@@ -1,0 +1,34 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.python-version
+
+# Models / cache
+*.bin
+*.pt
+*.onnx
+.cache/
+
+# Audio / video / transcript outputs
+*.wav
+*.mp3
+*.m4a
+*.webm
+*.mp4
+*.raw.md
+*.polished.md
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editors
+.vscode/
+.idea/
+
+# Env
+.env
+.env.local

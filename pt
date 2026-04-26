@@ -1,0 +1,28 @@
+#!/bin/bash
+# pt — one-shot: URL → transcribe → polish → markdown
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck disable=SC1091
+source "$SCRIPT_DIR/.venv/bin/activate"
+
+if [ $# -lt 1 ]; then
+    echo "Usage: pt <url> [output_dir]"
+    exit 1
+fi
+
+URL="$1"
+OUT_DIR="${2:-$(pwd)}"
+mkdir -p "$OUT_DIR"
+
+echo "→ transcribing $URL"
+RAW_PATH=$(cd "$OUT_DIR" && python "$SCRIPT_DIR/transcribe.py" "$URL" | tail -n1)
+
+if [ -n "${ANTHROPIC_API_KEY:-}" ]; then
+    echo "→ polishing with Claude"
+    python "$SCRIPT_DIR/polish.py" "$RAW_PATH"
+else
+    echo ""
+    echo "✓ raw transcript: $RAW_PATH"
+    echo "  (set ANTHROPIC_API_KEY for auto-polish, or open it in Claude Code)"
+fi
