@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
 """Polish a raw transcript with Claude — strip filler words, fix grammar, identify speakers."""
+import os, sys
+_venv = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".venv", "bin", "python3")
+if os.path.exists(_venv) and os.path.abspath(sys.executable) != os.path.abspath(_venv):
+    os.execv(_venv, [_venv] + sys.argv)
 
 import argparse
-import os
 import sys
 from pathlib import Path
 
