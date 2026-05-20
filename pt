@@ -1,5 +1,5 @@
 #!/bin/bash
-# pt — one-shot: URL → transcribe → polish → markdown
+# pt — one-shot: URL or local file → transcribe → polish → notes
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -7,22 +7,29 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/.venv/bin/activate"
 
 if [ $# -lt 1 ]; then
-    echo "Usage: pt <url> [output_dir]"
+    echo "Usage: pt <url-or-file> [output_dir]"
     exit 1
 fi
 
-URL="$1"
+SRC="$1"
 OUT_DIR="${2:-$(pwd)}"
 mkdir -p "$OUT_DIR"
 
-echo "→ transcribing $URL"
-RAW_PATH=$(cd "$OUT_DIR" && python "$SCRIPT_DIR/transcribe.py" "$URL" | tail -n1)
+# Make local paths absolute so we can safely `cd` into OUT_DIR.
+if [ -e "$SRC" ]; then
+    SRC="$(cd "$(dirname "$SRC")" && pwd)/$(basename "$SRC")"
+fi
 
-if [ -n "${ANTHROPIC_API_KEY:-}" ]; then
-    echo "→ polishing with Claude"
-    python "$SCRIPT_DIR/polish.py" "$RAW_PATH"
+echo "→ transcribing $SRC"
+RAW_PATH=$(cd "$OUT_DIR" && python "$SCRIPT_DIR/transcribe.py" "$SRC" | tail -n1)
+
+if command -v claude >/dev/null 2>&1 || command -v codex >/dev/null 2>&1; then
+    echo "→ polishing via local CLI"
+    POLISHED_PATH=$(python "$SCRIPT_DIR/polish.py" "$RAW_PATH" | tail -n1)
+    echo "→ generating notes"
+    python "$SCRIPT_DIR/notes.py" "$POLISHED_PATH"
 else
     echo ""
     echo "✓ raw transcript: $RAW_PATH"
-    echo "  (set ANTHROPIC_API_KEY for auto-polish, or open it in Claude Code)"
+    echo "  (install claude or codex CLI for auto-polish + notes, or open it in Claude Code yourself)"
 fi
