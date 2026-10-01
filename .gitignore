@@ -32,3 +32,10 @@ Thumbs.db
 # Env
 .env
 .env.local
+
+# Generated local processing state
+:memory:.ses
+.coconut/
+*.raw.json
+
+node_modules/

@@ -1,131 +1,87 @@
-# 🥥 coconut
+# 🥥 Coconut
 
-> Crack open podcasts. Turn talk into text you can actually study.
+把长音视频变成可信、好读、可回源的文字材料。
 
-**coconut** 把没有文字稿的播客和视频转化为**带时间戳、结构化、可深读**的中文文字稿，让你能像读论文一样反复学习播客、对不懂的概念用 AI 深挖、一键回到视频源对应位置。
+## 当前版本
 
----
+- 阅读器：JSON / SRT / VTT 导入、全文及笔记搜索、时间回源、原稿保留的文字修正、片段笔记、JSON 备份
+- 本地处理服务：公开 YouTube / Bilibili 链接、媒体文件上传、持久任务列表、取消、失败/中断后重试
+- 字幕优先：先找匹配原语言的现成字幕；没有适合的字幕才运行本地 ASR，也可手动强制重新转录
+- 已完成的字幕/转录结果和下载音频可在重试时复用；ASR 中途被终止仍需重做识别阶段
+- 默认不调用付费模型。首次 ASR 使用会下载开源模型；运行时间取决于模型和设备
 
-## 为什么做这个
+[在线阅读预览](https://yakihugo.github.io/coconut/) 是纯静态页面，不能替你的电脑运行转录。
+完整入口使用下面的本地服务。当前没有公开云转录后端，也没有跨设备自动同步。
 
-很多优质的播客和讲座视频根本没有文字稿——你听到一个有意思的概念，想停下来查、想做笔记、想日后回看，全靠耳朵和记忆。这导致：
+## 启动本地 MVP（macOS / Linux）
 
-- ❌ 听过即忘，难以复习
-- ❌ 想针对一个具体观点深入研究，找不到原话
-- ❌ 想引用一段话，没法精确定位
-- ❌ 一个小时的内容，没法 5 分钟扫完核心
-
-coconut 的目标是把"听"升维到"读 + 研"。
-
-## 核心能力（v0.1，已可用）
-
-```
-URL → yt-dlp 下载 → WhisperX 转录 + 说话人识别 → Claude 润色 → Markdown
-```
-
-支持平台：YouTube、Bilibili 及 yt-dlp 支持的 1000+ 平台。
-
-- ✅ **下载音频**：`yt-dlp` 处理 YouTube / B 站
-- ✅ **高质量转录**：WhisperX + `large-v3`，中文优化
-- ✅ **说话人识别**：pyannote 自动分离对话双方
-- ✅ **去碎嘴**：Claude 自动清理"嗯/呃/那个/就是"，修语病、合断句、加段落
-- **说话人标签**：保留 `SPEAKER_00` 等原始标签，不根据上下文猜测真实身份
-
-## Roadmap
-
-| 阶段 | 功能 | 状态 |
-|------|------|------|
-| v0.1 | CLI：URL → 干净的 Markdown 文稿 | ✅ 当前 |
-| v0.2 | 时间戳保留 + 行级跳转回原视频对应位置 | 已实现，待真实素材验收 |
-| v0.3 | Web UI：阅读、搜索、片段笔记、备份 | 首版已实现，待浏览器验收；高亮仍待做 |
-| v0.4 | 概念扩展：选中文字 → Claude 自动深挖背景知识 | 计划 |
-| v0.5 | 订阅 & 定时：关注播客频道，新集自动转录入库 | 计划 |
-| v0.6 | 全文搜索 + 跨集知识图谱 | 探索 |
-
-## 本地阅读器（首版）
-
-在仓库根目录执行 `python -m http.server 8080 --bind 127.0.0.1 --directory reader`，
-打开 `http://127.0.0.1:8080`。阅读器没有服务器端存储，不调用付费模型。
-
-- 导入 CLI 生成的 JSON，或已有 SRT / VTT 字幕
-- 搜索原话、说话人和笔记；为片段写笔记
-- 设置 YouTube / Bilibili 视频链接后按时间戳回源
-- 导出 JSON 备份（含笔记），可再次导入
-- 文字稿和笔记保存在当前浏览器；清除浏览器数据会丢失未导出的内容
-- 损坏的已存数据不会被新导入内容覆盖；此时仅在内存使用，关闭前务必导出
-
-网页暂不支持直接输入视频 URL 在线转录。CLI 转录需要另行安装模型和依赖；
-可选 Claude 润色需要用户自己的 API Key 并按提供商规则计费。润色输出会校验时间链接
-与说话人标签是否保留，但这不代表语义准确性已经自动得到保证。
-
-验证：`python -m unittest discover -s tests -v`、`node --test tests/reader.test.cjs`。
-本次未运行模型下载、真实音视频转录或付费模型请求，未完成真实浏览器视觉验收。
-
-## 安装（macOS / Apple Silicon）
+需要 Python 3.12；视频链接下载音频还需要 ffmpeg。
 
 ```bash
 git clone https://github.com/YakiHugo/coconut.git
 cd coconut
 ./install.sh
-export PATH="$PWD:$PATH"        # 写到 ~/.zshrc 持久化
+./coconut
 ```
 
-依赖：`ffmpeg`、`yt-dlp`、Python 3.11、`whisperx`、`anthropic`。首次运行会再下一个 ~3GB 的 Whisper large-v3 模型。
+打开 `http://127.0.0.1:8080`。安装脚本只创建仓库内的虚拟环境，不修改 shell 配置。
+若 ffmpeg 未安装，先从其官方安装渠道安装；本地字幕导入不依赖 ffmpeg。
 
-## 配置（可选但推荐）
+服务仅绑定本机回环地址，不要通过反向代理公开暴露。当前不是多用户服务。
+处理记录和输入默认放在 `~/.coconut`，可用 `./coconut --data-dir <目录>` 修改。
+网络视频限已结束且可确认时长不超过6小时的内容，拒绝直播和频道/合集。上传限 200 MiB，这是首版的资源保护边界，不是模型或平台的官方限制。
 
-### 说话人识别（HF_TOKEN）
+## 阅读与数据保存
 
-不设就只能拿到没人名的文稿。开启：
+- 浏览器中的修正与笔记保存在该浏览器的 localStorage 中；清除网站数据会丢失未导出的修改
+- 导出的 JSON 包含修正前文字、时间戳及笔记，可再次导入
+- 处理任务和原始结果保存在本地服务的数据目录；它们与浏览器笔记是两份数据
+- 无法读懂已有浏览器数据时，阅读器暂停写入，保留原数据；本次内容应先导出再关闭
+- 说话人编号不是真实身份；不让模型根据内容猜人名
 
-1. 注册 https://huggingface.co
-2. 在 https://huggingface.co/pyannote/speaker-diarization-3.1 同意许可
-3. 在 https://huggingface.co/settings/tokens 生成 **Read** token
-4. `export HF_TOKEN=hf_xxxxx`
-
-### Claude 润色（ANTHROPIC_API_KEY）
+## 命令行
 
 ```bash
-export ANTHROPIC_API_KEY=sk-ant-xxxxx
+.venv/bin/python transcribe.py 'https://www.youtube.com/watch?v=…'
+.venv/bin/python transcribe.py './访谈.mp3' --language zh
+.venv/bin/python transcribe.py './字幕.srt' --source-url 'https://www.bilibili.com/video/…'
+.venv/bin/python transcribe.py './访谈.mp3' --model small --work-dir ./private-work
 ```
 
-不设的话脚本只输出原始稿，你直接拖进 Claude Code 让它润色——`polish.py` 里的提示词可以直接复用。
+输出带时间定位的 `.raw.md` 和阅读器可导入的 `.raw.json`。默认输出不会覆盖既有文件；
+显式 `-o` 指定输出时会更新该目标。`--work-dir` 保留阶段产物，必须专用于同一份输入和选项。
 
-## 用法
+默认后端为 faster-whisper，small 是初始资源折中，不代表已证明它最适合所有中文材料。
+可选 `tiny/base/small/medium/large-v3/large-v3-turbo`。CPU 默认 int8。
+有兼容 NVIDIA 环境时可显式指定 `--device cuda --compute-type float16`。
+未测过你的 Mac 性能，不提供臆测的 M5 转录耗时。
+
+## 可选增强
+
+- WhisperX：另装 whisperx 后用 `--backend whisperx`，支持独立时间对齐；对齐失败保留 ASR 时间，不丢基础稿
+- 说话人区分：WhisperX 路径可用 pyannote；需要自己审阅模型许可并在本机配置相应 Hugging Face 权限
+- Claude 润色：另装 anthropic 并在本机配置自己的 API Key 后，显式运行 `polish.py`。这会使用付费 API
+- `pt` 默认只导入/转录；第三个参数显式传 `--polish` 才请求付费润色
+
+润色检查完整结束、时间链接和说话人标签是否保留。这不是语义准确性的自动保证。
+网页目前没有 AI 问答、自动摘要或知识图谱；这些不属于当前已完成能力。
+
+## 验证与当前局限
 
 ```bash
-pt https://www.bilibili.com/video/BVxxxxx           # 一条命令搞定
-pt https://www.youtube.com/watch?v=xxx ./out        # 指定输出目录
-
-./transcribe.py <url>                               # 只转录
-./polish.py transcript.raw.md                       # 只润色
+python -m unittest discover -s tests -v
+npm ci
+npm test
 ```
 
-输出：
-- `<id>.raw.md` — WhisperX 原始转录（带 `SPEAKER_xx` 标签）
-- `<id>.md`     — Claude 润色后的最终稿
+- 单元/回归与本地 HTTP 集成：字幕解析、队列重启/取消/重试、实际上传至结果、跨源与路径拒绝、备份笔记
+- 云浏览器已操作旧阅读预览的示例、笔记、搜索、刷新恢复、来源链接校验；新任务界面还需验收
+- 已实际运行干净的短英文 JFK 样例（tiny）和短中文公开样例（small）；不能据此声称长访谈、多人或噪声质量已达标
+- 文件选择器在测试环境遇到权限步骤中断，浏览器文件导入/备份重导完整链路尚未验证
+- 当前未在用户 Mac 上运行，未测试付费润色和可选说话人模型
+- 网站获取失败可能来自平台限制；不自动读取浏览器 Cookie，不绕过登录/访问限制
 
-## 性能参考（M5 Pro 48GB）
-
-| 1 小时音频 | 时长 |
-|-----------|------|
-| 下载 | ~30 秒 |
-| 转录（large-v3） | ~8-12 分钟 |
-| 说话人识别 | ~2-3 分钟 |
-| Claude 润色（Sonnet 4.6） | ~30-60 秒，约 $0.05-0.10 |
-
-## 调整
-
-- **更快/更省内存**：`transcribe.py` 中 `large-v3` → `medium`（中文也很好，2-3x 速度）
-- **更便宜的润色**：`--model` → `claude-haiku-4-5-20251001`
-- **B 站报错**：`brew upgrade yt-dlp`（B 站常变 API）
-
-## 贡献
-
-这是一个长期项目。欢迎 issue 和 PR，特别是：
-- B 站、小宇宙等中文平台的下载优化
-- 中文播客转录的提示词调优
-- v0.2+ 的功能设计讨论
+MVP 验收范围见 [docs/mvp.md](docs/mvp.md)。
 
 ## License
 
