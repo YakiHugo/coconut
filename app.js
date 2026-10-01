@@ -122,6 +122,7 @@ function render() {
 			"section",
 			"segment" + (selected === s.id ? " selected" : ""),
 		);
+		row.dataset.segmentId = s.id;
 		const meta = el("div", "time");
 		const href = Coconut.source(doc.source_url, s.start);
 		if (href) {
@@ -153,6 +154,7 @@ function render() {
 			render();
 			$("note").focus();
 		};
+		button.className = "note-button";
 		body.append(button);
 		if (doc.notes[s.id]) body.append(el("p", "saved-note", doc.notes[s.id]));
 		row.append(meta, body);
@@ -193,9 +195,24 @@ $("note").oninput = () => {
 	if (d && selected) {
 		d.notes[selected] = $("note").value;
 		save();
+		// Keep pointer targets mounted while focus leaves the note editor.
+		// Re-rendering on blur swallows the subsequent click on another row.
+		const row = [...$("transcript").querySelectorAll(".segment")].find(
+			(item) => item.dataset.segmentId === selected,
+		);
+		if (row) {
+			row.querySelector(".note-button").textContent = d.notes[selected] ? "编辑笔记" : "＋ 记一笔";
+			let preview = row.querySelector(".saved-note");
+			if (d.notes[selected]) {
+				if (!preview) {
+					preview = el("p", "saved-note");
+					row.lastElementChild.append(preview);
+				}
+				preview.textContent = d.notes[selected];
+			} else if (preview) preview.remove();
+		}
 	}
 };
-$("note").onblur = render;
 $("source").onclick = () => {
 	if (!active()) {
 		notice("请先导入文字稿");
