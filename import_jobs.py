@@ -5,6 +5,7 @@ import json
 import contextlib
 import fcntl
 import os
+import re
 import signal
 import sqlite3
 import subprocess
@@ -13,6 +14,19 @@ import threading
 import time
 import uuid
 from pathlib import Path
+
+
+# Only the original, generated upload path may be exposed to the reader.
+# Subtitle inputs and downloader/cache files are deliberately not playable.
+UPLOAD_MEDIA_TYPES = {
+    '.mp3': ('audio', 'audio/mpeg'),
+    '.mp4': ('video', 'video/mp4'),
+    '.wav': ('audio', 'audio/wav'),
+    '.m4a': ('audio', 'audio/mp4'),
+    '.webm': ('video', 'video/webm'),
+    '.ogg': ('audio', 'audio/ogg'),
+    '.flac': ('audio', 'audio/flac'),
+}
 
 
 class ImportJobs:
@@ -115,7 +129,36 @@ class ImportJobs:
         document = json.loads((self.directory / identifier / 'transcript.raw.json').read_text())
         if not job['title'].startswith('https://'):
             document['title'] = Path(job['title']).stem
+        # Never trust an association embedded in an imported transcript.
+        document.pop('source_media', None)
+        try:
+            _, kind, _ = self.media(identifier)
+        except KeyError:
+            pass
+        else:
+            document['source_media'] = {'job_id': identifier, 'kind': kind}
         return document
+
+    def media(self, identifier: str) -> tuple[Path, str, str]:
+        """Resolve a completed job's original upload without exposing its path."""
+        if not re.fullmatch(r'[a-f0-9]{32}', identifier):
+            raise KeyError('Job not found')
+        with self.connect() as db:
+            job = db.execute('SELECT source, status FROM jobs WHERE id=?', (identifier,)).fetchone()
+        if job is None:
+            raise KeyError('Job not found')
+        if job['status'] != 'done':
+            raise ValueError('Job is not complete')
+        path = Path(job['source'])
+        media_type = UPLOAD_MEDIA_TYPES.get(path.suffix)
+        expected = self.directory / identifier / ('source' + path.suffix)
+        try:
+            safe = path == expected and path.resolve() == expected and path.is_file()
+        except (OSError, RuntimeError):
+            safe = False
+        if not media_type or not safe:
+            raise KeyError('Media not found')
+        return path, *media_type
 
     def _status(self, identifier, status, stage, error=None):
         with self.connect() as db:

@@ -33,7 +33,7 @@ unverified. Platform-specific login or anti-bot restrictions are not bypassed.
 
 The published reader was actually opened in the cloud browser. Demo reading, adding a note, searching notes, reload persistence, invalid source rejection, and generated timestamp URLs were checked. Desktop screenshot captured.
 
-File chooser upload attempts could not complete because the browser file-chooser permission step could not complete in this environment. File import/export roundtrip still needs real-browser verification. The new local-job UI is not covered by the earlier browser check. A later browser check exposed a note-editor blur bug that swallowed the next segment-edit click; it has a regression test and a fix that keeps the target mounted.
+File chooser upload attempts could not complete because the browser file-chooser permission step could not complete in this environment. File import/export roundtrip still needs real-browser verification. The new local-job UI is not covered by the earlier browser check. A later browser check exposed a note-editor blur bug that swallowed the next segment-edit click; it has a regression test and a fix that keeps the target mounted. After the versioned scripts were published, the real browser confirmed that a single click from the focused first note opens the second segment editor, saves the correction, and leaves the first note unchanged.
 
 ## Automated coverage
 
@@ -44,3 +44,9 @@ A CI workflow example is included but has not been enabled for this change. Loca
 ## Local media job end-to-end smoke
 
 A real HTTP upload of the public Chinese WAV sample ran through the SQLite queue, subprocess importer and faster-whisper small, and returned a readable timed document from `/api/jobs/<id>/result`. This is API-to-ASR integration evidence, not local-server browser evidence. The same 达摩院 recognition error remains.
+
+A later real-browser export attempt timed out waiting for the download event; no successful export or reimport is claimed.
+
+## Source playback and storage-conflict regressions
+
+Local uploaded-media endpoints now support GET/HEAD and single byte ranges. Tests cover invalid ranges, subtitles, remote URL jobs, incomplete jobs, missing files, path confinement and symlinks. DOM tests verify that playback is enabled only after the local worker health check, a timestamp seeks the media, and note selection does not reload the player. Actual browser codec playback is still unverified in this environment. Stale-tab storage writes are detected and paused instead of replacing newer data.

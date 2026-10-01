@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import signal
+import stat
 import tempfile
 import uuid
 from functools import partial
@@ -13,13 +15,31 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-from import_jobs import ImportJobs
+from import_jobs import ImportJobs, UPLOAD_MEDIA_TYPES
 from subtitle_import import validate_video_url
 
 # Local implementation resource boundaries, not provider limits.
 MAX_UPLOAD = 200 * 1024 * 1024
 MAX_JSON = 16 * 1024
-MEDIA_EXTENSIONS = {'.mp3', '.mp4', '.wav', '.m4a', '.webm', '.ogg', '.flac', '.srt', '.vtt'}
+MEDIA_EXTENSIONS = set(UPLOAD_MEDIA_TYPES) | {'.srt', '.vtt'}
+
+
+def byte_range(value: str, size: int) -> tuple[int, int]:
+    """Parse one byte range; multipart or malformed ranges are not supported."""
+    match = re.fullmatch(r'bytes=([0-9]*)-([0-9]*)', value)
+    if not match or not any(match.groups()) or not size:
+        raise ValueError('Invalid range')
+    first, last = match.groups()
+    if not first:
+        suffix = int(last)
+        if suffix <= 0:
+            raise ValueError('Invalid range')
+        return max(0, size - suffix), size - 1
+    start = int(first)
+    end = min(int(last), size - 1) if last else size - 1
+    if start >= size or start > end:
+        raise ValueError('Invalid range')
+    return start, end
 
 
 class Handler(SimpleHTTPRequestHandler):
@@ -55,7 +75,70 @@ class Handler(SimpleHTTPRequestHandler):
         self.send_header('Content-Type', 'application/json; charset=utf-8')
         self.send_header('Content-Length', str(len(body)))
         self.end_headers()
-        self.wfile.write(body)
+        if self.command != 'HEAD':
+            self.wfile.write(body)
+
+    def _media(self, identifier):
+        # Browsers must not use this private endpoint as cross-site embedded media.
+        origin = self.headers.get('Origin')
+        if ((origin and origin != 'http://' + self.headers.get('Host', '')) or
+                self.headers.get('Sec-Fetch-Site') not in (None, 'same-origin', 'none')):
+            return self._json(403, {'error': 'Cross-origin requests are not permitted'})
+        path, _, content_type = self.jobs.media(identifier)
+        try:
+            # Pin the job directory and reject symlinks swapped in after validation.
+            folder = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+            try:
+                descriptor = os.open(path.name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK,
+                                     dir_fd=folder)
+            finally:
+                os.close(folder)
+            stream = os.fdopen(descriptor, 'rb')
+        except OSError:
+            return self._json(404, {'error': 'Media not found'})
+        with stream:
+            file_stat = os.fstat(stream.fileno())
+            if not stat.S_ISREG(file_stat.st_mode):
+                return self._json(404, {'error': 'Media not found'})
+            size = file_stat.st_size
+            start, end = 0, size - 1
+            requested_range = self.headers.get('Range')
+            if requested_range is not None:
+                try:
+                    start, end = byte_range(requested_range, size)
+                except ValueError:
+                    self.send_response(416)
+                    self.send_header('Content-Range', f'bytes */{size}')
+                    self.send_header('Content-Length', '0')
+                    self.send_header('Accept-Ranges', 'bytes')
+                    self.end_headers()
+                    return
+            self.send_response(206 if requested_range is not None else 200)
+            self.send_header('Content-Type', content_type)
+            self.send_header('Content-Length', str(end - start + 1))
+            self.send_header('Accept-Ranges', 'bytes')
+            self.send_header('Cross-Origin-Resource-Policy', 'same-origin')
+            if requested_range is not None:
+                self.send_header('Content-Range', f'bytes {start}-{end}/{size}')
+            self.end_headers()
+            if self.command == 'HEAD':
+                return
+            stream.seek(start)
+            remaining = end - start + 1
+            try:
+                while remaining:
+                    chunk = stream.read(min(remaining, 64 * 1024))
+                    if not chunk:
+                        break
+                    self.wfile.write(chunk)
+                    remaining -= len(chunk)
+            except (BrokenPipeError, ConnectionResetError):
+                # A browser seek cancels the previous media request.
+                pass
+
+    def do_HEAD(self):
+        # Use the same route allowlist and origin checks as GET.
+        self.do_GET()
 
     def do_GET(self):
         if not self._allowed():
@@ -66,16 +149,24 @@ class Handler(SimpleHTTPRequestHandler):
                 return self._json(200, {'local_worker': True, 'paid_processing': False, 'max_upload_bytes': MAX_UPLOAD})
             if path == '/api/jobs':
                 return self._json(200, {'jobs': self.jobs.list()})
+            match = re.fullmatch(r'/api/jobs/([a-f0-9]{32})/media', path)
+            if match:
+                return self._media(match[1])
             match = re.fullmatch(r'/api/jobs/([a-f0-9]{32})(/result)?', path)
             if match:
                 return self._json(200, self.jobs.result(match[1]) if match[2] else self.jobs.get(match[1]))
             if path not in ('/', '/index.html', '/app.js', '/core.js', '/jobs.js', '/style.css'):
                 return self._json(404, {'error': 'Not found'})
-            super().do_GET()
+            if self.command == 'HEAD':
+                super().do_HEAD()
+            else:
+                super().do_GET()
         except KeyError:
             self._json(404, {'error': 'Job not found'})
         except ValueError as error:
             self._json(409, {'error': str(error)})
+        except OSError:
+            self._json(404, {'error': 'File not found'})
 
     def do_POST(self):
         if not self._allowed():

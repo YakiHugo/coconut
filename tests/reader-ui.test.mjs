@@ -61,3 +61,32 @@ test('leaving the note editor preserves the pending row click target',async()=>{
   assert.equal(w.document.querySelector('.saved-note').textContent,'Live preview');
  }finally{await w.happyDOM.close();}
 });
+
+test('stale tabs cannot overwrite newer persisted notes',async()=>{
+ const w=setup();try{
+  await w.document.getElementById('sample').onclick();
+  const newest=JSON.parse(w.localStorage.getItem('coconut-reader-v1'));
+  newest.documents[0].notes['demo-1']='Newer note from another tab';
+  const external=JSON.stringify(newest);w.localStorage.setItem('coconut-reader-v1',external);
+  w.document.getElementById('library').querySelector('button').click();
+  assert.equal(w.localStorage.getItem('coconut-reader-v1'),external);
+  assert.match(w.document.getElementById('notice').textContent,/另一个页面/);
+ }finally{await w.happyDOM.close();}
+});
+
+test('local source playback activates only with the local worker and seeks to source time',async()=>{
+ const id='a'.repeat(32);
+ const stored=JSON.stringify({active:'local-doc',documents:[{key:'local-doc',schema_version:1,title:'Local source',source_url:'',source_media:{job_id:id,kind:'audio'},provenance:{kind:'local_asr',model:'small'},notes:{},segments:[{id:'one',start:12,end:15,text:'A verifiable phrase'}]}]});
+ const w=setup(stored);try{
+  assert.equal(w.document.querySelector('audio'),null);
+  assert.match(w.document.getElementById('provenance').textContent,/本机语音识别.*small/);
+  w.dispatchEvent(new w.Event('coconut-worker-ready'));
+  const player=w.document.querySelector('audio');assert.ok(player);
+  assert.equal(player.getAttribute('src'),'/api/jobs/'+id+'/media');
+  let played=false;player.play=async()=>{played=true;};
+  w.document.querySelector('.time button').click();
+  assert.equal(player.currentTime,12);assert.equal(played,true);
+  w.document.querySelector('.note-button').click();
+  assert.equal(w.document.querySelector('audio'),player,'note edits must not reload the source');
+ }finally{await w.happyDOM.close();}
+});
