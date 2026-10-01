@@ -11,7 +11,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-import whisperx
+from transcript import make_document, save_document, to_markdown
 
 
 def download_audio(url: str, out_dir: Path) -> tuple[Path, str]:
@@ -41,6 +41,8 @@ def download_audio(url: str, out_dir: Path) -> tuple[Path, str]:
 
 
 def transcribe(audio_path: Path, language: str | None, hf_token: str | None) -> dict:
+    import whisperx
+
     device = "cpu"
     compute_type = "int8"
 
@@ -124,7 +126,8 @@ def main():
         print(f"[2/2] transcribing (this may take a while)...", file=sys.stderr)
         result = transcribe(audio_path, args.language, hf_token)
 
-        text = format_transcript(result, title, with_speakers=bool(hf_token))
+        document = make_document(result, title, args.url)
+        text = to_markdown(document)
 
         out_path = (
             Path(args.output)
@@ -134,7 +137,11 @@ def main():
         # When using a temp file as the default name, write to cwd
         if not args.output:
             out_path = Path.cwd() / (audio_path.stem + ".raw.md")
+        out_path.parent.mkdir(parents=True, exist_ok=True)
         out_path.write_text(text, encoding="utf-8")
+        structured_path = out_path.with_suffix(".json")
+        save_document(document, structured_path)
+        print(f"  reader document: {structured_path}", file=sys.stderr)
 
     print(f"\n✓ raw transcript: {out_path}", file=sys.stderr)
     print(out_path)
