@@ -1,9 +1,151 @@
-(function(root){
-  'use strict';
-  function time(seconds){const n=Math.max(0,Math.floor(seconds));return (n>=3600?String(Math.floor(n/3600)).padStart(2,'0')+':':'')+String(Math.floor(n/60)%60).padStart(2,'0')+':'+String(n%60).padStart(2,'0');}
-  function source(url,seconds){if(!url)return '';let u;try{u=new URL(url);}catch{return '';}if(!['https:','http:'].includes(u.protocol)||u.username||u.password)return '';const h=u.hostname.toLowerCase();if(['www.youtube.com','youtube.com','m.youtube.com','youtu.be','www.bilibili.com','bilibili.com','m.bilibili.com'].includes(h)){u.searchParams.set('t',String(Math.max(0,Math.floor(seconds))));u.hash='';return u.href;}return '';}
-  function validate(data){if(!data||!Array.isArray(data.segments)||!data.segments.length||data.segments.length>100000)throw new Error('文字稿必须包含 1–100,000 个片段');let prior=-1;const ids=new Set();const segments=data.segments.map((s,i)=>{if(!s||typeof s.text!=='string'||!Number.isFinite(s.start)||!Number.isFinite(s.end)||s.start<0||s.end<s.start||s.start<prior)throw new Error('第 '+(i+1)+' 段内容或时间戳无效');prior=s.start;const id=typeof s.id==='string'?s.id:'segment-'+(i+1);if(ids.has(id))throw new Error('片段标识重复');ids.add(id);return {id,start:s.start,end:s.end,text:s.text,speaker:typeof s.speaker==='string'?s.speaker:null};});const notes=Object.create(null);if(data.notes&&typeof data.notes==='object'&&!Array.isArray(data.notes)){for(const id of ids){if(Object.hasOwn(data.notes,id)&&typeof data.notes[id]==='string')notes[id]=data.notes[id];}}return {notes,schema_version:1,title:typeof data.title==='string'?data.title:'未命名文字稿',source_url:typeof data.source_url==='string'?data.source_url:'',segments};}
-  function seconds(value){const parts=value.replace(',','.').split(':').map(Number);if(parts.some(n=>!Number.isFinite(n))||parts.length<2||parts.length>3)throw new Error('字幕时间格式无效');return parts.reduce((n,v)=>n*60+v,0);}
-  function parse(text,filename){if(filename.toLowerCase().endsWith('.json'))return validate(JSON.parse(text));const blocks=text.replace(/^\uFEFF/,'').replace(/\r\n?/g,'\n').split(/\n\s*\n/);const segments=[];for(const block of blocks){const lines=block.split('\n');const index=lines.findIndex(line=>line.includes('-->'));if(index<0)continue;const match=lines[index].match(/^(\S+)\s+-->\s+(\S+)/);if(!match)throw new Error('无法识别字幕时间');const body=lines.slice(index+1).join('\n').replace(/<[^>]*>/g,'').trim();if(body)segments.push({id:'segment-'+(segments.length+1),start:seconds(match[1]),end:seconds(match[2]),text:body,speaker:null});}return validate({title:filename.replace(/\.(srt|vtt)$/i,''),source_url:'',segments});}
-  const api={time,source,validate,parse};if(typeof module!=='undefined'&&module.exports)module.exports=api;else root.Coconut=api;
-})(typeof window!=='undefined'?window:globalThis);
+(function (root) {
+	"use strict";
+	function time(seconds) {
+		const n = Math.max(0, Math.floor(seconds));
+		return (
+			(n >= 3600 ? String(Math.floor(n / 3600)).padStart(2, "0") + ":" : "") +
+			String(Math.floor(n / 60) % 60).padStart(2, "0") +
+			":" +
+			String(n % 60).padStart(2, "0")
+		);
+	}
+	function source(url, seconds) {
+		if (!url) return "";
+		let u;
+		try {
+			u = new URL(url);
+		} catch {
+			return "";
+		}
+		if (!["https:", "http:"].includes(u.protocol) || u.username || u.password)
+			return "";
+		const h = u.hostname.toLowerCase();
+		if (
+			[
+				"www.youtube.com",
+				"youtube.com",
+				"m.youtube.com",
+				"youtu.be",
+				"www.bilibili.com",
+				"bilibili.com",
+				"m.bilibili.com",
+			].includes(h)
+		) {
+			u.searchParams.set("t", String(Math.max(0, Math.floor(seconds))));
+			u.hash = "";
+			return u.href;
+		}
+		return "";
+	}
+	function validate(data) {
+		if (
+			!data ||
+			!Array.isArray(data.segments) ||
+			!data.segments.length ||
+			data.segments.length > 100000
+		)
+			throw new Error("文字稿必须包含 1–100,000 个片段");
+		let prior = -1;
+		const ids = new Set();
+		const segments = data.segments.map((s, i) => {
+			if (
+				!s ||
+				typeof s.text !== "string" ||
+				!Number.isFinite(s.start) ||
+				!Number.isFinite(s.end) ||
+				s.start < 0 ||
+				s.end < s.start ||
+				s.start < prior
+			)
+				throw new Error("第 " + (i + 1) + " 段内容或时间戳无效");
+			prior = s.start;
+			const id = typeof s.id === "string" ? s.id : "segment-" + (i + 1);
+			if (ids.has(id)) throw new Error("片段标识重复");
+			ids.add(id);
+			return {
+				id,
+				start: s.start,
+				end: s.end,
+				text: s.text,
+				...(typeof s.original_text === "string"
+					? { original_text: s.original_text }
+					: {}),
+				speaker: typeof s.speaker === "string" ? s.speaker : null,
+			};
+		});
+		const notes = Object.create(null);
+		if (
+			data.notes &&
+			typeof data.notes === "object" &&
+			!Array.isArray(data.notes)
+		) {
+			for (const id of ids) {
+				if (Object.hasOwn(data.notes, id) && typeof data.notes[id] === "string")
+					notes[id] = data.notes[id];
+			}
+		}
+		const provenance =
+			data.provenance && typeof data.provenance === "object"
+				? Object.fromEntries(
+						["kind", "model", "backend", "language", "alignment_warning"]
+							.filter((k) => typeof data.provenance[k] === "string")
+							.map((k) => [k, data.provenance[k]]),
+					)
+				: undefined;
+		return {
+			notes,
+			...(provenance ? { provenance } : {}),
+			schema_version: 1,
+			title: typeof data.title === "string" ? data.title : "未命名文字稿",
+			source_url: typeof data.source_url === "string" ? data.source_url : "",
+			segments,
+		};
+	}
+	function seconds(value) {
+		const parts = value.replace(",", ".").split(":").map(Number);
+		if (
+			parts.some((n) => !Number.isFinite(n)) ||
+			parts.length < 2 ||
+			parts.length > 3
+		)
+			throw new Error("字幕时间格式无效");
+		return parts.reduce((n, v) => n * 60 + v, 0);
+	}
+	function parse(text, filename) {
+		if (filename.toLowerCase().endsWith(".json"))
+			return validate(JSON.parse(text));
+		const blocks = text
+			.replace(/^\uFEFF/, "")
+			.replace(/\r\n?/g, "\n")
+			.split(/\n\s*\n/);
+		const segments = [];
+		for (const block of blocks) {
+			const lines = block.split("\n");
+			const index = lines.findIndex((line) => line.includes("-->"));
+			if (index < 0) continue;
+			const match = lines[index].match(/^(\S+)\s+-->\s+(\S+)/);
+			if (!match) throw new Error("无法识别字幕时间");
+			const body = lines
+				.slice(index + 1)
+				.join("\n")
+				.replace(/<[^>]*>/g, "")
+				.trim();
+			if (body)
+				segments.push({
+					id: "segment-" + (segments.length + 1),
+					start: seconds(match[1]),
+					end: seconds(match[2]),
+					text: body,
+					speaker: null,
+				});
+		}
+		return validate({
+			title: filename.replace(/\.(srt|vtt)$/i, ""),
+			source_url: "",
+			segments,
+		});
+	}
+	const api = { time, source, validate, parse };
+	if (typeof module !== "undefined" && module.exports) module.exports = api;
+	else root.Coconut = api;
+})(typeof window !== "undefined" ? window : globalThis);
