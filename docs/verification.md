@@ -33,10 +33,14 @@ unverified. Platform-specific login or anti-bot restrictions are not bypassed.
 
 The published reader was actually opened in the cloud browser. Demo reading, adding a note, searching notes, reload persistence, invalid source rejection, and generated timestamp URLs were checked. Desktop screenshot captured.
 
-File chooser upload attempts could not complete because the browser file-chooser permission step could not complete in this environment. File import/export roundtrip still needs real-browser verification. The new local-job UI is not covered by the earlier browser check.
+File chooser upload attempts could not complete because the browser file-chooser permission step could not complete in this environment. File import/export roundtrip still needs real-browser verification. The new local-job UI is not covered by the earlier browser check. A later browser check exposed a note-editor blur bug that swallowed the next segment-edit click; it has a regression test and a fix that keeps the target mounted.
 
 ## Automated coverage
 
 Python regressions exercise real local HTTP upload-to-result, queue restart/retry/cancel, worker ownership, SIGTERM process cleanup, subtitle discovery and parsing, output collision protection, and metadata preflight. JS and DOM regressions exercise notes, backup parsing, corrupt storage preservation and editing another segment while a note is open.
 
 A CI workflow example is included but has not been enabled for this change. Local test results are not a claim that GitHub CI passed.
+
+## Local media job end-to-end smoke
+
+A real HTTP upload of the public Chinese WAV sample ran through the SQLite queue, subprocess importer and faster-whisper small, and returned a readable timed document from `/api/jobs/<id>/result`. This is API-to-ASR integration evidence, not local-server browser evidence. The same 达摩院 recognition error remains.

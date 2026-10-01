@@ -26,6 +26,7 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(current['status'],'done')
         with urlopen(self.base+'/api/jobs/'+job['id']+'/result') as response: doc=json.load(response)
         self.assertEqual(doc['segments'][0]['text'],'Hello Coconut')
+        self.assertEqual(doc['title'], 'test')
     def test_cross_origin_and_unscoped_host_rejected(self):
         for headers in [{'Origin':'https://evil.example'},{'Host':'evil.example'}]:
             with self.assertRaises(HTTPError) as error:urlopen(Request(self.base+'/api/jobs',headers=headers))

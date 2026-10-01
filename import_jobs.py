@@ -109,9 +109,13 @@ class ImportJobs:
         return self.get(identifier)
 
     def result(self, identifier: str) -> dict:
-        if self.get(identifier)['status'] != 'done':
+        job = self.get(identifier)
+        if job['status'] != 'done':
             raise ValueError('Job is not complete')
-        return json.loads((self.directory / identifier / 'transcript.raw.json').read_text())
+        document = json.loads((self.directory / identifier / 'transcript.raw.json').read_text())
+        if not job['title'].startswith('https://'):
+            document['title'] = Path(job['title']).stem
+        return document
 
     def _status(self, identifier, status, stage, error=None):
         with self.connect() as db:
