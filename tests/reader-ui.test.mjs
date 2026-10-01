@@ -47,3 +47,17 @@ test('notes survive restore and can be searched',async()=>{
     assert.equal(restored.document.querySelector('.saved-note').textContent,'My unique memory');
   }finally{await restored.happyDOM.close();}
 });
+
+test('leaving the note editor preserves the pending row click target',async()=>{
+ const w=setup();try{
+  await w.document.getElementById('sample').onclick();
+  w.document.querySelector('.segment').querySelectorAll('button')[1].click();
+  const note=w.document.getElementById('note');note.value='Live preview';note.oninput();
+  const target=w.document.querySelectorAll('.segment')[1].querySelector('button');
+  note.blur();
+  assert.ok(target.isConnected,'blur must not replace the pending pointer target');
+  target.click();
+  assert.ok(w.document.getElementById('edit-dialog').open);
+  assert.equal(w.document.querySelector('.saved-note').textContent,'Live preview');
+ }finally{await w.happyDOM.close();}
+});

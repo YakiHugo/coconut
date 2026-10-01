@@ -53,7 +53,7 @@ def parse_subtitles(text: str, extension: str) -> list[dict]:
             match = CUE.fullmatch(line.strip())
             if not match:
                 raise ValueError('Invalid subtitle cue')
-            body = html.unescape(re.sub(r'<[^>]*>', '', '\n'.join(lines[index + 1:]))).strip()
+            body = html.unescape(re.sub(r'</?(?:b|i|u|ruby|rt|v|c)(?:[ .][^>]*)?>|<\d{2}:\d{2}(?::\d{2})?\.\d{3}>', '', '\n'.join(lines[index + 1:]), flags=re.I)).strip()
             if body:
                 segment = {'start': seconds(match[1]), 'end': seconds(match[2]), 'text': body}
                 # Suppress exact duplicates, but never guess that repeated speech is redundant.

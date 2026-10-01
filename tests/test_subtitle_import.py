@@ -40,3 +40,7 @@ class SubtitleTests(unittest.TestCase):
             self.assertEqual(tls_cli_options(), ['--compat-options','no-certifi'])
         with patch.dict(os.environ, {}, clear=True):
             self.assertEqual(tls_cli_options(), [])
+
+    def test_subtitles_preserve_code_generics(self):
+        result = parse_subtitles('1\n00:00:01,000 --> 00:00:02,000\n<b>Use</b> List<T> &amp; compare\n', '.srt')
+        self.assertEqual(result[0]['text'], 'Use List<T> & compare')

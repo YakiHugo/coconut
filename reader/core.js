@@ -102,6 +102,7 @@
 		};
 	}
 	function seconds(value) {
+		if (!/^(?:\d{2,}:)?[0-5]\d:[0-5]\d[.,]\d{3}$/.test(value)) throw new Error("字幕时间格式无效");
 		const parts = value.replace(",", ".").split(":").map(Number);
 		if (
 			parts.some((n) => !Number.isFinite(n)) ||
@@ -110,6 +111,15 @@
 		)
 			throw new Error("字幕时间格式无效");
 		return parts.reduce((n, v) => n * 60 + v, 0);
+	}
+	function subtitleText(value) {
+		const plain = value.replace(/<\/?(?:b|i|u|ruby|rt|v|c)(?:[ .][^>]*)?>|<\d{2}:\d{2}(?::\d{2})?\.\d{3}>/gi, "");
+		const names = {amp:"&",lt:"<",gt:">",quot:'"',apos:"'",nbsp:" "};
+		return plain.replace(/&(#x[0-9a-f]+|#[0-9]+|amp|lt|gt|quot|apos|nbsp);/gi, (match, key) => {
+			if (key[0] !== "#") return names[key.toLowerCase()] || match;
+			const code = key[1].toLowerCase() === "x" ? Number.parseInt(key.slice(2),16) : Number.parseInt(key.slice(1),10);
+			return code > 0 && code <= 0x10ffff && !(code >= 0xd800 && code <= 0xdfff) ? String.fromCodePoint(code) : match;
+		});
 	}
 	function parse(text, filename) {
 		if (filename.toLowerCase().endsWith(".json"))
@@ -125,11 +135,7 @@
 			if (index < 0) continue;
 			const match = lines[index].match(/^(\S+)\s+-->\s+(\S+)/);
 			if (!match) throw new Error("无法识别字幕时间");
-			const body = lines
-				.slice(index + 1)
-				.join("\n")
-				.replace(/<[^>]*>/g, "")
-				.trim();
+			const body = subtitleText(lines.slice(index + 1).join("\n")).trim();
 			if (body)
 				segments.push({
 					id: "segment-" + (segments.length + 1),

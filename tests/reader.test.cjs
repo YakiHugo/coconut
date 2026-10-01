@@ -26,3 +26,12 @@ test('source links reject unsafe schemes and lookalike hosts', () => {
 test('invalid segment chronology is rejected', () => {
   assert.throws(() => validate({segments: [{start: 2, end: 1, text: 'Invalid'}]}));
 });
+test('subtitle imports preserve code-like text and decode entities safely', () => {
+  const doc = parse('1\n00:00:01,000 --> 00:00:02,000\n<b>React</b> &lt;T&gt; &amp; &#x4e2d; <T>', 'example.srt');
+  assert.equal(doc.segments[0].text, 'React <T> & 中 <T>');
+});
+test('subtitle timestamps reject non-clock and signed components', () => {
+  for (const time of ['00:99.000','01:-01:01.000','0x10:00.000']) {
+    assert.throws(() => parse(`1\n${time} --> 02:00:00,000\nInvalid`, 'bad.srt'));
+  }
+});
