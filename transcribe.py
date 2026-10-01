@@ -15,14 +15,14 @@ import tempfile
 from pathlib import Path
 
 from transcript import make_document, save_document, to_markdown
-from subtitle_import import fetch_subtitle_document, subtitle_document, validate_video_url, validate_media_info
+from subtitle_import import fetch_subtitle_document, subtitle_document, validate_video_url, validate_media_info, tls_cli_options
 
 
 def download_audio(url: str, out_dir: Path) -> tuple[Path, str]:
     """Download audio with yt-dlp. Returns (path, title)."""
     validate_video_url(url)
     metadata = subprocess.run(
-        [sys.executable, "-m", "yt_dlp", "--ignore-config", "--socket-timeout", "30", "--retries", "1",
+        [sys.executable, "-m", "yt_dlp", "--ignore-config", *tls_cli_options(), "--socket-timeout", "30", "--retries", "1",
          "--dump-single-json", "--skip-download", "--flat-playlist", "--playlist-end", "1", "--no-playlist", url],
         check=True, capture_output=True, text=True, timeout=90,
     )
@@ -34,7 +34,7 @@ def download_audio(url: str, out_dir: Path) -> tuple[Path, str]:
     out_template = str(out_dir / "%(id)s.%(ext)s")
     subprocess.run(
         [
-            sys.executable, "-m", "yt_dlp", "--ignore-config",
+            sys.executable, "-m", "yt_dlp", "--ignore-config", *tls_cli_options(),
             "--socket-timeout", "30", "--retries", "1",
             "-f", "bestaudio",
             "-x", "--audio-format", "wav",

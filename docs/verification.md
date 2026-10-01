@@ -15,6 +15,20 @@ Sources:
 - https://github.com/ggml-org/whisper.cpp/tree/master/samples
 - https://github.com/modelscope/FunASR
 
+## Real video URL smoke run
+
+A public YouTube video (`jNQXAC9IVRw`) was fetched through the actual subtitle-first adapter.
+Its existing English captions produced six structured segments, labeled `platform_subtitles`.
+This exposed and fixed a real yt-dlp discovery/simulation-state leak: separate parameter copies
+and an explicit non-simulated subtitle-write stage are required.
+
+The environment already supplies an SSL_CERT_FILE trust store. yt-dlp's bundled certifi roots
+did not honor it; the adapter now uses yt-dlp's documented system-trust option when that environment
+variable is explicitly present. Certificate verification remains enabled; no trust roots were added.
+
+Bilibili metadata/subtitle gating is covered by regression tests, but a real Bilibili import remains
+unverified. Platform-specific login or anti-bot restrictions are not bypassed.
+
 ## Browser checks
 
 The published reader was actually opened in the cloud browser. Demo reading, adding a note, searching notes, reload persistence, invalid source rejection, and generated timestamp URLs were checked. Desktop screenshot captured.

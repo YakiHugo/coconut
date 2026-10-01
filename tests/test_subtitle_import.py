@@ -31,3 +31,12 @@ class SubtitleTests(unittest.TestCase):
     def test_collections_rejected(self):
         for url in ['https://www.youtube.com/playlist?list=abc','https://www.youtube.com/@channel','https://www.bilibili.com/']:
             with self.assertRaises(ValueError):validate_video_url(url)
+
+    def test_tls_option_honors_existing_trust_store_without_disabling_verification(self):
+        import os
+        from unittest.mock import patch
+        from subtitle_import import tls_cli_options
+        with patch.dict(os.environ, {'SSL_CERT_FILE':'/already/configured/roots.pem'}, clear=True):
+            self.assertEqual(tls_cli_options(), ['--compat-options','no-certifi'])
+        with patch.dict(os.environ, {}, clear=True):
+            self.assertEqual(tls_cli_options(), [])

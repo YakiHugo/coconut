@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import html
 import json
+import os
 import re
 from pathlib import Path
 from urllib.parse import urlparse, parse_qs
@@ -117,23 +118,29 @@ def validate_media_info(info: dict | None) -> None:
 
 
 
+def tls_cli_options() -> list[str]:
+    # Honor an explicitly configured system trust store, keeping TLS verification on.
+    # yt-dlp otherwise overrides SSL_CERT_FILE with its bundled certifi roots.
+    return ['--compat-options', 'no-certifi'] if os.environ.get('SSL_CERT_FILE') or os.environ.get('SSL_CERT_DIR') else []
+
+
 def fetch_subtitle_document(url: str, directory: Path, language: str | None = None) -> dict | None:
     validate_video_url(url)
     from yt_dlp import YoutubeDL
 
     settings = {'quiet': True, 'no_warnings': False, 'skip_download': True,
                 'noplaylist': True, 'extract_flat': 'in_playlist', 'socket_timeout': 30, 'retries': 1,
-                'extractor_retries': 1, 'listsubtitles': True, 'outtmpl': str(directory / 'captions.%(ext)s')}
-    with YoutubeDL(settings) as downloader:
+                'extractor_retries': 1, 'listsubtitles': False, 'writesubtitles': True, 'writeautomaticsub': True, 'compat_opts': {'no-certifi'} if tls_cli_options() else set(), 'outtmpl': str(directory / 'captions.%(ext)s')}
+    with YoutubeDL(dict(settings)) as downloader:
         info = downloader.extract_info(url, download=False)
     validate_media_info(info)
     selected = select_track(info, language)
     if selected is None:
         return None
     field, track = selected
-    settings.update({'listsubtitles': False, 'writesubtitles': field == 'subtitles', 'writeautomaticsub': field == 'automatic_captions',
+    settings.update({'simulate': False, 'listsubtitles': False, 'writesubtitles': field == 'subtitles', 'writeautomaticsub': field == 'automatic_captions',
                      'subtitleslangs': [track], 'subtitlesformat': 'vtt/srt/json3'})
-    with YoutubeDL(settings) as downloader:
+    with YoutubeDL(dict(settings)) as downloader:
         downloaded = downloader.process_ie_result(info, download=True)
     subtitle = (downloaded.get('requested_subtitles') or {}).get(track) or {}
     filename = subtitle.get('filepath')
