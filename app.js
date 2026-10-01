@@ -6,12 +6,15 @@ let selected = null;
 let editingTarget = null;
 let currentLimit = 100;
 let storageBlocked = false;
+let lastSavedValue = null;
+let mediaWorkerReady = false;
 function notice(text) {
 	$("notice").hidden = !text;
 	$("notice").textContent = text;
 }
 try {
-	const stored = JSON.parse(localStorage.getItem(KEY) || "null");
+	lastSavedValue = localStorage.getItem(KEY);
+	const stored = JSON.parse(lastSavedValue || "null");
 	if (
 		stored &&
 		(!Array.isArray(stored.documents) ||
@@ -41,7 +44,14 @@ function save() {
 		return false;
 	}
 	try {
-		localStorage.setItem(KEY, JSON.stringify(state));
+		if (localStorage.getItem(KEY) !== lastSavedValue) {
+			storageBlocked = true;
+			notice("另一个页面更新了书架，已暂停保存以避免覆盖。请先导出本页修改，再刷新读取最新数据。");
+			return false;
+		}
+		const nextValue = JSON.stringify(state);
+		localStorage.setItem(KEY, nextValue);
+		lastSavedValue = nextValue;
 		return true;
 	} catch {
 		notice("浏览器保存空间不足或被禁用；当前内容仍在本页，请及时导出备份。");
@@ -94,12 +104,34 @@ function render() {
 		return;
 	}
 	$("empty").hidden = true;
+	const mediaPath = mediaWorkerReady && Coconut.media ? Coconut.media(doc.source_media) : "";
+	const mediaHost = $("source-media");
+	const currentPlayer = mediaHost.querySelector("audio,video");
+	if (!mediaPath) {
+		mediaHost.replaceChildren();
+		mediaHost.hidden = true;
+	} else if (!currentPlayer || currentPlayer.getAttribute("src") !== mediaPath) {
+		const player = el(doc.source_media.kind, "source-player");
+		player.controls = true;
+		player.preload = "metadata";
+		player.src = mediaPath;
+		player.setAttribute("aria-label", "原始音视频");
+		player.style.width = "100%";
+		player.style.maxHeight = "360px";
+		player.onerror = () => notice("原始媒体暂时无法播放。请确认此文字稿对应的本地任务仍在这台电脑上。");
+		mediaHost.replaceChildren(player);
+		mediaHost.hidden = false;
+	}
 	$("title").textContent = doc.title;
 	$("subtitle").textContent =
 		doc.segments.length +
 		" 个片段 · " +
 		Coconut.time(doc.segments.at(-1).end) +
 		" · 原话与笔记保存在本机";
+	const provenance = doc.provenance || {};
+	const sourceKinds = {platform_subtitles: "平台提供的字幕", automatic_subtitles: "平台自动字幕", imported_subtitles: "导入的字幕", local_asr: "本机语音识别"};
+	const provenanceText = sourceKinds[provenance.kind] || "导入文字稿，来源未标明";
+	$("provenance").textContent = provenanceText + (provenance.model ? " · " + provenance.model : "") + " · 请回听核对专有名词与重要信息" + (provenance.alignment_warning ? " · 时间对齐降级：" + provenance.alignment_warning : "");
 	$("count").textContent = "书架 / " + doc.title;
 	const currentNote = doc.segments.find((segment) => segment.id === selected);
 	if (!currentNote) selected = null;
@@ -132,6 +164,16 @@ function render() {
 			a.rel = "noopener noreferrer";
 			a.title = "回到原视频此刻";
 			meta.append(a);
+		} else if (mediaPath) {
+			const seek = el("button", "", Coconut.time(s.start));
+			seek.title = "回听本地原文件此刻";
+			seek.onclick = () => {
+				const player = mediaHost.querySelector("audio,video");
+				if (!player) return;
+				player.currentTime = s.start;
+				player.play().catch(() => notice("请点击播放器开始播放，再按时间戳定位。"));
+			};
+			meta.append(seek);
 		} else meta.textContent = Coconut.time(s.start);
 		const body = el("div");
 		if (s.speaker) body.append(el("p", "speaker", s.speaker));
@@ -312,3 +354,8 @@ $("restore-edit").onclick = (event) => {
 		$("edit-error").textContent = "原稿已填入，点击保存后生效";
 	}
 };
+
+window.addEventListener("coconut-worker-ready", () => {
+	mediaWorkerReady = true;
+	render();
+});

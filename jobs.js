@@ -143,6 +143,7 @@ $("media-file").onchange = async () => {
 		const health = await jobApi("health");
 		if (!health.local_worker) throw new Error("No local worker");
 		localWorker = true;
+		window.dispatchEvent(new Event("coconut-worker-ready"));
 		$("process-url").disabled = false;
 		$("import-media").disabled = false;
 		$("worker-help").textContent =

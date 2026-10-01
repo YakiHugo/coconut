@@ -37,6 +37,18 @@
 		}
 		return "";
 	}
+	function mediaSource(value) {
+		if (
+			!value || typeof value !== "object" || Array.isArray(value) ||
+			typeof value.job_id !== "string" || !/^[a-f0-9]{32}$/.test(value.job_id) ||
+			!["audio", "video"].includes(value.kind)
+		) return undefined;
+		return { job_id: value.job_id, kind: value.kind };
+	}
+	function media(value) {
+		const association = mediaSource(value);
+		return association ? "/api/jobs/" + association.job_id + "/media" : "";
+	}
 	function validate(data) {
 		if (
 			!data ||
@@ -92,9 +104,11 @@
 							.map((k) => [k, data.provenance[k]]),
 					)
 				: undefined;
+		const sourceMedia = mediaSource(data.source_media);
 		return {
 			notes,
 			...(provenance ? { provenance } : {}),
+			...(sourceMedia ? { source_media: sourceMedia } : {}),
 			schema_version: 1,
 			title: typeof data.title === "string" ? data.title : "未命名文字稿",
 			source_url: typeof data.source_url === "string" ? data.source_url : "",
@@ -151,7 +165,7 @@
 			segments,
 		});
 	}
-	const api = { time, source, validate, parse };
+	const api = { time, source, media, validate, parse };
 	if (typeof module !== "undefined" && module.exports) module.exports = api;
 	else root.Coconut = api;
 })(typeof window !== "undefined" ? window : globalThis);
