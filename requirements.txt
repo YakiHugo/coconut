@@ -1,0 +1,7 @@
+# Core local MVP. Optional WhisperX/Anthropic integrations are not installed here.
+faster-whisper==1.2.1
+yt-dlp==2026.8.19
+
+# PyAV 19 removed metadata_errors used by faster-whisper 1.2.1.
+av==16.1.0
+httpx[socks]>=0.28,<1

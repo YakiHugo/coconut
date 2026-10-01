@@ -7,7 +7,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/.venv/bin/activate"
 
 if [ $# -lt 1 ]; then
-    echo "Usage: pt <url> [output_dir]"
+    echo "Usage: pt <source> [output_dir] [--polish]"
     exit 1
 fi
 
@@ -18,11 +18,12 @@ mkdir -p "$OUT_DIR"
 echo "→ transcribing $URL"
 RAW_PATH=$(cd "$OUT_DIR" && python "$SCRIPT_DIR/transcribe.py" "$URL" | tail -n1)
 
-if [ -n "${ANTHROPIC_API_KEY:-}" ]; then
+if [ "${3:-}" = "--polish" ]; then
+    if [ -z "${ANTHROPIC_API_KEY:-}" ]; then echo "ANTHROPIC_API_KEY is required for requested polishing" >&2; exit 1; fi
     echo "→ polishing with Claude"
     python "$SCRIPT_DIR/polish.py" "$RAW_PATH"
 else
     echo ""
     echo "✓ raw transcript: $RAW_PATH"
-    echo "  (set ANTHROPIC_API_KEY for auto-polish, or open it in Claude Code)"
+    echo "  (run polish.py explicitly, or pass --polish as the third argument, to request paid polishing)"
 fi

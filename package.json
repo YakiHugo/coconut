@@ -1,0 +1,6 @@
+{
+  "name": "coconut-reader",
+  "private": true,
+  "scripts": {"test": "node --test tests/reader.test.cjs tests/reader-ui.test.mjs"},
+  "devDependencies": {"happy-dom": "20.11.1"}
+}

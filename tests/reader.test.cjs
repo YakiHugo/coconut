@@ -26,3 +26,30 @@ test('source links reject unsafe schemes and lookalike hosts', () => {
 test('invalid segment chronology is rejected', () => {
   assert.throws(() => validate({segments: [{start: 2, end: 1, text: 'Invalid'}]}));
 });
+test('subtitle imports preserve code-like text and decode entities safely', () => {
+  const doc = parse('1\n00:00:01,000 --> 00:00:02,000\n<b>React</b> &lt;T&gt; &amp; &#x4e2d; <T>', 'example.srt');
+  assert.equal(doc.segments[0].text, 'React <T> & 中 <T>');
+});
+test('subtitle timestamps reject non-clock and signed components', () => {
+  for (const time of ['00:99.000','01:-01:01.000','0x10:00.000']) {
+    assert.throws(() => parse(`1\n${time} --> 02:00:00,000\nInvalid`, 'bad.srt'));
+  }
+});
+
+test('uploaded-media backup preserves only a safe same-origin job association', () => {
+  const {media} = require('../reader/core.js');
+  const association = {job_id: '4a53b398274c4e5cb4f96c307110aabc', kind: 'audio'};
+  const doc = validate({segments: [{start: 0, end: 1, text: 'Hello'}],
+    source_media: {...association, url: 'https://evil.example/audio', path: '/private/audio.wav'}});
+  assert.deepEqual(doc.source_media, association);
+  assert.deepEqual(parse(JSON.stringify(doc), 'backup.json').source_media, association);
+  assert.equal(media(doc.source_media), '/api/jobs/' + association.job_id + '/media');
+  for (const value of [null, 'https://evil.example/media', [],
+    {job_id: '../private', kind: 'audio'}, {job_id: association.job_id + '/other', kind: 'video'},
+    {job_id: association.job_id.toUpperCase(), kind: 'audio'}, {job_id: association.job_id, kind: 'text'},
+    {job_id: association.job_id}, {job_id: 123, kind: 'audio'}]) {
+    assert.equal(media(value), '');
+    assert.equal(validate({segments: doc.segments, source_media: value}).source_media, undefined);
+  }
+  assert.equal(parse('1\n00:00:00,000 --> 00:00:01,000\nHi', 'test.srt').source_media, undefined);
+});
