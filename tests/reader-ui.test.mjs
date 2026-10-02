@@ -4,13 +4,14 @@ import fs from 'node:fs';
 import {webcrypto} from 'node:crypto';
 import {Window} from 'happy-dom';
 const root=new URL('../',import.meta.url);
-function setup(stored){
+function setup(stored, fetchMock){
   const window=new Window({url:'https://coconut.example/'});
   window.document.body.innerHTML=fs.readFileSync(new URL('reader/index.html',root),'utf8').split('<body>')[1].split('</body>')[0];
   Object.defineProperty(window,'crypto',{value:webcrypto});
   if(stored!==undefined)window.localStorage.setItem('coconut-reader-v1',stored);
   window.eval(fs.readFileSync(new URL('reader/core.js',root),'utf8'));
-  window.eval(fs.readFileSync(new URL('reader/app.js',root),'utf8'));
+  if(fetchMock)window.fetch=fetchMock;
+  window.eval(fs.readFileSync(new URL('reader/app.js',root),'utf8') + (fetchMock ? '\n' + fs.readFileSync(new URL('reader/jobs.js',root),'utf8') : ''));
   return window;
 }
 async function importDocument(w, document) {
@@ -145,5 +146,106 @@ test('failed backup creation keeps the document and gives a retryable error',asy
   assert.doesNotThrow(()=>w.document.getElementById('export').onclick());
   assert.match(w.document.getElementById('notice').textContent,/导出.*失败/);
   assert.equal(w.localStorage.getItem('coconut-reader-v1'),before);
+ }finally{await w.happyDOM.close();}
+});
+
+test('add and reading spaces preserve query, note and unfinished source input',async()=>{
+ const w=setup();try{
+  const $=id=>w.document.getElementById(id);
+  assert.equal($('add-workspace').hidden,false);assert.equal($('reader-workspace').hidden,true);
+  await $('sample').onclick();assert.equal($('add-workspace').hidden,true);
+  w.document.querySelector('.note-button').click();$('note').value='Keep my thought';$('note').oninput();
+  $('search').value='演示';$('search').oninput();
+  $('add-content').click();$('video-url').value='https://youtu.be/example';
+  $('back-reading').click();assert.equal($('search').value,'演示');assert.equal($('note').value,'Keep my thought');
+  $('add-content').click();assert.equal($('video-url').value,'https://youtu.be/example');
+  $('back-reading').click();assert.equal($('reader-workspace').hidden,false);
+ }finally{await w.happyDOM.close();}
+});
+
+test('search excluding an open note closes stale selection without losing saved text',async()=>{
+ const w=setup();try{
+  const $=id=>w.document.getElementById(id);await $('sample').onclick();
+  w.document.querySelector('.note-button').click();$('note').value='Persist me';$('note').oninput();
+  $('search').value='查证';$('search').oninput();
+  assert.equal($('notes-panel').hidden,true);assert.equal(w.document.querySelector('.selected'),null);
+  $('clear-search').click();w.document.querySelector('.note-button').click();assert.equal($('note').value,'Persist me');
+  $('close-note').click();assert.equal($('notes-panel').hidden,true);assert.equal(w.document.activeElement.className,'note-button');
+  w.document.querySelector('.note-button').click();w.document.dispatchEvent(new w.KeyboardEvent('keydown',{key:'Escape'}));
+  assert.equal($('notes-panel').hidden,true);
+ }finally{await w.happyDOM.close();}
+});
+
+test('notes view and return to excerpt clear filters and keep note provenance',async()=>{
+ const w=setup();try{
+  const $=id=>w.document.getElementById(id);await $('sample').onclick();
+  w.document.querySelectorAll('.note-button')[1].click();$('note').value='Reference';$('note').oninput();
+  $('filter-notes').click();assert.equal(w.document.querySelectorAll('.segment').length,1);
+  $('search').value='Reference';$('search').oninput();$('return-excerpt').click();
+  assert.equal($('search').value,'');assert.equal(w.document.querySelectorAll('.segment').length,3);
+  assert.equal(w.document.activeElement.dataset.segmentId,'demo-2');assert.equal($('notes-panel').hidden,true);
+  assert.equal(JSON.parse(w.localStorage.getItem('coconut-reader-v1')).documents[0].notes['demo-2'],'Reference');
+ }finally{await w.happyDOM.close();}
+});
+
+test('reading position beyond first page survives reload, backup validation and repeated document navigation',async()=>{
+ const w=setup();let stored;try{
+  const $=id=>w.document.getElementById(id);
+  await importDocument(w,{title:'Long document',segments:Array.from({length:205},(_,i)=>({id:'s'+i,start:i,end:i+1,text:'Part '+i}))});
+  [...$('transcript').querySelectorAll('button')].find(b=>b.textContent==='继续阅读后面的片段').click();
+  w.document.querySelectorAll('.bookmark-button')[150].click();stored=w.localStorage.getItem('coconut-reader-v1');
+  assert.equal(w.Coconut.validate(JSON.parse(stored).documents[0]).readingPosition,'s150');
+ }finally{await w.happyDOM.close();}
+ const restored=setup(stored);try{
+  const $=id=>restored.document.getElementById(id);$('resume').click();
+  assert.equal(restored.document.activeElement.dataset.segmentId,'s150');assert.equal(restored.document.querySelectorAll('.segment').length,200);
+  await $('sample').onclick();$('library-search').value='Long';$('library-search').oninput();
+  assert.equal($('library').querySelectorAll('button').length,1);$('library').querySelector('button').click();
+  assert.equal(restored.document.activeElement.dataset.segmentId,'s150');
+  $('library').querySelector('button').click();assert.equal(restored.document.activeElement.dataset.segmentId,'s150');
+ }finally{await restored.happyDOM.close();}
+});
+
+test('static preview hides processing fields; local worker exposes queue without interrupting reading',async()=>{
+ for(const connected of [false,true]){
+  const w=setup(undefined,async url=>({ok:true,json:async()=>url.endsWith('health')?{local_worker:connected}:{jobs:[{id:'x',title:'Pending',status:'queued',stage:'waiting'}]}}));try{
+   const $=id=>w.document.getElementById(id);await $('sample').onclick();
+   await new Promise(resolve=>setTimeout(resolve,10));
+   assert.equal($('url-form').hidden,!connected);assert.equal($('show-jobs').hidden,!connected);
+   assert.equal($('reader-workspace').hidden,false);
+   if(connected){assert.equal($('job-count').textContent,'1');$('show-jobs').click();assert.equal($('add-workspace').hidden,false);assert.equal($('jobs').querySelector('button').textContent,'取消');$('back-reading').click();assert.equal($('reader-workspace').hidden,false);}
+  }finally{await w.happyDOM.close();}
+ }
+});
+
+test('worker reconnection recovers controls and cancel/retry/open preserve the active reader',async()=>{
+ let connected=false;
+ let status='queued';const calls=[];
+ const w=setup(undefined,async (url,options)=>{
+  calls.push([url,options?.method]);
+  if(url.endsWith('health')){if(!connected)throw new Error('offline');return {ok:true,json:async()=>({local_worker:true})};}
+  if(url.endsWith('/cancel'))status='cancelled';
+  if(url.endsWith('/retry'))status='queued';
+  return {ok:true,json:async()=>({jobs:[{id:'job',title:'My import',status,stage:status}]})};
+ });try{
+  const $=id=>w.document.getElementById(id);await $('sample').onclick();
+  w.document.querySelector('.note-button').click();$('note').value='Not interrupted';$('note').oninput();
+  await new Promise(resolve=>setTimeout(resolve,10));assert.equal($('retry-worker').hidden,false);
+  connected=true;await $('retry-worker').onclick();assert.equal($('url-form').hidden,false);
+  $('show-jobs').click();await $('jobs').querySelector('button').onclick();
+  assert.equal($('jobs').querySelector('button').textContent,'重试');
+  await $('jobs').querySelector('button').onclick();assert.equal($('jobs').querySelector('button').textContent,'取消');
+  $('back-reading').click();assert.equal($('note').value,'Not interrupted');assert.equal($('notes-panel').hidden,false);
+  assert.ok(calls.some(([url,method])=>url.endsWith('/cancel')&&method==='POST'));
+  assert.ok(calls.some(([url,method])=>url.endsWith('/retry')&&method==='POST'));
+ }finally{await w.happyDOM.close();}
+});
+
+test('closing a deleted note reconciles notes-only results without swallowing clicks',async()=>{
+ const w=setup();try{
+  const $=id=>w.document.getElementById(id);await $('sample').onclick();
+  w.document.querySelector('.note-button').click();$('note').value='Temporary';$('note').oninput();$('filter-notes').click();
+  $('note').value='';$('note').oninput();const close=$('close-note');$('note').blur();assert.equal(close.isConnected,true);close.click();
+  assert.equal($('notes-panel').hidden,true);assert.equal(w.document.querySelectorAll('.segment').length,0);assert.equal($('note-count').textContent,'0');
  }finally{await w.happyDOM.close();}
 });

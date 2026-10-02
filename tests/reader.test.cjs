@@ -53,3 +53,10 @@ test('uploaded-media backup preserves only a safe same-origin job association', 
   }
   assert.equal(parse('1\n00:00:00,000 --> 00:00:01,000\nHi', 'test.srt').source_media, undefined);
 });
+
+test('reading bookmarks accept only segment ids and survive JSON round trips',()=>{
+ const input={title:'Resume',segments:[{id:'safe',start:0,end:1,text:'Read me'}],readingPosition:'safe'};
+ assert.equal(parse(JSON.stringify(input),'resume.json').readingPosition,'safe');
+ assert.equal(validate({...input,readingPosition:'missing'}).readingPosition,undefined);
+ assert.equal(validate({...input,readingPosition:{id:'safe'}}).readingPosition,undefined);
+});
