@@ -3,6 +3,9 @@ const $ = (id) => document.getElementById(id);
 const KEY = "coconut-reader-v1";
 let state = { documents: [], active: null };
 let selected = null;
+let notesOnly = false;
+let workspace = "read";
+let readingScroll = 0;
 let editingTarget = null;
 let sourceTarget = null;
 let currentLimit = 100;
@@ -80,25 +83,70 @@ async function add(doc) {
 	$("search").value = "";
 	selected = null;
 	currentLimit = 100;
+	notesOnly = false;
+	workspace = "read";
 	const saved = save();
 	render();
 	return saved;
 }
-function render() {
+function showWorkspace(next) {
+	if (workspace === "read" && next === "add") readingScroll = window.scrollY;
+	const returning = workspace === "add" && next === "read";
+	workspace = next;
+	$("add-workspace").hidden = next !== "add";
+	$("reader-workspace").hidden = next !== "read" || !active();
+	$("back-reading").hidden = next !== "add" || !active();
+	$("export").hidden = next !== "read" || !active();
+	$("add-content").setAttribute("aria-pressed", String(next === "add"));
+	if (returning) window.scrollTo(0, readingScroll);
+}
+function goToSegment(id) {
 	const doc = active();
+	const index = doc ? doc.segments.findIndex(s => s.id === id) : -1;
+	if (index < 0) return;
+	$("search").value = "";
+	notesOnly = false;
+	selected = null;
+	currentLimit = Math.max(100, Math.ceil((index + 1) / 100) * 100);
+	showWorkspace("read");
+	render();
+	const row = [...$("transcript").querySelectorAll(".segment")].find(row => row.dataset.segmentId === id);
+	row?.scrollIntoView?.({block: "center", behavior: "smooth"});
+	row?.focus({preventScroll: true});
+}
+function renderLibrary() {
 	$("library").replaceChildren();
-	for (const d of state.documents) {
-		const b = el("button", d.key === state.active ? "active" : "", d.title);
+	const query = $("library-search").value.trim().toLocaleLowerCase();
+	const docs = state.documents.filter(d => d.title.toLocaleLowerCase().includes(query));
+	$("library-total").textContent = String(state.documents.length);
+	$("library-empty").hidden = docs.length > 0;
+	$("library-empty").textContent = state.documents.length ? "没有匹配的标题" : "还没有文字稿。添加一份，或体验示例。";
+	for (const d of docs) {
+		const b = el("button", d.key === state.active ? "active" : "");
+		b.append(el("span", "library-title", d.title));
+		const bookmark = d.segments.find(s => s.id === d.readingPosition);
+		b.append(el("small", "", Coconut.time(d.segments.at(-1).end) + " · " + Object.values(d.notes).filter(Boolean).length + " 则笔记" + (bookmark ? " · 读到 " + Coconut.time(bookmark.start) : "")));
+		b.setAttribute("aria-current", d.key === state.active ? "page" : "false");
 		b.onclick = () => {
 			state.active = d.key;
 			selected = null;
+			notesOnly = false;
 			currentLimit = 100;
 			$("search").value = "";
+			$("toggle-library").setAttribute("aria-expanded", "false");
 			save();
+			showWorkspace("read");
 			render();
+			if (bookmark) goToSegment(bookmark.id);
+			else $("title").scrollIntoView?.({block: "start"});
 		};
 		$("library").append(b);
 	}
+}
+function render() {
+	const doc = active();
+	renderLibrary();
+	showWorkspace(doc ? workspace : "add");
 	if (!doc) {
 		$("transcript").replaceChildren();
 		$("empty").hidden = false;
@@ -135,7 +183,10 @@ function render() {
 	const provenanceText = sourceKinds[provenance.kind] || "导入文字稿，来源未标明";
 	$("provenance").textContent = provenanceText + (provenance.model ? " · " + provenance.model : "") + " · 请回听核对专有名词与重要信息" + (provenance.alignment_warning ? " · 时间对齐降级：" + provenance.alignment_warning : "");
 	$("count").textContent = "书架 / " + doc.title;
-	const currentNote = doc.segments.find((segment) => segment.id === selected);
+	const query = $("search").value.trim().toLocaleLowerCase();
+	const filtered = doc.segments.filter((s) => (!notesOnly || Boolean(doc.notes[s.id])) &&
+		[s.text, s.speaker || "", doc.notes[s.id] || ""].join(" ").toLocaleLowerCase().includes(query));
+	const currentNote = filtered.slice(0, currentLimit).find((segment) => segment.id === selected);
 	if (!currentNote) selected = null;
 	$("notes-panel").hidden = !selected;
 	if (currentNote) {
@@ -143,13 +194,15 @@ function render() {
 		$("note-time").textContent = Coconut.time(currentNote.start) + " 的想法";
 		$("note").value = doc.notes[currentNote.id] || "";
 	}
-	const query = $("search").value.trim().toLocaleLowerCase();
-	const filtered = doc.segments.filter((s) =>
-		[s.text, s.speaker || "", doc.notes[s.id] || ""]
-			.join(" ")
-			.toLocaleLowerCase()
-			.includes(query),
-	);
+	$("filter-all").setAttribute("aria-pressed", String(!notesOnly));
+	$("filter-notes").setAttribute("aria-pressed", String(notesOnly));
+	$("note-count").textContent = String(Object.values(doc.notes).filter(Boolean).length);
+	$("search-status").textContent = (query || notesOnly) ? "找到 " + filtered.length + " 个片段" : "共 " + doc.segments.length + " 个片段 · 点时间戳回听原声";
+	$("clear-search").hidden = !query && !notesOnly;
+	const bookmark = doc.segments.find(s => s.id === doc.readingPosition);
+	$("resume").hidden = !bookmark;
+	$("resume").textContent = bookmark ? "继续阅读 · " + Coconut.time(bookmark.start) : "";
+	$("resume").onclick = () => bookmark && goToSegment(bookmark.id);
 	$("transcript").replaceChildren();
 	for (const s of filtered.slice(0, currentLimit)) {
 		const row = el(
@@ -157,6 +210,7 @@ function render() {
 			"segment" + (selected === s.id ? " selected" : ""),
 		);
 		row.dataset.segmentId = s.id;
+		row.tabIndex = -1;
 		const meta = el("div", "time");
 		const href = Coconut.source(doc.source_url, s.start);
 		if (href) {
@@ -200,12 +254,20 @@ function render() {
 		};
 		button.className = "note-button";
 		body.append(button);
+		const bookmarkButton = el("button", "bookmark-button", doc.readingPosition === s.id ? "已标记阅读位置" : "读到这里");
+		bookmarkButton.setAttribute("aria-pressed", String(doc.readingPosition === s.id));
+		bookmarkButton.onclick = () => {
+			doc.readingPosition = s.id;
+			save();
+			render();
+		};
+		body.append(bookmarkButton);
 		if (doc.notes[s.id]) body.append(el("p", "saved-note", doc.notes[s.id]));
 		row.append(meta, body);
 		$("transcript").append(row);
 	}
 	if (!filtered.length)
-		$("transcript").append(el("p", "hint", "没有匹配的片段，试试另一个词。"));
+		$("transcript").append(el("p", "hint", notesOnly && !query ? "还没有笔记。回到全文，在想停下来的片段旁记一笔。" : "没有匹配的片段，试试另一个词。"));
 	if (filtered.length > currentLimit) {
 		const more = el("button", "", "继续阅读后面的片段");
 		more.onclick = () => {
@@ -215,6 +277,25 @@ function render() {
 		$("transcript").append(more);
 	}
 }
+$("add-content").onclick = () => { showWorkspace("add"); $("import").focus(); };
+$("back-reading").onclick = () => showWorkspace("read");
+$("show-jobs").onclick = () => { showWorkspace("add"); $("jobs-heading").scrollIntoView?.(); };
+$("toggle-library").onclick = () => $("toggle-library").setAttribute("aria-expanded", String($("toggle-library").getAttribute("aria-expanded") !== "true"));
+$("library-search").oninput = renderLibrary;
+$("filter-all").onclick = () => { notesOnly = false; currentLimit = 100; render(); };
+$("filter-notes").onclick = () => { notesOnly = true; currentLimit = 100; render(); };
+$("clear-search").onclick = () => { $("search").value = ""; notesOnly = false; currentLimit = 100; render(); $("search").focus(); };
+$("close-note").onclick = () => {
+	const id = selected;
+	selected = null;
+	render();
+	const row = [...$("transcript").querySelectorAll(".segment")].find(row => row.dataset.segmentId === id);
+	row?.querySelector(".note-button")?.focus();
+};
+$("return-excerpt").onclick = () => goToSegment(selected);
+document.addEventListener("keydown", event => {
+	if (event.key === "Escape" && selected && !document.querySelector("dialog[open]")) $("close-note").click();
+});
 $("import").onclick = () => $("file").click();
 $("file").onchange = async () => {
 	const f = $("file").files[0];
@@ -239,6 +320,8 @@ $("note").oninput = () => {
 	if (d && selected) {
 		d.notes[selected] = $("note").value;
 		save();
+		$("note-count").textContent = String(Object.values(d.notes).filter(Boolean).length);
+		renderLibrary();
 		// Keep pointer targets mounted while focus leaves the note editor.
 		// Re-rendering on blur swallows the subsequent click on another row.
 		const row = [...$("transcript").querySelectorAll(".segment")].find(

@@ -107,6 +107,7 @@
 		const sourceMedia = mediaSource(data.source_media);
 		return {
 			notes,
+			...(typeof data.readingPosition === "string" && ids.has(data.readingPosition) ? {readingPosition: data.readingPosition} : {}),
 			...(provenance ? { provenance } : {}),
 			...(sourceMedia ? { source_media: sourceMedia } : {}),
 			schema_version: 1,
