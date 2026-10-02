@@ -500,3 +500,78 @@ button:disabled {
 		gap: 10px;
 	}
 }
+
+/* Keep the reading canvas separate from acquisition and processing. */
+[hidden] { display: none !important; }
+main, .shell > aside, #reader-workspace, .segment > div { min-width: 0; }
+.library-search { display: block; margin-top: 24px; color: #65755d; }
+.library-search input { width: 100%; padding: 10px; margin: 8px 0 12px; border: 1px solid #d9e1d2; border-radius: 8px; font: inherit; background: #fafbf7; }
+.library-title { display: block; }
+#library small { display: block; font-size: 11px; color: #67765e; margin-top: 6px; }
+#toggle-library { display: none; }
+.add-actions { display: flex; gap: 12px; flex-wrap: wrap; margin: 28px 0 42px; }
+.import-workspace { max-width: 850px; padding: 32px; background: #f4f6ef; }
+.import-workspace h1 { font-size: clamp(30px, 4vw, 44px); }
+.import-workspace > p { line-height: 1.8; }
+.import-heading { border-top: 1px solid #dce2d7; padding-top: 24px; }
+.import-heading h2 { font-size: 17px; }
+.reading-layout { grid-template-columns: minmax(0, 780px); }
+.reading-layout:has(#notes-panel:not([hidden])) { grid-template-columns: minmax(0, 1fr) 300px; }
+.intro { max-width: none; }
+.intro h1 { font-size: clamp(28px, 3.3vw, 42px); letter-spacing: -1px; }
+.reading-controls, .note-heading { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; margin-top: 18px; }
+.reading-controls [aria-pressed="true"] { background: #e5eddc; border-color: #aabf9b; }
+.note-heading { margin: 0; }
+.note-heading .eyebrow { margin: 0; }
+.note-heading button { padding: 6px 10px; font-size: 12px; }
+.segment { scroll-margin-top: 32px; }
+.segment button + button { margin-left: 5px; }
+.bookmark-button[aria-pressed="true"] { background: #e5eddc; }
+#notes-panel { max-height: calc(100dvh - 44px); overflow-y: auto; }
+#return-excerpt { width: 100%; }
+#search-status { margin-bottom: 0; }
+#clear-search { margin-top: 10px; font-size: 12px; }
+@media (max-width: 1100px) {
+ .reading-layout:has(#notes-panel:not([hidden])) { grid-template-columns: minmax(0, 1fr); }
+ #notes-panel { position: sticky; bottom: 12px; top: auto; grid-row: 1; max-height: 65dvh; z-index: 2; box-shadow: 0 8px 30px #233a2d22; }
+ #notes-panel textarea { min-height: 100px; height: 140px; }
+ #quote { max-height: 90px; }
+}
+@media (max-width: 650px) {
+ aside { display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 12px; padding: 16px 20px; }
+ .brand { margin: 0; font-size: 25px; }
+ .brand span { display: none; }
+ #add-content { padding: 10px 12px; }
+ #toggle-library { display: block; grid-column: 1 / -1; padding: 7px; font-size: 12px; }
+ #library-list { grid-column: 1 / -1; }
+ #toggle-library[aria-expanded="false"] ~ #library-list { display: none; }
+ .library-search { margin-top: 0; }
+ aside > .eyebrow { display: none; }
+ #library { display: grid; max-height: 240px; }
+ #library button { max-width: none; width: 100%; }
+ header { gap: 8px; }
+ #count { overflow-wrap: anywhere; }
+ .import-workspace { padding: 20px; margin-top: 18px; }
+ .add-actions { flex-direction: column; margin: 20px 0 28px; }
+ .intro { padding-bottom: 10px; }
+ .tools { margin-top: 18px; }
+ .reading-controls { align-items: stretch; }
+ .reading-controls button { font-size: 12px; }
+ #notes-panel { padding: 18px; max-height: 70dvh; }
+ .segment { grid-template-columns: 45px minmax(0, 1fr); }
+ .segment button { min-height: 40px; }
+}
+/* Reading metadata stays legible; touch controls retain generous targets. */
+.hint, #library small, .time, .speaker, .saved-note, .library-search, .reading-controls button { font-size: 14px; }
+.segment button { font-size: 13px; min-height: 40px; }
+#notes-panel label { font-size: 14px; }
+@media (max-width: 1100px) {
+ #notes-panel { position: fixed; left: max(16px, calc((100vw - 700px) / 2)); right: max(16px, calc((100vw - 700px) / 2)); bottom: 12px; grid-row: auto; }
+ .reading-layout:has(#notes-panel:not([hidden])) { padding-bottom: 45vh; }
+}
+@media (max-width: 650px) {
+ button, .segment button, #close-note, #toggle-library { min-height: 44px; font-size: 14px; }
+ #notes-panel { max-height: 65dvh; bottom: max(12px, env(safe-area-inset-bottom)); }
+ #notes-panel textarea { height: 100px; }
+ .import-heading { display: flex; flex-wrap: wrap; }
+}

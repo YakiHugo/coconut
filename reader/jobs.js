@@ -47,6 +47,8 @@ async function refreshJobs() {
 	try {
 		const data = await jobApi("jobs");
 		$("jobs").replaceChildren();
+		$("job-count").textContent = String(data.jobs.filter(job => ["queued", "running"].includes(job.status)).length);
+		$("jobs-heading").textContent = data.jobs.length ? "处理任务" : "暂无处理任务";
 		for (const job of data.jobs) {
 			const row = el("section", "job-row");
 			const detail = el("div");
@@ -138,11 +140,16 @@ $("media-file").onchange = async () => {
 		$("import-media").disabled = !localWorker;
 	}
 };
-(async () => {
+async function connectWorker() {
+	$("retry-worker").disabled = true;
 	try {
 		const health = await jobApi("health");
 		if (!health.local_worker) throw new Error("No local worker");
 		localWorker = true;
+		$("retry-worker").hidden = true;
+		$("url-form").hidden = false;
+		$("show-jobs").hidden = false;
+		$("jobs-heading").hidden = false;
 		window.dispatchEvent(new Event("coconut-worker-ready"));
 		$("process-url").disabled = false;
 		$("import-media").disabled = false;
@@ -150,6 +157,12 @@ $("media-file").onchange = async () => {
 			"优先读取现成字幕；需要转录时使用本地模型。首次使用会下载模型。原始结果保存在本机，不会自动调用付费接口。";
 		await refreshJobs();
 	} catch {
-		$("worker-status").textContent = "阅读预览模式 · 未连接本地处理服务";
+		$("retry-worker").hidden = false;
+		$("worker-status").textContent = ["localhost", "127.0.0.1", "[::1]"].includes(location.hostname) ? "暂时无法连接本地处理服务" : "当前是阅读预览 · 未连接本地处理服务";
+		$("worker-help").textContent = "此页面可导入文字稿、阅读和记笔记。处理视频链接或本地音视频，请在自己的电脑运行 Coconut 本地服务。";
+	} finally {
+		$("retry-worker").disabled = false;
 	}
-})();
+}
+$("retry-worker").onclick = connectWorker;
+connectWorker();
