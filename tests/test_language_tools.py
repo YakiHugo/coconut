@@ -82,3 +82,25 @@ class CodexReaderTests(unittest.TestCase):
         with patch('ai_reader.codex_status',return_value={'ready':True}),patch('ai_reader.shutil.which',return_value='/cli/codex'),patch('ai_reader.subprocess.run',return_value=types.SimpleNamespace(returncode=1,stdout='limit')) as run:
             with self.assertRaisesRegex(ValueError,'不会购买额度'):ai_reader.ask('Q','en',[{'id':'a','text':'source'}],'codex')
             self.assertEqual(run.call_count,1)
+
+class SubscriptionTranslationTests(unittest.TestCase):
+    def test_translation_requires_exact_complete_ordered_ids(self):
+        source=[{'id':'a','text':'First'},{'id':'b','text':'Second'}]
+        invalid=[{'translations':[{'id':'a','text':'一'}]}, {'translations':[{'id':'a','text':'一'},{'id':'a','text':'二'}]}, {'translations':[{'id':'b','text':'二'},{'id':'a','text':'一'}]}, {'translations':[{'id':'a','text':'一'},{'id':'b','text':''}]}]
+        for result in invalid:
+            with patch('ai_reader.codex_answer',return_value=result):
+                with self.assertRaises(ValueError):ai_reader.subscription_translate('en','zh',source)
+        with patch('ai_reader.codex_answer',return_value={'translations':[{'id':'a','text':'一'},{'id':'b','text':'二'}]}) as call:
+            result=ai_reader.subscription_translate('en','zh',source)
+            self.assertEqual([t['source_text'] for t in result],['First','Second'])
+            self.assertEqual(result[0]['provider'],'chatgpt_subscription_translation')
+            payload,schema,instruction=call.call_args.args
+            self.assertEqual(schema['properties']['translations']['minItems'],2)
+            self.assertEqual(schema['properties']['translations']['items']['properties']['id']['enum'],['a','b'])
+            self.assertEqual(json.loads(payload)['cues'],source)
+            self.assertIn('untrusted data',instruction)
+
+    def test_translation_quota_error_never_falls_back(self):
+        with patch('ai_reader.codex_answer',side_effect=ValueError('quota exhausted')) as call,patch('ai_reader.subscription_status') as alternate:
+            with self.assertRaisesRegex(ValueError,'quota exhausted'):ai_reader.subscription_translate('en','zh',[{'id':'a','text':'Source'}])
+            call.assert_called_once();alternate.assert_not_called()
