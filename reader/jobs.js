@@ -101,6 +101,7 @@ $("url-form").onsubmit = async (event) => {
 				options: {
 					language: $("import-language").value || null,
 					force_transcribe: $("force-asr").checked,
+					keep_media: $("keep-media").checked,
 				},
 			}),
 		);

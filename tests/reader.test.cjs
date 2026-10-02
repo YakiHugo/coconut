@@ -78,3 +78,9 @@ test('platform media evidence survives backup without copying download URLs',()=
  assert.deepEqual(output.provenance,{kind:'platform_subtitles',media_id:'123',media_duration:3251.648});
  for(const duration of [-1,0,Infinity,'3251',21601])assert.equal(validate({...input,provenance:{media_duration:duration}}).provenance.media_duration,undefined);
 });
+
+test('bilingual backup keeps source alignment and refuses injected translation fields',()=>{
+ const doc=validate({language:'en',translation_view:'zh',segments:[{id:'a',start:1.2,end:3.4,text:'Source',translations:{zh:{text:'译文',source_text:'Source',source_language:'en',provider:'local_argos_test',url:'https://evil.example'},bad:{text:'bad'}}}],ai_answers:[{question:'Q',answer:'A',citations:['a','missing'],provider:'claude_subscription'}]});
+ const restored=parse(JSON.stringify(doc),'backup.json');
+ assert.equal(restored.language,'en');assert.equal(restored.translation_view,'zh');assert.equal(restored.segments[0].translations.zh.text,'译文');assert.equal(restored.segments[0].translations.zh.url,undefined);assert.equal(restored.segments[0].translations.bad,undefined);assert.deepEqual(restored.ai_answers[0].citations,['a']);assert.equal(restored.segments[0].start,1.2);
+});

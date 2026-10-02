@@ -48,3 +48,16 @@ class JobTests(unittest.TestCase):
             finally:first.close()
             second.start()
             second.close()
+
+class PlaybackCacheTests(unittest.TestCase):
+    def test_only_bounded_completed_download_cache_is_exposed(self):
+        import json
+        with tempfile.TemporaryDirectory() as td:
+            jobs=ImportJobs(Path(td));job=jobs.enqueue('https://x.com/example/status/123','URL',{'keep_media':True})
+            with jobs.connect() as db:db.execute("UPDATE jobs SET status='done' WHERE id=?",(job['id'],))
+            cache=Path(td)/job['id']/'cache';cache.mkdir(parents=True);media=cache/'playback.mp4';media.write_bytes(b'fixture')
+            with self.assertRaises(KeyError):jobs.media(job['id'])
+            (cache/'playback.json').write_text(json.dumps({'file':'playback.mp4','size':7}))
+            self.assertEqual(jobs.media(job['id']),(media,'video','video/mp4'))
+            media.write_bytes(b'changed size')
+            with self.assertRaises(KeyError):jobs.media(job['id'])

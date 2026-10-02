@@ -73,7 +73,7 @@ class ImportJobs:
         options = {} if options is None else options
         if not isinstance(options, dict):
             raise ValueError('Import options must be an object')
-        if set(options) - {'language', 'force_transcribe', 'model'}:
+        if set(options) - {'language', 'force_transcribe', 'model', 'keep_media'}:
             raise ValueError('Unknown import option')
         if options.get('language') not in (None, '', 'zh', 'en', 'ja', 'ko', 'fr', 'de', 'es'):
             raise ValueError('Unsupported language hint')
@@ -81,6 +81,8 @@ class ImportJobs:
             raise ValueError('Unsupported local model')
         if 'force_transcribe' in options and not isinstance(options['force_transcribe'], bool):
             raise ValueError('force_transcribe must be boolean')
+        if 'keep_media' in options and not isinstance(options['keep_media'], bool):
+            raise ValueError('keep_media must be boolean')
         identifier = job_id or uuid.uuid4().hex
         now = time.time()
         with self.connect() as db:
@@ -149,6 +151,22 @@ class ImportJobs:
             raise KeyError('Job not found')
         if job['status'] != 'done':
             raise ValueError('Job is not complete')
+        if job['source'].startswith('https://'):
+            from subtitle_import import validate_video_url
+            try:
+                validate_video_url(job['source'])
+            except ValueError:
+                raise KeyError('Media not found') from None
+            path = self.directory / identifier / 'cache' / 'playback.mp4'
+            try:
+                marker = path.with_name('playback.json')
+                safe = path.resolve() == path and path.is_file() and marker.resolve() == marker and marker.is_file() and 0 < path.stat().st_size <= 200 * 1024 * 1024
+                safe = safe and json.loads(marker.read_text()) == {'file': 'playback.mp4', 'size': path.stat().st_size}
+            except (OSError, RuntimeError, ValueError):
+                safe = False
+            if not safe:
+                raise KeyError('Media not found')
+            return path, 'video', 'video/mp4'
         path = Path(job['source'])
         media_type = UPLOAD_MEDIA_TYPES.get(path.suffix)
         expected = self.directory / identifier / ('source' + path.suffix)
@@ -187,6 +205,8 @@ class ImportJobs:
             command.extend(['--language', options['language']])
         if options.get('force_transcribe'):
             command.append('--force-transcribe')
+        if options.get('keep_media'):
+            command.append('--keep-media')
         try:
             with self.lock:
                 if self.get(identifier)['status'] != 'running':

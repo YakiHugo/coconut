@@ -52,6 +52,20 @@
 		const association = mediaSource(value);
 		return association ? "/api/jobs/" + association.job_id + "/media" : "";
 	}
+	function cleanTranslations(value) {
+ const output=Object.create(null);
+ if(!value || typeof value!=="object" || Array.isArray(value)) return output;
+ for(const language of ["en","zh","ja","ko","fr","de","es"]) {
+  const item=value[language];
+  if(item && typeof item.text==="string" && item.text.length<=12000 && typeof item.source_text==="string" && item.source_text.length<=4000 && typeof item.provider==="string")
+   output[language]={text:item.text,source_text:item.source_text,provider:item.provider.slice(0,100),source_language:typeof item.source_language==="string"?item.source_language:""};
+ }
+ return output;
+}
+ function matchesSegment(segment, doc, query, notesOnly=false) {
+  return (!notesOnly || Boolean(doc.notes?.[segment.id])) &&
+   [segment.text,segment.speaker||"",doc.notes?.[segment.id]||"",...Object.values(segment.translations||{}).filter(t=>t.source_text===segment.text).map(t=>t.text)].join(" ").toLocaleLowerCase().includes(query.trim().toLocaleLowerCase());
+ }
 	function validate(data) {
 		if (
 			!data ||
@@ -86,6 +100,7 @@
 					? { original_text: s.original_text }
 					: {}),
 				speaker: typeof s.speaker === "string" ? s.speaker : null,
+				translations: cleanTranslations(s.translations),
 			};
 		});
 		const notes = Object.create(null);
@@ -102,7 +117,7 @@
 		const provenance =
 			data.provenance && typeof data.provenance === "object"
 				? Object.fromEntries(
-						["kind", "model", "backend", "language", "alignment_warning", "media_id"]
+						["kind", "model", "backend", "language", "alignment_warning", "playback_warning", "media_id"]
 							.filter((k) => typeof data.provenance[k] === "string")
 							.map((k) => [k, data.provenance[k]]),
 					)
@@ -116,6 +131,9 @@
 			...(provenance ? { provenance } : {}),
 			...(sourceMedia ? { source_media: sourceMedia } : {}),
 			schema_version: 1,
+            language: typeof data.language === "string" ? data.language : "",
+            translation_view: ["en","zh","ja","ko","fr","de","es"].includes(data.translation_view) ? data.translation_view : "",
+            ai_answers: Array.isArray(data.ai_answers) ? data.ai_answers.slice(-20).filter(a=>a && typeof a.question==="string" && typeof a.answer==="string" && Array.isArray(a.citations)).map(a=>({question:a.question.slice(0,4000),answer:a.answer.slice(0,100000),citations:a.citations.filter(id=>ids.has(id)),source_snapshot:a.source_snapshot && typeof a.source_snapshot==="object" ? Object.fromEntries(Object.entries(a.source_snapshot).filter(([id,text])=>ids.has(id)&&typeof text==="string")) : {},provider:typeof a.provider==="string"?a.provider.slice(0,100):"unknown"})) : [],
 			title: typeof data.title === "string" ? data.title : "未命名文字稿",
 			source_url: typeof data.source_url === "string" ? data.source_url : "",
 			segments,
@@ -171,7 +189,7 @@
 			segments,
 		});
 	}
-	const api = { time, source, media, validate, parse };
+	const api = { time, source, media, validate, parse, matchesSegment };
 	if (typeof module !== "undefined" && module.exports) module.exports = api;
 	else root.Coconut = api;
 })(typeof window !== "undefined" ? window : globalThis);

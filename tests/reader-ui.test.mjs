@@ -11,7 +11,7 @@ function setup(stored, fetchMock){
   if(stored!==undefined)window.localStorage.setItem('coconut-reader-v1',stored);
   window.eval(fs.readFileSync(new URL('reader/core.js',root),'utf8'));
   if(fetchMock)window.fetch=fetchMock;
-  window.eval(fs.readFileSync(new URL('reader/app.js',root),'utf8') + (fetchMock ? '\n' + fs.readFileSync(new URL('reader/jobs.js',root),'utf8') : ''));
+  window.eval(fs.readFileSync(new URL('reader/app.js',root),'utf8') + '\n' + fs.readFileSync(new URL('reader/language.js',root),'utf8') + (fetchMock ? '\n' + fs.readFileSync(new URL('reader/jobs.js',root),'utf8') : ''));
   return window;
 }
 async function importDocument(w, document) {
@@ -247,5 +247,51 @@ test('closing a deleted note reconciles notes-only results without swallowing cl
   w.document.querySelector('.note-button').click();$('note').value='Temporary';$('note').oninput();$('filter-notes').click();
   $('note').value='';$('note').oninput();const close=$('close-note');$('note').blur();assert.equal(close.isConnected,true);close.click();
   assert.equal($('notes-panel').hidden,true);assert.equal(w.document.querySelectorAll('.segment').length,0);assert.equal($('note-count').textContent,'0');
+ }finally{await w.happyDOM.close();}
+});
+
+test('local playback takes priority over source URL and highlights the matching cue',async()=>{
+ const id='b'.repeat(32);const w=setup();try{
+  await importDocument(w,{title:'Video',source_url:'https://x.com/example/status/123',source_media:{job_id:id,kind:'video'},segments:[{id:'a',start:2,end:4,text:'First'},{id:'b',start:5,end:8,text:'Second'}]});
+  w.dispatchEvent(new w.Event('coconut-worker-ready'));const player=w.document.querySelector('video');assert.ok(player);
+  player.play=async()=>{};w.document.querySelector('.time button').click();assert.equal(player.currentTime,2);assert.equal(w.document.querySelector('.original-source').href,'https://x.com/example/status/123?t=2');
+  player.currentTime=6;player.ontimeupdate();assert.equal(w.document.querySelector('.playing').dataset.segmentId,'b');w.document.getElementById('locate-playback').click();assert.equal(w.document.activeElement.dataset.segmentId,'b');
+ }finally{await w.happyDOM.close();}
+});
+
+test('translation text is searchable, stale translations are labelled after correction',async()=>{
+ const w=setup();try{await importDocument(w,{translation_view:'zh',segments:[{id:'a',start:1,end:2,text:'Source',translations:{zh:{text:'唯一译文',source_text:'Source',provider:'local'}}}]});
+  const search=w.document.getElementById('search');search.value='唯一译文';search.oninput();assert.equal(w.document.querySelectorAll('.segment').length,1);
+  w.document.querySelector('.segment button').click();w.document.getElementById('edit-segment').value='Corrected';w.document.getElementById('save-edit').click();
+  search.value='';search.oninput();assert.match(w.document.querySelector('.translation.stale').textContent,/需要重新生成/);
+ }finally{await w.happyDOM.close();}
+});
+
+test('translation and subscription UI preserve scoped results and explicit consent',async()=>{
+ const w=setup();try{
+  const $=id=>w.document.getElementById(id);await importDocument(w,{title:'Bilingual',language:'en',segments:[{id:'a',start:2,end:4,text:'Source'}]});
+  let asked=0;
+  w.fetch=async(url,options)=>({ok:true,json:async()=>{
+   if(url.endsWith('language-tools'))return {ai:{codex:{ready:true,reason:'test subscription'}}};
+   const request=JSON.parse(options.body);
+   if(url.endsWith('translate'))return {translations:request.segments.map(s=>({...s,text:'译文',source_text:s.text,provider:'local-test'}))};
+   asked++;assert.equal(request.provider,'codex');return {answer:'Reading answer',citations:['a'],provider:'chatgpt_subscription'};
+  }});
+  await $('check-ai').onclick();await $('translate-document').onclick();assert.equal(w.document.querySelector('.translation').textContent,'译文');
+  $('ai-question').value='Question';await $('ask-ai').onclick();assert.equal(asked,0);
+  $('ai-consent').checked=true;await $('ask-ai').onclick();assert.equal(asked,1);assert.equal($('ai-consent').checked,false);
+  const stored=JSON.parse(w.localStorage.getItem('coconut-reader-v1')).documents[0];assert.equal(stored.ai_answers[0].answer,'Reading answer');assert.equal(stored.segments[0].translations.zh.source_text,'Source');
+  $('ai-answers').querySelector('button').click();assert.equal(w.document.activeElement.dataset.segmentId,'a');
+ }finally{await w.happyDOM.close();}
+});
+
+test('AI filtered scope matches bilingual and notes-only reader filters; edited citations are stale',async()=>{
+ const w=setup();try{
+  const $=id=>w.document.getElementById(id);await importDocument(w,{language:'en',notes:{a:'Saved'},segments:[{id:'a',start:1,end:2,text:'Source A',translations:{zh:{text:'中文匹配',source_text:'Source A',provider:'local'}}},{id:'b',start:3,end:4,text:'Source B',translations:{zh:{text:'中文匹配',source_text:'Source B',provider:'local'}}}]});
+  let sent;
+  w.fetch=async(url,options)=>({ok:true,json:async()=>url.endsWith('language-tools')?{ai:{codex:{ready:true}}}:(sent=JSON.parse(options.body),{answer:'A',citations:['a'],provider:'chatgpt_subscription'})});
+  await $('check-ai').onclick();$('filter-notes').click();$('search').value='中文匹配';$('search').oninput();assert.equal(w.document.querySelectorAll('.segment').length,1);
+  $('ai-filtered').checked=true;$('ai-consent').checked=true;$('ai-question').value='Q';await $('ask-ai').onclick();assert.deepEqual(sent.segments.map(s=>s.id),['a']);
+  $('clear-search').click();w.document.querySelector('.segment button').click();$('edit-segment').value='Updated source';$('save-edit').click();assert.match($('ai-answers').textContent,/依据可能过期/);
  }finally{await w.happyDOM.close();}
 });
