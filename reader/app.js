@@ -4,6 +4,7 @@ const KEY = "coconut-reader-v1";
 let state = { documents: [], active: null };
 let selected = null;
 let editingTarget = null;
+let sourceTarget = null;
 let currentLimit = 100;
 let storageBlocked = false;
 let lastSavedValue = null;
@@ -76,6 +77,7 @@ async function add(doc) {
 	if (!state.documents.some((d) => d.key === key))
 		state.documents.push({ ...doc, key, notes: doc.notes || {} });
 	state.active = key;
+	$("search").value = "";
 	selected = null;
 	currentLimit = 100;
 	const saved = save();
@@ -260,6 +262,7 @@ $("source").onclick = () => {
 		notice("请先导入文字稿");
 		return;
 	}
+	sourceTarget = active().key;
 	$("source-url").value = active().source_url;
 	$("source-error").textContent = "";
 	$("source-dialog").showModal();
@@ -271,7 +274,12 @@ $("save-source").onclick = (e) => {
 		$("source-error").textContent = "请填写有效的 YouTube 或 Bilibili 视频链接";
 		return;
 	}
-	active().source_url = url;
+	const doc = state.documents.find((d) => d.key === sourceTarget);
+	if (!doc) {
+		$("source-error").textContent = "原文字稿已不可用，请重新打开来源设置";
+		return;
+	}
+	doc.source_url = url;
 	save();
 	$("source-dialog").close();
 	render();
@@ -282,16 +290,28 @@ $("export").onclick = () => {
 		notice("书架还是空的，先导入一份内容吧");
 		return;
 	}
-	const blob = new Blob([JSON.stringify(d, null, 2)], {
-		type: "application/json",
-	});
-	const url = URL.createObjectURL(blob);
-	const a = el("a");
-	a.href = url;
-	a.download = d.title.replace(/[\\/:*?"<>|]/g, "_") + ".coconut.json";
-	a.click();
-	setTimeout(() => URL.revokeObjectURL(url), 1000);
-	notice("已导出带时间戳的原稿和笔记，可作为本地备份。");
+	let url;
+	let link;
+	try {
+		const blob = new Blob([JSON.stringify(d, null, 2)], {
+			type: "application/json",
+		});
+		url = URL.createObjectURL(blob);
+		link = el("a");
+		link.href = url;
+		link.download = d.title.replace(/[\\/:*?"<>|]/g, "_") + ".coconut.json";
+		link.hidden = true;
+		document.body.append(link);
+		link.click();
+		// A click requests a download; only the user/browser can confirm disk persistence.
+		notice("已发起备份下载，请检查浏览器下载记录并确认文件已保存。备份包含原稿、修正与笔记。");
+	} catch {
+		notice("备份导出失败，文字稿与笔记仍保留在本页。请重试，暂时不要关闭页面。");
+	} finally {
+		if (link) link.remove();
+		// Give the browser time to consume the object URL before releasing it.
+		if (url) setTimeout(() => URL.revokeObjectURL(url), 60000);
+	}
 };
 $("sample").onclick = () =>
 	add({
