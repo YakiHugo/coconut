@@ -44,3 +44,41 @@ class SubtitleTests(unittest.TestCase):
     def test_subtitles_preserve_code_generics(self):
         result = parse_subtitles('1\n00:00:01,000 --> 00:00:02,000\n<b>Use</b> List<T> &amp; compare\n', '.srt')
         self.assertEqual(result[0]['text'], 'Use List<T> & compare')
+
+    def test_x_status_url_is_narrowly_scoped(self):
+        for url in ['https://x.com/example/status/123?s=20', 'https://twitter.com/example/status/123?t=251',
+                    'https://www.x.com/i/status/123', 'https://mobile.twitter.com/example/status/123/']:
+            validate_video_url(url)
+        for url in ['https://x.com/example', 'https://x.com/search?q=video', 'https://x.com/i/flow/login',
+                    'https://x.com/example/status/nope', 'https://x.com/example/status/123/other',
+                    'https://x.com/example/status/123/video/1', 'https://x.com.evil.test/example/status/123',
+                    'https://x.com@evil.test/example/status/123', 'https://evil@x.com/example/status/123',
+                    'http://x.com/example/status/123', 'https://x.com:8443/example/status/123',
+                    'https://x.com/example/status/123%2f..%2fsearch']:
+            with self.subTest(url=url), self.assertRaises(ValueError): validate_video_url(url)
+
+    def test_x_word_timing_markup_is_not_transcript_text(self):
+        text = 'WEBVTT\n\n1\n00:00:01.220 --> 00:00:03.400\n<X-word-ms ms=100,200 index=1 character_ranges=0-2,3-6>Use List<T> &amp; keep it</X-word-ms>\n'
+        self.assertEqual(parse_subtitles(text, '.vtt'), [{'start':1.22, 'end':3.4, 'text':'Use List<T> & keep it'}])
+
+    def test_platform_media_evidence_is_attached_to_downloaded_captions(self):
+        import sys, tempfile, types
+        from pathlib import Path
+        from unittest.mock import patch
+        from subtitle_import import fetch_subtitle_document
+        with tempfile.TemporaryDirectory() as td:
+            path=Path(td)/'captions.en.vtt'
+            path.write_text('WEBVTT\n\n00:00:00.220 --> 00:00:02.181\n<X-word-ms index=1>Original fixture</X-word-ms>\n')
+            class Downloader:
+                def __init__(self, settings): self.settings=settings
+                def __enter__(self): return self
+                def __exit__(self, *args): pass
+                def extract_info(self, url, download=False):
+                    return {'id':'987','title':'Fixture','duration':4.321,'subtitles':{'en':[{'ext':'vtt'}]}}
+                def process_ie_result(self, info, download=True):
+                    return {'requested_subtitles':{'en':{'filepath':str(path)}}}
+            with patch.dict(sys.modules, {'yt_dlp':types.SimpleNamespace(YoutubeDL=Downloader)}):
+                doc=fetch_subtitle_document('https://x.com/example/status/123',Path(td),'en')
+            self.assertEqual(doc['source_url'],'https://x.com/example/status/123')
+            self.assertEqual(doc['provenance'],{'kind':'platform_subtitles','language':'en','media_id':'987','media_duration':4.321})
+            self.assertEqual(doc['segments'][0]['text'],'Original fixture')

@@ -20,8 +20,11 @@
 		if (!["https:", "http:"].includes(u.protocol) || u.username || u.password)
 			return "";
 		const h = u.hostname.toLowerCase();
+		const isX = ["x.com", "www.x.com", "twitter.com", "www.twitter.com", "mobile.twitter.com"].includes(h);
+		if (isX && (u.protocol !== "https:" || u.port && u.port !== "443" ||
+			!/^\/(?:[A-Za-z0-9_]{1,15}\/status|i\/status)\/[0-9]{1,20}\/?$/.test(u.pathname))) return "";
 		if (
-			[
+			isX || [
 				"www.youtube.com",
 				"youtube.com",
 				"m.youtube.com",
@@ -99,11 +102,13 @@
 		const provenance =
 			data.provenance && typeof data.provenance === "object"
 				? Object.fromEntries(
-						["kind", "model", "backend", "language", "alignment_warning"]
+						["kind", "model", "backend", "language", "alignment_warning", "media_id"]
 							.filter((k) => typeof data.provenance[k] === "string")
 							.map((k) => [k, data.provenance[k]]),
 					)
 				: undefined;
+		if (provenance && Number.isFinite(data.provenance.media_duration) && data.provenance.media_duration > 0 && data.provenance.media_duration <= 21600)
+			provenance.media_duration = data.provenance.media_duration;
 		const sourceMedia = mediaSource(data.source_media);
 		return {
 			notes,
@@ -128,7 +133,7 @@
 		return parts.reduce((n, v) => n * 60 + v, 0);
 	}
 	function subtitleText(value) {
-		const plain = value.replace(/<\/?(?:b|i|u|ruby|rt|v|c)(?:[ .][^>]*)?>|<\d{2}:\d{2}(?::\d{2})?\.\d{3}>/gi, "");
+		const plain = value.replace(/<\/?(?:b|i|u|ruby|rt|v|c|X-word-ms)(?:[ .][^>]*)?>|<\d{2}:\d{2}(?::\d{2})?\.\d{3}>/gi, "");
 		const names = {amp:"&",lt:"<",gt:">",quot:'"',apos:"'",nbsp:" "};
 		return plain.replace(/&(#x[0-9a-f]+|#[0-9]+|amp|lt|gt|quot|apos|nbsp);/gi, (match, key) => {
 			if (key[0] !== "#") return names[key.toLowerCase()] || match;

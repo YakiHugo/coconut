@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import math
 import os
+import re
 import tempfile
 from pathlib import Path
 from urllib.parse import urlparse, parse_qsl, urlencode, urlunparse
@@ -17,6 +18,10 @@ def source_link(url: str, seconds: float) -> str:
     if host in {'youtube.com', 'www.youtube.com', 'm.youtube.com', 'youtu.be'}:
         key = 't'
     elif host in {'bilibili.com', 'www.bilibili.com', 'm.bilibili.com'}:
+        key = 't'
+    elif host in {'x.com', 'www.x.com', 'twitter.com', 'www.twitter.com', 'mobile.twitter.com'}:
+        if parsed.scheme != 'https' or parsed.username or parsed.password or parsed.port not in (None, 443) or not re.fullmatch(r'/(?:[A-Za-z0-9_]{1,15}/status|i/status)/[0-9]{1,20}/?', parsed.path):
+            return ''
         key = 't'
     else:
         return url

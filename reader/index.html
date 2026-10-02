@@ -5,9 +5,9 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Coconut · 把听过的，留下来</title>
 <link rel="stylesheet" href="style.css?v=52ff372ae3">
-<script src="core.js?v=875695e59f" defer>
+<script src="core.js?v=8b32b60a61" defer>
 </script>
-<script src="app.js?v=c9e28aeb23" defer>
+<script src="app.js?v=9153a1b09a" defer>
 </script>
 <script src="jobs.js?v=56d4976020" defer>
 </script>
@@ -49,7 +49,7 @@
 <span id="worker-status">正在检查本地处理服务…</span><button id="retry-worker" hidden>重新连接</button>
 </div>
 <form id="url-form" hidden>
-<label for="video-url">YouTube / Bilibili 视频链接</label>
+<label for="video-url">YouTube / Bilibili / X 视频链接</label>
 <div class="url-row">
 <input id="video-url" type="url" placeholder="https://…" required>
 <button id="process-url" class="primary" disabled>开始处理</button>
@@ -112,7 +112,7 @@
 <dialog id="source-dialog">
 <form method="dialog">
 <h2>关联原视频</h2>
-<p>填写 YouTube 或 Bilibili 视频链接，时间戳才会跳转到对应片段</p>
+<p>填写 YouTube、Bilibili 或 X 视频链接，时间戳才会跳转到对应片段</p>
 <label>视频链接<input id="source-url" type="url" placeholder="https://…">
 </label>
 <div class="dialog-actions">

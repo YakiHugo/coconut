@@ -28,6 +28,17 @@ class ServerTests(unittest.TestCase):
         with urlopen(self.base+'/api/jobs/'+job['id']+'/result') as response: doc=json.load(response)
         self.assertEqual(doc['segments'][0]['text'],'Hello Coconut')
         self.assertEqual(doc['title'], 'test')
+    def test_x_status_is_queued_but_profile_and_arbitrary_hosts_are_rejected(self):
+        self.jobs.close()  # Validate admission without a network-dependent worker.
+        url='https://x.com/example/status/123?s=20'
+        with urlopen(Request(self.base+'/api/jobs',data=json.dumps({'url':url}).encode(),headers={'Content-Type':'application/json'})) as response:
+            self.assertEqual(response.status,201)
+            self.assertEqual(json.load(response)['status'],'queued')
+        for url in ['https://x.com/example','https://x.com.evil.test/example/status/123','https://127.0.0.1/example/status/123']:
+            with self.subTest(url=url), self.assertRaises(HTTPError) as error:
+                urlopen(Request(self.base+'/api/jobs',data=json.dumps({'url':url}).encode(),headers={'Content-Type':'application/json'}))
+            self.assertEqual(error.exception.code,400)
+
     def test_cross_origin_and_unscoped_host_rejected(self):
         for headers in [{'Origin':'https://evil.example'},{'Host':'evil.example'}]:
             with self.assertRaises(HTTPError) as error:urlopen(Request(self.base+'/api/jobs',headers=headers))

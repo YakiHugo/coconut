@@ -60,3 +60,21 @@ test('reading bookmarks accept only segment ids and survive JSON round trips',()
  assert.equal(validate({...input,readingPosition:'missing'}).readingPosition,undefined);
  assert.equal(validate({...input,readingPosition:{id:'safe'}}).readingPosition,undefined);
 });
+
+test('X post source links seek without accepting arbitrary URLs or profiles',()=>{
+ assert.equal(source('https://x.com/example/status/123?s=20&t=9#old',251.9),'https://x.com/example/status/123?s=20&t=251');
+ assert.equal(source('https://twitter.com/i/status/123',0),'https://twitter.com/i/status/123?t=0');
+ for(const url of ['https://x.com/example','https://x.com/search?q=video','https://x.com/example/status/nope',
+   'https://x.com/example/status/123/video/1','http://x.com/example/status/123','https://x.com:8443/example/status/123',
+   'https://user@x.com/example/status/123','https://x.com.evil.test/example/status/123'])assert.equal(source(url,1),'');
+});
+test('X word timing markup is stripped while text, generics and timestamp precision survive',()=>{
+ const doc=parse('WEBVTT\n\n00:00:01.220 --> 00:00:03.400\n<X-word-ms ms=100,200 index=1 character_ranges=0-2,3-6>Use List<T> &amp; keep it</X-word-ms>\n','native.vtt');
+ assert.equal(doc.segments[0].text,'Use List<T> & keep it');assert.equal(doc.segments[0].start,1.22);assert.equal(doc.segments[0].end,3.4);
+});
+test('platform media evidence survives backup without copying download URLs',()=>{
+ const input={segments:[{start:0,end:1,text:'Fixture'}],provenance:{kind:'platform_subtitles',media_id:'123',media_duration:3251.648,url:'https://private.example'}};
+ const output=parse(JSON.stringify(validate(input)),'backup.json');
+ assert.deepEqual(output.provenance,{kind:'platform_subtitles',media_id:'123',media_duration:3251.648});
+ for(const duration of [-1,0,Infinity,'3251',21601])assert.equal(validate({...input,provenance:{media_duration:duration}}).provenance.media_duration,undefined);
+});

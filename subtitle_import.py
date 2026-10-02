@@ -53,7 +53,7 @@ def parse_subtitles(text: str, extension: str) -> list[dict]:
             match = CUE.fullmatch(line.strip())
             if not match:
                 raise ValueError('Invalid subtitle cue')
-            body = html.unescape(re.sub(r'</?(?:b|i|u|ruby|rt|v|c)(?:[ .][^>]*)?>|<\d{2}:\d{2}(?::\d{2})?\.\d{3}>', '', '\n'.join(lines[index + 1:]), flags=re.I)).strip()
+            body = html.unescape(re.sub(r'</?(?:b|i|u|ruby|rt|v|c|X-word-ms)(?:[ .][^>]*)?>|<\d{2}:\d{2}(?::\d{2})?\.\d{3}>', '', '\n'.join(lines[index + 1:]), flags=re.I)).strip()
             if body:
                 segment = {'start': seconds(match[1]), 'end': seconds(match[2]), 'text': body}
                 # Suppress exact duplicates, but never guess that repeated speech is redundant.
@@ -94,12 +94,16 @@ def select_track(info: dict, language: str | None = None) -> tuple[str, str] | N
 
 def validate_video_url(url: str) -> None:
     parsed = urlparse(url)
-    hosts = {'youtube.com', 'www.youtube.com', 'm.youtube.com', 'youtu.be', 'bilibili.com', 'www.bilibili.com', 'm.bilibili.com', 'b23.tv'}
+    x_hosts = {'x.com', 'www.x.com', 'twitter.com', 'www.twitter.com', 'mobile.twitter.com'}
+    hosts = {'youtube.com', 'www.youtube.com', 'm.youtube.com', 'youtu.be', 'bilibili.com', 'www.bilibili.com', 'm.bilibili.com', 'b23.tv'} | x_hosts
     if parsed.scheme != 'https' or parsed.hostname not in hosts or parsed.username or parsed.password or parsed.port not in (None, 443):
-        raise ValueError('Use a public HTTPS YouTube or Bilibili video URL')
+        raise ValueError('Use a public HTTPS YouTube, Bilibili, or X/Twitter video URL')
     host = parsed.hostname
     path = parsed.path
-    if host in {'youtube.com', 'www.youtube.com', 'm.youtube.com'}:
+    if host in x_hosts:
+        if not re.fullmatch(r'/(?:[A-Za-z0-9_]{1,15}/status|i/status)/[0-9]{1,20}/?', path):
+            raise ValueError('Provide one X/Twitter video post, not a profile or search')
+    elif host in {'youtube.com', 'www.youtube.com', 'm.youtube.com'}:
         video_id = parse_qs(parsed.query).get('v', [''])[0] if path == '/watch' else (path.split('/')[-1] if path.startswith('/shorts/') else '')
         if not re.fullmatch(r'[A-Za-z0-9_-]{11}', video_id):
             raise ValueError('Provide one YouTube video, not a playlist or channel')
@@ -149,5 +153,13 @@ def fetch_subtitle_document(url: str, directory: Path, language: str | None = No
     path = Path(filename).resolve()
     if not path.is_relative_to(directory.resolve()) or not path.is_file():
         raise RuntimeError('Subtitle output was outside its work directory')
-    return subtitle_document(path, str(info.get('title') or 'Untitled video'), url,
-                             kind='platform_subtitles' if field == 'subtitles' else 'automatic_subtitles', language=track)
+    document = subtitle_document(path, str(info.get('title') or 'Untitled video'), url,
+                                 kind='platform_subtitles' if field == 'subtitles' else 'automatic_subtitles', language=track)
+    # Keep the platform's media identity distinct from a post URL (which may
+    # embed a different media ID). These fields are evidence, not download URLs.
+    if isinstance(info.get('id'), str):
+        document['provenance']['media_id'] = info['id']
+    duration = info.get('duration')
+    if isinstance(duration, (int, float)) and 0 < duration <= 6 * 3600:
+        document['provenance']['media_duration'] = duration
+    return document
