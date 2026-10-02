@@ -15,4 +15,9 @@ class TranscriptTests(unittest.TestCase):
     def test_bilibili_preserves_part(self):
         self.assertEqual(source_link('https://www.bilibili.com/video/BVabc?p=2',12),'https://www.bilibili.com/video/BVabc?p=2&t=12')
 
+    def test_x_source_timestamps_preserve_post_and_tracking_query(self):
+        self.assertEqual(source_link('https://x.com/example/status/123?s=20&t=9#old',251.9), 'https://x.com/example/status/123?s=20&t=251')
+        for url in ['https://x.com/example', 'https://x.com/example/status/nope', 'http://x.com/example/status/123', 'https://user@x.com/example/status/123', 'https://x.com:8443/example/status/123']:
+            with self.subTest(url=url): self.assertEqual(source_link(url,0), '')
+
 if __name__=='__main__':unittest.main()

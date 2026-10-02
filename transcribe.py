@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Transcribe a YouTube/Bilibili URL to a raw markdown transcript with speaker labels."""
+"""Transcribe a YouTube/Bilibili/X URL to a raw markdown transcript with speaker labels."""
 import os, sys
 _venv = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".venv", "bin", "python3")
 if __name__ == "__main__" and os.path.exists(_venv) and os.path.abspath(sys.executable) != os.path.abspath(_venv):
@@ -110,7 +110,7 @@ def default_output_path(source: str, directory: Path, is_url: bool) -> Path:
 
 def main():
     parser = argparse.ArgumentParser(description="Import subtitles or transcribe a public video/local media file")
-    parser.add_argument("source", help="YouTube/Bilibili URL, media file, SRT, or VTT")
+    parser.add_argument("source", help="YouTube/Bilibili/X URL, media file, SRT, or VTT")
     parser.add_argument("-o", "--output", help="Output Markdown path")
     parser.add_argument("--language", help="Original language hint, e.g. zh or en")
     parser.add_argument("--work-dir", type=Path, help="Keep completed stages for retry in this private directory")

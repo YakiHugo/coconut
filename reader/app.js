@@ -354,7 +354,7 @@ $("save-source").onclick = (e) => {
 	e.preventDefault();
 	const url = $("source-url").value.trim();
 	if (url && !Coconut.source(url, 0)) {
-		$("source-error").textContent = "请填写有效的 YouTube 或 Bilibili 视频链接";
+		$("source-error").textContent = "请填写有效的 YouTube、Bilibili 或 X 视频链接";
 		return;
 	}
 	const doc = state.documents.find((d) => d.key === sourceTarget);
