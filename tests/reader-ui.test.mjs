@@ -322,3 +322,33 @@ test('incomplete subscription translation response does not overwrite any old cu
   await $('check-ai').onclick();$('ai-consent').checked=true;await $('subscription-translate').onclick();const doc=JSON.parse(w.localStorage.getItem('coconut-reader-v1')).documents[0];assert.equal(doc.segments[0].translations.zh.text,'旧稿');assert.equal(doc.segments[1].translations.zh,undefined);
  }finally{await w.happyDOM.close();}
 });
+
+test('in-flight subscription translation blocks offline writer and reports captured provider/languages',async()=>{
+ const w=setup();try{
+  const $=id=>w.document.getElementById(id);await importDocument(w,{language:'en',segments:[{id:'a',start:0,end:1,text:'Source'}]});
+  let finish,offline=0;
+  w.fetch=async(url,options)=>{
+   if(url.endsWith('language-tools'))return {ok:true,json:async()=>({ai:{codex:{ready:true}}})};
+   if(url.endsWith('translate-subscription'))return new Promise(resolve=>{finish=()=>resolve({ok:true,json:async()=>({translations:[{id:'a',text:'订阅译文',source_text:'Source'}]})});});
+   offline++;throw new Error('Offline must not start');
+  };
+  await $('check-ai').onclick();$('ai-consent').checked=true;const pending=$('subscription-translate').onclick();
+  assert.equal($('translate-document').disabled,true);await $('translate-document').onclick();assert.equal(offline,0);
+  $('translation-target').value='fr';assert.match($('subscription-translation-scope').textContent,/ChatGPT\/Codex.*English.*中文/);
+  finish();await pending;const doc=JSON.parse(w.localStorage.getItem('coconut-reader-v1')).documents[0];assert.equal(doc.segments[0].translations.zh.text,'订阅译文');assert.equal(doc.segments[0].translations.fr,undefined);
+ }finally{await w.happyDOM.close();}
+});
+
+test('storage conflict stops subsequent subscription batches without overwriting another tab',async()=>{
+ const w=setup();try{
+  const $=id=>w.document.getElementById(id);await importDocument(w,{language:'en',segments:Array.from({length:33},(_,i)=>({id:'s'+i,start:i,end:i+1,text:'Source '+i}))});
+  let calls=0,external;
+  w.fetch=async(url,options)=>({ok:true,json:async()=>{
+   if(url.endsWith('language-tools'))return {ai:{codex:{ready:true}}};
+   calls++;const doc=JSON.parse(w.localStorage.getItem('coconut-reader-v1'));doc.documents[0].notes.s0='newer tab';external=JSON.stringify(doc);w.localStorage.setItem('coconut-reader-v1',external);
+   return {translations:JSON.parse(options.body).segments.map(s=>({id:s.id,text:'译文',source_text:s.text}))};
+  }});
+  await $('check-ai').onclick();$('ai-consent').checked=true;await $('subscription-translate').onclick();
+  assert.equal(calls,1);assert.equal(w.localStorage.getItem('coconut-reader-v1'),external);assert.match($('ai-progress').textContent,/浏览器保存未成功/);
+ }finally{await w.happyDOM.close();}
+});
