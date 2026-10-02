@@ -69,7 +69,7 @@ cd coconut
 - `pt` 默认只导入/转录；第三个参数显式传 `--polish` 才请求付费润色
 
 润色检查完整结束、时间链接和说话人标签是否保留。这不是语义准确性的自动保证。
-网页目前没有 AI 问答、自动摘要或知识图谱；这些不属于当前已完成能力。
+本地阅读器支持可选订阅 AI 共读与按片段翻译；它们的认证、下载与验收边界见下面说明。当前没有知识图谱。
 
 ## 验证与当前局限
 
@@ -101,3 +101,17 @@ X 的词级时间包装标签会在字幕导入时去掉，保留原文字和每
 平台媒体 ID 与时长保留在 JSON 的来源信息中，备份和重新导入不会丢失。
 
 真实长视频的处理及阅读验收记录见 [docs/x-video-acceptance.md](docs/x-video-acceptance.md)。
+
+## 同步回看、多语言与订阅共读
+
+- 新视频任务可勾选保留本地视频（最多200 MiB），完成后时间按钮优先定位本地播放器，同时保留原站链接；播放时高亮对应字幕，点击“定位正在播放的文字”跳到当前片段
+- 原语言支持中、英、日、韩、法、德、西班牙语及自动检测。多语言识别仍由本机 Whisper 运行，不等于所有语言质量都已逐一验证
+- 翻译保留每条原文、片段 ID、时间戳和模型来源。译文与原文并排显示、支持搜索和备份；原文修正后旧译文会标为过期
+- 本机翻译按32段一批保存，可停止后续批次、刷新后继续。英中使用 Helsinki-NLP 的 OPUS 模型，其余可用语言对从官方 Argos 模型索引准备；语言对不存在时明确报错，不自动跳转到付费服务
+- 英中模型需要可选 CPU 依赖：运行 `./install.sh --translation`。勾选允许首次下载后才下载模型，首次准备可能需要约1 GB磁盘；之后离线翻译。译文是离线粗稿，已观察到技术术语错义，不应作为未经核对的正式引用
+- AI 共读默认连接本机官方 Codex CLI 已有 ChatGPT 登录，Claude Code 订阅为可选。每次发送前必须明确勾选同意发送所选文字并使用订阅额度；回答用片段 ID 校验引用，可点回原文，随备份保存
+- 连接检测只确认登录方式，不保证额度。额度耗尽、登录过期、CLI不兼容或请求失败时停止；不购买额度、不切换API、不读取或复制令牌、不启动交互式会话
+- CLI 调用采用临时目录、无持久会话、禁用执行/浏览器/MCP/插件工具的配置，并拒绝 API Key 认证。当前订阅连接经过协议回归，但尚未在用户账户完成真实推理；需要用户已有合法登录和剩余额度
+- Kimi 订阅和 ChatGPT 直接 OAuth 暂未接入。不会把网页登录态或订阅凭据当作第三方 API key
+
+官方接口依据：[Codex 非交互调用](https://learn.chatgpt.com/docs/non-interactive-mode)、[Codex 认证](https://learn.chatgpt.com/docs/auth)、[Claude Code CLI](https://code.claude.com/docs/en/cli-reference)、[Claude 认证](https://code.claude.com/docs/en/authentication)、[OPUS 英中模型](https://huggingface.co/Helsinki-NLP/opus-mt-en-zh)、[Argos 包索引](https://github.com/argosopentech/argospm-index)。

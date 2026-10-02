@@ -4,12 +4,13 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Coconut · 把听过的，留下来</title>
-<link rel="stylesheet" href="style.css?v=52ff372ae3">
-<script src="core.js?v=8b32b60a61" defer>
+<link rel="stylesheet" href="style.css?v=4a7e7f0903">
+<script src="core.js?v=559f4af7ee" defer>
 </script>
-<script src="app.js?v=9153a1b09a" defer>
+<script src="app.js?v=2e8b999d78" defer>
 </script>
-<script src="jobs.js?v=56d4976020" defer>
+<script src="language.js?v=8dc2c499a9" defer></script>
+<script src="jobs.js?v=5cc408e185" defer>
 </script>
 </head>
 <body>
@@ -27,7 +28,7 @@
 </nav>
 <p id="library-empty" class="hint">还没有文字稿。添加一份，或体验示例。</p>
 </div>
-<div class="privacy">只留在你的浏览器<br>文字稿与笔记不会上传</div>
+<div class="privacy">只留在你的浏览器<br>默认留在本机；AI 共读需单次确认</div>
 </aside>
 <main>
 <header>
@@ -59,8 +60,10 @@
 <option value="">自动判断</option>
 <option value="zh">中文</option>
 <option value="en">English</option>
+<option value="ja">日本語</option><option value="ko">한국어</option><option value="fr">Français</option><option value="de">Deutsch</option><option value="es">Español</option>
 </select>
 </label>
+<label><input id="keep-media" type="checkbox" checked>保留本地视频用于同步回看（最多200 MiB）</label>
 <label>
 <input id="force-asr" type="checkbox">忽略现成字幕，重新转录</label>
 <button id="import-media" type="button" disabled>导入本地音视频</button>
@@ -78,6 +81,7 @@
 <p id="subtitle">导入 Coconut JSON、SRT 或 VTT。读原话，记想法，在时间戳处回到声音的现场。</p>
 <p id="provenance" class="hint">
 </p>
+<button id="locate-playback" hidden>定位正在播放的文字</button>
 <div id="source-media" hidden>
 </div>
 <div class="tools">
@@ -92,6 +96,18 @@
 <h2>下一次有意思的谈话，从这里开始</h2>
 <p>已有字幕可以直接导入。需要转录视频时，用 Coconut 本地命令生成 JSON 后导入；阅读页暂不提供在线转录。</p>
 </section>
+<details id="language-panel"><summary>翻译与 AI 共读</summary>
+<p class="hint">离线粗译可能误解技术术语，重要内容请对照原文回听。翻译在本机运行；AI 共读仅在你明确点击后把所选文字发送给所选的已登录 AI 订阅，不使用 API Key。</p>
+<div class="language-controls"><label>原文语言<select id="translation-source"><option value="">请选择</option></select></label><label>翻译 / 回答语言<select id="translation-target"></select></label><label>阅读显示<select id="translation-view"><option value="">仅原文</option></select></label></div>
+<label><input id="download-model" type="checkbox">允许首次下载对应离线模型（首次准备可能需要约1 GB磁盘）</label>
+<div><button id="translate-document" disabled>离线粗译全文 / 继续未完成翻译</button><button id="stop-translation" hidden>停止后续批次</button></div>
+<p id="language-status" role="status" class="hint">连接本地服务后可翻译；现有译文可直接阅读与备份。</p>
+<hr><label>订阅账户<select id="ai-provider"><option value="codex">ChatGPT / Codex 订阅</option><option value="claude">Claude 订阅（可选）</option></select></label><p id="ai-status" class="hint">订阅连接尚未检查；不会自动登录或启动付费请求。</p><button id="check-ai">检查本机订阅连接</button>
+<label for="ai-question">想从文字稿了解什么？</label><textarea id="ai-question" rows="3" placeholder="用中文总结核心观点，并指出对应的原文片段"></textarea>
+<label><input id="ai-filtered" type="checkbox">只读取当前筛选结果（含译文与笔记筛选的全部匹配片段）</label><label><input id="ai-consent" type="checkbox">本次把文字稿发送给所选 AI 提供商，并使用我的订阅额度</label>
+<button id="ask-ai" disabled>让 AI 读文字稿</button><p id="ai-progress" role="status"></p><div id="ai-answers"></div>
+<p class="hint">使用本机官方 Codex / Claude Code CLI 已有登录。额度耗尽时停止，不购买额度、不切换 API。不会读取或复制登录凭据；不会打开额外的交互式会话。Kimi 暂无已验证的订阅连接。</p>
+</details>
 <div class="reading-layout">
 <article id="transcript" aria-label="文字稿">
 </article>

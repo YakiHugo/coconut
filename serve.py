@@ -17,6 +17,8 @@ from urllib.parse import parse_qs, urlparse
 
 from import_jobs import ImportJobs, UPLOAD_MEDIA_TYPES
 from subtitle_import import validate_video_url
+from language_tools import LocalTranslator
+from ai_reader import subscription_status, codex_status, ask
 
 # Local implementation resource boundaries, not provider limits.
 MAX_UPLOAD = 200 * 1024 * 1024
@@ -147,6 +149,8 @@ class Handler(SimpleHTTPRequestHandler):
         try:
             if path == '/api/health':
                 return self._json(200, {'local_worker': True, 'paid_processing': False, 'max_upload_bytes': MAX_UPLOAD})
+            if path == '/api/language-tools':
+                return self._json(200, {'translation_models': self.server.translator.available(), 'ai': {'codex': codex_status(), 'claude': subscription_status()}})
             if path == '/api/jobs':
                 return self._json(200, {'jobs': self.jobs.list()})
             match = re.fullmatch(r'/api/jobs/([a-f0-9]{32})/media', path)
@@ -155,7 +159,7 @@ class Handler(SimpleHTTPRequestHandler):
             match = re.fullmatch(r'/api/jobs/([a-f0-9]{32})(/result)?', path)
             if match:
                 return self._json(200, self.jobs.result(match[1]) if match[2] else self.jobs.get(match[1]))
-            if path not in ('/', '/index.html', '/app.js', '/core.js', '/jobs.js', '/style.css'):
+            if path not in ('/', '/index.html', '/app.js', '/core.js', '/jobs.js', '/language.js', '/style.css'):
                 return self._json(404, {'error': 'Not found'})
             if self.command == 'HEAD':
                 super().do_HEAD()
@@ -204,12 +208,19 @@ class Handler(SimpleHTTPRequestHandler):
                     folder.rmdir()
                     raise
                 return self._json(201, job)
-            if media != 'application/json' or length < 0 or length > MAX_JSON:
+            limit = 1024 * 1024 if parsed.path in ('/api/translate','/api/ask') else MAX_JSON
+            if media != 'application/json' or length < 0 or length > limit:
                 return self._json(400, {'error': 'Use a small JSON request'})
             body = self.rfile.read(length)
             data = json.loads(body) if body else {}
             if not isinstance(data, dict):
                 raise ValueError('Expected an object')
+            if parsed.path == '/api/translate':
+                if not isinstance(data.get('allow_download', False), bool): raise ValueError('allow_download must be boolean')
+                translated = self.server.translator.translate(data.get('source'), data.get('target'), data.get('segments'), data.get('allow_download', False))
+                return self._json(200, {'translations': translated})
+            if parsed.path == '/api/ask':
+                return self._json(200, ask(data.get('question'), data.get('language'), data.get('segments'), data.get('provider', 'codex')))
             if parsed.path == '/api/jobs':
                 url = data.get('url')
                 if not isinstance(url, str):
@@ -221,6 +232,8 @@ class Handler(SimpleHTTPRequestHandler):
                 action = self.jobs.retry if match[2] == 'retry' else self.jobs.cancel
                 return self._json(200, action(match[1]))
             self._json(404, {'error': 'Not found'})
+        except ImportError:
+            self._json(400, {'error':'本地翻译依赖未安装，请重新运行 install.sh'})
         except (ValueError, TypeError, OSError) as error:
             self._json(400, {'error': str(error)[:300]})
         except KeyError:
@@ -230,6 +243,7 @@ class Handler(SimpleHTTPRequestHandler):
 def build_server(directory: Path, port: int = 8080):
     jobs = ImportJobs(directory)
     server = ThreadingHTTPServer(('127.0.0.1', port), partial(Handler, jobs=jobs))
+    server.translator = LocalTranslator(directory / 'translation-models')
     try:
         jobs.start()
     except Exception:

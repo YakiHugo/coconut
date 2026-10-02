@@ -5,3 +5,6 @@ yt-dlp==2026.8.19
 # PyAV 19 removed metadata_errors used by faster-whisper 1.2.1.
 av==16.1.0
 httpx[socks]>=0.28,<1
+
+# Local cue-by-cue translation tokenizer; uses the existing CTranslate2 runtime.
+sentencepiece==0.2.1

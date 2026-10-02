@@ -52,6 +52,30 @@ def download_audio(url: str, out_dir: Path) -> tuple[Path, str]:
     return files[0], str(info.get('title') or 'Untitled video')
 
 
+def download_playback(url: str, directory: Path) -> Path:
+    """Keep a bounded, fixed-name source copy for local timestamp playback."""
+    validate_video_url(url)
+    target = directory / 'playback.mp4'
+    marker = directory / 'playback.json'
+    if target.is_file() and not target.is_symlink() and marker.is_file() and not marker.is_symlink():
+        try:
+            saved = json.loads(marker.read_text())
+            if saved == {'file': 'playback.mp4', 'size': target.stat().st_size} and 0 < target.stat().st_size <= 200 * 1024 * 1024:
+                return target
+        except (ValueError, OSError):
+            pass
+    subprocess.run([sys.executable, '-m', 'yt_dlp', '--ignore-config', *tls_cli_options(),
+                    '--socket-timeout', '30', '--retries', '1', '--no-playlist',
+                    '--max-filesize', str(200 * 1024 * 1024), '--force-overwrites',
+                    '-f', 'worst[ext=mp4][protocol=https]/worst[ext=mp4]',
+                    '-o', str(target), url], check=True, timeout=900,
+                   stdout=subprocess.DEVNULL)
+    if not target.is_file() or target.is_symlink() or not 0 < target.stat().st_size <= 200 * 1024 * 1024:
+        raise RuntimeError('Playback download exceeded the local media limit or produced no file')
+    save_document({'file': 'playback.mp4', 'size': target.stat().st_size}, marker)
+    return target
+
+
 def transcribe_fast(audio_path: Path, language: str | None, *, model_name: str, device: str, compute_type: str, batch_size: int = 8) -> dict:
     """Lightweight base path; precise alignment and diarization remain optional."""
     from faster_whisper import WhisperModel
@@ -116,6 +140,7 @@ def main():
     parser.add_argument("--work-dir", type=Path, help="Keep completed stages for retry in this private directory")
     parser.add_argument("--source-url", default="", help="Optional source link for a local file")
     parser.add_argument("--force-transcribe", action="store_true", help="Ignore platform subtitles and recognize audio")
+    parser.add_argument("--keep-media", action="store_true", help="Keep a bounded local MP4 copy for playback (requires --work-dir)")
     parser.add_argument("--no-diarize", action="store_true")
     parser.add_argument("--no-align", action="store_true")
     parser.add_argument("--backend", choices=("faster-whisper", "whisperx"), default="faster-whisper")
@@ -124,6 +149,8 @@ def main():
     parser.add_argument("--compute-type", default="int8")
     parser.add_argument("--batch-size", type=int, default=8)
     args = parser.parse_args()
+    if args.keep_media and not args.work_dir:
+        parser.error('keep-media requires a persistent work-dir')
     if args.batch_size < 1:
         parser.error("batch-size must be positive")
     source = Path(args.source).expanduser()
@@ -144,6 +171,8 @@ def main():
                        "backend": args.backend, "model": args.model,
                        "source_url": source_url, "align": not args.no_align,
                        "diarize": bool(hf_token), "device": args.device, "compute_type": args.compute_type}
+        if args.keep_media:
+            fingerprint['keep_media'] = True
         if not is_url:
             fingerprint['source_size'] = source.stat().st_size
             fingerprint['source_mtime_ns'] = source.stat().st_mtime_ns
@@ -188,6 +217,13 @@ def main():
             document["provenance"] = {"kind": "local_asr", "model": args.model, "backend": args.backend,
                                       "language": result.get("language"),
                                       "alignment_warning": result.get("alignment_warning")}
+        if is_url and args.keep_media:
+            print('[playback] keeping a local source copy (up to 200 MiB)', file=sys.stderr)
+            try:
+                download_playback(args.source, tmp)
+            except (subprocess.SubprocessError, OSError, RuntimeError):
+                document.setdefault('provenance', {})['playback_warning'] = 'Local playback download unavailable; use the original source link'
+                print('[playback] copy unavailable; transcript and original source links retained', file=sys.stderr)
         save_document(document, cached_document)
         out_path = Path(args.output) if args.output else default_output_path(args.source, Path.cwd(), is_url)
         if not is_url and source.resolve() in (out_path.resolve(), out_path.with_suffix('.json').resolve()):
