@@ -115,3 +115,15 @@ X 的词级时间包装标签会在字幕导入时去掉，保留原文字和每
 - Kimi 订阅和 ChatGPT 直接 OAuth 暂未接入。不会把网页登录态或订阅凭据当作第三方 API key
 
 官方接口依据：[Codex 非交互调用](https://learn.chatgpt.com/docs/non-interactive-mode)、[Codex 认证](https://learn.chatgpt.com/docs/auth)、[Claude Code CLI](https://code.claude.com/docs/en/cli-reference)、[Claude 认证](https://code.claude.com/docs/en/authentication)、[OPUS 英中模型](https://huggingface.co/Helsinki-NLP/opus-mt-en-zh)、[Argos 包索引](https://github.com/argosopentech/argospm-index)。
+
+### 可选订阅上下文翻译
+
+“使用订阅翻译当前筛选”会显示片段数与最多请求批次，每32条为一批，把相邻片段一起作为上下文交给所选的官方订阅CLI。
+必须重新勾选本次发送与额度同意；没有同意标记的API请求也会被拒绝。不会自动运行、购买额度或切换到API。
+
+- 输出必须完整保留每个ID及顺序；缺失、重复、乱序、空白或源文在请求中被修改时，整批不覆盖已有译文
+- 每个完成批次保留原文、时间戳和提供商来源；失败、额度耗尽、取消勾选或按停止按钮会停止后续批次，重试只处理未完成部分
+- 精确度仅到原字幕片段范围，不声称译文逐词与声音对齐
+- 协议与错误恢复已用假后端验证，尚未用用户真实账户做订阅翻译质量验收；不能把它称为已验证的高质量翻译
+
+本次还对四个技术上下文做了OPUS合并段落与M2M100-418M对照。部分术语改善，但均出现错义或语义遗漏，因此没有切换默认模型，也没有把合并译文伪装成逐条对齐结果。

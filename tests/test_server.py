@@ -39,6 +39,13 @@ class ServerTests(unittest.TestCase):
                 urlopen(Request(self.base+'/api/jobs',data=json.dumps({'url':url}).encode(),headers={'Content-Type':'application/json'}))
             self.assertEqual(error.exception.code,400)
 
+    def test_subscription_routes_require_explicit_data_and_usage_consent(self):
+        for path in ['/api/ask','/api/translate-subscription']:
+            with patch('serve.ask') as ask, patch('serve.subscription_translate') as translate:
+                with self.assertRaises(HTTPError) as raised:
+                    urlopen(Request(self.base+path,data=b'{}',headers={'Content-Type':'application/json'}))
+                self.assertEqual(raised.exception.code,400);ask.assert_not_called();translate.assert_not_called()
+
     def test_cross_origin_and_unscoped_host_rejected(self):
         for headers in [{'Origin':'https://evil.example'},{'Host':'evil.example'}]:
             with self.assertRaises(HTTPError) as error:urlopen(Request(self.base+'/api/jobs',headers=headers))

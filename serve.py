@@ -18,7 +18,7 @@ from urllib.parse import parse_qs, urlparse
 from import_jobs import ImportJobs, UPLOAD_MEDIA_TYPES
 from subtitle_import import validate_video_url
 from language_tools import LocalTranslator
-from ai_reader import subscription_status, codex_status, ask
+from ai_reader import subscription_status, codex_status, ask, subscription_translate
 
 # Local implementation resource boundaries, not provider limits.
 MAX_UPLOAD = 200 * 1024 * 1024
@@ -208,7 +208,7 @@ class Handler(SimpleHTTPRequestHandler):
                     folder.rmdir()
                     raise
                 return self._json(201, job)
-            limit = 1024 * 1024 if parsed.path in ('/api/translate','/api/ask') else MAX_JSON
+            limit = 1024 * 1024 if parsed.path in ('/api/translate','/api/ask','/api/translate-subscription') else MAX_JSON
             if media != 'application/json' or length < 0 or length > limit:
                 return self._json(400, {'error': 'Use a small JSON request'})
             body = self.rfile.read(length)
@@ -219,7 +219,11 @@ class Handler(SimpleHTTPRequestHandler):
                 if not isinstance(data.get('allow_download', False), bool): raise ValueError('allow_download must be boolean')
                 translated = self.server.translator.translate(data.get('source'), data.get('target'), data.get('segments'), data.get('allow_download', False))
                 return self._json(200, {'translations': translated})
+            if parsed.path == '/api/translate-subscription':
+                if data.get('consent') is not True: raise ValueError('Explicit subscription data/usage consent is required')
+                return self._json(200, {'translations':subscription_translate(data.get('source'),data.get('target'),data.get('segments'),data.get('provider','codex'))})
             if parsed.path == '/api/ask':
+                if data.get('consent') is not True: raise ValueError('Explicit subscription data/usage consent is required')
                 return self._json(200, ask(data.get('question'), data.get('language'), data.get('segments'), data.get('provider', 'codex')))
             if parsed.path == '/api/jobs':
                 url = data.get('url')
