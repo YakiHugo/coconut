@@ -50,3 +50,16 @@ A later real-browser export attempt timed out waiting for the download event; no
 ## Source playback and storage-conflict regressions
 
 Local uploaded-media endpoints now support GET/HEAD and single byte ranges. Tests cover invalid ranges, subtitles, remote URL jobs, incomplete jobs, missing files, path confinement and symlinks. DOM tests verify that playback is enabled only after the local worker health check, a timestamp seeks the media, and note selection does not reload the player. Actual browser codec playback is still unverified in this environment. Stale-tab storage writes are detected and paused instead of replacing newer data.
+
+## Reader recovery fixes — 2026-10-02
+
+Four additional DOM regressions were first run against the preceding code and failed at the behavioral assertions, then passed after the fixes:
+
+- A source-link dialog remains bound to its original document if an asynchronous import makes another document active.
+- Importing a document clears an earlier search filter so its content is visible.
+- Backup uses a connected download link, and its generated JSON restores corrected text, original text, notes, timestamps and provenance.
+- Object-URL creation failure leaves saved data unchanged and reports a retryable failure instead of throwing silently.
+
+The browser message now says that a download was requested and asks the user to check its download record. It does not claim the file was saved to disk. The transient link is removed and the object URL released after a grace period. These are DOM and generated-payload checks, not actual browser-to-disk or picker verification. The earlier browser acceptance limitations remain.
+
+Validation at this change: 18 JavaScript/DOM tests and 46 Python tests passed locally. No GitHub test workflow has been enabled.
