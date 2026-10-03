@@ -163,6 +163,7 @@ function render() {
 	} else if (!currentPlayer || currentPlayer.getAttribute("src") !== mediaPath) {
 		const player = el(doc.source_media.kind, "source-player");
 		player.controls = true;
+		player.ontimeupdate = highlightPlayback;
 		player.preload = "metadata";
 		player.src = mediaPath;
 		player.setAttribute("aria-label", "原始音视频");
@@ -172,6 +173,7 @@ function render() {
 		mediaHost.replaceChildren(player);
 		mediaHost.hidden = false;
 	}
+	$("locate-playback").hidden = !mediaPath;
 	$("title").textContent = doc.title;
 	$("subtitle").textContent =
 		doc.segments.length +
@@ -184,8 +186,7 @@ function render() {
 	$("provenance").textContent = provenanceText + (provenance.model ? " · " + provenance.model : "") + " · 请回听核对专有名词与重要信息" + (provenance.alignment_warning ? " · 时间对齐降级：" + provenance.alignment_warning : "");
 	$("count").textContent = "书架 / " + doc.title;
 	const query = $("search").value.trim().toLocaleLowerCase();
-	const filtered = doc.segments.filter((s) => (!notesOnly || Boolean(doc.notes[s.id])) &&
-		[s.text, s.speaker || "", doc.notes[s.id] || ""].join(" ").toLocaleLowerCase().includes(query));
+	const filtered = doc.segments.filter(s=>Coconut.matchesSegment(s,doc,query,notesOnly));
 	const currentNote = filtered.slice(0, currentLimit).find((segment) => segment.id === selected);
 	if (!currentNote) selected = null;
 	$("notes-panel").hidden = !selected;
@@ -213,14 +214,7 @@ function render() {
 		row.tabIndex = -1;
 		const meta = el("div", "time");
 		const href = Coconut.source(doc.source_url, s.start);
-		if (href) {
-			const a = el("a", "", Coconut.time(s.start));
-			a.href = href;
-			a.target = "_blank";
-			a.rel = "noopener noreferrer";
-			a.title = "回到原视频此刻";
-			meta.append(a);
-		} else if (mediaPath) {
+		if (mediaPath) {
 			const seek = el("button", "", Coconut.time(s.start));
 			seek.title = "回听本地原文件此刻";
 			seek.onclick = () => {
@@ -230,10 +224,15 @@ function render() {
 				player.play().catch(() => notice("请点击播放器开始播放，再按时间戳定位。"));
 			};
 			meta.append(seek);
-		} else meta.textContent = Coconut.time(s.start);
+			if (href) { const external = el("a", "original-source", "原站"); external.href=href; external.target="_blank"; external.rel="noopener noreferrer"; meta.append(external); }
+		} else if (href) {
+			const a = el("a", "", Coconut.time(s.start)); a.href=href; a.target="_blank"; a.rel="noopener noreferrer"; a.title="回到原视频此刻"; meta.append(a);
+		} else meta.textContent=Coconut.time(s.start);
 		const body = el("div");
 		if (s.speaker) body.append(el("p", "speaker", s.speaker));
 		body.append(el("p", "words", s.text));
+        const translated=s.translations?.[doc.translation_view];
+        if(translated) body.append(el("p", "translation"+(translated.source_text!==s.text?" stale":""), translated.source_text===s.text ? translated.text : "原文已修正，此译文需要重新生成"));
 		const edit = el("button", "", "修正文字");
 		edit.onclick = () => {
 			editingTarget = { documentKey: doc.key, segmentId: s.id };
@@ -276,7 +275,17 @@ function render() {
 		};
 		$("transcript").append(more);
 	}
+	window.dispatchEvent(new Event("coconut-render"));
 }
+function playbackSegment() {
+ const player=$("source-media").querySelector("audio,video");
+ return player && active()?.segments.findLast(s=>s.start<=player.currentTime && s.end>=player.currentTime);
+}
+function highlightPlayback() {
+ const segment=playbackSegment();
+ for(const row of $("transcript").querySelectorAll(".segment")) row.classList.toggle("playing",row.dataset.segmentId===segment?.id);
+}
+$("locate-playback").onclick=()=>{const segment=playbackSegment();if(segment){goToSegment(segment.id);highlightPlayback();}};
 $("add-content").onclick = () => { showWorkspace("add"); $("import").focus(); };
 $("back-reading").onclick = () => showWorkspace("read");
 $("show-jobs").onclick = () => { showWorkspace("add"); $("jobs-heading").scrollIntoView?.(); };

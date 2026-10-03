@@ -575,3 +575,17 @@ main, .shell > aside, #reader-workspace, .segment > div { min-width: 0; }
  #notes-panel textarea { height: 100px; }
  .import-heading { display: flex; flex-wrap: wrap; }
 }
+
+.segment.playing { background: #e7f0dc; border-left: 3px solid #607c44; }
+.original-source { display: block; font-size: 12px; margin-top: 8px; }
+
+#language-panel { margin: 20px 0; padding: 18px; border: 1px solid #d9e1d2; border-radius: 12px; }
+#language-panel summary { cursor:pointer; font-weight:600; }
+#language-panel label { display:block; margin:12px 0; }
+#language-panel textarea { width:100%; box-sizing:border-box; font:inherit; }
+.language-controls { display:flex; flex-wrap:wrap; gap:20px; }
+.language-controls select { margin-left:8px; padding:8px; font:inherit; }
+.translation { padding:12px; background:#f1f4eb; color:#35523b; line-height:1.7; }
+.translation.stale { color:#845d20; }
+.ai-answer { white-space:pre-wrap; line-height:1.7; border-top:1px solid #d9e1d2; padding:16px 0; }
+#ai-answers button { margin:4px; }
