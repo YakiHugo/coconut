@@ -1,6 +1,7 @@
 "use strict";
 const languageNames={en:"English",zh:"中文",ja:"日本語",ko:"한국어",fr:"Français",de:"Deutsch",es:"Español"};
 let languageCheckSequence=0;
+let subscriptionSelectionSignature="";
 let aiStatuses={}, languageReady=false, aiReady=false, translating=false, stopTranslation=false, asking=false, subscriptionTranslating=false, stopSubscription=false, subscriptionScope=null, languageDocument=null;
 for(const [code,name] of Object.entries(languageNames))for(const id of ["translation-source","translation-target","translation-view"]){const option=document.createElement('option');option.value=code;option.textContent=id==='translation-view'?name+' + 原文':name;document.getElementById(id).append(option);}
 document.getElementById('translation-target').value='zh';
@@ -17,7 +18,17 @@ function renderLanguage(){
  $('ask-ai').disabled=!aiReady||asking||subscriptionTranslating;
  $('subscription-translate').disabled=!aiReady||asking||translating||subscriptionTranslating;
  const matches=doc.segments.filter(s=>Coconut.matchesSegment(s,doc,$('search').value,notesOnly));
- $('subscription-translation-scope').textContent=subscriptionTranslating?`正在用 ${subscriptionScope?.provider==='codex'?'ChatGPT/Codex':'Claude'} 把 ${languageNames[subscriptionScope?.source]||''} → ${languageNames[subscriptionScope?.target]||''}：启动时筛选的 ${subscriptionScope?.total||0} 段；修改筛选不改变这个已确认范围，取消勾选或停止按钮会停止后续批次。`:`订阅翻译将处理当前筛选的 ${matches.length} 段，最多 ${Math.ceil(matches.length/32)} 次模型请求；会消耗所选账户的订阅额度。可随时停止后续批次，已完成的保留。真实订阅翻译质量尚未验收。`;
+ const signature=JSON.stringify([doc.key,$('translation-source').value,$('translation-target').value,$('ai-provider').value,matches.map(s=>s.id)]);
+ if(!subscriptionTranslating&&subscriptionSelectionSignature!==signature){subscriptionSelectionSignature=signature;$('ai-consent').checked=false;}
+ if(subscriptionTranslating){
+  $('subscription-translation-scope').textContent=`正在用 ${subscriptionScope.provider==='codex'?'ChatGPT/Codex':'Claude'} 把 ${languageNames[subscriptionScope.source]||''} → ${languageNames[subscriptionScope.target]||''}：确认筛选的 ${subscriptionScope.selected} 段内，翻译 ${subscriptionScope.total} 段，共 ${subscriptionScope.requests} 次请求；已译的筛选片段也可能重复发送作上下文。不发送筛选外内容；修改筛选不扩大本次范围。`;
+ }else{
+  try{
+   const plan=Coconut.subscriptionPlan(doc,matches.map(s=>s.id),$('translation-source').value,$('translation-target').value,($('ai-provider').value==='codex'?'chatgpt':'claude')+'_subscription_translation');
+   $('subscription-translation-scope').textContent=`当前筛选 ${plan.selected} 段：待翻译 ${plan.total} 段，计划 ${plan.windows.length} 次模型请求，共发送 ${plan.sent} 段所选原文；已译的所选片段也可能重复发送作上下文。不发送未选片段；筛选断点的上下文不可用。会使用订阅额度；可停止后续批次，真实订阅翻译质量尚未验收。`;
+  }catch(error){$('subscription-translation-scope').textContent=error.message;$('subscription-translate').disabled=true;}
+ }
+
  const host=$('ai-answers');host.replaceChildren();
  for(const answer of (doc.ai_answers||[]).slice().reverse()){
   const section=el('section','ai-answer');
@@ -53,13 +64,14 @@ window.addEventListener('coconut-worker-disconnected',()=>{
  renderLanguage();
 });
 window.addEventListener('coconut-render',renderLanguage);
+for(const id of ['translation-source','translation-target'])$(id).onchange=()=>{$('ai-consent').checked=false;renderLanguage();};
 $('translation-view').onchange=()=>{if(active()){active().translation_view=$('translation-view').value;save();render();}};
 $('stop-translation').onclick=()=>{stopTranslation=true;$('language-status').textContent='正在完成当前批次；已完成译文会保留，下次可以继续。';};
 $('translate-document').onclick=async()=>{
  const doc=active(),source=$('translation-source').value,target=$('translation-target').value;
  if(translating||subscriptionTranslating){notice('已有翻译正在运行，请先停止或等待完成');return;}
  if(!doc||!source||source===target){notice('请选择不同的原文和翻译语言');return;}
- const key=doc.key;const pending=doc.segments.filter(s=>!(s.translations?.[target]?.source_text===s.text&&s.translations[target].source_language===source));
+ const key=doc.key;const pending=doc.segments.filter(s=>!(Coconut.translationCurrent(s,doc,s.translations?.[target])&&s.translations[target].source_language===source));
  if(!pending.length){doc.translation_view=target;save();render();return;}
  translating=true;stopTranslation=false;$('stop-translation').hidden=false;renderLanguage();let completed=0;
  try{
@@ -104,22 +116,27 @@ $('subscription-translate').onclick=async()=>{
  if(!source||source===target){notice('请选择不同的原文和翻译语言');return;}
  const providerName=(provider==='codex'?'chatgpt':'claude')+'_subscription_translation';
  const selectedCues=doc.segments.filter(s=>Coconut.matchesSegment(s,doc,$('search').value,notesOnly));
- const pending=selectedCues.filter(s=>!(s.translations?.[target]?.source_text===s.text&&s.translations[target].source_language===source&&s.translations[target].provider===providerName)).map(s=>({id:s.id,text:s.text}));
- if(!pending.length){notice('当前筛选没有需要订阅翻译的新片段');return;}
- const key=doc.key;subscriptionScope={key,total:pending.length,source,target,provider};subscriptionTranslating=true;stopSubscription=false;$('stop-subscription-translation').hidden=false;renderLanguage();let completed=0;
+ let plan;
+ try{plan=Coconut.subscriptionPlan(doc,selectedCues.map(s=>s.id),source,target,providerName);}catch(error){notice(error.message);return;}
+ if(!plan.total){notice('当前筛选没有需要订阅翻译的新片段');return;}
+ const key=doc.key;subscriptionScope={key,total:plan.total,selected:plan.selected,requests:plan.windows.length,source,target,provider};subscriptionTranslating=true;stopSubscription=false;$('stop-subscription-translation').hidden=false;renderLanguage();let completed=0;
  try{
-  for(let index=0;index<pending.length&&!stopSubscription&&$('ai-consent').checked;index+=32){
-   const batch=pending.slice(index,index+32);const before=state.documents.find(d=>d.key===key);
-   if(!before||batch.some(s=>before.segments.find(current=>current.id===s.id)?.text!==s.text))throw new Error('后续片段原文已修改，未发出本批模型请求，请重新开始');
-   $('ai-progress').textContent=`订阅翻译中：${completed}/${pending.length} 段；不购买额度，不回退到API。`;
-   const result=await languageApi('translate-subscription',{source,target,provider,segments:batch,consent:true});
-   if(!Array.isArray(result.translations)||result.translations.length!==batch.length||result.translations.some((t,i)=>t.id!==batch[i].id||t.source_text!==batch[i].text||typeof t.text!=='string'||!t.text.trim()))throw new Error('订阅结果与片段未完整对应，本批不保存');
+  for(const window of plan.windows){
+   if(stopSubscription||!$('ai-consent').checked)break;
+   const batch=window.segments;const before=state.documents.find(d=>d.key===key);
+   if(!Coconut.sameCueSnapshot(before,window.snapshot))throw new Error('原文或所选上下文已修改，未发出本批模型请求，请重新开始');
+   $('ai-progress').textContent=`订阅翻译中：${completed}/${plan.total} 段；上下文仅来自确认的筛选，不购买额度，不回退到API。`;
+   const result=await languageApi('translate-subscription',{source,target,provider,segments:batch,context:window.context,consent:true});
+   if(!Array.isArray(result.translations)||result.translations.length!==batch.length||result.translations.some((t,i)=>t.id!==batch[i].id||t.source_text!==batch[i].text||typeof t.text!=='string'||!t.text.trim()||t.text.length>12000))throw new Error('订阅结果与目标片段未完整对应，本批不保存');
    const destination=state.documents.find(d=>d.key===key);if(!destination)throw new Error('原文字稿已关闭');
-   if(batch.some(s=>destination.segments.find(current=>current.id===s.id)?.text!==s.text))throw new Error('本批原文已修改，为避免错配，本批全部不保存');
-   for(const item of result.translations){const segment=destination.segments.find(s=>s.id===item.id);segment.translations||={};segment.translations[target]={text:item.text,source_text:item.source_text,source_language:source,provider:providerName};}
+   if(!Coconut.sameCueSnapshot(destination,window.snapshot))throw new Error('本批原文或上下文已修改，为避免错配，本批全部不保存');
+   const contextId=crypto.randomUUID();destination.translation_contexts||=Object.create(null);destination.translation_contexts[contextId]=window.snapshot;
+   for(const item of result.translations){const segment=destination.segments.find(s=>s.id===item.id);segment.translations||={};segment.translations[target]={text:item.text,source_text:item.source_text,source_language:source,provider:providerName,context_id:contextId};}
+   destination.translation_contexts=Coconut.cleanContexts(destination.translation_contexts,destination.segments);
    completed+=batch.length;destination.translation_view=target;if(!save())throw new Error('本批译文暂留在此页面，浏览器保存未成功，请立即导出备份；后续请求已停止');if(active()?.key===key)render();
   }
-  $('ai-progress').textContent=`${completed<pending.length?'已停止后续批次':'本次订阅翻译完成'}：保存 ${completed} 段。下次需重新确认发送与额度，才会继续剩余部分。翻译仅关联原字幕时间范围，不是译文逐字对齐。`;
+  $('ai-progress').textContent=`${completed<plan.total?'已停止后续批次':'本次订阅翻译完成'}：保存 ${completed} 段。下次需重新确认发送与额度，才会继续剩余部分。翻译仅关联原字幕时间范围，不是译文逐字对齐。`;
+
  }catch(error){$('ai-progress').textContent='订阅翻译暂停：'+error.message+'。已完成结果仍在当前页；校验失败的批次不会覆盖旧译文。请检查保存提示并备份。';}
  finally{subscriptionTranslating=false;subscriptionScope=null;$('ai-consent').checked=false;$('stop-subscription-translation').hidden=true;if(active()?.key===key)render();renderLanguage();}
 };
