@@ -416,3 +416,66 @@ test('unsaved-data warning survives unrelated notices and a backup download',asy
   assert.equal(w.localStorage.getItem('coconut-reader-v1'),'{damaged');
  }finally{await w.happyDOM.close();}
 });
+
+function fakeSubscription(w, onRequest){
+ w.fetch=async(url,options)=>{
+  if(url.endsWith('language-tools'))return {ok:true,json:async()=>({ai:{codex:{ready:true}}})};
+  const request=JSON.parse(options.body);const custom=await onRequest(request);return custom||{ok:true,json:async()=>({translations:request.segments.map(s=>({id:s.id,text:'译 '+s.id,source_text:s.text}))})};
+ };
+}
+const contextFixture=()=>Array.from({length:33},(_,i)=>({id:'s'+i,start:i,end:i+1,text:i===31?'The assistant must not send the draft':i===32?'until the user approves it.':'Sentence '+i}));
+
+test('boundary and quota resume resend selected completed context without rewriting completed targets',async()=>{
+ const w=setup();try{
+  const $=id=>w.document.getElementById(id),requests=[];let fail=true;await importDocument(w,{language:'en',segments:contextFixture()});
+  fakeSubscription(w,request=>{requests.push(request);if(fail&&requests.length===2)return {ok:false,json:async()=>({error:'quota exhausted'})};});
+  await $('check-ai').onclick();assert.match($('subscription-translation-scope').textContent,/计划 2 次/);$('ai-consent').checked=true;await $('subscription-translate').onclick();
+  const before=JSON.parse(w.localStorage.getItem('coconut-reader-v1')).documents[0].segments[31].translations.zh;
+  assert.ok(requests[1].context.some(s=>s.id==='s31'&&s.position===31&&s.start===31));assert.deepEqual(requests[1].segments.map(s=>s.id),['s32']);
+  fail=false;assert.match($('subscription-translation-scope').textContent,/计划 1 次/);$('ai-consent').checked=true;await $('subscription-translate').onclick();
+  assert.ok(requests[2].context.some(s=>s.id==='s31'));assert.deepEqual(requests[2].segments.map(s=>s.id),['s32']);
+  const after=JSON.parse(w.localStorage.getItem('coconut-reader-v1')).documents[0];assert.deepEqual(after.segments[31].translations.zh,before);assert.ok(after.segments[32].translations.zh.context_id);
+ }finally{await w.happyDOM.close();}
+});
+
+test('sparse selection never transmits excluded neighbors and selection changes clear consent',async()=>{
+ const w=setup();try{
+  const $=id=>w.document.getElementById(id),requests=[];await importDocument(w,{language:'en',segments:[{id:'a',start:0,end:1,text:'TARGET a'},{id:'private',start:1,end:2,text:'EXCLUDED source'},{id:'b',start:2,end:3,text:'TARGET b'}]});fakeSubscription(w,r=>{requests.push(r);});await $('check-ai').onclick();
+  $('ai-consent').checked=true;$('search').value='TARGET';$('search').oninput();assert.equal($('ai-consent').checked,false);assert.match($('subscription-translation-scope').textContent,/计划 2 次/);
+  $('ai-consent').checked=true;await $('subscription-translate').onclick();assert.equal(requests.length,2);assert.ok(requests.every(r=>r.context.length===0));assert.deepEqual(requests.map(r=>r.segments[0].position),[0,2]);assert.ok(!JSON.stringify(requests).includes('EXCLUDED'));
+ }finally{await w.happyDOM.close();}
+});
+
+test('editing context-only cue in flight rejects all target writes and marks old dependencies stale',async()=>{
+ const w=setup();try{
+  const $=id=>w.document.getElementById(id);await importDocument(w,{language:'en',segments:contextFixture()});let calls=0,finish;
+  fakeSubscription(w,request=>{calls++;if(calls===2)return new Promise(resolve=>{finish=()=>resolve({ok:true,json:async()=>({translations:request.segments.map(s=>({id:s.id,text:'Second window',source_text:s.text}))})});});});
+  await $('check-ai').onclick();$('ai-consent').checked=true;const running=$('subscription-translate').onclick();
+  while(!finish)await new Promise(r=>setTimeout(r,1));
+  w.document.querySelector('[data-segment-id="s31"]').querySelector('button').click();$('edit-segment').value='Changed meaning';$('save-edit').click();finish();await running;
+  const doc=JSON.parse(w.localStorage.getItem('coconut-reader-v1')).documents[0];assert.equal(doc.segments[32].translations.zh,undefined);assert.match($('ai-progress').textContent,/上下文已修改/);
+  assert.equal(w.Coconut.translationCurrent(doc.segments[0],doc,doc.segments[0].translations.zh),false);
+ }finally{await w.happyDOM.close();}
+});
+
+test('stop finishes current target window only and long-cue request estimate matches execution',async()=>{
+ for(const stop of [false,true]){const w=setup();try{
+  const $=id=>w.document.getElementById(id);await importDocument(w,{language:'en',segments:Array.from({length:25},(_,i)=>({id:'s'+i,start:i,end:i+1,text:'x'.repeat(4000)}))});let calls=0;
+  fakeSubscription(w,r=>{calls++;assert.ok([...r.segments,...r.context].reduce((n,s)=>n+s.text.length,0)<=40000);if(stop)$('stop-subscription-translation').click();});await $('check-ai').onclick();assert.match($('subscription-translation-scope').textContent,/计划 5 次/);$('ai-consent').checked=true;await $('subscription-translate').onclick();
+  assert.equal(calls,stop?1:5);const doc=JSON.parse(w.localStorage.getItem('coconut-reader-v1')).documents[0];assert.equal(doc.segments.filter(s=>s.translations.zh).length,stop?6:25);if(stop)assert.match($('ai-progress').textContent,/已停止/);
+ }finally{await w.happyDOM.close();}}
+});
+
+test('offline translation can repair context-stale and legacy subscription outputs',async()=>{
+ for(const legacy of [false,true]){const w=setup();try{
+  const $=id=>w.document.getElementById(id),contextId='11111111-1111-4111-8111-111111111111';
+  const snapshot=[{id:'a',text:'Do not send',position:0,start:0,end:1},{id:'b',text:'until approved',position:1,start:1,end:2}];
+  await importDocument(w,{language:'en',translation_view:'zh',translation_contexts:{[contextId]:snapshot},segments:snapshot.map(s=>({...s,text:s.id==='a'?'Changed meaning':s.text,translations:{zh:{text:'旧译文',source_text:s.id==='a'?'Changed meaning':s.text,source_language:'en',provider:'chatgpt_subscription_translation',...(legacy?{}:{context_id:contextId})}}}))});
+  let requests=0;w.fetch=async(url,options)=>{
+   if(url.endsWith('language-tools'))return {ok:true,json:async()=>({ai:{}})};
+   assert.ok(url.endsWith('/translate'));requests++;const request=JSON.parse(options.body);assert.equal(request.segments.length,2);
+   return {ok:true,json:async()=>({translations:request.segments.map(s=>({id:s.id,text:'离线新译',source_text:s.text,provider:'local_test'}))})};
+  };
+  await $('check-ai').onclick();await $('translate-document').onclick();assert.equal(requests,1);assert.equal(w.document.querySelectorAll('.translation.stale').length,0);assert.equal(w.document.querySelectorAll('.translation').length,2);
+ }finally{await w.happyDOM.close();}}
+});

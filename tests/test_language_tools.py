@@ -104,3 +104,51 @@ class SubscriptionTranslationTests(unittest.TestCase):
         with patch('ai_reader.codex_answer',side_effect=ValueError('quota exhausted')) as call,patch('ai_reader.subscription_status') as alternate:
             with self.assertRaisesRegex(ValueError,'quota exhausted'):ai_reader.subscription_translate('en','zh',[{'id':'a','text':'Source'}])
             call.assert_called_once();alternate.assert_not_called()
+
+class SubscriptionContextTests(unittest.TestCase):
+    @staticmethod
+    def cue(identifier, position, text='Source'):
+        return {'id':identifier,'text':text,'position':position,'start':float(position),'end':float(position+1)}
+
+    def test_prompt_has_separate_target_ids_and_ordered_read_only_context(self):
+        targets=[self.cue('b',1,'until approved')]
+        context=[self.cue('a',0,'Do not send')]
+        with patch('ai_reader.codex_answer',return_value={'translations':[{'id':'b','text':'获得批准之前'}]}) as provider:
+            result=ai_reader.subscription_translate('en','zh',targets,context=context)
+        payload,schema,instruction=provider.call_args.args
+        payload=json.loads(payload)
+        self.assertEqual(payload['target_ids'],['b'])
+        self.assertEqual(payload['cues'],context+targets)
+        self.assertEqual(schema['properties']['translations']['items']['properties']['id']['enum'],['b'])
+        self.assertEqual([r['id'] for r in result],['b'])
+        self.assertIn('context-only IDs must never',instruction)
+        self.assertIn('negation',instruction)
+
+    def test_context_only_response_and_invalid_context_are_rejected_before_writes(self):
+        target=[self.cue('b',1)]
+        context=[self.cue('a',0)]
+        with patch('ai_reader.codex_answer',return_value={'translations':[{'id':'a','text':'Wrong target'}]}):
+            with self.assertRaises(ValueError):ai_reader.subscription_translate('en','zh',target,context=context)
+        invalid=[None, [{**context[0],'position':1}], [{**context[0],'start':float('nan')}],
+                 [{**context[0],'position':False}], [{'id':'b','text':'duplicate','position':0,'start':0,'end':1}],
+                 [self.cue('x'+str(i),i+2,'x'*4000) for i in range(11)]]
+        # None is the explicit legacy no-context path; other malformed context is never forwarded.
+        for value in invalid[1:]:
+            with self.subTest(context=value),patch('ai_reader.codex_answer') as provider:
+                with self.assertRaises(ValueError):ai_reader.subscription_translate('en','zh',target,context=value)
+                provider.assert_not_called()
+        with patch('ai_reader.codex_answer') as provider:
+            with self.assertRaises(ValueError):ai_reader.subscription_translate('en','zh',[self.cue('b',2),self.cue('a',1)],context=[])
+            provider.assert_not_called()
+
+    def test_combined_context_and_targets_share_the_existing_character_cap(self):
+        targets=[self.cue('t'+str(i),i,'x'*4000) for i in range(6)]
+        context=[self.cue('c'+str(i),i+6,'y'*4000) for i in range(4)]
+        result={'translations':[{'id':s['id'],'text':'译文'} for s in targets]}
+        with patch('ai_reader.codex_answer',return_value=result) as provider:
+            ai_reader.subscription_translate('en','zh',targets,context=context)
+            provider.assert_called_once()
+        with patch('ai_reader.codex_answer') as provider:
+            with self.assertRaisesRegex(ValueError,'too large'):
+                ai_reader.subscription_translate('en','zh',targets,context=context+[self.cue('extra',10)])
+            provider.assert_not_called()

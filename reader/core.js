@@ -58,13 +58,60 @@
  for(const language of ["en","zh","ja","ko","fr","de","es"]) {
   const item=value[language];
   if(item && typeof item.text==="string" && item.text.length<=12000 && typeof item.source_text==="string" && item.source_text.length<=4000 && typeof item.provider==="string")
-   output[language]={text:item.text,source_text:item.source_text,provider:item.provider.slice(0,100),source_language:typeof item.source_language==="string"?item.source_language:""};
+   output[language]={text:item.text,source_text:item.source_text,provider:item.provider.slice(0,100),source_language:typeof item.source_language==="string"?item.source_language:"",...(typeof item.context_id==="string"&&/^[a-f0-9-]{36}$/.test(item.context_id)?{context_id:item.context_id}:{})};
  }
  return output;
 }
+ function sameCueSnapshot(doc, cues) {
+  return Boolean(doc) && cues.every(c=>{const current=doc.segments[c.position];return current?.id===c.id && current.text===c.text && current.start===c.start && current.end===c.end;});
+ }
+ function translationCurrent(segment, doc, item) {
+  if(!item || item.source_text!==segment.text)return false;
+  if(!item.context_id)return !item.provider?.endsWith('_subscription_translation');
+  const snapshot=doc.translation_contexts?.[item.context_id];
+  return Array.isArray(snapshot) && snapshot.some(c=>c.id===segment.id) && sameCueSnapshot(doc,snapshot);
+ }
+ function cleanContexts(value, segments) {
+  const output=Object.create(null), referenced=new Set(segments.flatMap(s=>Object.values(s.translations).map(t=>t.context_id).filter(Boolean)));
+  if(!value || typeof value!=='object' || Array.isArray(value))return output;
+  for(const key of referenced){
+   if(!Object.hasOwn(value,key))continue;
+   const cues=value[key];let prior=-1,chars=0;const ids=new Set();
+   if(!Array.isArray(cues)||!cues.length||cues.length>36)continue;
+   const valid=cues.every(c=>{
+    if(!c||typeof c.id!=='string'||c.id.length<1||c.id.length>200||ids.has(c.id)||typeof c.text!=='string'||!c.text.length||c.text.length>4000||!Number.isSafeInteger(c.position)||c.position<0||c.position<=prior||!Number.isFinite(c.start)||!Number.isFinite(c.end)||c.start<0||c.end<c.start)return false;
+    ids.add(c.id);prior=c.position;chars+=c.text.length;return true;
+   });
+   if(valid&&chars<=40000)output[key]=cues.map(c=>({id:c.id,text:c.text,position:c.position,start:c.start,end:c.end}));
+  }
+  return output;
+ }
+ function subscriptionPlan(doc, selectedIds, source, target, provider) {
+  const selected=new Set(selectedIds),runs=[];
+  for(let position=0;position<doc.segments.length;position++){
+   const s=doc.segments[position];if(!selected.has(s.id))continue;
+   if(!s.id.length||s.id.length>200||!s.text.length||s.text.length>4000)throw new Error('订阅翻译需要每段1–4000字符、片段ID不超过200字符，请先缩小或修正内容');
+   const cue={id:s.id,text:s.text,position,start:s.start,end:s.end};
+   if(!runs.length||runs.at(-1).at(-1).position!==position-1)runs.push([]);
+   runs.at(-1).push(cue);
+  }
+  const windows=[];
+  for(const run of runs){
+   for(let start=0;start<run.length;){
+    let end=start,chars=0;
+    while(end<run.length&&end-start<32&&chars+run[end].text.length<=24000){chars+=run[end].text.length;end++;}
+    const segments=run.slice(start,end).filter(c=>{const s=doc.segments[c.position],t=s.translations?.[target];return !(translationCurrent(s,doc,t)&&t.source_language===source&&t.provider===provider);});
+    const targetIds=new Set(segments.map(c=>c.id));
+    const snapshot=run.slice(Math.max(0,start-2),Math.min(run.length,end+2));
+    if(segments.length)windows.push({segments,context:snapshot.filter(c=>!targetIds.has(c.id)),snapshot});
+    start=end;
+   }
+  }
+  return {windows,selected:runs.flat().length,total:windows.reduce((n,w)=>n+w.segments.length,0),sent:new Set(windows.flatMap(w=>w.snapshot.map(c=>c.id))).size};
+ }
  function matchesSegment(segment, doc, query, notesOnly=false) {
   return (!notesOnly || Boolean(doc.notes?.[segment.id])) &&
-   [segment.text,segment.speaker||"",doc.notes?.[segment.id]||"",...Object.values(segment.translations||{}).filter(t=>t.source_text===segment.text).map(t=>t.text)].join(" ").toLocaleLowerCase().includes(query.trim().toLocaleLowerCase());
+   [segment.text,segment.speaker||"",doc.notes?.[segment.id]||"",...Object.values(segment.translations||{}).filter(t=>translationCurrent(segment,doc,t)).map(t=>t.text)].join(" ").toLocaleLowerCase().includes(query.trim().toLocaleLowerCase());
  }
 	function validate(data) {
 		if (
@@ -137,6 +184,7 @@
 			title: typeof data.title === "string" ? data.title : "未命名文字稿",
 			source_url: typeof data.source_url === "string" ? data.source_url : "",
 			segments,
+            translation_contexts: cleanContexts(data.translation_contexts, segments),
 		};
 	}
 	function seconds(value) {
@@ -189,7 +237,7 @@
 			segments,
 		});
 	}
-	const api = { time, source, media, validate, parse, matchesSegment };
+	const api = { time, source, media, validate, parse, matchesSegment, translationCurrent, sameCueSnapshot, subscriptionPlan, cleanContexts };
 	if (typeof module !== "undefined" && module.exports) module.exports = api;
 	else root.Coconut = api;
 })(typeof window !== "undefined" ? window : globalThis);
