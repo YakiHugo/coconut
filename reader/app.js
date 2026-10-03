@@ -12,6 +12,10 @@ let currentLimit = 100;
 let storageBlocked = false;
 let lastSavedValue = null;
 let mediaWorkerReady = false;
+function saveWarning(text = "") {
+ $("save-status").hidden = !text;
+ $("save-status").textContent = text;
+}
 function notice(text) {
 	$("notice").hidden = !text;
 	$("notice").textContent = text;
@@ -36,12 +40,14 @@ try {
 	}
 } catch {
 	storageBlocked = true;
+ saveWarning("自动保存已暂停，原有数据未覆盖。关闭前请逐份导出本页修改过的文字稿与笔记。");
 	notice(
 		"上次保存的数据无法读取，已停止写入以保留原数据。本次内容可继续阅读，请导出备份后再关闭页面。",
 	);
 }
 function save() {
 	if (storageBlocked) {
+  saveWarning("自动保存已暂停，原有数据未覆盖。关闭前请逐份导出本页修改过的文字稿与笔记。");
 		notice(
 			"自动保存已暂停，原有数据未覆盖。请导出本次文字稿与笔记后再关闭页面。",
 		);
@@ -50,14 +56,17 @@ function save() {
 	try {
 		if (localStorage.getItem(KEY) !== lastSavedValue) {
 			storageBlocked = true;
+   saveWarning("另一个页面更新了书架，本页自动保存已暂停。先逐份导出本页修改，再刷新；否则修改可能丢失。");
 			notice("另一个页面更新了书架，已暂停保存以避免覆盖。请先导出本页修改，再刷新读取最新数据。");
 			return false;
 		}
 		const nextValue = JSON.stringify(state);
 		localStorage.setItem(KEY, nextValue);
 		lastSavedValue = nextValue;
+  saveWarning();
 		return true;
 	} catch {
+  saveWarning("修改尚未保存到浏览器。请逐份导出本页修改过的文字稿与笔记，暂时不要关闭或刷新页面。");
 		notice("浏览器保存空间不足或被禁用；当前内容仍在本页，请及时导出备份。");
 		return false;
 	}
@@ -198,7 +207,8 @@ function render() {
 	$("filter-all").setAttribute("aria-pressed", String(!notesOnly));
 	$("filter-notes").setAttribute("aria-pressed", String(notesOnly));
 	$("note-count").textContent = String(Object.values(doc.notes).filter(Boolean).length);
-	$("search-status").textContent = (query || notesOnly) ? "找到 " + filtered.length + " 个片段" : "共 " + doc.segments.length + " 个片段 · 点时间戳回听原声";
+	const playbackHint = mediaPath ? "点时间戳定位本地原声" : Coconut.source(doc.source_url, 0) ? "点时间戳打开原站；若平台未自动定位，请按显示时间手动跳转" : doc.source_media ? "本地媒体尚未连接；请在保存原任务的电脑启动 Coconut" : "尚未关联音视频；点击「原视频链接」添加来源后可回听";
+ $("search-status").textContent = ((query || notesOnly) ? "找到 " + filtered.length + " 个片段" : "共 " + doc.segments.length + " 个片段") + " · " + playbackHint;
 	$("clear-search").hidden = !query && !notesOnly;
 	const bookmark = doc.segments.find(s => s.id === doc.readingPosition);
 	$("resume").hidden = !bookmark;
@@ -226,7 +236,7 @@ function render() {
 			meta.append(seek);
 			if (href) { const external = el("a", "original-source", "原站"); external.href=href; external.target="_blank"; external.rel="noopener noreferrer"; meta.append(external); }
 		} else if (href) {
-			const a = el("a", "", Coconut.time(s.start)); a.href=href; a.target="_blank"; a.rel="noopener noreferrer"; a.title="回到原视频此刻"; meta.append(a);
+			const a = el("a", "", Coconut.time(s.start)); a.href=href; a.target="_blank"; a.rel="noopener noreferrer"; a.title="打开原视频的时间链接；是否自动定位取决于平台"; meta.append(a);
 		} else meta.textContent=Coconut.time(s.start);
 		const body = el("div");
 		if (s.speaker) body.append(el("p", "speaker", s.speaker));

@@ -1,5 +1,6 @@
 "use strict";
 const languageNames={en:"English",zh:"中文",ja:"日本語",ko:"한국어",fr:"Français",de:"Deutsch",es:"Español"};
+let languageCheckSequence=0;
 let aiStatuses={}, languageReady=false, aiReady=false, translating=false, stopTranslation=false, asking=false, subscriptionTranslating=false, stopSubscription=false, subscriptionScope=null, languageDocument=null;
 for(const [code,name] of Object.entries(languageNames))for(const id of ["translation-source","translation-target","translation-view"]){const option=document.createElement('option');option.value=code;option.textContent=id==='translation-view'?name+' + 原文':name;document.getElementById(id).append(option);}
 document.getElementById('translation-target').value='zh';
@@ -28,14 +29,29 @@ function renderLanguage(){
  }
 }
 async function checkLanguageTools(){
- const checkButton=$('check-ai');if(!checkButton)return;checkButton.disabled=true;
- try{const status=await languageApi('language-tools');if(!checkButton.isConnected)return;languageReady=true;aiStatuses=status.ai||{};aiReady=aiStatuses[$('ai-provider').value]?.ready===true;$('ai-status').textContent=aiStatuses[$('ai-provider').value]?.reason||'认证状态未知';$('language-status').textContent='本地翻译可用；未安装的语言模型需要你允许下载。机器翻译可能有误，原文和时间戳始终保留。';}
- catch{if(!checkButton.isConnected)return;languageReady=false;aiReady=false;$('ai-status').textContent='未连接本地处理服务。公开页面不会替你调用订阅账户，请在本机启动 Coconut。';}
- finally{checkButton.disabled=false;renderLanguage();}
+ const checkButton=$('check-ai');if(!checkButton)return;const sequence=++languageCheckSequence;checkButton.disabled=true;
+ try{const status=await languageApi('language-tools');if(!checkButton.isConnected||sequence!==languageCheckSequence)return;languageReady=true;aiStatuses=status.ai||{};aiReady=aiStatuses[$('ai-provider').value]?.ready===true;$('ai-status').textContent=aiStatuses[$('ai-provider').value]?.reason||'认证状态未知';$('language-status').textContent='本地翻译可用；未安装的语言模型需要你允许下载。机器翻译可能有误，原文和时间戳始终保留。';}
+ catch{if(!checkButton.isConnected||sequence!==languageCheckSequence)return;languageReady=false;aiReady=false;$('ai-status').textContent='未连接本地处理服务。公开页面不会替你调用订阅账户，请在本机启动 Coconut。';}
+ finally{if(sequence===languageCheckSequence){checkButton.disabled=false;renderLanguage();}}
 }
 $('check-ai').onclick=checkLanguageTools;
 $('ai-provider').onchange=()=>{aiReady=aiStatuses[$('ai-provider').value]?.ready===true;$('ai-status').textContent=aiStatuses[$('ai-provider').value]?.reason||'请检查本机订阅连接';$('ai-consent').checked=false;renderLanguage();};
-window.addEventListener('coconut-worker-ready',checkLanguageTools);
+$('language-setup').onclick=()=>{showWorkspace('add');$('local-setup').open=true;$('local-setup').scrollIntoView({behavior:'smooth'});$('local-setup').querySelector('summary').focus();};
+window.addEventListener('coconut-worker-ready',()=>{
+ $('language-prerequisite').textContent='本地服务已连接。订阅功能还需官方 CLI 已安装并登录；确认所选片段及额度后才会发出请求。';
+ $('language-setup').hidden=true;
+ checkLanguageTools();
+});
+window.addEventListener('coconut-worker-disconnected',()=>{
+ languageCheckSequence++;$('check-ai').disabled=true;
+ $('language-prerequisite').textContent='本地服务未连接：先启动 Coconut 并打开本地地址，再检查已登录的官方 CLI；已有译文与笔记仍可阅读。';
+ $('language-setup').hidden=false;
+ languageReady=false;aiReady=false;aiStatuses={};stopTranslation=true;stopSubscription=true;
+ $('ai-consent').checked=false;
+ $('ai-status').textContent='本地服务已断开。连接恢复后重新检查订阅；不会自动重新发送文字。';
+ $('language-status').textContent='本地服务未连接；已有译文仍可阅读与备份。';
+ renderLanguage();
+});
 window.addEventListener('coconut-render',renderLanguage);
 $('translation-view').onchange=()=>{if(active()){active().translation_view=$('translation-view').value;save();render();}};
 $('stop-translation').onclick=()=>{stopTranslation=true;$('language-status').textContent='正在完成当前批次；已完成译文会保留，下次可以继续。';};

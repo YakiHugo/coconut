@@ -217,6 +217,9 @@ def main():
             document["provenance"] = {"kind": "local_asr", "model": args.model, "backend": args.backend,
                                       "language": result.get("language"),
                                       "alignment_warning": result.get("alignment_warning")}
+        # Commit completed caption/ASR work before the optional media stage.
+        # A stop or crash during a large download must not discard the transcript.
+        save_document(document, cached_document)
         if is_url and args.keep_media:
             print('[playback] keeping a local source copy (up to 200 MiB)', file=sys.stderr)
             try:
