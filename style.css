@@ -589,3 +589,11 @@ main, .shell > aside, #reader-workspace, .segment > div { min-width: 0; }
 .translation.stale { color:#845d20; }
 .ai-answer { white-space:pre-wrap; line-height:1.7; border-top:1px solid #d9e1d2; padding:16px 0; }
 #ai-answers button { margin:4px; }
+
+.setup-guide { margin: 20px 0; padding: 18px; border: 1px solid #d9e1d2; border-radius: 12px; }
+.setup-guide summary { cursor: pointer; font-weight: 600; }
+.setup-guide li { margin: 12px 0; line-height: 1.7; }
+.setup-guide pre { padding: 14px; overflow-x: auto; background: #f1f4eb; border-radius: 8px; }
+.setup-guide a { overflow-wrap: anywhere; }
+
+.save-warning { padding: 14px; color: #714819; background: #fff3dc; border: 1px solid #dab77c; border-radius: 8px; line-height: 1.6; }

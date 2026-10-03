@@ -1,6 +1,8 @@
 "use strict";
 let localWorker = false;
 let pollTimer;
+let connectingWorker = false;
+let workerWasConnected = false;
 const jobStatus = {
 	queued: "排队中",
 	running: "处理中",
@@ -36,10 +38,26 @@ function jobButton(text, action) {
 		} catch (error) {
 			notice(error.message);
 		} finally {
-			button.disabled = false;
+			button.disabled = !localWorker;
 		}
 	};
 	return button;
+}
+function disconnectedWorker() {
+ localWorker = false;
+ $("process-url").disabled = true;
+ $("import-media").disabled = true;
+ $("retry-worker").hidden = false;
+ $("retry-worker").textContent = workerWasConnected ? "重新连接" : "重新检查此页面";
+ for (const button of $("jobs").querySelectorAll("button")) button.disabled = true;
+ $("worker-status").textContent = workerWasConnected
+  ? "连接暂时中断 · 下方是上次任务状态，正在尝试重连"
+  : (["localhost", "127.0.0.1", "[::1]"].includes(location.hostname) ? "暂时无法连接本地处理服务" : "当前是阅读预览 · 未连接本地处理服务");
+ $("worker-help").textContent = workerWasConnected
+  ? "请检查运行 Coconut 的终端。已提交的任务可能仍在处理；恢复连接后先查看任务列表，避免重复提交。阅读和笔记仍可使用。"
+  : "此页面可导入文字稿、阅读和记笔记。处理音视频请按下面的步骤在自己的电脑启动，再打开本地地址。";
+ if (!workerWasConnected) $("local-setup").open = true;
+ window.dispatchEvent(new Event("coconut-worker-disconnected"));
 }
 async function refreshJobs() {
 	if (!localWorker) return;
@@ -83,10 +101,14 @@ async function refreshJobs() {
 			$("jobs").append(row);
 		}
 		$("worker-status").textContent = "本地处理服务已连接";
+  return true;
 	} catch {
-		$("worker-status").textContent = "连接暂时中断；任务记录仍在本机";
-	}
-	pollTimer = setTimeout(refreshJobs, document.hidden ? 15000 : 3000);
+		disconnectedWorker();
+  return false;
+ } finally {
+  clearTimeout(pollTimer);
+  pollTimer = setTimeout(() => localWorker ? refreshJobs() : connectWorker(), document.hidden ? 15000 : 3000);
+ }
 }
 $("url-form").onsubmit = async (event) => {
 	event.preventDefault();
@@ -108,9 +130,10 @@ $("url-form").onsubmit = async (event) => {
 		notice("任务已加入。可以离开此页，重新打开后查看处理结果。");
 		await refreshJobs();
 	} catch (error) {
-		notice("无法开始：" + error.message);
+		notice("提交未确认：" + error.message + "。请先查看任务列表，确认是否已创建，避免重复提交。");
+  await refreshJobs();
 	} finally {
-		button.disabled = false;
+		button.disabled = !localWorker;
 	}
 };
 $("import-media").onclick = () => $("media-file").click();
@@ -135,18 +158,25 @@ $("media-file").onchange = async () => {
 		notice("文件已交给你电脑上的本地处理服务，不会上传到云端。");
 		await refreshJobs();
 	} catch (error) {
-		notice("导入失败：" + error.message);
+		notice("导入未确认：" + error.message + "。若已发送文件，请先检查任务列表，避免重复导入。");
+  await refreshJobs();
 	} finally {
 		$("media-file").value = "";
 		$("import-media").disabled = !localWorker;
 	}
 };
 async function connectWorker() {
-	$("retry-worker").disabled = true;
+ if (connectingWorker) return;
+ connectingWorker = true;
+ clearTimeout(pollTimer);
+ $("retry-worker").disabled = true;
 	try {
 		const health = await jobApi("health");
 		if (!health.local_worker) throw new Error("No local worker");
 		localWorker = true;
+  if (!await refreshJobs()) return;
+  workerWasConnected = true;
+  $("local-setup").open = false;
 		$("retry-worker").hidden = true;
 		$("url-form").hidden = false;
 		$("show-jobs").hidden = false;
@@ -156,14 +186,16 @@ async function connectWorker() {
 		$("import-media").disabled = false;
 		$("worker-help").textContent =
 			"优先读取现成字幕；需要转录时使用本地模型。首次使用会下载模型。原始结果保存在本机，不会自动调用付费接口。";
-		await refreshJobs();
-	} catch {
-		$("retry-worker").hidden = false;
-		$("worker-status").textContent = ["localhost", "127.0.0.1", "[::1]"].includes(location.hostname) ? "暂时无法连接本地处理服务" : "当前是阅读预览 · 未连接本地处理服务";
-		$("worker-help").textContent = "此页面可导入文字稿、阅读和记笔记。处理视频链接或本地音视频，请在自己的电脑运行 Coconut 本地服务。";
-	} finally {
-		$("retry-worker").disabled = false;
-	}
+ } catch {
+  disconnectedWorker();
+ } finally {
+  connectingWorker = false;
+  $("retry-worker").disabled = false;
+  if (!localWorker && workerWasConnected) {
+   clearTimeout(pollTimer);
+   pollTimer = setTimeout(connectWorker, document.hidden ? 15000 : 3000);
+  }
+ }
 }
 $("retry-worker").onclick = connectWorker;
 connectWorker();

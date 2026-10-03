@@ -4,13 +4,13 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Coconut · 把听过的，留下来</title>
-<link rel="stylesheet" href="style.css?v=4a7e7f0903">
+<link rel="stylesheet" href="style.css?v=c3dd696f30">
 <script src="core.js?v=559f4af7ee" defer>
 </script>
-<script src="app.js?v=2e8b999d78" defer>
+<script src="app.js?v=0b81891a39" defer>
 </script>
-<script src="language.js?v=1ef6b19cd0" defer></script>
-<script src="jobs.js?v=5cc408e185" defer>
+<script src="language.js?v=fed9b2c2b7" defer></script>
+<script src="jobs.js?v=f2eca42dcf" defer>
 </script>
 </head>
 <body>
@@ -38,6 +38,7 @@
 <button id="export">导出文字稿与笔记</button>
 </div>
 </header>
+<p id="save-status" class="save-warning" role="alert" hidden></p>
 <div id="notice" role="status" hidden>
 </div>
 <section id="add-workspace" class="import-workspace" aria-label="添加与处理内容">
@@ -47,7 +48,7 @@
 <div class="add-actions"><button id="import" class="primary">导入 JSON / SRT / VTT</button><button id="sample">体验示例</button></div>
 <div class="import-heading">
 <h2>从音视频生成文字稿</h2>
-<span id="worker-status">正在检查本地处理服务…</span><button id="retry-worker" hidden>重新连接</button>
+<span id="worker-status" role="status">正在检查本地处理服务…</span><button id="retry-worker" hidden>重新连接</button>
 </div>
 <form id="url-form" hidden>
 <label for="video-url">YouTube / Bilibili / X 视频链接</label>
@@ -71,6 +72,22 @@
 </div>
 </form>
 <p id="worker-help" class="hint">公开页面提供阅读功能。完整转录需在自己的电脑运行 Coconut 本地服务；不会自动调用付费接口。</p>
+<details id="local-setup" class="setup-guide">
+<summary>第一次使用？在自己的电脑启动完整版本</summary>
+<ol>
+<li>macOS / Linux 需要 Python 3.10 或更新版本（已测试 3.12）和 Git。视频下载与提取还需要 <a href="https://ffmpeg.org/download.html" target="_blank" rel="noopener noreferrer">ffmpeg</a>。</li>
+<li>在终端依次运行下面的命令。安装会下载依赖，只在项目目录创建虚拟环境，不修改 shell 配置。
+<pre><code>git clone https://github.com/YakiHugo/coconut.git
+cd coconut
+./install.sh
+./coconut</code></pre></li>
+<li>保持终端运行，在浏览器打开终端显示的本地地址（默认 <a href="http://127.0.0.1:8080/" target="_blank" rel="noopener noreferrer">http://127.0.0.1:8080</a>），然后粘贴视频链接或导入音视频。公开预览不会自动连接这个服务。</li>
+</ol>
+<p class="hint">已经安装？在原项目目录运行 ./coconut 即可。端口被占用时可运行 ./coconut --port 8081，并打开终端显示的新地址。关闭终端会停止处理；重启后可重试中断任务。</p>
+<p class="hint">公开预览和本地地址的书架互不相通。先在原页面导出文字稿与笔记，再到新地址导入；备份不包含视频文件。更换端口也需要这一步。</p>
+<p class="hint">字幕优先；没有匹配字幕时才运行本地识别，首次会下载模型。离线翻译另需语言模型；AI 订阅需本机官方 CLI 已登录，并逐次确认发送文字与使用额度。</p>
+<a href="https://github.com/YakiHugo/coconut#readme" target="_blank" rel="noopener noreferrer">完整安装、翻译与订阅连接说明</a>
+</details>
 <h3 id="jobs-heading" hidden>处理任务</h3><div id="jobs" aria-live="polite">
 </div>
 </section>
@@ -97,12 +114,13 @@
 <p>已有字幕可以直接导入。需要转录视频时，用 Coconut 本地命令生成 JSON 后导入；阅读页暂不提供在线转录。</p>
 </section>
 <details id="language-panel"><summary>翻译与 AI 共读</summary>
+<p id="language-prerequisite" class="hint">需要在本地服务中使用：启动 Coconut → 检查已登录的官方 CLI → 选择片段并确认发送与额度。</p><button id="language-setup" type="button">查看本地启动步骤</button>
 <p class="hint">离线粗译可能误解技术术语，重要内容请对照原文回听。翻译在本机运行；AI 共读仅在你明确点击后把所选文字发送给所选的已登录 AI 订阅，不使用 API Key。</p>
 <div class="language-controls"><label>原文语言<select id="translation-source"><option value="">请选择</option></select></label><label>翻译 / 回答语言<select id="translation-target"></select></label><label>阅读显示<select id="translation-view"><option value="">仅原文</option></select></label></div>
 <label><input id="download-model" type="checkbox">允许首次下载对应离线模型（首次准备可能需要约1 GB磁盘）</label>
 <div><button id="translate-document" disabled>离线粗译全文 / 继续未完成翻译</button><button id="stop-translation" hidden>停止后续批次</button></div>
 <p id="language-status" role="status" class="hint">连接本地服务后可翻译；现有译文可直接阅读与备份。</p>
-<hr><label>订阅账户<select id="ai-provider"><option value="codex">ChatGPT / Codex 订阅</option><option value="claude">Claude 订阅（可选）</option></select></label><p id="ai-status" class="hint">订阅连接尚未检查；不会自动登录或启动付费请求。</p><button id="check-ai">检查本机订阅连接</button>
+<hr><label>订阅账户<select id="ai-provider"><option value="codex">ChatGPT / Codex 订阅</option><option value="claude">Claude 订阅（可选）</option></select></label><p id="ai-status" class="hint">订阅连接尚未检查；不会自动登录或启动付费请求。</p><button id="check-ai" disabled>检查本机订阅连接</button>
 <label for="ai-question">想从文字稿了解什么？</label><textarea id="ai-question" rows="3" placeholder="用中文总结核心观点，并指出对应的原文片段"></textarea>
 <label><input id="ai-filtered" type="checkbox">只读取当前筛选结果（含译文与笔记筛选的全部匹配片段）</label><label><input id="ai-consent" type="checkbox">本次把文字稿发送给所选 AI 提供商，并使用我的订阅额度</label>
 <p id="subscription-translation-scope" class="hint"></p><button id="subscription-translate" disabled>使用订阅翻译当前筛选 / 继续未完成批次</button><button id="stop-subscription-translation" hidden>停止后续订阅批次</button>
@@ -129,7 +147,7 @@
 <dialog id="source-dialog">
 <form method="dialog">
 <h2>关联原视频</h2>
-<p>填写 YouTube、Bilibili 或 X 视频链接，时间戳才会跳转到对应片段</p>
+<p>填写 YouTube、Bilibili 或 X 视频链接后，可点击时间戳打开原站。平台或浏览器可能不会自动定位，此时请按显示时间手动跳转；本地保存的媒体可直接定位播放。</p>
 <label>视频链接<input id="source-url" type="url" placeholder="https://…">
 </label>
 <div class="dialog-actions">
