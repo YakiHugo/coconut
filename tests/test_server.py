@@ -46,6 +46,16 @@ class ServerTests(unittest.TestCase):
                     urlopen(Request(self.base+path,data=b'{}',headers={'Content-Type':'application/json'}))
                 self.assertEqual(raised.exception.code,400);ask.assert_not_called();translate.assert_not_called()
 
+    def test_subscription_route_forwards_only_explicit_context_to_fake_provider(self):
+        source={'id':'target','text':'until approved','position':1,'start':1,'end':2}
+        context={'id':'context','text':'Do not send','position':0,'start':0,'end':1}
+        payload={'source':'en','target':'zh','provider':'codex','segments':[source],'context':[context],'consent':True}
+        with patch('ai_reader.codex_answer',return_value={'translations':[{'id':'target','text':'获得批准之前'}]}) as provider:
+            with urlopen(Request(self.base+'/api/translate-subscription',data=json.dumps(payload).encode(),headers={'Content-Type':'application/json'})) as response:
+                result=json.load(response)
+        self.assertEqual([t['id'] for t in result['translations']],['target'])
+        sent=json.loads(provider.call_args.args[0]);self.assertEqual(sent['target_ids'],['target']);self.assertEqual(sent['cues'],[context,source])
+
     def test_cross_origin_and_unscoped_host_rejected(self):
         for headers in [{'Origin':'https://evil.example'},{'Host':'evil.example'}]:
             with self.assertRaises(HTTPError) as error:urlopen(Request(self.base+'/api/jobs',headers=headers))

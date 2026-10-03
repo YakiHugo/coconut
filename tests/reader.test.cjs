@@ -84,3 +84,24 @@ test('bilingual backup keeps source alignment and refuses injected translation f
  const restored=parse(JSON.stringify(doc),'backup.json');
  assert.equal(restored.language,'en');assert.equal(restored.translation_view,'zh');assert.equal(restored.segments[0].translations.zh.text,'译文');assert.equal(restored.segments[0].translations.zh.url,undefined);assert.equal(restored.segments[0].translations.bad,undefined);assert.deepEqual(restored.ai_answers[0].citations,['a']);assert.equal(restored.segments[0].start,1.2);
 });
+
+test('subscription windows preserve consented adjacency, character budgets and completed context',()=>{
+ const C=require('../reader/core.js');
+ const doc=validate({segments:Array.from({length:33},(_,i)=>({id:'s'+i,start:i,end:i+1,text:'Sentence '+i}))});
+ const selected=doc.segments.map(s=>s.id);let plan=C.subscriptionPlan(doc,selected,'en','zh','chatgpt_subscription_translation');
+ assert.equal(plan.windows.length,2);assert.deepEqual(plan.windows[1].segments.map(s=>s.id),['s32']);assert.deepEqual(plan.windows[1].context.map(s=>s.id),['s30','s31']);
+ plan=C.subscriptionPlan(doc,['s0','s2'],'en','zh','chatgpt_subscription_translation');assert.equal(plan.windows.length,2);assert.deepEqual(plan.windows.map(w=>w.snapshot.map(s=>s.position)),[[0],[2]]);
+ const long=validate({segments:Array.from({length:25},(_,i)=>({id:'l'+i,start:i,end:i+1,text:'x'.repeat(4000)}))});
+ plan=C.subscriptionPlan(long,long.segments.map(s=>s.id),'en','zh','chatgpt_subscription_translation');assert.equal(plan.windows.length,5);
+ assert.ok(plan.windows.every(w=>w.segments.length<=32&&w.snapshot.length<=36&&w.snapshot.reduce((n,s)=>n+s.text.length,0)<=40000));
+ assert.equal(new Set(plan.windows.flatMap(w=>w.segments.map(s=>s.id))).size,25);
+});
+
+test('subscription context provenance survives backup and edits invalidate dependents without duplicating source',()=>{
+ const C=require('../reader/core.js'),contextId='11111111-1111-4111-8111-111111111111';
+ const snapshot=[{id:'a',text:'Do not send',position:0,start:0,end:1},{id:'b',text:'until approved',position:1,start:1,end:2}];
+ const doc=validate({translation_contexts:{[contextId]:snapshot},segments:snapshot.map(s=>({...s,translations:{zh:{text:'译文',source_text:s.text,source_language:'en',provider:'chatgpt_subscription_translation',context_id:contextId}}}))});
+ const restored=parse(JSON.stringify(doc),'backup.json');assert.equal(Object.keys(restored.translation_contexts).length,1);assert.ok(C.translationCurrent(restored.segments[1],restored,restored.segments[1].translations.zh));
+ restored.segments[0].text='Send now';assert.equal(C.translationCurrent(restored.segments[1],restored,restored.segments[1].translations.zh),false);assert.equal(C.matchesSegment(restored.segments[1],restored,'译文'),false);
+ const missing=validate({...doc,translation_contexts:{}});assert.equal(C.translationCurrent(missing.segments[1],missing,missing.segments[1].translations.zh),false);
+});

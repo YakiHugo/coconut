@@ -242,7 +242,7 @@ function render() {
 		if (s.speaker) body.append(el("p", "speaker", s.speaker));
 		body.append(el("p", "words", s.text));
         const translated=s.translations?.[doc.translation_view];
-        if(translated) body.append(el("p", "translation"+(translated.source_text!==s.text?" stale":""), translated.source_text===s.text ? translated.text : "原文已修正，此译文需要重新生成"));
+        if(translated) body.append(el("p", "translation"+(!Coconut.translationCurrent(s,doc,translated)?" stale":""), Coconut.translationCurrent(s,doc,translated) ? translated.text : "原文或上下文已变化，或旧译文缺少上下文记录，此译文需要重新生成"));
 		const edit = el("button", "", "修正文字");
 		edit.onclick = () => {
 			editingTarget = { documentKey: doc.key, segmentId: s.id };
