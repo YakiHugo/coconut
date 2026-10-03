@@ -352,3 +352,67 @@ test('storage conflict stops subsequent subscription batches without overwriting
   assert.equal(calls,1);assert.equal(w.localStorage.getItem('coconut-reader-v1'),external);assert.match($('ai-progress').textContent,/浏览器保存未成功/);
  }finally{await w.happyDOM.close();}
 });
+
+test('public setup is actionable and explains separate bookshelf storage',async()=>{
+ const w=setup(undefined,async()=>{throw new Error('static page');});try{
+  await new Promise(resolve=>setTimeout(resolve,10));const $=id=>w.document.getElementById(id);
+  assert.equal($('local-setup').open,true);assert.match($('local-setup').textContent,/git clone[\s\S]*\.\/install.sh[\s\S]*\.\/coconut/);
+  assert.match($('local-setup').textContent,/公开预览不会自动连接/);assert.match($('local-setup').textContent,/先在原页面导出/);
+  assert.ok($('local-setup').querySelector('a[href="http://127.0.0.1:8080/"]'));
+  assert.equal($('process-url').disabled,true);assert.equal($('retry-worker').textContent,'重新检查此页面');
+ }finally{await w.happyDOM.close();}
+});
+
+test('queue disconnection disables stale actions and restores without resubmission or losing notes',async()=>{
+ let queueOnline=true;const calls=[];
+ const w=setup(undefined,async(url,options)=>{
+  calls.push([url,options?.method]);
+  if(url.endsWith('health'))return {ok:true,json:async()=>({local_worker:true})};
+  if(url.endsWith('language-tools'))return {ok:true,json:async()=>({ai:{codex:{ready:true},claude:{ready:true}}})};
+  if(!queueOnline)throw new Error('Disconnected');
+  return {ok:true,json:async()=>({jobs:[{id:'job',title:'Existing job',status:'queued',stage:'waiting'}]})};
+ });try{
+  const $=id=>w.document.getElementById(id);await $('sample').onclick();await new Promise(resolve=>setTimeout(resolve,10));
+  w.document.querySelector('.note-button').click();$('note').value='Keep my thought';$('note').oninput();$('ai-consent').checked=true;
+  assert.equal($('ask-ai').disabled,false);
+  queueOnline=false;await $('retry-worker').onclick();
+  assert.equal($('process-url').disabled,true);assert.equal($('import-media').disabled,true);assert.equal($('jobs').querySelector('button').disabled,true);
+  assert.match($('worker-status').textContent,/上次任务状态/);assert.equal($('ask-ai').disabled,true);assert.equal($('ai-consent').checked,false);
+  $('ai-provider').value='claude';$('ai-provider').onchange();assert.equal($('ask-ai').disabled,true);
+  queueOnline=true;await $('retry-worker').onclick();await new Promise(resolve=>setTimeout(resolve,10));
+  assert.equal($('process-url').disabled,false);assert.equal($('jobs').querySelector('button').disabled,false);assert.equal($('ai-consent').checked,false);
+  assert.equal($('note').value,'Keep my thought');assert.equal($('reader-workspace').hidden,false);
+  assert.equal(calls.some(([,method])=>method==='POST'),false,'reconnection never resubmits a mutation');
+ }finally{await w.happyDOM.close();}
+});
+
+test('a delayed subscription check cannot revive stale readiness after disconnection',async()=>{
+ const w=setup();try{
+  const $=id=>w.document.getElementById(id);await $('sample').onclick();let resolve;
+  w.fetch=()=>new Promise(done=>{resolve=done;});
+  const checking=$('check-ai').onclick();w.dispatchEvent(new w.Event('coconut-worker-disconnected'));
+  resolve({ok:true,json:async()=>({ai:{codex:{ready:true}}})});await checking;
+  assert.equal($('ask-ai').disabled,true);assert.equal($('translate-document').disabled,true);assert.equal($('check-ai').disabled,true);
+ }finally{await w.happyDOM.close();}
+});
+
+test('source guidance distinguishes absent media, external time links and actual local seek',async()=>{
+ const w=setup();try{
+  const $=id=>w.document.getElementById(id);await $('sample').onclick();assert.match($('search-status').textContent,/尚未关联音视频/);
+  $('source').click();assert.ok($('source-dialog').open);assert.match($('source-dialog').textContent,/可能不会自动定位/);
+  await importDocument(w,{schema_version:1,title:'External',source_url:'https://x.com/example/status/123',segments:[{id:'a',start:251,end:252,text:'Source cue'}]});
+  assert.match($('search-status').textContent,/若平台未自动定位/);assert.match(w.document.querySelector('.time a').href,/t=251/);
+  await importDocument(w,{schema_version:1,title:'Local',source_media:{job_id:'a'.repeat(32),kind:'video'},segments:[{id:'a',start:251,end:252,text:'Source cue'}]});
+  assert.match($('search-status').textContent,/本地媒体尚未连接/);
+  w.dispatchEvent(new w.Event('coconut-worker-ready'));assert.match($('search-status').textContent,/定位本地原声/);
+ }finally{await w.happyDOM.close();}
+});
+
+test('unsaved-data warning survives unrelated notices and a backup download',async()=>{
+ const w=setup('{damaged');try{
+  const $=id=>w.document.getElementById(id);await $('sample').onclick();assert.equal($('save-status').hidden,false);
+  w.URL.createObjectURL=()=> 'blob:https://coconut.example/backup';w.URL.revokeObjectURL=()=>{};w.HTMLAnchorElement.prototype.click=function(){};
+  $('export').onclick();assert.match($('notice').textContent,/备份下载/);assert.equal($('save-status').hidden,false);assert.match($('save-status').textContent,/自动保存已暂停/);
+  assert.equal(w.localStorage.getItem('coconut-reader-v1'),'{damaged');
+ }finally{await w.happyDOM.close();}
+});
