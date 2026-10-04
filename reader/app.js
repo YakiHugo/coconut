@@ -16,6 +16,7 @@ let lastSavedValue = null;
 let mediaWorkerReady = false;
 const PLAYBACK_RATES=[0.75,1,1.25,1.5,1.75,2];
 let playbackRate=1;
+let repeating=null;
 try {const saved=Number(localStorage.getItem("coconut-playback-rate-v1"));if(PLAYBACK_RATES.includes(saved))playbackRate=saved;}catch{}
 
 function saveWarning(text = "") {
@@ -171,6 +172,7 @@ function render() {
 	$("empty").hidden = true;
 	const mediaPath = mediaWorkerReady && Coconut.media ? Coconut.media(doc.source_media) : "";
 	const mediaHost = $("source-media");
+ if(repeating && (repeating.key!==doc.key || repeating.path!==mediaPath))stopRepeating();
 	const currentPlayer = mediaHost.querySelector("audio,video");
 	if (!mediaPath) {
 		mediaHost.replaceChildren();
@@ -183,7 +185,8 @@ function render() {
   player.onloadedmetadata=()=>{player.defaultPlaybackRate=playbackRate;player.playbackRate=playbackRate;updatePlaybackControls();};
   player.onratechange=updatePlaybackControls;
   player.ondurationchange=updatePlaybackControls;
-		player.ontimeupdate = highlightPlayback;
+		player.ontimeupdate = () => {if(mediaHost.querySelector("audio,video")!==player)return;repeatPlayback(false,player);highlightPlayback();};
+  player.onended=()=>repeatPlayback(true,player);
 		player.preload = "metadata";
 		player.src = mediaPath;
 		player.setAttribute("aria-label", "原始音视频");
@@ -249,10 +252,13 @@ function render() {
 			seek.onclick = () => {
 				const player = mediaHost.querySelector("audio,video");
 				if (!player) return;
+				stopRepeating();
 				player.currentTime = s.start;
 				player.play().catch(() => notice("请点击播放器开始播放，再按时间戳定位。"));
 			};
 			meta.append(seek);
+   const repeat=el("button","repeat-button",repeating?.id===s.id?"正在循环 · 停止":"循环回听此段");
+   repeat.disabled=s.end<=s.start;repeat.setAttribute("aria-pressed",String(repeating?.id===s.id));repeat.onclick=()=>toggleRepeat(s);meta.append(repeat);
 			if (href) { const external = el("a", "original-source", "原站"); external.href=href; external.target="_blank"; external.rel="noopener noreferrer"; meta.append(external); }
 		} else if (href) {
 			const a = el("a", "", Coconut.time(s.start)); a.href=href; a.target="_blank"; a.rel="noopener noreferrer"; a.title="打开原视频的时间链接；是否自动定位取决于平台"; meta.append(a);
@@ -662,6 +668,7 @@ function updatePlaybackControls(){
 }
 function skipPlayback(delta){
  const player=$("source-media").querySelector("audio,video");if(!player || !Number.isFinite(player.duration) || player.duration<=0)return;
+ stopRepeating();
  try{player.currentTime=Math.max(0,Math.min(player.duration,player.currentTime+delta));highlightPlayback();$("playback-status").textContent="已定位到 "+Coconut.time(player.currentTime);}
  catch{$("playback-status").textContent="媒体暂时无法定位，请等待加载后重试。";}
 }
@@ -672,3 +679,27 @@ $("playback-rate").onchange=()=>{
  try{localStorage.setItem("coconut-playback-rate-v1",String(rate));$("playback-status").textContent="播放速度已保存 · "+rate+"×";}
  catch{$("playback-status").textContent="播放速度已应用，本次未能保存偏好。";}
 };
+
+function stopRepeating(){
+ repeating=null;$("stop-repeat").hidden=true;$("repeat-status").textContent="";
+ for(const button of document.querySelectorAll(".repeat-button")){button.textContent="循环回听此段";button.setAttribute("aria-pressed","false");}
+}
+function toggleRepeat(segment){
+ if(repeating?.key===active()?.key && repeating?.id===segment.id){stopRepeating();return;}
+ const player=$("source-media").querySelector("audio,video");
+ if(!player || !Number.isFinite(player.duration) || segment.end<=segment.start || segment.end>player.duration){$("repeat-status").textContent="请等待媒体加载，并确认片段时间在媒体范围内。";return;}
+ stopRepeating();const target={key:active().key,id:segment.id,path:player.getAttribute("src"),start:segment.start,end:segment.end};repeating=target;
+ try{player.currentTime=segment.start;const pending=player.play();pending?.catch(()=>{if(repeating===target){stopRepeating();$("repeat-status").textContent="请先在播放器中开始播放，再循环此段。";}});}
+ catch{stopRepeating();$("repeat-status").textContent="此媒体暂时无法循环播放。";return;}
+ $("stop-repeat").hidden=false;$("repeat-status").textContent="循环 · "+Coconut.time(segment.start)+"–"+Coconut.time(segment.end);
+ for(const row of $("transcript").querySelectorAll(".segment")){const button=row.querySelector(".repeat-button");if(button){const selected=row.dataset.segmentId===segment.id;button.textContent=selected?"正在循环 · 停止":"循环回听此段";button.setAttribute("aria-pressed",String(selected));}}
+}
+function repeatPlayback(ended=false,player=$("source-media").querySelector("audio,video")){
+ const target=repeating;if(!target || !player || player!==$("source-media").querySelector("audio,video"))return;
+ if(target.key!==active()?.key || target.path!==player.getAttribute("src")){stopRepeating();return;}
+ if(player.currentTime<target.start){stopRepeating();return;}
+ if(player.currentTime>=target.end || ended){
+  try{player.currentTime=target.start;if(ended)player.play()?.catch(()=>{if(repeating===target)stopRepeating();});}catch{stopRepeating();}
+ }
+}
+$("stop-repeat").onclick=stopRepeating;

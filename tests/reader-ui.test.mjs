@@ -916,3 +916,32 @@ test('local playback controls clamp seeks, retain speed across renders and stay 
   await $('sample').onclick();assert.equal($('playback-controls').hidden,true);assert.equal($('skip-back').disabled,true);
  }finally{await w.happyDOM.close();}
 });
+
+test('repeat listening respects cue bounds and clears on skip, repeated click and document switch',async()=>{
+ const w=setup();try{
+  const $=id=>w.document.getElementById(id);await importDocument(w,{title:'Loop',source_media:{job_id:'a'.repeat(32),kind:'audio'},segments:[{id:'a',start:2,end:4,text:'A'},{id:'b',start:4,end:8,text:'B'}]});w.dispatchEvent(new w.Event('coconut-worker-ready'));
+  const player=w.document.querySelector('audio');Object.defineProperty(player,'duration',{value:10});player.play=async()=>{};player.onloadedmetadata();
+  const button=w.document.querySelector('.repeat-button');button.click();assert.equal(player.currentTime,2);assert.equal(button.getAttribute('aria-pressed'),'true');
+  player.currentTime=4.1;player.ontimeupdate();assert.equal(player.currentTime,2);assert.equal($('stop-repeat').hidden,false);
+  button.click();assert.equal($('stop-repeat').hidden,true);player.currentTime=5;player.ontimeupdate();assert.equal(player.currentTime,5);
+  button.click();$('skip-forward').click();assert.equal($('stop-repeat').hidden,true);assert.equal(player.currentTime,10);
+  button.click();await $('sample').onclick();assert.equal($('stop-repeat').hidden,true);assert.equal($('repeat-status').textContent,'');
+ }finally{await w.happyDOM.close();}
+});
+
+test('failed repeat playback resets controls without restarting media automatically',async()=>{
+ const w=setup();try{
+  const $=id=>w.document.getElementById(id);await importDocument(w,{source_media:{job_id:'a'.repeat(32),kind:'audio'},segments:[{start:0,end:2,text:'A'}]});w.dispatchEvent(new w.Event('coconut-worker-ready'));
+  const player=w.document.querySelector('audio');const button=w.document.querySelector('.repeat-button');button.click();assert.match($('repeat-status').textContent,/等待/);
+  Object.defineProperty(player,'duration',{value:2});player.play=async()=>{throw Error('blocked');};button.click();await Promise.resolve();await Promise.resolve();assert.equal($('stop-repeat').hidden,true);assert.equal(button.getAttribute('aria-pressed'),'false');
+ }finally{await w.happyDOM.close();}
+});
+
+test('events from a detached media player cannot restart a new source loop',async()=>{
+ const w=setup();try{
+  const doc=letter=>({title:letter,source_media:{job_id:letter.repeat(32),kind:'audio'},segments:[{start:0,end:5,text:letter}]});
+  await importDocument(w,doc('a'));w.dispatchEvent(new w.Event('coconut-worker-ready'));const old=w.document.querySelector('audio');
+  await importDocument(w,doc('b'));const player=w.document.querySelector('audio');Object.defineProperty(player,'duration',{value:5});let plays=0;player.play=async()=>{plays++;};
+  w.document.querySelector('.repeat-button').click();player.currentTime=3;old.onended();old.ontimeupdate();assert.equal(player.currentTime,3);assert.equal(plays,1);
+ }finally{await w.happyDOM.close();}
+});
