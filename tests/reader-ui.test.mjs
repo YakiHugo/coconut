@@ -945,3 +945,14 @@ test('events from a detached media player cannot restart a new source loop',asyn
   w.document.querySelector('.repeat-button').click();player.currentTime=3;old.onended();old.ontimeupdate();assert.equal(player.currentTime,3);assert.equal(plays,1);
  }finally{await w.happyDOM.close();}
 });
+
+test('literal search highlights text safely and navigates all matches across page boundaries',async()=>{
+ const w=setup();try{
+  const $=id=>w.document.getElementById(id);await importDocument(w,{segments:Array.from({length:205},(_,i)=>({id:'s'+i,start:i,end:i+1,text:'Cue <tag> [a.*] '+i}))});
+  $('search').value='[a.*]';$('search').oninput();assert.equal(w.document.querySelectorAll('.words mark').length,100);assert.equal(w.document.querySelector('tag'),null);assert.equal(w.document.querySelector('.words mark').textContent,'[a.*]');
+  $('previous-match').click();assert.equal(w.document.activeElement.dataset.segmentId,'s204');assert.equal(w.document.querySelectorAll('.segment').length,5);assert.match($('match-position').textContent,/205 \/ 205/);
+  $('next-match').click();assert.equal(w.document.activeElement.dataset.segmentId,'s0');assert.match($('match-position').textContent,/1 \/ 205/);
+  $('search').value='not present';$('search').oninput();assert.equal($('next-match').disabled,true);assert.match($('match-position').textContent,/0 \/ 0/);
+  $('clear-search').click();assert.equal($('search-navigation').hidden,true);assert.equal(w.document.querySelectorAll('mark').length,0);
+ }finally{await w.happyDOM.close();}
+});

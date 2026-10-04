@@ -623,3 +623,7 @@ select:focus-visible { outline:3px solid #95b88d; outline-offset:3px; }
  :root[data-reading-layout="spacious"] .words,
  :root[data-reading-layout="spacious"] .translation { font-size:19px; }
 }
+
+.words mark, .translation mark, .saved-note mark, .speaker mark {background:#f8db72;color:#233a2d;border-radius:2px;}
+#search-navigation {display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:12px 0;}
+#search-navigation[hidden] {display:none;}

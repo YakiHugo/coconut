@@ -5,6 +5,7 @@ let state = { documents: [], active: null };
 let selected = null;
 let notesOnly = false;
 let excerptsOnly = false;
+let searchFocusedId=null;
 let workspace = "read";
 let readingScroll = 0;
 let editingTarget = null;
@@ -96,6 +97,7 @@ async function add(doc) {
 	if (!state.documents.some((d) => d.key === key))
 		state.documents.push({ ...doc, key, notes: doc.notes || {} });
 	state.active = key;
+ searchFocusedId=null;
 	$("search").value = "";
 	selected = null;
 	pageStart = 0;
@@ -145,6 +147,7 @@ function renderLibrary() {
 		b.setAttribute("aria-current", d.key === state.active ? "page" : "false");
 		b.onclick = () => {
 			state.active = d.key;
+   searchFocusedId=null;
 			selected = null;
 			notesOnly = false; excerptsOnly = false;
 			pageStart = 0;
@@ -215,6 +218,10 @@ function render() {
 	// Clamp after removing the last matching note/excerpt on a later page.
 	pageStart = Math.min(pageStart, Math.max(0, Math.floor((filtered.length - 1) / PAGE_SIZE) * PAGE_SIZE));
 	const visible = filtered.slice(pageStart, pageStart + PAGE_SIZE);
+ if(!query || !filtered.some(s=>s.id===searchFocusedId))searchFocusedId=null;
+ $("search-navigation").hidden=!query;
+ $("previous-match").disabled=!filtered.length;$("next-match").disabled=!filtered.length;
+ $("match-position").textContent=(searchFocusedId?filtered.findIndex(s=>s.id===searchFocusedId)+1:0)+" / "+filtered.length+" 个匹配片段";
 	const currentNote = visible.find((segment) => segment.id === selected);
 	if (!currentNote) selected = null;
 	$("notes-panel").hidden = !selected;
@@ -264,10 +271,10 @@ function render() {
 			const a = el("a", "", Coconut.time(s.start)); a.href=href; a.target="_blank"; a.rel="noopener noreferrer"; a.title="打开原视频的时间链接；是否自动定位取决于平台"; meta.append(a);
 		} else meta.textContent=Coconut.time(s.start);
 		const body = el("div");
-		if (s.speaker) body.append(el("p", "speaker", s.speaker));
-		body.append(el("p", "words", s.text));
+		if (s.speaker) body.append(highlightedText("p", "speaker", s.speaker, query));
+		body.append(highlightedText("p", "words", s.text, query));
         const translated=s.translations?.[doc.translation_view];
-        if(translated) body.append(el("p", "translation"+(!Coconut.translationCurrent(s,doc,translated)?" stale":""), Coconut.translationCurrent(s,doc,translated) ? translated.text : "原文或上下文已变化，或旧译文缺少上下文记录，此译文需要重新生成"));
+        if(translated) body.append(highlightedText("p", "translation"+(!Coconut.translationCurrent(s,doc,translated)?" stale":""), Coconut.translationCurrent(s,doc,translated) ? translated.text : "原文或上下文已变化，或旧译文缺少上下文记录，此译文需要重新生成", query));
 		const edit = el("button", "edit-button", "修正文字");
 		edit.onclick = () => {
 			editingTarget = {
@@ -313,7 +320,7 @@ function render() {
 			render();
 		};
 		body.append(bookmarkButton);
-		if (doc.notes[s.id]) body.append(el("p", "saved-note", doc.notes[s.id]));
+		if (doc.notes[s.id]) body.append(highlightedText("p", "saved-note", doc.notes[s.id], query));
 		row.append(meta, body);
 		$("transcript").append(row);
 	}
@@ -393,6 +400,7 @@ $("file").onchange = async () => {
 	}
 };
 $("search").oninput = () => {
+ searchFocusedId=null;
 	pageStart = 0;
 	render();
 };
@@ -703,3 +711,22 @@ function repeatPlayback(ended=false,player=$("source-media").querySelector("audi
  }
 }
 $("stop-repeat").onclick=stopRepeating;
+
+function highlightedText(tag,className,value,query){
+ const node=el(tag,className),text=String(value),needle=query.trim();
+ if(!needle){node.textContent=text;return node;}
+ // Escape all regexp operators; imported text is always a text node.
+ const expression=new RegExp(needle.replace(/[.*+?^${}()|[\]\\]/g,"\\$&"),"giu");
+ let end=0;
+ for(const match of text.matchAll(expression)){node.append(document.createTextNode(text.slice(end,match.index)),el("mark","",match[0]));end=match.index+match[0].length;}
+ node.append(document.createTextNode(text.slice(end)));return node;
+}
+function moveSearchMatch(direction){
+ const doc=active(),query=$("search").value.trim();if(!doc || !query)return;
+ const matches=doc.segments.filter(s=>Coconut.matchesSegment(s,doc,query,notesOnly,excerptsOnly));if(!matches.length)return;
+ const current=matches.findIndex(s=>s.id===searchFocusedId);
+ const index=current<0?(direction>0?0:matches.length-1):(current+direction+matches.length)%matches.length;
+ searchFocusedId=matches[index].id;pageStart=Math.floor(index/PAGE_SIZE)*PAGE_SIZE;selected=null;render();
+ const row=[...$("transcript").querySelectorAll(".segment")].find(s=>s.dataset.segmentId===searchFocusedId);row?.scrollIntoView?.({block:"center"});row?.focus({preventScroll:true});
+}
+$("previous-match").onclick=()=>moveSearchMatch(-1);$("next-match").onclick=()=>moveSearchMatch(1);
