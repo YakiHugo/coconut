@@ -5,11 +5,11 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Coconut · 把听过的，留下来</title>
 <link rel="stylesheet" href="style.css?v=5d4dfaaf92">
-<script src="core.js?v=d43deb3d52" defer>
+<script src="core.js?v=975ef22dd9" defer>
 </script>
 <script src="app.js?v=5df7ccbe48" defer>
 </script>
-<script src="language.js?v=0a2bbd691a" defer></script>
+<script src="language.js?v=85af2ce7cb" defer></script>
 <script src="jobs.js?v=f2eca42dcf" defer>
 </script>
 </head>
@@ -131,7 +131,7 @@ cd coconut
 <label for="ai-question">想从文字稿了解什么？</label><textarea id="ai-question" rows="3" placeholder="用中文总结核心观点，并指出对应的原文片段"></textarea>
 <label><input id="ai-filtered" type="checkbox">只读取当前筛选结果（含译文、摘录与笔记筛选的全部匹配片段）</label><label><input id="ai-consent" type="checkbox">本次把文字稿发送给所选 AI 提供商，并使用我的订阅额度</label>
 <p id="subscription-translation-scope" class="hint"></p><button id="subscription-translate" disabled>使用订阅翻译当前筛选 / 继续未完成批次</button><button id="stop-subscription-translation" hidden>停止后续订阅批次</button>
-<button id="ask-ai" disabled>让 AI 读文字稿</button><p id="ai-progress" role="status"></p><div id="ai-answers"></div>
+<button id="ask-ai" disabled>让 AI 读文字稿</button><p id="ai-progress" role="status"></p><button id="export-ai-reading" disabled>导出全部 AI 共读记录</button><div id="ai-answers"></div>
 <p class="hint">使用本机官方 Codex / Claude Code CLI 已有登录。额度耗尽时停止，不购买额度、不切换 API。不会读取或复制登录凭据；不会打开额外的交互式会话。Kimi 暂无已验证的订阅连接。</p>
 </details>
 <div class="reading-layout">

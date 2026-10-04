@@ -206,6 +206,30 @@
             translation_contexts: cleanContexts(data.translation_contexts, segments),
 		};
 	}
+ function aiReadingMarkdown(doc) {
+  const line=value=>markdownText(value).replace(/[\r\n]+/g," ");
+  const quote=value=>markdownText(value).replace(/\r\n?/g,"\n").split("\n").map(s=>"> "+s).join("\n");
+  const lines=["# "+line(doc.title)+" · AI 共读记录","","AI 输出仍需核对；以下是本篇已保存的全部回答，不受当前筛选影响。","来源定位使用当前文字稿的时间与链接，可能不同于生成回答时的媒体信息。",""];
+  for(const [index,answer] of (doc.ai_answers||[]).entries()){
+   const freshness=answerFreshness(answer,doc), input=cleanAnswerInput(answer.input_snapshot);
+   lines.push("## 回答 "+(index+1),"","提供商："+line(answer.provider||"unknown"),"",
+    "依据状态："+({current:"完整发送原文仍与当前稿一致（不代表回答正确）",stale:"发送原文已变化或移除，回答依据可能过期",unknown:"缺少完整发送原文，无法确认依据是否仍有效"}[freshness]),"",
+    "问题：","",quote(answer.question),"","回答：","",quote(answer.answer),"","引用：","");
+   const cited=[...new Set(answer.citations||[])];
+   if(!cited.length)lines.push("未提供片段引用，请回听核对。","");
+   for(const id of cited){
+    const segment=doc.segments.find(s=>s.id===id), url=segment?source(doc.source_url,segment.start).replace(/[()]/g,c=>c==="("?"%28":"%29"):"";
+    const label=segment?time(segment.start):"原片段已移除";
+    lines.push("- "+line(id)+" · "+(url?"["+label+"]("+url+")":label));
+   }
+   lines.push("","### 本次实际发送的原文","");
+   if(!input){lines.push("旧记录没有完整发送原文；不能用当前稿替代历史依据。","");continue;}
+   lines.push(input.segments.length+" 个片段；包括模型读到但未引用的内容。","");
+   for(const segment of input.segments)lines.push("片段 "+line(segment.id),"",quote(segment.text),"");
+  }
+  lines.push("完整编辑和恢复请保留 Coconut JSON 备份；本文件不包含媒体或订阅凭据。","");
+  return lines.join("\n");
+ }
  function parseReadingTime(value) {
   const parts=String(value).trim().split(":");
   if(parts.length>3 || !parts.length || parts.some((part,i)=>!(i===parts.length-1 ? /^\d+(?:\.\d{1,3})?$/ : /^\d+$/).test(part)))return null;
@@ -346,7 +370,7 @@
 			segments,
 		});
 	}
-	const api = { parseReadingTime, segmentAtTime, subtitleExport, mergeLibraryBackup, time, source, media, validate, parse, matchesSegment, notebookSegments, notebookMarkdown, translationCurrent, sameCueSnapshot, subscriptionPlan, cleanContexts, answerFreshness };
+	const api = { aiReadingMarkdown, parseReadingTime, segmentAtTime, subtitleExport, mergeLibraryBackup, time, source, media, validate, parse, matchesSegment, notebookSegments, notebookMarkdown, translationCurrent, sameCueSnapshot, subscriptionPlan, cleanContexts, answerFreshness };
 	if (typeof module !== "undefined" && module.exports) module.exports = api;
 	else root.Coconut = api;
 })(typeof window !== "undefined" ? window : globalThis);

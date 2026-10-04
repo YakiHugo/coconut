@@ -228,3 +228,11 @@ test('reading time accepts clock input and chooses containing or next cue withou
  const doc=C.validate({segments:[{id:'a',start:3,end:10,text:'A'},{id:'b',start:5,end:7,text:'B'},{id:'c',start:12,end:14,text:'C'}]});
  assert.equal(C.segmentAtTime(doc,0).id,'a');assert.equal(C.segmentAtTime(doc,6).id,'b');assert.equal(C.segmentAtTime(doc,9).id,'a');assert.equal(C.segmentAtTime(doc,11).id,'c');assert.equal(C.segmentAtTime(doc,14).id,'c');assert.equal(C.segmentAtTime(doc,15),null);
 });
+
+test('AI reading report includes historical full input, freshness, safe citations and legacy boundaries',()=>{
+ const C=require('../reader/core.js');const doc=C.validate({title:'Report\n# fake',source_url:'https://youtu.be/demo?label=(x)',segments:[{id:'a',start:1,end:2,text:'Changed'},{id:'b',start:3,end:4,text:'Uncited'}],ai_answers:[
+ {question:'![track](https://evil.test)',answer:'<script>bad</script>',provider:'test',citations:['a'],input_snapshot:{version:1,segments:[{id:'a',text:'Historical'},{id:'b',text:'Uncited'}]}},
+ {question:'Old Q',answer:'Old A',citations:[],provider:'legacy'}]});
+ const output=C.aiReadingMarkdown(doc);assert.match(output,/Historical/);assert.match(output,/Uncited/);assert.match(output,/依据可能过期/);assert.match(output,/缺少完整发送原文/);assert.match(output,/不能用当前稿替代历史依据/);assert.doesNotMatch(output,/<script>|!\[track\]|\n# fake|> Changed/);assert.match(output,/label=%28x%29/);assert.equal((output.match(/^## 回答 /gm)||[]).length,2);
+ const unsafe=C.aiReadingMarkdown({...doc,source_url:'javascript:alert(1)'});assert.doesNotMatch(unsafe,/javascript:/);
+});

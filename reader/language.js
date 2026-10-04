@@ -2,6 +2,7 @@
 const languageNames={en:"English",zh:"中文",ja:"日本語",ko:"한국어",fr:"Français",de:"Deutsch",es:"Español"};
 let languageCheckSequence=0;
 let subscriptionSelectionSignature="";
+let languageDocumentLabel=null;
 let aiStatuses={}, languageReady=false, aiReady=false, translating=false, stopTranslation=false, asking=false, subscriptionTranslating=false, stopSubscription=false, subscriptionScope=null, languageDocument=null;
 for(const [code,name] of Object.entries(languageNames))for(const id of ["translation-source","translation-target","translation-view"]){const option=document.createElement('option');option.value=code;option.textContent=id==='translation-view'?name+' + 原文':name;document.getElementById(id).append(option);}
 document.getElementById('translation-target').value='zh';
@@ -12,7 +13,12 @@ async function languageApi(path,data){
 function renderLanguage(){
  if(!$("language-panel"))return;
  const doc=active();if(!doc)return;
- if(languageDocument!==doc.key){languageDocument=doc.key;$('translation-source').value=doc.language||doc.provenance?.language?.split('-')[0]||'';$('ai-consent').checked=false;}
+ if(languageDocument!==doc.key || languageDocumentLabel!==(doc.language||'')){
+  if(languageDocument===doc.key && translating)stopTranslation=true;
+  if(languageDocument===doc.key && subscriptionTranslating)stopSubscription=true;
+  languageDocument=doc.key;languageDocumentLabel=doc.language||'';
+  $('translation-source').value=languageDocumentLabel;$('ai-consent').checked=false;
+ }
  $('translation-view').value=doc.translation_view||'';
  $('translate-document').disabled=!languageReady||translating||subscriptionTranslating;
  $('ask-ai').disabled=!aiReady||asking||subscriptionTranslating;
@@ -29,6 +35,7 @@ function renderLanguage(){
   }catch(error){$('subscription-translation-scope').textContent=error.message;$('subscription-translate').disabled=true;}
  }
 
+ $("export-ai-reading").disabled=!(doc.ai_answers||[]).length;
  const host=$('ai-answers');host.replaceChildren();
  for(const answer of (doc.ai_answers||[]).slice().reverse()){
   const section=el('section','ai-answer');
@@ -146,4 +153,15 @@ $('subscription-translate').onclick=async()=>{
 
  }catch(error){$('ai-progress').textContent='订阅翻译暂停：'+error.message+'。已完成结果仍在当前页；校验失败的批次不会覆盖旧译文。请检查保存提示并备份。';}
  finally{subscriptionTranslating=false;subscriptionScope=null;$('ai-consent').checked=false;$('stop-subscription-translation').hidden=true;if(active()?.key===key)render();renderLanguage();}
+};
+
+$("export-ai-reading").onclick=()=>{
+ const doc=active();if(!doc?.ai_answers?.length)return;
+ let url,link;
+ try{
+  url=URL.createObjectURL(new Blob([Coconut.aiReadingMarkdown(doc)],{type:"text/markdown;charset=utf-8"}));
+  link=el("a");link.href=url;link.download=doc.title.replace(/[\\/:*?"<>|\x00-\x1f\x7f]/g,"_")+".ai-reading.md";link.hidden=true;document.body.append(link);link.click();
+  notice("已发起全部 "+doc.ai_answers.length+" 则 AI 共读记录下载，包含历史发送原文及依据状态；请确认文件已保存并核对 AI 判断。");
+ }catch{notice("AI 共读记录导出失败，回答仍在本页，请重试。");}
+ finally{link?.remove();if(url)setTimeout(()=>URL.revokeObjectURL(url),60000);}
 };
