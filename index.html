@@ -5,9 +5,9 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Coconut · 把听过的，留下来</title>
 <link rel="stylesheet" href="style.css?v=278bbf21c2">
-<script src="core.js?v=7ee554538f" defer>
+<script src="core.js?v=d43deb3d52" defer>
 </script>
-<script src="app.js?v=e254c8ada4" defer>
+<script src="app.js?v=dc91b9d2c4" defer>
 </script>
 <script src="language.js?v=0a2bbd691a" defer></script>
 <script src="jobs.js?v=f2eca42dcf" defer>
@@ -105,9 +105,12 @@ cd coconut
 <div class="tools">
 <label class="search">⌕ <input id="search" type="search" placeholder="搜索原话、说话人或笔记" aria-label="搜索文字稿">
 </label>
+<button id="document-details">标题与语言</button>
 <button id="source">原视频链接</button>
 </div>
+<form id="time-navigation" class="time-navigation"><label for="reading-time">跳到时间</label><input id="reading-time" placeholder="12:34 或 1:02:03" inputmode="decimal" aria-describedby="time-navigation-status"><button type="submit">定位文字</button><span id="time-navigation-status" class="hint" role="status"></span></form>
 <div class="reading-controls"><div role="group" aria-label="阅读视图"><button id="filter-all" aria-pressed="true">全文</button><button id="filter-excerpts" aria-pressed="false">摘录 <span id="excerpt-count">0</span></button><button id="filter-notes" aria-pressed="false">笔记 <span id="note-count">0</span></button></div><button id="resume" hidden></button></div><p id="search-status" class="hint" role="status"></p><button id="clear-search" hidden>清除筛选，返回全文</button>
+<div class="subtitle-export"><label>字幕格式<select id="subtitle-format"><option value="srt">SRT</option><option value="vtt">VTT</option></select></label><label><input type="checkbox" id="subtitle-bilingual">附加当前显示语言的有效译文</label><button id="export-subtitles">导出整篇字幕</button><span class="hint">使用修正后原文及原时间戳，不含笔记</span></div>
 <div class="notebook-export"><button id="export-notebook" disabled>导出阅读笔记（0 段）</button><span class="hint">Markdown · 本篇全部摘录与笔记，可用于整理和回顾</span></div>
 </section>
 <section id="empty">
@@ -146,6 +149,12 @@ cd coconut
 </div>
 </main>
 </div>
+<dialog id="details-dialog" aria-labelledby="details-heading">
+<form method="dialog"><h2 id="details-heading">文字稿信息</h2>
+<label for="document-title">标题</label><input id="document-title" maxlength="200" required>
+<label for="document-language">原文语言（只标记，不重新识别或翻译）</label><select id="document-language"><option value="">未标明</option><option value="zh">中文</option><option value="en">English</option><option value="ja">日本語</option><option value="ko">한국어</option><option value="fr">Français</option><option value="de">Deutsch</option><option value="es">Español</option></select>
+<p id="details-error" role="alert"></p><div class="dialog-actions"><button value="cancel">取消</button><button id="save-details" class="primary">保存信息</button></div></form>
+</dialog>
 <dialog id="source-dialog">
 <form method="dialog">
 <h2>关联原视频</h2>

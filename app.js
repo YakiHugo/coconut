@@ -186,6 +186,7 @@ function render() {
 	}
 	$("locate-playback").hidden = !mediaPath;
 	$("title").textContent = doc.title;
+	$("time-navigation-status").textContent="";
 	$("subtitle").textContent =
 		doc.segments.length +
 		" 个片段 · " +
@@ -586,4 +587,43 @@ $("library-file").onchange = async () => {
   if(persisted)notice("已恢复 " + (state.documents.length-before) + " 份文字稿；相同内容已跳过，不同版本分别保留，原书架未删除。");
  } catch(error) { notice("恢复失败，原书架未改变："+error.message); }
  finally { $("library-file").value=""; }
+};
+
+$("export-subtitles").onclick = () => {
+ const doc=active(); if(!doc)return;
+ let url,link;
+ try {
+  const format=$("subtitle-format").value, bilingual=$("subtitle-bilingual").checked;
+  const result=Coconut.subtitleExport(doc,format,bilingual);
+  url=URL.createObjectURL(new Blob([result.text],{type:format==="vtt"?"text/vtt;charset=utf-8":"text/plain;charset=utf-8"}));
+  link=el("a");link.href=url;link.download=doc.title.replace(/[\\/:*?"<>|\x00-\x1f\x7f]/g,"_")+"."+format;link.hidden=true;document.body.append(link);link.click();
+  notice("已发起整篇字幕下载（"+doc.segments.length+" 段）"+(bilingual?"，附加 "+result.translated+" 段有效译文；缺失或过期译文未导出":"")+"。请确认文件已保存。");
+ } catch { notice("字幕导出失败，内容仍在本页，请重试。"); }
+ finally {link?.remove();if(url)setTimeout(()=>URL.revokeObjectURL(url),60000);}
+};
+
+let detailsTarget=null;
+$("document-details").onclick=()=>{
+ const doc=active();if(!doc)return;
+ detailsTarget=doc.key;$("document-title").value=doc.title;$("details-error").textContent="";
+ const language=$("document-language");language.querySelector('[data-custom]')?.remove();
+ if(doc.language && ![...language.options].some(o=>o.value===doc.language)){const option=el("option","",doc.language);option.value=doc.language;option.dataset.custom="true";language.append(option);}
+ language.value=doc.language||"";$("details-dialog").showModal();
+};
+$("save-details").onclick=event=>{
+ event.preventDefault();const doc=state.documents.find(d=>d.key===detailsTarget), title=$("document-title").value.trim();
+ if(!doc || !title || title.length>200){$("details-error").textContent="请输入1–200字的标题";return;}
+ doc.title=title;doc.language=$("document-language").value;
+ const persisted=save();$("details-dialog").close();render();$("document-details").focus();
+ if(persisted)notice("文字稿信息已保存；原始来源信息、时间戳和笔记保持不变。");
+};
+
+$("time-navigation").onsubmit=event=>{
+ event.preventDefault();const doc=active();if(!doc)return;
+ const seconds=Coconut.parseReadingTime($("reading-time").value);
+ if(seconds===null){$("time-navigation-status").textContent="请输入秒数、分:秒或时:分:秒；秒和小时格式中的分钟须小于60。";return;}
+ const segment=Coconut.segmentAtTime(doc,seconds);
+ if(!segment){$("time-navigation-status").textContent="该时间超出文字稿范围。";return;}
+ goToSegment(segment.id);
+ $("time-navigation-status").textContent=seconds<segment.start?"此处没有字幕，已定位下一段 · "+Coconut.time(segment.start):"已定位 · "+Coconut.time(segment.start)+"；未自动播放音视频。";
 };

@@ -206,6 +206,36 @@
             translation_contexts: cleanContexts(data.translation_contexts, segments),
 		};
 	}
+ function parseReadingTime(value) {
+  const parts=String(value).trim().split(":");
+  if(parts.length>3 || !parts.length || parts.some((part,i)=>!(i===parts.length-1 ? /^\d+(?:\.\d{1,3})?$/ : /^\d+$/).test(part)))return null;
+  const numbers=parts.map(Number);
+  if(numbers.slice(1).some(n=>n>=60))return null;
+  const seconds=numbers.reduce((sum,n)=>sum*60+n,0);
+  return Number.isFinite(seconds) && seconds<=Number.MAX_SAFE_INTEGER/1000 ? seconds : null;
+ }
+ function segmentAtTime(doc,seconds) {
+  if(!Number.isFinite(seconds) || seconds<0 || !doc.segments.length || seconds>doc.segments.reduce((end,s)=>Math.max(end,s.end),0))return null;
+  return doc.segments.findLast(s=>s.start<=seconds && s.end>=seconds) || doc.segments.find(s=>s.start>=seconds) || null;
+ }
+ function subtitleExport(doc, format="srt", bilingual=false) {
+  if (!["srt","vtt"].includes(format)) throw new Error("不支持的字幕格式");
+  const stamp = ms => {
+   const hours = Math.floor(ms / 3600000), minutes = Math.floor(ms / 60000) % 60, seconds = Math.floor(ms / 1000) % 60;
+   return [hours,minutes,seconds].map(n=>String(n).padStart(2,"0")).join(":") + (format === "srt" ? "," : ".") + String(ms % 1000).padStart(3,"0");
+  };
+  const text = value => String(value).replace(/\u0000/g,"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/\r\n?/g,"\n").split("\n").filter(line=>line.trim()).join("\n");
+  let translated = 0;
+  const cues = doc.segments.map((segment,index)=>{
+   const lines = [text(segment.text) || " "];
+   const translation = segment.translations?.[doc.translation_view];
+   if (bilingual && translation && translationCurrent(segment,doc,translation)) { lines.push(text(translation.text)); translated++; }
+   const start = Math.round(segment.start*1000);
+   const end = Math.max(start + 1, Math.round(segment.end*1000));
+   return `${index+1}\n${stamp(start)} --> ${stamp(end)}\n${lines.join("\n")}`;
+  });
+  return {text:(format === "vtt" ? "WEBVTT\n\n" : "") + cues.join("\n\n") + "\n", translated};
+ }
  function mergeLibraryBackup(current, backup) {
   if (!backup || backup.format !== "coconut-library" || backup.version !== 1 || !Array.isArray(backup.documents) || backup.documents.length > 500)
    throw new Error("不是支持的 Coconut 书架备份（最多500份）");
@@ -316,7 +346,7 @@
 			segments,
 		});
 	}
-	const api = { mergeLibraryBackup, time, source, media, validate, parse, matchesSegment, notebookSegments, notebookMarkdown, translationCurrent, sameCueSnapshot, subscriptionPlan, cleanContexts, answerFreshness };
+	const api = { parseReadingTime, segmentAtTime, subtitleExport, mergeLibraryBackup, time, source, media, validate, parse, matchesSegment, notebookSegments, notebookMarkdown, translationCurrent, sameCueSnapshot, subscriptionPlan, cleanContexts, answerFreshness };
 	if (typeof module !== "undefined" && module.exports) module.exports = api;
 	else root.Coconut = api;
 })(typeof window !== "undefined" ? window : globalThis);
