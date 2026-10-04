@@ -206,6 +206,24 @@
             translation_contexts: cleanContexts(data.translation_contexts, segments),
 		};
 	}
+ function subtitleExport(doc, format="srt", bilingual=false) {
+  if (!["srt","vtt"].includes(format)) throw new Error("不支持的字幕格式");
+  const stamp = ms => {
+   const hours = Math.floor(ms / 3600000), minutes = Math.floor(ms / 60000) % 60, seconds = Math.floor(ms / 1000) % 60;
+   return [hours,minutes,seconds].map(n=>String(n).padStart(2,"0")).join(":") + (format === "srt" ? "," : ".") + String(ms % 1000).padStart(3,"0");
+  };
+  const text = value => String(value).replace(/\u0000/g,"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/\r\n?/g,"\n").split("\n").filter(line=>line.trim()).join("\n");
+  let translated = 0;
+  const cues = doc.segments.map((segment,index)=>{
+   const lines = [text(segment.text) || " "];
+   const translation = segment.translations?.[doc.translation_view];
+   if (bilingual && translation && translationCurrent(segment,doc,translation)) { lines.push(text(translation.text)); translated++; }
+   const start = Math.round(segment.start*1000);
+   const end = Math.max(start + 1, Math.round(segment.end*1000));
+   return `${index+1}\n${stamp(start)} --> ${stamp(end)}\n${lines.join("\n")}`;
+  });
+  return {text:(format === "vtt" ? "WEBVTT\n\n" : "") + cues.join("\n\n") + "\n", translated};
+ }
  function mergeLibraryBackup(current, backup) {
   if (!backup || backup.format !== "coconut-library" || backup.version !== 1 || !Array.isArray(backup.documents) || backup.documents.length > 500)
    throw new Error("不是支持的 Coconut 书架备份（最多500份）");
@@ -316,7 +334,7 @@
 			segments,
 		});
 	}
-	const api = { mergeLibraryBackup, time, source, media, validate, parse, matchesSegment, notebookSegments, notebookMarkdown, translationCurrent, sameCueSnapshot, subscriptionPlan, cleanContexts, answerFreshness };
+	const api = { subtitleExport, mergeLibraryBackup, time, source, media, validate, parse, matchesSegment, notebookSegments, notebookMarkdown, translationCurrent, sameCueSnapshot, subscriptionPlan, cleanContexts, answerFreshness };
 	if (typeof module !== "undefined" && module.exports) module.exports = api;
 	else root.Coconut = api;
 })(typeof window !== "undefined" ? window : globalThis);
