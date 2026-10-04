@@ -603,3 +603,6 @@ main, .shell > aside, #reader-workspace, .segment > div { min-width: 0; }
 .excerpt-button[aria-pressed="true"] { background: #fff2c2; border-color: #dac884; }
 .notebook-export { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-top: 14px; }
 .notebook-export button { font-size: 14px; min-height: 44px; }
+
+.reading-pages { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; padding: 24px 0; }
+.reading-pages .hint { margin: 0; }
