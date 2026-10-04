@@ -4,6 +4,7 @@ const KEY = "coconut-reader-v1";
 let state = { documents: [], active: null };
 let selected = null;
 let notesOnly = false;
+let excerptsOnly = false;
 let workspace = "read";
 let readingScroll = 0;
 let editingTarget = null;
@@ -92,7 +93,7 @@ async function add(doc) {
 	$("search").value = "";
 	selected = null;
 	currentLimit = 100;
-	notesOnly = false;
+	notesOnly = false; excerptsOnly = false;
 	workspace = "read";
 	const saved = save();
 	render();
@@ -114,7 +115,7 @@ function goToSegment(id) {
 	const index = doc ? doc.segments.findIndex(s => s.id === id) : -1;
 	if (index < 0) return;
 	$("search").value = "";
-	notesOnly = false;
+	notesOnly = false; excerptsOnly = false;
 	selected = null;
 	currentLimit = Math.max(100, Math.ceil((index + 1) / 100) * 100);
 	showWorkspace("read");
@@ -139,7 +140,7 @@ function renderLibrary() {
 		b.onclick = () => {
 			state.active = d.key;
 			selected = null;
-			notesOnly = false;
+			notesOnly = false; excerptsOnly = false;
 			currentLimit = 100;
 			$("search").value = "";
 			$("toggle-library").setAttribute("aria-expanded", "false");
@@ -195,7 +196,7 @@ function render() {
 	$("provenance").textContent = provenanceText + (provenance.model ? " · " + provenance.model : "") + " · 请回听核对专有名词与重要信息" + (provenance.alignment_warning ? " · 时间对齐降级：" + provenance.alignment_warning : "");
 	$("count").textContent = "书架 / " + doc.title;
 	const query = $("search").value.trim().toLocaleLowerCase();
-	const filtered = doc.segments.filter(s=>Coconut.matchesSegment(s,doc,query,notesOnly));
+	const filtered = doc.segments.filter(s=>Coconut.matchesSegment(s,doc,query,notesOnly,excerptsOnly));
 	const currentNote = filtered.slice(0, currentLimit).find((segment) => segment.id === selected);
 	if (!currentNote) selected = null;
 	$("notes-panel").hidden = !selected;
@@ -204,12 +205,15 @@ function render() {
 		$("note-time").textContent = Coconut.time(currentNote.start) + " 的想法";
 		$("note").value = doc.notes[currentNote.id] || "";
 	}
-	$("filter-all").setAttribute("aria-pressed", String(!notesOnly));
+	$("filter-all").setAttribute("aria-pressed", String(!notesOnly && !excerptsOnly));
 	$("filter-notes").setAttribute("aria-pressed", String(notesOnly));
+	$("filter-excerpts").setAttribute("aria-pressed", String(excerptsOnly));
+	$("excerpt-count").textContent = String(doc.segments.filter(s => s.saved_excerpt === true).length);
+	renderNotebookAction(doc);
 	$("note-count").textContent = String(Object.values(doc.notes).filter(Boolean).length);
 	const playbackHint = mediaPath ? "点时间戳定位本地原声" : Coconut.source(doc.source_url, 0) ? "点时间戳打开原站；若平台未自动定位，请按显示时间手动跳转" : doc.source_media ? "本地媒体尚未连接；请在保存原任务的电脑启动 Coconut" : "尚未关联音视频；点击「原视频链接」添加来源后可回听";
- $("search-status").textContent = ((query || notesOnly) ? "找到 " + filtered.length + " 个片段" : "共 " + doc.segments.length + " 个片段") + " · " + playbackHint;
-	$("clear-search").hidden = !query && !notesOnly;
+ $("search-status").textContent = ((query || notesOnly || excerptsOnly) ? "找到 " + filtered.length + " 个片段" : "共 " + doc.segments.length + " 个片段") + " · " + playbackHint;
+	$("clear-search").hidden = !query && !notesOnly && !excerptsOnly;
 	const bookmark = doc.segments.find(s => s.id === doc.readingPosition);
 	$("resume").hidden = !bookmark;
 	$("resume").textContent = bookmark ? "继续阅读 · " + Coconut.time(bookmark.start) : "";
@@ -218,7 +222,7 @@ function render() {
 	for (const s of filtered.slice(0, currentLimit)) {
 		const row = el(
 			"section",
-			"segment" + (selected === s.id ? " selected" : ""),
+			"segment" + (selected === s.id ? " selected" : "") + (s.saved_excerpt === true ? " excerpted" : ""),
 		);
 		row.dataset.segmentId = s.id;
 		row.tabIndex = -1;
@@ -263,6 +267,20 @@ function render() {
 		};
 		button.className = "note-button";
 		body.append(button);
+		const excerptButton = el("button", "excerpt-button", s.saved_excerpt === true ? "已摘录 · 取消" : "☆ 摘录整段");
+		excerptButton.setAttribute("aria-pressed", String(s.saved_excerpt === true));
+		excerptButton.setAttribute("aria-label", (s.saved_excerpt === true ? "取消摘录 " : "摘录整段 ") + Coconut.time(s.start));
+		excerptButton.onclick = () => {
+			const position = [...$("transcript").querySelectorAll(".segment")].indexOf(row);
+			if (s.saved_excerpt === true) delete s.saved_excerpt;
+			else s.saved_excerpt = true;
+			save();
+			render();
+			const rows = [...$("transcript").querySelectorAll(".segment")];
+			const target = rows.find(item => item.dataset.segmentId === s.id) || rows[Math.min(position, rows.length - 1)];
+			(target?.querySelector(".excerpt-button") || $("filter-excerpts")).focus({preventScroll: true});
+		};
+		body.append(excerptButton);
 		const bookmarkButton = el("button", "bookmark-button", doc.readingPosition === s.id ? "已标记阅读位置" : "读到这里");
 		bookmarkButton.setAttribute("aria-pressed", String(doc.readingPosition === s.id));
 		bookmarkButton.onclick = () => {
@@ -276,7 +294,7 @@ function render() {
 		$("transcript").append(row);
 	}
 	if (!filtered.length)
-		$("transcript").append(el("p", "hint", notesOnly && !query ? "还没有笔记。回到全文，在想停下来的片段旁记一笔。" : "没有匹配的片段，试试另一个词。"));
+		$("transcript").append(el("p", "hint", excerptsOnly && !query ? "还没有摘录。回到全文，点击「摘录整段」留下值得重读的原话，不必先写笔记。" : notesOnly && !query ? "还没有笔记。回到全文，在想停下来的片段旁记一笔。" : "没有匹配的片段，试试另一个词。"));
 	if (filtered.length > currentLimit) {
 		const more = el("button", "", "继续阅读后面的片段");
 		more.onclick = () => {
@@ -301,9 +319,10 @@ $("back-reading").onclick = () => showWorkspace("read");
 $("show-jobs").onclick = () => { showWorkspace("add"); $("jobs-heading").scrollIntoView?.(); };
 $("toggle-library").onclick = () => $("toggle-library").setAttribute("aria-expanded", String($("toggle-library").getAttribute("aria-expanded") !== "true"));
 $("library-search").oninput = renderLibrary;
-$("filter-all").onclick = () => { notesOnly = false; currentLimit = 100; render(); };
-$("filter-notes").onclick = () => { notesOnly = true; currentLimit = 100; render(); };
-$("clear-search").onclick = () => { $("search").value = ""; notesOnly = false; currentLimit = 100; render(); $("search").focus(); };
+$("filter-all").onclick = () => { notesOnly = false; excerptsOnly = false; currentLimit = 100; render(); };
+$("filter-excerpts").onclick = () => { excerptsOnly = true; notesOnly = false; currentLimit = 100; render(); };
+$("filter-notes").onclick = () => { notesOnly = true; excerptsOnly = false; currentLimit = 100; render(); };
+$("clear-search").onclick = () => { $("search").value = ""; notesOnly = false; excerptsOnly = false; currentLimit = 100; render(); $("search").focus(); };
 $("close-note").onclick = () => {
 	const id = selected;
 	selected = null;
@@ -341,6 +360,7 @@ $("note").oninput = () => {
 		save();
 		$("note-count").textContent = String(Object.values(d.notes).filter(Boolean).length);
 		renderLibrary();
+		renderNotebookAction(d);
 		// Keep pointer targets mounted while focus leaves the note editor.
 		// Re-rendering on blur swallows the subsequent click on another row.
 		const row = [...$("transcript").querySelectorAll(".segment")].find(
@@ -386,6 +406,32 @@ $("save-source").onclick = (e) => {
 	$("source-dialog").close();
 	render();
 };
+function renderNotebookAction(doc) {
+	const count = Coconut.notebookSegments(doc).length;
+	$("export-notebook").disabled = count === 0;
+	$("export-notebook").textContent = "导出阅读笔记（" + count + " 段）";
+}
+$("export-notebook").onclick = () => {
+	const doc = active();
+	if (!doc || !Coconut.notebookSegments(doc).length) {
+		notice("先摘录一段原话，或写一则笔记，再导出阅读笔记。");
+		return;
+	}
+	let url, link;
+	try {
+		const blob = new Blob([Coconut.notebookMarkdown(doc)], {type: "text/markdown;charset=utf-8"});
+		url = URL.createObjectURL(blob);
+		link = el("a"); link.href = url;
+		link.download = doc.title.replace(/[\\/:*?"<>|\x00-\x1f\x7f]/g, "_") + ".notes.md";
+		link.hidden = true; document.body.append(link); link.click();
+		notice("已发起 Markdown 下载，包含本篇全部摘录与笔记。请检查浏览器下载记录；完整恢复仍需 JSON 备份。");
+	} catch {
+		notice("阅读笔记导出失败，摘录与笔记仍在本页。请重试，暂时不要关闭页面。");
+	} finally {
+		link?.remove();
+		if (url) setTimeout(() => URL.revokeObjectURL(url), 60000);
+	}
+};
 $("export").onclick = () => {
 	const d = active();
 	if (!d) {
@@ -406,7 +452,7 @@ $("export").onclick = () => {
 		document.body.append(link);
 		link.click();
 		// A click requests a download; only the user/browser can confirm disk persistence.
-		notice("已发起备份下载，请检查浏览器下载记录并确认文件已保存。备份包含原稿、修正与笔记。");
+		notice("已发起备份下载，请检查浏览器下载记录并确认文件已保存。备份包含原稿、修正、摘录与笔记。");
 	} catch {
 		notice("备份导出失败，文字稿与笔记仍保留在本页。请重试，暂时不要关闭页面。");
 	} finally {

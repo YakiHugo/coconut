@@ -597,3 +597,9 @@ main, .shell > aside, #reader-workspace, .segment > div { min-width: 0; }
 .setup-guide a { overflow-wrap: anywhere; }
 
 .save-warning { padding: 14px; color: #714819; background: #fff3dc; border: 1px solid #dab77c; border-radius: 8px; line-height: 1.6; }
+
+/* Excerpts keep the original cue identity; they are separate from reading position. */
+.segment.excerpted .words { background: #fff2c2; border-radius: 5px; padding: 0 6px; }
+.excerpt-button[aria-pressed="true"] { background: #fff2c2; border-color: #dac884; }
+.notebook-export { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-top: 14px; }
+.notebook-export button { font-size: 14px; min-height: 44px; }
