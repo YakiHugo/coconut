@@ -123,7 +123,7 @@ test('new import clears the previous document search',async()=>{
 });
 
 test('backup requests a connected download and restores corrections, notes and provenance',async()=>{
- const w=setup();try{
+ const w=setup();const originalClick=w.HTMLAnchorElement.prototype.click;try{
   await importDocument(w,{title:'A/B',provenance:{kind:'local_asr',model:'small'},source_url:'https://youtu.be/jNQXAC9IVRw',segments:[{id:'one',start:2,end:4,text:'Correction',original_text:'Original'}],notes:{one:'Keep this'}});
   let backup,clicked=false;
   w.URL.createObjectURL=blob=>{backup=blob;return 'blob:https://coconut.example/backup';};
@@ -137,7 +137,7 @@ test('backup requests a connected download and restores corrections, notes and p
   assert.match(w.document.getElementById('notice').textContent,/检查.*下载/);
   assert.doesNotMatch(w.document.getElementById('notice').textContent,/已导出/);
   assert.equal(w.document.querySelectorAll('a[download]').length,0);
- }finally{await w.happyDOM.close();}
+ }finally{w.HTMLAnchorElement.prototype.click=originalClick;await w.happyDOM.close();}
 });
 
 test('failed backup creation keeps the document and gives a retryable error',async()=>{
@@ -410,12 +410,12 @@ test('source guidance distinguishes absent media, external time links and actual
 });
 
 test('unsaved-data warning survives unrelated notices and a backup download',async()=>{
- const w=setup('{damaged');try{
+ const w=setup('{damaged');const originalClick=w.HTMLAnchorElement.prototype.click;try{
   const $=id=>w.document.getElementById(id);await $('sample').onclick();assert.equal($('save-status').hidden,false);
   w.URL.createObjectURL=()=> 'blob:https://coconut.example/backup';w.URL.revokeObjectURL=()=>{};w.HTMLAnchorElement.prototype.click=function(){};
   $('export').onclick();assert.match($('notice').textContent,/备份下载/);assert.equal($('save-status').hidden,false);assert.match($('save-status').textContent,/自动保存已暂停/);
   assert.equal(w.localStorage.getItem('coconut-reader-v1'),'{damaged');
- }finally{await w.happyDOM.close();}
+ }finally{w.HTMLAnchorElement.prototype.click=originalClick;await w.happyDOM.close();}
 });
 
 function fakeSubscription(w, onRequest){
@@ -544,7 +544,7 @@ test('excerpt search beyond first page and document switching preserve exact sav
 });
 
 test('notebook download includes every kept cue despite search and is only requested on click',async()=>{
- const w=setup();try{
+ const w=setup();const originalClick=w.HTMLAnchorElement.prototype.click;try{
   let blob,clicks=0;w.URL.createObjectURL=value=>{blob=value;return 'blob:https://coconut.example/notebook';};w.URL.revokeObjectURL=()=>{};
   w.HTMLAnchorElement.prototype.click=function(){assert.ok(this.isConnected);assert.equal(this.download,'Notes_Test.notes.md');clicks++;};
   const $=id=>w.document.getElementById(id);
@@ -554,11 +554,11 @@ test('notebook download includes every kept cue despite search and is only reque
   $('export-notebook').click();const markdown=await blob.text();assert.equal(clicks,1);
   assert.match(markdown,/Saved quote/);assert.match(markdown,/Note source/);assert.match(markdown,/Remember me/);assert.doesNotMatch(markdown,/Not kept/);
   assert.equal(w.document.querySelectorAll('a[download]').length,0);assert.match($('notice').textContent,/检查浏览器下载记录/);
- }finally{await w.happyDOM.close();}
+ }finally{w.HTMLAnchorElement.prototype.click=originalClick;await w.happyDOM.close();}
 });
 
 test('excerpt storage conflict or quota failure leaves recoverable data with a persistent warning',async()=>{
- for(const failure of ['conflict','quota']){const w=setup();try{
+ for(const failure of ['conflict','quota']){const w=setup();const originalClick=w.HTMLAnchorElement.prototype.click;try{
   const $=id=>w.document.getElementById(id);await $('sample').onclick();
   const before=w.localStorage.getItem('coconut-reader-v1');let persisted=before;
   if(failure==='conflict'){persisted=JSON.stringify({active:'external',documents:[]});w.localStorage.setItem('coconut-reader-v1',persisted);}
@@ -570,7 +570,7 @@ test('excerpt storage conflict or quota failure leaves recoverable data with a p
   assert.equal($('save-status').hidden,false);
   w.URL.createObjectURL=()=>{throw new Error('download unavailable');};$('export-notebook').click();
   assert.match($('notice').textContent,/导出失败/);assert.equal($('save-status').hidden,false);assert.equal(w.document.querySelector('.excerpt-button').getAttribute('aria-pressed'),'true');
- }finally{await w.happyDOM.close();}}
+ }finally{w.HTMLAnchorElement.prototype.click=originalClick;await w.happyDOM.close();}}
 });
 
 test('excerpt filter scopes both AI reading and subscription translation without sending excluded cues',async()=>{
@@ -964,5 +964,48 @@ test('AI reading report exports all saved answers independently of current filte
   $('search').value='missing';$('search').oninput();let blob,requests=0;w.fetch=()=>{requests++;throw Error('No request');};w.URL.createObjectURL=value=>{blob=value;return 'blob:report';};w.URL.revokeObjectURL=()=>{};
   assert.equal($('export-ai-reading').disabled,false);$('export-ai-reading').click();const output=await blob.text();assert.match(output,/First Q/);assert.match(output,/Second Q/);assert.equal(requests,0);
   w.URL.createObjectURL=()=>{throw Error('blocked');};$('export-ai-reading').click();assert.match($('notice').textContent,/导出失败/);assert.equal($('ai-answers').children.length,2);
+ }finally{await w.happyDOM.close();}
+});
+
+test('metadata language corrections update translation selection and revoke pending consent without requests',async()=>{
+ const w=setup();try{
+  const $=id=>w.document.getElementById(id);await importDocument(w,{title:'Book',language:'en',provenance:{language:'en'},segments:[{start:0,end:1,text:'A'}]});assert.equal($('translation-source').value,'en');
+  let requests=0;w.fetch=()=>{requests++;throw Error('No automatic request');};$('translation-source').value='ja';$('translation-source').onchange();
+  $('document-details').click();$('document-title').value='Renamed';$('save-details').click();assert.equal($('translation-source').value,'ja','renaming alone preserves explicit source choice');
+  $('ai-consent').checked=true;$('document-details').click();$('document-language').value='fr';$('save-details').click();assert.equal($('translation-source').value,'fr');assert.equal($('ai-consent').checked,false);
+  $('document-details').click();$('document-language').value='';$('save-details').click();assert.equal($('translation-source').value,'');assert.equal(requests,0);
+ }finally{await w.happyDOM.close();}
+});
+
+test('changing metadata language stops later offline translation batches while retaining completed work',async()=>{
+ const w=setup();try{
+  const $=id=>w.document.getElementById(id);await importDocument(w,{language:'en',segments:Array.from({length:33},(_,i)=>({id:'s'+i,start:i,end:i+1,text:'Source '+i}))});
+  let resolve,body,requests=0;w.fetch=async(url,options)=>{requests++;body=JSON.parse(options.body);return new Promise(r=>resolve=r);};
+  const pending=$('translate-document').onclick();$('document-details').click();$('document-language').value='fr';$('save-details').click();
+  resolve({ok:true,json:async()=>({translations:body.segments.map(s=>({id:s.id,source_text:s.text,text:'Draft '+s.id,provider:'mock'}))})});await pending;
+  assert.equal(requests,1);assert.equal($('translation-source').value,'fr');assert.match($('language-status').textContent,/已停止后续批次/);
+  const stored=JSON.parse(w.localStorage.getItem('coconut-reader-v1')).documents[0];assert.equal(stored.segments[0].translations.zh.source_language,'en');assert.equal(stored.segments[32].translations.zh,undefined);
+ }finally{await w.happyDOM.close();}
+});
+
+test('independent metadata language revocation stops prior subscription plan',async()=>{
+ const w=setup();try{
+  const $=id=>w.document.getElementById(id),calls=[];let release;
+  await importDocument(w,{language:'en',segments:[...Array.from({length:35},(_,i)=>({id:'s'+i,start:i,end:i+1,text:'Saved '+i,saved_excerpt:true})),{id:'secret',start:35,end:36,text:'Excluded neighbor'}]});
+  w.fetch=async(url,options)=>{
+   if(url.endsWith('language-tools'))return {ok:true,json:async()=>({ai:{codex:{ready:true}}})};
+   const request=JSON.parse(options.body);calls.push(request);
+   if(calls.length===1)await new Promise(resolve=>{release=resolve;});
+   return {ok:true,json:async()=>({translations:request.segments.map(s=>({id:s.id,text:'译文',source_text:s.text}))})};
+  };
+  await $('check-ai').onclick();$('filter-excerpts').click();$('ai-consent').checked=true;
+  const pending=$('subscription-translate').onclick();assert.equal(calls.length,1);
+  $('document-details').click();$('document-language').value='fr';$('save-details').click();
+  assert.equal($('ai-consent').checked,false);$('ai-consent').checked=true;
+  release();await pending;
+  assert.equal(calls.length,1,'the prior queued plan cannot continue under changed scope');
+  assert.ok([...calls[0].segments,...calls[0].context].every(s=>s.id!=='secret'));
+  const doc=JSON.parse(w.localStorage.getItem('coconut-reader-v1')).documents[0];
+  assert.equal(doc.segments.filter(s=>s.translations?.zh).length,32);assert.equal($('ai-consent').checked,false);
  }finally{await w.happyDOM.close();}
 });

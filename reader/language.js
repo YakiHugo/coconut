@@ -2,6 +2,7 @@
 const languageNames={en:"English",zh:"中文",ja:"日本語",ko:"한국어",fr:"Français",de:"Deutsch",es:"Español"};
 let languageCheckSequence=0;
 let subscriptionSelectionSignature="";
+let languageDocumentLabel=null;
 let aiStatuses={}, languageReady=false, aiReady=false, translating=false, stopTranslation=false, asking=false, subscriptionTranslating=false, stopSubscription=false, subscriptionScope=null, languageDocument=null;
 for(const [code,name] of Object.entries(languageNames))for(const id of ["translation-source","translation-target","translation-view"]){const option=document.createElement('option');option.value=code;option.textContent=id==='translation-view'?name+' + 原文':name;document.getElementById(id).append(option);}
 document.getElementById('translation-target').value='zh';
@@ -12,7 +13,12 @@ async function languageApi(path,data){
 function renderLanguage(){
  if(!$("language-panel"))return;
  const doc=active();if(!doc)return;
- if(languageDocument!==doc.key){languageDocument=doc.key;$('translation-source').value=doc.language||doc.provenance?.language?.split('-')[0]||'';$('ai-consent').checked=false;}
+ if(languageDocument!==doc.key || languageDocumentLabel!==(doc.language||'')){
+  if(languageDocument===doc.key && translating)stopTranslation=true;
+  if(languageDocument===doc.key && subscriptionTranslating)stopSubscription=true;
+  languageDocument=doc.key;languageDocumentLabel=doc.language||'';
+  $('translation-source').value=languageDocumentLabel;$('ai-consent').checked=false;
+ }
  $('translation-view').value=doc.translation_view||'';
  $('translate-document').disabled=!languageReady||translating||subscriptionTranslating;
  $('ask-ai').disabled=!aiReady||asking||subscriptionTranslating;
