@@ -828,3 +828,28 @@ test('uncited in-flight edits reject an answer and quota errors leave full evide
   }finally{await w.happyDOM.close();}
  }
 });
+
+test('whole bookshelf export and additive recovery retain both documents and report quota failures',async()=>{
+ const w=setup();let backup;
+ try{
+  const $=id=>w.document.getElementById(id);await $('sample').onclick();
+  await importDocument(w,{title:'Second',segments:[{id:'a',text:'A',start:0,end:1}],notes:{a:'Keep'},readingPosition:'a',ai_answers:[{question:'Q',answer:'A',citations:['a'],input_snapshot:{version:1,segments:[{id:'a',text:'A'}]}}]});
+  w.URL.createObjectURL=blob=>{backup=blob;return 'blob:backup';};w.URL.revokeObjectURL=()=>{};$('export-library').click();
+  const payload=JSON.parse(await backup.text());assert.equal(payload.documents.length,2);
+  const restore=async text=>{Object.defineProperty($('library-file'),'files',{configurable:true,value:[{size:text.length,text:async()=>text}]});await $('library-file').onchange();};
+  await restore(JSON.stringify(payload));assert.equal($('library-total').textContent,'2');
+  payload.documents[1].title='Changed version';await restore(JSON.stringify(payload));assert.equal($('library-total').textContent,'3');
+  assert.match($('ai-answers').textContent,/Q/);assert.equal($('resume').hidden,false);
+  payload.documents.push({key:'broken',segments:[]});await restore(JSON.stringify(payload));assert.equal($('library-total').textContent,'3');assert.match($('notice').textContent,/恢复失败/);
+  payload.documents.pop();payload.documents[1].title='Quota copy';const old=w.localStorage.getItem('coconut-reader-v1');Object.defineProperty(w,'localStorage',{value:{getItem:()=>old,setItem:()=>{throw Error('quota');}}});
+  await restore(JSON.stringify(payload));assert.equal($('library-total').textContent,'4');assert.match($('save-status').textContent,/尚未保存/);assert.doesNotMatch($('notice').textContent,/已恢复/);
+ }finally{await w.happyDOM.close();}
+});
+
+test('oversized library export refuses to create a backup that recovery cannot accept',async()=>{
+ const seed={documents:Array.from({length:501},(_,i)=>({key:'k'+i,title:'Book '+i,segments:[{start:0,end:1,text:'A'}]})),active:'k0'};
+ const w=setup(JSON.stringify(seed));try{
+  let downloads=0;w.URL.createObjectURL=()=>{downloads++;return 'blob:bad';};
+  w.document.getElementById('export-library').click();assert.equal(downloads,0);assert.match(w.document.getElementById('notice').textContent,/逐份文字稿备份/);
+ }finally{await w.happyDOM.close();}
+});

@@ -559,3 +559,31 @@ window.addEventListener("coconut-worker-ready", () => {
 	mediaWorkerReady = true;
 	render();
 });
+
+// Library restore is additive: a conflicting version becomes another document.
+$("export-library").onclick = () => {
+ let url, link;
+ try {
+  const backup = {format:"coconut-library", version:1, documents:state.documents, active:state.active};
+  const blob = new Blob([JSON.stringify(backup, null, 2)], {type:"application/json"});
+  if(backup.documents.length>500 || blob.size>50*1024*1024) { notice("书架超过整库恢复限制（500份或50MB），请使用逐份文字稿备份，避免生成无法恢复的文件。"); return; }
+  url = URL.createObjectURL(blob);
+  link = el("a"); link.href=url; link.download="coconut-library.json"; link.hidden=true; document.body.append(link); link.click();
+  notice("已发起整个书架的备份下载，请确认文件已保存；包含文字、笔记及 AI 回答，不包含媒体文件。");
+ } catch { notice("书架备份失败，内容仍在本页，请重试后再关闭。"); }
+ finally { link?.remove(); if(url)setTimeout(()=>URL.revokeObjectURL(url),60000); }
+};
+$("restore-library").onclick = () => $("library-file").click();
+$("library-file").onchange = async () => {
+ const file = $("library-file").files[0]; if(!file)return;
+ try {
+  if(file.size > 50*1024*1024)throw new Error("书架备份超过50MB，请改用逐份导入");
+  const backup = JSON.parse(await file.text());
+  const before = state.documents.length;
+  const restored = Coconut.mergeLibraryBackup(state, backup);
+  state = restored; selected=null; pageStart=0; notesOnly=false; excerptsOnly=false; $("search").value=""; workspace="read";
+  const persisted = save(); render();
+  if(persisted)notice("已恢复 " + (state.documents.length-before) + " 份文字稿；相同内容已跳过，不同版本分别保留，原书架未删除。");
+ } catch(error) { notice("恢复失败，原书架未改变："+error.message); }
+ finally { $("library-file").value=""; }
+};
