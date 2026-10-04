@@ -4,11 +4,12 @@ import fs from 'node:fs';
 import {webcrypto} from 'node:crypto';
 import {Window} from 'happy-dom';
 const root=new URL('../',import.meta.url);
-function setup(stored, fetchMock){
+function setup(stored, fetchMock, layout){
   const window=new Window({url:'https://coconut.example/'});
   window.document.body.innerHTML=fs.readFileSync(new URL('reader/index.html',root),'utf8').split('<body>')[1].split('</body>')[0];
   Object.defineProperty(window,'crypto',{value:webcrypto});
   if(stored!==undefined)window.localStorage.setItem('coconut-reader-v1',stored);
+  if(layout!==undefined)window.localStorage.setItem('coconut-reading-layout-v1',layout);
   window.eval(fs.readFileSync(new URL('reader/core.js',root),'utf8'));
   if(fetchMock)window.fetch=fetchMock;
   window.eval(fs.readFileSync(new URL('reader/app.js',root),'utf8') + '\n' + fs.readFileSync(new URL('reader/language.js',root),'utf8') + (fetchMock ? '\n' + fs.readFileSync(new URL('reader/jobs.js',root),'utf8') : ''));
@@ -884,4 +885,17 @@ test('time navigation leaves filters and opens the correct long transcript page 
   $('reading-time').value='99:00';$('time-navigation').dispatchEvent(new w.Event('submit',{cancelable:true}));assert.match($('time-navigation-status').textContent,/超出/);
   $('reading-time').value='1:99';$('time-navigation').dispatchEvent(new w.Event('submit',{cancelable:true}));assert.match($('time-navigation-status').textContent,/请输入/);
  }finally{await w.happyDOM.close();}
+});
+
+
+test('reading comfort persists independently of books and handles unknown or unavailable storage',async()=>{
+ let saved,library;const w=setup();try{
+  const $=id=>w.document.getElementById(id);await $('sample').onclick();library=w.localStorage.getItem('coconut-reader-v1');
+  $('reading-layout').value='spacious';$('reading-layout').onchange();assert.equal(w.document.documentElement.dataset.readingLayout,'spacious');
+  saved=w.localStorage.getItem('coconut-reading-layout-v1');assert.equal(w.localStorage.getItem('coconut-reader-v1'),library);
+  Object.defineProperty(w,'localStorage',{value:{setItem:()=>{throw Error('blocked');}}});$('reading-layout').value='large';$('reading-layout').onchange();assert.equal(w.document.documentElement.dataset.readingLayout,'large');assert.match($('layout-status').textContent,/未能保存/);
+ }finally{await w.happyDOM.close();}
+ for(const [value,expected] of [[saved,'spacious'],['url(javascript:evil)','standard']]){
+  const restored=setup(library,undefined,value);try{assert.equal(restored.document.documentElement.dataset.readingLayout,expected);assert.equal(restored.document.getElementById('reading-layout').value,expected);}finally{await restored.happyDOM.close();}
+ }
 });

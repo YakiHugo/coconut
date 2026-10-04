@@ -606,3 +606,20 @@ main, .shell > aside, #reader-workspace, .segment > div { min-width: 0; }
 
 .reading-pages { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; padding: 24px 0; }
 .reading-pages .hint { margin: 0; }
+
+/* A small reading-only preference; app controls and document data stay unchanged. */
+.reading-comfort, .time-navigation, .subtitle-export { display:flex; flex-wrap:wrap; align-items:center; gap:10px; margin:14px 0; }
+.reading-comfort select, .time-navigation input { max-width:100%; }
+select:focus-visible { outline:3px solid #95b88d; outline-offset:3px; }
+:root[data-reading-layout="large"] .words,
+:root[data-reading-layout="large"] .translation,
+:root[data-reading-layout="spacious"] .words,
+:root[data-reading-layout="spacious"] .translation { font-size:20px; }
+:root[data-reading-layout="spacious"] .words,
+:root[data-reading-layout="spacious"] .translation { line-height:2.3; }
+@media (max-width:700px) {
+ :root[data-reading-layout="large"] .words,
+ :root[data-reading-layout="large"] .translation,
+ :root[data-reading-layout="spacious"] .words,
+ :root[data-reading-layout="spacious"] .translation { font-size:19px; }
+}

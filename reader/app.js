@@ -627,3 +627,15 @@ $("time-navigation").onsubmit=event=>{
  goToSegment(segment.id);
  $("time-navigation-status").textContent=seconds<segment.start?"此处没有字幕，已定位下一段 · "+Coconut.time(segment.start):"已定位 · "+Coconut.time(segment.start)+"；未自动播放音视频。";
 };
+
+const LAYOUT_KEY="coconut-reading-layout-v1";
+function applyReadingLayout(value){
+ const layout=["standard","large","spacious"].includes(value)?value:"standard";
+ document.documentElement.dataset.readingLayout=layout;$("reading-layout").value=layout;
+}
+try { applyReadingLayout(localStorage.getItem(LAYOUT_KEY)); } catch { applyReadingLayout("standard"); }
+$("reading-layout").onchange=()=>{
+ applyReadingLayout($("reading-layout").value);
+ try {localStorage.setItem(LAYOUT_KEY,$("reading-layout").value);$("layout-status").textContent="排版已保存在此浏览器";}
+ catch {$("layout-status").textContent="本次排版已应用，浏览器未能保存偏好；文字稿不受影响。";}
+};
