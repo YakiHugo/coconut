@@ -181,3 +181,26 @@ test('legacy or malformed answer evidence stays unknown rather than silently bec
   assert.equal(doc.ai_answers[0].answer,'Saved');assert.equal(answerFreshness(doc.ai_answers[0],doc),'unknown');
  }
 });
+
+test('library recovery validates atomically and preserves conflicting versions without duplication',()=>{
+ const C=require('../reader/core.js');
+ const doc={...C.validate({title:'Original',segments:[{id:'a',text:'Corrected',original_text:'Raw',start:0,end:2,saved_excerpt:true}],notes:{a:'Note'},readingPosition:'a'}),key:'book'};
+ const current={documents:[doc],active:'book'};
+ const backup={format:'coconut-library',version:1,documents:[{...doc,title:'Changed'}],active:'book'};
+ const merged=C.mergeLibraryBackup(current,backup);
+ assert.equal(merged.documents.length,2);assert.equal(merged.documents[0],doc);assert.equal(merged.active,'book-restored-1');
+ assert.equal(merged.documents[1].notes.a,'Note');assert.equal(merged.documents[1].readingPosition,'a');
+ assert.equal(C.mergeLibraryBackup(merged,backup).documents.length,2);
+ assert.equal(C.mergeLibraryBackup({documents:[],active:null},backup).documents[0].segments[0].original_text,'Raw');
+ for(const invalid of [{...backup,version:2},{...backup,documents:[doc,doc]},{...backup,documents:[doc,{key:'bad',segments:[]}]}])assert.throws(()=>C.mergeLibraryBackup(current,invalid));
+ assert.equal(current.documents.length,1);assert.equal(current.active,'book');
+});
+
+test('recovered maximum-length conflicting library keys remain valid on re-export',()=>{
+ const C=require('../reader/core.js'), key='k'.repeat(200);
+ const doc={...C.validate({title:'A',segments:[{start:0,end:1,text:'A'}]}),key};
+ const backup={format:'coconut-library',version:1,documents:[{...doc,title:'B'}],active:key};
+ const merged=C.mergeLibraryBackup({documents:[doc],active:key},backup);
+ assert.equal(merged.documents[1].key.length,200);
+ assert.equal(C.mergeLibraryBackup({documents:[],active:null},{...backup,...merged}).documents.length,2);
+});
