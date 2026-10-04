@@ -251,9 +251,12 @@ function render() {
 		body.append(el("p", "words", s.text));
         const translated=s.translations?.[doc.translation_view];
         if(translated) body.append(el("p", "translation"+(!Coconut.translationCurrent(s,doc,translated)?" stale":""), Coconut.translationCurrent(s,doc,translated) ? translated.text : "原文或上下文已变化，或旧译文缺少上下文记录，此译文需要重新生成"));
-		const edit = el("button", "", "修正文字");
+		const edit = el("button", "edit-button", "修正文字");
 		edit.onclick = () => {
-			editingTarget = { documentKey: doc.key, segmentId: s.id };
+			editingTarget = {
+				documentKey: doc.key, segmentId: s.id,
+				position: [...$("transcript").querySelectorAll(".segment")].indexOf(row),
+			};
 			$("edit-error").textContent = "";
 			$("edit-segment").value = s.text;
 			$("edit-dialog").showModal();
@@ -532,6 +535,12 @@ $("save-edit").onclick = (event) => {
 	save();
 	$("edit-dialog").close();
 	render();
+	// Rendering replaces the dialog’s original opener. Restore the reader’s
+	// keyboard position even when the correction no longer matches the search.
+	const rows = [...$("transcript").querySelectorAll(".segment")];
+	const target = doc.key === active()?.key ? (rows.find(row => row.dataset.segmentId === segment.id)
+		|| rows[Math.min(editingTarget.position, rows.length - 1)]) : null;
+	(target?.querySelector(".edit-button") || $("search")).focus({preventScroll: true});
 };
 $("restore-edit").onclick = (event) => {
 	event.preventDefault();
