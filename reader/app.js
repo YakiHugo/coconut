@@ -600,3 +600,19 @@ $("export-subtitles").onclick = () => {
  } catch { notice("字幕导出失败，内容仍在本页，请重试。"); }
  finally {link?.remove();if(url)setTimeout(()=>URL.revokeObjectURL(url),60000);}
 };
+
+let detailsTarget=null;
+$("document-details").onclick=()=>{
+ const doc=active();if(!doc)return;
+ detailsTarget=doc.key;$("document-title").value=doc.title;$("details-error").textContent="";
+ const language=$("document-language");language.querySelector('[data-custom]')?.remove();
+ if(doc.language && ![...language.options].some(o=>o.value===doc.language)){const option=el("option","",doc.language);option.value=doc.language;option.dataset.custom="true";language.append(option);}
+ language.value=doc.language||"";$("details-dialog").showModal();
+};
+$("save-details").onclick=event=>{
+ event.preventDefault();const doc=state.documents.find(d=>d.key===detailsTarget), title=$("document-title").value.trim();
+ if(!doc || !title || title.length>200){$("details-error").textContent="请输入1–200字的标题";return;}
+ doc.title=title;doc.language=$("document-language").value;
+ const persisted=save();$("details-dialog").close();render();$("document-details").focus();
+ if(persisted)notice("文字稿信息已保存；原始来源信息、时间戳和笔记保持不变。");
+};
