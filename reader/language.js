@@ -32,7 +32,9 @@ function renderLanguage(){
  const host=$('ai-answers');host.replaceChildren();
  for(const answer of (doc.ai_answers||[]).slice().reverse()){
   const section=el('section','ai-answer');
-  if(Object.entries(answer.source_snapshot||{}).some(([id,text])=>doc.segments.find(s=>s.id===id)?.text!==text))section.append(el('p','hint','引用原文已修正，此回答依据可能过期，请重新提问'));
+  const freshness=Coconut.answerFreshness(answer,doc);
+  if(freshness==='stale')section.append(el('p','hint','本次发送的原文已修改或移除，此回答依据可能过期，请重新提问'));
+  if(freshness==='unknown')section.append(el('p','hint','此回答缺少完整的发送原文记录，无法确认依据是否仍有效，请核对或重新提问'));
   section.append(el('strong','',answer.question),el('p','',answer.answer));
   for(const id of answer.citations){const segment=doc.segments.find(s=>s.id===id);if(!segment)continue;const button=el('button','',Coconut.time(segment.start)+' · 原文');button.onclick=()=>goToSegment(id);section.append(button);}
   if(!answer.citations.length)section.append(el('p','hint','回答未提供片段引用，请回听核对'));
@@ -104,9 +106,9 @@ $('ask-ai').onclick=async()=>{
  try{
   const answer=await languageApi('ask',{question,language:$('translation-target').value,provider:$('ai-provider').value,segments,consent:true});
   const destination=state.documents.find(d=>d.key===key);if(!destination)throw new Error('原文字稿已关闭');
-  if(segments.some(s=>destination.segments.find(current=>current.id===s.id)?.text!==s.text))throw new Error('请求期间原文已修改，请按新原文重新提问');
+  if(Coconut.answerFreshness({input_snapshot:{version:1,segments}},destination)!=='current')throw new Error('请求期间原文已修改，请按新原文重新提问');
   if(typeof answer.answer!=='string'||!Array.isArray(answer.citations)||answer.citations.some(id=>!segments.some(s=>s.id===id)))throw new Error('回答引用无效');
-  destination.ai_answers||=[];destination.ai_answers.push({...answer,question,source_snapshot:Object.fromEntries(segments.filter(s=>answer.citations.includes(s.id)).map(s=>[s.id,s.text]))});destination.ai_answers=destination.ai_answers.slice(-20);const persisted=save();
+  destination.ai_answers||=[];destination.ai_answers.push({...answer,question,input_snapshot:{version:1,segments}});destination.ai_answers=destination.ai_answers.slice(-20);const persisted=save();
   $('ai-progress').textContent=persisted?'回答已保存在这份文字稿中，可点击引用返回原文；AI 判断仍需核对。':'回答暂留在当前页，浏览器保存未成功；请先导出备份，勿关闭页面。';
  }catch(error){$('ai-progress').textContent='AI 阅读未完成：'+error.message;}
  finally{asking=false;$('ai-consent').checked=false;renderLanguage();}

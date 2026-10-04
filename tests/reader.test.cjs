@@ -158,3 +158,26 @@ test('notebook excludes stale translations without dropping saved source or note
  const output=C.notebookMarkdown(doc);
  assert.doesNotMatch(output,/Obsolete output/);assert.match(output,/译文已过期/);assert.match(output,/Updated/);assert.match(output,/Verify this/);
 });
+
+test('answer freshness preserves exact ordered input through JSON and removed cue imports',()=>{
+ const {answerFreshness}=require('../reader/core.js');
+ const input=[{id:'a',text:'A'},{id:'b',text:'B'}];
+ const original={segments:[...input,{id:'c',text:'C'}].map((s,i)=>({...s,start:i,end:i+1})),ai_answers:[{question:'Q',answer:'A',citations:['a'],input_snapshot:{version:1,segments:input}}]};
+ const doc=parse(JSON.stringify(validate(original)),'backup.json');
+ assert.equal(answerFreshness(doc.ai_answers[0],doc),'current');
+ doc.segments[2].text='Unsent change';doc.segments[0].translations.zh={text:'New translation'};doc.notes.a='New note';
+ assert.equal(answerFreshness(doc.ai_answers[0],doc),'current');
+ doc.segments[1].text='Changed same ID';assert.equal(answerFreshness(doc.ai_answers[0],doc),'stale');
+ doc.segments.splice(1,1);const removed=parse(JSON.stringify(doc),'backup.json');
+ assert.equal(removed.ai_answers[0].input_snapshot.segments.length,2);assert.equal(answerFreshness(removed.ai_answers[0],removed),'stale');
+ const reordered=validate({...original,segments:[{id:'b',text:'B',start:0,end:1},{id:'a',text:'A',start:1,end:2}]});
+ assert.equal(answerFreshness(reordered.ai_answers[0],reordered),'stale');
+});
+
+test('legacy or malformed answer evidence stays unknown rather than silently becoming current',()=>{
+ const {answerFreshness}=require('../reader/core.js');
+ for(const input_snapshot of [undefined,{version:2,segments:[{id:'a',text:'A'}]},{version:1,segments:[]},{version:1,segments:[{id:'a',text:'A'},{id:'a',text:'A'}]},{version:1,segments:[{id:'a',text:42}]},{version:1,segments:[{id:'a',text:'x'.repeat(500001)}]}]){
+  const doc=validate({segments:[{id:'a',text:'A',start:0,end:1}],ai_answers:[{question:'Q',answer:'Saved',citations:['a'],source_snapshot:{a:'A'},input_snapshot}]});
+  assert.equal(doc.ai_answers[0].answer,'Saved');assert.equal(answerFreshness(doc.ai_answers[0],doc),'unknown');
+ }
+});

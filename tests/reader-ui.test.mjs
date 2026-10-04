@@ -775,3 +775,56 @@ test('correction focus survives the final search page collapsing and a repeated 
   assert.equal(w.document.querySelector('.words').textContent,'Match corrected again');
  }finally{await w.happyDOM.close();}
 });
+
+test('saved answers track uncited submitted cues through corrections and reload without automatic requests',async()=>{
+ const w=setup();let stored,requests=0;
+ try{
+  const $=id=>w.document.getElementById(id);await $('sample').onclick();
+  w.fetch=async(url,options)=>({ok:true,json:async()=>{requests++;assert.equal(JSON.parse(options.body).segments.length,3);return {answer:'Saved answer',citations:['demo-1']};}});
+  $('ai-question').value='Q';$('ai-consent').checked=true;await $('ask-ai').onclick();
+  assert.doesNotMatch($('ai-answers').textContent,/依据可能过期|无法确认/);
+  w.document.querySelectorAll('.segment .edit-button')[1].click();$('edit-segment').value='Contradictory uncited context';$('save-edit').click();
+  assert.match($('ai-answers').textContent,/依据可能过期/);assert.equal(requests,1);
+  stored=w.localStorage.getItem('coconut-reader-v1');
+ }finally{await w.happyDOM.close();}
+ const restored=setup(stored);try{assert.match(restored.document.getElementById('ai-answers').textContent,/依据可能过期/);}finally{await restored.happyDOM.close();}
+});
+
+test('answer evidence follows exact filtered scope, independent of citations, notes, translations and reader window',async()=>{
+ const w=setup();try{
+  const $=id=>w.document.getElementById(id);
+  const segments=Array.from({length:205},(_,i)=>({id:'s'+i,start:i,end:i+1,text:'Source '+i,...(i%2===0?{saved_excerpt:true}:{}),translations:{zh:{text:'匹配',source_text:'Source '+i,provider:'local'}}}));
+  await importDocument(w,{segments});let requests=0,sent;
+  w.fetch=async(url,options)=>({ok:true,json:async()=>{requests++;sent=JSON.parse(options.body);return {answer:'No citations answer',citations:[]};}});
+  $('filter-excerpts').click();$('search').value='匹配';$('search').oninput();$('ai-filtered').checked=true;$('ai-question').value='Q';$('ai-consent').checked=true;await $('ask-ai').onclick();
+  assert.equal(sent.segments.length,103);assert.equal(sent.segments.at(-1).id,'s204');
+  let doc=JSON.parse(w.localStorage.getItem('coconut-reader-v1')).documents[0];assert.deepEqual(doc.ai_answers[0].input_snapshot.segments,sent.segments);
+  assert.doesNotMatch($('ai-answers').textContent,/依据可能过期|无法确认/);
+  doc.segments[1].text='Unsent changed';doc.segments[0].translations.zh.text='Revised translation';doc.notes.s0='New note';
+  await importDocument(w,doc);assert.doesNotMatch($('ai-answers').textContent,/依据可能过期|无法确认/);
+  doc.segments[204].text='Sent but beyond first page changed';await importDocument(w,doc);assert.match($('ai-answers').textContent,/依据可能过期/);assert.equal(requests,1);
+ }finally{await w.happyDOM.close();}
+});
+
+test('legacy answers are readable but unverified and cannot rerun without consent',async()=>{
+ const w=setup();try{
+  const $=id=>w.document.getElementById(id);let requests=0;w.fetch=async()=>{requests++;throw Error('No automatic request');};
+  await importDocument(w,{segments:[{id:'a',text:'A',start:0,end:1}],ai_answers:[{question:'Q',answer:'Legacy answer',citations:['a'],source_snapshot:{a:'A'}}]});
+  assert.match($('ai-answers').textContent,/Legacy answer/);assert.match($('ai-answers').textContent,/无法确认/);
+  $('ai-question').value='Q';await $('ask-ai').onclick();assert.equal(requests,0);
+ }finally{await w.happyDOM.close();}
+});
+
+test('uncited in-flight edits reject an answer and quota errors leave full evidence recoverable',async()=>{
+ for(const quota of [false,true]){
+  const w=setup();try{
+   const $=id=>w.document.getElementById(id);await $('sample').onclick();let resolve;
+   w.fetch=()=>new Promise(r=>resolve=r);$('ai-question').value='Q';$('ai-consent').checked=true;const pending=$('ask-ai').onclick();
+   if(quota){const stored=w.localStorage.getItem('coconut-reader-v1');Object.defineProperty(w,'localStorage',{value:{getItem:()=>stored,setItem:()=>{throw Error('QuotaExceededError');}}});}
+   else {w.document.querySelectorAll('.segment .edit-button')[1].click();$('edit-segment').value='Changed in flight';$('save-edit').click();}
+   resolve({ok:true,json:async()=>({answer:'A',citations:['demo-1']})});await pending;
+   if(quota){assert.match($('ai-progress').textContent,/保存未成功/);let backup;w.URL.createObjectURL=b=>{backup=b;return 'blob:backup';};w.URL.revokeObjectURL=()=>{};$('export').onclick();const doc=w.Coconut.parse(await backup.text(),'backup.json');assert.equal(doc.ai_answers[0].input_snapshot.segments.length,3);assert.equal(w.Coconut.answerFreshness(doc.ai_answers[0],doc),'current');}
+   else {assert.match($('ai-progress').textContent,/请求期间原文已修改/);assert.equal($('ai-answers').children.length,0);}
+  }finally{await w.happyDOM.close();}
+ }
+});
