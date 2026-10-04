@@ -853,3 +853,12 @@ test('oversized library export refuses to create a backup that recovery cannot a
   w.document.getElementById('export-library').click();assert.equal(downloads,0);assert.match(w.document.getElementById('notice').textContent,/逐份文字稿备份/);
  }finally{await w.happyDOM.close();}
 });
+
+test('subtitle download exports full document despite active search and handles download failure',async()=>{
+ const w=setup();try{
+  const $=id=>w.document.getElementById(id);await $('sample').onclick();$('search').value='不会匹配';$('search').oninput();
+  let blob;w.URL.createObjectURL=value=>{blob=value;return 'blob:subtitles';};w.URL.revokeObjectURL=()=>{};
+  $('subtitle-format').value='vtt';$('export-subtitles').click();assert.equal(w.Coconut.parse(await blob.text(),'export.vtt').segments.length,3);assert.match($('notice').textContent,/3 段/);
+  w.URL.createObjectURL=()=>{throw Error('blocked');};$('export-subtitles').click();assert.match($('notice').textContent,/导出失败/);
+ }finally{await w.happyDOM.close();}
+});

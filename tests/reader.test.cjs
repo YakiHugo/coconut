@@ -204,3 +204,20 @@ test('recovered maximum-length conflicting library keys remain valid on re-expor
  assert.equal(merged.documents[1].key.length,200);
  assert.equal(C.mergeLibraryBackup({documents:[],active:null},{...backup,...merged}).documents.length,2);
 });
+
+test('subtitle exports preserve millisecond timing and include only current bilingual content',()=>{
+ const C=require('../reader/core.js');const doc=C.validate({translation_view:'zh',segments:[
+ {id:'a',start:3599.9996,end:3601.002,text:'Corrected <script> & text\n\nnext',original_text:'Raw',translations:{zh:{text:'有效',source_text:'Corrected <script> & text\n\nnext',provider:'local'}}},
+ {id:'b',start:3601.5,end:3602,text:'B',translations:{zh:{text:'过期',source_text:'Old',provider:'local'}}}],notes:{a:'Private note'}});
+ const srt=C.subtitleExport(doc,'srt',true);assert.match(srt.text,/01:00:00,000 --> 01:00:01,002/);assert.equal(srt.translated,1);assert.match(srt.text,/有效/);assert.doesNotMatch(srt.text,/过期|Raw|Private note|<script>/);assert.match(srt.text,/&lt;script&gt; &amp; text\nnext/);
+ const vtt=C.subtitleExport(doc,'vtt');assert.match(vtt.text,/^WEBVTT\n\n1\n01:00:00.000/);assert.doesNotMatch(vtt.text,/有效/);assert.throws(()=>C.subtitleExport(doc,'exe'));
+ const restored=C.parse(srt.text,'copy.srt');assert.equal(restored.segments[1].start,3601.5);assert.equal(restored.segments[0].text,'Corrected <script> & text\nnext\n有效');
+});
+
+test('subtitle export keeps tiny cues visible and removes NUL separators before line filtering',()=>{
+ const C=require('../reader/core.js');const doc=C.validate({segments:[{start:0,end:0.0004,text:'A\n\0\nB'},{start:1,end:1,text:'Still visible'}]});
+ for(const format of ['srt','vtt']){
+  const output=C.subtitleExport(doc,format).text;const restored=C.parse(output,'copy.'+format);
+  assert.equal(restored.segments.length,2);assert.equal(restored.segments[0].end,.001);assert.equal(restored.segments[0].text,'A\nB');assert.equal(restored.segments[1].end,1.001);
+ }
+});

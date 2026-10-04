@@ -587,3 +587,16 @@ $("library-file").onchange = async () => {
  } catch(error) { notice("恢复失败，原书架未改变："+error.message); }
  finally { $("library-file").value=""; }
 };
+
+$("export-subtitles").onclick = () => {
+ const doc=active(); if(!doc)return;
+ let url,link;
+ try {
+  const format=$("subtitle-format").value, bilingual=$("subtitle-bilingual").checked;
+  const result=Coconut.subtitleExport(doc,format,bilingual);
+  url=URL.createObjectURL(new Blob([result.text],{type:format==="vtt"?"text/vtt;charset=utf-8":"text/plain;charset=utf-8"}));
+  link=el("a");link.href=url;link.download=doc.title.replace(/[\\/:*?"<>|\x00-\x1f\x7f]/g,"_")+"."+format;link.hidden=true;document.body.append(link);link.click();
+  notice("已发起整篇字幕下载（"+doc.segments.length+" 段）"+(bilingual?"，附加 "+result.translated+" 段有效译文；缺失或过期译文未导出":"")+"。请确认文件已保存。");
+ } catch { notice("字幕导出失败，内容仍在本页，请重试。"); }
+ finally {link?.remove();if(url)setTimeout(()=>URL.revokeObjectURL(url),60000);}
+};
