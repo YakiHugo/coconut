@@ -221,3 +221,10 @@ test('subtitle export keeps tiny cues visible and removes NUL separators before 
   assert.equal(restored.segments.length,2);assert.equal(restored.segments[0].end,.001);assert.equal(restored.segments[0].text,'A\nB');assert.equal(restored.segments[1].end,1.001);
  }
 });
+
+test('reading time accepts clock input and chooses containing or next cue without fabricating coverage',()=>{
+ const C=require('../reader/core.js');for(const [input,value] of [['90',90],['01:02.125',62.125],['1:02:03',3723],['90:00',5400]])assert.equal(C.parseReadingTime(input),value);
+ for(const input of ['', '-1','1:60','1:60:00','1e3','1:2:3:4','1:02.1234'])assert.equal(C.parseReadingTime(input),null);
+ const doc=C.validate({segments:[{id:'a',start:3,end:10,text:'A'},{id:'b',start:5,end:7,text:'B'},{id:'c',start:12,end:14,text:'C'}]});
+ assert.equal(C.segmentAtTime(doc,0).id,'a');assert.equal(C.segmentAtTime(doc,6).id,'b');assert.equal(C.segmentAtTime(doc,9).id,'a');assert.equal(C.segmentAtTime(doc,11).id,'c');assert.equal(C.segmentAtTime(doc,14).id,'c');assert.equal(C.segmentAtTime(doc,15),null);
+});

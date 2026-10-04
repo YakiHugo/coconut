@@ -875,3 +875,13 @@ test('document details persist and target the document that opened the dialog',a
   $('document-details').click();$('document-title').value='Not saved';$('details-dialog').close();assert.equal($('title').textContent,'<New title>');
  }finally{await w.happyDOM.close();}
 });
+
+test('time navigation leaves filters and opens the correct long transcript page without network',async()=>{
+ const w=setup();try{
+  const $=id=>w.document.getElementById(id);await importDocument(w,{segments:Array.from({length:205},(_,i)=>({id:'s'+i,start:i*2,end:i*2+1,text:'Cue '+i}))});
+  let requests=0;w.fetch=()=>{requests++;throw Error('No requests');};$('filter-notes').click();$('reading-time').value='6:41';$('time-navigation').dispatchEvent(new w.Event('submit',{cancelable:true}));
+  assert.equal(w.document.activeElement.dataset.segmentId,'s200');assert.equal($('filter-all').getAttribute('aria-pressed'),'true');assert.match($('time-navigation-status').textContent,/已定位/);assert.equal(requests,0);
+  $('reading-time').value='99:00';$('time-navigation').dispatchEvent(new w.Event('submit',{cancelable:true}));assert.match($('time-navigation-status').textContent,/超出/);
+  $('reading-time').value='1:99';$('time-navigation').dispatchEvent(new w.Event('submit',{cancelable:true}));assert.match($('time-navigation-status').textContent,/请输入/);
+ }finally{await w.happyDOM.close();}
+});
