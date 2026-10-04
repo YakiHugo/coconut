@@ -714,3 +714,64 @@ test('removing the only excerpt on the final page returns to a valid page and ke
   assert.equal(w.document.querySelector('.segment').dataset.segmentId,'e100');assert.equal(w.document.querySelector('.excerpt-button').getAttribute('aria-pressed'),'false');
  }finally{await w.happyDOM.close();}
 });
+
+test('saving a correction returns keyboard focus to the edited cue on a later page',async()=>{
+ const w=setup();try{
+  const $=id=>w.document.getElementById(id);
+  await importDocument(w,{title:'Keyboard corrections',segments:Array.from({length:205},(_,i)=>({id:'k'+i,start:i,end:i+1,text:'Part '+i}))});
+  $('next-page').click();
+  const edit=w.document.querySelector('[data-segment-id="k150"] button');
+  edit.focus();edit.click();
+  $('edit-segment').focus();$('edit-segment').value='Corrected part';$('save-edit').click();
+  assert.equal($('edit-dialog').open,false);
+  assert.equal(w.document.activeElement.closest('.segment')?.dataset.segmentId,'k150');
+  assert.equal(w.document.activeElement.textContent,'修正文字');
+  assert.equal(w.document.querySelector('.segment').dataset.segmentId,'k100');
+  const saved=JSON.parse(w.localStorage.getItem('coconut-reader-v1')).documents[0].segments[150];
+  assert.equal(saved.text,'Corrected part');assert.equal(saved.original_text,'Part 150');
+ }finally{await w.happyDOM.close();}
+});
+
+test('correcting away a search match keeps focus in the remaining results or search',async()=>{
+ const w=setup();try{
+  const $=id=>w.document.getElementById(id);
+  await importDocument(w,{title:'Filtered corrections',segments:[{id:'a',start:0,end:1,text:'Match one'},{id:'b',start:1,end:2,text:'Match two'}]});
+  $('search').value='Match';$('search').oninput();
+  for(const expected of ['b',null]){
+   const edit=w.document.querySelector('.segment button');edit.focus();edit.click();
+   $('edit-segment').focus();$('edit-segment').value='Corrected';$('save-edit').click();
+   assert.equal($('search').value,'Match','saving must preserve the reader’s search');
+   if(expected)assert.equal(w.document.activeElement.closest('.segment')?.dataset.segmentId,expected);
+   else assert.equal(w.document.activeElement,$('search'));
+  }
+ }finally{await w.happyDOM.close();}
+});
+
+test('correction dialog has an accessible heading and initial editor target',async()=>{
+ const w=setup();try{
+  const dialog=w.document.getElementById('edit-dialog');
+  assert.equal(w.document.getElementById(dialog.getAttribute('aria-labelledby'))?.textContent,'修正这一段');
+  assert.equal(dialog.querySelector('[autofocus]')?.id,'edit-segment');
+ }finally{await w.happyDOM.close();}
+});
+
+test('correction focus survives the final search page collapsing and a repeated edit',async()=>{
+ const w=setup();try{
+  const $=id=>w.document.getElementById(id);
+  await importDocument(w,{title:'Search page corrections',segments:Array.from({length:101},(_,i)=>({id:'c'+i,start:i,end:i+1,text:'Match '+i}))});
+  $('search').value='Match';$('search').oninput();$('next-page').click();
+  w.document.querySelector('.edit-button').click();
+  $('edit-segment').value='Rewritten cue';$('save-edit').click();
+  assert.equal($('next-page'),null);
+  assert.equal(w.document.querySelectorAll('.segment').length,100);
+  assert.equal(w.document.activeElement.closest('.segment')?.dataset.segmentId,'c0');
+  w.document.activeElement.click();
+  $('edit-segment').value='';$('save-edit').click();
+  assert.equal($('edit-dialog').open,true);
+  assert.equal($('edit-error').textContent,'文字不能为空');
+  assert.equal(w.document.querySelector('.words').textContent,'Match 0');
+  $('edit-segment').value='Match corrected again';$('save-edit').click();
+  assert.equal(w.document.activeElement.closest('.segment')?.dataset.segmentId,'c0');
+  assert.equal(w.document.querySelector('.words').textContent,'Match corrected again');
+ }finally{await w.happyDOM.close();}
+});
