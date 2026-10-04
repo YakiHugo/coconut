@@ -206,6 +206,18 @@
             translation_contexts: cleanContexts(data.translation_contexts, segments),
 		};
 	}
+ function parseReadingTime(value) {
+  const parts=String(value).trim().split(":");
+  if(parts.length>3 || !parts.length || parts.some((part,i)=>!(i===parts.length-1 ? /^\d+(?:\.\d{1,3})?$/ : /^\d+$/).test(part)))return null;
+  const numbers=parts.map(Number);
+  if(numbers.slice(1).some(n=>n>=60))return null;
+  const seconds=numbers.reduce((sum,n)=>sum*60+n,0);
+  return Number.isFinite(seconds) && seconds<=Number.MAX_SAFE_INTEGER/1000 ? seconds : null;
+ }
+ function segmentAtTime(doc,seconds) {
+  if(!Number.isFinite(seconds) || seconds<0 || !doc.segments.length || seconds>doc.segments.reduce((end,s)=>Math.max(end,s.end),0))return null;
+  return doc.segments.findLast(s=>s.start<=seconds && s.end>=seconds) || doc.segments.find(s=>s.start>=seconds) || null;
+ }
  function subtitleExport(doc, format="srt", bilingual=false) {
   if (!["srt","vtt"].includes(format)) throw new Error("不支持的字幕格式");
   const stamp = ms => {
@@ -334,7 +346,7 @@
 			segments,
 		});
 	}
-	const api = { subtitleExport, mergeLibraryBackup, time, source, media, validate, parse, matchesSegment, notebookSegments, notebookMarkdown, translationCurrent, sameCueSnapshot, subscriptionPlan, cleanContexts, answerFreshness };
+	const api = { parseReadingTime, segmentAtTime, subtitleExport, mergeLibraryBackup, time, source, media, validate, parse, matchesSegment, notebookSegments, notebookMarkdown, translationCurrent, sameCueSnapshot, subscriptionPlan, cleanContexts, answerFreshness };
 	if (typeof module !== "undefined" && module.exports) module.exports = api;
 	else root.Coconut = api;
 })(typeof window !== "undefined" ? window : globalThis);

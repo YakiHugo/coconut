@@ -5,9 +5,9 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Coconut · 把听过的，留下来</title>
 <link rel="stylesheet" href="style.css?v=278bbf21c2">
-<script src="core.js?v=b32d907cd6" defer>
+<script src="core.js?v=d43deb3d52" defer>
 </script>
-<script src="app.js?v=86a7049ded" defer>
+<script src="app.js?v=dc91b9d2c4" defer>
 </script>
 <script src="language.js?v=0a2bbd691a" defer></script>
 <script src="jobs.js?v=f2eca42dcf" defer>
@@ -108,6 +108,7 @@ cd coconut
 <button id="document-details">标题与语言</button>
 <button id="source">原视频链接</button>
 </div>
+<form id="time-navigation" class="time-navigation"><label for="reading-time">跳到时间</label><input id="reading-time" placeholder="12:34 或 1:02:03" inputmode="decimal" aria-describedby="time-navigation-status"><button type="submit">定位文字</button><span id="time-navigation-status" class="hint" role="status"></span></form>
 <div class="reading-controls"><div role="group" aria-label="阅读视图"><button id="filter-all" aria-pressed="true">全文</button><button id="filter-excerpts" aria-pressed="false">摘录 <span id="excerpt-count">0</span></button><button id="filter-notes" aria-pressed="false">笔记 <span id="note-count">0</span></button></div><button id="resume" hidden></button></div><p id="search-status" class="hint" role="status"></p><button id="clear-search" hidden>清除筛选，返回全文</button>
 <div class="subtitle-export"><label>字幕格式<select id="subtitle-format"><option value="srt">SRT</option><option value="vtt">VTT</option></select></label><label><input type="checkbox" id="subtitle-bilingual">附加当前显示语言的有效译文</label><button id="export-subtitles">导出整篇字幕</button><span class="hint">使用修正后原文及原时间戳，不含笔记</span></div>
 <div class="notebook-export"><button id="export-notebook" disabled>导出阅读笔记（0 段）</button><span class="hint">Markdown · 本篇全部摘录与笔记，可用于整理和回顾</span></div>

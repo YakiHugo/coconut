@@ -186,6 +186,7 @@ function render() {
 	}
 	$("locate-playback").hidden = !mediaPath;
 	$("title").textContent = doc.title;
+	$("time-navigation-status").textContent="";
 	$("subtitle").textContent =
 		doc.segments.length +
 		" 个片段 · " +
@@ -615,4 +616,14 @@ $("save-details").onclick=event=>{
  doc.title=title;doc.language=$("document-language").value;
  const persisted=save();$("details-dialog").close();render();$("document-details").focus();
  if(persisted)notice("文字稿信息已保存；原始来源信息、时间戳和笔记保持不变。");
+};
+
+$("time-navigation").onsubmit=event=>{
+ event.preventDefault();const doc=active();if(!doc)return;
+ const seconds=Coconut.parseReadingTime($("reading-time").value);
+ if(seconds===null){$("time-navigation-status").textContent="请输入秒数、分:秒或时:分:秒；秒和小时格式中的分钟须小于60。";return;}
+ const segment=Coconut.segmentAtTime(doc,seconds);
+ if(!segment){$("time-navigation-status").textContent="该时间超出文字稿范围。";return;}
+ goToSegment(segment.id);
+ $("time-navigation-status").textContent=seconds<segment.start?"此处没有字幕，已定位下一段 · "+Coconut.time(segment.start):"已定位 · "+Coconut.time(segment.start)+"；未自动播放音视频。";
 };
