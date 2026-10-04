@@ -14,6 +14,10 @@ let pageStart = 0;
 let storageBlocked = false;
 let lastSavedValue = null;
 let mediaWorkerReady = false;
+const PLAYBACK_RATES=[0.75,1,1.25,1.5,1.75,2];
+let playbackRate=1;
+try {const saved=Number(localStorage.getItem("coconut-playback-rate-v1"));if(PLAYBACK_RATES.includes(saved))playbackRate=saved;}catch{}
+
 function saveWarning(text = "") {
  $("save-status").hidden = !text;
  $("save-status").textContent = text;
@@ -174,6 +178,11 @@ function render() {
 	} else if (!currentPlayer || currentPlayer.getAttribute("src") !== mediaPath) {
 		const player = el(doc.source_media.kind, "source-player");
 		player.controls = true;
+  player.defaultPlaybackRate=playbackRate;
+  player.playbackRate=playbackRate;
+  player.onloadedmetadata=()=>{player.defaultPlaybackRate=playbackRate;player.playbackRate=playbackRate;updatePlaybackControls();};
+  player.onratechange=updatePlaybackControls;
+  player.ondurationchange=updatePlaybackControls;
 		player.ontimeupdate = highlightPlayback;
 		player.preload = "metadata";
 		player.src = mediaPath;
@@ -185,6 +194,7 @@ function render() {
 		mediaHost.hidden = false;
 	}
 	$("locate-playback").hidden = !mediaPath;
+ updatePlaybackControls();
 	$("title").textContent = doc.title;
 	$("time-navigation-status").textContent="";
 	$("subtitle").textContent =
@@ -638,4 +648,27 @@ $("reading-layout").onchange=()=>{
  applyReadingLayout($("reading-layout").value);
  try {localStorage.setItem(LAYOUT_KEY,$("reading-layout").value);$("layout-status").textContent="排版已保存在此浏览器";}
  catch {$("layout-status").textContent="本次排版已应用，浏览器未能保存偏好；文字稿不受影响。";}
+};
+
+function updatePlaybackControls(){
+ const player=$("source-media").querySelector("audio,video");
+ $("playback-controls").hidden=!player;
+ const seekable=Boolean(player && Number.isFinite(player.duration) && player.duration>0);
+ $("skip-back").disabled=!seekable;$("skip-forward").disabled=!seekable;
+ const actual=player?.playbackRate ?? playbackRate, selector=$("playback-rate");
+ selector.querySelector('[data-current]')?.remove();
+ if(!PLAYBACK_RATES.includes(actual)){const option=el("option","","当前 "+actual+"×");option.value=String(actual);option.dataset.current="true";selector.append(option);}
+ selector.value=String(actual);
+}
+function skipPlayback(delta){
+ const player=$("source-media").querySelector("audio,video");if(!player || !Number.isFinite(player.duration) || player.duration<=0)return;
+ try{player.currentTime=Math.max(0,Math.min(player.duration,player.currentTime+delta));highlightPlayback();$("playback-status").textContent="已定位到 "+Coconut.time(player.currentTime);}
+ catch{$("playback-status").textContent="媒体暂时无法定位，请等待加载后重试。";}
+}
+$("skip-back").onclick=()=>skipPlayback(-10);$("skip-forward").onclick=()=>skipPlayback(10);
+$("playback-rate").onchange=()=>{
+ const rate=Number($("playback-rate").value),player=$("source-media").querySelector("audio,video");if(!player || !PLAYBACK_RATES.includes(rate))return;
+ try{player.defaultPlaybackRate=rate;player.playbackRate=rate;playbackRate=rate;}catch{$("playback-status").textContent="播放器不支持该速度。";return;}
+ try{localStorage.setItem("coconut-playback-rate-v1",String(rate));$("playback-status").textContent="播放速度已保存 · "+rate+"×";}
+ catch{$("playback-status").textContent="播放速度已应用，本次未能保存偏好。";}
 };

@@ -899,3 +899,20 @@ test('reading comfort persists independently of books and handles unknown or una
   const restored=setup(library,undefined,value);try{assert.equal(restored.document.documentElement.dataset.readingLayout,expected);assert.equal(restored.document.getElementById('reading-layout').value,expected);}finally{await restored.happyDOM.close();}
  }
 });
+
+test('local playback controls clamp seeks, retain speed across renders and stay hidden without media',async()=>{
+ const w=setup();try{
+  const $=id=>w.document.getElementById(id);await $('sample').onclick();assert.equal($('playback-controls').hidden,true);
+  await importDocument(w,{title:'Audio',source_media:{job_id:'a'.repeat(32),kind:'audio'},segments:[{start:0,end:20,text:'A'}]});w.dispatchEvent(new w.Event('coconut-worker-ready'));
+  const player=w.document.querySelector('audio');assert.equal($('playback-controls').hidden,false);assert.equal($('skip-back').disabled,true);
+  Object.defineProperty(player,'duration',{value:20,configurable:true});player.onloadedmetadata();assert.equal($('skip-back').disabled,false);
+  player.currentTime=3;$('skip-back').click();assert.equal(player.currentTime,0);player.currentTime=18;$('skip-forward').click();assert.equal(player.currentTime,20);
+  $('playback-rate').value='1.5';$('playback-rate').onchange();assert.equal(player.playbackRate,1.5);assert.equal(player.defaultPlaybackRate,1.5);assert.equal(w.localStorage.getItem('coconut-playback-rate-v1'),'1.5');
+  player.playbackRate=1;player.onloadedmetadata();assert.equal(player.playbackRate,1.5);assert.equal($('playback-rate').value,'1.5');
+  player.playbackRate=.5;player.onratechange();assert.equal($('playback-rate').value,'0.5');player.onloadedmetadata();
+
+  w.document.querySelector('.note-button').click();assert.equal(w.document.querySelector('audio'),player);assert.equal(player.playbackRate,1.5);
+  await importDocument(w,{title:'Another audio',source_media:{job_id:'b'.repeat(32),kind:'audio'},segments:[{start:0,end:1,text:'B'}]});assert.equal(w.document.querySelector('audio').playbackRate,1.5);
+  await $('sample').onclick();assert.equal($('playback-controls').hidden,true);assert.equal($('skip-back').disabled,true);
+ }finally{await w.happyDOM.close();}
+});
