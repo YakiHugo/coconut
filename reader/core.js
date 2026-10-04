@@ -109,6 +109,24 @@
   }
   return {windows,selected:runs.flat().length,total:windows.reduce((n,w)=>n+w.segments.length,0),sent:new Set(windows.flatMap(w=>w.snapshot.map(c=>c.id))).size};
  }
+ // Only the exact ordered {id,text} payload is evidence for a saved answer.
+ // Never discard missing IDs: doing so would make a removed dependency look current.
+ function cleanAnswerInput(value) {
+  if(!value || value.version!==1 || !Array.isArray(value.segments) || !value.segments.length || value.segments.length>5000)return undefined;
+  const ids=new Set();let chars=0;
+  if(!value.segments.every(s=>{
+   if(!s || typeof s.id!=="string" || !s.id.length || s.id.length>400 || ids.has(s.id) || typeof s.text!=="string")return false;
+   ids.add(s.id);chars+=s.id.length+s.text.length;return chars<=500000;
+  }))return undefined;
+  return {version:1,segments:value.segments.map(s=>({id:s.id,text:s.text}))};
+ }
+ function answerFreshness(answer, doc) {
+  const input=cleanAnswerInput(answer.input_snapshot);
+  if(!input)return 'unknown'; // Legacy source_snapshot only covered citations.
+  const selected=new Set(input.segments.map(s=>s.id));
+  const current=doc.segments.filter(s=>selected.has(s.id));
+  return current.length===input.segments.length && current.every((s,i)=>s.id===input.segments[i].id && s.text===input.segments[i].text) ? 'current' : 'stale';
+ }
  function matchesSegment(segment, doc, query, notesOnly=false, excerptsOnly=false) {
   return (!notesOnly || Boolean(doc.notes?.[segment.id])) && (!excerptsOnly || segment.saved_excerpt === true) &&
    [segment.text,segment.speaker||"",doc.notes?.[segment.id]||"",...Object.values(segment.translations||{}).filter(t=>translationCurrent(segment,doc,t)).map(t=>t.text)].join(" ").toLocaleLowerCase().includes(query.trim().toLocaleLowerCase());
@@ -181,7 +199,7 @@
 			schema_version: 1,
             language: typeof data.language === "string" ? data.language : "",
             translation_view: ["en","zh","ja","ko","fr","de","es"].includes(data.translation_view) ? data.translation_view : "",
-            ai_answers: Array.isArray(data.ai_answers) ? data.ai_answers.slice(-20).filter(a=>a && typeof a.question==="string" && typeof a.answer==="string" && Array.isArray(a.citations)).map(a=>({question:a.question.slice(0,4000),answer:a.answer.slice(0,100000),citations:a.citations.filter(id=>ids.has(id)),source_snapshot:a.source_snapshot && typeof a.source_snapshot==="object" ? Object.fromEntries(Object.entries(a.source_snapshot).filter(([id,text])=>ids.has(id)&&typeof text==="string")) : {},provider:typeof a.provider==="string"?a.provider.slice(0,100):"unknown"})) : [],
+            ai_answers: Array.isArray(data.ai_answers) ? data.ai_answers.slice(-20).filter(a=>a && typeof a.question==="string" && typeof a.answer==="string" && Array.isArray(a.citations)).map(a=>({question:a.question.slice(0,4000),answer:a.answer.slice(0,100000),citations:a.citations.filter(id=>ids.has(id)),...(cleanAnswerInput(a.input_snapshot) ? {input_snapshot:cleanAnswerInput(a.input_snapshot)} : {}),provider:typeof a.provider==="string"?a.provider.slice(0,100):"unknown"})) : [],
 			title: typeof data.title === "string" ? data.title : "未命名文字稿",
 			source_url: typeof data.source_url === "string" ? data.source_url : "",
 			segments,
@@ -275,7 +293,7 @@
 			segments,
 		});
 	}
-	const api = { time, source, media, validate, parse, matchesSegment, notebookSegments, notebookMarkdown, translationCurrent, sameCueSnapshot, subscriptionPlan, cleanContexts };
+	const api = { time, source, media, validate, parse, matchesSegment, notebookSegments, notebookMarkdown, translationCurrent, sameCueSnapshot, subscriptionPlan, cleanContexts, answerFreshness };
 	if (typeof module !== "undefined" && module.exports) module.exports = api;
 	else root.Coconut = api;
 })(typeof window !== "undefined" ? window : globalThis);
