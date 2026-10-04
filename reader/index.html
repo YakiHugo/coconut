@@ -4,12 +4,12 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Coconut · 把听过的，留下来</title>
-<link rel="stylesheet" href="style.css?v=c3dd696f30">
-<script src="core.js?v=7bb5a0afb8" defer>
+<link rel="stylesheet" href="style.css?v=f0282e3546">
+<script src="core.js?v=899ed1f9f7" defer>
 </script>
-<script src="app.js?v=de08b83a71" defer>
+<script src="app.js?v=e96b54c586" defer>
 </script>
-<script src="language.js?v=2d63a8f51d" defer></script>
+<script src="language.js?v=984cf661fb" defer></script>
 <script src="jobs.js?v=f2eca42dcf" defer>
 </script>
 </head>
@@ -106,7 +106,8 @@ cd coconut
 </label>
 <button id="source">原视频链接</button>
 </div>
-<div class="reading-controls"><div role="group" aria-label="阅读视图"><button id="filter-all" aria-pressed="true">全文</button><button id="filter-notes" aria-pressed="false">笔记 <span id="note-count">0</span></button></div><button id="resume" hidden></button></div><p id="search-status" class="hint" role="status"></p><button id="clear-search" hidden>清除筛选，返回全文</button>
+<div class="reading-controls"><div role="group" aria-label="阅读视图"><button id="filter-all" aria-pressed="true">全文</button><button id="filter-excerpts" aria-pressed="false">摘录 <span id="excerpt-count">0</span></button><button id="filter-notes" aria-pressed="false">笔记 <span id="note-count">0</span></button></div><button id="resume" hidden></button></div><p id="search-status" class="hint" role="status"></p><button id="clear-search" hidden>清除筛选，返回全文</button>
+<div class="notebook-export"><button id="export-notebook" disabled>导出阅读笔记（0 段）</button><span class="hint">Markdown · 本篇全部摘录与笔记，可用于整理和回顾</span></div>
 </section>
 <section id="empty">
 <div class="seed">◒</div>
@@ -122,7 +123,7 @@ cd coconut
 <p id="language-status" role="status" class="hint">连接本地服务后可翻译；现有译文可直接阅读与备份。</p>
 <hr><label>订阅账户<select id="ai-provider"><option value="codex">ChatGPT / Codex 订阅</option><option value="claude">Claude 订阅（可选）</option></select></label><p id="ai-status" class="hint">订阅连接尚未检查；不会自动登录或启动付费请求。</p><button id="check-ai" disabled>检查本机订阅连接</button>
 <label for="ai-question">想从文字稿了解什么？</label><textarea id="ai-question" rows="3" placeholder="用中文总结核心观点，并指出对应的原文片段"></textarea>
-<label><input id="ai-filtered" type="checkbox">只读取当前筛选结果（含译文与笔记筛选的全部匹配片段）</label><label><input id="ai-consent" type="checkbox">本次把文字稿发送给所选 AI 提供商，并使用我的订阅额度</label>
+<label><input id="ai-filtered" type="checkbox">只读取当前筛选结果（含译文、摘录与笔记筛选的全部匹配片段）</label><label><input id="ai-consent" type="checkbox">本次把文字稿发送给所选 AI 提供商，并使用我的订阅额度</label>
 <p id="subscription-translation-scope" class="hint"></p><button id="subscription-translate" disabled>使用订阅翻译当前筛选 / 继续未完成批次</button><button id="stop-subscription-translation" hidden>停止后续订阅批次</button>
 <button id="ask-ai" disabled>让 AI 读文字稿</button><p id="ai-progress" role="status"></p><div id="ai-answers"></div>
 <p class="hint">使用本机官方 Codex / Claude Code CLI 已有登录。额度耗尽时停止，不购买额度、不切换 API。不会读取或复制登录凭据；不会打开额外的交互式会话。Kimi 暂无已验证的订阅连接。</p>

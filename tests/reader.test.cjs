@@ -105,3 +105,56 @@ test('subscription context provenance survives backup and edits invalidate depen
  restored.segments[0].text='Send now';assert.equal(C.translationCurrent(restored.segments[1],restored,restored.segments[1].translations.zh),false);assert.equal(C.matchesSegment(restored.segments[1],restored,'译文'),false);
  const missing=validate({...doc,translation_contexts:{}});assert.equal(C.translationCurrent(missing.segments[1],missing,missing.segments[1].translations.zh),false);
 });
+
+test('saved excerpts validate strictly and roundtrip independently from notes and reading position',()=>{
+ const C=require('../reader/core.js');
+ const doc=C.validate({readingPosition:'b',notes:{b:'Only a note'},segments:[
+  {id:'a',start:0,end:1,text:'Saved without a note',saved_excerpt:true},
+  {id:'b',start:1,end:2,text:'Note without an excerpt',saved_excerpt:'true'},
+  {id:'c',start:2,end:3,text:'No annotations',saved_excerpt:{enabled:true}},
+ ]});
+ const restored=C.parse(JSON.stringify(doc),'backup.json');
+ assert.equal(restored.segments[0].saved_excerpt,true);assert.equal(restored.segments[1].saved_excerpt,undefined);assert.equal(restored.segments[2].saved_excerpt,undefined);
+ assert.equal(restored.readingPosition,'b');assert.equal(restored.notes.a,undefined);
+ assert.deepEqual(restored.segments.filter(s=>C.matchesSegment(s,restored,'',true)).map(s=>s.id),['b']);
+ assert.deepEqual(restored.segments.filter(s=>C.matchesSegment(s,restored,'',false,true)).map(s=>s.id),['a']);
+ assert.deepEqual(C.notebookSegments(restored).map(s=>s.id),['a','b']);
+ assert.equal(C.parse('1\n00:00:00,000 --> 00:00:01,000\nHello','legacy.srt').segments[0].saved_excerpt,undefined);
+});
+
+test('notebook Markdown includes kept cues once with original source, corrections and notes',()=>{
+ const C=require('../reader/core.js');
+ const doc=C.validate({title:'A useful reading',source_url:'https://youtu.be/demo',translation_view:'zh',notes:{both:'My thought\nSecond line',note:'Only a note',empty:'  '},segments:[
+  {id:'both',start:61.25,end:65,text:'Corrected quote',original_text:'Raw quote',saved_excerpt:true,speaker:'Speaker 1',translations:{zh:{text:'有效译文',source_text:'Corrected quote',provider:'local_test'}}},
+  {id:'note',start:90,end:95,text:'Not excerpted'},
+  {id:'empty',start:100,end:110,text:'Not included'},
+  {id:'excerpt',start:120,end:125,text:'Saved only',saved_excerpt:true},
+ ]});
+ const output=C.notebookMarkdown(doc);
+ assert.equal((output.match(/^## /gm)||[]).length,3);
+ assert.match(output,/\[01:01–01:05\]\(https:\/\/youtu.be\/demo\?t=61\)/);
+ assert.match(output,/原文（已修正）：\n\n> Corrected quote/);
+ assert.match(output,/修正前文字稿：\n\n> Raw quote/);
+ assert.match(output,/我的笔记：\n\n> My thought\n> Second line/);
+ assert.match(output,/有效译文/);assert.match(output,/说话人标签：Speaker 1/);
+ assert.doesNotMatch(output,/Not included/);assert.match(output,/Saved only/);
+ assert.match(output,/完整恢复.*JSON/);
+});
+
+test('notebook Markdown treats hostile content as text and never exports unsafe or local media links',()=>{
+ const C=require('../reader/core.js');
+ const doc=C.validate({title:'Title\n# Injected',source_url:'javascript:alert(1)',source_media:{kind:'audio',job_id:'a'.repeat(32)},notes:{a:'![tracker](https://evil.test/image)\n<script>alert(1)</script>\n~~strike~~ $math$'},segments:[{id:'a',start:0,end:1,text:'<img src="https://evil.test/pixel">\n# Heading\n[open](javascript:alert(1))',saved_excerpt:true}]});
+ const output=C.notebookMarkdown(doc);
+ assert.match(output,/^# Title \\# Injected\n/);
+ assert.doesNotMatch(output,/<(?:img|script)|\n# Heading|!\[tracker\]|\[open\]\(javascript|\/api\/jobs|aaaaaaaa/);
+ assert.ok(output.includes('\\~\\~strike\\~\\~ \\$math\\$'));assert.match(output,/&lt;img/);assert.match(output,/未关联可用的原站链接/);
+ const linked=C.notebookMarkdown({...doc,source_url:'https://youtu.be/demo?label=(value)'});
+ assert.match(linked,/label=%28value%29/);
+});
+
+test('notebook excludes stale translations without dropping saved source or notes',()=>{
+ const C=require('../reader/core.js');
+ const doc=C.validate({translation_view:'zh',notes:{a:'Verify this'},segments:[{id:'a',start:0,end:1,text:'Updated',saved_excerpt:true,translations:{zh:{text:'Obsolete output',source_text:'Old',provider:'local_test'}}}]});
+ const output=C.notebookMarkdown(doc);
+ assert.doesNotMatch(output,/Obsolete output/);assert.match(output,/译文已过期/);assert.match(output,/Updated/);assert.match(output,/Verify this/);
+});

@@ -17,8 +17,8 @@ function renderLanguage(){
  $('translate-document').disabled=!languageReady||translating||subscriptionTranslating;
  $('ask-ai').disabled=!aiReady||asking||subscriptionTranslating;
  $('subscription-translate').disabled=!aiReady||asking||translating||subscriptionTranslating;
- const matches=doc.segments.filter(s=>Coconut.matchesSegment(s,doc,$('search').value,notesOnly));
- const signature=JSON.stringify([doc.key,$('translation-source').value,$('translation-target').value,$('ai-provider').value,matches.map(s=>s.id)]);
+ const matches=doc.segments.filter(s=>Coconut.matchesSegment(s,doc,$('search').value,notesOnly,excerptsOnly));
+ const signature=JSON.stringify([doc.key,$('translation-source').value,$('translation-target').value,$('ai-provider').value,$('ai-filtered').checked,matches.map(s=>s.id)]);
  if(!subscriptionTranslating&&subscriptionSelectionSignature!==signature){subscriptionSelectionSignature=signature;$('ai-consent').checked=false;}
  if(subscriptionTranslating){
   $('subscription-translation-scope').textContent=`正在用 ${subscriptionScope.provider==='codex'?'ChatGPT/Codex':'Claude'} 把 ${languageNames[subscriptionScope.source]||''} → ${languageNames[subscriptionScope.target]||''}：确认筛选的 ${subscriptionScope.selected} 段内，翻译 ${subscriptionScope.total} 段，共 ${subscriptionScope.requests} 次请求；已译的筛选片段也可能重复发送作上下文。不发送筛选外内容；修改筛选不扩大本次范围。`;
@@ -46,6 +46,11 @@ async function checkLanguageTools(){
  finally{if(sequence===languageCheckSequence){checkButton.disabled=false;renderLanguage();}}
 }
 $('check-ai').onclick=checkLanguageTools;
+$('ai-filtered').onchange=()=>{
+ $('ai-consent').checked=false;
+ if(subscriptionTranslating){stopSubscription=true;$('ai-progress').textContent='读取范围已变化，当前订阅批次结束后停止；重新开始前需再次确认范围与额度。';}
+ renderLanguage();
+};
 $('ai-provider').onchange=()=>{aiReady=aiStatuses[$('ai-provider').value]?.ready===true;$('ai-status').textContent=aiStatuses[$('ai-provider').value]?.reason||'请检查本机订阅连接';$('ai-consent').checked=false;renderLanguage();};
 $('language-setup').onclick=()=>{showWorkspace('add');$('local-setup').open=true;$('local-setup').scrollIntoView({behavior:'smooth'});$('local-setup').querySelector('summary').focus();};
 window.addEventListener('coconut-worker-ready',()=>{
@@ -94,7 +99,7 @@ $('ask-ai').onclick=async()=>{
  if(!$('ai-consent').checked){notice('请先确认本次把所选文字发送给所选提供商并使用订阅额度');return;}
  const question=$('ai-question').value.trim();if(!question){notice('请先输入问题');return;}
  const query=$('search').value.trim().toLocaleLowerCase();
- const segments=doc.segments.filter(s=>!$('ai-filtered').checked||Coconut.matchesSegment(s,doc,query,notesOnly)).map(s=>({id:s.id,text:s.text}));
+ const segments=doc.segments.filter(s=>!$('ai-filtered').checked||Coconut.matchesSegment(s,doc,query,notesOnly,excerptsOnly)).map(s=>({id:s.id,text:s.text}));
  const key=doc.key;asking=true;renderLanguage();$('ai-progress').textContent=`正在让所选 AI 阅读 ${segments.length} 段；不会切换到付费 API。`;
  try{
   const answer=await languageApi('ask',{question,language:$('translation-target').value,provider:$('ai-provider').value,segments,consent:true});
@@ -115,7 +120,7 @@ $('subscription-translate').onclick=async()=>{
  if(!$('ai-consent').checked){notice('请先确认本次把筛选片段发送给所选AI，并消耗所显示批次的订阅额度');return;}
  if(!source||source===target){notice('请选择不同的原文和翻译语言');return;}
  const providerName=(provider==='codex'?'chatgpt':'claude')+'_subscription_translation';
- const selectedCues=doc.segments.filter(s=>Coconut.matchesSegment(s,doc,$('search').value,notesOnly));
+ const selectedCues=doc.segments.filter(s=>Coconut.matchesSegment(s,doc,$('search').value,notesOnly,excerptsOnly));
  let plan;
  try{plan=Coconut.subscriptionPlan(doc,selectedCues.map(s=>s.id),source,target,providerName);}catch(error){notice(error.message);return;}
  if(!plan.total){notice('当前筛选没有需要订阅翻译的新片段');return;}
