@@ -956,3 +956,13 @@ test('literal search highlights text safely and navigates all matches across pag
   $('clear-search').click();assert.equal($('search-navigation').hidden,true);assert.equal(w.document.querySelectorAll('mark').length,0);
  }finally{await w.happyDOM.close();}
 });
+
+test('AI reading report exports all saved answers independently of current filtering without requests',async()=>{
+ const w=setup();try{
+  const $=id=>w.document.getElementById(id);await $('sample').onclick();assert.equal($('export-ai-reading').disabled,true);
+  await importDocument(w,{title:'Report',segments:[{id:'a',start:0,end:1,text:'A'}],ai_answers:[{question:'First Q',answer:'First A',citations:['a']},{question:'Second Q',answer:'Second A',citations:[]}]});
+  $('search').value='missing';$('search').oninput();let blob,requests=0;w.fetch=()=>{requests++;throw Error('No request');};w.URL.createObjectURL=value=>{blob=value;return 'blob:report';};w.URL.revokeObjectURL=()=>{};
+  assert.equal($('export-ai-reading').disabled,false);$('export-ai-reading').click();const output=await blob.text();assert.match(output,/First Q/);assert.match(output,/Second Q/);assert.equal(requests,0);
+  w.URL.createObjectURL=()=>{throw Error('blocked');};$('export-ai-reading').click();assert.match($('notice').textContent,/导出失败/);assert.equal($('ai-answers').children.length,2);
+ }finally{await w.happyDOM.close();}
+});
