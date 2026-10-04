@@ -206,6 +206,29 @@
             translation_contexts: cleanContexts(data.translation_contexts, segments),
 		};
 	}
+ function mergeLibraryBackup(current, backup) {
+  if (!backup || backup.format !== "coconut-library" || backup.version !== 1 || !Array.isArray(backup.documents) || backup.documents.length > 500)
+   throw new Error("不是支持的 Coconut 书架备份（最多500份）");
+  const keys = new Set();
+  // Validate the entire file before changing any live state.
+  const incoming = backup.documents.map(item => {
+   if (!item || typeof item.key !== "string" || !item.key || item.key.length > 200 || keys.has(item.key)) throw new Error("备份的文字稿标识无效或重复");
+   keys.add(item.key);
+   return {...validate(item), key:item.key};
+  });
+  const documents = current.documents.slice();
+  const fingerprints = new Map(documents.map(d => [JSON.stringify(validate(d)), d.key]));
+  const used = new Set(documents.map(d => d.key));
+  const mapping = new Map();
+  for (const doc of incoming) {
+   const fingerprint = JSON.stringify(validate(doc));
+   if (fingerprints.has(fingerprint)) { mapping.set(doc.key, fingerprints.get(fingerprint)); continue; }
+   let key = doc.key, suffix = 1;
+   while (used.has(key)) { const tail = "-restored-" + suffix++; key = doc.key.slice(0,200-tail.length) + tail; }
+   documents.push({...doc, key}); used.add(key); fingerprints.set(fingerprint,key); mapping.set(doc.key,key);
+  }
+  return {documents, active:mapping.get(backup.active) || current.active || documents[0]?.key || null};
+ }
 	function notebookSegments(doc) {
 		return doc.segments.filter(s => s.saved_excerpt === true || Boolean(doc.notes?.[s.id]?.trim()));
 	}
@@ -293,7 +316,7 @@
 			segments,
 		});
 	}
-	const api = { time, source, media, validate, parse, matchesSegment, notebookSegments, notebookMarkdown, translationCurrent, sameCueSnapshot, subscriptionPlan, cleanContexts, answerFreshness };
+	const api = { mergeLibraryBackup, time, source, media, validate, parse, matchesSegment, notebookSegments, notebookMarkdown, translationCurrent, sameCueSnapshot, subscriptionPlan, cleanContexts, answerFreshness };
 	if (typeof module !== "undefined" && module.exports) module.exports = api;
 	else root.Coconut = api;
 })(typeof window !== "undefined" ? window : globalThis);
