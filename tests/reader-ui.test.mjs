@@ -479,3 +479,162 @@ test('offline translation can repair context-stale and legacy subscription outpu
   await $('check-ai').onclick();await $('translate-document').onclick();assert.equal(requests,1);assert.equal(w.document.querySelectorAll('.translation.stale').length,0);assert.equal(w.document.querySelectorAll('.translation').length,2);
  }finally{await w.happyDOM.close();}}
 });
+
+test('one-click excerpts preserve note-only semantics, reading position and JSON reload',async()=>{
+ const w=setup();let stored;try{
+  const $=id=>w.document.getElementById(id);await $('sample').onclick();
+  assert.equal($('export-notebook').disabled,true);
+  w.document.querySelectorAll('.bookmark-button')[2].click();
+  w.document.querySelectorAll('.excerpt-button')[0].click();
+  assert.equal(w.document.querySelector('.excerpted').dataset.segmentId,'demo-1');
+  assert.equal(w.document.querySelector('.excerpt-button').getAttribute('aria-pressed'),'true');
+  assert.equal(w.document.activeElement.className,'excerpt-button');
+  assert.equal($('note-count').textContent,'0');assert.equal($('excerpt-count').textContent,'1');
+  assert.equal($('notes-panel').hidden,true);assert.equal($('export-notebook').disabled,false);
+  $('filter-notes').click();assert.equal(w.document.querySelectorAll('.segment').length,0);
+  $('filter-excerpts').click();assert.equal(w.document.querySelectorAll('.segment').length,1);
+  assert.equal($('filter-notes').getAttribute('aria-pressed'),'false');
+  stored=w.localStorage.getItem('coconut-reader-v1');
+  const doc=w.Coconut.parse(JSON.stringify(JSON.parse(stored).documents[0]),'backup.json');
+  assert.equal(doc.segments[0].saved_excerpt,true);assert.equal(doc.readingPosition,'demo-3');
+ }finally{await w.happyDOM.close();}
+ const restored=setup(stored);try{
+  assert.equal(restored.document.getElementById('excerpt-count').textContent,'1');
+  restored.document.getElementById('filter-excerpts').click();
+  assert.equal(restored.document.querySelector('.segment').dataset.segmentId,'demo-1');
+  restored.document.getElementById('resume').click();
+  assert.equal(restored.document.querySelectorAll('.segment').length,3);
+  assert.equal(restored.document.activeElement.dataset.segmentId,'demo-3');
+ }finally{await restored.happyDOM.close();}
+});
+
+test('excerpt removal, repeated toggles and correction cancel never erase the note or original cue',async()=>{
+ const w=setup();try{
+  const $=id=>w.document.getElementById(id);await $('sample').onclick();
+  w.document.querySelector('.note-button').click();$('note').value='Keep this note';$('note').oninput();
+  const target=w.document.querySelector('.excerpt-button');$('note').blur();assert.ok(target.isConnected);target.click();
+  w.document.querySelector('.segment button').click();$('edit-segment').value='Cancelled edit';$('edit-dialog').close();
+  assert.doesNotMatch(w.document.querySelector('.words').textContent,/Cancelled/);
+  w.document.querySelector('.segment button').click();$('edit-segment').value='Corrected excerpt';$('save-edit').click();
+  assert.equal(w.document.querySelector('.excerpt-button').getAttribute('aria-pressed'),'true');
+  $('filter-excerpts').click();w.document.querySelector('.excerpt-button').click();
+  assert.equal(w.document.querySelectorAll('.segment').length,0);assert.equal($('notes-panel').hidden,true);
+  assert.equal(w.document.activeElement.id,'filter-excerpts');assert.equal($('export-notebook').disabled,false);
+  $('filter-notes').click();assert.equal(w.document.querySelectorAll('.segment').length,1);assert.equal(w.document.querySelector('.saved-note').textContent,'Keep this note');
+  for(let i=0;i<4;i++)w.document.querySelector('.excerpt-button').click();
+  const doc=JSON.parse(w.localStorage.getItem('coconut-reader-v1')).documents[0];
+  assert.equal(doc.segments[0].saved_excerpt,undefined);assert.equal(doc.notes['demo-1'],'Keep this note');
+  assert.equal(doc.segments[0].text,'Corrected excerpt');assert.ok(doc.segments[0].original_text);
+ }finally{await w.happyDOM.close();}
+});
+
+test('excerpt search beyond first page and document switching preserve exact saved identities',async()=>{
+ const w=setup();try{
+  const $=id=>w.document.getElementById(id);
+  await importDocument(w,{title:'Long excerpt source',segments:Array.from({length:205},(_,i)=>({id:'s'+i,start:i,end:i+1,text:'Part '+i,saved_excerpt:i===150||i===204}))});
+  $('filter-excerpts').click();assert.deepEqual([...w.document.querySelectorAll('.segment')].map(r=>r.dataset.segmentId),['s150','s204']);
+  $('search').value='204';$('search').oninput();assert.equal(w.document.querySelector('.segment').dataset.segmentId,'s204');
+  w.document.querySelector('.note-button').click();$('return-excerpt').click();
+  assert.equal(w.document.activeElement.dataset.segmentId,'s204');assert.equal(w.document.querySelectorAll('.segment').length,205);
+  await $('sample').onclick();assert.equal($('excerpt-count').textContent,'0');assert.equal($('filter-all').getAttribute('aria-pressed'),'true');
+  $('library-search').value='Long excerpt source';$('library-search').oninput();$('library').querySelector('button').click();
+  assert.equal($('excerpt-count').textContent,'2');assert.equal($('filter-excerpts').getAttribute('aria-pressed'),'false');
+ }finally{await w.happyDOM.close();}
+});
+
+test('notebook download includes every kept cue despite search and is only requested on click',async()=>{
+ const w=setup();try{
+  let blob,clicks=0;w.URL.createObjectURL=value=>{blob=value;return 'blob:https://coconut.example/notebook';};w.URL.revokeObjectURL=()=>{};
+  w.HTMLAnchorElement.prototype.click=function(){assert.ok(this.isConnected);assert.equal(this.download,'Notes_Test.notes.md');clicks++;};
+  const $=id=>w.document.getElementById(id);
+  await importDocument(w,{title:'Notes/Test',source_url:'https://youtu.be/demo',notes:{note:'Remember me'},segments:[{id:'saved',start:0,end:1,text:'Saved quote',saved_excerpt:true},{id:'note',start:2,end:3,text:'Note source'},{id:'neither',start:4,end:5,text:'Not kept'}]});
+  assert.equal(clicks,0);assert.equal($('export-notebook').textContent,'导出阅读笔记（2 段）');
+  $('filter-excerpts').click();$('search').value='no match';$('search').oninput();assert.equal(w.document.querySelectorAll('.segment').length,0);
+  $('export-notebook').click();const markdown=await blob.text();assert.equal(clicks,1);
+  assert.match(markdown,/Saved quote/);assert.match(markdown,/Note source/);assert.match(markdown,/Remember me/);assert.doesNotMatch(markdown,/Not kept/);
+  assert.equal(w.document.querySelectorAll('a[download]').length,0);assert.match($('notice').textContent,/检查浏览器下载记录/);
+ }finally{await w.happyDOM.close();}
+});
+
+test('excerpt storage conflict or quota failure leaves recoverable data with a persistent warning',async()=>{
+ for(const failure of ['conflict','quota']){const w=setup();try{
+  const $=id=>w.document.getElementById(id);await $('sample').onclick();
+  const before=w.localStorage.getItem('coconut-reader-v1');let persisted=before;
+  if(failure==='conflict'){persisted=JSON.stringify({active:'external',documents:[]});w.localStorage.setItem('coconut-reader-v1',persisted);}
+  else Object.defineProperty(w,'localStorage',{value:{getItem:()=>persisted,setItem:()=>{throw new Error('quota exceeded');}}});
+  w.document.querySelector('.excerpt-button').click();assert.equal($('save-status').hidden,false);
+  assert.equal(w.localStorage.getItem('coconut-reader-v1'),persisted);
+  let backup;w.URL.createObjectURL=blob=>{backup=blob;return 'blob:https://coconut.example/backup';};w.URL.revokeObjectURL=()=>{};w.HTMLAnchorElement.prototype.click=()=>{};
+  $('export').click();const doc=w.Coconut.parse(await backup.text(),'recover.json');assert.equal(doc.segments[0].saved_excerpt,true);
+  assert.equal($('save-status').hidden,false);
+  w.URL.createObjectURL=()=>{throw new Error('download unavailable');};$('export-notebook').click();
+  assert.match($('notice').textContent,/导出失败/);assert.equal($('save-status').hidden,false);assert.equal(w.document.querySelector('.excerpt-button').getAttribute('aria-pressed'),'true');
+ }finally{await w.happyDOM.close();}}
+});
+
+test('excerpt filter scopes both AI reading and subscription translation without sending excluded cues',async()=>{
+ const w=setup();try{
+  const $=id=>w.document.getElementById(id);const calls=[];
+  await importDocument(w,{language:'en',segments:[{id:'a',start:0,end:1,text:'Saved A',saved_excerpt:true},{id:'b',start:1,end:2,text:'Private excluded neighbor'},{id:'c',start:2,end:3,text:'Saved C',saved_excerpt:true}]});
+  w.fetch=async(url,options)=>{
+   if(url.endsWith('language-tools'))return {ok:true,json:async()=>({ai:{codex:{ready:true}}})};
+   const request=JSON.parse(options.body);calls.push({url,request});
+   if(url.endsWith('/ask'))return {ok:true,json:async()=>({answer:'A saved insight',citations:['a'],provider:'test'})};
+   return {ok:true,json:async()=>({translations:request.segments.map(s=>({id:s.id,text:'译文',source_text:s.text}))})};
+  };
+  await $('check-ai').onclick();$('filter-excerpts').click();
+  assert.match($('subscription-translation-scope').textContent,/当前筛选 2 段/);
+  $('ai-filtered').checked=true;$('ai-question').value='Summarize';$('ai-consent').checked=true;await $('ask-ai').onclick();
+  assert.deepEqual(calls[0].request.segments.map(s=>s.id),['a','c']);
+  $('ai-consent').checked=true;await $('subscription-translate').onclick();
+  assert.deepEqual(calls.slice(1).flatMap(c=>c.request.segments.map(s=>s.id)),['a','c']);
+  assert.ok(calls.slice(1).every(c=>c.request.context.length===0));
+  $('ai-consent').checked=true;w.document.querySelector('.excerpt-button').click();assert.equal($('ai-consent').checked,false);
+  assert.match($('subscription-translation-scope').textContent,/当前筛选 1 段/);
+ }finally{await w.happyDOM.close();}
+});
+
+test('changing filtered versus full-document AI scope revokes consent for both AI actions',async()=>{
+ const w=setup();try{
+  const $=id=>w.document.getElementById(id),calls=[];
+  await importDocument(w,{language:'en',segments:[{id:'saved',start:0,end:1,text:'Approved excerpt',saved_excerpt:true},{id:'excluded',start:1,end:2,text:'Excluded neighbor'}]});
+  w.fetch=async(url,options)=>{
+   if(url.endsWith('language-tools'))return {ok:true,json:async()=>({ai:{codex:{ready:true}}})};
+   const request=JSON.parse(options.body);calls.push({url,request});
+   if(url.endsWith('/ask'))return {ok:true,json:async()=>({answer:'Insight',citations:['saved'],provider:'test'})};
+   return {ok:true,json:async()=>({translations:request.segments.map(s=>({id:s.id,text:'译文',source_text:s.text}))})};
+  };
+  await $('check-ai').onclick();$('filter-excerpts').click();$('ai-question').value='Summarize';
+  $('ai-filtered').checked=true;$('ai-filtered').dispatchEvent(new w.Event('change'));$('ai-consent').checked=true;
+  $('ai-filtered').checked=false;$('ai-filtered').dispatchEvent(new w.Event('change'));
+  assert.equal($('ai-consent').checked,false,'broadening to the full document needs new consent');
+  await $('ask-ai').onclick();await $('subscription-translate').onclick();assert.equal(calls.length,0);
+  $('ai-consent').checked=true;$('ai-filtered').checked=true;$('ai-filtered').dispatchEvent(new w.Event('change'));
+  assert.equal($('ai-consent').checked,false,'narrowing scope also clears the shared single-request consent');
+  await $('ask-ai').onclick();await $('subscription-translate').onclick();assert.equal(calls.length,0);
+  $('ai-consent').checked=true;await $('ask-ai').onclick();assert.deepEqual(calls[0].request.segments.map(s=>s.id),['saved']);
+  $('ai-consent').checked=true;await $('subscription-translate').onclick();assert.deepEqual(calls[1].request.segments.map(s=>s.id),['saved']);assert.deepEqual(calls[1].request.context,[]);
+ }finally{await w.happyDOM.close();}
+});
+
+test('changing AI scope invalidates queued subscription batches even if consent is checked again',async()=>{
+ const w=setup();try{
+  const $=id=>w.document.getElementById(id),calls=[];let release;
+  await importDocument(w,{language:'en',segments:[...Array.from({length:35},(_,i)=>({id:'s'+i,start:i,end:i+1,text:'Saved '+i,saved_excerpt:true})),{id:'secret',start:35,end:36,text:'Excluded neighbor'}]});
+  w.fetch=async(url,options)=>{
+   if(url.endsWith('language-tools'))return {ok:true,json:async()=>({ai:{codex:{ready:true}}})};
+   const request=JSON.parse(options.body);calls.push(request);
+   if(calls.length===1)await new Promise(resolve=>{release=resolve;});
+   return {ok:true,json:async()=>({translations:request.segments.map(s=>({id:s.id,text:'译文',source_text:s.text}))})};
+  };
+  await $('check-ai').onclick();$('filter-excerpts').click();$('ai-consent').checked=true;
+  const pending=$('subscription-translate').onclick();assert.equal(calls.length,1);
+  $('ai-filtered').checked=true;$('ai-filtered').dispatchEvent(new w.Event('change'));
+  assert.equal($('ai-consent').checked,false);$('ai-consent').checked=true;
+  release();await pending;
+  assert.equal(calls.length,1,'the prior queued plan cannot continue under changed scope');
+  assert.ok([...calls[0].segments,...calls[0].context].every(s=>s.id!=='secret'));
+  const doc=JSON.parse(w.localStorage.getItem('coconut-reader-v1')).documents[0];
+  assert.equal(doc.segments.filter(s=>s.translations?.zh).length,32);assert.equal($('ai-consent').checked,false);
+ }finally{await w.happyDOM.close();}
+});

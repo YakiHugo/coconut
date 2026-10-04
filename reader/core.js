@@ -109,8 +109,8 @@
   }
   return {windows,selected:runs.flat().length,total:windows.reduce((n,w)=>n+w.segments.length,0),sent:new Set(windows.flatMap(w=>w.snapshot.map(c=>c.id))).size};
  }
- function matchesSegment(segment, doc, query, notesOnly=false) {
-  return (!notesOnly || Boolean(doc.notes?.[segment.id])) &&
+ function matchesSegment(segment, doc, query, notesOnly=false, excerptsOnly=false) {
+  return (!notesOnly || Boolean(doc.notes?.[segment.id])) && (!excerptsOnly || segment.saved_excerpt === true) &&
    [segment.text,segment.speaker||"",doc.notes?.[segment.id]||"",...Object.values(segment.translations||{}).filter(t=>translationCurrent(segment,doc,t)).map(t=>t.text)].join(" ").toLocaleLowerCase().includes(query.trim().toLocaleLowerCase());
  }
 	function validate(data) {
@@ -143,6 +143,7 @@
 				start: s.start,
 				end: s.end,
 				text: s.text,
+				...(s.saved_excerpt === true ? {saved_excerpt: true} : {}),
 				...(typeof s.original_text === "string"
 					? { original_text: s.original_text }
 					: {}),
@@ -186,6 +187,43 @@
 			segments,
             translation_contexts: cleanContexts(data.translation_contexts, segments),
 		};
+	}
+	function notebookSegments(doc) {
+		return doc.segments.filter(s => s.saved_excerpt === true || Boolean(doc.notes?.[s.id]?.trim()));
+	}
+	function markdownText(value) {
+		return String(value).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+			.replace(/[\\`*_{}\[\]()#+.!|~$-]/g, "\\$&");
+	}
+	function notebookMarkdown(doc) {
+		const kept = notebookSegments(doc);
+		const text = value => markdownText(value).replace(/\r\n?/g, "\n");
+		const singleLine = value => text(value).replace(/\n/g, " ");
+		const quote = value => text(value).split("\n").map(line => "> " + line).join("\n");
+		const sourceLink = seconds => source(doc.source_url, seconds).replace(/[()]/g, char => char === "(" ? "%28" : "%29");
+		const lines = ["# " + singleLine(doc.title), "", "Coconut 阅读笔记 · " + kept.length + " 个片段", "",
+			"以下包含本篇全部摘录和非空笔记，不受当前搜索筛选影响。文字稿可能有识别错误，请回听核对。", "",
+			"Markdown 用于阅读与整理；完整恢复请另存 Coconut JSON 备份。此文件不包含媒体。", ""];
+		const origin = sourceLink(0);
+		if (origin) lines.push("[原始来源](" + origin + ")", "");
+		else lines.push("未关联可用的原站链接；时间戳仅用于在原始媒体中定位。", "");
+		for (const segment of kept) {
+			const range = time(segment.start) + "–" + time(segment.end);
+			const href = sourceLink(segment.start);
+			lines.push("## " + (href ? "[" + range + "](" + href + ")" : range), "");
+			lines.push("片段 ID：" + singleLine(segment.id) + (segment.speaker ? " · 说话人标签：" + singleLine(segment.speaker) : ""), "");
+			if (segment.saved_excerpt === true) lines.push("已摘录整段", "");
+			const corrected = segment.original_text !== undefined && segment.original_text !== segment.text;
+			lines.push(corrected ? "原文（已修正）：" : "原文：", "", quote(segment.text), "");
+			if (corrected) lines.push("修正前文字稿：", "", quote(segment.original_text), "");
+			const translated = segment.translations?.[doc.translation_view];
+			if (translated) {
+				if (translationCurrent(segment, doc, translated)) lines.push("译文（" + singleLine(doc.translation_view) + "；" + singleLine(translated.provider) + "，机器生成，需核对）：", "", quote(translated.text), "");
+				else lines.push("此片段译文已过期，未导出。", "");
+			}
+			if (doc.notes?.[segment.id]?.trim()) lines.push("我的笔记：", "", quote(doc.notes[segment.id]), "");
+		}
+		return lines.join("\n");
 	}
 	function seconds(value) {
 		if (!/^(?:\d{2,}:)?[0-5]\d:[0-5]\d[.,]\d{3}$/.test(value)) throw new Error("字幕时间格式无效");
@@ -237,7 +275,7 @@
 			segments,
 		});
 	}
-	const api = { time, source, media, validate, parse, matchesSegment, translationCurrent, sameCueSnapshot, subscriptionPlan, cleanContexts };
+	const api = { time, source, media, validate, parse, matchesSegment, notebookSegments, notebookMarkdown, translationCurrent, sameCueSnapshot, subscriptionPlan, cleanContexts };
 	if (typeof module !== "undefined" && module.exports) module.exports = api;
 	else root.Coconut = api;
 })(typeof window !== "undefined" ? window : globalThis);
