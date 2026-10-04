@@ -7,7 +7,7 @@
 <link rel="stylesheet" href="style.css?v=278bbf21c2">
 <script src="core.js?v=899ed1f9f7" defer>
 </script>
-<script src="app.js?v=a12ffb5404" defer>
+<script src="app.js?v=c937f3534c" defer>
 </script>
 <script src="language.js?v=984cf661fb" defer></script>
 <script src="jobs.js?v=f2eca42dcf" defer>
@@ -159,12 +159,12 @@ cd coconut
 </p>
 </form>
 </dialog>
-<dialog id="edit-dialog">
+<dialog id="edit-dialog" aria-labelledby="edit-heading">
 <form method="dialog">
-<h2>修正这一段</h2>
+<h2 id="edit-heading">修正这一段</h2>
 <p>原稿会保留，修正不会改变原始时间戳。</p>
 <label for="edit-segment">文字内容</label>
-<textarea id="edit-segment" rows="8">
+<textarea id="edit-segment" rows="8" autofocus>
 </textarea>
 <p id="edit-error" role="status">
 </p>
