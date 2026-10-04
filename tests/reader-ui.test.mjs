@@ -193,12 +193,12 @@ test('reading position beyond first page survives reload, backup validation and 
   const $=id=>w.document.getElementById(id);
   await importDocument(w,{title:'Long document',segments:Array.from({length:205},(_,i)=>({id:'s'+i,start:i,end:i+1,text:'Part '+i}))});
   [...$('transcript').querySelectorAll('button')].find(b=>b.textContent==='继续阅读后面的片段').click();
-  w.document.querySelectorAll('.bookmark-button')[150].click();stored=w.localStorage.getItem('coconut-reader-v1');
+  w.document.querySelectorAll('.bookmark-button')[50].click();stored=w.localStorage.getItem('coconut-reader-v1');
   assert.equal(w.Coconut.validate(JSON.parse(stored).documents[0]).readingPosition,'s150');
  }finally{await w.happyDOM.close();}
  const restored=setup(stored);try{
   const $=id=>restored.document.getElementById(id);$('resume').click();
-  assert.equal(restored.document.activeElement.dataset.segmentId,'s150');assert.equal(restored.document.querySelectorAll('.segment').length,200);
+  assert.equal(restored.document.activeElement.dataset.segmentId,'s150');assert.equal(restored.document.querySelectorAll('.segment').length,100);
   await $('sample').onclick();$('library-search').value='Long';$('library-search').oninput();
   assert.equal($('library').querySelectorAll('button').length,1);$('library').querySelector('button').click();
   assert.equal(restored.document.activeElement.dataset.segmentId,'s150');
@@ -535,7 +535,7 @@ test('excerpt search beyond first page and document switching preserve exact sav
   $('filter-excerpts').click();assert.deepEqual([...w.document.querySelectorAll('.segment')].map(r=>r.dataset.segmentId),['s150','s204']);
   $('search').value='204';$('search').oninput();assert.equal(w.document.querySelector('.segment').dataset.segmentId,'s204');
   w.document.querySelector('.note-button').click();$('return-excerpt').click();
-  assert.equal(w.document.activeElement.dataset.segmentId,'s204');assert.equal(w.document.querySelectorAll('.segment').length,205);
+  assert.equal(w.document.activeElement.dataset.segmentId,'s204');assert.equal(w.document.querySelectorAll('.segment').length,5);
   await $('sample').onclick();assert.equal($('excerpt-count').textContent,'0');assert.equal($('filter-all').getAttribute('aria-pressed'),'true');
   $('library-search').value='Long excerpt source';$('library-search').oninput();$('library').querySelector('button').click();
   assert.equal($('excerpt-count').textContent,'2');assert.equal($('filter-excerpts').getAttribute('aria-pressed'),'false');
@@ -636,5 +636,81 @@ test('changing AI scope invalidates queued subscription batches even if consent 
   assert.ok([...calls[0].segments,...calls[0].context].every(s=>s.id!=='secret'));
   const doc=JSON.parse(w.localStorage.getItem('coconut-reader-v1')).documents[0];
   assert.equal(doc.segments.filter(s=>s.translations?.zh).length,32);assert.equal($('ai-consent').checked,false);
+ }finally{await w.happyDOM.close();}
+});
+
+test('late resume and playback re-renders keep a bounded reading window and active cue',async()=>{
+ const segments=Array.from({length:1771},(_,i)=>({id:'long-'+i,start:i*2,end:i*2+2,text:'Transcript cue '+i}));
+ const w=setup();try{
+  const $=id=>w.document.getElementById(id);
+  await importDocument(w,{title:'Long transcript',readingPosition:'long-1750',source_media:{job_id:'a'.repeat(32),kind:'video'},segments});
+  w.dispatchEvent(new w.Event('coconut-worker-ready'));
+  const player=w.document.querySelector('video');
+  player.currentTime=3501;player.ontimeupdate();
+  $('resume').click();
+  assert.equal(w.document.activeElement.dataset.segmentId,'long-1750');
+  assert.ok(w.document.querySelectorAll('.segment').length<=100,'late jumps must not mount all preceding cues');
+  assert.equal(w.document.querySelector('.playing')?.dataset.segmentId,'long-1750','paused playback survives rendering');
+  w.document.querySelector('[data-segment-id="long-1750"] .note-button').click();
+  assert.equal(w.document.querySelector('.playing')?.dataset.segmentId,'long-1750');
+  assert.equal(w.document.querySelector('video'),player);
+  assert.equal(player.currentTime,3501);
+ }finally{await w.happyDOM.close();}
+});
+
+test('paging traverses every cue once in both directions and preserves saved notes',async()=>{
+ const w=setup();try{
+  const $=id=>w.document.getElementById(id);
+  await importDocument(w,{title:'Paged reading',segments:Array.from({length:205},(_,i)=>({id:'p'+i,start:i,end:i+1,text:'Part '+i}))});
+  const ids=()=>[...w.document.querySelectorAll('.segment')].map(row=>row.dataset.segmentId);
+  assert.equal($('previous-page').disabled,true);
+  const visited=[...ids()];
+  $('next-page').click();assert.equal(w.document.activeElement.dataset.segmentId,'p100');
+  visited.push(...ids());
+  w.document.querySelector('.note-button').click();$('note').value='Middle page note';$('note').oninput();$('close-note').click();
+  $('next-page').click();visited.push(...ids());
+  assert.equal($('next-page').disabled,true);assert.match(w.document.querySelector('.reading-pages').textContent,/201–205 \/ 205/);
+  assert.deepEqual(visited,Array.from({length:205},(_,i)=>'p'+i));
+  $('previous-page').click();assert.equal(w.document.activeElement.dataset.segmentId,'p100');
+  assert.equal(w.document.querySelector('.saved-note').textContent,'Middle page note');
+  $('previous-page').click();assert.equal(w.document.activeElement.dataset.segmentId,'p0');assert.equal(ids().length,100);
+ }finally{await w.happyDOM.close();}
+});
+
+test('search and AI scope include off-page matches while page changes preserve consent',async()=>{
+ const w=setup();try{
+  const $=id=>w.document.getElementById(id);
+  await importDocument(w,{title:'Full search',language:'en',segments:Array.from({length:305},(_,i)=>({id:'s'+i,start:i,end:i+1,text:(i%2?'Other ':'Match ')+i}))});
+  let sent;
+  w.fetch=async(url,options)=>({ok:true,json:async()=>url.endsWith('language-tools')?{ai:{codex:{ready:true}}}:(sent=JSON.parse(options.body),{answer:'Cited final match',citations:['s304'],provider:'test'})});
+  await $('check-ai').onclick();
+  $('search').value='Match';$('search').oninput();
+  assert.match($('search-status').textContent,/153 个片段/);
+  $('ai-filtered').checked=true;$('ai-filtered').onchange();$('ai-consent').checked=true;
+  $('next-page').click();
+  assert.equal(w.document.querySelector('.segment').dataset.segmentId,'s200');assert.equal(w.document.querySelectorAll('.segment').length,53);
+  assert.equal($('ai-consent').checked,true,'paging does not change the consented matching set');
+  $('ai-question').value='What matters?';await $('ask-ai').onclick();
+  assert.deepEqual(sent.segments.map(s=>s.id),Array.from({length:153},(_,i)=>'s'+i*2));
+  $('ai-answers').querySelector('button').click();
+  assert.equal($('search').value,'');assert.equal(w.document.activeElement.dataset.segmentId,'s304');
+  assert.equal(w.document.querySelectorAll('.segment').length,5);
+  $('search').value='no results';$('search').oninput();assert.equal(w.document.querySelectorAll('.segment').length,0);assert.equal($('next-page'),null);
+  $('clear-search').click();assert.equal(w.document.querySelector('.segment').dataset.segmentId,'s0');
+ }finally{await w.happyDOM.close();}
+});
+
+test('removing the only excerpt on the final page returns to a valid page and keyboard target',async()=>{
+ const w=setup();try{
+  const $=id=>w.document.getElementById(id);
+  await importDocument(w,{title:'Excerpt pages',segments:Array.from({length:101},(_,i)=>({id:'e'+i,start:i,end:i+1,text:'Excerpt '+i,saved_excerpt:true}))});
+  $('filter-excerpts').click();$('next-page').click();
+  assert.equal(w.document.querySelectorAll('.segment').length,1);
+  w.document.querySelector('.excerpt-button').click();
+  assert.equal(w.document.querySelectorAll('.segment').length,100);assert.equal($('next-page'),null);
+  assert.equal(w.document.activeElement.closest('.segment').dataset.segmentId,'e0');
+  assert.match($('search-status').textContent,/100 个片段/);
+  $('filter-all').click();$('next-page').click();
+  assert.equal(w.document.querySelector('.segment').dataset.segmentId,'e100');assert.equal(w.document.querySelector('.excerpt-button').getAttribute('aria-pressed'),'false');
  }finally{await w.happyDOM.close();}
 });

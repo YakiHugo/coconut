@@ -9,7 +9,8 @@ let workspace = "read";
 let readingScroll = 0;
 let editingTarget = null;
 let sourceTarget = null;
-let currentLimit = 100;
+const PAGE_SIZE = 100;
+let pageStart = 0;
 let storageBlocked = false;
 let lastSavedValue = null;
 let mediaWorkerReady = false;
@@ -92,7 +93,7 @@ async function add(doc) {
 	state.active = key;
 	$("search").value = "";
 	selected = null;
-	currentLimit = 100;
+	pageStart = 0;
 	notesOnly = false; excerptsOnly = false;
 	workspace = "read";
 	const saved = save();
@@ -117,7 +118,7 @@ function goToSegment(id) {
 	$("search").value = "";
 	notesOnly = false; excerptsOnly = false;
 	selected = null;
-	currentLimit = Math.max(100, Math.ceil((index + 1) / 100) * 100);
+	pageStart = Math.floor(index / PAGE_SIZE) * PAGE_SIZE;
 	showWorkspace("read");
 	render();
 	const row = [...$("transcript").querySelectorAll(".segment")].find(row => row.dataset.segmentId === id);
@@ -141,7 +142,7 @@ function renderLibrary() {
 			state.active = d.key;
 			selected = null;
 			notesOnly = false; excerptsOnly = false;
-			currentLimit = 100;
+			pageStart = 0;
 			$("search").value = "";
 			$("toggle-library").setAttribute("aria-expanded", "false");
 			save();
@@ -197,7 +198,10 @@ function render() {
 	$("count").textContent = "书架 / " + doc.title;
 	const query = $("search").value.trim().toLocaleLowerCase();
 	const filtered = doc.segments.filter(s=>Coconut.matchesSegment(s,doc,query,notesOnly,excerptsOnly));
-	const currentNote = filtered.slice(0, currentLimit).find((segment) => segment.id === selected);
+	// Clamp after removing the last matching note/excerpt on a later page.
+	pageStart = Math.min(pageStart, Math.max(0, Math.floor((filtered.length - 1) / PAGE_SIZE) * PAGE_SIZE));
+	const visible = filtered.slice(pageStart, pageStart + PAGE_SIZE);
+	const currentNote = visible.find((segment) => segment.id === selected);
 	if (!currentNote) selected = null;
 	$("notes-panel").hidden = !selected;
 	if (currentNote) {
@@ -219,7 +223,7 @@ function render() {
 	$("resume").textContent = bookmark ? "继续阅读 · " + Coconut.time(bookmark.start) : "";
 	$("resume").onclick = () => bookmark && goToSegment(bookmark.id);
 	$("transcript").replaceChildren();
-	for (const s of filtered.slice(0, currentLimit)) {
+	for (const s of visible) {
 		const row = el(
 			"section",
 			"segment" + (selected === s.id ? " selected" : "") + (s.saved_excerpt === true ? " excerpted" : ""),
@@ -295,15 +299,34 @@ function render() {
 	}
 	if (!filtered.length)
 		$("transcript").append(el("p", "hint", excerptsOnly && !query ? "还没有摘录。回到全文，点击「摘录整段」留下值得重读的原话，不必先写笔记。" : notesOnly && !query ? "还没有笔记。回到全文，在想停下来的片段旁记一笔。" : "没有匹配的片段，试试另一个词。"));
-	if (filtered.length > currentLimit) {
-		const more = el("button", "", "继续阅读后面的片段");
-		more.onclick = () => {
-			currentLimit += 100;
-			render();
-		};
-		$("transcript").append(more);
+	if (filtered.length > PAGE_SIZE) {
+		const navigation = el("nav", "reading-pages");
+		navigation.setAttribute("aria-label", "文字稿分页");
+		const previous = el("button", "", "前面的片段");
+		previous.id = "previous-page";
+		previous.disabled = pageStart === 0;
+		previous.onclick = () => changeReadingPage(-1);
+		const position = el("span", "hint", `${pageStart + 1}–${pageStart + visible.length} / ${filtered.length} 段`);
+		position.setAttribute("role", "status");
+		const next = el("button", "", "继续阅读后面的片段");
+		next.id = "next-page";
+		next.disabled = pageStart + PAGE_SIZE >= filtered.length;
+		next.onclick = () => changeReadingPage(1);
+		navigation.append(previous, position, next);
+		$("transcript").append(navigation);
 	}
+	highlightPlayback();
 	window.dispatchEvent(new Event("coconut-render"));
+}
+function changeReadingPage(direction) {
+	pageStart = Math.max(0, pageStart + direction * PAGE_SIZE);
+	selected = null;
+	render();
+	// Replacing a page removes its controls: move focus into the new content
+	// rather than dropping keyboard users back to the top of the document.
+	const row = $("transcript").querySelector(".segment");
+	row?.scrollIntoView?.({block: "start"});
+	row?.focus({preventScroll: true});
 }
 function playbackSegment() {
  const player=$("source-media").querySelector("audio,video");
@@ -319,10 +342,10 @@ $("back-reading").onclick = () => showWorkspace("read");
 $("show-jobs").onclick = () => { showWorkspace("add"); $("jobs-heading").scrollIntoView?.(); };
 $("toggle-library").onclick = () => $("toggle-library").setAttribute("aria-expanded", String($("toggle-library").getAttribute("aria-expanded") !== "true"));
 $("library-search").oninput = renderLibrary;
-$("filter-all").onclick = () => { notesOnly = false; excerptsOnly = false; currentLimit = 100; render(); };
-$("filter-excerpts").onclick = () => { excerptsOnly = true; notesOnly = false; currentLimit = 100; render(); };
-$("filter-notes").onclick = () => { notesOnly = true; excerptsOnly = false; currentLimit = 100; render(); };
-$("clear-search").onclick = () => { $("search").value = ""; notesOnly = false; excerptsOnly = false; currentLimit = 100; render(); $("search").focus(); };
+$("filter-all").onclick = () => { notesOnly = false; excerptsOnly = false; pageStart = 0; render(); };
+$("filter-excerpts").onclick = () => { excerptsOnly = true; notesOnly = false; pageStart = 0; render(); };
+$("filter-notes").onclick = () => { notesOnly = true; excerptsOnly = false; pageStart = 0; render(); };
+$("clear-search").onclick = () => { $("search").value = ""; notesOnly = false; excerptsOnly = false; pageStart = 0; render(); $("search").focus(); };
 $("close-note").onclick = () => {
 	const id = selected;
 	selected = null;
@@ -350,7 +373,7 @@ $("file").onchange = async () => {
 	}
 };
 $("search").oninput = () => {
-	currentLimit = 100;
+	pageStart = 0;
 	render();
 };
 $("note").oninput = () => {
