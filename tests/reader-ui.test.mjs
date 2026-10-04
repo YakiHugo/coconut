@@ -862,3 +862,16 @@ test('subtitle download exports full document despite active search and handles 
   w.URL.createObjectURL=()=>{throw Error('blocked');};$('export-subtitles').click();assert.match($('notice').textContent,/导出失败/);
  }finally{await w.happyDOM.close();}
 });
+
+test('document details persist and target the document that opened the dialog',async()=>{
+ const w=setup();try{
+  const $=id=>w.document.getElementById(id);await importDocument(w,{title:'Original',language:'it',segments:[{id:'a',start:0,end:1,text:'A'}],notes:{a:'Keep'}});
+  const key=JSON.parse(w.localStorage.getItem('coconut-reader-v1')).active;
+  $('document-details').click();assert.equal($('document-language').value,'it');$('document-title').value=' ';$('save-details').click();assert.equal($('details-dialog').open,true);
+  await importDocument(w,{title:'Other',segments:[{start:0,end:1,text:'B'}]});$('document-title').value='<New title>'; $('document-language').value='en';$('save-details').click();
+  const stored=JSON.parse(w.localStorage.getItem('coconut-reader-v1'));const doc=stored.documents.find(d=>d.key===key);
+  assert.equal(doc.title,'<New title>');assert.equal(doc.language,'en');assert.equal(doc.notes.a,'Keep');assert.equal($('title').textContent,'Other');assert.equal($('library').querySelector('New'),null);
+  $('library-search').value='new title';$('library-search').oninput();assert.equal($('library').children.length,1);$('library').firstElementChild.click();assert.equal($('title').textContent,'<New title>');
+  $('document-details').click();$('document-title').value='Not saved';$('details-dialog').close();assert.equal($('title').textContent,'<New title>');
+ }finally{await w.happyDOM.close();}
+});
