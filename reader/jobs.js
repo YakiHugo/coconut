@@ -2,7 +2,9 @@
 let localWorker = false;
 let pollTimer;
 let connectingWorker = false;
+let queueRefreshSequence = 0;
 let workerWasConnected = false;
+const pendingJobActions = new Set();
 const jobStatus = {
 	queued: "排队中",
 	running: "处理中",
@@ -27,21 +29,77 @@ function jsonPost(data = {}) {
 		body: JSON.stringify(data),
 	};
 }
-function jobButton(text, action) {
-	const button = el("button", "", text);
-	button.type = "button";
-	button.onclick = async () => {
-		button.disabled = true;
-		try {
-			await action();
-			await refreshJobs();
-		} catch (error) {
-			notice(error.message);
-		} finally {
-			button.disabled = !localWorker;
-		}
-	};
-	return button;
+function updateJobButtons(identifier) {
+ for (const row of $("jobs").children) {
+  if (identifier !== undefined && row.dataset.jobId !== identifier) continue;
+  const pending = pendingJobActions.has(row.dataset.jobId);
+  row.setAttribute("aria-busy", String(pending));
+  for (const button of row.querySelectorAll("button")) button.disabled = !localWorker || pending;
+ }
+}
+function jobButton(text, action, identifier, name) {
+ const button = el("button", "", text);
+ button.type = "button";
+ button.dataset.jobAction = name;
+ button.onclick = async () => {
+  if (!localWorker || pendingJobActions.has(identifier)) return;
+  pendingJobActions.add(identifier);
+  updateJobButtons(identifier);
+  try {
+   await action();
+   await refreshJobs();
+  } catch (error) {
+   notice(error.message);
+  } finally {
+   pendingJobActions.delete(identifier);
+   updateJobButtons(identifier);
+  }
+ };
+ return button;
+}
+function renderJobs(jobs) {
+ const host = $("jobs");
+ const focused = document.activeElement;
+ const focusedRow = focused?.closest?.(".job-row");
+ const focusId = host.contains(focusedRow) ? focusedRow.dataset.jobId : null;
+ const focusAction = focused?.dataset.jobAction;
+ const existing = new Map([...host.children].map(row => [row.dataset.jobId, row]));
+ const retained = new Set();
+ for (const [index, job] of jobs.entries()) {
+  const signature = JSON.stringify([job.title, job.status, job.stage, job.error, job.playback_retryable]);
+  let row = existing.get(job.id);
+  if (!row || row.dataset.signature !== signature) {
+   const replacement = el("section", "job-row");
+   replacement.dataset.jobId = job.id;
+   replacement.dataset.signature = signature;
+   replacement.tabIndex = -1;
+   replacement.setAttribute("aria-label", job.title);
+   const detail = el("div");
+   detail.append(el("strong", "", job.title), el("p", "hint", jobStatus[job.status] + " · " + job.stage));
+   if (job.error) detail.append(el("p", "job-error", job.error));
+   if (job.playback_retryable) detail.append(el("p", "hint", "文字稿已保留，本地视频尚不可用。重试会复用已完成的文字稿；原站链接仍可使用。"));
+   replacement.append(detail);
+   if (job.status === "done") replacement.append(jobButton("打开阅读", async () => {
+    const doc = Coconut.validate(await jobApi("jobs/" + job.id + "/result"));
+    await add(doc);
+    $("title").scrollIntoView({ behavior: "smooth" });
+   }, job.id, "open"));
+   if (["queued", "running"].includes(job.status)) replacement.append(jobButton("取消", () => jobApi("jobs/" + job.id + "/cancel", jsonPost()), job.id, "cancel"));
+   if (job.playback_retryable || ["failed", "cancelled", "interrupted"].includes(job.status)) replacement.append(jobButton(job.playback_retryable ? "重试本地视频" : "重试", () => jobApi("jobs/" + job.id + "/retry", jsonPost()), job.id, "retry"));
+   if (row) row.replaceWith(replacement);
+   row = replacement;
+  }
+  if (host.children[index] !== row) host.insertBefore(row, host.children[index] || null);
+  retained.add(row);
+ }
+ for (const row of [...host.children]) if (!retained.has(row)) row.remove();
+ updateJobButtons();
+ // Refresh only restores a focus target that it removed, never another field.
+ if (focusId && !focused.isConnected && !$("add-workspace").hidden) {
+  const row = [...host.children].find(item => item.dataset.jobId === focusId);
+  const action = row && [...row.querySelectorAll("button")].find(button => button.dataset.jobAction === focusAction && !button.disabled);
+  (action || row || $("jobs-heading")).focus({preventScroll:true});
+ }
 }
 function disconnectedWorker() {
  localWorker = false;
@@ -61,54 +119,24 @@ function disconnectedWorker() {
 }
 async function refreshJobs() {
 	if (!localWorker) return;
+ const request = ++queueRefreshSequence;
 	clearTimeout(pollTimer);
 	try {
 		const data = await jobApi("jobs");
-		$("jobs").replaceChildren();
-		$("job-count").textContent = String(data.jobs.filter(job => ["queued", "running"].includes(job.status)).length);
-		$("jobs-heading").textContent = data.jobs.length ? "处理任务" : "暂无处理任务";
-		for (const job of data.jobs) {
-			const row = el("section", "job-row");
-			const detail = el("div");
-			detail.append(
-				el("strong", "", job.title),
-				el("p", "hint", jobStatus[job.status] + " · " + job.stage),
-			);
-			if (job.error) detail.append(el("p", "job-error", job.error));
-            if (job.playback_retryable) detail.append(el("p", "hint", "文字稿已保留，本地视频尚不可用。重试会复用已完成的文字稿；原站链接仍可使用。"));
-			row.append(detail);
-			if (job.status === "done")
-				row.append(
-					jobButton("打开阅读", async () => {
-						const doc = Coconut.validate(
-							await jobApi("jobs/" + job.id + "/result"),
-						);
-						await add(doc);
-						$("title").scrollIntoView({ behavior: "smooth" });
-					}),
-				);
-			if (["queued", "running"].includes(job.status))
-				row.append(
-					jobButton("取消", () =>
-						jobApi("jobs/" + job.id + "/cancel", jsonPost()),
-					),
-				);
-			if (job.playback_retryable || ["failed", "cancelled", "interrupted"].includes(job.status))
-				row.append(
-					jobButton(job.playback_retryable ? "重试本地视频" : "重试", () =>
-						jobApi("jobs/" + job.id + "/retry", jsonPost()),
-					),
-				);
-			$("jobs").append(row);
-		}
+  if (request !== queueRefreshSequence) return false;
+        $("job-count").textContent = String(data.jobs.filter(job => ["queued", "running"].includes(job.status)).length);
+        $("jobs-heading").textContent = data.jobs.length ? "处理任务" : "暂无处理任务";
+        renderJobs(data.jobs);
 		$("worker-status").textContent = "本地处理服务已连接";
   return true;
 	} catch {
-		disconnectedWorker();
+  if (request === queueRefreshSequence) disconnectedWorker();
   return false;
  } finally {
-  clearTimeout(pollTimer);
-  pollTimer = setTimeout(() => localWorker ? refreshJobs() : connectWorker(), document.hidden ? 15000 : 3000);
+  if (request === queueRefreshSequence) {
+   clearTimeout(pollTimer);
+   pollTimer = setTimeout(() => localWorker ? refreshJobs() : connectWorker(), document.hidden ? 15000 : 3000);
+  }
  }
 }
 $("url-form").onsubmit = async (event) => {
