@@ -43,3 +43,23 @@ class StageRecoveryTests(unittest.TestCase):
                 captions.assert_not_called()
                 media.assert_called_once()
             self.assertEqual(json.loads(output.with_suffix('.json').read_text()), document)
+
+    def test_successful_playback_retry_clears_old_warning_without_recognizing_again(self):
+        import json
+        from unittest.mock import patch
+        from transcribe import main
+        document = {'schema_version':1, 'title':'Saved', 'source_url':'https://x.com/example/status/123',
+                    'segments':[{'id':'a','start':0,'end':1,'text':'Keep original'}],
+                    'provenance':{'kind':'platform_subtitles','playback_warning':'Unavailable'}}
+        with tempfile.TemporaryDirectory() as td:
+            cache = Path(td) / 'cache'; cache.mkdir()
+            (cache / 'document.json').write_text(json.dumps(document))
+            output = Path(td) / 'result.md'
+            args = ['transcribe.py', document['source_url'], '--work-dir', str(cache), '-o', str(output), '--keep-media', '--no-diarize']
+            with patch('sys.argv', args), patch('transcribe.fetch_subtitle_document') as captions, \
+                    patch('transcribe.transcribe_fast') as recognition, patch('transcribe.download_playback'):
+                main()
+            captions.assert_not_called(); recognition.assert_not_called()
+            actual = json.loads(output.with_suffix('.json').read_text())
+            self.assertNotIn('playback_warning', actual['provenance'])
+            self.assertEqual(actual['segments'], document['segments'])

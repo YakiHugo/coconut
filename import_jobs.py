@@ -96,8 +96,20 @@ class ImportJobs:
         if row is None:
             raise KeyError('Job not found')
         data = dict(row)
-        data.pop('source')
+        source = data.pop('source')
         data['options'] = json.loads(data['options'])
+        data['playback_retryable'] = False
+        if data['status'] == 'done' and source.startswith('https://') and data['options'].get('keep_media'):
+            try:
+                self.media(identifier)
+            except KeyError:
+                # Only resume a completed transcript, never start recognition again
+                # because an optional playback copy is missing.
+                cache = self.directory / identifier / 'cache' / 'document.json'
+                data['playback_retryable'] = cache.is_file()
+            except ValueError:
+                # Another request may have queued recovery after this snapshot.
+                pass
         return data
 
     def list(self):
@@ -106,10 +118,12 @@ class ImportJobs:
         return [self.get(identifier) for identifier in ids]
 
     def retry(self, identifier: str):
+        job = self.get(identifier)
+        allowed = ('done',) if job['playback_retryable'] else ('failed', 'interrupted', 'cancelled')
         with self.connect() as db:
-            changed = db.execute("UPDATE jobs SET status='queued', stage='Waiting', error=NULL, updated=? WHERE id=? AND status IN ('failed','interrupted','cancelled')", (time.time(), identifier)).rowcount
+            changed = db.execute(f"UPDATE jobs SET status='queued', stage='Waiting', error=NULL, updated=? WHERE id=? AND status IN ({','.join('?' for _ in allowed)})", (time.time(), identifier, *allowed)).rowcount
         if not changed:
-            raise ValueError('Only failed, interrupted or cancelled jobs can be retried')
+            raise ValueError('Only failed, interrupted, cancelled jobs or missing requested playback can be retried')
         self.wakeup.set()
         return self.get(identifier)
 

@@ -61,3 +61,37 @@ class PlaybackCacheTests(unittest.TestCase):
             self.assertEqual(jobs.media(job['id']),(media,'video','video/mp4'))
             media.write_bytes(b'changed size')
             with self.assertRaises(KeyError):jobs.media(job['id'])
+
+class PlaybackRecoveryTests(unittest.TestCase):
+    def test_done_job_retries_only_missing_requested_playback_with_cached_transcript(self):
+        import json
+        with tempfile.TemporaryDirectory() as td:
+            jobs = ImportJobs(Path(td))
+            job = jobs.enqueue('https://x.com/example/status/123', 'URL', {'keep_media': True})
+            identifier = job['id']
+            with jobs.connect() as db:
+                db.execute("UPDATE jobs SET status='done' WHERE id=?", (identifier,))
+            self.assertFalse(jobs.get(identifier)['playback_retryable'])
+            with self.assertRaises(ValueError): jobs.retry(identifier)
+            cache = Path(td) / identifier / 'cache'
+            cache.mkdir(parents=True)
+            (cache / 'document.json').write_text('{"segments": []}')
+            self.assertTrue(jobs.get(identifier)['playback_retryable'])
+            (cache / 'playback.mp4').write_bytes(b'fixture')
+            (cache / 'playback.json').write_text(json.dumps({'file':'playback.mp4','size':7}))
+            self.assertFalse(jobs.get(identifier)['playback_retryable'])
+            with self.assertRaises(ValueError): jobs.retry(identifier)
+            (cache / 'playback.json').unlink()
+            self.assertEqual(jobs.retry(identifier)['status'], 'queued')
+            with self.assertRaises(ValueError): jobs.retry(identifier)
+            self.assertTrue((cache / 'document.json').is_file())
+
+    def test_done_job_without_requested_playback_cannot_be_reprocessed(self):
+        with tempfile.TemporaryDirectory() as td:
+            jobs = ImportJobs(Path(td))
+            for source, options in [('https://x.com/example/status/123', {}), ('local.mp4', {'keep_media':True})]:
+                job = jobs.enqueue(source, 'Title', options)
+                with jobs.connect() as db:
+                    db.execute("UPDATE jobs SET status='done' WHERE id=?", (job['id'],))
+                self.assertFalse(jobs.get(job['id'])['playback_retryable'])
+                with self.assertRaises(ValueError): jobs.retry(job['id'])

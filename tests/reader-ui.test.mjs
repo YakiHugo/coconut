@@ -1009,3 +1009,22 @@ test('independent metadata language revocation stops prior subscription plan',as
   assert.equal(doc.segments.filter(s=>s.translations?.zh).length,32);assert.equal($('ai-consent').checked,false);
  }finally{await w.happyDOM.close();}
 });
+
+test('finished transcript stays readable and missing optional playback can be retried explicitly',async()=>{
+ const calls=[];let status='done';
+ const w=setup(undefined,async(url,options={})=>{
+  calls.push([url,options.method]);
+  if(url.endsWith('health'))return {ok:true,json:async()=>({local_worker:true})};
+  if(url.endsWith('/retry'))status='queued';
+  return {ok:true,json:async()=>({jobs:[{id:'job',title:'Saved transcript',status,stage:status,playback_retryable:status==='done'}]})};
+ });try{
+  await new Promise(r=>setTimeout(r,20));
+  const buttons=[...w.document.getElementById('jobs').querySelectorAll('button')];
+  assert.deepEqual(buttons.map(b=>b.textContent),['打开阅读','重试本地视频']);
+  assert.match(w.document.getElementById('jobs').textContent,/复用已完成的文字稿/);
+  assert.equal(calls.filter(([url])=>url.endsWith('/retry')).length,0);
+  await buttons[1].onclick();
+  assert.equal(calls.filter(([url,method])=>url.endsWith('/retry')&&method==='POST').length,1);
+  assert.equal(w.document.getElementById('jobs').querySelector('button').textContent,'取消');
+ }finally{await w.happyDOM.close();}
+});
