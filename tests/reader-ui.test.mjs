@@ -1028,3 +1028,76 @@ test('finished transcript stays readable and missing optional playback can be re
   assert.equal(w.document.getElementById('jobs').querySelector('button').textContent,'取消');
  }finally{await w.happyDOM.close();}
 });
+
+test('unchanged queue polls preserve task buttons and keyboard focus',async()=>{
+ const w=setup(undefined,async url=>({ok:true,json:async()=>url.endsWith('health')?{local_worker:true}:{jobs:[{id:'job',title:'Pending',status:'queued',stage:'waiting',updated:Date.now()}]}}));
+ try{
+  await new Promise(r=>setTimeout(r,20));
+  w.document.getElementById('show-jobs').click();const button=w.document.getElementById('jobs').querySelector('button');button.focus();
+  await w.document.getElementById('retry-worker').onclick();
+  assert.ok(w.document.getElementById('jobs').querySelector('button')===button);
+  assert.equal(w.document.activeElement,button);
+ }finally{await w.happyDOM.close();}
+});
+
+test('task actions remain single flight across queue refresh and recover after failure',async()=>{
+ let release,pending,requests=0,stage='waiting';
+ const w=setup(undefined,async url=>{
+  if(url.endsWith('/cancel')){requests++;await new Promise(resolve=>release=resolve);throw new Error('temporary failure');}
+  return {ok:true,json:async()=>url.endsWith('health')?{local_worker:true}:{jobs:[{id:'job',title:'Pending',status:'queued',stage}]}};
+ });try{
+  await new Promise(r=>setTimeout(r,20));
+  const old=w.document.getElementById('jobs').querySelector('button');pending=old.onclick();
+  stage='new progress';await w.document.getElementById('retry-worker').onclick();
+  const refreshed=w.document.getElementById('jobs').querySelector('button');
+  assert.equal(refreshed.disabled,true);
+  await refreshed.onclick();assert.equal(requests,1);
+  release();await pending;
+  assert.equal(w.document.getElementById('jobs').querySelector('button').disabled,false);
+  assert.match(w.document.getElementById('notice').textContent,/temporary failure/);
+ }finally{release?.();await pending;await w.happyDOM.close();}
+});
+
+test('queue progress preserves focused action and removed actions land on their task row',async()=>{
+ let status='running',stage='starting',jobs=true;
+ const w=setup(undefined,async url=>({ok:true,json:async()=>url.endsWith('health')?{local_worker:true}:{jobs:jobs?[{id:'job',title:'Import',status,stage}]:[]}}));
+ try{
+  await new Promise(r=>setTimeout(r,20));
+  w.document.getElementById('show-jobs').click();w.document.getElementById('jobs').querySelector('button').focus();
+  stage='recognizing';await w.document.getElementById('retry-worker').onclick();
+  assert.equal(w.document.activeElement.textContent,'取消');
+  status='done';stage='Ready';await w.document.getElementById('retry-worker').onclick();
+  assert.equal(w.document.activeElement.dataset.jobId,'job');
+  assert.equal(w.document.activeElement.getAttribute('tabindex'),'-1');
+  w.document.getElementById('video-url').focus();stage='Ready again';await w.document.getElementById('retry-worker').onclick();
+  assert.equal(w.document.activeElement.id,'video-url','background refresh must not steal unrelated focus');
+  jobs=false;await w.document.getElementById('retry-worker').onclick();assert.equal(w.document.getElementById('jobs').children.length,0);
+ }finally{await w.happyDOM.close();}
+});
+
+test('older queue responses and errors cannot undo the newest action result',async()=>{
+ for(const oldFails of [false,true]){
+  let listCalls=0,release,ready;
+  const waiting=new Promise(resolve=>ready=resolve);
+  const w=setup(undefined,async url=>{
+   if(url.endsWith('health'))return {ok:true,json:async()=>({local_worker:true})};
+   if(url.endsWith('/cancel'))return {ok:true,json:async()=>({status:'cancelled'})};
+   if(url.endsWith('jobs')){
+    const call=++listCalls;
+    if(call===2){ready();await new Promise(resolve=>release=resolve);if(oldFails)throw new Error('old request offline');}
+    const status=call>=3?'cancelled':'running';
+    return {ok:true,json:async()=>({jobs:[{id:'job',title:'Import',status,stage:status}]})};
+   }
+   return {ok:true,json:async()=>({})};
+  });let oldPoll;
+  try{
+   await new Promise(r=>setTimeout(r,20));
+   oldPoll=w.document.getElementById('retry-worker').onclick();await waiting;
+   await w.document.getElementById('jobs').querySelector('button').onclick();
+   release();await oldPoll;
+   const button=w.document.getElementById('jobs').querySelector('button');
+   assert.equal(button.textContent,'重试');assert.equal(button.disabled,false);
+   assert.equal(w.document.getElementById('worker-status').textContent,'本地处理服务已连接');
+  }finally{release?.();await oldPoll;await w.happyDOM.close();}
+ }
+});
