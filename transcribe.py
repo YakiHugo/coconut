@@ -224,6 +224,7 @@ def main():
             print('[playback] keeping a local source copy (up to 200 MiB)', file=sys.stderr)
             try:
                 download_playback(args.source, tmp)
+                document.get('provenance', {}).pop('playback_warning', None)
             except (subprocess.SubprocessError, OSError, RuntimeError):
                 document.setdefault('provenance', {})['playback_warning'] = 'Local playback download unavailable; use the original source link'
                 print('[playback] copy unavailable; transcript and original source links retained', file=sys.stderr)

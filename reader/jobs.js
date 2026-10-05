@@ -75,6 +75,7 @@ async function refreshJobs() {
 				el("p", "hint", jobStatus[job.status] + " · " + job.stage),
 			);
 			if (job.error) detail.append(el("p", "job-error", job.error));
+            if (job.playback_retryable) detail.append(el("p", "hint", "文字稿已保留，本地视频尚不可用。重试会复用已完成的文字稿；原站链接仍可使用。"));
 			row.append(detail);
 			if (job.status === "done")
 				row.append(
@@ -92,9 +93,9 @@ async function refreshJobs() {
 						jobApi("jobs/" + job.id + "/cancel", jsonPost()),
 					),
 				);
-			if (["failed", "cancelled", "interrupted"].includes(job.status))
+			if (job.playback_retryable || ["failed", "cancelled", "interrupted"].includes(job.status))
 				row.append(
-					jobButton("重试", () =>
+					jobButton(job.playback_retryable ? "重试本地视频" : "重试", () =>
 						jobApi("jobs/" + job.id + "/retry", jsonPost()),
 					),
 				);
