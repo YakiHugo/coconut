@@ -30,6 +30,12 @@ try {
     for (const directory of paths) {
       const arch = directory.endsWith('-arm64') ? 'arm64' : 'x64';
       const archive = path.join(output,`Coconut-${configuration.version}-${arch}-unsigned.zip`);
+      // Packager leaves Electron's own notices beside the .app; the ZIP contains
+      // the .app alone, so preserve both notices inside its resource bundle.
+      const appResources = path.join(directory,'Coconut.app/Contents/Resources');
+      await copyFile(path.join(directory,'LICENSE'),path.join(appResources,'LICENSE.electron'));
+      await copyFile(path.join(directory,'LICENSES.chromium.html'),path.join(appResources,'LICENSES.chromium.html'));
+      await rm(archive,{force:true}); // Do not retain stale entries from an older ZIP.
       const result = process.platform === 'darwin'
         ? spawnSync('/usr/bin/ditto',['-c','-k','--keepParent',path.join(directory,'Coconut.app'),archive],{stdio:'inherit'})
         : spawnSync('zip',['-q','-r','-y',archive,'Coconut.app'],{cwd:directory,stdio:'inherit'});

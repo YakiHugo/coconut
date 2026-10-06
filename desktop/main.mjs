@@ -15,7 +15,7 @@ if (!singleInstance) app.quit();
 else {
   app.on('second-instance',()=>{ if (window) { if (window.isMinimized()) window.restore(); window.focus(); } });
   app.on('window-all-closed',()=>app.quit());
-  app.on('before-quit',()=>{server?.close();server?.closeAllConnections();});
+  app.on('before-quit',()=>server?.shutdown());
   app.whenReady().then(async()=>{
     const readerDirectory = app.isPackaged ? path.join(process.resourcesPath,'reader') : path.resolve(ROOT,'../reader');
     server = await startBridge({port:PORT,readerDirectory});
@@ -49,6 +49,7 @@ else {
   }).catch(error=>{
     const message = error.code === 'EADDRINUSE' ? `本机端口 ${PORT} 已被占用。请关闭另一份 Coconut 后重试；不会自动改地址，以免书架看起来丢失。` : 'Coconut 启动未完成。请检查安装包，稍后重试。';
     if (process.env.COCONUT_SMOKE_TEST === '1') console.error(error.message); else dialog.showErrorBox('Coconut',message);
+    server?.shutdown();
     app.exit(1);
   });
 }

@@ -41,6 +41,8 @@ jobs:
           for archive in desktop/dist/*.zip; do
             unzip -l "$archive" | grep 'Coconut.app/Contents/Resources/app.asar'
             unzip -l "$archive" | grep 'Coconut.app/Contents/Resources/reader/index.html'
+            unzip -l "$archive" | grep 'Coconut.app/Contents/Resources/LICENSE.electron'
+            unzip -l "$archive" | grep 'Coconut.app/Contents/Resources/LICENSES.chromium.html'
           done
       - name: Start the packaged app on the native runner architecture
         run: |

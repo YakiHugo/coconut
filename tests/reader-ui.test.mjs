@@ -375,6 +375,7 @@ test('queue disconnection disables stale actions and restores without resubmissi
   return {ok:true,json:async()=>({jobs:[{id:'job',title:'Existing job',status:'queued',stage:'waiting'}]})};
  });try{
   const $=id=>w.document.getElementById(id);await $('sample').onclick();await new Promise(resolve=>setTimeout(resolve,10));
+  assert.equal($('ask-ai').disabled,true);await $('check-ai').onclick();
   w.document.querySelector('.note-button').click();$('note').value='Keep my thought';$('note').oninput();$('ai-consent').checked=true;
   assert.equal($('ask-ai').disabled,false);
   queueOnline=false;await $('retry-worker').onclick();
@@ -383,6 +384,7 @@ test('queue disconnection disables stale actions and restores without resubmissi
   $('ai-provider').value='claude';$('ai-provider').onchange();assert.equal($('ask-ai').disabled,true);
   queueOnline=true;await $('retry-worker').onclick();await new Promise(resolve=>setTimeout(resolve,10));
   assert.equal($('process-url').disabled,false);assert.equal($('jobs').querySelector('button').disabled,false);assert.equal($('ai-consent').checked,false);
+  assert.equal($('ask-ai').disabled,true,'reconnection needs an explicit CLI check');
   assert.equal($('note').value,'Keep my thought');assert.equal($('reader-workspace').hidden,false);
   assert.equal(calls.some(([,method])=>method==='POST'),false,'reconnection never resubmits a mutation');
  }finally{await w.happyDOM.close();}
@@ -1333,5 +1335,15 @@ test('saved translation review flags stay visible next to valid text and in note
   await importDocument(w,{title:'Review flags',language:'en',translation_view:'zh',notes:{a:'Keep'},segments:[{id:'a',start:0,end:1,text:'12 requests',translations:{zh:{text:'20 次请求',source_text:'12 requests',source_language:'en',document_language:'en',provider:'local',quality_warnings:['numbers_changed']}}}]});
   assert.match(w.document.querySelector('.translation-review').textContent,/数字/);
   const doc=JSON.parse(w.localStorage.getItem('coconut-reader-v1')).documents[0];assert.match(w.Coconut.notebookMarkdown(doc),/译文待核对：.*数字/);
+ }finally{await w.happyDOM.close();}
+});
+
+test('startup and reconnect do not probe local CLI until the user clicks check',async()=>{
+ const calls=[];const w=setup(undefined,async path=>{calls.push(path);return {ok:true,json:async()=>path==='api/health'?{local_worker:false,capabilities:{local_agents:true,media_import:false}}:{local_translation:false,ai:{}}};});
+ try{
+  await new Promise(resolve=>setTimeout(resolve,20));const $=id=>w.document.getElementById(id);
+  assert.deepEqual(calls,['api/health']);assert.equal($('check-ai').disabled,false);
+  w.dispatchEvent(new w.Event('coconut-worker-disconnected'));w.dispatchEvent(new w.CustomEvent('coconut-worker-ready',{detail:{media_import:false}}));
+  assert.deepEqual(calls,['api/health']);await $('check-ai').onclick();assert.deepEqual(calls,['api/health','api/language-tools']);
  }finally{await w.happyDOM.close();}
 });

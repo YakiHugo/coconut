@@ -72,3 +72,19 @@ test('translation endpoint preserves complete V2 source provenance without actua
   const output = await result.json(); assert.equal(output.translations[0].context_version,2); assert.equal(output.translations[0].source_text,'Source');
   assert.equal(calls.length,1); assert.equal(calls[0][0],'translate');
 });
+test('desktop shutdown synchronously cancels active provider work before process exit',async t=>{
+  let requestSignal, notifyStarted;
+  const started = new Promise(resolve=>{notifyStarted=resolve;});
+  const providers = {ask:async(_data,{signal})=>{
+    requestSignal=signal;notifyStarted();
+    return new Promise((_resolve,reject)=>signal.addEventListener('abort',()=>reject(new Error('Canceled')),{once:true}));
+  }};
+  const server=await startBridge({port:0,providers});
+  t.after(()=>new Promise(resolve=>server.close(resolve)));
+  const origin=`http://127.0.0.1:${server.address().port}`;
+  const request=fetch(origin+'/api/ask',{method:'POST',headers:{Origin:origin,'Content-Type':'application/json'},body:JSON.stringify(body)}).catch(()=>null);
+  await started;
+  server.shutdown();
+  assert.equal(requestSignal.aborted,true);
+  await request;
+});

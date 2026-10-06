@@ -67,6 +67,12 @@ export function createBridge({readerDirectory = path.resolve(ROOT,'../reader'), 
   });
   server.requestTimeout = 30000; server.headersTimeout = 10000;
   server.on('close',()=>{ for (const controller of active) controller.abort(); active.clear(); });
+  // Abort synchronously before Electron exits: detached CLI process groups must
+  // not outlive the app while waiting for a later HTTP close event.
+  server.shutdown = callback => {
+    for (const controller of active) controller.abort();
+    active.clear(); server.close(callback); server.closeAllConnections();
+  };
   return server;
 }
 export async function startBridge({port = 8080, ...options} = {}) {
@@ -80,6 +86,6 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
   if (args.length && (args.length !== 2 || args[0] !== '--port')) { console.error('Usage: node desktop/server.mjs [--port 8080]'); process.exit(1); }
   const server = await startBridge({port:args.length ? Number(args[1]) : 8080});
   console.log(`Coconut 轻量阅读器：http://127.0.0.1:${server.address().port}（不需要 Python；未发起模型请求）`);
-  const stop = () => { server.close(); server.closeAllConnections(); };
+  const stop = () => server.shutdown();
   process.on('SIGINT',stop); process.on('SIGTERM',stop);
 }

@@ -73,7 +73,9 @@ $('language-setup').onclick=()=>{showWorkspace('add');$('local-setup').open=true
 window.addEventListener('coconut-worker-ready',()=>{
  $('language-prerequisite').textContent='本地连接已就绪。CLI 功能需要官方工具已安装并登录；确认所选文字、匹配术语和已有译文建议及额度后才会发出请求。';
  $('language-setup').hidden=true;
- checkLanguageTools();
+ $('check-ai').disabled=false;
+ $('ai-status').textContent='点击「检查本地 CLI 连接」后才会检测已安装工具和订阅登录。打开页面不会启动 CLI 或发送原文。';
+ renderLanguage();
 });
 window.addEventListener('coconut-worker-disconnected',()=>{
  languageCheckSequence++;$('check-ai').disabled=true;
@@ -182,7 +184,7 @@ $("export-ai-reading").onclick=()=>{
  try{
   url=URL.createObjectURL(new Blob([Coconut.aiReadingMarkdown(doc)],{type:"text/markdown;charset=utf-8"}));
   link=el("a");link.href=url;link.download=doc.title.replace(/[\\/:*?"<>|\x00-\x1f\x7f]/g,"_")+".ai-reading.md";link.hidden=true;document.body.append(link);link.click();
-  notice("已发起全部 "+doc.ai_answers.length+" 则 AI 共读记录下载，包含历史发送原文及依据状态；请确认文件已保存并核对 AI 判断。");
- }catch{notice("AI 共读记录导出失败，回答仍在本页，请重试。");}
+  notice("已发起全部 "+doc.ai_answers.length+" 则 本地 AI 记录下载，包含历史发送原文及依据状态；请确认文件已保存并核对 AI 判断。");
+ }catch{notice("本地 AI 记录导出失败，回答仍在本页，请重试。");}
  finally{link?.remove();if(url)setTimeout(()=>URL.revokeObjectURL(url),60000);}
 };

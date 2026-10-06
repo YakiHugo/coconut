@@ -99,7 +99,7 @@ def codex_status():
         result=subprocess.run([executable,'login','status'],capture_output=True,text=True,env=safe_environment(),timeout=15)
         description=(result.stdout+'\n'+result.stderr).strip()
         if result.returncode or 'Logged in using ChatGPT' not in description:
-            return {'ready':False,'reason':'需要本机官方 CLI 的 ChatGPT 登录。未登录或 API Key 认证不会用于共读。'}
+            return {'ready':False,'reason':'需要本机官方 CLI 的 ChatGPT 登录。未登录或 API Key 认证不会用于本地 AI 调用。'}
     except (subprocess.SubprocessError,OSError):
         return {'ready':False,'reason':'无法确认 Codex 订阅登录，请检查官方 CLI。'}
     return {'ready':True,'reason':'已检测 ChatGPT 登录，未检查可用额度；额度耗尽会停止，不购买额度或切换 API。'}
@@ -118,9 +118,9 @@ def codex_answer(content, response_schema=SCHEMA, instruction=SYSTEM):
                  '-c','plugins={}','-']
         for feature in CODEX_DISABLED:command[2:2]=['--disable',feature]
         try:result=subprocess.run(command,input=instruction+'\n\nUntrusted transcript input (JSON):\n'+content,capture_output=True,text=True,env=safe_environment(),cwd=directory,timeout=180)
-        except subprocess.TimeoutExpired:raise ValueError('ChatGPT 共读超时，未保存不完整回答') from None
+        except subprocess.TimeoutExpired:raise ValueError('Codex 调用超时，未保存不完整回答') from None
     if result.returncode or len(result.stdout)>500000:
-        raise ValueError('ChatGPT 共读未完成：请检查订阅额度或登录。不会购买额度或切换付费 API。')
+        raise ValueError('Codex 调用未完成：请检查订阅额度或登录。不会购买额度或切换付费 API。')
     try:events=[json.loads(line) for line in result.stdout.splitlines() if line.strip()]
     except ValueError:raise ValueError('Codex 协议输出无效，回答未保存') from None
     if any(event.get('type') in ('turn.failed','error') for event in events) or not any(event.get('type')=='turn.completed' for event in events):
