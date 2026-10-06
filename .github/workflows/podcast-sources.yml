@@ -12,7 +12,7 @@ concurrency:
 jobs:
   public-sources:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -21,9 +21,9 @@ jobs:
           cache: npm
       - run: npm ci --ignore-scripts
       - run: npx playwright install --with-deps chromium
-      - name: Verify anonymous publisher feeds, actual transcript and public audio playback
-        env:
-          COCONUT_LIVE_PODCAST_MEDIA: '1'
+      - name: Verify anonymous publisher feeds and source metadata
         run: node tests/podcast-public-smoke.mjs
+      - name: Verify real public sources through the actual reader, exports and audio UI
+        run: node tests/podcast-live-browser.mjs
 # Public source bodies remain transient. Never upload transcripts, source HTML,
 # audio, screenshots, browser profiles or upstream error logs as artifacts.
