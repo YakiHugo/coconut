@@ -78,3 +78,15 @@ test('podcast exports keep an untimed publisher origin without inventing platfor
   for(const report of [w.Coconut.notebookMarkdown(doc),w.Coconut.aiReadingMarkdown(doc),w.Coconut.summaryMarkdown(doc)]){assert.match(report,/https:\/\/publisher\.example\/episode/);assert.match(report,/手动定位/);assert.ok(!report.includes('?t='));assert.ok(!report.includes('未关联可用的原站链接'));}
  }finally{await w.happyDOM.close();}
 });
+
+
+test('partial source lists disclose their limit and hidden source audio pauses on return to reading',async()=>{
+ const {w,$}=await setup(()=>response({...discovery,truncated:true}));try{
+  await importDocument(w,documentFixture);$('add-content').click();await discover($);
+  assert.match($('podcast-results').querySelector('.podcast-truncation').textContent,/200.*不是完整/);
+  const preview=w.document.createElement('audio');let pauses=0;preview.pause=()=>{pauses++;};$('podcast-results').append(preview);
+  $('back-reading').click();assert.equal(pauses,1);$('add-content').click();assert.equal(pauses,1);
+  const player=w.document.createElement('audio');let readerPauses=0;player.pause=()=>{readerPauses++;};$('source-media').append(player);
+  $('add-content').click();assert.equal(readerPauses,1);
+ }finally{await w.happyDOM.close();}
+});

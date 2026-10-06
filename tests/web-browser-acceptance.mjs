@@ -78,6 +78,18 @@ try {
  // Mobile is the same complete reader, with no horizontal overflow.
  await page.locator('#close-note').click();await page.setViewportSize({width:390,height:844});await page.locator('#mode-summary').click();
  check('mobile_summary_fits',await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth));
+ const oversize={title:'Synthetic summary limit test',language:'en',segments:Array.from({length:5001},(_,i)=>({id:'limit-'+i,start:i,end:i+1,text:i?'Other cue':'Unique selected source'}))};
+ await page.locator('#file').setInputFiles({name:'summary-limit.json',mimeType:'application/json',buffer:Buffer.from(JSON.stringify(oversize))});
+ await page.locator('#summary-readiness').waitFor({state:'visible'});
+ check('oversize_summary_blocked_before_consent',await page.locator('#prepare-summary').isDisabled()&&!(await page.locator('#ai-consent').isChecked()));
+ check('mobile_summary_limit_fits',await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth));
+ await page.locator('#summary-select-excerpt').click();await page.locator('#search').fill('Unique selected');
+ check('summary_recovery_is_filtered_question',await page.locator('#ai-task').inputValue()==='question'&&await page.locator('#ai-filtered').isChecked()&&await page.locator('.segment').count()===1);
+ await page.locator('#ai-task').selectOption('summary');await page.locator('#ai-consent').check();
+ await page.locator('#ask-ai').evaluate(button=>button.onclick());
+ check('manual_oversize_send_still_blocked',await page.locator('#ask-ai').isDisabled()&&!(await page.locator('#ai-consent').isChecked())&&(await page.locator('#ai-progress').textContent()).includes('整篇摘要暂不可用'));
+ check('summary_preflight_does_not_generate_or_send',mutations===0&&external===0&&await page.locator('#summary-body').textContent()==='');
+ check('summary_preflight_has_no_browser_errors',pageErrors===0);
  console.log(JSON.stringify({suite:'static-web-podcast',status:'passed',checks}));
 } catch {
  console.log(JSON.stringify({suite:'static-web-podcast',status:'failed',stage,checks}));process.exitCode=1;

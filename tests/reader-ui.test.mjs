@@ -1312,6 +1312,33 @@ test('summary task revokes consent and sends entire source despite reading filte
  }finally{await w.happyDOM.close();}
 });
 
+test('oversize summaries are blocked before consent and even manual invocation sends no request',async()=>{
+ for(const segments of [
+  Array.from({length:5001},(_,i)=>({id:'s'+i,start:i,end:i+1,text:i?'Other cue':'Unique selected source'})),
+  [{id:'s0',start:0,end:1,text:'Unique selected source'},{id:'s1',start:1,end:2,text:'a'.repeat(250000)}]
+ ]){
+  const w=setup();try{
+   const $=id=>w.document.getElementById(id);const sent=[];
+   w.fetch=async(url,options)=>({ok:true,json:async()=>url.endsWith('language-tools')?{ai:{codex:{ready:true}}}:(sent.push(JSON.parse(options.body)),{answer:'Answer about the selected source only',citations:['s0'],provider:'test'})});
+   await importDocument(w,{title:'Oversize source',language:'en',segments});
+   assert.equal($('prepare-summary').disabled,true);assert.equal($('summary-readiness').hidden,false);assert.match($('summary-readiness').textContent,/整篇摘要暂不可用/);
+   assert.equal($('ai-consent').checked,false);assert.equal(sent.length,0);
+   $('ai-consent').checked=true;$('prepare-summary').onclick();
+   assert.equal($('ai-consent').checked,false);assert.equal($('ai-task').value,'question','blocked preparation must not open a summary consent flow');
+   await $('check-ai').onclick();$('ai-task').value='summary';$('ai-task').onchange();
+   assert.equal($('ask-ai').disabled,true);assert.equal($('ai-request-readiness').hidden,false);assert.equal($('ai-select-excerpt').hidden,false);
+   await $('ask-ai').onclick();assert.match($('notice').textContent,/整篇摘要暂不可用/,'size warning precedes consent prompt');
+   $('ai-consent').checked=true;await $('ask-ai').onclick();assert.equal(sent.length,0);assert.equal($('ai-consent').checked,false);
+   $('ai-select-excerpt').click();assert.equal($('ai-task').value,'question');assert.equal($('ai-filtered').checked,true);assert.equal($('ai-filtered').disabled,false);assert.equal($('transcript-layout').hidden,false);assert.equal($('ai-request-readiness').hidden,true);
+   $('search').value='Unique selected';$('search').oninput();$('ai-question').value='What does this selected passage say?';$('ai-consent').checked=true;
+   await $('ask-ai').onclick();assert.equal(sent.length,1);assert.deepEqual(sent[0].segments.map(s=>s.id),['s0']);
+   const doc=JSON.parse(w.localStorage.getItem('coconut-reader-v1')).documents[0];assert.equal(doc.ai_answers[0].purpose,'question');assert.equal(w.Coconut.latestSummary(doc),null);
+   await importDocument(w,{title:'Short source',language:'en',segments:[{id:'new',start:0,end:1,text:'A valid summary source'}]});
+   assert.equal($('prepare-summary').disabled,false);assert.equal($('summary-readiness').hidden,true);assert.equal($('summary-select-excerpt').hidden,true);
+  }finally{await w.happyDOM.close();}
+ }
+});
+
 test('imported glossary equality and quote terms survive unchanged UI saves',async()=>{
  const w=setup(undefined,undefined,undefined,true);try{
   const $=id=>w.document.getElementById(id),terms=[{source:'a = b',target:'a 等于 b'},{source:'say "hi"',target:'说“嗨”'},{source:'path\\name',target:'路径 = 名称'}];
@@ -1365,5 +1392,56 @@ test('replacing a full service with a lightweight bridge removes stale processin
   await new Promise(resolve=>setTimeout(resolve,20));const $=id=>w.document.getElementById(id);assert.equal($('import-media').disabled,false);
   lightweight=true;await new Promise(resolve=>setTimeout(resolve,3200));assert.equal($('import-media').disabled,true);
   await $('retry-worker').onclick();assert.equal($('url-form').hidden,true);assert.equal($('jobs').hidden,true);assert.equal($('show-jobs').hidden,true);assert.equal($('import-media').disabled,true);assert.match($('worker-status').textContent,/轻量/);assert.ok(calls.filter(p=>p==='api/health').length>=2);assert.ok(!calls.includes('api/language-tools'));
+ }finally{await w.happyDOM.close();}
+});
+
+test('caption-only is the default submitted permission and conflicting force-ASR requires opting in',async()=>{
+ const submitted=[];
+ const w=setup(undefined,async(url,options)=>{
+  if(options?.method==='POST')submitted.push(JSON.parse(options.body));
+  return {ok:true,json:async()=>url.endsWith('health')?{local_worker:true}:{jobs:[]}};
+ });try{
+  await new Promise(resolve=>setTimeout(resolve,10));const $=id=>w.document.getElementById(id);
+  assert.equal($('captions-only').checked,true);assert.equal($('force-asr').checked,false);assert.equal($('force-asr').disabled,true);
+  $('video-url').value='https://x.com/example/status/123';
+  await $('url-form').onsubmit({preventDefault(){}});
+  assert.equal(submitted[0].options.captions_only,true);assert.equal(submitted[0].options.force_transcribe,false);
+  $('captions-only').checked=false;$('captions-only').onchange();
+  assert.equal($('force-asr').disabled,false);assert.match($('asr-option-help').textContent,/已允许.*首次可能下载模型/);
+  $('force-asr').checked=true;await $('url-form').onsubmit({preventDefault(){}});
+  assert.equal(submitted[1].options.captions_only,false);assert.equal(submitted[1].options.force_transcribe,true);
+  $('captions-only').checked=true;$('captions-only').onchange();
+  assert.equal($('force-asr').checked,false);assert.equal($('force-asr').disabled,true);
+  await $('url-form').onsubmit({preventDefault(){}});
+  assert.equal(submitted[2].options.captions_only,true);assert.equal(submitted[2].options.force_transcribe,false);
+ }finally{await w.happyDOM.close();}
+});
+
+test('caption-only prevents a local media selection from silently starting recognition',async()=>{
+ const uploads=[];const w=setup(undefined,async(url,options)=>{
+  if(options?.method==='POST')uploads.push(url);
+  return {ok:true,json:async()=>url.endsWith('health')?{local_worker:true}:{jobs:[]}};
+ });try{
+  await new Promise(resolve=>setTimeout(resolve,10));const $=id=>w.document.getElementById(id);let choices=0;
+  $('media-file').click=()=>choices++;
+  $('import-media').onclick();assert.equal(choices,0);assert.match($('notice').textContent,/取消.*仅使用现成字幕/);
+  assert.equal(w.document.querySelector('.import-settings').open,true);assert.equal(w.document.activeElement,$('captions-only'));assert.equal($('captions-only').checked,true);
+  Object.defineProperty($('media-file'),'files',{configurable:true,value:[{name:'sample.mp4',size:10}]});
+  await $('media-file').onchange();assert.deepEqual(uploads,[]);
+  $('captions-only').checked=false;$('captions-only').onchange();$('import-media').onclick();assert.equal(choices,1);
+  await $('media-file').onchange();assert.equal(uploads.length,1);
+ }finally{await w.happyDOM.close();}
+});
+
+
+test('leaving reading stops repeat before late media events can replay hidden audio',async()=>{
+ const w=setup();try{
+  const $=id=>w.document.getElementById(id);
+  await importDocument(w,{title:'Hidden loop',source_media:{job_id:'a'.repeat(32),kind:'audio'},segments:[{id:'a',start:2,end:4,text:'A'}]});
+  w.dispatchEvent(new w.Event('coconut-worker-ready'));$('mode-transcript').click();
+  const player=w.document.querySelector('audio');let plays=0;player.play=async()=>{plays++;};player.pause=()=>{};Object.defineProperty(player,'duration',{value:10});
+  w.document.querySelector('.repeat-button').click();assert.equal(plays,1);
+  $('add-content').click();assert.equal($('stop-repeat').hidden,true);assert.equal($('reader-workspace').hidden,true);
+  player.currentTime=4.2;player.onended();player.ontimeupdate();assert.equal(plays,1);assert.equal(player.currentTime,4.2);
  }finally{await w.happyDOM.close();}
 });

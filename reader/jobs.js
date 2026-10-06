@@ -141,6 +141,16 @@ async function refreshJobs() {
   }
  }
 }
+function updateCaptionOptions() {
+ const captionsOnly = $("captions-only").checked;
+ if (captionsOnly) $("force-asr").checked = false;
+ $("force-asr").disabled = captionsOnly;
+ $("asr-option-help").textContent = captionsOnly
+  ? "没有可用字幕时会停止。取消「仅使用现成字幕」才允许本机语音识别，首次可能下载模型。"
+  : "已允许本机语音识别，首次可能下载模型。勾选「重新转录」会跳过现成字幕。";
+}
+$("captions-only").onchange = updateCaptionOptions;
+updateCaptionOptions();
 $("url-form").onsubmit = async (event) => {
 	event.preventDefault();
 	if (!localWorker) return;
@@ -154,6 +164,7 @@ $("url-form").onsubmit = async (event) => {
 				options: {
 					language: $("import-language").value || null,
 					force_transcribe: $("force-asr").checked,
+					captions_only: $("captions-only").checked,
 					keep_media: $("keep-media").checked,
 				},
 			}),
@@ -167,10 +178,18 @@ $("url-form").onsubmit = async (event) => {
 		button.disabled = !localWorker;
 	}
 };
-$("import-media").onclick = () => $("media-file").click();
+function allowMediaRecognition() {
+ if (!$("captions-only").checked) return true;
+ $("captions-only").closest("details").open = true;
+ $("captions-only").focus();
+ notice("本地音视频需要语音识别。请先在处理选项取消「仅使用现成字幕」；首次可能下载模型。已有文字稿可直接导入阅读。");
+ return false;
+}
+$("import-media").onclick = () => { if (allowMediaRecognition()) $("media-file").click(); };
 $("media-file").onchange = async () => {
 	const file = $("media-file").files[0];
 	if (!file) return;
+ if (!allowMediaRecognition()) { $("media-file").value = ""; return; }
 	$("import-media").disabled = true;
 	try {
 		if (file.size > 200 * 1024 * 1024)
@@ -229,7 +248,7 @@ async function connectWorker() {
 		$("process-url").disabled = false;
 		$("import-media").disabled = false;
 		$("worker-help").textContent =
-			"优先读取现成字幕；需要转录时使用本地模型。首次使用会下载模型。原始结果保存在本机，不会自动调用付费接口。";
+			"默认仅使用现成字幕，没有字幕时停止。只有取消「仅使用现成字幕」才会使用本地语音模型，首次可能下载模型。原始结果保存在本机，不会自动调用付费接口。";
  } catch {
   disconnectedWorker();
  } finally {

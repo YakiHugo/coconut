@@ -2,6 +2,29 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const {parse, validate, source} = require('../reader/core.js');
 
+test('summary readiness enforces cue count and both bridges serialized input boundaries',()=>{
+ const {summaryReadiness,SUMMARY_QUESTION}=require('../reader/core.js');
+ const segments=Array.from({length:5000},(_,i)=>({id:'s'+i,text:'a'}));
+ assert.equal(summaryReadiness({segments}).ready,true);
+ assert.equal(summaryReadiness({segments:[...segments,{id:'extra',text:'a'}]}).ready,false);
+ const payload=text=>({question:SUMMARY_QUESTION,answer_language:'zh',transcript:[{id:'one',text}]});
+ const overhead=JSON.stringify(payload('')).length+8; // Python's eight separator spaces.
+ const exact='a'.repeat(250000-overhead);
+ assert.deepEqual(summaryReadiness({segments:payload(exact).transcript}),{ready:true,reason:'',characters:250000});
+ assert.equal(summaryReadiness({segments:payload(exact+'a').transcript}).ready,false);
+ assert.equal(summaryReadiness({segments:payload('"'.repeat(exact.length)).transcript}).ready,false,'JSON escaping counts toward the limit');
+ assert.equal(summaryReadiness({segments:payload('中'.repeat(exact.length)).transcript}).ready,true,'Unicode is not counted as escaped ASCII');
+ assert.equal(summaryReadiness({segments:payload('😀'.repeat(exact.length)).transcript}).ready,false,'Node UTF-16 bound is enforced');
+ assert.match(summaryReadiness({segments:[...segments,{id:'extra',text:'a'}]}).reason,/局部回答不会保存为整篇摘要/);
+});
+
+test('summary readiness rejects unsupported cue IDs and blank text without changing the source',()=>{
+ const {summaryReadiness}=require('../reader/core.js');
+ for(const segments of [[],[null],[{id:'a',text:' '}],[{id:'a'.repeat(201),text:'source'}],[{id:'a',text:'source'},{id:'a',text:'another'}]]){
+  const before=JSON.stringify(segments);assert.equal(summaryReadiness({segments}).ready,false);assert.equal(JSON.stringify(segments),before);
+ }
+});
+
 test('exported JSON restores segment notes and excludes unknown segments', () => {
   const document = validate({title: 'Example', segments: [{id: 'a', start: 0, end: 2, text: 'Hello'}], notes: {a: 'Keep this thought', unknown: 'Ignore'}});
   const restored = parse(JSON.stringify(document), 'backup.json');

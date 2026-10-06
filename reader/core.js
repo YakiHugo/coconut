@@ -213,6 +213,25 @@
   }
   return {windows,selected:runs.flat().length,total:windows.reduce((n,w)=>n+w.segments.length,0),sent:new Set(windows.flatMap(w=>w.snapshot.map(c=>c.id))).size};
  }
+ const SUMMARY_QUESTION='请根据完整原文生成简洁中文摘要，列出核心主旨、关键论点、重要事实或数字、分歧与尚不确定之处。每项结论都必须能由原文支持，并在返回的 citations 中提供相应片段ID。不要虚构主题、事实、人物身份或缺失结论；证据不足时明确说明。';
+ function summaryReadiness(doc) {
+  const segments=doc?.segments;
+  const alternative='可直接读原文，或切换到「向原文提问」，用搜索或摘录筛选较小范围；局部回答不会保存为整篇摘要。';
+  const blocked=reason=>({ready:false,reason:reason+' '+alternative});
+  if(!Array.isArray(segments)||!segments.length)return blocked('没有可用于整篇摘要的原文。');
+  if(segments.length>5000)return blocked(`整篇摘要暂不可用：当前 ${segments.length.toLocaleString('en-US')} 段，超过单次 5,000 段上限。`);
+  const ids=new Set();
+  for(const segment of segments){
+   if(!segment||typeof segment.id!=='string'||!segment.id.length||segment.id.length>200||ids.has(segment.id)||typeof segment.text!=='string'||!segment.text.trim())return blocked('整篇摘要暂不可用：存在空白原文或不支持的片段 ID，请修正文字稿后重试。');
+   ids.add(segment.id);
+  }
+  const input=JSON.stringify({question:SUMMARY_QUESTION,answer_language:'zh',transcript:segments.map(({id,text})=>({id,text}))});
+  // Cover both bridges: Python json.dumps adds these separator spaces; UTF-16
+  // length is conservative for its Unicode count and matches the Node bridge.
+  const characters=input.length+4*segments.length+4;
+  if(characters>250000)return blocked('整篇摘要暂不可用：全文及请求结构超过单次 250,000 字符上限。');
+  return {ready:true,reason:'',characters};
+ }
  // Only the exact ordered {id,text} payload is evidence for a saved answer.
  // Never discard missing IDs: doing so would make a removed dependency look current.
  function cleanAnswerInput(value) {
@@ -498,7 +517,7 @@
 			segments,
 		});
 	}
-	const api = { podcastURL, podcastSource, cleanGlossary, relevantGlossary, translationQualityMessage, retainAnswers, summaryFreshness, latestSummary, summaryMarkdown, aiReadingMarkdown, parseReadingTime, segmentAtTime, subtitleExport, mergeLibraryBackup, time, source, media, validate, parse, matchesSegment, notebookSegments, notebookMarkdown, translationCurrent, sameCueSnapshot, subscriptionPlan, cleanContexts, answerFreshness };
+	const api = { SUMMARY_QUESTION, summaryReadiness, podcastURL, podcastSource, cleanGlossary, relevantGlossary, translationQualityMessage, retainAnswers, summaryFreshness, latestSummary, summaryMarkdown, aiReadingMarkdown, parseReadingTime, segmentAtTime, subtitleExport, mergeLibraryBackup, time, source, media, validate, parse, matchesSegment, notebookSegments, notebookMarkdown, translationCurrent, sameCueSnapshot, subscriptionPlan, cleanContexts, answerFreshness };
 	if (typeof module !== "undefined" && module.exports) module.exports = api;
 	else root.Coconut = api;
 })(typeof window !== "undefined" ? window : globalThis);

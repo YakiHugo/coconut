@@ -73,7 +73,7 @@ class ImportJobs:
         options = {} if options is None else options
         if not isinstance(options, dict):
             raise ValueError('Import options must be an object')
-        if set(options) - {'language', 'force_transcribe', 'model', 'keep_media'}:
+        if set(options) - {'language', 'force_transcribe', 'captions_only', 'model', 'keep_media'}:
             raise ValueError('Unknown import option')
         if options.get('language') not in (None, '', 'zh', 'en', 'ja', 'ko', 'fr', 'de', 'es'):
             raise ValueError('Unsupported language hint')
@@ -81,6 +81,10 @@ class ImportJobs:
             raise ValueError('Unsupported local model')
         if 'force_transcribe' in options and not isinstance(options['force_transcribe'], bool):
             raise ValueError('force_transcribe must be boolean')
+        if 'captions_only' in options and not isinstance(options['captions_only'], bool):
+            raise ValueError('captions_only must be boolean')
+        if options.get('captions_only') and options.get('force_transcribe'):
+            raise ValueError('captions_only cannot be combined with force_transcribe')
         if 'keep_media' in options and not isinstance(options['keep_media'], bool):
             raise ValueError('keep_media must be boolean')
         identifier = job_id or uuid.uuid4().hex
@@ -219,6 +223,8 @@ class ImportJobs:
             command.extend(['--language', options['language']])
         if options.get('force_transcribe'):
             command.append('--force-transcribe')
+        if options.get('captions_only'):
+            command.append('--captions-only')
         if options.get('keep_media'):
             command.append('--keep-media')
         try:

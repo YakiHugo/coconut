@@ -20,6 +20,7 @@ function episodeDescription(episode){
 function renderPodcastResults(result){
  const host=$('podcast-results');host.querySelector('audio,video')?.pause();if(podcastPreviewURL){URL.revokeObjectURL(podcastPreviewURL);podcastPreviewURL=null;}host.replaceChildren();
  if(result.title)host.append(el('h2','',result.title));
+ if(result.truncated)host.append(el('p','hint podcast-truncation',result.source_type==='xiaoyuzhou_public_page'?'这里只显示公开页面当前提供的部分单集，不是完整节目列表；找不到时请打开原站。':'本次最多列出 200 集，当前列表不是完整节目存档；更早内容请使用发布者的单集页面、分期订阅源或合法字幕文件。'));
  if(result.kind==='choices'){
   host.append(el('p','hint','此页面列出多个公开订阅源，请选择要导入的节目。'));
   for(const feed of result.feeds||[]){
