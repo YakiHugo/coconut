@@ -1172,3 +1172,23 @@ test('adding content focuses the video link only when the local form is availabl
   assert.equal($('keep-media').checked,true);assert.equal($('force-asr').checked,false);
  }finally{await w.happyDOM.close();}
 });
+
+test('successful export clicks keep the disclosure and keyboard focus available',async()=>{
+ const w=setup();try{
+  const $=id=>w.document.getElementById(id);await $('sample').onclick();
+  w.document.querySelector('.excerpt-button').click();
+  w.URL.createObjectURL=()=> 'blob:https://coconut.example/download';w.URL.revokeObjectURL=()=>{};
+  let downloads=0;
+  w.document.addEventListener('click',event=>{if(event.target.matches?.('a[download]')){downloads++;event.preventDefault();}});
+  for(const id of ['export','export-subtitles','export-notebook']){
+   $('export-menu').open=true;$(id).focus();$(id).click();
+   assert.equal($('export-menu').open,true,id+' must not treat a generated download as a dismissal');
+   assert.equal(w.document.activeElement,$(id));assert.equal(w.document.querySelector('a[download]'),null);
+  }
+  assert.equal(downloads,3,'exercise real bubbling link clicks rather than replacing anchor.click');
+  $('title').click();assert.equal($('export-menu').open,false);
+  assert.equal(w.document.activeElement,$('export-menu').querySelector('summary'));
+  $('export-menu').open=true;$('export').focus();$('search').focus();$('search').click();
+  assert.equal($('export-menu').open,false);assert.equal(w.document.activeElement,$('search'));
+ }finally{await w.happyDOM.close();}
+});

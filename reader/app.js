@@ -736,7 +736,14 @@ $("previous-match").onclick=()=>moveSearchMatch(-1);$("next-match").onclick=()=>
 // A native disclosure keeps export options keyboard-accessible and out of the reading canvas.
 document.addEventListener("click", event => {
  const menu = $("export-menu");
- if (menu.open && !menu.contains(event.target)) menu.open = false;
+ // Exports click a temporary, hidden download link outside the disclosure.
+ // It is not a user dismissal and must not strand focus in the closed panel.
+ if (event.target.closest?.("a[download][hidden]")) return;
+ if (menu.open && !menu.contains(event.target)) {
+  const restoreFocus = menu.contains(document.activeElement);
+  menu.open = false;
+  if (restoreFocus) menu.querySelector("summary").focus();
+ }
 });
 document.addEventListener("keydown", event => {
  const menu = $("export-menu");
