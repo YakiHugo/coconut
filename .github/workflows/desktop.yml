@@ -55,3 +55,26 @@ jobs:
           path: desktop/dist/*.zip
           if-no-files-found: error
           retention-days: 7
+  publish-developer-release:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [bridge-tests, mac-package]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: Coconut-macOS-unsigned
+          path: release-assets
+      - name: Publish exact-commit verified unsigned development assets
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { pathToFileURL } = require('node:url');
+            const { readFile } = require('node:fs/promises');
+            const { publishDesktopRelease } = await import(pathToFileURL(`${process.env.GITHUB_WORKSPACE}/scripts/publish_desktop_release.mjs`));
+            const { version } = JSON.parse(await readFile('desktop/package.json', 'utf8'));
+            await publishDesktopRelease({github,context,core,version});

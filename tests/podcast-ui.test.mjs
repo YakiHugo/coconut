@@ -53,3 +53,28 @@ test('browser source metadata rejects credentials and survives full JSON restora
   assert.equal(w.Coconut.podcastURL('javascript:alert(1)'), '');
  }finally{await w.happyDOM.close();}
 });
+
+test('late publisher download never replaces a newer local media selection',async()=>{
+ let finish;const {w,$}=await setup(()=>new Promise(resolve=>{finish=()=>resolve(audioResponse());}));try{
+  await importDocument(w,documentFixture);let count=0;w.URL.createObjectURL=()=> 'blob:http://127.0.0.1:8080/'+(++count);
+  const pending=$('download-podcast-media').onclick();$('attach-reader-media').click();
+  Object.defineProperty($('reader-media-file'),'files',{configurable:true,value:[{name:'chosen-by-user.mp3',type:'audio/mpeg',size:10,slice:()=>({text:async()=> 'ID3 local'})}]});await $('reader-media-file').onchange();
+  const chosen=w.document.querySelector('audio').src;finish();await pending;
+  assert.equal(w.document.querySelector('audio').src,chosen);assert.match($('reader-media-status').textContent,/chosen-by-user/);assert.equal(count,1);
+ }finally{await w.happyDOM.close();}
+});
+
+test('cancel during transcript fingerprinting prevents both persistence and navigation',async()=>{
+ const {w,$}=await setup(url=>url.endsWith('/discover')?response(discovery):response({status:'ready',document:documentFixture}));const original=w.crypto.subtle.digest;try{
+  await discover($);let finish;w.crypto.subtle.digest=()=>new Promise(resolve=>{finish=()=>resolve(new Uint8Array(32).buffer);});
+  const pending=$('podcast-results').querySelector('button').onclick();await new Promise(resolve=>setTimeout(resolve,0));assert.ok(finish);$('cancel-podcast').click();finish();await pending;
+  assert.equal(w.localStorage.getItem('coconut-reader-v1'),null);assert.equal($('reader-workspace').hidden,true);assert.match($('podcast-status').textContent,/取消/);
+ }finally{w.crypto.subtle.digest=original;await w.happyDOM.close();}
+});
+
+test('podcast exports keep an untimed publisher origin without inventing platform seeking',async()=>{
+ const {w}=await setup(()=>response({}));try{
+  const doc=w.Coconut.validate({...documentFixture,notes:{one:'Keep'},ai_answers:[{purpose:'summary',question:'Summary',answer:'Test output',citations:['one'],input_snapshot:{version:1,segments:[{id:'one',text:'Publisher words'}]}}]});
+  for(const report of [w.Coconut.notebookMarkdown(doc),w.Coconut.aiReadingMarkdown(doc),w.Coconut.summaryMarkdown(doc)]){assert.match(report,/https:\/\/publisher\.example\/episode/);assert.match(report,/手动定位/);assert.ok(!report.includes('?t='));assert.ok(!report.includes('未关联可用的原站链接'));}
+ }finally{await w.happyDOM.close();}
+});

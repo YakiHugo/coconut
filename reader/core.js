@@ -44,6 +44,9 @@
   if(typeof value!=="string"||value.length>4096)return "";
   try { const url=new URL(value);return ["http:","https:"].includes(url.protocol)&&!url.username&&!url.password&&!url.port?url.href:""; }catch{return "";}
  }
+ function podcastOrigin(doc) {
+  return doc.podcast_source ? (podcastURL(doc.source_url)||podcastURL(doc.podcast_source.feed_url)).replace(/[()]/g,c=>c==='('?'%28':'%29') : '';
+ }
  function podcastSource(value) {
   if(!value||typeof value!=="object"||Array.isArray(value))return undefined;
   const feed=podcastURL(value.feed_url),mediaURL=podcastURL(value.media_url),transcriptURL=podcastURL(value.transcript_url);
@@ -332,6 +335,7 @@
   const line=value=>markdownText(value).replace(/[\r\n]+/g," ");
   const quote=value=>markdownText(value).replace(/\r\n?/g,"\n").split("\n").map(s=>"> "+s).join("\n");
   const lines=["# "+line(doc.title)+" · 本地 AI 记录","","AI 输出仍需核对；以下是本篇已保存的全部回答，不受当前筛选影响。","来源定位使用当前文字稿的时间与链接，可能不同于生成回答时的媒体信息。",""];
+  const origin=podcastOrigin(doc);if(origin)lines.push("[播客原站]("+origin+")","时间戳需在原声中手动定位；没有伪造平台时间跳转链接。", "");
   for(const [index,answer] of (doc.ai_answers||[]).entries()){
    const freshness=answerFreshness(answer,doc), input=cleanAnswerInput(answer.input_snapshot);
    lines.push("## 回答 "+(index+1),"","提供商："+line(answer.provider||"unknown"),"",
@@ -421,9 +425,10 @@
 		const lines = ["# " + singleLine(doc.title), "", "Coconut 阅读笔记 · " + kept.length + " 个片段", "",
 			"以下包含本篇全部摘录和非空笔记，不受当前搜索筛选影响。文字稿可能有识别错误，请回听核对。", "",
 			"Markdown 用于阅读与整理；完整恢复请另存 Coconut JSON 备份。此文件不包含媒体。", ""];
-		const origin = sourceLink(0);
+		const origin = sourceLink(0) || podcastOrigin(doc);
 		if (origin) lines.push("[原始来源](" + origin + ")", "");
 		else lines.push("未关联可用的原站链接；时间戳仅用于在原始媒体中定位。", "");
+        if(podcastOrigin(doc))lines.push("播客原站链接不包含自动时间跳转；请按下列时间戳手动定位。", "");
 		for (const segment of kept) {
 			const range = time(segment.start) + "–" + time(segment.end);
 			const href = sourceLink(segment.start);

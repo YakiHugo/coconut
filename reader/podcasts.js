@@ -1,6 +1,6 @@
 "use strict";
 // Feed discovery and media acquisition are always explicit clicks, never page-load work.
-let podcastReady=false,podcastRequest=null,podcastMediaRequest=null,podcastDiscovery=null,podcastPreviewURL=null;
+let podcastReady=false,podcastRequest=null,podcastMediaRequest=null,podcastMediaKey=null,podcastDiscovery=null,podcastPreviewURL=null;
 function podcastMessage(message){$('podcast-status').textContent=message;}
 function setPodcastBusy(busy){
  $('discover-podcast').disabled=busy||!podcastReady;$('cancel-podcast').hidden=!busy;
@@ -57,6 +57,7 @@ $('podcast-form').onsubmit=async event=>{
 $('cancel-podcast').onclick=()=>podcastRequest?.abort();
 async function importPodcastEpisode(feedUrl,episodeId,transcriptUrl){
  if(!podcastReady||podcastRequest)return;
+ const startingDocument=state.active;
  const controller=new AbortController();podcastRequest=controller;setPodcastBusy(true);podcastMessage('正在读取发布者提供的文字稿；尚未下载音视频。');
  try{
   const response=await podcastAPI('import',{feedUrl,episodeId,...(transcriptUrl?{transcriptUrl}:{})},controller.signal),result=await response.json();
@@ -64,7 +65,7 @@ async function importPodcastEpisode(feedUrl,episodeId,transcriptUrl){
   if(result.status!=='ready'||!result.document){
    podcastMessage('这集没有可用的公开定时文字稿。节目简介不会代替原文；需要单独的转录方案，当前未启动识别、下载模型或扣费。');return;
   }
-  const persisted=await add(Coconut.validate(result.document));
+  const persisted=await add(Coconut.validate(result.document),()=>controller===podcastRequest&&!controller.signal.aborted&&state.active===startingDocument&&workspace==='add');
   podcastMessage('文字稿已打开。');
   if(persisted)notice('发布者文字稿已导入。内容尚未经人工核对；可在「原文与音视频」中点击下载原声回听。');
  }catch(error){if(controller===podcastRequest)podcastMessage(controller.signal.aborted?'已取消导入，已有书架不变。':error.message);}
@@ -104,21 +105,23 @@ function renderPodcastPlayback(){
 }
 $('download-podcast-media').onclick=async()=>{
  const doc=active(),source=doc?.podcast_source;if(!podcastReady||podcastMediaRequest||!source?.media_url)return;
- const key=doc.key,controller=new AbortController();podcastMediaRequest=controller;$('cancel-podcast-media').hidden=false;renderPodcastPlayback();$('podcast-media-status').textContent='正在下载公开原声（最多 200 MiB），可随时取消；不会发起转录。';
+ const key=doc.key,revision=mediaSelectionRevision(key),controller=new AbortController();podcastMediaRequest=controller;podcastMediaKey=key;$('cancel-podcast-media').hidden=false;renderPodcastPlayback();$('podcast-media-status').textContent='正在下载公开原声（最多 200 MiB），可随时取消；不会发起转录。';
  let url;
  try{
   const response=await podcastAPI('media',{feedUrl:source.feed_url,episodeId:source.episode_id,mediaUrl:source.media_url},controller.signal);
   const {blob,kind}=await readPodcastMedia(response);
-  if(controller.signal.aborted||!state.documents.some(d=>d.key===key))return;
+  if(controller.signal.aborted||mediaSelectionRevision(key)!==revision||!state.documents.some(d=>d.key===key)){if(active()?.key===key)$('podcast-media-status').textContent='本次下载已取消，保留当前选择的媒体。';return;}
+  changeMediaSelection(key,false);
   url=URL.createObjectURL(blob);const previous=browserMedia.get(key);
   if(active()?.key===key){stopRepeating();$('source-media').querySelector('audio,video')?.pause();}
   browserMedia.set(key,{url,kind,name:'本集发布者原声'});if(previous)URL.revokeObjectURL(previous.url);
   if(active()?.key===key){setReadingMode('transcript');render();$('podcast-media-status').textContent='原声已在本次页面就绪。未发起转录；刷新后可重新获取。';}
   url=null;
  }catch(error){if(url)URL.revokeObjectURL(url);if(active()?.key===key)$('podcast-media-status').textContent=controller.signal.aborted?'已取消下载，文字稿和笔记保留。':error.message;}
- finally{podcastMediaRequest=null;$('cancel-podcast-media').hidden=true;$('download-podcast-media').disabled=!podcastReady;}
+ finally{podcastMediaRequest=null;podcastMediaKey=null;$('cancel-podcast-media').hidden=true;$('download-podcast-media').disabled=!podcastReady;}
 };
 $('cancel-podcast-media').onclick=()=>podcastMediaRequest?.abort();
+window.addEventListener('coconut-media-selection-change',event=>{if(event.detail?.key===podcastMediaKey)podcastMediaRequest?.abort();});
 window.addEventListener('coconut-render',renderPodcastPlayback);
 window.addEventListener('coconut-worker-ready',event=>{podcastReady=event.detail?.podcast_import===true;$('podcast-import').hidden=!podcastReady;setPodcastBusy(!!podcastRequest);renderPodcastPlayback();});
 window.addEventListener('coconut-worker-disconnected',()=>{podcastReady=false;podcastRequest?.abort();podcastMediaRequest?.abort();setPodcastBusy(false);renderPodcastPlayback();});
