@@ -173,7 +173,7 @@ function goToSegment(id) {
 function renderLibrary() {
 	$("library").replaceChildren();
 	const query = $("library-search").value.trim().toLocaleLowerCase();
-	const docs = state.documents.filter(d => d.title.toLocaleLowerCase().includes(query));
+	const docs = Coconut.sortedLibrary(state.documents, $("library-sort").value).filter(d => d.title.toLocaleLowerCase().includes(query));
 	$("library-total").textContent = String(state.documents.length);
 	$("library-empty").hidden = docs.length > 0;
 	$("library-empty").textContent = state.documents.length ? "没有匹配的标题" : "还没有内容。添加一份，或体验示例。";
@@ -432,6 +432,9 @@ $("back-reading").onclick = () => showWorkspace("read");
 $("show-jobs").onclick = () => { showWorkspace("add"); $("jobs-heading").scrollIntoView?.(); };
 $("toggle-library").onclick = () => $("toggle-library").setAttribute("aria-expanded", String($("toggle-library").getAttribute("aria-expanded") !== "true"));
 $("library-search").oninput = renderLibrary;
+try{const order=localStorage.getItem('coconut-library-sort-v1');if(['added','title','duration'].includes(order))$('library-sort').value=order;}catch{}
+$('library-sort').onchange=()=>{renderLibrary();try{localStorage.setItem('coconut-library-sort-v1',$('library-sort').value);}catch{notice('本次排序已应用，但浏览器未保存偏好。');}};
+
 $("filter-all").onclick = () => { notesOnly = false; excerptsOnly = false; pageStart = 0; render(); };
 $("filter-excerpts").onclick = () => { excerptsOnly = true; notesOnly = false; pageStart = 0; render(); };
 $("filter-notes").onclick = () => { notesOnly = true; excerptsOnly = false; pageStart = 0; render(); };
