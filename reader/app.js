@@ -575,7 +575,7 @@ function renderAudioProject(doc) {
    if(next===null||next>604800){error.textContent='请输入最长7天的有效时间，原书签未改变。';return;}
    item.time=next;doc.timestamp_bookmarks.sort((a,b)=>a.time-b.time);const persisted=save();renderAudioProject(doc);renderNotebookAction(doc);
    $('audio-project-status').textContent=persisted?'书签时间已更新，笔记保留。':'书签时间仅在本页，请立即导出 JSON 备份。';
-   [...host.children].find(element=>element.dataset.bookmarkId===item.id)?.querySelector('.edit-bookmark-time')?.focus();
+   ([...host.children].find(element=>element.dataset.bookmarkId===item.id)?.querySelector('.edit-bookmark-time')||$('audio-bookmark-search')).focus();
   };
   form.append(timeInput,apply,cancel,error);row.append(seek,input,remove,edit,form);host.append(row);
  }
