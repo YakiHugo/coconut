@@ -541,12 +541,16 @@ function renderNotebookAction(doc) {
 function renderAudioProject(doc) {
  const panel=$('audio-project');
  if(panel.dataset.documentKey!==doc.key){
-  panel.dataset.documentKey=doc.key;$('audio-bookmark-form').reset();$('audio-project-status').textContent='';
+  panel.dataset.documentKey=doc.key;$('audio-bookmark-form').reset();$('audio-bookmark-search').value='';$('audio-project-status').textContent='';
  }
  $('project-note').value=doc.project_note;
  const host=$('audio-bookmarks');host.replaceChildren();
  if(!doc.timestamp_bookmarks.length)host.append(el('p','hint','还没有时间书签。播放时可以填入当前时间，也可以手动记录。'));
- for(const item of doc.timestamp_bookmarks){
+ const query=$('audio-bookmark-search').value.trim().toLocaleLowerCase();
+ const bookmarks=doc.timestamp_bookmarks.filter(item=>!query||[item.note,Coconut.time(item.time),String(item.time)].some(value=>value.toLocaleLowerCase().includes(query)));
+ $('audio-bookmark-results').textContent=query?'找到 '+bookmarks.length+' / '+doc.timestamp_bookmarks.length+' 个时间书签':'共 '+bookmarks.length+' 个时间书签';
+ if(query&&!bookmarks.length)host.append(el('p','hint','没有匹配的书签，请清除或更换关键词。'));
+ for(const item of bookmarks){
   const row=el('section','audio-bookmark');row.dataset.bookmarkId=item.id;
   const seek=el('button','',Coconut.time(item.time)+' · 定位原声');
   seek.onclick=()=>{
@@ -582,6 +586,7 @@ function allowAudioNoteChange(doc,previous,value,limit){
  }
  return true;
 }
+$('audio-bookmark-search').oninput=()=>{const doc=active();if(Coconut.isAudioProject(doc))renderAudioProject(doc);};
 $('project-note').oninput=()=>{
  const doc=active();if(!Coconut.isAudioProject(doc))return;
  const input=$('project-note');if(!allowAudioNoteChange(doc,doc.project_note,input.value,100000)){input.value=doc.project_note;return;}
