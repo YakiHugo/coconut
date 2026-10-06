@@ -140,6 +140,7 @@ def main():
     parser.add_argument("--work-dir", type=Path, help="Keep completed stages for retry in this private directory")
     parser.add_argument("--source-url", default="", help="Optional source link for a local file")
     parser.add_argument("--force-transcribe", action="store_true", help="Ignore platform subtitles and recognize audio")
+    parser.add_argument("--captions-only", action="store_true", help="Require existing captions; never fall back to ASR or load recognition models (optional playback media is separate)")
     parser.add_argument("--keep-media", action="store_true", help="Keep a bounded local MP4 copy for playback (requires --work-dir)")
     parser.add_argument("--no-diarize", action="store_true")
     parser.add_argument("--no-align", action="store_true")
@@ -149,6 +150,8 @@ def main():
     parser.add_argument("--compute-type", default="int8")
     parser.add_argument("--batch-size", type=int, default=8)
     args = parser.parse_args()
+    if args.captions_only and args.force_transcribe:
+        parser.error('captions-only cannot be combined with force-transcribe')
     if args.keep_media and not args.work_dir:
         parser.error('keep-media requires a persistent work-dir')
     if args.batch_size < 1:
@@ -173,6 +176,10 @@ def main():
                        "diarize": bool(hf_token), "device": args.device, "compute_type": args.compute_type}
         if args.keep_media:
             fingerprint['keep_media'] = True
+        # Keep old work directories compatible when the option is absent, but
+        # never reuse an ASR-enabled cache under a captions-only permission.
+        if args.captions_only:
+            fingerprint['captions_only'] = True
         if not is_url:
             fingerprint['source_size'] = source.stat().st_size
             fingerprint['source_mtime_ns'] = source.stat().st_mtime_ns
@@ -191,6 +198,8 @@ def main():
             print("[subtitles] checking existing original-language captions", file=sys.stderr)
             document = fetch_subtitle_document(args.source, tmp, args.language)
         if document is None:
+            if args.captions_only:
+                raise ValueError('No suitable existing captions. Captions-only mode stopped before audio download or speech recognition; no model was loaded. 仅字幕模式：没有可用字幕，未识别语音或下载模型。')
             if is_url:
                 print("[download] downloading audio", file=sys.stderr)
                 audio_meta = tmp / 'audio.json'

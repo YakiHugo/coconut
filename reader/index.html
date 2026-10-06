@@ -5,13 +5,13 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Coconut · 把听过的，留下来</title>
 <link rel="stylesheet" href="style.css?v=942b3e9c43">
-<script src="core.js?v=2012dbef3b" defer>
+<script src="core.js?v=fda7f3c429" defer>
 </script>
-<script src="app.js?v=13e1fcf0d1" defer>
+<script src="app.js?v=4065477aa1" defer>
 </script>
-<script src="language.js?v=f496722f02" defer></script>
-<script src="podcasts.js?v=a5897a66b6" defer></script>
-<script src="jobs.js?v=a751351d13" defer>
+<script src="language.js?v=cce2a38689" defer></script>
+<script src="podcasts.js?v=02c0fb53de" defer></script>
+<script src="jobs.js?v=fede348875" defer>
 </script>
 </head>
 <body>
@@ -68,8 +68,10 @@
 </select>
 </label>
 <label><input id="keep-media" type="checkbox" checked>保留本地视频用于同步回看（最多200 MiB）</label>
+<label><input id="captions-only" type="checkbox" checked>仅使用现成字幕（不识别、不下载模型）</label>
 <label>
-<input id="force-asr" type="checkbox">忽略现成字幕，重新转录</label>
+<input id="force-asr" type="checkbox" disabled>忽略现成字幕，重新转录</label>
+<p id="asr-option-help" class="hint">没有可用字幕时会停止。取消「仅使用现成字幕」才允许本机语音识别，首次可能下载模型。</p>
 <input id="media-file" type="file" accept="audio/*,video/*" hidden>
 </div></details>
 </form>
@@ -117,7 +119,8 @@ cd coconut
 <div class="summary-heading"><div><p class="eyebrow">先抓住重点</p><h2 id="summary-heading" tabindex="-1">这篇还没有摘要</h2></div><span id="summary-state" class="status-chip">未生成</span></div>
 <p id="summary-status" class="hint" role="status"></p><div id="summary-body"></div>
 <div id="summary-citations" class="summary-citations" aria-label="摘要引用"></div>
-<div class="summary-actions"><button id="prepare-summary" class="primary">使用本地 AI 工具生成摘要</button><button id="summary-open-transcript">直接读原文</button><button id="export-summary" hidden>导出这份摘要</button></div>
+<p id="summary-readiness" class="hint" role="status" hidden></p>
+<div class="summary-actions"><button id="prepare-summary" class="primary" aria-describedby="summary-readiness">使用本地 AI 工具生成摘要</button><button id="summary-open-transcript">直接读原文</button><button id="summary-select-excerpt" hidden>筛选原文后提问</button><button id="export-summary" hidden>导出这份摘要</button></div>
 <p class="hint summary-boundary">摘要仅展示明确生成并保存的结果。模型可能遗漏或理解有误，请点引用核对；打开页面不会发送原文或使用额度。</p>
 </section>
 <div id="transcript-controls" hidden>
@@ -157,6 +160,7 @@ cd coconut
 <p id="language-status" role="status" class="hint">连接本地服务后可翻译；现有译文可直接阅读与备份。</p>
 <hr><label>本地 CLI<select id="ai-provider"><option value="codex">ChatGPT / Codex 订阅</option><option value="claude">Claude 订阅（可选）</option></select></label><p id="ai-status" class="hint">订阅连接尚未检查；不会自动登录或启动付费请求。</p><button id="check-ai" disabled>检查本地 CLI 连接</button>
 <label>任务<select id="ai-task"><option value="question">向原文提问</option><option value="summary">生成整篇摘要</option></select></label>
+<p id="ai-request-readiness" class="hint" role="status" hidden></p><button id="ai-select-excerpt" type="button" hidden>改为筛选原文后提问</button>
 <label for="ai-question">想从文字稿了解什么？</label><textarea id="ai-question" rows="3" placeholder="用中文总结核心观点，并指出对应的原文片段"></textarea>
 <label><input id="ai-filtered" type="checkbox">只读取当前筛选结果（含译文、摘录与笔记筛选的全部匹配片段）</label><label><input id="ai-consent" type="checkbox">本次把所选原文和相关术语发送给所选 AI 提供商，并使用我的订阅额度；旧译文只作为未核对的上下文建议</label>
 <p id="subscription-translation-scope" class="hint"></p><button id="subscription-translate" disabled>使用订阅翻译当前筛选 / 继续未完成批次</button><button id="stop-subscription-translation" hidden>停止后续订阅批次</button>

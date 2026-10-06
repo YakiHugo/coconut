@@ -120,6 +120,8 @@ async function add(doc, canCommit = null) {
 	return saved;
 }
 function showWorkspace(next) {
+ if(next!=="add")$("podcast-results")?.querySelectorAll("audio,video").forEach(player=>player.pause());
+ if(next!=="read"){stopRepeating();$("source-media").querySelectorAll("audio,video").forEach(player=>player.pause());}
 	if (workspace === "read" && next === "add") readingScroll = window.scrollY;
 	const returning = workspace === "add" && next === "read";
 	workspace = next;
@@ -798,6 +800,7 @@ function setReadingMode(mode) {
 }
 function renderSummary() {
  const doc=active();if(!doc)return;
+ const readiness=Coconut.summaryReadiness(doc);
  const answer=Coconut.latestSummary(doc),freshness=answer?Coconut.summaryFreshness(answer,doc):'empty';
  const persisted=answer && persistedSummaries.get(doc.key)===answer && !storageBlocked;
  $('summary-heading').textContent=answer?'这篇的主要内容':'这篇还没有摘要';
@@ -816,17 +819,31 @@ function renderSummary() {
   if(!answer.citations.length)$('summary-citations').append(el('p','hint','这份摘要没有片段引用，请在原文中自行核对。'));
  }
  $('prepare-summary').textContent=answer?'重新生成整篇摘要':'使用本地 AI 工具生成摘要';
+ $('prepare-summary').disabled=!readiness.ready;
+ $('summary-readiness').hidden=readiness.ready;$('summary-readiness').textContent=readiness.reason;
+ $('summary-select-excerpt').hidden=readiness.ready;
  $('export-summary').hidden=!answer;
 }
 $('mode-summary').onclick=()=>setReadingMode('summary');
 $('mode-transcript').onclick=()=>setReadingMode('transcript');
 $('summary-open-transcript').onclick=()=>{setReadingMode('transcript');$('search').focus();};
 $('prepare-summary').onclick=()=>{
+ const readiness=Coconut.summaryReadiness(active());
+ if(!readiness.ready){$('ai-consent').checked=false;renderSummary();notice(readiness.reason);return;}
  $('language-panel').open=true;
  $('ai-task').value='summary';$('ai-filtered').checked=false;$('ai-consent').checked=false;
  $('ai-task').dispatchEvent(new Event('change'));
  $('ai-task').scrollIntoView?.({block:'center',behavior:'smooth'});$('ai-task').focus();
 };
+function prepareExcerptQuestion(){
+ setReadingMode('transcript');$('language-panel').open=true;
+ $('ai-task').value='question';$('ai-filtered').checked=true;$('ai-consent').checked=false;
+ $('ai-task').dispatchEvent(new Event('change'));
+ $('search').focus();
+ notice('先用搜索、摘录或笔记筛选较小范围，再填写问题。回答只依据所选片段，不会保存为整篇摘要。');
+}
+$('summary-select-excerpt').onclick=prepareExcerptQuestion;
+$('ai-select-excerpt').onclick=prepareExcerptQuestion;
 window.addEventListener('coconut-summary-updated',renderSummary);
 $('export-summary').onclick=()=>{
  const doc=active();if(!doc||!Coconut.latestSummary(doc))return;

@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       original_video_url:
-        description: 'Optional public single-video URL for caption-only original-media acceptance'
+        description: 'Optional public single-video URL for a real captions-only production-queue browser acceptance'
         required: false
         type: string
 
@@ -51,9 +51,15 @@ jobs:
         run: rm -rf -- "$RUNNER_TEMP/coconut-acceptance"
 
   original-sample:
-    if: github.event_name == 'workflow_dispatch' && inputs.original_video_url != ''
+    # The original X sample is scoped to this acceptance PR. Other PRs and main
+    # do not repeatedly download it; a manual run must explicitly supply a URL.
+    if: >-
+      (github.event_name == 'pull_request' &&
+       github.head_ref == 'dot/acceptance-user-journeys' &&
+       github.event.pull_request.head.repo.full_name == github.repository) ||
+      (github.event_name == 'workflow_dispatch' && inputs.original_video_url != '')
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -67,25 +73,16 @@ jobs:
       - run: npx playwright install --with-deps chromium
       - run: python -m pip install yt-dlp==2026.8.19
       - run: sudo apt-get update && sudo apt-get install -y ffmpeg
-      - name: Obtain public media with an existing-caption-only gate
+      - name: Submit the original URL in Chromium and verify the actual production queue
         env:
-          COCONUT_ORIGINAL_URL: ${{ inputs.original_video_url }}
-        run: |
-          # Downloader messages can contain source text or signed URLs. Keep them
-          # ephemeral; report only the failure category, never their contents.
-          if ! python scripts/prepare_browser_acceptance.py --mode original --directory "$RUNNER_TEMP/coconut-acceptance" > "$RUNNER_TEMP/coconut-preparation.log" 2>&1; then
-            echo 'Original-media preparation failed. Check public access, English captions and media availability. No ASR fallback was attempted.'
-            exit 1
-          fi
-      - name: Verify the actual original media in Chromium
-        env:
-          COCONUT_ACCEPTANCE_MODE: original
-          COCONUT_ACCEPTANCE_DATA_DIR: ${{ runner.temp }}/coconut-acceptance
-          COCONUT_ACCEPTANCE_RESULT: ${{ runner.temp }}/coconut-acceptance/acceptance-result.json
-        run: npm run test:browser
+          COCONUT_ORIGINAL_URL: ${{ github.event_name == 'workflow_dispatch' && inputs.original_video_url || 'https://x.com/VaibhavSisinty/status/2105733670493651236?s=20' }}
+        # Installs only yt-dlp above, never the ASR requirements or recognition
+        # models. The browser explicitly submits captions_only=true; unavailable
+        # captions stop the job. All source/log bytes are transient and private.
+        run: node tests/queued-original-browser.mjs
       - name: Remove original media, captions, exports and private logs
         if: always()
-        run: rm -rf -- "$RUNNER_TEMP/coconut-acceptance" "$RUNNER_TEMP/coconut-preparation.log"
+        run: rm -rf -- "$RUNNER_TEMP"/coconut-queued-original-*
 
 # Deliberately no upload-artifact step: source media, captions, browser storage,
 # screenshots, traces and downloads must not become public CI artifacts.

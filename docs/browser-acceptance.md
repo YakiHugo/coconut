@@ -41,3 +41,25 @@ rm -rf -- "$work"
 原视频模式还需 yt-dlp，并以 `COCONUT_ORIGINAL_URL` 指定公开链接；
 将准备命令的模式改成 `original`，将其全部输出重定向到临时私有日志。
 不要提交真实媒体/稿件，不要给这个作业添加通配符上传 artifact 的步骤。
+
+
+## 真正的公开播客阅读链路
+
+`Public podcast acceptance` 现在另运行 `tests/podcast-live-browser.mjs`：
+在真实 Chromium 中操作 Coconut 的生产 HTTP 桥接与界面，不注入来源或 AI 假处理器。
+从发布者 RSS 选择并导入原语言定时稿，创建笔记和阅读位置，下载并检查 JSON / Markdown，
+刷新，再在空白浏览器重导下载文件。Apple 目录与小宇宙公开页面也通过实际入口读取；
+小宇宙无稿时必须明确停止文字阅读，公开原声则在 Coconut 的播放器中真正解码、播放和定位。
+
+公开原文、媒体、下载文件和浏览器存储只在临时运行环境使用并清理，不上传 artifacts。
+这里只证明实际连接和操作链路，不证明发布者稿件逐字准确，也不证明不存在文字稿时已完成转录。
+
+## macOS 安装包内的用户操作
+
+`Lightweight desktop` 的 `tests/desktop-packaged-acceptance.mjs` 解压本次生成的原生架构 ZIP，
+直接启动包中的应用；使用自写稿件和 PCM 音频实际操作文件选择器、播放定位、笔记、文字修正、
+摘录、阅读位置和四种导出。随后退出应用、重新启动检查恢复，再使用空白配置重导备份。
+渲染器仍保持 sandbox / context isolation，测试不检测账户、不调用模型。
+
+这是安装包运行与数据恢复验收，不能替代签名、公证、Gatekeeper 安装、用户 Mac 性能或另一架构的运行验收。
+未签名开发包仍有安装门槛；不会要求用户绕过操作系统安全提示。
