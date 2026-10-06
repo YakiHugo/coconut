@@ -6,15 +6,16 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createProviders } from './providers.mjs';
 import { createTranslator } from './translation.mjs';
+import { createPodcastSources } from './podcast-sources.mjs';
 
-export const CAPABILITIES = Object.freeze({reader:true,local_agents:true,subscription_ask:true,subscription_translation:true,media_import:false,local_translation:false});
+export const CAPABILITIES = Object.freeze({reader:true,local_agents:true,subscription_ask:true,subscription_translation:true,media_import:false,local_translation:false,podcast_import:true});
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
-const ASSETS = new Map([['/','index.html'],...['index.html','app.js','core.js','jobs.js','language.js','style.css'].map(name=>['/'+name,name])]);
+const ASSETS = new Map([['/','index.html'],...['index.html','app.js','core.js','jobs.js','language.js','podcasts.js','style.css'].map(name=>['/'+name,name])]);
 const MIME = {'.html':'text/html; charset=utf-8','.js':'text/javascript; charset=utf-8','.css':'text/css; charset=utf-8'};
 const MAX_BODY = 1024 * 1024;
 export const CSP = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self'; img-src 'self' data: blob:; media-src 'self' blob:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'";
 
-export function createBridge({readerDirectory = path.resolve(ROOT,'../reader'), providers = createProviders()} = {}) {
+export function createBridge({readerDirectory = path.resolve(ROOT,'../reader'), providers = createProviders(), podcastSources = createPodcastSources()} = {}) {
   const translate = createTranslator(providers);
   const active = new Set();
   const server = http.createServer(async (req,res) => {
@@ -46,7 +47,7 @@ export function createBridge({readerDirectory = path.resolve(ROOT,'../reader'), 
       if (req.method !== 'POST') return json(405,{error:'Method not allowed'});
       // Cross-site HTML forms and opaque-origin pages must never start a local CLI.
       if (req.headers.origin !== origin) return json(403,{error:'发送请求必须来自此本机阅读器'});
-      if (!['/api/ask','/api/translate-subscription'].includes(pathname)) return json(501,{error:'轻量版未启用下载、ASR 或离线翻译。请直接导入字幕/文字稿；完整本地处理服务为可选高级功能。'});
+      if (!['/api/ask','/api/translate-subscription','/api/podcasts/discover','/api/podcasts/import','/api/podcasts/media'].includes(pathname)) return json(501,{error:'轻量版未启用视频站下载、ASR 或离线翻译。可使用公开播客源、字幕或本地音视频；完整本地处理服务为可选高级功能。'});
       if (req.headers['content-type']?.split(';')[0] !== 'application/json') return json(400,{error:'Use application/json'});
       const declared = req.headers['content-length'];
       if (declared && (!/^\d+$/.test(declared) || Number(declared) > MAX_BODY)) { req.resume(); return json(413,{error:'请求过大'}); }
@@ -58,6 +59,15 @@ export function createBridge({readerDirectory = path.resolve(ROOT,'../reader'), 
       }
       let data;
       try { data = JSON.parse(Buffer.concat(chunks).toString('utf8')); } catch { return json(400,{error:'请求 JSON 无效'}); }
+      if (!data || typeof data !== 'object' || Array.isArray(data)) return json(400,{error:'请求 JSON 无效'});
+      if(pathname === '/api/podcasts/discover') return json(200,await podcastSources.discover(data,{signal:controller.signal}));
+      if(pathname === '/api/podcasts/import') return json(200,await podcastSources.importEpisode(data,{signal:controller.signal}));
+      if(pathname === '/api/podcasts/media') {
+        const media=await podcastSources.downloadMedia(data,{signal:controller.signal});
+        if(res.destroyed)return;
+        res.writeHead(200,{'Content-Type':media.type,'Content-Length':media.body.length,'X-Coconut-Media-Kind':media.kind,
+          'Content-Disposition':'inline; filename="'+media.filename+'"'});res.end(media.body);return;
+      }
       if (!data || typeof data !== 'object' || Array.isArray(data) || data.consent !== true) return json(400,{error:'请先确认发送范围和订阅额度'});
       if (pathname === '/api/ask') return json(200,await providers.ask(data,{signal:controller.signal}));
       return json(200,{translations:await translate(data,{signal:controller.signal})});

@@ -40,6 +40,16 @@
 		}
 		return "";
 	}
+ function podcastURL(value) {
+  if(typeof value!=="string"||value.length>4096)return "";
+  try { const url=new URL(value);return ["http:","https:"].includes(url.protocol)&&!url.username&&!url.password&&!url.port?url.href:""; }catch{return "";}
+ }
+ function podcastSource(value) {
+  if(!value||typeof value!=="object"||Array.isArray(value))return undefined;
+  const feed=podcastURL(value.feed_url),mediaURL=podcastURL(value.media_url),transcriptURL=podcastURL(value.transcript_url);
+  if(!feed||typeof value.episode_id!=="string"||!value.episode_id||value.episode_id.length>1000)return undefined;
+  return {feed_url:feed,episode_id:value.episode_id,...(mediaURL?{media_url:mediaURL}:{}),...(transcriptURL?{transcript_url:transcriptURL}:{}),...(['audio','video'].includes(value.media_kind)?{media_kind:value.media_kind}:{})};
+ }
 	function mediaSource(value) {
 		if (
 			!value || typeof value !== "object" || Array.isArray(value) ||
@@ -287,6 +297,7 @@
 			...(typeof data.readingPosition === "string" && ids.has(data.readingPosition) ? {readingPosition: data.readingPosition} : {}),
 			...(provenance ? { provenance } : {}),
 			...(sourceMedia ? { source_media: sourceMedia } : {}),
+            ...(podcastSource(data.podcast_source)?{podcast_source:podcastSource(data.podcast_source)}:{}),
 			schema_version: 1,
             language: typeof data.language === "string" ? data.language : "",
             translation_view: ["en","zh","ja","ko","fr","de","es"].includes(data.translation_view) ? data.translation_view : "",
@@ -482,7 +493,7 @@
 			segments,
 		});
 	}
-	const api = { cleanGlossary, relevantGlossary, translationQualityMessage, retainAnswers, summaryFreshness, latestSummary, summaryMarkdown, aiReadingMarkdown, parseReadingTime, segmentAtTime, subtitleExport, mergeLibraryBackup, time, source, media, validate, parse, matchesSegment, notebookSegments, notebookMarkdown, translationCurrent, sameCueSnapshot, subscriptionPlan, cleanContexts, answerFreshness };
+	const api = { podcastURL, podcastSource, cleanGlossary, relevantGlossary, translationQualityMessage, retainAnswers, summaryFreshness, latestSummary, summaryMarkdown, aiReadingMarkdown, parseReadingTime, segmentAtTime, subtitleExport, mergeLibraryBackup, time, source, media, validate, parse, matchesSegment, notebookSegments, notebookMarkdown, translationCurrent, sameCueSnapshot, subscriptionPlan, cleanContexts, answerFreshness };
 	if (typeof module !== "undefined" && module.exports) module.exports = api;
 	else root.Coconut = api;
 })(typeof window !== "undefined" ? window : globalThis);

@@ -7,22 +7,22 @@
 1. 有可获取、匹配原语言的现成字幕时优先导入；不把自动翻译当作原文。
 2. “平台提供”只说明字幕来源，不证明作者手工校对。自动字幕、本地 ASR 和来源不明的上传字幕均保留待核对状态。
 3. 元数据或字幕下载失败、登录限制与“没有合适字幕”分开处理。前两者停止并允许重试，不据此静默启动 ASR。
-4. 当前网址下载仍限 YouTube、Bilibili、X 的单篇公开内容。其他平台先用用户合法取得的音视频或字幕文件；不读浏览器 Cookie，不绕过付费、DRM、地域或登录限制。
-5. RSS 是扩大音频播客覆盖的优先方向，但必须一起实现单集选择、字幕优先、媒体来源校验、大小/时长限制、每跳重定向及 DNS 安全校验，不能把任意网址直接交给现有下载器。
+4. 高级 Python 服务的视频站下载仍限 YouTube、Bilibili、X 的单篇公开内容。轻量 Node / macOS 新增公开 RSS / Atom、Apple 发布者 RSS、有限小宇宙公开页面及直接媒体文件入口，详见[来源导入实现与验证](podcast-source-import.md)。不读浏览器 Cookie，不绕过付费、DRM、地域或登录限制。
+5. 新 RSS 入口已实现明确单集选择、发布者时间戳文字稿导入和按需媒体获取，独立执行每跳 DNS/IP 绑定及大小、类型、时间限制；没有字幕仍明确需要文字稿，不自动调用 ASR。纯静态页面不能代理来源请求。
 
 ## 来源支持矩阵
 
 | 来源 | Coconut 当前实际入口 | 可行的后续路径与边界 |
 | --- | --- | --- |
 | 本地音频 / 视频 | 上传 MP3、MP4、WAV、M4A、WebM、OGG、FLAC；本地可选 ASR | 同一内容可配合已有 SRT/VTT/JSON；文件来源合法性仍由用户确认。扩展名是容器提示，不证明声音/画面质量 |
-| 音视频直接 URL | 尚未支持任意网址下载 | 先用合法下载的文件。需要专门的公开地址获取器和大小、时长、重定向校验，不能放宽视频站白名单代替 |
-| RSS / enclosure | 尚无 RSS 单集导入器 | 读取具体 item 的 enclosure；优先 podcast:transcript。订阅私有 token、会员源另行处理，不记录或分享凭证。规范依据：[RSS enclosure](https://www.rssboard.org/rss-specification#ltenclosuregtSubelementOfLtitemgt)、[Podcasting 2.0 transcript](https://github.com/Podcastindex-org/podcast-namespace/blob/main/docs/tags/transcript.md) |
-| Apple Podcasts | 当前 Apple 分享链接不能直接导入 | 能获取原发布者公开 RSS 时可走其 enclosure / transcript；订阅专享内容不能按公开源处理。Apple 可自动生成字幕，也可摄取作者提供的 RSS 字幕；其面向创作者的下载流程不是通用听众下载 API。[Apple 官方说明](https://podcasters.apple.com/support/5316-transcripts-on-apple-podcasts) |
+| 音视频直接 URL | 轻量服务支持公开音视频文件；明确点击后下载并回听 | 专用公共地址获取器验证 DNS/IP、重定向、媒体 MIME、时限和实际200 MiB上限；不支持播放列表、私有token/签名或DRM；无文字稿不自动识别 |
+| RSS / enclosure | 轻量服务已实现 RSS2/Atom、单集选择、发布者SRT/VTT/时间戳JSON和按需媒体 | 读取具体 item 的 enclosure；优先 podcast:transcript。订阅私有 token、会员源另行处理，不记录或分享凭证。规范依据：[RSS enclosure](https://www.rssboard.org/rss-specification#ltenclosuregtSubelementOfLtitemgt)、[Podcasting 2.0 transcript](https://github.com/Podcastindex-org/podcast-namespace/blob/main/docs/tags/transcript.md) |
+| Apple Podcasts | 已通过官方目录精确节目ID解析发布者公开RSS；单集链接仍显式选集 | 能获取原发布者公开 RSS 时可走其 enclosure / transcript；订阅专享内容不能按公开源处理。Apple 可自动生成字幕，也可摄取作者提供的 RSS 字幕；其面向创作者的下载流程不是通用听众下载 API。[Apple 官方说明](https://podcasters.apple.com/support/5316-transcripts-on-apple-podcasts) |
 | Spotify | 当前 Spotify 分享链接不能直接导入 | 优先寻找发布者独立公开 RSS、官网媒体或合法文件。Spotify 的 episode API 是目录信息，官方明确禁止借它促进下载或 stream ripping，不能做通用 Spotify 抓音轨器。[Spotify episode API](https://developer.spotify.com/documentation/web-api/reference/get-an-episode) |
 | YouTube | 已有公开单视频、现成字幕优先、本地 ASR 备用 | 原语言、作者/平台提供、自动字幕分开标记。直播、合集、登录或访问失败不等于“无字幕”；平台自动字幕会受口音、噪声、重叠说话等影响。[自动字幕说明](https://support.google.com/youtube/answer/6373554) |
 | Bilibili | 已有公开 BV/av 单视频、字幕优先 | yt-dlp 可能把 AI 轨放进 subtitles；不能只按字段名称其为人工字幕。弹幕不是字幕；登录才能取得字幕时不能判定不存在。[上游 Bilibili extractor](https://github.com/yt-dlp/yt-dlp/blob/master/yt_dlp/extractor/bilibili.py) |
 | X / Twitter | 已有单视频 status 链接；不支持主页、搜索、直播、合集 | 已有时间定位和字幕导入路径；具体帖子是否有可获取媒体/字幕取决于平台响应，不能承诺所有帖子可用。[上游 Twitter extractor](https://github.com/yt-dlp/yt-dlp/blob/master/yt_dlp/extractor/twitter.py) |
-| 小宇宙 | 分享页直接导入尚未实现 | 官方区分托管节目与 RSS 节目，因此“在小宇宙可听”不保证有可公开取得的原 RSS。优先原发布者 RSS 或合法本地文件；节目简介/时间轴不能冒充完整文字稿。[官方主播说明](https://blog.xiaoyuzhoufm.com/podcaster-january-21-update/) |
+| 小宇宙 | 官方公开页仅对明确FREE、非私有且PUBLIC媒体的单集提供按需回放；未实现平台完整文字稿 | 页面无公开RSS时可解析其当前显示的合格单集，每次下载重新核验免费/公开条件；节目页不等于完整历史列表。节目简介/时间轴不能冒充完整文字稿。[官方主播说明](https://blog.xiaoyuzhoufm.com/podcaster-january-21-update/) |
 | 喜马拉雅 | 分享页直接导入尚未实现 | yt-dlp 有提取器，但也含付费/VIP及试听处理；不能把其存在当作整集公开可用，尤其不能把试听冒充全文。[上游实现](https://github.com/yt-dlp/yt-dlp/blob/master/yt_dlp/extractor/ximalaya.py) |
 | 蜻蜓 FM | 分享页直接导入尚未实现 | 上游单节目匹配 qingting.fm / qtfm.cn 的 channels/.../programs/...，只提供音频 URL，当前实现不输出时长，无法满足 Coconut 下载前已知 ≤6 小时门槛。尚未放行这个入口。[上游实现](https://github.com/yt-dlp/yt-dlp/blob/master/yt_dlp/extractor/qingting.py) |
 | SoundCloud / 其他播客播放器 | 未实现专用分享链接导入 | 即使上游列有 extractor，也不代表 Coconut 已接入、所有单集可用或有字幕；优先发布者 RSS/合法文件。[yt-dlp 支持列表及免责声明](https://github.com/yt-dlp/yt-dlp/blob/master/supportedsites.md) |
@@ -31,9 +31,9 @@
 
 ## 字幕来源与语言契约
 
-保留 schema_version=1 和已有 provenance.kind，增加可选字段：
+保留 schema_version=1 和已有 provenance.kind；RSS 使用 publisher_transcript / publisher_provided，只表示发布者提供，不能据此判断人工或自动生成。增加可选字段：
 
-- caption_method：platform_provided / automatic / asr / unknown。platform_provided 不能显示成“人工校对”
+- caption_method：platform_provided / publisher_provided / automatic / asr / unknown。platform_provided 不能显示成“人工校对”
 - caption_track：原始平台轨道标识，如 en-orig、ai-zh；document.language 保留规范化语言，如 en、zh
 - language_basis：user_hint / platform_metadata / original_track / single_track / asr_detected / unknown。single_track 只是唯一可用轨，不证明语音语言已被识别
 - review_status：unreviewed，表示 Coconut 未做人工逐字听校
