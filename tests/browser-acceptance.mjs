@@ -74,6 +74,7 @@ async function waitForDocument(page, count) {
     const document = library?.documents.find(item => item.key === library.active);
     return document?.segments.length === expected && !window.document.getElementById('reader-workspace').hidden;
   }, count);
+  await page.locator('#mode-transcript').click();
 }
 
 async function importFile(page, filename, count) {
@@ -294,7 +295,7 @@ try {
 
   stage = 'launch_installed_chromium';
   const {chromium} = await import('@playwright/test');
-  browser = await chromium.launch({headless: true});
+  browser = await chromium.launch({headless: true, ...(process.env.COCONUT_CHROMIUM_EXECUTABLE ? {executablePath:process.env.COCONUT_CHROMIUM_EXECUTABLE} : {})});
   const newContext = async () => {
     const context = await browser.newContext({acceptDownloads: true, viewport: {width: 1440, height: 1000}, serviceWorkers: 'block'});
     // Prevent accidental navigation, model calls, or data transmission. Requests

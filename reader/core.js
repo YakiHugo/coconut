@@ -183,7 +183,7 @@
 		const provenance =
 			data.provenance && typeof data.provenance === "object"
 				? Object.fromEntries(
-						["kind", "model", "backend", "language", "alignment_warning", "playback_warning", "media_id"]
+						["kind", "model", "backend", "language", "alignment_warning", "playback_warning", "media_id", "caption_method", "caption_track", "subtitle_check", "language_basis", "review_status", "source_platform", "source_medium"]
 							.filter((k) => typeof data.provenance[k] === "string")
 							.map((k) => [k, data.provenance[k]]),
 					)
@@ -199,17 +199,36 @@
 			schema_version: 1,
             language: typeof data.language === "string" ? data.language : "",
             translation_view: ["en","zh","ja","ko","fr","de","es"].includes(data.translation_view) ? data.translation_view : "",
-            ai_answers: Array.isArray(data.ai_answers) ? data.ai_answers.slice(-20).filter(a=>a && typeof a.question==="string" && typeof a.answer==="string" && Array.isArray(a.citations)).map(a=>({question:a.question.slice(0,4000),answer:a.answer.slice(0,100000),citations:a.citations.filter(id=>ids.has(id)),...(cleanAnswerInput(a.input_snapshot) ? {input_snapshot:cleanAnswerInput(a.input_snapshot)} : {}),provider:typeof a.provider==="string"?a.provider.slice(0,100):"unknown"})) : [],
+            ai_answers: Array.isArray(data.ai_answers) ? retainAnswers(data.ai_answers).filter(a=>a && typeof a.question==="string" && typeof a.answer==="string" && Array.isArray(a.citations)).map(a=>({question:a.question.slice(0,4000),answer:a.answer.slice(0,100000),citations:a.citations.filter(id=>ids.has(id)),...(cleanAnswerInput(a.input_snapshot) ? {input_snapshot:cleanAnswerInput(a.input_snapshot)} : {}),...(a.purpose==="summary"?{purpose:"summary"}:a.purpose==="question"?{purpose:"question"}:{}),provider:typeof a.provider==="string"?a.provider.slice(0,100):"unknown"})) : [],
 			title: typeof data.title === "string" ? data.title : "未命名文字稿",
 			source_url: typeof data.source_url === "string" ? data.source_url : "",
 			segments,
             translation_contexts: cleanContexts(data.translation_contexts, segments),
 		};
 	}
+ function retainAnswers(answers) {
+  const recent=answers.slice(-20);
+  const summary=answers.findLast(a=>a?.purpose==="summary"&&typeof a.question==="string"&&typeof a.answer==="string"&&Array.isArray(a.citations));
+  return summary&&!recent.includes(summary)?[summary,...recent.slice(-19)]:recent;
+ }
+ function summaryFreshness(answer, doc) {
+  if(answer?.purpose!=="summary")return "unknown";
+  const input=cleanAnswerInput(answer.input_snapshot);
+  if(!input)return "unknown";
+  return input.segments.length===doc.segments.length && answerFreshness(answer,doc)==="current" ? "current" : "stale";
+ }
+ function latestSummary(doc) {
+  return (doc.ai_answers||[]).findLast(answer=>answer.purpose==="summary") || null;
+ }
+ function summaryMarkdown(doc, answer=latestSummary(doc)) {
+  if(!answer)throw new Error("这篇还没有保存的摘要");
+  return aiReadingMarkdown({...doc,ai_answers:[answer]}).replace(" · 本地 AI 记录", " · 播客摘要") +
+   "\n摘要覆盖状态：" + ({current:"覆盖当前整篇原文，仍需核对模型判断",stale:"整篇原文已经变化，旧摘要可能过期",unknown:"缺少完整依据，无法确认摘要覆盖范围"}[summaryFreshness(answer,doc)]) + "\n";
+ }
  function aiReadingMarkdown(doc) {
   const line=value=>markdownText(value).replace(/[\r\n]+/g," ");
   const quote=value=>markdownText(value).replace(/\r\n?/g,"\n").split("\n").map(s=>"> "+s).join("\n");
-  const lines=["# "+line(doc.title)+" · AI 共读记录","","AI 输出仍需核对；以下是本篇已保存的全部回答，不受当前筛选影响。","来源定位使用当前文字稿的时间与链接，可能不同于生成回答时的媒体信息。",""];
+  const lines=["# "+line(doc.title)+" · 本地 AI 记录","","AI 输出仍需核对；以下是本篇已保存的全部回答，不受当前筛选影响。","来源定位使用当前文字稿的时间与链接，可能不同于生成回答时的媒体信息。",""];
   for(const [index,answer] of (doc.ai_answers||[]).entries()){
    const freshness=answerFreshness(answer,doc), input=cleanAnswerInput(answer.input_snapshot);
    lines.push("## 回答 "+(index+1),"","提供商："+line(answer.provider||"unknown"),"",
@@ -370,7 +389,7 @@
 			segments,
 		});
 	}
-	const api = { aiReadingMarkdown, parseReadingTime, segmentAtTime, subtitleExport, mergeLibraryBackup, time, source, media, validate, parse, matchesSegment, notebookSegments, notebookMarkdown, translationCurrent, sameCueSnapshot, subscriptionPlan, cleanContexts, answerFreshness };
+	const api = { retainAnswers, summaryFreshness, latestSummary, summaryMarkdown, aiReadingMarkdown, parseReadingTime, segmentAtTime, subtitleExport, mergeLibraryBackup, time, source, media, validate, parse, matchesSegment, notebookSegments, notebookMarkdown, translationCurrent, sameCueSnapshot, subscriptionPlan, cleanContexts, answerFreshness };
 	if (typeof module !== "undefined" && module.exports) module.exports = api;
 	else root.Coconut = api;
 })(typeof window !== "undefined" ? window : globalThis);

@@ -1,5 +1,6 @@
 "use strict";
 let localWorker = false;
+let localAgents = false;
 let pollTimer;
 let connectingWorker = false;
 let queueRefreshSequence = 0;
@@ -103,6 +104,7 @@ function renderJobs(jobs) {
 }
 function disconnectedWorker() {
  localWorker = false;
+ localAgents = false;
  $("process-url").disabled = true;
  $("import-media").disabled = true;
  $("retry-worker").hidden = false;
@@ -113,7 +115,7 @@ function disconnectedWorker() {
   : (["localhost", "127.0.0.1", "[::1]"].includes(location.hostname) ? "暂时无法连接本地处理服务" : "阅读预览 · 未连接本地服务");
  $("worker-help").textContent = workerWasConnected
   ? "请检查运行 Coconut 的终端。已提交的任务可能仍在处理；恢复连接后先查看任务列表，避免重复提交。阅读和笔记仍可使用。"
-  : "当前可导入文字稿、阅读和记笔记。处理音视频需在自己的电脑启动本地服务。";
+  : "Web 阅读无需安装。导入文字稿后可选择本地音频或视频同步回听，文件不上传。生成摘要与翻译需连接本地 AI 工具。";
  // Keep the setup guide available without expanding it on every failed probe.
  window.dispatchEvent(new Event("coconut-worker-disconnected"));
 }
@@ -201,7 +203,19 @@ async function connectWorker() {
  $("retry-worker").disabled = true;
 	try {
 		const health = await jobApi("health");
-		if (!health.local_worker) throw new Error("No local worker");
+		if (!health.local_worker && health.capabilities?.local_agents !== true) throw new Error("No local worker");
+  if (!health.local_worker) {
+   const newlyConnected = !localAgents;
+   localWorker=false;localAgents=true;workerWasConnected=true;
+   $("local-setup").open=false;$("retry-worker").hidden=true;
+   $("url-form").hidden=true;$("show-jobs").hidden=true;$("jobs-heading").hidden=true;
+   $("process-url").disabled=true;$("import-media").disabled=true;
+   $("worker-status").textContent="轻量本地服务已连接 · 无需 Python";
+   $("worker-help").textContent="可导入文字稿、在浏览器中同步回听音视频，并调用已登录的本地 CLI。此轻量版本不含下载、转录或离线翻译模型；不会自动发送原文。";
+   if(newlyConnected)window.dispatchEvent(new CustomEvent("coconut-worker-ready",{detail:{local_agents:true,media_import:false}}));
+   return;
+  }
+  localAgents=true;
 		localWorker = true;
   if (!await refreshJobs()) return;
   workerWasConnected = true;
@@ -210,7 +224,7 @@ async function connectWorker() {
 		$("url-form").hidden = false;
 		$("show-jobs").hidden = false;
 		$("jobs-heading").hidden = false;
-		window.dispatchEvent(new Event("coconut-worker-ready"));
+		window.dispatchEvent(new CustomEvent("coconut-worker-ready",{detail:{local_agents:true,media_import:true}}));
 		$("process-url").disabled = false;
 		$("import-media").disabled = false;
 		$("worker-help").textContent =
@@ -222,7 +236,7 @@ async function connectWorker() {
   $("retry-worker").disabled = false;
   if (!localWorker && workerWasConnected) {
    clearTimeout(pollTimer);
-   pollTimer = setTimeout(connectWorker, document.hidden ? 15000 : 3000);
+   pollTimer = setTimeout(connectWorker, localAgents ? 15000 : (document.hidden ? 15000 : 3000));
   }
  }
 }

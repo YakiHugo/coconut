@@ -1192,3 +1192,78 @@ test('successful export clicks keep the disclosure and keyboard focus available'
   assert.equal($('export-menu').open,false);assert.equal(w.document.activeElement,$('search'));
  }finally{await w.happyDOM.close();}
 });
+
+test('summary is the first reading mode and never relabels saved questions as summaries',async()=>{
+ const w=setup();try{
+  await importDocument(w,{title:'Podcast',segments:[{id:'one',start:0,end:10,text:'Original statement'}],ai_answers:[{question:'A question',answer:'A question answer',citations:['one']}]});
+  const $=id=>w.document.getElementById(id);
+  assert.equal($('summary-workspace').hidden,false);assert.equal($('transcript-layout').hidden,true);
+  assert.equal($('summary-state').textContent,'未生成');assert.equal($('summary-body').textContent,'');
+  $('summary-open-transcript').click();assert.equal($('transcript-layout').hidden,false);assert.equal($('summary-workspace').hidden,true);
+  $('mode-summary').click();assert.equal($('summary-workspace').hidden,false);
+  $('prepare-summary').click();assert.equal($('language-panel').open,true);assert.equal($('ai-task').value,'summary');assert.equal($('ai-consent').checked,false);
+ }finally{await w.happyDOM.close();}
+});
+
+test('saved summary citations return to source and edits mark the summary stale',async()=>{
+ const w=setup();try{
+  const $=id=>w.document.getElementById(id);
+  await importDocument(w,{title:'Podcast',segments:[{id:'one',start:0,end:10,text:'Original'}],ai_answers:[{purpose:'summary',question:'Summary',answer:'<img src=x> Main point',citations:['one'],provider:'codex',input_snapshot:{version:1,segments:[{id:'one',text:'Original'}]}}]});
+  assert.equal($('summary-body').textContent,'<img src=x> Main point');assert.equal($('summary-body').querySelector('img'),null);
+  assert.match($('summary-state').textContent,/已保存/);$('summary-citations').querySelector('button').click();
+  assert.equal($('transcript-layout').hidden,false);assert.equal(w.document.activeElement.dataset.segmentId,'one');
+  w.document.querySelector('.edit-button').click();$('edit-segment').value='Changed';$('save-edit').click();
+  $('mode-summary').click();assert.equal($('summary-state').textContent,'原文有更新');assert.match($('summary-body').textContent,/Main point/);
+ }finally{await w.happyDOM.close();}
+});
+
+test('static Web attaches audio and video without a worker, upload or persisted media URL',async()=>{
+ const w=setup();try{
+  const $=id=>w.document.getElementById(id);let calls=0,revoked=[];
+  w.fetch=async()=>{calls++;throw new Error('No uploads permitted');};
+  w.URL.createObjectURL=()=>`blob:https://coconut.example/local-${calls++}`;w.URL.revokeObjectURL=url=>revoked.push(url);
+  await $('sample').onclick();$('mode-transcript').click();
+  $('attach-reader-media').click();
+  Object.defineProperty($('reader-media-file'),'files',{configurable:true,value:[{name:'episode.mp3',type:'audio/mpeg',size:10,slice:()=>({text:async()=> 'ID3 audio'})}]});
+  await $('reader-media-file').onchange();
+  const audio=w.document.querySelector('#source-media audio');assert.ok(audio);assert.match(audio.src,/^blob:/);
+  assert.equal(calls,1,'only local object URL creation, no fetch');
+  assert.doesNotMatch(w.localStorage.getItem('coconut-reader-v1'),/blob:|episode.mp3/);
+  $('attach-reader-media').click();Object.defineProperty($('reader-media-file'),'files',{configurable:true,value:[{name:'episode.mp4',type:'video/mp4',size:10,slice:()=>({text:async()=> 'ftyp video'})}]});await $('reader-media-file').onchange();
+  assert.ok(w.document.querySelector('#source-media video'));assert.equal(revoked.length,1);
+  $('detach-reader-media').click();assert.equal(w.document.querySelector('#source-media video'),null);assert.equal(revoked.length,2);
+ }finally{await w.happyDOM.close();}
+});
+
+test('media selection belongs to the document that opened the picker, with cancellation safe',async()=>{
+ const w=setup();try{
+  const $=id=>w.document.getElementById(id);w.URL.createObjectURL=()=> 'blob:https://coconut.example/selected';w.URL.revokeObjectURL=()=>{};
+  await $('sample').onclick();$('attach-reader-media').click();
+  await importDocument(w,{title:'Another',segments:[{start:0,end:1,text:'Other'}]});
+  Object.defineProperty($('reader-media-file'),'files',{configurable:true,value:[{name:'episode.wav',type:'audio/wav',size:10,slice:()=>({text:async()=> 'RIFF WAVE'})}]});await $('reader-media-file').onchange();
+  assert.equal(w.document.querySelector('audio'),null);$('library').querySelector('button').click();assert.ok(w.document.querySelector('audio'));
+  const audio=w.document.querySelector('audio');$('attach-reader-media').click();Object.defineProperty($('reader-media-file'),'files',{configurable:true,value:[]});await $('reader-media-file').onchange();assert.equal(w.document.querySelector('audio'),audio);
+ }finally{await w.happyDOM.close();}
+});
+
+test('lightweight bridge enables local agents without media jobs or Python processing',async()=>{
+ const calls=[];
+ const w=setup(undefined,async path=>{calls.push(path);return {ok:true,json:async()=>path==='api/health'?{local_worker:false,capabilities:{local_agents:true,media_import:false}}:{local_translation:false,ai:{codex:{ready:false,reason:'CLI unavailable'}}}};});
+ try{
+  await new Promise(resolve=>setTimeout(resolve,25));
+  const $=id=>w.document.getElementById(id);
+  assert.match($('worker-status').textContent,/轻量本地服务/);assert.equal($('url-form').hidden,true);assert.equal($('import-media').disabled,true);assert.equal($('show-jobs').hidden,true);assert.ok(!calls.includes('api/jobs'));
+ }finally{await w.happyDOM.close();}
+});
+
+test('reselecting a playing document pauses hidden media and playlist inputs are rejected',async()=>{
+ const w=setup();try{
+  const $=id=>w.document.getElementById(id);let objects=0;w.URL.createObjectURL=()=> 'blob:https://coconut.example/'+(++objects);w.URL.revokeObjectURL=()=>{};
+  await $('sample').onclick();$('attach-reader-media').click();
+  Object.defineProperty($('reader-media-file'),'files',{configurable:true,value:[{name:'episode.mp3',type:'audio/mpeg',size:10,slice:()=>({text:async()=> 'ID3 audio'})}]});await $('reader-media-file').onchange();
+  const player=w.document.querySelector('audio');let pauses=0;player.pause=()=>pauses++;player.play=async()=>{};Object.defineProperty(player,'duration',{value:68,configurable:true});w.document.querySelector('.repeat-button').click();assert.equal($('stop-repeat').hidden,false);
+  $('library').querySelector('button').click();assert.equal($('summary-workspace').hidden,false);assert.ok(pauses>0);assert.equal($('stop-repeat').hidden,true);
+  $('attach-reader-media').click();Object.defineProperty($('reader-media-file'),'files',{configurable:true,value:[{name:'disguised.mp3',type:'audio/mpeg',size:10,slice:()=>({text:async()=> '#EXTM3U\nhttps://example.org/remote.ts'})}]});await $('reader-media-file').onchange();
+  assert.equal(objects,1);assert.match($('notice').textContent,/播放列表/);assert.equal(w.document.querySelector('audio'),player);
+ }finally{await w.happyDOM.close();}
+});

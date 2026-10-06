@@ -236,3 +236,23 @@ test('AI reading report includes historical full input, freshness, safe citation
  const output=C.aiReadingMarkdown(doc);assert.match(output,/Historical/);assert.match(output,/Uncited/);assert.match(output,/依据可能过期/);assert.match(output,/缺少完整发送原文/);assert.match(output,/不能用当前稿替代历史依据/);assert.doesNotMatch(output,/<script>|!\[track\]|\n# fake|> Changed/);assert.match(output,/label=%28x%29/);assert.equal((output.match(/^## 回答 /gm)||[]).length,2);
  const unsafe=C.aiReadingMarkdown({...doc,source_url:'javascript:alert(1)'});assert.doesNotMatch(unsafe,/javascript:/);
 });
+
+test('only explicit whole-document summaries are current and survive backups',()=>{
+ const Coconut=require('../reader/core.js');
+ const doc=Coconut.validate({title:'Podcast',segments:[{id:'one',start:0,end:10,text:'First'},{id:'two',start:10,end:20,text:'Second'}],ai_answers:[{question:'Q',answer:'Not a summary',citations:['one']},{purpose:'summary',question:'Summary',answer:'A grounded summary',provider:'codex',citations:['one'],input_snapshot:{version:1,segments:[{id:'one',text:'First'},{id:'two',text:'Second'}]}}]});
+ const answer=Coconut.latestSummary(doc);assert.equal(answer.answer,'A grounded summary');assert.equal(Coconut.summaryFreshness(answer,doc),'current');
+ assert.equal(Coconut.latestSummary({...doc,ai_answers:[doc.ai_answers[0]]}),null);
+ assert.equal(Coconut.summaryFreshness(answer,{...doc,segments:[...doc.segments,{id:'three',start:20,end:30,text:'Added'}]}),'stale');
+ assert.equal(Coconut.summaryFreshness({...answer,input_snapshot:undefined},doc),'unknown');
+ assert.equal(Coconut.summaryFreshness({...answer,input_snapshot:{version:1,segments:[{id:'one',text:'First'}]}},doc),'stale');
+ assert.equal(Coconut.latestSummary(Coconut.validate(JSON.parse(JSON.stringify(doc)))).purpose,'summary');
+ assert.match(Coconut.summaryMarkdown(doc),/播客摘要/);assert.match(Coconut.summaryMarkdown(doc),/Second/);
+});
+
+test('later questions never evict the latest saved summary from the bounded history',()=>{
+ const {retainAnswers,latestSummary}=require('../reader/core.js');
+ const summary={purpose:'summary',question:'Summary',answer:'Keep this work',citations:[]};
+ const answers=[summary,...Array.from({length:25},(_,i)=>({purpose:'question',question:String(i),answer:'Later question',citations:[]}))];
+ const retained=retainAnswers(answers);assert.equal(retained.length,20);assert.equal(latestSummary({ai_answers:retained}),summary);assert.equal(retained.at(-1).question,'24');
+ const doc=validate({segments:[{id:'a',start:0,end:1,text:'Source'}],ai_answers:answers});assert.equal(latestSummary(doc).answer,'Keep this work');
+});

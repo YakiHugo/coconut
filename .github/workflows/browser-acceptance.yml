@@ -34,6 +34,8 @@ jobs:
       - run: npm ci --ignore-scripts
       - run: npx playwright install --with-deps chromium
       - run: sudo apt-get update && sudo apt-get install -y ffmpeg
+      - name: Verify standalone Web reading without a Python service
+        run: node tests/web-browser-acceptance.mjs
       - name: Prepare original synthetic media and timed text
         run: python scripts/prepare_browser_acceptance.py --mode synthetic --directory "$RUNNER_TEMP/coconut-acceptance"
       - name: Verify actual browser playback, reading, downloads and restore
