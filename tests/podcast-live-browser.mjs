@@ -98,7 +98,7 @@ try {
  await audio.evaluate(element=>element.play());await page.locator('#back-reading').click();
  check('leaving_source_preview_pauses_hidden_audio',await audio.evaluate(element=>element.paused));
  await page.locator('#add-content').click();
- check('returning_to_sources_preserves_paused_preview',await audio.evaluate(element=>element.paused&&Math.abs(element.currentTime-target)<3));
+ check('returning_to_sources_preserves_paused_preview',await audio.evaluate((element,target)=>element.paused&&Math.abs(element.currentTime-target)<3,target));
  check('no_inference_upload_or_uncaught_errors',unexpected===0&&errors===0&&calls.filter(item=>item==='media').length===1);
  console.log(JSON.stringify({suite:'public-source-to-reader',status:'passed',checks,segments:imported.document.segments.length,audio_duration_seconds:Math.round(duration),source_requests:calls.length}));
 } catch {
