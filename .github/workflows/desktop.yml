@@ -30,6 +30,8 @@ jobs:
           cache: npm
           cache-dependency-path: desktop/package-lock.json
       - run: npm ci --prefix desktop
+      - name: Install packaged-app acceptance tools without browser downloads
+        run: npm ci --ignore-scripts
       - name: Run the real Electron reader without model calls
         run: COCONUT_SMOKE_TEST=1 desktop/node_modules/.bin/electron desktop
       - name: Package unsigned arm64 and x64 apps
@@ -48,6 +50,8 @@ jobs:
         run: |
           arch="$(node -p 'process.arch')"
           COCONUT_SMOKE_TEST=1 "desktop/dist/Coconut-darwin-$arch/Coconut.app/Contents/MacOS/Coconut"
+      - name: Verify native release ZIP reading, playback, exports and restart recovery
+        run: node tests/desktop-packaged-acceptance.mjs
       - name: Upload unsigned developer builds only
         uses: actions/upload-artifact@v4
         with:

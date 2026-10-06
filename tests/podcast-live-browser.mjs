@@ -7,6 +7,7 @@ import {chromium} from '@playwright/test';
 import {startBridge} from '../desktop/server.mjs';
 let server,browser,directory,stage='setup';const checks=[];
 const check=(name,value)=>{stage=name;assert.ok(value,name);checks.push(name);};
+const markdownText=value=>String(value).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/[\\`*_{}\[\]()#+.!|~$-]/g,'\\$&');
 try {
  directory=await mkdtemp(path.join(os.tmpdir(),'coconut-live-ui-'));
  server=await startBridge({port:0});const origin='http://127.0.0.1:'+server.address().port;
@@ -55,14 +56,14 @@ try {
  const original=imported.document.segments.find(item=>item.id===segmentId);assert.ok(original);
  await first.locator('.note-button').click();await page.locator('#note').fill('Coconut live acceptance: verify this passage against the publisher audio.');await page.locator('#close-note').click();
  await first.locator('.bookmark-button').click();
- await page.locator('#export-menu summary').click();
+ if(!await page.locator('#export-menu').evaluate(node=>node.open))await page.locator('#export-menu summary').click();
  const [backup]=await Promise.all([page.waitForEvent('download'),page.locator('#export').click()]);
  const backupPath=path.join(directory,'transcript.json');await backup.saveAs(backupPath);const saved=JSON.parse(await readFile(backupPath,'utf8'));
  check('real_transcript_notes_and_source_exported',saved.podcast_source.episode_id===episode.id&&saved.notes[segmentId].startsWith('Coconut live acceptance:')&&saved.readingPosition===segmentId&&saved.segments.find(item=>item.id===segmentId).text===original.text);
- await page.locator('#export-menu summary').click();
+ if(!await page.locator('#export-menu').evaluate(node=>node.open))await page.locator('#export-menu summary').click();
  const [notebook]=await Promise.all([page.waitForEvent('download'),page.locator('#export-notebook').click()]);
  const notebookPath=path.join(directory,'notes.md');await notebook.saveAs(notebookPath);const markdown=await readFile(notebookPath,'utf8');
- check('notebook_contains_real_quote_note_and_publisher_link',markdown.includes(original.text)&&markdown.includes(saved.notes[segmentId])&&markdown.includes(episode.source_url));
+ check('notebook_contains_real_quote_note_and_publisher_link',markdown.includes(markdownText(original.text))&&markdown.includes(markdownText(saved.notes[segmentId]))&&markdown.includes(episode.source_url));
  await page.reload();await page.locator('#mode-transcript').click();await page.locator('#resume').click();
  check('reload_restores_reading_position',await page.locator('.segment').first().getAttribute('data-segment-id')===segmentId);
  await page.locator('.segment').first().locator('.note-button').click();check('reload_restores_real_source_notes',(await page.locator('#note').inputValue())===saved.notes[segmentId]);await page.locator('#close-note').click();
