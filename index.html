@@ -6,12 +6,12 @@
 <title>Coconut · 把听过的，留下来</title>
 <link rel="stylesheet" href="style.css?v=8b6e2ca979">
 <script src="summary.js?v=580ffdad1e" defer></script>
-<script src="core.js?v=83aa543827" defer>
+<script src="core.js?v=57844f4005" defer>
 </script>
-<script src="app.js?v=69994f3424" defer>
+<script src="app.js?v=d06e91eade" defer>
 </script>
-<script src="language.js?v=04ebe93526" defer></script>
-<script src="podcasts.js?v=faf2195d29" defer></script>
+<script src="language.js?v=be55932556" defer></script>
+<script src="podcasts.js?v=c542fbe50d" defer></script>
 <script src="jobs.js?v=fede348875" defer>
 </script>
 </head>
@@ -27,6 +27,7 @@
 <input type="file" id="file" accept=".json,.srt,.vtt" hidden>
 <details class="library-backup"><summary>书架备份</summary><div class="disclosure-content"><button id="export-library">备份整个书架</button><button id="restore-library">恢复书架备份</button><input id="library-file" type="file" accept=".json" hidden></div></details>
 <p class="eyebrow">你的书架</p>
+<details class="library-options"><summary>整理书架</summary><label>排序<select id="library-sort"><option value="added">按添加顺序</option><option value="title">按标题</option><option value="duration">按时长（短到长）</option></select></label><label>内容<select id="library-kind"><option value="all">全部</option><option value="transcript">有文字稿</option><option value="audio">原声项目</option><option value="annotated">有笔记或摘录</option></select></label><label>查找范围<select id="library-scope"><option value="title">标题</option><option value="notes">标题与笔记</option><option value="text">标题、原文与笔记</option></select></label></details>
 <nav id="library" aria-label="文字稿书架">
 </nav>
 <p id="library-empty" class="hint">还没有文字稿。添加一份，或体验示例。</p>
@@ -132,10 +133,12 @@ cd coconut
 <div id="source-media" hidden>
 </div>
 <section id="audio-project" hidden aria-label="原声项目与笔记">
-<h2>先留下声音和想法</h2><p class="hint">尚未导入文字稿，没有可生成摘要的原文。节目简介不会代替文字稿；项目笔记和时间书签只记录你的想法，不会作为原文发送给 AI。</p>
+<h2 id="audio-project-heading">先留下声音和想法</h2><p id="audio-project-boundary" class="hint">尚未导入文字稿，没有可生成摘要的原文。节目简介不会代替文字稿；项目笔记和时间书签只记录你的想法，不会作为原文发送给 AI。</p>
+<button id="attach-project-transcript" type="button">为此项目补充文字稿</button><button id="fetch-project-transcript" type="button" hidden>检查并补充发布者文字稿</button><button id="cancel-project-transcript" type="button" hidden>取消获取文字稿</button><input id="project-transcript-file" type="file" accept=".json,.srt,.vtt" hidden><p id="attach-project-help" class="hint">选择与本集声音对应的定时文字稿，包括已完成的字幕或 ASR JSON。只导入文件，不自动识别或调用模型；保留当前项目的标题、笔记、书签及已选择的媒体。</p>
 <label for="project-note">项目笔记</label><textarea id="project-note" rows="4" placeholder="记下想法、疑问或之后要核对的内容"></textarea>
 <p class="hint">来源、笔记与时间书签自动保存在此浏览器；媒体只在本次页面可用，刷新后请单独重新获取。迁移请导出 JSON 备份。</p>
 <form id="audio-bookmark-form"><label for="audio-bookmark-time">时间书签</label><input id="audio-bookmark-time" required placeholder="12:34 或秒数" inputmode="decimal"><button id="use-playback-time" type="button">填入正在播放的时间</button><label for="audio-bookmark-note">书签笔记（可选）</label><input id="audio-bookmark-note" placeholder="此刻想记住什么？"><button type="submit">保存时间书签</button></form>
+<label>查找时间书签<input id="audio-bookmark-search" type="search" placeholder="笔记关键词或 12:34"></label><p id="audio-bookmark-results" class="hint" role="status"></p>
 <p id="audio-project-status" class="hint" role="status"></p><div id="audio-bookmarks" aria-label="已保存的时间书签"></div>
 </section>
 <div id="transcript-reading-tools">
@@ -143,6 +146,7 @@ cd coconut
 <label class="search">⌕ <input id="search" type="search" placeholder="搜索原话、说话人或笔记" aria-label="搜索文字稿">
 </label>
 </div>
+<label id="speaker-filter-control" hidden>说话人标签<select id="speaker-filter"><option value="all">全部说话人</option></select></label>
 <div class="reading-controls"><div role="group" aria-label="阅读视图"><button id="filter-all" aria-pressed="true">全文</button><button id="filter-excerpts" aria-pressed="false">摘录 <span id="excerpt-count">0</span></button><button id="filter-notes" aria-pressed="false">笔记 <span id="note-count">0</span></button></div><button id="resume" hidden></button></div><p id="search-status" class="hint" role="status"></p><div id="search-navigation" hidden><button id="previous-match" type="button">上一匹配段</button><span id="match-position" class="hint" role="status"></span><button id="next-match" type="button">下一匹配段</button></div><button id="clear-search" hidden>清除筛选，返回全文</button>
 </div>
 </div>

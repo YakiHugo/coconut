@@ -5,6 +5,8 @@ let state = { documents: [], active: null };
 let selected = null;
 let notesOnly = false;
 let excerptsOnly = false;
+let speakerFilter = null;
+function matchesReadingSegment(segment,doc,query){return (speakerFilter===null||(segment.speaker||'')===speakerFilter)&&Coconut.matchesSegment(segment,doc,query,notesOnly,excerptsOnly);}
 let searchFocusedId=null;
 let workspace = "read";
 let readingScroll = 0;
@@ -134,7 +136,7 @@ async function add(doc, canCommit = null, reuseAudioSource = false) {
 	$("search").value = "";
 	selected = null;
 	pageStart = 0;
-	notesOnly = false; excerptsOnly = false;
+	notesOnly = false; excerptsOnly = false; speakerFilter=null;
 	workspace = "read";
 	const saved = save();
 	render();
@@ -161,7 +163,7 @@ function goToSegment(id) {
 	const index = doc ? doc.segments.findIndex(s => s.id === id) : -1;
 	if (index < 0) return;
 	$("search").value = "";
-	notesOnly = false; excerptsOnly = false;
+	notesOnly = false; excerptsOnly = false; speakerFilter=null;
 	selected = null;
 	pageStart = Math.floor(index / PAGE_SIZE) * PAGE_SIZE;
 	showWorkspace("read");
@@ -173,10 +175,10 @@ function goToSegment(id) {
 function renderLibrary() {
 	$("library").replaceChildren();
 	const query = $("library-search").value.trim().toLocaleLowerCase();
-	const docs = state.documents.filter(d => d.title.toLocaleLowerCase().includes(query));
+	const docs = Coconut.sortedLibrary(state.documents, $("library-sort").value).filter(d => Coconut.libraryMatches(d,query,$("library-kind").value,$("library-scope").value));
 	$("library-total").textContent = String(state.documents.length);
 	$("library-empty").hidden = docs.length > 0;
-	$("library-empty").textContent = state.documents.length ? "没有匹配的标题" : "还没有内容。添加一份，或体验示例。";
+	$("library-empty").textContent = state.documents.length ? "没有匹配的内容，可调整书架筛选或查找范围" : "还没有内容。添加一份，或体验示例。";
 	for (const d of docs) {
 		const b = el("button", d.key === state.active ? "active" : "");
 		b.append(el("span", "library-title", d.title));
@@ -188,7 +190,7 @@ function renderLibrary() {
    setReadingMode("summary");
    searchFocusedId=null;
 			selected = null;
-			notesOnly = false; excerptsOnly = false;
+			notesOnly = false; excerptsOnly = false; speakerFilter=null;
 			pageStart = 0;
 			$("search").value = "";
 			$("toggle-library").setAttribute("aria-expanded", "false");
@@ -213,7 +215,8 @@ function render() {
 	}
 	$("empty").hidden = true;
  const audioOnly=Coconut.isAudioProject(doc);
- $('audio-project').hidden=!audioOnly;
+ $('audio-project').hidden=!Coconut.hasProjectAnnotations(doc);
+ if(!audioOnly&&Coconut.hasProjectAnnotations(doc))renderAudioProject(doc);
  $('transcript-reading-tools').hidden=audioOnly;
  $('reading-modes').hidden=audioOnly;
  $('time-navigation').hidden=audioOnly;
@@ -272,8 +275,13 @@ function render() {
   renderAudioProject(doc);renderNotebookAction(doc);applyReadingMode();
   window.dispatchEvent(new Event('coconut-render'));return;
  }
+ const speakers=[...new Set(doc.segments.map(s=>s.speaker||''))];
+ if(speakerFilter!==null&&!speakers.includes(speakerFilter))speakerFilter=null;
+ const selector=$('speaker-filter');selector.replaceChildren(el('option','','全部说话人'));selector.firstChild.value='all';
+ for(const speaker of speakers){const option=el('option','',speaker||'未标注说话人');option.value=JSON.stringify(speaker);selector.append(option);}
+ selector.value=speakerFilter===null?'all':JSON.stringify(speakerFilter);$('speaker-filter-control').hidden=speakers.length<2;
 	const query = $("search").value.trim().toLocaleLowerCase();
-	const filtered = doc.segments.filter(s=>Coconut.matchesSegment(s,doc,query,notesOnly,excerptsOnly));
+	const filtered = doc.segments.filter(s=>matchesReadingSegment(s,doc,query));
 	// Clamp after removing the last matching note/excerpt on a later page.
 	pageStart = Math.min(pageStart, Math.max(0, Math.floor((filtered.length - 1) / PAGE_SIZE) * PAGE_SIZE));
 	const visible = filtered.slice(pageStart, pageStart + PAGE_SIZE);
@@ -296,8 +304,8 @@ function render() {
 	renderNotebookAction(doc);
 	$("note-count").textContent = String(Object.values(doc.notes).filter(Boolean).length);
 	const playbackHint = mediaPath ? "点时间戳定位本地原声" : Coconut.source(doc.source_url, 0) ? "点时间戳打开原站；若平台未自动定位，请按显示时间手动跳转" : doc.source_media ? "本地媒体尚未连接；请在保存原任务的电脑启动 Coconut" : "尚未关联音视频，可在「阅读设置」添加原视频链接";
- $("search-status").textContent = ((query || notesOnly || excerptsOnly) ? "找到 " + filtered.length + " 个片段" : "共 " + doc.segments.length + " 个片段") + " · " + playbackHint;
-	$("clear-search").hidden = !query && !notesOnly && !excerptsOnly;
+ $("search-status").textContent = ((query || notesOnly || excerptsOnly || speakerFilter!==null) ? "找到 " + filtered.length + " 个片段" : "共 " + doc.segments.length + " 个片段") + " · " + playbackHint;
+	$("clear-search").hidden = !query && !notesOnly && !excerptsOnly && speakerFilter===null;
 	const bookmark = doc.segments.find(s => s.id === doc.readingPosition);
 	$("resume").hidden = !bookmark;
 	$("resume").textContent = bookmark ? "继续阅读 · " + Coconut.time(bookmark.start) : "";
@@ -432,10 +440,16 @@ $("back-reading").onclick = () => showWorkspace("read");
 $("show-jobs").onclick = () => { showWorkspace("add"); $("jobs-heading").scrollIntoView?.(); };
 $("toggle-library").onclick = () => $("toggle-library").setAttribute("aria-expanded", String($("toggle-library").getAttribute("aria-expanded") !== "true"));
 $("library-search").oninput = renderLibrary;
-$("filter-all").onclick = () => { notesOnly = false; excerptsOnly = false; pageStart = 0; render(); };
+$("library-kind").onchange=renderLibrary;
+$("library-scope").onchange=renderLibrary;
+try{const order=localStorage.getItem('coconut-library-sort-v1');if(['added','title','duration'].includes(order))$('library-sort').value=order;}catch{}
+$('library-sort').onchange=()=>{renderLibrary();try{localStorage.setItem('coconut-library-sort-v1',$('library-sort').value);}catch{notice('本次排序已应用，但浏览器未保存偏好。');}};
+
+$('speaker-filter').onchange=()=>{speakerFilter=$('speaker-filter').value==='all'?null:JSON.parse($('speaker-filter').value);pageStart=0;searchFocusedId=null;render();};
+$("filter-all").onclick = () => { notesOnly = false; excerptsOnly = false; speakerFilter=null; pageStart = 0; render(); };
 $("filter-excerpts").onclick = () => { excerptsOnly = true; notesOnly = false; pageStart = 0; render(); };
 $("filter-notes").onclick = () => { notesOnly = true; excerptsOnly = false; pageStart = 0; render(); };
-$("clear-search").onclick = () => { $("search").value = ""; notesOnly = false; excerptsOnly = false; pageStart = 0; render(); $("search").focus(); };
+$("clear-search").onclick = () => { $("search").value = ""; notesOnly = false; excerptsOnly = false; speakerFilter=null; pageStart = 0; render(); $("search").focus(); };
 $("close-note").onclick = () => {
 	const id = selected;
 	selected = null;
@@ -521,19 +535,26 @@ $("save-source").onclick = (e) => {
 	render();
 };
 function renderNotebookAction(doc) {
-	const count = Coconut.isAudioProject(doc)?(doc.project_note.trim()?1:0)+doc.timestamp_bookmarks.length:Coconut.notebookSegments(doc).length;
+	const count = Coconut.projectAnnotationCount(doc)+Coconut.notebookSegments(doc).length;
 	$("export-notebook").disabled = count === 0;
-	$("export-notebook").textContent = Coconut.isAudioProject(doc)?"导出原声项目笔记（"+count+" 项）":"导出阅读笔记（" + count + " 段）";
+	$("export-notebook").textContent = Coconut.isAudioProject(doc)?"导出原声项目笔记（"+count+" 项）":"导出阅读笔记（" + count + (Coconut.hasProjectAnnotations(doc)?" 项）":" 段）");
 }
 function renderAudioProject(doc) {
- const panel=$('audio-project');
+ const panel=$('audio-project'),audioOnly=Coconut.isAudioProject(doc);
+ $('audio-project-heading').textContent=audioOnly?'先留下声音和想法':'项目笔记与时间书签';
+ $('audio-project-boundary').textContent=audioOnly?'尚未导入文字稿，没有可生成摘要的原文。项目笔记和时间书签只记录你的想法，不会作为原文发送给 AI。':'已补充文字稿。以下项目笔记和时间书签仍是你的记录，不是原文，不会加入发送给 AI 的原文范围。';
+ $('attach-project-transcript').hidden=!audioOnly;$('attach-project-help').hidden=!audioOnly;
  if(panel.dataset.documentKey!==doc.key){
-  panel.dataset.documentKey=doc.key;$('audio-bookmark-form').reset();$('audio-project-status').textContent='';
+  panel.dataset.documentKey=doc.key;$('audio-bookmark-form').reset();$('audio-bookmark-search').value='';$('audio-project-status').textContent='';
  }
  $('project-note').value=doc.project_note;
  const host=$('audio-bookmarks');host.replaceChildren();
  if(!doc.timestamp_bookmarks.length)host.append(el('p','hint','还没有时间书签。播放时可以填入当前时间，也可以手动记录。'));
- for(const item of doc.timestamp_bookmarks){
+ const query=$('audio-bookmark-search').value.trim().toLocaleLowerCase();
+ const bookmarks=doc.timestamp_bookmarks.filter(item=>!query||[item.note,Coconut.time(item.time),String(item.time)].some(value=>value.toLocaleLowerCase().includes(query)));
+ $('audio-bookmark-results').textContent=query?'找到 '+bookmarks.length+' / '+doc.timestamp_bookmarks.length+' 个时间书签':'共 '+bookmarks.length+' 个时间书签';
+ if(query&&!bookmarks.length)host.append(el('p','hint','没有匹配的书签，请清除或更换关键词。'));
+ for(const item of bookmarks){
   const row=el('section','audio-bookmark');row.dataset.bookmarkId=item.id;
   const seek=el('button','',Coconut.time(item.time)+' · 定位原声');
   seek.onclick=()=>{
@@ -548,7 +569,19 @@ function renderAudioProject(doc) {
   const remove=el('button','','删除书签');remove.onclick=()=>{
    doc.timestamp_bookmarks=doc.timestamp_bookmarks.filter(bookmark=>bookmark.id!==item.id);save();renderAudioProject(doc);renderLibrary();renderNotebookAction(doc);$('audio-bookmark-time').focus();
   };
-  row.append(seek,input,remove);host.append(row);
+  const edit=el('button','','修正书签时间'),form=el('form'),timeInput=el('input'),apply=el('button','','保存时间'),cancel=el('button','','取消修正'),error=el('p','hint');
+  edit.className='edit-bookmark-time';form.hidden=true;timeInput.value=String(item.time);timeInput.setAttribute('aria-label','修正书签时间（秒、分:秒或时:分:秒）');timeInput.inputMode='decimal';apply.type='submit';cancel.type='button';error.setAttribute('role','status');
+  edit.onclick=()=>{form.hidden=false;timeInput.value=String(item.time);error.textContent='';timeInput.focus();};
+  cancel.onclick=()=>{form.hidden=true;edit.focus();};
+  form.onsubmit=event=>{
+   event.preventDefault();if(active()?.key!==doc.key||!doc.timestamp_bookmarks.includes(item))return;
+   const next=Coconut.parseReadingTime(timeInput.value);
+   if(next===null||next>604800){error.textContent='请输入最长7天的有效时间，原书签未改变。';return;}
+   item.time=next;doc.timestamp_bookmarks.sort((a,b)=>a.time-b.time);const persisted=save();renderAudioProject(doc);renderNotebookAction(doc);
+   $('audio-project-status').textContent=persisted?'书签时间已更新，笔记保留。':'书签时间仅在本页，请立即导出 JSON 备份。';
+   ([...host.children].find(element=>element.dataset.bookmarkId===item.id)?.querySelector('.edit-bookmark-time')||$('audio-bookmark-search')).focus();
+  };
+  form.append(timeInput,apply,cancel,error);row.append(seek,input,remove,edit,form);host.append(row);
  }
 }
 function allowAudioNoteChange(doc,previous,value,limit){
@@ -557,8 +590,9 @@ function allowAudioNoteChange(doc,previous,value,limit){
  }
  return true;
 }
+$('audio-bookmark-search').oninput=()=>{const doc=active();if(Coconut.hasProjectAnnotations(doc))renderAudioProject(doc);};
 $('project-note').oninput=()=>{
- const doc=active();if(!Coconut.isAudioProject(doc))return;
+ const doc=active();if(!Coconut.hasProjectAnnotations(doc))return;
  const input=$('project-note');if(!allowAudioNoteChange(doc,doc.project_note,input.value,100000)){input.value=doc.project_note;return;}
  doc.project_note=input.value;save();renderNotebookAction(doc);
 };
@@ -567,7 +601,7 @@ $('use-playback-time').onclick=()=>{
  $('audio-bookmark-time').value=String(Math.floor(player.currentTime*1000)/1000);$('audio-bookmark-note').focus();
 };
 $('audio-bookmark-form').onsubmit=event=>{
- event.preventDefault();const doc=active();if(!Coconut.isAudioProject(doc))return;
+ event.preventDefault();const doc=active();if(!Coconut.hasProjectAnnotations(doc))return;
  const seconds=Coconut.parseReadingTime($('audio-bookmark-time').value);
  if(seconds===null||seconds>604800){$('audio-project-status').textContent='请输入有效的秒数、分:秒或时:分:秒，最长7天。';return;}
  if(doc.timestamp_bookmarks.length>=2000){$('audio-project-status').textContent='已达到2,000个时间书签上限，请先备份和整理。';return;}
@@ -579,7 +613,7 @@ $('audio-bookmark-form').onsubmit=event=>{
 };
 $("export-notebook").onclick = () => {
 	const doc = active();
-	if (!doc || (Coconut.isAudioProject(doc)?!doc.project_note.trim()&&!doc.timestamp_bookmarks.length:!Coconut.notebookSegments(doc).length)) {
+	if (!doc || (!Coconut.projectAnnotationCount(doc)&&!Coconut.notebookSegments(doc).length)) {
 		notice("先摘录一段原话，或写一则笔记，再导出阅读笔记。");
 		return;
 	}
@@ -721,7 +755,7 @@ $("library-file").onchange = async () => {
   const backup = JSON.parse(await file.text());
   const before = state.documents.length;
   const restored = Coconut.mergeLibraryBackup(state, backup);
-  state = restored; selected=null; pageStart=0; notesOnly=false; excerptsOnly=false; $("search").value=""; workspace="read";
+  state = restored; selected=null; pageStart=0; notesOnly=false; excerptsOnly=false; speakerFilter=null; $("search").value=""; workspace="read";
   const persisted = save(); render();
   if(persisted)notice("已恢复 " + (state.documents.length-before) + " 份文字稿；相同内容已跳过，不同版本分别保留，原书架未删除。");
  } catch(error) { notice("恢复失败，原书架未改变："+error.message); }
@@ -839,7 +873,7 @@ function highlightedText(tag,className,value,query){
 }
 function moveSearchMatch(direction){
  const doc=active(),query=$("search").value.trim();if(!doc || !query)return;
- const matches=doc.segments.filter(s=>Coconut.matchesSegment(s,doc,query,notesOnly,excerptsOnly));if(!matches.length)return;
+ const matches=doc.segments.filter(s=>matchesReadingSegment(s,doc,query));if(!matches.length)return;
  const current=matches.findIndex(s=>s.id===searchFocusedId);
  const index=current<0?(direction>0?0:matches.length-1):(current+direction+matches.length)%matches.length;
  searchFocusedId=matches[index].id;pageStart=Math.floor(index/PAGE_SIZE)*PAGE_SIZE;selected=null;render();
@@ -975,3 +1009,27 @@ $('detach-reader-media').onclick=()=>{
  changeMediaSelection(key);
  stopRepeating();$('source-media').querySelector('audio,video')?.pause();browserMedia.delete(key);URL.revokeObjectURL(attachment.url);render();
 };
+
+let projectTranscriptTarget=null,projectTranscriptRead=0;
+$('attach-project-transcript').onclick=()=>{const doc=active();if(Coconut.isAudioProject(doc)){projectTranscriptTarget={key:doc.key,source:JSON.stringify(doc.podcast_source)};$('project-transcript-file').click();}};
+$('project-transcript-file').onchange=async()=>{
+ const input=$('project-transcript-file'),file=input.files[0],target=projectTranscriptTarget,read=++projectTranscriptRead;projectTranscriptTarget=null;
+ if(!file)return;
+ try{
+  if(!target)throw new Error('请从目标原声项目重新选择文字稿');
+  if(file.size>15*1024*1024)throw new Error('文件超过15MB，请先拆分文字稿');
+  const text=Coconut.parse(await file.text(),file.name);
+  if(read!==projectTranscriptRead)throw new Error('已经选择更新的文字稿，本次导入已取消');
+  const persisted=attachTranscriptToProject(text,target);
+  notice(persisted?'文字稿已附加到当前项目，原有笔记、时间书签与媒体保留。未调用识别、翻译或摘要模型。':'文字稿已在本页附加，但未能保存，请立即导出 JSON 备份。');
+ }catch(error){notice('补充文字稿失败：'+error.message);}
+ finally{input.value='';}
+};
+
+function attachTranscriptToProject(text,target){
+ const index=state.documents.findIndex(doc=>doc.key===target.key),original=state.documents[index];
+ if(state.active!==target.key||workspace!=='read'||!Coconut.isAudioProject(original)||JSON.stringify(original.podcast_source)!==target.source)throw new Error('目标项目已经切换或更新，本次未附加文字稿，请重新选择');
+ const attached={...Coconut.attachProjectTranscript(original,text),key:original.key};
+ state.documents[index]=attached;selected=null;pageStart=0;notesOnly=false;excerptsOnly=false;speakerFilter=null;$('search').value='';
+ const persisted=save();setReadingMode('transcript');render();return persisted;
+}

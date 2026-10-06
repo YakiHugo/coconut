@@ -48,7 +48,7 @@ function renderLanguage(){
  }
 
  $('subscription-translate').disabled=!hasTranscript||!aiReady||asking||translating||subscriptionTranslating;
- const matches=doc.segments.filter(s=>Coconut.matchesSegment(s,doc,$('search').value,notesOnly,excerptsOnly));
+ const matches=doc.segments.filter(s=>matchesReadingSegment(s,doc,$('search').value));
  if($('ai-task')){$('ai-question').disabled=$('ai-task').value==='summary';$('ai-filtered').disabled=$('ai-task').value==='summary';if($('ai-task').value==='summary')$('ai-filtered').checked=false;}
  const signature=JSON.stringify([doc.key,$('translation-source').value,$('translation-target').value,$('ai-provider').value,$('ai-filtered').checked,$('ai-task')?.value,doc.translation_glossary,matches.map(s=>s.id)]);
  const glossarySignature=JSON.stringify([doc.key,$('translation-target').value]);
@@ -201,7 +201,7 @@ $('ask-ai').onclick=async()=>{
  if(purpose==='summary'){await runDocumentSummary(doc);return;}
  const question=purpose==='summary'?Coconut.SUMMARY_QUESTION:$('ai-question').value.trim();if(!question){notice('请先输入问题');return;}
  const query=$('search').value.trim().toLocaleLowerCase();
- const segments=doc.segments.filter(s=>purpose==='summary'||!$('ai-filtered').checked||Coconut.matchesSegment(s,doc,query,notesOnly,excerptsOnly)).map(s=>({id:s.id,text:s.text}));
+ const segments=doc.segments.filter(s=>purpose==='summary'||!$('ai-filtered').checked||matchesReadingSegment(s,doc,query)).map(s=>({id:s.id,text:s.text}));
  const key=doc.key;asking=true;renderLanguage();$('ai-progress').textContent=`正在让所选 AI 阅读 ${segments.length} 段；不会切换到付费 API。`;
  try{
   const answer=await languageApi('ask',{question,language:purpose==='summary'?'zh':$('translation-target').value,provider:$('ai-provider').value,segments,consent:true});
@@ -224,7 +224,7 @@ $('subscription-translate').onclick=async()=>{
  if(!source||source===target){notice('请选择不同的原文和翻译语言');return;}
  if(glossaryDirty()){notice('术语表有未保存修改，请先保存本篇术语表，再确认翻译');return;}
  const providerName=(provider==='codex'?'chatgpt':'claude')+'_subscription_translation';
- const selectedCues=doc.segments.filter(s=>Coconut.matchesSegment(s,doc,$('search').value,notesOnly,excerptsOnly));
+ const selectedCues=doc.segments.filter(s=>matchesReadingSegment(s,doc,$('search').value));
  let plan;
  try{plan=Coconut.subscriptionPlan(doc,selectedCues.map(s=>s.id),source,target,providerName);}catch(error){notice(error.message);return;}
  if(!plan.total){notice('当前筛选没有需要订阅翻译的新片段');return;}
