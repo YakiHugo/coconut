@@ -290,6 +290,8 @@ function render() {
 		body.append(highlightedText("p", "words", s.text, query));
         const translated=s.translations?.[doc.translation_view];
         if(translated) body.append(highlightedText("p", "translation"+(!Coconut.translationCurrent(s,doc,translated)?" stale":""), Coconut.translationCurrent(s,doc,translated) ? translated.text : "原文或上下文已变化，或旧译文缺少上下文记录，此译文需要重新生成", query));
+        if(translated && Coconut.translationCurrent(s,doc,translated)) { const warning=Coconut.translationQualityMessage(translated); if(warning)body.append(el("p","translation-review","待核对："+warning)); }
+
 		const edit = el("button", "edit-button", "修正文字");
 		edit.onclick = () => {
 			editingTarget = {
@@ -834,6 +836,8 @@ $('reader-media-file').onchange=async()=>{
  try{
   if(!key||!state.documents.some(d=>d.key===key))throw new Error('原文字稿已关闭，请重新选择');
   const extension=file.name.split('.').pop().toLowerCase();
+  const supportedTypes=new Set(['audio/mpeg','audio/mp3','audio/mp4','audio/x-m4a','audio/wav','audio/x-wav','audio/ogg','audio/flac','audio/x-flac','audio/aac','audio/opus','video/mp4','video/webm','audio/webm','video/quicktime','video/x-m4v','application/octet-stream']);
+  if(file.type&&!supportedTypes.has(file.type.toLowerCase()))throw new Error('请选择 MP3、M4A、WAV、OGG、FLAC、MP4、WebM 等实际音视频文件');
   const kind=file.type.startsWith('video/')||['mp4','webm','mov','m4v'].includes(extension)?'video':file.type.startsWith('audio/')||['mp3','m4a','wav','ogg','flac','aac','opus'].includes(extension)?'audio':null;
   if(!kind||!file.size)throw new Error('请选择可播放的音频或视频文件');
   const prefix=await file.slice(0,1024).text();

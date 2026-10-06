@@ -272,3 +272,5 @@ dialog select { display: block; margin-top: 8px; }
 .local-media-entry button { font-size: 12px; }
 .local-media-entry p { margin: 8px 0 0; font-size: 12px; overflow-wrap: anywhere; }
 @media (max-width:650px) { .summary-heading { align-items: flex-start; } .summary-heading h2 { font-size: 22px; } .status-chip { max-width: 105px; } #summary-body { font-size: 16px; } }
+
+.translation-review { color: #845d20; font-size: 12px; padding: 8px 12px; border-left: 2px solid #d8b16a; background: #fffaf0; overflow-wrap: anywhere; }

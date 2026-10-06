@@ -4,9 +4,10 @@ import fs from 'node:fs';
 import {webcrypto} from 'node:crypto';
 import {Window} from 'happy-dom';
 const root=new URL('../',import.meta.url);
-function setup(stored, fetchMock, layout){
+function setup(stored, fetchMock, layout, contextControls=false){
   const window=new Window({url:'https://coconut.example/'});
   window.document.body.innerHTML=fs.readFileSync(new URL('reader/index.html',root),'utf8').split('<body>')[1].split('</body>')[0];
+  if(contextControls&&!window.document.getElementById('translation-glossary'))window.document.body.insertAdjacentHTML('beforeend','<textarea id="translation-glossary"></textarea><button id="save-translation-glossary"></button><p id="translation-quality"></p><select id="ai-task"><option value="question">提问</option><option value="summary">整篇摘要</option></select>');
   Object.defineProperty(window,'crypto',{value:webcrypto});
   if(stored!==undefined)window.localStorage.setItem('coconut-reader-v1',stored);
   if(layout!==undefined)window.localStorage.setItem('coconut-reading-layout-v1',layout);
@@ -980,6 +981,7 @@ test('metadata language corrections update translation selection and revoke pend
 test('changing metadata language stops later offline translation batches while retaining completed work',async()=>{
  const w=setup();try{
   const $=id=>w.document.getElementById(id);await importDocument(w,{language:'en',segments:Array.from({length:33},(_,i)=>({id:'s'+i,start:i,end:i+1,text:'Source '+i}))});
+  w.fetch=async()=>({ok:true,json:async()=>({ai:{}})});await $('check-ai').onclick();
   let resolve,body,requests=0;w.fetch=async(url,options)=>{requests++;body=JSON.parse(options.body);return new Promise(r=>resolve=r);};
   const pending=$('translate-document').onclick();$('document-details').click();$('document-language').value='fr';$('save-details').click();
   resolve({ok:true,json:async()=>({translations:body.segments.map(s=>({id:s.id,source_text:s.text,text:'Draft '+s.id,provider:'mock'}))})});await pending;
@@ -1265,5 +1267,71 @@ test('reselecting a playing document pauses hidden media and playlist inputs are
   $('library').querySelector('button').click();assert.equal($('summary-workspace').hidden,false);assert.ok(pauses>0);assert.equal($('stop-repeat').hidden,true);
   $('attach-reader-media').click();Object.defineProperty($('reader-media-file'),'files',{configurable:true,value:[{name:'disguised.mp3',type:'audio/mpeg',size:10,slice:()=>({text:async()=> '#EXTM3U\nhttps://example.org/remote.ts'})}]});await $('reader-media-file').onchange();
   assert.equal(objects,1);assert.match($('notice').textContent,/播放列表/);assert.equal(w.document.querySelector('audio'),player);
+ }finally{await w.happyDOM.close();}
+});
+
+test('glossary save and contextual translation send only matching terms and persist review warnings',async()=>{
+ const w=setup(undefined,undefined,undefined,true);try{
+  const $=id=>w.document.getElementById(id);await importDocument(w,{language:'en',segments:[{id:'a',start:0,end:3,speaker:'Speaker A',text:'Coconut sends 12 requests.'}]});
+  const requests=[];w.fetch=async(url,options)=>({ok:true,json:async()=>{
+   if(url.endsWith('language-tools'))return {local_translation:false,ai:{codex:{ready:true}}};
+   const request=JSON.parse(options.body);requests.push(request);return {translations:request.segments.map(s=>({id:s.id,source_text:s.text,text:'Coconut 发送20次请求',quality_warnings:['numbers_changed'],input_revision:'a'.repeat(64)}))};
+  }});
+  await $('check-ai').onclick();assert.equal($('translate-document').disabled,true);await $('translate-document').onclick();assert.equal(requests.length,0);
+  $('translation-glossary').value='Coconut = Coconut\nsecret = 隐藏术语';$('translation-glossary').oninput();$('ai-consent').checked=true;
+  await $('subscription-translate').onclick();assert.equal(requests.length,0,'unsaved glossary cannot be sent accidentally');
+  $('save-translation-glossary').click();assert.equal($('ai-consent').checked,false);$('ai-consent').checked=true;await $('subscription-translate').onclick();
+  assert.deepEqual(requests[0].glossary,[{source:'Coconut',target:'Coconut'}]);assert.equal(requests[0].segments[0].speaker,'Speaker A');
+  const doc=JSON.parse(w.localStorage.getItem('coconut-reader-v1')).documents[0];assert.equal(doc.segments[0].translations.zh.context_version,2);assert.deepEqual(doc.segments[0].translations.zh.quality_warnings,['numbers_changed']);
+  assert.match($('translation-quality').textContent,/1 段自动核对提示/);
+  $('translation-glossary').value='Coconut = 椰子';$('translation-glossary').oninput();$('save-translation-glossary').click();
+  assert.match(w.document.querySelector('.translation.stale').textContent,/需要重新生成/);assert.equal(requests.length,1);
+ }finally{await w.happyDOM.close();}
+});
+
+test('editing saved glossary during an in-flight request prevents all target writes',async()=>{
+ const w=setup(undefined,undefined,undefined,true);try{
+  const $=id=>w.document.getElementById(id);await importDocument(w,{language:'en',segments:[{id:'a',start:0,end:2,text:'Coconut works.'}]});
+  let release;w.fetch=async(url,options)=>url.endsWith('language-tools')?{ok:true,json:async()=>({ai:{codex:{ready:true}}})}:new Promise(resolve=>{const request=JSON.parse(options.body);release=()=>resolve({ok:true,json:async()=>({translations:request.segments.map(s=>({id:s.id,source_text:s.text,text:'译文'}))})});});
+  await $('check-ai').onclick();$('ai-consent').checked=true;const pending=$('subscription-translate').onclick();
+  $('translation-glossary').value='Coconut = 椰子';$('translation-glossary').oninput();$('save-translation-glossary').click();release();await pending;
+  const doc=JSON.parse(w.localStorage.getItem('coconut-reader-v1')).documents[0];assert.equal(doc.segments[0].translations.zh,undefined);assert.match($('ai-progress').textContent,/本批全部不保存/);
+ }finally{await w.happyDOM.close();}
+});
+
+test('summary task revokes consent and sends entire source despite reading filters',async()=>{
+ const w=setup(undefined,undefined,undefined,true);try{
+  const $=id=>w.document.getElementById(id);await importDocument(w,{language:'en',segments:[{id:'a',start:0,end:1,text:'Selected source'},{id:'b',start:1,end:2,text:'Other source'}]});
+  let sent;w.fetch=async(url,options)=>({ok:true,json:async()=>url.endsWith('language-tools')?{ai:{codex:{ready:true}}}:(sent=JSON.parse(options.body),{answer:'基于原文的摘要',citations:['a','b'],provider:'chatgpt_subscription'})});
+  await $('check-ai').onclick();$('search').value='Selected';$('search').oninput();$('ai-filtered').checked=true;$('ai-consent').checked=true;$('ai-task').value='summary';$('ai-task').onchange();
+  assert.equal($('ai-consent').checked,false);assert.equal($('ai-filtered').checked,false);assert.equal($('ai-filtered').disabled,true);assert.equal(sent,undefined);
+  $('ai-consent').checked=true;await $('ask-ai').onclick();assert.deepEqual(sent.segments.map(s=>s.id),['a','b']);assert.match(sent.question,/完整原文/);assert.equal(sent.language,'zh');
+  const doc=JSON.parse(w.localStorage.getItem('coconut-reader-v1')).documents[0];assert.equal(doc.ai_answers[0].purpose,'summary');assert.deepEqual(doc.ai_answers[0].input_snapshot.segments.map(s=>s.id),['a','b']);
+ }finally{await w.happyDOM.close();}
+});
+
+test('imported glossary equality and quote terms survive unchanged UI saves',async()=>{
+ const w=setup(undefined,undefined,undefined,true);try{
+  const $=id=>w.document.getElementById(id),terms=[{source:'a = b',target:'a 等于 b'},{source:'say "hi"',target:'说“嗨”'},{source:'path\\name',target:'路径 = 名称'}];
+  await importDocument(w,{language:'en',translation_glossary:{zh:terms},segments:[{start:0,end:1,text:'a = b'}]});
+  $('save-translation-glossary').click();
+  const doc=JSON.parse(w.localStorage.getItem('coconut-reader-v1')).documents[0];assert.deepEqual(doc.translation_glossary.zh,terms);
+ }finally{await w.happyDOM.close();}
+});
+
+test('changing AI task latches stop for active translation even if shared consent is rechecked',async()=>{
+ const w=setup(undefined,undefined,undefined,true);try{
+  const $=id=>w.document.getElementById(id);await importDocument(w,{language:'en',segments:Array.from({length:33},(_,i)=>({id:'s'+i,start:i,end:i+1,text:'Fragment '+i}))});
+  let release,requests=0;w.fetch=async(url,options)=>url.endsWith('language-tools')?{ok:true,json:async()=>({ai:{codex:{ready:true}}})}:new Promise(resolve=>{requests++;const request=JSON.parse(options.body);release=()=>resolve({ok:true,json:async()=>({translations:request.segments.map(s=>({id:s.id,source_text:s.text,text:'译文'}))})});});
+  await $('check-ai').onclick();$('ai-consent').checked=true;const pending=$('subscription-translate').onclick();
+  $('ai-task').value='summary';$('ai-task').onchange();$('ai-consent').checked=true;release();await pending;assert.equal(requests,1);assert.match($('ai-progress').textContent,/已停止/);
+ }finally{await w.happyDOM.close();}
+});
+
+test('saved translation review flags stay visible next to valid text and in notebook export',async()=>{
+ const w=setup();try{
+  await importDocument(w,{title:'Review flags',language:'en',translation_view:'zh',notes:{a:'Keep'},segments:[{id:'a',start:0,end:1,text:'12 requests',translations:{zh:{text:'20 次请求',source_text:'12 requests',source_language:'en',document_language:'en',provider:'local',quality_warnings:['numbers_changed']}}}]});
+  assert.match(w.document.querySelector('.translation-review').textContent,/数字/);
+  const doc=JSON.parse(w.localStorage.getItem('coconut-reader-v1')).documents[0];assert.match(w.Coconut.notebookMarkdown(doc),/译文待核对：.*数字/);
  }finally{await w.happyDOM.close();}
 });

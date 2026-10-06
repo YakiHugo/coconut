@@ -2,7 +2,10 @@
 
 No paid model API or executable remote model code is used. OPUS preparation
 uses optional CPU PyTorch; runtime translation uses CTranslate2.
-Subtitle cues already provide the sentence units; each output keeps its cue ID.
+This legacy offline rough-draft path translates each cue separately. Subtitle
+cues are not reliable semantic units; use the contextual CLI workflow when
+context, terminology and discourse consistency are required. Each output keeps
+its original cue ID; this does not imply translated-word alignment.
 """
 from __future__ import annotations
 import json
