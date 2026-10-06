@@ -40,6 +40,8 @@ jobs:
         run: node tests/summary-browser-acceptance.mjs
       - name: Verify explicit podcast source imports through the desktop HTTP bridge
         run: node tests/podcast-browser-acceptance.mjs
+      - name: Verify audio project to transcript, injected AI, playback and clean-browser recovery
+        run: node tests/project-continuity-browser.mjs
       - name: Prepare original synthetic media and timed text
         run: python scripts/prepare_browser_acceptance.py --mode synthetic --directory "$RUNNER_TEMP/coconut-acceptance"
       - name: Verify actual browser playback, reading, downloads and restore

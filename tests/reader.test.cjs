@@ -393,3 +393,23 @@ test('shelf discovery searches only the chosen scope and distinguishes original 
  const audio={title:'原声',project_kind:'audio_only',segments:[],timestamp_bookmarks:[{note:'audio thought'}]};
  assert.equal(libraryMatches(audio,'thought','annotated','notes'),true);assert.equal(libraryMatches(audio,'','transcript'),false);
 });
+
+test('attaching a transcript keeps root annotations recoverable and separate from model evidence',()=>{
+ const C=require('../reader/core.js');
+ const audio=C.validate({project_kind:'audio_only',title:'My saved title',language:'en',podcast_source:{feed_url:'https://publisher.example/feed',episode_id:'episode',media_url:'https://publisher.example/audio.mp3',media_kind:'audio'},segments:[],project_note:'PRIVATE PROJECT NOTE',timestamp_bookmarks:[{id:'bookmark',time:2,note:'PRIVATE BOOKMARK'}]});
+ const attached=C.attachProjectTranscript(audio,{title:'Subtitle filename',language:'en',source_media:{job_id:'a'.repeat(32),kind:'video'},segments:[{id:'cue',start:0,end:4,text:'Actual source words'}]});
+ assert.equal(attached.title,'My saved title');assert.equal(attached.project_kind,undefined);assert.equal(attached.source_media,undefined);assert.equal(C.audioProjectIdentity(attached),C.audioProjectIdentity(audio));
+ const restored=C.validate(JSON.parse(JSON.stringify(attached)));assert.equal(restored.project_note,audio.project_note);assert.deepEqual(restored.timestamp_bookmarks,audio.timestamp_bookmarks);assert.equal(C.libraryMatches(restored,'','annotated'),true);
+ assert.match(C.notebookMarkdown(restored),/PRIVATE PROJECT NOTE/);assert.match(C.notebookMarkdown(restored),/PRIVATE BOOKMARK/);assert.match(C.notebookMarkdown(restored),/不是原文/);
+ const summary=C.summaryReadiness(restored).plan,translation=C.subscriptionPlan(restored,['cue'],'en','zh','codex');
+ assert.ok(!JSON.stringify(summary).includes('PRIVATE'));assert.ok(!JSON.stringify(translation).includes('PRIVATE'));assert.equal(Object.keys(restored.notes).length,0);
+ assert.throws(()=>C.attachProjectTranscript(audio,audio),/真正/);assert.throws(()=>C.validate({...attached,timestamp_bookmarks:[{id:'x',time:-1,note:''}]}),/时间书签/);
+});
+
+test('attachment rejects independently valid files whose combined recovery JSON exceeds the import limit',()=>{
+ const C=require('../reader/core.js'),limit=15*1024*1024;
+ const project=C.validate({project_kind:'audio_only',title:'Notes',podcast_source:{kind:'direct_media',media_url:'https://publisher.example/audio.mp3',media_kind:'audio'},segments:[],project_note:'\0'.repeat(100000),timestamp_bookmarks:Array.from({length:900},(_,i)=>({id:'b'+i,time:i,note:'\0'.repeat(1000)}))});
+ const text=C.validate({title:'Large valid file',segments:Array.from({length:2000},(_,i)=>({id:'s'+i,start:i,end:i+1,text:'t'.repeat(6000)}))});
+ const size=value=>Buffer.byteLength(JSON.stringify(value,null,2));assert.ok(size(project)<limit);assert.ok(size(text)<limit);
+ const before=JSON.stringify(project);assert.throws(()=>C.attachProjectTranscript(project,text),/超过15MB/);assert.equal(JSON.stringify(project),before);
+});

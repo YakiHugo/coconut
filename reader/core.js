@@ -60,13 +60,12 @@
  function audioNoteCharacters(doc) {return (doc.project_note?.length||0)+(doc.timestamp_bookmarks||[]).reduce((total,item)=>total+item.note.length,0);}
  function audioProjectIdentity(doc) {
   const origin=podcastSource(doc?.podcast_source);
-  if(!isAudioProject(doc)||!origin)return '';
+  if(!origin)return '';
   return JSON.stringify(origin.kind==='direct_media'?['direct_media',origin.media_url]:['podcast',origin.feed_url,origin.episode_id]);
  }
- function validateAudioProject(data) {
-  const origin=podcastSource(data.podcast_source);
-  if(!Array.isArray(data.segments)||data.segments.length||!origin?.media_url)throw new Error('原声项目必须保留公开媒体来源，且不能把简介或笔记当作文字稿');
-  if(typeof data.title==='string'&&data.title.length>500||typeof data.language==='string'&&data.language.length>100)throw new Error('原声项目标题不能超过500字符，语言标记不能超过100字符');
+ function hasProjectAnnotations(doc){return Boolean(doc&&Object.hasOwn(doc,'project_note')&&Array.isArray(doc.timestamp_bookmarks));}
+ function projectAnnotationCount(doc){return (doc.project_note?.trim()?1:0)+(doc.timestamp_bookmarks?.length||0);}
+ function projectAnnotations(data){
   if(data.project_note!==undefined&&(typeof data.project_note!=='string'||data.project_note.length>100000))throw new Error('项目笔记不能超过100,000字符');
   const bookmarks=data.timestamp_bookmarks??[],ids=new Set();
   if(!Array.isArray(bookmarks)||bookmarks.length>2000)throw new Error('每个原声项目最多保存2,000个时间书签');
@@ -75,11 +74,33 @@
    ids.add(item.id);
   }
   if(audioNoteCharacters({...data,timestamp_bookmarks:bookmarks})>AUDIO_NOTE_BUDGET)throw new Error('项目笔记与书签笔记总量不能超过1,000,000字符，请拆分备份');
+  return {project_note:data.project_note||'',timestamp_bookmarks:bookmarks.map(({id,time,note})=>({id,time,note}))};
+ }
+ function attachProjectTranscript(project, transcript){
+  if(!isAudioProject(project))throw new Error('只能为尚未导入文字稿的原声项目补充原文');
+  const original=validateAudioProject(project),text=validate(transcript);
+  if(isAudioProject(text))throw new Error('请选择真正的 JSON / SRT / VTT 定时文字稿，原声项目没有可附加的原文');
+  const result={...text,title:original.title,language:text.language||original.language,source_url:original.source_url,podcast_source:original.podcast_source,
+   ...projectAnnotations(original),...(original.media_duration?{media_duration:original.media_duration}:{})};
+  // The selected file supplies words, not an unrelated local media job association.
+  delete result.source_media;
+  if(audioProjectIdentity(original)===audioProjectIdentity(text)&&original.podcast_source.media_url===text.podcast_source?.media_url&&original.podcast_source.media_kind===text.podcast_source?.media_kind&&text.podcast_source.transcript_url){
+   result.podcast_source={...original.podcast_source,transcript_url:text.podcast_source.transcript_url};
+  }
+  const attached=validate(result),key=typeof project.key==='string'?project.key:'k'.repeat(200);
+  if(new TextEncoder().encode(JSON.stringify({...attached,key},null,2)).byteLength>15*1024*1024)throw new Error('合并后的 JSON 备份超过15MB，无法可靠重新导入；原项目保留，请先整理或拆分文字稿与笔记');
+  return attached;
+ }
+ function validateAudioProject(data) {
+  const origin=podcastSource(data.podcast_source);
+  if(!Array.isArray(data.segments)||data.segments.length||!origin?.media_url)throw new Error('原声项目必须保留公开媒体来源，且不能把简介或笔记当作文字稿');
+  if(typeof data.title==='string'&&data.title.length>500||typeof data.language==='string'&&data.language.length>100)throw new Error('原声项目标题不能超过500字符，语言标记不能超过100字符');
+  const annotations=projectAnnotations(data);
   return {schema_version:1,project_kind:'audio_only',transcript_status:data.transcript_status==='unavailable'?'unavailable':'not_imported',
    title:typeof data.title==='string'?data.title:'未命名原声项目',source_url:podcastURL(data.source_url)||origin.feed_url||origin.media_url,
    language:typeof data.language==='string'?data.language:'',podcast_source:origin,
    ...(Number.isFinite(data.media_duration)&&data.media_duration>0&&data.media_duration<=604800?{media_duration:data.media_duration}:{}),
-   project_note:data.project_note||'',timestamp_bookmarks:bookmarks.map(({id,time,note})=>({id,time,note})),
+   ...annotations,
    // Audio metadata and user notes are never transcript evidence or model output.
    segments:[],notes:Object.create(null),ai_answers:[],translation_view:'',translation_contexts:Object.create(null),translation_glossary:Object.create(null)};
  }
@@ -270,7 +291,7 @@
   return isAudioProject(doc)?doc.media_duration||0:doc.segments.reduce((end,segment)=>Math.max(end,segment.end),0);
  }
  function libraryMatches(doc, query, kind='all', scope='title') {
-  const audio=isAudioProject(doc), annotated=audio?Boolean(doc.project_note?.trim()||doc.timestamp_bookmarks?.length):Boolean(doc.segments.some(s=>s.saved_excerpt)||Object.values(doc.notes||{}).some(n=>n.trim()));
+  const audio=isAudioProject(doc), annotated=Boolean(projectAnnotationCount(doc)||doc.segments.some(s=>s.saved_excerpt)||Object.values(doc.notes||{}).some(n=>n.trim()));
   if(kind==='audio'&&!audio||kind==='transcript'&&audio||kind==='annotated'&&!annotated)return false;
   const needle=query.trim().toLocaleLowerCase(),matches=value=>typeof value==='string'&&value.toLocaleLowerCase().includes(needle);
   if(matches(doc.title))return true;
@@ -352,6 +373,8 @@
 		const sourceMedia = mediaSource(data.source_media);
 		return {
 			notes,
+   ...((data.project_note!==undefined||data.timestamp_bookmarks!==undefined)?projectAnnotations(data):{}),
+   ...(Number.isFinite(data.media_duration)&&data.media_duration>0&&data.media_duration<=604800?{media_duration:data.media_duration}:{}),
 			...(typeof data.readingPosition === "string" && ids.has(data.readingPosition) ? {readingPosition: data.readingPosition} : {}),
 			...(provenance ? { provenance } : {}),
 			...(sourceMedia ? { source_media: sourceMedia } : {}),
@@ -504,6 +527,11 @@
 			}
 			if (doc.notes?.[segment.id]?.trim()) lines.push("我的笔记：", "", quote(doc.notes[segment.id]), "");
 		}
+  if(hasProjectAnnotations(doc)){
+   lines.push('## 项目笔记与时间书签','','以下是用户自己的记录，不是原文或经过验证的引用。','');
+   if(doc.project_note.trim())lines.push('### 项目笔记','',quote(doc.project_note),'');
+   for(const item of doc.timestamp_bookmarks)lines.push('### '+time(item.time),'',item.note?quote(item.note):'时间书签（未填写笔记）','');
+  }
 		return lines.join("\n");
 	}
  function audioNotebookMarkdown(doc) {
@@ -566,7 +594,7 @@
 			segments,
 		});
 	}
-	const api = { libraryMatches, documentDuration, sortedLibrary, AUDIO_NOTE_BUDGET, audioNoteCharacters, isAudioProject, audioProjectIdentity, SUMMARY_QUESTION, summaryReadiness, podcastURL, podcastSource, cleanGlossary, relevantGlossary, translationQualityMessage, retainAnswers, summaryFreshness, latestSummary, summaryMarkdown, aiReadingMarkdown, parseReadingTime, segmentAtTime, subtitleExport, mergeLibraryBackup, time, source, media, validate, parse, matchesSegment, notebookSegments, notebookMarkdown, translationCurrent, sameCueSnapshot, subscriptionPlan, cleanContexts, answerFreshness };
+	const api = { hasProjectAnnotations, projectAnnotationCount, attachProjectTranscript, libraryMatches, documentDuration, sortedLibrary, AUDIO_NOTE_BUDGET, audioNoteCharacters, isAudioProject, audioProjectIdentity, SUMMARY_QUESTION, summaryReadiness, podcastURL, podcastSource, cleanGlossary, relevantGlossary, translationQualityMessage, retainAnswers, summaryFreshness, latestSummary, summaryMarkdown, aiReadingMarkdown, parseReadingTime, segmentAtTime, subtitleExport, mergeLibraryBackup, time, source, media, validate, parse, matchesSegment, notebookSegments, notebookMarkdown, translationCurrent, sameCueSnapshot, subscriptionPlan, cleanContexts, answerFreshness };
 	if (typeof module !== "undefined" && module.exports) module.exports = api;
 	else root.Coconut = api;
 })(typeof window !== "undefined" ? window : globalThis);

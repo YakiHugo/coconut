@@ -6,12 +6,12 @@
 <title>Coconut · 把听过的，留下来</title>
 <link rel="stylesheet" href="style.css?v=8b6e2ca979">
 <script src="summary.js?v=580ffdad1e" defer></script>
-<script src="core.js?v=e0b76eeb34" defer>
+<script src="core.js?v=57844f4005" defer>
 </script>
-<script src="app.js?v=8df9d70887" defer>
+<script src="app.js?v=d06e91eade" defer>
 </script>
 <script src="language.js?v=be55932556" defer></script>
-<script src="podcasts.js?v=faf2195d29" defer></script>
+<script src="podcasts.js?v=c542fbe50d" defer></script>
 <script src="jobs.js?v=fede348875" defer>
 </script>
 </head>
@@ -133,7 +133,8 @@ cd coconut
 <div id="source-media" hidden>
 </div>
 <section id="audio-project" hidden aria-label="原声项目与笔记">
-<h2>先留下声音和想法</h2><p class="hint">尚未导入文字稿，没有可生成摘要的原文。节目简介不会代替文字稿；项目笔记和时间书签只记录你的想法，不会作为原文发送给 AI。</p>
+<h2 id="audio-project-heading">先留下声音和想法</h2><p id="audio-project-boundary" class="hint">尚未导入文字稿，没有可生成摘要的原文。节目简介不会代替文字稿；项目笔记和时间书签只记录你的想法，不会作为原文发送给 AI。</p>
+<button id="attach-project-transcript" type="button">为此项目补充文字稿</button><button id="fetch-project-transcript" type="button" hidden>检查并补充发布者文字稿</button><button id="cancel-project-transcript" type="button" hidden>取消获取文字稿</button><input id="project-transcript-file" type="file" accept=".json,.srt,.vtt" hidden><p id="attach-project-help" class="hint">选择与本集声音对应的定时文字稿，包括已完成的字幕或 ASR JSON。只导入文件，不自动识别或调用模型；保留当前项目的标题、笔记、书签及已选择的媒体。</p>
 <label for="project-note">项目笔记</label><textarea id="project-note" rows="4" placeholder="记下想法、疑问或之后要核对的内容"></textarea>
 <p class="hint">来源、笔记与时间书签自动保存在此浏览器；媒体只在本次页面可用，刷新后请单独重新获取。迁移请导出 JSON 备份。</p>
 <form id="audio-bookmark-form"><label for="audio-bookmark-time">时间书签</label><input id="audio-bookmark-time" required placeholder="12:34 或秒数" inputmode="decimal"><button id="use-playback-time" type="button">填入正在播放的时间</button><label for="audio-bookmark-note">书签笔记（可选）</label><input id="audio-bookmark-note" placeholder="此刻想记住什么？"><button type="submit">保存时间书签</button></form>

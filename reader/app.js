@@ -215,7 +215,8 @@ function render() {
 	}
 	$("empty").hidden = true;
  const audioOnly=Coconut.isAudioProject(doc);
- $('audio-project').hidden=!audioOnly;
+ $('audio-project').hidden=!Coconut.hasProjectAnnotations(doc);
+ if(!audioOnly&&Coconut.hasProjectAnnotations(doc))renderAudioProject(doc);
  $('transcript-reading-tools').hidden=audioOnly;
  $('reading-modes').hidden=audioOnly;
  $('time-navigation').hidden=audioOnly;
@@ -534,12 +535,15 @@ $("save-source").onclick = (e) => {
 	render();
 };
 function renderNotebookAction(doc) {
-	const count = Coconut.isAudioProject(doc)?(doc.project_note.trim()?1:0)+doc.timestamp_bookmarks.length:Coconut.notebookSegments(doc).length;
+	const count = Coconut.projectAnnotationCount(doc)+Coconut.notebookSegments(doc).length;
 	$("export-notebook").disabled = count === 0;
-	$("export-notebook").textContent = Coconut.isAudioProject(doc)?"导出原声项目笔记（"+count+" 项）":"导出阅读笔记（" + count + " 段）";
+	$("export-notebook").textContent = Coconut.isAudioProject(doc)?"导出原声项目笔记（"+count+" 项）":"导出阅读笔记（" + count + (Coconut.hasProjectAnnotations(doc)?" 项）":" 段）");
 }
 function renderAudioProject(doc) {
- const panel=$('audio-project');
+ const panel=$('audio-project'),audioOnly=Coconut.isAudioProject(doc);
+ $('audio-project-heading').textContent=audioOnly?'先留下声音和想法':'项目笔记与时间书签';
+ $('audio-project-boundary').textContent=audioOnly?'尚未导入文字稿，没有可生成摘要的原文。项目笔记和时间书签只记录你的想法，不会作为原文发送给 AI。':'已补充文字稿。以下项目笔记和时间书签仍是你的记录，不是原文，不会加入发送给 AI 的原文范围。';
+ $('attach-project-transcript').hidden=!audioOnly;$('attach-project-help').hidden=!audioOnly;
  if(panel.dataset.documentKey!==doc.key){
   panel.dataset.documentKey=doc.key;$('audio-bookmark-form').reset();$('audio-bookmark-search').value='';$('audio-project-status').textContent='';
  }
@@ -586,9 +590,9 @@ function allowAudioNoteChange(doc,previous,value,limit){
  }
  return true;
 }
-$('audio-bookmark-search').oninput=()=>{const doc=active();if(Coconut.isAudioProject(doc))renderAudioProject(doc);};
+$('audio-bookmark-search').oninput=()=>{const doc=active();if(Coconut.hasProjectAnnotations(doc))renderAudioProject(doc);};
 $('project-note').oninput=()=>{
- const doc=active();if(!Coconut.isAudioProject(doc))return;
+ const doc=active();if(!Coconut.hasProjectAnnotations(doc))return;
  const input=$('project-note');if(!allowAudioNoteChange(doc,doc.project_note,input.value,100000)){input.value=doc.project_note;return;}
  doc.project_note=input.value;save();renderNotebookAction(doc);
 };
@@ -597,7 +601,7 @@ $('use-playback-time').onclick=()=>{
  $('audio-bookmark-time').value=String(Math.floor(player.currentTime*1000)/1000);$('audio-bookmark-note').focus();
 };
 $('audio-bookmark-form').onsubmit=event=>{
- event.preventDefault();const doc=active();if(!Coconut.isAudioProject(doc))return;
+ event.preventDefault();const doc=active();if(!Coconut.hasProjectAnnotations(doc))return;
  const seconds=Coconut.parseReadingTime($('audio-bookmark-time').value);
  if(seconds===null||seconds>604800){$('audio-project-status').textContent='请输入有效的秒数、分:秒或时:分:秒，最长7天。';return;}
  if(doc.timestamp_bookmarks.length>=2000){$('audio-project-status').textContent='已达到2,000个时间书签上限，请先备份和整理。';return;}
@@ -609,7 +613,7 @@ $('audio-bookmark-form').onsubmit=event=>{
 };
 $("export-notebook").onclick = () => {
 	const doc = active();
-	if (!doc || (Coconut.isAudioProject(doc)?!doc.project_note.trim()&&!doc.timestamp_bookmarks.length:!Coconut.notebookSegments(doc).length)) {
+	if (!doc || (!Coconut.projectAnnotationCount(doc)&&!Coconut.notebookSegments(doc).length)) {
 		notice("先摘录一段原话，或写一则笔记，再导出阅读笔记。");
 		return;
 	}
@@ -1005,3 +1009,27 @@ $('detach-reader-media').onclick=()=>{
  changeMediaSelection(key);
  stopRepeating();$('source-media').querySelector('audio,video')?.pause();browserMedia.delete(key);URL.revokeObjectURL(attachment.url);render();
 };
+
+let projectTranscriptTarget=null,projectTranscriptRead=0;
+$('attach-project-transcript').onclick=()=>{const doc=active();if(Coconut.isAudioProject(doc)){projectTranscriptTarget={key:doc.key,source:JSON.stringify(doc.podcast_source)};$('project-transcript-file').click();}};
+$('project-transcript-file').onchange=async()=>{
+ const input=$('project-transcript-file'),file=input.files[0],target=projectTranscriptTarget,read=++projectTranscriptRead;projectTranscriptTarget=null;
+ if(!file)return;
+ try{
+  if(!target)throw new Error('请从目标原声项目重新选择文字稿');
+  if(file.size>15*1024*1024)throw new Error('文件超过15MB，请先拆分文字稿');
+  const text=Coconut.parse(await file.text(),file.name);
+  if(read!==projectTranscriptRead)throw new Error('已经选择更新的文字稿，本次导入已取消');
+  const persisted=attachTranscriptToProject(text,target);
+  notice(persisted?'文字稿已附加到当前项目，原有笔记、时间书签与媒体保留。未调用识别、翻译或摘要模型。':'文字稿已在本页附加，但未能保存，请立即导出 JSON 备份。');
+ }catch(error){notice('补充文字稿失败：'+error.message);}
+ finally{input.value='';}
+};
+
+function attachTranscriptToProject(text,target){
+ const index=state.documents.findIndex(doc=>doc.key===target.key),original=state.documents[index];
+ if(state.active!==target.key||workspace!=='read'||!Coconut.isAudioProject(original)||JSON.stringify(original.podcast_source)!==target.source)throw new Error('目标项目已经切换或更新，本次未附加文字稿，请重新选择');
+ const attached={...Coconut.attachProjectTranscript(original,text),key:original.key};
+ state.documents[index]=attached;selected=null;pageStart=0;notesOnly=false;excerptsOnly=false;speakerFilter=null;$('search').value='';
+ const persisted=save();setReadingMode('transcript');render();return persisted;
+}
