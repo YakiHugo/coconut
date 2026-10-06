@@ -1,5 +1,6 @@
 (function (root) {
 	"use strict";
+ const Summaries=typeof module!=="undefined"&&module.exports?require("./summary.js"):root.CoconutSummary;
 	function time(seconds) {
 		const n = Math.max(0, Math.floor(seconds));
 		return (
@@ -42,7 +43,7 @@
 	}
  function podcastURL(value) {
   if(typeof value!=="string"||value.length>4096)return "";
-  try { const url=new URL(value);return ["http:","https:"].includes(url.protocol)&&!url.username&&!url.password&&!url.port?url.href:""; }catch{return "";}
+  try { const url=new URL(value);return ["http:","https:"].includes(url.protocol)&&!url.username&&!url.password&&!url.port&&url.href.length<=4096?url.href:""; }catch{return "";}
  }
  function podcastOrigin(doc) {
   return doc.podcast_source ? (podcastURL(doc.source_url)||podcastURL(doc.podcast_source.feed_url)).replace(/[()]/g,c=>c==='('?'%28':'%29') : '';
@@ -50,8 +51,37 @@
  function podcastSource(value) {
   if(!value||typeof value!=="object"||Array.isArray(value))return undefined;
   const feed=podcastURL(value.feed_url),mediaURL=podcastURL(value.media_url),transcriptURL=podcastURL(value.transcript_url);
+  if(value.kind==='direct_media')return mediaURL&&['audio','video'].includes(value.media_kind)?{kind:'direct_media',media_url:mediaURL,media_kind:value.media_kind}:undefined;
   if(!feed||typeof value.episode_id!=="string"||!value.episode_id||value.episode_id.length>1000)return undefined;
   return {feed_url:feed,episode_id:value.episode_id,...(mediaURL?{media_url:mediaURL}:{}),...(transcriptURL?{transcript_url:transcriptURL}:{}),...(['audio','video'].includes(value.media_kind)?{media_kind:value.media_kind}:{})};
+ }
+ function isAudioProject(doc) { return doc?.project_kind==='audio_only'; }
+ const AUDIO_NOTE_BUDGET=1000000;
+ function audioNoteCharacters(doc) {return (doc.project_note?.length||0)+(doc.timestamp_bookmarks||[]).reduce((total,item)=>total+item.note.length,0);}
+ function audioProjectIdentity(doc) {
+  const origin=podcastSource(doc?.podcast_source);
+  if(!isAudioProject(doc)||!origin)return '';
+  return JSON.stringify(origin.kind==='direct_media'?['direct_media',origin.media_url]:['podcast',origin.feed_url,origin.episode_id]);
+ }
+ function validateAudioProject(data) {
+  const origin=podcastSource(data.podcast_source);
+  if(!Array.isArray(data.segments)||data.segments.length||!origin?.media_url)throw new Error('原声项目必须保留公开媒体来源，且不能把简介或笔记当作文字稿');
+  if(typeof data.title==='string'&&data.title.length>500||typeof data.language==='string'&&data.language.length>100)throw new Error('原声项目标题不能超过500字符，语言标记不能超过100字符');
+  if(data.project_note!==undefined&&(typeof data.project_note!=='string'||data.project_note.length>100000))throw new Error('项目笔记不能超过100,000字符');
+  const bookmarks=data.timestamp_bookmarks??[],ids=new Set();
+  if(!Array.isArray(bookmarks)||bookmarks.length>2000)throw new Error('每个原声项目最多保存2,000个时间书签');
+  for(const item of bookmarks){
+   if(!item||typeof item.id!=='string'||!item.id.length||item.id.length>200||ids.has(item.id)||!Number.isFinite(item.time)||item.time<0||item.time>604800||typeof item.note!=='string'||item.note.length>10000)throw new Error('时间书签内容或时间无效');
+   ids.add(item.id);
+  }
+  if(audioNoteCharacters({...data,timestamp_bookmarks:bookmarks})>AUDIO_NOTE_BUDGET)throw new Error('项目笔记与书签笔记总量不能超过1,000,000字符，请拆分备份');
+  return {schema_version:1,project_kind:'audio_only',transcript_status:data.transcript_status==='unavailable'?'unavailable':'not_imported',
+   title:typeof data.title==='string'?data.title:'未命名原声项目',source_url:podcastURL(data.source_url)||origin.feed_url||origin.media_url,
+   language:typeof data.language==='string'?data.language:'',podcast_source:origin,
+   ...(Number.isFinite(data.media_duration)&&data.media_duration>0&&data.media_duration<=604800?{media_duration:data.media_duration}:{}),
+   project_note:data.project_note||'',timestamp_bookmarks:bookmarks.map(({id,time,note})=>({id,time,note})),
+   // Audio metadata and user notes are never transcript evidence or model output.
+   segments:[],notes:Object.create(null),ai_answers:[],translation_view:'',translation_contexts:Object.create(null),translation_glossary:Object.create(null)};
  }
 	function mediaSource(value) {
 		if (
@@ -213,33 +243,19 @@
   }
   return {windows,selected:runs.flat().length,total:windows.reduce((n,w)=>n+w.segments.length,0),sent:new Set(windows.flatMap(w=>w.snapshot.map(c=>c.id))).size};
  }
- const SUMMARY_QUESTION='请根据完整原文生成简洁中文摘要，列出核心主旨、关键论点、重要事实或数字、分歧与尚不确定之处。每项结论都必须能由原文支持，并在返回的 citations 中提供相应片段ID。不要虚构主题、事实、人物身份或缺失结论；证据不足时明确说明。';
+ const SUMMARY_QUESTION=Summaries.QUESTION;
  function summaryReadiness(doc) {
-  const segments=doc?.segments;
-  const alternative='可直接读原文，或切换到「向原文提问」，用搜索或摘录筛选较小范围；局部回答不会保存为整篇摘要。';
-  const blocked=reason=>({ready:false,reason:reason+' '+alternative});
-  if(!Array.isArray(segments)||!segments.length)return blocked('没有可用于整篇摘要的原文。');
-  if(segments.length>5000)return blocked(`整篇摘要暂不可用：当前 ${segments.length.toLocaleString('en-US')} 段，超过单次 5,000 段上限。`);
-  const ids=new Set();
-  for(const segment of segments){
-   if(!segment||typeof segment.id!=='string'||!segment.id.length||segment.id.length>200||ids.has(segment.id)||typeof segment.text!=='string'||!segment.text.trim())return blocked('整篇摘要暂不可用：存在空白原文或不支持的片段 ID，请修正文字稿后重试。');
-   ids.add(segment.id);
-  }
-  const input=JSON.stringify({question:SUMMARY_QUESTION,answer_language:'zh',transcript:segments.map(({id,text})=>({id,text}))});
-  // Cover both bridges: Python json.dumps adds these separator spaces; UTF-16
-  // length is conservative for its Unicode count and matches the Node bridge.
-  const characters=input.length+4*segments.length+4;
-  if(characters>250000)return blocked('整篇摘要暂不可用：全文及请求结构超过单次 250,000 字符上限。');
-  return {ready:true,reason:'',characters};
+  try {const plan=Summaries.plan(doc);return {ready:true,reason:'',characters:plan.characters,plan};}
+  catch(error){return {ready:false,reason:'整篇摘要暂不可用：'+error.message+'。可直接读原文，或筛选较小范围提问；局部回答不会保存为整篇摘要。'};}
  }
  // Only the exact ordered {id,text} payload is evidence for a saved answer.
  // Never discard missing IDs: doing so would make a removed dependency look current.
  function cleanAnswerInput(value) {
-  if(!value || value.version!==1 || !Array.isArray(value.segments) || !value.segments.length || value.segments.length>5000)return undefined;
+  if(!value || value.version!==1 || !Array.isArray(value.segments) || !value.segments.length || value.segments.length>20000)return undefined;
   const ids=new Set();let chars=0;
   if(!value.segments.every(s=>{
-   if(!s || typeof s.id!=="string" || !s.id.length || s.id.length>400 || ids.has(s.id) || typeof s.text!=="string")return false;
-   ids.add(s.id);chars+=s.id.length+s.text.length;return chars<=500000;
+   if(!s || typeof s.id!=="string" || !s.id.length || s.id.length>400 || ids.has(s.id) || typeof s.text!=="string"||s.text.length>1000000)return false;
+   ids.add(s.id);chars+=s.id.length+s.text.length;return chars<=2200000;
   }))return undefined;
   return {version:1,segments:value.segments.map(s=>({id:s.id,text:s.text}))};
  }
@@ -255,6 +271,7 @@
    [segment.text,segment.speaker||"",doc.notes?.[segment.id]||"",...Object.values(segment.translations||{}).filter(t=>translationCurrent(segment,doc,t)).map(t=>t.text)].join(" ").toLocaleLowerCase().includes(query.trim().toLocaleLowerCase());
  }
 	function validate(data) {
+  if(isAudioProject(data))return validateAudioProject(data);
 		if (
 			!data ||
 			!Array.isArray(data.segments) ||
@@ -323,7 +340,8 @@
 			schema_version: 1,
             language: typeof data.language === "string" ? data.language : "",
             translation_view: ["en","zh","ja","ko","fr","de","es"].includes(data.translation_view) ? data.translation_view : "",
-            ai_answers: Array.isArray(data.ai_answers) ? retainAnswers(data.ai_answers).filter(a=>a && typeof a.question==="string" && typeof a.answer==="string" && Array.isArray(a.citations)).map(a=>({question:a.question.slice(0,4000),answer:a.answer.slice(0,100000),citations:a.citations.filter(id=>ids.has(id)),...(cleanAnswerInput(a.input_snapshot) ? {input_snapshot:cleanAnswerInput(a.input_snapshot)} : {}),...(a.purpose==="summary"?{purpose:"summary"}:a.purpose==="question"?{purpose:"question"}:{}),provider:typeof a.provider==="string"?a.provider.slice(0,100):"unknown"})) : [],
+            summary_job: Summaries.clean(data.summary_job),
+            ai_answers: Array.isArray(data.ai_answers) ? retainAnswers(data.ai_answers).filter(a=>a && typeof a.question==="string" && typeof a.answer==="string" && Array.isArray(a.citations)).map(a=>({question:a.question.slice(0,4000),answer:a.answer.slice(0,100000),citations:a.citations.filter(id=>ids.has(id)),...(cleanAnswerInput(a.input_snapshot) ? {input_snapshot:cleanAnswerInput(a.input_snapshot)} : {}),...(a.purpose==="summary"?{purpose:"summary"}:a.purpose==="question"?{purpose:"question"}:{}),...(a.summary_process?.version===1&&Number.isInteger(a.summary_process.batches)&&a.summary_process.batches>=1&&a.summary_process.batches<=64?{summary_process:{version:1,batches:a.summary_process.batches,requests:a.summary_process.batches+(a.summary_process.batches>1?1:0),citation_basis:a.summary_process.batches>1?"batch_sources":"direct"}}:{}),provider:typeof a.provider==="string"?a.provider.slice(0,100):"unknown"})) : [],
 			title: typeof data.title === "string" ? data.title : "未命名文字稿",
 			source_url: typeof data.source_url === "string" ? data.source_url : "",
 			segments,
@@ -348,7 +366,7 @@
  function summaryMarkdown(doc, answer=latestSummary(doc)) {
   if(!answer)throw new Error("这篇还没有保存的摘要");
   return aiReadingMarkdown({...doc,ai_answers:[answer]}).replace(" · 本地 AI 记录", " · 播客摘要") +
-   "\n摘要覆盖状态：" + ({current:"覆盖当前整篇原文，仍需核对模型判断",stale:"整篇原文已经变化，旧摘要可能过期",unknown:"缺少完整依据，无法确认摘要覆盖范围"}[summaryFreshness(answer,doc)]) + "\n";
+   (answer.summary_process?.batches>1?"\n生成方式："+answer.summary_process.batches+" 批原文笔记完成后再汇总；所列引用来自被汇总结果引用的批次依据，不能保证每句话均有独立证据。\n":"") + "\n摘要覆盖状态：" + ({current:"覆盖当前整篇原文，仍需核对模型判断",stale:"整篇原文已经变化，旧摘要可能过期",unknown:"缺少完整依据，无法确认摘要覆盖范围"}[summaryFreshness(answer,doc)]) + "\n";
  }
  function aiReadingMarkdown(doc) {
   const line=value=>markdownText(value).replace(/[\r\n]+/g," ");
@@ -388,6 +406,7 @@
   return doc.segments.findLast(s=>s.start<=seconds && s.end>=seconds) || doc.segments.find(s=>s.start>=seconds) || null;
  }
  function subtitleExport(doc, format="srt", bilingual=false) {
+  if(isAudioProject(doc)||!doc.segments.length)throw new Error('尚未导入文字稿，不能导出字幕');
   if (!["srt","vtt"].includes(format)) throw new Error("不支持的字幕格式");
   const stamp = ms => {
    const hours = Math.floor(ms / 3600000), minutes = Math.floor(ms / 60000) % 60, seconds = Math.floor(ms / 1000) % 60;
@@ -436,6 +455,7 @@
 			.replace(/[\\`*_{}\[\]()#+.!|~$-]/g, "\\$&");
 	}
 	function notebookMarkdown(doc) {
+  if(isAudioProject(doc))return audioNotebookMarkdown(doc);
 		const kept = notebookSegments(doc);
 		const text = value => markdownText(value).replace(/\r\n?/g, "\n");
 		const singleLine = value => text(value).replace(/\n/g, " ");
@@ -467,6 +487,16 @@
 		}
 		return lines.join("\n");
 	}
+ function audioNotebookMarkdown(doc) {
+  const quote=value=>markdownText(value).replace(/\r\n?/g,'\n').split('\n').map(line=>'> '+line).join('\n');
+  const lines=['# '+markdownText(doc.title).replace(/[\r\n]+/g,' '),'','Coconut 原声项目笔记','',
+   '尚未导入文字稿，没有摘要。以下仅为用户笔记和时间书签，不是原文或经过验证的引用。','',
+   'Markdown 用于阅读；完整恢复请保留 Coconut JSON 备份。备份不包含媒体，回听需重新获取或选择本地文件。',''];
+  const origin=podcastOrigin(doc);if(origin)lines.push('[原始来源]('+origin+')','时间戳需在原声中手动定位。','');
+  if(doc.project_note?.trim())lines.push('## 项目笔记','',quote(doc.project_note),'');
+  for(const item of doc.timestamp_bookmarks||[])lines.push('## '+time(item.time),'',item.note?quote(item.note):'时间书签（未填写笔记）','');
+  return lines.join('\n');
+ }
 	function seconds(value) {
 		if (!/^(?:\d{2,}:)?[0-5]\d:[0-5]\d[.,]\d{3}$/.test(value)) throw new Error("字幕时间格式无效");
 		const parts = value.replace(",", ".").split(":").map(Number);
@@ -517,7 +547,7 @@
 			segments,
 		});
 	}
-	const api = { SUMMARY_QUESTION, summaryReadiness, podcastURL, podcastSource, cleanGlossary, relevantGlossary, translationQualityMessage, retainAnswers, summaryFreshness, latestSummary, summaryMarkdown, aiReadingMarkdown, parseReadingTime, segmentAtTime, subtitleExport, mergeLibraryBackup, time, source, media, validate, parse, matchesSegment, notebookSegments, notebookMarkdown, translationCurrent, sameCueSnapshot, subscriptionPlan, cleanContexts, answerFreshness };
+	const api = { AUDIO_NOTE_BUDGET, audioNoteCharacters, isAudioProject, audioProjectIdentity, SUMMARY_QUESTION, summaryReadiness, podcastURL, podcastSource, cleanGlossary, relevantGlossary, translationQualityMessage, retainAnswers, summaryFreshness, latestSummary, summaryMarkdown, aiReadingMarkdown, parseReadingTime, segmentAtTime, subtitleExport, mergeLibraryBackup, time, source, media, validate, parse, matchesSegment, notebookSegments, notebookMarkdown, translationCurrent, sameCueSnapshot, subscriptionPlan, cleanContexts, answerFreshness };
 	if (typeof module !== "undefined" && module.exports) module.exports = api;
 	else root.Coconut = api;
 })(typeof window !== "undefined" ? window : globalThis);

@@ -285,3 +285,11 @@ dialog select { display: block; margin-top: 8px; }
 
 .podcast-preview { display: block; width: 100%; max-height: 360px; margin-top: 14px; border-radius: 10px; }
 .podcast-origin { display: inline-block; margin-top: 8px; font-size: 12px; }
+
+/* Audio-only projects keep user notes separate from transcript evidence. */
+#audio-project { margin-top: 24px; }
+#audio-bookmark-form { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px 12px; align-items: center; margin: 20px 0; }
+#audio-bookmark-form label, #audio-bookmark-note, #audio-bookmark-form button[type="submit"] { grid-column: 1 / -1; }
+#audio-bookmark-form button[type="submit"] { justify-self: start; }
+.audio-bookmark { padding: 16px 0; border-top: 1px solid var(--line); }
+.audio-bookmark textarea { display: block; margin-bottom: 8px; }
