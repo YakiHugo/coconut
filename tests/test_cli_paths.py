@@ -100,3 +100,28 @@ class ASRProvenanceTests(unittest.TestCase):
                 main()
         download.assert_not_called()
         asr.assert_not_called()
+
+    def test_ambiguous_existing_tracks_require_language_before_any_asr(self):
+        import sys, types
+        from unittest.mock import patch
+        from transcribe import main
+        from subtitle_import import SubtitleRetrievalError
+        cases = [
+            {'ai-zh': [{'ext': 'srt', 'data': 'Original automatic captions'}]},
+            {'ai-zh': [{'ext': 'srt', 'data': 'Chinese automatic captions'}],
+             'en': [{'ext': 'srt', 'data': 'Supplied translation'}]},
+        ]
+        for tracks in cases:
+            class Downloader:
+                def __init__(self, settings): pass
+                def __enter__(self): return self
+                def __exit__(self, *args): pass
+                def extract_info(self, url, download=False): return {'subtitles': tracks}
+            with tempfile.TemporaryDirectory() as td, \
+                    patch.dict(sys.modules, {'yt_dlp': types.SimpleNamespace(YoutubeDL=Downloader)}), \
+                    patch('sys.argv', ['transcribe.py', 'https://www.bilibili.com/video/BV1234567890', '--work-dir', td, '--no-diarize']), \
+                    patch('transcribe.download_audio') as download, patch('transcribe.transcribe_fast') as asr:
+                with self.assertRaisesRegex(SubtitleRetrievalError, '选择原语言'):
+                    main()
+                download.assert_not_called()
+                asr.assert_not_called()

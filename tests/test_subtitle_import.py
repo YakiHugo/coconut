@@ -176,3 +176,9 @@ class CaptionProvenanceTests(unittest.TestCase):
             doc = subtitle_document(path)
         self.assertEqual(doc['provenance']['caption_method'], 'unknown')
         self.assertEqual(doc['provenance']['language_basis'], 'unknown')
+
+    def test_automatic_language_still_counts_for_source_ambiguity(self):
+        info = {'subtitles': {'ai-zh': [{'ext': 'srt', 'data': 'Chinese source'}],
+                              'en': [{'ext': 'srt', 'data': 'English translation'}]}}
+        self.assertIsNone(select_track(info))
+        self.assertEqual(select_track(info, 'zh'), ('subtitles', 'ai-zh'))

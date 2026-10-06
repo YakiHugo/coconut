@@ -1347,3 +1347,23 @@ test('startup and reconnect do not probe local CLI until the user clicks check',
   assert.deepEqual(calls,['api/health']);await $('check-ai').onclick();assert.deepEqual(calls,['api/health','api/language-tools']);
  }finally{await w.happyDOM.close();}
 });
+
+test('a generated summary is never labeled saved after browser persistence fails',async()=>{
+ const w=setup();try{
+  const $=id=>w.document.getElementById(id);await importDocument(w,{title:'Quota',language:'en',segments:[{id:'a',start:0,end:1,text:'Source'}]});
+  w.fetch=async url=>({ok:true,json:async()=>url.endsWith('language-tools')?{ai:{codex:{ready:true}}}:{answer:'Generated test summary',citations:['a'],provider:'test'}});
+  await $('check-ai').onclick();$('ai-task').value='summary';$('ai-task').onchange();$('ai-consent').checked=true;
+  const before=w.localStorage.getItem('coconut-reader-v1');Object.defineProperty(w,'localStorage',{value:{getItem:()=>before,setItem:()=>{throw new Error('QuotaExceededError');}}});
+  await $('ask-ai').onclick();assert.equal($('summary-state').dataset.state,'unsaved');assert.match($('summary-state').textContent,/请备份/);assert.match($('summary-status').textContent,/尚未保存/);assert.equal($('summary-body').textContent,'Generated test summary');assert.ok(!before.includes('Generated test summary'));
+ }finally{await w.happyDOM.close();}
+});
+
+test('replacing a full service with a lightweight bridge removes stale processing capabilities',async()=>{
+ let lightweight=false;const calls=[];
+ const w=setup(undefined,async path=>{calls.push(path);if(path==='api/health')return {ok:true,json:async()=>lightweight?{local_worker:false,capabilities:{local_agents:true,media_import:false}}:{local_worker:true}};return lightweight?{ok:false,json:async()=>({error:'No processing queue'})}:{ok:true,json:async()=>({jobs:[{id:'old',title:'Old queued job',status:'queued',stage:'queued'}]})};});
+ try{
+  await new Promise(resolve=>setTimeout(resolve,20));const $=id=>w.document.getElementById(id);assert.equal($('import-media').disabled,false);
+  lightweight=true;await new Promise(resolve=>setTimeout(resolve,3200));assert.equal($('import-media').disabled,true);
+  await $('retry-worker').onclick();assert.equal($('url-form').hidden,true);assert.equal($('jobs').hidden,true);assert.equal($('show-jobs').hidden,true);assert.equal($('import-media').disabled,true);assert.match($('worker-status').textContent,/轻量/);assert.ok(calls.filter(p=>p==='api/health').length>=2);assert.ok(!calls.includes('api/language-tools'));
+ }finally{await w.happyDOM.close();}
+});

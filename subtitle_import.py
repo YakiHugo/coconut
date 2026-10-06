@@ -115,6 +115,14 @@ def select_track(info: dict, language: str | None = None) -> tuple[str, str] | N
     choose an arbitrary alphabetically first translation from a multilingual set.
     """
     preferred, _ = preferred_language(info, language)
+    # Automatic tracks still count as language evidence when judging ambiguity.
+    # Excluding ai-* first can make a supplied translation look like the only source.
+    available_languages = {track_language(key)
+        for field in ('subtitles', 'automatic_captions')
+        for key, tracks in (info.get(field) or {}).items()
+        if key not in ('live_chat', 'danmaku') and eligible_formats(tracks)}
+    if not preferred and len(available_languages) > 1:
+        return None
     candidates = []
     for field in ('subtitles', 'automatic_captions'):
         for key, tracks in (info.get(field) or {}).items():
@@ -231,6 +239,11 @@ def fetch_subtitle_document(url: str, directory: Path, language: str | None = No
     if selected is None:
         if logger.warnings:
             raise SubtitleRetrievalError('Caption availability could not be confirmed because the platform reported a warning. Retry or explicitly choose local ASR.')
+        if preferred_language(info, language)[0] is None and any(
+                key not in ('live_chat', 'danmaku') and eligible_formats(tracks)
+                for field in ('subtitles', 'automatic_captions')
+                for key, tracks in (info.get(field) or {}).items()):
+            raise SubtitleRetrievalError('已发现字幕，但无法确认原语言。请在处理选项选择原语言后重试，或明确选择重新转录；未启动 ASR。')
         return None
     # Remove translated/unsupported formats from the selected track before giving
     # metadata back to yt-dlp; format preference must not reselect a translation.

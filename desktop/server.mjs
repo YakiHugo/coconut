@@ -38,7 +38,7 @@ export function createBridge({readerDirectory = path.resolve(ROOT,'../reader'), 
         if (pathname === '/api/health') return json(200,{local_worker:false,runtime:'desktop-bridge',paid_processing:false,max_upload_bytes:0,capabilities:CAPABILITIES});
         if (pathname === '/api/language-tools' && req.method === 'GET') return json(200,{translation_models:[],local_translation:false,capabilities:CAPABILITIES,
           ai:{codex:await providers.status('codex',{signal:controller.signal}),claude:await providers.status('claude',{signal:controller.signal})}});
-        if (pathname === '/api/jobs') return json(200,{jobs:[]});
+        if (pathname === '/api/jobs') return json(501,{error:'轻量版不提供处理队列，请重新检查本地服务能力'});
         if (!ASSETS.has(pathname)) return json(404,{error:'Not found'});
         const file = ASSETS.get(pathname), body = await readFile(path.join(readerDirectory,file));
         res.writeHead(200,{'Content-Type':MIME[path.extname(file)],'Content-Length':body.length}); res.end(req.method === 'HEAD' ? undefined : body); return;

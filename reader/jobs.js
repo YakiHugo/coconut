@@ -208,7 +208,7 @@ async function connectWorker() {
    const newlyConnected = !localAgents;
    localWorker=false;localAgents=true;workerWasConnected=true;
    $("local-setup").open=false;$("retry-worker").hidden=true;
-   $("url-form").hidden=true;$("show-jobs").hidden=true;$("jobs-heading").hidden=true;
+   $("url-form").hidden=true;$("show-jobs").hidden=true;$("jobs-heading").hidden=true;$("jobs").hidden=true;
    $("process-url").disabled=true;$("import-media").disabled=true;
    $("worker-status").textContent="轻量本地服务已连接 · 无需 Python";
    $("worker-help").textContent="可导入文字稿、在浏览器中同步回听音视频，并调用已登录的本地 CLI。此轻量版本不含下载、转录或离线翻译模型；不会自动发送原文。";
@@ -224,6 +224,7 @@ async function connectWorker() {
 		$("url-form").hidden = false;
 		$("show-jobs").hidden = false;
 		$("jobs-heading").hidden = false;
+        $("jobs").hidden = false;
 		window.dispatchEvent(new CustomEvent("coconut-worker-ready",{detail:{local_agents:true,media_import:true}}));
 		$("process-url").disabled = false;
 		$("import-media").disabled = false;

@@ -14,6 +14,8 @@ const PAGE_SIZE = 100;
 let pageStart = 0;
 let storageBlocked = false;
 let lastSavedValue = null;
+const persistedSummaries = new Map();
+function recordPersistedSummaries() { persistedSummaries.clear(); for(const doc of state.documents)persistedSummaries.set(doc.key,Coconut.latestSummary(doc)); }
 let mediaWorkerReady = false;
 let readingMode = "summary";
 const browserMedia = new Map();
@@ -49,6 +51,7 @@ try {
 			active: stored.active,
 		};
 	}
+ recordPersistedSummaries();
 } catch {
 	storageBlocked = true;
  saveWarning("自动保存已暂停，原有数据未覆盖。关闭前请逐份导出本页修改过的文字稿与笔记。");
@@ -74,6 +77,7 @@ function save() {
 		const nextValue = JSON.stringify(state);
 		localStorage.setItem(KEY, nextValue);
 		lastSavedValue = nextValue;
+  recordPersistedSummaries();
   saveWarning();
 		return true;
 	} catch {
@@ -791,10 +795,12 @@ function setReadingMode(mode) {
 function renderSummary() {
  const doc=active();if(!doc)return;
  const answer=Coconut.latestSummary(doc),freshness=answer?Coconut.summaryFreshness(answer,doc):'empty';
+ const persisted=answer && persistedSummaries.get(doc.key)===answer && !storageBlocked;
  $('summary-heading').textContent=answer?'这篇的主要内容':'这篇还没有摘要';
- $('summary-state').textContent=({current:'已保存 · 待核对',stale:'原文有更新',unknown:'依据待确认',empty:'未生成'})[freshness];
- $('summary-state').dataset.state=freshness;
+ $('summary-state').textContent=answer&&!persisted?'仅在此页 · 请备份':({current:'已保存 · 待核对',stale:'原文有更新',unknown:'依据待确认',empty:'未生成'})[freshness];
+ $('summary-state').dataset.state=answer&&!persisted?'unsaved':freshness;
  $('summary-status').textContent=answer ? ({current:'覆盖当前整篇原文 · '+answer.provider+' · 摘要不代替原话',stale:'原文已经修改、增加或移除，下面是旧摘要。重新生成前请对照原文。',unknown:'这份摘要缺少完整发送记录，无法确认覆盖范围，请对照原文。'})[freshness] : '已有原文可直接阅读。连接已登录的本地 Codex 或 Claude Code，确认发送全文与使用额度后，才会生成摘要。';
+ if(answer&&!persisted)$('summary-status').textContent='这份摘要尚未保存到浏览器。关闭或刷新前请先导出摘要或 JSON 备份。'+$('summary-status').textContent;
  $('summary-body').textContent=answer?.answer||'';
  $('summary-citations').replaceChildren();
  if(answer){

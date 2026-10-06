@@ -259,7 +259,7 @@ dialog select { display: block; margin-top: 8px; }
 .summary-heading .eyebrow { margin: 0 0 8px; }
 .summary-heading h2 { font-size: 25px; font-weight: 600; margin: 0; }
 .status-chip { flex-shrink: 0; border: 1px solid var(--line); border-radius: 30px; color: var(--muted); padding: 4px 10px; font-size: 11px; }
-.status-chip[data-state="stale"], .status-chip[data-state="unknown"] { border-color: #e6c889; background: #fff7e2; color: #715319; }
+.status-chip[data-state="stale"], .status-chip[data-state="unknown"], .status-chip[data-state="unsaved"] { border-color: #e6c889; background: #fff7e2; color: #715319; }
 #summary-status { margin: 15px 0 26px; }
 #summary-body { font-size: 17px; line-height: 2; white-space: pre-wrap; overflow-wrap: anywhere; }
 #summary-body:empty { display: none; }
