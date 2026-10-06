@@ -52,46 +52,121 @@
 		const association = mediaSource(value);
 		return association ? "/api/jobs/" + association.job_id + "/media" : "";
 	}
-	function cleanTranslations(value) {
- const output=Object.create(null);
- if(!value || typeof value!=="object" || Array.isArray(value)) return output;
- for(const language of ["en","zh","ja","ko","fr","de","es"]) {
-  const item=value[language];
-  if(item && typeof item.text==="string" && item.text.length<=12000 && typeof item.source_text==="string" && item.source_text.length<=4000 && typeof item.provider==="string")
-   output[language]={text:item.text,source_text:item.source_text,provider:item.provider.slice(0,100),source_language:typeof item.source_language==="string"?item.source_language:"",...(typeof item.context_id==="string"&&/^[a-f0-9-]{36}$/.test(item.context_id)?{context_id:item.context_id}:{})};
+ const QUALITY_LABELS={numbers_changed:'数字或百分比发生变化',glossary_missing:'术语译法未匹配',unchanged_translation:'译文与原文相同',repeated_phrase:'可能重复生成',length_outlier:'译文长度异常，可能漏译或扩写',reading_speed:'按原时间范围显示可能过快'};
+ function translationQualityMessage(item) {
+  return (item?.quality_warnings||[]).filter(c=>Object.hasOwn(QUALITY_LABELS,c)).map(c=>QUALITY_LABELS[c]).join('；');
  }
- return output;
-}
- function sameCueSnapshot(doc, cues) {
-  return Boolean(doc) && cues.every(c=>{const current=doc.segments[c.position];return current?.id===c.id && current.text===c.text && current.start===c.start && current.end===c.end;});
+ function cleanGlossary(value, strict=false) {
+  const fail=()=>{if(strict)throw new Error('术语表最多100条，每个原词/译法1–120字符，不可重复或含控制字符，总长不超过8000字符');return [];};
+  if(value===undefined)return [];
+  if(!Array.isArray(value)||value.length>100)return fail();
+  const terms=[],seen=new Set();let chars=0;
+  for(const e of value){
+   if(!e||typeof e.source!=='string'||typeof e.target!=='string')return fail();
+   const source=e.source.trim(),target=e.target.trim(),key=source.toLowerCase();
+   if(!source||!target||source.length>120||target.length>120||/[\x00-\x1f\x7f]/.test(source+target)||seen.has(key))return fail();
+   chars+=source.length+target.length;if(chars>8000)return fail();seen.add(key);terms.push({source,target});
+  }
+  return terms;
+ }
+ function termPresent(text, term) {
+  const escaped=term.replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
+  return new RegExp((/^[A-Za-z0-9_]/.test(term)?'(?<![A-Za-z0-9_])':'')+escaped+(/[A-Za-z0-9_]$/.test(term)?'(?![A-Za-z0-9_])':''),'i').test(text);
+ }
+ function relevantGlossary(doc, target, cues) {
+  return cleanGlossary(doc.translation_glossary?.[target]).filter(e=>cues.some(c=>termPresent(c.text,e.source)));
+ }
+ function cleanDocumentGlossary(value) {
+  const result=Object.create(null);
+  for(const language of ['en','zh','ja','ko','fr','de','es']){
+   const terms=cleanGlossary(value?.[language]);if(terms.length)result[language]=terms;
+  }
+  return result;
+ }
+ function cleanTranslations(value) {
+  const output=Object.create(null);
+  if(!value || typeof value!=="object" || Array.isArray(value)) return output;
+  for(const language of ["en","zh","ja","ko","fr","de","es"]) {
+   const item=value[language];
+   if(item && typeof item.text==="string" && item.text.length<=12000 && typeof item.source_text==="string" && item.source_text.length<=4000 && typeof item.provider==="string"){
+    output[language]={text:item.text,source_text:item.source_text,provider:item.provider.slice(0,100),source_language:typeof item.source_language==="string"?item.source_language:"",...(typeof item.context_id==="string"&&/^[a-f0-9-]{36}$/.test(item.context_id)?{context_id:item.context_id}:{})};
+    if(typeof item.document_language==='string'&&item.document_language.length<=100)output[language].document_language=item.document_language;
+    if(item.context_version===2){
+     Object.assign(output[language],{context_version:2,target_language:language});
+     try{if(Array.isArray(item.glossary_snapshot))output[language].glossary_snapshot=cleanGlossary(item.glossary_snapshot,true);}catch{}
+     if(typeof item.input_revision==='string'&&/^[a-f0-9]{64}$/.test(item.input_revision))output[language].input_revision=item.input_revision;
+    }
+    if(Array.isArray(item.quality_warnings))output[language].quality_warnings=[...new Set(item.quality_warnings.filter(c=>typeof c==='string'&&Object.hasOwn(QUALITY_LABELS,c)))];
+   }
+  }
+  return output;
+ }
+ function sameCueSnapshot(doc, cues, checkMemory=true) {
+  return Boolean(doc) && cues.every(c=>{
+   const current=doc.segments[c.position];
+   if(current?.id!==c.id||current.text!==c.text||current.start!==c.start||current.end!==c.end)return false;
+   if(Object.hasOwn(c,'speaker')&&(current.speaker||null)!==c.speaker)return false;
+   if(Object.hasOwn(c,'memory_text')){
+    const item=current.translations?.[c.memory_language];
+    if(item?.text!==c.memory_text||item.source_text!==c.text)return false;
+    if(checkMemory&&!translationCurrent(current,doc,item))return false;
+   }
+   return true;
+  });
  }
  function translationCurrent(segment, doc, item) {
-  if(!item || item.source_text!==segment.text)return false;
-  if(!item.context_id)return !item.provider?.endsWith('_subscription_translation');
-  const snapshot=doc.translation_contexts?.[item.context_id];
-  return Array.isArray(snapshot) && snapshot.some(c=>c.id===segment.id) && sameCueSnapshot(doc,snapshot);
+  // Iterative traversal verifies the entire reused-memory dependency chain without
+  // recursive stack growth. A visited item is checked once even for shared/cyclic
+  // imported references; source/term changes anywhere in that chain invalidate it.
+  if(!doc)return false;
+  const pending=[{segment,item}],seen=new Set();
+  while(pending.length){
+   const node=pending.pop(),s=node.segment,t=node.item;
+   if(!s||!t||t.source_text!==s.text)return false;
+   if(seen.has(t))continue;seen.add(t);
+   if(Object.hasOwn(t,'document_language')&&t.document_language!==(doc.language||''))return false;
+   if(!t.context_id){if(t.provider?.endsWith('_subscription_translation'))return false;continue;}
+   const snapshot=doc.translation_contexts?.[t.context_id];
+   if(!Array.isArray(snapshot)||!snapshot.some(c=>c.id===s.id)||!sameCueSnapshot(doc,snapshot,false))return false;
+   if(t.context_version===2&&!Array.isArray(t.glossary_snapshot))return false;
+   const target=t.target_language||Object.keys(s.translations||{}).find(k=>s.translations[k]===t);
+   if(JSON.stringify(relevantGlossary(doc,target,snapshot))!==JSON.stringify(t.glossary_snapshot||[]))return false;
+   for(const cue of snapshot)if(Object.hasOwn(cue,'memory_text')){
+    const dependency=doc.segments[cue.position];
+    pending.push({segment:dependency,item:dependency.translations?.[cue.memory_language]});
+   }
+  }
+  return true;
  }
  function cleanContexts(value, segments) {
   const output=Object.create(null), referenced=new Set(segments.flatMap(s=>Object.values(s.translations).map(t=>t.context_id).filter(Boolean)));
   if(!value || typeof value!=='object' || Array.isArray(value))return output;
   for(const key of referenced){
    if(!Object.hasOwn(value,key))continue;
-   const cues=value[key];let prior=-1,chars=0;const ids=new Set();
+   const cues=value[key];let prior=-1,chars=0,memoryChars=0;const ids=new Set();
    if(!Array.isArray(cues)||!cues.length||cues.length>36)continue;
    const valid=cues.every(c=>{
     if(!c||typeof c.id!=='string'||c.id.length<1||c.id.length>200||ids.has(c.id)||typeof c.text!=='string'||!c.text.length||c.text.length>4000||!Number.isSafeInteger(c.position)||c.position<0||c.position<=prior||!Number.isFinite(c.start)||!Number.isFinite(c.end)||c.start<0||c.end<c.start)return false;
+    if(Object.hasOwn(c,'speaker')&&c.speaker!==null&&(typeof c.speaker!=='string'||c.speaker.length>120))return false;
+    if(Object.hasOwn(c,'memory_text')){
+     if(typeof c.memory_text!=='string'||!c.memory_text.length||c.memory_text.length>12000||!['en','zh','ja','ko','fr','de','es'].includes(c.memory_language))return false;
+     memoryChars+=c.memory_text.length;
+    }
     ids.add(c.id);prior=c.position;chars+=c.text.length;return true;
    });
-   if(valid&&chars<=40000)output[key]=cues.map(c=>({id:c.id,text:c.text,position:c.position,start:c.start,end:c.end}));
+   if(valid&&chars<=40000&&memoryChars<=24000)output[key]=cues.map(c=>({id:c.id,text:c.text,position:c.position,start:c.start,end:c.end,...(Object.hasOwn(c,'speaker')?{speaker:c.speaker}:{}),...(Object.hasOwn(c,'memory_text')?{memory_text:c.memory_text,memory_language:c.memory_language}:{})}));
   }
   return output;
+ }
+ function semanticBoundary(before, after) {
+  return before && (!after || before.speaker!==after.speaker || after.start-before.end>2 || /[.!?。！？][\s"'”’）)]*$/.test(before.text));
  }
  function subscriptionPlan(doc, selectedIds, source, target, provider) {
   const selected=new Set(selectedIds),runs=[];
   for(let position=0;position<doc.segments.length;position++){
    const s=doc.segments[position];if(!selected.has(s.id))continue;
-   if(!s.id.length||s.id.length>200||!s.text.length||s.text.length>4000)throw new Error('订阅翻译需要每段1–4000字符、片段ID不超过200字符，请先缩小或修正内容');
-   const cue={id:s.id,text:s.text,position,start:s.start,end:s.end};
+   if(!s.id.length||s.id.length>200||!s.text.length||s.text.length>4000||typeof s.speaker==='string'&&s.speaker.length>120)throw new Error('订阅翻译需要每段1–4000字符、片段ID不超过200字符、说话人标签不超过120字符，请先缩小或修正内容');
+   const cue={id:s.id,text:s.text,position,start:s.start,end:s.end,speaker:s.speaker||null};
    if(!runs.length||runs.at(-1).at(-1).position!==position-1)runs.push([]);
    runs.at(-1).push(cue);
   }
@@ -100,10 +175,26 @@
    for(let start=0;start<run.length;){
     let end=start,chars=0;
     while(end<run.length&&end-start<32&&chars+run[end].text.length<=24000){chars+=run[end].text.length;end++;}
+    // Prefer a nearby sentence/turn/pause boundary over an arbitrary cue count.
+    if(end<run.length)for(let candidate=end;candidate>=start+Math.max(1,Math.ceil((end-start)/2));candidate--){
+     if(semanticBoundary(run[candidate-1],run[candidate])){end=candidate;break;}
+    }
     const segments=run.slice(start,end).filter(c=>{const s=doc.segments[c.position],t=s.translations?.[target];return !(translationCurrent(s,doc,t)&&t.source_language===source&&t.provider===provider);});
     const targetIds=new Set(segments.map(c=>c.id));
-    const snapshot=run.slice(Math.max(0,start-2),Math.min(run.length,end+2));
-    if(segments.length)windows.push({segments,context:snapshot.filter(c=>!targetIds.has(c.id)),snapshot});
+    const snapshot=run.slice(Math.max(0,start-2),Math.min(run.length,end+2)).map(c=>({...c}));
+    if(segments.length){
+     const glossary=relevantGlossary(doc,target,snapshot),memory=[];let memoryChars=0;
+     for(const cue of snapshot){
+      if(targetIds.has(cue.id))continue;
+      const s=doc.segments[cue.position],t=s.translations?.[target];
+      if(translationCurrent(s,doc,t)&&t.source_language===source&&t.provider===provider&&!t.quality_warnings?.length&&memoryChars+t.text.length<=24000){
+       memory.push({id:cue.id,source_text:cue.text,text:t.text});memoryChars+=t.text.length;
+       cue.memory_text=t.text;cue.memory_language=target;
+      }
+     }
+     const context=snapshot.filter(c=>!targetIds.has(c.id)).map(({memory_text,memory_language,...c})=>c);
+     windows.push({segments,context,snapshot,glossary,memory});
+    }
     start=end;
    }
   }
@@ -183,7 +274,7 @@
 		const provenance =
 			data.provenance && typeof data.provenance === "object"
 				? Object.fromEntries(
-						["kind", "model", "backend", "language", "alignment_warning", "playback_warning", "media_id"]
+						["kind", "model", "backend", "language", "alignment_warning", "playback_warning", "media_id", "caption_method", "caption_track", "subtitle_check", "language_basis", "review_status", "source_platform", "source_medium"]
 							.filter((k) => typeof data.provenance[k] === "string")
 							.map((k) => [k, data.provenance[k]]),
 					)
@@ -199,17 +290,37 @@
 			schema_version: 1,
             language: typeof data.language === "string" ? data.language : "",
             translation_view: ["en","zh","ja","ko","fr","de","es"].includes(data.translation_view) ? data.translation_view : "",
-            ai_answers: Array.isArray(data.ai_answers) ? data.ai_answers.slice(-20).filter(a=>a && typeof a.question==="string" && typeof a.answer==="string" && Array.isArray(a.citations)).map(a=>({question:a.question.slice(0,4000),answer:a.answer.slice(0,100000),citations:a.citations.filter(id=>ids.has(id)),...(cleanAnswerInput(a.input_snapshot) ? {input_snapshot:cleanAnswerInput(a.input_snapshot)} : {}),provider:typeof a.provider==="string"?a.provider.slice(0,100):"unknown"})) : [],
+            ai_answers: Array.isArray(data.ai_answers) ? retainAnswers(data.ai_answers).filter(a=>a && typeof a.question==="string" && typeof a.answer==="string" && Array.isArray(a.citations)).map(a=>({question:a.question.slice(0,4000),answer:a.answer.slice(0,100000),citations:a.citations.filter(id=>ids.has(id)),...(cleanAnswerInput(a.input_snapshot) ? {input_snapshot:cleanAnswerInput(a.input_snapshot)} : {}),...(a.purpose==="summary"?{purpose:"summary"}:a.purpose==="question"?{purpose:"question"}:{}),provider:typeof a.provider==="string"?a.provider.slice(0,100):"unknown"})) : [],
 			title: typeof data.title === "string" ? data.title : "未命名文字稿",
 			source_url: typeof data.source_url === "string" ? data.source_url : "",
 			segments,
             translation_contexts: cleanContexts(data.translation_contexts, segments),
+            translation_glossary: cleanDocumentGlossary(data.translation_glossary),
 		};
 	}
+ function retainAnswers(answers) {
+  const recent=answers.slice(-20);
+  const summary=answers.findLast(a=>a?.purpose==="summary"&&typeof a.question==="string"&&typeof a.answer==="string"&&Array.isArray(a.citations));
+  return summary&&!recent.includes(summary)?[summary,...recent.slice(-19)]:recent;
+ }
+ function summaryFreshness(answer, doc) {
+  if(answer?.purpose!=="summary")return "unknown";
+  const input=cleanAnswerInput(answer.input_snapshot);
+  if(!input)return "unknown";
+  return input.segments.length===doc.segments.length && answerFreshness(answer,doc)==="current" ? "current" : "stale";
+ }
+ function latestSummary(doc) {
+  return (doc.ai_answers||[]).findLast(answer=>answer.purpose==="summary") || null;
+ }
+ function summaryMarkdown(doc, answer=latestSummary(doc)) {
+  if(!answer)throw new Error("这篇还没有保存的摘要");
+  return aiReadingMarkdown({...doc,ai_answers:[answer]}).replace(" · 本地 AI 记录", " · 播客摘要") +
+   "\n摘要覆盖状态：" + ({current:"覆盖当前整篇原文，仍需核对模型判断",stale:"整篇原文已经变化，旧摘要可能过期",unknown:"缺少完整依据，无法确认摘要覆盖范围"}[summaryFreshness(answer,doc)]) + "\n";
+ }
  function aiReadingMarkdown(doc) {
   const line=value=>markdownText(value).replace(/[\r\n]+/g," ");
   const quote=value=>markdownText(value).replace(/\r\n?/g,"\n").split("\n").map(s=>"> "+s).join("\n");
-  const lines=["# "+line(doc.title)+" · AI 共读记录","","AI 输出仍需核对；以下是本篇已保存的全部回答，不受当前筛选影响。","来源定位使用当前文字稿的时间与链接，可能不同于生成回答时的媒体信息。",""];
+  const lines=["# "+line(doc.title)+" · 本地 AI 记录","","AI 输出仍需核对；以下是本篇已保存的全部回答，不受当前筛选影响。","来源定位使用当前文字稿的时间与链接，可能不同于生成回答时的媒体信息。",""];
   for(const [index,answer] of (doc.ai_answers||[]).entries()){
    const freshness=answerFreshness(answer,doc), input=cleanAnswerInput(answer.input_snapshot);
    lines.push("## 回答 "+(index+1),"","提供商："+line(answer.provider||"unknown"),"",
@@ -315,6 +426,7 @@
 			if (translated) {
 				if (translationCurrent(segment, doc, translated)) lines.push("译文（" + singleLine(doc.translation_view) + "；" + singleLine(translated.provider) + "，机器生成，需核对）：", "", quote(translated.text), "");
 				else lines.push("此片段译文已过期，未导出。", "");
+                if(translationCurrent(segment,doc,translated)&&translationQualityMessage(translated))lines.push("译文待核对："+translationQualityMessage(translated), "");
 			}
 			if (doc.notes?.[segment.id]?.trim()) lines.push("我的笔记：", "", quote(doc.notes[segment.id]), "");
 		}
@@ -370,7 +482,7 @@
 			segments,
 		});
 	}
-	const api = { aiReadingMarkdown, parseReadingTime, segmentAtTime, subtitleExport, mergeLibraryBackup, time, source, media, validate, parse, matchesSegment, notebookSegments, notebookMarkdown, translationCurrent, sameCueSnapshot, subscriptionPlan, cleanContexts, answerFreshness };
+	const api = { cleanGlossary, relevantGlossary, translationQualityMessage, retainAnswers, summaryFreshness, latestSummary, summaryMarkdown, aiReadingMarkdown, parseReadingTime, segmentAtTime, subtitleExport, mergeLibraryBackup, time, source, media, validate, parse, matchesSegment, notebookSegments, notebookMarkdown, translationCurrent, sameCueSnapshot, subscriptionPlan, cleanContexts, answerFreshness };
 	if (typeof module !== "undefined" && module.exports) module.exports = api;
 	else root.Coconut = api;
 })(typeof window !== "undefined" ? window : globalThis);

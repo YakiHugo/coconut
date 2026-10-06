@@ -236,3 +236,92 @@ test('AI reading report includes historical full input, freshness, safe citation
  const output=C.aiReadingMarkdown(doc);assert.match(output,/Historical/);assert.match(output,/Uncited/);assert.match(output,/依据可能过期/);assert.match(output,/缺少完整发送原文/);assert.match(output,/不能用当前稿替代历史依据/);assert.doesNotMatch(output,/<script>|!\[track\]|\n# fake|> Changed/);assert.match(output,/label=%28x%29/);assert.equal((output.match(/^## 回答 /gm)||[]).length,2);
  const unsafe=C.aiReadingMarkdown({...doc,source_url:'javascript:alert(1)'});assert.doesNotMatch(unsafe,/javascript:/);
 });
+
+test('only explicit whole-document summaries are current and survive backups',()=>{
+ const Coconut=require('../reader/core.js');
+ const doc=Coconut.validate({title:'Podcast',segments:[{id:'one',start:0,end:10,text:'First'},{id:'two',start:10,end:20,text:'Second'}],ai_answers:[{question:'Q',answer:'Not a summary',citations:['one']},{purpose:'summary',question:'Summary',answer:'A grounded summary',provider:'codex',citations:['one'],input_snapshot:{version:1,segments:[{id:'one',text:'First'},{id:'two',text:'Second'}]}}]});
+ const answer=Coconut.latestSummary(doc);assert.equal(answer.answer,'A grounded summary');assert.equal(Coconut.summaryFreshness(answer,doc),'current');
+ assert.equal(Coconut.latestSummary({...doc,ai_answers:[doc.ai_answers[0]]}),null);
+ assert.equal(Coconut.summaryFreshness(answer,{...doc,segments:[...doc.segments,{id:'three',start:20,end:30,text:'Added'}]}),'stale');
+ assert.equal(Coconut.summaryFreshness({...answer,input_snapshot:undefined},doc),'unknown');
+ assert.equal(Coconut.summaryFreshness({...answer,input_snapshot:{version:1,segments:[{id:'one',text:'First'}]}},doc),'stale');
+ assert.equal(Coconut.latestSummary(Coconut.validate(JSON.parse(JSON.stringify(doc)))).purpose,'summary');
+ assert.match(Coconut.summaryMarkdown(doc),/播客摘要/);assert.match(Coconut.summaryMarkdown(doc),/Second/);
+});
+
+test('later questions never evict the latest saved summary from the bounded history',()=>{
+ const {retainAnswers,latestSummary}=require('../reader/core.js');
+ const summary={purpose:'summary',question:'Summary',answer:'Keep this work',citations:[]};
+ const answers=[summary,...Array.from({length:25},(_,i)=>({purpose:'question',question:String(i),answer:'Later question',citations:[]}))];
+ const retained=retainAnswers(answers);assert.equal(retained.length,20);assert.equal(latestSummary({ai_answers:retained}),summary);assert.equal(retained.at(-1).question,'24');
+ const doc=validate({segments:[{id:'a',start:0,end:1,text:'Source'}],ai_answers:answers});assert.equal(latestSummary(doc).answer,'Keep this work');
+});
+
+test('semantic-window planning prefers sentence and speaker boundaries without crossing selection gaps',()=>{
+ const C=require('../reader/core.js');
+ const doc=C.validate({language:'en',segments:Array.from({length:40},(_,i)=>({id:'s'+i,start:i,end:i+1,text:i===26?'Sentence ends.':'unfinished fragment',speaker:'A'}))});
+ const plan=C.subscriptionPlan(doc,doc.segments.map(s=>s.id),'en','zh','chatgpt_subscription_translation');
+ assert.equal(plan.windows[0].segments.length,27);
+ assert.equal(plan.windows[1].context[0].id,'s25');
+ assert.ok(plan.windows.every(w=>w.snapshot.every(c=>c.speaker==='A')));
+ const sparse=C.subscriptionPlan(doc,['s0','s2'],'en','zh','chatgpt_subscription_translation');
+ assert.deepEqual(sparse.windows.map(w=>w.snapshot.map(c=>c.id)),[['s0'],['s2']]);
+});
+
+test('glossary, speaker, memory revisions and quality warnings roundtrip conservatively',()=>{
+ const C=require('../reader/core.js'),id='11111111-1111-4111-8111-111111111111';
+ const snapshot=[{id:'a',text:'Coconut is offline,',position:0,start:0,end:4,speaker:'A',memory_text:'Coconut 离线时',memory_language:'zh'},
+  {id:'b',text:'it must not send 12 requests.',position:1,start:4,end:8,speaker:'A'}];
+ const terms=[{source:'Coconut',target:'Coconut'}];
+ const input={language:'en',translation_glossary:{zh:terms},translation_contexts:{[id]:snapshot},segments:snapshot.map((c,i)=>({...c,translations:{zh:i===0?{text:'Coconut 离线时',source_text:c.text,source_language:'en',provider:'local'}:{text:'不得发送12次请求',source_text:c.text,source_language:'en',target_language:'zh',document_language:'en',provider:'chatgpt_subscription_translation',context_id:id,context_version:2,glossary_snapshot:terms,input_revision:'a'.repeat(64),quality_warnings:['numbers_changed','evil','numbers_changed']}}}))};
+ const doc=C.parse(JSON.stringify(C.validate(input)),'saved.json');
+ let item=doc.segments[1].translations.zh;
+ assert.deepEqual(item.quality_warnings,['numbers_changed']);assert.equal(item.input_revision,'a'.repeat(64));
+ assert.ok(C.translationCurrent(doc.segments[1],doc,item));
+ doc.segments[0].speaker='B';assert.equal(C.translationCurrent(doc.segments[1],doc,item),false);doc.segments[0].speaker='A';
+ doc.segments[0].translations.zh.text='新的建议';assert.equal(C.translationCurrent(doc.segments[1],doc,item),false);doc.segments[0].translations.zh.text='Coconut 离线时';
+ doc.translation_glossary.zh[0].target='椰子';assert.equal(C.translationCurrent(doc.segments[1],doc,item),false);doc.translation_glossary.zh[0].target='Coconut';
+ doc.language='fr';assert.equal(C.translationCurrent(doc.segments[1],doc,item),false);doc.language='en';
+ delete item.glossary_snapshot;assert.equal(C.translationCurrent(doc.segments[1],doc,item),false);
+});
+
+test('context memory only reuses current warning-free translations inside consented cues',()=>{
+ const C=require('../reader/core.js'),provider='chatgpt_subscription_translation',id='11111111-1111-4111-8111-111111111111';
+ const cues=[{id:'a',text:'Coconut works.',position:0,start:0,end:2,speaker:null},{id:'b',text:'Next fragment',position:1,start:2,end:4,speaker:null}];
+ const doc=C.validate({language:'en',translation_glossary:{zh:[{source:'Coconut',target:'Coconut'},{source:'AI',target:'人工智能'},{source:'other',target:'别的'}]},translation_contexts:{[id]:[cues[0]]},segments:cues.map((c,i)=>({...c,translations:i===0?{zh:{text:'Coconut 能运行。',source_text:c.text,source_language:'en',provider,context_id:id,context_version:2,glossary_snapshot:[{source:'Coconut',target:'Coconut'}]}}:{}}))});
+ const plan=C.subscriptionPlan(doc,['a','b'],'en','zh',provider);
+ assert.deepEqual(plan.windows[0].segments.map(c=>c.id),['b']);
+ assert.deepEqual(plan.windows[0].glossary,[{source:'Coconut',target:'Coconut'}]);
+ assert.deepEqual(plan.windows[0].memory,[{id:'a',source_text:'Coconut works.',text:'Coconut 能运行。'}]);
+ assert.equal(plan.windows[0].snapshot[0].memory_text,'Coconut 能运行。');
+ doc.segments[0].translations.zh.quality_warnings=['glossary_missing'];
+ assert.equal(C.subscriptionPlan(doc,['a','b'],'en','zh',provider).windows[0].memory.length,0);
+ assert.deepEqual(C.subscriptionPlan(doc,['b'],'en','zh',provider).windows[0].glossary,[]);
+});
+
+test('glossary validation rejects duplicate or malformed terms and uses literal bounded matches',()=>{
+ const C=require('../reader/core.js');
+ for(const value of [{},[{source:'AI',target:'人工智能'},{source:'ai',target:'爱'}],[{source:'x',target:'bad\nvalue'}]])assert.throws(()=>C.cleanGlossary(value,true));
+ assert.deepEqual(C.relevantGlossary({translation_glossary:{zh:[{source:'AI',target:'人工智能'},{source:'C++',target:'C++'}]}},'zh',[{text:'A chair and C++'}]),[{source:'C++',target:'C++'}]);
+});
+
+test('memory freshness follows transitive source dependencies and terminates on cycles',()=>{
+ const C=require('../reader/core.js'),one='11111111-1111-4111-8111-111111111111',two='22222222-2222-4222-8222-222222222222',provider='chatgpt_subscription_translation';
+ const cues=['x','a','b'].map((id,i)=>({id,text:'Source '+id,position:i,start:i,end:i+1,speaker:null}));
+ const doc=C.validate({language:'en',translation_contexts:{[one]:cues.slice(0,2),[two]:[{...cues[1],memory_text:'译文 a',memory_language:'zh'},cues[2]]},segments:cues.map((cue,i)=>({...cue,translations:i?{zh:{text:'译文 '+cue.id,source_text:cue.text,source_language:'en',provider,context_id:i===1?one:two,context_version:2,glossary_snapshot:[]}}:{}}))});
+ assert.ok(C.translationCurrent(doc.segments[2],doc,doc.segments[2].translations.zh));
+ doc.segments[0].text='Changed source outside b snapshot';
+ assert.equal(C.translationCurrent(doc.segments[2],doc,doc.segments[2].translations.zh),false);
+ assert.equal(C.subscriptionPlan(doc,['b'],'en','zh',provider).total,1);
+ doc.segments[0].text=cues[0].text;
+ doc.translation_contexts[one]=[{...cues[1]}, {...cues[2],memory_text:'译文 b',memory_language:'zh'}];
+ assert.equal(C.translationCurrent(doc.segments[2],doc,doc.segments[2].translations.zh),true,'shared cycle is bounded and all actual evidence is still checked');
+ doc.segments[1].text='Changed';assert.equal(C.translationCurrent(doc.segments[2],doc,doc.segments[2].translations.zh),false);
+});
+
+test('manual translation source remains independent of document language while later metadata changes invalidate',()=>{
+ const C=require('../reader/core.js');
+ const doc=C.validate({language:'en',segments:[{id:'a',start:0,end:1,text:'Bonjour',translations:{zh:{text:'你好',source_text:'Bonjour',source_language:'fr',document_language:'en',provider:'local'}}}]});
+ assert.ok(C.translationCurrent(doc.segments[0],doc,doc.segments[0].translations.zh));
+ doc.language='fr';assert.equal(C.translationCurrent(doc.segments[0],doc,doc.segments[0].translations.zh),false);
+});

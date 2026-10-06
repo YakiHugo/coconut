@@ -1,0 +1,57 @@
+name: Lightweight desktop
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: desktop-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  bridge-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: node --test tests/desktop-*.test.mjs
+  mac-package:
+    runs-on: macos-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
+      - run: npm ci --prefix desktop
+      - name: Run the real Electron reader without model calls
+        run: COCONUT_SMOKE_TEST=1 desktop/node_modules/.bin/electron desktop
+      - name: Package unsigned arm64 and x64 apps
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+        run: npm run package:mac --prefix desktop
+      - name: Verify package contents
+        run: |
+          for archive in desktop/dist/*.zip; do
+            unzip -l "$archive" | grep 'Coconut.app/Contents/Resources/app.asar'
+            unzip -l "$archive" | grep 'Coconut.app/Contents/Resources/reader/index.html'
+            unzip -l "$archive" | grep 'Coconut.app/Contents/Resources/LICENSE.electron'
+            unzip -l "$archive" | grep 'Coconut.app/Contents/Resources/LICENSES.chromium.html'
+          done
+      - name: Start the packaged app on the native runner architecture
+        run: |
+          arch="$(node -p 'process.arch')"
+          COCONUT_SMOKE_TEST=1 "desktop/dist/Coconut-darwin-$arch/Coconut.app/Contents/MacOS/Coconut"
+      - name: Upload unsigned developer builds only
+        uses: actions/upload-artifact@v4
+        with:
+          name: Coconut-macOS-unsigned
+          path: desktop/dist/*.zip
+          if-no-files-found: error
+          retention-days: 7

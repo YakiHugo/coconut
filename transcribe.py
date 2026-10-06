@@ -15,7 +15,7 @@ import tempfile
 from pathlib import Path
 
 from transcript import make_document, save_document, to_markdown
-from subtitle_import import fetch_subtitle_document, subtitle_document, validate_video_url, validate_media_info, tls_cli_options
+from subtitle_import import fetch_subtitle_document, subtitle_document, validate_video_url, validate_media_info, tls_cli_options, source_evidence
 
 
 def download_audio(url: str, out_dir: Path) -> tuple[Path, str]:
@@ -216,7 +216,11 @@ def main():
             document = make_document(result, title, source_url)
             document["provenance"] = {"kind": "local_asr", "model": args.model, "backend": args.backend,
                                       "language": result.get("language"),
-                                      "alignment_warning": result.get("alignment_warning")}
+                                      "alignment_warning": result.get("alignment_warning"),
+                                      "caption_method": "asr", "review_status": "unreviewed",
+                                      "language_basis": "user_hint" if args.language else "asr_detected",
+                                      "subtitle_check": ("skipped" if args.force_transcribe else "no_eligible_track") if is_url else "not_applicable",
+                                      **source_evidence(source_url)}
         # Commit completed caption/ASR work before the optional media stage.
         # A stop or crash during a large download must not discard the transcript.
         save_document(document, cached_document)

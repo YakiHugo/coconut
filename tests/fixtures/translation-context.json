@@ -1,0 +1,28 @@
+[
+  {
+    "name": "selected-context-speaker-terms-memory",
+    "request": {
+      "source": "en", "target": "zh",
+      "segments": [{"id":"b","text":"it must not send 12 requests.","position":1,"start":4,"end":8,"speaker":"Speaker 1"}],
+      "context": [{"id":"a","text":"When Coconut is offline,","position":0,"start":0,"end":4,"speaker":"Speaker 1"}],
+      "glossary": [{"source":"Coconut","target":"Coconut"},{"source":"requests","target":"请求"},{"source":"unselected","target":"不发送"}],
+      "memory": [{"id":"a","source_text":"When Coconut is offline,","text":"Coconut 离线时，"}]
+    },
+    "model_output":{"translations":[{"id":"b","text":"它不得发送 12 次请求。"}]},
+    "expected_units":[{"ids":["a","b"]}],
+    "expected_terms":[{"source":"Coconut","target":"Coconut"},{"source":"requests","target":"请求"}],
+    "expected_warnings":[[]]
+  },
+  {
+    "name":"number-term-and-pace-review",
+    "request": {
+      "source":"en", "target":"zh",
+      "segments":[{"id":"count","text":"Coconut sends 12 requests.","position":2,"start":10,"end":11,"speaker":null}],
+      "context":[], "glossary":[{"source":"Coconut","target":"Coconut"}], "memory":[]
+    },
+    "model_output":{"translations":[{"id":"count","text":"系统会自动发送 20 次不同的请求。"}]},
+    "expected_units":[{"ids":["count"]}],
+    "expected_terms":[{"source":"Coconut","target":"Coconut"}],
+    "expected_warnings":[["numbers_changed","glossary_missing","reading_speed"]]
+  }
+]

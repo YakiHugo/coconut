@@ -80,5 +80,105 @@ class SubtitleTests(unittest.TestCase):
             with patch.dict(sys.modules, {'yt_dlp':types.SimpleNamespace(YoutubeDL=Downloader)}):
                 doc=fetch_subtitle_document('https://x.com/example/status/123',Path(td),'en')
             self.assertEqual(doc['source_url'],'https://x.com/example/status/123')
-            self.assertEqual(doc['provenance'],{'kind':'platform_subtitles','language':'en','media_id':'987','media_duration':4.321})
+            self.assertEqual(doc['provenance'],{'kind':'platform_subtitles','language':'en','media_id':'987','media_duration':4.321,
+                'caption_method':'platform_provided','caption_track':'en','review_status':'unreviewed',
+                'language_basis':'user_hint','subtitle_check':'found','source_platform':'x'})
             self.assertEqual(doc['segments'][0]['text'],'Original fixture')
+
+
+class CaptionProvenanceTests(unittest.TestCase):
+    def test_unknown_multiple_supplied_languages_are_not_guessed(self):
+        self.assertIsNone(select_track({'subtitles': {'en': [{'ext': 'vtt'}], 'zh': [{'ext': 'vtt'}]}}))
+
+    def test_platform_translation_url_is_not_source_caption(self):
+        for url in ['https://www.youtube.com/api/timedtext?lang=en&tlang=zh',
+                    'https://www.youtube.com/api/timedtext?tlang=']:
+            self.assertIsNone(select_track({'language': 'zh', 'automatic_captions': {'zh': [{'ext': 'vtt', 'url': url}]}}))
+
+    def test_bilibili_ai_track_is_automatic_and_below_provided_track(self):
+        from subtitle_import import track_is_automatic, track_language
+        info = {'language': 'zh', 'subtitles': {'ai-zh': [{'ext': 'srt'}], 'zh-Hans': [{'ext': 'srt'}]}}
+        self.assertEqual(select_track(info), ('subtitles', 'zh-Hans'))
+        del info['subtitles']['zh-Hans']
+        self.assertEqual(select_track(info), ('subtitles', 'ai-zh'))
+        self.assertTrue(track_is_automatic('subtitles', 'ai-zh'))
+        self.assertEqual(track_language('ai-zh'), 'zh')
+
+    def test_original_auto_track_precedes_equivalent_unannotated_auto(self):
+        self.assertEqual(select_track({'language': 'en', 'automatic_captions': {
+            'en': [{'ext': 'vtt'}], 'en-orig': [{'ext': 'vtt'}]}}), ('automatic_captions', 'en-orig'))
+
+    def test_source_medium_requires_codec_evidence(self):
+        from subtitle_import import source_evidence
+        self.assertEqual(source_evidence('https://x.com/example/status/123'), {'source_platform': 'x'})
+        self.assertEqual(source_evidence('https://youtu.be/abcdefghijk', {'formats': [
+            {'vcodec': 'none', 'acodec': 'aac'}, {'vcodec': 'h264', 'acodec': 'none'}]})['source_medium'], 'video')
+        self.assertEqual(source_evidence('', {'vcodec': 'none', 'acodec': 'aac'})['source_medium'], 'audio')
+
+    def test_failed_lookup_and_access_warning_do_not_mean_absent(self):
+        import sys, tempfile, types
+        from pathlib import Path
+        from unittest.mock import patch
+        from subtitle_import import fetch_subtitle_document, SubtitleRetrievalError
+        for outcome in ('exception', 'warning', 'absent'):
+            class Downloader:
+                def __init__(self, settings): self.settings = settings
+                def __enter__(self): return self
+                def __exit__(self, *args): pass
+                def extract_info(self, url, download=False):
+                    if outcome == 'exception':
+                        raise OSError('Temporary network failure')
+                    if outcome == 'warning':
+                        self.settings['logger'].warning('Subtitles are only available when logged in')
+                    return {'id': '123', 'title': 'Test', 'subtitles': {}}
+            with tempfile.TemporaryDirectory() as td, patch.dict(sys.modules, {'yt_dlp': types.SimpleNamespace(YoutubeDL=Downloader)}):
+                if outcome == 'absent':
+                    self.assertIsNone(fetch_subtitle_document('https://x.com/example/status/123', Path(td)))
+                else:
+                    with self.assertRaises(SubtitleRetrievalError):
+                        fetch_subtitle_document('https://x.com/example/status/123', Path(td))
+
+    def test_selected_track_filters_translated_formats_before_download(self):
+        import sys, tempfile, types
+        from pathlib import Path
+        from unittest.mock import patch
+        from subtitle_import import fetch_subtitle_document
+        for field, key in [('automatic_captions', 'en-orig'), ('subtitles', 'ai-en')]:
+            with tempfile.TemporaryDirectory() as td:
+                path = Path(td) / 'caption.vtt'
+                path.write_text('WEBVTT\n\n00:00:00.000 --> 00:00:01.000\nSource caption\n')
+                class Downloader:
+                    def __init__(self, settings): self.settings = settings
+                    def __enter__(self): return self
+                    def __exit__(self, *args): pass
+                    def extract_info(self, url, download=False):
+                        return {'language': 'en', field: {key: [
+                            {'ext': 'vtt', 'url': 'https://example.com/caption'},
+                            {'ext': 'vtt', 'url': 'https://example.com/caption?tlang=en'}]}}
+                    def process_ie_result(inner, info, download=True):
+                        self.assertEqual(len(info[field][key]), 1)
+                        return {'requested_subtitles': {key: {'filepath': str(path)}}}
+                with patch.dict(sys.modules, {'yt_dlp': types.SimpleNamespace(YoutubeDL=Downloader)}):
+                    doc = fetch_subtitle_document('https://x.com/example/status/123', Path(td))
+                self.assertEqual(doc['provenance']['kind'], 'automatic_subtitles')
+                self.assertEqual(doc['provenance']['caption_method'], 'automatic')
+                self.assertEqual(doc['provenance']['review_status'], 'unreviewed')
+                self.assertEqual(doc['language'], 'en')
+                self.assertEqual(doc['provenance']['caption_track'], key)
+
+    def test_imported_caption_authorship_remains_unknown(self):
+        import tempfile
+        from pathlib import Path
+        from subtitle_import import subtitle_document
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / 'caption.srt'
+            path.write_text('1\n00:00:00,000 --> 00:00:01,000\nTest\n')
+            doc = subtitle_document(path)
+        self.assertEqual(doc['provenance']['caption_method'], 'unknown')
+        self.assertEqual(doc['provenance']['language_basis'], 'unknown')
+
+    def test_automatic_language_still_counts_for_source_ambiguity(self):
+        info = {'subtitles': {'ai-zh': [{'ext': 'srt', 'data': 'Chinese source'}],
+                              'en': [{'ext': 'srt', 'data': 'English translation'}]}}
+        self.assertIsNone(select_track(info))
+        self.assertEqual(select_track(info, 'zh'), ('subtitles', 'ai-zh'))

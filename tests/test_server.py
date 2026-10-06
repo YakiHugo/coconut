@@ -49,12 +49,13 @@ class ServerTests(unittest.TestCase):
     def test_subscription_route_forwards_only_explicit_context_to_fake_provider(self):
         source={'id':'target','text':'until approved','position':1,'start':1,'end':2}
         context={'id':'context','text':'Do not send','position':0,'start':0,'end':1}
-        payload={'source':'en','target':'zh','provider':'codex','segments':[source],'context':[context],'consent':True}
+        payload={'source':'en','target':'zh','provider':'codex','segments':[source],'context':[context],'glossary':[{'source':'approved','target':'批准'}],'memory':[{'id':'context','source_text':'Do not send','text':'不要发送'}],'consent':True}
         with patch('ai_reader.codex_answer',return_value={'translations':[{'id':'target','text':'获得批准之前'}]}) as provider:
             with urlopen(Request(self.base+'/api/translate-subscription',data=json.dumps(payload).encode(),headers={'Content-Type':'application/json'})) as response:
                 result=json.load(response)
+        self.assertEqual(result['translations'][0]['context_version'],2)
         self.assertEqual([t['id'] for t in result['translations']],['target'])
-        sent=json.loads(provider.call_args.args[0]);self.assertEqual(sent['target_ids'],['target']);self.assertEqual(sent['cues'],[context,source])
+        sent=json.loads(provider.call_args.args[0]);self.assertEqual(sent['target_ids'],['target']);self.assertEqual(sent['cues'],[context,source]);self.assertEqual(sent['glossary'],payload['glossary']);self.assertEqual(sent['translation_memory'],payload['memory'])
 
     def test_cross_origin_and_unscoped_host_rejected(self):
         for headers in [{'Origin':'https://evil.example'},{'Host':'evil.example'}]:

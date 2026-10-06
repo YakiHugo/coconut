@@ -14,7 +14,12 @@ const PAGE_SIZE = 100;
 let pageStart = 0;
 let storageBlocked = false;
 let lastSavedValue = null;
+const persistedSummaries = new Map();
+function recordPersistedSummaries() { persistedSummaries.clear(); for(const doc of state.documents)persistedSummaries.set(doc.key,Coconut.latestSummary(doc)); }
 let mediaWorkerReady = false;
+let readingMode = "summary";
+const browserMedia = new Map();
+let pendingMediaDocument = null;
 const PLAYBACK_RATES=[0.75,1,1.25,1.5,1.75,2];
 let playbackRate=1;
 let repeating=null;
@@ -46,6 +51,7 @@ try {
 			active: stored.active,
 		};
 	}
+ recordPersistedSummaries();
 } catch {
 	storageBlocked = true;
  saveWarning("自动保存已暂停，原有数据未覆盖。关闭前请逐份导出本页修改过的文字稿与笔记。");
@@ -71,6 +77,7 @@ function save() {
 		const nextValue = JSON.stringify(state);
 		localStorage.setItem(KEY, nextValue);
 		lastSavedValue = nextValue;
+  recordPersistedSummaries();
   saveWarning();
 		return true;
 	} catch {
@@ -97,6 +104,7 @@ async function add(doc) {
 	if (!state.documents.some((d) => d.key === key))
 		state.documents.push({ ...doc, key, notes: doc.notes || {} });
 	state.active = key;
+ setReadingMode("summary");
  searchFocusedId=null;
 	$("search").value = "";
 	selected = null;
@@ -121,6 +129,7 @@ function showWorkspace(next) {
 	if (returning) window.scrollTo(0, readingScroll);
 }
 function goToSegment(id) {
+ readingMode = "transcript";
 	const doc = active();
 	const index = doc ? doc.segments.findIndex(s => s.id === id) : -1;
 	if (index < 0) return;
@@ -149,6 +158,7 @@ function renderLibrary() {
 		b.setAttribute("aria-current", d.key === state.active ? "page" : "false");
 		b.onclick = () => {
 			state.active = d.key;
+   setReadingMode("summary");
    searchFocusedId=null;
 			selected = null;
 			notesOnly = false; excerptsOnly = false;
@@ -175,15 +185,21 @@ function render() {
 		return;
 	}
 	$("empty").hidden = true;
-	const mediaPath = mediaWorkerReady && Coconut.media ? Coconut.media(doc.source_media) : "";
+	const attachment = browserMedia.get(doc.key);
+ const mediaPath = attachment?.url || (mediaWorkerReady && Coconut.media ? Coconut.media(doc.source_media) : "");
+ const mediaKind = attachment?.kind || doc.source_media?.kind;
+ $("detach-reader-media").hidden = !attachment;
+ $("reader-media-status").textContent = attachment ? attachment.name + " · 仅在此页面读取，不上传；刷新后需重新选择" : "在浏览器中打开文件，不上传。请选与文字稿对应的原文件；刷新页面后需重新选择。";
 	const mediaHost = $("source-media");
  if(repeating && (repeating.key!==doc.key || repeating.path!==mediaPath))stopRepeating();
 	const currentPlayer = mediaHost.querySelector("audio,video");
 	if (!mediaPath) {
+  currentPlayer?.pause();
 		mediaHost.replaceChildren();
 		mediaHost.hidden = true;
 	} else if (!currentPlayer || currentPlayer.getAttribute("src") !== mediaPath) {
-		const player = el(doc.source_media.kind, "source-player");
+  currentPlayer?.pause();
+		const player = el(mediaKind, "source-player");
 		player.controls = true;
   player.defaultPlaybackRate=playbackRate;
   player.playbackRate=playbackRate;
@@ -197,7 +213,7 @@ function render() {
 		player.setAttribute("aria-label", "原始音视频");
 		player.style.width = "100%";
 		player.style.maxHeight = "360px";
-		player.onerror = () => notice("原始媒体暂时无法播放。请确认此文字稿对应的本地任务仍在这台电脑上。");
+		player.onerror = () => notice(attachment ? "浏览器无法播放这个文件，可换用 MP3、M4A、MP4 或 WebM 等受支持格式。文字稿与笔记仍可阅读。" : "原始媒体暂时无法播放。请确认此文字稿对应的本地任务仍在这台电脑上。");
 		mediaHost.replaceChildren(player);
 		mediaHost.hidden = false;
 	}
@@ -213,7 +229,8 @@ function render() {
 	const provenance = doc.provenance || {};
 	const sourceKinds = {platform_subtitles: "平台提供的字幕", automatic_subtitles: "平台自动字幕", imported_subtitles: "导入的字幕", local_asr: "本机语音识别"};
 	const provenanceText = sourceKinds[provenance.kind] || "导入文字稿，来源未标明";
-	$("provenance").textContent = provenanceText + (provenance.model ? " · " + provenance.model : "") + " · 请回听核对专有名词与重要信息" + (provenance.alignment_warning ? " · 时间对齐降级：" + provenance.alignment_warning : "");
+	const medium = provenance.source_medium === "audio" ? "音频内容" : provenance.source_medium === "video" ? "视频内容" : "";
+ $("provenance").textContent = [medium, provenance.source_platform].filter(Boolean).join(" · ") + (medium || provenance.source_platform ? " · " : "") + provenanceText + (provenance.model ? " · " + provenance.model : "") + " · 请回听核对专有名词与重要信息" + (provenance.alignment_warning ? " · 时间对齐降级：" + provenance.alignment_warning : "");
 	$("count").textContent = "书架 / " + doc.title;
 	const query = $("search").value.trim().toLocaleLowerCase();
 	const filtered = doc.segments.filter(s=>Coconut.matchesSegment(s,doc,query,notesOnly,excerptsOnly));
@@ -277,6 +294,8 @@ function render() {
 		body.append(highlightedText("p", "words", s.text, query));
         const translated=s.translations?.[doc.translation_view];
         if(translated) body.append(highlightedText("p", "translation"+(!Coconut.translationCurrent(s,doc,translated)?" stale":""), Coconut.translationCurrent(s,doc,translated) ? translated.text : "原文或上下文已变化，或旧译文缺少上下文记录，此译文需要重新生成", query));
+        if(translated && Coconut.translationCurrent(s,doc,translated)) { const warning=Coconut.translationQualityMessage(translated); if(warning)body.append(el("p","translation-review","待核对："+warning)); }
+
 		const edit = el("button", "edit-button", "修正文字");
 		edit.onclick = () => {
 			editingTarget = {
@@ -344,6 +363,8 @@ function render() {
 		navigation.append(previous, position, next);
 		$("transcript").append(navigation);
 	}
+ renderSummary();
+ applyReadingMode();
 	highlightPlayback();
 	window.dispatchEvent(new Event("coconut-render"));
 }
@@ -582,8 +603,8 @@ $("restore-edit").onclick = (event) => {
 	}
 };
 
-window.addEventListener("coconut-worker-ready", () => {
-	mediaWorkerReady = true;
+window.addEventListener("coconut-worker-ready", event => {
+	mediaWorkerReady = event.detail?.media_import !== false;
 	render();
 });
 
@@ -752,3 +773,90 @@ document.addEventListener("keydown", event => {
   menu.querySelector("summary").focus();
  }
 });
+
+function applyReadingMode() {
+ const summary=readingMode==='summary';
+ $('summary-workspace').hidden=!summary;
+ $('transcript-controls').hidden=summary;
+ $('transcript-layout').hidden=summary;
+ $('reading-settings').hidden=summary;
+ $('mode-summary').setAttribute('aria-pressed',String(summary));
+ $('mode-transcript').setAttribute('aria-pressed',String(!summary));
+}
+function setReadingMode(mode) {
+ readingMode=mode==='transcript'?'transcript':'summary';
+ if(readingMode==='summary'){
+  selected=null;$('notes-panel').hidden=true;
+  stopRepeating();
+  $('source-media').querySelector('audio,video')?.pause();
+ }
+ applyReadingMode();
+}
+function renderSummary() {
+ const doc=active();if(!doc)return;
+ const answer=Coconut.latestSummary(doc),freshness=answer?Coconut.summaryFreshness(answer,doc):'empty';
+ const persisted=answer && persistedSummaries.get(doc.key)===answer && !storageBlocked;
+ $('summary-heading').textContent=answer?'这篇的主要内容':'这篇还没有摘要';
+ $('summary-state').textContent=answer&&!persisted?'仅在此页 · 请备份':({current:'已保存 · 待核对',stale:'原文有更新',unknown:'依据待确认',empty:'未生成'})[freshness];
+ $('summary-state').dataset.state=answer&&!persisted?'unsaved':freshness;
+ $('summary-status').textContent=answer ? ({current:'覆盖当前整篇原文 · '+answer.provider+' · 摘要不代替原话',stale:'原文已经修改、增加或移除，下面是旧摘要。重新生成前请对照原文。',unknown:'这份摘要缺少完整发送记录，无法确认覆盖范围，请对照原文。'})[freshness] : '已有原文可直接阅读。连接已登录的本地 Codex 或 Claude Code，确认发送全文与使用额度后，才会生成摘要。';
+ if(answer&&!persisted)$('summary-status').textContent='这份摘要尚未保存到浏览器。关闭或刷新前请先导出摘要或 JSON 备份。'+$('summary-status').textContent;
+ $('summary-body').textContent=answer?.answer||'';
+ $('summary-citations').replaceChildren();
+ if(answer){
+  for(const id of [...new Set(answer.citations)]){
+   const segment=doc.segments.find(s=>s.id===id);if(!segment)continue;
+   const button=el('button','',Coconut.time(segment.start)+' · 核对原文');
+   button.onclick=()=>goToSegment(id);$('summary-citations').append(button);
+  }
+  if(!answer.citations.length)$('summary-citations').append(el('p','hint','这份摘要没有片段引用，请在原文中自行核对。'));
+ }
+ $('prepare-summary').textContent=answer?'重新生成整篇摘要':'使用本地 AI 工具生成摘要';
+ $('export-summary').hidden=!answer;
+}
+$('mode-summary').onclick=()=>setReadingMode('summary');
+$('mode-transcript').onclick=()=>setReadingMode('transcript');
+$('summary-open-transcript').onclick=()=>{setReadingMode('transcript');$('search').focus();};
+$('prepare-summary').onclick=()=>{
+ $('language-panel').open=true;
+ $('ai-task').value='summary';$('ai-filtered').checked=false;$('ai-consent').checked=false;
+ $('ai-task').dispatchEvent(new Event('change'));
+ $('ai-task').scrollIntoView?.({block:'center',behavior:'smooth'});$('ai-task').focus();
+};
+window.addEventListener('coconut-summary-updated',renderSummary);
+$('export-summary').onclick=()=>{
+ const doc=active();if(!doc||!Coconut.latestSummary(doc))return;
+ let url,link;
+ try{
+  url=URL.createObjectURL(new Blob([Coconut.summaryMarkdown(doc)],{type:'text/markdown;charset=utf-8'}));
+  link=el('a');link.href=url;link.download=doc.title.replace(/[\\/:*?"<>|\x00-\x1f\x7f]/g,'_')+'.summary.md';link.hidden=true;document.body.append(link);link.click();
+  notice('已发起摘要下载，包含引用与历史依据。请检查浏览器下载记录。');
+ }catch{notice('摘要导出失败，已保存的摘要仍在此页面，请重试。');}
+ finally{link?.remove();if(url)setTimeout(()=>URL.revokeObjectURL(url),60000);}
+};
+$('attach-reader-media').onclick=()=>{pendingMediaDocument=active()?.key||null;if(pendingMediaDocument)$('reader-media-file').click();};
+$('reader-media-file').onchange=async()=>{
+ const input=$('reader-media-file'),file=input.files[0],key=pendingMediaDocument;pendingMediaDocument=null;
+ if(!file)return;
+ let nextURL;
+ try{
+  if(!key||!state.documents.some(d=>d.key===key))throw new Error('原文字稿已关闭，请重新选择');
+  const extension=file.name.split('.').pop().toLowerCase();
+  const supportedTypes=new Set(['audio/mpeg','audio/mp3','audio/mp4','audio/x-m4a','audio/wav','audio/x-wav','audio/ogg','audio/flac','audio/x-flac','audio/aac','audio/opus','video/mp4','video/webm','audio/webm','video/quicktime','video/x-m4v','application/octet-stream']);
+  if(file.type&&!supportedTypes.has(file.type.toLowerCase()))throw new Error('请选择 MP3、M4A、WAV、OGG、FLAC、MP4、WebM 等实际音视频文件');
+  const kind=file.type.startsWith('video/')||['mp4','webm','mov','m4v'].includes(extension)?'video':file.type.startsWith('audio/')||['mp3','m4a','wav','ogg','flac','aac','opus'].includes(extension)?'audio':null;
+  if(!kind||!file.size)throw new Error('请选择可播放的音频或视频文件');
+  const prefix=await file.slice(0,1024).text();
+  if(/(?:mpegurl|scpls|dash\+xml)/i.test(file.type)||/^\s*(?:#EXTM3U|\[playlist\]|<\?xml|<MPD|<SmoothStreamingMedia|<ASX|<smil)/i.test(prefix))throw new Error('请选择实际音视频文件，不支持会连接远程地址的播放列表');
+  nextURL=URL.createObjectURL(file);const previous=browserMedia.get(key);
+  if(key===active()?.key){stopRepeating();$('source-media').querySelector('audio,video')?.pause();}
+  browserMedia.set(key,{url:nextURL,kind,name:file.name});if(previous)URL.revokeObjectURL(previous.url);
+  if(key===active()?.key){setReadingMode('transcript');render();}
+  notice('媒体只在本次页面读取，未上传。请核对内容和文字稿对应；刷新后重新选择文件即可继续回听。');
+ }catch(error){if(nextURL)URL.revokeObjectURL(nextURL);notice('打开媒体失败：'+error.message);}
+ finally{input.value='';}
+};
+$('detach-reader-media').onclick=()=>{
+ const key=active()?.key,attachment=browserMedia.get(key);if(!attachment)return;
+ stopRepeating();$('source-media').querySelector('audio,video')?.pause();browserMedia.delete(key);URL.revokeObjectURL(attachment.url);render();
+};

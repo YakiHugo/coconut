@@ -1,0 +1,21 @@
+{
+  "name": "coconut-desktop",
+  "productName": "Coconut",
+  "version": "0.1.0",
+  "private": true,
+  "description": "A local-first transcript reader with explicit official CLI subscription connections",
+  "author": "Coconut contributors",
+  "license": "MIT",
+  "type": "module",
+  "main": "main.mjs",
+  "scripts": {
+    "start": "electron .",
+    "test": "node --test ../tests/desktop-*.test.mjs",
+    "package:mac": "node package.mjs --mac",
+    "package:dir": "node package.mjs --dir"
+  },
+  "devDependencies": {
+    "electron": "44.5.1",
+    "@electron/packager": "20.3.0"
+  }
+}
