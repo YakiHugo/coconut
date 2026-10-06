@@ -16,6 +16,13 @@ class ServerTests(unittest.TestCase):
         self.base=f'http://127.0.0.1:{self.server.server_port}'
     def tearDown(self):
         self.server.shutdown();self.server.server_close();self.jobs.close();self.thread.join();self.temp.cleanup()
+    def test_summary_plan_asset_is_served_without_model_calls(self):
+        with patch('serve.ask') as ask:
+            with urlopen(self.base+'/summary.js') as response:
+                self.assertEqual(response.status,200)
+                self.assertIn(b'CoconutSummary',response.read())
+            ask.assert_not_called()
+
     def test_actual_upload_to_readable_document(self):
         request=Request(self.base+'/api/uploads?filename=test.srt', data=b'1\n00:00:01,000 --> 00:00:02,000\nHello Coconut\n',headers={'Content-Type':'application/octet-stream'})
         with urlopen(request) as response: job=json.load(response)

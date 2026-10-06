@@ -6,7 +6,7 @@
 
 - RSS 2.0 / Atom：读取公开源，列出最多 200 集；选择单集后才导入发布者的 VTT、SRT 或 Podcasting 2.0 时间戳 JSON
 - 普通发布者网页：仅发现页面公开声明的 `rel=alternate` RSS / Atom，先选源再选一集。节目列表从不自动当成最新一集
-- Apple Podcasts：使用官方公开目录的精确节目 ID 找到 `feedUrl`，再读原发布者 RSS。含单集 `i=` 的分享链接仍要求在列表中选择对应一集；未证明单集精确匹配，不自动取最新一集
+- Apple Podcasts：使用官方公开目录的精确节目 ID 找到 `feedUrl`，再读原发布者 RSS。含单集 `i=` 时，再读取同节目最多 200 集的官方公开目录，要求 `trackId` 和 `collectionId` 都精确相同，并以发布者 GUID 或完全一致的 enclosure 地址在 RSS 中唯一匹配。成功时只显示对应单集，但不自动保存、下载或调用模型；目录失败、身份冲突、超出窗口或无法匹配时保留明确手选，不按标题、发布日期或最新一集猜测
 - 小宇宙：支持官方公开节目页 / 单集页当前服务器提供的可见数据。单集必须同时明确 `status=NORMAL`、`payType=FREE`、`isPrivateMedia=false`、`media.source.mode=PUBLIC`，媒体地址与 enclosure 一致。每次导入或下载重新读取页面并校验这些条件。只列出节目页当前显示的单集，不承诺完整历史节目；已验证路径只提供公开音频，不宣称取得完整文字稿
 - 音视频直链：只接受明确音频 / 视频 MIME 的公开文件，不接受网页、HLS/DASH、DRM 或登录内容。发现时读取响应头后关闭连接，明确点击下载才获取文件
 - Spotify：不提取其音轨。请使用发布者独立公开 RSS 或合法取得的文件
@@ -33,7 +33,7 @@
 
 `createPodcastSources()` 返回以下方法，第二个参数都接受 `{signal}`：
 
-- `discover({url})` 返回 `kind=feed | choices | media`、标题、`feed_url`、`episodes`、可选 `feeds` / `media` 和 `warnings`
+- `discover({url})` 返回 `kind=feed | choices | media`、标题、`feed_url`、`episodes`、可选 `feeds` / `media` 和 `warnings`；Apple 单集另有 `episode_selection.status=matched | choice_required`，成功时包含原 Apple 单集 ID、RSS 单集 ID 与匹配依据
 - 单集包含 `id`（SHA-256，来源 GUID 或小宇宙 eid，不含秘密）、`title`、`source_url`、`language`、`duration`（秒或 null）、`media:[{url,type,kind,length}]`、`transcripts:[{url,type,language,supported}]`
 - `importEpisode({feedUrl,episodeId,transcriptUrl?})` 重新取得来源后返回 `{status:ready,document,episode,feed_url}` 或 `{status:needs_transcription,episode,feed_url,message}`。省略 transcriptUrl 时只选与节目声明语言一致的轨；多语言不随意猜测
 - `document` 使用 schema_version=1。新 `podcast_source` 保存 `feed_url`、`episode_id`、`transcript_url`、可选 `media_url` / `media_kind`；`provenance.kind=publisher_transcript`、`caption_method=publisher_provided`、`review_status=unreviewed`
@@ -45,7 +45,7 @@
 
 2026-10-06 的当前实现验证包括：
 
-- 人工编写的原创协议夹具覆盖 RSS、Atom、命名空间与 xml:base、SRT/VTT/JSON、来源/语言保留、无字幕、下载失败、重复/越界时间、单集选择、Apple 单集选择警告、小宇宙免费/私有/VIP/状态变化、伪造媒体链接
+- 人工编写的原创协议夹具覆盖 RSS、Atom、命名空间与 xml:base、SRT/VTT/JSON、来源/语言保留、无字幕、下载失败、重复/越界时间、单集选择、Apple 单集 GUID / enclosure 唯一匹配、冲突/失败回退与取消、小宇宙免费/私有/VIP/状态变化、伪造媒体链接
 - HTTP 传输注入测试覆盖 DNS 绑定、混合内外网解析、每跳重定向、IPv4 数字伪装和 IPv6 保留范围、凭据链接、长度/真实字节/MIME/压缩限制、重定向循环、DNS 取消与超时
 - 实际公开 Apple 目录：Changelog 节目 ID 341623264 返回 `https://changelog.com/podcast/feed`
 - 实际公开 Changelog RSS（约 6.25 MB）成功解析有界 200 集；其 HTML transcript 链接不会冒充时间戳文字稿

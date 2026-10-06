@@ -16,7 +16,7 @@ try {
   const app = path.join(work,'app'), resources = path.join(work,'resources'), reader = path.join(resources,'reader');
   await mkdir(app); await mkdir(reader,{recursive:true});
   for (const name of ['main.mjs','providers.mjs','server.mjs','translation.mjs','podcast-sources.mjs','podcast-xml.mjs','public-http.mjs']) await copyFile(path.join(ROOT,name),path.join(app,name));
-  for (const name of ['index.html','core.js','app.js','language.js','jobs.js','podcasts.js','style.css']) await copyFile(path.join(ROOT,'../reader',name),path.join(reader,name));
+  for (const name of ['index.html','summary.js','core.js','app.js','language.js','jobs.js','podcasts.js','style.css']) await copyFile(path.join(ROOT,'../reader',name),path.join(reader,name));
   const license = path.join(resources,'LICENSE.coconut'); await copyFile(path.join(ROOT,'../LICENSE'),license);
   await writeFile(path.join(app,'package.json'),JSON.stringify({name:configuration.name,version:configuration.version,
     productName:configuration.productName,main:configuration.main,type:'module',license:configuration.license}));

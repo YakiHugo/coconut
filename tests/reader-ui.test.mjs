@@ -11,6 +11,7 @@ function setup(stored, fetchMock, layout, contextControls=false){
   Object.defineProperty(window,'crypto',{value:webcrypto});
   if(stored!==undefined)window.localStorage.setItem('coconut-reader-v1',stored);
   if(layout!==undefined)window.localStorage.setItem('coconut-reading-layout-v1',layout);
+  window.eval(fs.readFileSync(new URL('reader/summary.js',root),'utf8'));
   window.eval(fs.readFileSync(new URL('reader/core.js',root),'utf8'));
   if(fetchMock)window.fetch=fetchMock;
   window.eval(fs.readFileSync(new URL('reader/app.js',root),'utf8') + '\n' + fs.readFileSync(new URL('reader/language.js',root),'utf8') + '\n' + fs.readFileSync(new URL('reader/podcasts.js',root),'utf8') + (fetchMock ? '\n' + fs.readFileSync(new URL('reader/jobs.js',root),'utf8') : ''));
@@ -1314,8 +1315,8 @@ test('summary task revokes consent and sends entire source despite reading filte
 
 test('oversize summaries are blocked before consent and even manual invocation sends no request',async()=>{
  for(const segments of [
-  Array.from({length:5001},(_,i)=>({id:'s'+i,start:i,end:i+1,text:i?'Other cue':'Unique selected source'})),
-  [{id:'s0',start:0,end:1,text:'Unique selected source'},{id:'s1',start:1,end:2,text:'a'.repeat(250000)}]
+  Array.from({length:20001},(_,i)=>({id:'s'+i,start:i,end:i+1,text:i?'Other cue':'Unique selected source'})),
+  [{id:'s0',start:0,end:1,text:'Unique selected source'},{id:'s1',start:1,end:2,text:'a'.repeat(1000001)}]
  ]){
   const w=setup();try{
    const $=id=>w.document.getElementById(id);const sent=[];
@@ -1378,9 +1379,9 @@ test('startup and reconnect do not probe local CLI until the user clicks check',
 test('a generated summary is never labeled saved after browser persistence fails',async()=>{
  const w=setup();try{
   const $=id=>w.document.getElementById(id);await importDocument(w,{title:'Quota',language:'en',segments:[{id:'a',start:0,end:1,text:'Source'}]});
-  w.fetch=async url=>({ok:true,json:async()=>url.endsWith('language-tools')?{ai:{codex:{ready:true}}}:{answer:'Generated test summary',citations:['a'],provider:'test'}});
+  w.fetch=async url=>({ok:true,json:async()=>{if(url.endsWith('language-tools'))return {ai:{codex:{ready:true}}};const before=w.localStorage.getItem('coconut-reader-v1');Object.defineProperty(w,'localStorage',{value:{getItem:()=>before,setItem:()=>{throw new Error('QuotaExceededError');}}});return {answer:'Generated test summary',citations:['a'],provider:'test'};}});
   await $('check-ai').onclick();$('ai-task').value='summary';$('ai-task').onchange();$('ai-consent').checked=true;
-  const before=w.localStorage.getItem('coconut-reader-v1');Object.defineProperty(w,'localStorage',{value:{getItem:()=>before,setItem:()=>{throw new Error('QuotaExceededError');}}});
+  const before=w.localStorage.getItem('coconut-reader-v1');
   await $('ask-ai').onclick();assert.equal($('summary-state').dataset.state,'unsaved');assert.match($('summary-state').textContent,/请备份/);assert.match($('summary-status').textContent,/尚未保存/);assert.equal($('summary-body').textContent,'Generated test summary');assert.ok(!before.includes('Generated test summary'));
  }finally{await w.happyDOM.close();}
 });
@@ -1443,5 +1444,79 @@ test('leaving reading stops repeat before late media events can replay hidden au
   w.document.querySelector('.repeat-button').click();assert.equal(plays,1);
   $('add-content').click();assert.equal($('stop-repeat').hidden,true);assert.equal($('reader-workspace').hidden,true);
   player.currentTime=4.2;player.onended();player.ontimeupdate();assert.equal(plays,1);assert.equal(player.currentTime,4.2);
+ }finally{await w.happyDOM.close();}
+});
+
+const longSummaryDocument=()=>({title:'Long synthetic summary scope',language:'en',segments:Array.from({length:801},(_,i)=>({id:'long-'+i,start:i,end:i+1,text:'Synthetic source '+i}))});
+const mockSummaryAnswer=request=>({answer:request.segments[0].id.startsWith('batch-')?'Final synthetic aggregation':'Synthetic batch note',citations:[request.segments[0].id],provider:'mock-only'});
+async function enableSummary(w){const $=id=>w.document.getElementById(id);await $('check-ai').onclick();$('prepare-summary').onclick();$('ai-consent').checked=true;}
+
+test('long summary plan is passive, all batches precede aggregation, and final sources survive reload',async()=>{
+ const w=setup();let stored;try{
+  const $=id=>w.document.getElementById(id);const sent=[];await importDocument(w,longSummaryDocument());
+  assert.equal($('prepare-summary').disabled,false);assert.equal($('summary-state').dataset.state,'empty');
+  w.fetch=async(url,options)=>({ok:true,json:async()=>{if(url.endsWith('language-tools'))return {ai:{codex:{ready:true}}};const request=JSON.parse(options.body);sent.push(request);if(sent.length<=3){assert.equal($('summary-body').textContent,'');assert.equal($('summary-state').dataset.state,'empty');}return mockSummaryAnswer(request);}});
+  await enableSummary(w);assert.match($('summary-plan').textContent,/共 4 次/);assert.equal(sent.length,0);
+  await $('ask-ai').onclick();assert.equal(sent.length,4);assert.deepEqual(sent.slice(0,3).map(r=>r.segments.length),[400,400,1]);assert.deepEqual(sent[3].segments.map(s=>s.id),['batch-1','batch-2','batch-3']);
+  stored=w.localStorage.getItem('coconut-reader-v1');const doc=JSON.parse(stored).documents[0];assert.equal(doc.summary_job,null);assert.equal(doc.ai_answers[0].answer,'Final synthetic aggregation');assert.deepEqual(doc.ai_answers[0].citations,['long-0']);assert.equal(doc.ai_answers[0].input_snapshot.segments.length,801);assert.equal($('summary-state').dataset.state,'current');
+ }finally{await w.happyDOM.close();}
+ const restored=setup(stored);try{assert.equal(restored.document.getElementById('summary-state').dataset.state,'current');assert.equal(restored.document.getElementById('summary-body').textContent,'Final synthetic aggregation');}finally{await restored.happyDOM.close();}
+});
+
+test('stopping a long summary saves a checkpoint and reload requires fresh explicit consent to resume',async()=>{
+ const w=setup();let stored;try{
+  const $=id=>w.document.getElementById(id);await importDocument(w,longSummaryDocument());let release,calls=0;
+  w.fetch=async(url,options)=>url.endsWith('language-tools')?{ok:true,json:async()=>({ai:{codex:{ready:true}}})}:new Promise(resolve=>{calls++;const request=JSON.parse(options.body);release=()=>resolve({ok:true,json:async()=>mockSummaryAnswer(request)});});
+  await enableSummary(w);const run=$('ask-ai').onclick();assert.equal(calls,1);$('stop-summary').onclick();$('ai-consent').checked=true;release();await run;
+  stored=w.localStorage.getItem('coconut-reader-v1');const doc=JSON.parse(stored).documents[0];assert.equal(calls,1);assert.equal(doc.summary_job.results.length,1);assert.equal(doc.summary_job.status,'paused');assert.equal(doc.ai_answers.length,0);assert.equal($('summary-state').dataset.state,'empty');assert.equal($('ai-consent').checked,false);
+ }finally{await w.happyDOM.close();}
+ const restored=setup(stored);try{
+  const $=id=>restored.document.getElementById(id),requests=[];restored.fetch=async(url,options)=>({ok:true,json:async()=>url.endsWith('language-tools')?{ai:{codex:{ready:true}}}:(requests.push(JSON.parse(options.body)),mockSummaryAnswer(JSON.parse(options.body)))});
+  assert.equal(requests.length,0);$('prepare-summary').onclick();await $('ask-ai').onclick();assert.equal(requests.length,0);assert.match($('summary-plan').textContent,/本次继续 3 次/);
+  await enableSummary(restored);await $('ask-ai').onclick();assert.equal(requests.length,3);assert.equal(requests[0].segments[0].id,'long-400');assert.equal($('summary-state').dataset.state,'current');
+ }finally{await restored.happyDOM.close();}
+});
+
+test('provider, task, panel close, document switch and source changes latch a stop before any next summary request',async()=>{
+ for(const mutation of ['provider','task','close','document','source']){
+  const w=setup();try{
+   const $=id=>w.document.getElementById(id);await importDocument(w,longSummaryDocument());let release,calls=0;
+   w.fetch=async(url,options)=>url.endsWith('language-tools')?{ok:true,json:async()=>({ai:{codex:{ready:true},claude:{ready:true}}})}:new Promise(resolve=>{calls++;const request=JSON.parse(options.body);release=()=>resolve({ok:true,json:async()=>mockSummaryAnswer(request)});});
+   await enableSummary(w);const run=$('ask-ai').onclick();
+   if(mutation==='provider'){$('ai-provider').value='claude';$('ai-provider').onchange();$('ai-provider').value='codex';$('ai-provider').onchange();}
+   if(mutation==='task'){$('ai-task').value='question';$('ai-task').onchange();}
+   if(mutation==='close'){$('language-panel').open=false;$('language-panel').dispatchEvent(new w.Event('toggle'));}
+   if(mutation==='document')await importDocument(w,{title:'Other source',segments:[{id:'other',start:0,end:1,text:'Other source'}]});
+   if(mutation==='source'){$('mode-transcript').onclick();w.document.querySelector('.segment button').click();$('edit-segment').value='Changed original';$('save-edit').click();}
+   $('ai-consent').checked=true;release();await run;assert.equal(calls,1,mutation);
+   const doc=JSON.parse(w.localStorage.getItem('coconut-reader-v1')).documents.find(d=>d.title==='Long synthetic summary scope');assert.equal(doc.ai_answers.length,0);assert.equal(doc.summary_job.results.length,mutation==='source'?0:1);
+  }finally{await w.happyDOM.close();}
+ }
+});
+
+test('long summary quota failure never retries automatically; saved chunks resume only the failed aggregate',async()=>{
+ const w=setup();try{
+  const $=id=>w.document.getElementById(id);await importDocument(w,longSummaryDocument());let calls=0,fail=true;
+  w.fetch=async(url,options)=>{if(url.endsWith('language-tools'))return {ok:true,json:async()=>({ai:{codex:{ready:true}}})};calls++;const request=JSON.parse(options.body);if(request.segments[0].id==='batch-1'&&fail)return {ok:false,json:async()=>({error:'Synthetic quota exhausted'})};return {ok:true,json:async()=>mockSummaryAnswer(request)};};
+  await enableSummary(w);await $('ask-ai').onclick();let doc=JSON.parse(w.localStorage.getItem('coconut-reader-v1')).documents[0];assert.equal(calls,4);assert.equal(doc.summary_job.results.length,3);assert.equal(doc.summary_job.status,'interrupted');assert.equal(doc.ai_answers.length,0);assert.match($('summary-job-state').textContent,/可能已消耗额度/);
+  fail=false;await enableSummary(w);await $('ask-ai').onclick();doc=JSON.parse(w.localStorage.getItem('coconut-reader-v1')).documents[0];assert.equal(calls,5);assert.equal(doc.ai_answers.length,1);assert.equal(doc.summary_job,null);
+ }finally{await w.happyDOM.close();}
+});
+
+test('summary persistence failure before a request prevents any model call',async()=>{
+ const w=setup();try{
+  const $=id=>w.document.getElementById(id);await importDocument(w,longSummaryDocument());let calls=0;
+  w.fetch=async url=>{if(url.endsWith('language-tools'))return {ok:true,json:async()=>({ai:{codex:{ready:true}}})};calls++;throw new Error('Must not send');};
+  await enableSummary(w);const before=w.localStorage.getItem('coconut-reader-v1');Object.defineProperty(w,'localStorage',{value:{getItem:()=>before,setItem:()=>{throw new Error('QuotaExceededError');}}});
+  await $('ask-ai').onclick();assert.equal(calls,0);assert.equal($('summary-state').dataset.state,'empty');assert.match($('notice').textContent,/未发送请求/);
+ }finally{await w.happyDOM.close();}
+});
+
+test('a batch kept only in memory is never labeled as a durable checkpoint',async()=>{
+ const w=setup();try{
+  const $=id=>w.document.getElementById(id);await importDocument(w,longSummaryDocument());let calls=0;
+  w.fetch=async(url,options)=>({ok:true,json:async()=>{if(url.endsWith('language-tools'))return {ai:{codex:{ready:true}}};calls++;const request=JSON.parse(options.body),saved=w.localStorage.getItem('coconut-reader-v1');Object.defineProperty(w,'localStorage',{value:{getItem:()=>saved,setItem:()=>{throw new Error('QuotaExceededError');}}});return mockSummaryAnswer(request);}});
+  await enableSummary(w);await $('ask-ai').onclick();assert.equal(calls,1);assert.match($('summary-job-state').textContent,/当前页暂存 1\/3 批/);assert.match($('summary-job-state').textContent,/尚未保存/);assert.match($('summary-plan').textContent,/当前页暂存 1 批/);assert.match($('summary-status').textContent,/尚未保存到浏览器/);
+  const saved=JSON.parse(w.localStorage.getItem('coconut-reader-v1')).documents[0];assert.equal(saved.summary_job.results.length,0);assert.equal(saved.ai_answers.length,0);
  }finally{await w.happyDOM.close();}
 });

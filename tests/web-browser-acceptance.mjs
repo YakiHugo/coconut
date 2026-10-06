@@ -78,7 +78,7 @@ try {
  // Mobile is the same complete reader, with no horizontal overflow.
  await page.locator('#close-note').click();await page.setViewportSize({width:390,height:844});await page.locator('#mode-summary').click();
  check('mobile_summary_fits',await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth));
- const oversize={title:'Synthetic summary limit test',language:'en',segments:Array.from({length:5001},(_,i)=>({id:'limit-'+i,start:i,end:i+1,text:i?'Other cue':'Unique selected source'}))};
+ const oversize={title:'Synthetic summary limit test',language:'en',segments:Array.from({length:20001},(_,i)=>({id:'limit-'+i,start:i,end:i+1,text:i?'Other cue':'Unique selected source'}))};
  await page.locator('#file').setInputFiles({name:'summary-limit.json',mimeType:'application/json',buffer:Buffer.from(JSON.stringify(oversize))});
  await page.locator('#summary-readiness').waitFor({state:'visible'});
  check('oversize_summary_blocked_before_consent',await page.locator('#prepare-summary').isDisabled()&&!(await page.locator('#ai-consent').isChecked()));

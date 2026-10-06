@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
-import { createPodcastSources, parsePodcastFeed, parsePublisherTranscript, publisherFeeds, parseXiaoyuzhouPage, PODCAST_LIMITS } from '../desktop/podcast-sources.mjs';
+import { createPodcastSources, parsePodcastFeed, parsePublisherTranscript, publisherFeeds, parseXiaoyuzhouPage, matchAppleEpisode, PODCAST_LIMITS } from '../desktop/podcast-sources.mjs';
 import { parseXml } from '../desktop/podcast-xml.mjs';
 const dir=new URL('./fixtures/podcasts/',import.meta.url);
 const fixture=name=>readFile(new URL(name,dir),'utf8');
@@ -62,7 +62,70 @@ test('only actual advertised publisher feeds are offered, never arbitrary HTML s
 test('Apple uses exact official directory ID and feed, never silently maps a shared episode to latest episode',async()=>{
  const apple='https://itunes.apple.com/lookup?id=341623264&entity=podcast&country=us';
  const {sources,calls}=service({[apple]:{type:'text/javascript',body:Buffer.from(JSON.stringify({results:[{kind:'podcast',collectionId:341623264,feedUrl}]}))}});
- const result=await sources.discover({url:'https://podcasts.apple.com/us/podcast/show/id341623264?i=123'});assert.equal(result.kind,'feed');assert.equal(calls[0].url,apple);assert.match(result.warnings.at(-1),/明确选择/);assert.equal(calls.length,2);
+ const result=await sources.discover({url:'https://podcasts.apple.com/us/podcast/show/id341623264?i=123'});assert.equal(result.kind,'feed');assert.equal(calls[0].url,apple);assert.match(result.warnings.at(-1),/明确选择/);assert.equal(calls.length,3);assert.equal(result.episode_selection.status,'choice_required');assert.equal(result.episodes.length,2);
+});
+const appleShow='https://itunes.apple.com/lookup?id=341623264&entity=podcast&country=us';
+const appleEpisodes='https://itunes.apple.com/lookup?id=341623264&entity=podcastEpisode&country=us&limit=200';
+const appleTrack={kind:'podcast-episode',collectionId:341623264,trackId:123,episodeGuid:'episode-two',episodeUrl:'https://media.example.org/two.mp4'};
+function appleService(results,overrides={}){return service({[appleShow]:{type:'text/javascript',body:Buffer.from(JSON.stringify({results:[{kind:'podcast',collectionId:341623264,feedUrl}]}))},[appleEpisodes]:{type:'text/javascript',body:Buffer.from(JSON.stringify({results}))},...overrides});}
+test('Apple episode ID uniquely matches publisher GUID rather than selecting the newest/title-similar episode',async()=>{
+ const {sources,calls}=appleService([appleTrack]);const found=await sources.discover({url:'https://podcasts.apple.com/us/podcast/show/id341623264?i=123'});
+ assert.equal(found.episodes.length,1);assert.equal(found.episodes[0].title,'视频播客');assert.equal(found.episode_selection.status,'matched');assert.equal(found.episode_selection.matched_by,'publisher_guid');assert.equal(found.episode_selection.episode_id,found.episodes[0].id);assert.equal(found.episode_selection.apple_episode_id,'123');assert.equal(found.truncated,false);assert.equal(calls.length,3);assert.equal(calls.at(-1).options.maxBytes,PODCAST_LIMITS.metadataBytes);assert.ok(calls.every(c=>!c.url.includes('media.example')));
+});
+test('Apple enclosure is usable only as an exact unambiguous identity, never fuzzy title/date/URL matching',()=>{
+ const episodes=parsePodcastFeed(rss,feedUrl).episodes;
+ assert.equal(matchAppleEpisode([{...appleTrack,episodeGuid:undefined}],'341623264','123',episodes).matched_by,'enclosure_url');
+ for(const changed of [{collectionId:1},{collectionId:[341623264]},{trackId:[123]},{trackId:9007199254740992},{trackId:124},{kind:'podcast'},{episodeGuid:'unknown',episodeUrl:'https://media.example.org/two.mp4?other=1',trackName:'视频播客'},
+  {episodeGuid:'episode-one'},{episodeGuid:'unknown',episodeUrl:'https://user:pass@media.example.org/two.mp4'},{episodeGuid:'unknown',episodeUrl:'http://127.0.0.1/audio'}])assert.equal(matchAppleEpisode([{...appleTrack,...changed}],'341623264','123',episodes),null);
+ assert.equal(matchAppleEpisode([appleTrack,appleTrack],'341623264','123',episodes),null);
+ assert.equal(matchAppleEpisode([{...appleTrack,episodeGuid:undefined}],'341623264','123',[...episodes,{...episodes[1],id:'b'.repeat(64)}]),null);
+});
+test('RSS reused media outside the displayed window cannot establish a unique Apple enclosure match',async()=>{
+ const entry=(guid,media)=>`<item><guid>${guid}</guid><title>${guid}</title><enclosure url="https://media.example.org/${media}.mp3" type="audio/mpeg"/></item>`;
+ const filler=Array.from({length:205},(_,i)=>entry('filler-'+i,'filler-'+i)).join('');
+ const body=Buffer.from('<rss><channel>'+entry('first','same')+filler+entry('second','same')+'</channel></rss>');
+ const {sources}=appleService([{...appleTrack,episodeGuid:undefined,episodeUrl:'https://media.example.org/same.mp3'}],{[feedUrl]:{type:'application/rss+xml',body}});
+ const result=await sources.discover({url:'https://podcasts.apple.com/us/podcast/show/id341623264?i=123'});
+ assert.equal(result.episode_selection.status,'choice_required');assert.equal(result.episodes[0].identity_ambiguous,true);assert.equal(result.episodes.length,200);assert.equal(result.truncated,true);
+});
+test('Apple GUID/enclosure conflicts across the display cutoff require manual choice in either direction',async()=>{
+ const entry=guid=>`<item><guid>${guid}</guid><title>${guid}</title><enclosure url="https://media.example.org/${guid}.mp3" type="audio/mpeg"/></item>`;
+ const body=Buffer.from('<rss><channel>'+entry('first')+Array.from({length:205},(_,i)=>entry('filler-'+i)).join('')+entry('later')+'</channel></rss>');
+ for(const [guid,media] of [['first','later'],['later','first']]){
+  const {sources}=appleService([{...appleTrack,episodeGuid:guid,episodeUrl:`https://media.example.org/${media}.mp3`}],{[feedUrl]:{type:'application/rss+xml',body}});
+  const result=await sources.discover({url:'https://podcasts.apple.com/us/podcast/show/id341623264?i=123'});
+  assert.equal(result.episode_selection.status,'choice_required');assert.equal(result.episodes.length,200);assert.equal(result.truncated,true);assert.ok(!JSON.stringify(result).includes('mediaOwners'));
+ }
+});
+test('RSS duplicate identity never selects the first episode for an Apple link, even beyond the displayed window',async()=>{
+ const entry=(guid,media)=>`<item><guid>${guid}</guid><title>${media}</title><enclosure url="https://media.example.org/${media}.mp3" type="audio/mpeg"/></item>`;
+ for(const intervening of ['',Array.from({length:205},(_,i)=>entry('filler-'+i,'filler-'+i)).join('')]){
+  const body=Buffer.from('<rss><channel>'+entry('duplicate-guid','first')+intervening+entry('duplicate-guid','second')+'</channel></rss>');
+  const track={...appleTrack,episodeGuid:'duplicate-guid',episodeUrl:'https://media.example.org/second.mp3'};
+  const {sources}=appleService([track],{[feedUrl]:{type:'application/rss+xml',body}});
+  const result=await sources.discover({url:'https://podcasts.apple.com/us/podcast/show/id341623264?i=123'});
+  assert.equal(result.episode_selection.status,'choice_required');assert.equal(result.episodes[0].identity_ambiguous,true);assert.equal(result.episodes[0].title,'first');assert.match(result.warnings.join(' '),/重复/);
+ }
+});
+test('Apple missing, malformed, failed, conflicting or older-than-window metadata preserves explicit choices',async()=>{
+ for(const result of [[],[{...appleTrack,trackId:124}],[appleTrack,appleTrack],[{...appleTrack,episodeGuid:'episode-one'}]]){
+  const {sources}=appleService(result);const found=await sources.discover({url:'https://podcasts.apple.com/us/podcast/show/id341623264?i=123'});assert.equal(found.episodes.length,2);assert.equal(found.episode_selection.status,'choice_required');assert.match(found.warnings.at(-1),/不会按标题猜测/);
+ }
+ for(const response of [new Error('Directory unavailable'),{type:'application/json',body:Buffer.from('{broken')}]){
+  const {sources}=appleService([],{[appleEpisodes]:response});assert.equal((await sources.discover({url:'https://podcasts.apple.com/us/podcast/show/id341623264?i=123'})).episode_selection.status,'choice_required');
+ }
+});
+test('Apple show-only lookup avoids episode metadata and malformed episode IDs are rejected before network calls',async()=>{
+ const {sources,calls}=appleService([]);const show=await sources.discover({url:'https://podcasts.apple.com/us/podcast/show/id341623264'});assert.equal(show.episode_selection,undefined);assert.equal(calls.length,2);
+ for(const query of ['i=','i=abc','i=0','i=123&i=124','i=123456789012345678901'])await assert.rejects(sources.discover({url:'https://podcasts.apple.com/us/podcast/show/id341623264?'+query}),/单集 ID 无效/);assert.equal(calls.length,2);
+});
+test('cancelled Apple episode lookup propagates cancellation instead of publishing a manual fallback',async()=>{
+ const controller=new AbortController();
+ const aborting=createPodcastSources({fetchResource:async(url,options)=>{
+  if(url===appleEpisodes){controller.abort();throw new Error('cancelled lookup');}
+  return {url,type:'application/json',body:Buffer.from(url===appleShow?JSON.stringify({results:[{kind:'podcast',collectionId:341623264,feedUrl}]}):rss)};
+ }});
+ await assert.rejects(aborting.discover({url:'https://podcasts.apple.com/us/podcast/show/id341623264?i=123'},{signal:controller.signal}),/cancelled lookup/);
 });
 test('Spotify and Xiaoyuzhou access boundaries are explicit, no hidden API or cookie fallback',async()=>{
  const {sources,calls}=service({'https://www.xiaoyuzhoufm.com/podcast/abc':{type:'text/html',body:Buffer.from('<html>Only show notes</html>')}});
