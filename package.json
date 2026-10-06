@@ -1,6 +1,12 @@
 {
   "name": "coconut-reader",
   "private": true,
-  "scripts": {"test": "node --test tests/reader.test.cjs tests/reader-ui.test.mjs"},
-  "devDependencies": {"happy-dom": "20.11.1"}
+  "scripts": {
+    "test": "node --test tests/reader.test.cjs tests/reader-ui.test.mjs",
+    "test:browser": "node tests/browser-acceptance.mjs"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.63.0",
+    "happy-dom": "20.11.1"
+  }
 }

@@ -1,0 +1,87 @@
+name: Browser acceptance
+
+on:
+  push:
+    branches: [main, dot/redogfood-original-video]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      original_video_url:
+        description: 'Optional public single-video URL for caption-only original-media acceptance'
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: browser-${{ github.ref }}-${{ github.event_name }}
+  cancel-in-progress: true
+
+jobs:
+  browser-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - run: npx playwright install --with-deps chromium
+      - run: sudo apt-get update && sudo apt-get install -y ffmpeg
+      - name: Prepare original synthetic media and timed text
+        run: python scripts/prepare_browser_acceptance.py --mode synthetic --directory "$RUNNER_TEMP/coconut-acceptance"
+      - name: Verify actual browser playback, reading, downloads and restore
+        env:
+          COCONUT_ACCEPTANCE_MODE: synthetic
+          COCONUT_ACCEPTANCE_DATA_DIR: ${{ runner.temp }}/coconut-acceptance
+          COCONUT_ACCEPTANCE_RESULT: ${{ runner.temp }}/coconut-acceptance/acceptance-result.json
+        run: npm run test:browser
+      - name: Remove temporary media and exports
+        if: always()
+        run: rm -rf -- "$RUNNER_TEMP/coconut-acceptance"
+
+  original-sample:
+    if: (github.event_name == 'workflow_dispatch' && inputs.original_video_url != '') || (github.event_name == 'push' && github.ref == 'refs/heads/dot/redogfood-original-video' && contains(github.event.head_commit.message, '[run-original-once]'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - run: npx playwright install --with-deps chromium
+      - run: python -m pip install yt-dlp==2026.8.19
+      - run: sudo apt-get update && sudo apt-get install -y ffmpeg
+      - name: Obtain public media with an existing-caption-only gate
+        env:
+          COCONUT_ORIGINAL_URL: ${{ inputs.original_video_url || 'https://x.com/VaibhavSisinty/status/2105733670493651236' }}
+        run: |
+          # Downloader messages can contain source text or signed URLs. Keep them
+          # ephemeral; report only the failure category, never their contents.
+          if ! python scripts/prepare_browser_acceptance.py --mode original --directory "$RUNNER_TEMP/coconut-acceptance" > "$RUNNER_TEMP/coconut-preparation.log" 2>&1; then
+            echo 'Original-media preparation failed. Check public access, English captions and media availability. No ASR fallback was attempted.'
+            exit 1
+          fi
+      - name: Verify the actual original media in Chromium
+        env:
+          COCONUT_ACCEPTANCE_MODE: original
+          COCONUT_ACCEPTANCE_DATA_DIR: ${{ runner.temp }}/coconut-acceptance
+          COCONUT_ACCEPTANCE_RESULT: ${{ runner.temp }}/coconut-acceptance/acceptance-result.json
+        run: npm run test:browser
+      - name: Remove original media, captions, exports and private logs
+        if: always()
+        run: rm -rf -- "$RUNNER_TEMP/coconut-acceptance" "$RUNNER_TEMP/coconut-preparation.log"
+
+# Deliberately no upload-artifact step: source media, captions, browser storage,
+# screenshots, traces and downloads must not become public CI artifacts.
