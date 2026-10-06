@@ -8,7 +8,7 @@
 <script src="summary.js?v=580ffdad1e" defer></script>
 <script src="core.js?v=e0b76eeb34" defer>
 </script>
-<script src="app.js?v=72a8791ba8" defer>
+<script src="app.js?v=8df9d70887" defer>
 </script>
 <script src="language.js?v=be55932556" defer></script>
 <script src="podcasts.js?v=faf2195d29" defer></script>
@@ -137,6 +137,7 @@ cd coconut
 <label for="project-note">项目笔记</label><textarea id="project-note" rows="4" placeholder="记下想法、疑问或之后要核对的内容"></textarea>
 <p class="hint">来源、笔记与时间书签自动保存在此浏览器；媒体只在本次页面可用，刷新后请单独重新获取。迁移请导出 JSON 备份。</p>
 <form id="audio-bookmark-form"><label for="audio-bookmark-time">时间书签</label><input id="audio-bookmark-time" required placeholder="12:34 或秒数" inputmode="decimal"><button id="use-playback-time" type="button">填入正在播放的时间</button><label for="audio-bookmark-note">书签笔记（可选）</label><input id="audio-bookmark-note" placeholder="此刻想记住什么？"><button type="submit">保存时间书签</button></form>
+<label>查找时间书签<input id="audio-bookmark-search" type="search" placeholder="笔记关键词或 12:34"></label><p id="audio-bookmark-results" class="hint" role="status"></p>
 <p id="audio-project-status" class="hint" role="status"></p><div id="audio-bookmarks" aria-label="已保存的时间书签"></div>
 </section>
 <div id="transcript-reading-tools">

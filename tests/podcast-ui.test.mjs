@@ -236,3 +236,23 @@ test('audio bookmark time correction validates, reorders and retains its saved n
   row=[...$('audio-bookmarks').children].at(-1);row.querySelector('.edit-bookmark-time').click();form=row.querySelector('form');form.querySelector('input').value='40';form.querySelector('[type="button"]').click();assert.equal(JSON.parse(w.localStorage.getItem('coconut-reader-v1')).documents[0].timestamp_bookmarks[1].time,30);
  }finally{await w.happyDOM.close();}
 });
+
+test('audio bookmark search finds notes or timestamps without losing hidden bookmarks',async()=>{
+ const {w,$}=await setup(()=>response({}));try{
+  await importDocument(w,{project_kind:'audio_only',title:'Audio',podcast_source:source,segments:[],timestamp_bookmarks:[{id:'a',time:10,note:'Interesting point'},{id:'b',time:20,note:'Other'}]});
+  const before=w.localStorage.getItem('coconut-reader-v1'),search=$('audio-bookmark-search');search.value='interesting';search.oninput();assert.equal($('audio-bookmarks').querySelectorAll('.audio-bookmark').length,1);assert.match($('audio-bookmark-results').textContent,/1 \/ 2/);
+  search.value='00:20';search.oninput();assert.equal($('audio-bookmarks').querySelector('.audio-bookmark').dataset.bookmarkId,'b');
+  search.value='missing';search.oninput();assert.equal($('audio-bookmarks').querySelectorAll('.audio-bookmark').length,0);
+  search.value='';search.oninput();assert.equal($('audio-bookmarks').querySelectorAll('.audio-bookmark').length,2);assert.equal(w.localStorage.getItem('coconut-reader-v1'),before);
+ }finally{await w.happyDOM.close();}
+});
+
+test('editing a filtered timestamp restores focus to bookmark search when the row leaves results',async()=>{
+ const {w,$}=await setup(()=>response({}));try{
+  await importDocument(w,{project_kind:'audio_only',title:'Audio',podcast_source:source,segments:[],timestamp_bookmarks:[{id:'a',time:10,note:'Keep'}]});
+  $('audio-bookmark-search').value='00:10';$('audio-bookmark-search').oninput();
+  const row=$('audio-bookmarks').querySelector('.audio-bookmark');row.querySelector('.edit-bookmark-time').click();const form=row.querySelector('form');form.querySelector('input').value='20';form.onsubmit({preventDefault(){}});
+  assert.equal($('audio-bookmarks').querySelectorAll('.audio-bookmark').length,0);assert.equal(w.document.activeElement,$('audio-bookmark-search'));
+  assert.equal(JSON.parse(w.localStorage.getItem('coconut-reader-v1')).documents[0].timestamp_bookmarks[0].note,'Keep');
+ }finally{await w.happyDOM.close();}
+});
