@@ -374,3 +374,12 @@ test('podcast URL normalization cannot create a source too long to reimport',()=
  const C=require('../reader/core.js');assert.equal(C.podcastURL('https://publisher.example/'+'声'.repeat(1500)),'');
  const url=C.podcastURL('https://publisher.example/声音.mp3');assert.ok(url);assert.equal(C.podcastURL(url),url);
 });
+
+test('library ordering is stable, nonmutating and handles overlapping or missing duration',()=>{
+ const {sortedLibrary,documentDuration}=require('../reader/core.js');
+ const docs=[{title:'第10集',segments:[{end:50},{end:30}]},{title:'第2集',segments:[{end:20}]},{title:'原声',project_kind:'audio_only',segments:[]}];
+ assert.equal(documentDuration(docs[0]),50);
+ assert.deepEqual(sortedLibrary(docs,'title').filter(d=>d.title.startsWith('第')).map(d=>d.title),['第2集','第10集']);
+ assert.deepEqual(sortedLibrary(docs,'duration').map(d=>documentDuration(d)),[0,20,50]);
+ assert.deepEqual(sortedLibrary(docs,'added'),docs);assert.notEqual(sortedLibrary(docs,'added'),docs);assert.equal(docs[0].title,'第10集');
+});

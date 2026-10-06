@@ -1520,3 +1520,14 @@ test('a batch kept only in memory is never labeled as a durable checkpoint',asyn
   const saved=JSON.parse(w.localStorage.getItem('coconut-reader-v1')).documents[0];assert.equal(saved.summary_job.results.length,0);assert.equal(saved.ai_answers.length,0);
  }finally{await w.happyDOM.close();}
 });
+
+test('shelf sort changes view without changing stored document order or active reading',async()=>{
+ const w=setup();try{
+  await importDocument(w,{title:'Z title',segments:[{start:0,end:3,text:'Z'}]});
+  await importDocument(w,{title:'A title',segments:[{start:0,end:2,text:'A'}]});
+  const before=w.localStorage.getItem('coconut-reader-v1'),select=w.document.getElementById('library-sort');select.value='title';select.onchange();
+  assert.deepEqual([...w.document.querySelectorAll('.library-title')].map(n=>n.textContent),['A title','Z title']);
+  assert.equal(w.localStorage.getItem('coconut-reader-v1'),before);assert.equal(w.localStorage.getItem('coconut-library-sort-v1'),'title');
+  select.value='added';select.onchange();assert.equal(w.document.querySelector('.library-title').textContent,'Z title');
+ }finally{await w.happyDOM.close();}
+});

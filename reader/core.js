@@ -266,6 +266,15 @@
   const current=doc.segments.filter(s=>selected.has(s.id));
   return current.length===input.segments.length && current.every((s,i)=>s.id===input.segments[i].id && s.text===input.segments[i].text) ? 'current' : 'stale';
  }
+ function documentDuration(doc) {
+  return isAudioProject(doc)?doc.media_duration||0:doc.segments.reduce((end,segment)=>Math.max(end,segment.end),0);
+ }
+ function sortedLibrary(documents, order) {
+  const result=documents.slice();
+  if(order==='title')result.sort((a,b)=>a.title.localeCompare(b.title,'zh-Hans',{numeric:true,sensitivity:'base'}));
+  if(order==='duration')result.sort((a,b)=>documentDuration(a)-documentDuration(b));
+  return result;
+ }
  function matchesSegment(segment, doc, query, notesOnly=false, excerptsOnly=false) {
   return (!notesOnly || Boolean(doc.notes?.[segment.id])) && (!excerptsOnly || segment.saved_excerpt === true) &&
    [segment.text,segment.speaker||"",doc.notes?.[segment.id]||"",...Object.values(segment.translations||{}).filter(t=>translationCurrent(segment,doc,t)).map(t=>t.text)].join(" ").toLocaleLowerCase().includes(query.trim().toLocaleLowerCase());
@@ -547,7 +556,7 @@
 			segments,
 		});
 	}
-	const api = { AUDIO_NOTE_BUDGET, audioNoteCharacters, isAudioProject, audioProjectIdentity, SUMMARY_QUESTION, summaryReadiness, podcastURL, podcastSource, cleanGlossary, relevantGlossary, translationQualityMessage, retainAnswers, summaryFreshness, latestSummary, summaryMarkdown, aiReadingMarkdown, parseReadingTime, segmentAtTime, subtitleExport, mergeLibraryBackup, time, source, media, validate, parse, matchesSegment, notebookSegments, notebookMarkdown, translationCurrent, sameCueSnapshot, subscriptionPlan, cleanContexts, answerFreshness };
+	const api = { documentDuration, sortedLibrary, AUDIO_NOTE_BUDGET, audioNoteCharacters, isAudioProject, audioProjectIdentity, SUMMARY_QUESTION, summaryReadiness, podcastURL, podcastSource, cleanGlossary, relevantGlossary, translationQualityMessage, retainAnswers, summaryFreshness, latestSummary, summaryMarkdown, aiReadingMarkdown, parseReadingTime, segmentAtTime, subtitleExport, mergeLibraryBackup, time, source, media, validate, parse, matchesSegment, notebookSegments, notebookMarkdown, translationCurrent, sameCueSnapshot, subscriptionPlan, cleanContexts, answerFreshness };
 	if (typeof module !== "undefined" && module.exports) module.exports = api;
 	else root.Coconut = api;
 })(typeof window !== "undefined" ? window : globalThis);
