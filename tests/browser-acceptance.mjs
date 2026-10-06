@@ -398,7 +398,7 @@ try {
   const markdown = await fs.readFile(markdownFile, 'utf8');
   check('markdown_all_notes', noteMarkers.every(marker => markdown.includes(marker)));
   check('markdown_corrected_and_original', markdown.includes(markdownQuote(correction)) && markdown.includes(markdownQuote(originalText)));
-  check('markdown_all_annotation_times', Object.values(indices).every(index => markdown.includes('片段 ID：' + markdownText(document.segments[index].id))));
+  check('markdown_all_annotation_ids', Object.values(indices).every(index => markdown.includes('片段 ID：' + markdownText(document.segments[index].id))));
 
   stage = 'actual_page_reload';
   await page.reload({waitUntil: 'domcontentloaded'});

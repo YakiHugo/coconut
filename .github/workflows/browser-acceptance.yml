@@ -2,7 +2,7 @@ name: Browser acceptance
 
 on:
   push:
-    branches: [main, dot/redogfood-original-video]
+    branches: [main]
   pull_request:
   workflow_dispatch:
     inputs:
@@ -47,7 +47,7 @@ jobs:
         run: rm -rf -- "$RUNNER_TEMP/coconut-acceptance"
 
   original-sample:
-    if: (github.event_name == 'workflow_dispatch' && inputs.original_video_url != '') || (github.event_name == 'push' && github.ref == 'refs/heads/dot/redogfood-original-video' && contains(github.event.head_commit.message, '[run-original-once]'))
+    if: github.event_name == 'workflow_dispatch' && inputs.original_video_url != ''
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -65,7 +65,7 @@ jobs:
       - run: sudo apt-get update && sudo apt-get install -y ffmpeg
       - name: Obtain public media with an existing-caption-only gate
         env:
-          COCONUT_ORIGINAL_URL: ${{ inputs.original_video_url || 'https://x.com/VaibhavSisinty/status/2105733670493651236' }}
+          COCONUT_ORIGINAL_URL: ${{ inputs.original_video_url }}
         run: |
           # Downloader messages can contain source text or signed URLs. Keep them
           # ephemeral; report only the failure category, never their contents.
