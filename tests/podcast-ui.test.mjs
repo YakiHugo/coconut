@@ -224,3 +224,15 @@ test('all valid publisher titles up to 500 characters remain saveable as audio p
   assert.throws(()=>w.Coconut.validate({...saved,title:title+'多'}),/500/);
  }finally{await w.happyDOM.close();}
 });
+
+test('audio bookmark time correction validates, reorders and retains its saved note',async()=>{
+ const {w,$}=await setup(()=>response({}));try{
+  await importDocument(w,{project_kind:'audio_only',title:'Audio',podcast_source:source,segments:[],timestamp_bookmarks:[{id:'first',time:10,note:'keep me'},{id:'second',time:20,note:'next'}]});
+  let row=$('audio-bookmarks').querySelector('.audio-bookmark');row.querySelector('.edit-bookmark-time').click();
+  let form=row.querySelector('form');form.querySelector('input').value='nonsense';form.onsubmit({preventDefault(){}});assert.match(form.textContent,/未改变/);
+  form.querySelector('input').value='0:30';form.onsubmit({preventDefault(){}});
+  const saved=JSON.parse(w.localStorage.getItem('coconut-reader-v1')).documents[0];assert.deepEqual(saved.timestamp_bookmarks.map(b=>b.id),['second','first']);assert.equal(saved.timestamp_bookmarks[1].note,'keep me');assert.equal(saved.timestamp_bookmarks[1].time,30);
+  assert.equal(w.document.activeElement.closest('.audio-bookmark').dataset.bookmarkId,'first');
+  row=[...$('audio-bookmarks').children].at(-1);row.querySelector('.edit-bookmark-time').click();form=row.querySelector('form');form.querySelector('input').value='40';form.querySelector('[type="button"]').click();assert.equal(JSON.parse(w.localStorage.getItem('coconut-reader-v1')).documents[0].timestamp_bookmarks[1].time,30);
+ }finally{await w.happyDOM.close();}
+});

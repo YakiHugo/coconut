@@ -561,7 +561,19 @@ function renderAudioProject(doc) {
   const remove=el('button','','删除书签');remove.onclick=()=>{
    doc.timestamp_bookmarks=doc.timestamp_bookmarks.filter(bookmark=>bookmark.id!==item.id);save();renderAudioProject(doc);renderLibrary();renderNotebookAction(doc);$('audio-bookmark-time').focus();
   };
-  row.append(seek,input,remove);host.append(row);
+  const edit=el('button','','修正书签时间'),form=el('form'),timeInput=el('input'),apply=el('button','','保存时间'),cancel=el('button','','取消修正'),error=el('p','hint');
+  edit.className='edit-bookmark-time';form.hidden=true;timeInput.value=String(item.time);timeInput.setAttribute('aria-label','修正书签时间（秒、分:秒或时:分:秒）');timeInput.inputMode='decimal';apply.type='submit';cancel.type='button';error.setAttribute('role','status');
+  edit.onclick=()=>{form.hidden=false;timeInput.value=String(item.time);error.textContent='';timeInput.focus();};
+  cancel.onclick=()=>{form.hidden=true;edit.focus();};
+  form.onsubmit=event=>{
+   event.preventDefault();if(active()?.key!==doc.key||!doc.timestamp_bookmarks.includes(item))return;
+   const next=Coconut.parseReadingTime(timeInput.value);
+   if(next===null||next>604800){error.textContent='请输入最长7天的有效时间，原书签未改变。';return;}
+   item.time=next;doc.timestamp_bookmarks.sort((a,b)=>a.time-b.time);const persisted=save();renderAudioProject(doc);renderNotebookAction(doc);
+   $('audio-project-status').textContent=persisted?'书签时间已更新，笔记保留。':'书签时间仅在本页，请立即导出 JSON 备份。';
+   [...host.children].find(element=>element.dataset.bookmarkId===item.id)?.querySelector('.edit-bookmark-time')?.focus();
+  };
+  form.append(timeInput,apply,cancel,error);row.append(seek,input,remove,edit,form);host.append(row);
  }
 }
 function allowAudioNoteChange(doc,previous,value,limit){
