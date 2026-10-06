@@ -173,10 +173,10 @@ function goToSegment(id) {
 function renderLibrary() {
 	$("library").replaceChildren();
 	const query = $("library-search").value.trim().toLocaleLowerCase();
-	const docs = Coconut.sortedLibrary(state.documents, $("library-sort").value).filter(d => d.title.toLocaleLowerCase().includes(query));
+	const docs = Coconut.sortedLibrary(state.documents, $("library-sort").value).filter(d => Coconut.libraryMatches(d,query,$("library-kind").value,$("library-scope").value));
 	$("library-total").textContent = String(state.documents.length);
 	$("library-empty").hidden = docs.length > 0;
-	$("library-empty").textContent = state.documents.length ? "没有匹配的标题" : "还没有内容。添加一份，或体验示例。";
+	$("library-empty").textContent = state.documents.length ? "没有匹配的内容，可调整书架筛选或查找范围" : "还没有内容。添加一份，或体验示例。";
 	for (const d of docs) {
 		const b = el("button", d.key === state.active ? "active" : "");
 		b.append(el("span", "library-title", d.title));
@@ -432,6 +432,8 @@ $("back-reading").onclick = () => showWorkspace("read");
 $("show-jobs").onclick = () => { showWorkspace("add"); $("jobs-heading").scrollIntoView?.(); };
 $("toggle-library").onclick = () => $("toggle-library").setAttribute("aria-expanded", String($("toggle-library").getAttribute("aria-expanded") !== "true"));
 $("library-search").oninput = renderLibrary;
+$("library-kind").onchange=renderLibrary;
+$("library-scope").onchange=renderLibrary;
 try{const order=localStorage.getItem('coconut-library-sort-v1');if(['added','title','duration'].includes(order))$('library-sort').value=order;}catch{}
 $('library-sort').onchange=()=>{renderLibrary();try{localStorage.setItem('coconut-library-sort-v1',$('library-sort').value);}catch{notice('本次排序已应用，但浏览器未保存偏好。');}};
 
