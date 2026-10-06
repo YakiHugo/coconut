@@ -383,3 +383,13 @@ test('library ordering is stable, nonmutating and handles overlapping or missing
  assert.deepEqual(sortedLibrary(docs,'duration').map(d=>documentDuration(d)),[0,20,50]);
  assert.deepEqual(sortedLibrary(docs,'added'),docs);assert.notEqual(sortedLibrary(docs,'added'),docs);assert.equal(docs[0].title,'第10集');
 });
+
+test('shelf discovery searches only the chosen scope and distinguishes original audio projects',()=>{
+ const {libraryMatches}=require('../reader/core.js');
+ const doc={title:'标题',segments:[{text:'hidden original',saved_excerpt:true}],notes:{a:'记住这里'}};
+ assert.equal(libraryMatches(doc,'hidden'),false);assert.equal(libraryMatches(doc,'hidden','all','notes'),false);
+ assert.equal(libraryMatches(doc,'hidden','transcript','text'),true);assert.equal(libraryMatches(doc,'记住','annotated','notes'),true);
+ assert.equal(libraryMatches(doc,'','audio'),false);
+ const audio={title:'原声',project_kind:'audio_only',segments:[],timestamp_bookmarks:[{note:'audio thought'}]};
+ assert.equal(libraryMatches(audio,'thought','annotated','notes'),true);assert.equal(libraryMatches(audio,'','transcript'),false);
+});

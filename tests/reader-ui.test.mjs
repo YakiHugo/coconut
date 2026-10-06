@@ -1531,3 +1531,13 @@ test('shelf sort changes view without changing stored document order or active r
   select.value='added';select.onchange();assert.equal(w.document.querySelector('.library-title').textContent,'Z title');
  }finally{await w.happyDOM.close();}
 });
+
+test('shelf search finds saved notes only after explicitly expanding its scope',async()=>{
+ const w=setup();try{
+  await importDocument(w,{title:'Interview',segments:[{id:'a',start:0,end:1,text:'原话'}],notes:{a:'needle in note'}});
+  const $=id=>w.document.getElementById(id);$('library-search').value='needle';$('library-search').oninput();assert.equal($('library').children.length,0);
+  $('library-scope').value='notes';$('library-scope').onchange();assert.equal($('library').children.length,1);
+  $('library-kind').value='audio';$('library-kind').onchange();assert.equal($('library').children.length,0);
+  assert.equal($('title').textContent,'Interview');
+ }finally{await w.happyDOM.close();}
+});

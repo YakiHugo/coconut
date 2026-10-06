@@ -269,6 +269,16 @@
  function documentDuration(doc) {
   return isAudioProject(doc)?doc.media_duration||0:doc.segments.reduce((end,segment)=>Math.max(end,segment.end),0);
  }
+ function libraryMatches(doc, query, kind='all', scope='title') {
+  const audio=isAudioProject(doc), annotated=audio?Boolean(doc.project_note?.trim()||doc.timestamp_bookmarks?.length):Boolean(doc.segments.some(s=>s.saved_excerpt)||Object.values(doc.notes||{}).some(n=>n.trim()));
+  if(kind==='audio'&&!audio||kind==='transcript'&&audio||kind==='annotated'&&!annotated)return false;
+  const needle=query.trim().toLocaleLowerCase(),matches=value=>typeof value==='string'&&value.toLocaleLowerCase().includes(needle);
+  if(matches(doc.title))return true;
+  if(scope==='notes'||scope==='text'){
+   if(matches(doc.project_note)||Object.values(doc.notes||{}).some(matches)||(doc.timestamp_bookmarks||[]).some(item=>matches(item.note)))return true;
+  }
+  return scope==='text'&&doc.segments.some(segment=>matches(segment.text));
+ }
  function sortedLibrary(documents, order) {
   const result=documents.slice();
   if(order==='title')result.sort((a,b)=>a.title.localeCompare(b.title,'zh-Hans',{numeric:true,sensitivity:'base'}));
@@ -556,7 +566,7 @@
 			segments,
 		});
 	}
-	const api = { documentDuration, sortedLibrary, AUDIO_NOTE_BUDGET, audioNoteCharacters, isAudioProject, audioProjectIdentity, SUMMARY_QUESTION, summaryReadiness, podcastURL, podcastSource, cleanGlossary, relevantGlossary, translationQualityMessage, retainAnswers, summaryFreshness, latestSummary, summaryMarkdown, aiReadingMarkdown, parseReadingTime, segmentAtTime, subtitleExport, mergeLibraryBackup, time, source, media, validate, parse, matchesSegment, notebookSegments, notebookMarkdown, translationCurrent, sameCueSnapshot, subscriptionPlan, cleanContexts, answerFreshness };
+	const api = { libraryMatches, documentDuration, sortedLibrary, AUDIO_NOTE_BUDGET, audioNoteCharacters, isAudioProject, audioProjectIdentity, SUMMARY_QUESTION, summaryReadiness, podcastURL, podcastSource, cleanGlossary, relevantGlossary, translationQualityMessage, retainAnswers, summaryFreshness, latestSummary, summaryMarkdown, aiReadingMarkdown, parseReadingTime, segmentAtTime, subtitleExport, mergeLibraryBackup, time, source, media, validate, parse, matchesSegment, notebookSegments, notebookMarkdown, translationCurrent, sameCueSnapshot, subscriptionPlan, cleanContexts, answerFreshness };
 	if (typeof module !== "undefined" && module.exports) module.exports = api;
 	else root.Coconut = api;
 })(typeof window !== "undefined" ? window : globalThis);

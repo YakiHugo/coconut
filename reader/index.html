@@ -6,9 +6,9 @@
 <title>Coconut · 把听过的，留下来</title>
 <link rel="stylesheet" href="style.css?v=8b6e2ca979">
 <script src="summary.js?v=580ffdad1e" defer></script>
-<script src="core.js?v=8e47df69cf" defer>
+<script src="core.js?v=e0b76eeb34" defer>
 </script>
-<script src="app.js?v=5bcb784794" defer>
+<script src="app.js?v=817c47e779" defer>
 </script>
 <script src="language.js?v=04ebe93526" defer></script>
 <script src="podcasts.js?v=faf2195d29" defer></script>
@@ -27,7 +27,7 @@
 <input type="file" id="file" accept=".json,.srt,.vtt" hidden>
 <details class="library-backup"><summary>书架备份</summary><div class="disclosure-content"><button id="export-library">备份整个书架</button><button id="restore-library">恢复书架备份</button><input id="library-file" type="file" accept=".json" hidden></div></details>
 <p class="eyebrow">你的书架</p>
-<details class="library-options"><summary>整理书架</summary><label>排序<select id="library-sort"><option value="added">按添加顺序</option><option value="title">按标题</option><option value="duration">按时长（短到长）</option></select></label></details>
+<details class="library-options"><summary>整理书架</summary><label>排序<select id="library-sort"><option value="added">按添加顺序</option><option value="title">按标题</option><option value="duration">按时长（短到长）</option></select></label><label>内容<select id="library-kind"><option value="all">全部</option><option value="transcript">有文字稿</option><option value="audio">原声项目</option><option value="annotated">有笔记或摘录</option></select></label><label>查找范围<select id="library-scope"><option value="title">标题</option><option value="notes">标题与笔记</option><option value="text">标题、原文与笔记</option></select></label></details>
 <nav id="library" aria-label="文字稿书架">
 </nav>
 <p id="library-empty" class="hint">还没有文字稿。添加一份，或体验示例。</p>
