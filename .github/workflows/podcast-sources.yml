@@ -1,0 +1,29 @@
+name: Public podcast acceptance
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: podcast-live-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  public-sources:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - run: npx playwright install --with-deps chromium
+      - name: Verify anonymous publisher feeds, actual transcript and public audio playback
+        env:
+          COCONUT_LIVE_PODCAST_MEDIA: '1'
+        run: node tests/podcast-public-smoke.mjs
+# Public source bodies remain transient. Never upload transcripts, source HTML,
+# audio, screenshots, browser profiles or upstream error logs as artifacts.

@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:p="https://podcastindex.org/namespace/1.0" xmlns:i="http://www.itunes.com/dtds/podcast-1.0.dtd">
+<channel><title>公开技术播客 &amp; Audio</title><language>zh-CN</language>
+<item><guid isPermaLink="false">episode-one</guid><title><![CDATA[第一集 <b>可核对原文</b>]]></title><link>https://publisher.example.org/episode/one</link><pubDate>Tue, 06 Oct 2026 08:00:00 GMT</pubDate><i:duration>01:02:03</i:duration><enclosure url="https://media.example.org/one.mp3" type="audio/mpeg" length="1024"/><p:transcript url="./one.vtt" type="text/vtt"/><p:transcript url="./one-en.vtt" type="text/vtt" language="en"/></item>
+<item><guid>episode-two</guid><title>视频播客</title><enclosure url="https://media.example.org/two.mp4" type="video/mp4" length="2048"/></item>
+</channel></rss>

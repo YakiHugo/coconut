@@ -2,11 +2,12 @@
   "name": "coconut-reader",
   "private": true,
   "scripts": {
-    "test": "node --test tests/reader.test.cjs tests/reader-ui.test.mjs",
+    "test": "node --test tests/reader.test.cjs tests/reader-ui.test.mjs tests/podcast-ui.test.mjs",
     "test:browser": "node tests/browser-acceptance.mjs",
     "test:web-browser": "node tests/web-browser-acceptance.mjs",
     "test:desktop": "node --test tests/desktop-*.test.mjs",
-    "start:light": "node desktop/server.mjs"
+    "start:light": "node desktop/server.mjs",
+    "test:podcast-live": "node tests/podcast-public-smoke.mjs"
   },
   "devDependencies": {
     "@playwright/test": "1.63.0",

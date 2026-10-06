@@ -88,3 +88,16 @@ test('desktop shutdown synchronously cancels active provider work before process
   assert.equal(requestSignal.aborted,true);
   await request;
 });
+
+test('source imports require same-origin JSON and route only to bounded podcast service',async t=>{
+ const calls=[];
+ const source={discover:async(data,{signal})=>{calls.push(['discover',data,signal]);return {kind:'feed',episodes:[]};},importEpisode:async data=>{calls.push(['import',data]);return {status:'needs_transcription'};},downloadMedia:async data=>{calls.push(['media',data]);return {body:Buffer.from('ID3 fixture'),type:'audio/mpeg',kind:'audio',filename:'podcast-audio'};}};
+ const server=await startBridge({port:0,podcastSources:source,providers:{status:async()=>{throw new Error('Must not probe CLI');}}});t.after(()=>new Promise(resolve=>server.shutdown(resolve)));const origin=`http://127.0.0.1:${server.address().port}`;
+ assert.equal((await fetch(origin+'/api/health').then(r=>r.json())).capabilities.podcast_import,true);assert.equal(calls.length,0);
+ for(const endpoint of ['discover','import','media']){
+  assert.equal((await fetch(origin+'/api/podcasts/'+endpoint,{method:'POST',headers:{Origin:'https://attacker.example','Content-Type':'application/json'},body:'{}'})).status,403);
+  const result=await fetch(origin+'/api/podcasts/'+endpoint,{method:'POST',headers:{Origin:origin,'Content-Type':'application/json'},body:JSON.stringify({url:'https://publisher.example/feed'})});assert.equal(result.status,200);
+  if(endpoint==='media'){assert.equal(result.headers.get('X-Coconut-Media-Kind'),'audio');assert.equal(await result.text(),'ID3 fixture');}
+ }
+ assert.deepEqual(calls.map(c=>c[0]),['discover','import','media']);assert.equal(calls[0][2].aborted,false);
+});

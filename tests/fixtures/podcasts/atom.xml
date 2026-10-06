@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom" xmlns:p="https://podcastindex.org/namespace/1.0" xml:lang="en" xml:base="https://publisher.example.org/">
+<title>Atom podcast</title><id>urn:uuid:show</id>
+<entry xml:base="episodes/"><id>urn:uuid:one</id><title>First episode</title><link href="one"/><link rel="enclosure" href="one.ogg" type="audio/ogg" length="700"/><p:transcript url="one.json" type="application/json" rel="captions"/></entry>
+</feed>

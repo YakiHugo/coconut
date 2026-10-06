@@ -19,6 +19,9 @@ function recordPersistedSummaries() { persistedSummaries.clear(); for(const doc 
 let mediaWorkerReady = false;
 let readingMode = "summary";
 const browserMedia = new Map();
+const mediaSelectionRevisions = new Map();
+function mediaSelectionRevision(key){return mediaSelectionRevisions.get(key)||0;}
+function changeMediaSelection(key,notify=true){const revision=mediaSelectionRevision(key)+1;mediaSelectionRevisions.set(key,revision);if(notify)window.dispatchEvent(new CustomEvent('coconut-media-selection-change',{detail:{key}}));return revision;}
 let pendingMediaDocument = null;
 const PLAYBACK_RATES=[0.75,1,1.25,1.5,1.75,2];
 let playbackRate=1;
@@ -95,12 +98,13 @@ function el(tag, className, text) {
 	if (text !== undefined) n.textContent = text;
 	return n;
 }
-async function add(doc) {
+async function add(doc, canCommit = null) {
 	const bytes = new TextEncoder().encode(JSON.stringify(doc));
 	const digest = await crypto.subtle.digest("SHA-256", bytes);
 	const key = Array.from(new Uint8Array(digest))
 		.map((x) => x.toString(16).padStart(2, "0"))
 		.join("");
+ if(canCommit && !canCommit())throw new Error("导入已取消，书架未改变");
 	if (!state.documents.some((d) => d.key === key))
 		state.documents.push({ ...doc, key, notes: doc.notes || {} });
 	state.active = key;
@@ -227,7 +231,7 @@ function render() {
 		Coconut.time(doc.segments.at(-1).end) +
 		" · 原话与笔记保存在本机";
 	const provenance = doc.provenance || {};
-	const sourceKinds = {platform_subtitles: "平台提供的字幕", automatic_subtitles: "平台自动字幕", imported_subtitles: "导入的字幕", local_asr: "本机语音识别"};
+	const sourceKinds = {publisher_transcript:"发布者提供的文字稿（未人工核对）",platform_subtitles: "平台提供的字幕", automatic_subtitles: "平台自动字幕", imported_subtitles: "导入的字幕", local_asr: "本机语音识别"};
 	const provenanceText = sourceKinds[provenance.kind] || "导入文字稿，来源未标明";
 	const medium = provenance.source_medium === "audio" ? "音频内容" : provenance.source_medium === "video" ? "视频内容" : "";
  $("provenance").textContent = [medium, provenance.source_platform].filter(Boolean).join(" · ") + (medium || provenance.source_platform ? " · " : "") + provenanceText + (provenance.model ? " · " + provenance.model : "") + " · 请回听核对专有名词与重要信息" + (provenance.alignment_warning ? " · 时间对齐降级：" + provenance.alignment_warning : "");
@@ -838,6 +842,7 @@ $('attach-reader-media').onclick=()=>{pendingMediaDocument=active()?.key||null;i
 $('reader-media-file').onchange=async()=>{
  const input=$('reader-media-file'),file=input.files[0],key=pendingMediaDocument;pendingMediaDocument=null;
  if(!file)return;
+ const revision=changeMediaSelection(key);
  let nextURL;
  try{
   if(!key||!state.documents.some(d=>d.key===key))throw new Error('原文字稿已关闭，请重新选择');
@@ -848,6 +853,7 @@ $('reader-media-file').onchange=async()=>{
   if(!kind||!file.size)throw new Error('请选择可播放的音频或视频文件');
   const prefix=await file.slice(0,1024).text();
   if(/(?:mpegurl|scpls|dash\+xml)/i.test(file.type)||/^\s*(?:#EXTM3U|\[playlist\]|<\?xml|<MPD|<SmoothStreamingMedia|<ASX|<smil)/i.test(prefix))throw new Error('请选择实际音视频文件，不支持会连接远程地址的播放列表');
+  if(mediaSelectionRevision(key)!==revision)return;
   nextURL=URL.createObjectURL(file);const previous=browserMedia.get(key);
   if(key===active()?.key){stopRepeating();$('source-media').querySelector('audio,video')?.pause();}
   browserMedia.set(key,{url:nextURL,kind,name:file.name});if(previous)URL.revokeObjectURL(previous.url);
@@ -858,5 +864,6 @@ $('reader-media-file').onchange=async()=>{
 };
 $('detach-reader-media').onclick=()=>{
  const key=active()?.key,attachment=browserMedia.get(key);if(!attachment)return;
+ changeMediaSelection(key);
  stopRepeating();$('source-media').querySelector('audio,video')?.pause();browserMedia.delete(key);URL.revokeObjectURL(attachment.url);render();
 };

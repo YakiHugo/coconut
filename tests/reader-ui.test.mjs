@@ -13,7 +13,7 @@ function setup(stored, fetchMock, layout, contextControls=false){
   if(layout!==undefined)window.localStorage.setItem('coconut-reading-layout-v1',layout);
   window.eval(fs.readFileSync(new URL('reader/core.js',root),'utf8'));
   if(fetchMock)window.fetch=fetchMock;
-  window.eval(fs.readFileSync(new URL('reader/app.js',root),'utf8') + '\n' + fs.readFileSync(new URL('reader/language.js',root),'utf8') + (fetchMock ? '\n' + fs.readFileSync(new URL('reader/jobs.js',root),'utf8') : ''));
+  window.eval(fs.readFileSync(new URL('reader/app.js',root),'utf8') + '\n' + fs.readFileSync(new URL('reader/language.js',root),'utf8') + '\n' + fs.readFileSync(new URL('reader/podcasts.js',root),'utf8') + (fetchMock ? '\n' + fs.readFileSync(new URL('reader/jobs.js',root),'utf8') : ''));
   return window;
 }
 async function importDocument(w, document) {
