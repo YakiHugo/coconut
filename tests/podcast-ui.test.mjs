@@ -312,3 +312,14 @@ test('failed storage after attachment preserves an exportable complete project w
   let backup;w.URL.createObjectURL=blob=>{backup=blob;return 'blob:backup';};$('export').click();const restored=w.Coconut.parse(await backup.text(),'backup.json');assert.equal(restored.project_note,'PRIVATE PROJECT NOTE');assert.equal(restored.segments.length,1);assert.equal(restored.timestamp_bookmarks[0].id,'saved-mark');
  }finally{await w.happyDOM.close();}
 });
+
+test('changed publisher media cannot silently pair a new transcript with the saved old audio',async()=>{
+ const {w,$}=await setup(()=>response({status:'ready',document:{...documentFixture,podcast_source:{...source,media_url:'https://publisher.example/replacement.mp3'}}}));try{
+  await importDocument(w,originalAudioProject());const before=w.localStorage.getItem('coconut-reader-v1');await $('fetch-project-transcript').onclick();assert.equal(w.localStorage.getItem('coconut-reader-v1'),before);assert.match($('audio-project-status').textContent,/新文字稿配到旧原声/);
+ }finally{await w.happyDOM.close();}
+});
+test('matching publisher attachment retains the newly verified transcript source URL',async()=>{
+ const nextURL='https://publisher.example/new-transcript.vtt';const {w,$}=await setup(()=>response({status:'ready',document:{...documentFixture,podcast_source:{...source,transcript_url:nextURL}}}));try{
+  await importDocument(w,{...originalAudioProject(),podcast_source:{...source,transcript_url:undefined}});await $('fetch-project-transcript').onclick();const doc=JSON.parse(w.localStorage.getItem('coconut-reader-v1')).documents[0];assert.equal(doc.podcast_source.transcript_url,nextURL);assert.equal(doc.podcast_source.media_url,source.media_url);
+ }finally{await w.happyDOM.close();}
+});

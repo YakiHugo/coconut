@@ -84,7 +84,12 @@
    ...projectAnnotations(original),...(original.media_duration?{media_duration:original.media_duration}:{})};
   // The selected file supplies words, not an unrelated local media job association.
   delete result.source_media;
-  return validate(result);
+  if(audioProjectIdentity(original)===audioProjectIdentity(text)&&original.podcast_source.media_url===text.podcast_source?.media_url&&original.podcast_source.media_kind===text.podcast_source?.media_kind&&text.podcast_source.transcript_url){
+   result.podcast_source={...original.podcast_source,transcript_url:text.podcast_source.transcript_url};
+  }
+  const attached=validate(result),key=typeof project.key==='string'?project.key:'k'.repeat(200);
+  if(new TextEncoder().encode(JSON.stringify({...attached,key},null,2)).byteLength>15*1024*1024)throw new Error('合并后的 JSON 备份超过15MB，无法可靠重新导入；原项目保留，请先整理或拆分文字稿与笔记');
+  return attached;
  }
  function validateAudioProject(data) {
   const origin=podcastSource(data.podcast_source);

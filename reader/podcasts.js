@@ -171,6 +171,7 @@ $('fetch-project-transcript').onclick=async()=>{
   if(result.status!=='ready'||!result.document)throw new Error('未取得有效文字稿，原项目保留。');
   const text=Coconut.validate(result.document);
   if(Coconut.audioProjectIdentity(text)!==Coconut.audioProjectIdentity(doc))throw new Error('返回文字稿与本项目来源不一致，未附加，请重新发现来源。');
+  if(text.podcast_source?.media_url!==source.media_url||text.podcast_source?.media_kind!==source.media_kind||!['audio','video'].includes(source.media_kind))throw new Error('发布者媒体地址或类型已变化或无法核对，未把新文字稿配到旧原声。请重新发现来源并核对媒体后再补充。');
   const persisted=attachTranscriptToProject(text,target);
   notice(persisted?'发布者文字稿已补充到原项目，笔记、书签和当前媒体保留。尚未经人工核对；未调用模型。':'文字稿已在本页附加，但未能保存，请立即导出 JSON 备份。');
  }catch(error){if(active()?.key===target.key)$('audio-project-status').textContent=controller.signal.aborted?'已取消获取文字稿，原项目保留。':error.message;}
