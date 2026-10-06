@@ -256,3 +256,59 @@ test('editing a filtered timestamp restores focus to bookmark search when the ro
   assert.equal(JSON.parse(w.localStorage.getItem('coconut-reader-v1')).documents[0].timestamp_bookmarks[0].note,'Keep');
  }finally{await w.happyDOM.close();}
 });
+
+const originalAudioProject=()=>({project_kind:'audio_only',title:'Retain my title',language:'en',podcast_source:source,segments:[],project_note:'PRIVATE PROJECT NOTE',timestamp_bookmarks:[{id:'saved-mark',time:1,note:'PRIVATE BOOKMARK'}]});
+async function attachFile(w,$,payload){
+ $('attach-project-transcript').click();const value=JSON.stringify(payload);
+ Object.defineProperty($('project-transcript-file'),'files',{configurable:true,value:[{name:'captions.json',size:value.length,text:async()=>value}]});await $('project-transcript-file').onchange();
+}
+test('explicit transcript attachment keeps one project, loaded media, notes and restorable annotations',async()=>{
+ const {w,$,calls}=await setup(()=>audioResponse());let stored;
+ try{
+  await importDocument(w,originalAudioProject());await $('download-podcast-media').onclick();const player=$('source-media').querySelector('audio');
+  const key=JSON.parse(w.localStorage.getItem('coconut-reader-v1')).active;
+  await attachFile(w,$,documentFixture);stored=w.localStorage.getItem('coconut-reader-v1');const shelf=JSON.parse(stored),doc=shelf.documents[0];
+  assert.equal(shelf.documents.length,1);assert.equal(shelf.active,key);assert.equal(doc.title,'Retain my title');assert.equal(doc.segments[0].text,'Publisher words');assert.equal(doc.project_note,'PRIVATE PROJECT NOTE');assert.equal(doc.timestamp_bookmarks[0].id,'saved-mark');
+  assert.equal($('source-media').querySelector('audio'),player);assert.equal($('audio-project').hidden,false);assert.equal($('transcript-layout').hidden,false);assert.equal($('language-panel').hidden,false);assert.equal($('export-notebook').disabled,false);assert.equal($('attach-project-transcript').hidden,true);assert.equal($('summary-state').textContent,'未生成');
+  assert.equal(calls.filter(c=>c.url.endsWith('/media')).length,1);assert.equal(calls.filter(c=>/ask|translate/.test(c.url)).length,0);
+  $('project-note').value='Updated after attachment';$('project-note').oninput();stored=w.localStorage.getItem('coconut-reader-v1');
+ }finally{await w.happyDOM.close();}
+ const restored=await setup(()=>response({}),stored);try{
+  restored.$('mode-transcript').click();assert.equal(restored.$('project-note').value,'Updated after attachment');assert.equal(restored.w.document.querySelector('#audio-bookmarks textarea').value,'PRIVATE BOOKMARK');assert.equal(restored.$('source-media').querySelector('audio'),null);
+ }finally{await restored.w.happyDOM.close();}
+});
+test('invalid or late file attachment never alters an old or different project',async()=>{
+ const {w,$}=await setup(()=>response({}));try{
+  await importDocument(w,originalAudioProject());const before=w.localStorage.getItem('coconut-reader-v1');await attachFile(w,$,{segments:[]});assert.equal(w.localStorage.getItem('coconut-reader-v1'),before);
+  let release;$('attach-project-transcript').click();Object.defineProperty($('project-transcript-file'),'files',{configurable:true,value:[{name:'text.json',size:10,text:()=>new Promise(resolve=>{release=resolve;})}]});const pending=$('project-transcript-file').onchange();
+  await importDocument(w,{...documentFixture,title:'Other document'});release(JSON.stringify(documentFixture));await pending;
+  const shelf=JSON.parse(w.localStorage.getItem('coconut-reader-v1'));assert.equal(shelf.documents[0].project_kind,'audio_only');assert.equal(shelf.documents[0].project_note,'PRIVATE PROJECT NOTE');assert.equal($('title').textContent,'Other document');assert.match($('notice').textContent,/已经切换/);
+ }finally{await w.happyDOM.close();}
+});
+test('publisher attachment checks exact identity and never downgrades an attached project when re-saved',async()=>{
+ let mismatch=true;const {w,$}=await setup(url=>url.endsWith('/discover')?response(discovery):response({status:'ready',document:{...documentFixture,podcast_source:{...source,episode_id:mismatch?'wrong':episode}}}));try{
+  await importDocument(w,originalAudioProject());const before=w.localStorage.getItem('coconut-reader-v1');await $('fetch-project-transcript').onclick();assert.equal(w.localStorage.getItem('coconut-reader-v1'),before);assert.match($('audio-project-status').textContent,/不一致/);
+  mismatch=false;await $('fetch-project-transcript').onclick();assert.equal(JSON.parse(w.localStorage.getItem('coconut-reader-v1')).documents[0].segments.length,1);
+  $('add-content').click();await discover($);await [...$('podcast-results').querySelectorAll('button')].find(button=>button.textContent==='保存原声项目').onclick();
+  const shelf=JSON.parse(w.localStorage.getItem('coconut-reader-v1'));assert.equal(shelf.documents.length,1);assert.equal(shelf.documents[0].segments.length,1);assert.equal(shelf.documents[0].project_note,'PRIVATE PROJECT NOTE');
+ }finally{await w.happyDOM.close();}
+});
+test('attached project summary sends transcript words without project note or bookmark content',async()=>{
+ let request;const {w,$}=await setup((url,options)=>url.endsWith('language-tools')?response({ai:{codex:{ready:true}}}):(request=JSON.parse(options.body),response({answer:'Injected test summary',citations:['one'],provider:'synthetic-fixture'})));try{
+  await importDocument(w,originalAudioProject());await attachFile(w,$,documentFixture);await $('check-ai').onclick();$('ai-task').value='summary';$('ai-task').onchange();$('ai-consent').checked=true;await $('ask-ai').onclick();
+  assert.equal(request.segments.length,1);assert.equal(request.segments[0].text,'Publisher words');assert.ok(!JSON.stringify(request).includes('PRIVATE'));assert.equal($('summary-state').dataset.state,'current');
+ }finally{await w.happyDOM.close();}
+});
+test('cancelled publisher attachment preserves the original project and its notes',async()=>{
+ const {w,$}=await setup((_url,options)=>new Promise((_resolve,reject)=>options.signal.addEventListener('abort',()=>reject(new Error('aborted')),{once:true})));try{
+  await importDocument(w,originalAudioProject());const before=w.localStorage.getItem('coconut-reader-v1'),pending=$('fetch-project-transcript').onclick();$('cancel-project-transcript').click();await pending;
+  assert.equal(w.localStorage.getItem('coconut-reader-v1'),before);assert.match($('audio-project-status').textContent,/已取消/);assert.equal($('fetch-project-transcript').disabled,false);
+ }finally{await w.happyDOM.close();}
+});
+test('failed storage after attachment preserves an exportable complete project with a clear warning',async()=>{
+ const {w,$}=await setup(()=>response({}));try{
+  await importDocument(w,originalAudioProject());const before=w.localStorage.getItem('coconut-reader-v1');Object.defineProperty(w,'localStorage',{value:{getItem:()=>before,setItem:()=>{throw Error('quota');}}});
+  await attachFile(w,$,documentFixture);assert.match($('notice').textContent,/未能保存/);assert.equal($('transcript-layout').hidden,false);assert.equal($('project-note').value,'PRIVATE PROJECT NOTE');
+  let backup;w.URL.createObjectURL=blob=>{backup=blob;return 'blob:backup';};$('export').click();const restored=w.Coconut.parse(await backup.text(),'backup.json');assert.equal(restored.project_note,'PRIVATE PROJECT NOTE');assert.equal(restored.segments.length,1);assert.equal(restored.timestamp_bookmarks[0].id,'saved-mark');
+ }finally{await w.happyDOM.close();}
+});

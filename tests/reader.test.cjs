@@ -393,3 +393,15 @@ test('shelf discovery searches only the chosen scope and distinguishes original 
  const audio={title:'原声',project_kind:'audio_only',segments:[],timestamp_bookmarks:[{note:'audio thought'}]};
  assert.equal(libraryMatches(audio,'thought','annotated','notes'),true);assert.equal(libraryMatches(audio,'','transcript'),false);
 });
+
+test('attaching a transcript keeps root annotations recoverable and separate from model evidence',()=>{
+ const C=require('../reader/core.js');
+ const audio=C.validate({project_kind:'audio_only',title:'My saved title',language:'en',podcast_source:{feed_url:'https://publisher.example/feed',episode_id:'episode',media_url:'https://publisher.example/audio.mp3',media_kind:'audio'},segments:[],project_note:'PRIVATE PROJECT NOTE',timestamp_bookmarks:[{id:'bookmark',time:2,note:'PRIVATE BOOKMARK'}]});
+ const attached=C.attachProjectTranscript(audio,{title:'Subtitle filename',language:'en',source_media:{job_id:'a'.repeat(32),kind:'video'},segments:[{id:'cue',start:0,end:4,text:'Actual source words'}]});
+ assert.equal(attached.title,'My saved title');assert.equal(attached.project_kind,undefined);assert.equal(attached.source_media,undefined);assert.equal(C.audioProjectIdentity(attached),C.audioProjectIdentity(audio));
+ const restored=C.validate(JSON.parse(JSON.stringify(attached)));assert.equal(restored.project_note,audio.project_note);assert.deepEqual(restored.timestamp_bookmarks,audio.timestamp_bookmarks);assert.equal(C.libraryMatches(restored,'','annotated'),true);
+ assert.match(C.notebookMarkdown(restored),/PRIVATE PROJECT NOTE/);assert.match(C.notebookMarkdown(restored),/PRIVATE BOOKMARK/);assert.match(C.notebookMarkdown(restored),/不是原文/);
+ const summary=C.summaryReadiness(restored).plan,translation=C.subscriptionPlan(restored,['cue'],'en','zh','codex');
+ assert.ok(!JSON.stringify(summary).includes('PRIVATE'));assert.ok(!JSON.stringify(translation).includes('PRIVATE'));assert.equal(Object.keys(restored.notes).length,0);
+ assert.throws(()=>C.attachProjectTranscript(audio,audio),/真正/);assert.throws(()=>C.validate({...attached,timestamp_bookmarks:[{id:'x',time:-1,note:''}]}),/时间书签/);
+});
