@@ -25,7 +25,12 @@ function renderLanguage(){
  }
  $('translation-view').value=doc.translation_view||'';
  $('translate-document').disabled=!languageReady||translating||subscriptionTranslating;
- $('ask-ai').disabled=!aiReady||asking||subscriptionTranslating;
+ const summaryReadiness=$('ai-task')?.value==='summary'?Coconut.summaryReadiness(doc):null;
+ const summaryBlocked=summaryReadiness?.ready===false;
+ $('ask-ai').disabled=!aiReady||asking||subscriptionTranslating||summaryBlocked;
+ $('ai-request-readiness').hidden=!summaryBlocked;
+ $('ai-request-readiness').textContent=summaryBlocked?summaryReadiness.reason:'';
+ $('ai-select-excerpt').hidden=!summaryBlocked;
  $('subscription-translate').disabled=!aiReady||asking||translating||subscriptionTranslating;
  const matches=doc.segments.filter(s=>Coconut.matchesSegment(s,doc,$('search').value,notesOnly,excerptsOnly));
  if($('ai-task')){$('ai-question').disabled=$('ai-task').value==='summary';$('ai-filtered').disabled=$('ai-task').value==='summary';if($('ai-task').value==='summary')$('ai-filtered').checked=false;}
@@ -126,9 +131,13 @@ $('translate-document').onclick=async()=>{
 };
 $('ask-ai').onclick=async()=>{
  const doc=active();if(!doc||asking)return;
- if(!$('ai-consent').checked){notice('请先确认本次把所选文字发送给所选提供商并使用订阅额度');return;}
  const purpose=$('ai-task')?.value==='summary'?'summary':'question';
- const question=purpose==='summary'?'请根据完整原文生成简洁中文摘要，列出核心主旨、关键论点、重要事实或数字、分歧与尚不确定之处。每项结论都必须能由原文支持，并在返回的 citations 中提供相应片段ID。不要虚构主题、事实、人物身份或缺失结论；证据不足时明确说明。':$('ai-question').value.trim();if(!question){notice('请先输入问题');return;}
+ if(purpose==='summary'){
+  const readiness=Coconut.summaryReadiness(doc);
+  if(!readiness.ready){$('ai-consent').checked=false;renderLanguage();$('ai-progress').textContent=readiness.reason;notice(readiness.reason);return;}
+ }
+ if(!$('ai-consent').checked){notice('请先确认本次把所选文字发送给所选提供商并使用订阅额度');return;}
+ const question=purpose==='summary'?Coconut.SUMMARY_QUESTION:$('ai-question').value.trim();if(!question){notice('请先输入问题');return;}
  const query=$('search').value.trim().toLocaleLowerCase();
  const segments=doc.segments.filter(s=>purpose==='summary'||!$('ai-filtered').checked||Coconut.matchesSegment(s,doc,query,notesOnly,excerptsOnly)).map(s=>({id:s.id,text:s.text}));
  const key=doc.key;asking=true;renderLanguage();$('ai-progress').textContent=`正在让所选 AI 阅读 ${segments.length} 段；不会切换到付费 API。`;
