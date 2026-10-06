@@ -4,13 +4,14 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Coconut · 把听过的，留下来</title>
-<link rel="stylesheet" href="style.css?v=1240de0818">
-<script src="core.js?v=e42313c675" defer>
+<link rel="stylesheet" href="style.css?v=942b3e9c43">
+<script src="core.js?v=2012dbef3b" defer>
 </script>
-<script src="app.js?v=72e96eeaff" defer>
+<script src="app.js?v=13e1fcf0d1" defer>
 </script>
 <script src="language.js?v=f496722f02" defer></script>
-<script src="jobs.js?v=76f9ff70c1" defer>
+<script src="podcasts.js?v=a5897a66b6" defer></script>
+<script src="jobs.js?v=a751351d13" defer>
 </script>
 </head>
 <body>
@@ -72,6 +73,11 @@
 <input id="media-file" type="file" accept="audio/*,video/*" hidden>
 </div></details>
 </form>
+<section id="podcast-import" class="podcast-import" hidden aria-label="从播客订阅源添加">
+<form id="podcast-form"><label for="podcast-url">播客 RSS 或公开节目链接</label><div class="url-row"><input id="podcast-url" type="url" required maxlength="4096" placeholder="粘贴发布者 RSS，或支持的公开播客页面"><button id="discover-podcast" class="primary">查找节目</button><button id="cancel-podcast" type="button" hidden>取消</button></div></form>
+<p class="hint">优先读取发布者提供的文字稿。只访问公开来源，不使用登录、会员或私有订阅链接；没有文字稿时会明确提示，不自动转录或扣费。</p>
+<p id="podcast-status" class="hint" role="status"></p><div id="podcast-results"></div>
+</section>
 <div class="file-entry"><div class="add-actions"><button id="import" class="primary">导入文字稿</button><button id="sample">先看一个示例 <span aria-hidden="true">↗</span></button></div><p class="hint">支持 JSON、SRT、VTT · 文件在浏览器内读取</p></div>
 <p id="worker-help" class="hint">Web 阅读无需安装：导入文字稿后，可选择对应的本地音频或视频同步回听。文件不上传；生成摘要需要连接本地 AI 工具并确认使用额度。</p>
 <details id="local-setup" class="setup-guide">
@@ -115,6 +121,7 @@ cd coconut
 <p class="hint summary-boundary">摘要仅展示明确生成并保存的结果。模型可能遗漏或理解有误，请点引用核对；打开页面不会发送原文或使用额度。</p>
 </section>
 <div id="transcript-controls" hidden>
+<div id="podcast-playback" class="podcast-playback" hidden><button id="download-podcast-media" type="button">下载并回听本集原声</button><button id="cancel-podcast-media" type="button" hidden>取消下载</button><p id="podcast-media-status" class="hint">只在点击后下载（最多 200 MiB），媒体仅保留在本次页面，刷新后需重新获取。</p></div>
 <div class="local-media-entry"><button id="attach-reader-media" type="button">选择对应的音频或视频</button><button id="detach-reader-media" type="button" hidden>移除本次媒体</button><input id="reader-media-file" type="file" accept="audio/*,video/*,.mp3,.m4a,.wav,.ogg,.flac,.mp4,.webm,.mov" hidden><p id="reader-media-status" class="hint">在浏览器中打开文件，不上传。请选与文字稿对应的原文件；刷新页面后需重新选择。</p></div>
 <button id="locate-playback" hidden>定位正在播放的文字</button>
 <div id="playback-controls" hidden><button id="skip-back" type="button" disabled>后退10秒</button><button id="skip-forward" type="button" disabled>前进10秒</button><label>播放速度<select id="playback-rate"><option value="0.75">0.75×</option><option value="1" selected>1×</option><option value="1.25">1.25×</option><option value="1.5">1.5×</option><option value="1.75">1.75×</option><option value="2">2×</option></select></label><button id="stop-repeat" type="button" hidden>停止循环</button><span id="repeat-status" class="hint" role="status"></span><span id="playback-status" class="hint" role="status"></span></div>

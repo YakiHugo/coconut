@@ -211,8 +211,8 @@ async function connectWorker() {
    $("url-form").hidden=true;$("show-jobs").hidden=true;$("jobs-heading").hidden=true;$("jobs").hidden=true;
    $("process-url").disabled=true;$("import-media").disabled=true;
    $("worker-status").textContent="轻量本地服务已连接 · 无需 Python";
-   $("worker-help").textContent="可导入文字稿、在浏览器中同步回听音视频，并调用已登录的本地 CLI。此轻量版本不含下载、转录或离线翻译模型；不会自动发送原文。";
-   if(newlyConnected)window.dispatchEvent(new CustomEvent("coconut-worker-ready",{detail:{local_agents:true,media_import:false}}));
+   $("worker-help").textContent="可导入文字稿、在浏览器中同步回听音视频，并调用已登录的本地 CLI。可从公开播客源导入文字稿与回听媒体；不含 ASR 或离线翻译模型，不会自动发送原文。";
+   if(newlyConnected)window.dispatchEvent(new CustomEvent("coconut-worker-ready",{detail:{local_agents:true,media_import:false,podcast_import:health.capabilities?.podcast_import===true}}));
    return;
   }
   localAgents=true;
@@ -225,7 +225,7 @@ async function connectWorker() {
 		$("show-jobs").hidden = false;
 		$("jobs-heading").hidden = false;
         $("jobs").hidden = false;
-		window.dispatchEvent(new CustomEvent("coconut-worker-ready",{detail:{local_agents:true,media_import:true}}));
+		window.dispatchEvent(new CustomEvent("coconut-worker-ready",{detail:{local_agents:true,media_import:true,podcast_import:health.capabilities?.podcast_import===true}}));
 		$("process-url").disabled = false;
 		$("import-media").disabled = false;
 		$("worker-help").textContent =

@@ -274,3 +274,14 @@ dialog select { display: block; margin-top: 8px; }
 @media (max-width:650px) { .summary-heading { align-items: flex-start; } .summary-heading h2 { font-size: 22px; } .status-chip { max-width: 105px; } #summary-body { font-size: 16px; } }
 
 .translation-review { color: #845d20; font-size: 12px; padding: 8px 12px; border-left: 2px solid #d8b16a; background: #fffaf0; overflow-wrap: anywhere; }
+.podcast-import { border: 1px solid var(--line); border-radius: 14px; padding: 22px; margin: 22px 0; background: #fafcfb; }
+.podcast-episode { padding: 18px 0; border-top: 1px solid var(--line); }
+.podcast-episode h3 { margin: 0 0 8px; font-size: 15px; overflow-wrap: anywhere; }
+.podcast-episode p { margin: 6px 0 12px; }
+.podcast-episode button { font-size: 12px; }
+.podcast-episode a { margin-left: 12px; font-size: 12px; }
+.podcast-playback { border: 1px solid #dce8df; background: #f5faf7; padding: 16px; border-radius: 12px; margin-top: 20px; }
+.podcast-playback .hint { margin: 8px 0 0; }
+
+.podcast-preview { display: block; width: 100%; max-height: 360px; margin-top: 14px; border-radius: 10px; }
+.podcast-origin { display: inline-block; margin-top: 8px; font-size: 12px; }
