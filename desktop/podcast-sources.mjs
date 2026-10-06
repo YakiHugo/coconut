@@ -11,6 +11,7 @@ const FEED_TYPES=new Set(['application/rss+xml','application/atom+xml','applicat
 const PAGE_TYPES=new Set([...FEED_TYPES,'text/html','application/xhtml+xml']);
 const TRANSCRIPT_TYPES=new Set(['text/vtt','application/x-subrip','application/srt','text/srt','application/json']);
 const JSON_TYPES=new Set(['application/json','text/javascript','application/javascript']);
+const FEED_IDENTITIES=Symbol('bounded publisher identity index');
 const hash=value=>createHash('sha256').update(value).digest('hex');
 const plain=value=>String(value??'').replace(/<[^<>]*>/g,'').replace(/\s+/g,' ').trim();
 const small=value=>plain(value).slice(0,500);
@@ -41,24 +42,33 @@ export function parsePodcastFeed(text,feedUrl) {
   if(!channel||(!atom&&channel===root))throw new Error('来源不是 RSS 2.0 或 Atom 播客源');
   const items=atom?(root.local==='entry'?[root]:children(root,'entry',ATOM)):children(channel,'item','');
   const feedLanguage=language(atom?root.language:value(channel,'language',''));
-  const seen=new Set(),episodes=[];let skipped=0;
+  const seen=new Set(),ambiguous=new Set(),mediaOwners=new Map(),ambiguousMedia=new Set(),episodes=[];
   for(const item of items) {
     const itemLanguage=language(item.language)||feedLanguage;
     const media=(atom?children(item,'link',ATOM).filter(n=>n.attrs.rel==='enclosure').map(n=>mediaItem(n.attrs.href,n.attrs.type,n.attrs.length,n.base)):
       children(item,'enclosure','').map(n=>mediaItem(n.attrs.url,n.attrs.type,n.attrs.length,n.base))).filter(Boolean);
     const transcripts=item.children.filter(n=>n.local==='transcript'&&PODCAST_URIS.has(n.uri)).map(n=>({url:safeLink(n.attrs.url,n.base),type:mime(n.attrs.type),language:language(n.attrs.language)||itemLanguage,rel:n.attrs.rel==='captions'?'captions':'',supported:TRANSCRIPT_TYPES.has(mime(n.attrs.type))})).filter(t=>t.url);
-    if(!media.length&&!transcripts.length){skipped++;continue;}
+    if(!media.length&&!transcripts.length)continue;
     const linkNode=atom?children(item,'link',ATOM).find(n=>!n.attrs.rel||n.attrs.rel==='alternate'):child(item,'link','');
     const sourceUrl=safeLink(atom?linkNode?.attrs.href:nodeText(linkNode).trim(),linkNode?.base||item.base);
     const guid=value(item,atom?'id':'guid',atom?ATOM:'')||sourceUrl||media[0]?.url||transcripts[0]?.url;
-    const id=hash(guid);if(seen.has(id)){skipped++;continue;}seen.add(id);
+    const id=hash(guid);
+    for(const medium of media){const owner=mediaOwners.get(medium.url);if(owner&&owner!==id)ambiguousMedia.add(medium.url);else mediaOwners.set(medium.url,id);}
+    if(seen.has(id)){ambiguous.add(id);continue;}seen.add(id);
+    // Continue scanning the already byte/node-bounded feed after the display
+    // limit: a repeated GUID later in the archive still makes identity unsafe.
+    if(episodes.length===PODCAST_LIMITS.episodes)continue;
     episodes.push({id,title:small(value(item,'title',atom?ATOM:''))||'未命名单集',source_url:sourceUrl||feedUrl,
       language:itemLanguage,duration:seconds(value(item,'duration',ITUNES)),published:small(value(item,atom?'published':'pubDate',atom?ATOM:'')),media,transcripts});
-    if(episodes.length===PODCAST_LIMITS.episodes)break;
   }
   if(!episodes.length)throw new Error('此源中没有可用的公开音视频 enclosure 或发布者文字稿');
-  return {kind:'feed',title:small(value(channel,'title',atom?ATOM:''))||'播客',feed_url:feedUrl,language:feedLanguage,episodes,feeds:[],
-    truncated:items.length>episodes.length+skipped,warnings:['发布者提供的文字稿不等于人工校对；没有文字稿时不会自动识别。']};
+  for(const episode of episodes)if(ambiguous.has(episode.id)||episode.media.some(item=>ambiguousMedia.has(item.url)))episode.identity_ambiguous=true;
+  const result={kind:'feed',title:small(value(channel,'title',atom?ATOM:''))||'播客',feed_url:feedUrl,language:feedLanguage,episodes,feeds:[],
+    truncated:seen.size>episodes.length,warnings:['发布者提供的文字稿不等于人工校对；没有文字稿时不会自动识别。',...(ambiguous.size||ambiguousMedia.size?['发布者源包含重复的单集标识或媒体地址，无法据此精确匹配 Apple 单集；请核对原站后明确选择。']:[])]};
+  // Keep all bounded identities for matching, without exposing the non-displayed
+  // archive or inflating API responses. Object spread/JSON omit this index.
+  Object.defineProperty(result,FEED_IDENTITIES,{value:{ids:seen,mediaOwners,ambiguous,ambiguousMedia}});
+  return result;
 }
 function htmlAttributes(tag) {
   const result=Object.create(null),text=tag.replace(/^<\/?[^\s/>]+/,'').replace(/\/?>$/,'');
@@ -186,6 +196,27 @@ export function parsePublisherTranscript(text,type) {
     return {id:'segment-'+(index+1),start:cue.start,end:cue.end,text:cue.text.trim(),speaker:cue.speaker?.slice(0,120)||null};
   });
 }
+// Directory titles/dates are display metadata, not identity. Only the requested
+// Apple track inside the requested collection can identify a publisher episode.
+function appleId(value){return (typeof value==='string'&&/^[1-9]\d{0,19}$/.test(value))||(Number.isSafeInteger(value)&&value>0)?String(value):'';}
+export function matchAppleEpisode(results,collectionId,trackId,episodes,identityIndex) {
+  const tracks=Array.isArray(results)?results.filter(item=>item?.kind==='podcast-episode'&&appleId(item.collectionId)===collectionId&&appleId(item.trackId)===trackId):[];
+  if(tracks.length!==1)return null;
+  const track=tracks[0],guid=typeof track.episodeGuid==='string'?track.episodeGuid.trim():'';
+  const guidHash=guid&&guid.length<=4096?hash(guid):'';
+  const mediaUrl=typeof track.episodeUrl==='string'?safeLink(track.episodeUrl):'';
+  if(identityIndex){
+    if(identityIndex.ambiguous.has(guidHash)||identityIndex.ambiguousMedia.has(mediaUrl))return null;
+    const identities=new Set([identityIndex.ids.has(guidHash)?guidHash:null,identityIndex.mediaOwners.get(mediaUrl)].filter(Boolean));
+    // A contradictory identity outside the 200-item UI is still a conflict.
+    if(identities.size!==1)return null;
+  }
+  const matches=episodes.filter(episode=>(guidHash&&episode.id===guidHash)||(mediaUrl&&episode.media.some(media=>media.url===mediaUrl)));
+  // Conflicting GUID/enclosure identities or reused media must never silently
+  // turn a shared episode into a different episode, even with the same title.
+  if(matches.length!==1||matches[0].identity_ambiguous)return null;
+  return {episode:matches[0],matched_by:matches[0].id===guidHash?'publisher_guid':'enclosure_url'};
+}
 export function createPodcastSources({fetchResource=fetchPublic}={}) {
   let active=0;
   const bounded=async action=>{if(active>=PODCAST_LIMITS.concurrent)throw new Error('最多同时处理两个播客请求，请稍后重试');active++;try{return await action();}finally{active--;}};
@@ -200,13 +231,23 @@ export function createPodcastSources({fetchResource=fetchPublic}={}) {
     if(/(?:^|\.)spotify\.com$/.test(input.hostname))throw new Error('Spotify 链接不能用于提取音轨。请提供该节目的原发布者公开 RSS，或合法取得的音视频文件');
     if(['podcasts.apple.com','itunes.apple.com'].includes(input.hostname)) {
       const id=input.pathname.match(/\/id(\d+)(?:\/|$)/)?.[1];if(!id)throw new Error('请使用含节目 ID 的 Apple Podcasts 分享链接');
+      const episodeIds=input.searchParams.getAll('i'),episodeId=episodeIds[0];
+      if(episodeIds.length>1||(episodeIds.length&&!/^[1-9]\d{0,19}$/.test(episodeId)))throw new Error('Apple 单集 ID 无效，请重新复制官方单集分享链接');
       const country=input.pathname.match(/^\/([a-z]{2})\//)?.[1]||'us';
       const lookup=await fetchResource(`https://itunes.apple.com/lookup?id=${id}&entity=podcast&country=${country}`,{signal,maxBytes:1024*1024,types:JSON_TYPES});
       let data;try{data=JSON.parse(textBody(lookup));}catch{throw new Error('Apple 目录返回无效数据');}
-      const show=Array.isArray(data.results)&&data.results.find(item=>String(item.collectionId)===id&&item.kind==='podcast'&&item.feedUrl);
+      const show=Array.isArray(data.results)&&data.results.find(item=>appleId(item.collectionId)===id&&item.kind==='podcast'&&item.feedUrl);
       if(!show)throw new Error('Apple 目录未提供此节目的公开 RSS；请提供原发布者 RSS 或合法本地文件');
       const result=await feed(show.feedUrl,signal);
-      return {...result,resolved_from:input.href,warnings:[...result.warnings,input.searchParams.has('i')?'此分享链接指向单集；目录只确认节目 RSS，请在列表中明确选择对应单集，不会自动导入最新一集。':'已通过 Apple 公开目录找到发布者 RSS；仅使用 RSS 中发布的文件。']};
+      if(!episodeId)return {...result,resolved_from:input.href,warnings:[...result.warnings,'已通过 Apple 公开目录找到发布者 RSS；仅使用 RSS 中发布的文件。']};
+      let matched=null;
+      try {
+        const directory=await fetchResource(`https://itunes.apple.com/lookup?id=${id}&entity=podcastEpisode&country=${country}&limit=200`,{signal,maxBytes:PODCAST_LIMITS.metadataBytes,types:JSON_TYPES});
+        matched=matchAppleEpisode(JSON.parse(textBody(directory)).results,id,episodeId,result.episodes,result[FEED_IDENTITIES]);
+      } catch(error) {if(signal?.aborted)throw error;}
+      const selection={status:matched?'matched':'choice_required',apple_episode_id:episodeId,...(matched?{episode_id:matched.episode.id,matched_by:matched.matched_by}:{})};
+      return {...result,resolved_from:input.href,episode_selection:selection,...(matched?{episodes:[matched.episode],truncated:false}:{}),
+        warnings:[...result.warnings,matched?'已用 Apple 单集 ID 与发布者 GUID / 媒体地址精确匹配，只显示此集；仍需点击后才保存或获取文字稿、音视频。':'此分享链接指向单集，但未能在有界公开目录与 RSS 中唯一匹配；请在列表中明确选择对应单集。不会按标题猜测或自动取最新一集，较早内容可打开原站查找。']};
     }
     const resource=await fetchResource(input.href,{signal,maxBytes:PODCAST_LIMITS.metadataBytes,types:PAGE_TYPES,inspectMedia:true,maxMediaBytes:PODCAST_LIMITS.mediaBytes});
     if(isMediaType(resource.type))return {kind:'media',title:small(decodeURIComponent(new URL(resource.url).pathname.split('/').pop()||'公开媒体')),feed_url:'',episodes:[],feeds:[],media:mediaItem(resource.url,resource.type,resource.length,resource.url),warnings:['仅获取了媒体响应头，尚未下载；没有文字稿，不会自动识别。媒体时长将在播放时由浏览器确认。']};

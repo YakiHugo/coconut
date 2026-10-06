@@ -75,6 +75,10 @@ try {
  const apple=await sources.discover({url:'https://podcasts.apple.com/us/podcast/the-changelog-software-development-open-source/id341623264'},{signal});
  assert.equal(apple.kind,'feed');assert.equal(apple.feed_url,'https://changelog.com/podcast/feed');assert.ok(apple.episodes.length>0);
  console.log(JSON.stringify({check:'apple_public_feed_resolution',passed:true,episodes:apple.episodes.length}));
+ stage='Apple exact shared episode resolution';
+ const shared=await sources.discover({url:'https://podcasts.apple.com/us/podcast/the-changelog-software-development-open-source/id341623264?i=1000785837067'},{signal});
+ assert.equal(shared.episode_selection?.status,'matched');assert.equal(shared.episode_selection.apple_episode_id,'1000785837067');assert.equal(shared.episodes.length,1);assert.equal(shared.episodes[0].title,'Postgres at PlanetScale (Interview)');assert.equal(shared.episode_selection.matched_by,'publisher_guid');assert.notEqual(shared.episodes[0].id,apple.episodes[0].id);
+ console.log(JSON.stringify({check:'apple_exact_shared_episode_resolution',passed:true,episodes:1,identity:shared.episode_selection.matched_by}));
  stage='Xiaoyuzhou public episode gates';
  const xy=await sources.discover({url:'https://www.xiaoyuzhoufm.com/episode/6ab0922a0916f6f8b4468234'},{signal});
  assert.equal(xy.source_type,'xiaoyuzhou_public_page');assert.equal(xy.episodes.length,1);assert.equal(xy.episodes[0].transcripts.length,0);

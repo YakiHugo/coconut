@@ -20,6 +20,7 @@ test('startup, assets and health are passive; declared capabilities match runtim
   assert.equal(health.local_worker,false); assert.equal(health.runtime,'desktop-bridge');
   assert.equal(health.capabilities.local_agents,true); assert.equal(health.capabilities.media_import,false); assert.equal(health.capabilities.local_translation,false);
   const page = await fetch(origin+'/'); assert.equal(page.status,200); assert.match(await page.text(),/Coconut/);
+  assert.equal((await fetch(origin+'/summary.js')).status,200);
   assert.match(page.headers.get('content-security-policy'),/script-src 'self'/); assert.equal(page.headers.get('x-frame-options'),'DENY');
   assert.equal((await fetch(origin+'/api/jobs')).status,501); assert.equal(calls.length,0);
   assert.equal((await fetch(origin+'/package.json')).status,404);

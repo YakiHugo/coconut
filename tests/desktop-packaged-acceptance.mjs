@@ -107,6 +107,17 @@ async function verifyRestored(page,expected,label){
  await page.locator('#edit-dialog button[value="cancel"]').click();
  check(label+'_cancel_does_not_change_document',isDeepStrictEqual(await stored(page),expected));
 }
+async function verifyAudioRestored(page,expected,label){
+ await page.locator('#audio-project').waitFor({state:'visible'});
+ check(label+'_complete_audio_project',isDeepStrictEqual(await stored(page),expected));
+ check(label+'_audio_note_ui',await page.locator('#project-note').inputValue()===expected.project_note);
+ check(label+'_timestamp_bookmark_ui',await page.locator('#audio-bookmarks textarea').inputValue()===expected.timestamp_bookmarks[0].note);
+ check(label+'_no_fabricated_transcript_or_summary',expected.segments.length===0&&expected.ai_answers.length===0&&await page.locator('#summary-workspace').isHidden()&&await page.locator('#language-panel').isHidden()&&await page.locator('#export-subtitles').isDisabled());
+ check(label+'_audio_media_needs_reselection',await page.locator('#source-media audio,#source-media video').count()===0);
+ await page.locator('#audio-bookmarks button').first().click();
+ check(label+'_bookmark_requires_explicit_media',(await page.locator('#audio-project-status').textContent()).includes('先单独获取原声'));
+ check(label+'_bookmark_does_not_change_saved_project',isDeepStrictEqual(await stored(page),expected));
+}
 
 try{
  check('native_macos_required',process.platform==='darwin');
@@ -169,8 +180,34 @@ try{
  }
  const notebook=await download(page,'#export-notebook','notebook.md'),markdown=await fs.readFile(notebook,'utf8');
  check('markdown_disk_contains_original_edit_and_note',markdown.includes(expected.notes.middle)&&markdown.includes(expected.segments[1].text)&&markdown.includes(fixture.segments[1].text.replaceAll('.','\\.')));
+ // An authored public-source reference is metadata only. The request guard above
+ // forbids fetching it; playback uses the same local PCM fixture and no network.
+ const audioFixture={schema_version:1,project_kind:'audio_only',transcript_status:'not_imported',
+  title:'Packaged authored audio project',source_url:'https://publisher.example/native-acceptance',
+  podcast_source:{kind:'direct_media',media_url:'https://publisher.example/native-authored.wav',media_kind:'audio'},
+  media_duration:10,segments:[]};
+ const audioFixturePath=path.join(temporary,'audio-project-fixture.json');await fs.writeFile(audioFixturePath,JSON.stringify(audioFixture));
+ await importFile(page,audioFixturePath);await page.locator('#audio-project').waitFor({state:'visible'});
+ check('packaged_audio_project_import_preserves_transcript_shelf',await page.evaluate(()=>JSON.parse(localStorage.getItem('coconut-reader-v1')).documents.length)===2);
+ check('packaged_audio_source_is_metadata_only',(await stored(page)).podcast_source.media_url===audioFixture.podcast_source.media_url&&await page.locator('#source-media audio').count()===0&&forbiddenRequests===0);
+ await page.locator('#project-note').fill('Native project note survives app restart');
+ const [audioChooser]=await Promise.all([page.waitForEvent('filechooser'),page.locator('#attach-reader-media').click()]);await audioChooser.setFiles(audioPath);
+ await page.waitForFunction(()=>{const media=document.querySelector('#source-media audio');return media&&!media.error&&media.readyState>=2&&media.duration>9;});
+ await page.locator('#source-media audio').evaluate(media=>{media.pause();media.currentTime=4.25;});
+ await page.locator('#use-playback-time').click();await page.locator('#audio-bookmark-note').fill('Check this authored audio moment');await page.locator('#audio-bookmark-form button[type=submit]').click();
+ const audioExpected=await stored(page);
+ check('packaged_audio_note_and_timestamp_saved',audioExpected.project_note==='Native project note survives app restart'&&audioExpected.timestamp_bookmarks.length===1&&audioExpected.timestamp_bookmarks[0].time===4.25&&audioExpected.timestamp_bookmarks[0].note==='Check this authored audio moment');
+ check('packaged_audio_has_no_inferred_content_or_blob',audioExpected.segments.length===0&&audioExpected.ai_answers.length===0&&!JSON.stringify(audioExpected).includes('blob:'));
+ await page.locator('#source-media audio').evaluate(media=>{media.currentTime=0;});await page.locator('#audio-bookmarks button').first().click();
+ await page.waitForFunction(()=>{const media=document.querySelector('#source-media audio');return !media.seeking&&Math.abs(media.currentTime-4.25)<0.01&&media.paused;});
+ check('packaged_audio_bookmark_seeks_without_autoplay',true);
+ const audioBackup=await download(page,'#export','audio-project-backup.json');
+ check('audio_json_disk_bytes_match_saved_project',isDeepStrictEqual(JSON.parse(await fs.readFile(audioBackup,'utf8')),audioExpected));
+ const audioNotebook=await download(page,'#export-notebook','audio-project-notes.md'),audioMarkdown=await fs.readFile(audioNotebook,'utf8');
+ check('audio_markdown_has_user_notes_without_fake_transcript',audioMarkdown.includes(audioExpected.project_note)&&audioMarkdown.includes(audioExpected.timestamp_bookmarks[0].note)&&audioMarkdown.includes('00:04')&&audioMarkdown.includes('没有摘要')&&audioMarkdown.includes('用户笔记和时间书签'));
  await close();
- page=await launch(executable,profile,configuration.version,'relaunch');await verifyRestored(page,expected,'relaunch');
+ page=await launch(executable,profile,configuration.version,'relaunch');await verifyAudioRestored(page,audioExpected,'relaunch');
+ await page.locator('#library button').filter({hasText:fixture.title}).click();await verifyRestored(page,expected,'relaunch');
  check('relaunch_keeps_playback_preference',await page.locator('#playback-rate').inputValue()==='1.5');
  await close();
  page=await launch(executable,path.join(temporary,'fresh-profile'),configuration.version,'fresh_restore');
@@ -178,6 +215,9 @@ try{
  // Import deliberately assigns a content fingerprint; all user data must match.
  const restored=await stored(page);const restoredExpected={...expected,key:restored.key};
  await verifyRestored(page,restoredExpected,'fresh_restore');
+ await importFile(page,audioBackup);const restoredAudio=await stored(page);
+ await verifyAudioRestored(page,{...audioExpected,key:restoredAudio.key},'fresh_restore');
+ check('clean_profile_retains_both_project_formats',await page.evaluate(()=>JSON.parse(localStorage.getItem('coconut-reader-v1')).documents.length)===2);
  check('no_unexpected_external_status_or_mutating_requests',forbiddenRequests===0);
  check('no_uncaught_renderer_errors',pageErrors===0);
  await close();

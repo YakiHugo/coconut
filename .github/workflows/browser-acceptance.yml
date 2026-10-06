@@ -36,6 +36,8 @@ jobs:
       - run: sudo apt-get update && sudo apt-get install -y ffmpeg
       - name: Verify standalone Web reading without a Python service
         run: node tests/web-browser-acceptance.mjs
+      - name: Verify bounded long-summary plans with injected fixtures only
+        run: node tests/summary-browser-acceptance.mjs
       - name: Verify explicit podcast source imports through the desktop HTTP bridge
         run: node tests/podcast-browser-acceptance.mjs
       - name: Prepare original synthetic media and timed text
@@ -55,7 +57,7 @@ jobs:
     # do not repeatedly download it; a manual run must explicitly supply a URL.
     if: >-
       (github.event_name == 'pull_request' &&
-       github.head_ref == 'dot/acceptance-user-journeys' &&
+       github.head_ref == 'dot/close-reading-gaps' &&
        github.event.pull_request.head.repo.full_name == github.repository) ||
       (github.event_name == 'workflow_dispatch' && inputs.original_video_url != '')
     runs-on: ubuntu-latest

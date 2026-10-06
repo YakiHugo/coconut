@@ -2,20 +2,16 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const {parse, validate, source} = require('../reader/core.js');
 
-test('summary readiness enforces cue count and both bridges serialized input boundaries',()=>{
- const {summaryReadiness,SUMMARY_QUESTION}=require('../reader/core.js');
- const segments=Array.from({length:5000},(_,i)=>({id:'s'+i,text:'a'}));
- assert.equal(summaryReadiness({segments}).ready,true);
- assert.equal(summaryReadiness({segments:[...segments,{id:'extra',text:'a'}]}).ready,false);
- const payload=text=>({question:SUMMARY_QUESTION,answer_language:'zh',transcript:[{id:'one',text}]});
- const overhead=JSON.stringify(payload('')).length+8; // Python's eight separator spaces.
- const exact='a'.repeat(250000-overhead);
- assert.deepEqual(summaryReadiness({segments:payload(exact).transcript}),{ready:true,reason:'',characters:250000});
- assert.equal(summaryReadiness({segments:payload(exact+'a').transcript}).ready,false);
- assert.equal(summaryReadiness({segments:payload('"'.repeat(exact.length)).transcript}).ready,false,'JSON escaping counts toward the limit');
- assert.equal(summaryReadiness({segments:payload('中'.repeat(exact.length)).transcript}).ready,true,'Unicode is not counted as escaped ASCII');
- assert.equal(summaryReadiness({segments:payload('😀'.repeat(exact.length)).transcript}).ready,false,'Node UTF-16 bound is enforced');
- assert.match(summaryReadiness({segments:[...segments,{id:'extra',text:'a'}]}).reason,/局部回答不会保存为整篇摘要/);
+test('summary readiness plans long documents with bounded batches instead of one oversized request',()=>{
+ const {summaryReadiness}=require('../reader/core.js');
+ const segments=Array.from({length:5001},(_,i)=>({id:'s'+i,text:'Source'}));
+ const readiness=summaryReadiness({segments});
+ assert.equal(readiness.ready,true);assert.equal(readiness.plan.chunks.length,13);assert.equal(readiness.plan.requests,14);
+ assert.equal(readiness.plan.chunks.flatMap(chunk=>chunk.parts).length,5001);
+ assert.equal(summaryReadiness({segments:[{id:'one',text:'中'.repeat(250001)}]}).ready,true);
+ assert.equal(summaryReadiness({segments:Array.from({length:20001},(_,i)=>({id:'s'+i,text:'A'}))}).ready,false);
+ assert.equal(summaryReadiness({segments:[{id:'one',text:'a'.repeat(1000001)}]}).ready,false);
+ assert.match(summaryReadiness({segments:[]}).reason,/局部回答不会保存为整篇摘要/);
 });
 
 test('summary readiness rejects unsupported cue IDs and blank text without changing the source',()=>{
@@ -199,7 +195,7 @@ test('answer freshness preserves exact ordered input through JSON and removed cu
 
 test('legacy or malformed answer evidence stays unknown rather than silently becoming current',()=>{
  const {answerFreshness}=require('../reader/core.js');
- for(const input_snapshot of [undefined,{version:2,segments:[{id:'a',text:'A'}]},{version:1,segments:[]},{version:1,segments:[{id:'a',text:'A'},{id:'a',text:'A'}]},{version:1,segments:[{id:'a',text:42}]},{version:1,segments:[{id:'a',text:'x'.repeat(500001)}]}]){
+ for(const input_snapshot of [undefined,{version:2,segments:[{id:'a',text:'A'}]},{version:1,segments:[]},{version:1,segments:[{id:'a',text:'A'},{id:'a',text:'A'}]},{version:1,segments:[{id:'a',text:42}]},{version:1,segments:[{id:'a',text:'x'.repeat(1000001)}]}]){
   const doc=validate({segments:[{id:'a',text:'A',start:0,end:1}],ai_answers:[{question:'Q',answer:'Saved',citations:['a'],source_snapshot:{a:'A'},input_snapshot}]});
   assert.equal(doc.ai_answers[0].answer,'Saved');assert.equal(answerFreshness(doc.ai_answers[0],doc),'unknown');
  }
@@ -347,4 +343,34 @@ test('manual translation source remains independent of document language while l
  const doc=C.validate({language:'en',segments:[{id:'a',start:0,end:1,text:'Bonjour',translations:{zh:{text:'你好',source_text:'Bonjour',source_language:'fr',document_language:'en',provider:'local'}}}]});
  assert.ok(C.translationCurrent(doc.segments[0],doc,doc.segments[0].translations.zh));
  doc.language='fr';assert.equal(C.translationCurrent(doc.segments[0],doc,doc.segments[0].translations.zh),false);
+});
+
+test('audio-only project schema keeps durable notes but never treats metadata or fake answers as transcript',()=>{
+ const C=require('../reader/core.js'),input={project_kind:'audio_only',title:'Audio',podcast_source:{kind:'direct_media',media_url:'https://publisher.example/audio.mp3',media_kind:'audio'},segments:[],project_note:'My idea',timestamp_bookmarks:[{id:'mark-1',time:12.125,note:'Listen again'}],description:'Not a transcript',ai_answers:[{purpose:'summary',answer:'Invented',question:'Fake',citations:[]}]};
+ const doc=C.parse(JSON.stringify(C.validate(input)),'project.json');
+ assert.deepEqual(doc.segments,[]);assert.deepEqual(doc.ai_answers,[]);assert.equal(doc.description,undefined);assert.equal(doc.project_note,'My idea');assert.deepEqual(doc.timestamp_bookmarks,input.timestamp_bookmarks);
+ assert.equal(C.summaryReadiness(doc).ready,false);assert.equal(C.latestSummary(doc),null);assert.throws(()=>C.subtitleExport(doc),/文字稿/);
+ assert.match(C.notebookMarkdown(doc),/00:12/);assert.match(C.notebookMarkdown(doc),/没有摘要/);assert.ok(!C.notebookMarkdown(doc).includes('Invented'));
+ for(const bad of [{...input,segments:[{id:'x',start:0,end:1,text:'Description'}]},{...input,podcast_source:{kind:'direct_media',media_url:'https://u:p@example.com/audio.mp3',media_kind:'audio'}},{...input,timestamp_bookmarks:[{id:'one',time:-1,note:'x'}]},{...input,timestamp_bookmarks:[{id:'one',time:0,note:'x'},{id:'one',time:1,note:'y'}]},{...input,timestamp_bookmarks:[{id:'one',time:0,note:{}}]}])assert.throws(()=>C.validate(bad));
+ assert.throws(()=>C.validate({segments:[]}),/片段/,'empty transcripts still require explicit audio project type');
+});
+test('audio project library restore is additive, atomic and survives renamed source and conflicting notes',()=>{
+ const C=require('../reader/core.js'),base=C.validate({project_kind:'audio_only',segments:[],title:'Audio',podcast_source:{feed_url:'https://publisher.example/feed',episode_id:'ep',media_url:'https://publisher.example/audio.mp3',media_kind:'audio'},project_note:'old'});
+ const current={documents:[{...base,key:'same'}],active:'same'},backup={format:'coconut-library',version:1,active:'same',documents:[{...base,key:'same',project_note:'new'}]};
+ const restored=C.mergeLibraryBackup(current,backup);assert.equal(restored.documents.length,2);assert.equal(restored.documents[1].project_note,'new');
+ assert.equal(C.mergeLibraryBackup(restored,backup).documents.length,2);
+ assert.equal(C.audioProjectIdentity({...base,title:'Renamed'}),C.audioProjectIdentity(base));
+ assert.throws(()=>C.mergeLibraryBackup(current,{...backup,documents:[...backup.documents,{...base,key:'bad',timestamp_bookmarks:[{}]}]}));assert.equal(current.documents.length,1);
+});
+test('maximal audio project note budget always fits the 15 MiB JSON reimport limit without truncation',()=>{
+ const C=require('../reader/core.js'),input={project_kind:'audio_only',segments:[],title:'\0'.repeat(500),language:'\0'.repeat(100),podcast_source:{kind:'direct_media',media_url:'https://publisher.example/audio.mp3',media_kind:'audio'},project_note:'',timestamp_bookmarks:Array.from({length:2000},(_,index)=>({id:String(index).padStart(4,'0')+'\0'.repeat(196),time:604800,note:'\0'.repeat(500)}))};
+ const doc=C.validate(input),exported=JSON.stringify({...doc,key:'a'.repeat(64)},null,2);
+ assert.equal(C.audioNoteCharacters(doc),C.AUDIO_NOTE_BUDGET);assert.ok(Buffer.byteLength(exported,'utf8')<15*1024*1024);
+ assert.deepEqual(C.parse(exported,'audio.json').timestamp_bookmarks,input.timestamp_bookmarks);
+ assert.throws(()=>C.validate({...input,project_note:'x'}),/1,000,000/);
+ assert.throws(()=>C.validate({...input,title:'x'.repeat(501)}),/标题/);assert.throws(()=>C.validate({...input,language:'x'.repeat(101)}),/语言/);
+});
+test('podcast URL normalization cannot create a source too long to reimport',()=>{
+ const C=require('../reader/core.js');assert.equal(C.podcastURL('https://publisher.example/'+'声'.repeat(1500)),'');
+ const url=C.podcastURL('https://publisher.example/声音.mp3');assert.ok(url);assert.equal(C.podcastURL(url),url);
 });
