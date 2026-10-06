@@ -5,6 +5,8 @@ let state = { documents: [], active: null };
 let selected = null;
 let notesOnly = false;
 let excerptsOnly = false;
+let speakerFilter = null;
+function matchesReadingSegment(segment,doc,query){return (speakerFilter===null||(segment.speaker||'')===speakerFilter)&&Coconut.matchesSegment(segment,doc,query,notesOnly,excerptsOnly);}
 let searchFocusedId=null;
 let workspace = "read";
 let readingScroll = 0;
@@ -134,7 +136,7 @@ async function add(doc, canCommit = null, reuseAudioSource = false) {
 	$("search").value = "";
 	selected = null;
 	pageStart = 0;
-	notesOnly = false; excerptsOnly = false;
+	notesOnly = false; excerptsOnly = false; speakerFilter=null;
 	workspace = "read";
 	const saved = save();
 	render();
@@ -161,7 +163,7 @@ function goToSegment(id) {
 	const index = doc ? doc.segments.findIndex(s => s.id === id) : -1;
 	if (index < 0) return;
 	$("search").value = "";
-	notesOnly = false; excerptsOnly = false;
+	notesOnly = false; excerptsOnly = false; speakerFilter=null;
 	selected = null;
 	pageStart = Math.floor(index / PAGE_SIZE) * PAGE_SIZE;
 	showWorkspace("read");
@@ -188,7 +190,7 @@ function renderLibrary() {
    setReadingMode("summary");
    searchFocusedId=null;
 			selected = null;
-			notesOnly = false; excerptsOnly = false;
+			notesOnly = false; excerptsOnly = false; speakerFilter=null;
 			pageStart = 0;
 			$("search").value = "";
 			$("toggle-library").setAttribute("aria-expanded", "false");
@@ -272,8 +274,13 @@ function render() {
   renderAudioProject(doc);renderNotebookAction(doc);applyReadingMode();
   window.dispatchEvent(new Event('coconut-render'));return;
  }
+ const speakers=[...new Set(doc.segments.map(s=>s.speaker||''))];
+ if(speakerFilter!==null&&!speakers.includes(speakerFilter))speakerFilter=null;
+ const selector=$('speaker-filter');selector.replaceChildren(el('option','','全部说话人'));selector.firstChild.value='all';
+ for(const speaker of speakers){const option=el('option','',speaker||'未标注说话人');option.value=JSON.stringify(speaker);selector.append(option);}
+ selector.value=speakerFilter===null?'all':JSON.stringify(speakerFilter);$('speaker-filter-control').hidden=speakers.length<2;
 	const query = $("search").value.trim().toLocaleLowerCase();
-	const filtered = doc.segments.filter(s=>Coconut.matchesSegment(s,doc,query,notesOnly,excerptsOnly));
+	const filtered = doc.segments.filter(s=>matchesReadingSegment(s,doc,query));
 	// Clamp after removing the last matching note/excerpt on a later page.
 	pageStart = Math.min(pageStart, Math.max(0, Math.floor((filtered.length - 1) / PAGE_SIZE) * PAGE_SIZE));
 	const visible = filtered.slice(pageStart, pageStart + PAGE_SIZE);
@@ -296,8 +303,8 @@ function render() {
 	renderNotebookAction(doc);
 	$("note-count").textContent = String(Object.values(doc.notes).filter(Boolean).length);
 	const playbackHint = mediaPath ? "点时间戳定位本地原声" : Coconut.source(doc.source_url, 0) ? "点时间戳打开原站；若平台未自动定位，请按显示时间手动跳转" : doc.source_media ? "本地媒体尚未连接；请在保存原任务的电脑启动 Coconut" : "尚未关联音视频，可在「阅读设置」添加原视频链接";
- $("search-status").textContent = ((query || notesOnly || excerptsOnly) ? "找到 " + filtered.length + " 个片段" : "共 " + doc.segments.length + " 个片段") + " · " + playbackHint;
-	$("clear-search").hidden = !query && !notesOnly && !excerptsOnly;
+ $("search-status").textContent = ((query || notesOnly || excerptsOnly || speakerFilter!==null) ? "找到 " + filtered.length + " 个片段" : "共 " + doc.segments.length + " 个片段") + " · " + playbackHint;
+	$("clear-search").hidden = !query && !notesOnly && !excerptsOnly && speakerFilter===null;
 	const bookmark = doc.segments.find(s => s.id === doc.readingPosition);
 	$("resume").hidden = !bookmark;
 	$("resume").textContent = bookmark ? "继续阅读 · " + Coconut.time(bookmark.start) : "";
@@ -437,10 +444,11 @@ $("library-scope").onchange=renderLibrary;
 try{const order=localStorage.getItem('coconut-library-sort-v1');if(['added','title','duration'].includes(order))$('library-sort').value=order;}catch{}
 $('library-sort').onchange=()=>{renderLibrary();try{localStorage.setItem('coconut-library-sort-v1',$('library-sort').value);}catch{notice('本次排序已应用，但浏览器未保存偏好。');}};
 
-$("filter-all").onclick = () => { notesOnly = false; excerptsOnly = false; pageStart = 0; render(); };
+$('speaker-filter').onchange=()=>{speakerFilter=$('speaker-filter').value==='all'?null:JSON.parse($('speaker-filter').value);pageStart=0;searchFocusedId=null;render();};
+$("filter-all").onclick = () => { notesOnly = false; excerptsOnly = false; speakerFilter=null; pageStart = 0; render(); };
 $("filter-excerpts").onclick = () => { excerptsOnly = true; notesOnly = false; pageStart = 0; render(); };
 $("filter-notes").onclick = () => { notesOnly = true; excerptsOnly = false; pageStart = 0; render(); };
-$("clear-search").onclick = () => { $("search").value = ""; notesOnly = false; excerptsOnly = false; pageStart = 0; render(); $("search").focus(); };
+$("clear-search").onclick = () => { $("search").value = ""; notesOnly = false; excerptsOnly = false; speakerFilter=null; pageStart = 0; render(); $("search").focus(); };
 $("close-note").onclick = () => {
 	const id = selected;
 	selected = null;
@@ -726,7 +734,7 @@ $("library-file").onchange = async () => {
   const backup = JSON.parse(await file.text());
   const before = state.documents.length;
   const restored = Coconut.mergeLibraryBackup(state, backup);
-  state = restored; selected=null; pageStart=0; notesOnly=false; excerptsOnly=false; $("search").value=""; workspace="read";
+  state = restored; selected=null; pageStart=0; notesOnly=false; excerptsOnly=false; speakerFilter=null; $("search").value=""; workspace="read";
   const persisted = save(); render();
   if(persisted)notice("已恢复 " + (state.documents.length-before) + " 份文字稿；相同内容已跳过，不同版本分别保留，原书架未删除。");
  } catch(error) { notice("恢复失败，原书架未改变："+error.message); }
@@ -844,7 +852,7 @@ function highlightedText(tag,className,value,query){
 }
 function moveSearchMatch(direction){
  const doc=active(),query=$("search").value.trim();if(!doc || !query)return;
- const matches=doc.segments.filter(s=>Coconut.matchesSegment(s,doc,query,notesOnly,excerptsOnly));if(!matches.length)return;
+ const matches=doc.segments.filter(s=>matchesReadingSegment(s,doc,query));if(!matches.length)return;
  const current=matches.findIndex(s=>s.id===searchFocusedId);
  const index=current<0?(direction>0?0:matches.length-1):(current+direction+matches.length)%matches.length;
  searchFocusedId=matches[index].id;pageStart=Math.floor(index/PAGE_SIZE)*PAGE_SIZE;selected=null;render();

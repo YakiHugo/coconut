@@ -1541,3 +1541,15 @@ test('shelf search finds saved notes only after explicitly expanding its scope',
   assert.equal($('title').textContent,'Interview');
  }finally{await w.happyDOM.close();}
 });
+
+test('speaker filters share the same selected source scope and clear on explicit full reading',async()=>{
+ const w=setup();try{
+  await importDocument(w,{title:'Speakers',segments:[{id:'a',start:0,end:1,text:'A words',speaker:'Speaker A'},{id:'b',start:1,end:2,text:'B words',speaker:'Speaker B'},{id:'c',start:2,end:3,text:'Unlabelled'}]});
+  const $=id=>w.document.getElementById(id),filter=$('speaker-filter');
+  filter.value=JSON.stringify('Speaker B');filter.onchange();assert.equal(w.document.querySelectorAll('.segment').length,1);assert.equal(w.document.querySelector('.segment').dataset.segmentId,'b');
+  assert.match($('subscription-translation-scope').textContent,/1/);assert.equal($('clear-search').hidden,false);
+  filter.value=JSON.stringify('');filter.onchange();assert.equal(w.document.querySelector('.segment').dataset.segmentId,'c');
+  $('clear-search').click();assert.equal(w.document.querySelectorAll('.segment').length,3);assert.equal(filter.value,'all');
+  assert.equal(JSON.parse(w.localStorage.getItem('coconut-reader-v1')).documents[0].segments[0].speaker,'Speaker A');
+ }finally{await w.happyDOM.close();}
+});
