@@ -110,11 +110,11 @@ function disconnectedWorker() {
  for (const button of $("jobs").querySelectorAll("button")) button.disabled = true;
  $("worker-status").textContent = workerWasConnected
   ? "连接暂时中断 · 下方是上次任务状态，正在尝试重连"
-  : (["localhost", "127.0.0.1", "[::1]"].includes(location.hostname) ? "暂时无法连接本地处理服务" : "当前是阅读预览 · 未连接本地处理服务");
+  : (["localhost", "127.0.0.1", "[::1]"].includes(location.hostname) ? "暂时无法连接本地处理服务" : "阅读预览 · 未连接本地服务");
  $("worker-help").textContent = workerWasConnected
   ? "请检查运行 Coconut 的终端。已提交的任务可能仍在处理；恢复连接后先查看任务列表，避免重复提交。阅读和笔记仍可使用。"
-  : "此页面可导入文字稿、阅读和记笔记。处理音视频请按下面的步骤在自己的电脑启动，再打开本地地址。";
- if (!workerWasConnected) $("local-setup").open = true;
+  : "当前可导入文字稿、阅读和记笔记。处理音视频需在自己的电脑启动本地服务。";
+ // Keep the setup guide available without expanding it on every failed probe.
  window.dispatchEvent(new Event("coconut-worker-disconnected"));
 }
 async function refreshJobs() {

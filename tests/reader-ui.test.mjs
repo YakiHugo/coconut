@@ -335,7 +335,7 @@ test('in-flight subscription translation blocks offline writer and reports captu
   };
   await $('check-ai').onclick();$('ai-consent').checked=true;const pending=$('subscription-translate').onclick();
   assert.equal($('translate-document').disabled,true);await $('translate-document').onclick();assert.equal(offline,0);
-  $('translation-target').value='fr';assert.match($('subscription-translation-scope').textContent,/ChatGPT\/Codex.*English.*中文/);
+  $('translation-target').value='fr';assert.match($('subscription-translation-scope').textContent,/ChatGPT\/Codex.*英语.*中文/);
   finish();await pending;const doc=JSON.parse(w.localStorage.getItem('coconut-reader-v1')).documents[0];assert.equal(doc.segments[0].translations.zh.text,'订阅译文');assert.equal(doc.segments[0].translations.fr,undefined);
  }finally{await w.happyDOM.close();}
 });
@@ -357,7 +357,7 @@ test('storage conflict stops subsequent subscription batches without overwriting
 test('public setup is actionable and explains separate bookshelf storage',async()=>{
  const w=setup(undefined,async()=>{throw new Error('static page');});try{
   await new Promise(resolve=>setTimeout(resolve,10));const $=id=>w.document.getElementById(id);
-  assert.equal($('local-setup').open,true);assert.match($('local-setup').textContent,/git clone[\s\S]*\.\/install.sh[\s\S]*\.\/coconut/);
+  assert.equal($('local-setup').open,false);assert.match($('local-setup').textContent,/git clone[\s\S]*\.\/install.sh[\s\S]*\.\/coconut/);
   assert.match($('local-setup').textContent,/公开预览不会自动连接/);assert.match($('local-setup').textContent,/先在原页面导出/);
   assert.ok($('local-setup').querySelector('a[href="http://127.0.0.1:8080/"]'));
   assert.equal($('process-url').disabled,true);assert.equal($('retry-worker').textContent,'重新检查此页面');
@@ -1100,4 +1100,75 @@ test('older queue responses and errors cannot undo the newest action result',asy
    assert.equal(w.document.getElementById('worker-status').textContent,'本地处理服务已连接');
   }finally{release?.();await oldPoll;await w.happyDOM.close();}
  }
+});
+
+test('Chinese reading canvas keeps essential content visible and secondary tools in disclosures',async()=>{
+ const w=setup();try{
+  const $=id=>w.document.getElementById(id);
+  const ids=[...w.document.querySelectorAll('[id]')].map(node=>node.id);
+  assert.equal(new Set(ids).size,ids.length,'each existing control needs one unambiguous target');
+  assert.equal($('export-menu').hidden,true);
+  await $('sample').onclick();
+  assert.equal($('export-menu').hidden,false);
+  for(const id of ['export-menu','reading-settings','language-panel','local-setup'])assert.equal($(id).open,false);
+  for(const id of ['title','provenance','search','filter-all','transcript'])assert.equal($(id).closest('details'),null,id+' must remain on the main canvas');
+  for(const id of ['document-details','source','reading-layout','reading-time'])assert.equal($(id).closest('details').id,'reading-settings');
+  for(const id of ['export','export-notebook','export-subtitles','subtitle-format','subtitle-bilingual'])assert.equal($(id).closest('details').id,'export-menu');
+  assert.match($('search-status').textContent,/阅读设置/);
+  for(const id of ['import-language','document-language','translation-source','translation-target','translation-view']){
+   const label=$(id).querySelector('option[value="en"]').textContent;
+   assert.match(label,/英语/);assert.doesNotMatch(label,/English/);
+  }
+ }finally{await w.happyDOM.close();}
+});
+
+test('export disclosure dismisses independently of an open note and restores keyboard focus',async()=>{
+ const w=setup();try{
+  const $=id=>w.document.getElementById(id);await $('sample').onclick();
+  w.document.querySelector('.note-button').click();$('note').value='Keep this note';$('note').oninput();
+  $('export-menu').open=true;$('export').focus();
+  w.document.dispatchEvent(new w.KeyboardEvent('keydown',{key:'Escape'}));
+  assert.equal($('export-menu').open,false);assert.equal($('notes-panel').hidden,false);
+  assert.equal(w.document.activeElement,$('export-menu').querySelector('summary'));
+  w.document.dispatchEvent(new w.KeyboardEvent('keydown',{key:'Escape'}));
+  assert.equal($('notes-panel').hidden,true);
+  assert.equal(JSON.parse(w.localStorage.getItem('coconut-reader-v1')).documents[0].notes['demo-1'],'Keep this note');
+  $('export-menu').open=true;$('search').click();assert.equal($('export-menu').open,false);
+  $('export-menu').open=true;$('add-content').click();assert.equal($('export-menu').open,false);assert.equal($('export-menu').hidden,true);
+  $('back-reading').click();assert.equal($('export-menu').hidden,false);assert.equal($('export-menu').open,false);
+ }finally{await w.happyDOM.close();}
+});
+
+test('opening reading settings is local and preserves search, notes and document data',async()=>{
+ const w=setup();try{
+  const $=id=>w.document.getElementById(id);await $('sample').onclick();let calls=0;w.fetch=async()=>{calls++;throw new Error('must not request');};
+  $('search').value='时间戳';$('search').oninput();
+  const before=w.localStorage.getItem('coconut-reader-v1');
+  $('reading-settings').open=true;$('reading-layout').value='large';$('reading-layout').onchange();
+  $('reading-settings').open=false;
+  assert.equal($('search').value,'时间戳');assert.equal(calls,0);assert.equal(w.localStorage.getItem('coconut-reader-v1'),before);
+  $('reading-settings').open=true;$('document-details').click();assert.equal($('details-dialog').open,true);
+ }finally{await w.happyDOM.close();}
+});
+
+test('setup disclosure stays user-controlled while public requests stay disabled',async()=>{
+ const w=setup(undefined,async()=>{throw new Error('static page');});try{
+  await new Promise(resolve=>setTimeout(resolve,10));const $=id=>w.document.getElementById(id);
+  assert.equal($('local-setup').open,false);assert.equal($('url-form').hidden,true);assert.equal($('process-url').disabled,true);
+  $('local-setup').open=true;await $('retry-worker').onclick();assert.equal($('local-setup').open,true);
+  $('local-setup').open=false;await $('retry-worker').onclick();assert.equal($('local-setup').open,false);
+  await $('sample').onclick();$('language-setup').click();
+  assert.equal($('add-workspace').hidden,false);assert.equal($('local-setup').open,true);
+  assert.equal(w.document.activeElement,$('local-setup').querySelector('summary'));
+ }finally{await w.happyDOM.close();}
+});
+
+test('adding content focuses the video link only when the local form is available',async()=>{
+ const w=setup(undefined,async url=>({ok:true,json:async()=>url.endsWith('health')?{local_worker:true}:url.endsWith('jobs')?{jobs:[]}:{ai:{}}}));try{
+  await new Promise(resolve=>setTimeout(resolve,10));const $=id=>w.document.getElementById(id);
+  await $('sample').onclick();$('add-content').click();
+  assert.equal($('url-form').hidden,false);assert.equal(w.document.activeElement,$('video-url'));
+  assert.equal(w.document.querySelector('.import-settings').open,false);
+  assert.equal($('keep-media').checked,true);assert.equal($('force-asr').checked,false);
+ }finally{await w.happyDOM.close();}
 });

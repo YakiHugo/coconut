@@ -1,5 +1,5 @@
 "use strict";
-const languageNames={en:"English",zh:"中文",ja:"日本語",ko:"한국어",fr:"Français",de:"Deutsch",es:"Español"};
+const languageNames={en:"英语",zh:"中文",ja:"日语",ko:"韩语",fr:"法语",de:"德语",es:"西班牙语"};
 let languageCheckSequence=0;
 let subscriptionSelectionSignature="";
 let languageDocumentLabel=null;

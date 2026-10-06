@@ -4,77 +4,78 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Coconut · 把听过的，留下来</title>
-<link rel="stylesheet" href="style.css?v=5d4dfaaf92">
+<link rel="stylesheet" href="style.css?v=3b24069168">
 <script src="core.js?v=975ef22dd9" defer>
 </script>
-<script src="app.js?v=5df7ccbe48" defer>
+<script src="app.js?v=001cbd8abb" defer>
 </script>
-<script src="language.js?v=85af2ce7cb" defer></script>
-<script src="jobs.js?v=ead6afa29c" defer>
+<script src="language.js?v=63aafd4296" defer></script>
+<script src="jobs.js?v=54d091517f" defer>
 </script>
 </head>
 <body>
 <div class="shell">
 <aside>
-<a class="brand" href="#">◒ coconut<span>听见，再读一遍</span>
+<a class="brand" href="#"><span class="brand-mark" aria-hidden="true">◒</span> coconut<span class="brand-caption">听见，再读一遍</span>
 </a>
 <button id="add-content" class="primary">＋ 添加内容</button>
 <button id="toggle-library" aria-expanded="false" aria-controls="library-list">书架 <span id="library-total">0</span></button>
 <div id="library-list">
 <label class="library-search">查找书架<input id="library-search" type="search" placeholder="按标题查找"></label>
 <input type="file" id="file" accept=".json,.srt,.vtt" hidden>
-<div class="library-backup"><button id="export-library">备份整个书架</button><button id="restore-library">恢复书架备份</button><input id="library-file" type="file" accept=".json" hidden></div>
+<details class="library-backup"><summary>书架备份</summary><div class="disclosure-content"><button id="export-library">备份整个书架</button><button id="restore-library">恢复书架备份</button><input id="library-file" type="file" accept=".json" hidden></div></details>
 <p class="eyebrow">你的书架</p>
 <nav id="library" aria-label="文字稿书架">
 </nav>
 <p id="library-empty" class="hint">还没有文字稿。添加一份，或体验示例。</p>
 </div>
-<div class="privacy">只留在你的浏览器<br>默认留在本机；AI 共读需单次确认</div>
+<div class="privacy">笔记保存在此浏览器<br>AI 发送前会征求你的同意</div>
 </aside>
 <main>
 <header>
 <button id="back-reading" hidden>← 返回阅读</button><span id="count">阅读空间</span>
 <div>
 <button id="show-jobs" hidden>处理任务 <span id="job-count">0</span></button>
-<button id="export">导出文字稿与笔记</button>
+<details id="export-menu" class="export-menu" hidden><summary>导出</summary><div class="export-panel"><h2>带走你的阅读成果</h2><button id="export">导出文字稿与笔记</button><p class="hint">JSON 备份，可重新导入恢复</p><div class="subtitle-export"><label>字幕格式<select id="subtitle-format"><option value="srt">SRT</option><option value="vtt">VTT</option></select></label><label><input type="checkbox" id="subtitle-bilingual">附加当前显示语言的有效译文</label><button id="export-subtitles">导出整篇字幕</button><span class="hint">使用修正后原文及原时间戳，不含笔记</span></div>
+<div class="notebook-export"><button id="export-notebook" disabled>导出阅读笔记（0 段）</button><span class="hint">Markdown · 本篇全部摘录与笔记，可用于整理和回顾</span></div></div></details>
 </div>
 </header>
 <p id="save-status" class="save-warning" role="alert" hidden></p>
 <div id="notice" role="status" hidden>
 </div>
 <section id="add-workspace" class="import-workspace" aria-label="添加与处理内容">
-<p class="eyebrow">你的下一次阅读</p>
-<h1>把内容带进来</h1>
-<p>已有文字稿？直接在浏览器里打开，开始阅读。</p>
-<div class="add-actions"><button id="import" class="primary">导入 JSON / SRT / VTT</button><button id="sample">体验示例</button></div>
+<div class="welcome-mark" aria-hidden="true">◒</div>
+<p class="eyebrow">你的阅读空间</p>
+<h1>开始一段阅读</h1>
+<p class="welcome-copy">读原话，留想法。让听过的内容，值得再读一遍。</p>
 <div class="import-heading">
-<h2>从音视频生成文字稿</h2>
 <span id="worker-status" role="status">正在检查本地处理服务…</span><button id="retry-worker" hidden>重新连接</button>
 </div>
 <form id="url-form" hidden>
-<label for="video-url">YouTube / Bilibili / X 视频链接</label>
+<label for="video-url">粘贴视频链接</label>
 <div class="url-row">
-<input id="video-url" type="url" placeholder="https://…" required>
+<input id="video-url" type="url" placeholder="YouTube、哔哩哔哩或 X 视频链接" required>
 <button id="process-url" class="primary" disabled>开始处理</button>
 </div>
-<div class="import-options">
+<div class="media-import"><button id="import-media" type="button" disabled>导入本地音视频</button><span class="hint">或粘贴链接，优先使用原视频字幕</span></div>
+<details class="import-settings"><summary>处理选项</summary><div class="import-options">
 <label>原语言<select id="import-language">
 <option value="">自动判断</option>
 <option value="zh">中文</option>
-<option value="en">English</option>
-<option value="ja">日本語</option><option value="ko">한국어</option><option value="fr">Français</option><option value="de">Deutsch</option><option value="es">Español</option>
+<option value="en">英语</option>
+<option value="ja">日语</option><option value="ko">韩语</option><option value="fr">法语</option><option value="de">德语</option><option value="es">西班牙语</option>
 </select>
 </label>
 <label><input id="keep-media" type="checkbox" checked>保留本地视频用于同步回看（最多200 MiB）</label>
 <label>
 <input id="force-asr" type="checkbox">忽略现成字幕，重新转录</label>
-<button id="import-media" type="button" disabled>导入本地音视频</button>
 <input id="media-file" type="file" accept="audio/*,video/*" hidden>
-</div>
+</div></details>
 </form>
+<div class="file-entry"><div class="add-actions"><button id="import" class="primary">导入文字稿</button><button id="sample">先看一个示例 <span aria-hidden="true">↗</span></button></div><p class="hint">支持 JSON、SRT、VTT · 文件在浏览器内读取</p></div>
 <p id="worker-help" class="hint">公开页面提供阅读功能。完整转录需在自己的电脑运行 Coconut 本地服务；不会自动调用付费接口。</p>
 <details id="local-setup" class="setup-guide">
-<summary>第一次使用？在自己的电脑启动完整版本</summary>
+<summary>处理音视频？查看本地启动步骤</summary>
 <ol>
 <li>macOS / Linux 需要 Python 3.10 或更新版本（已测试 3.12）和 Git。视频下载与提取还需要 <a href="https://ffmpeg.org/download.html" target="_blank" rel="noopener noreferrer">ffmpeg</a>。</li>
 <li>在终端依次运行下面的命令。安装会下载依赖，只在项目目录创建虚拟环境，不修改 shell 配置。
@@ -94,7 +95,7 @@ cd coconut
 </section>
 <div id="reader-workspace" hidden>
 <section class="intro">
-<p class="eyebrow">阅读 · 思考 · 回到原声</p>
+<p class="eyebrow">文字稿</p>
 <h1 id="title">把听过的，<br>真正留下来。</h1>
 <p id="subtitle">导入 Coconut JSON、SRT 或 VTT。读原话，记想法，在时间戳处回到声音的现场。</p>
 <p id="provenance" class="hint">
@@ -106,21 +107,23 @@ cd coconut
 <div class="tools">
 <label class="search">⌕ <input id="search" type="search" placeholder="搜索原话、说话人或笔记" aria-label="搜索文字稿">
 </label>
-<button id="document-details">标题与语言</button>
+</div>
+<div class="reading-controls"><div role="group" aria-label="阅读视图"><button id="filter-all" aria-pressed="true">全文</button><button id="filter-excerpts" aria-pressed="false">摘录 <span id="excerpt-count">0</span></button><button id="filter-notes" aria-pressed="false">笔记 <span id="note-count">0</span></button></div><button id="resume" hidden></button></div><p id="search-status" class="hint" role="status"></p><div id="search-navigation" hidden><button id="previous-match" type="button">上一匹配段</button><span id="match-position" class="hint" role="status"></span><button id="next-match" type="button">下一匹配段</button></div><button id="clear-search" hidden>清除筛选，返回全文</button>
+
+</section>
+<div class="reader-options">
+<details id="reading-settings" class="reading-settings"><summary>阅读设置</summary><div class="disclosure-content"><div class="settings-actions"><button id="document-details">标题与语言</button>
 <button id="source">原视频链接</button>
 </div>
 <label class="reading-comfort">阅读排版<select id="reading-layout"><option value="standard">标准</option><option value="large">大字</option><option value="spacious">大字 · 宽松行距</option></select></label><span id="layout-status" class="hint" role="status"></span>
 <form id="time-navigation" class="time-navigation"><label for="reading-time">跳到时间</label><input id="reading-time" placeholder="12:34 或 1:02:03" inputmode="decimal" aria-describedby="time-navigation-status"><button type="submit">定位文字</button><span id="time-navigation-status" class="hint" role="status"></span></form>
-<div class="reading-controls"><div role="group" aria-label="阅读视图"><button id="filter-all" aria-pressed="true">全文</button><button id="filter-excerpts" aria-pressed="false">摘录 <span id="excerpt-count">0</span></button><button id="filter-notes" aria-pressed="false">笔记 <span id="note-count">0</span></button></div><button id="resume" hidden></button></div><p id="search-status" class="hint" role="status"></p><div id="search-navigation" hidden><button id="previous-match" type="button">上一匹配段</button><span id="match-position" class="hint" role="status"></span><button id="next-match" type="button">下一匹配段</button></div><button id="clear-search" hidden>清除筛选，返回全文</button>
-<div class="subtitle-export"><label>字幕格式<select id="subtitle-format"><option value="srt">SRT</option><option value="vtt">VTT</option></select></label><label><input type="checkbox" id="subtitle-bilingual">附加当前显示语言的有效译文</label><button id="export-subtitles">导出整篇字幕</button><span class="hint">使用修正后原文及原时间戳，不含笔记</span></div>
-<div class="notebook-export"><button id="export-notebook" disabled>导出阅读笔记（0 段）</button><span class="hint">Markdown · 本篇全部摘录与笔记，可用于整理和回顾</span></div>
-</section>
+</div></details>
 <section id="empty">
 <div class="seed">◒</div>
 <h2>下一次有意思的谈话，从这里开始</h2>
 <p>已有字幕可以直接导入。需要转录视频时，用 Coconut 本地命令生成 JSON 后导入；阅读页暂不提供在线转录。</p>
 </section>
-<details id="language-panel"><summary>翻译与 AI 共读</summary>
+<details id="language-panel"><summary>翻译与 AI 共读</summary><div class="disclosure-content">
 <p id="language-prerequisite" class="hint">需要在本地服务中使用：启动 Coconut → 检查已登录的官方 CLI → 选择片段并确认发送与额度。</p><button id="language-setup" type="button">查看本地启动步骤</button>
 <p class="hint">离线粗译可能误解技术术语，重要内容请对照原文回听。翻译在本机运行；AI 共读仅在你明确点击后把所选文字发送给所选的已登录 AI 订阅，不使用 API Key。</p>
 <div class="language-controls"><label>原文语言<select id="translation-source"><option value="">请选择</option></select></label><label>翻译 / 回答语言<select id="translation-target"></select></label><label>阅读显示<select id="translation-view"><option value="">仅原文</option></select></label></div>
@@ -133,7 +136,8 @@ cd coconut
 <p id="subscription-translation-scope" class="hint"></p><button id="subscription-translate" disabled>使用订阅翻译当前筛选 / 继续未完成批次</button><button id="stop-subscription-translation" hidden>停止后续订阅批次</button>
 <button id="ask-ai" disabled>让 AI 读文字稿</button><p id="ai-progress" role="status"></p><button id="export-ai-reading" disabled>导出全部 AI 共读记录</button><div id="ai-answers"></div>
 <p class="hint">使用本机官方 Codex / Claude Code CLI 已有登录。额度耗尽时停止，不购买额度、不切换 API。不会读取或复制登录凭据；不会打开额外的交互式会话。Kimi 暂无已验证的订阅连接。</p>
-</details>
+</div></details>
+</div>
 <div class="reading-layout">
 <article id="transcript" aria-label="文字稿">
 </article>
@@ -154,7 +158,7 @@ cd coconut
 <dialog id="details-dialog" aria-labelledby="details-heading">
 <form method="dialog"><h2 id="details-heading">文字稿信息</h2>
 <label for="document-title">标题</label><input id="document-title" maxlength="200" required>
-<label for="document-language">原文语言（只标记，不重新识别或翻译）</label><select id="document-language"><option value="">未标明</option><option value="zh">中文</option><option value="en">English</option><option value="ja">日本語</option><option value="ko">한국어</option><option value="fr">Français</option><option value="de">Deutsch</option><option value="es">Español</option></select>
+<label for="document-language">原文语言（只标记，不重新识别或翻译）</label><select id="document-language"><option value="">未标明</option><option value="zh">中文</option><option value="en">英语</option><option value="ja">日语</option><option value="ko">韩语</option><option value="fr">法语</option><option value="de">德语</option><option value="es">西班牙语</option></select>
 <p id="details-error" role="alert"></p><div class="dialog-actions"><button value="cancel">取消</button><button id="save-details" class="primary">保存信息</button></div></form>
 </dialog>
 <dialog id="source-dialog">

@@ -115,6 +115,8 @@ function showWorkspace(next) {
 	$("reader-workspace").hidden = next !== "read" || !active();
 	$("back-reading").hidden = next !== "add" || !active();
 	$("export").hidden = next !== "read" || !active();
+ $("export-menu").hidden = next !== "read" || !active();
+ if (next !== "read") $("export-menu").open = false;
 	$("add-content").setAttribute("aria-pressed", String(next === "add"));
 	if (returning) window.scrollTo(0, readingScroll);
 }
@@ -236,7 +238,7 @@ function render() {
 	$("excerpt-count").textContent = String(doc.segments.filter(s => s.saved_excerpt === true).length);
 	renderNotebookAction(doc);
 	$("note-count").textContent = String(Object.values(doc.notes).filter(Boolean).length);
-	const playbackHint = mediaPath ? "点时间戳定位本地原声" : Coconut.source(doc.source_url, 0) ? "点时间戳打开原站；若平台未自动定位，请按显示时间手动跳转" : doc.source_media ? "本地媒体尚未连接；请在保存原任务的电脑启动 Coconut" : "尚未关联音视频；点击「原视频链接」添加来源后可回听";
+	const playbackHint = mediaPath ? "点时间戳定位本地原声" : Coconut.source(doc.source_url, 0) ? "点时间戳打开原站；若平台未自动定位，请按显示时间手动跳转" : doc.source_media ? "本地媒体尚未连接；请在保存原任务的电脑启动 Coconut" : "尚未关联音视频，可在「阅读设置」添加原视频链接";
  $("search-status").textContent = ((query || notesOnly || excerptsOnly) ? "找到 " + filtered.length + " 个片段" : "共 " + doc.segments.length + " 个片段") + " · " + playbackHint;
 	$("clear-search").hidden = !query && !notesOnly && !excerptsOnly;
 	const bookmark = doc.segments.find(s => s.id === doc.readingPosition);
@@ -364,7 +366,7 @@ function highlightPlayback() {
  for(const row of $("transcript").querySelectorAll(".segment")) row.classList.toggle("playing",row.dataset.segmentId===segment?.id);
 }
 $("locate-playback").onclick=()=>{const segment=playbackSegment();if(segment){goToSegment(segment.id);highlightPlayback();}};
-$("add-content").onclick = () => { showWorkspace("add"); $("import").focus(); };
+$("add-content").onclick = () => { showWorkspace("add"); ($("url-form").hidden ? $("import") : $("video-url")).focus(); };
 $("back-reading").onclick = () => showWorkspace("read");
 $("show-jobs").onclick = () => { showWorkspace("add"); $("jobs-heading").scrollIntoView?.(); };
 $("toggle-library").onclick = () => $("toggle-library").setAttribute("aria-expanded", String($("toggle-library").getAttribute("aria-expanded") !== "true"));
@@ -382,7 +384,7 @@ $("close-note").onclick = () => {
 };
 $("return-excerpt").onclick = () => goToSegment(selected);
 document.addEventListener("keydown", event => {
-	if (event.key === "Escape" && selected && !document.querySelector("dialog[open]")) $("close-note").click();
+	if (event.key === "Escape" && selected && !$("export-menu").open && !document.querySelector("dialog[open]")) $("close-note").click();
 });
 $("import").onclick = () => $("file").click();
 $("file").onchange = async () => {
@@ -730,3 +732,16 @@ function moveSearchMatch(direction){
  const row=[...$("transcript").querySelectorAll(".segment")].find(s=>s.dataset.segmentId===searchFocusedId);row?.scrollIntoView?.({block:"center"});row?.focus({preventScroll:true});
 }
 $("previous-match").onclick=()=>moveSearchMatch(-1);$("next-match").onclick=()=>moveSearchMatch(1);
+
+// A native disclosure keeps export options keyboard-accessible and out of the reading canvas.
+document.addEventListener("click", event => {
+ const menu = $("export-menu");
+ if (menu.open && !menu.contains(event.target)) menu.open = false;
+});
+document.addEventListener("keydown", event => {
+ const menu = $("export-menu");
+ if (event.key === "Escape" && menu.open && !document.querySelector("dialog[open]")) {
+  menu.open = false;
+  menu.querySelector("summary").focus();
+ }
+});
