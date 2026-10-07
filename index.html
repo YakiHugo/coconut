@@ -4,15 +4,15 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Coconut · 把听过的，留下来</title>
-<link rel="stylesheet" href="style.css?v=8b6e2ca979">
+<link rel="stylesheet" href="style.css?v=feb536fe07">
 <script src="summary.js?v=580ffdad1e" defer></script>
 <script src="core.js?v=57844f4005" defer>
 </script>
-<script src="app.js?v=d06e91eade" defer>
+<script src="app.js?v=0bdc5611aa" defer>
 </script>
-<script src="language.js?v=be55932556" defer></script>
-<script src="podcasts.js?v=c542fbe50d" defer></script>
-<script src="jobs.js?v=fede348875" defer>
+<script src="language.js?v=deb570ccd6" defer></script>
+<script src="podcasts.js?v=5e3059eb12" defer></script>
+<script src="jobs.js?v=2add01d5db" defer>
 </script>
 </head>
 <body>
@@ -54,14 +54,14 @@
 <div class="import-heading">
 <span id="worker-status" role="status">正在检查本地处理服务…</span><button id="retry-worker" hidden>重新连接</button>
 </div>
-<form id="url-form" hidden>
-<label for="video-url">粘贴视频链接</label>
+<form id="url-form">
+<label for="video-url">粘贴播客或视频链接</label>
 <div class="url-row">
-<input id="video-url" type="url" placeholder="YouTube、哔哩哔哩或 X 视频链接" required>
-<button id="process-url" class="primary" disabled>开始处理</button>
+<input id="video-url" type="url" placeholder="RSS、Apple Podcasts、小宇宙、YouTube、哔哩哔哩或 X" required maxlength="4096">
+<button id="process-url" class="primary">添加到阅读空间</button>
 </div>
-<div class="media-import"><button id="import-media" type="button" disabled>导入本地音视频</button><span class="hint">或粘贴链接，优先使用原视频字幕</span></div>
-<details class="import-settings"><summary>处理选项</summary><div class="import-options">
+<div id="advanced-media-import" class="media-import" hidden><button id="import-media" type="button" disabled>导入本地音视频</button><span class="hint">或粘贴链接，优先使用原视频字幕</span></div>
+<details id="advanced-import-options" class="import-settings" hidden><summary>处理选项</summary><div class="import-options">
 <label>原语言<select id="import-language">
 <option value="">自动判断</option>
 <option value="zh">中文</option>
@@ -77,10 +77,11 @@
 <input id="media-file" type="file" accept="audio/*,video/*" hidden>
 </div></details>
 </form>
+<p id="source-route-status" class="hint" role="status">粘贴一个链接，Coconut 会识别来源。只有确认发送原文时才会使用 AI 额度。</p>
 <section id="podcast-import" class="podcast-import" hidden aria-label="从播客订阅源添加">
-<form id="podcast-form"><label for="podcast-url">播客 RSS 或公开节目链接</label><div class="url-row"><input id="podcast-url" type="url" required maxlength="4096" placeholder="粘贴发布者 RSS，或支持的公开播客页面"><button id="discover-podcast" class="primary">查找节目</button><button id="cancel-podcast" type="button" hidden>取消</button></div></form>
+<form id="podcast-form" hidden><label for="podcast-url">播客 RSS 或公开节目链接</label><div class="url-row"><input id="podcast-url" type="url" required maxlength="4096" placeholder="粘贴发布者 RSS，或支持的公开播客页面"><button id="discover-podcast" class="primary">查找节目</button></div></form>
 <p class="hint">优先读取发布者提供的文字稿。只访问公开来源，不使用登录、会员或私有订阅链接；没有文字稿时会明确提示，不自动转录或扣费。</p>
-<p id="podcast-status" class="hint" role="status"></p><div id="podcast-results"></div>
+<button id="cancel-podcast" type="button" hidden>取消读取</button><p id="podcast-status" class="hint" role="status"></p><div id="podcast-results"></div>
 </section>
 <div class="file-entry"><div class="add-actions"><button id="import" class="primary">导入文字稿</button><button id="sample">先看一个示例 <span aria-hidden="true">↗</span></button></div><p class="hint">支持 JSON、SRT、VTT · 文件在浏览器内读取</p></div>
 <p id="worker-help" class="hint">Web 阅读无需安装：导入文字稿后，可选择对应的本地音频或视频同步回听。文件不上传；生成摘要需要连接本地 AI 工具并确认使用额度。</p>
@@ -116,22 +117,24 @@ cd coconut
 <p id="subtitle">导入 Coconut JSON、SRT 或 VTT。读原话，记想法，在时间戳处回到声音的现场。</p>
 <p id="provenance" class="hint">
 </p>
-<nav id="reading-modes" class="reading-modes" aria-label="播客阅读方式"><button id="mode-summary" aria-pressed="true">摘要阅读</button><button id="mode-transcript" aria-pressed="false">原文与音视频</button></nav>
+<section id="episode-media" class="episode-media" aria-label="本集声音与回源"><div class="episode-media-heading"><span class="eyebrow">原声与来源</span><span class="hint">阅读时随时回听</span></div><div id="podcast-playback" class="podcast-playback" hidden><button id="download-podcast-media" type="button">下载并回听本集原声</button><button id="cancel-podcast-media" type="button" hidden>取消下载</button><p id="podcast-media-status" class="hint">只在点击后下载（最多 200 MiB），媒体仅保留在本次页面，刷新后需重新获取。</p></div>
+<div class="local-media-entry"><button id="attach-reader-media" type="button">选择对应的音频或视频</button><button id="detach-reader-media" type="button" hidden>移除本次媒体</button><input id="reader-media-file" type="file" accept="audio/*,video/*,.mp3,.m4a,.wav,.ogg,.flac,.mp4,.webm,.mov" hidden><p id="reader-media-status" class="hint">在浏览器中打开文件，不上传。请选与文字稿对应的原文件；刷新页面后需重新选择。</p></div>
+<button id="locate-playback" hidden>定位正在播放的文字</button>
+<div id="playback-controls" hidden><button id="skip-back" type="button" disabled>后退10秒</button><button id="skip-forward" type="button" disabled>前进10秒</button><label>播放速度<select id="playback-rate"><option value="0.75">0.75×</option><option value="1" selected>1×</option><option value="1.25">1.25×</option><option value="1.5">1.5×</option><option value="1.75">1.75×</option><option value="2">2×</option></select></label><button id="stop-repeat" type="button" hidden>停止循环</button><span id="repeat-status" class="hint" role="status"></span><span id="playback-status" class="hint" role="status"></span></div>
+<div id="source-media" hidden>
+</div>
+</section>
+<nav id="reading-modes" class="reading-modes" aria-label="播客阅读方式"><button id="mode-summary" aria-pressed="true">摘要阅读</button><button id="mode-transcript" aria-pressed="false">原文</button><button id="mode-bilingual" aria-pressed="false">双语对照</button></nav>
 <section id="summary-workspace" aria-label="播客摘要">
 <div class="summary-heading"><div><p class="eyebrow">先抓住重点</p><h2 id="summary-heading" tabindex="-1">这篇还没有摘要</h2></div><span id="summary-state" class="status-chip">未生成</span></div>
 <p id="summary-status" class="hint" role="status"></p><div id="summary-body"></div>
 <div id="summary-citations" class="summary-citations" aria-label="摘要引用"></div>
 <p id="summary-readiness" class="hint" role="status" hidden></p>
 <div class="summary-actions"><button id="prepare-summary" class="primary" aria-describedby="summary-readiness">使用本地 AI 工具生成摘要</button><button id="summary-open-transcript">直接读原文</button><button id="summary-select-excerpt" hidden>筛选原文后提问</button><button id="export-summary" hidden>导出这份摘要</button></div>
+<section id="summary-request" class="summary-request" hidden aria-label="生成摘要"><div class="summary-request-heading"><h3 tabindex="-1" id="summary-request-heading">生成这篇的摘要</h3><button id="close-summary-request" type="button">收起</button></div><p class="hint">1. 检查已登录的本地工具　2. 核对全文范围　3. 确认后生成</p><p id="summary-connection-help" class="hint"></p><button id="summary-connection-setup" type="button">查看连接步骤</button><div id="summary-request-slot"></div></section>
 <p class="hint summary-boundary">摘要仅展示明确生成并保存的结果。模型可能遗漏或理解有误，请点引用核对；打开页面不会发送原文或使用额度。</p>
 </section>
 <div id="transcript-controls" hidden>
-<div id="podcast-playback" class="podcast-playback" hidden><button id="download-podcast-media" type="button">下载并回听本集原声</button><button id="cancel-podcast-media" type="button" hidden>取消下载</button><p id="podcast-media-status" class="hint">只在点击后下载（最多 200 MiB），媒体仅保留在本次页面，刷新后需重新获取。</p></div>
-<div class="local-media-entry"><button id="attach-reader-media" type="button">选择对应的音频或视频</button><button id="detach-reader-media" type="button" hidden>移除本次媒体</button><input id="reader-media-file" type="file" accept="audio/*,video/*,.mp3,.m4a,.wav,.ogg,.flac,.mp4,.webm,.mov" hidden><p id="reader-media-status" class="hint">在浏览器中打开文件，不上传。请选与文字稿对应的原文件；刷新页面后需重新选择。</p></div>
-<button id="locate-playback" hidden>定位正在播放的文字</button>
-<div id="playback-controls" hidden><button id="skip-back" type="button" disabled>后退10秒</button><button id="skip-forward" type="button" disabled>前进10秒</button><label>播放速度<select id="playback-rate"><option value="0.75">0.75×</option><option value="1" selected>1×</option><option value="1.25">1.25×</option><option value="1.5">1.5×</option><option value="1.75">1.75×</option><option value="2">2×</option></select></label><button id="stop-repeat" type="button" hidden>停止循环</button><span id="repeat-status" class="hint" role="status"></span><span id="playback-status" class="hint" role="status"></span></div>
-<div id="source-media" hidden>
-</div>
 <section id="audio-project" hidden aria-label="原声项目与笔记">
 <h2 id="audio-project-heading">先留下声音和想法</h2><p id="audio-project-boundary" class="hint">尚未导入文字稿，没有可生成摘要的原文。节目简介不会代替文字稿；项目笔记和时间书签只记录你的想法，不会作为原文发送给 AI。</p>
 <button id="attach-project-transcript" type="button">为此项目补充文字稿</button><button id="fetch-project-transcript" type="button" hidden>检查并补充发布者文字稿</button><button id="cancel-project-transcript" type="button" hidden>取消获取文字稿</button><input id="project-transcript-file" type="file" accept=".json,.srt,.vtt" hidden><p id="attach-project-help" class="hint">选择与本集声音对应的定时文字稿，包括已完成的字幕或 ASR JSON。只导入文件，不自动识别或调用模型；保留当前项目的标题、笔记、书签及已选择的媒体。</p>
@@ -142,6 +145,7 @@ cd coconut
 <p id="audio-project-status" class="hint" role="status"></p><div id="audio-bookmarks" aria-label="已保存的时间书签"></div>
 </section>
 <div id="transcript-reading-tools">
+<div id="bilingual-readiness" class="bilingual-readiness" hidden><p id="bilingual-status" class="hint" role="status"></p><button id="prepare-bilingual" type="button">翻译选项</button></div>
 <div class="tools">
 <label class="search">⌕ <input id="search" type="search" placeholder="搜索原话、说话人或笔记" aria-label="搜索文字稿">
 </label>
@@ -171,14 +175,14 @@ cd coconut
 <label><input id="download-model" type="checkbox">允许首次下载对应离线模型（首次准备可能需要约1 GB磁盘）</label>
 <div><button id="translate-document" disabled>离线粗译全文 / 继续未完成翻译</button><button id="stop-translation" hidden>停止后续批次</button></div>
 <p id="language-status" role="status" class="hint">连接本地服务后可翻译；现有译文可直接阅读与备份。</p>
-<hr><label>本地 CLI<select id="ai-provider"><option value="codex">ChatGPT / Codex 订阅</option><option value="claude">Claude 订阅（可选）</option></select></label><p id="ai-status" class="hint">订阅连接尚未检查；不会自动登录或启动付费请求。</p><button id="check-ai" disabled>检查本地 CLI 连接</button>
-<label>任务<select id="ai-task"><option value="question">向原文提问</option><option value="summary">生成整篇摘要</option></select></label>
+<div id="ai-request-home"><section id="ai-request-panel" aria-label="本地 AI 请求"><label>本地 CLI<select id="ai-provider"><option value="codex">ChatGPT / Codex 订阅</option><option value="claude">Claude 订阅（可选）</option></select></label><p id="ai-status" class="hint">订阅连接尚未检查；不会自动登录或启动付费请求。</p><button id="check-ai" disabled>检查本地 CLI 连接</button>
+<label class="question-control">任务<select id="ai-task"><option value="question">向原文提问</option><option value="summary">生成整篇摘要</option></select></label>
 <p id="summary-plan" class="hint" role="status" hidden></p><p id="summary-job-state" class="hint" role="status" hidden></p><button id="stop-summary" type="button" hidden>停止后续摘要批次</button><button id="restart-summary" type="button" hidden>放弃分批进度，按当前原文重做</button>
 <p id="ai-request-readiness" class="hint" role="status" hidden></p><button id="ai-select-excerpt" type="button" hidden>改为筛选原文后提问</button>
-<label for="ai-question">想从文字稿了解什么？</label><textarea id="ai-question" rows="3" placeholder="用中文总结核心观点，并指出对应的原文片段"></textarea>
-<label><input id="ai-filtered" type="checkbox">只读取当前筛选结果（含译文、摘录与笔记筛选的全部匹配片段）</label><label><input id="ai-consent" type="checkbox">本次按显示的范围与请求次数，把所选原文、相关术语或摘要分批笔记发送给所选 AI 提供商，并使用我的订阅额度；旧译文只作为未核对的上下文建议</label>
-<p id="subscription-translation-scope" class="hint"></p><button id="subscription-translate" disabled>使用订阅翻译当前筛选 / 继续未完成批次</button><button id="stop-subscription-translation" hidden>停止后续订阅批次</button>
-<button id="ask-ai" disabled>发送给本地 AI 工具</button><p id="ai-progress" role="status"></p><button id="export-ai-reading" disabled>导出全部 本地 AI 工具记录</button><div id="ai-answers"></div>
+<label class="question-control" for="ai-question">想从文字稿了解什么？</label><textarea class="question-control" id="ai-question" rows="3" placeholder="用中文总结核心观点，并指出对应的原文片段"></textarea>
+<label class="question-control"><input id="ai-filtered" type="checkbox">只读取当前筛选结果（含译文、摘录与笔记筛选的全部匹配片段）</label><label><input id="ai-consent" type="checkbox">本次按显示的范围与请求次数，把所选原文、相关术语或摘要分批笔记发送给所选 AI 提供商，并使用我的订阅额度；旧译文只作为未核对的上下文建议</label>
+<div class="subscription-actions"><p id="subscription-translation-scope" class="hint"></p><button id="subscription-translate" disabled>使用订阅翻译当前筛选 / 继续未完成批次</button><button id="stop-subscription-translation" hidden>停止后续订阅批次</button>
+</div><button id="ask-ai" disabled>发送给本地 AI 工具</button><p id="ai-progress" role="status"></p></section></div><button id="export-ai-reading" disabled>导出全部 本地 AI 工具记录</button><div id="ai-answers"></div>
 <p class="hint">使用本机官方 Codex / Claude Code CLI 已有登录。额度耗尽时停止，不购买额度、不切换 API。不会读取或复制登录凭据；不会打开额外的交互式会话。Kimi 暂无已验证的订阅连接。</p>
 </div></details>
 </div>
