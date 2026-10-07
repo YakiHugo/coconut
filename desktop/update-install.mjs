@@ -93,6 +93,25 @@ write_result installed
 if ! ${q(launcher)} "$target"; then write_result launch-needs-attention; exit 1; fi
 `;
 }
+export async function startInstaller({directory,version,script,write=writeFile,launch=spawn}){
+  const lock=path.join(directory,'install-lock.json'),helper=path.join(directory,'helper.pid');let child;
+  await write(lock,JSON.stringify({version,expires:Date.now()+5*60*1000}),{mode:0o600});
+  try{
+    await new Promise((resolve,reject)=>{
+      child=launch('/bin/sh',[script],{detached:true,stdio:'ignore'});child.once('error',reject);
+      child.once('spawn',async()=>{
+        try{await write(helper,String(child.pid),{mode:0o600});await write(lock,JSON.stringify({version,helperPid:child.pid,expires:Date.now()+5*60*1000}),{mode:0o600});child.unref();resolve();}catch(error){reject(error);}
+      });
+    });
+  }catch(error){
+    // The app is still running here. Stop only our failed helper and wait for
+    // its exit before unlocking, so an orphan cannot install after a retry.
+    if(child?.pid&&child.exitCode===null&&child.signalCode===null){
+      await new Promise(resolve=>{child.once('close',resolve);child.kill('SIGTERM');});
+    }
+    await rm(lock,{force:true});await rm(helper,{force:true});throw error;
+  }
+}
 export async function prepareInstall({directory,release,appPath,version,arch,pid=process.pid}){
   const target=path.resolve(appPath);
   const parent=path.dirname(target);
@@ -117,12 +136,6 @@ export async function prepareInstall({directory,release,appPath,version,arch,pid
     const script=path.join(directory,'install.sh');await writeFile(script,installerScript({pid,target,staged,backup,result}),{mode:0o700});
     const recovery=path.join(directory,'recover.command');
     await writeFile(recovery,recoveryScript({pid,target,backup,lock:path.join(directory,'install-lock.json')}),{mode:0o700});
-    return {backup,async discard(){await rm(stage,{recursive:true,force:true});},async start(){
-      await writeFile(path.join(directory,'install-lock.json'),JSON.stringify({version:release.version,expires:Date.now()+5*60*1000}),{mode:0o600});
-      try{await new Promise((resolve,reject)=>{const child=spawn('/bin/sh',[script],{detached:true,stdio:'ignore'});child.once('error',reject);child.once('spawn',async()=>{
-        try{await writeFile(path.join(directory,'helper.pid'),String(child.pid),{mode:0o600});await writeFile(path.join(directory,'install-lock.json'),JSON.stringify({version:release.version,helperPid:child.pid,expires:Date.now()+5*60*1000}),{mode:0o600});child.unref();resolve();}catch(error){reject(error);}
-      });});}
-      catch(error){await rm(path.join(directory,'install-lock.json'),{force:true});throw error;}
-    }};
+    return {backup,async discard(){await rm(stage,{recursive:true,force:true});},start:()=>startInstaller({directory,version:release.version,script})};
   }catch(error){await rm(stage,{recursive:true,force:true});throw error;}
 }

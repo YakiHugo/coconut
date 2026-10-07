@@ -9,7 +9,7 @@ import {execFile,spawn} from 'node:child_process';
 import {promisify} from 'node:util';
 import {Updater,compareVersions,versionParts,selectRelease,checksumFor,REPOSITORY} from '../desktop/updater.mjs';
 import {updateURL} from '../desktop/update-http.mjs';
-import {inspectZip,installerScript,recoveryScript} from '../desktop/update-install.mjs';
+import {inspectZip,installerScript,recoveryScript,startInstaller} from '../desktop/update-install.mjs';
 const execute=promisify(execFile),hash=b=>createHash('sha256').update(b).digest('hex');
 const bytes=Buffer.from('authored update fixture'),version='0.4.0',name=`Coconut-${version}-arm64-unsigned.zip`;
 const sums=hash(bytes)+'  '+name+'\n';
@@ -105,4 +105,9 @@ test('failed second rename rolls back original; interrupted gap recovery never o
 test('recovery cannot remove the lock or start another app while installation helper lives',async t=>{
  const u=await setup(t),target=path.join(u.directory,'app'),backup=path.join(u.directory,'backup'),lock=path.join(u.directory,'install-lock.json');await mkdir(backup);await writeFile(lock,'active installation');await writeFile(path.join(u.directory,'helper.pid'),String(process.pid));
  const file=path.join(u.directory,'recover.sh');await writeFile(file,recoveryScript({pid:2147483647,target,backup,lock,launcher:'/usr/bin/true'}));await assert.rejects(execute('/bin/sh',[file]));assert.equal(await readFile(lock,'utf8'),'active installation');await assert.rejects(stat(target));assert.ok((await stat(backup)).isDirectory());
+});
+test('post-spawn filesystem failure stops and waits for helper before permitting retry',async t=>{
+ const u=await setup(t);let helper,calls=0;
+ await assert.rejects(startInstaller({directory:u.directory,version:'0.4.0',script:'/unused',launch:()=>{helper=spawn('/bin/sleep',['60'],{stdio:'ignore'});return helper;},write:async(...args)=>{calls++;if(calls===3)throw new Error('injected disk failure');return writeFile(...args);}}),/disk failure/);
+ assert.equal(helper.signalCode,'SIGTERM');await assert.rejects(stat(path.join(u.directory,'install-lock.json')));await assert.rejects(stat(path.join(u.directory,'helper.pid')));
 });
