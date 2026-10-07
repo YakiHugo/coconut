@@ -61,6 +61,24 @@ function fixtureEndpoint(value) {
   return url.href;
 }
 
+/** Internal filesystem seam for the live output monitor's rename-race proof. */
+export async function inspectCaptionOutputFiles(directory,{listEntries=readdir,readStat=lstat}={}) {
+  const entries=await listEntries(directory,{withFileTypes:true});
+  for(const entry of entries) {
+    if(entry.name!=='caption.en.vtt' && entry.name!=='caption.en.vtt.part')continue;
+    let stat;
+    try {stat=await readStat(path.join(directory,entry.name));}
+    catch(error) {
+      // yt-dlp atomically renames .part to the finished VTT. A directory
+      // snapshot may include a path which has disappeared before lstat.
+      // Only that per-file disappearance is harmless; all other I/O fails.
+      if(error.code==='ENOENT')continue;
+      throw error;
+    }
+    if(!stat.isFile() || stat.size>HELPER_LIMITS.captionBytes)throw fail('CAPTION_FILE_LIMIT','字幕文件超过安全限制');
+  }
+}
+
 function runProcess(executable,input,{directory,signal,timeoutMs,maxOutputBytes,onSpawn,spawnProcess=spawn}) {
   return new Promise((resolve,reject)=>{
     let child, timer, monitor, reading=false, firstError, closed=false, outputBytes=0;
@@ -98,14 +116,8 @@ function runProcess(executable,input,{directory,signal,timeoutMs,maxOutputBytes,
     monitor=setInterval(async()=>{
       if(reading||closed)return;reading=true;
       try {
-        const entries=await readdir(directory,{withFileTypes:true});
-        for(const entry of entries) {
-          if(entry.name==='caption.en.vtt' || entry.name==='caption.en.vtt.part') {
-            const stat=await lstat(path.join(directory,entry.name));
-            if(!stat.isFile() || stat.size>HELPER_LIMITS.captionBytes)stop(fail('CAPTION_FILE_LIMIT','字幕文件超过安全限制'));
-          }
-        }
-      } catch(error) {if(!closed)stop(fail('CAPTION_OUTPUT','无法验证字幕临时文件'));}
+        await inspectCaptionOutputFiles(directory);
+      } catch(error) {if(!closed)stop(error instanceof CaptionHelperError?error:fail('CAPTION_OUTPUT','无法验证字幕临时文件'));}
       finally {reading=false;}
     },25);
     if(signal?.aborted)abort();

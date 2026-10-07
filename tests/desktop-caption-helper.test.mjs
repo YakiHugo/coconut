@@ -6,7 +6,7 @@ import {mkdtemp,mkdir,writeFile,readFile,readdir,rm,symlink,stat} from 'node:fs/
 import {createHash} from 'node:crypto';
 import os from 'node:os';
 import path from 'node:path';
-import {runPinnedCaptionHelper,verifiedHelperBytes,helperEnvironment} from '../desktop/caption-helper-process.mjs';
+import {runPinnedCaptionHelper,verifiedHelperBytes,helperEnvironment,inspectCaptionOutputFiles,HELPER_LIMITS} from '../desktop/caption-helper-process.mjs';
 import {createCaptionHelper} from '../desktop/caption-helper.mjs';
 const validVersion={status:'ok',protocol:1,version:'2026.08.19',python:'3.14.8',publicExtraction:true,guardProtocol:1,tlsRootsVerified:true};
 async function fixture(t) {
@@ -82,6 +82,22 @@ test('wrong-version/oversized child output never becomes ready and leaves no tem
  await assert.rejects(runPinnedCaptionHelper({...s,operation:'version',spawnProcess:fakeSpawn({...validVersion,version:'unknown'})}),e=>e.code==='CAPTION_VERSION');
  await assert.rejects(runPinnedCaptionHelper({...s,operation:'version',maxOutputBytes:16,spawnProcess:fakeSpawn()}),e=>e.code==='CAPTION_OUTPUT_LIMIT');
  assert.deepEqual(await readdir(s.tempRoot),[]);
+});
+test('live caption monitor tolerates an atomic part-file rename and still checks finished output',async()=>{
+ const visited=[];
+ await inspectCaptionOutputFiles('/private-proof',{
+  listEntries:async()=>[{name:'caption.en.vtt.part'},{name:'caption.en.vtt'}],
+  readStat:async filename=>{visited.push(path.basename(filename));if(filename.endsWith('.part'))throw Object.assign(new Error('renamed'),{code:'ENOENT'});return {isFile:()=>true,size:64};}
+ });
+ assert.deepEqual(visited,['caption.en.vtt.part','caption.en.vtt']);
+});
+test('caption monitor fails closed for directory errors, permission errors, symlinks and oversized files',async()=>{
+ const listEntries=async()=>[{name:'caption.en.vtt.part'},{name:'caption.en.vtt'}];
+ await assert.rejects(inspectCaptionOutputFiles('/private-proof',{listEntries:async()=>{throw Object.assign(new Error('missing directory'),{code:'ENOENT'});}}),{code:'ENOENT'});
+ await assert.rejects(inspectCaptionOutputFiles('/private-proof',{listEntries,readStat:async()=>{throw Object.assign(new Error('denied'),{code:'EACCES'});}}),{code:'EACCES'});
+ for(const stat of [{isFile:()=>false,size:8},{isFile:()=>true,size:HELPER_LIMITS.captionBytes+1}]) {
+  await assert.rejects(inspectCaptionOutputFiles('/private-proof',{listEntries,readStat:async filename=>{if(filename.endsWith('.part'))throw Object.assign(new Error('renamed'),{code:'ENOENT'});return stat;}}),{code:'CAPTION_FILE_LIMIT'});
+ }
 });
 test('missing packaged artifact is honest and does not fall back to PATH or system Python',async()=>{
  const helper=createCaptionHelper();assert.equal((await helper.status()).ready,false);
