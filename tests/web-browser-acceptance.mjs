@@ -10,6 +10,8 @@ import {chromium} from '@playwright/test';
 const root=fileURLToPath(new URL('../',import.meta.url));
 let directory,server,browser,stage='setup';
 const checks=[];
+// Only authored synthetic fixtures from this file may enter these review images.
+async function capture(page,name){if(!process.env.COCONUT_UI_SCREENSHOTS)return;await fs.mkdir(process.env.COCONUT_UI_SCREENSHOTS,{recursive:true});await page.screenshot({path:path.join(process.env.COCONUT_UI_SCREENSHOTS,name+'.png'),fullPage:true});}
 function check(name,value){stage=name;assert.ok(value,name);checks.push(name);}
 try {
  directory=await fs.mkdtemp(path.join(os.tmpdir(),'coconut-static-web-'));
@@ -37,12 +39,14 @@ try {
   if(u.origin===origin||['blob:','data:'].includes(u.protocol))await route.continue();else{external++;await route.abort();}
  });
  const page=await context.newPage();page.on('pageerror',()=>pageErrors++);page.setDefaultTimeout(15000);
- await page.goto(origin);stage='import';
+ await page.goto(origin);await capture(page,'01-source-entry');stage='import';
  await page.locator('#file').setInputFiles(fixturePath);
  await page.locator('#reader-workspace').waitFor({state:'visible'});
  check('summary_is_default',await page.locator('#summary-workspace').isVisible()&&await page.locator('#transcript-layout').isHidden());
  check('saved_summary_visible',(await page.locator('#summary-body').textContent()).includes('自写的浏览器验证'));
  check('summary_source_current',await page.locator('#summary-state').getAttribute('data-state')==='current');
+ await capture(page,'02-episode-summary');
+ await page.locator('#prepare-summary').click();check('summary_review_is_inline',await page.locator('#summary-request').isVisible()&&await page.locator('#language-panel').isHidden());await capture(page,'03-summary-review');await page.locator('#close-summary-request').click();
  await page.locator('#summary-citations button').click();
  check('citation_opens_original',await page.locator('#transcript-layout').isVisible()&&await page.locator('.segment[data-segment-id="second"]').evaluate(n=>n===document.activeElement));
  async function attach(filename,kind){
@@ -56,8 +60,10 @@ try {
  }
  await attach(video,'video');
  check('video_decoded',await page.locator('video').evaluate(v=>v.videoWidth===320&&v.videoHeight===180));
+ await page.locator('video').evaluate(v=>v.play());
  await page.locator('#mode-summary').click();
- check('summary_mode_pauses_media',await page.locator('video').evaluate(v=>v.paused));
+ check('summary_keeps_visible_media_playing',await page.locator('video').isVisible()&&await page.locator('video').evaluate(v=>!v.paused));
+ await page.locator('video').evaluate(v=>v.pause());
  await page.locator('#mode-transcript').click();await attach(audio,'audio');
  check('audio_replaces_video',await page.locator('video').count()===0);
  const row=page.locator('.segment[data-segment-id="second"]');
@@ -77,7 +83,7 @@ try {
  check('zero_uncaught_browser_errors',pageErrors===0);
  // Mobile is the same complete reader, with no horizontal overflow.
  await page.locator('#close-note').click();await page.setViewportSize({width:390,height:844});await page.locator('#mode-summary').click();
- check('mobile_summary_fits',await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth));
+ check('mobile_summary_fits',await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth));await capture(page,'04-mobile-summary');
  const oversize={title:'Synthetic summary limit test',language:'en',segments:Array.from({length:20001},(_,i)=>({id:'limit-'+i,start:i,end:i+1,text:i?'Other cue':'Unique selected source'}))};
  await page.locator('#file').setInputFiles({name:'summary-limit.json',mimeType:'application/json',buffer:Buffer.from(JSON.stringify(oversize))});
  await page.locator('#summary-readiness').waitFor({state:'visible'});

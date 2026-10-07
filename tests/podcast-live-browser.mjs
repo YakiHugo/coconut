@@ -27,18 +27,18 @@ try {
  await page.goto(origin);await page.locator('#podcast-import').waitFor({state:'visible'});
  check('fresh_launch_has_no_automatic_source_or_model_request',calls.length===0&&await page.locator('#library button').count()===0);
  async function discover(url){
-  stage='discover_public_source';await page.locator('#podcast-url').fill(url);
+  stage='discover_public_source';await page.locator('#video-url').fill(url);
   const response=page.waitForResponse(r=>r.url()===origin+'/api/podcasts/discover'&&r.request().method()==='POST');
-  await page.locator('#discover-podcast').click();const received=await response;
+  await page.locator('#process-url').click();const received=await response;
   assert.equal(received.status(),200);const value=await received.json();
-  await page.locator('#discover-podcast').waitFor({state:'visible'});
-  await page.waitForFunction(()=>!document.getElementById('discover-podcast').disabled);
+  await page.locator('#process-url').waitFor({state:'visible'});
+  await page.waitForFunction(()=>!document.getElementById('process-url').disabled);
   return value;
  }
  // A rejected source must leave a usable retry entry, with no partial bookshelf item.
- await page.locator('#podcast-url').fill('http://127.0.0.1/private-feed');
- await page.locator('#discover-podcast').click();
- await page.waitForFunction(()=>!document.getElementById('discover-podcast').disabled&&!document.getElementById('cancel-podcast').offsetParent);
+ await page.locator('#video-url').fill('http://127.0.0.1/private-feed');
+ await page.locator('#process-url').click();
+ await page.waitForFunction(()=>!document.getElementById('process-url').disabled&&!document.getElementById('cancel-podcast').offsetParent);
  check('invalid_source_failure_preserves_empty_shelf',await page.locator('#library button').count()===0&&(await page.locator('#podcast-status').textContent()).length>0);
  const feed=await discover('https://mp3s.nashownotes.com/pc20rss.xml');
  const episode=feed.episodes?.find(item=>item.transcripts?.some(track=>track.supported&&/^en(?:-|$)/.test(track.language)));

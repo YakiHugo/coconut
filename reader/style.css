@@ -293,3 +293,41 @@ dialog select { display: block; margin-top: 8px; }
 #audio-bookmark-form button[type="submit"] { justify-self: start; }
 .audio-bookmark { padding: 16px 0; border-top: 1px solid var(--line); }
 .audio-bookmark textarea { display: block; margin-bottom: 8px; }
+
+/* One source entry and one episode, from first paste to source verification. */
+#url-form > label { font-size: 14px; font-weight: 600; }
+#url-form > .url-row { padding: 7px; border: 1px solid #cbdcd0; border-radius: 16px; background: #fff; box-shadow: 0 6px 24px #243b2e07; }
+#url-form > .url-row input { border: 0; background: transparent; padding: 12px; }
+#source-route-status { margin: 12px 0 20px; }
+.podcast-import { border: 0; padding: 0; }
+.podcast-episode { background: var(--soft); border-radius: 14px; padding: 20px; margin: 12px 0; }
+.episode-media { padding: 16px 20px; border: 1px solid var(--line); border-radius: 14px; background: #fafcf9; margin: 22px 0; }
+.episode-media-heading { display: flex; justify-content: space-between; gap: 12px; align-items: center; margin-bottom: 10px; }
+.episode-media-heading .eyebrow { margin: 0; }
+.episode-media .local-media-entry, .episode-media .podcast-playback { padding: 0; margin: 8px 0; border: 0; background: none; }
+.episode-media .hint { margin: 5px 0; font-size: 12px; }
+.episode-media #source-media { margin-top: 12px; }
+.episode-media #source-media video { max-height: 300px; }
+.episode-media #source-media audio { display: block; width: 100%; }
+.episode-media #playback-controls { margin: 8px 0; gap: 8px; }
+.summary-request { border: 1px solid #cbdcd0; background: #f7faf7; padding: 22px; border-radius: 14px; margin: 22px 0; }
+.summary-request-heading { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+.summary-request-heading h3 { margin: 0; }
+#ai-request-panel { margin-top: 16px; }
+.summary-only .question-control, .summary-only .subscription-actions { display: none !important; }
+.summary-only #ai-consent { flex-shrink: 0; }
+.summary-only label:has(#ai-consent) { display: flex; align-items: flex-start; margin: 18px 0; line-height: 1.8; }
+.summary-only #ask-ai { color: #fff; background: var(--accent); border-color: var(--accent); }
+.summary-only #summary-plan { padding: 14px; border-radius: 10px; background: #fff; color: var(--ink); }
+.summary-only #ai-progress { overflow-wrap: anywhere; }
+@media (max-width: 640px) {
+ #url-form > .url-row { flex-direction: column; }
+ #url-form > .url-row button { width: 100%; }
+ .episode-media, .summary-request { padding: 14px; }
+ .episode-media-heading { align-items: flex-start; }
+ .episode-media button { max-width: 100%; }
+}
+.bilingual-readiness { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 12px 16px; border-radius: 10px; background: var(--soft); margin: 16px 0; }
+.bilingual-readiness p { margin: 0; }
+.bilingual-readiness button { flex-shrink: 0; }
+@media(max-width:640px) { .bilingual-readiness { display: block; } .bilingual-readiness button { margin-top: 10px; } }

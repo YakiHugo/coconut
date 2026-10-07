@@ -3,7 +3,7 @@
 let podcastReady=false,podcastRequest=null,podcastMediaRequest=null,podcastMediaKey=null,podcastDiscovery=null,podcastPreviewURL=null;
 function podcastMessage(message){$('podcast-status').textContent=message;}
 function setPodcastBusy(busy){
- $('discover-podcast').disabled=busy||!podcastReady;$('cancel-podcast').hidden=!busy;
+ $('discover-podcast').disabled=busy||!podcastReady;$('process-url').disabled=busy;$('cancel-podcast').hidden=!busy;
  for(const button of $('podcast-results').querySelectorAll('button'))button.disabled=busy||!podcastReady;
 }
 async function podcastAPI(action,payload,signal){
@@ -141,7 +141,7 @@ $('download-podcast-media').onclick=async()=>{
   url=URL.createObjectURL(blob);const previous=browserMedia.get(key);
   if(active()?.key===key){stopRepeating();$('source-media').querySelector('audio,video')?.pause();}
   browserMedia.set(key,{url,kind,name:'本集发布者原声',origin:'publisher'});if(previous)URL.revokeObjectURL(previous.url);
-  if(active()?.key===key){setReadingMode('transcript');render();$('podcast-media-status').textContent='原声已在本次页面就绪。未发起转录；刷新后可重新获取。';}
+  if(active()?.key===key){render();$('podcast-media-status').textContent='原声已在本次页面就绪。未发起转录；刷新后可重新获取。';}
   url=null;
  }catch(error){if(url)URL.revokeObjectURL(url);if(active()?.key===key)$('podcast-media-status').textContent=controller.signal.aborted?'已取消下载，文字稿和笔记保留。':error.message;}
  finally{podcastMediaRequest=null;podcastMediaKey=null;$('cancel-podcast-media').hidden=true;$('download-podcast-media').disabled=!podcastReady;}

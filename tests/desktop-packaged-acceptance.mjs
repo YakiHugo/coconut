@@ -137,7 +137,7 @@ try{
  await fs.writeFile(fixturePath,JSON.stringify(fixture));await fs.writeFile(audioPath,authoredAudio());
  const profile=path.join(temporary,'profile');let page=await launch(executable,profile,configuration.version,'first_launch');
  check('new_profile_empty',await stored(page)===null);
- check('asr_ui_not_offered',await page.locator('#url-form').isHidden()&&await page.locator('#process-url').isDisabled());
+ check('asr_ui_not_offered',await page.locator('#advanced-import-options').isHidden()&&await page.locator('#import-media').isDisabled());
  await importFile(page,fixturePath);
  check('all_authored_segments_imported',(await stored(page)).segments.length===3);
  check('local_subtitles_do_not_claim_manual_verification',(await stored(page)).provenance.caption_method==='unknown'&&(await stored(page)).provenance.review_status==='unreviewed'&&(await page.locator('#provenance').textContent()).includes('导入的字幕'));

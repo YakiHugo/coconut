@@ -143,6 +143,7 @@ async function add(doc, canCommit = null, reuseAudioSource = false) {
 	return saved;
 }
 function showWorkspace(next) {
+ if(next!=="read"&&typeof closeSummaryRequest==="function")closeSummaryRequest(false);
  if(next!=="add")$("podcast-results")?.querySelectorAll("audio,video").forEach(player=>player.pause());
  if(next!=="read"){stopRepeating();$("source-media").querySelectorAll("audio,video").forEach(player=>player.pause());}
 	if (workspace === "read" && next === "add") readingScroll = window.scrollY;
@@ -158,6 +159,7 @@ function showWorkspace(next) {
 	if (returning) window.scrollTo(0, readingScroll);
 }
 function goToSegment(id) {
+ closeSummaryRequest(false);
  readingMode = "transcript";
 	const doc = active();
 	const index = doc ? doc.segments.findIndex(s => s.id === id) : -1;
@@ -186,6 +188,7 @@ function renderLibrary() {
 		b.append(el("small", "", Coconut.isAudioProject(d)?"原声项目 · 未导入文字稿 · "+(d.timestamp_bookmarks||[]).length+" 个时间书签":Coconut.time(d.segments.at(-1).end) + " · " + Object.values(d.notes).filter(Boolean).length + " 则笔记" + (bookmark ? " · 读到 " + Coconut.time(bookmark.start) : "")));
 		b.setAttribute("aria-current", d.key === state.active ? "page" : "false");
 		b.onclick = () => {
+   stopRepeating();$("source-media").querySelector("audio,video")?.pause();closeSummaryRequest(false);
 			state.active = d.key;
    setReadingMode("summary");
    searchFocusedId=null;
@@ -435,7 +438,7 @@ function highlightPlayback() {
  for(const row of $("transcript").querySelectorAll(".segment")) row.classList.toggle("playing",row.dataset.segmentId===segment?.id);
 }
 $("locate-playback").onclick=()=>{const segment=playbackSegment();if(segment){goToSegment(segment.id);highlightPlayback();}};
-$("add-content").onclick = () => { showWorkspace("add"); ($("url-form").hidden ? $("import") : $("video-url")).focus(); };
+$("add-content").onclick = () => { showWorkspace("add"); ($("video-url")).focus(); };
 $("back-reading").onclick = () => showWorkspace("read");
 $("show-jobs").onclick = () => { showWorkspace("add"); $("jobs-heading").scrollIntoView?.(); };
 $("toggle-library").onclick = () => $("toggle-library").setAttribute("aria-expanded", String($("toggle-library").getAttribute("aria-expanded") !== "true"));
@@ -908,17 +911,23 @@ function applyReadingMode() {
  $('transcript-controls').hidden=summary;
  $('transcript-layout').hidden=summary||audioOnly;
  $('reading-settings').hidden=summary;
- $('language-panel').hidden=audioOnly;
+ $('language-panel').hidden=audioOnly||summary;
  $('mode-summary').setAttribute('aria-pressed',String(summary));
- $('mode-transcript').setAttribute('aria-pressed',String(!summary));
+ const bilingual=!summary&&!audioOnly&&!!active()?.translation_view;
+ $('mode-transcript').setAttribute('aria-pressed',String(!summary&&!bilingual));
+ $('mode-bilingual').setAttribute('aria-pressed',String(bilingual));
+ $('mode-bilingual').disabled=audioOnly;
+ $('bilingual-readiness').hidden=!bilingual;
+ if(bilingual){const doc=active(),target=doc.translation_view,count=doc.segments.filter(s=>Coconut.translationCurrent(s,doc,s.translations?.[target])).length;
+ $('bilingual-status').textContent=count?`当前语言已有 ${count}/${doc.segments.length} 段有效译文；缺失或过期部分仍保留原文，可在翻译选项中继续。`:'还没有当前语言的有效译文。先读原文，或打开翻译选项，核对发送范围与额度后生成；切换视图不会调用模型。';}
 }
 function setReadingMode(mode) {
  readingMode=mode==='transcript'?'transcript':'summary';
  if(readingMode==='summary'){
   selected=null;$('notes-panel').hidden=true;
   stopRepeating();
-  $('source-media').querySelector('audio,video')?.pause();
  }
+ if(readingMode!=='summary'||$('summary-request').hidden)closeSummaryRequest(false);
  applyReadingMode();
 }
 function renderSummary() {
@@ -950,18 +959,33 @@ function renderSummary() {
  $('export-summary').hidden=!answer;
 }
 $('mode-summary').onclick=()=>setReadingMode('summary');
-$('mode-transcript').onclick=()=>setReadingMode('transcript');
+$('mode-transcript').onclick=()=>{if(active()){active().translation_view='';save();}setReadingMode('transcript');render();};
+$('mode-bilingual').onclick=()=>{const doc=active();if(!doc||Coconut.isAudioProject(doc))return;doc.translation_view=doc.translation_view||$('translation-target').value||'zh';save();setReadingMode('transcript');render();};
+$('prepare-bilingual').onclick=()=>{closeSummaryRequest(false);$('ai-task').value='question';$('ai-task').dispatchEvent(new Event('change'));$('language-panel').open=true;$('translation-view').scrollIntoView?.({block:'center',behavior:'smooth'});$('translation-view').focus();};
 $('summary-open-transcript').onclick=()=>{setReadingMode('transcript');$('search').focus();};
 $('prepare-summary').onclick=()=>{
  const readiness=Coconut.summaryReadiness(active());
  if(!readiness.ready){$('ai-consent').checked=false;renderSummary();notice(readiness.reason);return;}
- $('language-panel').open=true;
+ $('summary-request').hidden=false;
+ $('summary-request-slot').append($('ai-request-panel'));
+ $('ai-request-panel').classList.add('summary-only');
  $('ai-task').value='summary';$('ai-filtered').checked=false;$('ai-consent').checked=false;
  $('ai-task').dispatchEvent(new Event('change'));
- $('ai-task').scrollIntoView?.({block:'center',behavior:'smooth'});$('ai-task').focus();
+ $('summary-request-heading').scrollIntoView?.({block:'center',behavior:'smooth'});$('summary-request-heading').focus();
 };
+function closeSummaryRequest(restoreFocus=true) {
+ $('ai-consent').checked=false;
+ window.dispatchEvent(new Event('coconut-summary-stop'));
+ if($('summary-request').hidden)return;
+ $('summary-request').hidden=true;
+ $('ai-request-home').append($('ai-request-panel'));
+ $('ai-request-panel').classList.remove('summary-only');
+ if(restoreFocus)$('prepare-summary').focus();
+}
+$('close-summary-request').onclick=()=>closeSummaryRequest();
+$('summary-connection-setup').onclick=()=>$('language-setup').click();
 function prepareExcerptQuestion(){
- setReadingMode('transcript');$('language-panel').open=true;
+ closeSummaryRequest(false);setReadingMode('transcript');$('language-panel').open=true;
  $('ai-task').value='question';$('ai-filtered').checked=true;$('ai-consent').checked=false;
  $('ai-task').dispatchEvent(new Event('change'));
  $('search').focus();
@@ -999,7 +1023,7 @@ $('reader-media-file').onchange=async()=>{
   nextURL=URL.createObjectURL(file);const previous=browserMedia.get(key);
   if(key===active()?.key){stopRepeating();$('source-media').querySelector('audio,video')?.pause();}
   browserMedia.set(key,{url:nextURL,kind,name:file.name});if(previous)URL.revokeObjectURL(previous.url);
-  if(key===active()?.key){setReadingMode('transcript');render();}
+  if(key===active()?.key){render();}
   notice('媒体只在本次页面读取，未上传。请核对内容和文字稿对应；刷新后重新选择文件即可继续回听。');
  }catch(error){if(nextURL)URL.revokeObjectURL(nextURL);notice('打开媒体失败：'+error.message);}
  finally{input.value='';}

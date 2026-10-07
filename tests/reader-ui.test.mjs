@@ -214,7 +214,7 @@ test('static preview hides processing fields; local worker exposes queue without
   const w=setup(undefined,async url=>({ok:true,json:async()=>url.endsWith('health')?{local_worker:connected}:{jobs:[{id:'x',title:'Pending',status:'queued',stage:'waiting'}]}}));try{
    const $=id=>w.document.getElementById(id);await $('sample').onclick();
    await new Promise(resolve=>setTimeout(resolve,10));
-   assert.equal($('url-form').hidden,!connected);assert.equal($('show-jobs').hidden,!connected);
+   assert.equal($('url-form').hidden,false);assert.equal($('advanced-import-options').hidden,!connected);assert.equal($('show-jobs').hidden,!connected);
    assert.equal($('reader-workspace').hidden,false);
    if(connected){assert.equal($('job-count').textContent,'1');$('show-jobs').click();assert.equal($('add-workspace').hidden,false);assert.equal($('jobs').querySelector('button').textContent,'取消');$('back-reading').click();assert.equal($('reader-workspace').hidden,false);}
   }finally{await w.happyDOM.close();}
@@ -362,7 +362,7 @@ test('public setup is actionable and explains separate bookshelf storage',async(
   assert.equal($('local-setup').open,false);assert.match($('local-setup').textContent,/git clone[\s\S]*\.\/install.sh[\s\S]*\.\/coconut/);
   assert.match($('local-setup').textContent,/公开预览不会自动连接/);assert.match($('local-setup').textContent,/先在原页面导出/);
   assert.ok($('local-setup').querySelector('a[href="http://127.0.0.1:8080/"]'));
-  assert.equal($('process-url').disabled,true);assert.equal($('retry-worker').textContent,'重新检查此页面');
+  assert.equal($('process-url').disabled,false);assert.equal($('retry-worker').textContent,'重新检查此页面');
  }finally{await w.happyDOM.close();}
 });
 
@@ -380,7 +380,7 @@ test('queue disconnection disables stale actions and restores without resubmissi
   w.document.querySelector('.note-button').click();$('note').value='Keep my thought';$('note').oninput();$('ai-consent').checked=true;
   assert.equal($('ask-ai').disabled,false);
   queueOnline=false;await $('retry-worker').onclick();
-  assert.equal($('process-url').disabled,true);assert.equal($('import-media').disabled,true);assert.equal($('jobs').querySelector('button').disabled,true);
+  assert.equal($('process-url').disabled,false);assert.equal($('import-media').disabled,true);assert.equal($('jobs').querySelector('button').disabled,true);
   assert.match($('worker-status').textContent,/上次任务状态/);assert.equal($('ask-ai').disabled,true);assert.equal($('ai-consent').checked,false);
   $('ai-provider').value='claude';$('ai-provider').onchange();assert.equal($('ask-ai').disabled,true);
   queueOnline=true;await $('retry-worker').onclick();await new Promise(resolve=>setTimeout(resolve,10));
@@ -1159,7 +1159,7 @@ test('opening reading settings is local and preserves search, notes and document
 test('setup disclosure stays user-controlled while public requests stay disabled',async()=>{
  const w=setup(undefined,async()=>{throw new Error('static page');});try{
   await new Promise(resolve=>setTimeout(resolve,10));const $=id=>w.document.getElementById(id);
-  assert.equal($('local-setup').open,false);assert.equal($('url-form').hidden,true);assert.equal($('process-url').disabled,true);
+  assert.equal($('local-setup').open,false);assert.equal($('url-form').hidden,false);assert.equal($('process-url').disabled,false);
   $('local-setup').open=true;await $('retry-worker').onclick();assert.equal($('local-setup').open,true);
   $('local-setup').open=false;await $('retry-worker').onclick();assert.equal($('local-setup').open,false);
   await $('sample').onclick();$('language-setup').click();
@@ -1206,7 +1206,7 @@ test('summary is the first reading mode and never relabels saved questions as su
   assert.equal($('summary-state').textContent,'未生成');assert.equal($('summary-body').textContent,'');
   $('summary-open-transcript').click();assert.equal($('transcript-layout').hidden,false);assert.equal($('summary-workspace').hidden,true);
   $('mode-summary').click();assert.equal($('summary-workspace').hidden,false);
-  $('prepare-summary').click();assert.equal($('language-panel').open,true);assert.equal($('ai-task').value,'summary');assert.equal($('ai-consent').checked,false);
+  $('prepare-summary').click();assert.equal($('summary-request').hidden,false);assert.equal($('ai-request-panel').parentElement,$('summary-request-slot'));assert.equal($('ai-task').value,'summary');assert.equal($('ai-consent').checked,false);
  }finally{await w.happyDOM.close();}
 });
 
@@ -1257,7 +1257,7 @@ test('lightweight bridge enables local agents without media jobs or Python proce
  try{
   await new Promise(resolve=>setTimeout(resolve,25));
   const $=id=>w.document.getElementById(id);
-  assert.match($('worker-status').textContent,/轻量本地服务/);assert.equal($('url-form').hidden,true);assert.equal($('import-media').disabled,true);assert.equal($('show-jobs').hidden,true);assert.ok(!calls.includes('api/jobs'));
+  assert.match($('worker-status').textContent,/轻量本地服务/);assert.equal($('url-form').hidden,false);assert.equal($('import-media').disabled,true);assert.equal($('show-jobs').hidden,true);assert.ok(!calls.includes('api/jobs'));
  }finally{await w.happyDOM.close();}
 });
 
@@ -1392,7 +1392,7 @@ test('replacing a full service with a lightweight bridge removes stale processin
  try{
   await new Promise(resolve=>setTimeout(resolve,20));const $=id=>w.document.getElementById(id);assert.equal($('import-media').disabled,false);
   lightweight=true;await new Promise(resolve=>setTimeout(resolve,3200));assert.equal($('import-media').disabled,true);
-  await $('retry-worker').onclick();assert.equal($('url-form').hidden,true);assert.equal($('jobs').hidden,true);assert.equal($('show-jobs').hidden,true);assert.equal($('import-media').disabled,true);assert.match($('worker-status').textContent,/轻量/);assert.ok(calls.filter(p=>p==='api/health').length>=2);assert.ok(!calls.includes('api/language-tools'));
+  await $('retry-worker').onclick();assert.equal($('url-form').hidden,false);assert.equal($('jobs').hidden,true);assert.equal($('show-jobs').hidden,true);assert.equal($('import-media').disabled,true);assert.match($('worker-status').textContent,/轻量/);assert.ok(calls.filter(p=>p==='api/health').length>=2);assert.ok(!calls.includes('api/language-tools'));
  }finally{await w.happyDOM.close();}
 });
 
@@ -1485,7 +1485,7 @@ test('provider, task, panel close, document switch and source changes latch a st
    await enableSummary(w);const run=$('ask-ai').onclick();
    if(mutation==='provider'){$('ai-provider').value='claude';$('ai-provider').onchange();$('ai-provider').value='codex';$('ai-provider').onchange();}
    if(mutation==='task'){$('ai-task').value='question';$('ai-task').onchange();}
-   if(mutation==='close'){$('language-panel').open=false;$('language-panel').dispatchEvent(new w.Event('toggle'));}
+   if(mutation==='close'){$('close-summary-request').onclick();}
    if(mutation==='document')await importDocument(w,{title:'Other source',segments:[{id:'other',start:0,end:1,text:'Other source'}]});
    if(mutation==='source'){$('mode-transcript').onclick();w.document.querySelector('.segment button').click();$('edit-segment').value='Changed original';$('save-edit').click();}
    $('ai-consent').checked=true;release();await run;assert.equal(calls,1,mutation);
@@ -1551,5 +1551,64 @@ test('speaker filters share the same selected source scope and clear on explicit
   filter.value=JSON.stringify('');filter.onchange();assert.equal(w.document.querySelector('.segment').dataset.segmentId,'c');
   $('clear-search').click();assert.equal(w.document.querySelectorAll('.segment').length,3);assert.equal(filter.value,'all');
   assert.equal(JSON.parse(w.localStorage.getItem('coconut-reader-v1')).documents[0].segments[0].speaker,'Speaker A');
+ }finally{await w.happyDOM.close();}
+});
+
+test('one link entry routes a podcast through the lightweight bridge without media jobs',async()=>{
+ const calls=[];const w=setup(undefined,async(url,options)=>{calls.push([url,options?.body]);return {ok:true,json:async()=>url.endsWith('health')?{local_worker:false,capabilities:{local_agents:true,podcast_import:true}}:{kind:'feed',feed_url:'https://publisher.example/feed',title:'A public programme',episodes:[]}};});try{
+  const $=id=>w.document.getElementById(id);await new Promise(r=>setTimeout(r,10));
+  $('video-url').value='https://publisher.example/feed';await $('url-form').onsubmit({preventDefault(){}});
+  assert.equal(calls.filter(([url])=>url==='api/podcasts/discover').length,1);assert.equal(calls.some(([url])=>url==='api/jobs'),false);assert.match($('podcast-results').textContent,/A public programme/);assert.equal($('podcast-form').hidden,true);
+  const before=calls.length;$('video-url').value='https://www.youtube.com/watch?v=example';await $('url-form').onsubmit({preventDefault(){}});
+  assert.equal(calls.length,before);assert.match($('source-route-status').textContent,/可选高级服务/);assert.equal($('local-setup').open,true);
+ }finally{await w.happyDOM.close();}
+});
+
+test('public link entry offers an honest local handoff and never makes a source request',async()=>{
+ let posts=0;const w=setup(undefined,async(url,options)=>{if(options?.method==='POST')posts++;throw new Error('Static only');});try{
+  const $=id=>w.document.getElementById(id);await new Promise(r=>setTimeout(r,10));
+  $('video-url').value='https://publisher.example/feed';await $('url-form').onsubmit({preventDefault(){}});assert.equal(posts,0);assert.equal($('local-setup').open,true);assert.match($('source-route-status').textContent,/本地服务/);
+  $('video-url').value='https://name:secret@publisher.example/feed';await $('url-form').onsubmit({preventDefault(){}});assert.equal(posts,0);assert.match($('source-route-status').textContent,/不含登录凭据/);
+ }finally{await w.happyDOM.close();}
+});
+
+test('summary composer uses one consent control and returns it on close or document switch',async()=>{
+ const w=setup();try{const $=id=>w.document.getElementById(id);await $('sample').onclick();$('prepare-summary').click();assert.equal($('summary-request').hidden,false);assert.equal(w.document.querySelectorAll('#ai-consent').length,1);assert.equal($('language-panel').open,false);
+  $('ai-consent').checked=true;$('close-summary-request').click();assert.equal($('ai-consent').checked,false);assert.equal($('ai-request-panel').parentElement,$('ai-request-home'));assert.equal(w.document.activeElement,$('prepare-summary'));
+  $('prepare-summary').click();$('ai-consent').checked=true;await importDocument(w,{title:'Next episode',segments:[{id:'next',start:0,end:2,text:'A different source.'}]});assert.equal($('summary-request').hidden,true);assert.equal($('ai-consent').checked,false);
+ }finally{await w.happyDOM.close();}
+});
+
+test('summary and bilingual tabs preserve the visible player and never generate translations',async()=>{
+ const w=setup();try{const $=id=>w.document.getElementById(id);await $('sample').onclick();let pauses=0,calls=0;w.fetch=async()=>{calls++;throw new Error('No calls expected');};
+  const player=w.document.createElement('audio');player.pause=()=>pauses++;$('source-media').append(player);$('source-media').hidden=false;
+  $('mode-summary').click();assert.equal(pauses,0);assert.equal($('source-media').closest('#transcript-controls'),null);assert.equal($('episode-media').hidden,false);
+  $('mode-bilingual').click();assert.equal($('mode-bilingual').getAttribute('aria-pressed'),'true');assert.equal($('bilingual-readiness').hidden,false);assert.match($('bilingual-status').textContent,/还没有/);assert.equal(calls,0);assert.equal($('ai-consent').checked,false);
+  $('mode-transcript').click();assert.equal($('translation-view').value,'');assert.equal($('bilingual-readiness').hidden,true);assert.equal(calls,0);
+ }finally{await w.happyDOM.close();}
+});
+
+test('supported mobile Twitter links use the video worker instead of podcast discovery',async()=>{
+ const calls=[];const w=setup(undefined,async(url,options)=>{calls.push([url,options?.body]);return {ok:true,json:async()=>url.endsWith('health')?{local_worker:true,capabilities:{local_agents:true,podcast_import:true}}:{jobs:[]}};});try{
+  const $=id=>w.document.getElementById(id);await new Promise(r=>setTimeout(r,10));$('video-url').value='https://mobile.twitter.com/example/status/123456';await $('url-form').onsubmit({preventDefault(){}});
+  assert.equal(calls.filter(([url,body])=>url==='api/jobs'&&body).length,1);assert.equal(calls.some(([url])=>url==='api/podcasts/discover'),false);
+ }finally{await w.happyDOM.close();}
+});
+
+test('leaving a legacy summary request stops later batches even when the inline composer is closed',async()=>{
+ for(const destination of ['add-content','mode-summary']){
+  const w=setup();try{const $=id=>w.document.getElementById(id);await importDocument(w,longSummaryDocument());let release,calls=0;
+   w.fetch=async(url,options)=>url.endsWith('language-tools')?{ok:true,json:async()=>({ai:{codex:{ready:true}}})}:new Promise(resolve=>{calls++;const request=JSON.parse(options.body);release=()=>resolve({ok:true,json:async()=>mockSummaryAnswer(request)});});
+   $('mode-transcript').click();$('language-panel').open=true;await $('check-ai').onclick();$('ai-task').value='summary';$('ai-task').onchange();$('ai-consent').checked=true;
+   const run=$('ask-ai').onclick();$(destination).click();assert.equal($('ai-consent').checked,false);release();await run;assert.equal(calls,1);
+  }finally{await w.happyDOM.close();}
+ }
+});
+
+test('a newer unsupported source retires old podcast discovery and its late results',async()=>{
+ let release;const w=setup(undefined,async(url)=>url.endsWith('health')?{ok:true,json:async()=>({local_worker:false,capabilities:{local_agents:true,podcast_import:true}})}:new Promise(resolve=>{release=()=>resolve({ok:true,json:async()=>({kind:'feed',title:'Old feed result',episodes:[]})});}));try{
+  const $=id=>w.document.getElementById(id);await new Promise(r=>setTimeout(r,10));$('video-url').value='https://publisher.example/feed';const pending=$('url-form').onsubmit({preventDefault(){}});
+  $('video-url').value='https://youtube.com/watch?v=new';await $('url-form').onsubmit({preventDefault(){}});release();await pending;
+  assert.equal($('podcast-results').textContent,'');assert.match($('source-route-status').textContent,/可选高级服务/);assert.equal($('cancel-podcast').hidden,true);
  }finally{await w.happyDOM.close();}
 });

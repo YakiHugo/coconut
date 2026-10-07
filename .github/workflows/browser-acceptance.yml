@@ -35,6 +35,8 @@ jobs:
       - run: npx playwright install --with-deps chromium
       - run: sudo apt-get update && sudo apt-get install -y ffmpeg
       - name: Verify standalone Web reading without a Python service
+        env:
+          COCONUT_UI_SCREENSHOTS: ${{ runner.temp }}/coconut-authored-ui
         run: node tests/web-browser-acceptance.mjs
       - name: Verify bounded long-summary plans with injected fixtures only
         run: node tests/summary-browser-acceptance.mjs
@@ -42,6 +44,9 @@ jobs:
         run: node tests/podcast-browser-acceptance.mjs
       - name: Verify audio project to transcript, injected AI, playback and clean-browser recovery
         run: node tests/project-continuity-browser.mjs
+      - name: Probe anonymous video caption feasibility without enabling import
+        if: github.event_name == 'pull_request' && github.head_ref == 'dot/primary-journey'
+        run: node scripts/probe_public_captions.mjs
       - name: Prepare original synthetic media and timed text
         run: python scripts/prepare_browser_acceptance.py --mode synthetic --directory "$RUNNER_TEMP/coconut-acceptance"
       - name: Verify actual browser playback, reading, downloads and restore
@@ -50,6 +55,14 @@ jobs:
           COCONUT_ACCEPTANCE_DATA_DIR: ${{ runner.temp }}/coconut-acceptance
           COCONUT_ACCEPTANCE_RESULT: ${{ runner.temp }}/coconut-acceptance/acceptance-result.json
         run: npm run test:browser
+      - name: Upload authored UI review images only
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Coconut-authored-UI
+          path: ${{ runner.temp }}/coconut-authored-ui/*.png
+          if-no-files-found: ignore
+          retention-days: 7
       - name: Remove temporary media and exports
         if: always()
         run: rm -rf -- "$RUNNER_TEMP/coconut-acceptance"
@@ -88,5 +101,5 @@ jobs:
         if: always()
         run: rm -rf -- "$RUNNER_TEMP"/coconut-queued-original-*
 
-# Deliberately no upload-artifact step: source media, captions, browser storage,
-# screenshots, traces and downloads must not become public CI artifacts.
+# Only the static Web test writes review images, using authored synthetic fixtures.
+# Original source media, captions, storage, traces and downloads are never artifacts.
