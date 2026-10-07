@@ -120,7 +120,10 @@ def expand_macho_path(value, native, executable):
 
 def audit_frozen(binary, directory):
     from PyInstaller.archive.readers import CArchiveReader
-    archive=CArchiveReader(str(binary));root=directory/'frozen-audit';root.mkdir()
+    # macOS temp paths commonly enter through /var -> /private/var. Compare
+    # resolved candidates against one canonical root, preserving containment.
+    binary=binary.resolve()
+    archive=CArchiveReader(str(binary));root=directory/'frozen-audit';root.mkdir();root=root.resolve()
     natives=[];symlinks=[]
     for name,entry in archive.toc.items():
         if entry[-1] not in ('b','n'):continue

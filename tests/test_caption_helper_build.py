@@ -4,7 +4,9 @@ import json
 from pathlib import Path
 import unittest
 import tempfile
-from scripts.build_caption_helper import expand_macho_path, analysis_record, validated_framework_link, ROOT
+import types
+from unittest.mock import patch
+from scripts.build_caption_helper import expand_macho_path, analysis_record, validated_framework_link, audit_frozen, ROOT
 
 
 class CaptionBuildContracts(unittest.TestCase):
@@ -46,6 +48,30 @@ class CaptionBuildContracts(unittest.TestCase):
                 validated_framework_link(name,target,names)
         with self.assertRaises(RuntimeError):
             validated_framework_link('Python','Python.framework/Versions/3.14/Python',set())
+
+    def test_frozen_audit_canonicalizes_an_aliased_temporary_root(self):
+        # Reproduce /var -> /private/var without requiring macOS or PyInstaller.
+        payloads={'Python.framework/Versions/3.14/Python':b'authored native payload',
+                  'Python':b'Python.framework/Versions/3.14/Python\0'}
+        class FixtureArchive:
+            def __init__(self, _binary):
+                self.toc={name:(0,0,0,0,'n' if name=='Python' else 'b') for name in payloads}
+            def extract(self, name):return payloads[name]
+        readers=types.ModuleType('PyInstaller.archive.readers');readers.CArchiveReader=FixtureArchive
+        modules={'PyInstaller':types.ModuleType('PyInstaller'),
+                 'PyInstaller.archive':types.ModuleType('PyInstaller.archive'),
+                 'PyInstaller.archive.readers':readers}
+        with tempfile.TemporaryDirectory() as directory:
+            parent=Path(directory);real=parent/'private-var';real.mkdir()
+            alias=parent/'var';alias.symlink_to(real,target_is_directory=True)
+            binary=real/'helper';binary.write_bytes(b'authored helper bytes')
+            with patch.dict('sys.modules',modules), patch('scripts.build_caption_helper.sys.platform','linux'):
+                records=audit_frozen(alias/'helper',alias)
+            self.assertEqual(len(records),2)
+            root=(real/'frozen-audit').resolve()
+            self.assertEqual((root/'Python').resolve(),root/'Python.framework/Versions/3.14/Python')
+            self.assertTrue((root/'Python').resolve().is_relative_to(root))
+            self.assertEqual(records[1]['sha256'],hashlib.sha256(payloads['Python.framework/Versions/3.14/Python']).hexdigest())
 
     def test_vendored_notice_and_source_hashes(self):
         root=ROOT/'desktop/vendor/caption-helper-notices'
