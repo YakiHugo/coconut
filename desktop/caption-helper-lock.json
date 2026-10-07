@@ -1,0 +1,193 @@
+{
+  "schemaVersion": 1,
+  "python": "3.14.8",
+  "ytDlpVersion": "2026.08.19",
+  "pyinstaller": "6.22.3",
+  "protocol": 1,
+  "publicExtraction": true,
+  "packages": [
+    {
+      "name": "yt-dlp",
+      "version": "2026.8.19",
+      "provenance": "https://pypi.org/pypi/yt-dlp/2026.8.19/json",
+      "files": [
+        {
+          "filename": "yt_dlp-2026.8.19-py3-none-any.whl",
+          "url": "https://files.pythonhosted.org/packages/69/b2/8cd1613f56eed7ceb64fbd4df3f1c01246bfb098e6f398228bafda22b80b/yt_dlp-2026.8.19-py3-none-any.whl",
+          "sha256": "1d57897e94c6665a0a6f9bc54b34e584284e32c034ffab3a7df25d8f7b24eedf",
+          "bytes": 3185533,
+          "type": "bdist_wheel"
+        },
+        {
+          "filename": "yt_dlp-2026.8.19.tar.gz",
+          "url": "https://files.pythonhosted.org/packages/1e/e0/832fa4ca334b766a06933a196066edc3dba37cdb6f14cd98d59bcc69a4b4/yt_dlp-2026.8.19.tar.gz",
+          "sha256": "9e213e48cea35c66b378e4447903f118f6392a5fa380a2b6d7070ec86f4e0af1",
+          "bytes": 3052025,
+          "type": "sdist"
+        }
+      ]
+    },
+    {
+      "name": "pyinstaller",
+      "version": "6.22.3",
+      "provenance": "https://pypi.org/pypi/pyinstaller/6.22.3/json",
+      "files": [
+        {
+          "filename": "pyinstaller-6.22.3-py3-none-macosx_10_13_universal2.whl",
+          "url": "https://files.pythonhosted.org/packages/ec/af/898f70947e27f8e65d55183c780e77112e023c0b4a6fba6255d4d563a27d/pyinstaller-6.22.3-py3-none-macosx_10_13_universal2.whl",
+          "sha256": "052f4a1cd4f81092ccb7a18fe8ebc9ecf832a5917317e39fb3775af4e959b253",
+          "bytes": 1071847,
+          "type": "bdist_wheel"
+        },
+        {
+          "filename": "pyinstaller-6.22.3-py3-none-manylinux2014_x86_64.whl",
+          "url": "https://files.pythonhosted.org/packages/7b/b6/dd21d61fc5e25377be24eabf13e99e4e46548a5abe2bf7b15d8b3d9cc74a/pyinstaller-6.22.3-py3-none-manylinux2014_x86_64.whl",
+          "sha256": "451a4ae14b719365bf1a2f0a99dae7b3463060061c3a394c70d5264cfb439528",
+          "bytes": 764974,
+          "type": "bdist_wheel"
+        },
+        {
+          "filename": "pyinstaller-6.22.3.tar.gz",
+          "url": "https://files.pythonhosted.org/packages/63/41/f90302845945abd4ed647933ff5ee7c6ac93983187be67f897b6cb613331/pyinstaller-6.22.3.tar.gz",
+          "sha256": "05eb2f5615503e72939a7224d68b4aff572c6b0438ee4a17d0a4b481f399362d",
+          "bytes": 4437180,
+          "type": "sdist"
+        }
+      ]
+    },
+    {
+      "name": "altgraph",
+      "version": "0.17.5",
+      "provenance": "https://pypi.org/pypi/altgraph/0.17.5/json",
+      "files": [
+        {
+          "filename": "altgraph-0.17.5-py2.py3-none-any.whl",
+          "url": "https://files.pythonhosted.org/packages/a9/ba/000a1996d4308bc65120167c21241a3b205464a2e0b58deda26ae8ac21d1/altgraph-0.17.5-py2.py3-none-any.whl",
+          "sha256": "f3a22400bce1b0c701683820ac4f3b159cd301acab067c51c653e06961600597",
+          "bytes": 21228,
+          "type": "bdist_wheel"
+        },
+        {
+          "filename": "altgraph-0.17.5.tar.gz",
+          "url": "https://files.pythonhosted.org/packages/7e/f8/97fdf103f38fed6792a1601dbc16cc8aac56e7459a9fff08c812d8ae177a/altgraph-0.17.5.tar.gz",
+          "sha256": "c87b395dd12fabde9c99573a9749d67da8d29ef9de0125c7f536699b4a9bc9e7",
+          "bytes": 48428,
+          "type": "sdist"
+        }
+      ]
+    },
+    {
+      "name": "macholib",
+      "version": "1.16.4",
+      "provenance": "https://pypi.org/pypi/macholib/1.16.4/json",
+      "files": [
+        {
+          "filename": "macholib-1.16.4-py2.py3-none-any.whl",
+          "url": "https://files.pythonhosted.org/packages/c7/d1/a9f36f8ecdf0fb7c9b1e78c8d7af12b8c8754e74851ac7b94a8305540fc7/macholib-1.16.4-py2.py3-none-any.whl",
+          "sha256": "da1a3fa8266e30f0ce7e97c6a54eefaae8edd1e5f86f3eb8b95457cae90265ea",
+          "bytes": 38117,
+          "type": "bdist_wheel"
+        },
+        {
+          "filename": "macholib-1.16.4.tar.gz",
+          "url": "https://files.pythonhosted.org/packages/10/2f/97589876ea967487978071c9042518d28b958d87b17dceb7cdc1d881f963/macholib-1.16.4.tar.gz",
+          "sha256": "f408c93ab2e995cd2c46e34fe328b130404be143469e41bc366c807448979362",
+          "bytes": 59427,
+          "type": "sdist"
+        }
+      ]
+    },
+    {
+      "name": "packaging",
+      "version": "26.3",
+      "provenance": "https://pypi.org/pypi/packaging/26.3/json",
+      "files": [
+        {
+          "filename": "packaging-26.3-py3-none-any.whl",
+          "url": "https://files.pythonhosted.org/packages/63/34/ba1c580383c9eada3711951fef0795c80b829a078d72188184bcab9dd527/packaging-26.3-py3-none-any.whl",
+          "sha256": "d7193f7c8e4e93f444fde0262bf90af30e16fa0ad0ad44cb553c87339b23cd1c",
+          "bytes": 129956,
+          "type": "bdist_wheel"
+        },
+        {
+          "filename": "packaging-26.3.tar.gz",
+          "url": "https://files.pythonhosted.org/packages/7d/fa/3944b40b07da9ce895c0e6303a5ab7d53da063554f534556b134a54d6093/packaging-26.3.tar.gz",
+          "sha256": "94edc256424af38762eb31306eed28beb9f0efc50a8837492c9d6fd6004aed79",
+          "bytes": 313412,
+          "type": "sdist"
+        }
+      ]
+    },
+    {
+      "name": "pyinstaller-hooks-contrib",
+      "version": "2026.8",
+      "provenance": "https://pypi.org/pypi/pyinstaller-hooks-contrib/2026.8/json",
+      "files": [
+        {
+          "filename": "pyinstaller_hooks_contrib-2026.8-py3-none-any.whl",
+          "url": "https://files.pythonhosted.org/packages/8f/f1/3eee0263b487e571aed9204257b45bc2a0b6fec34d0a1adade4d8d8a968c/pyinstaller_hooks_contrib-2026.8-py3-none-any.whl",
+          "sha256": "6d21d65323ea4467753afc21f52d7d0e69416ae8101dd88269bf273ad48db084",
+          "bytes": 462145,
+          "type": "bdist_wheel"
+        },
+        {
+          "filename": "pyinstaller_hooks_contrib-2026.8.tar.gz",
+          "url": "https://files.pythonhosted.org/packages/c9/3b/fab1a12a21bf9223af012e5dd002b7d4265683d21d9fabbd0ccb347316e4/pyinstaller_hooks_contrib-2026.8.tar.gz",
+          "sha256": "4d825786ad7a9b7dbcc52d612748a34562fe273461bcfd88f4d549c594bbf8f9",
+          "bytes": 176955,
+          "type": "sdist"
+        }
+      ]
+    },
+    {
+      "name": "setuptools",
+      "version": "84.0.0",
+      "provenance": "https://pypi.org/pypi/setuptools/84.0.0/json",
+      "files": [
+        {
+          "filename": "setuptools-84.0.0-py3-none-any.whl",
+          "url": "https://files.pythonhosted.org/packages/95/9c/c510029fc6ef33a6275cd2c5d3cecd6613dfd6aa401d57c54f1c18852ccf/setuptools-84.0.0-py3-none-any.whl",
+          "sha256": "51a52592b3b99e102b609654876bd65f19f999935166d1352678931132b0c670",
+          "bytes": 818216,
+          "type": "bdist_wheel"
+        },
+        {
+          "filename": "setuptools-84.0.0.tar.gz",
+          "url": "https://files.pythonhosted.org/packages/6d/44/f5da03a8ef95d369145c5bb53050e7877c9f3d312e128605fd9504829143/setuptools-84.0.0.tar.gz",
+          "sha256": "f4695c21257f0d9b537ec2692c941d02ee143b7cc1276941349a546573b2ef73",
+          "bytes": 1168449,
+          "type": "sdist"
+        }
+      ]
+    },
+    {
+      "name": "certifi",
+      "version": "2026.7.22",
+      "provenance": "https://pypi.org/pypi/certifi/2026.7.22/json",
+      "files": [
+        {
+          "filename": "certifi-2026.7.22-py3-none-any.whl",
+          "url": "https://files.pythonhosted.org/packages/0b/a7/71ac2cff56fec219ed242bb11b8efb69fcc4bec75db06fb7bfe35de520e6/certifi-2026.7.22-py3-none-any.whl",
+          "sha256": "62f22742b58a1a33014a2b6b706588a8d7e2a88ae7bd1a6ebe8c992928483775",
+          "bytes": 136983,
+          "type": "bdist_wheel"
+        },
+        {
+          "filename": "certifi-2026.7.22.tar.gz",
+          "url": "https://files.pythonhosted.org/packages/a3/c2/24167ea9858356b47a87a50d39908bfdb72ceeefe0041586e704e5376b3a/certifi-2026.7.22.tar.gz",
+          "sha256": "741e2c3b351ddf169a738da9f2c048608ff7f2c5cc02f1ebc6b118bb090d5d55",
+          "bytes": 138112,
+          "type": "sdist"
+        }
+      ]
+    }
+  ],
+  "verifiedProviders": [
+    "x-public-guest-captions"
+  ],
+  "liveProof": {
+    "run": "https://github.com/YakiHugo/coconut/actions/runs/37581123817",
+    "commit": "5ed57d5",
+    "result": "public source captions, no media or ASR"
+  }
+}

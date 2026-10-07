@@ -1,0 +1,134 @@
+{
+  "schemaVersion": 1,
+  "scope": "Pinned notices and source delivery for the minimal caption helper; the final build inventory decides which conditional components are shipped.",
+  "files": [
+    {
+      "file": "LICENSE.yt-dlp",
+      "sha256": "7e12e5df4bae12cb21581ba157ced20e1986a0508dd10d0e8a4ab9a4cf94e85c",
+      "bytes": 1211,
+      "sourceUrl": "https://files.pythonhosted.org/packages/1e/e0/832fa4ca334b766a06933a196066edc3dba37cdb6f14cd98d59bcc69a4b4/yt_dlp-2026.8.19.tar.gz",
+      "derivation": "verbatim",
+      "sourceMember": "yt_dlp-2026.8.19/LICENSE"
+    },
+    {
+      "file": "COPYING.PyInstaller",
+      "sha256": "0598064c7d2718e38d7914a7d08343b2fa008e3bea9ebba2aa7a6ffa5900dd64",
+      "bytes": 32604,
+      "sourceUrl": "https://files.pythonhosted.org/packages/63/41/f90302845945abd4ed647933ff5ee7c6ac93983187be67f897b6cb613331/pyinstaller-6.22.3.tar.gz",
+      "derivation": "verbatim",
+      "sourceMember": "pyinstaller-6.22.3/COPYING.txt"
+    },
+    {
+      "file": "LICENSE.PyInstaller-zlib",
+      "sha256": "e32ff4e00d9d94930537635291da39e7e612703334bf6fde8c7f1686fe8a45a2",
+      "bytes": 1002,
+      "sourceUrl": "https://files.pythonhosted.org/packages/63/41/f90302845945abd4ed647933ff5ee7c6ac93983187be67f897b6cb613331/pyinstaller-6.22.3.tar.gz",
+      "derivation": "verbatim",
+      "sourceMember": "pyinstaller-6.22.3/bootloader/zlib/LICENSE"
+    },
+    {
+      "file": "LICENSE.Python",
+      "sha256": "b0e25a78cffb43f4d92de8b61ccfa1f1f98ecbc22330b54b5251e7b6ba010231",
+      "bytes": 13804,
+      "sourceUrl": "https://www.python.org/ftp/python/3.14.8/Python-3.14.8.tar.xz",
+      "derivation": "verbatim",
+      "sourceMember": "Python-3.14.8/LICENSE"
+    },
+    {
+      "file": "PYTHON-THIRD-PARTY-LICENSES.rst",
+      "sha256": "cd6f471c0bfdb099efefc25ddff9b3df8bf62e10428987f1f05e6f2f9e35d563",
+      "bytes": 60039,
+      "sourceUrl": "https://www.python.org/ftp/python/3.14.8/Python-3.14.8.tar.xz",
+      "derivation": "verbatim",
+      "sourceMember": "Python-3.14.8/Doc/license.rst"
+    },
+    {
+      "file": "LICENSE.expat",
+      "sha256": "31b15de82aa19a845156169a17a5488bf597e561b2c318d159ed583139b25e87",
+      "bytes": 1144,
+      "sourceUrl": "https://www.python.org/ftp/python/3.14.8/Python-3.14.8.tar.xz",
+      "derivation": "verbatim",
+      "sourceMember": "Python-3.14.8/Modules/expat/COPYING"
+    },
+    {
+      "file": "LICENSE.certifi",
+      "sha256": "e93716da6b9c0d5a4a1df60fe695b370f0695603d21f6f83f053e42cfc10caf7",
+      "bytes": 989,
+      "sourceUrl": "https://files.pythonhosted.org/packages/a3/c2/24167ea9858356b47a87a50d39908bfdb72ceeefe0041586e704e5376b3a/certifi-2026.7.22.tar.gz",
+      "derivation": "verbatim",
+      "sourceMember": "certifi-2026.7.22/LICENSE"
+    },
+    {
+      "file": "COPYRIGHT.libmpdec",
+      "sha256": "dba079e24a0286052f9f36a5e0b4f6cc95bc83ada657eb26bef8c0b6473f6512",
+      "bytes": 1285,
+      "sourceUrl": "https://www.bytereef.org/software/mpdecimal/releases/mpdecimal-4.0.1.tar.gz",
+      "derivation": "verbatim",
+      "sourceMember": "mpdecimal-4.0.1/COPYRIGHT.txt"
+    },
+    {
+      "file": "CPYTHON-BUNDLED-NOTICES.txt",
+      "sha256": "15cccf3b86adb95b09dc4f0eb14d862257a9fa284dae920bca25eb61f438eec5",
+      "bytes": 9497,
+      "sourceUrl": "https://www.python.org/ftp/python/3.14.8/Python-3.14.8.tar.xz",
+      "derivation": "Unique original initial license/copyright block comments from Modules/_hacl, Objects/mimalloc and Include/internal/mimalloc; source paths retained"
+    },
+    {
+      "file": "LICENSE.OpenSSL",
+      "sha256": "7d5450cb2d142651b8afa315b5f238efc805dad827d91ba367d8516bc9d49e7a",
+      "bytes": 10175,
+      "sourceUrl": "https://raw.githubusercontent.com/openssl/openssl/openssl-3.5.9/LICENSE.txt",
+      "derivation": "verbatim"
+    },
+    {
+      "file": "COPYING.XZ",
+      "sha256": "c4f8e14fafe458d84808a4cd8b69f94673ebe2bf8fc992291629a69ac12218f8",
+      "bytes": 2774,
+      "sourceUrl": "https://raw.githubusercontent.com/tukaani-project/xz/v5.2.3/COPYING",
+      "derivation": "verbatim"
+    },
+    {
+      "file": "LICENSE.Zstandard",
+      "sha256": "7055266497633c9025b777c78eb7235af13922117480ed5c674677adc381c9d8",
+      "bytes": 1549,
+      "sourceUrl": "https://raw.githubusercontent.com/facebook/zstd/v1.5.7/LICENSE",
+      "derivation": "verbatim"
+    },
+    {
+      "file": "LICENSE.MPL-2.0",
+      "sha256": "3f3d9e0024b1921b067d6f7f88deb4a60cbe7a78e76c64e3f1d7fc3b779b9d04",
+      "bytes": 16726,
+      "sourceUrl": "https://www.mozilla.org/media/MPL/2.0/index.txt",
+      "derivation": "verbatim"
+    },
+    {
+      "file": "LICENSE.HACL-Apache-2.0",
+      "sha256": "c5accbbd8546e94c34aed24afe689a617627d18eed5a6c48277e48db57c23851",
+      "bytes": 11356,
+      "sourceUrl": "https://raw.githubusercontent.com/hacl-star/hacl-star/8ba599b2f6c9701b3dc961db895b0856a2210f76/LICENSE",
+      "derivation": "verbatim"
+    },
+    {
+      "file": "NOTICE.SQLite",
+      "sha256": "85806d613cfda5901f848b3b5b4b04396c8c64e89c97c0af3706c42b0c44bb47",
+      "bytes": 1485,
+      "sourceUrl": "https://www.sqlite.org/2025/sqlite-autoconf-3500400.tar.gz",
+      "derivation": "Verbatim initial public-domain notice block from sqlite3.h",
+      "sourceMember": "sqlite-autoconf-3500400/sqlite3.h"
+    },
+    {
+      "file": "sources/certifi-2026.7.22.tar.gz",
+      "sha256": "741e2c3b351ddf169a738da9f2c048608ff7f2c5cc02f1ebc6b118bb090d5d55",
+      "bytes": 138112,
+      "sourceUrl": "https://files.pythonhosted.org/packages/a3/c2/24167ea9858356b47a87a50d39908bfdb72ceeefe0041586e704e5376b3a/certifi-2026.7.22.tar.gz",
+      "derivation": "verbatim"
+    },
+    {
+      "file": "CPYTHON-CORE-NOTICES.txt",
+      "sha256": "768c3fd0b719422de40569be2619ad00d728af718d4f30a62ca03ffd2cd5a67b",
+      "bytes": 60766,
+      "sourceUrl": "https://www.python.org/ftp/python/3.14.8/Python-3.14.8.tar.xz",
+      "derivation": "Unique original copyright/permission/license C comment blocks from Python, Objects, Modules and Include; excludes test/example/benchmark/platform-only source and separately noticed HACL, mimalloc and Expat; source paths retained"
+    }
+  ]
+}

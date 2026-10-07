@@ -3,10 +3,14 @@ import { app, BrowserWindow, dialog, shell } from 'electron';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { startBridge } from './server.mjs';
+import { createCaptionHelper } from './caption-helper.mjs';
+import { createCaptionService } from './caption-service.mjs';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const PORT = 47831; // Stable origin preserves the local bookshelf between launches.
-let server, window;
+let server, window, captionHelper;
+const startupAbort=new AbortController();
+let quitting=false,quitReady=false;
 function ordinaryWebLink(value) {
   try { const url = new URL(value); return ['https:','http:'].includes(url.protocol) && !url.username && !url.password; } catch { return false; }
 }
@@ -15,10 +19,29 @@ if (!singleInstance) app.quit();
 else {
   app.on('second-instance',()=>{ if (window) { if (window.isMinimized()) window.restore(); window.focus(); } });
   app.on('window-all-closed',()=>app.quit());
-  app.on('before-quit',()=>server?.shutdown());
+  app.on('before-quit',event=>{
+    startupAbort.abort();
+    if(quitReady)return;
+    if(!captionHelper){server?.shutdown();return;}
+    event.preventDefault();
+    if(quitting)return;
+    quitting=true;server?.shutdown();
+    const finish=()=>{if(quitReady)return;quitReady=true;app.quit();};
+    const failSafe=setTimeout(finish,5000);
+    Promise.resolve().then(()=>captionHelper.shutdown()).catch(()=>{}).finally(()=>{clearTimeout(failSafe);finish();});
+  });
   app.whenReady().then(async()=>{
+    if(startupAbort.signal.aborted)return;
     const readerDirectory = app.isPackaged ? path.join(process.resourcesPath,'reader') : path.resolve(ROOT,'../reader');
-    server = await startBridge({port:PORT,readerDirectory});
+    let captionService=null;
+    if(app.isPackaged){
+      captionHelper=createCaptionHelper({resourcesPath:process.resourcesPath});
+      const status=await captionHelper.status({signal:startupAbort.signal});
+      if(startupAbort.signal.aborted)return;
+      if(status.ready)captionService=createCaptionService({helper:captionHelper,readerDirectory,enabledProviders:['x']});
+    }
+    server = await startBridge({port:PORT,readerDirectory,captionService});
+    if(startupAbort.signal.aborted){server.shutdown();return;}
     const origin = `http://127.0.0.1:${PORT}`;
     window = new BrowserWindow({width:1280,height:880,minWidth:780,minHeight:620,show:process.env.COCONUT_SMOKE_TEST !== '1',title:'Coconut',
       webPreferences:{nodeIntegration:false,contextIsolation:true,sandbox:true,webSecurity:true,allowRunningInsecureContent:false,webviewTag:false}});
@@ -40,13 +63,14 @@ else {
         return {reader:!!document.querySelector('#import'),
           scripts:typeof Coconut==='object',isolated:typeof require==='undefined'&&typeof process==='undefined',
           bridge:health.runtime==='desktop-bridge'&&health.capabilities.local_agents===true,
-          pythonDisabled:health.capabilities.media_import===false};
+          asrDisabled:health.capabilities.media_import===false};
       })()`);
       if (!Object.values(result).every(Boolean)) throw new Error('Desktop smoke test failed: '+JSON.stringify(result));
-      console.log('Coconut desktop smoke passed: packaged reader, isolated renderer and zero-Python bridge');
+      console.log('Coconut desktop smoke passed: packaged reader, isolated renderer and no user-installed Python');
       app.quit();
     }
   }).catch(error=>{
+    if(startupAbort.signal.aborted)return;
     const message = error.code === 'EADDRINUSE' ? `本机端口 ${PORT} 已被占用。请关闭另一份 Coconut 后重试；不会自动改地址，以免书架看起来丢失。` : 'Coconut 启动未完成。请检查安装包，稍后重试。';
     if (process.env.COCONUT_SMOKE_TEST === '1') console.error(error.message); else dialog.showErrorBox('Coconut',message);
     server?.shutdown();

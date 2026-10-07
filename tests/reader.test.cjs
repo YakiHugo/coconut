@@ -413,3 +413,8 @@ test('attachment rejects independently valid files whose combined recovery JSON 
  const size=value=>Buffer.byteLength(JSON.stringify(value,null,2));assert.ok(size(project)<limit);assert.ok(size(text)<limit);
  const before=JSON.stringify(project);assert.throws(()=>C.attachProjectTranscript(project,text),/超过15MB/);assert.equal(JSON.stringify(project),before);
 });
+
+
+test('WebVTT metadata is excluded while similarly named cue identifiers remain source text',()=>{
+ const value='WEBVTT\n\nNOTE comment\n00:00.000 --> 00:00.500\nNot spoken\n\nSTYLE\n00:00.000 --> 00:00.500\nNot spoken CSS\n\nREGION\n00:00.000 --> 00:00.500\nNot spoken region\n\nNOTEworthy\n00:00.500 --> 00:01.000\nActual cue\n';const doc=parse(value,'source.vtt');assert.equal(doc.segments.length,1);assert.equal(doc.segments[0].text,'Actual cue');assert.equal(doc.segments[0].start,.5);
+});

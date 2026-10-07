@@ -1,0 +1,675 @@
+{
+  "schemaVersion": 1,
+  "pythonVersion": "3.14.8",
+  "distribution": "python.org standard GIL universal2 macOS installer, repackaged by actions/python-versions",
+  "upstreamInstaller": {
+    "url": "https://www.python.org/ftp/python/3.14.8/python-3.14.8-macos11.pkg",
+    "bytes": 75240265,
+    "sha256": "507fc086c5c006ff875d344a75b4e67b8fb3c401f1bc4908c6250adb673d4907"
+  },
+  "inspectedActionsArchive": {
+    "url": "https://github.com/actions/python-versions/releases/download/3.14.8-36806082737/python-3.14.8-darwin-arm64.tar.gz",
+    "bytes": 74568814,
+    "sha256": "88379ff8be11ec05986bf384205f00092b4b46975f40321d8567a16a7c2e8d5f",
+    "setupScript": {
+      "member": "./setup.sh",
+      "sha256": "95dbe883496970bcaa670c1b131e664e14bf804d54cafdd11949e3d6a32cd0b6",
+      "bytes": 3613
+    }
+  },
+  "cpythonSource": {
+    "url": "https://www.python.org/ftp/python/3.14.8/Python-3.14.8.tar.xz",
+    "bytes": 24130644,
+    "sha256": "c2215904f02b175596dc49351585104f4bc20341e1c47378b26a2c274360ce73"
+  },
+  "observedInstallerComponents": {
+    "OpenSSL": "3.5.9",
+    "XZ": "5.2.3",
+    "SQLite": "3.50.4",
+    "libmpdec": "4.0.1",
+    "Zstandard": "1.5.7",
+    "Tcl": "9.0.4",
+    "Tk": "9.0.4",
+    "NCurses": "6.5"
+  },
+  "inventoryNote": "This records inspected BUILD INPUTS, not the final helper SBOM. Static liblzma/libmpdec/SQLite occur in _lzma/_decimal/_sqlite3 even when no matching dylib exists. Exclude unneeded modules; validate the final archive and Mach-O load commands on each native build. Tcl/Tk/ncurses are unapproved and must be absent.",
+  "nativeInputVerification": {
+    "frameworkRoot": "/Library/Frameworks/Python.framework/Versions/3.14",
+    "pathBase": "Resolve symlinks first; keys are relative to this real framework root. Never compare after architecture thinning, Mach-O load-command rewriting or code signing.",
+    "hashAlgorithm": "SHA-256",
+    "scope": "The approved standard-GIL universal2 Python 3.14.8 installer inputs only. Entry presence is provenance coverage, not proof the final minimal build needs or includes that component. Final module allowlists and exclusions still apply.",
+    "unknownInput": "Reject any Python/native-library input not present in expectedNativeInputs. PyInstaller bootloader inputs must be checked against their own pinned wheel, not this table.",
+    "systemLibraries": "macOS system dylibs/frameworks remain external OS dependencies; do not copy them into the helper.",
+    "setupBehavior": "The inspected release setup.sh installs the untouched python.org pkg, creates toolcache/interpreter symlinks, changes modes and upgrades pip/certifi. The package postinstall scripts compile Python bytecode and adjust modes. Neither script rewrites native Mach-O file bytes. Hash resolved framework files before PyInstaller transforms them; do not hash the mutable whole installation or system certificate links."
+  },
+  "expectedNativeInputs": {
+    "Python": {
+      "sha256": "8c132821ac0372309f5cd205a9401fe1e47d8daf80d96c9c078cc4e34a6e1cbe",
+      "bytes": 14797040,
+      "architectures": [
+        "x86_64",
+        "arm64"
+      ],
+      "component": "CPython"
+    },
+    "lib/libcrypto.3.dylib": {
+      "sha256": "37f8cf4275f9799aadc992f026239216d650f0f456da9f97d742b4795b398e3a",
+      "bytes": 10773888,
+      "architectures": [
+        "x86_64",
+        "arm64"
+      ],
+      "component": "OpenSSL"
+    },
+    "lib/libssl.3.dylib": {
+      "sha256": "4cac9290deb102187429f6fb90760dfebcf8a4b030f0033503563baff41366aa",
+      "bytes": 2113680,
+      "architectures": [
+        "x86_64",
+        "arm64"
+      ],
+      "component": "OpenSSL"
+    },
+    "lib/libzstd.1.5.7.dylib": {
+      "sha256": "6a952c4afb1ccce0ea33e788bd9f516b897626c28821b95957c52c92f0007c17",
+      "bytes": 4325776,
+      "architectures": [
+        "x86_64",
+        "arm64"
+      ],
+      "component": "Zstandard"
+    },
+    "lib/python3.14/lib-dynload/_asyncio.cpython-314-darwin.so": {
+      "sha256": "2142db807b2cf8fcdc5b4ef3d7e4241048786d468987eab9697f3f6c1f40507a",
+      "bytes": 262384,
+      "architectures": [
+        "x86_64",
+        "arm64"
+      ],
+      "component": "CPython"
+    },
+    "lib/python3.14/lib-dynload/_bisect.cpython-314-darwin.so": {
+      "sha256": "72e1a61f3c28aa681b4a190f50a979cdad600daed57ef659b3da3489ad4e870a",
+      "bytes": 137728,
+      "architectures": [
+        "x86_64",
+        "arm64"
+      ],
+      "component": "CPython"
+    },
+    "lib/python3.14/lib-dynload/_blake2.cpython-314-darwin.so": {
+      "sha256": "7059739ae3949703bc98dc16d19ee7c9797633d72dc488cbb30935bc8a8a951b",
+      "bytes": 190112,
+      "architectures": [
+        "x86_64",
+        "arm64"
+      ],
+      "component": "CPython"
+    },
+    "lib/python3.14/lib-dynload/_bz2.cpython-314-darwin.so": {
+      "sha256": "8457a5b0599a320749669509edf1c162d304ec194d79cb99f8fe8392bb9f50c6",
+      "bytes": 140416,
+      "architectures": [
+        "x86_64",
+        "arm64"
+      ],
+      "component": "CPython"
+    },
+    "lib/python3.14/lib-dynload/_codecs_cn.cpython-314-darwin.so": {
+      "sha256": "6927694587bbf0535fa211c5e69e23dab532e07ab827d79314e77e40cf6bc163",
+      "bytes": 384000,
+      "architectures": [
+        "x86_64",
+        "arm64"
+      ],
+      "component": "CPython"
+    },
+    "lib/python3.14/lib-dynload/_codecs_hk.cpython-314-darwin.so": {
+      "sha256": "ee1c34a5dd9cc0cb19b619aeb949a33cb0e254d7b29c14507e56a67157612e79",
+      "bytes": 383568,
+      "architectures": [
+        "x86_64",
+        "arm64"
+      ],
+      "component": "CPython"
+    },
+    "lib/python3.14/lib-dynload/_codecs_iso2022.cpython-314-darwin.so": {
+      "sha256": "ff8cf8e70abdc6049707743345de10e7dee08d25548670c55aee8136ec783397",
+      "bytes": 141616,
+      "architectures": [
+        "x86_64",
+        "arm64"
+      ],
+      "component": "CPython"
+    },
+    "lib/python3.14/lib-dynload/_codecs_jp.cpython-314-darwin.so": {
+      "sha256": "3b9be95b33df7d9b9da4d876be2526d185fb707b3163b031a739e577b6d3720c",
+      "bytes": 598320,
+      "architectures": [
+        "x86_64",
+        "arm64"
+      ],
+      "component": "CPython"
+    },
+    "lib/python3.14/lib-dynload/_codecs_kr.cpython-314-darwin.so": {
+      "sha256": "87ef8ac593cd68c70a6df45303d955c3dee28c947d11731331a05fe4e68a8dde",
+      "bytes": 351056,
+      "architectures": [
+        "x86_64",
+        "arm64"
+      ],
+      "component": "CPython"
+    },
+    "lib/python3.14/lib-dynload/_codecs_tw.cpython-314-darwin.so": {
+      "sha256": "42517e72394e49965deab8cade0c92667f77ab89329c645014066c2ea2ebc24e",
+      "bytes": 333840,
+      "architectures": [
+        "x86_64",
+        "arm64"
+      ],
+      "component": "CPython"
+    },
+    "lib/python3.14/lib-dynload/_csv.cpython-314-darwin.so": {
+      "sha256": "cf547097ee6895ddc9d7e1536632318a5441161b1e58d41fe347dbb194ba3742",
+      "bytes": 176384,
+      "architectures": [
+        "x86_64",
+        "arm64"
+      ],
+      "component": "CPython"
+    },
+    "lib/python3.14/lib-dynload/_ctypes.cpython-314-darwin.so": {
+      "sha256": "d0bdf6338b5a8402820abca11140bc0550ddbf46f8740db675e4f6e3f0ed4b4a",
+      "bytes": 416928,
+      "architectures": [
+        "x86_64",
+        "arm64"
+      ],
+      "component": "CPython"
+    },
+    "lib/python3.14/lib-dynload/_dbm.cpython-314-darwin.so": {
+      "sha256": "5b373949a9254be22397df0e2061255c8142baa6a59c8d24309358fdadd3bf91",
+      "bytes": 140336,
+      "architectures": [
+        "x86_64",
+        "arm64"
+      ],
+      "component": "CPython"
+    },
+    "lib/python3.14/lib-dynload/_decimal.cpython-314-darwin.so": {
+      "sha256": "ec6352a40d0364359a5450ebbf858c7d3422869c2227cda605aca238d74a11b9",
+      "bytes": 733696,
+      "architectures": [
+        "x86_64",
+        "arm64"
+      ],
+      "component": "CPython + libmpdec"
+    },
+    "lib/python3.14/lib-dynload/_elementtree.cpython-314-darwin.so": {
+      "sha256": "5d0c086c279298ba43de15b3212b16ad3d7bf9a84f19d1ca831d9c046b13f245",
+      "bytes": 257968,
+      "architectures": [
+        "x86_64",
+        "arm64"
+      ],
+      "component": "CPython + Expat"
+    },
+    "lib/python3.14/lib-dynload/_hashlib.cpython-314-darwin.so": {
+      "sha256": "767a7ea17431b5cfc5acad9400e747ac0a2f221de18385532fa91fcecc0f91b1",
+      "bytes": 219344,
+      "architectures": [
+        "x86_64",
+        "arm64"
+      ],
+      "component": "CPython"
+    },
+    "lib/python3.14/lib-dynload/_heapq.cpython-314-darwin.so": {
+      "sha256": "8cf2f01ec03d06b5c2e5e2072643b0ca7dc7b6c1ef3f8d6fb3d52e38c703fc79",
+      "bytes": 137296,
+      "architectures": [
+        "x86_64",
+        "arm64"
+      ],
+      "component": "CPython"
+    },
+    "lib/python3.14/lib-dynload/_hmac.cpython-314-darwin.so": {
+      "sha256": "1d6031b2b7be255c5f0c6d375f3048933e3a1cdc092e0e17b05fd68add9f1c2a",
+      "bytes": 317584,
+      "architectures": [
+        "x86_64",
+        "arm64"
+      ],
+      "component": "CPython"
+    },
+    "lib/python3.14/lib-dynload/_interpchannels.cpython-314-darwin.so": {
+      "sha256": "3b9a56d05fd9a07a87d125b6e4ccae1538f9bb3b9ad728bf8ecab1fac6e69b12",
+      "bytes": 178688,
+      "architectures": [
+        "x86_64",
+        "arm64"
+      ],
+      "component": "CPython"
+    },
+    "lib/python3.14/lib-dynload/_interpqueues.cpython-314-darwin.so": {
+      "sha256": "e086b397ffd3488de78006f96037d08c5b615fa70d37d56fe684965e9fb6469e",
+      "bytes": 161104,
+      "architectures": [
+        "x86_64",
+        "arm64"
+      ],
+      "component": "CPython"
+    },
+    "lib/python3.14/lib-dynload/_interpreters.cpython-314-darwin.so": {
+      "sha256": "53f2f38123c3b4521225dd83919faf319642065278cad5675d30a0355cb0df05",
+      "bytes": 180608,
+      "architectures": [
+        "x86_64",
+        "arm64"
+      ],
+      "component": "CPython"
+    },
+    "lib/python3.14/lib-dynload/_json.cpython-314-darwin.so": {
+      "sha256": "6cb8994f41c1816a13ef3b25efd71778645fcb3a2503f68c20b3ea2754c9641e",
+      "bytes": 174944,
+      "architectures": [
+        "x86_64",
+        "arm64"
+      ],
+      "component": "CPython"
+    },
+    "lib/python3.14/lib-dynload/_lsprof.cpython-314-darwin.so": {
+      "sha256": "5f057e6839e41a545b81abb41233bd426c071e5000901249b72eba732575af2b",
+      "bytes": 158080,
+      "architectures": [
+        "x86_64",
+        "arm64"
+      ],
+      "component": "CPython"
+    },
+    "lib/python3.14/lib-dynload/_lzma.cpython-314-darwin.so": {
+      "sha256": "817b3db82435cb5b02f76121a4b61b73f5a9b62d4cc8036ac7c2b726e3ef7ef5",
+      "bytes": 537024,
+      "architectures": [
+        "x86_64",
+        "arm64"
+      ],
+      "component": "CPython + XZ/liblzma"
+    },
+    "lib/python3.14/lib-dynload/_md5.cpython-314-darwin.so": {
+      "sha256": "8ed7f333906829c827f489ee208b08578d815077637c9513a4dd83cbce83bd5d",
+      "bytes": 139280,
+      "architectures": [
+        "x86_64",
+        "arm64"
+      ],
+      "component": "CPython"
+    },
+    "lib/python3.14/lib-dynload/_multibytecodec.cpython-314-darwin.so": {
+      "sha256": "2f620e16f9c913363d811063d51565f32d4ba2e5e560070eab0021914432ae81",
+      "bytes": 200144,
+      "architectures": [
+        "x86_64",
+        "arm64"
+      ],
+      "component": "CPython"
+    },
+    "lib/python3.14/lib-dynload/_multiprocessing.cpython-314-darwin.so": {
+      "sha256": "d404f9e81f884905e73fa874cb7e499b52a5afb4787dbfb55a23cd952fb77648",
+      "bytes": 141376,
+      "architectures": [
+        "x86_64",
+        "arm64"
+      ],
+      "component": "CPython"
+    },
+    "lib/python3.14/lib-dynload/_pickle.cpython-314-darwin.so": {
+      "sha256": "7f547e6e19b7a6778b62a8bac68eb3d857f6b5b5fcdbd7e091f782ae4acea1d6",
+      "bytes": 357808,
+      "architectures": [
+        "x86_64",
+        "arm64"
+      ],
+      "component": "CPython"
+    },
+    "lib/python3.14/lib-dynload/_posixshmem.cpython-314-darwin.so": {
+      "sha256": "d3623fbcb3b1fbe454cb6de60980d62dfce0980ddbbd421fdc2c75faed532aa7",
+      "bytes": 135936,
+      "architectures": [
+        "x86_64",
+        "arm64"
+      ],
+      "component": "CPython"
+    },
+    "lib/python3.14/lib-dynload/_posixsubprocess.cpython-314-darwin.so": {
+      "sha256": "b5a5bd9c5db0a1c9148621f5b86b011b95c5e416dbb5fd6b9f772aaa5d2a9f13",
+      "bytes": 139168,
+      "architectures": [
+        "x86_64",
+        "arm64"
+      ],
+      "component": "CPython"
+    },
+    "lib/python3.14/lib-dynload/_queue.cpython-314-darwin.so": {
+      "sha256": "bf3503f108c590965d39694c1d80ffd50f41aff9be794e6ce61dadee315677a3",
+      "bytes": 139680,
+      "architectures": [
+        "x86_64",
+        "arm64"
+      ],
+      "component": "CPython"
+    },
+    "lib/python3.14/lib-dynload/_random.cpython-314-darwin.so": {
+      "sha256": "181504065291b19da634f60736c16e2427793e44527a3fae4896377dae3b3438",
+      "bytes": 138976,
+      "architectures": [
+        "x86_64",
+        "arm64"
+      ],
+      "component": "CPython"
+    },
+    "lib/python3.14/lib-dynload/_remote_debugging.cpython-314-darwin.so": {
+      "sha256": "ebf508fb222fd6751fb4eeb97aa720d6b775a3ecc0ddde3b1d5fe6f3eba72c86",
+      "bytes": 258784,
+      "architectures": [
+        "x86_64",
+        "arm64"
+      ],
+      "component": "CPython"
+    },
+    "lib/python3.14/lib-dynload/_scproxy.cpython-314-darwin.so": {
+      "sha256": "98106967d40e6929ee130a76dd543f983a6afe3b4d6f33c9f932807083cbaa49",
+      "bytes": 137456,
+      "architectures": [
+        "x86_64",
+        "arm64"
+      ],
+      "component": "CPython"
+    },
+    "lib/python3.14/lib-dynload/_sha1.cpython-314-darwin.so": {
+      "sha256": "a9acf84f2295f6246d78fdcfa233e8a796332c0815994c4a901dc6c6a32c330a",
+      "bytes": 139200,
+      "architectures": [
+        "x86_64",
+        "arm64"
+      ],
+      "component": "CPython"
+    },
+    "lib/python3.14/lib-dynload/_sha2.cpython-314-darwin.so": {
+      "sha256": "919c4924b616ef750887f7c92414aff5ebce48ffe993228491912e2ef3a4d0d6",
+      "bytes": 191072,
+      "architectures": [
+        "x86_64",
+        "arm64"
+      ],
+      "component": "CPython"
+    },
+    "lib/python3.14/lib-dynload/_sha3.cpython-314-darwin.so": {
+      "sha256": "a0adaa4544deed30f3c75f93ad43daeefa1414d1d6e0b0c4853fa1c9a5abe0d7",
+      "bytes": 158608,
+      "architectures": [
+        "x86_64",
+        "arm64"
+      ],
+      "component": "CPython"
+    },
+    "lib/python3.14/lib-dynload/_socket.cpython-314-darwin.so": {
+      "sha256": "cbaecea5c2a026112b8b251402ad8ca0718afaf147248219c1c678b8e31497df",
+      "bytes": 273184,
+      "architectures": [
+        "x86_64",
+        "arm64"
+      ],
+      "component": "CPython"
+    },
+    "lib/python3.14/lib-dynload/_sqlite3.cpython-314-darwin.so": {
+      "sha256": "9f8a43742424b5a98616b9f0e07f9c6e26382261eaa6c62418cdb43b71e5de63",
+      "bytes": 2557712,
+      "architectures": [
+        "x86_64",
+        "arm64"
+      ],
+      "component": "CPython + SQLite"
+    },
+    "lib/python3.14/lib-dynload/_ssl.cpython-314-darwin.so": {
+      "sha256": "fab81ddc70572ac38f4846f2f08818fa2bedf80dfdc03ce138782dae0b7ed304",
+      "bytes": 483744,
+      "architectures": [
+        "x86_64",
+        "arm64"
+      ],
+      "component": "CPython"
+    },
+    "lib/python3.14/lib-dynload/_statistics.cpython-314-darwin.so": {
+      "sha256": "1d129a1e68387ac3b3211b54328af9816c59ffa47221b08833b3306bc829c340",
+      "bytes": 118416,
+      "architectures": [
+        "x86_64",
+        "arm64"
+      ],
+      "component": "CPython"
+    },
+    "lib/python3.14/lib-dynload/_struct.cpython-314-darwin.so": {
+      "sha256": "d72b30c229d649e19cb82aa5e3bcaff255957ea7be1f8db6c67d56f1f866abf4",
+      "bytes": 202720,
+      "architectures": [
+        "x86_64",
+        "arm64"
+      ],
+      "component": "CPython"
+    },
+    "lib/python3.14/lib-dynload/_uuid.cpython-314-darwin.so": {
+      "sha256": "31e0284c50ac96a7547b9098d09cfc5d3c6a1092afa45b1f9dd7691c54fb6f84",
+      "bytes": 118224,
+      "architectures": [
+        "x86_64",
+        "arm64"
+      ],
+      "component": "CPython"
+    },
+    "lib/python3.14/lib-dynload/_xxtestfuzz.cpython-314-darwin.so": {
+      "sha256": "8aaae574c982ee71a6ff0f174b8689d12e52ffe5cbdc413cd2b4c8773dc89d1f",
+      "bytes": 138192,
+      "architectures": [
+        "x86_64",
+        "arm64"
+      ],
+      "component": "CPython"
+    },
+    "lib/python3.14/lib-dynload/_zoneinfo.cpython-314-darwin.so": {
+      "sha256": "b2c033cbc5130fd084b4689f904eeb4378657b71dab75183576ee7602bef9756",
+      "bytes": 176384,
+      "architectures": [
+        "x86_64",
+        "arm64"
+      ],
+      "component": "CPython"
+    },
+    "lib/python3.14/lib-dynload/_zstd.cpython-314-darwin.so": {
+      "sha256": "c4d7bfba67b894ac21e9c11ff736eced75043c37b3ec67e9315f68799123dbd8",
+      "bytes": 219152,
+      "architectures": [
+        "x86_64",
+        "arm64"
+      ],
+      "component": "CPython + Zstandard"
+    },
+    "lib/python3.14/lib-dynload/array.cpython-314-darwin.so": {
+      "sha256": "07e21427c349082134a53ddec1007a6478e28f04b70770d02fa9846024e7e097",
+      "bytes": 236880,
+      "architectures": [
+        "x86_64",
+        "arm64"
+      ],
+      "component": "CPython"
+    },
+    "lib/python3.14/lib-dynload/binascii.cpython-314-darwin.so": {
+      "sha256": "7b63c17c84d8af4ea6601e50b715f68f72fb23a6177be3f27681ccd17a9ae7f2",
+      "bytes": 156416,
+      "architectures": [
+        "x86_64",
+        "arm64"
+      ],
+      "component": "CPython"
+    },
+    "lib/python3.14/lib-dynload/cmath.cpython-314-darwin.so": {
+      "sha256": "66b697b8d5608d28dbb09eb9f2b8906411376c774e115e719ed342770db6d51b",
+      "bytes": 173824,
+      "architectures": [
+        "x86_64",
+        "arm64"
+      ],
+      "component": "CPython"
+    },
+    "lib/python3.14/lib-dynload/fcntl.cpython-314-darwin.so": {
+      "sha256": "cb39a40d9b2cf30fd16eaeabad299c72de0794faaa357806046220bcdb0e41c8",
+      "bytes": 137680,
+      "architectures": [
+        "x86_64",
+        "arm64"
+      ],
+      "component": "CPython"
+    },
+    "lib/python3.14/lib-dynload/grp.cpython-314-darwin.so": {
+      "sha256": "ebed1d4bf0aef6472f4001119c3ee42ef0989738caf1a0beb662f52f6c56d596",
+      "bytes": 137920,
+      "architectures": [
+        "x86_64",
+        "arm64"
+      ],
+      "component": "CPython"
+    },
+    "lib/python3.14/lib-dynload/math.cpython-314-darwin.so": {
+      "sha256": "bac9c9fd3f50e1fd5fc0858c20104e2beb3bcb630f815cb342f7827634d3b142",
+      "bytes": 232048,
+      "architectures": [
+        "x86_64",
+        "arm64"
+      ],
+      "component": "CPython"
+    },
+    "lib/python3.14/lib-dynload/mmap.cpython-314-darwin.so": {
+      "sha256": "2852a3ab80718b394bd60133266e5e0f344d989312913d98cdd93f5d0d9d35d7",
+      "bytes": 159184,
+      "architectures": [
+        "x86_64",
+        "arm64"
+      ],
+      "component": "CPython"
+    },
+    "lib/python3.14/lib-dynload/pyexpat.cpython-314-darwin.so": {
+      "sha256": "9a57bba291ad4562c4e7a1a697db2439fd7902b78aead94d1e691c197fe58ab4",
+      "bytes": 548304,
+      "architectures": [
+        "x86_64",
+        "arm64"
+      ],
+      "component": "CPython + Expat"
+    },
+    "lib/python3.14/lib-dynload/resource.cpython-314-darwin.so": {
+      "sha256": "25983c9c9eceb0ecfe622e879d9dd07f018d2f47ad3e08be745df8e37c1a574b",
+      "bytes": 138256,
+      "architectures": [
+        "x86_64",
+        "arm64"
+      ],
+      "component": "CPython"
+    },
+    "lib/python3.14/lib-dynload/select.cpython-314-darwin.so": {
+      "sha256": "869526ae04c267db591102c6be331590c42272da7bb72b6940d92433c071000f",
+      "bytes": 178048,
+      "architectures": [
+        "x86_64",
+        "arm64"
+      ],
+      "component": "CPython"
+    },
+    "lib/python3.14/lib-dynload/syslog.cpython-314-darwin.so": {
+      "sha256": "8e1b5d6b8aa899b8a12761e62c7f350c1ae59a44702b8f6e21e78fd775466e52",
+      "bytes": 137184,
+      "architectures": [
+        "x86_64",
+        "arm64"
+      ],
+      "component": "CPython"
+    },
+    "lib/python3.14/lib-dynload/termios.cpython-314-darwin.so": {
+      "sha256": "ca65654e49eb451e4bd669eb57934c36ab7911af5f36898f37789f3fa122497c",
+      "bytes": 139472,
+      "architectures": [
+        "x86_64",
+        "arm64"
+      ],
+      "component": "CPython"
+    },
+    "lib/python3.14/lib-dynload/unicodedata.cpython-314-darwin.so": {
+      "sha256": "6343d330eef9f7dabff85c34c4001d2c89baf402656a7301de5babb12940da5c",
+      "bytes": 1603904,
+      "architectures": [
+        "x86_64",
+        "arm64"
+      ],
+      "component": "CPython"
+    },
+    "lib/python3.14/lib-dynload/zlib.cpython-314-darwin.so": {
+      "sha256": "3132ccdf1cf2f71646a7521bf3d40d58ab3b5101d9b20c69dca13dbe37f55d39",
+      "bytes": 197296,
+      "architectures": [
+        "x86_64",
+        "arm64"
+      ],
+      "component": "CPython"
+    }
+  },
+  "expectedInterpreterInputs": {
+    "Resources/Python.app/Contents/MacOS/Python": {
+      "sha256": "714b168a4abedf83f40677a356336f6ab9e289f9080a7c9d3e35df1183971f97",
+      "bytes": 118272,
+      "architectures": [
+        "x86_64",
+        "arm64"
+      ],
+      "component": "CPython"
+    },
+    "bin/python3.14": {
+      "sha256": "20394aac11379defc6864ba50ea5fc915ac930b2144dd7336e3fc53ec4c7dc20",
+      "bytes": 135696,
+      "architectures": [
+        "x86_64",
+        "arm64"
+      ],
+      "component": "CPython"
+    }
+  },
+  "certifiInput": {
+    "version": "2026.7.22",
+    "sourceArchive": "sources/certifi-2026.7.22.tar.gz",
+    "sourceArchiveSha256": "741e2c3b351ddf169a738da9f2c048608ff7f2c5cc02f1ebc6b118bb090d5d55",
+    "expectedSourceFiles": {
+      "certifi/__init__.py": {
+        "sha256": "7a52e5f4205f9b3d12a31898ceaa7e3f6837d19cc230700bcae1a9d91d1486c1",
+        "bytes": 94
+      },
+      "certifi/__main__.py": {
+        "sha256": "c410688fdd394d45812d118034e71fee88ba7beddd30fe1c1281bd3b232cd758",
+        "bytes": 243
+      },
+      "certifi/cacert.pem": {
+        "sha256": "9cc2a774b5198dcff14d9be1e66091f538975d867ce029a96bce15a55dfd730f",
+        "bytes": 240216
+      },
+      "certifi/core.py": {
+        "sha256": "5c55f2727746e697f7edac9e17c377d8752e0da7ecca191531b3b80403d61dad",
+        "bytes": 3394
+      },
+      "certifi/tests/__init__.py": {
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "bytes": 0
+      },
+      "certifi/tests/test_certify.py": {
+        "sha256": "7c179d1edf37f7e912b133663735fb46c6338d5d0e5f8915d11c3bc287d227b8",
+        "bytes": 467
+      }
+    },
+    "verification": "Hash the installed build-venv source .py and cacert.pem files before freezing. Keep the exact unchanged source archive beside the shipped licenses. Bytecode has separate final-artifact hashes."
+  }
+}

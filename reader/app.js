@@ -143,6 +143,7 @@ async function add(doc, canCommit = null, reuseAudioSource = false) {
 	return saved;
 }
 function showWorkspace(next) {
+ if(next!==workspace)window.dispatchEvent(new CustomEvent("coconut-workspace-change",{detail:{workspace:next}}));
  if(next!=="read"&&typeof closeSummaryRequest==="function")closeSummaryRequest(false);
  if(next!=="add")$("podcast-results")?.querySelectorAll("audio,video").forEach(player=>player.pause());
  if(next!=="read"){stopRepeating();$("source-media").querySelectorAll("audio,video").forEach(player=>player.pause());}

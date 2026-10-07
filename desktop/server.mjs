@@ -8,15 +8,16 @@ import { createProviders } from './providers.mjs';
 import { createTranslator } from './translation.mjs';
 import { createPodcastSources } from './podcast-sources.mjs';
 
-export const CAPABILITIES = Object.freeze({reader:true,local_agents:true,subscription_ask:true,subscription_translation:true,media_import:false,local_translation:false,podcast_import:true});
+export const CAPABILITIES = Object.freeze({reader:true,local_agents:true,subscription_ask:true,subscription_translation:true,media_import:false,local_translation:false,podcast_import:true,caption_import:false});
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const ASSETS = new Map([['/','index.html'],...['index.html','app.js','summary.js','core.js','jobs.js','language.js','podcasts.js','style.css'].map(name=>['/'+name,name])]);
 const MIME = {'.html':'text/html; charset=utf-8','.js':'text/javascript; charset=utf-8','.css':'text/css; charset=utf-8'};
 const MAX_BODY = 1024 * 1024;
 export const CSP = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self'; img-src 'self' data: blob:; media-src 'self' blob:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'";
 
-export function createBridge({readerDirectory = path.resolve(ROOT,'../reader'), providers = createProviders(), podcastSources = createPodcastSources()} = {}) {
+export function createBridge({readerDirectory = path.resolve(ROOT,'../reader'), providers = createProviders(), podcastSources = createPodcastSources(), captionService = null} = {}) {
   const translate = createTranslator(providers);
+  const capabilities=Object.freeze({...CAPABILITIES,caption_import:captionService?.available===true});
   const active = new Set();
   const server = http.createServer(async (req,res) => {
     for (const [key,value] of Object.entries({'X-Content-Type-Options':'nosniff','Referrer-Policy':'no-referrer','Cache-Control':'no-store',
@@ -36,8 +37,8 @@ export function createBridge({readerDirectory = path.resolve(ROOT,'../reader'), 
     res.on('close',()=>{ if (!res.writableEnded) controller.abort(); active.delete(controller); });
     try {
       if (req.method === 'GET' || req.method === 'HEAD') {
-        if (pathname === '/api/health') return json(200,{local_worker:false,runtime:'desktop-bridge',paid_processing:false,max_upload_bytes:0,capabilities:CAPABILITIES});
-        if (pathname === '/api/language-tools' && req.method === 'GET') return json(200,{translation_models:[],local_translation:false,capabilities:CAPABILITIES,
+        if (pathname === '/api/health') return json(200,{local_worker:false,runtime:'desktop-bridge',paid_processing:false,max_upload_bytes:0,capabilities});
+        if (pathname === '/api/language-tools' && req.method === 'GET') return json(200,{translation_models:[],local_translation:false,capabilities,
           ai:{codex:await providers.status('codex',{signal:controller.signal}),claude:await providers.status('claude',{signal:controller.signal})}});
         if (pathname === '/api/jobs') return json(501,{error:'轻量版不提供处理队列，请重新检查本地服务能力'});
         if (!ASSETS.has(pathname)) return json(404,{error:'Not found'});
@@ -47,7 +48,7 @@ export function createBridge({readerDirectory = path.resolve(ROOT,'../reader'), 
       if (req.method !== 'POST') return json(405,{error:'Method not allowed'});
       // Cross-site HTML forms and opaque-origin pages must never start a local CLI.
       if (req.headers.origin !== origin) return json(403,{error:'发送请求必须来自此本机阅读器'});
-      if (!['/api/ask','/api/translate-subscription','/api/podcasts/discover','/api/podcasts/import','/api/podcasts/media'].includes(pathname)) return json(501,{error:'轻量版未启用视频站下载、ASR 或离线翻译。可使用公开播客源、字幕或本地音视频；完整本地处理服务为可选高级功能。'});
+      if (!['/api/ask','/api/translate-subscription','/api/podcasts/discover','/api/podcasts/import','/api/podcasts/media','/api/captions/import'].includes(pathname)) return json(501,{error:'轻量版未启用视频站下载、ASR 或离线翻译。可使用公开播客源、字幕或本地音视频；完整本地处理服务为可选高级功能。'});
       if (req.headers['content-type']?.split(';')[0] !== 'application/json') return json(400,{error:'Use application/json'});
       const declared = req.headers['content-length'];
       if (declared && (!/^\d+$/.test(declared) || Number(declared) > MAX_BODY)) { req.resume(); return json(413,{error:'请求过大'}); }
@@ -60,6 +61,10 @@ export function createBridge({readerDirectory = path.resolve(ROOT,'../reader'), 
       let data;
       try { data = JSON.parse(Buffer.concat(chunks).toString('utf8')); } catch { return json(400,{error:'请求 JSON 无效'}); }
       if (!data || typeof data !== 'object' || Array.isArray(data)) return json(400,{error:'请求 JSON 无效'});
+      if(pathname === '/api/captions/import'){
+        if(!capabilities.caption_import)return json(501,{error:'此版本尚未启用内置视频字幕获取，可导入已有字幕；不会启动识别或下载模型'});
+        return json(200,await captionService.importCaption(data,{signal:controller.signal}));
+      }
       if(pathname === '/api/podcasts/discover') return json(200,await podcastSources.discover(data,{signal:controller.signal}));
       if(pathname === '/api/podcasts/import') return json(200,await podcastSources.importEpisode(data,{signal:controller.signal}));
       if(pathname === '/api/podcasts/media') {

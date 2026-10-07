@@ -46,7 +46,7 @@ def parse_subtitles(text: str, extension: str) -> list[dict]:
     segments = []
     for block in re.split(r'\n\s*\n', text):
         lines = block.strip().splitlines()
-        if not lines or lines[0].startswith(('NOTE', 'STYLE', 'REGION')):
+        if not lines or (extension == '.vtt' and re.match(r'^(?:WEBVTT|NOTE|STYLE|REGION)(?:[ \t]|$)', lines[0])):
             continue
         for index, line in enumerate(lines):
             if '-->' not in line:
