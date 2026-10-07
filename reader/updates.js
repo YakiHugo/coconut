@@ -4,6 +4,7 @@
  const panel=document.getElementById('app-updates'),status=document.getElementById('update-status');panel.hidden=false;
  const button=id=>document.getElementById(id);
  function render(s){
+  panel.querySelector('summary').textContent='应用更新'+(s.status==='ready'?' · 可安装':s.status==='downloading'?' · 下载中':s.status==='error'?' · 请重试':'');
   button('update-version').textContent=`Coconut ${s.version} · ${s.arch==='arm64'?'Apple Silicon':'Intel'}`;
   status.textContent=s.message;
   button('update-developer').checked=s.developer;
