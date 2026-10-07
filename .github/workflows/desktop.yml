@@ -76,6 +76,8 @@ jobs:
         run: npm ci --ignore-scripts
       - name: Run the real Electron reader without model calls
         run: COCONUT_SMOKE_TEST=1 desktop/node_modules/.bin/electron desktop
+      - name: Verify update UI, restart guards and note persistence in isolated Electron
+        run: node tests/desktop-updates-ui.mjs
       - name: Package unsigned arm64 and x64 apps
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'

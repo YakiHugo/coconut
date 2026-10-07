@@ -10,7 +10,7 @@ import { createPodcastSources } from './podcast-sources.mjs';
 
 export const CAPABILITIES = Object.freeze({reader:true,local_agents:true,subscription_ask:true,subscription_translation:true,media_import:false,local_translation:false,podcast_import:true,caption_import:false});
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
-const ASSETS = new Map([['/','index.html'],...['index.html','app.js','summary.js','core.js','jobs.js','language.js','podcasts.js','style.css'].map(name=>['/'+name,name])]);
+const ASSETS = new Map([['/','index.html'],...['index.html','app.js','summary.js','core.js','jobs.js','language.js','podcasts.js','updates.js','style.css'].map(name=>['/'+name,name])]);
 const MIME = {'.html':'text/html; charset=utf-8','.js':'text/javascript; charset=utf-8','.css':'text/css; charset=utf-8'};
 const MAX_BODY = 1024 * 1024;
 export const CSP = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self'; img-src 'self' data: blob:; media-src 'self' blob:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'";
