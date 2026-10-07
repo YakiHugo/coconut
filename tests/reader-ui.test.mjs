@@ -1612,3 +1612,21 @@ test('a newer unsupported source retires old podcast discovery and its late resu
   assert.equal($('podcast-results').textContent,'');assert.match($('source-route-status').textContent,/可选高级服务/);assert.equal($('cancel-podcast').hidden,true);
  }finally{await w.happyDOM.close();}
 });
+
+test('verified lightweight captions route opens original text without Python jobs, media or AI',async()=>{
+ const calls=[];const w=setup(undefined,async(url,options)=>{calls.push([url,options?.body]);return {ok:true,json:async()=>url.endsWith('health')?{local_worker:false,capabilities:{local_agents:true,podcast_import:true,caption_import:true}}:{status:'ready',document:{title:'Public original captions',language:'en',source_url:'https://x.com/example/status/123456',segments:[{id:'a',start:0,end:2,text:'Original source'}]}}};});try{
+  const $=id=>w.document.getElementById(id);await new Promise(r=>setTimeout(r,10));$('video-url').value='https://x.com/example/status/123456';await $('url-form').onsubmit({preventDefault(){}});
+  assert.equal($('reader-workspace').hidden,false);assert.equal($('title').textContent,'Public original captions');assert.equal($('summary-state').dataset.state,'empty');assert.equal(calls.filter(([path,body])=>body).length,1);assert.ok(calls.some(([path])=>path==='api/captions/import'));assert.equal(calls.some(([path])=>/api\/(jobs|ask|podcasts)/.test(path)),false);
+ }finally{await w.happyDOM.close();}
+});
+
+test('caption cancel, navigation and repeated submit cannot save stale output or duplicate requests',async()=>{
+ for(const action of ['cancel','navigate','repeat']){
+  let release,calls=0;const w=setup(undefined,async(url)=>url.endsWith('health')?{ok:true,json:async()=>({local_worker:false,capabilities:{local_agents:true,caption_import:true}})}:new Promise(resolve=>{calls++;release=()=>resolve({ok:true,json:async()=>({status:'ready',document:{title:'Late captions',segments:[{id:'late',start:0,end:1,text:'Late original'}]}})});}));try{
+   const $=id=>w.document.getElementById(id);await $('sample').onclick();$('add-content').click();await new Promise(r=>setTimeout(r,10));const before=w.localStorage.getItem('coconut-reader-v1');$('video-url').value='https://x.com/example/status/123456';const pending=$('url-form').onsubmit({preventDefault(){}});
+   if(action==='repeat'){await $('url-form').onsubmit({preventDefault(){}});assert.equal(calls,1);$('cancel-source').click();}
+   if(action==='cancel')$('cancel-source').click();if(action==='navigate')$('back-reading').click();release();await pending;
+   assert.equal(w.localStorage.getItem('coconut-reader-v1'),before);assert.equal($('cancel-source').hidden,true);assert.equal(calls,1);
+  }finally{await w.happyDOM.close();}
+ }
+});

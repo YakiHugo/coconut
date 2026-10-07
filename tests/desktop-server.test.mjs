@@ -102,3 +102,17 @@ test('source imports require same-origin JSON and route only to bounded podcast 
  }
  assert.deepEqual(calls.map(c=>c[0]),['discover','import','media']);assert.equal(calls[0][2].aborted,false);
 });
+
+test('caption acquisition is disabled unless the separately verified service is explicitly available',async t=>{
+ const {origin}=await setup(t);const health=await (await fetch(origin+'/api/health')).json();assert.equal(health.capabilities.caption_import,false);
+ const result=await fetch(origin+'/api/captions/import',{method:'POST',headers:{Origin:origin,'Content-Type':'application/json'},body:JSON.stringify({url:'https://x.com/example/status/123'})});assert.equal(result.status,501);
+});
+
+test('caption endpoint has the same origin, type and cancellation boundary without AI consent',async t=>{
+ let calls=0;const server=await startBridge({port:0,captionService:{available:true,importCaption:async(data,{signal})=>{calls++;assert.ok(signal instanceof AbortSignal);assert.equal(data.url,'https://x.com/example/status/123');return {status:'unavailable'};}}});
+ t.after(()=>new Promise(resolve=>{server.shutdown(resolve);}));const origin=`http://127.0.0.1:${server.address().port}`;
+ assert.equal((await (await fetch(origin+'/api/health')).json()).capabilities.caption_import,true);assert.equal(calls,0);
+ for(const Origin of ['https://attacker.example','null'])assert.equal((await fetch(origin+'/api/captions/import',{method:'POST',headers:{Origin,'Content-Type':'application/json'},body:'{}'})).status,403);
+ assert.equal((await fetch(origin+'/api/captions/import',{method:'POST',headers:{Origin:origin,'Content-Type':'text/plain'},body:'{}'})).status,400);assert.equal(calls,0);
+ const result=await fetch(origin+'/api/captions/import',{method:'POST',headers:{Origin:origin,'Content-Type':'application/json'},body:JSON.stringify({url:'https://x.com/example/status/123'})});assert.equal(result.status,200);assert.equal(calls,1);
+});
