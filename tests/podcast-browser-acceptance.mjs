@@ -21,7 +21,7 @@ try{
  const page=await browser.newPage();let external=0,errors=0;
  await page.route('**/*',async route=>{const u=new URL(route.request().url());if(u.origin===origin||u.protocol==='blob:')await route.continue();else{external++;await route.abort();}});page.on('pageerror',()=>errors++);page.setDefaultTimeout(15000);
  await page.goto(origin);await page.locator('#podcast-import').waitFor({state:'visible'});check('no_automatic_source_requests',calls.length===0);
- stage='discover';await page.locator('#podcast-url').fill(source.feed_url);await page.locator('#discover-podcast').click();await page.locator('.podcast-episode').first().waitFor();
+ stage='discover';await page.locator('#video-url').fill(source.feed_url);await page.locator('#process-url').click();await page.locator('.podcast-episode').first().waitFor();
  check('discovery_only',calls.join(',')==='discover');await page.locator('.podcast-episode button').first().click();await page.locator('#summary-workspace').waitFor({state:'visible'});
  check('no_fabricated_summary',await page.locator('#summary-state').textContent()==='未生成');check('no_automatic_media_download',calls.join(',')==='discover,import');
  await page.locator('#mode-transcript').click();await page.locator('#download-podcast-media').click();
@@ -31,7 +31,7 @@ try{
  const saved=await page.evaluate(()=>JSON.parse(localStorage.getItem('coconut-reader-v1')).documents[0]);check('source_and_notes_saved',saved.podcast_source.episode_id===source.episode_id&&saved.notes.two==='Browser source note');
  await page.reload();await page.locator('#mode-transcript').click();check('media_requires_explicit_reload',await page.locator('#source-media audio').count()===0);check('no_hidden_or_external_requests',calls.join(',')==='discover,import,media'&&external===0&&errors===0);
 
- stage='save_no_transcript_project';await page.locator('#add-content').click();await page.locator('#podcast-url').fill(source.feed_url);await page.locator('#discover-podcast').click();await page.locator('.podcast-episode').nth(1).locator('button').first().click();await page.locator('#audio-project').waitFor({state:'visible'});
+ stage='save_no_transcript_project';await page.locator('#add-content').click();await page.locator('#video-url').fill(source.feed_url);await page.locator('#process-url').click();await page.locator('.podcast-episode').nth(1).locator('button').first().click();await page.locator('#audio-project').waitFor({state:'visible'});
  check('audio_project_has_no_fake_summary',await page.locator('#summary-workspace').isHidden()&&await page.locator('#language-panel').isHidden()&&await page.locator('#transcript-layout').isHidden());
  const noTextSaved=await page.evaluate(()=>{const s=JSON.parse(localStorage.getItem('coconut-reader-v1'));return s.documents.find(d=>d.key===s.active);});
  check('audio_project_source_saved_without_download',noTextSaved.project_kind==='audio_only'&&noTextSaved.segments.length===0&&noTextSaved.ai_answers.length===0&&calls.filter(c=>c==='media').length===1);
@@ -49,7 +49,7 @@ try{
  await page.evaluate(()=>localStorage.removeItem('coconut-reader-v1'));await page.reload();await page.locator('#file').setInputFiles(projectPath);await page.locator('#audio-project').waitFor({state:'visible'});
  check('single_project_backup_restores_audio_notes',await page.locator('#project-note').inputValue()==='浏览器验收项目笔记'&&await page.locator('#audio-bookmarks textarea').inputValue()==='这里需要回听核对');
  if(process.env.COCONUT_AUDIO_SCREENSHOT)await page.screenshot({path:process.env.COCONUT_AUDIO_SCREENSHOT,fullPage:true});
- stage='direct_media_project';await page.locator('#add-content').click();await page.locator('#podcast-url').fill(source.media_url);await page.locator('#discover-podcast').click();await page.getByRole('button',{name:'保存原声项目',exact:true}).click();await page.locator('#audio-project').waitFor({state:'visible'});
+ stage='direct_media_project';await page.locator('#add-content').click();await page.locator('#video-url').fill(source.media_url);await page.locator('#process-url').click();await page.getByRole('button',{name:'保存原声项目',exact:true}).click();await page.locator('#audio-project').waitFor({state:'visible'});
  await page.reload();await page.locator('#download-podcast-media').click();await page.waitForFunction(()=>{const a=document.querySelector('#source-media audio');return a&&!a.error&&a.readyState>=2;});
  check('direct_media_redownload_preserves_url_contract',JSON.stringify(mediaPayloads.at(-1))===JSON.stringify({url:source.media_url}));
  check('audio_projects_never_trigger_external_requests_or_inference',external===0&&errors===0&&calls.every(c=>['discover','import','media'].includes(c)));

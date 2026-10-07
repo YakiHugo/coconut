@@ -1,6 +1,8 @@
 "use strict";
 let localWorker = false;
 let localAgents = false;
+let sourcePodcastReady = false;
+let sourceSubmitting = false;
 let pollTimer;
 let connectingWorker = false;
 let queueRefreshSequence = 0;
@@ -105,7 +107,9 @@ function renderJobs(jobs) {
 function disconnectedWorker() {
  localWorker = false;
  localAgents = false;
- $("process-url").disabled = true;
+ sourcePodcastReady=false;
+ $("advanced-import-options").hidden=true;$("advanced-media-import").hidden=true;
+ $("process-url").disabled = false;
  $("import-media").disabled = true;
  $("retry-worker").hidden = false;
  $("retry-worker").textContent = workerWasConnected ? "重新连接" : "重新检查此页面";
@@ -153,8 +157,24 @@ $("captions-only").onchange = updateCaptionOptions;
 updateCaptionOptions();
 $("url-form").onsubmit = async (event) => {
 	event.preventDefault();
-	if (!localWorker) return;
-	const button = $("process-url");
+	if (sourceSubmitting) return;
+ const raw=$("video-url").value.trim();
+ let url;try{url=new URL(raw);if(!['https:','http:'].includes(url.protocol)||url.username||url.password)throw new Error();}catch{$("source-route-status").textContent="请粘贴不含登录凭据的公开 http / https 链接。";return;}
+ const video=new Set(['youtube.com','www.youtube.com','m.youtube.com','youtu.be','bilibili.com','www.bilibili.com','m.bilibili.com','b23.tv','x.com','www.x.com','twitter.com','www.twitter.com','mobile.twitter.com']).has(url.hostname);
+ if(!video&&sourcePodcastReady){
+  $("source-route-status").textContent="正在查找这个链接对应的公开节目。";
+  $("podcast-url").value=raw;await $("podcast-form").onsubmit(event);return;
+ }
+ podcastRequest?.abort();podcastRequest=null;setPodcastBusy(false);
+ $("podcast-results").querySelectorAll("audio,video").forEach(player=>player.pause());
+ $("podcast-results").replaceChildren();podcastMessage("");
+ if(!video||!localWorker){
+  $("source-route-status").textContent=video&&localAgents?"这个视频来源暂需可选高级服务。轻量版可直接读取公开播客来源，或导入已取得的字幕；不会自动安装 Python 或识别模型。":"请在 Coconut 桌面应用或本地服务中添加公开链接。这里可以直接导入文字稿和播放本地媒体。";
+  $("local-setup").open=true;return;
+ }
+ sourceSubmitting=true;
+ $("source-route-status").textContent="已识别为视频链接，将按下方处理选项创建任务。";
+ const button = $("process-url");
 	button.disabled = true;
 	try {
 		await jobApi(
@@ -175,7 +195,7 @@ $("url-form").onsubmit = async (event) => {
 		notice("提交未确认：" + error.message + "。请先查看任务列表，确认是否已创建，避免重复提交。");
   await refreshJobs();
 	} finally {
-		button.disabled = !localWorker;
+		button.disabled = false;sourceSubmitting=false;
 	}
 };
 function allowMediaRecognition() {
@@ -227,15 +247,16 @@ async function connectWorker() {
    const newlyConnected = !localAgents;
    localWorker=false;localAgents=true;workerWasConnected=true;
    $("local-setup").open=false;$("retry-worker").hidden=true;
-   $("url-form").hidden=true;$("show-jobs").hidden=true;$("jobs-heading").hidden=true;$("jobs").hidden=true;
-   $("process-url").disabled=true;$("import-media").disabled=true;
+   $("url-form").hidden=false;sourcePodcastReady=health.capabilities?.podcast_import===true;$("advanced-import-options").hidden=true;$("advanced-media-import").hidden=true;$("show-jobs").hidden=true;$("jobs-heading").hidden=true;$("jobs").hidden=true;
+   $("process-url").disabled=false;$("import-media").disabled=true;
    $("worker-status").textContent="轻量本地服务已连接 · 无需 Python";
    $("worker-help").textContent="可导入文字稿、在浏览器中同步回听音视频，并调用已登录的本地 CLI。可从公开播客源导入文字稿与回听媒体；不含 ASR 或离线翻译模型，不会自动发送原文。";
    if(newlyConnected)window.dispatchEvent(new CustomEvent("coconut-worker-ready",{detail:{local_agents:true,media_import:false,podcast_import:health.capabilities?.podcast_import===true}}));
    return;
   }
-  localAgents=true;
+  localAgents=true;sourcePodcastReady=health.capabilities?.podcast_import===true;
 		localWorker = true;
+ $("advanced-import-options").hidden=false;$("advanced-media-import").hidden=false;
   if (!await refreshJobs()) return;
   workerWasConnected = true;
   $("local-setup").open = false;

@@ -22,9 +22,13 @@ function renderLanguage(){
  if(languageDocument!==doc.key || languageDocumentLabel!==(doc.language||'')){
   if(languageDocument===doc.key && translating)stopTranslation=true;
   if(languageDocument===doc.key && subscriptionTranslating)stopSubscription=true;
+  if(languageDocument!==doc.key)closeSummaryRequest(false);
   languageDocument=doc.key;languageDocumentLabel=doc.language||'';
   $('translation-source').value=languageDocumentLabel;$('ai-consent').checked=false;
  }
+ $('summary-connection-help').textContent=$('language-prerequisite').textContent;
+ $('summary-connection-setup').hidden=$('language-setup').hidden;
+ $('ask-ai').textContent=$('ai-task').value==='summary'?(asking?'正在生成摘要…':doc.summary_job?'继续生成整篇摘要':'确认并生成摘要'):'发送给本地 AI 工具';
  $('translation-view').value=doc.translation_view||'';
  $('translate-document').disabled=!hasTranscript||!languageReady||asking||translating||subscriptionTranslating;
  const summaryReadiness=$('ai-task')?.value==='summary'?Coconut.summaryReadiness(doc):null;
@@ -147,7 +151,8 @@ $('translate-document').onclick=async()=>{
  finally{translating=false;$('stop-translation').hidden=true;if(active()?.key===key)render();renderLanguage();}
 };
 window.addEventListener('pagehide',()=>{if(summaryScope)summaryScope.stop=true;});
-$('language-panel').addEventListener('toggle',()=>{if(!$('language-panel').open&&summaryScope)summaryScope.stop=true;});
+window.addEventListener('coconut-summary-stop',()=>{if(summaryScope)summaryScope.stop=true;});
+$('language-panel').addEventListener('toggle',()=>{if(!$('language-panel').open&&summaryScope&&$('summary-request').hidden)summaryScope.stop=true;});
 $('stop-summary').onclick=()=>{if(summaryScope)summaryScope.stop=true;$('ai-consent').checked=false;$('ai-progress').textContent='当前摘要批次完成后停止；已保存的分批笔记保留，尚不代表整篇摘要。';};
 $('restart-summary').onclick=()=>{const doc=active();if(!doc||summaryScope)return;doc.summary_job=null;$('ai-consent').checked=false;if(!save())notice('清除进度未保存，请备份当前文档');renderLanguage();};
 async function runDocumentSummary(doc){

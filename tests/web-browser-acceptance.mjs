@@ -56,8 +56,10 @@ try {
  }
  await attach(video,'video');
  check('video_decoded',await page.locator('video').evaluate(v=>v.videoWidth===320&&v.videoHeight===180));
+ await page.locator('video').evaluate(v=>v.play());
  await page.locator('#mode-summary').click();
- check('summary_mode_pauses_media',await page.locator('video').evaluate(v=>v.paused));
+ check('summary_keeps_visible_media_playing',await page.locator('video').isVisible()&&await page.locator('video').evaluate(v=>!v.paused));
+ await page.locator('video').evaluate(v=>v.pause());
  await page.locator('#mode-transcript').click();await attach(audio,'audio');
  check('audio_replaces_video',await page.locator('video').count()===0);
  const row=page.locator('.segment[data-segment-id="second"]');
