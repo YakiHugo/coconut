@@ -1,5 +1,6 @@
 /** Explicit package allowlist: never include transcripts, auth, caches or repository metadata. */
 import { packager } from '@electron/packager';
+import {loadCaptionHelperBuild,stageCaptionHelper} from './caption-helper-package.mjs';
 import { mkdtemp, mkdir, readFile, writeFile, copyFile, rm } from 'node:fs/promises';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
@@ -10,12 +11,16 @@ const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const args = process.argv.slice(2);
 if (args.length !== 1 || !['--mac','--dir'].includes(args[0])) throw new Error('Usage: node desktop/package.mjs --mac|--dir');
 const mac = args[0] === '--mac';
+const helperLockBytes=await readFile(path.join(ROOT,'caption-helper-lock.json'));
+const helperArtifacts={};
+if(mac)for(const arch of ['arm64','x64'])helperArtifacts[`darwin-${arch}`]=await loadCaptionHelperBuild(path.join(ROOT,'helper-build',`darwin-${arch}`),{platform:'darwin',arch,lockBytes:helperLockBytes});
 const configuration = JSON.parse(await readFile(path.join(ROOT,'package.json'),'utf8'));
 const work = await mkdtemp(path.join(tmpdir(),'coconut-package-'));
 try {
   const app = path.join(work,'app'), resources = path.join(work,'resources'), reader = path.join(resources,'reader');
   await mkdir(app); await mkdir(reader,{recursive:true});
-  for (const name of ['main.mjs','providers.mjs','server.mjs','translation.mjs','podcast-sources.mjs','podcast-xml.mjs','public-http.mjs']) await copyFile(path.join(ROOT,name),path.join(app,name));
+  for (const name of ['main.mjs','providers.mjs','server.mjs','translation.mjs','podcast-sources.mjs','podcast-xml.mjs','public-http.mjs','caption-service.mjs','caption-helper.mjs','caption-helper-process.mjs','caption-helper-lock.json']) await copyFile(path.join(ROOT,name),path.join(app,name));
+  await writeFile(path.join(app,'caption-helper-artifacts.json'),JSON.stringify({schemaVersion:1,artifacts:helperArtifacts}));
   for (const name of ['index.html','summary.js','core.js','app.js','language.js','jobs.js','podcasts.js','style.css']) await copyFile(path.join(ROOT,'../reader',name),path.join(reader,name));
   const license = path.join(resources,'LICENSE.coconut'); await copyFile(path.join(ROOT,'../LICENSE'),license);
   await writeFile(path.join(app,'package.json'),JSON.stringify({name:configuration.name,version:configuration.version,
@@ -33,6 +38,7 @@ try {
       // Packager leaves Electron's own notices beside the .app; the ZIP contains
       // the .app alone, so preserve both notices inside its resource bundle.
       const appResources = path.join(directory,'Coconut.app/Contents/Resources');
+      await stageCaptionHelper(path.join(ROOT,'helper-build',`darwin-${arch}`),appResources);
       await copyFile(path.join(directory,'LICENSE'),path.join(appResources,'LICENSE.electron'));
       await copyFile(path.join(directory,'LICENSES.chromium.html'),path.join(appResources,'LICENSES.chromium.html'));
       await rm(archive,{force:true}); // Do not retain stale entries from an older ZIP.

@@ -205,10 +205,10 @@ $("url-form").onsubmit = async (event) => {
 	}
 };
 async function importVideoCaptions(url) {
- const controller=new AbortController(),startingDocument=state.active;sourceCaptionRequest=controller;sourceCaptionURL=url;
+ const controller=new AbortController(),startingDocument=state.active,startingLanguage=$('caption-language').value;sourceCaptionRequest=controller;sourceCaptionURL=url;
  $('process-url').disabled=true;$('cancel-source').hidden=false;
  $('source-route-status').textContent='正在读取公开原语言字幕，不下载音视频、不识别或调用模型。';
- const current=()=>sourceCaptionRequest===controller&&!controller.signal.aborted&&workspace==='add'&&state.active===startingDocument;
+ const current=()=>sourceCaptionRequest===controller&&!controller.signal.aborted&&workspace==='add'&&state.active===startingDocument&&$('video-url').value.trim()===url&&$('caption-language').value===startingLanguage;
  try{
   const response=await fetch('api/captions/import',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({url,language:$('caption-language').value||null}),signal:controller.signal});
   const result=await response.json();if(!current())return;
@@ -224,7 +224,10 @@ async function importVideoCaptions(url) {
  finally{if(sourceCaptionRequest===controller){sourceCaptionRequest=null;sourceCaptionURL=null;$('cancel-source').hidden=true;$('process-url').disabled=false;}}
 }
 $('cancel-source').onclick=()=>sourceCaptionRequest?.abort();
+$('video-url').addEventListener('input',()=>sourceCaptionRequest?.abort());
+$('caption-language').addEventListener('change',()=>sourceCaptionRequest?.abort());
 window.addEventListener('coconut-workspace-change',event=>{if(event.detail?.workspace!=='add')sourceCaptionRequest?.abort();});
+window.addEventListener('coconut-render',()=>{if(workspace!=='add')sourceCaptionRequest?.abort();});
 function allowMediaRecognition() {
  if (!$("captions-only").checked) return true;
  $("captions-only").closest("details").open = true;

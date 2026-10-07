@@ -1,0 +1,31 @@
+{
+  "schemaVersion": 1,
+  "pythonVersion": "3.14.8",
+  "distribution": "python.org standard GIL universal2 macOS installer, repackaged by actions/python-versions",
+  "upstreamInstaller": {
+    "url": "https://www.python.org/ftp/python/3.14.8/python-3.14.8-macos11.pkg",
+    "bytes": 75240265,
+    "sha256": "507fc086c5c006ff875d344a75b4e67b8fb3c401f1bc4908c6250adb673d4907"
+  },
+  "inspectedActionsArchive": {
+    "url": "https://github.com/actions/python-versions/releases/download/3.14.8-36806082737/python-3.14.8-darwin-arm64.tar.gz",
+    "bytes": 74568814,
+    "sha256": "88379ff8be11ec05986bf384205f00092b4b46975f40321d8567a16a7c2e8d5f"
+  },
+  "cpythonSource": {
+    "url": "https://www.python.org/ftp/python/3.14.8/Python-3.14.8.tar.xz",
+    "bytes": 24130644,
+    "sha256": "c2215904f02b175596dc49351585104f4bc20341e1c47378b26a2c274360ce73"
+  },
+  "observedInstallerComponents": {
+    "OpenSSL": "3.5.9",
+    "XZ": "5.2.3",
+    "SQLite": "3.50.4",
+    "libmpdec": "4.0.1",
+    "Zstandard": "1.5.7",
+    "Tcl": "9.0.4",
+    "Tk": "9.0.4",
+    "NCurses": "6.5"
+  },
+  "inventoryNote": "This records inspected BUILD INPUTS, not the final helper SBOM. Static liblzma/libmpdec/SQLite occur in _lzma/_decimal/_sqlite3 even when no matching dylib exists. Exclude unneeded modules; validate the final archive and Mach-O load commands on each native build. Tcl/Tk/ncurses are unapproved and must be absent."
+}

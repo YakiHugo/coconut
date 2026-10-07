@@ -2,6 +2,8 @@
 import contextlib
 import io
 import json
+import importlib.util
+import ssl
 from pathlib import Path
 import tempfile
 import unittest
@@ -41,6 +43,16 @@ class PublicCaptionGuardTests(unittest.TestCase):
         with self.assertRaises(guard.StopProof) as caught:
             fn(*args, **kwargs)
         self.assertEqual(caught.exception.outcome, outcome)
+
+    def test_explicit_bundled_ca_keeps_certificate_and_hostname_verification(self):
+        context = ssl.create_default_context()
+        with patch.object(guard.ssl, 'create_default_context', return_value=context) as create:
+            transport = guard.PublicTransport(proof.POST_ID, ca_file='/bundle/certifi/cacert.pem')
+        create.assert_called_once_with(cafile='/bundle/certifi/cacert.pem')
+        handler = next(item for item in transport.opener.handlers if isinstance(item, guard.urllib.request.HTTPSHandler))
+        self.assertIs(handler._context, context)
+        self.assertTrue(context.check_hostname)
+        self.assertEqual(context.verify_mode, ssl.CERT_REQUIRED)
 
     def test_one_public_route_only(self):
         cases = [(GUEST, 'POST', b'', 'guest_activation'),
@@ -108,6 +120,15 @@ class PublicCaptionGuardTests(unittest.TestCase):
         self.assertEqual(request.get_header('Accept-encoding'), 'identity')
         self.assertFalse(any(isinstance(item, __import__('urllib.request', fromlist=['HTTPCookieProcessor']).HTTPCookieProcessor)
                              for item in transport.opener.handlers))
+
+    def test_encrypted_manifest_never_reaches_downloader(self):
+        for tag in (b'#EXT-X-KEY:METHOD=SAMPLE-AES,URI="https://outside.invalid/key"',
+                    b'#EXT-X-KEY:METHOD=AES-128,URI="https://outside.invalid/key"',
+                    b'#EXT-X-SESSION-KEY:METHOD=AES-128,URI="https://outside.invalid/key"'):
+            transport = guard.PublicTransport(proof.POST_ID)
+            with patch.object(transport.opener, 'open', return_value=Response(b'#EXTM3U\n' + tag + b'\n')):
+                self.expect_stop('encrypted_manifest_stopped', transport.send,
+                                 'https://video.twimg.com/captions.m3u8', 'GET', None, {})
 
     def test_request_and_time_budgets(self):
         transport = guard.PublicTransport(proof.POST_ID)
@@ -184,6 +205,120 @@ class PublicCaptionGuardTests(unittest.TestCase):
         self.assertEqual(result['outcome'], 'extraction_or_validation_failed')
         self.assertNotIn('DO-NOT-PRINT', stdout.getvalue())
         self.assertFalse(seen[0].exists())
+
+
+class IsolatedCaptionAPITests(unittest.TestCase):
+    fixture_document = PublicCaptionGuardTests.fixture_document
+    @contextlib.contextmanager
+    def fake_guard(self, transport):
+        transport.counts.update(guest_activation=1, post_metadata=1, caption=1)
+        yield
+
+    def test_api_preserves_private_bytes_and_honest_provenance(self):
+        import subtitle_import
+        def caption(url, directory, language):
+            document = self.fixture_document(directory)
+            document['provenance'].update(caption_method='platform_provided', language_basis='single_track', caption_track='en')
+            return document
+        stdout = io.StringIO()
+        with patch.object(guard, 'guarded_extractor', self.fake_guard), patch.object(subtitle_import, 'fetch_subtitle_document', caption), contextlib.redirect_stdout(stdout):
+            result = guard.extract_public_captions(proof.SOURCE_URL)
+        self.assertEqual(result['bytes'], BODY)
+        self.assertEqual(result['format'], 'vtt')
+        self.assertEqual(result['source']['url'], proof.SOURCE_URL)
+        self.assertFalse(result['source']['automatic'])
+        self.assertEqual(result['track']['captionMethod'], 'platform_provided')
+        self.assertEqual(result['track']['reviewStatus'], 'unreviewed')
+        self.assertEqual(result['track']['captionTrack'], 'en')
+        self.assertEqual(stdout.getvalue(), '')
+
+    def test_api_denial_is_redacted(self):
+        @contextlib.contextmanager
+        def deny(_):
+            raise guard.StopProof('access_restricted')
+            yield
+        with patch.object(guard, 'guarded_extractor', deny):
+            self.assertEqual(guard.extract_public_captions(proof.SOURCE_URL), {'status': 'access_restricted'})
+
+    def test_api_rejects_non_x_and_arbitrary_options(self):
+        for url, language in [('https://youtu.be/abcdefghijk', None),
+                              (proof.SOURCE_URL, '--cookies-from-browser chrome'),
+                              ('https://x.com/i/flow/login', None)]:
+            with patch.object(guard, 'guarded_extractor') as extract:
+                self.assertEqual(guard.extract_public_captions(url, language), {'status': 'unavailable'})
+                extract.assert_not_called()
+
+    def test_api_reports_missing_language_without_guessing(self):
+        import subtitle_import
+        def ambiguous(url, directory, language):
+            subtitle_import.select_track({'subtitles': {'en': [{'ext': 'vtt'}], 'zh': [{'ext': 'vtt'}]}})
+            raise subtitle_import.SubtitleRetrievalError('private error')
+        with patch.object(guard, 'guarded_extractor', self.fake_guard), patch.object(subtitle_import, 'fetch_subtitle_document', ambiguous):
+            self.assertEqual(guard.extract_public_captions(proof.SOURCE_URL), {'status': 'language_required'})
+
+
+@unittest.skipUnless(importlib.util.find_spec('yt_dlp'), 'Pinned yt-dlp is exercised in the live-proof CI job')
+class PinnedExtractorFullPathTests(unittest.TestCase):
+    def fixture_opener(self, encrypted=False):
+        metadata = {'data': {'tweetResult': {'result': {'__typename': 'Tweet', 'legacy': {
+            'id_str': proof.POST_ID, 'full_text': 'Authored offline fixture',
+            'extended_entities': {'media': [{'id_str': '1234', 'type': 'video', 'video_info': {
+                'duration_millis': 4000, 'variants': [{'url': 'https://video.twimg.com/master.m3u8',
+                'content_type': 'application/x-mpegURL'}]}}]}}}}}}
+        master = b'#EXTM3U\n#EXT-X-MEDIA:TYPE=SUBTITLES,GROUP-ID="subs",NAME="English",LANGUAGE="en",URI="https://video.twimg.com/captions.m3u8"\n#EXT-X-STREAM-INF:BANDWIDTH=800000,SUBTITLES="subs"\nhttps://video.twimg.com/video.m3u8\n'
+        captions = (b'#EXTM3U\n#EXT-X-TARGETDURATION:4\n'
+                    + (b'#EXT-X-KEY:METHOD=SAMPLE-AES,URI="https://outside.invalid/key"\n' if encrypted else b'')
+                    + b'#EXTINF:4.0,\nhttps://video.twimg.com/captions.vtt\n#EXT-X-ENDLIST\n')
+        def open_fixture(request, timeout):
+            kind = guard.request_kind(request.full_url, request.method, request.data, dict(request.header_items()), proof.POST_ID)
+            if kind == 'guest_activation':
+                body = b'{"guest_token":"offline-fixture"}'
+            elif kind == 'post_metadata':
+                body = json.dumps(metadata).encode()
+            elif request.full_url.endswith('/master.m3u8'):
+                body = master
+            elif request.full_url.endswith('/captions.m3u8'):
+                body = captions
+            elif kind == 'caption':
+                body = BODY
+            else:
+                raise AssertionError('Unexpected fixture request')
+            return Response(body)
+        return open_fixture
+
+    def test_real_extractor_hls_caption_to_production_document(self):
+        import subtitle_import
+        transport = guard.PublicTransport(proof.POST_ID)
+        with tempfile.TemporaryDirectory() as temporary, patch.object(transport.opener, 'open', side_effect=self.fixture_opener()), guard.guarded_extractor(transport):
+            document = subtitle_import.fetch_subtitle_document(proof.SOURCE_URL, Path(temporary), 'en')
+            result = proof.verify_document(document, Path(temporary))
+        self.assertEqual(result['cues'], 3)
+        self.assertEqual(transport.counts, {'guest_activation': 1, 'post_metadata': 1, 'manifest': 2, 'caption': 1})
+
+    def test_real_extractor_encrypted_hls_stops_before_ffmpeg(self):
+        import subtitle_import
+        from yt_dlp.downloader.external import FFmpegFD
+        transport = guard.PublicTransport(proof.POST_ID)
+        with tempfile.TemporaryDirectory() as temporary, patch.object(transport.opener, 'open', side_effect=self.fixture_opener(encrypted=True)), guard.guarded_extractor(transport), patch.object(FFmpegFD, 'real_download') as external:
+            with self.assertRaises(guard.StopProof) as stopped:
+                subtitle_import.fetch_subtitle_document(proof.SOURCE_URL, Path(temporary), 'en')
+        self.assertEqual(stopped.exception.outcome, 'encrypted_manifest_stopped')
+        external.assert_not_called()
+        self.assertEqual(transport.counts['caption'], 0)
+
+    def test_external_and_process_paths_are_independently_disabled(self):
+        import subprocess
+        from yt_dlp.downloader.external import FFmpegFD, ExternalFD
+        transport = guard.PublicTransport(proof.POST_ID)
+        with guard.guarded_extractor(transport):
+            self.assertFalse(FFmpegFD.available())
+            for target in (lambda: FFmpegFD.real_download(None, 'ignored', {}),
+                           lambda: ExternalFD.real_download(None, 'ignored', {}),
+                           lambda: FFmpegFD._call_downloader(None, 'ignored', {}),
+                           lambda: subprocess.Popen(['must-never-execute'])):
+                with self.assertRaises(guard.StopProof) as stopped:
+                    target()
+                self.assertEqual(stopped.exception.outcome, 'external_execution_stopped')
 
 
 if __name__ == '__main__':

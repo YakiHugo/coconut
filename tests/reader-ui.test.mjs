@@ -1621,11 +1621,14 @@ test('verified lightweight captions route opens original text without Python job
 });
 
 test('caption cancel, navigation and repeated submit cannot save stale output or duplicate requests',async()=>{
- for(const action of ['cancel','navigate','repeat']){
+ for(const action of ['cancel','navigate','repeat','url-edit','language-edit']){
   let release,calls=0;const w=setup(undefined,async(url)=>url.endsWith('health')?{ok:true,json:async()=>({local_worker:false,capabilities:{local_agents:true,caption_import:true}})}:new Promise(resolve=>{calls++;release=()=>resolve({ok:true,json:async()=>({status:'ready',document:{title:'Late captions',segments:[{id:'late',start:0,end:1,text:'Late original'}]}})});}));try{
    const $=id=>w.document.getElementById(id);await $('sample').onclick();$('add-content').click();await new Promise(r=>setTimeout(r,10));const before=w.localStorage.getItem('coconut-reader-v1');$('video-url').value='https://x.com/example/status/123456';const pending=$('url-form').onsubmit({preventDefault(){}});
    if(action==='repeat'){await $('url-form').onsubmit({preventDefault(){}});assert.equal(calls,1);$('cancel-source').click();}
-   if(action==='cancel')$('cancel-source').click();if(action==='navigate')$('back-reading').click();release();await pending;
+   if(action==='cancel')$('cancel-source').click();if(action==='navigate')$('back-reading').click();
+   if(action==='url-edit'){$('video-url').value='https://x.com/other/status/999';$('video-url').dispatchEvent(new w.Event('input'));}
+   if(action==='language-edit'){$('caption-language').value='zh';$('caption-language').dispatchEvent(new w.Event('change'));}
+   release();await pending;
    assert.equal(w.localStorage.getItem('coconut-reader-v1'),before);assert.equal($('cancel-source').hidden,true);assert.equal(calls,1);
   }finally{await w.happyDOM.close();}
  }

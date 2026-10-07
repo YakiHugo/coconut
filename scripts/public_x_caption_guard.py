@@ -10,6 +10,8 @@ import contextlib
 import io
 import json
 import re
+import ssl
+import subprocess
 import time
 import urllib.error
 import urllib.request
@@ -66,7 +68,7 @@ def request_kind(url: str, method: str, data, headers: dict, post_id: str) -> st
 
 
 class PublicTransport:
-    def __init__(self, post_id: str):
+    def __init__(self, post_id: str, *, ca_file: str | None = None):
         if not re.fullmatch(r'\d{1,20}', post_id):
             raise ValueError('A numeric X post ID is required')
         self.post_id = post_id
@@ -74,7 +76,9 @@ class PublicTransport:
         self.counts = dict.fromkeys(('guest_activation', 'post_metadata', 'manifest', 'caption'), 0)
         self.bytes_read = 0
         # No environment proxy, cookie processor, browser profile or login flow.
-        self.opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect())
+        context = ssl.create_default_context(cafile=ca_file)
+        self.opener = urllib.request.build_opener(
+            urllib.request.ProxyHandler({}), NoRedirect(), urllib.request.HTTPSHandler(context=context))
 
     def send(self, url, method, data, headers):
         kind = request_kind(url, method, data, headers, self.post_id)
@@ -116,8 +120,14 @@ class PublicTransport:
                         result = payload.get('data', {}).get('tweetResult', {}).get('result', {})
                         if result.get('__typename') in ('TweetUnavailable', 'TweetTombstone') or 'tombstone' in result:
                             raise StopProof('post_unavailable_stopped')
-                elif kind == 'manifest' and not body.lstrip().startswith(b'#EXTM3U'):
-                    raise StopProof('non_manifest_response_stopped')
+                elif kind == 'manifest':
+                    if not body.lstrip().startswith(b'#EXTM3U'):
+                        raise StopProof('non_manifest_response_stopped')
+                    # HlsFD can delegate unsupported encryption to FFmpegFD,
+                    # which would bypass this transport. No keys/decryption
+                    # are part of this public caption-only route.
+                    if re.search(br'(?im)^\s*#EXT-X-(?:SESSION-)?KEY\s*:', body) or b'#EXT-X-FAXS-CM:' in body:
+                        raise StopProof('encrypted_manifest_stopped')
                 elif kind == 'caption' and not body.lstrip(b'\xef\xbb\xbf \r\n\t').startswith(b'WEBVTT'):
                     raise StopProof('non_caption_response_stopped')
                 return body, dict(response.headers), status
@@ -137,15 +147,19 @@ def guarded_extractor(transport: PublicTransport):
     try:
         import yt_dlp
         from yt_dlp.version import __version__
-        from yt_dlp.globals import plugin_dirs
+        from yt_dlp.globals import plugin_dirs, plugin_ies, plugin_pps
         from yt_dlp.networking import Request, Response
     except ImportError:
         raise StopProof('pinned_dependency_missing') from None
     if __version__ != PINNED_VERSION:
         raise StopProof('pinned_dependency_mismatch')
+    if plugin_ies.value or plugin_pps.value:
+        raise StopProof('preloaded_plugins_stopped')
     # The public Python API otherwise searches ambient plugin directories.
     plugin_dirs.value = []
     from yt_dlp.extractor.twitter import TwitterIE
+    from yt_dlp.downloader.external import ExternalFD, FFmpegFD
+    from yt_dlp.postprocessor.ffmpeg import FFmpegPostProcessor
 
     class GuardedTwitterIE(TwitterIE):
         def _call_syndication_api(self, *args, **kwargs):
@@ -163,7 +177,8 @@ def guarded_extractor(transport: PublicTransport):
                             username=None, password=None, usenetrc=False,
                             proxy='', cachedir=False, retries=0, extractor_retries=0,
                             fragment_retries=0, file_access_retries=0, socket_timeout=15,
-                            skip_download=True, check_formats=False, fixup='never',
+                            skip_download=True, check_formats=False, fixup='never', format='best',
+                            external_downloader={}, external_downloader_args={}, hls_prefer_native=True,
                             js_runtimes={}, remote_components=[], postprocessors=[],
                             extractor_args={'twitter': {'api': ['graphql']}},
                             http_headers={'User-Agent': 'Coconut-public-caption-proof/1.0'})
@@ -178,5 +193,111 @@ def guarded_extractor(transport: PublicTransport):
             body, headers, status = transport.send(request.url, request.method, request.data, dict(request.headers))
             return Response(io.BytesIO(body), request.url, headers, status=status)
 
-    with patch.object(yt_dlp, 'YoutubeDL', CaptionOnlyDL):
+    def stop_external(*args, **kwargs):
+        raise StopProof('external_execution_stopped')
+
+    # These are independent of URL filtering: unsupported HLS must never hand
+    # its URLs to ffmpeg/curl/etc. Prevent probes as well as actual processes.
+    with contextlib.ExitStack() as stack:
+        stack.enter_context(patch.object(yt_dlp, 'YoutubeDL', CaptionOnlyDL))
+        for downloader in (ExternalFD, FFmpegFD):
+            stack.enter_context(patch.object(downloader, 'real_download', stop_external))
+            stack.enter_context(patch.object(downloader, '_call_downloader', stop_external))
+            stack.enter_context(patch.object(downloader, 'available', return_value=False))
+        stack.enter_context(patch.object(FFmpegPostProcessor, 'available', property(lambda _: False)))
+        stack.enter_context(patch.object(subprocess.Popen, '__init__', stop_external))
         yield
+
+
+def extract_public_captions(url: str, language: str | None = None, *, ca_file: str | None = None) -> dict:
+    """Isolated-process API; bytes are private VTT, never a download URL.
+
+    Intended for a fixed JSON helper protocol, not arbitrary yt-dlp arguments.
+    Uses Coconut's existing language/provenance rules (subtitle_import.py and
+    transcript.py; standard library only). Run on the child process main thread.
+    A platform-provided track is not evidence of manual/human authorship.
+    The native launcher passes its bundled certifi.where() as ca_file; this is
+    an internal trust-store choice, never a user-supplied protocol option.
+    """
+    import math
+    import os
+    from pathlib import Path
+    import signal
+    import tempfile
+    import threading
+    import subtitle_import
+
+    if threading.current_thread() is not threading.main_thread() or not hasattr(signal, 'SIGALRM'):
+        return {'status': 'unavailable'}
+    try:
+        subtitle_import.validate_video_url(url)
+        parsed = urlparse(url)
+        if parsed.hostname not in {'x.com', 'www.x.com', 'twitter.com', 'www.twitter.com', 'mobile.twitter.com'}:
+            return {'status': 'unavailable'}
+        post_id = parsed.path.rstrip('/').rsplit('/', 1)[-1]
+        if language is not None and (not isinstance(language, str) or not re.fullmatch(r'[A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,8})*', language)):
+            return {'status': 'unavailable'}
+        transport = PublicTransport(post_id, ca_file=ca_file)
+    except (TypeError, ValueError, OSError):
+        return {'status': 'unavailable'}
+
+    language_required = False
+    original_select = subtitle_import.select_track
+
+    def remember_selection(info, hint=None):
+        nonlocal language_required
+        selected = original_select(info, hint)
+        if selected is None and subtitle_import.preferred_language(info, hint)[0] is None:
+            language_required = any(
+                key not in ('live_chat', 'danmaku') and subtitle_import.eligible_formats(tracks)
+                for field in ('subtitles', 'automatic_captions')
+                for key, tracks in (info.get(field) or {}).items())
+        return selected
+
+    def deadline(*_):
+        raise StopProof('deadline_reached')
+
+    previous_handler = signal.signal(signal.SIGALRM, deadline)
+    signal.alarm(MAX_SECONDS)
+    try:
+        with open(os.devnull, 'w') as silent, contextlib.redirect_stdout(silent), contextlib.redirect_stderr(silent):
+            with tempfile.TemporaryDirectory(prefix='coconut-public-caption-') as temporary:
+                directory = Path(temporary)
+                with guarded_extractor(transport), patch.object(subtitle_import, 'select_track', remember_selection):
+                    document = subtitle_import.fetch_subtitle_document(url, directory, language)
+                if document is None:
+                    return {'status': 'unavailable'}
+                if (transport.counts['guest_activation'] != 1 or transport.counts['post_metadata'] != 1
+                        or not transport.counts['caption']):
+                    return {'status': 'unavailable'}
+                provenance = document['provenance']
+                duration = provenance.get('media_duration')
+                files = list(directory.iterdir())
+                if (len(files) != 1 or files[0].suffix != '.vtt' or not files[0].is_file()
+                        or not re.fullmatch(r'\d{1,20}', str(provenance.get('media_id', '')))
+                        or not isinstance(duration, (int, float)) or isinstance(duration, bool)
+                        or not math.isfinite(duration) or not 0 < duration <= 21600):
+                    return {'status': 'unavailable'}
+                body = files[0].read_bytes()
+                if len(body) > MAX_RESPONSE_BYTES:
+                    return {'status': 'unavailable'}
+                return {
+                    'source': {'url': url, 'id': provenance['media_id'], 'title': document['title'],
+                               'duration': duration, 'language': provenance['language'],
+                               'automatic': provenance['caption_method'] == 'automatic',
+                               'extractor': 'twitter', 'translated': False, 'live': False},
+                    'track': {'language': provenance['language'],
+                              'captionMethod': provenance['caption_method'],
+                              'languageBasis': provenance['language_basis'],
+                              'captionTrack': provenance['caption_track'],
+                              'reviewStatus': 'unreviewed'},
+                    'format': 'vtt', 'bytes': body,
+                }
+    except StopProof as stopped:
+        return {'status': 'access_restricted' if stopped.outcome in (
+            'access_restricted', 'login_required', 'post_unavailable_stopped') else 'unavailable'}
+    except Exception:
+        return {'status': 'language_required' if language_required else 'unavailable'}
+    finally:
+        signal.alarm(0)
+        signal.signal(signal.SIGALRM, previous_handler)

@@ -8,6 +8,9 @@ class SubtitleTests(unittest.TestCase):
     def test_vtt_voice_and_settings(self):
         result = parse_subtitles('WEBVTT\n\nNOTE ignore this\n\nfirst\n00:01.000 --> 00:02.000 align:start\n<v Speaker>Hello</v>\n', '.vtt')
         self.assertEqual(result[0]['text'], 'Hello')
+    def test_vtt_metadata_is_not_spoken_text_but_similar_cue_ids_are(self):
+        value = 'WEBVTT\n\nNOTE comment\n00:00.000 --> 00:00.500\nNot spoken\n\nNOTEworthy\n00:00.500 --> 00:01.000\nActual cue\n'
+        self.assertEqual(parse_subtitles(value, '.vtt'), [{'start': .5, 'end': 1, 'text': 'Actual cue'}])
     def test_json3(self):
         self.assertEqual(parse_subtitles('{"events":[{"tStartMs":1000,"dDurationMs":2000,"segs":[{"utf8":"你好"}]}]}', '.json3')[0]['end'], 3)
     def test_invalid_timestamp(self):

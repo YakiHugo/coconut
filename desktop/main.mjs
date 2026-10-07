@@ -3,6 +3,8 @@ import { app, BrowserWindow, dialog, shell } from 'electron';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { startBridge } from './server.mjs';
+import { createCaptionHelper } from './caption-helper.mjs';
+import { createCaptionService } from './caption-service.mjs';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const PORT = 47831; // Stable origin preserves the local bookshelf between launches.
@@ -18,7 +20,13 @@ else {
   app.on('before-quit',()=>server?.shutdown());
   app.whenReady().then(async()=>{
     const readerDirectory = app.isPackaged ? path.join(process.resourcesPath,'reader') : path.resolve(ROOT,'../reader');
-    server = await startBridge({port:PORT,readerDirectory});
+    let captionService=null;
+    if(app.isPackaged){
+      const helper=createCaptionHelper({resourcesPath:process.resourcesPath});
+      const status=await helper.status();
+      if(status.ready)captionService=createCaptionService({helper,readerDirectory,enabledProviders:['x']});
+    }
+    server = await startBridge({port:PORT,readerDirectory,captionService});
     const origin = `http://127.0.0.1:${PORT}`;
     window = new BrowserWindow({width:1280,height:880,minWidth:780,minHeight:620,show:process.env.COCONUT_SMOKE_TEST !== '1',title:'Coconut',
       webPreferences:{nodeIntegration:false,contextIsolation:true,sandbox:true,webSecurity:true,allowRunningInsecureContent:false,webviewTag:false}});

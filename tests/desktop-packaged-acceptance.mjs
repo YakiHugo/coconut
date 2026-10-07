@@ -137,6 +137,7 @@ try{
  await fs.writeFile(fixturePath,JSON.stringify(fixture));await fs.writeFile(audioPath,authoredAudio());
  const profile=path.join(temporary,'profile');let page=await launch(executable,profile,configuration.version,'first_launch');
  check('new_profile_empty',await stored(page)===null);
+ check('packaged_public_caption_capability',await page.evaluate(async()=>{const health=await(await fetch('api/health')).json();return health.capabilities.caption_import===true&&health.capabilities.media_import===false;}));
  check('asr_ui_not_offered',await page.locator('#advanced-import-options').isHidden()&&await page.locator('#import-media').isDisabled());
  await importFile(page,fixturePath);
  check('all_authored_segments_imported',(await stored(page)).segments.length===3);

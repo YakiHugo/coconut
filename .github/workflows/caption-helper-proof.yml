@@ -18,6 +18,8 @@ jobs:
           python-version: '3.12'
       - name: Install only the pinned official extractor
         run: python -m pip install --disable-pip-version-check --no-input --no-deps yt-dlp==2026.8.19
+      - name: Verify pinned extractor denial and downloader guards offline
+        run: python -m unittest discover -s tests -p test_public_x_caption_proof.py -v
       - name: Verify guarded public guest captions without media or ASR
         timeout-minutes: 3
         env:

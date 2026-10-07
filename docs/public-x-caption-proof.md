@@ -30,6 +30,8 @@ needs no browser, ffmpeg, project requirements, ASR package or model:
     python-version: '3.12'
 - name: Install only the pinned official extractor
   run: python -m pip install --disable-pip-version-check --no-input --no-deps yt-dlp==2026.8.19
+- name: Verify full pinned extractor path and external-execution stops offline
+  run: python -m unittest discover -s tests -p test_public_x_caption_proof.py -v
 - name: Verify public guest captions without media or ASR
   timeout-minutes: 3
   env:
@@ -83,6 +85,39 @@ Offline guard tests (no external requests):
 python -m unittest discover -s tests -p test_public_x_caption_proof.py -v
 ```
 
-The authoring environment had no installed yt-dlp. Offline tests and the explicit
-`pinned_dependency_missing` outcome were checked locally; current source
-availability remains unverified until the CI invocation above passes.
+The [initial live CI proof](https://github.com/YakiHugo/coconut/actions/runs/37581123817/job/112660784287)
+passed with 1,771 English cues, duration 3251.648 seconds and unchanged cue bounds
+0.220–3251.490. It read 310,859 bytes in five admitted requests: one guest, one
+post, two manifests and one caption, with zero media/ASR/model requests.
+
+Independent review subsequently identified HLS delegation to an external
+downloader on unsupported encrypted manifests. This revision rejects encryption
+tags before parsing, disables external downloader/fallback/probe paths and blocks
+subprocess creation during extraction. Full-path tests using the pinned official
+extractor now cover both normal HLS captions and that rejection. The hardened
+revision must pass the live proof again before product enablement.
+
+## Isolated helper API
+
+`extract_public_captions(url, language=None)` in the guard module reuses
+`subtitle_import.py` and `transcript.py` (both standard-library-only). It runs on
+an isolated child process's main thread, applies the same deadline, silences
+upstream output and cleans temporary files. Success returns `source`, `track`,
+`format: 'vtt'` and raw `bytes`. The fixed-protocol launcher must encode those
+bytes itself and must never expose arbitrary yt-dlp arguments.
+
+`track.captionMethod` is `platform_provided` or `automatic`, with
+`reviewStatus: 'unreviewed'`. `source.automatic: false` only means the extractor
+has not labeled the track automatic; it does not mean human authorship. Failure
+returns only `status: 'access_restricted'`, `'unavailable'` or
+`'language_required'`. This reusable API does not enable the product operation.
+
+The native launcher may pass the internal keyword `ca_file=certifi.where()` to
+use its pinned bundled CA roots without a separately installed Python trust
+store. This is not a user-facing protocol option. The proof's default uses the
+system trust store. Both paths use `ssl.create_default_context`, retaining
+certificate verification and hostname checks; TLS failure stops the request.
+
+The helper returns the exact selected extractor track as `track.captionTrack`,
+alongside `languageBasis`; callers must retain these rather than inventing a
+language-origin classification.
