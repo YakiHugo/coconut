@@ -567,6 +567,7 @@
 	function parse(text, filename) {
 		if (filename.toLowerCase().endsWith(".json"))
 			return validate(JSON.parse(text));
+		const isVtt = filename.toLowerCase().endsWith(".vtt") || /^(?:\uFEFF)?WEBVTT(?:[ \t]|\r?\n|$)/.test(text);
 		const blocks = text
 			.replace(/^\uFEFF/, "")
 			.replace(/\r\n?/g, "\n")
@@ -574,6 +575,7 @@
 		const segments = [];
 		for (const block of blocks) {
 			const lines = block.split("\n");
+			if (isVtt && /^(?:WEBVTT|NOTE|STYLE|REGION)(?:[ \t]|$)/.test(lines[0].trim())) continue;
 			const index = lines.findIndex((line) => line.includes("-->"));
 			if (index < 0) continue;
 			const match = lines[index].match(/^(\S+)\s+-->\s+(\S+)/);

@@ -3,6 +3,7 @@ let localWorker = false;
 let localAgents = false;
 let sourcePodcastReady = false;
 let sourceSubmitting = false;
+let sourceCaptionReady=false,sourceCaptionRequest=null,sourceCaptionURL=null;
 let pollTimer;
 let connectingWorker = false;
 let queueRefreshSequence = 0;
@@ -107,7 +108,7 @@ function renderJobs(jobs) {
 function disconnectedWorker() {
  localWorker = false;
  localAgents = false;
- sourcePodcastReady=false;
+ sourcePodcastReady=false;sourceCaptionReady=false;sourceCaptionRequest?.abort();$("caption-language-control").hidden=true;
  $("advanced-import-options").hidden=true;$("advanced-media-import").hidden=true;
  $("process-url").disabled = false;
  $("import-media").disabled = true;
@@ -159,6 +160,8 @@ $("url-form").onsubmit = async (event) => {
 	event.preventDefault();
 	if (sourceSubmitting) return;
  const raw=$("video-url").value.trim();
+ if(sourceCaptionRequest&&sourceCaptionURL===raw&&!sourceCaptionRequest.signal.aborted)return;
+ if(sourceCaptionRequest){sourceCaptionRequest.abort();sourceCaptionRequest=null;sourceCaptionURL=null;$("cancel-source").hidden=true;}
  let url;try{url=new URL(raw);if(!['https:','http:'].includes(url.protocol)||url.username||url.password)throw new Error();}catch{$("source-route-status").textContent="请粘贴不含登录凭据的公开 http / https 链接。";return;}
  const video=new Set(['youtube.com','www.youtube.com','m.youtube.com','youtu.be','bilibili.com','www.bilibili.com','m.bilibili.com','b23.tv','x.com','www.x.com','twitter.com','www.twitter.com','mobile.twitter.com']).has(url.hostname);
  if(!video&&sourcePodcastReady){
@@ -168,6 +171,9 @@ $("url-form").onsubmit = async (event) => {
  podcastRequest?.abort();podcastRequest=null;setPodcastBusy(false);
  $("podcast-results").querySelectorAll("audio,video").forEach(player=>player.pause());
  $("podcast-results").replaceChildren();podcastMessage("");
+ if(video&&sourceCaptionReady&&["x.com","www.x.com","twitter.com","www.twitter.com","mobile.twitter.com"].includes(url.hostname)){
+  await importVideoCaptions(raw);return;
+ }
  if(!video||!localWorker){
   $("source-route-status").textContent=video&&localAgents?"这个视频来源暂需可选高级服务。轻量版可直接读取公开播客来源，或导入已取得的字幕；不会自动安装 Python 或识别模型。":"请在 Coconut 桌面应用或本地服务中添加公开链接。这里可以直接导入文字稿和播放本地媒体。";
   $("local-setup").open=true;return;
@@ -198,6 +204,30 @@ $("url-form").onsubmit = async (event) => {
 		button.disabled = false;sourceSubmitting=false;
 	}
 };
+async function importVideoCaptions(url) {
+ const controller=new AbortController(),startingDocument=state.active,startingLanguage=$('caption-language').value;sourceCaptionRequest=controller;sourceCaptionURL=url;
+ $('process-url').disabled=true;$('cancel-source').hidden=false;
+ $('source-route-status').textContent='正在读取公开原语言字幕，不下载音视频、不识别或调用模型。';
+ const current=()=>sourceCaptionRequest===controller&&!controller.signal.aborted&&workspace==='add'&&state.active===startingDocument&&$('video-url').value.trim()===url&&$('caption-language').value===startingLanguage;
+ try{
+  const response=await fetch('api/captions/import',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({url,language:$('caption-language').value||null}),signal:controller.signal});
+  const result=await response.json();if(!current())return;
+  if(!response.ok)throw new Error(result.error||'当前入口未取得可用公开字幕，请重试或导入字幕文件');
+  if(result.status!=='ready'||!result.document){
+   $('source-route-status').textContent=result.message||'当前入口未取得可用公开字幕，可打开原站或导入字幕文件；未启动识别。';
+   if(result.status==='language_required'){$('caption-language-control').hidden=false;$('caption-language').focus();}
+   return;
+  }
+  const persisted=await add(Coconut.validate(result.document),current);
+  if(persisted)notice('原语言字幕已保存。尚未经人工核对；摘要需单独确认，时间戳可回到原站。未下载媒体或运行识别。');
+ }catch(error){if(sourceCaptionRequest===controller)$('source-route-status').textContent=controller.signal.aborted?'已取消获取字幕，书架保留。':error.message;}
+ finally{if(sourceCaptionRequest===controller){sourceCaptionRequest=null;sourceCaptionURL=null;$('cancel-source').hidden=true;$('process-url').disabled=false;}}
+}
+$('cancel-source').onclick=()=>sourceCaptionRequest?.abort();
+$('video-url').addEventListener('input',()=>sourceCaptionRequest?.abort());
+$('caption-language').addEventListener('change',()=>sourceCaptionRequest?.abort());
+window.addEventListener('coconut-workspace-change',event=>{if(event.detail?.workspace!=='add')sourceCaptionRequest?.abort();});
+window.addEventListener('coconut-render',()=>{if(workspace!=='add')sourceCaptionRequest?.abort();});
 function allowMediaRecognition() {
  if (!$("captions-only").checked) return true;
  $("captions-only").closest("details").open = true;
@@ -247,14 +277,14 @@ async function connectWorker() {
    const newlyConnected = !localAgents;
    localWorker=false;localAgents=true;workerWasConnected=true;
    $("local-setup").open=false;$("retry-worker").hidden=true;
-   $("url-form").hidden=false;sourcePodcastReady=health.capabilities?.podcast_import===true;$("advanced-import-options").hidden=true;$("advanced-media-import").hidden=true;$("show-jobs").hidden=true;$("jobs-heading").hidden=true;$("jobs").hidden=true;
+   $("url-form").hidden=false;sourcePodcastReady=health.capabilities?.podcast_import===true;sourceCaptionReady=health.capabilities?.caption_import===true;$("caption-language-control").hidden=!sourceCaptionReady;$("advanced-import-options").hidden=true;$("advanced-media-import").hidden=true;$("show-jobs").hidden=true;$("jobs-heading").hidden=true;$("jobs").hidden=true;
    $("process-url").disabled=false;$("import-media").disabled=true;
    $("worker-status").textContent="轻量本地服务已连接 · 无需 Python";
    $("worker-help").textContent="可导入文字稿、在浏览器中同步回听音视频，并调用已登录的本地 CLI。可从公开播客源导入文字稿与回听媒体；不含 ASR 或离线翻译模型，不会自动发送原文。";
    if(newlyConnected)window.dispatchEvent(new CustomEvent("coconut-worker-ready",{detail:{local_agents:true,media_import:false,podcast_import:health.capabilities?.podcast_import===true}}));
    return;
   }
-  localAgents=true;sourcePodcastReady=health.capabilities?.podcast_import===true;
+  localAgents=true;sourcePodcastReady=health.capabilities?.podcast_import===true;sourceCaptionReady=health.capabilities?.caption_import===true;$("caption-language-control").hidden=!sourceCaptionReady;
 		localWorker = true;
  $("advanced-import-options").hidden=false;$("advanced-media-import").hidden=false;
   if (!await refreshJobs()) return;
