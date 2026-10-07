@@ -3,7 +3,8 @@ import hashlib
 import json
 from pathlib import Path
 import unittest
-from scripts.build_caption_helper import expand_macho_path, ROOT
+import tempfile
+from scripts.build_caption_helper import expand_macho_path, analysis_record, validated_framework_link, ROOT
 
 
 class CaptionBuildContracts(unittest.TestCase):
@@ -15,6 +16,36 @@ class CaptionBuildContracts(unittest.TestCase):
         self.assertEqual(expand_macho_path('@executable_path/nested',native,executable),executable.parent/'nested')
         # Common top-level LC_RPATH must locate the sibling libcrypto binary.
         self.assertEqual(expand_macho_path('@loader_path',native,executable)/'libcrypto.3.dylib',Path('/private/archive/libcrypto.3.dylib'))
+
+    def test_macos_analysis_data_symlinks_are_not_opened_as_files(self):
+        names={'Python.framework/Versions/3.14/Python',
+               'Python.framework/Versions/3.14/Resources/Info.plist'}
+        links=[('Python','Python.framework/Versions/3.14/Python'),
+               ('Python.framework/Python','Versions/Current/Python'),
+               ('Python.framework/Resources','Versions/Current/Resources'),
+               ('Python.framework/Versions/Current','3.14')]
+        for name,target in links:
+            with self.subTest(name=name):
+                record=analysis_record(name,target,'SYMLINK',names)
+                self.assertEqual(record['target'],target)
+                self.assertEqual(record['kind'],'SYMLINK')
+                self.assertNotIn('sha256',record)
+        with tempfile.TemporaryDirectory() as directory:
+            source=Path(directory)/'Info.plist';source.write_bytes(b'original framework metadata')
+            record=analysis_record('Python.framework/Versions/3.14/Resources/Info.plist',str(source),'DATA',names)
+            self.assertEqual(record['sha256'],hashlib.sha256(source.read_bytes()).hexdigest())
+        with self.assertRaises(FileNotFoundError):
+            analysis_record('ordinary.data','nonexistent-real-file','DATA',names)
+
+    def test_framework_aliases_reject_external_missing_and_unapproved_targets(self):
+        names={'Python.framework/Versions/3.14/Python'}
+        for name,target in [('Python','/Library/Frameworks/Python.framework/Versions/3.14/Python'),
+                            ('Python','../../private-file'),('Other','Python.framework/Versions/3.14/Python'),
+                            ('Python.framework/Python','Versions/Current/Other')]:
+            with self.subTest(name=name,target=target), self.assertRaises(RuntimeError):
+                validated_framework_link(name,target,names)
+        with self.assertRaises(RuntimeError):
+            validated_framework_link('Python','Python.framework/Versions/3.14/Python',set())
 
     def test_vendored_notice_and_source_hashes(self):
         root=ROOT/'desktop/vendor/caption-helper-notices'

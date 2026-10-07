@@ -79,6 +79,37 @@ def verify_certifi_source():
                 raise RuntimeError('Installed certifi differs from delivered MPL source: '+name)
 
 
+# PyInstaller reconstructs these standard Python.framework aliases. SYMLINK
+# sources are archive-relative target strings, never paths to files to hash.
+FRAMEWORK_LINKS = {
+    'Python': ('Python.framework/Versions/3.14/Python', 'Python.framework/Versions/3.14/Python'),
+    'Python.framework/Python': ('Versions/Current/Python', 'Python.framework/Versions/3.14/Python'),
+    'Python.framework/Resources': ('Versions/Current/Resources', 'Python.framework/Versions/3.14/Resources'),
+    'Python.framework/Versions/Current': ('3.14', 'Python.framework/Versions/3.14'),
+}
+
+def validated_framework_link(name, target, archive_names):
+    expected = FRAMEWORK_LINKS.get(name)
+    if not expected or target != expected[0]:
+        raise RuntimeError('Unapproved framework symlink: '+name)
+    canonical = expected[1]
+    if not any(entry == canonical or entry.startswith(canonical+'/') for entry in archive_names):
+        raise RuntimeError('Framework symlink target is absent from archive: '+name)
+    return {'name':name,'kind':'SYMLINK','target':target,'resolvedArchivePath':canonical}
+
+
+def analysis_record(name, source, kind, archive_names, hash_key='sha256'):
+    if kind == 'SYMLINK':
+        return validated_framework_link(name, source, archive_names)
+    if source == '-':
+        if name != 'scripts' or kind != 'PYMODULE':
+            raise RuntimeError('Unapproved namespace analysis record: '+name)
+        return {'name':name,'kind':kind,hash_key:'namespace-package'}
+    # Every real code/data input remains hashed; an unexpected missing source
+    # fails rather than being mistaken for a symbolic-link target.
+    return {'name':name,'kind':kind,hash_key:digest(Path(source).read_bytes())}
+
+
 def expand_macho_path(value, native, executable):
     if value == '@loader_path': return native.parent
     if value.startswith('@loader_path/'): return native.parent/value.removeprefix('@loader_path/')
@@ -97,7 +128,10 @@ def audit_frozen(binary, directory):
         if Path(name).is_absolute() or '..' in Path(name).parts:raise RuntimeError('Unsafe frozen archive path')
         destination.parent.mkdir(parents=True,exist_ok=True)
         payload=archive.extract(name)
-        if entry[-1]=='n':symlinks.append((destination,payload.rstrip(b'\0').decode('utf8')))
+        if entry[-1]=='n':
+            target=payload.rstrip(b'\0').decode('utf8')
+            validated_framework_link(name,target,archive.toc)
+            symlinks.append((destination,target))
         else:destination.write_bytes(payload);natives.append(destination)
     for destination,target in symlinks:
         if Path(target).is_absolute() or not (destination.parent/target).resolve().is_relative_to(root):raise RuntimeError('Unsafe frozen symlink')
@@ -136,7 +170,7 @@ def audit_native(inventory):
     framework,expected_inputs=approved_python_inputs() if sys.platform=='darwin' else (None,None)
     for item in inventory['binaries']:
         if item['kind']=='SYMLINK':
-            output.append({'name':item['name'],'kind':'SYMLINK','target':item['source']});continue
+            output.append(validated_framework_link(item['name'],item['source'],{entry['name'] for category in ('binaries','data') for entry in inventory[category]}));continue
         source=Path(item['source'])
         if not source.is_file(): raise RuntimeError('Missing analyzed native input')
         record={'name':item['name'],'kind':item['kind'],'sha256':digest(source.read_bytes())}

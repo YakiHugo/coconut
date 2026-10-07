@@ -1,6 +1,5 @@
 # Build only with scripts/build_caption_helper.py in its clean, pinned environment.
 from pathlib import Path
-import hashlib
 import json
 import os
 import sys
@@ -26,11 +25,17 @@ if unexpected:
 for name,source,kind in [*a.pure,*a.binaries]:
     if name.split('.')[0] in set(excludes):
         raise RuntimeError('Excluded optional dependency reached bundle: ' + name)
-# Persist the complete measured build contents for native-library/license review.
-inventory = {'pure':[{'name':n,'kind':k,'sourceSha256':hashlib.sha256(Path(s).read_bytes()).hexdigest() if s!='-' else 'namespace-package'} for n,s,k in a.pure],
+# Persist real input hashes and validated archive aliases as distinct records.
+# macOS framework SYMLINK targets are not host filesystem paths.
+sys.path.insert(0,str(root))
+from scripts.build_caption_helper import analysis_record, validated_framework_link
+archive_names = {name for name,_,_ in [*a.binaries,*a.datas]}
+for name,source,kind in [*a.binaries,*a.datas]:
+    if kind == 'SYMLINK': validated_framework_link(name,source,archive_names)
+inventory = {'pure':[analysis_record(n,s,k,archive_names,'sourceSha256') for n,s,k in a.pure],
              'binaries':[{'name':n,'source':s,'kind':k} for n,s,k in a.binaries],
-             'scripts':[{'name':n,'kind':k,'sourceSha256':hashlib.sha256(Path(s).read_bytes()).hexdigest() if s!='-' else 'namespace-package'} for n,s,k in a.scripts],
-             'data':[{'name':n,'kind':k,'sha256':hashlib.sha256(Path(s).read_bytes()).hexdigest() if s!='-' else 'namespace-package'} for n,s,k in a.datas], 'excluded':excludes}
+             'scripts':[analysis_record(n,s,k,archive_names,'sourceSha256') for n,s,k in a.scripts],
+             'data':[analysis_record(n,s,k,archive_names) for n,s,k in a.datas], 'excluded':excludes}
 Path(os.environ['COCONUT_HELPER_INVENTORY']).write_text(json.dumps(inventory,indent=2)+'\n')
 pyz = PYZ(a.pure)
 exe = EXE(pyz,a.scripts,a.binaries,a.datas,[],name='coconut-caption',debug=False,
