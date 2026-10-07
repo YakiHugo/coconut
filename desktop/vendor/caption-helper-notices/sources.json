@@ -122,6 +122,13 @@
       "bytes": 138112,
       "sourceUrl": "https://files.pythonhosted.org/packages/a3/c2/24167ea9858356b47a87a50d39908bfdb72ceeefe0041586e704e5376b3a/certifi-2026.7.22.tar.gz",
       "derivation": "verbatim"
+    },
+    {
+      "file": "CPYTHON-CORE-NOTICES.txt",
+      "sha256": "768c3fd0b719422de40569be2619ad00d728af718d4f30a62ca03ffd2cd5a67b",
+      "bytes": 60766,
+      "sourceUrl": "https://www.python.org/ftp/python/3.14.8/Python-3.14.8.tar.xz",
+      "derivation": "Unique original copyright/permission/license C comment blocks from Python, Objects, Modules and Include; excludes test/example/benchmark/platform-only source and separately noticed HACL, mimalloc and Expat; source paths retained"
     }
   ]
 }

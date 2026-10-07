@@ -28,7 +28,10 @@ for each release.
   `PYTHON-THIRD-PARTY-LICENSES.rst` preserves the upstream third-party notices.
   CPython labels that third-party list incomplete. `CPYTHON-BUNDLED-NOTICES.txt`
   additionally reproduces the source copyright/license blocks for the bundled
-  HACL*/Karamel and mimalloc code. `LICENSE.HACL-Apache-2.0` and `LICENSE.expat`
+  HACL*/Karamel and mimalloc code. `CPYTHON-CORE-NOTICES.txt` additionally
+  preserves source-level notices for the interpreter and candidate extensions,
+  including getopt, the regular-expression engine, Unicode, SipHash, dtoa,
+  hash tables and safe memory reclamation. `LICENSE.HACL-Apache-2.0` and `LICENSE.expat`
   retain further exact upstream texts. This packaging changes the selection and
   layout of distributed Python files, freezes modules and may narrow universal2
   binaries to the target architecture; Coconut makes no source changes to
@@ -62,6 +65,36 @@ installer SHA-256 is
 These are content measurements; native CI must establish that the runtime it
 actually uses is the approved distribution. Preserve its provenance, and verify
 the python.org installer signature when installing the package directly.
+
+
+### Pre-freeze native hash contract
+
+`python-runtime-input.json` contains `expectedNativeInputs`, keyed by the file's
+path relative to `/Library/Frameworks/Python.framework/Versions/3.14`, after
+resolving symlinks. Each entry records SHA-256, byte length, architecture slices
+and component. The 64 entries cover the interpreter library, OpenSSL libraries,
+approved candidate standard-library extensions and optional Zstandard library.
+They are provenance coverage, not a requirement to include optional modules.
+`expectedInterpreterInputs` separately identifies the two Python launchers.
+
+For every Python/native input selected by PyInstaller Analysis, resolve its
+original path, verify that it is inside that exact real framework directory,
+require a matching entry and compare its hash and size before PyInstaller
+thins, rewrites or signs it. Unknown input files fail. The PyInstaller bootloader
+is a separate pinned-wheel input and must not be checked against this table.
+macOS system libraries are external dependencies, not approved copied inputs.
+Record transformed/final file hashes separately; they will differ from these
+universal2 installer-input hashes. Do not add newly observed hashes to the
+approved index automatically.
+
+The inspected Actions `setup.sh` and installer postinstall scripts do not alter
+Mach-O bytes. They install the package, add toolcache/interpreter symlinks,
+change file modes, compile bytecode and upgrade pip/certifi. Therefore the
+resolved indexed framework files and launchers are safe to compare. Whole-tree
+hashing, `.pyc` comparison and trusting the global certificate-store link are
+not appropriate. The build must use its isolated pinned certifi; compare its
+`.py` and `cacert.pem` files with `certifiInput.expectedSourceFiles`, also in the
+index. Its source archive hash is recorded there.
 
 The installer contains more than the helper should ship. Its declared component
 versions and direct Mach-O dependencies were inspected; they are not a final

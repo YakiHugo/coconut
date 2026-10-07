@@ -86,6 +86,10 @@ jobs:
           COCONUT_SMOKE_TEST=1 "desktop/dist/Coconut-darwin-$arch/Coconut.app/Contents/MacOS/Coconut"
       - name: Verify native release ZIP reading, playback, exports and restart recovery
         run: node tests/desktop-packaged-acceptance.mjs
+      - name: Verify exact ZIP helper integrity and native public captions
+        run: node tests/desktop-caption-helper-packaged-proof.mjs --live
+      - name: Verify real captions through the native primary journey
+        run: node tests/desktop-caption-ui-proof.mjs
       - name: Upload unsigned developer builds only
         uses: actions/upload-artifact@v4
         with:

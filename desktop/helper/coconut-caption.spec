@@ -1,6 +1,6 @@
 # Build only with scripts/build_caption_helper.py in its clean, pinned environment.
 from pathlib import Path
-import ast
+import hashlib
 import json
 import os
 import sys
@@ -10,7 +10,7 @@ root = Path(SPECPATH).resolve().parents[1]
 helper = root / 'desktop' / 'helper'
 excludes = ['mutagen','curl_cffi','yt_dlp_ejs','websockets','requests','urllib3','Cryptodome','Crypto',
             'brotli','brotlicffi','secretstorage','keyring','deno','sqlite3','_sqlite3','readline',
-            'tkinter','_tkinter','lzma','_lzma','decimal','_decimal','compression.zstd','_zstd',
+            'tkinter','_tkinter','curses','_curses','_curses_panel','lzma','_lzma','decimal','_decimal','compression.zstd','_zstd',
             'pip','setuptools','pkg_resources','packaging','numpy','IPython','pytest','ytdlp_plugins']
 a = Analysis([str(helper / 'caption_helper_launcher.py')], pathex=[str(root),str(helper)],
              binaries=[],datas=[],hiddenimports=['scripts.public_x_caption_guard','certifi'],
@@ -27,9 +27,10 @@ for name,source,kind in [*a.pure,*a.binaries]:
     if name.split('.')[0] in set(excludes):
         raise RuntimeError('Excluded optional dependency reached bundle: ' + name)
 # Persist the complete measured build contents for native-library/license review.
-inventory = {'pure':[{'name':n,'kind':k} for n,_,k in a.pure],
+inventory = {'pure':[{'name':n,'kind':k,'sourceSha256':hashlib.sha256(Path(s).read_bytes()).hexdigest() if s!='-' else 'namespace-package'} for n,s,k in a.pure],
              'binaries':[{'name':n,'source':s,'kind':k} for n,s,k in a.binaries],
-             'data':[{'name':n,'kind':k} for n,_,k in a.datas], 'excluded':excludes}
+             'scripts':[{'name':n,'kind':k,'sourceSha256':hashlib.sha256(Path(s).read_bytes()).hexdigest() if s!='-' else 'namespace-package'} for n,s,k in a.scripts],
+             'data':[{'name':n,'kind':k,'sha256':hashlib.sha256(Path(s).read_bytes()).hexdigest() if s!='-' else 'namespace-package'} for n,s,k in a.datas], 'excluded':excludes}
 Path(os.environ['COCONUT_HELPER_INVENTORY']).write_text(json.dumps(inventory,indent=2)+'\n')
 pyz = PYZ(a.pure)
 exe = EXE(pyz,a.scripts,a.binaries,a.datas,[],name='coconut-caption',debug=False,

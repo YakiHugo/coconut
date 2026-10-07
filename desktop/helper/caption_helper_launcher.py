@@ -8,6 +8,7 @@ import contextlib
 import io
 import json
 import os
+import ssl
 from pathlib import Path
 import sys
 import urllib.parse
@@ -93,8 +94,13 @@ def main():
         return {'status': 'unavailable'}
     operation = request.get('operation')
     if operation == 'version' and set(request) == {'operation'}:
+        from scripts.public_x_caption_guard import extract_public_captions
+        assert callable(extract_public_captions)
+        trust=ssl.create_default_context(cafile=certifi.where())
+        assert trust.check_hostname and trust.verify_mode == ssl.CERT_REQUIRED
         return {'status': 'ok', 'protocol': PROTOCOL, 'version': __version__,
-                'python': '.'.join(map(str, sys.version_info[:3])), 'publicExtraction': PUBLIC_EXTRACTION}
+                'python': '.'.join(map(str, sys.version_info[:3])), 'publicExtraction': PUBLIC_EXTRACTION,
+                'guardProtocol': 1, 'tlsRootsVerified': True}
     if operation == 'authored-fixture' and set(request) == {'operation', 'endpoint'}:
         if not isinstance(request['endpoint'], str) or len(request['endpoint']) > 200:
             return {'status': 'unavailable'}

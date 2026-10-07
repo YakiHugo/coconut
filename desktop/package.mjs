@@ -38,7 +38,7 @@ try {
       // Packager leaves Electron's own notices beside the .app; the ZIP contains
       // the .app alone, so preserve both notices inside its resource bundle.
       const appResources = path.join(directory,'Coconut.app/Contents/Resources');
-      await stageCaptionHelper(path.join(ROOT,'helper-build',`darwin-${arch}`),appResources);
+      await stageCaptionHelper(path.join(ROOT,'helper-build',`darwin-${arch}`),appResources,helperArtifacts[`darwin-${arch}`]);
       await copyFile(path.join(directory,'LICENSE'),path.join(appResources,'LICENSE.electron'));
       await copyFile(path.join(directory,'LICENSES.chromium.html'),path.join(appResources,'LICENSES.chromium.html'));
       await rm(archive,{force:true}); // Do not retain stale entries from an older ZIP.

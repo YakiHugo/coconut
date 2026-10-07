@@ -1,5 +1,5 @@
 /**
- * Only pinned bytes, two fixed operations, no inherited credentials or shell.
+ * Only pinned bytes, fixed protocol operations, no inherited credentials or shell.
  * The authored-fixture operation is an internal CI seam, never a bridge route.
  * This is process hygiene, not an OS sandbox or a public-network policy.
  */
@@ -13,6 +13,8 @@ import path from 'node:path';
 const lock = JSON.parse(await readFile(new URL('./caption-helper-lock.json',import.meta.url),'utf8'));
 export const HELPER_LIMITS = Object.freeze({timeoutMs:130000, outputBytes:1500000, captionBytes:1024*1024, concurrency:1});
 let active = false;
+const idleWaiters=new Set();
+export function waitForCaptionHelperIdle(){return active?new Promise(resolve=>idleWaiters.add(resolve)):Promise.resolve();}
 
 export class CaptionHelperError extends Error {
   constructor(code,message) { super(message); this.name='CaptionHelperError'; this.code=code; }
@@ -38,11 +40,13 @@ export async function verifiedHelperBytes(resourcesPath, artifact) {
   try {
     const parent=await lstat(directory);
     if (!parent.isDirectory() || parent.isSymbolicLink()) throw fail('CAPTION_INTEGRITY','字幕助手资源不是普通目录');
-    handle=await open(path.join(directory,artifact.name),constants.O_RDONLY | constants.O_NOFOLLOW);
+    handle=await open(path.join(directory,artifact.name),constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
     const stat=await handle.stat();
     if (!stat.isFile() || stat.size!==artifact.bytes) throw fail('CAPTION_INTEGRITY','字幕助手大小校验失败');
-    const bytes=await handle.readFile();
-    if (bytes.length!==artifact.bytes || createHash('sha256').update(bytes).digest('hex')!==artifact.sha256) throw fail('CAPTION_INTEGRITY','字幕助手完整性校验失败');
+    const bytes=Buffer.alloc(artifact.bytes);let offset=0;
+    while(offset<bytes.length){const {bytesRead}=await handle.read(bytes,offset,bytes.length-offset,offset);if(!bytesRead)break;offset+=bytesRead;}
+    const extra=await handle.read(Buffer.alloc(1),0,1,bytes.length);
+    if (offset!==artifact.bytes || extra.bytesRead!==0 || createHash('sha256').update(bytes).digest('hex')!==artifact.sha256) throw fail('CAPTION_INTEGRITY','字幕助手完整性校验失败');
     return bytes;
   } catch(error) {
     if(error instanceof CaptionHelperError)throw error;
@@ -136,10 +140,11 @@ export async function runPinnedCaptionHelper({resourcesPath,artifact,operation,f
     const stdout=await runProcess(executable,input,{directory,signal,timeoutMs,maxOutputBytes,onSpawn,spawnProcess});
     cancelled(signal);let result;
     try{result=JSON.parse(stdout);}catch{throw fail('CAPTION_OUTPUT','字幕助手没有返回完整元数据');}
+    if(!result || typeof result!=='object' || Array.isArray(result))throw fail('CAPTION_OUTPUT','字幕助手没有返回完整元数据');
     if(operation==='extract' && ['unavailable','access_restricted','language_required'].includes(result.status))return {status:result.status};
     if(result.status!=='ok')throw fail('CAPTION_UNAVAILABLE','字幕助手未返回完整原语字幕');
     if(operation==='version') {
-      if(result.protocol!==1 || result.version!==lock.ytDlpVersion || result.python!==artifact.python || result.publicExtraction!==true)throw fail('CAPTION_VERSION','字幕助手版本不匹配');
+      if(result.protocol!==1 || result.version!==lock.ytDlpVersion || result.python!==artifact.python || result.publicExtraction!==true || result.guardProtocol!==1 || result.tlsRootsVerified!==true)throw fail('CAPTION_VERSION','字幕助手版本不匹配');
       return {version:result.version,python:result.python,protocol:1};
     }
     if(!result.source || typeof result.source.title!=='string' || result.source.title.length>1000 ||
@@ -157,5 +162,5 @@ export async function runPinnedCaptionHelper({resourcesPath,artifact,operation,f
     const allowed=new Set(['home','tmp','config','cache','data','empty-bin','bin','caption.en.vtt']);
     if((await readdir(directory)).some(name=>!allowed.has(name)))throw fail('CAPTION_OUTPUT','字幕助手写入了未允许的文件');
     return {source:result.source,track:result.track,bytes:body,format:'vtt'};
-  } finally {try{if(directory)await rm(directory,{recursive:true,force:true});}finally{active=false;}}
+  } finally {try{if(directory)await rm(directory,{recursive:true,force:true});}finally{active=false;for(const resolve of idleWaiters)resolve();idleWaiters.clear();}}
 }
