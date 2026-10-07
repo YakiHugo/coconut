@@ -78,10 +78,12 @@ jobs:
         run: COCONUT_SMOKE_TEST=1 desktop/node_modules/.bin/electron desktop
       - name: Verify update UI, restart guards and note persistence in isolated Electron
         run: node tests/desktop-updates-ui.mjs
-      - name: Package unsigned arm64 and x64 apps
+      - name: Package and seal arm64 and x64 development apps without a signing identity
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
         run: npm run package:mac --prefix desktop
+      - name: Gate exact ZIPs on strict code signatures and reject resource tampering
+        run: node tests/desktop-mac-signature-proof.mjs
       - name: Verify package contents
         run: |
           for archive in desktop/dist/*.zip; do

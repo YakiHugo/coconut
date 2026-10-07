@@ -6,6 +6,7 @@ import os from 'node:os';
 import {fileURLToPath} from 'node:url';
 import {_electron as electron} from '@playwright/test';
 const root=fileURLToPath(new URL('../',import.meta.url)),temporary=await fs.mkdtemp(path.join(os.tmpdir(),'coconut-update-ui-'));
+const {version}=JSON.parse(await fs.readFile(path.join(root,'desktop/package.json'),'utf8'));
 let application;
 try{
  const profile=path.join(temporary,'profile'),home=path.join(temporary,'home');await fs.mkdir(home);
@@ -15,7 +16,7 @@ try{
   const page=await application.firstWindow();await page.waitForFunction(()=>typeof window.coconutPrepareUpdate==='function');return page;
  };
  let page=await launch();await page.locator('#app-updates > summary').click();
- assert.match(await page.locator('#update-version').textContent(),/0\.4\.0/);
+ assert.ok((await page.locator('#update-version').textContent()).includes(version));
  assert.equal(await page.evaluate(()=>typeof require==='undefined'&&typeof process==='undefined'),true);
  assert.equal(await page.evaluate(()=>coconutPrepareUpdate()),true);
  await page.locator('#update-developer').check();
