@@ -2,7 +2,11 @@
 
 当前机制是**自动检查／下载、确认后安装**，不是无需干预的系统级自动更新。
 
-当前 ZIP 是未签名、未公证的开发版。Electron 原生 `autoUpdater` 在 macOS 使用 Squirrel.Mac，要求应用签名。这里没有假装满足该要求，也没有安装签名密钥或关闭 macOS 安全检查。
+从 0.4.1 起，开发 ZIP 有完整的 **ad-hoc 开发签名和资源封印**，但没有可信的 Developer ID，也没有公证。为兼容既有更新器，文件名仍保留 `-unsigned.zip`，表示没有可信发行身份。Electron 原生 `autoUpdater` 在 macOS 使用 Squirrel.Mac，仍需要适当的应用签名身份；ad-hoc 并不保证 Gatekeeper 接受或原生自动更新。这里没有安装签名密钥或关闭 macOS 安全检查。
+
+0.4.0 及更早的构建关闭了 Packager 最终签名，沿用 Electron 开发运行时的 linker-signed Mach-O；原始运行时本身未提供完整应用资源封印。构建还在 Packager 返回后加入了 helper、许可证等资源。0.4.1 在全部资源落盘后使用固定版本的 Electron 官方 `@electron/osx-sign` 从内到外完成 ad-hoc 签名，以 `codesign --verify --deep --strict` 验证，再生成 ZIP；归档后再次验证两个架构的精确 ZIP，并证明改动 reader 资源或 native helper 会使校验失败。已审计的 PyInstaller helper 原本有完整二进制 ad-hoc 签名，最终封装保留其字节与 app.asar 内的校验收据。
+
+代码签名完整性门禁与 Gatekeeper 信任是两个检查。ad-hoc 身份没有 Team ID，开发包采用不启用 hardened runtime 的正常开发配置，不加入绕过库验证的 entitlement；系统 Gatekeeper 仍照常评估。正式可信分发还需要用户授权提供有效的 Developer ID Application 身份及私钥，配置 hardened runtime 和 Apple 公证、装订票据；此任务不创建身份或密钥，也不付款。Apple Developer Program 通常为每年 99 美元（地区价格以注册页为准）：https://developer.apple.com/programs/enroll/ 。Electron 官方流程：https://www.electronjs.org/docs/latest/tutorial/code-signing 。
 
 ## 使用
 
