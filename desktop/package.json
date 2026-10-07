@@ -1,7 +1,7 @@
 {
   "name": "coconut-desktop",
   "productName": "Coconut",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "private": true,
   "description": "A local-first transcript reader with explicit official CLI subscription connections",
   "author": "Coconut contributors",
