@@ -158,9 +158,9 @@ test('add and reading spaces preserve query, note and unfinished source input',a
   assert.equal($('add-workspace').hidden,false);assert.equal($('reader-workspace').hidden,true);
   await $('sample').onclick();assert.equal($('add-workspace').hidden,true);
   w.document.querySelector('.note-button').click();$('note').value='Keep my thought';$('note').oninput();
-  $('search').value='演示';$('search').oninput();
+  $('search').value='good idea';$('search').oninput();
   $('add-content').click();$('video-url').value='https://youtu.be/example';
-  $('back-reading').click();assert.equal($('search').value,'演示');assert.equal($('note').value,'Keep my thought');
+  $('back-reading').click();assert.equal($('search').value,'good idea');assert.equal($('note').value,'Keep my thought');
   $('add-content').click();assert.equal($('video-url').value,'https://youtu.be/example');
   $('back-reading').click();assert.equal($('reader-workspace').hidden,false);
  }finally{await w.happyDOM.close();}
@@ -403,7 +403,7 @@ test('a delayed subscription check cannot revive stale readiness after disconnec
 
 test('source guidance distinguishes absent media, external time links and actual local seek',async()=>{
  const w=setup();try{
-  const $=id=>w.document.getElementById(id);await $('sample').onclick();assert.match($('search-status').textContent,/尚未关联音视频/);
+  const $=id=>w.document.getElementById(id);await $('sample').onclick();assert.match($('search-status').textContent,/没有对应音视频/);
   $('source').click();assert.ok($('source-dialog').open);assert.match($('source-dialog').textContent,/可能不会自动定位/);
   await importDocument(w,{schema_version:1,title:'External',source_url:'https://x.com/example/status/123',segments:[{id:'a',start:251,end:252,text:'Source cue'}]});
   assert.match($('search-status').textContent,/若平台未自动定位/);assert.match(w.document.querySelector('.time a').href,/t=251/);
@@ -1119,7 +1119,7 @@ test('Chinese reading canvas keeps essential content visible and secondary tools
   for(const id of ['title','provenance','search','filter-all','transcript'])assert.equal($(id).closest('details'),null,id+' must remain on the main canvas');
   for(const id of ['document-details','source','reading-layout','reading-time'])assert.equal($(id).closest('details').id,'reading-settings');
   for(const id of ['export','export-notebook','export-subtitles','subtitle-format','subtitle-bilingual'])assert.equal($(id).closest('details').id,'export-menu');
-  assert.match($('search-status').textContent,/阅读设置/);
+  assert.match($('search-status').textContent,/没有对应音视频/);
   for(const id of ['import-language','document-language','translation-source','translation-target','translation-view']){
    const label=$(id).querySelector('option[value="en"]').textContent;
    assert.match(label,/英语/);assert.doesNotMatch(label,/English/);
@@ -1580,7 +1580,7 @@ test('summary composer uses one consent control and returns it on close or docum
 });
 
 test('summary and bilingual tabs preserve the visible player and never generate translations',async()=>{
- const w=setup();try{const $=id=>w.document.getElementById(id);await $('sample').onclick();let pauses=0,calls=0;w.fetch=async()=>{calls++;throw new Error('No calls expected');};
+ const w=setup();try{const $=id=>w.document.getElementById(id);await importDocument(w,{title:'No translations yet',language:'en',segments:[{id:'one',start:0,end:10,text:'A source sentence.'}]});let pauses=0,calls=0;w.fetch=async()=>{calls++;throw new Error('No calls expected');};
   const player=w.document.createElement('audio');player.pause=()=>pauses++;$('source-media').append(player);$('source-media').hidden=false;
   $('mode-summary').click();assert.equal(pauses,0);assert.equal($('source-media').closest('#transcript-controls'),null);assert.equal($('episode-media').hidden,false);
   $('mode-bilingual').click();assert.equal($('mode-bilingual').getAttribute('aria-pressed'),'true');assert.equal($('bilingual-readiness').hidden,false);assert.match($('bilingual-status').textContent,/还没有/);assert.equal(calls,0);assert.equal($('ai-consent').checked,false);
@@ -1632,4 +1632,100 @@ test('caption cancel, navigation and repeated submit cannot save stale output or
    assert.equal(w.localStorage.getItem('coconut-reader-v1'),before);assert.equal($('cancel-source').hidden,true);assert.equal(calls,1);
   }finally{await w.happyDOM.close();}
  }
+});
+
+
+test('one-minute demo opens labelled bilingual reading without fabricating an AI summary',async()=>{
+ const w=setup();try{
+  const $=id=>w.document.getElementById(id);let calls=0;
+  w.fetch=async()=>{calls++;throw new Error('No model or source requests');};
+  await $('sample').onclick();
+  assert.equal($('demo-guide').hidden,false);assert.match($('demo-guide').textContent,/无音视频/);
+  assert.equal($('mode-bilingual').getAttribute('aria-pressed'),'true');
+  assert.equal(w.document.querySelectorAll('.translation').length,3);
+  assert.equal($('transcript-layout').classList.contains('is-bilingual'),true);
+  assert.equal($('summary-body').textContent,'');assert.equal($('summary-state').dataset.state,'empty');
+  $('demo-note').click();assert.equal(w.document.activeElement,$('note'));
+  $('note').value='My first insight';$('note').oninput();$('close-note').click();
+  $('mode-transcript').click();
+  $('demo-finish').click();assert.equal($('add-workspace').hidden,false);
+  $('back-reading').click();assert.match($('count').textContent,/书架 \/ 把好想法/);
+  $('demo-finish').click();await $('sample').onclick();
+  assert.equal($('mode-bilingual').getAttribute('aria-pressed'),'true');
+  assert.equal($('episode-media').hidden,true);
+  assert.equal($('provenance').hidden,true);
+  assert.equal($('toggle-demo-tools').getAttribute('aria-expanded'),'false');
+  $('toggle-demo-tools').click();assert.equal(w.document.activeElement,$('search'));
+  $('toggle-demo-tools').click();assert.equal(w.document.activeElement,$('toggle-demo-tools'));
+  assert.doesNotMatch($('provenance').textContent,/请回听/);
+  assert.doesNotMatch($('search-status').textContent,/添加原视频/);
+  const saved=JSON.parse(w.localStorage.getItem('coconut-reader-v1'));
+  assert.equal(saved.documents.length,1);assert.equal(saved.documents[0].notes['demo-1'],'My first insight');
+  assert.equal(calls,0);assert.equal($('ai-consent').checked,false);
+ }finally{await w.happyDOM.close();}
+});
+
+test('source overview previews actual bounded cues and navigates to the last page without playing',async()=>{
+ const w=setup();try{
+  const $=id=>w.document.getElementById(id);
+  const segments=Array.from({length:221},(_,i)=>({id:'cue-'+i,start:i*10,end:i*10+9,text:i===220?'<img src=x> Final exact source sentence':'Authored source cue '+i}));
+  await importDocument(w,{title:'Long source',segments});
+  assert.equal($('source-overview').hidden,false);
+  assert.equal($('overview-segments').querySelectorAll('button').length,6);
+  assert.equal($('overview-segments').querySelector('img'),null);
+  const last=$('overview-segments').querySelector('button:last-child');
+  assert.match(last.textContent,/<img src=x> Final exact source sentence/);
+  let calls=0;w.fetch=async()=>{calls++;throw new Error('Must not request');};
+  last.click();assert.equal(w.document.activeElement.dataset.segmentId,'cue-220');
+  assert.equal($('transcript-layout').hidden,false);assert.equal($('search').value,'');
+  assert.equal($('reading-jump').options.length,21);
+  $('search').value='no matches';$('search').oninput();
+  $('reading-jump').value='cue-0';$('reading-jump').onchange();
+  assert.equal(w.document.activeElement.dataset.segmentId,'cue-0');assert.equal($('search').value,'');
+  assert.match($('reading-page-status').textContent,/1–100 \/ 221/);assert.equal(calls,0);
+ }finally{await w.happyDOM.close();}
+});
+
+test('source overview does not masquerade as or duplicate a saved summary',async()=>{
+ const w=setup();try{
+  const $=id=>w.document.getElementById(id);
+  await importDocument(w,{title:'Saved summary',segments:[{id:'a',start:0,end:4,text:'Original'}],ai_answers:[{purpose:'summary',question:'Summary',answer:'Saved model output',citations:['a'],provider:'fixture',input_snapshot:{version:1,segments:[{id:'a',text:'Original'}]}}]});
+  assert.equal($('source-overview').hidden,true);assert.equal($('overview-segments').childElementCount,0);
+  assert.equal($('summary-body').textContent,'Saved model output');
+  $('add-content').click();w.document.querySelector('.brand').click();
+  assert.equal($('add-workspace').hidden,false);assert.equal(w.document.activeElement,$('sample'));
+ }finally{await w.happyDOM.close();}
+});
+
+
+test('demo tools disclose active filters when collapsed and preserve notes and the chosen view',async()=>{
+ const w=setup();try{
+  const $=id=>w.document.getElementById(id);await $('sample').onclick();
+  assert.equal($('mode-bilingual').getAttribute('aria-pressed'),'true');
+  assert.equal(w.document.body.dataset.demoTools,'false');
+  $('toggle-demo-tools').click();$('search').value='good idea';$('search').oninput();
+  assert.equal(w.document.querySelectorAll('.segment').length,1);
+  $('language-panel').open=true;$('reading-settings').open=true;
+  $('toggle-demo-tools').click();assert.equal($('search').value,'good idea');
+  assert.equal($('language-panel').open,false);assert.equal($('reading-settings').open,false);
+  assert.match($('toggle-demo-tools').textContent,/筛选中/);
+  assert.equal(w.document.querySelectorAll('.segment').length,1);
+  $('toggle-demo-tools').click();$('clear-search').click();
+  assert.equal(w.document.querySelectorAll('.segment').length,3);
+  $('toggle-demo-tools').click();assert.equal($('toggle-demo-tools').textContent,'搜索与工具');
+  assert.equal($('mode-bilingual').getAttribute('aria-pressed'),'true');
+ }finally{await w.happyDOM.close();}
+});
+
+
+test('demo search tools are offered only in the visible transcript reading mode',async()=>{
+ const w=setup();try{
+  const $=id=>w.document.getElementById(id);await $('sample').onclick();
+  assert.equal($('toggle-demo-tools').hidden,false);
+  $('mode-summary').click();assert.equal($('toggle-demo-tools').hidden,true);
+  assert.equal($('transcript-controls').hidden,true);
+  $('mode-bilingual').click();assert.equal($('toggle-demo-tools').hidden,false);
+  $('toggle-demo-tools').click();assert.equal($('transcript-controls').hidden,false);
+  assert.equal(w.document.activeElement,$('search'));
+ }finally{await w.happyDOM.close();}
 });

@@ -58,6 +58,7 @@ async function launch(executable,profile,version,label){
  const preferences=await application.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].webContents.getLastWebPreferences());
  check(label+'_production_renderer_security',preferences.sandbox===true&&preferences.contextIsolation===true&&preferences.nodeIntegration===false&&preferences.webSecurity===true);
  check(label+'_renderer_has_no_node',await page.evaluate(()=>typeof require==='undefined'&&typeof process==='undefined'));
+ check(label+'_original_brand_asset_loads',await page.locator('.brand-mark').evaluate(img=>img.complete&&img.naturalWidth>0));
  return page;
 }
 

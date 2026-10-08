@@ -33,11 +33,19 @@ jobs:
           cache: npm
       - run: npm ci --ignore-scripts
       - run: npx playwright install --with-deps chromium
-      - run: sudo apt-get update && sudo apt-get install -y ffmpeg
+      - run: sudo apt-get update && sudo apt-get install -y ffmpeg fonts-noto-cjk
       - name: Verify standalone Web reading without a Python service
         env:
           COCONUT_UI_SCREENSHOTS: ${{ runner.temp }}/coconut-authored-ui
         run: node tests/web-browser-acceptance.mjs
+      - name: Verify 1,771-cue bilingual reading and recovery with authored fixtures
+        env:
+          COCONUT_UI_SCREENSHOTS: ${{ runner.temp }}/coconut-authored-ui
+        run: node tests/long-reading-browser.mjs
+      - name: Verify AI request ownership and explicit retry with injected responses only
+        env:
+          COCONUT_UI_SCREENSHOTS: ${{ runner.temp }}/coconut-authored-ui
+        run: node tests/ai-recovery-browser.mjs
       - name: Verify bounded long-summary plans with injected fixtures only
         run: node tests/summary-browser-acceptance.mjs
       - name: Verify explicit podcast source imports through the desktop HTTP bridge
@@ -89,7 +97,7 @@ jobs:
       - run: npm ci --ignore-scripts
       - run: npx playwright install --with-deps chromium
       - run: python -m pip install yt-dlp==2026.8.19
-      - run: sudo apt-get update && sudo apt-get install -y ffmpeg
+      - run: sudo apt-get update && sudo apt-get install -y ffmpeg fonts-noto-cjk
       - name: Submit the original URL in Chromium and verify the actual production queue
         env:
           COCONUT_ORIGINAL_URL: ${{ github.event_name == 'workflow_dispatch' && inputs.original_video_url || 'https://x.com/VaibhavSisinty/status/2105733670493651236?s=20' }}
