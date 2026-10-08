@@ -63,12 +63,15 @@ try{
  const beforeExcerpt=await cueViewport();
  await cueMore.locator('.excerpt-button').evaluate(button=>{for(const type of ['pointerdown','click'])button.addEventListener(type,()=>{window['__excerpt'+type]={top:button.closest('.segment').getBoundingClientRect().top,scrollY:window.scrollY,active:document.activeElement.className};},{once:true,capture:true});});
  await cueMore.locator('.excerpt-button').click();
+ // Native pointerdown is after Playwright's normal pre-click scrolling and
+ // before the action handler; compare against that real user-action baseline.
  // Wait through layout/scroll anchoring, without scrolling to hide a jump.
  await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));
  const afterExcerpt=await cueViewport();
- console.log(JSON.stringify({suite:'short-cue-viewport',beforeOpen,afterOpen,beforeExcerpt,pointerDown:await page.evaluate(()=>window.__excerptpointerdown),click:await page.evaluate(()=>window.__excerptclick),afterExcerpt}));
+ const pointerDown=await page.evaluate(()=>window.__excerptpointerdown),click=await page.evaluate(()=>window.__excerptclick);
+ console.log(JSON.stringify({suite:'short-cue-viewport',beforeOpen,afterOpen,beforeExcerpt,pointerDown,click,afterExcerpt}));
  await capture('02-short-cue-actions-mobile');
- check('short_cue_excerpt_keeps_bilingual_context_and_actions_visible',Math.abs(afterExcerpt.top-beforeExcerpt.top)<=2&&afterExcerpt.parts.every(part=>part.top>=0&&part.bottom<afterExcerpt.dockTop));
+ check('short_cue_excerpt_keeps_bilingual_context_and_actions_visible',pointerDown&&Math.abs(afterExcerpt.top-pointerDown.top)<=2&&afterExcerpt.parts.every(part=>part.top>=0&&part.bottom<afterExcerpt.dockTop));
  check('short_cue_secondary_action_restores_visible_focus',await page.evaluate(()=>document.activeElement.classList.contains('excerpt-button')&&document.activeElement.closest('details').open));
  await page.locator('.segment.playing .cue-more > summary').click();
  const current=page.locator('.segment.playing');await current.locator('.note-button').click();await page.locator('#note').fill('留在当前原声旁边的想法。');
