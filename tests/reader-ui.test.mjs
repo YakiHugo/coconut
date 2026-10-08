@@ -1729,3 +1729,61 @@ test('demo search tools are offered only in the visible transcript reading mode'
   assert.equal(w.document.activeElement,$('search'));
  }finally{await w.happyDOM.close();}
 });
+
+test('reimporting an unchanged edited backup reuses its existing document and preserves distinct versions',async()=>{
+ const w=setup();try{
+  await w.document.getElementById('sample').onclick();
+  const pristine=JSON.parse(w.localStorage.getItem('coconut-reader-v1')).documents[0];
+  const row=w.document.querySelector('.segment');row.querySelector('.edit-button').click();
+  w.document.getElementById('edit-segment').value='My corrected original';w.document.getElementById('save-edit').click();
+  w.document.querySelector('.segment .note-button').click();
+  const note=w.document.getElementById('note');note.value='Keep my observation';note.oninput();
+  const before=JSON.parse(w.localStorage.getItem('coconut-reader-v1')), original=before.documents[0];
+  await importDocument(w,original);
+  let stored=JSON.parse(w.localStorage.getItem('coconut-reader-v1'));
+  assert.equal(stored.documents.length,1,'the exact edited backup already exists');
+  assert.equal(stored.active,original.key,'keep stable media and bookmark associations');
+  assert.deepEqual(stored.documents[0],original);
+  await importDocument(w,pristine);
+  stored=JSON.parse(w.localStorage.getItem('coconut-reader-v1'));
+  assert.equal(stored.documents.length,1,'reopening the original source still prefers its existing edited entry');
+  assert.equal(stored.active,original.key);assert.deepEqual(stored.documents[0],original);
+  const different=structuredClone(original);different.notes['demo-1']='A different saved version';
+  await importDocument(w,different);
+  stored=JSON.parse(w.localStorage.getItem('coconut-reader-v1'));assert.equal(stored.documents.length,2);
+  assert.equal(stored.documents[0].notes['demo-1'],'Keep my observation');
+  await importDocument(w,different);assert.equal(JSON.parse(w.localStorage.getItem('coconut-reader-v1')).documents.length,2);
+ }finally{await w.happyDOM.close();}
+});
+
+test('single-document import uses the complete library-restore equivalence, not just transcript text',async()=>{
+ const w=setup();try{
+  await w.document.getElementById('sample').onclick();
+  const base=JSON.parse(w.localStorage.getItem('coconut-reader-v1')).documents[0];
+  const versions=[
+   doc=>{doc.segments[0].translations.zh.text='Different translation';},
+   doc=>{doc.segments[0].id='different-cue-id';},
+   doc=>{doc.source_url='https://www.youtube.com/watch?v=other';},
+   doc=>{doc.segments[0].start=.5;},
+   doc=>{doc.readingPosition='demo-2';},
+   doc=>{doc.segments[0].saved_excerpt=true;},
+   doc=>{doc.project_note='Personal note';doc.timestamp_bookmarks=[{id:'bookmark',time:2,note:'Personal timestamp'}];},
+  ];
+  for(const [index,change] of versions.entries()){
+   const version=structuredClone(base);change(version);
+   await importDocument(w,version);
+   const before=JSON.parse(w.localStorage.getItem('coconut-reader-v1'));
+   assert.equal(before.documents.length,index+2,'a different persistent field preserves a distinct version');
+   const active=before.documents.find(doc=>doc.key===before.active);
+   // Simulate restored entries whose keys differ from the current content hash.
+   const restored={...before,active:'restored-'+index,documents:before.documents.map(doc=>doc===active?{...doc,key:'restored-'+index}:doc)};
+   const copy=setup(JSON.stringify(restored));try{
+    await importDocument(copy,version);
+    const after=JSON.parse(copy.localStorage.getItem('coconut-reader-v1'));
+    assert.equal(after.documents.length,restored.documents.length);
+    assert.equal(after.active,restored.active);
+    assert.deepEqual(after.documents,restored.documents);
+   }finally{await copy.happyDOM.close();}
+  }
+ }finally{await w.happyDOM.close();}
+});
