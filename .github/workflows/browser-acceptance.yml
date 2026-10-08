@@ -52,6 +52,8 @@ jobs:
         run: node tests/playback-dock-browser.mjs
       - name: Verify latest local-file selection and navigation ownership with authored files
         run: node tests/import-order-browser.mjs
+      - name: Verify native reload protection after user activation with authored reading changes
+        run: node tests/reader-unload-browser.mjs
       - name: Verify bounded long-summary plans with injected fixtures only
         run: node tests/summary-browser-acceptance.mjs
       - name: Verify explicit podcast source imports through the desktop HTTP bridge

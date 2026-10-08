@@ -33,3 +33,25 @@ Chosen improvement: complete the **read → retain → revisit → reuse** flow.
 - New automated cases cover strict schema restoration, reload/JSON round trips, note-only compatibility, independent reading position, edit cancellation, repeated toggles/removal, >100-cue navigation and switching documents, export scope, storage conflict/quota recovery, safe Markdown and stale translations, and exact sparse AI selection.
 - Current public reader was inspected in a real cloud browser to verify the pre-change gap. The new code has DOM-level coverage only until publication: local browser access, file-picker and download-record restrictions were not retried or bypassed. New-code browser visual/touch behavior and browser-to-disk download acceptance remain unverified.
 - No real subscription inference, paid request, credentials, user-computer operation, private-content publication or deployment was performed for this change.
+
+
+## Unsaved reading changes and reload (2026-10-08)
+
+Notes still save synchronously on input. If document persistence fails (including a
+stale-tab conflict), a best-effort browser leave/reload confirmation is installed
+while this page has unsaved document changes. Changed transcript, source-link and
+document-details dialogs receive the same protection until saved or canceled.
+Merely opening a dialog, selecting a book, or running a background task does not
+trigger it. Saving successfully removes the listener; reverting a dialog field to
+its stored value also clears its draft protection.
+
+This does not merge tabs or save conflicting content automatically. Keep the
+existing export-before-refresh warning and export each changed document first.
+[MDN's beforeunload guidance](https://developer.mozilla.org/en-US/docs/Web/API/Window/beforeunload_event)
+requires prior user interaction and allows only browser-provided prompt text.
+The event is unreliable on mobile and cannot protect against a killed process.
+DOM regressions cover listener lifetime and cancellation; a native Chromium
+prompt after real user activation is exercised by `tests/reader-unload-browser.mjs`
+in the browser CI workflow. The script checks dirty reload/dismiss, a recovered
+clean reload, unchanged/canceled editor drafts and two-tab conflicts. It has not
+been launched locally in this environment; CI must establish the browser result.

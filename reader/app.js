@@ -24,6 +24,10 @@ const PAGE_SIZE = 100;
 let pageStart = 0;
 let storageBlocked = false;
 let lastSavedValue = null;
+let savedDocumentsValue = "[]";
+let unsavedDocumentChanges = false;
+let unloadGuardReady = false;
+let unloadGuardAttached = false;
 const persistedSummaries = new Map();
 const persistedSummaryJobs = new Map();
 function summaryCheckpointSignature(job){return job?JSON.stringify([job.provider,job.snapshot,job.results]):null;}
@@ -46,6 +50,8 @@ try {const saved=Number(localStorage.getItem("coconut-playback-rate-v1"));if(PLA
 function saveWarning(text = "") {
  $("save-status").hidden = !text;
  $("save-status").textContent = text;
+ unsavedDocumentChanges = !!text && JSON.stringify(state.documents)!==savedDocumentsValue;
+ if(unloadGuardReady)syncUnsavedUnloadGuard();
 }
 function notice(text) {
 	$("notice").hidden = !text;
@@ -77,6 +83,8 @@ try {
 		"上次保存的数据无法读取，已停止写入以保留原数据。本次内容可继续阅读，请导出备份后再关闭页面。",
 	);
 }
+// Compare validated in-memory documents, not active-tab navigation or unread storage.
+savedDocumentsValue = JSON.stringify(state.documents);
 function save() {
 	if (storageBlocked) {
   saveWarning("自动保存已暂停，原有数据未覆盖。关闭前请逐份导出本页修改过的文字稿与笔记。");
@@ -95,6 +103,7 @@ function save() {
 		const nextValue = JSON.stringify(state);
 		localStorage.setItem(KEY, nextValue);
 		lastSavedValue = nextValue;
+  savedDocumentsValue = JSON.stringify(state.documents);
   recordPersistedSummaries();
   saveWarning();
 		return true;
@@ -1274,3 +1283,44 @@ function attachTranscriptToProject(text,target){
  state.documents[index]=attached;selected=null;pageStart=0;notesOnly=false;excerptsOnly=false;speakerFilter=null;$('search').value='';
  const persisted=save();setReadingMode('transcript');render();return persisted;
 }
+
+
+// Last-resort protection, not a backup: browsers require prior user activation,
+// show their own text, and may omit this event on mobile or process termination.
+// Keep the existing export warnings. Attach only while actual changes remain.
+// https://developer.mozilla.org/en-US/docs/Web/API/Window/beforeunload_event
+function hasUnsavedReaderChanges() {
+ if(unsavedDocumentChanges)return true;
+ if($("edit-dialog").open && editingTarget){
+  const doc=state.documents.find(d=>d.key===editingTarget.documentKey);
+  const segment=doc?.segments.find(s=>s.id===editingTarget.segmentId);
+  if(segment && $("edit-segment").value!==segment.text)return true;
+ }
+ if($("source-dialog").open){
+  const doc=state.documents.find(d=>d.key===sourceTarget);
+  if(doc && $("source-url").value!==(doc.source_url||""))return true;
+ }
+ if($("details-dialog").open){
+  const doc=state.documents.find(d=>d.key===detailsTarget);
+  if(doc && ($("document-title").value!==doc.title || $("document-language").value!==(doc.language||"")))return true;
+ }
+ return false;
+}
+function warnUnsavedUnload(event) {
+ // Recheck in case a dialog was just canceled or an edit was saved.
+ if(!hasUnsavedReaderChanges()){syncUnsavedUnloadGuard();return;}
+ event.preventDefault();event.returnValue=true;
+}
+function syncUnsavedUnloadGuard() {
+ const dirty=hasUnsavedReaderChanges();
+ if(dirty===unloadGuardAttached)return;
+ unloadGuardAttached=dirty;
+ if(dirty)window.addEventListener("beforeunload",warnUnsavedUnload);
+ else window.removeEventListener("beforeunload",warnUnsavedUnload);
+}
+unloadGuardReady=true;
+// Input handlers run first, so synchronously saved notes never install a guard.
+for(const event of ["input","change","click"])document.addEventListener(event,syncUnsavedUnloadGuard);
+// Dialog close does not bubble; capture also covers native Escape/Cancel.
+document.addEventListener("close",syncUnsavedUnloadGuard,true);
+syncUnsavedUnloadGuard();
