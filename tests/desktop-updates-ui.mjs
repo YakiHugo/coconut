@@ -42,6 +42,18 @@ try{
  const fixture=path.join(temporary,'authored.json');await fs.writeFile(fixture,JSON.stringify({schema_version:1,title:'Update persistence fixture',language:'en',segments:[{id:'first',start:0,end:4,text:'Authored updater acceptance words.'}]}));
  await page.locator('#add-content').click();const [chooser]=await Promise.all([page.waitForEvent('filechooser'),page.locator('#import').click()]);await chooser.setFiles(fixture);
  await page.locator('#mode-transcript').click();await page.locator('.segment[data-segment-id="first"] .note-button').click();await page.locator('#note').fill('更新重启后保留这则笔记');await page.locator('#close-note').click();
+ // Web unload prompts must not intercept native quit after service teardown.
+ const webUnloadAbsent=()=>page.evaluate(()=>{const event=new Event('beforeunload',{cancelable:true});window.dispatchEvent(event);return !!window.coconutUpdates&&!unloadGuardReady&&!unloadGuardAttached&&!event.defaultPrevented;});
+ await page.locator('#reading-settings > summary').click();
+ await page.locator('#document-details').click();await page.locator('#document-title').fill('Temporary unsaved native title');
+ assert.equal(await webUnloadAbsent(),true);assert.equal(await page.evaluate(()=>coconutPrepareUpdate()),false);
+ await page.locator('#details-dialog button[value="cancel"]').click();
+ await page.locator('.segment[data-segment-id="first"] .note-button').click();
+ await page.evaluate(()=>{const original=Storage.prototype.setItem;window.restoreNativeStorage=()=>{Storage.prototype.setItem=original;};Storage.prototype.setItem=function(key,value){if(this===localStorage&&key==='coconut-reader-v1')throw new DOMException('Authored quota failure','QuotaExceededError');return original.call(this,key,value);};});
+ await page.locator('#note').fill('Temporary unsaved native note');
+ assert.equal(await webUnloadAbsent(),true);assert.equal(await page.evaluate(()=>coconutPrepareUpdate()),false);
+ await page.evaluate(()=>window.restoreNativeStorage());await page.locator('#note').fill('更新重启后保留这则笔记');await page.locator('#close-note').click();
+ assert.equal(await webUnloadAbsent(),true);
  assert.equal(await page.evaluate(()=>coconutPrepareUpdate()),true);
  const expected=await page.evaluate(()=>localStorage.getItem('coconut-reader-v1'));
  await application.close();application=null;page=await launch();
