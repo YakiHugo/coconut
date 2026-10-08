@@ -46,6 +46,10 @@ jobs:
         env:
           COCONUT_UI_SCREENSHOTS: ${{ runner.temp }}/coconut-authored-ui
         run: node tests/ai-recovery-browser.mjs
+      - name: Verify deep-reading audio controls and notes with authored short cues
+        env:
+          COCONUT_UI_SCREENSHOTS: ${{ runner.temp }}/coconut-authored-ui
+        run: node tests/playback-dock-browser.mjs
       - name: Verify bounded long-summary plans with injected fixtures only
         run: node tests/summary-browser-acceptance.mjs
       - name: Verify explicit podcast source imports through the desktop HTTP bridge
