@@ -56,6 +56,8 @@ try{
  release();await settled();saved=await readDocument(title);
  check('old_response_writes_only_original_document',requests.length===2&&translatedCount(saved)===64&&translatedCount(await readDocument(other.title))===0);
  check('old_status_is_not_new_document_success',!(await page.locator('#ai-progress').textContent()).includes('保存 32'));
+ stage='return_to_original_document';
+ if(await page.locator('#toggle-library').isVisible()&&await page.locator('#toggle-library').getAttribute('aria-expanded')==='false')await page.locator('#toggle-library').click();
  await page.locator('#library button').filter({hasText:title}).click();await openLanguage();
  stage='last_batch_failure';failNext=true;await page.locator('#ai-consent').check();await page.locator('#subscription-translate').click();await page.waitForFunction(()=>document.querySelector('#ai-progress').textContent.includes('Injected final-batch network rejection'));await settled();
  check('failure_unlocks_manual_retry_without_losing_results',requests.length===3&&translatedCount(await readDocument(title))===64&&!(await page.locator('#subscription-translate').isDisabled())&&!(await page.locator('#ai-consent').isChecked()));
