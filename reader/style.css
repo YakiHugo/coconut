@@ -1,6 +1,6 @@
 :root {
   color-scheme: light;
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", "Noto Sans CJK SC", "Noto Sans SC", sans-serif;
   color: #282a2c;
   background: #faf9f7;
   font-synthesis: none;
@@ -338,8 +338,8 @@ dialog select { display: block; margin-top: 8px; }
 @media(max-width:640px) { .bilingual-readiness { display: block; } .bilingual-readiness button { margin-top: 10px; } }
 
 /* Product workspace: the original coral C identity, with a quiet reading canvas. */
-.skip-link { position: fixed; z-index: 20; top: -80px; left: 16px; padding: 12px 18px; border-radius: 10px; background: var(--ink); color: #fff; }
-.skip-link:focus { top: 12px; }
+.skip-link { position: fixed; z-index: 20; top: 12px; left: 16px; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; background: var(--ink); color: #fff; }
+.skip-link:focus { width: auto; height: auto; clip-path: none; padding: 12px 18px; border-radius: 10px; }
 #main-content:focus { outline: none; }
 #add-content { background: var(--ink); border-color: var(--ink); }
 #add-content:hover { background: #41413e; }
@@ -511,3 +511,29 @@ body[data-workspace="add"] #count { font-size: 12px; }
 }
 
 body[data-demo="true"] .transcript-navigation { display: none; }
+
+/* Let the first read be about an idea; tools remain one explicit step away. */
+body[data-demo="true"][data-demo-tools="false"] #transcript-reading-tools,
+body[data-demo="true"][data-demo-tools="false"] #reader-options { display: none; }
+body[data-demo="true"] .demo-guide { margin: 16px 0 18px; }
+body[data-demo="true"] .demo-guide > div:first-child { display: flex; flex-wrap: wrap; gap: 4px 10px; }
+body[data-demo="true"] .demo-guide span { margin-top: 0; }
+body[data-demo="true"] .demo-guide strong { font-size: 11px; }
+body[data-demo="true"] .intro h1 { max-width: 780px; }
+body[data-demo="true"] #transcript { max-width: 100%; }
+#toggle-demo-tools { margin-left: auto; font-size: 11px; }
+#toggle-demo-tools[aria-expanded="true"] { color: var(--accent); }
+#add-workspace[data-source-available="false"] .file-entry { border-top: 0; padding-top: 0; margin: 0 0 24px; }
+#add-workspace[data-source-available="false"] .file-entry #import { background: var(--accent); border-color: var(--accent); color: #fff; padding: 10px 16px; font-size: 13px; }
+#add-workspace[data-source-available="false"] #process-url { background: #fff; color: var(--ink); border-color: #e2dbd3; }
+#add-workspace[data-source-available="false"] #url-form { border-top: 1px solid var(--line); padding-top: 18px; }
+#add-workspace[data-source-available="false"] #source-route-status { margin-bottom: 16px; }
+@media (max-width:650px) {
+ body[data-demo="true"] .intro h1 { font-size: 27px; line-height: 1.4; }
+ body[data-demo="true"] .demo-guide { padding: 12px 14px; }
+ body[data-demo="true"] .demo-guide > div + div { margin-top: 10px; }
+ body[data-demo="true"] .reading-modes { gap: 18px; }
+ body[data-demo="true"] .reading-modes button { font-size: 12px; }
+ body[data-demo="true"] #toggle-demo-tools { font-size: 10px; }
+ body[data-demo="true"] .segment { padding-top: 22px; }
+}

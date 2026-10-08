@@ -158,9 +158,9 @@ test('add and reading spaces preserve query, note and unfinished source input',a
   assert.equal($('add-workspace').hidden,false);assert.equal($('reader-workspace').hidden,true);
   await $('sample').onclick();assert.equal($('add-workspace').hidden,true);
   w.document.querySelector('.note-button').click();$('note').value='Keep my thought';$('note').oninput();
-  $('search').value='演示';$('search').oninput();
+  $('search').value='good idea';$('search').oninput();
   $('add-content').click();$('video-url').value='https://youtu.be/example';
-  $('back-reading').click();assert.equal($('search').value,'演示');assert.equal($('note').value,'Keep my thought');
+  $('back-reading').click();assert.equal($('search').value,'good idea');assert.equal($('note').value,'Keep my thought');
   $('add-content').click();assert.equal($('video-url').value,'https://youtu.be/example');
   $('back-reading').click();assert.equal($('reader-workspace').hidden,false);
  }finally{await w.happyDOM.close();}
@@ -1640,7 +1640,7 @@ test('one-minute demo opens labelled bilingual reading without fabricating an AI
   const $=id=>w.document.getElementById(id);let calls=0;
   w.fetch=async()=>{calls++;throw new Error('No model or source requests');};
   await $('sample').onclick();
-  assert.equal($('demo-guide').hidden,false);assert.match($('demo-guide').textContent,/没有音视频/);
+  assert.equal($('demo-guide').hidden,false);assert.match($('demo-guide').textContent,/无音视频/);
   assert.equal($('mode-bilingual').getAttribute('aria-pressed'),'true');
   assert.equal(w.document.querySelectorAll('.translation').length,3);
   assert.equal($('transcript-layout').classList.contains('is-bilingual'),true);
@@ -1649,10 +1649,14 @@ test('one-minute demo opens labelled bilingual reading without fabricating an AI
   $('note').value='My first insight';$('note').oninput();$('close-note').click();
   $('mode-transcript').click();
   $('demo-finish').click();assert.equal($('add-workspace').hidden,false);
-  $('back-reading').click();assert.match($('count').textContent,/书架 \/ 一分钟/);
+  $('back-reading').click();assert.match($('count').textContent,/书架 \/ 把好想法/);
   $('demo-finish').click();await $('sample').onclick();
   assert.equal($('mode-bilingual').getAttribute('aria-pressed'),'true');
   assert.equal($('episode-media').hidden,true);
+  assert.equal($('provenance').hidden,true);
+  assert.equal($('toggle-demo-tools').getAttribute('aria-expanded'),'false');
+  $('toggle-demo-tools').click();assert.equal(w.document.activeElement,$('search'));
+  $('toggle-demo-tools').click();assert.equal(w.document.activeElement,$('toggle-demo-tools'));
   assert.doesNotMatch($('provenance').textContent,/请回听/);
   assert.doesNotMatch($('search-status').textContent,/添加原视频/);
   const saved=JSON.parse(w.localStorage.getItem('coconut-reader-v1'));
@@ -1690,5 +1694,23 @@ test('source overview does not masquerade as or duplicate a saved summary',async
   assert.equal($('summary-body').textContent,'Saved model output');
   $('add-content').click();w.document.querySelector('.brand').click();
   assert.equal($('add-workspace').hidden,false);assert.equal(w.document.activeElement,$('sample'));
+ }finally{await w.happyDOM.close();}
+});
+
+
+test('demo tools disclose active filters when collapsed and preserve notes and the chosen view',async()=>{
+ const w=setup();try{
+  const $=id=>w.document.getElementById(id);await $('sample').onclick();
+  assert.equal($('mode-bilingual').getAttribute('aria-pressed'),'true');
+  assert.equal(w.document.body.dataset.demoTools,'false');
+  $('toggle-demo-tools').click();$('search').value='good idea';$('search').oninput();
+  assert.equal(w.document.querySelectorAll('.segment').length,1);
+  $('toggle-demo-tools').click();assert.equal($('search').value,'good idea');
+  assert.match($('toggle-demo-tools').textContent,/筛选中/);
+  assert.equal(w.document.querySelectorAll('.segment').length,1);
+  $('toggle-demo-tools').click();$('clear-search').click();
+  assert.equal(w.document.querySelectorAll('.segment').length,3);
+  $('toggle-demo-tools').click();assert.equal($('toggle-demo-tools').textContent,'搜索与工具');
+  assert.equal($('mode-bilingual').getAttribute('aria-pressed'),'true');
  }finally{await w.happyDOM.close();}
 });

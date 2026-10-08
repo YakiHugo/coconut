@@ -11,7 +11,16 @@ const root=fileURLToPath(new URL('../',import.meta.url));
 let directory,server,browser,stage='setup';
 const checks=[];
 // Only authored synthetic fixtures from this file may enter these review images.
-async function capture(page,name,fullPage=true){if(!process.env.COCONUT_UI_SCREENSHOTS)return;await fs.mkdir(process.env.COCONUT_UI_SCREENSHOTS,{recursive:true});await page.screenshot({path:path.join(process.env.COCONUT_UI_SCREENSHOTS,name+'.png'),fullPage});}
+async function capture(page,name,fullPage=true){
+ if(!process.env.COCONUT_UI_SCREENSHOTS)return;
+ await fs.mkdir(process.env.COCONUT_UI_SCREENSHOTS,{recursive:true});
+ // A full-page document image starts at the top so sticky UI isn't stranded mid-page.
+ // Viewport-only evidence preserves exactly the user's current reading position.
+ const scroll=await page.evaluate(()=>({x:scrollX,y:scrollY}));
+ if(fullPage)await page.evaluate(()=>scrollTo(0,0));
+ await page.screenshot({path:path.join(process.env.COCONUT_UI_SCREENSHOTS,name+'.png'),fullPage});
+ if(fullPage)await page.evaluate(({x,y})=>scrollTo(x,y),scroll);
+}
 function check(name,value){stage=name;assert.ok(value,name);checks.push(name);}
 try {
  directory=await fs.mkdtemp(path.join(os.tmpdir(),'coconut-static-web-'));
@@ -46,12 +55,13 @@ try {
  await page.setViewportSize({width:390,height:844});
  check('mobile_first_use_fits',await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth));await capture(page,'01-mobile-source-entry');
  await page.setViewportSize({width:1360,height:1000});
- await page.locator('#video-url').fill('https://youtu.be/authored-unavailable-example');await page.locator('#process-url').click();
+ check('static_web_prioritizes_working_import',await page.locator('#import').evaluate(n=>n.classList.contains('primary'))&&await page.locator('#process-url').textContent()==='查看连接方式');
+ await page.locator('#process-url').click();
  check('static_source_failure_has_an_honest_next_step',(await page.locator('#source-route-status').textContent()).includes('本地服务')&&await page.locator('#local-setup').evaluate(n=>n.open));
  await capture(page,'01-source-unavailable');await page.locator('#video-url').fill('');await page.locator('#local-setup > summary').click();
  await page.locator('#sample').click();await page.locator('#demo-guide').waitFor({state:'visible'});
  check('demo_opens_actual_bilingual_reading',await page.locator('#mode-bilingual').getAttribute('aria-pressed')==='true'&&await page.locator('.translation').count()===3);
- check('demo_discloses_authored_content',(await page.locator('#demo-guide').textContent()).includes('没有音视频')&&await page.locator('#summary-body').textContent()==='');
+ check('demo_discloses_authored_content',(await page.locator('#demo-guide').textContent()).includes('无音视频')&&await page.locator('#summary-body').textContent()==='');
  await capture(page,'02-bilingual-demo');
  await page.locator('#demo-note').click();await page.locator('#note').fill('My authored first reading note');await capture(page,'02-open-note');
  await page.setViewportSize({width:390,height:844});
@@ -61,9 +71,14 @@ try {
  check('repeated_demo_preserves_note',await page.locator('.saved-note').textContent()==='My authored first reading note');
  await page.setViewportSize({width:390,height:844});
  await page.locator('#demo-finish').click();await page.locator('#sample').click();
- check('one_click_mobile_tryout_reveals_actual_source',await page.locator('.words').first().evaluate(n=>{const r=n.getBoundingClientRect();return r.top<innerHeight&&r.bottom>0;}));
+ check('one_click_mobile_tryout_reveals_actual_source',await page.locator('.words').first().evaluate(n=>{const r=n.getBoundingClientRect();return r.top<innerHeight*0.6&&r.bottom>0;}));
+ check('one_click_mobile_tryout_shows_both_languages',await page.locator('.parallel-text').first().evaluate(n=>{const r=n.getBoundingClientRect();return r.top>=0&&r.bottom<=innerHeight;}));
  await capture(page,'02-mobile-first-viewport',false);
  check('mobile_bilingual_demo_fits',await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth));await capture(page,'02-mobile-bilingual-demo');
+ await page.locator('#toggle-demo-tools').click();await page.locator('#search').fill('good idea');await page.locator('#toggle-demo-tools').click();
+ check('collapsed_demo_tools_keep_filter_visible',await page.locator('.segment').count()===1&&(await page.locator('#toggle-demo-tools').textContent()).includes('筛选中'));
+ await page.locator('#toggle-demo-tools').click();await page.locator('#clear-search').click();await page.locator('#toggle-demo-tools').click();
+ check('demo_tools_preserve_bilingual_reading',await page.locator('.translation').count()===3&&await page.locator('#mode-bilingual').getAttribute('aria-pressed')==='true');
  await page.setViewportSize({width:1360,height:1000});stage='import';
  await page.locator('#file').setInputFiles(fixturePath);
  await page.locator('#reader-workspace').waitFor({state:'visible'});

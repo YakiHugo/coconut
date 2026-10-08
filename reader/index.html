@@ -7,15 +7,15 @@
 <meta name="description" content="把长视频和播客变成自己的阅读空间。对照原文与译文，按时间回听，留下摘录和笔记。">
 <meta name="theme-color" content="#faf9f7">
 <link rel="icon" type="image/png" href="coconut-mark.png">
-<link rel="stylesheet" href="style.css?v=bf5d0ff3cc">
+<link rel="stylesheet" href="style.css?v=3ba248900a">
 <script src="summary.js?v=580ffdad1e" defer></script>
 <script src="core.js?v=ce1ae62390" defer>
 </script>
-<script src="app.js?v=bad7531454" defer>
+<script src="app.js?v=f09a7518d1" defer>
 </script>
 <script src="language.js?v=4c3da93a7c" defer></script>
 <script src="podcasts.js?v=5e3059eb12" defer></script>
-<script src="jobs.js?v=81e5fd2059" defer>
+<script src="jobs.js?v=660c7c538d" defer>
 </script>
 <script src="updates.js?v=c99ed00c5a" defer></script>
 </head>
@@ -71,9 +71,9 @@
 <button id="sample" class="demo-launch">先试读一分钟 <span aria-hidden="true">↗</span></button><p class="demo-caption">自写双语示例 · 无需安装或连接 AI</p>
 </div>
 <div class="welcome-preview" aria-label="自写双语示例预览，没有音视频">
-<div class="preview-topline"><span class="preview-label">一段声音，两种视角</span><span class="preview-language">中 / EN</span></div>
+<div class="preview-topline"><span class="preview-label">一句话，两种视角</span><span class="preview-language">中 / EN</span></div>
 <div class="preview-orbit" aria-hidden="true"><span>好想法</span><i></i><b>留在这里</b></div>
-<div class="preview-excerpt"><span class="preview-time">00:18 · 自写示例</span><p>重要的不只是更顺的文字，<span class="preview-highlight">还有随时查证的能力。</span></p><p lang="en">What matters is not just smoother prose, but the ability to check the source.</p></div>
+<div class="preview-excerpt"><span class="preview-time">00:00 · 自写示例</span><p>好想法，有时只是一句话，<span class="preview-highlight">让你忍不住读第二遍。</span></p><p lang="en">Sometimes a good idea begins with a sentence you want to read twice.</p></div>
 <div class="preview-footer"><span><span aria-hidden="true">⌁</span> 原文与译文，一起读</span><span aria-hidden="true">↗</span></div>
 </div>
 </div>
@@ -146,7 +146,7 @@ cd coconut
 <p id="subtitle">导入 Coconut JSON、SRT 或 VTT。读原话，记想法，在时间戳处回到声音的现场。</p>
 <p id="provenance" class="hint">
 </p>
-<div id="demo-guide" class="demo-guide" hidden><div><strong>这是你的试读空间</strong><span>自写内容与预置译文，没有音视频，也没有调用模型。</span></div><div><button id="demo-note" type="button">记下第一个想法 <span aria-hidden="true">↗</span></button><button id="demo-finish" type="button">添加自己的内容</button></div></div>
+<div id="demo-guide" class="demo-guide" hidden><div><strong>内置自写示例</strong><span>原文与译文均为预置 · 无音视频 · 不调用 AI</span></div><div><button id="demo-note" type="button">记下第一个想法 <span aria-hidden="true">↗</span></button><button id="demo-finish" type="button">添加自己的内容</button></div></div>
 <section id="episode-media" class="episode-media" aria-label="本集声音与回源"><div class="episode-media-heading"><span class="eyebrow">原声与来源</span><span class="hint">阅读时随时回听</span></div><div id="podcast-playback" class="podcast-playback" hidden><button id="download-podcast-media" type="button">下载并回听本集原声</button><button id="cancel-podcast-media" type="button" hidden>取消下载</button><p id="podcast-media-status" class="hint">只在点击后下载（最多 200 MiB），媒体仅保留在本次页面，刷新后需重新获取。</p></div>
 <div class="local-media-entry"><button id="attach-reader-media" type="button">选择对应的音频或视频</button><button id="detach-reader-media" type="button" hidden>移除本次媒体</button><input id="reader-media-file" type="file" accept="audio/*,video/*,.mp3,.m4a,.wav,.ogg,.flac,.mp4,.webm,.mov" hidden><p id="reader-media-status" class="hint">在浏览器中打开文件，不上传。请选与文字稿对应的原文件；刷新页面后需重新选择。</p></div>
 <button id="locate-playback" hidden>定位正在播放的文字</button>
@@ -154,7 +154,7 @@ cd coconut
 <div id="source-media" hidden>
 </div>
 </section>
-<nav id="reading-modes" class="reading-modes" aria-label="播客阅读方式"><button id="mode-summary" aria-pressed="true">摘要阅读</button><button id="mode-transcript" aria-pressed="false">原文</button><button id="mode-bilingual" aria-pressed="false">双语对照</button></nav>
+<nav id="reading-modes" class="reading-modes" aria-label="播客阅读方式"><button id="mode-summary" aria-pressed="true">摘要阅读</button><button id="mode-transcript" aria-pressed="false">原文</button><button id="mode-bilingual" aria-pressed="false">双语对照</button><button id="toggle-demo-tools" type="button" aria-expanded="false" aria-controls="transcript-reading-tools reader-options" hidden>搜索与工具</button></nav>
 <section id="summary-workspace" aria-label="播客摘要">
 <section id="source-overview" class="source-overview" aria-label="原文速览">
 <div class="source-overview-heading"><div><p class="eyebrow">先看看，这篇说了什么</p><h2>沿着原文，找到感兴趣的地方</h2></div><span id="overview-duration" class="status-chip"></span></div>
@@ -191,7 +191,7 @@ cd coconut
 </div>
 </div>
 </section>
-<div class="reader-options">
+<div id="reader-options" class="reader-options">
 <details id="reading-settings" class="reading-settings"><summary>阅读设置</summary><div class="disclosure-content"><div class="settings-actions"><button id="document-details">标题与语言</button>
 <button id="source">原始来源链接</button>
 </div>

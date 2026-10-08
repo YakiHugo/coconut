@@ -23,6 +23,7 @@ function summaryCheckpointSaved(doc){return !!doc?.summary_job&&persistedSummary
 function recordPersistedSummaries() { persistedSummaries.clear();persistedSummaryJobs.clear(); for(const doc of state.documents){persistedSummaries.set(doc.key,Coconut.latestSummary(doc));persistedSummaryJobs.set(doc.key,summaryCheckpointSignature(doc.summary_job));} }
 let mediaWorkerReady = false;
 let readingMode = "summary";
+let demoToolsExpanded=false;
 const browserMedia = new Map();
 const mediaSelectionRevisions = new Map();
 function mediaSelectionRevision(key){return mediaSelectionRevisions.get(key)||0;}
@@ -265,10 +266,15 @@ function render() {
 	$("title").textContent = doc.title;
  const isDemo=doc.provenance?.kind==='authored_demo';
  document.body.dataset.demo=String(isDemo);
+ document.body.dataset.demoTools=String(demoToolsExpanded);
+ $('toggle-demo-tools').hidden=!isDemo;
+ $('toggle-demo-tools').setAttribute('aria-expanded',String(demoToolsExpanded));
+ const hasReadingFilter=!!$('search').value.trim()||notesOnly||excerptsOnly||speakerFilter!==null;
+ $('toggle-demo-tools').textContent=demoToolsExpanded?'收起工具':hasReadingFilter?'筛选中 · 查看':'搜索与工具';
  $('demo-guide').hidden=!isDemo;
  // The authored tryout has no media; don't suggest attaching an unrelated recording.
  $('episode-media').hidden=isDemo&&!mediaPath;
- $('reader-kind').textContent=isDemo?'自写双语示例':audioOnly?'原声项目':doc.language?doc.language.toUpperCase()+' · 原文可回查':'原文可回查';
+ $('reader-kind').textContent=isDemo?'一分钟试读':audioOnly?'原声项目':doc.language?doc.language.toUpperCase()+' · 原文可回查':'原文可回查';
  renderReadingNavigation(doc);
 	$("time-navigation-status").textContent="";
 	$("subtitle").textContent = audioOnly ? '原声项目 · '+(doc.media_duration?Coconut.time(doc.media_duration)+' · ':'')+'来源、项目笔记与时间书签保存在本机' :
@@ -281,7 +287,9 @@ function render() {
 	const provenanceText = sourceKinds[provenance.kind] || "导入文字稿，来源未标明";
 	const medium = provenance.source_medium === "audio" ? "音频内容" : provenance.source_medium === "video" ? "视频内容" : "";
  $("provenance").textContent = [medium, provenance.source_platform].filter(Boolean).join(" · ") + (medium || provenance.source_platform ? " · " : "") + provenanceText + (provenance.model ? " · " + provenance.model : "") + (isDemo ? " · 没有对应音视频" : " · 请回听核对专有名词与重要信息") + (provenance.alignment_warning ? " · 时间对齐降级：" + provenance.alignment_warning : "");
-	$("count").textContent = "书架 / " + doc.title;
+	if(isDemo){$('provenance').hidden=true;$('subtitle').textContent='3 个片段 · 英文 / 中文';}
+ else $('provenance').hidden=false;
+ $("count").textContent = "书架 / " + doc.title;
  if(audioOnly){
   $('provenance').textContent=doc.transcript_status==='unavailable'?'未发现可用的公开定时文字稿；未运行语音识别或模型':'尚未导入文字稿；未运行语音识别或模型';
   $('notes-panel').hidden=true;$('transcript').replaceChildren();
@@ -455,6 +463,10 @@ $("locate-playback").onclick=()=>{const segment=playbackSegment();if(segment){go
 $("add-content").onclick = () => { showWorkspace("add"); ($("video-url")).focus(); };
  document.querySelector('.brand').onclick=event=>{event.preventDefault();showWorkspace('add');$('sample').focus();};
  $('demo-finish').onclick=()=>$('add-content').click();
+ $('toggle-demo-tools').onclick=()=>{
+  demoToolsExpanded=!demoToolsExpanded;render();
+  if(demoToolsExpanded)$('search').focus();else $('toggle-demo-tools').focus();
+ };
  $('demo-note').onclick=()=>{const id=active()?.segments[0]?.id;if(!id)return;goToSegment(id);$('transcript').querySelector('.note-button')?.click();};
  $('reading-jump').onchange=()=>{const id=$('reading-jump').value;if(id)goToSegment(id);};
 $("back-reading").onclick = () => showWorkspace("read");
@@ -688,9 +700,9 @@ $("sample").onclick = async () => {
  try {
  const demo={
 		schema_version: 1,
-		title: "一分钟，试试不一样的阅读",
-  language: "zh",
-  translation_view: "en",
+		title: "把好想法，变成自己的想法",
+  language: "en",
+  translation_view: "zh",
   provenance: {kind: "authored_demo"},
 		source_url: "",
 		segments: [
@@ -698,34 +710,34 @@ $("sample").onclick = async () => {
 				id: "demo-1",
 				start: 0,
 				end: 18,
-				text: "这是 Coconut 自写的演示内容，不是真实访谈。阅读长内容时，先找到让你想停下来思考的那一段。",
-				speaker: "演示",
+				text: "A good idea does not always arrive as an answer. Sometimes it begins with a sentence you want to read twice.",
+				speaker: "",
 			},
 			{
 				id: "demo-2",
 				start: 18,
 				end: 42,
-				text: "保留时间戳，就可以把一段文字和原来的声音重新连起来。重要的不只是更顺的文字，还有随时查证的能力。",
-				speaker: "演示",
+				text: "Keep the sentence. Add one line in your own words. Later, that note can remind you why it mattered to you.",
+				speaker: "",
 			},
 			{
 				id: "demo-3",
 				start: 42,
 				end: 68,
-				text: "试着在这段旁边记一笔，或者搜索“时间戳”。你的笔记只保存在自己的浏览器里，也可以导出备份。",
-				speaker: "演示",
+				text: "A timestamp is a way back, not a verdict. When a detail matters, return to the original voice before turning it into a conclusion.",
+				speaker: "",
 			},
 		],
  };
  const translations=[
-  'This is an original Coconut demo, not a real interview. When reading something long, start with the passage that makes you pause and think.',
-  'Timestamps connect words back to the original voice. What matters is not just smoother prose, but the ability to check the source.',
-  'Try adding a note beside this passage, or searching for “timestamps”. Your notes stay in this browser, and you can export a backup.'
+  '好想法，不一定以答案的样子出现。有时，它只是一句话，让你忍不住读第二遍。',
+  '先留下那句话，再用自己的话写一行。下次回来，这一行会提醒你：当时为什么被它打动。',
+  '时间戳是一条回去的路，不是结论。重要的细节，先回到原声核对，再把它变成自己的理解。'
  ];
- demo.segments.forEach((segment,index)=>{segment.translations={en:{text:translations[index],source_text:segment.text,source_language:'zh',document_language:'zh',provider:'Coconut 自写演示译文'}};});
+ demo.segments.forEach((segment,index)=>{segment.translations={zh:{text:translations[index],source_text:segment.text,source_language:'en',document_language:'en',provider:'Coconut 自写示例译文'}};});
  await add(Coconut.validate(demo));
  // Explicitly reopening the bilingual tryout restores its view, never its edited content.
- active().translation_view='en';save();
+ active().translation_view='zh';save();demoToolsExpanded=false;
  setReadingMode('transcript');render();
  $('title').scrollIntoView?.({block:'start'});
  } catch(error){notice('示例打开失败：'+error.message);}

@@ -51,6 +51,15 @@ function updateSourceEntry() {
   placeholder=sourcePodcastReady?(sourceCaptionReady?"RSS、Apple Podcasts、小宇宙或 X 单视频":"RSS、Apple Podcasts 或小宇宙公开链接"):(sourceCaptionReady?"https://x.com/用户名/status/帖子编号":"请直接导入已有的 JSON、SRT 或 VTT");
  }
  if(label)label.textContent=text;$("video-url").placeholder=placeholder;
+ const sourceAvailable=localWorker||sourcePodcastReady||sourceCaptionReady;
+ $('add-workspace').dataset.sourceAvailable=String(sourceAvailable);
+ $('process-url').textContent=sourceAvailable?'添加到阅读空间':'查看连接方式';
+ $('process-url').type=sourceAvailable?'submit':'button';
+ $('import').classList.toggle('primary',!sourceAvailable);
+ $('import').textContent=sourceAvailable?'＋ 导入文字稿':'导入文字稿，开始阅读';
+ const entry=$('import').closest('.file-entry'),form=$('url-form');
+ if(sourceAvailable){if(form.parentElement.lastElementChild!==entry)form.parentElement.append(entry);}
+ else if(entry.nextElementSibling!==form)form.before(entry);
 }
 function updateJobButtons(identifier) {
  for (const row of $("jobs").children) {
@@ -137,7 +146,7 @@ function disconnectedWorker() {
  for (const button of $("jobs").querySelectorAll("button")) button.disabled = true;
  $("worker-status").textContent = workerWasConnected
   ? "连接暂时中断 · 下方是上次任务状态，正在尝试重连"
-  : (["localhost", "127.0.0.1", "[::1]"].includes(location.hostname) ? "暂时无法连接本地处理服务" : "阅读预览 · 未连接本地服务");
+  : "Web 阅读 · 文件导入可用 · 未连接本地服务";
  $("worker-help").textContent = workerWasConnected
   ? "请检查运行 Coconut 的终端。已提交的任务可能仍在处理；恢复连接后先查看任务列表，避免重复提交。阅读和笔记仍可使用。"
   : "Web 阅读无需安装。导入文字稿后可选择本地音频或视频同步回听，文件不上传。生成摘要与翻译需连接本地 AI 工具。";
@@ -177,6 +186,12 @@ function updateCaptionOptions() {
 }
 $("captions-only").onchange = updateCaptionOptions;
 updateCaptionOptions();
+$('process-url').onclick=event=>{
+ if(localWorker||sourcePodcastReady||sourceCaptionReady)return;
+ event.preventDefault();$('local-setup').open=true;
+ $('source-route-status').textContent='请在 Coconut 桌面应用或本地服务中添加公开链接。这里可以直接导入文字稿和播放本地媒体。';
+ $('local-setup').scrollIntoView?.({block:'nearest',behavior:'smooth'});
+};
 $("url-form").onsubmit = async (event) => {
 	event.preventDefault();
 	if (sourceSubmitting) return;

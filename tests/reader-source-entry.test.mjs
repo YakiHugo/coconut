@@ -75,3 +75,19 @@ test('editing a source clears its existing preview and revokes only that object 
   assert.equal(pauses,1);assert.deepEqual(revoked,['blob:source-preview']);assert.equal($('podcast-results').textContent,'');
  }finally{await w.happyDOM.close();}
 });
+
+
+test('without source fetching the primary import is available and connection help needs no URL',async()=>{
+ let health={};const {w,$,calls}=await setup(()=>health);try{
+  const entry=$('import').closest('.file-entry');
+  assert.equal(entry.nextElementSibling,$('url-form'));
+  assert.equal($('import').classList.contains('primary'),true);
+  assert.match($('import').textContent,/开始阅读/);
+  assert.equal($('process-url').textContent,'查看连接方式');assert.equal($('process-url').type,'button');
+  $('process-url').click();assert.equal($('local-setup').open,true);
+  assert.equal($('video-url').value,'');assert.ok(calls.every(([url])=>url==='api/health'));
+  health=light({podcast_import:true});await $('retry-worker').onclick();
+  assert.equal($('process-url').type,'submit');assert.equal($('process-url').textContent,'添加到阅读空间');
+  assert.equal($('import').classList.contains('primary'),false);assert.equal(entry.parentElement.lastElementChild,entry);
+ }finally{await w.happyDOM.close();}
+});
