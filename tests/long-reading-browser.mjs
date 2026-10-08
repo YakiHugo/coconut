@@ -1,3 +1,4 @@
+import {openCueActions} from './cue-actions-browser.mjs';
 /** Real Chromium acceptance of authored long-text reading and recovery.
  * No model, media, third-party text, or external network calls are used.
  * Run in CI or an explicitly permitted browser environment. */
@@ -105,7 +106,7 @@ try {
   check('mobile_note_fits_without_horizontal_overflow', await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
   await capture(page, '03-last-note-mobile'); await page.locator('#close-note').click();
   check('closing_note_returns_keyboard_to_its_cue', await last.locator('.note-button').evaluate(el => el === document.activeElement));
-  await last.locator('.excerpt-button').click();
+  await openCueActions(last);await last.locator('.excerpt-button').click();
   await last.locator('.bookmark-button').focus(); await page.keyboard.press('Enter');
   check('bookmark_keeps_keyboard_focus_on_last_cue', await last.locator('.bookmark-button').evaluate(el => el === document.activeElement));
   await last.locator('.edit-button').click(); await page.locator('#edit-segment').fill('Corrected closing thought, retained with the original.'); await page.locator('#save-edit').click();

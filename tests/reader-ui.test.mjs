@@ -265,7 +265,7 @@ test('local playback takes priority over source URL and highlights the matching 
 test('translation text is searchable, stale translations are labelled after correction',async()=>{
  const w=setup();try{await importDocument(w,{translation_view:'zh',segments:[{id:'a',start:1,end:2,text:'Source',translations:{zh:{text:'唯一译文',source_text:'Source',provider:'local'}}}]});
   const search=w.document.getElementById('search');search.value='唯一译文';search.oninput();assert.equal(w.document.querySelectorAll('.segment').length,1);
-  w.document.querySelector('.segment button').click();w.document.getElementById('edit-segment').value='Corrected';w.document.getElementById('save-edit').click();
+  w.document.querySelector('.segment .edit-button').click();w.document.getElementById('edit-segment').value='Corrected';w.document.getElementById('save-edit').click();
   search.value='';search.oninput();assert.match(w.document.querySelector('.translation.stale').textContent,/需要重新生成/);
  }finally{await w.happyDOM.close();}
 });
@@ -295,7 +295,7 @@ test('AI filtered scope matches bilingual and notes-only reader filters; edited 
   w.fetch=async(url,options)=>({ok:true,json:async()=>url.endsWith('language-tools')?{ai:{codex:{ready:true}}}:(sent=JSON.parse(options.body),{answer:'A',citations:['a'],provider:'chatgpt_subscription'})});
   await $('check-ai').onclick();$('filter-notes').click();$('search').value='中文匹配';$('search').oninput();assert.equal(w.document.querySelectorAll('.segment').length,1);
   $('ai-filtered').checked=true;$('ai-consent').checked=true;$('ai-question').value='Q';await $('ask-ai').onclick();assert.deepEqual(sent.segments.map(s=>s.id),['a']);
-  $('clear-search').click();w.document.querySelector('.segment button').click();$('edit-segment').value='Updated source';$('save-edit').click();assert.match($('ai-answers').textContent,/依据可能过期/);
+  $('clear-search').click();w.document.querySelector('.segment .edit-button').click();$('edit-segment').value='Updated source';$('save-edit').click();assert.match($('ai-answers').textContent,/依据可能过期/);
  }finally{await w.happyDOM.close();}
 });
 
@@ -457,7 +457,7 @@ test('editing context-only cue in flight rejects all target writes and marks old
   fakeSubscription(w,request=>{calls++;if(calls===2)return new Promise(resolve=>{finish=()=>resolve({ok:true,json:async()=>({translations:request.segments.map(s=>({id:s.id,text:'Second window',source_text:s.text}))})});});});
   await $('check-ai').onclick();$('ai-consent').checked=true;const running=$('subscription-translate').onclick();
   while(!finish)await new Promise(r=>setTimeout(r,1));
-  w.document.querySelector('[data-segment-id="s31"]').querySelector('button').click();$('edit-segment').value='Changed meaning';$('save-edit').click();finish();await running;
+  w.document.querySelector('[data-segment-id="s31"] .edit-button').click();$('edit-segment').value='Changed meaning';$('save-edit').click();finish();await running;
   const doc=JSON.parse(w.localStorage.getItem('coconut-reader-v1')).documents[0];assert.equal(doc.segments[32].translations.zh,undefined);assert.match($('ai-progress').textContent,/上下文已修改/);
   assert.equal(w.Coconut.translationCurrent(doc.segments[0],doc,doc.segments[0].translations.zh),false);
  }finally{await w.happyDOM.close();}
@@ -518,9 +518,9 @@ test('excerpt removal, repeated toggles and correction cancel never erase the no
   const $=id=>w.document.getElementById(id);await $('sample').onclick();
   w.document.querySelector('.note-button').click();$('note').value='Keep this note';$('note').oninput();
   const target=w.document.querySelector('.excerpt-button');$('note').blur();assert.ok(target.isConnected);target.click();
-  w.document.querySelector('.segment button').click();$('edit-segment').value='Cancelled edit';$('edit-dialog').close();
+  w.document.querySelector('.segment .edit-button').click();$('edit-segment').value='Cancelled edit';$('edit-dialog').close();
   assert.doesNotMatch(w.document.querySelector('.words').textContent,/Cancelled/);
-  w.document.querySelector('.segment button').click();$('edit-segment').value='Corrected excerpt';$('save-edit').click();
+  w.document.querySelector('.segment .edit-button').click();$('edit-segment').value='Corrected excerpt';$('save-edit').click();
   assert.equal(w.document.querySelector('.excerpt-button').getAttribute('aria-pressed'),'true');
   $('filter-excerpts').click();w.document.querySelector('.excerpt-button').click();
   assert.equal(w.document.querySelectorAll('.segment').length,0);assert.equal($('notes-panel').hidden,true);
@@ -725,7 +725,7 @@ test('saving a correction returns keyboard focus to the edited cue on a later pa
   const $=id=>w.document.getElementById(id);
   await importDocument(w,{title:'Keyboard corrections',segments:Array.from({length:205},(_,i)=>({id:'k'+i,start:i,end:i+1,text:'Part '+i}))});
   $('next-page').click();
-  const edit=w.document.querySelector('[data-segment-id="k150"] button');
+  const edit=w.document.querySelector('[data-segment-id="k150"] .edit-button');
   edit.focus();edit.click();
   $('edit-segment').focus();$('edit-segment').value='Corrected part';$('save-edit').click();
   assert.equal($('edit-dialog').open,false);
@@ -743,7 +743,7 @@ test('correcting away a search match keeps focus in the remaining results or sea
   await importDocument(w,{title:'Filtered corrections',segments:[{id:'a',start:0,end:1,text:'Match one'},{id:'b',start:1,end:2,text:'Match two'}]});
   $('search').value='Match';$('search').oninput();
   for(const expected of ['b',null]){
-   const edit=w.document.querySelector('.segment button');edit.focus();edit.click();
+   const edit=w.document.querySelector('.segment .edit-button');edit.focus();edit.click();
    $('edit-segment').focus();$('edit-segment').value='Corrected';$('save-edit').click();
    assert.equal($('search').value,'Match','saving must preserve the reader’s search');
    if(expected)assert.equal(w.document.activeElement.closest('.segment')?.dataset.segmentId,expected);
@@ -1487,7 +1487,7 @@ test('provider, task, panel close, document switch and source changes latch a st
    if(mutation==='task'){$('ai-task').value='question';$('ai-task').onchange();}
    if(mutation==='close'){$('close-summary-request').onclick();}
    if(mutation==='document')await importDocument(w,{title:'Other source',segments:[{id:'other',start:0,end:1,text:'Other source'}]});
-   if(mutation==='source'){$('mode-transcript').onclick();w.document.querySelector('.segment button').click();$('edit-segment').value='Changed original';$('save-edit').click();}
+   if(mutation==='source'){$('mode-transcript').onclick();w.document.querySelector('.segment .edit-button').click();$('edit-segment').value='Changed original';$('save-edit').click();}
    $('ai-consent').checked=true;release();await run;assert.equal(calls,1,mutation);
    const doc=JSON.parse(w.localStorage.getItem('coconut-reader-v1')).documents.find(d=>d.title==='Long synthetic summary scope');assert.equal(doc.ai_answers.length,0);assert.equal(doc.summary_job.results.length,mutation==='source'?0:1);
   }finally{await w.happyDOM.close();}

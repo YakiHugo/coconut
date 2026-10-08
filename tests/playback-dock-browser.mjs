@@ -52,6 +52,28 @@ try{
  await page.setViewportSize({width:390,height:844});await page.locator('#media-dock').waitFor({state:'visible'});
  await page.locator('#dock-locate').click();await page.waitForFunction(()=>{const row=document.activeElement,words=row.querySelector?.('.words'),dock=document.querySelector('#media-dock');if(!words)return false;const r=words.getBoundingClientRect();return r.top>=0&&r.bottom<dock.getBoundingClientRect().top;});
  check('mobile_current_source_is_not_covered_by_dock',true);await capture('02-short-cues-mobile');
+ check('three_bilingual_short_cues_fit_a_readable_mobile_span',await page.evaluate(()=>{const rows=[...document.querySelectorAll('.segment.short-cue')].slice(26,29);return rows.length===3&&rows.reduce((sum,row)=>sum+row.getBoundingClientRect().height,0)<=550&&rows.every(row=>row.querySelector('.words').textContent&&row.querySelector('.translation').textContent);}));
+ check('short_cue_primary_targets_remain_touch_sized',await page.locator('.segment.playing').evaluate(row=>['.note-button','.cue-more > summary','.time > button'].every(selector=>{const r=row.querySelector(selector).getBoundingClientRect();return r.height>=44&&r.width>=44;})));
+ const cueViewport=()=>page.locator('.segment.playing').evaluate(row=>({scrollY:window.scrollY,top:row.getBoundingClientRect().top,dockTop:document.querySelector('#media-dock').getBoundingClientRect().top,parts:['.words','.translation','.cue-more > summary','.excerpt-button'].map(selector=>{const r=row.querySelector(selector).getBoundingClientRect();return {selector,top:r.top,bottom:r.bottom};})}));
+ const beforeOpen=await cueViewport();
+ const cueMore=page.locator('.segment.playing .cue-more');await cueMore.locator('summary').focus();await page.keyboard.press('Enter');
+ const afterOpen=await cueViewport();
+ check('short_cue_more_opens_by_keyboard',await cueMore.evaluate(node=>node.open));await page.keyboard.press('Tab');
+ check('short_cue_correction_is_keyboard_reachable',await page.evaluate(()=>document.activeElement.classList.contains('edit-button')));
+ const beforeExcerpt=await cueViewport();
+ await cueMore.locator('.excerpt-button').evaluate(button=>{for(const type of ['pointerdown','click'])button.addEventListener(type,()=>{window['__excerpt'+type]={top:button.closest('.segment').getBoundingClientRect().top,scrollY:window.scrollY,active:document.activeElement.className};},{once:true,capture:true});});
+ await cueMore.locator('.excerpt-button').click();
+ // Native pointerdown is after Playwright's normal pre-click scrolling and
+ // before the action handler; compare against that real user-action baseline.
+ // Wait through layout/scroll anchoring, without scrolling to hide a jump.
+ await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));
+ const afterExcerpt=await cueViewport();
+ const pointerDown=await page.evaluate(()=>window.__excerptpointerdown),click=await page.evaluate(()=>window.__excerptclick);
+ console.log(JSON.stringify({suite:'short-cue-viewport',beforeOpen,afterOpen,beforeExcerpt,pointerDown,click,afterExcerpt}));
+ await capture('02-short-cue-actions-mobile');
+ check('short_cue_excerpt_keeps_bilingual_context_and_actions_visible',pointerDown&&Math.abs(afterExcerpt.top-pointerDown.top)<=2&&afterExcerpt.parts.every(part=>part.top>=0&&part.bottom<afterExcerpt.dockTop));
+ check('short_cue_secondary_action_restores_visible_focus',await page.evaluate(()=>document.activeElement.classList.contains('excerpt-button')&&document.activeElement.closest('details').open));
+ await page.locator('.segment.playing .cue-more > summary').click();
  const current=page.locator('.segment.playing');await current.locator('.note-button').click();await page.locator('#note').fill('留在当前原声旁边的想法。');
  check('mobile_dock_and_note_do_not_overlap',await page.evaluate(()=>{const n=document.querySelector('#notes-panel').getBoundingClientRect(),d=document.querySelector('#media-dock').getBoundingClientRect(),t=document.querySelector('#note').getBoundingClientRect();return n.bottom<d.top&&t.bottom<d.top&&document.documentElement.scrollWidth<=innerWidth;}));
  await capture('02-mobile-note');

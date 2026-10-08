@@ -1,3 +1,4 @@
+import {openCueActions} from './cue-actions-browser.mjs';
 /** Chromium acceptance with only injected provider fixtures. Never invoke a real CLI. */
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
@@ -44,7 +45,7 @@ try{
  const other=await browser.newContext({serviceWorkers:'block'}),restored=await other.newPage();restored.on('pageerror',()=>errors++);await restored.goto(origin);await restored.locator('#file').setInputFiles(exported);
  await restored.waitForFunction(()=>document.querySelector('#summary-state').dataset.state==='current');
  check('export_reimport_recovers_complete_summary',(await restored.locator('#summary-body').textContent()).includes('测试用汇总'));
- await restored.locator('#summary-citations button').first().click();await restored.locator('.segment .edit-button').first().click();await restored.locator('#edit-segment').fill('Modified source, after summary');await restored.locator('#save-edit').click();await restored.locator('#mode-summary').click();
+ await restored.locator('#summary-citations button').first().click();await openCueActions(restored.locator('.segment').first());await restored.locator('.segment .edit-button').first().click();await restored.locator('#edit-segment').fill('Modified source, after summary');await restored.locator('#save-edit').click();await restored.locator('#mode-summary').click();
  check('changed_original_marks_summary_stale',await restored.locator('#summary-state').getAttribute('data-state')==='stale');
  check('no_external_requests_or_browser_errors',external===0&&errors===0);
  console.log(JSON.stringify({suite:'long-summary-mocked',status:'passed',checks}));

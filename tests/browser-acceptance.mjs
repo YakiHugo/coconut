@@ -1,3 +1,4 @@
+import {openCueActions} from './cue-actions-browser.mjs';
 /**
  * Real Chromium acceptance against a prepared, completed local job.
  * Run after scripts/prepare_browser_acceptance.py; Chromium is installed by CI.
@@ -170,6 +171,7 @@ async function verifyRestoration(page, expected, indices, marker) {
   await editedRow.locator('.note-button').click();
   check(marker + '_note_ui', await page.locator('#note').inputValue() === expected.notes[expected.segments[indices.middle].id]);
   await page.locator('#close-note').click();
+  await openCueActions(row(page, expected.segments[indices.middle].id));
   await row(page, expected.segments[indices.middle].id).locator('.edit-button').click();
   await page.locator('#restore-edit').click();
   check(marker + '_original_ui', await page.locator('#edit-segment').inputValue() === expected.segments[indices.middle].original_text);
@@ -245,6 +247,7 @@ async function mediaAcceptance(page, document, indices) {
   check('repeat_has_meaningful_cue', loopIndex >= 0);
   const loopCue = document.segments[loopIndex];
   const loopRow = await goToSegment(page, document, loopIndex);
+  await openCueActions(loopRow);
   await loopRow.locator('.repeat-button').click();
   await page.waitForFunction(({start, end}) => {
     const media = document.querySelector('#source-media audio, #source-media video');
@@ -266,6 +269,7 @@ async function mediaAcceptance(page, document, indices) {
   await page.locator('#stop-repeat').click();
   check('repeat_stops_from_toolbar', await page.locator('#stop-repeat').isHidden() && await row(page, loopCue.id).locator('.repeat-button').getAttribute('aria-pressed') === 'false');
   await player.evaluate(media => media.pause());
+  await openCueActions(row(page, loopCue.id));
   await row(page, loopCue.id).locator('.repeat-button').click();
   await page.locator('#skip-forward').click();
   check('skip_cancels_repeat', await page.locator('#stop-repeat').isHidden());
@@ -355,13 +359,16 @@ try {
     await page.locator('#note').fill(noteMarkers[position]);
     await page.locator('#close-note').click();
     if (position < 2 && await row(page, document.segments[index].id).locator('.excerpt-button').getAttribute('aria-pressed') !== 'true') {
+      await openCueActions(row(page, document.segments[index].id));
       await row(page, document.segments[index].id).locator('.excerpt-button').click();
     }
   }
+  await openCueActions(row(page, document.segments[indices.last].id));
   await row(page, document.segments[indices.last].id).locator('.bookmark-button').click();
   const middle = await goToSegment(page, document, indices.middle);
   const originalText = document.segments[indices.middle].original_text ?? document.segments[indices.middle].text;
   const correction = document.segments[indices.middle].text + ' CoconutAcceptanceCorrection';
+  await openCueActions(middle);
   await middle.locator('.edit-button').click();
   await page.locator('#edit-segment').fill(correction);
   await page.locator('#save-edit').click();
