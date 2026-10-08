@@ -1,3 +1,4 @@
+import {openCueActions} from './cue-actions-browser.mjs';
 /** Real Chromium proof for the static Web product; no Python service or AI calls. */
 import assert from 'node:assert/strict';
 import {createServer} from 'node:http';
@@ -111,7 +112,7 @@ try {
  check('audio_replaces_video',await page.locator('video').count()===0);
  const row=page.locator('.segment[data-segment-id="second"]');
  await row.locator('.note-button').click();await page.locator('#note').fill('Synthetic note survives mode changes');await page.locator('#close-note').click();
- await row.locator('.edit-button').click();await page.locator('#edit-segment').fill('A corrected synthetic source sentence.');await page.locator('#save-edit').click();
+ await openCueActions(row);await row.locator('.edit-button').click();await page.locator('#edit-segment').fill('A corrected synthetic source sentence.');await page.locator('#save-edit').click();
  await page.locator('#mode-summary').click();check('edited_source_marks_summary_stale',await page.locator('#summary-state').getAttribute('data-state')==='stale');
  const [download]=await Promise.all([page.waitForEvent('download'),page.locator('#export-summary').click()]);
  const exported=path.join(directory,'summary.md');await download.saveAs(exported);const markdown=await fs.readFile(exported,'utf8');

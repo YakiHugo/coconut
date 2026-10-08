@@ -563,3 +563,21 @@ body[data-media-docked="true"] main { padding-bottom: 112px; }
  #dock-total { display: none; }
  body[data-media-docked="true"] #notes-panel { bottom: calc(84px + env(safe-area-inset-bottom)); max-height: min(65dvh, calc(100dvh - 108px)); }
 }
+
+/* Short subtitle fragments: source boundaries remain intact, controls unfold
+   on demand instead of competing with each line of the transcript. */
+.segment.short-cue { padding-top: 12px; padding-bottom: 10px; }
+.short-cue .cue-actions { display: flex; align-items: flex-start; flex-wrap: wrap; gap: 0 12px; margin-top: 4px; }
+.short-cue .cue-actions > .note-button { margin: 0; }
+.short-cue .cue-more { flex: 1; min-width: 0; }
+.short-cue .cue-more > summary { width: fit-content; font-size: 11px; padding: 6px; min-height: 36px; display: flex; align-items: center; }
+.short-cue .cue-more > button { margin: 0; }
+.is-bilingual .short-cue .parallel-text { gap: 8px 28px; }
+.is-bilingual .short-cue .words::before, .is-bilingual .short-cue .translation::before { display: inline; margin-right: 8px; letter-spacing: 0; }
+@media (max-width: 850px) {
+ .is-bilingual .short-cue .parallel-text { gap: 4px; }
+}
+@media (max-width: 650px) {
+ .short-cue .cue-more > summary { min-height: 44px; }
+ .short-cue .time > button { min-height: 44px; min-width: 44px; margin-top: 0; }
+}

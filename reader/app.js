@@ -232,7 +232,20 @@ function renderLibrary() {
 		$("library").append(b);
 	}
 }
+function isLightCueText(text) {
+ // Count wider glyphs conservatively so a 160-character Chinese paragraph
+ // does not receive the same density treatment as a short English fragment.
+ return text.length<=160&&!/[\r\n\u2028\u2029]/.test(text)&&Array.from(text).reduce((width,char)=>width+(char.codePointAt(0)>255?2:1),0)<=100;
+}
+function focusCueAction(target) {
+ const disclosure=target?.closest(".cue-more");
+ if(disclosure&&target.tagName!=='SUMMARY')disclosure.open=true;
+ target?.focus({preventScroll:true});
+}
 function render() {
+ const focusedCueAction=document.activeElement?.closest('.cue-more');
+ const cueFocus=focusedCueAction?{key:focusedCueAction.dataset.cueKey,selector:document.activeElement.tagName==='SUMMARY'?'summary':'.'+document.activeElement.className}:null;
+ const openCueActions=new Set([...document.querySelectorAll(".cue-more[open]")].map(node=>node.dataset.cueKey));
 	const doc = active();
 	renderLibrary();
 	showWorkspace(doc ? workspace : "add");
@@ -361,6 +374,12 @@ function render() {
 			"segment" + (selected === s.id ? " selected" : "") + (s.saved_excerpt === true ? " excerpted" : ""),
 		);
 		row.dataset.segmentId = s.id;
+  const translated=s.translations?.[doc.translation_view];
+  // Dense caption fragments remain individual source-timed cues. Long text,
+  // stale translations and quality warnings keep the full reading treatment.
+  const compact=s.end>s.start&&s.end-s.start<=3&&isLightCueText(s.text)&&
+   (!translated||(Coconut.translationCurrent(s,doc,translated)&&isLightCueText(translated.text)&&!Coconut.translationQualityMessage(translated)));
+  row.classList.toggle('short-cue',compact);
 		row.tabIndex = -1;
 		const meta = el("div", "time");
 		const href = Coconut.source(doc.source_url, s.start);
@@ -386,7 +405,6 @@ function render() {
 		body.className="segment-content";
   const parallel=el("div","parallel-text");
   parallel.append(highlightedText("p", "words", s.text, query));
-        const translated=s.translations?.[doc.translation_view];
         if(translated) parallel.append(highlightedText("p", "translation"+(!Coconut.translationCurrent(s,doc,translated)?" stale":""), Coconut.translationCurrent(s,doc,translated) ? translated.text : "原文或上下文已变化，或旧译文缺少上下文记录，此译文需要重新生成", query));
         body.append(parallel);
         if(translated && Coconut.translationCurrent(s,doc,translated)) { const warning=Coconut.translationQualityMessage(translated); if(warning)body.append(el("p","translation-review","待核对："+warning)); }
@@ -425,7 +443,7 @@ function render() {
 			render();
 			const rows = [...$("transcript").querySelectorAll(".segment")];
 			const target = rows.find(item => item.dataset.segmentId === s.id) || rows[Math.min(position, rows.length - 1)];
-			(target?.querySelector(".excerpt-button") || $("filter-excerpts")).focus({preventScroll: true});
+			focusCueAction(target?.querySelector(".excerpt-button") || $("filter-excerpts"));
 		};
 		body.append(excerptButton);
 		const bookmarkButton = el("button", "bookmark-button", doc.readingPosition === s.id ? "已标记阅读位置" : "读到这里");
@@ -436,9 +454,21 @@ function render() {
 			render();
    // Rendering replaces the focused control; keep keyboard readers at this cue.
    const target = [...$("transcript").querySelectorAll(".segment")].find(item => item.dataset.segmentId === s.id);
-   target?.querySelector(".bookmark-button")?.focus({preventScroll: true});
+   focusCueAction(target?.querySelector(".bookmark-button"));
 		};
 		body.append(bookmarkButton);
+  if(compact){
+   const actions=el('div','cue-actions');
+   const more=el('details','cue-more');more.dataset.cueKey=JSON.stringify([doc.key,s.id]);
+   const summary=el('summary','',[repeating?.id===s.id?'循环中':'',s.saved_excerpt===true?'已摘录':'','更多'].filter(Boolean).join(' · '));
+   summary.dataset.cueTime=Coconut.time(s.start);
+   const repeat=meta.querySelector('.repeat-button');
+   summary.setAttribute('aria-label',summary.dataset.cueTime+' · '+summary.textContent+'：修正、摘录、阅读位置'+(repeat?'与循环回听':''));
+   more.append(summary,edit,excerptButton,bookmarkButton);
+   if(repeat)more.append(repeat);
+   more.open=openCueActions.has(more.dataset.cueKey);
+   actions.append(button,more);body.append(actions);
+  }
 		if (doc.notes[s.id]) body.append(highlightedText("p", "saved-note", doc.notes[s.id], query));
 		row.append(meta, body);
 		$("transcript").append(row);
@@ -463,6 +493,10 @@ function render() {
 	}
  renderSummary();
  applyReadingMode();
+ if(cueFocus){
+  const disclosure=[...document.querySelectorAll('.cue-more')].find(node=>node.dataset.cueKey===cueFocus.key);
+  focusCueAction(disclosure?.querySelector(cueFocus.selector));
+ }
 	highlightPlayback();
 	window.dispatchEvent(new Event("coconut-render"));
 }
@@ -801,7 +835,7 @@ $("save-edit").onclick = (event) => {
 	const rows = [...$("transcript").querySelectorAll(".segment")];
 	const target = doc.key === active()?.key ? (rows.find(row => row.dataset.segmentId === segment.id)
 		|| rows[Math.min(editingTarget.position, rows.length - 1)]) : null;
-	(target?.querySelector(".edit-button") || $("search")).focus({preventScroll: true});
+	focusCueAction(target?.querySelector(".edit-button") || $("search"));
 };
 $("restore-edit").onclick = (event) => {
 	event.preventDefault();
@@ -974,9 +1008,19 @@ $("playback-rate").onchange=()=>{
  catch{$("playback-status").textContent="播放速度已应用，本次未能保存偏好。";}
 };
 
+function refreshCueActionLabels(){
+ for(const row of $('transcript').querySelectorAll('.short-cue')){
+  const summary=row.querySelector('.cue-more > summary');
+  if(summary){
+   summary.textContent=[row.querySelector('.repeat-button')?.getAttribute('aria-pressed')==='true'?'循环中':'',row.classList.contains('excerpted')?'已摘录':'','更多'].filter(Boolean).join(' · ');
+   summary.setAttribute('aria-label',summary.dataset.cueTime+' · '+summary.textContent+'：修正、摘录、阅读位置'+(row.querySelector('.repeat-button')?'与循环回听':''));
+  }
+ }
+}
 function stopRepeating(){
  repeating=null;$("stop-repeat").hidden=true;$("repeat-status").textContent="";
  for(const button of document.querySelectorAll(".repeat-button")){button.textContent="循环回听此段";button.setAttribute("aria-pressed","false");}
+ refreshCueActionLabels();
 }
 function toggleRepeat(segment){
  if(repeating?.key===active()?.key && repeating?.id===segment.id){stopRepeating();return;}
@@ -987,6 +1031,7 @@ function toggleRepeat(segment){
  catch{stopRepeating();$("repeat-status").textContent="此媒体暂时无法循环播放。";return;}
  $("stop-repeat").hidden=false;$("repeat-status").textContent="循环 · "+Coconut.time(segment.start)+"–"+Coconut.time(segment.end);
  for(const row of $("transcript").querySelectorAll(".segment")){const button=row.querySelector(".repeat-button");if(button){const selected=row.dataset.segmentId===segment.id;button.textContent=selected?"正在循环 · 停止":"循环回听此段";button.setAttribute("aria-pressed",String(selected));}}
+ refreshCueActionLabels();
 }
 function repeatPlayback(ended=false,player=$("source-media").querySelector("audio,video")){
  const target=repeating;if(!target || !player || player!==$("source-media").querySelector("audio,video"))return;

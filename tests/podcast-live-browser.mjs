@@ -1,3 +1,4 @@
+import {openCueActions} from './cue-actions-browser.mjs';
 /** Real public sources → production bridge → Coconut UI. No injected source/provider handlers. */
 import assert from 'node:assert/strict';
 import {mkdtemp,readFile,rm} from 'node:fs/promises';
@@ -55,7 +56,7 @@ try {
  await page.locator('#mode-transcript').click();const first=page.locator('.segment').first();const segmentId=await first.getAttribute('data-segment-id');
  const original=imported.document.segments.find(item=>item.id===segmentId);assert.ok(original);
  await first.locator('.note-button').click();await page.locator('#note').fill('Coconut live acceptance: verify this passage against the publisher audio.');await page.locator('#close-note').click();
- await first.locator('.bookmark-button').click();
+ await openCueActions(first);await first.locator('.bookmark-button').click();
  if(!await page.locator('#export-menu').evaluate(node=>node.open))await page.locator('#export-menu summary').click();
  const [backup]=await Promise.all([page.waitForEvent('download'),page.locator('#export').click()]);
  const backupPath=path.join(directory,'transcript.json');await backup.saveAs(backupPath);const saved=JSON.parse(await readFile(backupPath,'utf8'));
