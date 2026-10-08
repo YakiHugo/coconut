@@ -44,6 +44,9 @@ else {
       dialog.showErrorBox('Coconut 正在安装更新','请等待安装完成后再启动。当前应用不会在运行中被替换。');app.quit();return;
     }
     const readerDirectory = app.isPackaged ? path.join(process.resourcesPath,'reader') : path.resolve(ROOT,'../reader');
+    const windowIcon=app.isPackaged?path.join(process.resourcesPath,'coconut-icon.png'):path.join(readerDirectory,'coconut-mark.png');
+    // Packaged macOS uses the signed bundle icon; development has no app bundle.
+    if(!app.isPackaged&&process.platform==='darwin')app.dock?.setIcon(windowIcon);
     let captionService=null;
     if(app.isPackaged){
       captionHelper=createCaptionHelper({resourcesPath:process.resourcesPath});
@@ -54,7 +57,7 @@ else {
     server = await startBridge({port:PORT,readerDirectory,captionService});
     if(startupAbort.signal.aborted){server.shutdown();return;}
     const origin = `http://127.0.0.1:${PORT}`;
-    window = new BrowserWindow({width:1280,height:880,minWidth:780,minHeight:620,show:process.env.COCONUT_SMOKE_TEST !== '1',title:'Coconut',
+    window = new BrowserWindow({width:1280,height:880,minWidth:780,minHeight:620,show:process.env.COCONUT_SMOKE_TEST !== '1',title:'Coconut',icon:windowIcon,
       webPreferences:{preload:path.join(ROOT,'update-preload.cjs'),nodeIntegration:false,contextIsolation:true,sandbox:true,webSecurity:true,allowRunningInsecureContent:false,webviewTag:false}});
     updater=new Updater({directory:path.join(app.getPath('userData'),'updates'),version:app.getVersion()});
     await updater.initialize();
