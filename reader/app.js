@@ -163,7 +163,7 @@ function showWorkspace(next) {
 	if (returning) window.scrollTo(0, readingScroll);
 }
 function goToSegment(id) {
- closeSummaryRequest(false);
+ if(readingMode==='summary'||!$('summary-request').hidden||$('ai-task').value==='summary')closeSummaryRequest(false);
  readingMode = "transcript";
 	const doc = active();
 	const index = doc ? doc.segments.findIndex(s => s.id === id) : -1;
@@ -175,7 +175,9 @@ function goToSegment(id) {
 	showWorkspace("read");
 	render();
 	const row = [...$("transcript").querySelectorAll(".segment")].find(row => row.dataset.segmentId === id);
-	row?.scrollIntoView?.({block: "center", behavior: "smooth"});
+ // Center ordinary cues, but show the opening of a cue taller than the viewport.
+ const alignment = row && row.getBoundingClientRect().height > (window.visualViewport?.height || window.innerHeight) ? "start" : "center";
+	row?.scrollIntoView?.({block: alignment, behavior: "smooth"});
 	row?.focus({preventScroll: true});
 }
 function renderLibrary() {
@@ -466,7 +468,9 @@ $("add-content").onclick = () => { showWorkspace("add"); ($("video-url")).focus(
  document.querySelector('.brand').onclick=event=>{event.preventDefault();showWorkspace('add');$('sample').focus();};
  $('demo-finish').onclick=()=>$('add-content').click();
  $('toggle-demo-tools').onclick=()=>{
-  demoToolsExpanded=!demoToolsExpanded;render();
+  demoToolsExpanded=!demoToolsExpanded;
+  if(!demoToolsExpanded){$('language-panel').open=false;$('reading-settings').open=false;}
+  render();
   if(demoToolsExpanded)$('search').focus();else $('toggle-demo-tools').focus();
  };
  $('demo-note').onclick=()=>{const id=active()?.segments[0]?.id;if(!id)return;goToSegment(id);$('transcript').querySelector('.note-button')?.click();};
@@ -932,7 +936,9 @@ function moveSearchMatch(direction){
  const current=matches.findIndex(s=>s.id===searchFocusedId);
  const index=current<0?(direction>0?0:matches.length-1):(current+direction+matches.length)%matches.length;
  searchFocusedId=matches[index].id;pageStart=Math.floor(index/PAGE_SIZE)*PAGE_SIZE;selected=null;render();
- const row=[...$("transcript").querySelectorAll(".segment")].find(s=>s.dataset.segmentId===searchFocusedId);row?.scrollIntoView?.({block:"center"});row?.focus({preventScroll:true});
+ const row=[...$("transcript").querySelectorAll(".segment")].find(s=>s.dataset.segmentId===searchFocusedId);
+ const alignment = row && row.getBoundingClientRect().height > (window.visualViewport?.height || window.innerHeight) ? "start" : "center";
+ row?.scrollIntoView?.({block:alignment});row?.focus({preventScroll:true});
 }
 $("previous-match").onclick=()=>moveSearchMatch(-1);$("next-match").onclick=()=>moveSearchMatch(1);
 
@@ -976,12 +982,13 @@ function applyReadingMode() {
  $('bilingual-status').textContent=count?`当前语言已有 ${count}/${doc.segments.length} 段有效译文；缺失或过期部分仍保留原文，可在翻译选项中继续。`:'还没有当前语言的有效译文。先读原文，或打开翻译选项，核对发送范围与额度后生成；切换视图不会调用模型。';}
 }
 function setReadingMode(mode) {
+ const previousMode=readingMode;
  readingMode=mode==='transcript'?'transcript':'summary';
  if(readingMode==='summary'){
   selected=null;$('notes-panel').hidden=true;
   stopRepeating();
  }
- if(readingMode!=='summary'||$('summary-request').hidden)closeSummaryRequest(false);
+ if(readingMode==='summary'?$('summary-request').hidden:previousMode==='summary'||!$('summary-request').hidden||$('ai-task').value==='summary')closeSummaryRequest(false);
  applyReadingMode();
 }
 // A bounded map of actual source positions, never fabricated chapter titles or an AI summary.

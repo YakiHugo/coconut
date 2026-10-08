@@ -16,7 +16,8 @@ function setup(saved) {
   w.eval(['app', 'language', 'podcasts'].map(name => fs.readFileSync(new URL('reader/' + name + '.js', root), 'utf8')).join('\n'));
   const calls = [];
   w.fetch = async (...args) => {calls.push(args); throw new Error('Unexpected network request');};
-  w.HTMLElement.prototype.scrollIntoView = function () {w.lastScrolledSegment = this.dataset.segmentId;};
+  w.scrollRequests = [];
+  w.HTMLElement.prototype.scrollIntoView = function (options) {w.lastScrolledSegment = this.dataset.segmentId; w.scrollRequests.push({id: this.dataset.segmentId, options});};
   return {w, $: id => w.document.getElementById(id), calls};
 }
 async function importDocument($, value) {
@@ -135,5 +136,30 @@ test('bookmark activation should keep keyboard focus on the replacement bookmark
     button.focus(); button.click();
     assert.equal(w.document.activeElement.closest('.segment')?.dataset.segmentId, 'harbor-1770');
     assert.equal(w.document.activeElement.className, 'bookmark-button');
+  } finally {await w.happyDOM.close();}
+});
+
+
+test('navigation aligns tall cue openings while ordinary cues stay centered', async () => {
+  const {w, $} = setup();
+  try {
+    await importDocument($, longReadingFixture());
+    w.happyDOM.setViewport({width: 390, height: 844});
+    let height = 1600;
+    const originalBounds = w.HTMLElement.prototype.getBoundingClientRect;
+    w.HTMLElement.prototype.getBoundingClientRect = function () {
+      return this.classList.contains('segment') ? {height} : originalBounds.call(this);
+    };
+    for (const [measuredHeight, expected] of [[1600, 'start'], [320, 'center']]) {
+      height = measuredHeight;
+      $('overview-segments').lastElementChild.click();
+      assert.equal(w.scrollRequests.at(-1).id, 'harbor-1770');
+      assert.equal(w.scrollRequests.at(-1).options.block, expected);
+      assert.equal(w.document.activeElement.dataset.segmentId, 'harbor-1770');
+      search($, 'Harbor notebook 1755.'); $('next-match').click();
+      assert.equal(w.scrollRequests.at(-1).id, 'harbor-1754');
+      assert.equal(w.scrollRequests.at(-1).options.block, expected);
+      assert.equal(w.document.activeElement.dataset.segmentId, 'harbor-1754');
+    }
   } finally {await w.happyDOM.close();}
 });

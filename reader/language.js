@@ -13,6 +13,38 @@ let languageDocumentLabel=null;
 let glossaryDocumentSignature="";
 const glossaryDrafts=new Map();
 let summaryScope=null,summaryConsentSignature="";
+let offlineTranslationKey=null,questionKey=null;
+const aiProgressByDocument=new Map(),translationProgressByDocument=new Map();
+let languageAvailabilityMessage=$('language-status').textContent;
+function aiProgress(key,text){if(!key)return;aiProgressByDocument.set(key,text);if(active()?.key===key)$('ai-progress').textContent=text;}
+function translationProgress(key,text){if(!key)return;translationProgressByDocument.set(key,text);if(active()?.key===key)$('language-status').textContent=text;}
+function languageAvailability(text){languageAvailabilityMessage=text;$('language-status').textContent=translationProgressByDocument.get(active()?.key)||text;}
+// A canceled plan stays canceled even if the shared consent control is checked
+// for a reopened panel or another document while its current request finishes.
+function stopLanguageBatches(){
+ if(summaryScope)summaryScope.stop=true;
+ if(translating)stopTranslation=true;
+ if(subscriptionTranslating)stopSubscription=true;
+ $('ai-consent').checked=false;
+}
+function translationSurfaceOpen(){
+ return workspace==='read'&&!$('language-panel').hidden&&$('language-panel').open&&($('toggle-demo-tools').hidden||$('toggle-demo-tools').getAttribute('aria-expanded')==='true');
+}
+function subscriptionReadingControls(){return JSON.stringify([$('search').value.trim().toLocaleLowerCase(),notesOnly,excerptsOnly,speakerFilter]);}
+function checkSubscriptionReadingScope(doc=active(),matches=null){
+ if(!subscriptionTranslating||stopSubscription)return;
+ matches??=doc?.segments.filter(cue=>matchesReadingSegment(cue,doc,$('search').value))||[];
+ if(doc?.key!==subscriptionScope.key||subscriptionReadingControls()!==subscriptionScope.readingControls||matches.length!==subscriptionScope.visibleIds.length||matches.some((cue,index)=>cue.id!==subscriptionScope.visibleIds[index])){
+  stopSubscription=true;$('ai-consent').checked=false;
+  aiProgress(subscriptionScope.key,'读取范围已变化，当前订阅批次结束后停止；重新开始前需再次确认范围与额度。');
+ }
+}
+function renderLanguageProgress(doc){
+ const runningKey=summaryScope?.key||subscriptionScope?.key||questionKey||offlineTranslationKey;
+ const other=runningKey&&runningKey!==doc.key&&state.documents.find(item=>item.key===runningKey);
+ $('ai-progress').textContent=other?`正在完成「${other.title}」已发送的当前请求；完成前不能开始新的 AI 请求。`:aiProgressByDocument.get(doc.key)||'';
+ $('language-status').textContent=translationProgressByDocument.get(doc.key)||languageAvailabilityMessage;
+}
 function savedGlossaryText(doc,target){return Coconut.cleanGlossary(doc?.translation_glossary?.[target]).map(e=>JSON.stringify(e.source)+' = '+JSON.stringify(e.target)).join('\n');}
 function glossaryDirty(){return $('translation-glossary')&&$('translation-glossary').value!==savedGlossaryText(active(),$('translation-target').value);}
 let aiStatuses={}, languageReady=false, aiReady=false, translating=false, stopTranslation=false, asking=false, subscriptionTranslating=false, stopSubscription=false, subscriptionScope=null, languageDocument=null;
@@ -25,11 +57,12 @@ async function languageApi(path,data){
 function renderLanguage(){
  if(!$("language-panel"))return;
  const doc=active();if(summaryScope&&(doc?.key!==summaryScope.key||!CoconutSummary.current(doc?.summary_job,doc)))summaryScope.stop=true;if(!doc)return;
+ renderLanguageProgress(doc);
  const hasTranscript=doc.project_kind!=='audio_only'&&doc.segments.length>0;
  if(languageDocument!==doc.key || languageDocumentLabel!==(doc.language||'')){
   const newDocument=languageDocument!==doc.key;
-  if(languageDocument===doc.key && translating)stopTranslation=true;
-  if(languageDocument===doc.key && subscriptionTranslating)stopSubscription=true;
+  if(translating)stopTranslation=true;
+  if(subscriptionTranslating)stopSubscription=true;
   if(languageDocument!==doc.key)closeSummaryRequest(false);
   languageDocument=doc.key;languageDocumentLabel=doc.language||'';
   const source=translationLanguage(languageDocumentLabel);
@@ -46,7 +79,7 @@ function renderLanguage(){
  $('translate-document').disabled=!hasTranscript||!languageReady||asking||translating||subscriptionTranslating;
  const summaryReadiness=$('ai-task')?.value==='summary'?Coconut.summaryReadiness(doc):null;
  const summaryBlocked=summaryReadiness?.ready===false;
- $('ask-ai').disabled=!hasTranscript||!aiReady||asking||subscriptionTranslating||summaryBlocked;
+ $('ask-ai').disabled=!hasTranscript||!aiReady||asking||translating||subscriptionTranslating||summaryBlocked;
  $('ai-request-readiness').hidden=!summaryBlocked;
  $('ai-request-readiness').textContent=summaryBlocked?summaryReadiness.reason:'';
  $('ai-select-excerpt').hidden=!summaryBlocked;
@@ -66,6 +99,7 @@ function renderLanguage(){
 
  $('subscription-translate').disabled=!hasTranscript||!aiReady||asking||translating||subscriptionTranslating;
  const matches=doc.segments.filter(s=>matchesReadingSegment(s,doc,$('search').value));
+ checkSubscriptionReadingScope(doc,matches);
  if($('ai-task')){$('ai-question').disabled=$('ai-task').value==='summary';$('ai-filtered').disabled=$('ai-task').value==='summary';if($('ai-task').value==='summary')$('ai-filtered').checked=false;}
  const signature=JSON.stringify([doc.key,$('translation-source').value,$('translation-target').value,$('ai-provider').value,$('ai-filtered').checked,$('ai-task')?.value,doc.translation_glossary,matches.map(s=>s.id)]);
  const glossarySignature=JSON.stringify([doc.key,$('translation-target').value]);
@@ -73,7 +107,7 @@ function renderLanguage(){
  if($('translation-quality')){const warnings=doc.segments.filter(s=>Coconut.translationCurrent(s,doc,s.translations?.[$('translation-target').value])&&s.translations[$('translation-target').value].quality_warnings?.length);$('translation-quality').textContent=warnings.length?`当前译文有 ${warnings.length} 段自动核对提示，请回听检查数字、术语与漏译。提示只检测表面异常，不能证明语义正确。`:'自动核对可提示数字、术语、重复与阅读速度风险；没有提示也不代表语义正确。';}
  if(!subscriptionTranslating&&!summaryScope&&subscriptionSelectionSignature!==signature){subscriptionSelectionSignature=signature;$('ai-consent').checked=false;}
  if(subscriptionTranslating){
-  $('subscription-translation-scope').textContent=`正在用 ${subscriptionScope.provider==='codex'?'ChatGPT/Codex':'Claude'} 把 ${languageNames[subscriptionScope.source]||''} → ${languageNames[subscriptionScope.target]||''}：确认筛选的 ${subscriptionScope.selected} 段内，翻译 ${subscriptionScope.total} 段，共 ${subscriptionScope.requests} 次请求；已译的筛选片段也可能重复发送作上下文。同时发送所选片段的说话人标签、匹配术语及已有译文建议。不发送筛选外内容；修改筛选不扩大本次范围。`;
+  $('subscription-translation-scope').textContent=`正在用 ${subscriptionScope.provider==='codex'?'ChatGPT/Codex':'Claude'} 把 ${languageNames[subscriptionScope.source]||''} → ${languageNames[subscriptionScope.target]||''}：确认筛选的 ${subscriptionScope.selected} 段内，翻译 ${subscriptionScope.total} 段，共 ${subscriptionScope.requests} 次请求；已译的筛选片段也可能重复发送作上下文。同时发送所选片段的说话人标签、匹配术语及已有译文建议。不发送筛选外内容；修改筛选会停止后续批次，重新确认才继续。`;
  }else{
   try{
    const plan=Coconut.subscriptionPlan(doc,matches.map(s=>s.id),$('translation-source').value,$('translation-target').value,($('ai-provider').value==='codex'?'chatgpt':'claude')+'_subscription_translation');
@@ -96,14 +130,14 @@ function renderLanguage(){
 }
 async function checkLanguageTools(){
  const checkButton=$('check-ai');if(!checkButton)return;const sequence=++languageCheckSequence;checkButton.disabled=true;
- try{const status=await languageApi('language-tools');if(!checkButton.isConnected||sequence!==languageCheckSequence)return;languageReady=status.local_translation!==false;aiStatuses=status.ai||{};aiReady=aiStatuses[$('ai-provider').value]?.ready===true;$('ai-status').textContent=aiStatuses[$('ai-provider').value]?.reason||'认证状态未知';$('language-status').textContent=languageReady?'离线模型只提供逐段粗稿，不能理解跨段指代；上下文翻译请使用已连接的本地 CLI。未安装模型仍需你允许下载。':'桌面版不安装重型离线翻译模型；可连接本地 CLI 使用已有订阅做上下文翻译。不会自动发送文字或切换付费 API。';}
+ try{const status=await languageApi('language-tools');if(!checkButton.isConnected||sequence!==languageCheckSequence)return;languageReady=status.local_translation!==false;aiStatuses=status.ai||{};aiReady=aiStatuses[$('ai-provider').value]?.ready===true;$('ai-status').textContent=aiStatuses[$('ai-provider').value]?.reason||'认证状态未知';languageAvailability(languageReady?'离线模型只提供逐段粗稿，不能理解跨段指代；上下文翻译请使用已连接的本地 CLI。未安装模型仍需你允许下载。':'桌面版不安装重型离线翻译模型；可连接本地 CLI 使用已有订阅做上下文翻译。不会自动发送文字或切换付费 API。');}
  catch{if(!checkButton.isConnected||sequence!==languageCheckSequence)return;languageReady=false;aiReady=false;$('ai-status').textContent='未连接本地处理服务。公开页面不会替你调用订阅账户，请在本机启动 Coconut。';}
  finally{if(sequence===languageCheckSequence){checkButton.disabled=false;renderLanguage();}}
 }
 $('check-ai').onclick=checkLanguageTools;
 $('ai-filtered').onchange=()=>{
  $('ai-consent').checked=false;
- if(subscriptionTranslating){stopSubscription=true;$('ai-progress').textContent='读取范围已变化，当前订阅批次结束后停止；重新开始前需再次确认范围与额度。';}
+ if(subscriptionTranslating){stopSubscription=true;aiProgress(subscriptionScope?.key,'读取范围已变化，当前订阅批次结束后停止；重新开始前需再次确认范围与额度。');}
  renderLanguage();
 };
 $('ai-provider').onchange=()=>{if(summaryScope)summaryScope.stop=true;if(subscriptionTranslating)stopSubscription=true;aiReady=aiStatuses[$('ai-provider').value]?.ready===true;$('ai-status').textContent=aiStatuses[$('ai-provider').value]?.reason||'请检查本机订阅连接';$('ai-consent').checked=false;renderLanguage();};
@@ -122,10 +156,13 @@ window.addEventListener('coconut-worker-disconnected',()=>{
  languageReady=false;aiReady=false;aiStatuses={};stopTranslation=true;stopSubscription=true;
  $('ai-consent').checked=false;
  $('ai-status').textContent='本地服务已断开。连接恢复后重新检查订阅；不会自动重新发送文字。';
- $('language-status').textContent='本地服务未连接；已有译文仍可阅读与备份。';
+ languageAvailability('本地服务未连接；已有译文仍可阅读与备份。');
  renderLanguage();
 });
 window.addEventListener('coconut-render',renderLanguage);
+// Note input saves in place without a full reader render. Check scope after its
+// existing input handler has updated the document, before a pending batch returns.
+$('note').addEventListener('input',()=>{if(subscriptionTranslating)queueMicrotask(()=>checkSubscriptionReadingScope());});
 for(const id of ['translation-source','translation-target'])$(id).onchange=()=>{$('ai-consent').checked=false;if(subscriptionTranslating)stopSubscription=true;renderLanguage();};
 if($('ai-task'))$('ai-task').onchange=()=>{if(summaryScope)summaryScope.stop=true;$('ai-consent').checked=false;if(subscriptionTranslating)stopSubscription=true;renderLanguage();};
 if($('translation-glossary'))$('translation-glossary').oninput=()=>{glossaryDrafts.set(glossaryDocumentSignature,$('translation-glossary').value);$('ai-consent').checked=false;if(subscriptionTranslating)stopSubscription=true;};
@@ -138,7 +175,7 @@ if($('save-translation-glossary'))$('save-translation-glossary').onclick=()=>{
  }catch(error){notice(error.message);}
 };
 $('translation-view').onchange=()=>{if(active()){active().translation_view=$('translation-view').value;save();render();}};
-$('stop-translation').onclick=()=>{stopTranslation=true;$('language-status').textContent='正在完成当前批次；已完成译文会保留，下次可以继续。';};
+$('stop-translation').onclick=()=>{stopTranslation=true;translationProgress(offlineTranslationKey,'正在完成当前批次；已完成译文会保留，下次可以继续。');};
 $('translate-document').onclick=async()=>{
  const doc=active(),source=$('translation-source').value,target=$('translation-target').value;
  if(!doc?.segments.length||doc.project_kind==='audio_only'){notice('还没有文字稿，不能翻译');return;}
@@ -147,11 +184,13 @@ $('translate-document').onclick=async()=>{
  if(!languageReady){notice('当前连接不提供离线模型；请使用本地 CLI 上下文翻译');return;}
  const documentLanguage=doc.language||'';const key=doc.key;const pending=doc.segments.filter(s=>!(Coconut.translationCurrent(s,doc,s.translations?.[target])&&s.translations[target].source_language===source));
  if(!pending.length){doc.translation_view=target;save();render();return;}
- translating=true;stopTranslation=false;$('stop-translation').hidden=false;renderLanguage();let completed=0;
+ const watchSurface=translationSurfaceOpen();
+ offlineTranslationKey=key;translating=true;stopTranslation=false;$('stop-translation').hidden=false;renderLanguage();let completed=0;
  try{
   for(let index=0;index<pending.length&&!stopTranslation;index+=32){
+   if(watchSurface&&!translationSurfaceOpen()){stopTranslation=true;break;}
    const batch=pending.slice(index,index+32).map(s=>({id:s.id,text:s.text}));
-   $('language-status').textContent=`本机翻译中：${completed}/${pending.length} 段；可以停止后续批次，已完成内容会保存。`;
+   translationProgress(key,`本机翻译中：${completed}/${pending.length} 段；可以停止后续批次，已完成内容会保存。`);
    const result=await languageApi('translate',{source,target,segments:batch,allow_download:$('download-model').checked});
    if(!Array.isArray(result.translations)||result.translations.length!==batch.length||new Set(result.translations.map(t=>t.id)).size!==batch.length)throw new Error('翻译批次不完整，未覆盖原文');
    const destination=state.documents.find(d=>d.key===key);if(!destination)throw new Error('原文字稿已关闭');
@@ -159,14 +198,20 @@ $('translate-document').onclick=async()=>{
    for(const item of result.translations){const segment=destination.segments.find(s=>s.id===item.id);if(segment.text!==item.source_text)continue;segment.translations||={};segment.translations[target]={text:item.text,source_text:item.source_text,source_language:source,document_language:documentLanguage,provider:item.provider};completed++;}
    destination.translation_view=target;if(!save())throw new Error('本批译文暂留在此页面，浏览器保存未成功，请立即导出备份；后续请求已停止');if(active()?.key===key)render();
   }
-  $('language-status').textContent=`${stopTranslation?'已停止后续批次':'本次翻译完成'}：保存 ${completed} 段离线粗稿。逐段模型不能保证上下文一致，请核对技术术语；原稿、时间戳与已有笔记均保留。`;
- }catch(error){$('language-status').textContent='翻译暂停：'+error.message+'。已完成译文保留，可重试继续。';}
- finally{translating=false;$('stop-translation').hidden=true;if(active()?.key===key)render();renderLanguage();}
+  translationProgress(key,`${stopTranslation?'已停止后续批次':'本次翻译完成'}：保存 ${completed} 段离线粗稿。逐段模型不能保证上下文一致，请核对技术术语；原稿、时间戳与已有笔记均保留。`);
+ }catch(error){translationProgress(key,'翻译暂停：'+error.message+'。已完成译文保留，可重试继续。');}
+ finally{translating=false;offlineTranslationKey=null;$('ai-consent').checked=false;$('stop-translation').hidden=true;if(active()?.key===key)render();renderLanguage();}
 };
-window.addEventListener('pagehide',()=>{if(summaryScope)summaryScope.stop=true;});
-window.addEventListener('coconut-summary-stop',()=>{if(summaryScope)summaryScope.stop=true;});
-$('language-panel').addEventListener('toggle',()=>{if(!$('language-panel').open&&summaryScope&&$('summary-request').hidden)summaryScope.stop=true;});
-$('stop-summary').onclick=()=>{if(summaryScope)summaryScope.stop=true;$('ai-consent').checked=false;$('ai-progress').textContent='当前摘要批次完成后停止；已保存的分批笔记保留，尚不代表整篇摘要。';};
+window.addEventListener('pagehide',stopLanguageBatches);
+window.addEventListener('coconut-summary-stop',()=>{if(summaryScope)summaryScope.stop=true;if(readingMode==='summary')stopLanguageBatches();});
+window.addEventListener('coconut-workspace-change',event=>{if(event.detail?.workspace!=='read')stopLanguageBatches();});
+// Native details toggle events are queued. Latch real closing clicks before a
+// same-turn response or a quick reopen can admit another batch.
+$('language-panel').querySelector('summary').addEventListener('click',()=>{if($('language-panel').open)stopLanguageBatches();});
+$('toggle-demo-tools').addEventListener('click',()=>{if($('toggle-demo-tools').getAttribute('aria-expanded')==='true')stopLanguageBatches();},{capture:true});
+$('language-panel').addEventListener('toggle',()=>{if(!$('language-panel').open&&$('summary-request').hidden)stopLanguageBatches();});
+$('ai-consent').onchange=()=>{if(!$('ai-consent').checked)stopLanguageBatches();};
+$('stop-summary').onclick=()=>{if(summaryScope)summaryScope.stop=true;$('ai-consent').checked=false;aiProgress(summaryScope?.key,'当前摘要批次完成后停止；已保存的分批笔记保留，尚不代表整篇摘要。');};
 $('restart-summary').onclick=()=>{const doc=active();if(!doc||summaryScope)return;doc.summary_job=null;$('ai-consent').checked=false;if(!save())notice('清除进度未保存，请备份当前文档');renderLanguage();};
 async function runDocumentSummary(doc){
  const readiness=Coconut.summaryReadiness(doc);if(!readiness.ready){notice(readiness.reason);return;}
@@ -186,7 +231,7 @@ async function runDocumentSummary(doc){
    job.status='running';job.in_flight=index;
    if(!save())throw new Error('请求前保存未成功，本次尚未发送；请导出备份');
    const request=CoconutSummary.request(plan,job);
-   $('ai-progress').textContent=index<plan.chunks.length?`正在整理第 ${index+1}/${plan.chunks.length} 批原文；整篇摘要尚未完成。`:'所有原文批次已保存，正在汇总；汇总成功前不产生整篇摘要。';
+   aiProgress(key,index<plan.chunks.length?`正在整理第 ${index+1}/${plan.chunks.length} 批原文；整篇摘要尚未完成。`:'所有原文批次已保存，正在汇总；汇总成功前不产生整篇摘要。');
    const response=await languageApi('ask',request);
    const latest=state.documents.find(d=>d.key===key);
    if(!latest||latest.summary_job!==job||!CoconutSummary.current(job,latest))throw new Error('请求期间原文已修改，本批结果未保存；旧进度仅供恢复，不能生成当前整篇摘要');
@@ -194,17 +239,17 @@ async function runDocumentSummary(doc){
    if(finalAnswer){
     latest.ai_answers||=[];latest.ai_answers.push(finalAnswer);latest.ai_answers=Coconut.retainAnswers(latest.ai_answers);latest.summary_job=null;
     if(!save())throw new Error('最终摘要仅在此页，保存失败；请立即导出摘要或 JSON 备份');
-    $('ai-progress').textContent='整篇摘要已保存，可点击引用核对。分批与汇总都可能遗漏信息，真实长文摘要质量尚未验收。';
+    aiProgress(key,'整篇摘要已保存，可点击引用核对。分批与汇总都可能遗漏信息，真实长文摘要质量尚未验收。');
     window.dispatchEvent(new Event('coconut-summary-updated'));break;
    }
    job.status='paused';
    if(!save())throw new Error('本批结果仅在此页，保存失败，后续请求已停止；请立即导出 JSON 备份');
    renderLanguage();
   }
-  if(!finalAnswer){job.status='paused';job.in_flight=null;if(!save())throw new Error('已停止，但暂停状态未保存，请立即备份');$('ai-progress').textContent=`已停止后续请求，保存 ${job.results.length}/${plan.chunks.length} 批。还没有完整摘要；下次需重新确认发送与额度后继续。`;}
+  if(!finalAnswer){job.status='paused';job.in_flight=null;if(!save())throw new Error('已停止，但暂停状态未保存，请立即备份');aiProgress(key,`已停止后续请求，保存 ${job.results.length}/${plan.chunks.length} 批。还没有完整摘要；下次需重新确认发送与额度后继续。`);}
  }catch(error){
   if(!finalAnswer){job.status=job.in_flight===null?'failed':'interrupted';save();}
-  $('ai-progress').textContent='整篇摘要未完成：'+error.message+'。不会自动重试；已保存的分批进度可在再次确认后继续。';
+  aiProgress(key,'整篇摘要未完成：'+error.message+'。不会自动重试；已保存的分批进度可在再次确认后继续。');
  }finally{summaryScope=null;asking=false;$('ai-consent').checked=false;renderLanguage();if(typeof renderSummary==='function')renderSummary();}
 }
 $('ask-ai').onclick=async()=>{
@@ -213,27 +258,27 @@ $('ask-ai').onclick=async()=>{
  const purpose=$('ai-task')?.value==='summary'?'summary':'question';
  if(purpose==='summary'){
   const readiness=Coconut.summaryReadiness(doc);
-  if(!readiness.ready){$('ai-consent').checked=false;renderLanguage();$('ai-progress').textContent=readiness.reason;notice(readiness.reason);return;}
+  if(!readiness.ready){$('ai-consent').checked=false;renderLanguage();aiProgress(doc.key,readiness.reason);notice(readiness.reason);return;}
  }
  if(!$('ai-consent').checked){notice('请先确认本次把所选文字发送给所选提供商并使用订阅额度');return;}
  if(purpose==='summary'){await runDocumentSummary(doc);return;}
  const question=purpose==='summary'?Coconut.SUMMARY_QUESTION:$('ai-question').value.trim();if(!question){notice('请先输入问题');return;}
  const query=$('search').value.trim().toLocaleLowerCase();
  const segments=doc.segments.filter(s=>purpose==='summary'||!$('ai-filtered').checked||matchesReadingSegment(s,doc,query)).map(s=>({id:s.id,text:s.text}));
- const key=doc.key;asking=true;renderLanguage();$('ai-progress').textContent=`正在让所选 AI 阅读 ${segments.length} 段；不会切换到付费 API。`;
+ const key=doc.key;questionKey=key;asking=true;renderLanguage();aiProgress(key,`正在让所选 AI 阅读 ${segments.length} 段；不会切换到付费 API。`);
  try{
   const answer=await languageApi('ask',{question,language:purpose==='summary'?'zh':$('translation-target').value,provider:$('ai-provider').value,segments,consent:true});
   const destination=state.documents.find(d=>d.key===key);if(!destination)throw new Error('原文字稿已关闭');
   if(Coconut.answerFreshness({purpose,input_snapshot:{version:1,segments}},destination)!=='current'||purpose==='summary'&&destination.segments.length!==segments.length)throw new Error('请求期间原文已修改，请按新原文重新提问');
   if(typeof answer.answer!=='string'||!Array.isArray(answer.citations)||answer.citations.some(id=>!segments.some(s=>s.id===id)))throw new Error('回答引用无效');
   destination.ai_answers||=[];destination.ai_answers.push({...answer,question,purpose,input_snapshot:{version:1,segments}});destination.ai_answers=Coconut.retainAnswers?Coconut.retainAnswers(destination.ai_answers):destination.ai_answers.slice(-20);const persisted=save();if(typeof renderSummary==='function')renderSummary();
-  $('ai-progress').textContent=persisted?'回答已保存在这份文字稿中，可点击引用返回原文；AI 判断仍需核对。':'回答暂留在当前页，浏览器保存未成功；请先导出备份，勿关闭页面。';
- }catch(error){$('ai-progress').textContent='AI 阅读未完成：'+error.message;}
- finally{asking=false;$('ai-consent').checked=false;renderLanguage();}
+  aiProgress(key,persisted?'回答已保存在这份文字稿中，可点击引用返回原文；AI 判断仍需核对。':'回答暂留在当前页，浏览器保存未成功；请先导出备份，勿关闭页面。');
+ }catch(error){aiProgress(key,'AI 阅读未完成：'+error.message);}
+ finally{asking=false;questionKey=null;$('ai-consent').checked=false;renderLanguage();}
 };
 renderLanguage();
 
-$('stop-subscription-translation').onclick=()=>{stopSubscription=true;$('ai-progress').textContent='当前订阅批次结束后停止；已完成内容保留。';};
+$('stop-subscription-translation').onclick=()=>{stopSubscription=true;aiProgress(subscriptionScope?.key,'当前订阅批次结束后停止；已完成内容保留。');};
 $('subscription-translate').onclick=async()=>{
  const doc=active(),source=$('translation-source').value,target=$('translation-target').value,provider=$('ai-provider').value;
  if(!doc||subscriptionTranslating||asking||translating)return;
@@ -246,25 +291,33 @@ $('subscription-translate').onclick=async()=>{
  let plan;
  try{plan=Coconut.subscriptionPlan(doc,selectedCues.map(s=>s.id),source,target,providerName);}catch(error){notice(error.message);return;}
  if(!plan.total){notice('当前筛选没有需要订阅翻译的新片段');return;}
- const documentLanguage=doc.language||'';const key=doc.key;subscriptionScope={key,total:plan.total,selected:plan.selected,requests:plan.windows.length,source,target,provider};subscriptionTranslating=true;stopSubscription=false;$('stop-subscription-translation').hidden=false;renderLanguage();let completed=0;
+ const documentLanguage=doc.language||'';const key=doc.key,watchSurface=translationSurfaceOpen();subscriptionScope={key,visibleIds:selectedCues.map(cue=>cue.id),readingControls:subscriptionReadingControls(),total:plan.total,selected:plan.selected,requests:plan.windows.length,source,target,provider};subscriptionTranslating=true;stopSubscription=false;$('stop-subscription-translation').hidden=false;renderLanguage();let completed=0;
  try{
   for(const window of plan.windows){
+   checkSubscriptionReadingScope();
+   if(watchSurface&&!translationSurfaceOpen())stopSubscription=true;
    if(stopSubscription||!$('ai-consent').checked)break;
    const batch=window.segments;const before=state.documents.find(d=>d.key===key);
    if(!Coconut.sameCueSnapshot(before,window.snapshot)||JSON.stringify(Coconut.relevantGlossary(before,target,window.snapshot))!==JSON.stringify(window.glossary))throw new Error('原文或所选上下文已修改，未发出本批模型请求，请重新开始');
-   $('ai-progress').textContent=`订阅翻译中：${completed}/${plan.total} 段；上下文仅来自确认的筛选，不购买额度，不回退到API。`;
+   aiProgress(key,`订阅翻译中：${completed}/${plan.total} 段；上下文仅来自确认的筛选，不购买额度，不回退到API。`);
    const result=await languageApi('translate-subscription',{source,target,provider,segments:batch,context:window.context,glossary:window.glossary,memory:window.memory,consent:true});
    if(!Array.isArray(result.translations)||result.translations.length!==batch.length||result.translations.some((t,i)=>t.id!==batch[i].id||t.source_text!==batch[i].text||typeof t.text!=='string'||!t.text.trim()||t.text.length>12000))throw new Error('订阅结果与目标片段未完整对应，本批不保存');
    const destination=state.documents.find(d=>d.key===key);if(!destination)throw new Error('原文字稿已关闭');
    if(!Coconut.sameCueSnapshot(destination,window.snapshot)||JSON.stringify(Coconut.relevantGlossary(destination,target,window.snapshot))!==JSON.stringify(window.glossary))throw new Error('本批原文或上下文已修改，为避免错配，本批全部不保存');
+   checkSubscriptionReadingScope();
    const contextId=crypto.randomUUID();destination.translation_contexts||=Object.create(null);destination.translation_contexts[contextId]=window.snapshot;
    for(const item of result.translations){const segment=destination.segments.find(s=>s.id===item.id);segment.translations||={};segment.translations[target]={text:item.text,source_text:item.source_text,source_language:source,document_language:documentLanguage,provider:providerName,context_id:contextId,context_version:2,target_language:target,glossary_snapshot:window.glossary,input_revision:item.input_revision,quality_warnings:Array.isArray(item.quality_warnings)?item.quality_warnings.filter(code=>Coconut.translationQualityMessage({quality_warnings:[code]})):[]};}
    destination.translation_contexts=Coconut.cleanContexts(destination.translation_contexts,destination.segments);
-   completed+=batch.length;destination.translation_view=target;if(!save())throw new Error('本批译文暂留在此页面，浏览器保存未成功，请立即导出备份；后续请求已停止');if(active()?.key===key)render();
+   destination.translation_view=target;
+   // The confirmed request plan is immutable. Our own translated wording can
+   // change search matches; adopt that display change without canceling targets
+   // the user already approved. Any prior user scope change stays latched.
+   if(active()?.key===key)subscriptionScope.visibleIds=destination.segments.filter(cue=>matchesReadingSegment(cue,destination,$('search').value)).map(cue=>cue.id);
+   completed+=batch.length;if(!save())throw new Error('本批译文暂留在此页面，浏览器保存未成功，请立即导出备份；后续请求已停止');if(active()?.key===key)render();
   }
-  $('ai-progress').textContent=`${completed<plan.total?'已停止后续批次':'本次订阅翻译完成'}：保存 ${completed} 段。下次需重新确认发送与额度，才会继续剩余部分。翻译仅关联原字幕时间范围，不是译文逐字对齐。`;
+  aiProgress(key,`${completed<plan.total?'已停止后续批次':'本次订阅翻译完成'}：保存 ${completed} 段。下次需重新确认发送与额度，才会继续剩余部分。翻译仅关联原字幕时间范围，不是译文逐字对齐。`);
 
- }catch(error){$('ai-progress').textContent='订阅翻译暂停：'+error.message+'。已完成结果仍在当前页；校验失败的批次不会覆盖旧译文。请检查保存提示并备份。';}
+ }catch(error){aiProgress(key,'订阅翻译暂停：'+error.message+'。已完成结果仍在当前页；校验失败的批次不会覆盖旧译文。请检查保存提示并备份。');}
  finally{subscriptionTranslating=false;subscriptionScope=null;$('ai-consent').checked=false;$('stop-subscription-translation').hidden=true;if(active()?.key===key)render();renderLanguage();}
 };
 

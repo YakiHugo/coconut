@@ -2,7 +2,7 @@
   "name": "coconut-reader",
   "private": true,
   "scripts": {
-    "test": "node --test tests/reader.test.cjs tests/reader-summary.test.cjs tests/reader-ui.test.mjs tests/reader-language.test.mjs tests/reader-source-entry.test.mjs tests/reader-long-reading.test.mjs tests/podcast-ui.test.mjs",
+    "test": "node --test tests/reader.test.cjs tests/reader-summary.test.cjs tests/reader-ui.test.mjs tests/reader-language.test.mjs tests/reader-ai-recovery.test.mjs tests/reader-source-entry.test.mjs tests/reader-long-reading.test.mjs tests/podcast-ui.test.mjs",
     "test:browser": "node tests/browser-acceptance.mjs",
     "test:web-browser": "node tests/web-browser-acceptance.mjs",
     "test:desktop": "node --test tests/desktop-*.test.mjs",

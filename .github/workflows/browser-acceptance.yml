@@ -42,6 +42,10 @@ jobs:
         env:
           COCONUT_UI_SCREENSHOTS: ${{ runner.temp }}/coconut-authored-ui
         run: node tests/long-reading-browser.mjs
+      - name: Verify AI request ownership and explicit retry with injected responses only
+        env:
+          COCONUT_UI_SCREENSHOTS: ${{ runner.temp }}/coconut-authored-ui
+        run: node tests/ai-recovery-browser.mjs
       - name: Verify bounded long-summary plans with injected fixtures only
         run: node tests/summary-browser-acceptance.mjs
       - name: Verify explicit podcast source imports through the desktop HTTP bridge

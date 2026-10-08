@@ -109,6 +109,24 @@ Changing task, provider, language, glossary or explicit reading scope during a
 request stops later batches even if the shared consent checkbox is rechecked.
 The running request may finish; revised evidence is checked before any write.
 
+Translation work is tied to the document and source selection that the user
+confirmed. Collapsing the AI panel (including its parent demo tools), leaving
+reading, switching documents, or changing the selected source scope latches a
+stop for later batches. Reopening the panel or checking consent for another
+document cannot revive that plan. A new explicit request and fresh subscription
+consent are required to continue; already completed targets remain saved.
+
+A valid in-flight response can still finish and be saved to its original document
+while the page remains alive. Closing or reloading the actual page can interrupt
+that response, so receiving or saving its result is not guaranteed. Requests
+already sent may have consumed quota. Progress and errors stay with their source
+document, and another document explains when it is waiting for the current call.
+
+Within the same confirmed scope, jumping to another source passage or switching
+between original and bilingual views does not stop translation. The confirmed
+target list stays fixed even when new translations change which search results
+are visible; a result never authorizes adding new targets to the request plan.
+
 The offline OPUS/Argos path remains labeled a **per-cue rough draft**. Joining its
 output and arbitrarily repartitioning it into timestamps would invent alignment,
 so this increment deliberately does not do that. A stronger local document model

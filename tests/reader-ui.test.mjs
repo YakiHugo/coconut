@@ -1705,7 +1705,9 @@ test('demo tools disclose active filters when collapsed and preserve notes and t
   assert.equal(w.document.body.dataset.demoTools,'false');
   $('toggle-demo-tools').click();$('search').value='good idea';$('search').oninput();
   assert.equal(w.document.querySelectorAll('.segment').length,1);
+  $('language-panel').open=true;$('reading-settings').open=true;
   $('toggle-demo-tools').click();assert.equal($('search').value,'good idea');
+  assert.equal($('language-panel').open,false);assert.equal($('reading-settings').open,false);
   assert.match($('toggle-demo-tools').textContent,/筛选中/);
   assert.equal(w.document.querySelectorAll('.segment').length,1);
   $('toggle-demo-tools').click();$('clear-search').click();

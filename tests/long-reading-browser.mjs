@@ -93,6 +93,11 @@ try {
     const r = el.getBoundingClientRect(); return r.top >= -2 && r.top < innerHeight * 0.75;
   });
   await capture(page, '02-tall-cue-mobile');
+  await page.locator('#search').fill('Harbor notebook 1755.'); await page.locator('#next-match').click();
+  await visibleCue(page, 'harbor-1754');
+  check('mobile_tall_search_result_reveals_start_of_source', await page.locator('.segment[data-segment-id="harbor-1754"] .words').evaluate(el => {
+    const r = el.getBoundingClientRect(); return r.top >= -2 && r.top < innerHeight * 0.75;
+  }));
   await page.locator('#reading-jump').selectOption('harbor-1770'); await visibleCue(page, 'harbor-1770');
   const last = page.locator('.segment[data-segment-id="harbor-1770"]');
   await last.locator('.note-button').click();
