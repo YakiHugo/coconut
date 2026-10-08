@@ -60,7 +60,14 @@ try{
  await capture('03-compact-note');
  const before=await page.locator('audio').evaluate(p=>p.currentTime);await page.locator('#dock-play').click();await page.waitForFunction(time=>document.querySelector('audio').currentTime>time+.1,before);await page.locator('#dock-play').click();
  check('note_dock_controls_playback_without_losing_note',await page.locator('audio').evaluate(p=>p.paused)&&await page.locator('#note').inputValue()==='留在当前原声旁边的想法。');
- await page.locator('#close-note').click();await page.setViewportSize({width:390,height:844});await page.locator('#dock-return').click();
+ const noteCue=await page.locator('.segment.selected').getAttribute('data-segment-id');
+ await page.locator('#notes-panel').hover();await page.mouse.wheel(0,350);
+ await page.waitForFunction(()=>{const panel=document.querySelector('#notes-panel'),p=panel.getBoundingClientRect(),r=document.querySelector('#return-excerpt').getBoundingClientRect(),d=document.querySelector('#media-dock').getBoundingClientRect();return panel.scrollTop>0&&r.top>=p.top&&r.bottom<=p.bottom&&r.bottom<d.top;});
+ check('compact_note_footer_can_be_scrolled_into_view',true);await capture('04-compact-note-footer');
+ await page.locator('#return-excerpt').click();
+ await page.waitForFunction(id=>{const row=document.activeElement;if(row.dataset?.segmentId!==id)return false;const words=row.querySelector('.words').getBoundingClientRect(),dock=document.querySelector('#media-dock').getBoundingClientRect();return words.top>=0&&words.bottom<dock.top;},noteCue);
+ check('compact_note_return_is_operable_and_preserves_saved_note',await page.locator('#notes-panel').isHidden()&&await page.evaluate(id=>{const shelf=JSON.parse(localStorage.getItem('coconut-reader-v1'));return shelf.documents.find(doc=>doc.key===shelf.active).notes[id]==='留在当前原声旁边的想法。';},noteCue));
+ await page.setViewportSize({width:390,height:844});await page.locator('#dock-return').click();
  await page.waitForFunction(()=>{const p=document.querySelector('audio'),r=p.getBoundingClientRect();return r.top>=0&&r.bottom<=innerHeight;});
  check('return_restores_native_player_without_autoplay',await page.locator('#media-dock').isHidden()&&await page.locator('audio').evaluate(p=>p.paused&&p===document.activeElement));
  await page.locator('#detach-reader-media').click();
