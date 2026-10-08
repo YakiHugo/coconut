@@ -44,6 +44,7 @@ try{
  await page.locator('#mode-transcript').click();await page.locator('.segment[data-segment-id="first"] .note-button').click();await page.locator('#note').fill('更新重启后保留这则笔记');await page.locator('#close-note').click();
  // Web unload prompts must not intercept native quit after service teardown.
  const webUnloadAbsent=()=>page.evaluate(()=>{const event=new Event('beforeunload',{cancelable:true});window.dispatchEvent(event);return !!window.coconutUpdates&&!unloadGuardReady&&!unloadGuardAttached&&!event.defaultPrevented;});
+ await page.locator('#reading-settings > summary').click();
  await page.locator('#document-details').click();await page.locator('#document-title').fill('Temporary unsaved native title');
  assert.equal(await webUnloadAbsent(),true);assert.equal(await page.evaluate(()=>coconutPrepareUpdate()),false);
  await page.locator('#details-dialog button[value="cancel"]').click();
