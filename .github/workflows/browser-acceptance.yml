@@ -40,6 +40,7 @@ jobs:
         run: node tests/web-browser-acceptance.mjs
       - name: Verify 1,771-cue bilingual reading and recovery with authored fixtures
         env:
+          COCONUT_READING_PERFORMANCE: ${{ runner.temp }}/coconut-reading-performance
           COCONUT_UI_SCREENSHOTS: ${{ runner.temp }}/coconut-authored-ui
         run: node tests/long-reading-browser.mjs
       - name: Verify AI request ownership and explicit retry with injected responses only
@@ -80,6 +81,14 @@ jobs:
           name: Coconut-authored-UI
           path: ${{ runner.temp }}/coconut-authored-ui/*.png
           if-no-files-found: ignore
+          retention-days: 7
+      - name: Upload authored reading performance diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Coconut-authored-reading-performance
+          path: ${{ runner.temp }}/coconut-reading-performance/*.json
+          if-no-files-found: warn
           retention-days: 7
       - name: Remove temporary media and exports
         if: always()

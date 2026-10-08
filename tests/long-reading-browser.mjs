@@ -1,3 +1,4 @@
+import {startReadingPerformanceTrace} from './reading-performance-trace.mjs';
 import {openCueActions} from './cue-actions-browser.mjs';
 /** Real Chromium acceptance of authored long-text reading and recovery.
  * No model, media, third-party text, or external network calls are used.
@@ -11,7 +12,7 @@ import {fileURLToPath} from 'node:url';
 import {chromium} from '@playwright/test';
 import {longReadingFixture} from './helpers/long-reading-fixture.mjs';
 const root = fileURLToPath(new URL('../', import.meta.url));
-let server, browser, temporary, stage = 'setup';
+let server, browser, temporary, readingPerformance, stage = 'setup';
 const checks = [];
 function check(name, passed) {stage = name; assert.ok(passed, name); checks.push(name);}
 async function frameSettled(page) {
@@ -67,23 +68,27 @@ try {
   }
   const first = await context(), page = await first.newPage();
   page.setDefaultTimeout(15000); page.on('pageerror', () => errors++);
+  readingPerformance = await startReadingPerformanceTrace(page, process.env.COCONUT_READING_PERFORMANCE);
   await page.goto(origin);
   const fixture = longReadingFixture();
   await page.locator('#file').setInputFiles({name: 'authored-long-reading.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(fixture))});
   await page.locator('#mode-bilingual').click();
   check('long_import_is_bounded_to_100_visible_cues', await page.locator('#transcript .segment').count() === 100);
+  await readingPerformance?.mark('search-all');
   await page.locator('#search').fill('Harbor notebook'); await page.locator('#previous-match').click();
   await visibleCue(page, 'harbor-1770');
   check('last_search_result_is_actually_in_view', await page.locator('#transcript .segment').count() === 71);
   await capture(page, '01-last-search-desktop');
   await page.locator('#next-match').click(); await visibleCue(page, 'harbor-0');
   check('search_wraps_to_first_cue_in_view', true);
+  await readingPerformance?.mark('search-translation');
   await page.locator('#search').fill('远方灯塔'); await page.locator('#next-match').click(); await visibleCue(page, 'harbor-1668');
   check('translation_only_search_targets_correct_original_cue', await page.locator('#transcript .segment').count() === 1);
   await page.locator('#mode-transcript').click();
   check('source_mode_retains_translation_search_result', await page.locator('.segment[data-segment-id="harbor-1668"]').count() === 1 && await page.locator('.translation').count() === 0);
   await page.locator('#mode-bilingual').click();
   await page.locator('#clear-search').click();
+  await readingPerformance?.mark('long-page-navigation');
   await jumpToTime(page, 1754 * 4); await visibleCue(page, 'harbor-1754');
   check('variable_height_cue_can_be_reached_on_desktop', true);
   await page.setViewportSize({width: 390, height: 844}); await frameSettled(page);
@@ -102,10 +107,13 @@ try {
   await page.locator('#reading-jump').selectOption('harbor-1770'); await visibleCue(page, 'harbor-1770');
   const last = page.locator('.segment[data-segment-id="harbor-1770"]');
   await last.locator('.note-button').click();
+  await readingPerformance?.mark('note-input');
   await page.locator('#note').fill('A closing note in my own words.\n末段笔记完整保留。');
+  if (readingPerformance) await page.locator('#note').pressSequentially(' More authored notes.', {delay: 40});
   check('mobile_note_fits_without_horizontal_overflow', await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
   await capture(page, '03-last-note-mobile'); await page.locator('#close-note').click();
   check('closing_note_returns_keyboard_to_its_cue', await last.locator('.note-button').evaluate(el => el === document.activeElement));
+  await readingPerformance?.mark('excerpt-toggle');
   await openCueActions(last);await last.locator('.excerpt-button').click();
   await last.locator('.bookmark-button').focus(); await page.keyboard.press('Enter');
   check('bookmark_keeps_keyboard_focus_on_last_cue', await last.locator('.bookmark-button').evaluate(el => el === document.activeElement));
@@ -117,6 +125,7 @@ try {
   const backup = path.join(temporary, 'authored-long-reading.coconut.json'); await download.saveAs(backup);
   const exported = JSON.parse(await fs.readFile(backup, 'utf8'));
   check('download_contains_all_1771_cues_and_reading_work', exported.segments.length === 1771 && exported.readingPosition === 'harbor-1770' && exported.segments.at(-1).saved_excerpt === true && exported.notes['harbor-1770'].includes('末段笔记') && exported.segments.at(-1).original_text === fixture.segments.at(-1).text);
+  if (readingPerformance) {const capture = readingPerformance; readingPerformance = null; await capture.stop();}
   await page.reload(); await page.locator('#mode-bilingual').click(); await page.locator('#resume').click(); await visibleCue(page, 'harbor-1770');
   check('reload_can_resume_last_cue_with_note', (await last.locator('.saved-note').textContent()).includes('末段笔记'));
   await capture(page, '04-restored-desktop');
@@ -129,6 +138,7 @@ try {
 } catch (error) {
   console.log(JSON.stringify({suite: 'authored-long-reading', status: 'failed', stage, message: error.message, checks})); process.exitCode = 1;
 } finally {
+  await readingPerformance?.stop();
   await browser?.close(); await new Promise(resolve => server?.listening ? server.close(resolve) : resolve());
   if (temporary) await fs.rm(temporary, {recursive: true, force: true});
 }
