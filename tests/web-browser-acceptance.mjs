@@ -11,7 +11,7 @@ const root=fileURLToPath(new URL('../',import.meta.url));
 let directory,server,browser,stage='setup';
 const checks=[];
 // Only authored synthetic fixtures from this file may enter these review images.
-async function capture(page,name){if(!process.env.COCONUT_UI_SCREENSHOTS)return;await fs.mkdir(process.env.COCONUT_UI_SCREENSHOTS,{recursive:true});await page.screenshot({path:path.join(process.env.COCONUT_UI_SCREENSHOTS,name+'.png'),fullPage:true});}
+async function capture(page,name,fullPage=true){if(!process.env.COCONUT_UI_SCREENSHOTS)return;await fs.mkdir(process.env.COCONUT_UI_SCREENSHOTS,{recursive:true});await page.screenshot({path:path.join(process.env.COCONUT_UI_SCREENSHOTS,name+'.png'),fullPage});}
 function check(name,value){stage=name;assert.ok(value,name);checks.push(name);}
 try {
  directory=await fs.mkdtemp(path.join(os.tmpdir(),'coconut-static-web-'));
@@ -40,19 +40,29 @@ try {
  });
  const page=await context.newPage();page.on('pageerror',()=>pageErrors++);page.setDefaultTimeout(15000);
  await page.goto(origin);await page.locator('#sample').waitFor({state:'visible'});
+ await page.waitForFunction(()=>!document.getElementById('worker-status').textContent.includes('正在检查'));
  await capture(page,'01-source-entry');
  check('brand_asset_loads',await page.locator('.brand-mark').evaluate(img=>img.complete&&img.naturalWidth>0));
  await page.setViewportSize({width:390,height:844});
  check('mobile_first_use_fits',await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth));await capture(page,'01-mobile-source-entry');
  await page.setViewportSize({width:1360,height:1000});
+ await page.locator('#video-url').fill('https://youtu.be/authored-unavailable-example');await page.locator('#process-url').click();
+ check('static_source_failure_has_an_honest_next_step',(await page.locator('#source-route-status').textContent()).includes('本地服务')&&await page.locator('#local-setup').evaluate(n=>n.open));
+ await capture(page,'01-source-unavailable');await page.locator('#video-url').fill('');await page.locator('#local-setup > summary').click();
  await page.locator('#sample').click();await page.locator('#demo-guide').waitFor({state:'visible'});
  check('demo_opens_actual_bilingual_reading',await page.locator('#mode-bilingual').getAttribute('aria-pressed')==='true'&&await page.locator('.translation').count()===3);
  check('demo_discloses_authored_content',(await page.locator('#demo-guide').textContent()).includes('没有音视频')&&await page.locator('#summary-body').textContent()==='');
  await capture(page,'02-bilingual-demo');
- await page.locator('#demo-note').click();await page.locator('#note').fill('My authored first reading note');await page.locator('#close-note').click();
+ await page.locator('#demo-note').click();await page.locator('#note').fill('My authored first reading note');await capture(page,'02-open-note');
+ await page.setViewportSize({width:390,height:844});
+ check('mobile_open_note_fits',await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth));await capture(page,'02-mobile-open-note');
+ await page.locator('#close-note').click();await page.setViewportSize({width:1360,height:1000});
  await page.locator('#demo-finish').click();await page.locator('#sample').click();
  check('repeated_demo_preserves_note',await page.locator('.saved-note').textContent()==='My authored first reading note');
  await page.setViewportSize({width:390,height:844});
+ await page.locator('#demo-finish').click();await page.locator('#sample').click();
+ check('one_click_mobile_tryout_reveals_actual_source',await page.locator('.words').first().evaluate(n=>{const r=n.getBoundingClientRect();return r.top<innerHeight&&r.bottom>0;}));
+ await capture(page,'02-mobile-first-viewport',false);
  check('mobile_bilingual_demo_fits',await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth));await capture(page,'02-mobile-bilingual-demo');
  await page.setViewportSize({width:1360,height:1000});stage='import';
  await page.locator('#file').setInputFiles(fixturePath);

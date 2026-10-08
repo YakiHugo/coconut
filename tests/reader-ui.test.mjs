@@ -403,7 +403,7 @@ test('a delayed subscription check cannot revive stale readiness after disconnec
 
 test('source guidance distinguishes absent media, external time links and actual local seek',async()=>{
  const w=setup();try{
-  const $=id=>w.document.getElementById(id);await $('sample').onclick();assert.match($('search-status').textContent,/尚未关联音视频/);
+  const $=id=>w.document.getElementById(id);await $('sample').onclick();assert.match($('search-status').textContent,/没有对应音视频/);
   $('source').click();assert.ok($('source-dialog').open);assert.match($('source-dialog').textContent,/可能不会自动定位/);
   await importDocument(w,{schema_version:1,title:'External',source_url:'https://x.com/example/status/123',segments:[{id:'a',start:251,end:252,text:'Source cue'}]});
   assert.match($('search-status').textContent,/若平台未自动定位/);assert.match(w.document.querySelector('.time a').href,/t=251/);
@@ -1119,7 +1119,7 @@ test('Chinese reading canvas keeps essential content visible and secondary tools
   for(const id of ['title','provenance','search','filter-all','transcript'])assert.equal($(id).closest('details'),null,id+' must remain on the main canvas');
   for(const id of ['document-details','source','reading-layout','reading-time'])assert.equal($(id).closest('details').id,'reading-settings');
   for(const id of ['export','export-notebook','export-subtitles','subtitle-format','subtitle-bilingual'])assert.equal($(id).closest('details').id,'export-menu');
-  assert.match($('search-status').textContent,/阅读设置/);
+  assert.match($('search-status').textContent,/没有对应音视频/);
   for(const id of ['import-language','document-language','translation-source','translation-target','translation-view']){
    const label=$(id).querySelector('option[value="en"]').textContent;
    assert.match(label,/英语/);assert.doesNotMatch(label,/English/);
@@ -1647,8 +1647,14 @@ test('one-minute demo opens labelled bilingual reading without fabricating an AI
   assert.equal($('summary-body').textContent,'');assert.equal($('summary-state').dataset.state,'empty');
   $('demo-note').click();assert.equal(w.document.activeElement,$('note'));
   $('note').value='My first insight';$('note').oninput();$('close-note').click();
+  $('mode-transcript').click();
   $('demo-finish').click();assert.equal($('add-workspace').hidden,false);
-  await $('sample').onclick();
+  $('back-reading').click();assert.match($('count').textContent,/书架 \/ 一分钟/);
+  $('demo-finish').click();await $('sample').onclick();
+  assert.equal($('mode-bilingual').getAttribute('aria-pressed'),'true');
+  assert.equal($('episode-media').hidden,true);
+  assert.doesNotMatch($('provenance').textContent,/请回听/);
+  assert.doesNotMatch($('search-status').textContent,/添加原视频/);
   const saved=JSON.parse(w.localStorage.getItem('coconut-reader-v1'));
   assert.equal(saved.documents.length,1);assert.equal(saved.documents[0].notes['demo-1'],'My first insight');
   assert.equal(calls,0);assert.equal($('ai-consent').checked,false);

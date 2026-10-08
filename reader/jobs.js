@@ -33,6 +33,25 @@ function jsonPost(data = {}) {
 		body: JSON.stringify(data),
 	};
 }
+function retirePodcastSource() {
+ // A changed source owns a new result space, even if its URL is not valid yet.
+ // Retire identity as well as aborting: delayed parsers/fixtures may still resolve.
+ podcastRequest?.abort();podcastRequest=null;podcastDiscovery=null;
+ $("podcast-results").querySelectorAll("audio,video").forEach(player=>player.pause());
+ $("podcast-results").replaceChildren();
+ if(podcastPreviewURL){URL.revokeObjectURL(podcastPreviewURL);podcastPreviewURL=null;}
+ setPodcastBusy(false);podcastMessage("");
+}
+function updateSourceEntry() {
+ const label=$("source-url-label")||document.querySelector('label[for="video-url"]');
+ let text="公开链接 · 需桌面应用或本地服务",placeholder="公开来源链接（当前页面不会获取）";
+ if(localWorker){text=sourcePodcastReady?"公开播客或单视频链接":"公开单视频链接";placeholder=sourcePodcastReady?"公开 RSS、播客或单视频链接":"YouTube、哔哩哔哩或 X 公开单视频";}
+ else if(localAgents){
+  text=sourcePodcastReady?(sourceCaptionReady?"公开播客或 X 单视频链接":"公开播客链接"):(sourceCaptionReady?"公开 X 单视频链接":"公开链接 · 当前服务未启用来源获取");
+  placeholder=sourcePodcastReady?(sourceCaptionReady?"RSS、Apple Podcasts、小宇宙或 X 单视频":"RSS、Apple Podcasts 或小宇宙公开链接"):(sourceCaptionReady?"https://x.com/用户名/status/帖子编号":"请直接导入已有的 JSON、SRT 或 VTT");
+ }
+ if(label)label.textContent=text;$("video-url").placeholder=placeholder;
+}
 function updateJobButtons(identifier) {
  for (const row of $("jobs").children) {
   if (identifier !== undefined && row.dataset.jobId !== identifier) continue;
@@ -106,6 +125,7 @@ function renderJobs(jobs) {
  }
 }
 function disconnectedWorker() {
+ retirePodcastSource();
  localWorker = false;
  localAgents = false;
  sourcePodcastReady=false;sourceCaptionReady=false;sourceCaptionRequest?.abort();$("caption-language-control").hidden=true;
@@ -121,6 +141,7 @@ function disconnectedWorker() {
  $("worker-help").textContent = workerWasConnected
   ? "请检查运行 Coconut 的终端。已提交的任务可能仍在处理；恢复连接后先查看任务列表，避免重复提交。阅读和笔记仍可使用。"
   : "Web 阅读无需安装。导入文字稿后可选择本地音频或视频同步回听，文件不上传。生成摘要与翻译需连接本地 AI 工具。";
+ updateSourceEntry();
  // Keep the setup guide available without expanding it on every failed probe.
  window.dispatchEvent(new Event("coconut-worker-disconnected"));
 }
@@ -161,16 +182,15 @@ $("url-form").onsubmit = async (event) => {
 	if (sourceSubmitting) return;
  const raw=$("video-url").value.trim();
  if(sourceCaptionRequest&&sourceCaptionURL===raw&&!sourceCaptionRequest.signal.aborted)return;
+ if(podcastRequest&&$("podcast-url").value===raw&&!podcastRequest.signal.aborted)return;
  if(sourceCaptionRequest){sourceCaptionRequest.abort();sourceCaptionRequest=null;sourceCaptionURL=null;$("cancel-source").hidden=true;}
+ retirePodcastSource();
  let url;try{url=new URL(raw);if(!['https:','http:'].includes(url.protocol)||url.username||url.password)throw new Error();}catch{$("source-route-status").textContent="请粘贴不含登录凭据的公开 http / https 链接。";return;}
  const video=new Set(['youtube.com','www.youtube.com','m.youtube.com','youtu.be','bilibili.com','www.bilibili.com','m.bilibili.com','b23.tv','x.com','www.x.com','twitter.com','www.twitter.com','mobile.twitter.com']).has(url.hostname);
  if(!video&&sourcePodcastReady){
   $("source-route-status").textContent="正在查找这个链接对应的公开节目。";
   $("podcast-url").value=raw;await $("podcast-form").onsubmit(event);return;
  }
- podcastRequest?.abort();podcastRequest=null;setPodcastBusy(false);
- $("podcast-results").querySelectorAll("audio,video").forEach(player=>player.pause());
- $("podcast-results").replaceChildren();podcastMessage("");
  if(video&&sourceCaptionReady&&["x.com","www.x.com","twitter.com","www.twitter.com","mobile.twitter.com"].includes(url.hostname)){
   await importVideoCaptions(raw);return;
  }
@@ -224,7 +244,11 @@ async function importVideoCaptions(url) {
  finally{if(sourceCaptionRequest===controller){sourceCaptionRequest=null;sourceCaptionURL=null;$('cancel-source').hidden=true;$('process-url').disabled=false;}}
 }
 $('cancel-source').onclick=()=>sourceCaptionRequest?.abort();
-$('video-url').addEventListener('input',()=>sourceCaptionRequest?.abort());
+$('video-url').addEventListener('input',()=>{
+ sourceCaptionRequest?.abort();retirePodcastSource();
+ $('process-url').disabled=sourceSubmitting||!!sourceCaptionRequest;
+ $('source-route-status').textContent='';
+});
 $('caption-language').addEventListener('change',()=>sourceCaptionRequest?.abort());
 window.addEventListener('coconut-workspace-change',event=>{if(event.detail?.workspace!=='add')sourceCaptionRequest?.abort();});
 window.addEventListener('coconut-render',()=>{if(workspace!=='add')sourceCaptionRequest?.abort();});
@@ -274,18 +298,23 @@ async function connectWorker() {
 		const health = await jobApi("health");
 		if (!health.local_worker && health.capabilities?.local_agents !== true) throw new Error("No local worker");
   if (!health.local_worker) {
-   const newlyConnected = !localAgents;
+   const newlyConnected = !localAgents||localWorker||sourcePodcastReady!==(health.capabilities?.podcast_import===true)||sourceCaptionReady!==(health.capabilities?.caption_import===true);
+   if(sourcePodcastReady&&health.capabilities?.podcast_import!==true)retirePodcastSource();
+   if(sourceCaptionReady&&health.capabilities?.caption_import!==true)sourceCaptionRequest?.abort();
    localWorker=false;localAgents=true;workerWasConnected=true;
    $("local-setup").open=false;$("retry-worker").hidden=true;
    $("url-form").hidden=false;sourcePodcastReady=health.capabilities?.podcast_import===true;sourceCaptionReady=health.capabilities?.caption_import===true;$("caption-language-control").hidden=!sourceCaptionReady;$("advanced-import-options").hidden=true;$("advanced-media-import").hidden=true;$("show-jobs").hidden=true;$("jobs-heading").hidden=true;$("jobs").hidden=true;
-   $("process-url").disabled=false;$("import-media").disabled=true;
+   $("process-url").disabled=sourceSubmitting||!!sourceCaptionRequest||!!podcastRequest;$("import-media").disabled=true;
    $("worker-status").textContent="轻量本地服务已连接 · 无需 Python";
-   $("worker-help").textContent="可导入文字稿、在浏览器中同步回听音视频，并调用已登录的本地 CLI。可从公开播客源导入文字稿与回听媒体；不含 ASR 或离线翻译模型，不会自动发送原文。";
-   if(newlyConnected)window.dispatchEvent(new CustomEvent("coconut-worker-ready",{detail:{local_agents:true,media_import:false,podcast_import:health.capabilities?.podcast_import===true}}));
+   $("worker-help").textContent="可导入文字稿、选择本地音视频同步回听，并在确认后调用已登录的本地 CLI。"+(sourcePodcastReady?"可从公开播客源导入文字稿与回听媒体。":"")+(sourceCaptionReady?"可直接读取公开 X 单视频的原语言字幕，无需安装 Python；不下载媒体、不运行识别。":"")+"不含 ASR 或离线翻译模型，不会自动发送原文。";
+   updateSourceEntry();
+   if(newlyConnected)window.dispatchEvent(new CustomEvent("coconut-worker-ready",{detail:{local_agents:true,media_import:false,podcast_import:sourcePodcastReady,caption_import:sourceCaptionReady}}));
+   $("process-url").disabled=sourceSubmitting||!!sourceCaptionRequest||!!podcastRequest;
    return;
   }
   localAgents=true;sourcePodcastReady=health.capabilities?.podcast_import===true;sourceCaptionReady=health.capabilities?.caption_import===true;$("caption-language-control").hidden=!sourceCaptionReady;
 		localWorker = true;
+ updateSourceEntry();
  $("advanced-import-options").hidden=false;$("advanced-media-import").hidden=false;
   if (!await refreshJobs()) return;
   workerWasConnected = true;

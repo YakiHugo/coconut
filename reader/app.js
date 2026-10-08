@@ -156,7 +156,7 @@ function showWorkspace(next) {
 	$("export").hidden = next !== "read" || !active();
  $("export-menu").hidden = next !== "read" || !active();
  document.body.dataset.workspace = next;
- if(next === "add") $("count").textContent = "你的内容，从这里开始";
+ $("count").textContent = next === "add" ? "你的内容，从这里开始" : active() ? "书架 / " + active().title : "阅读空间";
  if (next !== "read") $("export-menu").open = false;
 	$("add-content").setAttribute("aria-pressed", String(next === "add"));
 	if (returning) window.scrollTo(0, readingScroll);
@@ -264,7 +264,10 @@ function render() {
  updatePlaybackControls();
 	$("title").textContent = doc.title;
  const isDemo=doc.provenance?.kind==='authored_demo';
+ document.body.dataset.demo=String(isDemo);
  $('demo-guide').hidden=!isDemo;
+ // The authored tryout has no media; don't suggest attaching an unrelated recording.
+ $('episode-media').hidden=isDemo&&!mediaPath;
  $('reader-kind').textContent=isDemo?'自写双语示例':audioOnly?'原声项目':doc.language?doc.language.toUpperCase()+' · 原文可回查':'原文可回查';
  renderReadingNavigation(doc);
 	$("time-navigation-status").textContent="";
@@ -277,7 +280,7 @@ function render() {
 	const sourceKinds = {authored_demo:"Coconut 自写演示内容与预置译文（不是节目字幕或模型生成结果）",publisher_transcript:"发布者提供的文字稿（未人工核对）",platform_subtitles: "平台提供的字幕", automatic_subtitles: "平台自动字幕", imported_subtitles: "导入的字幕", local_asr: "本机语音识别"};
 	const provenanceText = sourceKinds[provenance.kind] || "导入文字稿，来源未标明";
 	const medium = provenance.source_medium === "audio" ? "音频内容" : provenance.source_medium === "video" ? "视频内容" : "";
- $("provenance").textContent = [medium, provenance.source_platform].filter(Boolean).join(" · ") + (medium || provenance.source_platform ? " · " : "") + provenanceText + (provenance.model ? " · " + provenance.model : "") + " · 请回听核对专有名词与重要信息" + (provenance.alignment_warning ? " · 时间对齐降级：" + provenance.alignment_warning : "");
+ $("provenance").textContent = [medium, provenance.source_platform].filter(Boolean).join(" · ") + (medium || provenance.source_platform ? " · " : "") + provenanceText + (provenance.model ? " · " + provenance.model : "") + (isDemo ? " · 没有对应音视频" : " · 请回听核对专有名词与重要信息") + (provenance.alignment_warning ? " · 时间对齐降级：" + provenance.alignment_warning : "");
 	$("count").textContent = "书架 / " + doc.title;
  if(audioOnly){
   $('provenance').textContent=doc.transcript_status==='unavailable'?'未发现可用的公开定时文字稿；未运行语音识别或模型':'尚未导入文字稿；未运行语音识别或模型';
@@ -313,7 +316,7 @@ function render() {
 	$("excerpt-count").textContent = String(doc.segments.filter(s => s.saved_excerpt === true).length);
 	renderNotebookAction(doc);
 	$("note-count").textContent = String(Object.values(doc.notes).filter(Boolean).length);
-	const playbackHint = mediaPath ? "点时间戳定位本地原声" : Coconut.source(doc.source_url, 0) ? "点时间戳打开原站；若平台未自动定位，请按显示时间手动跳转" : doc.source_media ? "本地媒体尚未连接；请在保存原任务的电脑启动 Coconut" : "尚未关联音视频，可在「阅读设置」添加原视频链接";
+	const playbackHint = isDemo && !mediaPath ? "自写双语示例 · 可试读、摘录与记笔记，没有对应音视频" : mediaPath ? "点时间戳定位本地原声" : Coconut.source(doc.source_url, 0) ? "点时间戳打开原站；若平台未自动定位，请按显示时间手动跳转" : doc.source_media ? "本地媒体尚未连接；请在保存原任务的电脑启动 Coconut" : "尚未关联音视频，可在「阅读设置」添加原视频链接";
  $('reading-page-status').textContent=filtered.length?`${pageStart+1}–${pageStart+visible.length} / ${filtered.length} 段`:"没有匹配片段";
  $("search-status").textContent = ((query || notesOnly || excerptsOnly || speakerFilter!==null) ? "找到 " + filtered.length + " 个片段" : "共 " + doc.segments.length + " 个片段") + " · " + playbackHint;
 	$("clear-search").hidden = !query && !notesOnly && !excerptsOnly && speakerFilter===null;
@@ -721,6 +724,8 @@ $("sample").onclick = async () => {
  ];
  demo.segments.forEach((segment,index)=>{segment.translations={en:{text:translations[index],source_text:segment.text,source_language:'zh',document_language:'zh',provider:'Coconut 自写演示译文'}};});
  await add(Coconut.validate(demo));
+ // Explicitly reopening the bilingual tryout restores its view, never its edited content.
+ active().translation_view='en';save();
  setReadingMode('transcript');render();
  $('title').scrollIntoView?.({block:'start'});
  } catch(error){notice('示例打开失败：'+error.message);}
@@ -951,7 +956,7 @@ function applyReadingMode() {
  $('mode-bilingual').setAttribute('aria-pressed',String(bilingual));
  $('transcript-layout').classList.toggle('is-bilingual',bilingual);
  $('mode-bilingual').disabled=audioOnly;
- $('bilingual-readiness').hidden=!bilingual;
+ $('bilingual-readiness').hidden=!bilingual||active()?.provenance?.kind==='authored_demo';
  if(bilingual){const doc=active(),target=doc.translation_view,count=doc.segments.filter(s=>Coconut.translationCurrent(s,doc,s.translations?.[target])).length;
  $('bilingual-status').textContent=count?`当前语言已有 ${count}/${doc.segments.length} 段有效译文；缺失或过期部分仍保留原文，可在翻译选项中继续。`:'还没有当前语言的有效译文。先读原文，或打开翻译选项，核对发送范围与额度后生成；切换视图不会调用模型。';}
 }

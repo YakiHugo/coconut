@@ -509,3 +509,5 @@ body[data-workspace="add"] #count { font-size: 12px; }
  .is-bilingual .words, .is-bilingual .translation { font-size: 15px; }
  #summary-body { padding: 17px; }
 }
+
+body[data-demo="true"] .transcript-navigation { display: none; }
