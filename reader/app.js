@@ -32,6 +32,7 @@ let pendingMediaDocument = null;
 const PLAYBACK_RATES=[0.75,1,1.25,1.5,1.75,2];
 let playbackRate=1;
 let repeating=null;
+let dockFramePending=false;
 try {const saved=Number(localStorage.getItem("coconut-playback-rate-v1"));if(PLAYBACK_RATES.includes(saved))playbackRate=saved;}catch{}
 
 function saveWarning(text = "") {
@@ -161,6 +162,7 @@ function showWorkspace(next) {
  if (next !== "read") $("export-menu").open = false;
 	$("add-content").setAttribute("aria-pressed", String(next === "add"));
 	if (returning) window.scrollTo(0, readingScroll);
+ refreshPlaybackDock();
 }
 function goToSegment(id) {
  if(readingMode==='summary'||!$('summary-request').hidden||$('ai-task').value==='summary')closeSummaryRequest(false);
@@ -254,6 +256,7 @@ function render() {
   player.ondurationchange=updatePlaybackControls;
 		player.ontimeupdate = () => {if(mediaHost.querySelector("audio,video")!==player)return;repeatPlayback(false,player);highlightPlayback();};
   player.onended=()=>repeatPlayback(true,player);
+  for(const event of ["play","pause","timeupdate","ratechange","loadedmetadata","durationchange","ended","error","emptied"])player.addEventListener(event,refreshPlaybackDock);
 		player.preload = "metadata";
 		player.src = mediaPath;
 		player.setAttribute("aria-label", "原始音视频");
@@ -882,7 +885,49 @@ function updatePlaybackControls(){
  selector.querySelector('[data-current]')?.remove();
  if(!PLAYBACK_RATES.includes(actual)){const option=el("option","","当前 "+actual+"×");option.value=String(actual);option.dataset.current="true";selector.append(option);}
  selector.value=String(actual);
+ refreshPlaybackDock();
 }
+// The dock controls the existing source player; it never owns or starts media.
+function refreshPlaybackDock(){
+ const dock=$('media-dock'),player=$('source-media').querySelector('audio,video');
+ const playable=player&&!player.error&&Number.isFinite(player.duration)&&player.duration>0;
+ const visible=!!(playable&&workspace==='read'&&!$('reader-workspace').hidden&&!$('source-media').hidden&&$('episode-media').getBoundingClientRect().bottom<=0);
+ if(!visible&&!dock.hidden&&dock.contains(document.activeElement)&&player&&workspace==='read')player.focus({preventScroll:true});
+ if(dock.hidden!==!visible)dock.hidden=!visible;
+ if(document.body.dataset.mediaDocked!==String(visible))document.body.dataset.mediaDocked=String(visible);
+ if(!visible)return;
+ // Time events need not rewrite unchanged labels or invalidate layout styles.
+ const write=(id,value)=>{const node=$(id);if(node.textContent!==value)node.textContent=value;};
+ const title=(active()?.title||'当前原声').replace(/\s+/g,' ').slice(0,240);
+ write('dock-title',title);if($('dock-title').title!==title)$('dock-title').title=title;
+ write('dock-play',player.ended?'重播':player.paused?'播放':'暂停');
+ const label=player.ended?'重新播放本篇原声':player.paused?'播放本篇原声':'暂停本篇原声';
+ if($('dock-play').getAttribute('aria-label')!==label)$('dock-play').setAttribute('aria-label',label);
+ write('dock-current',Coconut.time(player.currentTime));write('dock-total',' / '+Coconut.time(player.duration));write('dock-rate',' · '+player.playbackRate+'×');
+ const audioOnly=Coconut.isAudioProject(active());if($('dock-locate').hidden!==audioOnly)$('dock-locate').hidden=audioOnly;
+ const cue=playbackSegment();if($('dock-locate').disabled!==!cue)$('dock-locate').disabled=!cue;write('dock-locate',cue?'定位原文':'此刻无字幕');
+}
+function schedulePlaybackDock(){
+ if(dockFramePending)return;
+ dockFramePending=true;requestAnimationFrame(()=>{dockFramePending=false;refreshPlaybackDock();});
+}
+$('dock-play').onclick=async()=>{
+ const player=$('source-media').querySelector('audio,video');
+ if(!player||player.error||!Number.isFinite(player.duration)||player.duration<=0)return;
+ if(!player.paused){player.pause();refreshPlaybackDock();return;}
+ try{if(player.ended){stopRepeating();player.currentTime=0;}await player.play();}
+ catch(error){if(error?.name!=='AbortError'&&player===$('source-media').querySelector('audio,video'))notice('媒体暂时无法播放，请回到播放器检查文件或重试。');}
+ refreshPlaybackDock();
+};
+$('dock-locate').onclick=()=>{const segment=playbackSegment();if(segment){goToSegment(segment.id);highlightPlayback();}};
+$('dock-return').onclick=()=>{
+ const player=$('source-media').querySelector('audio,video');if(!player)return;
+ $('source-media').scrollIntoView?.({block:'center',behavior:'smooth'});player.focus({preventScroll:true});
+};
+window.addEventListener('scroll',schedulePlaybackDock,{passive:true});
+window.addEventListener('resize',schedulePlaybackDock);
+window.visualViewport?.addEventListener('resize',schedulePlaybackDock);
+window.addEventListener('coconut-render',refreshPlaybackDock);
 function skipPlayback(delta){
  const player=$("source-media").querySelector("audio,video");if(!player || !Number.isFinite(player.duration) || player.duration<=0)return;
  stopRepeating();

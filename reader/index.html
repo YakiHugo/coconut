@@ -7,11 +7,11 @@
 <meta name="description" content="把长视频和播客变成自己的阅读空间。对照原文与译文，按时间回听，留下摘录和笔记。">
 <meta name="theme-color" content="#faf9f7">
 <link rel="icon" type="image/png" href="coconut-mark.png">
-<link rel="stylesheet" href="style.css?v=3ba248900a">
+<link rel="stylesheet" href="style.css?v=c273102bab">
 <script src="summary.js?v=580ffdad1e" defer></script>
 <script src="core.js?v=ce1ae62390" defer>
 </script>
-<script src="app.js?v=b596b4bf87" defer>
+<script src="app.js?v=3bac245a61" defer>
 </script>
 <script src="language.js?v=414cfadfe9" defer></script>
 <script src="podcasts.js?v=5e3059eb12" defer></script>
@@ -239,6 +239,11 @@ cd coconut
 </div>
 </main>
 </div>
+<section id="media-dock" class="media-dock" aria-label="当前原声播放控制" hidden>
+<button id="dock-play" class="dock-play" type="button">播放</button>
+<div class="dock-copy"><strong id="dock-title"></strong><span class="dock-clock"><span id="dock-current">00:00</span><span id="dock-total"></span><span id="dock-rate"></span></span></div>
+<button id="dock-locate" type="button">定位原文</button><button id="dock-return" type="button" aria-label="回到原声播放器">播放器 ↑</button>
+</section>
 <dialog id="details-dialog" aria-labelledby="details-heading">
 <form method="dialog"><h2 id="details-heading">文字稿信息</h2>
 <label for="document-title">标题</label><input id="document-title" maxlength="200" required>
