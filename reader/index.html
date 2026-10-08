@@ -3,23 +3,27 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Coconut · 把听过的，留下来</title>
-<link rel="stylesheet" href="style.css?v=7fbedfac35">
+<title>Coconut · 把好想法，留下来</title>
+<meta name="description" content="把长视频和播客变成自己的阅读空间。对照原文与译文，按时间回听，留下摘录和笔记。">
+<meta name="theme-color" content="#faf9f7">
+<link rel="icon" type="image/png" href="coconut-mark.png">
+<link rel="stylesheet" href="style.css?v=5df2785103">
 <script src="summary.js?v=580ffdad1e" defer></script>
 <script src="core.js?v=ce1ae62390" defer>
 </script>
-<script src="app.js?v=4f4125c445" defer>
+<script src="app.js?v=0ad5e5d1e4" defer>
 </script>
-<script src="language.js?v=deb570ccd6" defer></script>
+<script src="language.js?v=4c3da93a7c" defer></script>
 <script src="podcasts.js?v=5e3059eb12" defer></script>
 <script src="jobs.js?v=c990233789" defer>
 </script>
 <script src="updates.js?v=c99ed00c5a" defer></script>
 </head>
 <body>
+<a class="skip-link" href="#main-content">跳到主要内容</a>
 <div class="shell">
 <aside>
-<a class="brand" href="#"><span class="brand-mark" aria-hidden="true">◒</span> coconut<span class="brand-caption">播客，读懂再留下</span>
+<a class="brand" href="#" aria-label="Coconut 首页"><img class="brand-mark" src="coconut-mark.png" width="36" height="36" alt=""> <span>coconut<span class="brand-caption">留住值得重读的声音</span></span>
 </a>
 <button id="add-content" class="primary">＋ 添加内容</button>
 <button id="toggle-library" aria-expanded="false" aria-controls="library-list">书架 <span id="library-total">0</span></button>
@@ -47,7 +51,7 @@
 <button id="update-install" type="button" hidden>安装并重启…</button>
 </div></details>
 </aside>
-<main>
+<main id="main-content" tabindex="-1">
 <header>
 <button id="back-reading" hidden>← 返回阅读</button><span id="count">阅读空间</span>
 <div>
@@ -60,15 +64,25 @@
 <div id="notice" role="status" hidden>
 </div>
 <section id="add-workspace" class="import-workspace" aria-label="添加与处理内容">
-<div class="welcome-mark" aria-hidden="true">◒</div>
-<p class="eyebrow">你的阅读空间</p>
-<h1>先读懂，再回到声音</h1>
-<p class="welcome-copy">音频播客、视频访谈，都放在同一个阅读空间。先读摘要，再对照原文和声音。</p>
+<div class="welcome-hero">
+<div class="welcome-story"><p class="eyebrow"><span class="live-dot" aria-hidden="true"></span> 给好奇心，一个阅读空间</p>
+<h1>听见好想法。<br><span>这次，把它留下。</span></h1>
+<p class="welcome-copy">长视频、播客、另一种语言。<br>在原文与译文之间找到重点，随时回到声音，记下自己的想法。</p>
+<button id="sample" class="demo-launch">先试读一分钟 <span aria-hidden="true">↗</span></button><p class="demo-caption">自写双语示例 · 无需安装或连接 AI</p>
+</div>
+<div class="welcome-preview" aria-label="自写双语示例预览，没有音视频">
+<div class="preview-topline"><span class="preview-label">一段声音，两种视角</span><span class="preview-language">中 / EN</span></div>
+<div class="preview-orbit" aria-hidden="true"><span>好想法</span><i></i><b>留在这里</b></div>
+<div class="preview-excerpt"><span class="preview-time">00:18 · 自写示例</span><p>重要的不只是更顺的文字，<span class="preview-highlight">还有随时查证的能力。</span></p><p lang="en">What matters is not just smoother prose, but the ability to check the source.</p></div>
+<div class="preview-footer"><span><span aria-hidden="true">⌁</span> 原文与译文，一起读</span><span aria-hidden="true">↗</span></div>
+</div>
+</div>
+<div class="source-card"><div class="source-card-heading"><div><p class="eyebrow">从你正在听的开始</p><h2>添加自己的内容</h2></div><span class="source-private">文件在本机读取</span></div>
 <div class="import-heading">
 <span id="worker-status" role="status">正在检查本地处理服务…</span><button id="retry-worker" hidden>重新连接</button>
 </div>
 <form id="url-form">
-<label for="video-url">粘贴播客或视频链接</label>
+<label id="source-url-label" for="video-url">粘贴播客或视频链接</label>
 <div class="url-row">
 <input id="video-url" type="url" placeholder="RSS、Apple Podcasts、小宇宙、YouTube、哔哩哔哩或 X" required maxlength="4096">
 <button id="process-url" class="primary">添加到阅读空间</button><button id="cancel-source" type="button" hidden>取消获取</button>
@@ -97,7 +111,8 @@
 <p class="hint">优先读取发布者提供的文字稿。只访问公开来源，不使用登录、会员或私有订阅链接；没有文字稿时会明确提示，不自动转录或扣费。</p>
 <button id="cancel-podcast" type="button" hidden>取消读取</button><p id="podcast-status" class="hint" role="status"></p><div id="podcast-results"></div>
 </section>
-<div class="file-entry"><div class="add-actions"><button id="import" class="primary">导入文字稿</button><button id="sample">先看一个示例 <span aria-hidden="true">↗</span></button></div><p class="hint">支持 JSON、SRT、VTT · 文件在浏览器内读取</p></div>
+<div class="file-entry"><div class="add-actions"><button id="import">＋ 导入文字稿</button><span class="hint">JSON、SRT、VTT</span></div><p class="hint">已有字幕？直接开始读，再选择对应的本地音视频同步回听。</p></div>
+</div>
 <p id="worker-help" class="hint">Web 阅读无需安装：导入文字稿后，可选择对应的本地音频或视频同步回听。文件不上传；生成摘要需要连接本地 AI 工具并确认使用额度。</p>
 <details id="local-setup" class="setup-guide">
 <summary>连接本地 AI 工具与高级处理</summary>
@@ -117,7 +132,7 @@ cd coconut
 </ol>
 <p class="hint">已经安装？在原项目目录运行 ./coconut 即可。端口被占用时可运行 ./coconut --port 8081，并打开终端显示的新地址。关闭终端会停止处理；重启后可重试中断任务。</p>
 <p class="hint">公开预览和本地地址的书架互不相通。先在原页面导出文字稿与笔记，再到新地址导入；备份不包含视频文件。更换端口也需要这一步。</p>
-<p class="hint">字幕优先；没有匹配字幕时才运行本地识别，首次会下载模型。离线翻译另需语言模型；AI 订阅需本机官方 CLI 已登录，并逐次确认发送文字与使用额度。</p>
+<p class="hint">默认仅使用现成字幕，没有匹配字幕时会停止。只有在处理选项取消「仅使用现成字幕」后，才允许本地识别，首次可能下载模型。离线翻译另需语言模型；AI 订阅需本机官方 CLI 已登录，并逐次确认发送文字与使用额度。</p>
 <a href="https://github.com/YakiHugo/coconut#readme" target="_blank" rel="noopener noreferrer">完整安装、翻译与订阅连接说明</a>
 </details>
 </details>
@@ -126,11 +141,12 @@ cd coconut
 </section>
 <div id="reader-workspace" hidden>
 <section class="intro">
-<p class="eyebrow">播客阅读</p>
+<div class="reader-kicker"><p class="eyebrow">你的阅读空间</p><span id="reader-kind" class="reader-kind">原文可回查</span></div>
 <h1 id="title">把听过的，<br>真正留下来。</h1>
 <p id="subtitle">导入 Coconut JSON、SRT 或 VTT。读原话，记想法，在时间戳处回到声音的现场。</p>
 <p id="provenance" class="hint">
 </p>
+<div id="demo-guide" class="demo-guide" hidden><div><strong>这是你的试读空间</strong><span>自写内容与预置译文，没有音视频，也没有调用模型。</span></div><div><button id="demo-note" type="button">记下第一个想法 <span aria-hidden="true">↗</span></button><button id="demo-finish" type="button">添加自己的内容</button></div></div>
 <section id="episode-media" class="episode-media" aria-label="本集声音与回源"><div class="episode-media-heading"><span class="eyebrow">原声与来源</span><span class="hint">阅读时随时回听</span></div><div id="podcast-playback" class="podcast-playback" hidden><button id="download-podcast-media" type="button">下载并回听本集原声</button><button id="cancel-podcast-media" type="button" hidden>取消下载</button><p id="podcast-media-status" class="hint">只在点击后下载（最多 200 MiB），媒体仅保留在本次页面，刷新后需重新获取。</p></div>
 <div class="local-media-entry"><button id="attach-reader-media" type="button">选择对应的音频或视频</button><button id="detach-reader-media" type="button" hidden>移除本次媒体</button><input id="reader-media-file" type="file" accept="audio/*,video/*,.mp3,.m4a,.wav,.ogg,.flac,.mp4,.webm,.mov" hidden><p id="reader-media-status" class="hint">在浏览器中打开文件，不上传。请选与文字稿对应的原文件；刷新页面后需重新选择。</p></div>
 <button id="locate-playback" hidden>定位正在播放的文字</button>
@@ -140,6 +156,11 @@ cd coconut
 </section>
 <nav id="reading-modes" class="reading-modes" aria-label="播客阅读方式"><button id="mode-summary" aria-pressed="true">摘要阅读</button><button id="mode-transcript" aria-pressed="false">原文</button><button id="mode-bilingual" aria-pressed="false">双语对照</button></nav>
 <section id="summary-workspace" aria-label="播客摘要">
+<section id="source-overview" class="source-overview" aria-label="原文速览">
+<div class="source-overview-heading"><div><p class="eyebrow">先看看，这篇说了什么</p><h2>沿着原文，找到感兴趣的地方</h2></div><span id="overview-duration" class="status-chip"></span></div>
+<p class="hint">以下是按位置抽取的原句，不是 AI 摘要。点击任何一段，直接继续读。</p>
+<div id="overview-segments" class="overview-segments"></div>
+</section>
 <div class="summary-heading"><div><p class="eyebrow">先抓住重点</p><h2 id="summary-heading" tabindex="-1">这篇还没有摘要</h2></div><span id="summary-state" class="status-chip">未生成</span></div>
 <p id="summary-status" class="hint" role="status"></p><div id="summary-body"></div>
 <div id="summary-citations" class="summary-citations" aria-label="摘要引用"></div>
@@ -159,6 +180,7 @@ cd coconut
 <p id="audio-project-status" class="hint" role="status"></p><div id="audio-bookmarks" aria-label="已保存的时间书签"></div>
 </section>
 <div id="transcript-reading-tools">
+<div class="transcript-navigation"><label for="reading-jump">浏览全文</label><select id="reading-jump" aria-label="按片段位置浏览全文"></select><span id="reading-page-status" class="hint"></span></div>
 <div id="bilingual-readiness" class="bilingual-readiness" hidden><p id="bilingual-status" class="hint" role="status"></p><button id="prepare-bilingual" type="button">翻译选项</button></div>
 <div class="tools">
 <label class="search">⌕ <input id="search" type="search" placeholder="搜索原话、说话人或笔记" aria-label="搜索文字稿">

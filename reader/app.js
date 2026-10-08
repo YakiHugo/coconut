@@ -155,6 +155,8 @@ function showWorkspace(next) {
 	$("back-reading").hidden = next !== "add" || !active();
 	$("export").hidden = next !== "read" || !active();
  $("export-menu").hidden = next !== "read" || !active();
+ document.body.dataset.workspace = next;
+ if(next === "add") $("count").textContent = "你的内容，从这里开始";
  if (next !== "read") $("export-menu").open = false;
 	$("add-content").setAttribute("aria-pressed", String(next === "add"));
 	if (returning) window.scrollTo(0, readingScroll);
@@ -261,6 +263,10 @@ function render() {
 	$("locate-playback").hidden = !mediaPath||audioOnly;
  updatePlaybackControls();
 	$("title").textContent = doc.title;
+ const isDemo=doc.provenance?.kind==='authored_demo';
+ $('demo-guide').hidden=!isDemo;
+ $('reader-kind').textContent=isDemo?'自写双语示例':audioOnly?'原声项目':doc.language?doc.language.toUpperCase()+' · 原文可回查':'原文可回查';
+ renderReadingNavigation(doc);
 	$("time-navigation-status").textContent="";
 	$("subtitle").textContent = audioOnly ? '原声项目 · '+(doc.media_duration?Coconut.time(doc.media_duration)+' · ':'')+'来源、项目笔记与时间书签保存在本机' :
 		doc.segments.length +
@@ -268,7 +274,7 @@ function render() {
 		Coconut.time(doc.segments.at(-1).end) +
 		" · 原话与笔记保存在本机";
 	const provenance = doc.provenance || {};
-	const sourceKinds = {publisher_transcript:"发布者提供的文字稿（未人工核对）",platform_subtitles: "平台提供的字幕", automatic_subtitles: "平台自动字幕", imported_subtitles: "导入的字幕", local_asr: "本机语音识别"};
+	const sourceKinds = {authored_demo:"Coconut 自写演示内容与预置译文（不是节目字幕或模型生成结果）",publisher_transcript:"发布者提供的文字稿（未人工核对）",platform_subtitles: "平台提供的字幕", automatic_subtitles: "平台自动字幕", imported_subtitles: "导入的字幕", local_asr: "本机语音识别"};
 	const provenanceText = sourceKinds[provenance.kind] || "导入文字稿，来源未标明";
 	const medium = provenance.source_medium === "audio" ? "音频内容" : provenance.source_medium === "video" ? "视频内容" : "";
  $("provenance").textContent = [medium, provenance.source_platform].filter(Boolean).join(" · ") + (medium || provenance.source_platform ? " · " : "") + provenanceText + (provenance.model ? " · " + provenance.model : "") + " · 请回听核对专有名词与重要信息" + (provenance.alignment_warning ? " · 时间对齐降级：" + provenance.alignment_warning : "");
@@ -308,6 +314,7 @@ function render() {
 	renderNotebookAction(doc);
 	$("note-count").textContent = String(Object.values(doc.notes).filter(Boolean).length);
 	const playbackHint = mediaPath ? "点时间戳定位本地原声" : Coconut.source(doc.source_url, 0) ? "点时间戳打开原站；若平台未自动定位，请按显示时间手动跳转" : doc.source_media ? "本地媒体尚未连接；请在保存原任务的电脑启动 Coconut" : "尚未关联音视频，可在「阅读设置」添加原视频链接";
+ $('reading-page-status').textContent=filtered.length?`${pageStart+1}–${pageStart+visible.length} / ${filtered.length} 段`:"没有匹配片段";
  $("search-status").textContent = ((query || notesOnly || excerptsOnly || speakerFilter!==null) ? "找到 " + filtered.length + " 个片段" : "共 " + doc.segments.length + " 个片段") + " · " + playbackHint;
 	$("clear-search").hidden = !query && !notesOnly && !excerptsOnly && speakerFilter===null;
 	const bookmark = doc.segments.find(s => s.id === doc.readingPosition);
@@ -343,9 +350,12 @@ function render() {
 		} else meta.textContent=Coconut.time(s.start);
 		const body = el("div");
 		if (s.speaker) body.append(highlightedText("p", "speaker", s.speaker, query));
-		body.append(highlightedText("p", "words", s.text, query));
+		body.className="segment-content";
+  const parallel=el("div","parallel-text");
+  parallel.append(highlightedText("p", "words", s.text, query));
         const translated=s.translations?.[doc.translation_view];
-        if(translated) body.append(highlightedText("p", "translation"+(!Coconut.translationCurrent(s,doc,translated)?" stale":""), Coconut.translationCurrent(s,doc,translated) ? translated.text : "原文或上下文已变化，或旧译文缺少上下文记录，此译文需要重新生成", query));
+        if(translated) parallel.append(highlightedText("p", "translation"+(!Coconut.translationCurrent(s,doc,translated)?" stale":""), Coconut.translationCurrent(s,doc,translated) ? translated.text : "原文或上下文已变化，或旧译文缺少上下文记录，此译文需要重新生成", query));
+        body.append(parallel);
         if(translated && Coconut.translationCurrent(s,doc,translated)) { const warning=Coconut.translationQualityMessage(translated); if(warning)body.append(el("p","translation-review","待核对："+warning)); }
 
 		const edit = el("button", "edit-button", "修正文字");
@@ -440,6 +450,10 @@ function highlightPlayback() {
 }
 $("locate-playback").onclick=()=>{const segment=playbackSegment();if(segment){goToSegment(segment.id);highlightPlayback();}};
 $("add-content").onclick = () => { showWorkspace("add"); ($("video-url")).focus(); };
+ document.querySelector('.brand').onclick=event=>{event.preventDefault();showWorkspace('add');$('sample').focus();};
+ $('demo-finish').onclick=()=>$('add-content').click();
+ $('demo-note').onclick=()=>{const id=active()?.segments[0]?.id;if(!id)return;goToSegment(id);$('transcript').querySelector('.note-button')?.click();};
+ $('reading-jump').onchange=()=>{const id=$('reading-jump').value;if(id)goToSegment(id);};
 $("back-reading").onclick = () => showWorkspace("read");
 $("show-jobs").onclick = () => { showWorkspace("add"); $("jobs-heading").scrollIntoView?.(); };
 $("toggle-library").onclick = () => $("toggle-library").setAttribute("aria-expanded", String($("toggle-library").getAttribute("aria-expanded") !== "true"));
@@ -665,10 +679,16 @@ $("export").onclick = () => {
 		if (url) setTimeout(() => URL.revokeObjectURL(url), 60000);
 	}
 };
-$("sample").onclick = () =>
-	add({
+$("sample").onclick = async () => {
+ if($('sample').disabled)return;
+ $('sample').disabled=true;
+ try {
+ const demo={
 		schema_version: 1,
-		title: "开始一场更有收获的阅读",
+		title: "一分钟，试试不一样的阅读",
+  language: "zh",
+  translation_view: "en",
+  provenance: {kind: "authored_demo"},
 		source_url: "",
 		segments: [
 			{
@@ -693,7 +713,19 @@ $("sample").onclick = () =>
 				speaker: "演示",
 			},
 		],
-	}).catch((e) => notice("示例打开失败：" + e.message));
+ };
+ const translations=[
+  'This is an original Coconut demo, not a real interview. When reading something long, start with the passage that makes you pause and think.',
+  'Timestamps connect words back to the original voice. What matters is not just smoother prose, but the ability to check the source.',
+  'Try adding a note beside this passage, or searching for “timestamps”. Your notes stay in this browser, and you can export a backup.'
+ ];
+ demo.segments.forEach((segment,index)=>{segment.translations={en:{text:translations[index],source_text:segment.text,source_language:'zh',document_language:'zh',provider:'Coconut 自写演示译文'}};});
+ await add(Coconut.validate(demo));
+ setReadingMode('transcript');render();
+ $('title').scrollIntoView?.({block:'start'});
+ } catch(error){notice('示例打开失败：'+error.message);}
+ finally{$('sample').disabled=false;}
+};
 render();
 
 $("save-edit").onclick = (event) => {
@@ -917,6 +949,7 @@ function applyReadingMode() {
  const bilingual=!summary&&!audioOnly&&!!active()?.translation_view;
  $('mode-transcript').setAttribute('aria-pressed',String(!summary&&!bilingual));
  $('mode-bilingual').setAttribute('aria-pressed',String(bilingual));
+ $('transcript-layout').classList.toggle('is-bilingual',bilingual);
  $('mode-bilingual').disabled=audioOnly;
  $('bilingual-readiness').hidden=!bilingual;
  if(bilingual){const doc=active(),target=doc.translation_view,count=doc.segments.filter(s=>Coconut.translationCurrent(s,doc,s.translations?.[target])).length;
@@ -931,12 +964,46 @@ function setReadingMode(mode) {
  if(readingMode!=='summary'||$('summary-request').hidden)closeSummaryRequest(false);
  applyReadingMode();
 }
+// A bounded map of actual source positions, never fabricated chapter titles or an AI summary.
+function sourceStops(doc,limit){
+ const segments=doc?.segments||[];
+ if(!segments.length)return [];
+ const count=Math.min(limit,segments.length);
+ return Array.from({length:count},(_,index)=>segments[Math.floor(index*(segments.length-1)/Math.max(1,count-1))]);
+}
+function sourcePreview(segment,limit=90){
+ const text=segment.text.replace(/\s+/g,' ').trim();
+ return text.length>limit?text.slice(0,limit)+'…':text;
+}
+function renderReadingNavigation(doc){
+ const select=$('reading-jump'),previous=select.value;
+ select.replaceChildren();
+ const placeholder=el('option','','选择时间位置…');placeholder.value='';select.append(placeholder);
+ for(const segment of sourceStops(doc,20)){
+  const option=el('option','',Coconut.time(segment.start)+' · '+sourcePreview(segment,30));
+  option.value=segment.id;select.append(option);
+ }
+ select.value=[...select.options].some(option=>option.value===previous)?previous:'';
+}
+function renderSourceOverview(doc,hasSummary){
+ $('source-overview').hidden=hasSummary||Coconut.isAudioProject(doc);
+ $('overview-duration').textContent=Coconut.time(doc.segments.at(-1)?.end||0)+' · '+doc.segments.length+' 段';
+ const host=$('overview-segments');host.replaceChildren();
+ if(hasSummary)return;
+ for(const segment of sourceStops(doc,6)){
+  const button=el('button','overview-segment');
+  button.append(el('span','overview-time',Coconut.time(segment.start)),el('span','overview-quote',sourcePreview(segment)),el('span','overview-arrow','↗'));
+  button.setAttribute('aria-label',Coconut.time(segment.start)+' · '+sourcePreview(segment));
+  button.onclick=()=>goToSegment(segment.id);host.append(button);
+ }
+}
 function renderSummary() {
  const doc=active();if(!doc)return;
  const readiness=Coconut.summaryReadiness(doc);
  const answer=Coconut.latestSummary(doc),freshness=answer?Coconut.summaryFreshness(answer,doc):'empty';
  const persisted=answer && persistedSummaries.get(doc.key)===answer && !storageBlocked;
- $('summary-heading').textContent=answer?'这篇的主要内容':'这篇还没有摘要';
+ renderSourceOverview(doc,!!answer);
+ $('summary-heading').textContent=answer?'这篇的主要内容':'想先抓住重点？';
  $('summary-state').textContent=answer&&!persisted?'仅在此页 · 请备份':({current:'已保存 · 待核对',stale:'原文有更新',unknown:'依据待确认',empty:'未生成'})[freshness];
  $('summary-state').dataset.state=answer&&!persisted?'unsaved':freshness;
  $('summary-status').textContent=answer ? ({current:'覆盖当前整篇原文 · '+answer.provider+' · 摘要不代替原话',stale:'原文已经修改、增加或移除，下面是旧摘要。重新生成前请对照原文。',unknown:'这份摘要缺少完整发送记录，无法确认覆盖范围，请对照原文。'})[freshness] : '已有原文可直接阅读。连接已登录的本地 Codex 或 Claude Code，确认发送全文与使用额度后，才会生成摘要。';

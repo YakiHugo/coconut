@@ -26,8 +26,8 @@ try {
   if(req.method!=='GET'&&req.method!=='HEAD'){mutations++;res.writeHead(405).end();return;}
   const pathname=new URL(req.url,'http://localhost').pathname;
   const filename=pathname==='/'?'index.html':pathname.slice(1);
-  if(!/^[a-z-]+\.(html|js|css|webmanifest)$/.test(filename)){res.writeHead(404,{'Content-Type':'application/json'}).end('{"error":"static only"}');return;}
-  try{const data=await fs.readFile(path.join(root,'reader',filename));res.writeHead(200,{'Content-Type':filename.endsWith('.js')?'text/javascript':filename.endsWith('.css')?'text/css':'text/html'});res.end(data);}catch{res.writeHead(404).end();}
+  if(!/^[a-z-]+\.(html|js|css|webmanifest|png)$/.test(filename)){res.writeHead(404,{'Content-Type':'application/json'}).end('{"error":"static only"}');return;}
+  try{const data=await fs.readFile(path.join(root,'reader',filename));res.writeHead(200,{'Content-Type':filename.endsWith('.js')?'text/javascript':filename.endsWith('.css')?'text/css':filename.endsWith('.png')?'image/png':'text/html'});res.end(data);}catch{res.writeHead(404).end();}
  });
  await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
  const origin='http://127.0.0.1:'+server.address().port;
@@ -39,7 +39,22 @@ try {
   if(u.origin===origin||['blob:','data:'].includes(u.protocol))await route.continue();else{external++;await route.abort();}
  });
  const page=await context.newPage();page.on('pageerror',()=>pageErrors++);page.setDefaultTimeout(15000);
- await page.goto(origin);await capture(page,'01-source-entry');stage='import';
+ await page.goto(origin);await page.locator('#sample').waitFor({state:'visible'});
+ await capture(page,'01-source-entry');
+ check('brand_asset_loads',await page.locator('.brand-mark').evaluate(img=>img.complete&&img.naturalWidth>0));
+ await page.setViewportSize({width:390,height:844});
+ check('mobile_first_use_fits',await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth));await capture(page,'01-mobile-source-entry');
+ await page.setViewportSize({width:1360,height:1000});
+ await page.locator('#sample').click();await page.locator('#demo-guide').waitFor({state:'visible'});
+ check('demo_opens_actual_bilingual_reading',await page.locator('#mode-bilingual').getAttribute('aria-pressed')==='true'&&await page.locator('.translation').count()===3);
+ check('demo_discloses_authored_content',(await page.locator('#demo-guide').textContent()).includes('没有音视频')&&await page.locator('#summary-body').textContent()==='');
+ await capture(page,'02-bilingual-demo');
+ await page.locator('#demo-note').click();await page.locator('#note').fill('My authored first reading note');await page.locator('#close-note').click();
+ await page.locator('#demo-finish').click();await page.locator('#sample').click();
+ check('repeated_demo_preserves_note',await page.locator('.saved-note').textContent()==='My authored first reading note');
+ await page.setViewportSize({width:390,height:844});
+ check('mobile_bilingual_demo_fits',await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth));await capture(page,'02-mobile-bilingual-demo');
+ await page.setViewportSize({width:1360,height:1000});stage='import';
  await page.locator('#file').setInputFiles(fixturePath);
  await page.locator('#reader-workspace').waitFor({state:'visible'});
  check('summary_is_default',await page.locator('#summary-workspace').isVisible()&&await page.locator('#transcript-layout').isHidden());
@@ -96,6 +111,17 @@ try {
  check('manual_oversize_send_still_blocked',await page.locator('#ask-ai').isDisabled()&&!(await page.locator('#ai-consent').isChecked())&&(await page.locator('#ai-progress').textContent()).includes('整篇摘要暂不可用'));
  check('summary_preflight_does_not_generate_or_send',mutations===0&&external===0&&await page.locator('#summary-body').textContent()==='');
  check('summary_preflight_has_no_browser_errors',pageErrors===0);
+ // Navigation uses real authored source text, including the last page, never invented chapters.
+ const longSource={title:'一份长文字稿 · 自写导航验证',language:'en',segments:Array.from({length:221},(_,i)=>({id:'map-'+i,start:i*10,end:i*10+9,text:'Original authored passage '+(i+1)+'. Click a source position to keep reading, then leave your own note.'}))};
+ await page.locator('#file').setInputFiles({name:'authored-long-source.json',mimeType:'application/json',buffer:Buffer.from(JSON.stringify(longSource))});
+ await page.setViewportSize({width:1360,height:1000});
+ check('source_map_is_bounded',await page.locator('#overview-segments button').count()===6&&await page.locator('#reading-jump option').count()===21);
+ await capture(page,'05-source-overview');
+ await page.locator('#overview-segments button').last().click();
+ check('source_map_opens_last_page',await page.locator('.segment[data-segment-id="map-220"]').evaluate(n=>n===document.activeElement));
+ await page.locator('#search').fill('absent phrase');await page.locator('#reading-jump').selectOption('map-0');
+ check('source_navigation_recovers_from_empty_search',await page.locator('#search').inputValue()===''&&await page.locator('.segment[data-segment-id="map-0"]').evaluate(n=>n===document.activeElement));
+ check('first_use_and_source_map_have_no_external_requests',mutations===0&&external===0&&pageErrors===0);
  console.log(JSON.stringify({suite:'static-web-podcast',status:'passed',checks}));
 } catch {
  console.log(JSON.stringify({suite:'static-web-podcast',status:'failed',stage,checks}));process.exitCode=1;

@@ -1,5 +1,12 @@
 "use strict";
 const languageNames={en:"英语",zh:"中文",ja:"日语",ko:"韩语",fr:"法语",de:"德语",es:"西班牙语"};
+function translationLanguage(value){
+ // Publisher and caption metadata can retain regional/script tags. Select the
+ // supported base language without rewriting that original provenance.
+ const tag=typeof value==='string'?value.trim().toLowerCase():'';
+ if(!/^[a-z]{2,3}(?:-[a-z0-9]{2,8})*$/.test(tag))return '';
+ const base=tag.split('-')[0];return Object.hasOwn(languageNames,base)?base:'';
+}
 let languageCheckSequence=0;
 let subscriptionSelectionSignature="";
 let languageDocumentLabel=null;
@@ -20,11 +27,17 @@ function renderLanguage(){
  const doc=active();if(summaryScope&&(doc?.key!==summaryScope.key||!CoconutSummary.current(doc?.summary_job,doc)))summaryScope.stop=true;if(!doc)return;
  const hasTranscript=doc.project_kind!=='audio_only'&&doc.segments.length>0;
  if(languageDocument!==doc.key || languageDocumentLabel!==(doc.language||'')){
+  const newDocument=languageDocument!==doc.key;
   if(languageDocument===doc.key && translating)stopTranslation=true;
   if(languageDocument===doc.key && subscriptionTranslating)stopSubscription=true;
   if(languageDocument!==doc.key)closeSummaryRequest(false);
   languageDocument=doc.key;languageDocumentLabel=doc.language||'';
-  $('translation-source').value=languageDocumentLabel;$('ai-consent').checked=false;
+  const source=translationLanguage(languageDocumentLabel);
+  $('translation-source').value=source;
+  // Keep a deliberately selected target on ordinary renders and metadata edits.
+  // On opening another document, avoid an unusable same-language default.
+  if(newDocument&&source&&$('translation-target').value===source)$('translation-target').value=source==='zh'?'en':'zh';
+  $('ai-consent').checked=false;
  }
  $('summary-connection-help').textContent=$('language-prerequisite').textContent;
  $('summary-connection-setup').hidden=$('language-setup').hidden;

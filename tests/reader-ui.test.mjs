@@ -1580,7 +1580,7 @@ test('summary composer uses one consent control and returns it on close or docum
 });
 
 test('summary and bilingual tabs preserve the visible player and never generate translations',async()=>{
- const w=setup();try{const $=id=>w.document.getElementById(id);await $('sample').onclick();let pauses=0,calls=0;w.fetch=async()=>{calls++;throw new Error('No calls expected');};
+ const w=setup();try{const $=id=>w.document.getElementById(id);await importDocument(w,{title:'No translations yet',language:'en',segments:[{id:'one',start:0,end:10,text:'A source sentence.'}]});let pauses=0,calls=0;w.fetch=async()=>{calls++;throw new Error('No calls expected');};
   const player=w.document.createElement('audio');player.pause=()=>pauses++;$('source-media').append(player);$('source-media').hidden=false;
   $('mode-summary').click();assert.equal(pauses,0);assert.equal($('source-media').closest('#transcript-controls'),null);assert.equal($('episode-media').hidden,false);
   $('mode-bilingual').click();assert.equal($('mode-bilingual').getAttribute('aria-pressed'),'true');assert.equal($('bilingual-readiness').hidden,false);assert.match($('bilingual-status').textContent,/还没有/);assert.equal(calls,0);assert.equal($('ai-consent').checked,false);
@@ -1632,4 +1632,57 @@ test('caption cancel, navigation and repeated submit cannot save stale output or
    assert.equal(w.localStorage.getItem('coconut-reader-v1'),before);assert.equal($('cancel-source').hidden,true);assert.equal(calls,1);
   }finally{await w.happyDOM.close();}
  }
+});
+
+
+test('one-minute demo opens labelled bilingual reading without fabricating an AI summary',async()=>{
+ const w=setup();try{
+  const $=id=>w.document.getElementById(id);let calls=0;
+  w.fetch=async()=>{calls++;throw new Error('No model or source requests');};
+  await $('sample').onclick();
+  assert.equal($('demo-guide').hidden,false);assert.match($('demo-guide').textContent,/没有音视频/);
+  assert.equal($('mode-bilingual').getAttribute('aria-pressed'),'true');
+  assert.equal(w.document.querySelectorAll('.translation').length,3);
+  assert.equal($('transcript-layout').classList.contains('is-bilingual'),true);
+  assert.equal($('summary-body').textContent,'');assert.equal($('summary-state').dataset.state,'empty');
+  $('demo-note').click();assert.equal(w.document.activeElement,$('note'));
+  $('note').value='My first insight';$('note').oninput();$('close-note').click();
+  $('demo-finish').click();assert.equal($('add-workspace').hidden,false);
+  await $('sample').onclick();
+  const saved=JSON.parse(w.localStorage.getItem('coconut-reader-v1'));
+  assert.equal(saved.documents.length,1);assert.equal(saved.documents[0].notes['demo-1'],'My first insight');
+  assert.equal(calls,0);assert.equal($('ai-consent').checked,false);
+ }finally{await w.happyDOM.close();}
+});
+
+test('source overview previews actual bounded cues and navigates to the last page without playing',async()=>{
+ const w=setup();try{
+  const $=id=>w.document.getElementById(id);
+  const segments=Array.from({length:221},(_,i)=>({id:'cue-'+i,start:i*10,end:i*10+9,text:i===220?'<img src=x> Final exact source sentence':'Authored source cue '+i}));
+  await importDocument(w,{title:'Long source',segments});
+  assert.equal($('source-overview').hidden,false);
+  assert.equal($('overview-segments').querySelectorAll('button').length,6);
+  assert.equal($('overview-segments').querySelector('img'),null);
+  const last=$('overview-segments').querySelector('button:last-child');
+  assert.match(last.textContent,/<img src=x> Final exact source sentence/);
+  let calls=0;w.fetch=async()=>{calls++;throw new Error('Must not request');};
+  last.click();assert.equal(w.document.activeElement.dataset.segmentId,'cue-220');
+  assert.equal($('transcript-layout').hidden,false);assert.equal($('search').value,'');
+  assert.equal($('reading-jump').options.length,21);
+  $('search').value='no matches';$('search').oninput();
+  $('reading-jump').value='cue-0';$('reading-jump').onchange();
+  assert.equal(w.document.activeElement.dataset.segmentId,'cue-0');assert.equal($('search').value,'');
+  assert.match($('reading-page-status').textContent,/1–100 \/ 221/);assert.equal(calls,0);
+ }finally{await w.happyDOM.close();}
+});
+
+test('source overview does not masquerade as or duplicate a saved summary',async()=>{
+ const w=setup();try{
+  const $=id=>w.document.getElementById(id);
+  await importDocument(w,{title:'Saved summary',segments:[{id:'a',start:0,end:4,text:'Original'}],ai_answers:[{purpose:'summary',question:'Summary',answer:'Saved model output',citations:['a'],provider:'fixture',input_snapshot:{version:1,segments:[{id:'a',text:'Original'}]}}]});
+  assert.equal($('source-overview').hidden,true);assert.equal($('overview-segments').childElementCount,0);
+  assert.equal($('summary-body').textContent,'Saved model output');
+  $('add-content').click();w.document.querySelector('.brand').click();
+  assert.equal($('add-workspace').hidden,false);assert.equal(w.document.activeElement,$('sample'));
+ }finally{await w.happyDOM.close();}
 });
