@@ -12,6 +12,14 @@ let workspace = "read";
 let readingScroll = 0;
 let editingTarget = null;
 let sourceTarget = null;
+let localImportRevision = 0;
+function cancelLocalImports(keepInput = null) {
+ localImportRevision++;
+ // Retire both import paths while preserving a newly selected input's file.
+ for(const id of ["file", "library-file"])if(id!==keepInput)$(id).value = "";
+ return localImportRevision;
+}
+window.addEventListener("pagehide", () => cancelLocalImports());
 const PAGE_SIZE = 100;
 let pageStart = 0;
 let storageBlocked = false;
@@ -115,6 +123,14 @@ async function add(doc, canCommit = null, reuseAudioSource = false) {
  // A repeated source save refreshes recoverable source metadata, preserving
  // user-owned title, language, notes, bookmark IDs and the stable library key.
  const identity=reuseAudioSource?Coconut.audioProjectIdentity(doc):'';
+ // Match the complete validated backup, just like whole-library restore. The
+ // original hash remains the first choice when reopening an unedited source;
+ // otherwise an exported edited snapshot should reuse the same library entry.
+ if(!identity&&!state.documents.some(d=>d.key===key)){
+  const fingerprint=JSON.stringify(Coconut.validate(doc));
+  const matching=state.documents.find(d=>JSON.stringify(Coconut.validate(d))===fingerprint);
+  if(matching)key=matching.key;
+ }
  const existing=identity&&state.documents.find(d=>Coconut.audioProjectIdentity(d)===identity);
  if(existing){
   key=existing.key;
@@ -145,6 +161,7 @@ async function add(doc, canCommit = null, reuseAudioSource = false) {
 	return saved;
 }
 function showWorkspace(next) {
+ if(next!==workspace)cancelLocalImports();
  if(next!==workspace)window.dispatchEvent(new CustomEvent("coconut-workspace-change",{detail:{workspace:next}}));
  if(next!=="read"&&typeof closeSummaryRequest==="function")closeSummaryRequest(false);
  if(next!=="add")$("podcast-results")?.querySelectorAll("audio,video").forEach(player=>player.pause());
@@ -196,6 +213,7 @@ function renderLibrary() {
 		b.append(el("small", "", Coconut.isAudioProject(d)?"原声项目 · 未导入文字稿 · "+(d.timestamp_bookmarks||[]).length+" 个时间书签":Coconut.time(d.segments.at(-1).end) + " · " + Object.values(d.notes).filter(Boolean).length + " 则笔记" + (bookmark ? " · 读到 " + Coconut.time(bookmark.start) : "")));
 		b.setAttribute("aria-current", d.key === state.active ? "page" : "false");
 		b.onclick = () => {
+   cancelLocalImports();
    stopRepeating();$("source-media").querySelector("audio,video")?.pause();closeSummaryRequest(false);
 			state.active = d.key;
    setReadingMode("summary");
@@ -507,15 +525,21 @@ $("import").onclick = () => $("file").click();
 $("file").onchange = async () => {
 	const f = $("file").files[0];
 	if (!f) return;
+ const revision = cancelLocalImports("file");
+ const startingDocument = state.active, startingWorkspace = workspace;
+ const ownsRequest = () => revision === localImportRevision;
+ const canCommit = () => ownsRequest() && state.active === startingDocument && workspace === startingWorkspace;
 	try {
 		if (f.size > 15 * 1024 * 1024)
 			throw new Error("文件超过15MB，请先拆分文字稿");
-		const saved = await add(Coconut.parse(await f.text(), f.name));
-		if (saved) notice("已导入并保存在本机浏览器。没有向服务器上传文件。");
+		const text = await f.text();
+  if(!canCommit())return;
+		const saved = await add(Coconut.parse(text, f.name), canCommit);
+		if (saved && ownsRequest()) notice("已导入并保存在本机浏览器。没有向服务器上传文件。");
 	} catch (e) {
-		notice("导入失败：" + e.message);
+		if(canCommit())notice("导入失败：" + e.message);
 	} finally {
-		$("file").value = "";
+		if(ownsRequest())$("file").value = "";
 	}
 };
 $("search").oninput = () => {
@@ -705,6 +729,7 @@ $("export").onclick = () => {
 };
 $("sample").onclick = async () => {
  if($('sample').disabled)return;
+ cancelLocalImports();
  $('sample').disabled=true;
  try {
  const demo={
@@ -812,16 +837,23 @@ $("export-library").onclick = () => {
 $("restore-library").onclick = () => $("library-file").click();
 $("library-file").onchange = async () => {
  const file = $("library-file").files[0]; if(!file)return;
+ const revision = cancelLocalImports("library-file");
+ const startingDocument = state.active, startingWorkspace = workspace;
+ const ownsRequest = () => revision === localImportRevision;
+ const canCommit = () => ownsRequest() && state.active === startingDocument && workspace === startingWorkspace;
  try {
   if(file.size > 50*1024*1024)throw new Error("书架备份超过50MB，请改用逐份导入");
-  const backup = JSON.parse(await file.text());
+  const text = await file.text();
+  if(!canCommit())return;
+  const backup = JSON.parse(text);
   const before = state.documents.length;
   const restored = Coconut.mergeLibraryBackup(state, backup);
-  state = restored; selected=null; pageStart=0; notesOnly=false; excerptsOnly=false; speakerFilter=null; $("search").value=""; workspace="read";
+  // An empty restore stays in Add without looking like new navigation on render.
+  state = restored; selected=null; pageStart=0; notesOnly=false; excerptsOnly=false; speakerFilter=null; $("search").value=""; workspace=active()?"read":"add";
   const persisted = save(); render();
-  if(persisted)notice("已恢复 " + (state.documents.length-before) + " 份文字稿；相同内容已跳过，不同版本分别保留，原书架未删除。");
- } catch(error) { notice("恢复失败，原书架未改变："+error.message); }
- finally { $("library-file").value=""; }
+  if(persisted && ownsRequest())notice("已恢复 " + (state.documents.length-before) + " 份文字稿；相同内容已跳过，不同版本分别保留，原书架未删除。");
+ } catch(error) { if(canCommit())notice("恢复失败，原书架未改变："+error.message); }
+ finally { if(ownsRequest())$("library-file").value=""; }
 };
 
 $("export-subtitles").onclick = () => {
