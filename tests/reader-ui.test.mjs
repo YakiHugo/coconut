@@ -1714,3 +1714,16 @@ test('demo tools disclose active filters when collapsed and preserve notes and t
   assert.equal($('mode-bilingual').getAttribute('aria-pressed'),'true');
  }finally{await w.happyDOM.close();}
 });
+
+
+test('demo search tools are offered only in the visible transcript reading mode',async()=>{
+ const w=setup();try{
+  const $=id=>w.document.getElementById(id);await $('sample').onclick();
+  assert.equal($('toggle-demo-tools').hidden,false);
+  $('mode-summary').click();assert.equal($('toggle-demo-tools').hidden,true);
+  assert.equal($('transcript-controls').hidden,true);
+  $('mode-bilingual').click();assert.equal($('toggle-demo-tools').hidden,false);
+  $('toggle-demo-tools').click();assert.equal($('transcript-controls').hidden,false);
+  assert.equal(w.document.activeElement,$('search'));
+ }finally{await w.happyDOM.close();}
+});

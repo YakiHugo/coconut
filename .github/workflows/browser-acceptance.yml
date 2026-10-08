@@ -38,6 +38,10 @@ jobs:
         env:
           COCONUT_UI_SCREENSHOTS: ${{ runner.temp }}/coconut-authored-ui
         run: node tests/web-browser-acceptance.mjs
+      - name: Verify 1,771-cue bilingual reading and recovery with authored fixtures
+        env:
+          COCONUT_UI_SCREENSHOTS: ${{ runner.temp }}/coconut-authored-ui
+        run: node tests/long-reading-browser.mjs
       - name: Verify bounded long-summary plans with injected fixtures only
         run: node tests/summary-browser-acceptance.mjs
       - name: Verify explicit podcast source imports through the desktop HTTP bridge

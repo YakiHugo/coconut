@@ -267,7 +267,6 @@ function render() {
  const isDemo=doc.provenance?.kind==='authored_demo';
  document.body.dataset.demo=String(isDemo);
  document.body.dataset.demoTools=String(demoToolsExpanded);
- $('toggle-demo-tools').hidden=!isDemo;
  $('toggle-demo-tools').setAttribute('aria-expanded',String(demoToolsExpanded));
  const hasReadingFilter=!!$('search').value.trim()||notesOnly||excerptsOnly||speakerFilter!==null;
  $('toggle-demo-tools').textContent=demoToolsExpanded?'收起工具':hasReadingFilter?'筛选中 · 查看':'搜索与工具';
@@ -412,6 +411,9 @@ function render() {
 			doc.readingPosition = s.id;
 			save();
 			render();
+   // Rendering replaces the focused control; keep keyboard readers at this cue.
+   const target = [...$("transcript").querySelectorAll(".segment")].find(item => item.dataset.segmentId === s.id);
+   target?.querySelector(".bookmark-button")?.focus({preventScroll: true});
 		};
 		body.append(bookmarkButton);
 		if (doc.notes[s.id]) body.append(highlightedText("p", "saved-note", doc.notes[s.id], query));
@@ -957,6 +959,7 @@ document.addEventListener("keydown", event => {
 function applyReadingMode() {
  const audioOnly=Coconut.isAudioProject(active());
  const summary=readingMode==='summary'&&!audioOnly;
+ $('toggle-demo-tools').hidden=summary||active()?.provenance?.kind!=='authored_demo';
  $('summary-workspace').hidden=!summary;
  $('transcript-controls').hidden=summary;
  $('transcript-layout').hidden=summary||audioOnly;

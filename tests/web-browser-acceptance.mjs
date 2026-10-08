@@ -79,6 +79,9 @@ try {
  check('collapsed_demo_tools_keep_filter_visible',await page.locator('.segment').count()===1&&(await page.locator('#toggle-demo-tools').textContent()).includes('筛选中'));
  await page.locator('#toggle-demo-tools').click();await page.locator('#clear-search').click();await page.locator('#toggle-demo-tools').click();
  check('demo_tools_preserve_bilingual_reading',await page.locator('.translation').count()===3&&await page.locator('#mode-bilingual').getAttribute('aria-pressed')==='true');
+ await page.locator('#mode-summary').click();check('demo_search_tools_hidden_in_summary',await page.locator('#toggle-demo-tools').isHidden());
+ await page.locator('#mode-bilingual').click();await page.locator('#toggle-demo-tools').click();
+ check('demo_tools_return_to_visible_search',await page.locator('#search').isVisible()&&await page.locator('#search').evaluate(n=>n===document.activeElement));
  await page.setViewportSize({width:1360,height:1000});stage='import';
  await page.locator('#file').setInputFiles(fixturePath);
  await page.locator('#reader-workspace').waitFor({state:'visible'});
