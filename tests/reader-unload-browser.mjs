@@ -11,22 +11,31 @@ const check=(name,value)=>{assert.ok(value,name);checks.push(name);};
 // Every reload has a bounded, explicit expectation. Unexpected prompts fail;
 // dismissing a prompt here is never permission to continue through it.
 async function reload(page,expectPrompt){
- const dialogs=[],handler=async dialog=>{dialogs.push(dialog.type());await dialog.dismiss();};
- const marker=await page.evaluate(()=>window.unloadProbeMarker=crypto.randomUUID());
- page.on('dialog',handler);
- let failure;
- try{await page.reload({waitUntil:'load',timeout:15000});}catch(error){failure=error;}
- finally{page.off('dialog',handler);}
+ const dialogs=[],marker=await page.evaluate(()=>window.unloadProbeMarker=crypto.randomUUID());
  if(expectPrompt){
-  assert.deepEqual(dialogs,['beforeunload'],'exactly the expected native leave prompt must appear');
-  if(failure)assert.match(failure.message,/ERR_ABORTED|[Nn]avigation.*(?:cancel|abort)/,'only dismissed navigation may fail');
-  assert.equal(await page.evaluate(()=>window.unloadProbeMarker),marker,'dismiss must retain the original document');
+  const record=dialog=>dialogs.push(dialog.type());page.on('dialog',record);
+  let timeout;
+  try{
+   const nextDialog=page.waitForEvent('dialog',{timeout:15000}).then(dialog=>dialog.dismiss());
+   // A dismissed reload has no new load event. Request the native reload and
+   // await its dialog directly rather than timing out waiting for navigation.
+   const requested=page.evaluate(()=>location.reload());
+   await Promise.race([Promise.all([nextDialog,requested]),new Promise((_,reject)=>{timeout=setTimeout(()=>reject(new Error('Dirty reload/dialog did not settle within 15 seconds')),15000);})]);
+   assert.deepEqual(dialogs,['beforeunload'],'exactly the expected native leave prompt must appear');
+   assert.equal(await page.evaluate(()=>window.unloadProbeMarker),marker,'dismiss must retain the original document');
+  }finally{clearTimeout(timeout);page.off('dialog',record);}
  }else{
+  const unexpected=async dialog=>{dialogs.push(dialog.type());await dialog.dismiss();};
+  page.on('dialog',unexpected);
+  let failure;
+  try{await page.reload({waitUntil:'load',timeout:15000});}catch(error){failure=error;}
+  finally{page.off('dialog',unexpected);}
   assert.deepEqual(dialogs,[],'clean reload must not show any dialog');
   if(failure)throw failure;
   assert.equal(await page.evaluate(()=>window.unloadProbeMarker),undefined,'clean reload must replace the document');
  }
 }
+
 try{
  server=createServer(async(req,res)=>{
   if(!['GET','HEAD'].includes(req.method)){mutations++;res.writeHead(405).end();return;}

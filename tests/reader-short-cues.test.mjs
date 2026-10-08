@@ -89,3 +89,17 @@ test('more describes loop actions only while the same cue actually offers a loop
   assert.match(row('first').querySelector('summary').getAttribute('aria-label'),/循环回听/);
  }finally{await env.w.happyDOM.close();}
 });
+test('short cue secondary rerenders restore the acted-on viewport anchor without moving a filtered replacement',async()=>{
+ const env=setup();try{
+  const {$,w,row}=env;await add(env,[cue('first'),cue('second')]);
+  const scrolls=[];w.scrollBy=(x,y)=>scrolls.push([x,y]);
+  const rectangle=w.HTMLElement.prototype.getBoundingClientRect;
+  w.HTMLElement.prototype.getBoundingClientRect=function(){return this.classList.contains('segment')?{top:-120}:rectangle.call(this);};
+  row('first').getBoundingClientRect=()=>({top:480});row('first').querySelector('details').open=true;
+  row('first').querySelector('.excerpt-button').click();assert.deepEqual(scrolls,[[0,-600]]);
+  assert.equal(w.document.activeElement,row('first').querySelector('.excerpt-button'));assert.equal(row('first').querySelector('details').open,true);
+  scrolls.length=0;row('first').getBoundingClientRect=()=>({top:480});row('first').querySelector('.bookmark-button').click();assert.deepEqual(scrolls,[[0,-600]]);
+  $('filter-excerpts').click();scrolls.length=0;row('first').querySelector('.excerpt-button').click();
+  assert.deepEqual(scrolls,[]);assert.equal(w.document.activeElement,$('filter-excerpts'));
+ }finally{await env.w.happyDOM.close();}
+});

@@ -4,10 +4,11 @@ import fs from 'node:fs';
 import {webcrypto} from 'node:crypto';
 import {Window} from 'happy-dom';
 const root=new URL('../',import.meta.url),key='coconut-reader-v1';
-function setup(stored){
+function setup(stored,desktop=false){
  const w=new Window({url:'https://coconut.example/'});
  w.document.body.innerHTML=fs.readFileSync(new URL('reader/index.html',root),'utf8').split('<body>')[1].split('</body>')[0];
  Object.defineProperty(w,'crypto',{value:webcrypto});
+ if(desktop)Object.defineProperty(w,'coconutUpdates',{value:Object.freeze({state:async()=>({})})});
  if(stored!==undefined)w.localStorage.setItem(key,stored);
  const attached=new Set(),add=w.addEventListener.bind(w),remove=w.removeEventListener.bind(w);
  w.addEventListener=(type,fn,...args)=>{if(type==='beforeunload')attached.add(fn);return add(type,fn,...args);};
@@ -57,4 +58,13 @@ for(const kind of ['edit','source','details'])test(`${kind} dialog guards change
 });
 test('unreadable startup storage does not guard an empty page',async()=>{
  const {w,attached}=setup('{broken');try{assert.equal(attached.size,0);assert.equal(unload(w),false);}finally{await w.happyDOM.close();}
+});
+
+test('Electron preload capability keeps the Web unload guard absent for draft and failed persistence',async()=>{
+ const {w,$,attached}=setup(undefined,true);try{
+  await $('sample').onclick();w.document.querySelector('.segment .edit-button').click();input(w,$('edit-segment'),'Uncommitted native draft');
+  assert.equal(attached.size,0);assert.equal(unload(w),false);$('edit-dialog').close();
+  const backing=w.localStorage;Object.defineProperty(w,'localStorage',{value:{getItem:k=>backing.getItem(k),setItem(){throw new Error('quota');}}});
+  note(w,'Native unsaved note');assert.equal($('save-status').hidden,false);assert.equal(attached.size,0);assert.equal(unload(w),false);
+ }finally{await w.happyDOM.close();}
 });

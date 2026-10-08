@@ -35,9 +35,9 @@ Chosen improvement: complete the **read → retain → revisit → reuse** flow.
 - No real subscription inference, paid request, credentials, user-computer operation, private-content publication or deployment was performed for this change.
 
 
-## Unsaved reading changes and reload (2026-10-08)
+## Unsaved Web reading changes and reload (2026-10-08)
 
-Notes still save synchronously on input. If document persistence fails (including a
+In ordinary Web browsers, notes still save synchronously on input. If document persistence fails (including a
 stale-tab conflict), a best-effort browser leave/reload confirmation is installed
 while this page has unsaved document changes. Changed transcript, source-link and
 document-details dialogs receive the same protection until saved or canceled.
@@ -55,3 +55,10 @@ prompt after real user activation is exercised by `tests/reader-unload-browser.m
 in the browser CI workflow. The script checks dirty reload/dismiss, a recovered
 clean reload, unchanged/canceled editor drafts and two-tab conflicts. It has not
 been launched locally in this environment; CI must establish the browser result.
+
+The desktop Electron preload capability disables this Web-specific listener.
+Desktop update/restart checks remain unchanged; this change does not add desktop
+close/quit protection. Native close coordination needs a separate lifecycle change
+so canceled quit cannot leave the window open after its local services shut down.
+The existing Electron CI update test verifies the Web listener stays absent with
+both a changed title draft and a failed note save, while update safety still blocks.

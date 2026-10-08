@@ -5,6 +5,7 @@
  * temporary; this is runtime acceptance, not Gatekeeper/signing acceptance.
  */
 import assert from 'node:assert/strict';
+import {openCueActions} from './cue-actions-browser.mjs';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -103,6 +104,7 @@ async function verifyRestored(page,expected,label){
  await row(page,'middle').locator('.note-button').click();check(label+'_note_ui',await page.locator('#note').inputValue()===expected.notes.middle);
  await page.locator('#close-note').click();
  check(label+'_corrected_words',await row(page,'middle').locator('.words').textContent()===expected.segments[1].text);
+ stage=label+'_restore_original';await openCueActions(row(page,'middle'));
  await row(page,'middle').locator('.edit-button').click();await page.locator('#restore-edit').click();
  check(label+'_original_retained',await page.locator('#edit-segment').inputValue()===expected.segments[1].original_text);
  await page.locator('#edit-dialog button[value="cancel"]').click();
@@ -158,8 +160,12 @@ try{
  await page.locator('#source-media audio').evaluate(media=>media.pause());
  await page.locator('#playback-rate').selectOption('1.5');
  await row(page,'middle').locator('.note-button').click();await page.locator('#note').fill('A note that must survive closing the packaged app');await page.locator('#close-note').click();
+ stage='correct_source_from_cue_actions';await openCueActions(row(page,'middle'));
  await row(page,'middle').locator('.edit-button').click();await page.locator('#edit-segment').fill('The corrected authored acceptance sentence');await page.locator('#save-edit').click();
- await row(page,'first').locator('.excerpt-button').click();await row(page,'last').locator('.bookmark-button').click();
+ stage='save_excerpt_from_cue_actions';await openCueActions(row(page,'first'));
+ await row(page,'first').locator('.excerpt-button').click();
+ stage='bookmark_from_cue_actions';await openCueActions(row(page,'last'));
+ await row(page,'last').locator('.bookmark-button').click();
  const expected=await stored(page);
  check('original_and_note_saved',expected.segments[1].original_text===fixture.segments[1].text&&expected.notes.middle&&expected.readingPosition==='last'&&expected.segments[0].saved_excerpt===true);
  check('transient_media_not_persisted',!JSON.stringify(expected).includes('blob:'));
