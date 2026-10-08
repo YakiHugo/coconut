@@ -22,7 +22,7 @@ targets remain at least 44px high. Open disclosures survive same-document render
 secondary-action focus restoration opens the corresponding disclosure. No cue
 merging, source mutation, AI scope or new persisted data is introduced.
 
-Verification: 266 JS/core/DOM tests pass, including six dedicated regressions
+Verification: 267 JS/core/DOM tests pass, including seven dedicated regressions
 for cue identity and language boundaries, disclosures and keyboard continuity,
 precise seek/loop range, filter/document isolation, CR/LF/Unicode line breaks,
 and available-action ARIA labels. The first two dedicated
@@ -34,3 +34,20 @@ operation and captures an expanded-action mobile screenshot.
 No local browser was launched. New pixel layout and the added browser assertions
 await GitHub CI and independent inspection of its actual screenshots. Passing
 DOM tests alone is not visual acceptance.
+
+## Actual CI and viewport follow-up
+
+The c76702b GitHub CI capture demonstrates the denser bilingual mobile layout
+and passes the real touch/keyboard checks. It also exposes a viewport jump after
+saving an excerpt: only the current cue's lower actions remain visible. Rebuilding
+the transcript permits browser scroll anchoring to change the cue's position;
+focus restoration alone does not preserve the source context.
+
+Short-cue excerpt/bookmark actions now retain the surviving original cue's
+pre-render viewport position. Filtered-out cues keep the prior replacement-focus
+behavior. This is local to those actions, with no global scrolling changes. The
+browser scenario records geometry before/after opening and saving, including the
+actual click target, then asserts the original, translation, disclosure and
+action remain above the dock after two animation frames. It captures before
+asserting and does not scroll to repair the screenshot. The correction awaits
+new CI pixels; no local browser was launched.

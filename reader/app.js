@@ -237,9 +237,13 @@ function isLightCueText(text) {
  // does not receive the same density treatment as a short English fragment.
  return text.length<=160&&!/[\r\n\u2028\u2029]/.test(text)&&Array.from(text).reduce((width,char)=>width+(char.codePointAt(0)>255?2:1),0)<=100;
 }
-function focusCueAction(target) {
+function focusCueAction(target, viewportTop=null) {
  const disclosure=target?.closest(".cue-more");
  if(disclosure&&target.tagName!=='SUMMARY')disclosure.open=true;
+ // Replacing the transcript can move the browser's scroll anchor to another
+ // cue. Keep the acted-on short cue at its pre-render viewport position.
+ const row=target?.closest('.segment');
+ if(row&&viewportTop!==null)window.scrollBy(0,row.getBoundingClientRect().top-viewportTop);
  target?.focus({preventScroll:true});
 }
 function render() {
@@ -436,6 +440,7 @@ function render() {
 		excerptButton.setAttribute("aria-pressed", String(s.saved_excerpt === true));
 		excerptButton.setAttribute("aria-label", (s.saved_excerpt === true ? "取消摘录 " : "摘录整段 ") + Coconut.time(s.start));
 		excerptButton.onclick = () => {
+   const viewportTop=row.classList.contains('short-cue')?row.getBoundingClientRect().top:null;
 			const position = [...$("transcript").querySelectorAll(".segment")].indexOf(row);
 			if (s.saved_excerpt === true) delete s.saved_excerpt;
 			else s.saved_excerpt = true;
@@ -443,18 +448,19 @@ function render() {
 			render();
 			const rows = [...$("transcript").querySelectorAll(".segment")];
 			const target = rows.find(item => item.dataset.segmentId === s.id) || rows[Math.min(position, rows.length - 1)];
-			focusCueAction(target?.querySelector(".excerpt-button") || $("filter-excerpts"));
+			focusCueAction(target?.querySelector(".excerpt-button") || $("filter-excerpts"),target?.dataset.segmentId===s.id?viewportTop:null);
 		};
 		body.append(excerptButton);
 		const bookmarkButton = el("button", "bookmark-button", doc.readingPosition === s.id ? "已标记阅读位置" : "读到这里");
 		bookmarkButton.setAttribute("aria-pressed", String(doc.readingPosition === s.id));
 		bookmarkButton.onclick = () => {
+   const viewportTop=row.classList.contains('short-cue')?row.getBoundingClientRect().top:null;
 			doc.readingPosition = s.id;
 			save();
 			render();
    // Rendering replaces the focused control; keep keyboard readers at this cue.
    const target = [...$("transcript").querySelectorAll(".segment")].find(item => item.dataset.segmentId === s.id);
-   focusCueAction(target?.querySelector(".bookmark-button"));
+   focusCueAction(target?.querySelector(".bookmark-button"),viewportTop);
 		};
 		body.append(bookmarkButton);
   if(compact){
