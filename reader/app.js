@@ -263,7 +263,9 @@ function goToSegment(id,contextDetour=false) {
 	const row = [...$("transcript").querySelectorAll(".segment")].find(row => row.dataset.segmentId === id);
  // Center ordinary cues, but show the opening of a cue taller than the viewport.
  const alignment = row && row.getBoundingClientRect().height > (window.visualViewport?.height || window.innerHeight) ? "start" : "center";
-	row?.scrollIntoView?.({block: alignment, behavior: "smooth"});
+	// A context detour can cross most of a 100-cue page. Land immediately so
+ // the requested evidence is readable instead of animating past the AI tools.
+ row?.scrollIntoView?.({block: alignment, behavior: contextDetour ? "auto" : "smooth"});
 	row?.focus({preventScroll: true});
 }
 function renderLibrary() {

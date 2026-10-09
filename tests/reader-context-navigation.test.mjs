@@ -13,7 +13,7 @@ function setup() {
  w.eval(fs.readFileSync(new URL('reader/summary.js',root),'utf8'));
  w.eval(fs.readFileSync(new URL('reader/core.js',root),'utf8'));
  w.eval(['app','language','podcasts'].map(name=>fs.readFileSync(new URL('reader/'+name+'.js',root),'utf8')).join('\n'));
- w.HTMLElement.prototype.scrollIntoView=function(){w.scrolled=this.dataset.segmentId;};
+ w.HTMLElement.prototype.scrollIntoView=function(options){w.scrolled=this.dataset.segmentId;w.lastScrollOptions=options;};
  return {w,$:id=>w.document.getElementById(id),calls};
 }
 async function load($,doc=splitCueFixture()) {
@@ -33,6 +33,7 @@ test('late fragmented search result opens real neighbors and returns without mod
   assert.equal($('search').value,'');assert.equal($('ai-consent').checked,false);
   assert.ok(rows(w).length<=100);assert.ok(row(w,'split-1749'));assert.ok(row(w,'split-1751'));
   assert.ok(row(w,'split-1750').classList.contains('context-target'));assert.equal(w.document.activeElement.dataset.segmentId,'split-1750');
+  assert.equal(w.scrolled,'split-1750');assert.equal(w.lastScrollOptions.behavior,'auto','Context lands immediately rather than animating across dozens of cues');
   assert.equal(row(w,'split-1749').querySelector('.words').textContent,'to cross the road safely.');
   $('ai-consent').checked=true;$('return-reading-results').click();
   assert.equal($('reading-context').hidden,true);assert.equal($('search').value,'crossing-marker');assert.equal($('ai-consent').checked,false);
@@ -125,5 +126,14 @@ test('context detour latches stop for queued translation even after returning an
   assert.equal(requests.length,1);rows(w)[0].querySelector('.context-button').click();$('return-reading-results').click();
   $('ai-consent').checked=true;finish();await pending;
   assert.equal(requests.length,1);assert.ok(!JSON.stringify(requests).includes('excluded neighbor'));
+ }finally{await w.happyDOM.close();}
+});
+
+
+test('ordinary source navigation retains its existing scroll behavior',async()=>{
+ const {w,$}=setup();try{
+  await load($);$('mode-summary').click();$('overview-segments').lastElementChild.click();
+  assert.equal(w.scrolled,'split-1770');assert.equal(w.lastScrollOptions.behavior,'smooth');
+  assert.equal($('reading-context').hidden,true);
  }finally{await w.happyDOM.close();}
 });

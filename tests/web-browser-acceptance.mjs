@@ -163,7 +163,32 @@ try {
   await target.locator('.context-button').click();
   check(label+'_context_shows_actual_adjacent_source',await page.locator('#reading-context').isVisible()&&await page.locator('.segment').count()<=100&&await page.locator('.segment[data-segment-id="split-1749"] .words').textContent()===split.segments[1749].text&&await page.locator('.segment[data-segment-id="split-1751"] .words').textContent()===split.segments[1751].text);
   check(label+'_context_preserves_reading_bookmark',await page.evaluate(()=>{const s=JSON.parse(localStorage.getItem('coconut-reader-v1'));return s.documents.find(d=>d.key===s.active).readingPosition;})==='split-19');
-  check(label+'_context_return_is_in_view',await page.locator('#return-reading-results').evaluate(n=>{const r=n.getBoundingClientRect();return r.top>=0&&r.bottom<=innerHeight;})&&await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
+  // Do not scroll from the test: the product jump itself must settle on the
+  // intended fragment, not merely mount it somewhere in a 100-cue DOM window.
+  const contextViewport=await page.evaluate(async()=>{
+   const frame=()=>new Promise(resolve=>requestAnimationFrame(resolve));
+   await frame();await frame();
+   const before={scroll:scrollY,top:document.querySelector('.segment[data-segment-id="split-1750"]').getBoundingClientRect().top};
+   await frame();await frame();
+   const breadcrumb=document.getElementById('reading-context').getBoundingClientRect();
+   const visibleBelowBreadcrumb=element=>{
+    if(!element)return false;
+    const r=element.getBoundingClientRect();
+    return r.width>0&&r.height>0&&r.top>=breadcrumb.bottom&&r.bottom<=innerHeight&&r.left>=0&&r.right<=innerWidth;
+   };
+   const target=document.querySelector('.segment[data-segment-id="split-1750"]');
+   const neighbors=['split-1749','split-1751'].map(id=>document.querySelector('.segment[data-segment-id="'+id+'"]'));
+   return {
+    settled:Math.abs(scrollY-before.scroll)<1&&Math.abs(target.getBoundingClientRect().top-before.top)<1,
+    targetVisible:visibleBelowBreadcrumb(target.querySelector('.words'))&&visibleBelowBreadcrumb(target.querySelector('.translation')),
+    neighborsVisible:neighbors.every(row=>visibleBelowBreadcrumb(row?.querySelector('.words'))&&visibleBelowBreadcrumb(row?.querySelector('.translation'))),
+    returnVisible:breadcrumb.top>=0&&breadcrumb.bottom<=innerHeight&&document.documentElement.scrollWidth<=innerWidth
+   };
+  });
+  check(label+'_context_jump_settles_without_test_scrolling',contextViewport.settled);
+  check(label+'_context_target_source_and_translation_visible',contextViewport.targetVisible);
+  check(label+'_context_both_neighbors_visible_below_breadcrumb',contextViewport.neighborsVisible);
+  check(label+'_context_return_is_in_view',contextViewport.returnVisible);
   await capture(page,'06-'+label+'-reading-context',false);
   await page.locator('#return-reading-results').click();
   check(label+'_return_restores_filter_bilingual_and_keyboard_target',await page.locator('#search').inputValue()==='crossing-marker'&&await page.locator('.segment').count()===1&&await target.locator('.translation').count()===1&&await target.locator('.context-button').evaluate(n=>n===document.activeElement)&&await page.locator('#reading-context').isHidden());
