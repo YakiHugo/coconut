@@ -63,7 +63,7 @@ test('regional source translation sends a valid base language only after consent
    assert.equal(url,'api/translate-subscription');const data=JSON.parse(options.body);prepareTranslation(data);requests.push(data);
    return {translations:data.segments.map(c=>({id:c.id,source_text:c.text,text:'供测试的译文。',context_version:2,input_revision:'a'.repeat(64),quality_warnings:[]}))};
   }});
-  await $('check-ai').onclick();await $('subscription-translate').onclick();assert.equal(requests.length,0);
+  $('ai-task').value='translation';$('ai-task').onchange();await $('check-ai').onclick();await $('subscription-translate').onclick();assert.equal(requests.length,0);
   $('ai-consent').checked=true;await $('subscription-translate').onclick();assert.equal(requests.length,1);assert.equal(requests[0].source,'en');assert.equal(requests[0].target,'zh');
   const doc=saved(w).documents[0],translation=doc.segments[0].translations.zh;
   assert.equal(doc.language,'en-US');assert.equal(translation.document_language,'en-US');assert.equal(translation.source_language,'en');assert.equal(w.Coconut.translationCurrent(doc.segments[0],doc,translation),true);

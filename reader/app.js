@@ -1265,7 +1265,7 @@ function renderSummary() {
 $('mode-summary').onclick=()=>setReadingMode('summary');
 $('mode-transcript').onclick=()=>{if(active()){active().translation_view='';save();}setReadingMode('transcript');render();};
 $('mode-bilingual').onclick=()=>{const doc=active();if(!doc||Coconut.isAudioProject(doc))return;doc.translation_view=doc.translation_view||$('translation-target').value||'zh';save();setReadingMode('transcript');render();};
-$('prepare-bilingual').onclick=()=>{closeSummaryRequest(false);$('ai-task').value='question';$('ai-task').dispatchEvent(new Event('change'));$('language-panel').open=true;$('translation-view').scrollIntoView?.({block:'center',behavior:'smooth'});$('translation-view').focus();};
+$('prepare-bilingual').onclick=()=>{closeSummaryRequest(false);$('ai-task').value='translation';$('ai-task').dispatchEvent(new Event('change'));$('language-panel').open=true;$('ai-task').scrollIntoView?.({block:'center',behavior:'smooth'});$('translation-target').focus();};
 $('summary-open-transcript').onclick=()=>{setReadingMode('transcript');$('search').focus();};
 $('prepare-summary').onclick=()=>{
  const readiness=Coconut.summaryReadiness(active());
