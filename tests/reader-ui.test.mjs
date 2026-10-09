@@ -280,8 +280,8 @@ test('translation and subscription UI preserve scoped results and explicit conse
    if(url.endsWith('translate'))return {translations:request.segments.map(s=>({...s,text:'译文',source_text:s.text,provider:'local-test'}))};
    asked++;assert.equal(request.provider,'codex');return {answer:'Reading answer',citations:['a'],provider:'chatgpt_subscription'};
   }});
-  await $('check-ai').onclick();await $('translate-document').onclick();assert.equal(w.document.querySelector('.translation').textContent,'译文');
-  $('ai-question').value='Question';await $('ask-ai').onclick();assert.equal(asked,0);
+  $('ai-task').value='translation';$('ai-task').onchange();await $('check-ai').onclick();await $('translate-document').onclick();assert.equal(w.document.querySelector('.translation').textContent,'译文');
+  $('ai-task').value='question';$('ai-task').onchange();$('ai-question').value='Question';await $('ask-ai').onclick();assert.equal(asked,0);
   $('ai-consent').checked=true;await $('ask-ai').onclick();assert.equal(asked,1);assert.equal($('ai-consent').checked,false);
   const stored=JSON.parse(w.localStorage.getItem('coconut-reader-v1')).documents[0];assert.equal(stored.ai_answers[0].answer,'Reading answer');assert.equal(stored.segments[0].translations.zh.source_text,'Source');
   $('ai-answers').querySelector('button').click();assert.equal(w.document.activeElement.dataset.segmentId,'a');
@@ -309,7 +309,7 @@ test('subscription translation pauses after quota failure and resumes only with 
    if(fail&&requests===2)return {ok:false,json:async()=>({error:'quota exhausted'})};
    return {ok:true,json:async()=>({translations:request.segments.map(s=>({id:s.id,text:'译文 '+s.id,source_text:s.text,provider:'chatgpt_subscription_translation'}))})};
   };
-  await $('check-ai').onclick();await $('subscription-translate').onclick();assert.equal(requests,0);
+  $('ai-task').value='translation';$('ai-task').onchange();await $('check-ai').onclick();await $('subscription-translate').onclick();assert.equal(requests,0);
   $('ai-consent').checked=true;await $('subscription-translate').onclick();assert.equal(requests,2);assert.equal($('ai-consent').checked,false);
   let doc=JSON.parse(w.localStorage.getItem('coconut-reader-v1')).documents[0];assert.equal(doc.segments.filter(s=>s.translations?.zh).length,32);assert.match($('ai-progress').textContent,/quota exhausted/);
   fail=false;await $('subscription-translate').onclick();assert.equal(requests,2);
@@ -322,7 +322,7 @@ test('incomplete subscription translation response does not overwrite any old cu
  const w=setup();try{
   const $=id=>w.document.getElementById(id);await importDocument(w,{language:'en',segments:[{id:'a',start:0,end:1,text:'A',translations:{zh:{text:'旧稿',source_text:'A',provider:'local',source_language:'en'}}},{id:'b',start:1,end:2,text:'B'}]});
   w.fetch=async(url)=>({ok:true,json:async()=>url.endsWith('language-tools')?{ai:{codex:{ready:true}}}:{translations:[{id:'a',text:'新稿',source_text:'A'}]}});
-  await $('check-ai').onclick();$('ai-consent').checked=true;await $('subscription-translate').onclick();const doc=JSON.parse(w.localStorage.getItem('coconut-reader-v1')).documents[0];assert.equal(doc.segments[0].translations.zh.text,'旧稿');assert.equal(doc.segments[1].translations.zh,undefined);
+  $('ai-task').value='translation';$('ai-task').onchange();await $('check-ai').onclick();$('ai-consent').checked=true;await $('subscription-translate').onclick();const doc=JSON.parse(w.localStorage.getItem('coconut-reader-v1')).documents[0];assert.equal(doc.segments[0].translations.zh.text,'旧稿');assert.equal(doc.segments[1].translations.zh,undefined);
  }finally{await w.happyDOM.close();}
 });
 
@@ -335,7 +335,7 @@ test('in-flight subscription translation blocks offline writer and reports captu
    if(url.endsWith('translate-subscription'))return new Promise(resolve=>{finish=()=>resolve({ok:true,json:async()=>({translations:[{id:'a',text:'订阅译文',source_text:'Source'}]})});});
    offline++;throw new Error('Offline must not start');
   };
-  await $('check-ai').onclick();$('ai-consent').checked=true;const pending=$('subscription-translate').onclick();
+  $('ai-task').value='translation';$('ai-task').onchange();await $('check-ai').onclick();$('ai-consent').checked=true;const pending=$('subscription-translate').onclick();
   assert.equal($('translate-document').disabled,true);await $('translate-document').onclick();assert.equal(offline,0);
   $('translation-target').value='fr';assert.match($('subscription-translation-scope').textContent,/ChatGPT\/Codex.*英语.*中文/);
   finish();await pending;const doc=JSON.parse(w.localStorage.getItem('coconut-reader-v1')).documents[0];assert.equal(doc.segments[0].translations.zh.text,'订阅译文');assert.equal(doc.segments[0].translations.fr,undefined);
@@ -351,7 +351,7 @@ test('storage conflict stops subsequent subscription batches without overwriting
    calls++;const doc=JSON.parse(w.localStorage.getItem('coconut-reader-v1'));doc.documents[0].notes.s0='newer tab';external=JSON.stringify(doc);w.localStorage.setItem('coconut-reader-v1',external);
    return {translations:JSON.parse(options.body).segments.map(s=>({id:s.id,text:'译文',source_text:s.text}))};
   }});
-  await $('check-ai').onclick();$('ai-consent').checked=true;await $('subscription-translate').onclick();
+  $('ai-task').value='translation';$('ai-task').onchange();await $('check-ai').onclick();$('ai-consent').checked=true;await $('subscription-translate').onclick();
   assert.equal(calls,1);assert.equal(w.localStorage.getItem('coconut-reader-v1'),external);assert.match($('ai-progress').textContent,/浏览器保存未成功/);
  }finally{await w.happyDOM.close();}
 });
@@ -434,7 +434,7 @@ test('boundary and quota resume resend selected completed context without rewrit
  const w=setup();try{
   const $=id=>w.document.getElementById(id),requests=[];let fail=true;await importDocument(w,{language:'en',segments:contextFixture()});
   fakeSubscription(w,request=>{requests.push(request);if(fail&&requests.length===2)return {ok:false,json:async()=>({error:'quota exhausted'})};});
-  await $('check-ai').onclick();assert.match($('subscription-translation-scope').textContent,/计划 2 次/);$('ai-consent').checked=true;await $('subscription-translate').onclick();
+  $('ai-task').value='translation';$('ai-task').onchange();await $('check-ai').onclick();assert.match($('subscription-translation-scope').textContent,/计划 2 次/);$('ai-consent').checked=true;await $('subscription-translate').onclick();
   const before=JSON.parse(w.localStorage.getItem('coconut-reader-v1')).documents[0].segments[31].translations.zh;
   assert.ok(requests[1].context.some(s=>s.id==='s31'&&s.position===31&&s.start===31));assert.deepEqual(requests[1].segments.map(s=>s.id),['s32']);
   fail=false;assert.match($('subscription-translation-scope').textContent,/计划 1 次/);$('ai-consent').checked=true;await $('subscription-translate').onclick();
@@ -445,7 +445,7 @@ test('boundary and quota resume resend selected completed context without rewrit
 
 test('sparse selection never transmits excluded neighbors and selection changes clear consent',async()=>{
  const w=setup();try{
-  const $=id=>w.document.getElementById(id),requests=[];await importDocument(w,{language:'en',segments:[{id:'a',start:0,end:1,text:'TARGET a'},{id:'private',start:1,end:2,text:'EXCLUDED source'},{id:'b',start:2,end:3,text:'TARGET b'}]});fakeSubscription(w,r=>{requests.push(r);});await $('check-ai').onclick();
+  const $=id=>w.document.getElementById(id),requests=[];await importDocument(w,{language:'en',segments:[{id:'a',start:0,end:1,text:'TARGET a'},{id:'private',start:1,end:2,text:'EXCLUDED source'},{id:'b',start:2,end:3,text:'TARGET b'}]});fakeSubscription(w,r=>{requests.push(r);});$('ai-task').value='translation';$('ai-task').onchange();await $('check-ai').onclick();
   $('ai-consent').checked=true;$('search').value='TARGET';$('search').oninput();assert.equal($('ai-consent').checked,false);assert.match($('subscription-translation-scope').textContent,/计划 2 次/);
   $('ai-consent').checked=true;await $('subscription-translate').onclick();assert.equal(requests.length,2);assert.ok(requests.every(r=>r.context.length===0));assert.deepEqual(requests.map(r=>r.segments[0].position),[0,2]);assert.ok(!JSON.stringify(requests).includes('EXCLUDED'));
  }finally{await w.happyDOM.close();}
@@ -455,7 +455,7 @@ test('editing context-only cue in flight rejects all target writes and marks old
  const w=setup();try{
   const $=id=>w.document.getElementById(id);await importDocument(w,{language:'en',segments:contextFixture()});let calls=0,finish;
   fakeSubscription(w,request=>{calls++;if(calls===2)return new Promise(resolve=>{finish=()=>resolve({ok:true,json:async()=>({translations:request.segments.map(s=>({id:s.id,text:'Second window',source_text:s.text}))})});});});
-  await $('check-ai').onclick();$('ai-consent').checked=true;const running=$('subscription-translate').onclick();
+  $('ai-task').value='translation';$('ai-task').onchange();await $('check-ai').onclick();$('ai-consent').checked=true;const running=$('subscription-translate').onclick();
   while(!finish)await new Promise(r=>setTimeout(r,1));
   w.document.querySelector('[data-segment-id="s31"] .edit-button').click();$('edit-segment').value='Changed meaning';$('save-edit').click();finish();await running;
   const doc=JSON.parse(w.localStorage.getItem('coconut-reader-v1')).documents[0];assert.equal(doc.segments[32].translations.zh,undefined);assert.match($('ai-progress').textContent,/上下文已修改/);
@@ -466,7 +466,7 @@ test('editing context-only cue in flight rejects all target writes and marks old
 test('stop finishes current target window only and long-cue request estimate matches execution',async()=>{
  for(const stop of [false,true]){const w=setup();try{
   const $=id=>w.document.getElementById(id);await importDocument(w,{language:'en',segments:Array.from({length:25},(_,i)=>({id:'s'+i,start:i,end:i+1,text:'x'.repeat(4000)}))});let calls=0;
-  fakeSubscription(w,r=>{calls++;assert.ok([...r.segments,...r.context].reduce((n,s)=>n+s.text.length,0)<=40000);if(stop)$('stop-subscription-translation').click();});await $('check-ai').onclick();assert.match($('subscription-translation-scope').textContent,/计划 5 次/);$('ai-consent').checked=true;await $('subscription-translate').onclick();
+  fakeSubscription(w,r=>{calls++;assert.ok([...r.segments,...r.context].reduce((n,s)=>n+s.text.length,0)<=40000);if(stop)$('stop-subscription-translation').click();});$('ai-task').value='translation';$('ai-task').onchange();await $('check-ai').onclick();assert.match($('subscription-translation-scope').textContent,/计划 5 次/);$('ai-consent').checked=true;await $('subscription-translate').onclick();
   assert.equal(calls,stop?1:5);const doc=JSON.parse(w.localStorage.getItem('coconut-reader-v1')).documents[0];assert.equal(doc.segments.filter(s=>s.translations.zh).length,stop?6:25);if(stop)assert.match($('ai-progress').textContent,/已停止/);
  }finally{await w.happyDOM.close();}}
 });
@@ -481,7 +481,7 @@ test('offline translation can repair context-stale and legacy subscription outpu
    assert.ok(url.endsWith('/translate'));requests++;const request=JSON.parse(options.body);assert.equal(request.segments.length,2);
    return {ok:true,json:async()=>({translations:request.segments.map(s=>({id:s.id,text:'离线新译',source_text:s.text,provider:'local_test'}))})};
   };
-  await $('check-ai').onclick();await $('translate-document').onclick();assert.equal(requests,1);assert.equal(w.document.querySelectorAll('.translation.stale').length,0);assert.equal(w.document.querySelectorAll('.translation').length,2);
+  $('ai-task').value='translation';$('ai-task').onchange();await $('check-ai').onclick();await $('translate-document').onclick();assert.equal(requests,1);assert.equal(w.document.querySelectorAll('.translation.stale').length,0);assert.equal(w.document.querySelectorAll('.translation').length,2);
  }finally{await w.happyDOM.close();}}
 });
 
@@ -588,10 +588,10 @@ test('excerpt filter scopes both AI reading and subscription translation without
    return {ok:true,json:async()=>({translations:request.segments.map(s=>({id:s.id,text:'译文',source_text:s.text}))})};
   };
   await $('check-ai').onclick();$('filter-excerpts').click();
-  assert.match($('subscription-translation-scope').textContent,/当前筛选 2 段/);
+  $('ai-filtered').checked=true;$('ai-filtered').onchange();assert.match($('question-scope').textContent,/当前筛选 2 段/);
   $('ai-filtered').checked=true;$('ai-question').value='Summarize';$('ai-consent').checked=true;await $('ask-ai').onclick();
   assert.deepEqual(calls[0].request.segments.map(s=>s.id),['a','c']);
-  $('ai-consent').checked=true;await $('subscription-translate').onclick();
+  $('ai-task').value='translation';$('ai-task').onchange();$('ai-consent').checked=true;await $('subscription-translate').onclick();
   assert.deepEqual(calls.slice(1).flatMap(c=>c.request.segments.map(s=>s.id)),['a','c']);
   assert.ok(calls.slice(1).every(c=>c.request.context.length===0));
   $('ai-consent').checked=true;w.document.querySelector('.excerpt-button').click();assert.equal($('ai-consent').checked,false);
@@ -618,7 +618,7 @@ test('changing filtered versus full-document AI scope revokes consent for both A
   assert.equal($('ai-consent').checked,false,'narrowing scope also clears the shared single-request consent');
   await $('ask-ai').onclick();await $('subscription-translate').onclick();assert.equal(calls.length,0);
   $('ai-consent').checked=true;await $('ask-ai').onclick();assert.deepEqual(calls[0].request.segments.map(s=>s.id),['saved']);
-  $('ai-consent').checked=true;await $('subscription-translate').onclick();assert.deepEqual(calls[1].request.segments.map(s=>s.id),['saved']);assert.deepEqual(calls[1].request.context,[]);
+  $('ai-task').value='translation';$('ai-task').onchange();$('ai-consent').checked=true;await $('subscription-translate').onclick();assert.deepEqual(calls[1].request.segments.map(s=>s.id),['saved']);assert.deepEqual(calls[1].request.context,[]);
  }finally{await w.happyDOM.close();}
 });
 
@@ -632,7 +632,7 @@ test('changing AI scope invalidates queued subscription batches even if consent 
    if(calls.length===1)await new Promise(resolve=>{release=resolve;});
    return {ok:true,json:async()=>({translations:request.segments.map(s=>({id:s.id,text:'译文',source_text:s.text}))})};
   };
-  await $('check-ai').onclick();$('filter-excerpts').click();$('ai-consent').checked=true;
+  $('ai-task').value='translation';$('ai-task').onchange();await $('check-ai').onclick();$('filter-excerpts').click();$('ai-consent').checked=true;
   const pending=$('subscription-translate').onclick();assert.equal(calls.length,1);
   $('ai-filtered').checked=true;$('ai-filtered').dispatchEvent(new w.Event('change'));
   assert.equal($('ai-consent').checked,false);$('ai-consent').checked=true;
@@ -785,8 +785,8 @@ test('saved answers track uncited submitted cues through corrections and reload 
  const w=setup();let stored,requests=0;
  try{
   const $=id=>w.document.getElementById(id);await $('sample').onclick();
-  w.fetch=async(url,options)=>({ok:true,json:async()=>{requests++;assert.equal(JSON.parse(options.body).segments.length,3);return {answer:'Saved answer',citations:['demo-1']};}});
-  $('ai-question').value='Q';$('ai-consent').checked=true;await $('ask-ai').onclick();
+  w.fetch=async(url,options)=>({ok:true,json:async()=>{if(url.endsWith('language-tools'))return {ai:{codex:{ready:true}}};requests++;assert.equal(JSON.parse(options.body).segments.length,3);return {answer:'Saved answer',citations:['demo-1']};}});
+  await $('check-ai').onclick();$('ai-question').value='Q';$('ai-consent').checked=true;await $('ask-ai').onclick();
   assert.doesNotMatch($('ai-answers').textContent,/依据可能过期|无法确认/);
   w.document.querySelectorAll('.segment .edit-button')[1].click();$('edit-segment').value='Contradictory uncited context';$('save-edit').click();
   assert.match($('ai-answers').textContent,/依据可能过期/);assert.equal(requests,1);
@@ -800,8 +800,8 @@ test('answer evidence follows exact filtered scope, independent of citations, no
   const $=id=>w.document.getElementById(id);
   const segments=Array.from({length:205},(_,i)=>({id:'s'+i,start:i,end:i+1,text:'Source '+i,...(i%2===0?{saved_excerpt:true}:{}),translations:{zh:{text:'匹配',source_text:'Source '+i,provider:'local'}}}));
   await importDocument(w,{segments});let requests=0,sent;
-  w.fetch=async(url,options)=>({ok:true,json:async()=>{requests++;sent=JSON.parse(options.body);return {answer:'No citations answer',citations:[]};}});
-  $('filter-excerpts').click();$('search').value='匹配';$('search').oninput();$('ai-filtered').checked=true;$('ai-question').value='Q';$('ai-consent').checked=true;await $('ask-ai').onclick();
+  w.fetch=async(url,options)=>({ok:true,json:async()=>{if(url.endsWith('language-tools'))return {ai:{codex:{ready:true}}};requests++;sent=JSON.parse(options.body);return {answer:'No citations answer',citations:[]};}});
+  await $('check-ai').onclick();$('filter-excerpts').click();$('search').value='匹配';$('search').oninput();$('ai-filtered').checked=true;$('ai-question').value='Q';$('ai-consent').checked=true;await $('ask-ai').onclick();
   assert.equal(sent.segments.length,103);assert.equal(sent.segments.at(-1).id,'s204');
   let doc=JSON.parse(w.localStorage.getItem('coconut-reader-v1')).documents[0];assert.deepEqual(doc.ai_answers[0].input_snapshot.segments,sent.segments);
   assert.doesNotMatch($('ai-answers').textContent,/依据可能过期|无法确认/);
@@ -824,7 +824,7 @@ test('uncited in-flight edits reject an answer and quota errors leave full evide
  for(const quota of [false,true]){
   const w=setup();try{
    const $=id=>w.document.getElementById(id);await $('sample').onclick();let resolve;
-   w.fetch=()=>new Promise(r=>resolve=r);$('ai-question').value='Q';$('ai-consent').checked=true;const pending=$('ask-ai').onclick();
+   w.fetch=url=>url.endsWith('language-tools')?Promise.resolve({ok:true,json:async()=>({ai:{codex:{ready:true}}})}):new Promise(r=>resolve=r);await $('check-ai').onclick();$('ai-question').value='Q';$('ai-consent').checked=true;const pending=$('ask-ai').onclick();
    if(quota){const stored=w.localStorage.getItem('coconut-reader-v1');Object.defineProperty(w,'localStorage',{value:{getItem:()=>stored,setItem:()=>{throw Error('QuotaExceededError');}}});}
    else {w.document.querySelectorAll('.segment .edit-button')[1].click();$('edit-segment').value='Changed in flight';$('save-edit').click();}
    resolve({ok:true,json:async()=>({answer:'A',citations:['demo-1']})});await pending;
@@ -984,7 +984,7 @@ test('metadata language corrections update translation selection and revoke pend
 test('changing metadata language stops later offline translation batches while retaining completed work',async()=>{
  const w=setup();try{
   const $=id=>w.document.getElementById(id);await importDocument(w,{language:'en',segments:Array.from({length:33},(_,i)=>({id:'s'+i,start:i,end:i+1,text:'Source '+i}))});
-  w.fetch=async()=>({ok:true,json:async()=>({ai:{}})});await $('check-ai').onclick();
+  w.fetch=async()=>({ok:true,json:async()=>({ai:{}})});$('ai-task').value='translation';$('ai-task').onchange();await $('check-ai').onclick();
   let resolve,body,requests=0;w.fetch=async(url,options)=>{requests++;body=JSON.parse(options.body);return new Promise(r=>resolve=r);};
   const pending=$('translate-document').onclick();$('document-details').click();$('document-language').value='fr';$('save-details').click();
   resolve({ok:true,json:async()=>({translations:body.segments.map(s=>({id:s.id,source_text:s.text,text:'Draft '+s.id,provider:'mock'}))})});await pending;
@@ -1003,7 +1003,7 @@ test('independent metadata language revocation stops prior subscription plan',as
    if(calls.length===1)await new Promise(resolve=>{release=resolve;});
    return {ok:true,json:async()=>({translations:request.segments.map(s=>({id:s.id,text:'译文',source_text:s.text}))})};
   };
-  await $('check-ai').onclick();$('filter-excerpts').click();$('ai-consent').checked=true;
+  $('ai-task').value='translation';$('ai-task').onchange();await $('check-ai').onclick();$('filter-excerpts').click();$('ai-consent').checked=true;
   const pending=$('subscription-translate').onclick();assert.equal(calls.length,1);
   $('document-details').click();$('document-language').value='fr';$('save-details').click();
   assert.equal($('ai-consent').checked,false);$('ai-consent').checked=true;
@@ -1280,13 +1280,13 @@ test('glossary save and contextual translation send only matching terms and pers
    if(url.endsWith('language-tools'))return {local_translation:false,ai:{codex:{ready:true}}};
    const request=JSON.parse(options.body);requests.push(request);return {translations:request.segments.map(s=>({id:s.id,source_text:s.text,text:'Coconut 发送20次请求',quality_warnings:['numbers_changed'],input_revision:'a'.repeat(64)}))};
   }});
-  await $('check-ai').onclick();assert.equal($('translate-document').disabled,true);await $('translate-document').onclick();assert.equal(requests.length,0);
+  $('ai-task').value='translation';$('ai-task').onchange();await $('check-ai').onclick();assert.equal($('translate-document').disabled,true);await $('translate-document').onclick();assert.equal(requests.length,0);
   $('translation-glossary').value='Coconut = Coconut\nsecret = 隐藏术语';$('translation-glossary').oninput();$('ai-consent').checked=true;
   await $('subscription-translate').onclick();assert.equal(requests.length,0,'unsaved glossary cannot be sent accidentally');
   $('save-translation-glossary').click();assert.equal($('ai-consent').checked,false);$('ai-consent').checked=true;await $('subscription-translate').onclick();
   assert.deepEqual(requests[0].glossary,[{source:'Coconut',target:'Coconut'}]);assert.equal(requests[0].segments[0].speaker,'Speaker A');
   const doc=JSON.parse(w.localStorage.getItem('coconut-reader-v1')).documents[0];assert.equal(doc.segments[0].translations.zh.context_version,2);assert.deepEqual(doc.segments[0].translations.zh.quality_warnings,['numbers_changed']);
-  assert.match($('translation-quality').textContent,/1 段自动核对提示/);
+  assert.match($('translation-quality').textContent,/1 段核对提示/);
   $('translation-glossary').value='Coconut = 椰子';$('translation-glossary').oninput();$('save-translation-glossary').click();
   assert.match(w.document.querySelector('.translation.stale').textContent,/需要重新生成/);assert.equal(requests.length,1);
  }finally{await w.happyDOM.close();}
@@ -1296,7 +1296,7 @@ test('editing saved glossary during an in-flight request prevents all target wri
  const w=setup(undefined,undefined,undefined,true);try{
   const $=id=>w.document.getElementById(id);await importDocument(w,{language:'en',segments:[{id:'a',start:0,end:2,text:'Coconut works.'}]});
   let release;w.fetch=async(url,options)=>url.endsWith('language-tools')?{ok:true,json:async()=>({ai:{codex:{ready:true}}})}:new Promise(resolve=>{const request=JSON.parse(options.body);release=()=>resolve({ok:true,json:async()=>({translations:request.segments.map(s=>({id:s.id,source_text:s.text,text:'译文'}))})});});
-  await $('check-ai').onclick();$('ai-consent').checked=true;const pending=$('subscription-translate').onclick();
+  $('ai-task').value='translation';$('ai-task').onchange();await $('check-ai').onclick();$('ai-consent').checked=true;const pending=$('subscription-translate').onclick();
   $('translation-glossary').value='Coconut = 椰子';$('translation-glossary').oninput();$('save-translation-glossary').click();release();await pending;
   const doc=JSON.parse(w.localStorage.getItem('coconut-reader-v1')).documents[0];assert.equal(doc.segments[0].translations.zh,undefined);assert.match($('ai-progress').textContent,/本批全部不保存/);
  }finally{await w.happyDOM.close();}
@@ -1330,7 +1330,7 @@ test('oversize summaries are blocked before consent and even manual invocation s
    assert.equal($('ask-ai').disabled,true);assert.equal($('ai-request-readiness').hidden,false);assert.equal($('ai-select-excerpt').hidden,false);
    await $('ask-ai').onclick();assert.match($('notice').textContent,/整篇摘要暂不可用/,'size warning precedes consent prompt');
    $('ai-consent').checked=true;await $('ask-ai').onclick();assert.equal(sent.length,0);assert.equal($('ai-consent').checked,false);
-   $('ai-select-excerpt').click();assert.equal($('ai-task').value,'question');assert.equal($('ai-filtered').checked,true);assert.equal($('ai-filtered').disabled,false);assert.equal($('transcript-layout').hidden,false);assert.equal($('ai-request-readiness').hidden,true);
+   $('ai-select-excerpt').click();assert.equal($('ai-task').value,'question');assert.equal($('ai-filtered').checked,true);assert.equal($('ai-filtered').disabled,false);assert.equal($('transcript-layout').hidden,false);assert.equal($('ai-request-readiness').hidden,false,'question scope remains too large until the reader narrows it');
    $('search').value='Unique selected';$('search').oninput();$('ai-question').value='What does this selected passage say?';$('ai-consent').checked=true;
    await $('ask-ai').onclick();assert.equal(sent.length,1);assert.deepEqual(sent[0].segments.map(s=>s.id),['s0']);
    const doc=JSON.parse(w.localStorage.getItem('coconut-reader-v1')).documents[0];assert.equal(doc.ai_answers[0].purpose,'question');assert.equal(w.Coconut.latestSummary(doc),null);
@@ -1353,7 +1353,7 @@ test('changing AI task latches stop for active translation even if shared consen
  const w=setup(undefined,undefined,undefined,true);try{
   const $=id=>w.document.getElementById(id);await importDocument(w,{language:'en',segments:Array.from({length:33},(_,i)=>({id:'s'+i,start:i,end:i+1,text:'Fragment '+i}))});
   let release,requests=0;w.fetch=async(url,options)=>url.endsWith('language-tools')?{ok:true,json:async()=>({ai:{codex:{ready:true}}})}:new Promise(resolve=>{requests++;const request=JSON.parse(options.body);release=()=>resolve({ok:true,json:async()=>({translations:request.segments.map(s=>({id:s.id,source_text:s.text,text:'译文'}))})});});
-  await $('check-ai').onclick();$('ai-consent').checked=true;const pending=$('subscription-translate').onclick();
+  $('ai-task').value='translation';$('ai-task').onchange();await $('check-ai').onclick();$('ai-consent').checked=true;const pending=$('subscription-translate').onclick();
   $('ai-task').value='summary';$('ai-task').onchange();$('ai-consent').checked=true;release();await pending;assert.equal(requests,1);assert.match($('ai-progress').textContent,/已停止/);
  }finally{await w.happyDOM.close();}
 });
@@ -1546,7 +1546,7 @@ test('speaker filters share the same selected source scope and clear on explicit
  const w=setup();try{
   await importDocument(w,{title:'Speakers',segments:[{id:'a',start:0,end:1,text:'A words',speaker:'Speaker A'},{id:'b',start:1,end:2,text:'B words',speaker:'Speaker B'},{id:'c',start:2,end:3,text:'Unlabelled'}]});
   const $=id=>w.document.getElementById(id),filter=$('speaker-filter');
-  filter.value=JSON.stringify('Speaker B');filter.onchange();assert.equal(w.document.querySelectorAll('.segment').length,1);assert.equal(w.document.querySelector('.segment').dataset.segmentId,'b');
+  $('ai-task').value='translation';$('ai-task').onchange();filter.value=JSON.stringify('Speaker B');filter.onchange();assert.equal(w.document.querySelectorAll('.segment').length,1);assert.equal(w.document.querySelector('.segment').dataset.segmentId,'b');
   assert.match($('subscription-translation-scope').textContent,/1/);assert.equal($('clear-search').hidden,false);
   filter.value=JSON.stringify('');filter.onchange();assert.equal(w.document.querySelector('.segment').dataset.segmentId,'c');
   $('clear-search').click();assert.equal(w.document.querySelectorAll('.segment').length,3);assert.equal(filter.value,'all');

@@ -42,6 +42,10 @@ jobs:
         env:
           COCONUT_UI_SCREENSHOTS: ${{ runner.temp }}/coconut-authored-ui
         run: node tests/long-reading-browser.mjs
+      - name: Verify distinct AI actions and exact approved scopes with injected responses only
+        env:
+          COCONUT_UI_SCREENSHOTS: ${{ runner.temp }}/coconut-authored-ui
+        run: node tests/ai-actions-browser.mjs
       - name: Verify AI request ownership and explicit retry with injected responses only
         env:
           COCONUT_UI_SCREENSHOTS: ${{ runner.temp }}/coconut-authored-ui

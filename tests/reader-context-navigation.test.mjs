@@ -122,7 +122,7 @@ test('context detour latches stop for queued translation even after returning an
    await new Promise(resolve=>{finish=resolve;});
    return {ok:true,json:async()=>({translations:request.segments.map(s=>({id:s.id,text:'译 '+s.id,source_text:s.text}))})};
   };
-  await $('check-ai').onclick();$('ai-consent').checked=true;const pending=$('subscription-translate').onclick();
+  $('ai-task').value='translation';$('ai-task').onchange();await $('check-ai').onclick();$('ai-consent').checked=true;const pending=$('subscription-translate').onclick();
   assert.equal(requests.length,1);rows(w)[0].querySelector('.context-button').click();$('return-reading-results').click();
   $('ai-consent').checked=true;finish();await pending;
   assert.equal(requests.length,1);assert.ok(!JSON.stringify(requests).includes('excluded neighbor'));

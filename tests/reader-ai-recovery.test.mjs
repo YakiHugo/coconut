@@ -23,6 +23,7 @@ const storedDocument=(w,title='A field guide to careful reading')=>JSON.parse(w.
 const translated=doc=>doc.segments.filter(cue=>cue.translations?.zh);
 function translationResponse(request){return {ok:true,json:async()=>({translations:request.segments.map(cue=>({id:cue.id,source_text:cue.text,text:'仅供流程测试的预置译文。',provider:'injected-test-fixture'}))})};}
 function injectedTranslation(w,{hold=1,fail=0}={}){
+ const task=w.document.getElementById('ai-task');task.value='translation';task.onchange();
  const requests=[];let release;
  w.fetch=async(url,options)=>{
   if(url.endsWith('language-tools'))return {ok:true,json:async()=>({local_translation:true,ai:{codex:{ready:true},claude:{ready:true}}})};
@@ -79,7 +80,7 @@ test('final subscription batch failure returns usable controls; reload and retry
  try{
   const {w,$}=first,mock=injectedTranslation(w,{hold:0,fail:3});await prepareTranslation(w,$);await $('subscription-translate').onclick();
   assert.equal(mock.requests.length,3);assert.equal(translated(storedDocument(w)).length,64);assert.match($('ai-progress').textContent,/Injected network rejection/);
-  assert.equal($('subscription-translate').disabled,false);assert.equal($('ask-ai').disabled,false);assert.equal($('stop-subscription-translation').hidden,true);assert.equal($('ai-consent').checked,false);
+  assert.equal($('subscription-translate').disabled,false);assert.equal($('ask-ai').disabled,true);assert.equal($('ask-ai').hidden,true);assert.equal($('stop-subscription-translation').hidden,true);assert.equal($('ai-consent').checked,false);
   await $('subscription-translate').onclick();assert.equal(mock.requests.length,3,'a failed request is not retried automatically');snapshot=w.localStorage.getItem(KEY);
  }finally{await first.w.happyDOM.close();}
  const {w,$}=setup(snapshot);

@@ -318,13 +318,27 @@ dialog select { display: block; margin-top: 8px; }
 .summary-request { border: 1px solid #ddd4cb; background: #faf7f2; padding: 22px; border-radius: 14px; margin: 22px 0; }
 .summary-request-heading { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
 .summary-request-heading h3 { margin: 0; }
-#ai-request-panel { margin-top: 16px; }
-.summary-only .question-control, .summary-only .subscription-actions { display: none !important; }
-.summary-only #ai-consent { flex-shrink: 0; }
-.summary-only label:has(#ai-consent) { display: flex; align-items: flex-start; margin: 18px 0; line-height: 1.8; }
-.summary-only #ask-ai { color: #fff; background: var(--accent); border-color: var(--accent); }
-.summary-only #summary-plan { padding: 14px; border-radius: 10px; background: #fff; color: var(--ink); }
-.summary-only #ai-progress { overflow-wrap: anywhere; }
+#ai-request-panel { margin-top: 12px; }
+.ai-request-choices, .ai-connection { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 24px; }
+.ai-request-choices label { display: flex !important; align-items: center; gap: 8px; }
+.ai-request-choices select { margin-left: 0 !important; }
+.ai-connection { gap: 8px 14px; margin-bottom: 8px; }
+.ai-connection .hint { margin: 0; }
+.ai-request-plan { padding: 12px 14px; border: 1px solid var(--line); border-radius: 10px; background: #fff; line-height: 1.7; font-size: 13px; margin: 14px 0 10px; }
+.ai-request-plan p { margin: 0; }
+.ai-request-plan:not(:has(p:not([hidden]))) { display: none; }
+.ai-send-details, .translation-options { margin: 10px 0; }
+.ai-send-details > summary, .translation-options > summary { font-size: 12px; color: var(--muted); }
+.translation-options[open] { padding: 12px 14px; border: 1px solid var(--line); border-radius: 10px; }
+.ai-question-only textarea { min-height: 76px; }
+#ai-request-panel .ai-consent { display: flex; align-items: flex-start; gap: 8px; margin: 16px 0; font-size: 13px; line-height: 1.8; }
+.ai-consent input { flex-shrink: 0; margin: 5px 0 0; }
+.ai-submit-actions, .ai-run-controls { display: flex; flex-wrap: wrap; gap: 8px; }
+.ai-run-controls:has(button:not([hidden])) { margin-top: 10px; }
+#ai-progress { overflow-wrap: anywhere; }
+#ai-progress:empty { display: none; }
+.summary-only .ai-task-control { display: none !important; }
+.summary-only #summary-job-state { line-height: 1.8; }
 @media (max-width: 640px) {
  #url-form > .url-row { flex-direction: column; }
  #url-form > .url-row button { width: 100%; }

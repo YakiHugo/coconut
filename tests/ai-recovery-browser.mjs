@@ -36,7 +36,7 @@ try{
  const importFixture=async doc=>page.locator('#file').setInputFiles({name:'authored-recovery.json',mimeType:'application/json',buffer:Buffer.from(JSON.stringify(doc))});
  const readDocument=async name=>page.evaluate(title=>JSON.parse(localStorage.getItem('coconut-reader-v1')).documents.find(doc=>doc.title===title),name);
  const translatedCount=doc=>doc.segments.filter(cue=>cue.translations?.zh).length;
- const openLanguage=async()=>{await page.locator('#mode-transcript').click();if(!await page.locator('#language-panel').evaluate(node=>node.open))await page.locator('#language-panel > summary').click();};
+ const openLanguage=async()=>{await page.locator('#mode-transcript').click();if(!await page.locator('#language-panel').evaluate(node=>node.open))await page.locator('#language-panel > summary').click();await page.locator('#ai-task').selectOption('translation');};
  const settled=()=>page.waitForFunction(()=>document.querySelector('#stop-subscription-translation').hidden);
  const screenshot=async name=>{
   if(!process.env.COCONUT_UI_SCREENSHOTS)return;
