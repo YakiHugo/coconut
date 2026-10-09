@@ -1,5 +1,7 @@
 # MVP verification record
 
+> Historical record of the early MVP, not the current acceptance status. Later browser download/playback, source import and packaged-app recovery coverage is documented in [Browser acceptance](browser-acceptance.md) and [macOS + Web](local-agents-and-macos.md). The tests below describe what was established at that earlier change; current pass claims must refer to CI for the exact commit.
+
 Environment: dot cloud Linux, Python 3.12, Node 24. Not the owner's Mac.
 
 ## Real ASR smoke runs

@@ -2,12 +2,15 @@
 const $ = (id) => document.getElementById(id);
 const KEY = "coconut-reader-v1";
 let state = { documents: [], active: null };
+let readerClosing = false;
 let selected = null;
 let notesOnly = false;
 let excerptsOnly = false;
 let speakerFilter = null;
 function matchesReadingSegment(segment,doc,query){return (speakerFilter===null||(segment.speaker||'')===speakerFilter)&&Coconut.matchesSegment(segment,doc,query,notesOnly,excerptsOnly);}
 let searchFocusedId=null;
+// A temporary detour, never a persisted reading position or an AI selection.
+let readingContext=null;
 let workspace = "read";
 let readingScroll = 0;
 let editingTarget = null;
@@ -86,6 +89,8 @@ try {
 // Compare validated in-memory documents, not active-tab navigation or unread storage.
 savedDocumentsValue = JSON.stringify(state.documents);
 function save() {
+ // Approved native discard must not persist late async results during teardown.
+ if(readerClosing)return false;
 	if (storageBlocked) {
   saveWarning("自动保存已暂停，原有数据未覆盖。关闭前请逐份导出本页修改过的文字稿与笔记。");
 		notice(
@@ -171,6 +176,7 @@ async function add(doc, canCommit = null, reuseAudioSource = false) {
 }
 function showWorkspace(next) {
  if(next!==workspace)cancelLocalImports();
+ if(next!=="read")clearReadingContext();
  if(next!==workspace)window.dispatchEvent(new CustomEvent("coconut-workspace-change",{detail:{workspace:next}}));
  if(next!=="read"&&typeof closeSummaryRequest==="function")closeSummaryRequest(false);
  if(next!=="add")$("podcast-results")?.querySelectorAll("audio,video").forEach(player=>player.pause());
@@ -190,7 +196,59 @@ function showWorkspace(next) {
 	if (returning) window.scrollTo(0, readingScroll);
  refreshPlaybackDock();
 }
-function goToSegment(id) {
+function clearReadingContext() {
+ readingContext=null;
+ $('reading-context').hidden=true;
+ document.querySelectorAll('.context-target').forEach(row=>row.classList.remove('context-target'));
+}
+function renderReadingContext() {
+ if(readingContext?.key!==active()?.key)readingContext=null;
+ const origin=readingContext;
+ $('reading-context').hidden=!origin||workspace!=='read'||readingMode==='summary';
+ if(origin)$('reading-context-label').textContent=origin.label+' · 第 '+(origin.index+1)+' / '+origin.count+' 个结果';
+}
+function openReadingContext(id) {
+ const doc=active(),query=$('search').value;
+ if(!doc||(!query.trim()&&!notesOnly&&!excerptsOnly&&speakerFilter===null))return;
+ const matches=doc.segments.filter(s=>matchesReadingSegment(s,doc,query.trim().toLocaleLowerCase()));
+ const index=matches.findIndex(s=>s.id===id);if(index<0)return;
+ const row=[...$('transcript').querySelectorAll('.segment')].find(node=>node.dataset.segmentId===id);
+ const labels=[query.trim()?'搜索“'+query.trim()+'”':'',excerptsOnly?'摘录':'',notesOnly?'笔记':'',speakerFilter!==null?'说话人：'+(speakerFilter||'未标注'):''].filter(Boolean);
+ readingContext={key:doc.key,id,index,count:matches.length,label:labels.join(' · '),query,notesOnly,excerptsOnly,speakerFilter,pageStart,translationView:doc.translation_view||'',viewportTop:row?.getBoundingClientRect().top};
+ $('ai-consent').checked=false;
+ goToSegment(id,true);
+}
+function returnReadingResults() {
+ const origin=readingContext,doc=active();clearReadingContext();
+ if(!origin||doc?.key!==origin.key)return;
+ $('search').value=origin.query;notesOnly=origin.notesOnly;excerptsOnly=origin.excerptsOnly;speakerFilter=origin.speakerFilter;
+ // Display choice can change during the detour; restore the original view without
+ // reverting source edits, annotations, or the user's explicit reading bookmark.
+ if((doc.translation_view||'')!==origin.translationView){doc.translation_view=origin.translationView;save();}
+ readingMode='transcript';selected=null;
+ const matches=doc.segments.filter(s=>matchesReadingSegment(s,doc,origin.query.trim().toLocaleLowerCase()));
+ const exact=matches.findIndex(s=>s.id===origin.id);
+ const index=exact>=0?exact:Math.min(origin.index,matches.length-1);
+ const target=matches[index];
+ pageStart=index>=0?Math.floor(index/PAGE_SIZE)*PAGE_SIZE:0;
+ searchFocusedId=origin.query.trim()?target?.id||null:null;
+ $('ai-consent').checked=false;
+ render();
+ const row=[...$('transcript').querySelectorAll('.segment')].find(node=>node.dataset.segmentId===target?.id);
+ if(row){
+  if(exact>=0&&Number.isFinite(origin.viewportTop))window.scrollBy(0,row.getBoundingClientRect().top-origin.viewportTop);
+  else row.scrollIntoView?.({block:'center'});
+  (row.querySelector('.context-button')||row).focus({preventScroll:true});
+ }else $('search').focus();
+ if(exact<0)notice(target?'原片段已不在筛选结果中，已返回相邻结果。':'原筛选已没有匹配片段；可调整筛选继续阅读。');
+}
+$('return-reading-results').onclick=returnReadingResults;
+$('dismiss-reading-context').onclick=()=>{
+ const id=readingContext?.id;clearReadingContext();
+ const row=[...$('transcript').querySelectorAll('.segment')].find(node=>node.dataset.segmentId===id);
+ (row||$('search')).focus({preventScroll:true});
+};
+function goToSegment(id,contextDetour=false) {
  if(readingMode==='summary'||!$('summary-request').hidden||$('ai-task').value==='summary')closeSummaryRequest(false);
  readingMode = "transcript";
 	const doc = active();
@@ -199,13 +257,15 @@ function goToSegment(id) {
 	$("search").value = "";
 	notesOnly = false; excerptsOnly = false; speakerFilter=null;
 	selected = null;
-	pageStart = Math.floor(index / PAGE_SIZE) * PAGE_SIZE;
+	pageStart = contextDetour ? Math.max(0,Math.min(index-3,doc.segments.length-PAGE_SIZE)) : Math.floor(index / PAGE_SIZE) * PAGE_SIZE;
 	showWorkspace("read");
 	render();
 	const row = [...$("transcript").querySelectorAll(".segment")].find(row => row.dataset.segmentId === id);
  // Center ordinary cues, but show the opening of a cue taller than the viewport.
  const alignment = row && row.getBoundingClientRect().height > (window.visualViewport?.height || window.innerHeight) ? "start" : "center";
-	row?.scrollIntoView?.({block: alignment, behavior: "smooth"});
+	// A context detour can cross most of a 100-cue page. Land immediately so
+ // the requested evidence is readable instead of animating past the AI tools.
+ row?.scrollIntoView?.({block: alignment, behavior: contextDetour ? "auto" : "smooth"});
 	row?.focus({preventScroll: true});
 }
 function renderLibrary() {
@@ -260,6 +320,7 @@ function render() {
  const cueFocus=focusedCueAction?{key:focusedCueAction.dataset.cueKey,selector:document.activeElement.tagName==='SUMMARY'?'summary':'.'+document.activeElement.className}:null;
  const openCueActions=new Set([...document.querySelectorAll(".cue-more[open]")].map(node=>node.dataset.cueKey));
 	const doc = active();
+ renderReadingContext();
 	renderLibrary();
 	showWorkspace(doc ? workspace : "add");
 	if (!doc) {
@@ -387,6 +448,7 @@ function render() {
 			"segment" + (selected === s.id ? " selected" : "") + (s.saved_excerpt === true ? " excerpted" : ""),
 		);
 		row.dataset.segmentId = s.id;
+  row.classList.toggle("context-target",readingContext?.id===s.id);
   const translated=s.translations?.[doc.translation_view];
   // Dense caption fragments remain individual source-timed cues. Long text,
   // stale translations and quality warnings keep the full reading treatment.
@@ -445,6 +507,12 @@ function render() {
 		};
 		button.className = "note-button";
 		body.append(button);
+  let contextButton=null;
+  if(hasReadingFilter){
+   contextButton=el('button','context-button','查看上下文');
+   contextButton.setAttribute('aria-label','查看 '+Coconut.time(s.start)+' 的上下文');
+   contextButton.onclick=()=>openReadingContext(s.id);body.append(contextButton);
+  }
 		const excerptButton = el("button", "excerpt-button", s.saved_excerpt === true ? "已摘录 · 取消" : "☆ 摘录整段");
 		excerptButton.setAttribute("aria-pressed", String(s.saved_excerpt === true));
 		excerptButton.setAttribute("aria-label", (s.saved_excerpt === true ? "取消摘录 " : "摘录整段 ") + Coconut.time(s.start));
@@ -482,7 +550,7 @@ function render() {
    more.append(summary,edit,excerptButton,bookmarkButton);
    if(repeat)more.append(repeat);
    more.open=openCueActions.has(more.dataset.cueKey);
-   actions.append(button,more);body.append(actions);
+   actions.append(button);if(contextButton)actions.append(contextButton);actions.append(more);body.append(actions);
   }
 		if (doc.notes[s.id]) body.append(highlightedText("p", "saved-note", doc.notes[s.id], query));
 		row.append(meta, body);
@@ -554,11 +622,11 @@ $("library-scope").onchange=renderLibrary;
 try{const order=localStorage.getItem('coconut-library-sort-v1');if(['added','title','duration'].includes(order))$('library-sort').value=order;}catch{}
 $('library-sort').onchange=()=>{renderLibrary();try{localStorage.setItem('coconut-library-sort-v1',$('library-sort').value);}catch{notice('本次排序已应用，但浏览器未保存偏好。');}};
 
-$('speaker-filter').onchange=()=>{speakerFilter=$('speaker-filter').value==='all'?null:JSON.parse($('speaker-filter').value);pageStart=0;searchFocusedId=null;render();};
-$("filter-all").onclick = () => { notesOnly = false; excerptsOnly = false; speakerFilter=null; pageStart = 0; render(); };
-$("filter-excerpts").onclick = () => { excerptsOnly = true; notesOnly = false; pageStart = 0; render(); };
-$("filter-notes").onclick = () => { notesOnly = true; excerptsOnly = false; pageStart = 0; render(); };
-$("clear-search").onclick = () => { $("search").value = ""; notesOnly = false; excerptsOnly = false; speakerFilter=null; pageStart = 0; render(); $("search").focus(); };
+$('speaker-filter').onchange=()=>{clearReadingContext();speakerFilter=$('speaker-filter').value==='all'?null:JSON.parse($('speaker-filter').value);pageStart=0;searchFocusedId=null;render();};
+$("filter-all").onclick = () => { clearReadingContext(); notesOnly = false; excerptsOnly = false; speakerFilter=null; pageStart = 0; render(); };
+$("filter-excerpts").onclick = () => { clearReadingContext(); excerptsOnly = true; notesOnly = false; pageStart = 0; render(); };
+$("filter-notes").onclick = () => { clearReadingContext(); notesOnly = true; excerptsOnly = false; pageStart = 0; render(); };
+$("clear-search").onclick = () => { clearReadingContext(); $("search").value = ""; notesOnly = false; excerptsOnly = false; speakerFilter=null; pageStart = 0; render(); $("search").focus(); };
 $("close-note").onclick = () => {
 	const id = selected;
 	selected = null;
@@ -592,6 +660,7 @@ $("file").onchange = async () => {
 	}
 };
 $("search").oninput = () => {
+ clearReadingContext();
  searchFocusedId=null;
 	pageStart = 0;
 	render();
@@ -898,6 +967,7 @@ $("library-file").onchange = async () => {
   const before = state.documents.length;
   const restored = Coconut.mergeLibraryBackup(state, backup);
   // An empty restore stays in Add without looking like new navigation on render.
+  clearReadingContext();
   state = restored; selected=null; pageStart=0; notesOnly=false; excerptsOnly=false; speakerFilter=null; $("search").value=""; workspace=active()?"read":"add";
   const persisted = save(); render();
   if(persisted && ownsRequest())notice("已恢复 " + (state.documents.length-before) + " 份文字稿；相同内容已跳过，不同版本分别保留，原书架未删除。");
@@ -1114,6 +1184,7 @@ function applyReadingMode() {
  $('mode-bilingual').setAttribute('aria-pressed',String(bilingual));
  $('transcript-layout').classList.toggle('is-bilingual',bilingual);
  $('mode-bilingual').disabled=audioOnly;
+ renderReadingContext();
  $('bilingual-readiness').hidden=!bilingual||active()?.provenance?.kind==='authored_demo';
  if(bilingual){const doc=active(),target=doc.translation_view,count=doc.segments.filter(s=>Coconut.translationCurrent(s,doc,s.translations?.[target])).length;
  $('bilingual-status').textContent=count?`当前语言已有 ${count}/${doc.segments.length} 段有效译文；缺失或过期部分仍保留原文，可在翻译选项中继续。`:'还没有当前语言的有效译文。先读原文，或打开翻译选项，核对发送范围与额度后生成；切换视图不会调用模型。';}
@@ -1122,6 +1193,7 @@ function setReadingMode(mode) {
  const previousMode=readingMode;
  readingMode=mode==='transcript'?'transcript':'summary';
  if(readingMode==='summary'){
+  clearReadingContext();
   selected=null;$('notes-panel').hidden=true;
   stopRepeating();
  }
@@ -1236,6 +1308,7 @@ $('export-summary').onclick=()=>{
  }catch{notice('摘要导出失败，已保存的摘要仍在此页面，请重试。');}
  finally{link?.remove();if(url)setTimeout(()=>URL.revokeObjectURL(url),60000);}
 };
+$('reader-media-file').addEventListener('cancel',()=>{pendingMediaDocument=null;});
 $('attach-reader-media').onclick=()=>{pendingMediaDocument=active()?.key||null;if(pendingMediaDocument)$('reader-media-file').click();};
 $('reader-media-file').onchange=async()=>{
  const input=$('reader-media-file'),file=input.files[0],key=pendingMediaDocument;pendingMediaDocument=null;
@@ -1325,8 +1398,8 @@ function syncUnsavedUnloadGuard() {
  else window.removeEventListener("beforeunload",warnUnsavedUnload);
 }
 // The trusted Electron preload exposes this capability before reader scripts.
-// Native quit starts service teardown before renderer unload; keep its existing
-// update/restart protocol separate until native close coordination is designed.
+// Desktop close/quit uses its own native approval gate before service teardown;
+// Web beforeunload remains separate.
 if(!window.coconutUpdates){
  unloadGuardReady=true;
  // Input handlers run first, so synchronously saved notes never install a guard.

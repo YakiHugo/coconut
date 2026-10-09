@@ -59,6 +59,8 @@ jobs:
       - name: Verify bounded long-summary plans with injected fixtures only
         run: node tests/summary-browser-acceptance.mjs
       - name: Verify explicit podcast source imports through the desktop HTTP bridge
+        env:
+          COCONUT_UI_SCREENSHOTS: ${{ runner.temp }}/coconut-authored-ui
         run: node tests/podcast-browser-acceptance.mjs
       - name: Verify audio project to transcript, injected AI, playback and clean-browser recovery
         run: node tests/project-continuity-browser.mjs

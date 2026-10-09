@@ -1,4 +1,5 @@
 import {openCueActions} from './cue-actions-browser.mjs';
+import {splitCueFixture} from './helpers/split-cue-fixture.mjs';
 /** Real Chromium proof for the static Web product; no Python service or AI calls. */
 import assert from 'node:assert/strict';
 import {createServer} from 'node:http';
@@ -150,6 +151,56 @@ try {
  check('source_map_opens_last_page',await page.locator('.segment[data-segment-id="map-220"]').evaluate(n=>n===document.activeElement));
  await page.locator('#search').fill('absent phrase');await page.locator('#reading-jump').selectOption('map-0');
  check('source_navigation_recovers_from_empty_search',await page.locator('#search').inputValue()===''&&await page.locator('.segment[data-segment-id="map-0"]').evaluate(n=>n===document.activeElement));
+ // Search isolates a real sentence fragment; context must recover its actual
+ // neighbors and return the same reading filter without moving the bookmark.
+ const split=splitCueFixture();
+ await page.locator('#file').setInputFiles({name:'authored-split-cues.json',mimeType:'application/json',buffer:Buffer.from(JSON.stringify(split))});
+ await page.locator('#mode-bilingual').click();
+ const target=page.locator('.segment[data-segment-id="split-1750"]');
+ for(const [label,viewport] of [['desktop',{width:1360,height:1000}],['mobile',{width:390,height:844}]]){
+  await page.setViewportSize(viewport);await page.locator('#search').fill('crossing-marker');
+  check(label+'_fragment_search_is_one_bilingual_result',await page.locator('.segment').count()===1&&await target.locator('.translation').count()===1);
+  await target.locator('.context-button').click();
+  check(label+'_context_shows_actual_adjacent_source',await page.locator('#reading-context').isVisible()&&await page.locator('.segment').count()<=100&&await page.locator('.segment[data-segment-id="split-1749"] .words').textContent()===split.segments[1749].text&&await page.locator('.segment[data-segment-id="split-1751"] .words').textContent()===split.segments[1751].text);
+  check(label+'_context_preserves_reading_bookmark',await page.evaluate(()=>{const s=JSON.parse(localStorage.getItem('coconut-reader-v1'));return s.documents.find(d=>d.key===s.active).readingPosition;})==='split-19');
+  // Do not scroll from the test: the product jump itself must settle on the
+  // intended fragment, not merely mount it somewhere in a 100-cue DOM window.
+  const contextViewport=await page.evaluate(async()=>{
+   const frame=()=>new Promise(resolve=>requestAnimationFrame(resolve));
+   await frame();await frame();
+   const before={scroll:scrollY,top:document.querySelector('.segment[data-segment-id="split-1750"]').getBoundingClientRect().top};
+   await frame();await frame();
+   const breadcrumb=document.getElementById('reading-context').getBoundingClientRect();
+   const visibleBelowBreadcrumb=element=>{
+    if(!element)return false;
+    const r=element.getBoundingClientRect();
+    return r.width>0&&r.height>0&&r.top>=breadcrumb.bottom&&r.bottom<=innerHeight&&r.left>=0&&r.right<=innerWidth;
+   };
+   const target=document.querySelector('.segment[data-segment-id="split-1750"]');
+   const neighbors=['split-1749','split-1751'].map(id=>document.querySelector('.segment[data-segment-id="'+id+'"]'));
+   return {
+    settled:Math.abs(scrollY-before.scroll)<1&&Math.abs(target.getBoundingClientRect().top-before.top)<1,
+    targetVisible:visibleBelowBreadcrumb(target.querySelector('.words'))&&visibleBelowBreadcrumb(target.querySelector('.translation')),
+    neighborsVisible:neighbors.every(row=>visibleBelowBreadcrumb(row?.querySelector('.words'))&&visibleBelowBreadcrumb(row?.querySelector('.translation'))),
+    returnVisible:breadcrumb.top>=0&&breadcrumb.bottom<=innerHeight&&document.documentElement.scrollWidth<=innerWidth
+   };
+  });
+  check(label+'_context_jump_settles_without_test_scrolling',contextViewport.settled);
+  check(label+'_context_target_source_and_translation_visible',contextViewport.targetVisible);
+  check(label+'_context_both_neighbors_visible_below_breadcrumb',contextViewport.neighborsVisible);
+  check(label+'_context_return_is_in_view',contextViewport.returnVisible);
+  await capture(page,'06-'+label+'-reading-context',false);
+  await page.locator('#return-reading-results').click();
+  check(label+'_return_restores_filter_bilingual_and_keyboard_target',await page.locator('#search').inputValue()==='crossing-marker'&&await page.locator('.segment').count()===1&&await target.locator('.translation').count()===1&&await target.locator('.context-button').evaluate(n=>n===document.activeElement)&&await page.locator('#reading-context').isHidden());
+ }
+ // If the source changes on the detour, returning cannot resurrect old text or
+ // leave a stale context banner covering an empty filtered view.
+ await target.locator('.context-button').click();await openCueActions(target);await target.locator('.edit-button').click();
+ await page.locator('#edit-segment').fill('Authored revised sentence without the former search marker.');await page.locator('#save-edit').click();
+ await page.locator('#return-reading-results').click();
+ check('context_return_handles_removed_search_match',await page.locator('.segment').count()===0&&await page.locator('#reading-context').isHidden()&&await page.locator('#search').evaluate(n=>n===document.activeElement)&&(await page.locator('#notice').textContent()).includes('没有匹配'));
+ await page.locator('#search').fill('revised sentence');await target.locator('.context-button').click();await page.locator('#dismiss-reading-context').click();
+ check('explicit_context_dismiss_stays_in_full_source',await page.locator('#search').inputValue()===''&&await page.locator('#reading-context').isHidden()&&await target.evaluate(n=>n===document.activeElement));
  check('first_use_and_source_map_have_no_external_requests',mutations===0&&external===0&&pageErrors===0);
  console.log(JSON.stringify({suite:'static-web-podcast',status:'passed',checks}));
 } catch {
