@@ -28,7 +28,7 @@ try {
   await generateAppIcons({directory:icons,check:true});
   const app = path.join(work,'app'), resources = path.join(work,'resources'), reader = path.join(resources,'reader');
   await mkdir(app); await mkdir(reader,{recursive:true});
-  for (const name of ['main.mjs','update-preload.cjs','updater.mjs','update-http.mjs','update-install.mjs','providers.mjs','server.mjs','translation.mjs','podcast-sources.mjs','podcast-xml.mjs','public-http.mjs','caption-service.mjs','caption-helper.mjs','caption-helper-process.mjs','caption-helper-lock.json']) await copyFile(path.join(ROOT,name),path.join(app,name));
+  for (const name of ['main.mjs','close-coordinator.mjs','update-preload.cjs','updater.mjs','update-http.mjs','update-install.mjs','providers.mjs','server.mjs','translation.mjs','podcast-sources.mjs','podcast-xml.mjs','public-http.mjs','caption-service.mjs','caption-helper.mjs','caption-helper-process.mjs','caption-helper-lock.json']) await copyFile(path.join(ROOT,name),path.join(app,name));
   await writeFile(path.join(app,'caption-helper-artifacts.json'),JSON.stringify({schemaVersion:1,artifacts:helperArtifacts}));
   for (const name of ['index.html','summary.js','core.js','app.js','language.js','jobs.js','podcasts.js','updates.js','style.css','coconut-mark.png']) await copyFile(path.join(ROOT,'../reader',name),path.join(reader,name));
   const license = path.join(resources,'LICENSE.coconut'); await copyFile(path.join(ROOT,'../LICENSE'),license);

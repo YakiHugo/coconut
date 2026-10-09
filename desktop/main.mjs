@@ -8,12 +8,23 @@ import { createCaptionHelper } from './caption-helper.mjs';
 import { createCaptionService } from './caption-service.mjs';
 import { Updater } from './updater.mjs';
 import { prepareInstall } from './update-install.mjs';
+import { createCloseCoordinator } from './close-coordinator.mjs';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const PORT = 47831; // Stable origin preserves the local bookshelf between launches.
 let server, window, captionHelper, updater, updateTimer, updateInterval;
 const startupAbort=new AbortController();
-let quitting=false,quitReady=false;
+let quitting=false,quitReady=false,closeCoordinator;
+function finishQuit(){
+ if(quitting)return;
+ quitting=true;
+ clearTimeout(updateTimer);clearInterval(updateInterval);updater?.cancel();
+ startupAbort.abort();server?.shutdown();
+ const finish=()=>{if(quitReady)return;quitReady=true;app.quit();};
+ if(!captionHelper){finish();return;}
+ const failSafe=setTimeout(finish,5000);
+ Promise.resolve().then(()=>captionHelper.shutdown()).catch(()=>{}).finally(()=>{clearTimeout(failSafe);finish();});
+}
 function ordinaryWebLink(value) {
   try { const url = new URL(value); return ['https:','http:'].includes(url.protocol) && !url.username && !url.password; } catch { return false; }
 }
@@ -23,16 +34,10 @@ else {
   app.on('second-instance',()=>{ if (window) { if (window.isMinimized()) window.restore(); window.focus(); } });
   app.on('window-all-closed',()=>app.quit());
   app.on('before-quit',event=>{
-    clearTimeout(updateTimer);clearInterval(updateInterval);updater?.cancel();
-    startupAbort.abort();
     if(quitReady)return;
-    if(!captionHelper){server?.shutdown();return;}
     event.preventDefault();
-    if(quitting)return;
-    quitting=true;server?.shutdown();
-    const finish=()=>{if(quitReady)return;quitReady=true;app.quit();};
-    const failSafe=setTimeout(finish,5000);
-    Promise.resolve().then(()=>captionHelper.shutdown()).catch(()=>{}).finally(()=>{clearTimeout(failSafe);finish();});
+    if(closeCoordinator&&window&&!window.isDestroyed())void closeCoordinator.request();
+    else finishQuit();
   });
   app.whenReady().then(async()=>{
     if(startupAbort.signal.aborted)return;
@@ -59,6 +64,22 @@ else {
     const origin = `http://127.0.0.1:${PORT}`;
     window = new BrowserWindow({width:1280,height:880,minWidth:780,minHeight:620,show:process.env.COCONUT_SMOKE_TEST !== '1',title:'Coconut',icon:windowIcon,
       webPreferences:{preload:path.join(ROOT,'update-preload.cjs'),nodeIntegration:false,contextIsolation:true,sandbox:true,webSecurity:true,allowRunningInsecureContent:false,webviewTag:false}});
+    const readerClose=mode=>window.webContents.executeJavaScript(`typeof window.coconutPrepareClose === "function" ? window.coconutPrepareClose(${JSON.stringify(mode)}) : null`);
+    closeCoordinator=createCloseCoordinator({
+      inspect:()=>readerClose('inspect'),
+      commit:mode=>readerClose(mode),
+      confirm:async snapshot=>{
+        const answer=await dialog.showMessageBox(window,{type:'warning',title:'关闭 Coconut？',message:'还有未保存的编辑或进行中的工作',
+          detail:(snapshot.reasons||[]).join('；')+'。继续编辑可保存或导出备份。直接退出会丢弃未保存内容并中断任务；已发送的模型请求可能已经使用额度。',
+          buttons:['继续编辑','放弃未保存内容并退出'],defaultId:0,cancelId:0,noLink:true});
+        return answer.response===1;
+      },
+      finish:async()=>{await window.webContents.session.flushStorageData();finishQuit();},
+      onError:async()=>{if(window.isDestroyed())return;void readerClose('release').catch(()=>{});return dialog.showMessageBox(window,{type:'warning',title:'暂时无法安全关闭',message:'无法确认阅读器的保存状态，Coconut 已保持打开。',detail:'请等待阅读器恢复后保存或导出备份，再尝试退出。强制退出或系统终止仍可能丢失未保存内容。',buttons:['继续等待'],defaultId:0,cancelId:0});}
+    });
+    // Native close and Cmd-Q use the same gate. OS termination/crashes cannot be
+    // guaranteed recoverable; no browser beforeunload prompt is involved here.
+    window.on('close',event=>{if(!quitReady){event.preventDefault();void closeCoordinator.request();}});
     updater=new Updater({directory:path.join(app.getPath('userData'),'updates'),version:app.getVersion()});
     await updater.initialize();
     updater.on('state',state=>{if(!window.isDestroyed())window.webContents.send('coconut:update-state',state);});

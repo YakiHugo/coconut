@@ -2,7 +2,7 @@
 import {startBridge} from '../desktop/server.mjs';
 import {chromium} from '@playwright/test';
 import {execFileSync} from 'node:child_process';
-import {mkdtemp,readFile,rm} from 'node:fs/promises';
+import {mkdtemp,readFile,rm,mkdir} from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import assert from 'node:assert/strict';
@@ -15,14 +15,36 @@ try{
  const episode={id:source.episode_id,title:'自写来源验收节目',source_url:'https://publisher.example/episode',language:'en',duration:6,media:[{url:source.media_url,type:'audio/mpeg',kind:'audio',length:body.length}],transcripts:[{url:source.transcript_url,type:'text/vtt',language:'en',supported:true}]};
  const doc={title:episode.title,language:'en',source_url:episode.source_url,podcast_source:source,provenance:{kind:'publisher_transcript',caption_method:'publisher_provided',review_status:'unreviewed'},segments:[{id:'one',start:0,end:2,text:'Synthetic source words'},{id:'two',start:2,end:4,text:'More synthetic words'}]};
  const noTextEpisode={...episode,id:'b'.repeat(64),title:'无文字稿原声项目',transcripts:[]};
+ const unsupportedEpisode={...episode,id:'c'.repeat(64),title:'仅有网页格式文字稿的自写节目',transcripts:[{url:'https://publisher.example/transcript.html',type:'text/html',supported:false}]};
  const calls=[],mediaPayloads=[];
- server=await startBridge({port:0,providers:{status:async()=>{throw new Error('No CLI checks expected');}},podcastSources:{discover:async data=>{calls.push('discover');return data.url.endsWith('.mp3')?{kind:'media',title:'原声直链项目',media:episode.media[0]}:{kind:'feed',title:'Synthetic source',feed_url:source.feed_url,episodes:[episode,noTextEpisode],warnings:[]};},importEpisode:async data=>{calls.push('import');return data.episodeId===noTextEpisode.id?{status:'needs_transcription',episode:noTextEpisode,feed_url:source.feed_url}:{status:'ready',document:doc,episode};},downloadMedia:async data=>{calls.push('media');mediaPayloads.push(data);return {body,type:'audio/mpeg',kind:'audio',filename:'synthetic.mp3'};}}});
+ server=await startBridge({port:0,providers:{status:async()=>{throw new Error('No CLI checks expected');}},podcastSources:{discover:async data=>{calls.push('discover');return data.url.endsWith('.mp3')?{kind:'media',title:'原声直链项目',media:episode.media[0]}:{kind:'feed',title:'Synthetic source',feed_url:source.feed_url,episodes:[episode,noTextEpisode,unsupportedEpisode],warnings:[]};},importEpisode:async data=>{calls.push('import');return data.episodeId===noTextEpisode.id?{status:'needs_transcription',episode:noTextEpisode,feed_url:source.feed_url}:{status:'ready',document:doc,episode};},downloadMedia:async data=>{calls.push('media');mediaPayloads.push(data);return {body,type:'audio/mpeg',kind:'audio',filename:'synthetic.mp3'};}}});
  const origin='http://127.0.0.1:'+server.address().port;browser=await chromium.launch({headless:true,...(process.env.COCONUT_CHROMIUM_EXECUTABLE?{executablePath:process.env.COCONUT_CHROMIUM_EXECUTABLE}:{})});
  const page=await browser.newPage();let external=0,errors=0;
  await page.route('**/*',async route=>{const u=new URL(route.request().url());if(u.origin===origin||u.protocol==='blob:')await route.continue();else{external++;await route.abort();}});page.on('pageerror',()=>errors++);page.setDefaultTimeout(15000);
  await page.goto(origin);await page.locator('#podcast-import').waitFor({state:'visible'});check('no_automatic_source_requests',calls.length===0);
  stage='discover';await page.locator('#video-url').fill(source.feed_url);await page.locator('#process-url').click();await page.locator('.podcast-episode').first().waitFor();
- check('discovery_only',calls.join(',')==='discover');await page.locator('.podcast-episode button').first().click();await page.locator('#summary-workspace').waitFor({state:'visible'});
+ check('discovery_only',calls.join(',')==='discover');
+ stage='filter_discovered_episodes';
+ await page.locator('#podcast-episode-search').fill('无文字稿');
+ check('title_filter_finds_audio_only_episode',await page.locator('.podcast-episode:visible').count()===1&&await page.locator('.podcast-episode:visible h3').textContent()===noTextEpisode.title);
+ await page.locator('#podcast-episode-availability').selectOption('supported');
+ check('combined_filters_show_recoverable_empty_state',await page.locator('.podcast-episode:visible').count()===0&&await page.locator('.podcast-filter-empty').isVisible());
+ await page.locator('.podcast-clear').click();
+ check('clear_filters_restores_all_and_search_focus',await page.locator('.podcast-episode:visible').count()===3&&await page.locator('#podcast-episode-search').evaluate(node=>document.activeElement===node));
+ await page.locator('#podcast-episode-availability').selectOption('supported');
+ check('supported_filter_excludes_html_and_missing_transcripts',await page.locator('.podcast-episode:visible').count()===1&&await page.locator('.podcast-episode:visible h3').textContent()===episode.title);
+ check('episode_filtering_never_fetches_or_imports',calls.join(',')==='discover');
+ await page.locator('.podcast-clear').click();
+ if(process.env.COCONUT_UI_SCREENSHOTS){
+  await mkdir(process.env.COCONUT_UI_SCREENSHOTS,{recursive:true});
+  for(const [name,width,height] of [['desktop',1280,900],['mobile',390,844]]){
+   await page.setViewportSize({width,height});await page.locator('.podcast-filters').evaluate(node=>node.scrollIntoView({block:'start'}));
+   check('picker_'+name+'_has_no_horizontal_overflow',await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
+   await page.screenshot({path:path.join(process.env.COCONUT_UI_SCREENSHOTS,'podcast-picker-'+name+'.png')});
+  }
+  await page.setViewportSize({width:1280,height:720});
+ }
+ await page.locator('.podcast-episode button').first().click();await page.locator('#summary-workspace').waitFor({state:'visible'});
  check('no_fabricated_summary',await page.locator('#summary-state').textContent()==='未生成');check('no_automatic_media_download',calls.join(',')==='discover,import');
  await page.locator('#mode-transcript').click();await page.locator('#download-podcast-media').click();
  await page.waitForFunction(()=>{const a=document.querySelector('#source-media audio');return a&&!a.error&&a.duration>0&&a.readyState>=2;});check('media_download_is_explicit',calls.join(',')==='discover,import,media');

@@ -213,7 +213,42 @@ try{
  check('audio_json_disk_bytes_match_saved_project',isDeepStrictEqual(JSON.parse(await fs.readFile(audioBackup,'utf8')),audioExpected));
  const audioNotebook=await download(page,'#export-notebook','audio-project-notes.md'),audioMarkdown=await fs.readFile(audioNotebook,'utf8');
  check('audio_markdown_has_user_notes_without_fake_transcript',audioMarkdown.includes(audioExpected.project_note)&&audioMarkdown.includes(audioExpected.timestamp_bookmarks[0].note)&&audioMarkdown.includes('00:04')&&audioMarkdown.includes('没有摘要')&&audioMarkdown.includes('用户笔记和时间书签'));
- await close();
+ // Exercise the exact packaged close handlers with native dialog answers, not
+ // renderer-only beforeunload events. Cancel must leave its bridge operational.
+ stage='native_close_preserves_dirty_work';
+ await application.evaluate(({dialog})=>{
+  globalThis.closeProof={response:0,dialogs:[]};
+  dialog.showMessageBox=async(_window,options)=>{globalThis.closeProof.dialogs.push({title:options.title,buttons:options.buttons,defaultId:options.defaultId,cancelId:options.cancelId});return {response:globalThis.closeProof.response};};
+ });
+ async function cancelNativeClose(kind){
+  const count=await application.evaluate(()=>globalThis.closeProof.dialogs.length);
+  await application.evaluate(({app,BrowserWindow},kind)=>{if(kind==='window')BrowserWindow.getAllWindows()[0].close();else app.quit();},kind);
+  for(let i=0;i<100;i++){
+   if(await application.evaluate(()=>globalThis.closeProof.dialogs.length)>count)break;
+   await new Promise(resolve=>setTimeout(resolve,50));
+  }
+  const prompts=await application.evaluate(()=>globalThis.closeProof.dialogs);
+  check(kind+'_close_prompts_keep_editing_by_default',prompts.length===count+1&&prompts.at(-1).title==='关闭 Coconut？'&&prompts.at(-1).buttons[0]==='继续编辑'&&prompts.at(-1).defaultId===0&&prompts.at(-1).cancelId===0);
+  check(kind+'_cancel_keeps_bridge_and_window',!page.isClosed()&&(await fetch(origin+'/api/health')).ok&&await page.evaluate(()=>!document.body.inert));
+ }
+ await page.locator('#reading-settings > summary').click();await page.locator('#document-details').click();
+ await page.locator('#document-title').fill('Authored uncommitted native title');
+ await cancelNativeClose('window');
+ check('cancel_window_retains_title_draft',await page.locator('#document-title').inputValue()==='Authored uncommitted native title');
+ await page.locator('#details-dialog button[value="cancel"]').click();
+ await page.evaluate(()=>{const original=Storage.prototype.setItem;window.restoreCloseProofStorage=()=>{Storage.prototype.setItem=original;};Storage.prototype.setItem=function(key,value){if(this===localStorage&&key==='coconut-reader-v1')throw new DOMException('Authored native quota failure','QuotaExceededError');return original.call(this,key,value);};});
+ await page.locator('#project-note').fill('Authored unsaved note to discard explicitly');
+ await cancelNativeClose('quit');
+ check('cancel_quit_retains_unsaved_note',await page.locator('#project-note').inputValue()==='Authored unsaved note to discard explicitly'&&await page.locator('#save-status').isVisible());
+ // Restoring storage alone must not silently save the failed edit. Explicit
+ // discard should recover the last successful bytes on the next app launch.
+ await page.evaluate(()=>window.restoreCloseProofStorage());
+ await application.evaluate(()=>{globalThis.closeProof.response=1;});
+ const exited=application.waitForEvent('close');
+ await application.evaluate(({app})=>{setTimeout(()=>app.quit(),0);});await exited;application=null;
+ let bridgeStopped=false;
+ for(let i=0;i<50;i++){try{await fetch(origin+'/api/health',{signal:AbortSignal.timeout(300)});await new Promise(resolve=>setTimeout(resolve,100));}catch{bridgeStopped=true;break;}}
+ check('explicit_discard_quits_and_stops_bridge',bridgeStopped);
  page=await launch(executable,profile,configuration.version,'relaunch');await verifyAudioRestored(page,audioExpected,'relaunch');
  await page.locator('#library button').filter({hasText:fixture.title}).click();await verifyRestored(page,expected,'relaunch');
  check('relaunch_keeps_playback_preference',await page.locator('#playback-rate').inputValue()==='1.5');
@@ -234,5 +269,7 @@ try{
 }catch(error){
  console.error(JSON.stringify({suite:'packaged-macos-product',status:'failed',stage,category:error.name,checks}));process.exitCode=1;
 }finally{
- try{await application?.close();}finally{if(temporary)await fs.rm(temporary,{recursive:true,force:true});}
+ // A failed assertion may leave the authored dirty fixture open. Cleanup may
+ // discard only that isolated test profile so it cannot wait on a native dialog.
+ try{if(application){await application.evaluate(({dialog})=>{dialog.showMessageBox=async()=>({response:1});}).catch(()=>{});await application.close();}}finally{if(temporary)await fs.rm(temporary,{recursive:true,force:true});}
 }

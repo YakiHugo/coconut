@@ -581,3 +581,30 @@ body[data-media-docked="true"] main { padding-bottom: 112px; }
  .short-cue .cue-more > summary { min-height: 44px; }
  .short-cue .time > button { min-height: 44px; min-width: 44px; margin-top: 0; }
 }
+
+/* A reversible source detour: keep the return action at the top, away from the
+   bottom playback dock and note editor, without another full-screen panel. */
+.reading-context { position: sticky; top: 8px; z-index: 3; display: flex; align-items: center; justify-content: space-between; gap: 10px 18px; padding: 9px 12px; margin: 16px 0; border: 1px solid #e6d3c2; border-radius: 12px; background: #fffaf3; box-shadow: 0 3px 14px #3d26100c; }
+#reading-context-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #745038; font-size: 12px; }
+.reading-context > div { display: flex; gap: 6px; flex-shrink: 0; }
+.reading-context button { min-height: 40px; padding: 7px 10px; font-size: 12px; }
+#return-reading-results { color: var(--accent); border-color: #e6d3c2; }
+#dismiss-reading-context { background: transparent; border-color: transparent; color: var(--muted); }
+.segment.context-target { background: #fff8ef; box-shadow: inset 3px 0 #bc421c; }
+.segment .context-button { color: var(--accent); }
+@media (max-width:650px) {
+ .reading-context { top: 6px; flex-wrap: wrap; gap: 3px; padding: 7px 10px; }
+ #reading-context-label { flex-basis: 100%; font-size: 11px; }
+ .reading-context > div { width: 100%; justify-content: space-between; }
+ .reading-context button, .segment .context-button { min-height: 44px; }
+}
+
+.podcast-filters { display: grid; grid-template-columns: minmax(0, 1fr) minmax(150px, .65fr) auto; align-items: end; gap: 10px 12px; padding: 14px; margin: 14px 0; background: var(--soft); border-radius: 12px; }
+.podcast-filters > label { display: grid; min-width: 0; gap: 5px; }
+.podcast-filters input, .podcast-filters select { width: 100%; }
+.podcast-filters .podcast-clear { width: auto; min-height: 40px; padding: 8px 12px; cursor: pointer; }
+.podcast-filters .hint { grid-column: 1 / -1; margin: 0; }
+@media (max-width:650px) {
+ .podcast-filters { grid-template-columns: minmax(0, 1fr); }
+ .podcast-filters .podcast-clear { justify-self: start; min-height: 44px; }
+}

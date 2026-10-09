@@ -14,7 +14,8 @@ async function podcastAPI(action,payload,signal){
 function episodeDescription(episode){
  const media=episode.media||[],kind=media.some(item=>item.kind==='video')?'视频内容':media.length?'音频内容':'未发现公开媒体';
  const duration=Number.isFinite(episode.duration)&&episode.duration>0?' · '+Coconut.time(episode.duration):'';
- const captions=episode.transcripts?.length?' · '+episode.transcripts.length+' 份发布者文字稿':' · 未发现公开文字稿';
+ const supported=episode.transcripts?.filter(track=>track.supported).length||0;
+ const captions=supported?' · '+supported+' 份可导入的发布者文字稿':episode.transcripts?.length?' · 仅发现不支持的文字稿格式':' · 未发现公开文字稿';
  return kind+duration+captions;
 }
 function renderPodcastResults(result){
@@ -31,6 +32,31 @@ function renderPodcastResults(result){
   }
  }
  const episodes=result.kind==='media'&&result.media?[{id:'',title:result.title,media:[result.media],transcripts:[],source_url:result.media.url,direct:true}]:(result.episodes||[]);
+ const rows=[];
+ let applyEpisodeFilters=()=>{};
+ if(episodes.length>1){
+  const filters=el('form','podcast-filters');filters.setAttribute('aria-label','筛选本次发现的单集');
+  const searchLabel=el('label','','查找单集');const search=el('input');search.type='search';search.id='podcast-episode-search';search.placeholder='按本次列表中的标题查找';search.maxLength=200;searchLabel.append(search);
+  const trackLabel=el('label','','文字稿');const availability=el('select');availability.id='podcast-episode-availability';
+  for(const [value,label] of [['all','全部单集'],['supported','有可导入文字稿']]){const option=el('option','',label);option.value=value;availability.append(option);}trackLabel.append(availability);
+  const clear=el('input','podcast-clear');clear.type='reset';clear.value='清除筛选';
+  const count=el('p','hint podcast-filter-count');count.id='podcast-episode-count';count.setAttribute('role','status');count.setAttribute('aria-live','polite');
+  const empty=el('p','hint podcast-filter-empty','没有匹配的单集。换个标题关键词，或清除筛选查看本次列表。');empty.hidden=true;
+  filters.append(searchLabel,trackLabel,clear,count,empty);host.append(filters);
+  applyEpisodeFilters=()=>{
+   const query=search.value.trim().toLocaleLowerCase();let visible=0;
+   for(const {episode,section} of rows){
+    const matches=(episode.title||'未命名单集').toLocaleLowerCase().includes(query)&&(availability.value!=='supported'||episode.transcripts?.some(track=>track.supported));
+    if(!matches&&!section.hidden)section.querySelectorAll('audio,video').forEach(player=>player.pause());
+    section.hidden=!matches;if(matches)visible++;
+   }
+   count.textContent='本次列表 '+visible+' / '+episodes.length+' 集'+(result.truncated?' · 来源列表不完整':'');
+   empty.hidden=visible>0;clear.disabled=!query&&availability.value==='all';
+  };
+  search.oninput=applyEpisodeFilters;availability.onchange=applyEpisodeFilters;
+  filters.onsubmit=event=>event.preventDefault();
+  filters.onreset=event=>{event.preventDefault();search.value='';availability.value='all';applyEpisodeFilters();search.focus();};
+ }
  for(const episode of episodes){
   const section=el('section','podcast-episode');section.append(el('h3','',episode.title||'未命名单集'),el('p','hint',episodeDescription(episode)));
   let tracks;
@@ -38,13 +64,14 @@ function renderPodcastResults(result){
    tracks=el('select');tracks.setAttribute('aria-label','选择文字稿版本');const auto=el('option','','按原语言选择');auto.value='';tracks.append(auto);
    for(const track of episode.transcripts.filter(item=>item.supported)){const option=el('option','',(track.language||'未标明语言')+' · '+track.type);option.value=track.url;tracks.append(option);}section.append(tracks);
   }
-  if(!episode.direct){const button=el('button','',episode.transcripts?.length?'导入发布者文字稿':'检查本集文字稿');button.onclick=()=>importPodcastEpisode(result.feed_url,episode.id,tracks?.value||undefined,episode);section.append(button);}
+  if(!episode.direct){const button=el('button','',episode.transcripts?.some(track=>track.supported)?'导入发布者文字稿':'检查本集文字稿');button.onclick=()=>importPodcastEpisode(result.feed_url,episode.id,tracks?.value||undefined,episode);section.append(button);}
   if(episode.media?.length){const listen=el('button','','回听原声（最多200 MiB）');listen.onclick=()=>previewPodcastEpisode(result.feed_url,episode,section);section.append(listen);}
   if(episode.media?.length){const keep=el('button','','保存原声项目');keep.onclick=()=>savePodcastProject(result.feed_url,episode);section.append(keep);}
   const url=Coconut.podcastURL(episode.source_url);
   if(url){const link=el('a','','打开原站');link.href=url;link.target='_blank';link.rel='noopener noreferrer';section.append(link);}
-  host.append(section);
+  host.append(section);rows.push({episode,section});
  }
+ applyEpisodeFilters();
  for(const warning of result.warnings||[])if(typeof warning==='string')host.append(el('p','hint',warning));
  if(!episodes.length&&!result.feeds?.length)host.append(el('p','hint','未发现可导入的单集。可以使用发布者 RSS 或合法取得的字幕、音视频文件。'));
 }

@@ -323,3 +323,64 @@ test('matching publisher attachment retains the newly verified transcript source
   await importDocument(w,{...originalAudioProject(),podcast_source:{...source,transcript_url:undefined}});await $('fetch-project-transcript').onclick();const doc=JSON.parse(w.localStorage.getItem('coconut-reader-v1')).documents[0];assert.equal(doc.podcast_source.transcript_url,nextURL);assert.equal(doc.podcast_source.media_url,source.media_url);
  }finally{await w.happyDOM.close();}
 });
+
+test('episode picker finds the final title in a 200-episode discovery without fetching or importing',async()=>{
+ const episodes=Array.from({length:200},(_,index)=>({...discovery.episodes[0],id:String(index).padStart(64,'0'),title:index===199?'FINAL <img src=x> Interview':'Episode '+index}));
+ const {w,calls,$}=await setup(()=>response({...discovery,episodes,truncated:true}));try{
+  await discover($);const initialCalls=calls.length;
+  assert.match($('podcast-episode-count').textContent,/200 \/ 200.*不完整/);
+  const search=$('podcast-episode-search');search.value=' final ';search.dispatchEvent(new w.Event('input'));
+  const rows=[...$('podcast-results').querySelectorAll('.podcast-episode')];
+  assert.equal(rows.filter(row=>!row.hidden).length,1);assert.equal(rows[199].hidden,false);
+  assert.equal(rows[199].querySelector('img'),null);assert.match($('podcast-episode-count').textContent,/1 \/ 200/);
+  assert.equal(calls.length,initialCalls);assert.equal(w.localStorage.getItem('coconut-reader-v1'),null);
+  search.value='absent';search.dispatchEvent(new w.Event('input'));
+  assert.equal($('podcast-results').querySelector('.podcast-filter-empty').hidden,false);
+  $('podcast-results').querySelector('.podcast-clear').click();
+  assert.equal(search.value,'');assert.equal(rows.filter(row=>!row.hidden).length,200);assert.equal(w.document.activeElement,search);
+  assert.equal(calls.length,initialCalls);
+ }finally{await w.happyDOM.close();}
+});
+
+test('episode transcript filter distinguishes supported tracks and preserves selected language and rows',async()=>{
+ const episodes=[{...discovery.episodes[0],title:'Supported',transcripts:[...discovery.episodes[0].transcripts,{url:'https://publisher.example/zh.srt',language:'zh',type:'application/x-subrip',supported:true}]},{...discovery.episodes[0],id:'b'.repeat(64),title:'Unsupported',transcripts:[{url:'https://publisher.example/text.html',type:'text/html',supported:false}]},{...discovery.episodes[0],id:'c'.repeat(64),title:'No transcript',transcripts:[]}];
+ const {w,calls,$}=await setup(()=>response({...discovery,episodes}));try{
+  await discover($);const rows=[...$('podcast-results').querySelectorAll('.podcast-episode')];
+  const track=rows[0].querySelector('select');track.value='https://publisher.example/zh.srt';
+  assert.match(rows[0].textContent,/2 份可导入/);assert.match(rows[1].textContent,/仅发现不支持/);assert.equal(rows[1].querySelector('button').textContent,'检查本集文字稿');
+  const availability=$('podcast-episode-availability');availability.value='supported';availability.dispatchEvent(new w.Event('change'));
+  assert.deepEqual(rows.map(row=>row.hidden),[false,true,true]);assert.match($('podcast-episode-count').textContent,/1 \/ 3/);
+  $('podcast-episode-search').value='Unsupported';$('podcast-episode-search').dispatchEvent(new w.Event('input'));
+  assert.equal($('podcast-results').querySelector('.podcast-filter-empty').hidden,false);
+  $('podcast-results').querySelector('.podcast-clear').click();
+  assert.equal(rows[0].querySelector('select'),track);assert.equal(track.value,'https://publisher.example/zh.srt');assert.equal(calls.length,2);
+  assert.deepEqual(rows.map(row=>row.hidden),[false,false,false]);
+  await discover($);assert.equal($('podcast-episode-search').value,'');assert.equal($('podcast-episode-availability').value,'all');
+ }finally{await w.happyDOM.close();}
+});
+
+test('filtering pauses only a newly hidden preview and does not release its URL or restart playback',async()=>{
+ const episodes=[{...discovery.episodes[0],title:'First'},{...discovery.episodes[0],id:'b'.repeat(64),title:'Second'}];
+ const {w,calls,$}=await setup(url=>url.endsWith('/discover')?response({...discovery,episodes}):audioResponse());try{
+  await discover($);const row=$('podcast-results').querySelector('.podcast-episode');
+  await [...row.querySelectorAll('button')].find(button=>button.textContent.startsWith('回听原声')).onclick();
+  const player=row.querySelector('audio');let pauses=0,plays=0;player.pause=()=>pauses++;player.play=()=>plays++;
+  const revoked=[];w.URL.revokeObjectURL=url=>revoked.push(url);const requestCount=calls.length;
+  const search=$('podcast-episode-search');search.value='second';search.dispatchEvent(new w.Event('input'));
+  assert.equal(row.hidden,true);assert.equal(pauses,1);search.dispatchEvent(new w.Event('input'));assert.equal(pauses,1);
+  $('podcast-results').querySelector('.podcast-clear').click();
+  assert.equal(row.hidden,false);assert.equal(row.querySelector('audio'),player);assert.equal(plays,0);assert.deepEqual(revoked,[]);assert.equal(calls.length,requestCount);
+ }finally{await w.happyDOM.close();}
+});
+
+test('episode filters cannot unlock an in-flight import and single-episode results stay direct',async()=>{
+ let finish;const episodes=[{...discovery.episodes[0],title:'First'},{...discovery.episodes[0],id:'b'.repeat(64),title:'Second'}];
+ const {w,$}=await setup(url=>url.endsWith('/discover')?response({...discovery,episodes}):new Promise(resolve=>{finish=()=>resolve(response({status:'ready',document:documentFixture}));}));try{
+  await discover($);const pending=$('podcast-results').querySelector('.podcast-episode button').onclick();
+  const search=$('podcast-episode-search');search.value='second';search.dispatchEvent(new w.Event('input'));
+  assert.ok([...$('podcast-results').querySelectorAll('button')].every(button=>button.disabled));assert.equal($('process-url').disabled,true);
+  $('podcast-results').querySelector('.podcast-clear').click();assert.equal($('process-url').disabled,true);finish();await pending;
+  assert.equal($('reader-workspace').hidden,false);
+ }finally{await w.happyDOM.close();}
+ const single=await setup(()=>response(discovery));try{await discover(single.$);assert.equal(single.$('podcast-episode-search'),null);assert.ok(single.$('podcast-results').querySelector('.podcast-episode button'));}finally{await single.w.happyDOM.close();}
+});
