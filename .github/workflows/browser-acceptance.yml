@@ -92,6 +92,8 @@ jobs:
         env:
           COCONUT_UI_SCREENSHOTS: ${{ runner.temp }}/coconut-authored-ui
         run: node tests/reading-keyboard-browser.mjs
+      - name: Verify multiple transcript files, partial outcomes, cancellation and IndexedDB reload
+        run: node tests/multi-import-browser.mjs
       - name: Verify latest local-file selection and navigation ownership with authored files
         run: node tests/import-order-browser.mjs
       - name: Verify large complete backups, real downloads and native quota recovery

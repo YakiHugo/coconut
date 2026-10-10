@@ -843,8 +843,11 @@
 		return {text,speaker};
 	}
 	function parse(text, filename) {
-		if (filename.toLowerCase().endsWith(".json"))
-			return validate(JSON.parse(text));
+		if (filename.toLowerCase().endsWith(".json")){
+   const data=JSON.parse(text);
+   if(data?.format==='coconut-library')throw new Error('这是整书架备份，请使用「恢复书架备份」');
+			return validate(data);
+  }
 		const isVtt = filename.toLowerCase().endsWith(".vtt") || /^(?:\uFEFF)?WEBVTT(?:[ \t]|\r?\n|$)/.test(text);
 		const blocks = text
 			.replace(/^\uFEFF/, "")

@@ -8,16 +8,16 @@
 <meta name="theme-color" content="#faf9f7">
 <link rel="icon" type="image/png" href="coconut-mark.png">
 <script src="appearance.js?v=86ea922669"></script>
-<link rel="stylesheet" href="style.css?v=a52ee4928d">
+<link rel="stylesheet" href="style.css?v=6b59ec5036">
 <script src="summary.js?v=580ffdad1e" defer></script>
-<script src="core.js?v=a976b03fad" defer>
+<script src="core.js?v=aee49d839f" defer>
 </script>
 <script src="passages.js?v=b4aee1081b" defer></script>
 <script src="passage-playback.js?v=162dbb3695" defer></script>
 <script src="library-store.js?v=7a0c1b8828" defer></script>
 <script src="indexeddb-document-adapter.js?v=65c0c5a814" defer></script>
 <script src="storage-provider.js?v=1cb898e984" defer></script>
-<script src="app.js?v=77d5707687" type="text/coconut-pending" data-reader-script>
+<script src="app.js?v=9bd90b730e" type="text/coconut-pending" data-reader-script>
 </script>
 <script src="language.js?v=8832e43c29" type="text/coconut-pending" data-reader-script></script>
 <script src="translation-review.js?v=cf09bebe3b" type="text/coconut-pending" data-reader-script></script>
@@ -38,7 +38,7 @@
 <button id="toggle-library" aria-expanded="false" aria-controls="library-list">书架 <span id="library-total">0</span></button>
 <div id="library-list">
 <label class="library-search">查找书架<input id="library-search" type="search" placeholder="按标题查找"></label>
-<input type="file" id="file" accept=".json,.srt,.vtt" hidden>
+<input type="file" id="file" accept=".json,.srt,.vtt" multiple hidden>
 <details class="library-backup"><summary>书架备份</summary><div class="disclosure-content"><button id="export-library">备份整个书架</button><button id="restore-library">恢复书架备份</button><button id="export-original-storage" hidden>导出升级前原始数据</button><p id="storage-backend-hint" class="hint" hidden></p><input id="library-file" type="file" accept=".json" hidden></div></details>
 <p class="eyebrow">你的书架</p>
 <details id="library-options" class="library-options"><summary>整理书架</summary><p class="hint library-manage-hint">展开时，每篇下方可移除内容。</p><label>排序<select id="library-sort"><option value="added">按添加顺序</option><option value="title">按标题</option><option value="duration">按时长（短到长）</option></select></label><label>内容<select id="library-kind"><option value="all">全部</option><option value="transcript">有文字稿</option><option value="audio">原声项目</option><option value="annotated">有笔记或摘录</option></select></label><label>查找范围<select id="library-scope"><option value="title">标题</option><option value="notes">标题与笔记</option><option value="text">标题、原文与笔记</option></select></label></details>
@@ -131,7 +131,12 @@
 <p class="hint">优先读取发布者提供的文字稿。只访问公开来源，不使用登录、会员或私有订阅链接；没有文字稿时会明确提示，不自动转录或扣费。</p>
 <button id="cancel-podcast" type="button" hidden>取消读取</button><p id="podcast-status" class="hint" role="status"></p><div id="podcast-results"></div>
 </section>
-<div class="file-entry"><div class="add-actions"><button id="open-local-media" type="button">打开本地音视频</button><input id="local-media-file" type="file" accept="audio/*,video/*,.mp3,.m4a,.wav,.ogg,.flac,.aac,.opus,.mp4,.webm,.mov,.m4v" hidden><button id="import">＋ 导入文字稿</button><span class="hint">JSON、SRT、VTT</span></div><p class="hint">没有文字稿也能先听、记笔记和时间书签；文件不上传，不运行识别或 AI。有字幕时可补充到同一项目。JSON 超过50 MiB 先确认读取；SRT / VTT 限15 MiB。</p></div>
+<div class="file-entry"><div class="add-actions"><button id="open-local-media" type="button">打开本地音视频</button><input id="local-media-file" type="file" accept="audio/*,video/*,.mp3,.m4a,.wav,.ogg,.flac,.aac,.opus,.mp4,.webm,.mov,.m4v" hidden><button id="import">＋ 导入文字稿</button><span class="hint">JSON、SRT、VTT · 可多选</span></div><p class="hint">没有文字稿也能先听、记笔记和时间书签；文件不上传，不运行识别或 AI。有字幕时可补充到同一项目。JSON 超过50 MiB 先确认读取；SRT / VTT 限15 MiB。</p></div>
+<section id="transcript-import-results" class="transcript-import-results" aria-label="文字稿导入结果" hidden>
+<div class="transcript-import-heading"><p id="transcript-import-progress" role="status" aria-live="polite"></p><button id="stop-transcript-import" type="button">停止后续文件</button></div>
+<p class="hint">逐份在本机读取，已保存内容会保留。整书架 JSON 请使用「恢复书架备份」。</p>
+<ol id="transcript-import-list"></ol>
+</section>
 </div>
 <p id="worker-help" class="hint">Web 无需安装：打开本地音视频即可播放和记笔记，不需要文字稿、识别或 AI。文件不上传；生成摘要需要真正的文字稿和明确确认。</p>
 <details id="local-setup" class="setup-guide">
@@ -308,7 +313,7 @@ cd coconut
 <dialog id="large-backup-dialog" aria-labelledby="large-backup-heading" aria-describedby="large-backup-size large-backup-help">
 <h2 id="large-backup-heading">文件较大，继续读取？</h2>
 <p id="large-backup-size"></p><p id="large-backup-help">完整读取和校验需要额外内存，可能暂时卡顿或超出设备能力。恢复不会删除原书架；若本机保存空间不足，内容仍可在本页阅读与导出，关闭前请保留原备份文件。文件不会上传，也不会调用 AI。</p>
-<div class="dialog-actions"><button id="cancel-large-backup" type="button" autofocus>取消</button><button id="continue-large-backup" type="button" class="primary">继续完整读取</button></div>
+<div class="dialog-actions"><button id="cancel-large-backup" type="button" autofocus>取消</button><button id="stop-large-backup-batch" type="button" hidden>停止后续文件</button><button id="continue-large-backup" type="button" class="primary">继续完整读取</button></div>
 </dialog>
 <dialog id="keyboard-help" aria-labelledby="keyboard-help-heading" aria-describedby="keyboard-help-boundary">
 <div class="keyboard-help-heading"><h2 id="keyboard-help-heading">阅读快捷键</h2><button id="keyboard-help-close" type="button" autofocus aria-label="关闭快捷键帮助">关闭</button></div>
