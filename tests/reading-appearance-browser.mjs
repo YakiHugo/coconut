@@ -8,6 +8,7 @@ import {fileURLToPath} from 'node:url';
 import {chromium,expect} from './helpers/browser-storage.mjs';
 import {splitCueFixture} from './helpers/split-cue-fixture.mjs';
 import {authoredAudioFixture} from './helpers/authored-audio-fixture.mjs';
+import {themeTransitionsSettled} from './helpers/theme-transitions.mjs';
 if (!process.env.CI) throw new Error('Reading appearance browser acceptance is CI-only; use the authored Node/HappyDOM suite locally.');
 const root=fileURLToPath(new URL('../',import.meta.url)),checks=[],evidence=[];
 let server,browser,page,stage='setup',mutations=0,external=0;
@@ -30,6 +31,9 @@ async function closeSettings(){
 }
 async function noOverflow(name){check(name,await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));}
 async function contrast(name,selectors){
+ // A theme change updates inherited text immediately while button surfaces
+ // transition for 150ms. Measure the settled theme, not an intermediate frame.
+ await page.waitForFunction(themeTransitionsSettled,selectors,{timeout:15000});
  const ratios=await page.evaluate(selectors=>{
   const rgb=text=>{const nums=text.match(/[\d.]+/g)?.map(Number);if(!nums||nums.length<3)throw Error('Unrecognized color '+text);return [...nums.slice(0,3),nums[3]??1];};
   const over=(a,b)=>[...a.slice(0,3).map((v,i)=>v*a[3]+b[i]*(1-a[3])),1];
