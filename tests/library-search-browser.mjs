@@ -1,45 +1,29 @@
-import {openCueActions} from './cue-actions-browser.mjs';
-/** Real Chromium acceptance of authored long-text reading and recovery.
+/** Real Chromium acceptance of authored cross-document search and keyboard navigation.
  * No model, media, third-party text, or external network calls are used.
  * Run in CI or an explicitly permitted browser environment. */
 import assert from 'node:assert/strict';
 import {createServer} from 'node:http';
 import fs from 'node:fs/promises';
-import os from 'node:os';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {chromium} from '@playwright/test';
 import {splitCueFixture} from './helpers/split-cue-fixture.mjs';
 const root = fileURLToPath(new URL('../', import.meta.url));
-let server, browser, temporary, stage = 'setup';
+let server, browser, stage = 'setup';
 const checks = [];
 function check(name, passed) {stage = name; assert.ok(passed, name); checks.push(name);}
-async function frameSettled(page) {
-  await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
-}
-async function capture(page, name) {
-  if (!process.env.COCONUT_UI_SCREENSHOTS) return;
-  await fs.mkdir(process.env.COCONUT_UI_SCREENSHOTS, {recursive: true});
-  await page.screenshot({path: path.join(process.env.COCONUT_UI_SCREENSHOTS, 'long-' + name + '.png'), fullPage: false});
-}
 async function visibleCue(page, id) {
   await page.waitForFunction(id => {
     const element = [...document.querySelectorAll('#transcript .segment')].find(row => row.dataset.segmentId === id);
     if (!element || element !== document.activeElement) return false;
     const r = element.getBoundingClientRect();
-    const previous = window.__longReadingAuditPosition;
+    const previous = window.__librarySearchAuditPosition;
     const stable = previous?.id === id && Math.abs(previous.top - r.top) < 0.25 ? previous.stable + 1 : 0;
-    window.__longReadingAuditPosition = {id, top: r.top, stable};
+    window.__librarySearchAuditPosition = {id, top: r.top, stable};
     return stable >= 4 && r.top < innerHeight && r.bottom > 0;
   }, id);
 }
-async function jumpToTime(page, seconds) {
-  await page.locator('#reading-settings').evaluate(el => {el.open = true;});
-  await page.locator('#reading-time').fill(String(seconds));
-  await page.locator('#time-navigation button').click();
-}
 try {
-  temporary = await fs.mkdtemp(path.join(os.tmpdir(), 'coconut-long-reading-'));
   server = createServer(async (req, res) => {
     if (req.method !== 'GET' && req.method !== 'HEAD') {res.writeHead(405).end(); return;}
     const pathname = new URL(req.url, 'http://localhost').pathname;
@@ -67,24 +51,37 @@ try {
   }
   const first=await context(),page=await first.newPage();page.setDefaultTimeout(15000);page.on('pageerror',()=>errors++);
   await page.goto(origin);
+  async function openLibrary(options=false){
+    if(!await page.locator('#library-search').isVisible())await page.locator('#toggle-library').click();
+    await page.locator('#library-search').waitFor({state:'visible'});
+    if(options&&!await page.locator('#library-scope').isVisible())await page.locator('.library-options > summary').click();
+    if(options)await page.locator('#library-scope').waitFor({state:'visible'});
+  }
+
   const source=splitCueFixture();source.notes['split-1751']='Private <img src=x> needle';
   async function load(doc){await page.locator('#file').setInputFiles({name:'authored.json',mimeType:'application/json',buffer:Buffer.from(JSON.stringify(doc))});await page.waitForFunction(title=>document.querySelector('#title').textContent===title,doc.title);}
   await load(source);const other=splitCueFixture(5);other.title='Another document';await load(other);
-  await page.locator('#library-scope').selectOption('text');await page.locator('#library-search').fill('crossing-marker');
+  await openLibrary(true);await page.locator('#library-scope').selectOption('text');await page.locator('#library-search').fill('crossing-marker');
   const hit=page.locator('.library-hit');await hit.waitFor();await hit.focus();await page.keyboard.press('Enter');await visibleCue(page,'split-1750');
   check('keyboard_source_hit_lands_on_real_late_cue',await page.locator('.segment[data-segment-id="split-1749"]').count()===1&&await page.locator('.segment').count()<=100);
   check('library_query_survives_open',await page.locator('#library-search').inputValue()==='crossing-marker');
-  await page.locator('#library-scope').selectOption('notes');await page.locator('#library-search').fill('<img');
+  await openLibrary(true);await page.locator('#library-scope').selectOption('notes');await page.locator('#library-search').fill('<img');
   check('snippet_is_text_not_html',await page.locator('.library-hit img').count()===0&&await page.locator('.library-hit mark').textContent()==='<img');
   await page.locator('.library-hit').focus();await page.keyboard.press('Enter');
   check('note_hit_focuses_correct_editor',await page.locator('#note').evaluate(el=>el===document.activeElement&&el.value.includes('needle')));
   await page.locator('#close-note').click();
   const audio={project_kind:'audio_only',title:'Authored audio project',segments:[],project_note:'Needle project',timestamp_bookmarks:[{id:'stamp',time:3,note:'Needle bookmark'}],podcast_source:{feed_url:'https://example.com/feed',episode_id:'a'.repeat(64),media_url:'https://example.com/a.mp3',media_kind:'audio'}};
-  await load(audio);await page.locator('#library-search').fill('Needle bookmark');await page.locator('.library-hit').focus();await page.keyboard.press('Enter');
+  await load(audio);await openLibrary();await page.locator('#library-search').fill('Needle bookmark');await page.locator('.library-hit').focus();await page.keyboard.press('Enter');
   check('audio_bookmark_hit_focuses_note_without_playback',await page.locator('#audio-bookmarks textarea').evaluate(el=>el===document.activeElement)&&await page.locator('audio').count()===0);
-  await page.setViewportSize({width:390,height:844});await page.locator('#toggle-library').click();await page.locator('#library-search').fill('no matching content');
+  await page.setViewportSize({width:390,height:844});await openLibrary(true);
+  await page.locator('#library-scope').selectOption('notes');await page.locator('#library-search').fill('Needle project');
+  await page.locator('.library-hit').focus();await page.keyboard.press('Enter');
+  check('mobile_hit_focuses_project_note_and_collapses_library',await page.locator('#project-note').evaluate(el=>el===document.activeElement)&&await page.locator('#toggle-library').getAttribute('aria-expanded')==='false');
+  await openLibrary(true);
+  check('mobile_return_preserves_query_and_scope',await page.locator('#library-search').inputValue()==='Needle project'&&await page.locator('#library-scope').inputValue()==='notes');
+  await page.locator('#library-search').fill('no matching content');
   check('mobile_empty_results_are_truthful',await page.locator('.library-hit').count()===0&&await page.locator('#library-empty').isVisible());
   check('no_network_side_effects_or_script_errors',external===0&&mutations===0&&errors===0);
   console.log(JSON.stringify({checks},null,2));
 } catch(error){console.error('Library search acceptance failed at '+stage);throw error;}
-finally{await browser?.close();await new Promise(resolve=>server?server.close(resolve):resolve());if(temporary)await fs.rm(temporary,{recursive:true,force:true});}
+finally{await browser?.close();await new Promise(resolve=>server?server.close(resolve):resolve());}

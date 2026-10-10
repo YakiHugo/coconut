@@ -91,3 +91,18 @@ test('multiple matching documents retain title ordering and ordinary opens use s
   $('library-search').value='   ';$('library-search').oninput();assert.equal($('library').children.length,2);assert.equal($('library').querySelectorAll('.library-hit').length,0);
  }finally{await w.happyDOM.close();}
 });
+
+
+test('library options use a native disclosure and mobile library reopening preserves the search controls',async()=>{
+ const {w,$}=setup();try{
+  await load($);const disclosure=$('library-scope').closest('details');
+  assert.ok(disclosure.classList.contains('library-options'));assert.equal(disclosure.open,false);
+  disclosure.querySelector('summary').click();assert.equal(disclosure.open,true);
+  $('library-scope').value='text';$('library-search').value='crossing-marker';$('library-search').oninput();
+  $('toggle-library').click();assert.equal($('toggle-library').getAttribute('aria-expanded'),'true');
+  $('library').querySelector('.library-hit').click();assert.equal($('toggle-library').getAttribute('aria-expanded'),'false');
+  $('toggle-library').click();assert.equal($('toggle-library').getAttribute('aria-expanded'),'true');
+  assert.equal(disclosure.open,true);assert.equal($('library-search').value,'crossing-marker');assert.equal($('library-scope').value,'text');
+  assert.equal($('library').querySelectorAll('.library-hit').length,1);
+ }finally{await w.happyDOM.close();}
+});
