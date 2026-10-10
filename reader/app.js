@@ -9,7 +9,8 @@ let readerClosing = false;
 // Never replace it silently or mistake a requested download for a saved backup.
 let removedDocument = null;
 let removalTarget = null;
-let removalFocusKey = null;
+let removalDialogOrigin = null;
+let finishRemovalDialogOrigin = null;
 let documentLifecycleRevision = 0;
 const removedDocumentRevisions = new Map();
 // Tombstones retain small identities/digests, never another document-sized trash copy.
@@ -466,25 +467,52 @@ function resetReaderForDocumentNavigation(){
 }
 function focusLibraryRemoval(key) {
  const row=[...$('library').children].find(node=>node.dataset.documentKey===key);
- (row?.querySelector('.library-remove')||$('library-search')).focus();
+ // Undo can run with the mobile shelf or its organizing controls collapsed.
+ // Restore focus to an available action, never a hidden removal button.
+ $('toggle-library').setAttribute('aria-expanded','true');
+ (row?.querySelector($('library-options').open?'.library-remove':'.library-open')||$('library-search')).focus();
 }
+function removalDialogMayRestoreFocus(dialog,opener) {
+ const focused=document.activeElement;
+ return !focused||focused===document.body||focused===opener||dialog.contains(focused);
+}
+function syncLibraryRemovalControls() {
+ for(const button of $('library').querySelectorAll('.library-remove'))button.hidden=!$('library-options').open;
+}
+$('library-options').addEventListener('toggle',syncLibraryRemovalControls);
 function renderRemovalRecovery() {
  $('removal-recovery').hidden=!removedDocument;
  $('removal-recovery-title').textContent=removedDocument?'已移除：'+removedDocument.doc.title:'';
+ $('removal-recovery-short-title').textContent=removedDocument?removedDocument.doc.title:'';
+ if(!removedDocument){$('removal-recovery-details').open=false;$('removal-recovery-error').hidden=true;$('removal-export-error').hidden=true;}
  if(unloadGuardReady)syncUnsavedUnloadGuard();
+}
+function showRemovalRecoveryError(message) {
+ $('removal-recovery-error').textContent=message;
+ $('removal-recovery-error').hidden=false;
+ $('removal-recovery-details').open=true;
 }
 function requestLibraryRemoval(doc) {
  if(!state.documents.includes(doc))return;
- removalTarget=doc;removalFocusKey=doc.key;
+ removalTarget=doc;removalDialogOrigin={doc,node:document.activeElement,recovery:removedDocument,confirmed:false};
  $('remove-document-title').textContent=doc.title;
- $('remove-document-error').textContent='';
+ $('remove-document-error').textContent='';delete $('remove-document-error').dataset.kind;
  $('replace-removal-warning').hidden=!removedDocument;
  $('replace-removal-warning').textContent=removedDocument?'继续移除将结束上一篇“'+removedDocument.doc.title+'”的撤销，且不再保留它的本页副本。可取消，或先导出上一篇备份。':'';
  $('export-previous-removal').hidden=!removedDocument;
  $('remove-document-dialog').showModal();$('cancel-removal').focus();
 }
 $('cancel-removal').onclick=()=>{$('remove-document-dialog').close();};
-$('remove-document-dialog').addEventListener('close',()=>{const confirmed=removalTarget===null;removalTarget=null;if(confirmed&&removedDocument)$('undo-removal').focus();else focusLibraryRemoval(removalFocusKey);});
+$('remove-document-dialog').addEventListener('close',()=>{
+ const dialog=$('remove-document-dialog');
+ if(dialog.open)return; // A queued close must not retire a newer confirmation.
+ const origin=removalDialogOrigin;removalDialogOrigin=null;if(!origin)return;
+ if(removalTarget===origin.doc)removalTarget=null;
+ // Cleanup belongs to the closed owner; focus belongs to the user's latest intent.
+ if(origin.recovery!==removedDocument||!removalDialogMayRestoreFocus(dialog,origin.node))return;
+ if(origin.confirmed&&removedDocument)$('undo-removal').focus();
+ else if(state.documents.includes(origin.doc))focusLibraryRemoval(origin.doc.key);
+});
 $('confirm-removal').onclick=()=>{
  const doc=removalTarget;if(!doc||!state.documents.includes(doc))return;
  captureAudioBookmarkDrafts();
@@ -496,7 +524,7 @@ $('confirm-removal').onclick=()=>{
  if(!state.active)state.active=state.documents[Math.min(index,state.documents.length-1)]?.key||null;
  if(!save()){
   state=previous;saveWarning('移除未保存，原书架仍在。请先导出需要保留的内容，再重试。');
-  $('remove-document-error').textContent='未能保存移除，书架未改变。请先备份，再重试。';return;
+  $('remove-document-error').textContent='未能保存移除，书架未改变。请先备份，再重试。';delete $('remove-document-error').dataset.kind;return;
  }
  if(previous.active!==state.active)rememberActiveDocument();
  removedDocument={doc:snapshot,index,wasActive:previous.active===doc.key,bookmarkDraft};
@@ -505,6 +533,7 @@ $('confirm-removal').onclick=()=>{
  if($('audio-project').dataset.documentKey===doc.key){
   delete $('audio-project').dataset.documentKey;$('audio-bookmark-form').reset();$('audio-bookmarks').replaceChildren();
  }
+ $('removal-recovery-details').open=false;$('removal-recovery-error').hidden=true;$('removal-export-error').hidden=true;
  documentLifecycleRevision++;removedDocumentRevisions.set(doc.key,documentLifecycleRevision);
  removedDocumentAliases.push({revision:documentLifecycleRevision,source:documentSourceIdentity(snapshot),signature:libraryDocumentSignature(snapshot).catch(()=>null)});
  changeMediaSelection(doc.key);
@@ -516,7 +545,9 @@ $('confirm-removal').onclick=()=>{
   setReadingMode(prefersPassageReading(active())?'passages':'summary');workspace=active()?'read':'add';
  }
  const attachment=browserMedia.get(doc.key);if(attachment){browserMedia.delete(doc.key);URL.revokeObjectURL(attachment.url);}
- removalTarget=null;$('remove-document-dialog').close();render();renderRemovalRecovery();
+ removalTarget=null;removalDialogOrigin.confirmed=true;removalDialogOrigin.recovery=removedDocument;
+ $('remove-document-dialog').close();render();renderRemovalRecovery();
+ $('toggle-library').setAttribute('aria-expanded','false');
  notice('已从保存的书架移除。可在本页撤销或导出这份备份；刷新、关闭或离开页面后不能撤销。','success');
  $('undo-removal').focus();
 };
@@ -525,11 +556,12 @@ $('undo-removal').onclick=()=>{
  const previous=state;
  // A new identity object retires callbacks created before removal, even with the same key.
  const doc=JSON.parse(JSON.stringify(recovery.doc));
- if(state.documents.some(item=>item.key===doc.key)){notice('书架中已有同编号内容。请导出移除备份，再通过添加文件恢复；不同版本会分别保留。');return;}
+ if(state.documents.some(item=>item.key===doc.key)){showRemovalRecoveryError('书架中已有同编号内容。请先导出备份，再通过添加文件恢复。');notice('书架中已有同编号内容。请导出移除备份，再通过添加文件恢复；不同版本会分别保留。');return;}
  const documents=[...state.documents];documents.splice(Math.min(recovery.index,documents.length),0,doc);
  state={...state,documents,active:recovery.wasActive?doc.key:state.active||doc.key};
  if(!save()){
   state=previous;saveWarning('撤销尚未保存。移除的完整备份仍在本页，请重试撤销或导出移除备份，暂时不要关闭页面。');
+  showRemovalRecoveryError('撤销未保存。可重试或先导出备份，暂时不要离开本页。');
   notice('撤销未成功，完整内容仍保留在本页恢复区。请导出移除备份，或释放空间后重试。');return;
  }
  const changedActive=previous.active!==state.active;
@@ -551,19 +583,39 @@ $('export-removed-document').onclick=()=>{
  try{
   const blob=new Blob([JSON.stringify(removedDocument.doc,null,2)],{type:'application/json'});
   url=URL.createObjectURL(blob);link=el('a');link.href=url;link.download='coconut-removed-document.json';link.hidden=true;document.body.append(link);link.click();
+  $('removal-export-error').hidden=true;
+  if($('remove-document-error').dataset.kind==='export'){$('remove-document-error').textContent='';delete $('remove-document-error').dataset.kind;}
   notice('已发起移除备份下载，请打开文件确认已保存。可用“添加文件”恢复；下载不会自动结束撤销。'+backupRecoveryHint(blob));
- }catch{notice('移除备份下载失败，完整内容仍在本页，请重试或撤销移除。');}
+ }catch{
+  const message='移除备份下载失败，完整内容仍在本页，请重试或撤销移除。';
+  $('removal-recovery-details').open=true;$('removal-export-error').textContent=message;$('removal-export-error').hidden=false;
+  if($('remove-document-dialog').open){$('remove-document-error').textContent=message;$('remove-document-error').dataset.kind='export';}
+  notice(message);
+ }
  finally{link?.remove();if(url)setTimeout(()=>URL.revokeObjectURL(url),60000);}
 };
 $('finish-removal').onclick=()=>{
  if(!removedDocument)return;
+ finishRemovalDialogOrigin={recovery:removedDocument,confirmed:false};
  $('finish-removal-dialog').showModal();$('cancel-finish-removal').focus();
 };
 $('export-previous-removal').onclick=()=>$('export-removed-document').onclick();
 $('cancel-finish-removal').onclick=()=>{$('finish-removal-dialog').close();};
-$('finish-removal-dialog').addEventListener('close',()=>{(removedDocument?$('undo-removal'):$('library-search')).focus();});
+$('finish-removal-dialog').addEventListener('close',()=>{
+ const dialog=$('finish-removal-dialog');
+ if(dialog.open)return;
+ const origin=finishRemovalDialogOrigin;finishRemovalDialogOrigin=null;if(!origin)return;
+ if(!removalDialogMayRestoreFocus(dialog,$('finish-removal')))return;
+ if(origin.confirmed){if(!removedDocument)focusLibraryRemoval(null);}
+ else if(removedDocument===origin.recovery){
+  // Native close already restores the opener. Never reopen a disclosure that
+  // the user collapsed while the close event was waiting to be dispatched.
+  ($('removal-recovery-details').open?$('finish-removal'):$('removal-recovery-details').querySelector('summary')).focus();
+ }
+});
 $('confirm-finish-removal').onclick=()=>{
- removedDocument=null;$('finish-removal-dialog').close();renderRemovalRecovery();notice('已结束本页撤销。如果另有 JSON 备份，以后可用“添加文件”恢复。');
+ if(!finishRemovalDialogOrigin||removedDocument!==finishRemovalDialogOrigin.recovery)return;
+ finishRemovalDialogOrigin.confirmed=true;removedDocument=null;$('finish-removal-dialog').close();renderRemovalRecovery();notice('已结束本页撤销。如果另有 JSON 备份，以后可用“添加文件”恢复。');
 };
 
 function renderLibrary() {
@@ -596,7 +648,7 @@ function renderLibrary() {
 		};
 		b.onclick=()=>openDocument();
   const remove=el('button','library-remove','移除…');remove.type='button';remove.setAttribute('aria-label','从书架移除 '+d.title);
-  remove.onclick=()=>requestLibraryRemoval(d);
+  remove.hidden=!$('library-options').open;remove.onclick=()=>requestLibraryRemoval(d);
   entry.append(b,remove);
   const hits=Coconut.libraryHits(d,query,$('library-scope').value);
   if(hits.length){
