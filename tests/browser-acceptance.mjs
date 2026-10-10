@@ -65,14 +65,14 @@ async function startServer(dataDir, port) {
 async function storedDocument(page) {
   return await page.evaluate(() => {
     const library = JSON.parse(localStorage.getItem('coconut-reader-v1') || 'null');
-    return library?.documents.find(document => document.key === library.active) || null;
+    return library?.documents.find(document => document.key === sessionStorage.getItem('coconut-reader-active-v1')) || null;
   });
 }
 
 async function waitForDocument(page, count) {
   await page.waitForFunction(expected => {
     const library = JSON.parse(localStorage.getItem('coconut-reader-v1') || 'null');
-    const document = library?.documents.find(item => item.key === library.active);
+    const document = library?.documents.find(item => item.key === sessionStorage.getItem('coconut-reader-active-v1'));
     return document?.segments.length === expected && !window.document.getElementById('reader-workspace').hidden;
   }, count);
   await page.locator('#mode-transcript').click();

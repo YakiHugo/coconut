@@ -25,7 +25,7 @@ try{
   await page.goto(origin);await page.locator('#import').waitFor({state:'visible'});return page;
  }
  const stored=page=>page.evaluate(key=>JSON.parse(localStorage.getItem(key)),KEY);
- const active=async page=>{const state=await stored(page);return state.documents.find(doc=>doc.key===state.active);};
+ const active=async page=>{const state=await stored(page),selected=await page.evaluate(()=>sessionStorage.getItem('coconut-reader-active-v1'));return state.documents.find(doc=>doc.key===selected);};
  async function choose(page,file,title){
   if(await page.locator('#add-content').isVisible())await page.locator('#add-content').click();
   const [chooser]=await Promise.all([page.waitForEvent('filechooser'),page.locator('#import').click()]);

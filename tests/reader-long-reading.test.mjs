@@ -29,7 +29,7 @@ async function importDocument($, value) {
 }
 const rows = w => [...w.document.querySelectorAll('#transcript .segment')];
 const persisted = w => JSON.parse(w.localStorage.getItem(key));
-const activeDoc = w => {const saved = persisted(w); return saved.documents.find(d => d.key === saved.active);};
+const activeDoc = w => {const saved = persisted(w); return saved.documents.find(d => d.key === w.sessionStorage.getItem('coconut-reader-active-v1'));};
 function search($, query) {$('search').value = query; $('search').oninput();}
 async function captureExport(w, $, id) {
   let blob;

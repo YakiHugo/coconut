@@ -35,7 +35,7 @@ async function settled() {
   await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
 }
 async function stored() {
-  return page.evaluate(() => {const shelf = JSON.parse(localStorage.getItem('coconut-reader-v1')); return shelf.documents.find(doc => doc.key === shelf.active);});
+  return page.evaluate(() => {const shelf = JSON.parse(localStorage.getItem('coconut-reader-v1')); return shelf.documents.find(doc => doc.key === sessionStorage.getItem('coconut-reader-active-v1'));});
 }
 async function capture(name) {
   if (!process.env.COCONUT_UI_SCREENSHOTS) return;
@@ -181,7 +181,7 @@ try {
   await page.locator('#file').setInputFiles({name: 'authored-keyboard-other.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(otherFixture))});
   await page.waitForFunction(title => {
     const shelf = JSON.parse(localStorage.getItem('coconut-reader-v1') || '{"documents":[]}');
-    return shelf.documents.some(doc => doc.key === shelf.active && doc.title === title);
+    return shelf.documents.some(doc => doc.key === sessionStorage.getItem('coconut-reader-active-v1') && doc.title === title);
   }, otherFixture.title);
   await page.locator('#file').setInputFiles({name: 'authored-keyboard-reading.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(fixture))});
   await page.locator('#passage-workspace').waitFor({state: 'visible'});

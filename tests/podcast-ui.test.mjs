@@ -270,9 +270,9 @@ test('explicit transcript attachment keeps one project, loaded media, notes and 
  const {w,$,calls}=await setup(()=>audioResponse());let stored;
  try{
   await importDocument(w,originalAudioProject());await $('download-podcast-media').onclick();const player=$('source-media').querySelector('audio');
-  const key=JSON.parse(w.localStorage.getItem('coconut-reader-v1')).active;
+  const key=w.sessionStorage.getItem('coconut-reader-active-v1');
   await attachFile(w,$,documentFixture);stored=w.localStorage.getItem('coconut-reader-v1');const shelf=JSON.parse(stored),doc=shelf.documents[0];
-  assert.equal(shelf.documents.length,1);assert.equal(shelf.active,key);assert.equal(doc.title,'Retain my title');assert.equal(doc.segments[0].text,'Publisher words');assert.equal(doc.project_note,'PRIVATE PROJECT NOTE');assert.equal(doc.timestamp_bookmarks[0].id,'saved-mark');
+  assert.equal(shelf.documents.length,1);assert.equal(w.sessionStorage.getItem('coconut-reader-active-v1'),key);assert.equal(doc.title,'Retain my title');assert.equal(doc.segments[0].text,'Publisher words');assert.equal(doc.project_note,'PRIVATE PROJECT NOTE');assert.equal(doc.timestamp_bookmarks[0].id,'saved-mark');
   assert.equal($('source-media').querySelector('audio'),player);assert.equal($('audio-project').hidden,false);assert.equal($('transcript-layout').hidden,false);assert.equal($('language-panel').hidden,false);assert.equal($('export-notebook').disabled,false);assert.equal($('attach-project-transcript').hidden,true);assert.equal($('summary-state').textContent,'未生成');
   assert.equal(calls.filter(c=>c.url.endsWith('/media')).length,1);assert.equal(calls.filter(c=>/ask|translate/.test(c.url)).length,0);
   $('project-note').value='Updated after attachment';$('project-note').oninput();stored=w.localStorage.getItem('coconut-reader-v1');

@@ -29,7 +29,7 @@ function blockStorage(w, mode='quota'){
  const backing=w.localStorage;let blocked=true,attempts=0;
  Object.defineProperty(w,'localStorage',{configurable:true,value:{
   getItem(name){if(blocked&&mode==='security')throw new w.DOMException('Storage access denied','SecurityError');return backing.getItem(name);},
-  setItem(name,value){attempts++;if(blocked)throw new w.DOMException('Storage write denied',mode==='quota'?'QuotaExceededError':'SecurityError');backing.setItem(name,value);}
+  setItem(name,value){if(name===key)attempts++;if(blocked)throw new w.DOMException('Storage write denied',mode==='quota'?'QuotaExceededError':'SecurityError');backing.setItem(name,value);}
  }});
  return {backing,unblock(){blocked=false;},get attempts(){return attempts;}};
 }

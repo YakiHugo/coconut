@@ -48,7 +48,7 @@ async function importFixture(page, fixture, name = 'authored-fragmented-reading.
   await settled(page);
 }
 async function stored(page) {
-  return page.evaluate(() => {const shelf = JSON.parse(localStorage.getItem('coconut-reader-v1')); return shelf.documents.find(doc => doc.key === shelf.active);});
+  return page.evaluate(() => {const shelf = JSON.parse(localStorage.getItem('coconut-reader-v1')); return shelf.documents.find(doc => doc.key === sessionStorage.getItem('coconut-reader-active-v1'));});
 }
 async function attachAudio(page, filename) {
   const previousSource = await page.locator('#source-media audio').count() ? await page.locator('#source-media audio').getAttribute('src') : null;

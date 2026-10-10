@@ -141,7 +141,7 @@ test('audio-project JSON attachment above 15 MiB preserves annotations and a com
  const {w,$,choose,download,blockStorage}=setup();
  try{
   await choose(JSON.stringify({project_kind:'audio_only',title:'My audio project',segments:[],podcast_source:{kind:'direct_media',media_url:'https://publisher.example/authored.mp3',media_kind:'audio'},project_note:'Keep project note',timestamp_bookmarks:[{id:'mark',time:2,note:'Keep bookmark'}]}));
-  const old=w.localStorage.getItem(KEY),oldKey=JSON.parse(old).active,backing=blockStorage();
+  const old=w.localStorage.getItem(KEY),oldKey=w.sessionStorage.getItem('coconut-reader-active-v1'),backing=blockStorage();
   $('attach-project-transcript').click();await choose(JSON.stringify(chineseDocument()),{id:'project-transcript-file'});
   assert.equal($('large-backup-dialog').open,false);assert.equal($('title').textContent,'My audio project');assert.equal(backing.getItem(KEY),old);assert.equal($('save-status').hidden,false);
   const exported=JSON.parse(await download());assert.equal(exported.key,oldKey);assert.equal(exported.segments.length,6001);assert.equal(exported.project_note,'Keep project note');assert.equal(exported.timestamp_bookmarks[0].note,'Keep bookmark');

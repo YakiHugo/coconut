@@ -63,7 +63,7 @@ test('failed removal rolls back both in-page and disk state',async()=>{
  const {w,$}=setup();try{
   await add(w);const before=w.localStorage.getItem(KEY),backing=w.localStorage;Object.defineProperty(w,'localStorage',{value:{getItem:k=>backing.getItem(k),setItem:()=>{throw Error('Injected quota');}}});
   remove(w,'Authored removal fixture');assert.equal(backing.getItem(KEY),before);assert.equal($('library-total').textContent,'1');assert.equal($('removal-recovery').hidden,true);assert.equal($('remove-document-dialog').open,true);assert.match($('remove-document-error').textContent,/未能保存/);
-  assert.deepEqual(await download(w,'export-library'),{format:'coconut-library',version:1,...JSON.parse(before)});
+  assert.deepEqual(await download(w,'export-library'),{format:'coconut-library',version:1,...JSON.parse(before),active:w.sessionStorage.getItem('coconut-reader-active-v1')});
  }finally{await w.happyDOM.close();}
 });
 test('quota failure on undo retains full rescue data outside storage, permits export and later retry',async()=>{
@@ -145,7 +145,7 @@ test('undo to another document pauses an already playing shared-path media playe
  const {w,$}=setup(JSON.stringify({documents:[B,A],active:'a'}));try{
   w.dispatchEvent(new w.CustomEvent('coconut-worker-ready',{detail:{media_import:true}}));remove(w,A.title);
   const player=$('source-media').querySelector('audio');assert.ok(player);let paused=false,pauses=0;Object.defineProperty(player,'paused',{get:()=>paused});player.pause=()=>{paused=true;pauses++;};
-  $('undo-removal').click();assert.equal(read(w).active,'a');assert.equal(paused,true);assert.ok(pauses>0);
+  $('undo-removal').click();assert.equal(w.sessionStorage.getItem('coconut-reader-active-v1'),'a');assert.equal(paused,true);assert.ok(pauses>0);
  }finally{await w.happyDOM.close();}
 });
 test('undoing non-current B preserves Add and an unrelated pending import A',async()=>{
@@ -236,8 +236,8 @@ for(const preview of [false,true])test(`removal and undo across same media retai
 test('removing and undoing a non-current search result never pauses or resets current listening',async()=>{
  const {w,$}=setup();try{
   const B=fixture('Remove non-current B');B.segments[0].text='A unique needle to find.';await add(w,B);await add(w,{...fixture('Listening A'),source_media:{job_id:'e'.repeat(32),kind:'audio'}});
-  w.dispatchEvent(new w.CustomEvent('coconut-worker-ready',{detail:{media_import:true}}));const current=read(w).active,player=simulateListeningPlayer(w,$('source-media').querySelector('audio'));await player.play();player.currentTime=36;
+  w.dispatchEvent(new w.CustomEvent('coconut-worker-ready',{detail:{media_import:true}}));const current=w.sessionStorage.getItem('coconut-reader-active-v1'),player=simulateListeningPlayer(w,$('source-media').querySelector('audio'));await player.play();player.currentTime=36;
   $('library-scope').value='text';$('library-scope').onchange();$('library-search').value='needle';$('library-search').oninput();remove(w,B.title);assert.equal(player.paused,false);$('undo-removal').click();
-  assert.equal(read(w).active,current);assert.equal($('source-media').querySelector('audio'),player);assert.equal(player.paused,false);assert.equal(player.currentTime,36);assert.equal($('library-search').value,'needle');player.pause();assert.equal(JSON.parse(w.localStorage.getItem('coconut-listening-v1:'+current)).time,36);
+  assert.equal(w.sessionStorage.getItem('coconut-reader-active-v1'),current);assert.equal($('source-media').querySelector('audio'),player);assert.equal(player.paused,false);assert.equal(player.currentTime,36);assert.equal($('library-search').value,'needle');player.pause();assert.equal(JSON.parse(w.localStorage.getItem('coconut-listening-v1:'+current)).time,36);
  }finally{await w.happyDOM.close();}
 });

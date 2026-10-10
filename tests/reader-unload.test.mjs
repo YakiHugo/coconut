@@ -14,7 +14,7 @@ function setup(stored,desktop=false){
  w.addEventListener=(type,fn,...args)=>{if(type==='beforeunload')attached.add(fn);return add(type,fn,...args);};
  w.removeEventListener=(type,fn,...args)=>{if(type==='beforeunload')attached.delete(fn);return remove(type,fn,...args);};
  for(const file of ['summary','core','passages','passage-playback'])w.eval(fs.readFileSync(new URL(`reader/${file}.js`,root),'utf8'));
- w.eval(['app','language','podcasts'].map(file=>fs.readFileSync(new URL(`reader/${file}.js`,root),'utf8')).join('\n')+'\nwindow.draftTest={fixture(){active().project_note="";active().timestamp_bookmarks=[{id:"first",time:10,note:"Keep me"},{id:"second",time:20,note:"Other"}];state.documents.push({...JSON.parse(JSON.stringify(active())),key:"other",title:"Other document"});save();render();},switchDoc(other){state.active=other?"other":state.documents[0].key;render();},plain(){const doc={...JSON.parse(JSON.stringify(active())),key:"plain",title:"Plain transcript"};delete doc.project_note;delete doc.timestamp_bookmarks;state.documents.push(doc);state.active=doc.key;save();render();}};'+(desktop?'\nlet sourceSubmitting=false,sourceCaptionRequest=null;\n'+fs.readFileSync(new URL('reader/updates.js',root),'utf8'):''));
+ w.eval(['app','language','podcasts'].map(file=>fs.readFileSync(new URL(`reader/${file}.js`,root),'utf8')).join('\n')+'\nwindow.draftTest={fixture(){active().project_note="";active().timestamp_bookmarks=[{id:"first",time:10,note:"Keep me"},{id:"second",time:20,note:"Other"}];state.documents.push({...JSON.parse(JSON.stringify(active())),key:"other",title:"Other document"});save();render();},switchDoc(other){selectActiveDocument(other?"other":state.documents[0].key);render();},plain(){const doc={...JSON.parse(JSON.stringify(active())),key:"plain",title:"Plain transcript"};delete doc.project_note;delete doc.timestamp_bookmarks;state.documents.push(doc);selectActiveDocument(doc.key);save();render();}};'+(desktop?'\nlet sourceSubmitting=false,sourceCaptionRequest=null;\n'+fs.readFileSync(new URL('reader/updates.js',root),'utf8'):''));
  return {w,$:id=>w.document.getElementById(id),attached};
 }
 function unload(w){const event=new w.Event('beforeunload',{cancelable:true});w.dispatchEvent(event);return event.defaultPrevented;}
@@ -152,7 +152,7 @@ function removeFixture(w,$,key){
 for(const desktop of [false,true])test(`${desktop?'Desktop':'Web'} active removal and undo restore bookmark drafts with new callback ownership`,async()=>{
  const {w,$}=setup(undefined,desktop);const dirty=()=>desktop?!w.coconutPrepareClose('inspect').safe:unload(w);
  try{
-  await annotationFixture(w,$);const key=JSON.parse(w.localStorage.getItem('coconut-reader-v1')).active;
+  await annotationFixture(w,$);const key=w.sessionStorage.getItem('coconut-reader-active-v1');
   input(w,$('translation-glossary'),'Restored = 恢复');input(w,$('audio-bookmark-time'),'8');input(w,$('audio-bookmark-note'),'Keep my unfinished bookmark');
   const row=$('audio-bookmarks').querySelector('[data-bookmark-id="first"]');row.querySelector('.edit-bookmark-time').click();const oldForm=row.querySelector('form');input(w,oldForm.querySelector('input'),'41');
   removeFixture(w,$,key);assert.equal($('removal-recovery').hidden,false);assert.equal(dirty(),true);
@@ -166,17 +166,17 @@ for(const desktop of [false,true])test(`${desktop?'Desktop':'Web'} active remova
 for(const desktop of [false,true])test(`${desktop?'Desktop':'Web'} noncurrent remove and undo preserve the current document drafts`,async()=>{
  const {w,$}=setup(undefined,desktop);const dirty=()=>desktop?!w.coconutPrepareClose('inspect').safe:unload(w);
  try{
-  await annotationFixture(w,$);const key=JSON.parse(w.localStorage.getItem('coconut-reader-v1')).active;
+  await annotationFixture(w,$);const key=w.sessionStorage.getItem('coconut-reader-active-v1');
   input(w,$('audio-bookmark-time'),'11');w.draftTest.switchDoc(true);input(w,$('audio-bookmark-note'),'Current unfinished note');input(w,$('translation-glossary'),'Current = 当前');
   removeFixture(w,$,key);assert.equal($('audio-bookmark-note').value,'Current unfinished note');assert.equal($('translation-glossary').value,'Current = 当前');
-  $('undo-removal').click();assert.equal(JSON.parse(w.localStorage.getItem('coconut-reader-v1')).active,'other');assert.equal($('audio-bookmark-note').value,'Current unfinished note');assert.equal($('translation-glossary').value,'Current = 当前');
+  $('undo-removal').click();assert.equal(w.sessionStorage.getItem('coconut-reader-active-v1'),'other');assert.equal($('audio-bookmark-note').value,'Current unfinished note');assert.equal($('translation-glossary').value,'Current = 当前');
   $('cancel-audio-bookmark').click();$('cancel-translation-glossary').click();assert.equal(dirty(),true);
   w.draftTest.switchDoc(false);assert.equal($('audio-bookmark-time').value,'11');$('cancel-audio-bookmark').click();assert.equal(dirty(),false);
  }finally{await w.happyDOM.close();}
 });
 test('failed noncurrent removal retains hidden drafts and ending successful removal cannot resurrect them',async()=>{
  const {w,$}=setup();try{
-  await annotationFixture(w,$);const key=JSON.parse(w.localStorage.getItem('coconut-reader-v1')).active;
+  await annotationFixture(w,$);const key=w.sessionStorage.getItem('coconut-reader-active-v1');
   input(w,$('audio-bookmark-time'),'19');w.draftTest.switchDoc(true);
   const backing=w.localStorage;let blocked=true;Object.defineProperty(w,'localStorage',{value:{getItem:k=>backing.getItem(k),setItem(k,v){if(blocked)throw Error('quota');backing.setItem(k,v);}}});
   removeFixture(w,$,key);assert.equal($('remove-document-dialog').open,true);$('cancel-removal').click();w.draftTest.switchDoc(false);assert.equal($('audio-bookmark-time').value,'19');
@@ -185,7 +185,7 @@ test('failed noncurrent removal retains hidden drafts and ending successful remo
 });
 test('failed undo retains its recovery drafts and leaves another document draft alone until retry',async()=>{
  const {w,$}=setup();try{
-  await annotationFixture(w,$);const key=JSON.parse(w.localStorage.getItem('coconut-reader-v1')).active;
+  await annotationFixture(w,$);const key=w.sessionStorage.getItem('coconut-reader-active-v1');
   input(w,$('audio-bookmark-time'),'12');input(w,$('translation-glossary'),'Recovered = 恢复');w.draftTest.switchDoc(true);input(w,$('audio-bookmark-note'),'Still editing the other document');
   removeFixture(w,$,key);
   const backing=w.localStorage;let blocked=true;Object.defineProperty(w,'localStorage',{value:{getItem:k=>backing.getItem(k),setItem(k,v){if(blocked)throw Error('quota');backing.setItem(k,v);}}});
