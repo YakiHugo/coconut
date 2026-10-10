@@ -1096,6 +1096,8 @@ function render({keepNoteEditor=false}={}) {
   player.ondurationchange=updatePlaybackControls;
 		player.ontimeupdate = () => {if(mediaHost.querySelector("audio,video")!==player)return;repeatPlayback(false,player);highlightPlayback();};
   player.onended=()=>repeatPlayback(true,player);
+  player.addEventListener("seeking",()=>observeRepeatSeek(player,false));
+  player.addEventListener("seeked",()=>observeRepeatSeek(player,true));
   for(const event of ["play","pause","timeupdate","ratechange","loadedmetadata","durationchange","ended","error","emptied"])player.addEventListener(event,refreshPlaybackDock);
   for(const event of ["play","pause","timeupdate","ended","error","emptied"])player.addEventListener(event,()=>{
    if(followPlayer()!==player)return;
@@ -2167,19 +2169,35 @@ function toggleRepeat(segment){
  const player=$("source-media").querySelector("audio,video");
  const range=timingRange(segment);
  if(!player || !range){$("repeat-status").textContent="请等待媒体加载，并确认片段时间在媒体范围内。";return;}
- stopRepeating();const target={key:active().key,id:segment.id,path:player.getAttribute("src"),start:range.start,end:range.end};repeating=target;
- try{player.currentTime=range.start;const pending=player.play();pending?.catch(()=>{if(repeating===target){stopRepeating();$("repeat-status").textContent="请先在播放器中开始播放，再循环此段。";}});}
+ stopRepeating();const target={key:active().key,doc:active(),attachment:browserMedia.get(active().key),player,id:segment.id,path:player.getAttribute("src"),start:range.start,end:range.end,expectedSeek:null};repeating=target;
+ try{seekRepeat(target);const pending=player.play();pending?.catch(()=>{if(repeating===target){stopRepeating();$("repeat-status").textContent="请先在播放器中开始播放，再循环此段。";}});}
  catch{stopRepeating();$("repeat-status").textContent="此媒体暂时无法循环播放。";return;}
  $("stop-repeat").hidden=false;$("repeat-status").textContent="循环 · "+Coconut.time(segment.start)+"–"+Coconut.time(segment.end);
  for(const row of $("transcript").querySelectorAll(".segment")){const button=row.querySelector(".repeat-button");if(button){const selected=row.dataset.segmentId===segment.id;button.textContent=selected?"正在循环 · 停止":"循环回听此段";button.setAttribute("aria-pressed",String(selected));}}
  refreshCueActionLabels();
 }
-function repeatPlayback(ended=false,player=$("source-media").querySelector("audio,video")){
- const target=repeating;if(!target || !player || player!==$("source-media").querySelector("audio,video"))return;
- if(target.key!==active()?.key || target.path!==player.getAttribute("src")){stopRepeating();return;}
+function repeatTarget(player){
+ const target=repeating;
+ // Detached media events cannot retire a newer loop on the current player.
+ if(!target||target.player!==player||player!==$('source-media').querySelector('audio,video'))return null;
+ if(target.doc!==active()||target.path!==player.getAttribute('src')||target.attachment!==browserMedia.get(target.key)){stopRepeating();return null;}
+ return target;
+}
+function seekRepeat(target){
+ // Keep ownership until seeked: browsers queue seeking/seeked asynchronously.
+ if(!target.player.seeking&&target.player.currentTime===target.start){target.expectedSeek=null;return;}
+ target.expectedSeek=target.start;target.player.currentTime=target.start;
+}
+function observeRepeatSeek(player,completed){
+ const target=repeatTarget(player);if(!target)return;
+ if(target.expectedSeek===null||Math.abs(player.currentTime-target.expectedSeek)>.03){stopRepeating();return;}
+ if(completed)target.expectedSeek=null;
+}
+function repeatPlayback(ended=false,player=$('source-media').querySelector('audio,video')){
+ const target=repeatTarget(player);if(!target||player.seeking)return;
  if(player.currentTime<target.start){stopRepeating();return;}
  if(player.currentTime>=target.end || ended){
-  try{player.currentTime=target.start;if(ended)player.play()?.catch(()=>{if(repeating===target)stopRepeating();});}catch{stopRepeating();}
+  try{seekRepeat(target);if(ended)player.play()?.catch(()=>{if(repeating===target)stopRepeating();});}catch{stopRepeating();}
  }
 }
 $("stop-repeat").onclick=stopRepeating;

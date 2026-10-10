@@ -108,3 +108,53 @@ test('cue seeks retain pre-metadata playback start while bounded previews and lo
  Object.defineProperty(p,'duration',{configurable:true,value:120});draft(env,111);await $('media-timing-save').onclick();$('transcript').querySelector('.segment .time button').click();assert.equal(p.currentTime,30,'known duration still bounds ordinary cue seeking');
  }finally{await env.w.happyDOM.close();}
 });
+
+test('native seeks release cue loops in either direction, including while paused, but owned rewinds survive queued seek events',async()=>{
+ for(const paused of [false,true])for(const destination of [5,11,50]){
+  const env=setup();try{const {w,$}=env,p=await open(env),doc=w.localTest.active();
+   w.localTest.repeat(doc.segments[0]);
+   // The initial seek's events can arrive after play/metadata events.
+   p.dispatchEvent(new w.Event('loadedmetadata'));p.dispatchEvent(new w.Event('seeking'));p.dispatchEvent(new w.Event('timeupdate'));p.dispatchEvent(new w.Event('seeked'));
+   if(paused)p.pause();
+   p.currentTime=destination;p.dispatchEvent(new w.Event('seeking'));p.dispatchEvent(new w.Event('timeupdate'));p.dispatchEvent(new w.Event('seeked'));
+   assert.equal(p.currentTime,destination);assert.equal($('stop-repeat').hidden,true);assert.equal(p.paused,paused);
+  }finally{await env.w.happyDOM.close();}
+ }
+ const env=setup();try{const {w,$}=env,p=await open(env),doc=w.localTest.active();
+  draft(env,2);await $('media-timing-save').onclick();w.localTest.repeat(doc.segments[0]);
+  const seekEvents=()=>{p.dispatchEvent(new w.Event('seeking'));p.dispatchEvent(new w.Event('timeupdate'));p.dispatchEvent(new w.Event('seeked'));};
+  seekEvents();assert.equal(p.currentTime,12);p.pause();assert.equal($('stop-repeat').hidden,false);await p.play();
+  for(let i=0;i<2;i++){p.currentTime=14.1;p.dispatchEvent(new w.Event('timeupdate'));assert.equal(p.currentTime,12);seekEvents();assert.equal($('stop-repeat').hidden,false);}
+  p.currentTime=14;p.dispatchEvent(new w.Event('ended'));assert.equal(p.currentTime,12);seekEvents();assert.equal($('stop-repeat').hidden,false);
+  // A native seek overtakes an internal rewind before its queued events arrive.
+  p.currentTime=14;p.dispatchEvent(new w.Event('timeupdate'));p.currentTime=50;seekEvents();
+  assert.equal(p.currentTime,50);assert.equal($('stop-repeat').hidden,true);assert.equal(env.calls.length,0);
+ }finally{await env.w.happyDOM.close();}
+});
+
+test('retired player seek events cannot stop a replacement loop, while source or attachment replacement retires its own loop',async()=>{
+ const env=setup();try{const {w,$}=env,old=await open(env);
+  w.localTest.repeat(w.localTest.active().segments[0]);
+  await importJSON(env,{...captions,title:'Second source',segments:[{id:'new',start:20,end:24,text:'Second authored recording'}]});
+  await pick(env,file(w,'Second.wav'),{add:false});const current=player(env),doc=w.localTest.active();
+  w.localTest.repeat(doc.segments[0]);current.dispatchEvent(new w.Event('seeking'));current.dispatchEvent(new w.Event('seeked'));
+  old.currentTime=90;old.dispatchEvent(new w.Event('seeking'));old.dispatchEvent(new w.Event('seeked'));old.dispatchEvent(new w.Event('timeupdate'));
+  assert.equal($('stop-repeat').hidden,false);assert.equal(current.currentTime,20);
+  current.setAttribute('src','blob:replacement');current.dispatchEvent(new w.Event('seeking'));assert.equal($('stop-repeat').hidden,true);
+  w.localTest.repeat(doc.segments[0]);const prior=w.localTest.media().get(doc.key);w.localTest.media().set(doc.key,{...prior,url:'blob:replacement-attachment'});
+  current.dispatchEvent(new w.Event('seeked'));assert.equal($('stop-repeat').hidden,true);
+ }finally{await env.w.happyDOM.close();}
+});
+
+
+test('a timeupdate queued before native seeking cannot rewind the requested position; no-op entry owns no future seek',async()=>{
+ const env=setup();try{const {w,$}=env,p=await open(env),doc=w.localTest.active();let seeking=false;
+  Object.defineProperty(p,'seeking',{configurable:true,get:()=>seeking});
+  w.localTest.repeat(doc.segments[0]);p.dispatchEvent(new w.Event('seeking'));p.dispatchEvent(new w.Event('seeked'));
+  p.currentTime=50;seeking=true;p.dispatchEvent(new w.Event('timeupdate'));assert.equal(p.currentTime,50);
+  p.dispatchEvent(new w.Event('seeking'));seeking=false;p.dispatchEvent(new w.Event('seeked'));assert.equal($('stop-repeat').hidden,true);
+  p.currentTime=10;w.localTest.repeat(doc.segments[0]);assert.equal($('stop-repeat').hidden,false);
+  // At an already-settled start, no internal seek is needed or expected.
+  p.dispatchEvent(new w.Event('seeking'));assert.equal($('stop-repeat').hidden,true);assert.equal(p.currentTime,10);
+ }finally{await env.w.happyDOM.close();}
+});

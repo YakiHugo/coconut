@@ -275,6 +275,24 @@ async function mediaAcceptance(page, document, indices) {
   await page.locator('#skip-forward').click();
   check('skip_cancels_repeat', await page.locator('#stop-repeat').isHidden());
   await player.evaluate(media => media.pause());
+  await openCueActions(row(page, loopCue.id));
+  await row(page, loopCue.id).locator('.repeat-button').click();
+  await page.waitForFunction(start => {
+    const media = document.querySelector('#source-media audio, #source-media video');
+    return media && !media.seeking && media.currentTime >= start && !document.getElementById('stop-repeat').hidden;
+  }, loopCue.start);
+  const nativeSeek = await player.evaluate(async (media, end) => {
+    media.pause();
+    const destination = Math.min(media.duration, end + 1);
+    await new Promise(resolve => {
+      media.addEventListener('seeked', resolve, {once:true});
+      media.currentTime = destination;
+    });
+    return {destination, actual:media.currentTime, paused:media.paused};
+  }, loopCue.end);
+  check('native_forward_seek_cancels_repeat', await page.locator('#stop-repeat').isHidden() &&
+    Math.abs(nativeSeek.actual - nativeSeek.destination) < 0.1 && nativeSeek.paused);
+
 }
 
 try {
