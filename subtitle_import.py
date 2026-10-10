@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import html
+from html.entities import html5
 import json
 import os
 import re
@@ -26,6 +27,74 @@ def seconds(text: str) -> float:
     for value in values:
         total = total * 60 + value
     return total
+
+
+def vtt_entities(value: str) -> str:
+    """HTML references; WebVTT annotations are not HTML attributes."""
+    windows1252 = {128:8364,130:8218,131:402,132:8222,133:8230,134:8224,135:8225,136:710,137:8240,138:352,139:8249,140:338,142:381,145:8216,146:8217,147:8220,148:8221,149:8226,150:8211,151:8212,152:732,153:8482,154:353,155:8250,156:339,158:382,159:376}
+
+    def decode(match):
+        key = match[1]
+        if key[0] == '#':
+            digits = key.rstrip(';')
+            # Bound conversion of maliciously long numeric references.
+            digits = digits[2:] if digits[:2].lower() == '#x' else digits[1:]
+            digits = digits.lstrip('0') or '0'
+            code = int(digits, 16 if key[:2].lower() == '#x' else 10) if len(digits) <= 7 else 0x110000
+            return '\ufffd' if not code or code > 0x10ffff or 0xd800 <= code <= 0xdfff else chr(windows1252.get(code, code))
+        for length in range(min(len(key), 32), 0, -1):
+            name = key[:length]
+            if name not in html5:
+                continue
+            return html5[name] + key[length:]
+        return match[0]
+
+    return re.sub(r'&(#(?:x[0-9a-f]+|[0-9]+);?|[a-z][a-z0-9]*;?)', decode, value, flags=re.I)
+
+
+def vtt_payload(value: str) -> tuple[str, str | None]:
+    """Preserve one voice per cue; render mixed voices as labels, without new timings.
+
+    Voice classes, annotations and nesting: WebVTT sections 4.2.2 and 6.4.
+    """
+    stack = [('', None)]
+    runs = []
+
+    def append(raw):
+        text, speaker = vtt_entities(raw), stack[-1][1]
+        if runs and runs[-1][0] == speaker:
+            runs[-1][1] += text
+        else:
+            runs.append([speaker, text])
+
+    tags = r'<\/?(?:b|i|u|ruby|rt|v|c|lang|X-word-ms)(?:[.][^\t\n\f\r >]*)?(?:[\t\n\f\r ][^>]*)?>|<\d{2,}:\d{2}(?::\d{2})?\.\d{3}>'
+    position = 0
+    for match in re.finditer(tags, value, flags=re.I):
+        append(value[position:match.start()])
+        position = match.end()
+        tag = re.fullmatch(r'<(\/?)([a-z-]+)(?:[.][^\t\n\f\r >]*)?(?:[\t\n\f\r ]([^>]*))?>', match[0], flags=re.I)
+        if not tag:  # Inline timestamps and legacy word timing wrappers.
+            continue
+        name = tag[2].lower()
+        if name == 'x-word-ms':
+            continue
+        if tag[1]:
+            if name == 'ruby' and stack[-1][0] == 'rt':
+                stack.pop()
+            if stack[-1][0] == name:
+                stack.pop()
+        elif name != 'rt' or stack[-1][0] == 'ruby':
+            speaker = (re.sub(r'[\t\n\f\r ]+', ' ', vtt_entities(tag[3] or '')).strip(' ') or None) if name == 'v' else stack[-1][1]
+            stack.append((name, speaker))
+    append(value[position:])
+    spoken = [(speaker, text) for speaker, text in runs if text.strip()]
+    voices = {speaker for speaker, _ in spoken}
+    speaker = spoken[0][0] if len(voices) == 1 else None
+    if len(voices) > 1:
+        text = '\n'.join((f'[{voice}] ' if voice else '') + text.strip() for voice, text in spoken)
+    else:
+        text = ''.join(text for _, text in runs).strip()
+    return text, speaker
 
 
 def parse_subtitles(text: str, extension: str) -> list[dict]:
@@ -54,9 +123,16 @@ def parse_subtitles(text: str, extension: str) -> list[dict]:
             match = CUE.fullmatch(line.strip())
             if not match:
                 raise ValueError('Invalid subtitle cue')
-            body = html.unescape(re.sub(r'</?(?:b|i|u|ruby|rt|v|c|X-word-ms)(?:[ .][^>]*)?>|<\d{2}:\d{2}(?::\d{2})?\.\d{3}>', '', '\n'.join(lines[index + 1:]), flags=re.I)).strip()
+            payload = '\n'.join(lines[index + 1:])
+            if extension == '.vtt':
+                body, speaker = vtt_payload(payload)
+            else:
+                body = html.unescape(re.sub(r'</?(?:b|i|u|ruby|rt|v|c|X-word-ms)(?:[ .][^>]*)?>|<\d{2}:\d{2}(?::\d{2})?\.\d{3}>', '', payload, flags=re.I)).strip()
+                speaker = None
             if body:
                 segment = {'start': seconds(match[1]), 'end': seconds(match[2]), 'text': body}
+                if speaker is not None:
+                    segment['speaker'] = speaker
                 # Suppress exact duplicates, but never guess that repeated speech is redundant.
                 if not segments or segment != segments[-1]:
                     segments.append(segment)

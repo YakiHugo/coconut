@@ -1,5 +1,6 @@
 /** Public publisher sources for the zero-Python reader. No accounts, ASR or inference. */
 import { createHash } from 'node:crypto';
+import Coconut from '../reader/core.js';
 import { fetchPublic, publicUrl, mime, isMediaType } from './public-http.mjs';
 import { parseXml, decodeEntities } from './podcast-xml.mjs';
 
@@ -183,9 +184,10 @@ export function parsePublisherTranscript(text,type) {
       const lines=block.split('\n'),i=lines.findIndex(line=>line.includes('-->'));
       if(i<0||i>1||lines.filter(line=>line.includes('-->')).length!==1)throw new Error('文字稿存在无法识别或缺少分隔的字幕块，未导入部分结果');
       const match=lines[i].match(/^(\S+)\s+-->\s+(\S+)(?:\s+.*)?$/);if(!match)throw new Error('文字稿时间格式无效');
-      const start=cueTime(match[1]),end=cueTime(match[2]),body=subtitleText(lines.slice(i+1).join('\n'));
+      const start=cueTime(match[1]),end=cueTime(match[2]),payload=lines.slice(i+1).join('\n');
+      const {text:body,speaker}=type==='text/vtt'?Coconut.vttPayload(payload):{text:subtitleText(payload),speaker:null};
       if(!body)throw new Error('文字稿包含空白字幕，未导入部分结果');
-      segments.push({start,end,text:body,speaker:null});
+      segments.push({start,end,text:body,speaker});
     }
   }
   if(!segments.length||segments.length>PODCAST_LIMITS.segments)throw new Error('文字稿为空或片段过多');
@@ -193,7 +195,7 @@ export function parsePublisherTranscript(text,type) {
   return segments.map((cue,index)=>{
     if(!Number.isFinite(cue.start)||!Number.isFinite(cue.end)||cue.start<0||cue.end<cue.start||cue.end>PODCAST_LIMITS.duration||cue.start<prior||typeof cue.text!=='string'||!cue.text.trim()||cue.text.length>12000)throw new Error('发布者文字稿的时间戳或正文无效（最多6小时）');
     prior=cue.start;
-    return {id:'segment-'+(index+1),start:cue.start,end:cue.end,text:cue.text.trim(),speaker:cue.speaker?.slice(0,120)||null};
+    return {id:'segment-'+(index+1),start:cue.start,end:cue.end,text:cue.text.trim(),speaker:type==='text/vtt' ? cue.speaker||null : cue.speaker?.slice(0,120)||null};
   });
 }
 // Directory titles/dates are display metadata, not identity. Only the requested

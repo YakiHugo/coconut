@@ -41,3 +41,26 @@ for(const fixture of subtitleFixtures)test(`${fixture.format} file handler prese
   assert.deepEqual(cueSnapshot(roundtrip),cueSnapshot(current));assert.deepEqual(roundtrip.notes,{});
  }finally{await restored?.w.happyDOM.close();await w.happyDOM.close();}
 });
+
+test('VTT file import enables speaker filtering and keeps voices through export and fresh reload',async()=>{
+ const {w,$,stored,choose}=setup();let restored;
+ try{
+  await choose('interview.vtt','WEBVTT\n\n00:01.125 --> 00:03.875\n<v Alice &amp; Bob>Hello &lt;Team&gt;</v>\n\n00:04.000 --> 00:05.000\n<v Chen>Reply</v>\n\n00:06.000 --> 00:07.000\nUnvoiced');
+  $('mode-transcript').click();
+  assert.equal($('speaker-filter-control').hidden,false);
+  assert.deepEqual(Array.from($('speaker-filter').options,o=>o.textContent),['全部说话人','Alice & Bob','Chen','未标注说话人']);
+  $('speaker-filter').value=JSON.stringify('Alice & Bob');$('speaker-filter').dispatchEvent(new w.Event('change'));
+  assert.equal(w.document.querySelectorAll('.segment').length,1);
+  assert.equal(w.document.querySelector('.words').textContent,'Hello <Team>');
+  const before=stored().documents[0].segments;
+  const blobs=[];w.URL.createObjectURL=blob=>{blobs.push(blob);return 'blob:voice-export';};w.URL.revokeObjectURL=()=>{};w.HTMLAnchorElement.prototype.click=function(){};
+  $('subtitle-format').value='vtt';$('export-subtitles').click();
+  const output=await blobs.pop().text();
+  restored=setup();await restored.choose('voices-restored.vtt',output);
+  assert.deepEqual(restored.stored().documents[0].segments,before);
+  // Active speaker filtering never narrows the exported document.
+  assert.equal(restored.stored().documents[0].segments.length,3);
+  $('export').click();await restored.choose('voices-backup.json',await blobs.pop().text());
+  const state=restored.stored();assert.deepEqual(state.documents.find(doc=>doc.key===state.active).segments,before);
+ }finally{await restored?.w.happyDOM.close();await w.happyDOM.close();}
+});

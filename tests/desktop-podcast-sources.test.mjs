@@ -219,3 +219,17 @@ test('malformed repeated HTML openers and long unterminated attributes are bound
  for(const text of ['<a "'.repeat(32768),'<'+ 'a'.repeat(131072),'<div title="'+ 'a'.repeat(131072)])assert.deepEqual(publisherFeeds(text,feedUrl),[]);
  const literal='<'.repeat(131072);assert.throws(()=>parsePublisherTranscript('WEBVTT\n\n00:00.000 --> 00:01.000\n'+literal,'text/vtt'),/正文无效/);
 });
+
+const voiceFixtures=JSON.parse(await readFile(new URL('./fixtures/vtt-voices.json',import.meta.url),'utf8'));
+for(const fixture of voiceFixtures)test('publisher WebVTT shares voice payload semantics: '+fixture.name,()=>{
+ const result=parsePublisherTranscript('WEBVTT\n\nvoice-cue\n00:01.125 --> 00:03.875 align:start\n'+fixture.payload+'\n','text/vtt');
+ assert.deepEqual(result,[{id:'segment-1',start:1.125,end:3.875,text:fixture.text,speaker:fixture.speaker}]);
+});
+
+test('publisher VTT never collapses distinct voices that share a long name prefix',()=>{
+ const prefix='A'.repeat(120);
+ const input='WEBVTT\n\n00:01.000 --> 00:02.000\n<v '+prefix+'Alice>One</v>\n\n00:02.000 --> 00:03.000\n<v '+prefix+'Bob>Two</v>';
+ assert.deepEqual(parsePublisherTranscript(input,'text/vtt').map(cue=>cue.speaker),[prefix+'Alice',prefix+'Bob']);
+ // Keep the existing bounded JSON publisher normalization unchanged.
+ assert.equal(parsePublisherTranscript(JSON.stringify({segments:[{start:1,end:2,text:'Source',speaker:prefix+'Alice'}]}),'application/json')[0].speaker,prefix);
+});

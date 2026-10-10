@@ -418,3 +418,38 @@ test('attachment rejects independently valid files whose combined recovery JSON 
 test('WebVTT metadata is excluded while similarly named cue identifiers remain source text',()=>{
  const value='WEBVTT\n\nNOTE comment\n00:00.000 --> 00:00.500\nNot spoken\n\nSTYLE\n00:00.000 --> 00:00.500\nNot spoken CSS\n\nREGION\n00:00.000 --> 00:00.500\nNot spoken region\n\nNOTEworthy\n00:00.500 --> 00:01.000\nActual cue\n';const doc=parse(value,'source.vtt');assert.equal(doc.segments.length,1);assert.equal(doc.segments[0].text,'Actual cue');assert.equal(doc.segments[0].start,.5);
 });
+
+const voiceFixtures = require('./fixtures/vtt-voices.json');
+for (const fixture of voiceFixtures) test('WebVTT voice: '+fixture.name,()=>{
+ const C=require('../reader/core.js');
+ const doc=C.parse('WEBVTT\n\nvoice-cue\n00:01.125 --> 00:03.875 align:start\n'+fixture.payload+'\n','voices.vtt');
+ assert.equal(doc.segments.length,1);
+ const {translations,...cue}=doc.segments[0];
+ assert.deepEqual(cue, {id:'segment-1',start:1.125,end:3.875,text:fixture.text,speaker:fixture.speaker});
+ const restored=C.parse(C.subtitleExport(doc,'vtt').text,'roundtrip.vtt');
+ assert.deepEqual(restored.segments,doc.segments);
+ assert.deepEqual(C.parse(JSON.stringify(doc),'backup.json').segments,doc.segments);
+});
+test('VTT speaker export escapes markup, attaches current translation and leaves SRT unchanged',()=>{
+ const C=require('../reader/core.js');
+ const doc=C.validate({translation_view:'zh',segments:[{id:'s',start:1,end:2,text:'Hello <v Fake>',speaker:'A > B & <Team>',translations:{zh:{text:'你好',source_text:'Hello <v Fake>',provider:'fixture'}}}]});
+ const output=C.subtitleExport(doc,'vtt',true);
+ assert.match(output.text,/<v A &gt; B &amp; &lt;Team&gt;>Hello &lt;v Fake&gt;\n你好<\/v>/);
+ assert.equal(output.translated,1);
+ assert.equal(C.parse(output.text,'copy.vtt').segments[0].speaker,'A > B & <Team>');
+ assert.doesNotMatch(C.subtitleExport(doc,'srt').text,/<v |Team/);
+ assert.equal(C.parse('1\n00:01.000 --> 00:02.000\n<v Alice>Text</v>','legacy.srt').segments[0].speaker,null);
+});
+
+test('all standard HTML named references decode once in VTT text and voice annotations',()=>{
+ const fs=require('node:fs');const C=require('../reader/core.js');
+ const source=fs.readFileSync(require.resolve('../reader/core.js'),'utf8');
+ const table=JSON.parse(source.split('const VTT_ENTITIES = Object.freeze(')[1].split(');')[0]);
+ for(const [name,value] of Object.entries(table)){
+  if(!name.endsWith(';'))continue;
+  const expected='A'+value+'Z';
+  const {text,speaker}=C.vttPayload('<v A&'+name+'Z>A&'+name+'Z</v>');
+  assert.equal(text,expected,name+' text');
+  assert.equal(speaker,expected.replace(/[\t\n\f\r ]+/g,' '),name+' voice');
+ }
+});

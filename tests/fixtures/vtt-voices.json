@@ -1,0 +1,146 @@
+[
+  {
+    "name": "single-unclosed",
+    "payload": "<v Alice>Hello",
+    "text": "Hello",
+    "speaker": "Alice"
+  },
+  {
+    "name": "spaces-classes",
+    "payload": "<v.host.primary\t Alice   van\t Dijk ><b>Hello</b>\nworld</v>",
+    "text": "Hello\nworld",
+    "speaker": "Alice van Dijk"
+  },
+  {
+    "name": "escaped-name",
+    "payload": "<v A &amp; B &lt;Team&gt; &#x1F33F;>Hi &amp; bye</v>",
+    "text": "Hi & bye",
+    "speaker": "A & B <Team> 🌿"
+  },
+  {
+    "name": "escaped-literal",
+    "payload": "&lt;v Alice&gt;literal&lt;/v&gt;",
+    "text": "<v Alice>literal</v>",
+    "speaker": null
+  },
+  {
+    "name": "nested-format",
+    "payload": "<v Alice><lang en><i>Hello</i></lang> <ruby>漢<rt>kan</ruby> <00:01.500>world</v>",
+    "text": "Hello 漢kan world",
+    "speaker": "Alice"
+  },
+  {
+    "name": "mixed",
+    "payload": "<v Alice>One</v>\n<v Bob>Two</v>",
+    "text": "[Alice] One\n[Bob] Two",
+    "speaker": null
+  },
+  {
+    "name": "partly-unvoiced",
+    "payload": "[Music]\n<v Alice>Hello</v>\n[Applause]",
+    "text": "[Music]\n[Alice] Hello\n[Applause]",
+    "speaker": null
+  },
+  {
+    "name": "repeated",
+    "payload": "<v Alice>One</v>\n<v Alice>Two</v>",
+    "text": "One\nTwo",
+    "speaker": "Alice"
+  },
+  {
+    "name": "blank",
+    "payload": "<v \t >Hello</v>",
+    "text": "Hello",
+    "speaker": null
+  },
+  {
+    "name": "empty-other",
+    "payload": "<v Bob> </v><v Alice>Hello</v>",
+    "text": "Hello",
+    "speaker": "Alice"
+  },
+  {
+    "name": "nested-voices",
+    "payload": "<v Alice>One<v Bob>Two</v>Three</v>",
+    "text": "[Alice] One\n[Bob] Two\n[Alice] Three",
+    "speaker": null
+  },
+  {
+    "name": "unvoiced",
+    "payload": "Use List<T> &amp; compare\nagain",
+    "text": "Use List<T> & compare\nagain",
+    "speaker": null
+  },
+  {
+    "name": "decode-once",
+    "payload": "<v A &amp;lt; B>Keep &amp;lrm; &amp;lt;</v>",
+    "text": "Keep &lrm; &lt;",
+    "speaker": "A &lt; B"
+  },
+  {
+    "name": "direction-escapes",
+    "payload": "<v &lrm;Alice>Hello &rlm;world</v>",
+    "text": "Hello ‏world",
+    "speaker": "‎Alice"
+  },
+  {
+    "name": "nonbreaking-space",
+    "payload": "<v Alice&nbsp;Smith>Hello&nbsp;world</v>",
+    "text": "Hello world",
+    "speaker": "Alice Smith"
+  },
+  {
+    "name": "nonbreaking-name-edge",
+    "payload": "<v &nbsp;Alice&nbsp;>Hello</v>",
+    "text": "Hello",
+    "speaker": " Alice "
+  },
+  {
+    "name": "legacy-case-cleaning",
+    "payload": "<B>Hello</B> <X-word-ms ms=100>List<T></X-word-ms>",
+    "text": "Hello List<T>",
+    "speaker": null
+  },
+  {
+    "name": "named-accent",
+    "payload": "<v Ren&eacute;>Hola</v>",
+    "text": "Hola",
+    "speaker": "René"
+  },
+  {
+    "name": "same-voice-named-and-unicode",
+    "payload": "<v Ren&eacute;>One</v><v René>Two</v>",
+    "text": "OneTwo",
+    "speaker": "René"
+  },
+  {
+    "name": "html-named-multicodepoint",
+    "payload": "<v &Afr; &NotEqualTilde;>&copy; &eacute; &NotEqualTilde;</v>",
+    "text": "© é ≂̸",
+    "speaker": "𝔄 ≂̸"
+  },
+  {
+    "name": "legacy-entity-annotation-boundary",
+    "payload": "<v A &copy B &notit; &copy=C>Text &notit;</v>",
+    "text": "Text ¬it;",
+    "speaker": "A © B ¬it; ©=C"
+  },
+  {
+    "name": "numeric-invalid-and-c1",
+    "payload": "<v A &#x80; &#0; &#xD800; &#1114112;>Safe</v>",
+    "text": "Safe",
+    "speaker": "A € � � �"
+  },
+  {
+    "name": "nonbreaking-voice",
+    "payload": "<v &nbsp;>Hello</v>",
+    "text": "Hello",
+    "speaker": " "
+  },
+  {
+    "name": "long-voice-name",
+    "payload": "<v AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA Alice>Hello</v>",
+    "text": "Hello",
+    "speaker": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA Alice"
+  }
+]
