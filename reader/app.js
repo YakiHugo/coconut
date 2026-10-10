@@ -1671,6 +1671,91 @@ $('passage-previous').onclick=()=>movePassagePage(-1);$('passage-next').onclick=
 $('return-to-passages').onclick=returnToPassages;
 $('passage-toggle-translation').onclick=()=>{passageTranslations=!passageTranslations;renderPassages(active());};
 $('passage-search').onclick=()=>{passageReturn=null;setReadingMode('transcript');$('search').focus();};
+
+// Character shortcuts are opt-out, scoped to reading text, and never become
+// another playback owner. Invoke the existing controls without synthesizing a
+// pointer click that could dismiss an unrelated reading overlay.
+const READING_KEYS_PREFERENCE='coconut-reading-shortcuts-v1';
+let readingKeysEnabled=true,readingKeyComposition=false,keyboardHelpOrigin=null;
+try{readingKeysEnabled=localStorage.getItem(READING_KEYS_PREFERENCE)!=='off';}catch{}
+const readingKeyControls={'keyboard-help-open':'Shift+/',search:'/', 'passage-search':'/',
+ 'skip-back':'J','skip-forward':'L','dock-play':'K','locate-playback':'G','dock-locate':'G'};
+function updateReadingKeyHints(){
+ $('keyboard-shortcuts-enabled').checked=readingKeysEnabled;
+ for(const [id,key] of Object.entries(readingKeyControls)){
+  if(readingKeysEnabled)$(id).setAttribute('aria-keyshortcuts',key);else $(id).removeAttribute('aria-keyshortcuts');
+ }
+ // These shortcuts belong only to the focused search input, and remain usable
+ // when character shortcuts are turned off.
+ $('search').setAttribute('aria-keyshortcuts',readingKeysEnabled?'/ Enter Shift+Enter':'Enter Shift+Enter');
+}
+function hasReadingModal(){
+ return !!document.querySelector('dialog[open]')||[...document.querySelectorAll('[aria-modal="true"]')].some(node=>!node.closest('[hidden],[aria-hidden="true"]'));
+}
+function readingKeyIgnored(event){
+ return readerClosing||document.body.inert||$('reader-workspace').inert||!!$('reader-workspace').closest('[inert]')||
+  event.defaultPrevented||event.repeat||event.isComposing||readingKeyComposition||event.keyCode===229||
+  event.ctrlKey||event.metaKey||event.altKey||event.getModifierState?.('AltGraph')||workspace!=='read'||$('reader-workspace').hidden||!active()||hasReadingModal();
+}
+function readingTextTarget(node){
+ if(document.designMode==='on'||document.body.isContentEditable||document.body.hasAttribute('contenteditable')&&document.body.getAttribute('contenteditable')!=='false')return false;
+ if(!node||node===document||node===document.body||node===document.documentElement)return true;
+ if(!$('reader-workspace').contains(node))return false;
+ // Native controls, ARIA widgets, editable ancestors and shadow hosts retain
+ // their own keyboard behavior. Empty contenteditable is editable too.
+ if(node.closest?.('input,textarea,select,button,a,summary,audio,video,iframe,object,embed,[role],[inert]'))return false;
+ for(let current=node;current&&current!==document.body;current=current.parentElement){
+  if(current.isContentEditable||(current.hasAttribute?.('contenteditable')&&current.getAttribute('contenteditable')!=='false'))return false;
+ }
+ return true;
+}
+function openKeyboardHelp(){
+ if(workspace!=='read'||!active()||hasReadingModal())return;
+ keyboardHelpOrigin={node:document.activeElement,key:active().key};
+ $('keyboard-help').showModal();$('keyboard-help-close').focus({preventScroll:true});
+}
+$('keyboard-help-open').onclick=openKeyboardHelp;
+$('keyboard-help-close').onclick=()=>$('keyboard-help').close();
+$('keyboard-help').addEventListener('close',()=>{
+ if($('keyboard-help').open)return; // A queued close must not undo a newer opening.
+ const origin=keyboardHelpOrigin;keyboardHelpOrigin=null;
+ if(workspace!=='read'||origin?.key!==active()?.key)return;
+ const target=origin.node?.isConnected&&!origin.node.closest?.('[hidden],[inert]')?origin.node:$('keyboard-help-open');
+ target?.focus({preventScroll:true});
+});
+$('keyboard-shortcuts-enabled').onchange=()=>{
+ readingKeysEnabled=$('keyboard-shortcuts-enabled').checked;updateReadingKeyHints();
+ try{localStorage.setItem(READING_KEYS_PREFERENCE,readingKeysEnabled?'on':'off');$('keyboard-preference-status').textContent=readingKeysEnabled?'已启用阅读快捷键。':'已关闭单字符快捷键。';}
+ catch{$('keyboard-preference-status').textContent='本次设置已生效，但浏览器未保存；刷新后可能恢复原设置。';}
+};
+updateReadingKeyHints();
+document.addEventListener('compositionstart',()=>{readingKeyComposition=true;});
+document.addEventListener('compositionend',()=>{readingKeyComposition=false;});
+window.addEventListener('blur',()=>{readingKeyComposition=false;});
+document.addEventListener('keydown',event=>{
+ if(readingKeyIgnored(event))return;
+ if(event.target===$('search')&&event.key==='Enter'){
+  if(!$('search').value.trim()||$('search').closest('[hidden]'))return;
+  event.preventDefault();$(event.shiftKey?'previous-match':'next-match').onclick();return;
+ }
+ if(!readingKeysEnabled||!readingTextTarget(document.activeElement)||!readingTextTarget(event.target)||!readingTextTarget(event.composedPath?.()[0]||event.target))return;
+ const key=event.key.toLowerCase();if(event.shiftKey&&key!=='?')return;
+ let action=null;
+ if(key==='?')action=openKeyboardHelp;
+ else if(key==='/'&&!Coconut.isAudioProject(active()))action=()=>{
+  $('passage-search').onclick();
+  if(active()?.provenance?.kind==='authored_demo'&&!demoToolsExpanded)$('toggle-demo-tools').onclick();
+  $('search').focus();
+ };
+ else{
+  const player=$('source-media').querySelector('audio,video');
+  if(!player||player.error||!Number.isFinite(player.duration)||player.duration<=0)return;
+  const id=({j:'skip-back',l:'skip-forward',k:'dock-play',g:'locate-playback'})[key],control=id&&$(id);
+  if(control&&!control.disabled&&(key!=='g'||playbackSegment()))action=control.onclick;
+ }
+ if(action){event.preventDefault();action();}
+});
+
 $('passage-replay').onclick=()=>{stopRepeating();passagePlayback?.replay();};
 $('passage-continue').onclick=()=>passagePlayback?.continue();
 $('passage-return-playback').onclick=()=>passagePlayback?.returnToPrevious();

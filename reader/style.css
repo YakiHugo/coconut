@@ -808,3 +808,12 @@ body[data-media-docked="true"] .reading-feedback { bottom: 94px; }
 .ai-history-pages { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
 .ai-answer-heading { font-size: 13px; font-weight: 600; margin: 0 0 8px; }
 #ai-history-storage[data-state="unsaved"] { color: #715319; background: #fff7e2; padding: 10px; border-radius: 8px; }
+
+/* A small, native modal keeps keyboard help reachable without a command UI. */
+#keyboard-help{width:min(560px,calc(100vw - 32px));max-height:calc(100dvh - 32px);overflow:auto;box-sizing:border-box}
+.keyboard-help-heading{display:flex;align-items:center;justify-content:space-between;gap:16px}
+.keyboard-help-heading h2{margin:0}.keyboard-help-heading button{flex-shrink:0}
+.keyboard-keys{margin:20px 0}.keyboard-keys>div{display:grid;grid-template-columns:86px minmax(0,1fr);gap:12px;padding:10px 0;border-bottom:1px solid var(--line)}
+.keyboard-keys dt,.keyboard-keys dd{margin:0}.keyboard-keys kbd{font:inherit;font-weight:650;border:1px solid var(--line);border-radius:5px;padding:1px 6px;white-space:nowrap}
+.keyboard-preference{display:flex;align-items:center;gap:8px}.keyboard-preference input{width:auto;margin:0;flex-shrink:0}
+#transcript:focus-visible,#passage-body:focus-visible{outline:2px solid var(--accent);outline-offset:4px}

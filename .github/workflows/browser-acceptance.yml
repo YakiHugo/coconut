@@ -70,6 +70,10 @@ jobs:
         run: node tests/playback-dock-browser.mjs
       - name: Verify explicit listening resume with authored WAV and changed media
         run: node tests/listening-progress-browser.mjs
+      - name: Verify reading shortcuts, search, modal focus and bounded playback with authored media
+        env:
+          COCONUT_UI_SCREENSHOTS: ${{ runner.temp }}/coconut-authored-ui
+        run: node tests/reading-keyboard-browser.mjs
       - name: Verify latest local-file selection and navigation ownership with authored files
         run: node tests/import-order-browser.mjs
       - name: Verify large complete backups, real downloads and native quota recovery
