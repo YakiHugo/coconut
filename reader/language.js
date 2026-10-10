@@ -235,7 +235,7 @@ $('translate-document').onclick=async()=>{
    translationProgress(key,`本机翻译中：${completed}/${pending.length} 段；可以停止后续批次，已完成内容会保存。`);
    const result=await languageApi('translate',{source,target,segments:batch,allow_download:$('download-model').checked});
    if(!Array.isArray(result.translations)||result.translations.length!==batch.length||new Set(result.translations.map(t=>t.id)).size!==batch.length)throw new Error('翻译批次不完整，未覆盖原文');
-   const destination=state.documents.find(d=>d.key===key);if(!destination)throw new Error('原文字稿已关闭');
+   const destination=state.documents.find(d=>d.key===key);if(destination!==doc)throw new Error('原文字稿已移除或更换，本次结果未保存');
    for(const item of result.translations){const original=batch.find(s=>s.id===item.id);const segment=destination.segments.find(s=>s.id===item.id);if(!original||!segment||item.source_text!==original.text||typeof item.text!=='string'||!item.text.trim())throw new Error('翻译片段对应关系无效');}
    for(const item of result.translations){const segment=destination.segments.find(s=>s.id===item.id);if(segment.text!==item.source_text)continue;segment.translations||={};segment.translations[target]={text:item.text,source_text:item.source_text,source_language:source,document_language:documentLanguage,provider:item.provider};completed++;}
    destination.translation_view=target;if(!save())throw new Error('本批译文暂留在此页面，浏览器保存未成功，请立即导出备份；后续请求已停止');if(active()?.key===key)render();
@@ -245,6 +245,7 @@ $('translate-document').onclick=async()=>{
  finally{translating=false;offlineTranslationKey=null;$('ai-consent').checked=false;$('stop-translation').hidden=true;if(active()?.key===key)render();renderLanguage();}
 };
 window.addEventListener('pagehide',stopLanguageBatches);
+window.addEventListener('coconut-document-removed',event=>{if([offlineTranslationKey,questionKey,summaryScope?.key,subscriptionScope?.key].includes(event.detail?.key))stopLanguageBatches();});
 window.addEventListener('coconut-summary-stop',()=>{if(summaryScope)summaryScope.stop=true;if(readingMode==='summary')stopLanguageBatches();});
 window.addEventListener('coconut-workspace-change',event=>{if(event.detail?.workspace!=='read')stopLanguageBatches();});
 // Native details toggle events are queued. Latch real closing clicks before a
@@ -268,7 +269,7 @@ async function runDocumentSummary(doc){
   while(job.results.length<plan.chunks.length||plan.chunks.length>1){
    if(summaryScope.stop||!$('ai-consent').checked)break;
    const destination=state.documents.find(d=>d.key===key);
-   if(!destination||destination.summary_job!==job||!CoconutSummary.current(job,destination))throw new Error('原文已修改或关闭，后续请求已停止；请按新原文重新规划');
+   if(destination!==doc||destination.summary_job!==job||!CoconutSummary.current(job,destination))throw new Error('原文已修改或关闭，后续请求已停止；请按新原文重新规划');
    const index=job.results.length;
    job.status='running';job.in_flight=index;
    if(!save())throw new Error('请求前保存未成功，本次尚未发送；请导出备份');
@@ -276,7 +277,7 @@ async function runDocumentSummary(doc){
    aiProgress(key,index<plan.chunks.length?`正在整理第 ${index+1}/${plan.chunks.length} 批原文；整篇摘要尚未完成。`:'所有原文批次已保存，正在汇总；汇总成功前不产生整篇摘要。');
    const response=await languageApi('ask',request);
    const latest=state.documents.find(d=>d.key===key);
-   if(!latest||latest.summary_job!==job||!CoconutSummary.current(job,latest))throw new Error('请求期间原文已修改，本批结果未保存；旧进度仅供恢复，不能生成当前整篇摘要');
+   if(latest!==doc||latest.summary_job!==job||!CoconutSummary.current(job,latest))throw new Error('请求期间原文已修改，本批结果未保存；旧进度仅供恢复，不能生成当前整篇摘要');
    finalAnswer=CoconutSummary.accept(plan,job,response);
    if(finalAnswer){
     latest.ai_answers||=[];latest.ai_answers.push(finalAnswer);latest.ai_answers=Coconut.retainAnswers(latest.ai_answers);latest.summary_job=null;
@@ -313,7 +314,7 @@ $('ask-ai').onclick=async()=>{
  const key=doc.key;questionKey=key;asking=true;renderLanguage();aiProgress(key,`正在让所选 AI 阅读 ${segments.length} 段；不会切换到付费 API。`);
  try{
   const answer=await languageApi('ask',{question,language:purpose==='summary'?'zh':$('translation-target').value,provider:$('ai-provider').value,segments,consent:true});
-  const destination=state.documents.find(d=>d.key===key);if(!destination)throw new Error('原文字稿已关闭');
+  const destination=state.documents.find(d=>d.key===key);if(destination!==doc)throw new Error('原文字稿已移除或更换，本次结果未保存');
   if(Coconut.answerFreshness({purpose,input_snapshot:{version:1,segments}},destination)!=='current'||purpose==='summary'&&destination.segments.length!==segments.length)throw new Error('请求期间原文已修改，请按新原文重新提问');
   if(typeof answer.answer!=='string'||!Array.isArray(answer.citations)||answer.citations.some(id=>!segments.some(s=>s.id===id)))throw new Error('回答引用无效');
   destination.ai_answers||=[];destination.ai_answers.push({...answer,question,purpose,input_snapshot:{version:1,segments}});destination.ai_answers=Coconut.retainAnswers?Coconut.retainAnswers(destination.ai_answers):destination.ai_answers.slice(-20);const persisted=save();if(typeof renderSummary==='function')renderSummary();
@@ -345,11 +346,11 @@ $('subscription-translate').onclick=async()=>{
    if(watchSurface&&!translationSurfaceOpen())stopSubscription=true;
    if(stopSubscription||!$('ai-consent').checked)break;
    const batch=window.segments;const before=state.documents.find(d=>d.key===key);
-   if(!Coconut.sameCueSnapshot(before,window.snapshot)||JSON.stringify(Coconut.relevantGlossary(before,target,window.snapshot))!==JSON.stringify(window.glossary))throw new Error('原文或所选上下文已修改，未发出本批模型请求，请重新开始');
+   if(before!==doc||!Coconut.sameCueSnapshot(before,window.snapshot)||JSON.stringify(Coconut.relevantGlossary(before,target,window.snapshot))!==JSON.stringify(window.glossary))throw new Error('原文或所选上下文已修改，未发出本批模型请求，请重新开始');
    aiProgress(key,`订阅翻译中：${completed}/${plan.total} 段；上下文仅来自确认的筛选，不购买额度，不回退到API。`);
    const result=await languageApi('translate-subscription',{source,target,provider,segments:batch,context:window.context,glossary:window.glossary,memory:window.memory,consent:true});
    if(!Array.isArray(result.translations)||result.translations.length!==batch.length||result.translations.some((t,i)=>t.id!==batch[i].id||t.source_text!==batch[i].text||typeof t.text!=='string'||!t.text.trim()||t.text.length>12000))throw new Error('订阅结果与目标片段未完整对应，本批不保存');
-   const destination=state.documents.find(d=>d.key===key);if(!destination)throw new Error('原文字稿已关闭');
+   const destination=state.documents.find(d=>d.key===key);if(destination!==doc)throw new Error('原文字稿已移除或更换，本次结果未保存');
    if(!Coconut.sameCueSnapshot(destination,window.snapshot)||JSON.stringify(Coconut.relevantGlossary(destination,target,window.snapshot))!==JSON.stringify(window.glossary))throw new Error('本批原文或上下文已修改，为避免错配，本批全部不保存');
    checkSubscriptionReadingScope();
    const contextId=crypto.randomUUID();destination.translation_contexts||=Object.create(null);destination.translation_contexts[contextId]=window.snapshot;

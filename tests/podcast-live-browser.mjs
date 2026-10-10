@@ -26,7 +26,7 @@ try {
  });
  page.on('pageerror',()=>errors++);
  await page.goto(origin);await page.locator('#podcast-import').waitFor({state:'visible'});
- check('fresh_launch_has_no_automatic_source_or_model_request',calls.length===0&&await page.locator('#library button').count()===0);
+ check('fresh_launch_has_no_automatic_source_or_model_request',calls.length===0&&await page.locator('#library .library-open').count()===0);
  async function discover(url){
   stage='discover_public_source';await page.locator('#video-url').fill(url);
   const response=page.waitForResponse(r=>r.url()===origin+'/api/podcasts/discover'&&r.request().method()==='POST');
@@ -40,7 +40,7 @@ try {
  await page.locator('#video-url').fill('http://127.0.0.1/private-feed');
  await page.locator('#process-url').click();
  await page.waitForFunction(()=>!document.getElementById('process-url').disabled&&!document.getElementById('cancel-podcast').offsetParent);
- check('invalid_source_failure_preserves_empty_shelf',await page.locator('#library button').count()===0&&(await page.locator('#podcast-status').textContent()).length>0);
+ check('invalid_source_failure_preserves_empty_shelf',await page.locator('#library .library-open').count()===0&&(await page.locator('#podcast-status').textContent()).length>0);
  const feed=await discover('https://mp3s.nashownotes.com/pc20rss.xml');
  const episode=feed.episodes?.find(item=>item.transcripts?.some(track=>track.supported&&/^en(?:-|$)/.test(track.language)));
  assert.ok(episode);const track=episode.transcripts.find(item=>item.supported&&/^en(?:-|$)/.test(item.language));
@@ -85,7 +85,7 @@ try {
  const xyRow=page.locator('.podcast-episode').first();await xyRow.getByRole('button',{name:'检查本集文字稿',exact:true}).click();
  await page.waitForFunction(()=>document.getElementById('podcast-status').textContent.includes('没有可用的公开定时文字稿'));
  await page.locator('#audio-project').waitFor({state:'visible'});
- check('no_caption_truthful_state_saves_audio_project',await page.locator('#library button').count()===2&&!calls.includes('media')&&await page.locator('#summary-workspace').isHidden()&&await page.locator('#language-panel').isHidden());
+ check('no_caption_truthful_state_saves_audio_project',await page.locator('#library .library-open').count()===2&&!calls.includes('media')&&await page.locator('#summary-workspace').isHidden()&&await page.locator('#language-panel').isHidden());
  const audioProject=await page.evaluate(()=>{const shelf=JSON.parse(localStorage.getItem('coconut-reader-v1'));return shelf.documents.find(doc=>doc.key===shelf.active);});
  check('audio_project_preserves_real_source_without_transcript',audioProject.project_kind==='audio_only'&&audioProject.podcast_source.episode_id===sample.id&&audioProject.podcast_source.feed_url===xy.feed_url&&audioProject.segments.length===0&&audioProject.ai_answers.length===0);
  await page.locator('#project-note').fill('Coconut live audio project: my unverified listening note.');

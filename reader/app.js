@@ -3,6 +3,33 @@ const $ = (id) => document.getElementById(id);
 const KEY = "coconut-reader-v1";
 let state = { documents: [], active: null };
 let readerClosing = false;
+// One bounded recovery slot, held only in this page so removal frees storage.
+// Never replace it silently or mistake a requested download for a saved backup.
+let removedDocument = null;
+let removalTarget = null;
+let removalFocusKey = null;
+let documentLifecycleRevision = 0;
+const removedDocumentRevisions = new Map();
+// Tombstones retain small identities/digests, never another document-sized trash copy.
+const removedDocumentAliases = [];
+function documentSourceIdentity(doc){return Coconut.audioProjectIdentity(doc)||(doc.source_media?JSON.stringify(doc.source_media):'');}
+async function libraryDocumentSignature(doc){
+ const digest=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(JSON.stringify(Coconut.validate(doc))));
+ return Array.from(new Uint8Array(digest),byte=>byte.toString(16).padStart(2,'0')).join('');
+}
+async function wasRemovedSince(doc,revision,key=doc.key){
+ if((removedDocumentRevisions.get(key)||0)>revision)return true;
+ if(!removedDocumentAliases.some(item=>item.revision>revision))return false;
+ const signature=await libraryDocumentSignature(doc),source=documentSourceIdentity(doc);
+ // Iterate the live list: a removal while a digest settles must also be checked.
+ for(const removed of removedDocumentAliases){
+  if(removed.revision<=revision)continue;
+  if(source&&source===removed.source)return true;
+  const previous=await removed.signature;
+  if(previous===null||previous===signature)return true;
+ }
+ return (removedDocumentRevisions.get(key)||0)>revision;
+}
 let selected = null;
 let notesOnly = false;
 let excerptsOnly = false;
@@ -207,13 +234,13 @@ function el(tag, className, text) {
 	if (text !== undefined) n.textContent = text;
 	return n;
 }
-async function add(doc, canCommit = null, reuseAudioSource = false) {
+async function add(doc, canCommit = null, reuseAudioSource = false, lifecycleRevision = documentLifecycleRevision, sourceKey = doc.key) {
 	const bytes = new TextEncoder().encode(JSON.stringify(doc));
 	const digest = await crypto.subtle.digest("SHA-256", bytes);
 	let key = Array.from(new Uint8Array(digest))
 		.map((x) => x.toString(16).padStart(2, "0"))
 		.join("");
- if(canCommit && !canCommit())throw new Error("导入已取消，书架未改变");
+ if(await wasRemovedSince(doc,lifecycleRevision,key) || (removedDocumentRevisions.get(sourceKey)||0)>lifecycleRevision || canCommit && !canCommit())throw new Error("导入已取消，书架未改变");
  // A repeated source save refreshes recoverable source metadata, preserving
  // user-owned title, language, notes, bookmark IDs and the stable library key.
  const identity=reuseAudioSource?Coconut.audioProjectIdentity(doc):'';
@@ -351,6 +378,107 @@ function goToSegment(id,contextDetour=false,preservePassageReturn=false) {
  row?.scrollIntoView?.({block: alignment, behavior: contextDetour ? "auto" : "smooth"});
 	row?.focus({preventScroll: true});
 }
+// Ordinary library navigation, active removal, and active undo share ownership teardown.
+function resetReaderForDocumentNavigation(){
+ // Flush while the old player owns its own key. Preview clocks never become
+ // the main position, and a same-URL destination still gets new ownership.
+ flushListening(true);
+ cancelLocalImports();passagePlayback?.cancel();stopRepeating();
+ $('source-media').querySelectorAll('audio,video').forEach(player=>player.pause());
+ closeSummaryRequest(false);clearReadingContext();
+ selected=null;pageStart=0;notesOnly=false;excerptsOnly=false;speakerFilter=null;
+ passageReturn=null;passageDocumentKey=null;searchFocusedId=null;$('search').value='';
+}
+function focusLibraryRemoval(key) {
+ const row=[...$('library').children].find(node=>node.dataset.documentKey===key);
+ (row?.querySelector('.library-remove')||$('library-search')).focus();
+}
+function renderRemovalRecovery() {
+ $('removal-recovery').hidden=!removedDocument;
+ $('removal-recovery-title').textContent=removedDocument?'已移除：'+removedDocument.doc.title:'';
+ if(unloadGuardReady)syncUnsavedUnloadGuard();
+}
+function requestLibraryRemoval(doc) {
+ if(!state.documents.includes(doc))return;
+ removalTarget=doc;removalFocusKey=doc.key;
+ $('remove-document-title').textContent=doc.title;
+ $('remove-document-error').textContent='';
+ $('replace-removal-warning').hidden=!removedDocument;
+ $('replace-removal-warning').textContent=removedDocument?'继续移除将结束上一篇“'+removedDocument.doc.title+'”的撤销，且不再保留它的本页副本。可取消，或先导出上一篇备份。':'';
+ $('export-previous-removal').hidden=!removedDocument;
+ $('remove-document-dialog').showModal();$('cancel-removal').focus();
+}
+$('cancel-removal').onclick=()=>{$('remove-document-dialog').close();};
+$('remove-document-dialog').addEventListener('close',()=>{const confirmed=removalTarget===null;removalTarget=null;if(confirmed&&removedDocument)$('undo-removal').focus();else focusLibraryRemoval(removalFocusKey);});
+$('confirm-removal').onclick=()=>{
+ const doc=removalTarget;if(!doc||!state.documents.includes(doc))return;
+ const previous=state,index=state.documents.indexOf(doc);
+ // Clone before changing state: late AI results cannot mutate the recovery copy.
+ const snapshot=JSON.parse(JSON.stringify(doc));
+ state={...state,documents:state.documents.filter(item=>item!==doc),active:state.active===doc.key?null:state.active};
+ if(!state.active)state.active=state.documents[Math.min(index,state.documents.length-1)]?.key||null;
+ if(!save()){
+  state=previous;saveWarning('移除未保存，原书架仍在。请先导出需要保留的内容，再重试。');
+  $('remove-document-error').textContent='未能保存移除，书架未改变。请先备份，再重试。';return;
+ }
+ removedDocument={doc:snapshot,index,wasActive:previous.active===doc.key};
+ documentLifecycleRevision++;removedDocumentRevisions.set(doc.key,documentLifecycleRevision);
+ removedDocumentAliases.push({revision:documentLifecycleRevision,source:documentSourceIdentity(snapshot),signature:libraryDocumentSignature(snapshot).catch(()=>null)});
+ changeMediaSelection(doc.key);
+ if(projectTranscriptTarget?.key===doc.key){projectTranscriptRead++;projectTranscriptTarget=null;}
+ window.dispatchEvent(new CustomEvent('coconut-document-removed',{detail:{key:doc.key}}));
+ if(previous.active===doc.key){
+  resetReaderForDocumentNavigation();projectTranscriptRead++;
+  $('source-media').replaceChildren();$('source-media').hidden=true;listeningSession=null;renderListeningResume();
+  setReadingMode(prefersPassageReading(active())?'passages':'summary');workspace=active()?'read':'add';
+ }
+ const attachment=browserMedia.get(doc.key);if(attachment){browserMedia.delete(doc.key);URL.revokeObjectURL(attachment.url);}
+ removalTarget=null;$('remove-document-dialog').close();render();renderRemovalRecovery();
+ notice('已从保存的书架移除。可在本页撤销或导出这份备份；刷新、关闭或离开页面后不能撤销。','success');
+ $('undo-removal').focus();
+};
+$('undo-removal').onclick=()=>{
+ const recovery=removedDocument;if(!recovery)return;
+ const previous=state;
+ // A new identity object retires callbacks created before removal, even with the same key.
+ const doc=JSON.parse(JSON.stringify(recovery.doc));
+ if(state.documents.some(item=>item.key===doc.key)){notice('书架中已有同编号内容。请导出移除备份，再通过添加文件恢复；不同版本会分别保留。');return;}
+ const documents=[...state.documents];documents.splice(Math.min(recovery.index,documents.length),0,doc);
+ state={...state,documents,active:recovery.wasActive?doc.key:state.active||doc.key};
+ if(!save()){
+  state=previous;saveWarning('撤销尚未保存。移除的完整备份仍在本页，请重试撤销或导出移除备份，暂时不要关闭页面。');
+  notice('撤销未成功，完整内容仍保留在本页恢复区。请导出移除备份，或释放空间后重试。');return;
+ }
+ const changedActive=previous.active!==state.active;
+ removedDocument=null;
+ if(changedActive){
+  resetReaderForDocumentNavigation();
+  workspace=active()?'read':'add';setReadingMode(prefersPassageReading(active())?'passages':'summary');
+ }
+ render();renderRemovalRecovery();
+ if(changedActive&&active()?.key===doc.key&&doc.readingPosition){if(prefersPassageReading(doc))openPassage(doc.readingPosition);else goToSegment(doc.readingPosition);}
+ notice('已撤销移除，并保存完整文字稿、译文、笔记与阅读位置。','success');focusLibraryRemoval(doc.key);
+};
+$('export-removed-document').onclick=()=>{
+ if(!removedDocument)return;let url,link;
+ try{
+  const blob=new Blob([JSON.stringify(removedDocument.doc,null,2)],{type:'application/json'});
+  url=URL.createObjectURL(blob);link=el('a');link.href=url;link.download='coconut-removed-document.json';link.hidden=true;document.body.append(link);link.click();
+  notice('已发起移除备份下载，请打开文件确认已保存。可用“添加文件”恢复；下载不会自动结束撤销。');
+ }catch{notice('移除备份下载失败，完整内容仍在本页，请重试或撤销移除。');}
+ finally{link?.remove();if(url)setTimeout(()=>URL.revokeObjectURL(url),60000);}
+};
+$('finish-removal').onclick=()=>{
+ if(!removedDocument)return;
+ $('finish-removal-dialog').showModal();$('cancel-finish-removal').focus();
+};
+$('export-previous-removal').onclick=()=>$('export-removed-document').onclick();
+$('cancel-finish-removal').onclick=()=>{$('finish-removal-dialog').close();};
+$('finish-removal-dialog').addEventListener('close',()=>{(removedDocument?$('undo-removal'):$('library-search')).focus();});
+$('confirm-finish-removal').onclick=()=>{
+ removedDocument=null;$('finish-removal-dialog').close();renderRemovalRecovery();notice('已结束本页撤销。如果另有 JSON 备份，以后可用“添加文件”恢复。');
+};
+
 function renderLibrary() {
 	$("library").replaceChildren();
 	const query = $("library-search").value.trim().toLocaleLowerCase();
@@ -366,17 +494,8 @@ function renderLibrary() {
 		b.append(el("small", "", Coconut.isAudioProject(d)?"原声项目 · 未导入文字稿 · "+(d.timestamp_bookmarks||[]).length+" 个时间书签":Coconut.time(d.segments.at(-1).end) + " · " + Object.values(d.notes).filter(Boolean).length + " 则笔记" + (bookmark ? " · 读到 " + Coconut.time(bookmark.start) : "")));
 		b.setAttribute("aria-current", d.key === state.active ? "page" : "false");
 		const openDocument = (hit=null) => {
-   clearReadingContext();
-   cancelLocalImports();
-   stopRepeating();$("source-media").querySelector("audio,video")?.pause();closeSummaryRequest(false);
-			state.active = d.key;
-   passageReturn=null;passageDocumentKey=null;
+   resetReaderForDocumentNavigation();state.active=d.key;
    setReadingMode(prefersPassageReading(d)?"passages":"summary");
-   searchFocusedId=null;
-			selected = null;
-			notesOnly = false; excerptsOnly = false; speakerFilter=null;
-			pageStart = 0;
-			$("search").value = "";
 			$("toggle-library").setAttribute("aria-expanded", "false");
 			save();
 			showWorkspace("read");
@@ -386,7 +505,9 @@ function renderLibrary() {
 			else $("title").scrollIntoView?.({block: "start"});
 		};
 		b.onclick=()=>openDocument();
-  entry.append(b);
+  const remove=el('button','library-remove','移除…');remove.type='button';remove.setAttribute('aria-label','从书架移除 '+d.title);
+  remove.onclick=()=>requestLibraryRemoval(d);
+  entry.append(b,remove);
   const hits=Coconut.libraryHits(d,query,$('library-scope').value);
   if(hits.length){
    const list=el('div','library-hits');list.setAttribute('aria-label','匹配预览（最多 3 项）');
@@ -768,7 +889,7 @@ $("import").onclick = () => $("file").click();
 $("file").onchange = async () => {
 	const f = $("file").files[0];
 	if (!f) return;
- const revision = cancelLocalImports("file");
+ const revision = cancelLocalImports("file"), lifecycleRevision=documentLifecycleRevision;
  const startingDocument = state.active, startingWorkspace = workspace;
  const ownsRequest = () => revision === localImportRevision;
  const canCommit = () => ownsRequest() && state.active === startingDocument && workspace === startingWorkspace;
@@ -777,7 +898,11 @@ $("file").onchange = async () => {
 			throw new Error("文件超过15MB，请先拆分文字稿");
 		const text = await f.text();
   if(!canCommit())return;
-		const saved = await add(Coconut.parse(text, f.name), canCommit);
+		const parsed=Coconut.parse(text,f.name);
+  // Exported JSON carries a stable key which validate intentionally omits.
+  // Retain it only as async ownership evidence, never as an imported new key.
+  let sourceKey;try{const raw=JSON.parse(text);if(typeof raw?.key==='string'&&raw.key.length<=200)sourceKey=raw.key;}catch{}
+  const saved = await add(parsed,canCommit,false,lifecycleRevision,sourceKey);
 		if (saved && ownsRequest()) notice("已导入并保存在本机浏览器。没有向服务器上传文件。", "success");
 	} catch (e) {
 		if(canCommit())notice("导入失败：" + e.message);
@@ -1082,7 +1207,7 @@ $("export-library").onclick = () => {
 $("restore-library").onclick = () => $("library-file").click();
 $("library-file").onchange = async () => {
  const file = $("library-file").files[0]; if(!file)return;
- const revision = cancelLocalImports("library-file");
+ const revision = cancelLocalImports("library-file"), lifecycleRevision=documentLifecycleRevision;
  const startingDocument = state.active, startingWorkspace = workspace;
  const ownsRequest = () => revision === localImportRevision;
  const canCommit = () => ownsRequest() && state.active === startingDocument && workspace === startingWorkspace;
@@ -1091,8 +1216,18 @@ $("library-file").onchange = async () => {
   const text = await file.text();
   if(!canCommit())return;
   const backup = JSON.parse(text);
-  const before = state.documents.length;
-  const restored = Coconut.mergeLibraryBackup(state, backup);
+  // Validate first, then await only small identity checks. Merge the latest state
+  // after those awaits so unrelated in-page edits are never overwritten.
+  Coconut.mergeLibraryBackup(state,backup);
+  let checkedRevision;
+  do{
+   checkedRevision=documentLifecycleRevision;
+   for(const doc of backup.documents)if(await wasRemovedSince(doc,lifecycleRevision))throw new Error("读取备份期间有内容被移除，本次恢复已取消；如需重新恢复，请再次选择备份");
+   if(!canCommit())return;
+   // A later document's digest may have yielded while an earlier one was removed.
+   // Recheck the batch at one stable lifecycle revision before the synchronous merge.
+  }while(checkedRevision!==documentLifecycleRevision);
+  const before=state.documents.length,restored=Coconut.mergeLibraryBackup(state,backup);
   // An empty restore stays in Add without looking like new navigation on render.
   clearReadingContext();
   state = restored; selected=null; pageStart=0; notesOnly=false; excerptsOnly=false; speakerFilter=null; $("search").value=""; workspace=active()?"read":"add";
@@ -1672,7 +1807,7 @@ $('detach-reader-media').onclick=()=>{
 };
 
 let projectTranscriptTarget=null,projectTranscriptRead=0;
-$('attach-project-transcript').onclick=()=>{const doc=active();if(Coconut.isAudioProject(doc)){projectTranscriptTarget={key:doc.key,source:JSON.stringify(doc.podcast_source)};$('project-transcript-file').click();}};
+$('attach-project-transcript').onclick=()=>{const doc=active();if(Coconut.isAudioProject(doc)){projectTranscriptTarget={key:doc.key,source:JSON.stringify(doc.podcast_source),document:doc};$('project-transcript-file').click();}};
 $('project-transcript-file').onchange=async()=>{
  const input=$('project-transcript-file'),file=input.files[0],target=projectTranscriptTarget,read=++projectTranscriptRead;projectTranscriptTarget=null;
  if(!file)return;
@@ -1689,7 +1824,7 @@ $('project-transcript-file').onchange=async()=>{
 
 function attachTranscriptToProject(text,target){
  const index=state.documents.findIndex(doc=>doc.key===target.key),original=state.documents[index];
- if(state.active!==target.key||workspace!=='read'||!Coconut.isAudioProject(original)||JSON.stringify(original.podcast_source)!==target.source)throw new Error('目标项目已经切换或更新，本次未附加文字稿，请重新选择');
+ if(original!==target.document||state.active!==target.key||workspace!=='read'||!Coconut.isAudioProject(original)||JSON.stringify(original.podcast_source)!==target.source)throw new Error('目标项目已经切换或更新，本次未附加文字稿，请重新选择');
  const attached={...Coconut.attachProjectTranscript(original,text),key:original.key};
  state.documents[index]=attached;selected=null;pageStart=0;notesOnly=false;excerptsOnly=false;speakerFilter=null;$('search').value='';
  const persisted=save();setReadingMode('transcript');render();return persisted;
@@ -1701,6 +1836,7 @@ function attachTranscriptToProject(text,target){
 // Keep the existing export warnings. Attach only while actual changes remain.
 // https://developer.mozilla.org/en-US/docs/Web/API/Window/beforeunload_event
 function hasUnsavedReaderChanges() {
+ if(removedDocument)return true;
  if(unsavedDocumentChanges)return true;
  if($("edit-dialog").open && editingTarget){
   const doc=state.documents.find(d=>d.key===editingTarget.documentKey);

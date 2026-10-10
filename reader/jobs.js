@@ -112,8 +112,9 @@ function renderJobs(jobs) {
    if (job.playback_retryable) detail.append(el("p", "hint", "文字稿已保留，本地视频尚不可用。重试会复用已完成的文字稿；原站链接仍可使用。"));
    replacement.append(detail);
    if (job.status === "done") replacement.append(jobButton("打开阅读", async () => {
+    const revision=documentLifecycleRevision;
     const doc = Coconut.validate(await jobApi("jobs/" + job.id + "/result"));
-    await add(doc);
+    await add(doc,null,false,revision);
     $("title").scrollIntoView({ behavior: "smooth" });
    }, job.id, "open"));
    if (["queued", "running"].includes(job.status)) replacement.append(jobButton("取消", () => jobApi("jobs/" + job.id + "/cancel", jsonPost()), job.id, "cancel"));
@@ -240,7 +241,7 @@ $("url-form").onsubmit = async (event) => {
 	}
 };
 async function importVideoCaptions(url) {
- const controller=new AbortController(),startingDocument=state.active,startingLanguage=$('caption-language').value;sourceCaptionRequest=controller;sourceCaptionURL=url;
+ const revision=documentLifecycleRevision,controller=new AbortController(),startingDocument=state.active,startingLanguage=$('caption-language').value;sourceCaptionRequest=controller;sourceCaptionURL=url;
  $('process-url').disabled=true;$('cancel-source').hidden=false;
  $('source-route-status').textContent='正在读取公开原语言字幕，不下载音视频、不识别或调用模型。';
  const current=()=>sourceCaptionRequest===controller&&!controller.signal.aborted&&workspace==='add'&&state.active===startingDocument&&$('video-url').value.trim()===url&&$('caption-language').value===startingLanguage;
@@ -253,7 +254,7 @@ async function importVideoCaptions(url) {
    if(result.status==='language_required'){$('caption-language-control').hidden=false;$('caption-language').focus();}
    return;
   }
-  const persisted=await add(Coconut.validate(result.document),current);
+  const persisted=await add(Coconut.validate(result.document),current,false,revision);
   if(persisted)notice('原语言字幕已保存。尚未经人工核对；摘要需单独确认，时间戳可回到原站。未下载媒体或运行识别。');
  }catch(error){if(sourceCaptionRequest===controller)$('source-route-status').textContent=controller.signal.aborted?'已取消获取字幕，书架保留。':error.message;}
  finally{if(sourceCaptionRequest===controller){sourceCaptionRequest=null;sourceCaptionURL=null;$('cancel-source').hidden=true;$('process-url').disabled=false;}}

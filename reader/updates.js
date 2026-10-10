@@ -29,6 +29,7 @@
  // must not stop a request, revoke consent, cancel imports, or close a draft.
  function closeSnapshot(){
   const reasons=[];
+  if(removedDocument)reasons.push('移除备份仅在本页，关闭后无法撤销；可以撤销或导出备份后再关闭');
   if(hasUnsavedReaderChanges())reasons.push('文字稿或笔记有未保存修改');
   if(glossaryDirty()||glossaryDrafts.size>0)reasons.push('术语表有未保存修改');
   if(button('audio-bookmark-time').value.trim()||button('audio-bookmark-note').value.trim()||
@@ -69,7 +70,7 @@
  };
  // Returning false always keeps the window and original user data open.
  window.coconutPrepareUpdate=(lock=false)=>{
-  if(document.querySelector('dialog[open]')||storageBlocked||!document.getElementById('save-status').hidden||glossaryDirty()||glossaryDrafts.size>0||pendingMediaDocument||
+  if(removedDocument||document.querySelector('dialog[open]')||storageBlocked||!document.getElementById('save-status').hidden||glossaryDirty()||glossaryDrafts.size>0||pendingMediaDocument||
      [...document.querySelectorAll('input[type="file"]')].some(input=>input.files.length>0)||
      document.getElementById('audio-bookmark-time').value.trim()||document.getElementById('audio-bookmark-note').value.trim()||
      document.getElementById('ai-question').value.trim()||

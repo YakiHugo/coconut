@@ -789,9 +789,16 @@ body[data-media-docked="true"] .reading-feedback { bottom: 94px; }
  body:has(#notes-panel:not([hidden])) .reading-feedback { display: none; }
 }
 
-.library-entry { display: grid; grid-template-columns: minmax(0, 1fr) auto; min-width: 0; }
+.library-entry { display: grid; grid-template-columns: minmax(0, 1fr) auto; min-width: 0; align-items: center; }
 .library-hits { grid-column: 1 / -1; display: grid; gap: 2px; padding: 0 5px 8px; }
 #library .library-hit { font-size: 12px; line-height: 1.6; border-left: 2px solid var(--line); border-radius: 0 6px 6px 0; }
 .library-hit-preview { display: block; white-space: pre-wrap; }
 .library-hit mark { background: #f5e5a2; color: inherit; }
 #library button:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
+/* Library removal is an explicit secondary action; no nested buttons. */
+#library .library-remove { font-size: 11px; padding: 9px 7px; color: var(--muted); }
+.removal-recovery { margin: 14px 0; padding: 12px; border: 1px solid var(--accent); border-radius: 10px; background: #fff; overflow-wrap: anywhere; }
+.removal-recovery strong { display: block; font-size: 13px; }
+.removal-recovery button { display: block; width: 100%; margin-top: 7px; font-size: 12px; }
+#remove-document-dialog, #finish-removal-dialog { max-width: min(480px, calc(100vw - 32px)); }
+#remove-document-dialog p, #finish-removal-dialog p { overflow-wrap: anywhere; }
