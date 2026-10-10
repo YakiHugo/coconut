@@ -121,6 +121,24 @@ test('compact-height note editing pauses a bounded preview and keeps its return 
  }finally{await env.close();}
 });
 
+test('compact note pause settles through the asynchronous media event without losing its preview return',async()=>{
+ const env=setup();try{await load(env);const player=await media(env),{$,w}=env;w.happyDOM.setViewport({width:390,height:480});
+  passages(env)[0].querySelector('.passage-listen').click();await new Promise(resolve=>setTimeout(resolve,0));
+  passages(env)[0].querySelector('.passage-details').click();
+  // HTMLMediaElement.pause changes paused immediately and queues its event.
+  // Do not let the synchronous HappyDOM fixture conceal that observable gap.
+  let dispatchPause;
+  player.pause=()=>{if(!player.paused){player.paused=true;dispatchPause=()=>player.dispatchEvent(new w.Event('pause'));}};
+  cue(env,'split-0').querySelector('.note-button').click();
+  assert.equal(player.paused,true);assert.equal($('notes-panel').hidden,false);
+  assert.equal($('passage-playback-controls').dataset.state,'playing','the queued pause event has not yet published');
+  assert.equal(typeof dispatchPause,'function');dispatchPause();
+  assert.equal($('passage-playback-controls').dataset.state,'paused');
+  $('close-note').click();assert.equal($('passage-playback-controls').hidden,false);assert.equal($('passage-return-playback').hidden,false);
+  assert.equal(player.paused,true);
+ }finally{await env.close();}
+});
+
 test('page lifecycle cancellation does not leave a restored page with an unusable listening controller',async()=>{
  const env=setup();try{await load(env);const player=await media(env),{$,w}=env;
   passages(env)[0].querySelector('.passage-listen').click();await new Promise(resolve=>setTimeout(resolve,0));w.dispatchEvent(new w.Event('pagehide'));
@@ -205,5 +223,20 @@ test('success feedback shares the playback stack while failures return to the pe
   $('passage-stop').click();assert.equal(player.paused,true);$('dismiss-notice').click();assert.equal($('notice').hidden,true);assert.equal($('notice-shell').parentElement,$('notice-home'));
   Object.defineProperty($('file'),'files',{configurable:true,value:[{name:'broken.json',size:2,text:async()=>'{bad'}]});await $('file').onchange();
   assert.equal($('notice').hidden,false);assert.equal($('notice-shell').parentElement,$('notice-home'));assert.equal($('dismiss-notice').hidden,true);
+ }finally{await env.close();}
+});
+
+
+test('a success notice can expire during compact note editing without clearing the paused preview or returning on close',async()=>{
+ const env=setup();try{const {$,w}=env,timers=[];const schedule=w.setTimeout.bind(w);
+  w.setTimeout=(callback,delay,...args)=>{if(delay===5000){timers.push(callback);return schedule(()=>{},delay);}return schedule(callback,delay,...args);};
+  await load(env);const player=await media(env);w.happyDOM.setViewport({width:390,height:480});
+  passages(env)[0].querySelector('.passage-listen').click();await new Promise(resolve=>setTimeout(resolve,0));
+  passages(env)[0].querySelector('.passage-details').click();cue(env,'split-0').querySelector('.note-button').click();
+  assert.equal($('notice').dataset.kind,'success');assert.equal($('notice').hidden,false);assert.equal(player.paused,true);
+  timers.at(-1)();assert.equal($('notice').hidden,true);assert.equal($('notice').dataset.kind,'');
+  assert.equal($('passage-playback-controls').dataset.state,'paused');assert.equal($('notes-panel').hidden,false);
+  $('close-note').click();assert.equal($('notice').hidden,true);assert.equal($('notice-shell').parentElement,$('notice-home'));
+  assert.equal($('passage-playback-controls').hidden,false);assert.equal($('passage-return-playback').hidden,false);assert.equal(player.paused,true);
  }finally{await env.close();}
 });
