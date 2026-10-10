@@ -1000,3 +1000,16 @@ body[data-media-docked="true"] .reading-feedback { bottom: 94px; }
 .media-timing-fields, .media-timing-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
 .media-timing-fields label { display: grid; gap: 4px; min-width: 0; max-width: 100%; }
 .media-timing-fields input { width: 9rem; }
+
+/* An opt-in notebook, keeping the existing reading surface quiet. */
+.library-notebook{width:min(720px,calc(100vw - 32px));max-height:85dvh;overflow:auto;box-sizing:border-box}
+.library-notebook input[type=search]{width:100%;box-sizing:border-box}
+#notebook-captures{padding-left:1.5rem}
+.notebook-capture{padding:1rem 0;border-bottom:1px solid var(--line);overflow-wrap:anywhere}
+.notebook-capture label{display:flex;align-items:baseline;gap:.5rem}
+.notebook-preview{display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;white-space:pre-wrap}
+.notebook-content{white-space:pre-wrap;overflow-wrap:anywhere}
+.library-notebook nav{display:flex;gap:.5rem;margin:1rem 0}
+
+#open-library-notebook,#return-library-notebook{font-size:12px;background:transparent;color:var(--muted);text-align:left;margin-top:6px}
+@media(max-width:760px){#open-library-notebook,#return-library-notebook{grid-column:1 / -1;margin:0}.library-notebook button{min-height:44px}}

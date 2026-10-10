@@ -839,6 +839,69 @@ $('library-page-form').onsubmit=event=>{
  libraryPage=page-1;renderLibrary();libraryPageFocus();$('library-page-number').value=String(libraryPage+1);
 };
 $('library-show-active').onclick=()=>{renderLibrary(state.active);const card=libraryCards.get(state.active);$('toggle-library').setAttribute('aria-expanded','true');card?.open.focus();};
+// This modal deliberately leaves the reader, selection and media untouched.
+const notebookSelection=new Set();
+let notebookPage=0,notebookReturn=null,notebookOpener=null;
+const NOTEBOOK_PAGE_SIZE=30;
+function renderLibraryNotebook(){
+ const captures=Coconut.libraryCaptures(state.documents,$('notebook-search').value,$('notebook-kind').value);
+ for(const key of notebookSelection)if(!state.documents.some(doc=>doc.key===key))notebookSelection.delete(key);
+ notebookPage=Math.min(notebookPage,Math.max(0,Math.ceil(captures.length/NOTEBOOK_PAGE_SIZE)-1));
+ const start=notebookPage*NOTEBOOK_PAGE_SIZE,host=$('notebook-captures');host.replaceChildren();
+ $('notebook-status').textContent=captures.length?`${start+1}–${Math.min(start+NOTEBOOK_PAGE_SIZE,captures.length)} / ${captures.length} 条记录`:'没有匹配的记录。阅读时摘录原话或记下笔记后，会在这里出现。';
+ $('notebook-previous').disabled=notebookPage===0;$('notebook-next').disabled=start+NOTEBOOK_PAGE_SIZE>=captures.length;
+ for(const capture of captures.slice(start,start+NOTEBOOK_PAGE_SIZE)){
+  const doc=state.documents.find(doc=>doc.key===capture.documentKey),row=el('li','notebook-capture');row.dataset.captureKey=capture.key;
+  const source=capture.type==='cue'?doc.segments.find(cue=>cue.id===capture.id):capture.type==='bookmark'?doc.timestamp_bookmarks.find(item=>item.id===capture.id):doc;
+  const label=el('label'),check=el('input');check.type='checkbox';check.checked=notebookSelection.has(doc.key);check.setAttribute('aria-label','选择篇目 '+doc.title);check.onchange=()=>{check.checked?notebookSelection.add(doc.key):notebookSelection.delete(doc.key);syncNotebookSelection();};label.append(check,document.createTextNode(doc.title));row.append(label);
+  row.append(el('p','hint',(capture.type==='cue'?(capture.excerpt?'摘录':'片段')+(Coconut.hasNoteContent(capture.note)?' · 笔记':''):capture.type==='project-note'?'项目笔记':'时间书签')+(capture.time===null?'':' · '+Coconut.time(capture.time))));
+  const details=el('details'),summary=el('summary','','查看完整记录与来源');details.append(summary);
+  if(capture.text){row.append(el('p','notebook-preview',capture.text));details.append(el('p','notebook-content',capture.text));}
+  if(capture.note){row.append(el('p','notebook-preview',capture.note));details.append(el('p','notebook-content','我的笔记：\n'+capture.note));}
+  details.append(el('p','hint','文档标识：'+doc.key+' · '+capture.type+' · '+capture.id));
+  details.append(el('p','hint',doc.local_media_source?'本地媒体：'+doc.local_media_source.name:(doc.source_url||doc.podcast_source?.media_url||'未关联原站链接；可打开原位置核对。')));
+  if(capture.type==='cue'){
+   const cue=doc.segments.find(cue=>cue.id===capture.id),translation=cue.translations?.[doc.translation_view];
+   if(translation)details.append(el('p','notebook-content',Coconut.translationCurrent(cue,doc,translation)?'译文（'+doc.translation_view+'；'+(translation.provider==='user'?'用户自己写的译文':translation.manual_review?'用户已核对':'机器生成，需核对')+'）：\n'+translation.text:'译文已过期，请在原文中核对。'));
+   if(cue.original_text!==undefined&&cue.original_text!==cue.text)details.append(el('p','notebook-content','修正前文字稿：\n'+cue.original_text));
+  }
+  const open=el('button','notebook-open','打开原位置');open.type='button';open.onclick=()=>{
+   const sourceCurrent=capture.type==='cue'?doc.segments.includes(source)&&source.text===capture.text&&source.start===capture.time:capture.type==='bookmark'?doc.timestamp_bookmarks.includes(source)&&source.time===capture.time:Coconut.hasNoteContent(doc.project_note);
+   if(pendingStructuralDocuments.has(doc.key)||!state.documents.includes(doc)||!sourceCurrent){renderLibraryNotebook();$('notebook-status').textContent='这条记录的来源已变动，请从更新后的笔记本重新选择。';$('notebook-search').focus();return;}
+   notebookReturn={key:capture.key,scroll:$('library-notebook').scrollTop};$('library-notebook').close();
+   resetReaderForDocumentNavigation();selectActiveDocument(doc.key);setReadingMode('transcript');showWorkspace('read');render();
+   openLibraryHit({kind:capture.type==='cue'?(Coconut.hasNoteContent(capture.note)?'note':'text'):capture.type,id:capture.id});
+   $('return-library-notebook').hidden=false;
+  };row.append(details,open);host.append(row);
+ }
+ syncNotebookSelection();
+}
+function syncNotebookSelection(){
+ for(const row of $('notebook-captures').children){const key=JSON.parse(row.dataset.captureKey)[0];row.querySelector('input').checked=notebookSelection.has(key);}
+ $('notebook-export-scope').textContent='已选 '+notebookSelection.size+' 篇；导出所选篇目的全部记录（包括当前搜索未显示的记录）。';
+ $('notebook-export').disabled=notebookSelection.size===0;
+}
+function openLibraryNotebook(returning=false){
+ notebookOpener=document.activeElement;renderLibraryNotebook();$('library-notebook').showModal();
+ const row=returning&&notebookReturn?[...$('notebook-captures').children].find(row=>row.dataset.captureKey===notebookReturn.key):null;
+ (row?.querySelector('.notebook-open')||$('notebook-search')).focus({preventScroll:true});
+ if(returning&&notebookReturn)$('library-notebook').scrollTop=notebookReturn.scroll;
+}
+$('open-library-notebook').onclick=()=>openLibraryNotebook();
+$('return-library-notebook').onclick=()=>openLibraryNotebook(true);
+$('notebook-close').onclick=()=>{$('library-notebook').close();notebookOpener?.focus?.();};
+for(const id of ['notebook-search','notebook-kind'])$(id)[id==='notebook-search'?'oninput':'onchange']=()=>{notebookPage=0;renderLibraryNotebook();};
+for(const [id,delta] of [['notebook-previous',-1],['notebook-next',1]])$(id).onclick=()=>{notebookPage+=delta;renderLibraryNotebook();$('notebook-captures').querySelector('.notebook-open')?.focus();};
+$('notebook-clear-selection').onclick=()=>{notebookSelection.clear();syncNotebookSelection();};
+$('notebook-export').onclick=()=>{
+ let url,link;
+ try{
+  renderLibraryNotebook();if(!notebookSelection.size)return;
+  url=URL.createObjectURL(new Blob([Coconut.libraryNotebookMarkdown(state.documents,notebookSelection)],{type:'text/markdown;charset=utf-8'}));
+  link=el('a');link.href=url;link.download='coconut-library.notes.md';link.hidden=true;document.body.append(link);link.click();
+  notice('已发起所选篇目全部记录的 Markdown 下载，请检查下载记录。完整恢复仍需 JSON 备份。','success');
+ }catch{notice('笔记本下载失败，请重试或使用书架备份。');}finally{link?.remove();if(url)setTimeout(()=>URL.revokeObjectURL(url),1000);}
+};
 function openLibraryHit(hit) {
  if(hit.kind==='text'||hit.kind==='note'){
   goToSegment(hit.id,true);
