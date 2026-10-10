@@ -37,7 +37,7 @@ for(const fixture of subtitleFixtures)test(`${fixture.format} file handler prese
   assert.equal(restored.stored().documents[0].segments[1].original_text,expectedCues[1].text);
   $('subtitle-format').value=fixture.format;$('export-subtitles').click();const subtitles=await blobs.pop().text();
   assert.ok(!subtitles.includes(note));await restored.choose('roundtrip.'+fixture.format,subtitles);
-  const roundtrip=restored.stored().documents.find(d=>d.key===restored.stored().active);
+  const roundtrip=restored.stored().documents.find(d=>d.key===restored.w.sessionStorage.getItem('coconut-reader-active-v1'));
   assert.deepEqual(cueSnapshot(roundtrip),cueSnapshot(current));assert.deepEqual(roundtrip.notes,{});
  }finally{await restored?.w.happyDOM.close();await w.happyDOM.close();}
 });
@@ -61,6 +61,6 @@ test('VTT file import enables speaker filtering and keeps voices through export 
   // Active speaker filtering never narrows the exported document.
   assert.equal(restored.stored().documents[0].segments.length,3);
   $('export').click();await restored.choose('voices-backup.json',await blobs.pop().text());
-  const state=restored.stored();assert.deepEqual(state.documents.find(doc=>doc.key===state.active).segments,before);
+  const state=restored.stored();assert.deepEqual(state.documents.find(doc=>doc.key===restored.w.sessionStorage.getItem('coconut-reader-active-v1')).segments,before);
  }finally{await restored?.w.happyDOM.close();await w.happyDOM.close();}
 });

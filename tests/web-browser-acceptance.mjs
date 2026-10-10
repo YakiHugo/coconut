@@ -166,7 +166,7 @@ try {
   check(label+'_fragment_search_is_one_bilingual_result',await page.locator('.segment').count()===1&&await target.locator('.translation').count()===1);
   await target.locator('.context-button').click();
   check(label+'_context_shows_actual_adjacent_source',await page.locator('#reading-context').isVisible()&&await page.locator('.segment').count()<=100&&await page.locator('.segment[data-segment-id="split-1749"] .words').textContent()===split.segments[1749].text&&await page.locator('.segment[data-segment-id="split-1751"] .words').textContent()===split.segments[1751].text);
-  check(label+'_context_preserves_reading_bookmark',await page.evaluate(()=>{const s=JSON.parse(localStorage.getItem('coconut-reader-v1'));return s.documents.find(d=>d.key===s.active).readingPosition;})==='split-19');
+  check(label+'_context_preserves_reading_bookmark',await page.evaluate(()=>{const s=JSON.parse(localStorage.getItem('coconut-reader-v1'));return s.documents.find(d=>d.key===sessionStorage.getItem('coconut-reader-active-v1')).readingPosition;})==='split-19');
   // Do not scroll from the test: the product jump itself must settle on the
   // intended fragment, not merely mount it somewhere in a 100-cue DOM window.
   const contextViewport=await page.evaluate(async()=>{

@@ -27,7 +27,7 @@ async function importDocument(w,doc,inputId='file'){
  const input=w.document.getElementById(inputId),text=JSON.stringify(doc);
  Object.defineProperty(input,'files',{configurable:true,value:[{name:'authored-history.json',size:Buffer.byteLength(text),text:async()=>text}]});await input.onchange();
 }
-const storedDocument=w=>JSON.parse(w.localStorage.getItem(KEY)).documents.find(d=>d.key===JSON.parse(w.localStorage.getItem(KEY)).active);
+const storedDocument=w=>JSON.parse(w.localStorage.getItem(KEY)).documents.find(d=>d.key===w.sessionStorage.getItem('coconut-reader-active-v1'));
 function captureDownloads(w){
  const blobs=[];w.URL.createObjectURL=blob=>{blobs.push(blob);return 'blob:authored-history';};w.URL.revokeObjectURL=()=>{};w.HTMLAnchorElement.prototype.click=function(){};
  return blobs;

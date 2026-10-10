@@ -82,16 +82,16 @@ for(const failure of ['read','parse'])for(const newKind of ['file','restore'])te
 test('restore remains additive and backup.active remains authoritative after neutral reader actions',async()=>{
  const {w,$,choose,library}=setup(),read=deferred();let pending;
  try{
-  await choose('file',source('Existing'));const original=library(),data={format:'coconut-library',version:1,...original};
+  await choose('file',source('Existing'));const original=library(),originalActive=w.sessionStorage.getItem('coconut-reader-active-v1'),data={format:'coconut-library',version:1,...original,active:originalActive};
   pending=choose('restore',data,{text:()=>read.promise});$('mode-transcript').click();w.document.querySelector('.note-button').click();$('note').value='Latest live note';$('note').dispatchEvent(new w.Event('input'));
   $('search').value='Authored';$('search').dispatchEvent(new w.Event('input'));$('filter-notes').click();$('clear-search').click();$('mode-summary').click();
   for(const [button,input] of [['import','file'],['restore-library','library-file']]){$(button).click();$(input).dispatchEvent(new w.Event('cancel'));Object.defineProperty($(input),'files',{configurable:true,value:[]});await $(input).onchange();}
   w.URL.createObjectURL=()=> 'blob:authored-backup';w.URL.revokeObjectURL=()=>{};$('export-library').click();
-  read.resolve(JSON.stringify(data));await pending;const after=library();
+  read.resolve(JSON.stringify(data));await pending;const after=library(),afterActive=w.sessionStorage.getItem('coconut-reader-active-v1');
   assert.equal(after.documents.length,2,'a changed live document and its backup are separately retained');
-  assert.equal(after.documents.find(doc=>doc.key===original.active).notes.cue,'Latest live note');
-  assert.notEqual(after.active,original.active);assert.equal(after.documents.find(doc=>doc.key===after.active).notes.cue,'Private note for Existing');
-  assert.match($('notice').textContent,/已恢复 1 份文字稿/);await choose('restore',data);assert.equal(library().documents.length,2);assert.equal(library().active,after.active);assert.match($('notice').textContent,/已恢复 0 份文字稿/);
+  assert.equal(after.documents.find(doc=>doc.key===originalActive).notes.cue,'Latest live note');
+  assert.notEqual(afterActive,originalActive);assert.equal(after.documents.find(doc=>doc.key===afterActive).notes.cue,'Private note for Existing');
+  assert.match($('notice').textContent,/已恢复 1 份文字稿/);await choose('restore',data);assert.equal(library().documents.length,2);assert.equal(w.sessionStorage.getItem('coconut-reader-active-v1'),afterActive);assert.match($('notice').textContent,/已恢复 0 份文字稿/);
  }finally{read.resolve('{}');await pending;await w.happyDOM.close();}
 });
 
@@ -118,7 +118,7 @@ test('an empty backup succeeds in an empty library without losing its completion
  const {w,$,choose,library}=setup();
  try{
   await choose('restore',{format:'coconut-library',version:1,documents:[],active:null});
-  assert.deepEqual(library(),{documents:[],active:null});assert.equal(w.document.body.dataset.workspace,'add');
+  assert.deepEqual(library(),{documents:[]});assert.equal(w.sessionStorage.getItem('coconut-reader-active-v1'),null);assert.equal(w.document.body.dataset.workspace,'add');
   assert.match($('notice').textContent,/已恢复 0 份文字稿/);assert.equal($('library-file').value,'');
  }finally{await w.happyDOM.close();}
 });

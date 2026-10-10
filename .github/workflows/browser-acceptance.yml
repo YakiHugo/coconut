@@ -78,6 +78,8 @@ jobs:
         run: node tests/import-order-browser.mjs
       - name: Verify large complete backups, real downloads and native quota recovery
         run: node tests/backup-roundtrip-browser.mjs
+      - name: Verify per-window reading selection, no-content-write navigation and actual conflict recovery downloads
+        run: node tests/window-selection-browser.mjs
       - name: Verify native reload protection after user activation with authored reading changes
         run: node tests/reader-unload-browser.mjs
       - name: Verify native SRT and VTT import, notes, failed files and actual download recovery

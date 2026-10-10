@@ -25,7 +25,7 @@ async function load(env, fixture) {
 }
 const rows = env => [...env.$('transcript').querySelectorAll('.segment')];
 const row = (env, id) => rows(env).find(node => node.dataset.segmentId === id);
-const saved = env => {const state = JSON.parse(env.w.localStorage.getItem(KEY)); return state.documents.find(doc => doc.key === state.active);};
+const saved = env => {const state = JSON.parse(env.w.localStorage.getItem(KEY)); return state.documents.find(doc => doc.key === env.w.sessionStorage.getItem('coconut-reader-active-v1'));};
 const type = (env, id, value) => {env.$(id).value = value; env.$(id).oninput();};
 
 test('duration uses the latest end, never sums overlaps or rewrites source ordering and times', () => {

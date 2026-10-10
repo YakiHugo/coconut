@@ -71,7 +71,7 @@ try{
  const beforeRetry=await stored();await choose('Successful retry');await finished(9);assert.deepEqual(await stored(),beforeRetry);
  check('same_file_retry_remains_idempotent',true);check('native_input_is_reset_after_current_request',await page.locator('#file').evaluate(input=>input.files.length===0));
 
- stage='old_restore_new_file';const backup={format:'coconut-library',version:1,...await stored()};
+ stage='old_restore_new_file';const backup={format:'coconut-library',version:1,...await stored(),active:await page.evaluate(()=>sessionStorage.getItem('coconut-reader-active-v1'))};
  const restore=()=>page.locator('#library-file').setInputFiles({name:'authored-backup.json',mimeType:'application/json',buffer:Buffer.from(JSON.stringify(backup))});
  await page.evaluate(()=>{window.importProbe.heldReadName='authored-backup.json';});await restore();await page.waitForFunction(()=>!!window.importProbe.releaseRead);
  await choose('New file after restore');await finished(10);await page.locator('#mode-transcript').click();await page.locator('.note-button').click();await page.locator('#note').fill('Keep the new file note open');
@@ -80,7 +80,7 @@ try{
  check('stale_restore_cannot_reopen_backup_active',await page.locator('#title').textContent()==='New file after restore');
  check('stale_restore_preserves_new_file_note_and_notice',await page.locator('#notes-panel').isVisible()&&await page.locator('#note').inputValue()==='Keep the new file note open'&&await page.locator('#notice').textContent()===newFileNotice);
  stage='explicit_restore_retry';await restore();await finished(12);const restored=await stored();
- check('uninterrupted_restore_selects_backup_active',await page.locator('#title').textContent()==='Successful retry'&&restored.active===backup.active);
+ check('uninterrupted_restore_selects_backup_active',await page.locator('#title').textContent()==='Successful retry'&&await page.evaluate(()=>sessionStorage.getItem('coconut-reader-active-v1'))===backup.active);
  check('uninterrupted_restore_keeps_newer_documents_and_notes',restored.documents.length===afterNewFile.documents.length&&restored.documents.find(doc=>doc.title==='New file after restore').notes.cue==='Keep the new file note open');
  await restore();await finished(13);assert.deepEqual(await stored(),restored);check('explicit_restore_retry_remains_idempotent',true);
  stage='downloaded_document_roundtrip';

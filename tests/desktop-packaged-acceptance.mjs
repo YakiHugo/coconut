@@ -77,7 +77,7 @@ async function close(){
 
 async function stored(page){return page.evaluate(()=>{
  const shelf=JSON.parse(localStorage.getItem('coconut-reader-v1')||'null');
- return shelf?.documents.find(doc=>doc.key===shelf.active)||null;
+ return shelf?.documents.find(doc=>doc.key===sessionStorage.getItem('coconut-reader-active-v1'))||null;
 });}
 async function importFile(page,filename){
  stage='file_chooser_import';await page.locator('#add-content').click();

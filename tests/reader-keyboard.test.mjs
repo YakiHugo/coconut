@@ -162,7 +162,7 @@ test('native close and inert locks reject body/document shortcuts until release'
 
 
 const input=(env,node,value)=>{node.value=value;node.dispatchEvent(new env.w.Event('input',{bubbles:true}));};
-const checkpoint=env=>JSON.parse(env.w.localStorage.getItem('coconut-listening-v1:'+saved(env).active));
+const checkpoint=env=>JSON.parse(env.w.localStorage.getItem('coconut-listening-v1:'+env.w.sessionStorage.getItem('coconut-reader-active-v1')));
 for(const native of [false,true])test(`${native?'native':'Web'} unsaved glossary and bookmark drafts survive keyboard navigation and help`,async()=>{
  const env=setup({native});try{const {w,$,press}=env,doc={...fixture(),project_note:'Saved project note',timestamp_bookmarks:[{id:'first',time:10,note:'Saved bookmark'}]},m=await media(env,doc);
  Object.defineProperty($('file'),'files',{configurable:true,value:[]});

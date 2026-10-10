@@ -18,7 +18,7 @@ function setup(saved){
 async function load(env,fixture=passageReadingFixture()){
  const text=JSON.stringify(fixture);Object.defineProperty(env.$('file'),'files',{configurable:true,value:[{name:'authored.json',size:Buffer.byteLength(text),text:async()=>text}]});await env.$('file').onchange();return fixture;
 }
-function saved(env){const shelf=JSON.parse(env.w.localStorage.getItem(key));return shelf.documents.find(doc=>doc.key===shelf.active);}
+function saved(env){const shelf=JSON.parse(env.w.localStorage.getItem(key));return shelf.documents.find(doc=>doc.key===env.w.sessionStorage.getItem('coconut-reader-active-v1'));}
 const passages=env=>[...env.$('passage-body').querySelectorAll('.passage')];
 const cue= (env,id)=>env.w.document.querySelector('.segment[data-segment-id="'+id+'"]');
 async function media(env){

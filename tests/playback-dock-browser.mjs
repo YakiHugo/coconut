@@ -83,7 +83,7 @@ try{
  check('compact_note_footer_can_be_scrolled_into_view',true);await capture('04-compact-note-footer');
  await page.locator('#return-excerpt').click();
  await page.waitForFunction(id=>{const row=document.activeElement;if(row.dataset?.segmentId!==id)return false;const words=row.querySelector('.words').getBoundingClientRect(),dock=document.querySelector('#media-dock').getBoundingClientRect();return words.top>=0&&words.bottom<dock.top;},noteCue);
- check('compact_note_return_is_operable_and_preserves_saved_note',await page.locator('#notes-panel').isHidden()&&await page.evaluate(id=>{const shelf=JSON.parse(localStorage.getItem('coconut-reader-v1'));return shelf.documents.find(doc=>doc.key===shelf.active).notes[id]==='留在当前原声旁边的想法。';},noteCue));
+ check('compact_note_return_is_operable_and_preserves_saved_note',await page.locator('#notes-panel').isHidden()&&await page.evaluate(id=>{const shelf=JSON.parse(localStorage.getItem('coconut-reader-v1'));return shelf.documents.find(doc=>doc.key===sessionStorage.getItem('coconut-reader-active-v1')).notes[id]==='留在当前原声旁边的想法。';},noteCue));
  await page.setViewportSize({width:390,height:844});await page.locator('#dock-return').click();
  await page.waitForFunction(()=>{const p=document.querySelector('audio'),r=p.getBoundingClientRect();return r.top>=0&&r.bottom<=innerHeight;});
  check('return_restores_native_player_without_autoplay',await page.locator('#media-dock').isHidden()&&await page.locator('audio').evaluate(p=>p.paused&&p===document.activeElement));

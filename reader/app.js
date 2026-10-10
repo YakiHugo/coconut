@@ -1,6 +1,8 @@
 "use strict";
 const $ = (id) => document.getElementById(id);
 const KEY = "coconut-reader-v1";
+const ACTIVE_KEY = "coconut-reader-active-v1";
+const LAST_ACTIVE_KEY = "coconut-reader-last-active-v1";
 let state = { documents: [], active: null };
 let readerClosing = false;
 // One bounded recovery slot, held only in this page so removal frees storage.
@@ -245,6 +247,27 @@ try {
 		"上次保存的数据无法读取，已停止写入以保留原数据。本次内容可继续阅读，请导出备份后再关闭页面。",
 	);
 }
+// Selection belongs to this window. The small shared hint is only a default
+// for a new window; neither preference is part of content conflict detection.
+// Old libraries remain a fallback, and JSON backups explicitly include active.
+function rememberActiveDocument() {
+ try {
+  if(state.active===null)sessionStorage.removeItem(ACTIVE_KEY);
+  else sessionStorage.setItem(ACTIVE_KEY,state.active);
+ } catch { /* Reading and content saves still work when session storage is denied. */ }
+ try {
+  if(state.active===null)localStorage.removeItem(LAST_ACTIVE_KEY);
+  else localStorage.setItem(LAST_ACTIVE_KEY,state.active);
+ } catch { /* A preference failure is not a failed document save. */ }
+}
+function selectActiveDocument(key) {
+ state.active=state.documents.some(doc=>doc.key===key)?key:state.documents[0]?.key||null;
+ rememberActiveDocument();
+}
+let windowActive=null,lastActive=null;
+try { windowActive=sessionStorage.getItem(ACTIVE_KEY); } catch {}
+try { lastActive=localStorage.getItem(LAST_ACTIVE_KEY); } catch {}
+selectActiveDocument([windowActive,lastActive,state.active].find(key=>state.documents.some(doc=>doc.key===key)));
 // Compare validated in-memory documents, not active-tab navigation or unread storage.
 savedDocumentsValue = JSON.stringify(state.documents);
 function save() {
@@ -264,7 +287,7 @@ function save() {
 			notice("另一个页面更新了书架，已暂停保存以避免覆盖。请先导出本页修改，再刷新读取最新数据。");
 			return false;
 		}
-		const nextValue = JSON.stringify(state);
+		const nextValue = JSON.stringify({documents:state.documents});
 		localStorage.setItem(KEY, nextValue);
 		lastSavedValue = nextValue;
   savedDocumentsValue = JSON.stringify(state.documents);
@@ -321,7 +344,7 @@ async function add(doc, canCommit = null, reuseAudioSource = false, lifecycleRev
  }
 	if (!state.documents.some((d) => d.key === key))
 		state.documents.push({ ...doc, key, notes: doc.notes || {} });
-	state.active = key;
+	selectActiveDocument(key);
  passageReturn=null;passageDocumentKey=key;passageAnchor=active()?.segments[0]?.id||null;mediaExpandedKey=null;
  setReadingMode(prefersPassageReading(active())?"passages":"summary");
  searchFocusedId=null;
@@ -475,6 +498,7 @@ $('confirm-removal').onclick=()=>{
   state=previous;saveWarning('移除未保存，原书架仍在。请先导出需要保留的内容，再重试。');
   $('remove-document-error').textContent='未能保存移除，书架未改变。请先备份，再重试。';return;
  }
+ if(previous.active!==state.active)rememberActiveDocument();
  removedDocument={doc:snapshot,index,wasActive:previous.active===doc.key,bookmarkDraft};
  audioBookmarkDrafts.delete(doc.key);
  // Retire the old DOM owner before undo can restore the same key with a new identity.
@@ -509,6 +533,7 @@ $('undo-removal').onclick=()=>{
   notice('撤销未成功，完整内容仍保留在本页恢复区。请导出移除备份，或释放空间后重试。');return;
  }
  const changedActive=previous.active!==state.active;
+ if(changedActive)rememberActiveDocument();
  if(recovery.bookmarkDraft)audioBookmarkDrafts.set(doc.key,recovery.bookmarkDraft);
  window.dispatchEvent(new CustomEvent('coconut-document-restored',{detail:{key:doc.key,glossaryDrafts:recovery.glossaryDrafts}}));
  removedDocument=null;
@@ -560,10 +585,9 @@ function renderLibrary() {
   b.append(el('small','',metadata.join(' · ')));
 		b.setAttribute("aria-current", d.key === state.active ? "page" : "false");
 		const openDocument = (hit=null) => {
-   resetReaderForDocumentNavigation();state.active=d.key;
+   resetReaderForDocumentNavigation();selectActiveDocument(d.key);
    setReadingMode(prefersPassageReading(d)?"passages":"summary");
 			$("toggle-library").setAttribute("aria-expanded", "false");
-			save();
 			showWorkspace("read");
 			render();
 			if(hit)openLibraryHit(hit);
@@ -1343,7 +1367,7 @@ $("library-file").onchange = async () => {
   const before=state.documents.length,restored=Coconut.mergeLibraryBackup(state,backup);
   // An empty restore stays in Add without looking like new navigation on render.
   clearReadingContext();
-  state = restored; selected=null; pageStart=0; notesOnly=false; excerptsOnly=false; speakerFilter=null; $("search").value=""; workspace=active()?"read":"add";
+  state = restored; selectActiveDocument(restored.active); selected=null; pageStart=0; notesOnly=false; excerptsOnly=false; speakerFilter=null; $("search").value=""; workspace=active()?"read":"add";
   const persisted = save(); render();
   if(persisted && ownsRequest())notice("已恢复 " + (state.documents.length-before) + " 份文字稿；相同内容已跳过，不同版本分别保留，原书架未删除。");
  } catch(error) { if(canCommit())notice("恢复失败，原书架未改变："+localFileError(error)); }

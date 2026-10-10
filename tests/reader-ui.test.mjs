@@ -80,7 +80,8 @@ test('stale tabs cannot overwrite newer persisted notes',async()=>{
   const newest=JSON.parse(w.localStorage.getItem('coconut-reader-v1'));
   newest.documents[0].notes['demo-1']='Newer note from another tab';
   const external=JSON.stringify(newest);w.localStorage.setItem('coconut-reader-v1',external);
-  w.document.getElementById('library').querySelector('button').click();
+  w.document.querySelector('.note-button').click();
+  const note=w.document.getElementById('note');note.value='Stale tab attempted edit';note.oninput();
   assert.equal(w.localStorage.getItem('coconut-reader-v1'),external);
   assert.match(w.document.getElementById('notice').textContent,/另一个页面/);
  }finally{await w.happyDOM.close();}
@@ -106,14 +107,14 @@ test('local source playback activates only with the local worker and seeks to so
 test('source dialog saves to its original document even if another import becomes active',async()=>{
  const w=setup();try{
   await w.document.getElementById('sample').onclick();
-  const firstKey=JSON.parse(w.localStorage.getItem('coconut-reader-v1')).active;
+  const firstKey=w.sessionStorage.getItem('coconut-reader-active-v1');
   w.document.getElementById('source').click();
   await importDocument(w,{title:'Second document',segments:[{start:0,end:1,text:'Second'}]});
   w.document.getElementById('source-url').value='https://www.youtube.com/watch?v=jNQXAC9IVRw';
   w.document.getElementById('save-source').click();
   const stored=JSON.parse(w.localStorage.getItem('coconut-reader-v1'));
   assert.equal(stored.documents.find(d=>d.key===firstKey).source_url,'https://www.youtube.com/watch?v=jNQXAC9IVRw');
-  assert.equal(stored.documents.find(d=>d.key===stored.active).source_url,'');
+  assert.equal(stored.documents.find(d=>d.key===w.sessionStorage.getItem('coconut-reader-active-v1')).source_url,'');
  }finally{await w.happyDOM.close();}
 });
 
@@ -880,7 +881,7 @@ test('subtitle download exports full document despite active search and handles 
 test('document details persist and target the document that opened the dialog',async()=>{
  const w=setup();try{
   const $=id=>w.document.getElementById(id);await importDocument(w,{title:'Original',language:'it',segments:[{id:'a',start:0,end:1,text:'A'}],notes:{a:'Keep'}});
-  const key=JSON.parse(w.localStorage.getItem('coconut-reader-v1')).active;
+  const key=w.sessionStorage.getItem('coconut-reader-active-v1');
   $('document-details').click();assert.equal($('document-language').value,'it');$('document-title').value=' ';$('save-details').click();assert.equal($('details-dialog').open,true);
   await importDocument(w,{title:'Other',segments:[{start:0,end:1,text:'B'}]});$('document-title').value='<New title>'; $('document-language').value='en';$('save-details').click();
   const stored=JSON.parse(w.localStorage.getItem('coconut-reader-v1'));const doc=stored.documents.find(d=>d.key===key);
@@ -1763,12 +1764,12 @@ test('reimporting an unchanged edited backup reuses its existing document and pr
   await importDocument(w,original);
   let stored=JSON.parse(w.localStorage.getItem('coconut-reader-v1'));
   assert.equal(stored.documents.length,1,'the exact edited backup already exists');
-  assert.equal(stored.active,original.key,'keep stable media and bookmark associations');
+  assert.equal(w.sessionStorage.getItem('coconut-reader-active-v1'),original.key,'keep stable media and bookmark associations');
   assert.deepEqual(stored.documents[0],original);
   await importDocument(w,pristine);
   stored=JSON.parse(w.localStorage.getItem('coconut-reader-v1'));
   assert.equal(stored.documents.length,1,'reopening the original source still prefers its existing edited entry');
-  assert.equal(stored.active,original.key);assert.deepEqual(stored.documents[0],original);
+  assert.equal(w.sessionStorage.getItem('coconut-reader-active-v1'),original.key);assert.deepEqual(stored.documents[0],original);
   const different=structuredClone(original);different.notes['demo-1']='A different saved version';
   await importDocument(w,different);
   stored=JSON.parse(w.localStorage.getItem('coconut-reader-v1'));assert.equal(stored.documents.length,2);
@@ -1795,14 +1796,14 @@ test('single-document import uses the complete library-restore equivalence, not 
    await importDocument(w,version);
    const before=JSON.parse(w.localStorage.getItem('coconut-reader-v1'));
    assert.equal(before.documents.length,index+2,'a different persistent field preserves a distinct version');
-   const active=before.documents.find(doc=>doc.key===before.active);
+   const active=before.documents.find(doc=>doc.key===w.sessionStorage.getItem('coconut-reader-active-v1'));
    // Simulate restored entries whose keys differ from the current content hash.
    const restored={...before,active:'restored-'+index,documents:before.documents.map(doc=>doc===active?{...doc,key:'restored-'+index}:doc)};
    const copy=setup(JSON.stringify(restored));try{
     await importDocument(copy,version);
     const after=JSON.parse(copy.localStorage.getItem('coconut-reader-v1'));
     assert.equal(after.documents.length,restored.documents.length);
-    assert.equal(after.active,restored.active);
+    assert.equal(copy.sessionStorage.getItem('coconut-reader-active-v1'),restored.active);
     assert.deepEqual(after.documents,restored.documents);
    }finally{await copy.happyDOM.close();}
   }

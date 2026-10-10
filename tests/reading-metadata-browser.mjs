@@ -47,7 +47,7 @@ try {
   await page.locator('#export-menu > summary').click();
   return Buffer.concat(chunks).toString('utf8');
  }
- const active = page => page.evaluate(key => {const state = JSON.parse(localStorage.getItem(key)); return state.documents.find(doc => doc.key === state.active);}, KEY);
+ const active = page => page.evaluate(key => {const state = JSON.parse(localStorage.getItem(key)); return state.documents.find(doc => doc.key === sessionStorage.getItem('coconut-reader-active-v1'));}, KEY);
  for (const width of [1360, 390]) {
   const page = await open(width), label = width === 390 ? 'mobile' : 'desktop';
   const fixture = readingMetadataFixture(); stage = label + '_overlap';
