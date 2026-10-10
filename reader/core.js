@@ -184,12 +184,15 @@
   }
   return result;
  }
+ // User-authored source evidence follows the full validated cue contract; the
+ // 4,000-character bound belongs only to model translation inputs. Backup file
+ // limits still apply at ingress. Never save a source that restoration truncates.
  function cleanTranslations(value, includeReview=true) {
   const output=Object.create(null);
   if(!value || typeof value!=="object" || Array.isArray(value)) return output;
   for(const language of ["en","zh","ja","ko","fr","de","es"]) {
    const item=value[language];
-   if(item && typeof item.text==="string" && item.text.length<=12000 && typeof item.source_text==="string" && item.source_text.length<=4000 && typeof item.provider==="string"){
+   if(item && typeof item.text==="string" && item.text.length<=12000 && typeof item.source_text==="string" && (item.provider==='user'||item.source_text.length<=4000) && typeof item.provider==="string"){
     output[language]={text:item.text,source_text:item.source_text,provider:item.provider.slice(0,100),source_language:typeof item.source_language==="string"?item.source_language:"",...(typeof item.context_id==="string"&&/^[a-f0-9-]{36}$/.test(item.context_id)?{context_id:item.context_id}:{})};
     if(typeof item.document_language==='string'&&item.document_language.length<=100)output[language].document_language=item.document_language;
     if(item.context_version===2){
@@ -248,20 +251,21 @@
  }
  function saveManualTranslation(doc,segment,target,text,snapshot,expectedTranslation) {
   const item=segment.translations?.[target];
-  if(!item||JSON.stringify(item)!==expectedTranslation||JSON.stringify(manualReviewSnapshot(doc,segment,target))!==JSON.stringify(snapshot))throw new Error('原文、上下文或译文已变化，请关闭后重新打开核对；草稿仍在此处，可先复制。');
+  if(JSON.stringify(item)!==expectedTranslation||JSON.stringify(manualReviewSnapshot(doc,segment,target))!==JSON.stringify(snapshot))throw new Error('原文、上下文或译文已变化，请关闭后重新打开核对；草稿仍在此处，可先复制。');
   if(typeof text!=='string'||!text.trim()||text.length>12000)throw new Error('译文不能为空，且最多 12,000 字符');
-  const review=cleanManualReview({version:1,...snapshot,text,previous_text:item.text,previous_source_text:item.manual_review?.cues?.find(c=>c.id===segment.id)?.text??item.source_text},target);
+  const review=cleanManualReview({version:1,...snapshot,text,previous_text:item?.text||'',previous_source_text:item?.manual_review?.cues?.find(c=>c.id===segment.id)?.text??item?.source_text??segment.text},target);
   if(review.invalid)throw new Error('核对依据超过支持范围，未保存；请先导出 JSON 备份');
-  const original=item.original_translation||cleanTranslations({[target]:item},false)[target];
-  const result={...item,text,original_translation:original,manual_review:review};
+  const original=item&&(item.original_translation||cleanTranslations({[target]:item},false)[target]);
+  const result={...(item||{provider:'user',source_text:segment.text,source_language:doc.language||'',document_language:doc.language||''}),text,...(original?{original_translation:original}:{}),manual_review:review};
+  if(!segment.translations)segment.translations=Object.create(null);
   segment.translations[target]=result;invalidateSearch(doc);
   return result;
  }
- function translationReviewQueue(doc,target) {
+ function translationReviewQueue(doc,target,includeMissing=false) {
   const result={entries:[],missing:0,current:0,stale:0,quality:0,total:doc?.segments.length||0};
   for(const [position,segment] of (doc?.segments||[]).entries()){
    const item=segment.translations?.[target];
-   if(!item){result.missing++;continue;}
+   if(!item){result.missing++;if(includeMissing)result.entries.push({id:segment.id,position,status:'missing',reason:'尚未保存此语言译文，可对照原文自己写，不调用 AI'});continue;}
    const status=!translationCurrent(segment,doc,item)?'stale':!item.text.trim()||translationQualityMessage(item)?'quality':'current';
    result[status]++;
    if(status!=='current')result.entries.push({id:segment.id,position,status,reason:status==='stale'?'原文、上下文或语言依据已变化，或旧记录不完整':!item.text.trim()?'译文为空，需人工补全':translationQualityMessage(item)});
@@ -755,7 +759,7 @@
 			if (corrected) lines.push("修正前文字稿：", "", quote(segment.original_text), "");
 			const translated = segment.translations?.[doc.translation_view];
 			if (translated) {
-				if (translationCurrent(segment, doc, translated)) lines.push("译文（" + singleLine(doc.translation_view) + "；初始来源：" + singleLine(translated.provider) + (translated.manual_review ? "；用户人工核对／修正）：" : "；机器生成，需核对）："), "", quote(translated.text), "");
+				if (translationCurrent(segment, doc, translated)) lines.push("译文（" + singleLine(doc.translation_view) + "；初始来源：" + singleLine(translated.provider) + (translated.provider==='user' ? "；用户自己写的译文）：" : translated.manual_review ? "；用户人工核对／修正）：" : "；机器生成，需核对）："), "", quote(translated.text), "");
 				else lines.push("此片段译文已过期，未导出。", "");
                 if(translationCurrent(segment,doc,translated)&&translationQualityMessage(translated))lines.push("译文待核对："+translationQualityMessage(translated), "");
 			}

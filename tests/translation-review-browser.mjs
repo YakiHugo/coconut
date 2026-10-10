@@ -42,25 +42,25 @@ try{
  const corrected='  人工修正 <img>\n103 个苹果。  ';await page.locator('#translation-edit-text').fill(corrected);
  page.once('dialog',dialog=>dialog.dismiss());await page.locator('#translation-edit-cancel').click();
  check('declining_discard_keeps_exact_draft',await page.locator('#translation-edit-text').inputValue()===corrected&&await page.locator('#translation-edit-dialog').isVisible());
- await saveTranslation('review-102','zh');await page.locator('#translation-queue-dialog').waitFor({state:'visible'});
+ await saveTranslation('review-102');await page.locator('#translation-queue-dialog').waitFor({state:'visible'});
  check('human_save_removes_only_reviewed_stale_entry',await page.locator('.translation-queue-open[data-segment-id="review-102"]').count()===0&&await page.locator('.translation-queue-open[data-segment-id="review-1"]').count()===1);
  await page.locator('#translation-queue-close').click();
- // These review-only fixtures explicitly select Chinese before every save.
  // Saving deliberately keeps the editor/focus until the actual storage receipt.
  // Observe the exact durable translation, then the receipt-driven close; a click
  // or in-memory queue update is not evidence that the save finished.
- async function saveTranslation(id,target){
-  const expected={key:await page.evaluate(()=>sessionStorage.getItem('coconut-reader-active-v1')),id,target,
+ async function saveTranslation(id,button='#save-translation-edit'){
+  const expected={key:await page.evaluate(()=>sessionStorage.getItem('coconut-reader-active-v1')),id,
+   target:await page.locator('#translation-edit-language').inputValue(),
    text:await page.locator('#translation-edit-text').inputValue(),
    source:await page.locator('#translation-edit-source').textContent()};
-  await page.locator('#save-translation-edit').click();
+  await page.locator(button).click();
   await waitForPersistedLibrary(page,async expected=>{
    const doc=(await readPersistedLibrary()).documents.find(doc=>doc.key===expected.key);
    const cue=doc?.segments.find(cue=>cue.id===expected.id),item=cue?.translations?.[expected.target];
    return cue?.text===expected.source&&item?.text===expected.text&&
     item.manual_review?.cues.some(cue=>cue.id===expected.id&&cue.text===expected.source);
   },expected);
-  await page.locator('#translation-edit-dialog').waitFor({state:'hidden'});
+  if(button==='#save-translation-edit')await page.locator('#translation-edit-dialog').waitFor({state:'hidden'});
  }
  async function download(button){if(!await page.locator(button).isVisible())await page.locator('#export-menu > summary').click();const pending=page.waitForEvent('download');await page.locator(button).click();const file=await pending;return fs.readFile(await file.path(),'utf8');}
  const json=JSON.parse(await download('#export')),item=json.segments[102].translations.zh;
@@ -70,7 +70,7 @@ try{
  await page.reload();await page.waitForFunction(()=>window.CoconutStorageBootstrap?.phase==='ready');await page.locator('#mode-bilingual').click();await queue();
  check('reload_keeps_saved_review_out_of_queue',await page.locator('.translation-queue-open[data-segment-id="review-102"]').count()===0);
  await page.locator('.translation-queue-open[data-segment-id="review-1"]').click();check('unchanged_review_requires_explicit_current_source_confirmation',(await page.locator('#save-translation-edit').textContent()).includes('确认已核对当前原文'));
- await saveTranslation('review-1','zh');await page.locator('#translation-queue-dialog').waitFor({state:'visible'});check('no_unnecessary_warning_entries_remain',await page.locator('.translation-queue-open').count()===0);await page.locator('#translation-queue-close').click();
+ await saveTranslation('review-1');await page.locator('#translation-queue-dialog').waitFor({state:'visible'});check('no_unnecessary_warning_entries_remain',await page.locator('.translation-queue-open').count()===0);await page.locator('#translation-queue-close').click();
  if(!await page.locator('#reading-time').isVisible())await page.locator('#reading-settings > summary').click();await page.locator('#reading-time').fill('06:48');await page.locator('#time-navigation button').click();
  const late=page.locator('.segment[data-segment-id="review-102"]');if(!await late.locator('.edit-button').isVisible())await late.locator('.cue-more > summary').click();await late.locator('.edit-button').click();await page.locator('#edit-segment').fill(doc.segments[102].text+' The source changed.');await page.locator('#save-edit').click();
  await queue();check('later_source_edit_requeues_old_human_confirmation',await page.locator('.translation-queue-open[data-segment-id="review-102"]').count()===1);
@@ -93,7 +93,7 @@ try{
    if(await cue.locator('.cue-more').count())await cue.locator('.cue-more').evaluate(el=>el.open=false);
    if(action==='save')await page.locator('#translation-edit-text').fill(`Human focus check ${width} ${cueId}`);
    if(action==='escape')await page.keyboard.press('Escape');
-   else if(action==='save')await saveTranslation(cueId,'zh');
+   else if(action==='save')await saveTranslation(cueId);
    else await page.locator('#translation-edit-cancel').click();
    check(`direct_${width}_${cueId}_${action}_focus_returns_to_visible_exact_cue`,await button.isVisible()&&await button.evaluate(el=>document.activeElement===el&&(!el.closest('.cue-more')||el.closest('.cue-more').open))&&!await page.locator('#reading-settings').evaluate(el=>el.open));
    await opener.dispose();
@@ -104,6 +104,37 @@ try{
  await page.locator('#translation-edit-cancel').click();
  check('missing_cue_focus_uses_visible_settings_without_discarding_newer_filter',await page.locator('#review-translations').isVisible()&&await page.locator('#review-translations').evaluate(el=>document.activeElement===el)&&await page.locator('.segment').count()===0&&await page.locator('#search').inputValue()==='No matching source after editor opened');
  await page.locator('#clear-search').click();
+ // Missing-cue authoring is entirely local, including a language with no prior output.
+ const manualDoc=translationReviewFixture(4);manualDoc.title='Authored missing translations';manualDoc.segments.forEach(cue=>delete cue.translations);
+ await page.locator('#file').setInputFiles({name:'authored-missing.json',mimeType:'application/json',buffer:Buffer.from(JSON.stringify(manualDoc))});
+ await page.locator('#title').filter({hasText:manualDoc.title}).waitFor({state:'visible'});await page.locator('#mode-bilingual').click();
+ const missingCue=page.locator('.segment[data-segment-id="review-0"]');
+ if(!await missingCue.locator('.review-translation-button').isVisible())await missingCue.locator('.cue-more > summary').click();
+ await missingCue.locator('.review-translation-button').click();await page.locator('#translation-edit-language').selectOption('fr');
+ check('missing_editor_has_exact_source_and_explicit_user_origin',await page.locator('#translation-edit-source').textContent()===manualDoc.segments[0].text&&(await page.locator('#translation-edit-origin').textContent()).includes('用户自己写'));
+ const authored='  Traduction personnelle <b>\nUne pomme.  ';await page.locator('#translation-edit-text').fill(authored);
+ page.once('dialog',dialog=>dialog.dismiss());await page.locator('#translation-edit-language').selectOption('de');
+ check('declined_language_change_keeps_owned_draft',await page.locator('#translation-edit-language').inputValue()==='fr'&&await page.locator('#translation-edit-text').inputValue()===authored);
+ check('mobile_missing_editor_fits',await page.locator('#translation-edit-dialog').evaluate(el=>el.getBoundingClientRect().left>=0&&el.getBoundingClientRect().right<=innerWidth&&el.scrollWidth<=el.clientWidth));
+ await saveTranslation('review-0','#save-next-missing-translation');
+ await page.waitForFunction(text=>document.getElementById('translation-edit-source').textContent===text,manualDoc.segments[1].text);
+ check('save_next_missing_keeps_target_and_exact_next_source',await page.locator('#translation-edit-language').inputValue()==='fr'&&await page.locator('#translation-edit-text').inputValue()==='');
+ await page.locator('#translation-edit-cancel').click();
+ await page.locator('#search').fill('Traduction personnelle');
+ check('user_translation_is_searchable_and_bilingual',await page.locator('.segment').count()===1&&(await page.locator('.segment .translation').textContent())===authored);
+ await page.locator('#clear-search').click();
+ const manualJson=JSON.parse(await download('#export'));check('missing_save_json_is_user_authored_without_fake_machine_history',manualJson.segments[0].translations.fr.provider==='user'&&manualJson.segments[0].translations.fr.text===authored&&!manualJson.segments[0].translations.fr.original_translation&&!manualJson.segments[0].translations.zh);
+ await page.locator('#subtitle-format').selectOption('vtt');await page.locator('#subtitle-bilingual').check();check('missing_save_subtitle_export_keeps_authored_text',(await download('#export-subtitles')).includes('Traduction personnelle &lt;b&gt;'));
+ await page.reload();await page.waitForFunction(()=>window.CoconutStorageBootstrap?.phase==='ready');await page.locator('#mode-bilingual').click();
+ check('missing_save_survives_real_reload',(await page.locator('.segment[data-segment-id="review-0"] .translation').textContent())===authored);
+ manualJson.title='Restored user translations';
+ await page.locator('#file').setInputFiles({name:'restored-user-translations.json',mimeType:'application/json',buffer:Buffer.from(JSON.stringify(manualJson))});
+ await page.locator('#title').filter({hasText:manualJson.title}).waitFor({state:'visible'});await page.locator('#mode-bilingual').click();
+ check('user_translation_survives_actual_json_restore',(await page.locator('.segment[data-segment-id="review-0"] .translation').textContent())===authored);
+
+ await queue();await page.locator('#translation-queue-mode').selectOption('missing');
+ check('missing_queue_excludes_saved_exact_language',await page.locator('.translation-queue-open').count()===3&&await page.locator('.translation-queue-open[data-segment-id="review-0"]').count()===0);
+ await page.locator('#translation-queue-mode').selectOption('review');await page.locator('#translation-queue-close').click();
  const longDoc=translationReviewFixture(70);longDoc.title='Authored long review context';longDoc.translation_contexts={};
  const cue=i=>{const s=longDoc.segments[i];return {id:s.id,position:i,text:s.text,start:s.start,end:s.end,speaker:s.speaker};};
  for(let i=1;i<longDoc.segments.length;i++){
@@ -123,7 +154,7 @@ try{
  await page.locator('#translation-edit-text').fill('Long context human correction');
  await page.locator('#translation-edit-context-next').click();await page.locator('#translation-edit-context-next').click();
  check('long_context_pages_keep_draft_and_mobile_width',await page.locator('#translation-edit-context > p').count()===8&&await page.locator('#translation-edit-text').inputValue()==='Long context human correction'&&await page.locator('#translation-edit-dialog').evaluate(el=>el.getBoundingClientRect().left>=0&&el.getBoundingClientRect().right<=innerWidth&&el.scrollWidth<=el.clientWidth));
- await saveTranslation('review-69','zh');await page.locator('#translation-queue-dialog').waitFor({state:'visible'});await page.locator('#translation-queue-close').click();
+ await saveTranslation('review-69');await page.locator('#translation-queue-dialog').waitFor({state:'visible'});await page.locator('#translation-queue-close').click();
  const longJson=JSON.parse(await download('#export'));
  check('long_context_download_keeps_every_dependency',longJson.segments[69].translations.zh.manual_review.cues.length===69&&longJson.segments[69].translations.zh.manual_review.cues[0].id==='review-1');
  check('no_model_mutations_external_requests_or_script_errors',mutations===0&&external===0&&errors===0);
