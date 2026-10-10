@@ -12,7 +12,7 @@ import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {execFileSync} from 'node:child_process';
 import {isDeepStrictEqual} from 'node:util';
-import {_electron as electron} from '@playwright/test';
+import {_electron as electron,expect} from '@playwright/test';
 import {installStorageAssertions,readerReady} from './helpers/browser-storage.mjs';
 
 const root=fileURLToPath(new URL('../',import.meta.url));
@@ -85,9 +85,17 @@ return page.evaluate(async()=>{
  const shelf=await window.readPersistedLibrary();
  return shelf?.documents.find(doc=>doc.key===sessionStorage.getItem('coconut-reader-active-v1'))||null;
 });}
-async function importFile(page,filename){
+async function nativeFileCommand(id){
+ return application.evaluate(({Menu,BrowserWindow},id)=>{
+  const item=Menu.getApplicationMenu().getMenuItemById(id);
+  assertNativeItem(item);
+  function assertNativeItem(value){if(!value?.enabled)throw new Error('Native file item unavailable: '+id);}
+  return item.click(item,BrowserWindow.getAllWindows()[0],{});
+ },id);
+}
+async function importFile(page,filename,native=false){
  stage='file_chooser_import';await page.locator('#add-content').click();
- const [chooser]=await Promise.all([page.waitForEvent('filechooser'),page.locator('#import').click()]);await chooser.setFiles(filename);
+ const [chooser]=await Promise.all([page.waitForEvent('filechooser'),native?nativeFileCommand('import-transcript'):page.locator('#import').click()]);await chooser.setFiles(filename);
  await page.locator('#reader-workspace').waitFor({state:'visible'});
  await page.waitForFunction(()=>document.getElementById('file').value==='');
 }
@@ -148,7 +156,12 @@ try{
  check('new_profile_empty',await stored(page)===null);
  check('packaged_public_caption_capability',await page.evaluate(async()=>{const health=await(await fetch('api/health')).json();return health.capabilities.caption_import===true&&health.capabilities.media_import===false;}));
  check('asr_ui_not_offered',await page.locator('#advanced-import-options').isHidden()&&await page.locator('#import-media').isDisabled());
- await importFile(page,fixturePath);
+ await expect.poll(()=>application.evaluate(({Menu})=>['import-transcript','open-local-media','backup-library'].every(id=>Menu.getApplicationMenu()?.getMenuItemById(id)?.enabled)),{timeout:15000,message:'Packaged File menu waits for completed storage bootstrap'}).toBe(true);
+ const menuFacts=await application.evaluate(({Menu})=>['import-transcript','open-local-media','backup-library'].map(id=>{const item=Menu.getApplicationMenu().getMenuItemById(id);return {id,enabled:item?.enabled,accelerator:item?.accelerator,label:item?.label};}));
+ check('packaged_native_file_menu_ready',menuFacts.every(item=>item.enabled));
+ check('packaged_native_file_accelerators',isDeepStrictEqual(menuFacts.map(item=>item.accelerator),['CmdOrCtrl+O','CmdOrCtrl+Shift+O','CmdOrCtrl+Shift+S']));
+ check('packaged_backup_is_named_full_library',menuFacts[2].label.includes('整个书架'));
+ await importFile(page,fixturePath,true);
  check('all_authored_segments_imported',(await stored(page)).segments.length===3);
  check('local_subtitles_do_not_claim_manual_verification',(await stored(page)).provenance.caption_method==='unknown'&&(await stored(page)).provenance.review_status==='unreviewed'&&(await page.locator('#provenance').textContent()).includes('导入的字幕'));
  check('summary_stays_uncreated',await page.locator('#summary-state').textContent()==='未生成');
@@ -223,6 +236,17 @@ try{
  check('audio_json_disk_bytes_match_saved_project',isDeepStrictEqual(JSON.parse(await fs.readFile(audioBackup,'utf8')),audioExpected));
  const audioNotebook=await download(page,'#export-notebook','audio-project-notes.md'),audioMarkdown=await fs.readFile(audioNotebook,'utf8');
  check('audio_markdown_has_user_notes_without_fake_transcript',audioMarkdown.includes(audioExpected.project_note)&&audioMarkdown.includes(audioExpected.timestamp_bookmarks[0].note)&&audioMarkdown.includes('00:04')&&audioMarkdown.includes('没有摘要')&&audioMarkdown.includes('用户笔记和时间书签'));
+ // Use the actual packaged MenuItem callback and Electron user-gesture bridge.
+ stage='native_local_media_chooser';
+ const [nativeMediaChooser]=await Promise.all([page.waitForEvent('filechooser'),nativeFileCommand('open-local-media')]);
+ check('native_media_uses_existing_picker',await nativeMediaChooser.element().getAttribute('id')==='local-media-file');
+ await nativeMediaChooser.setFiles([]);
+ check('native_media_cancel_preserves_library',isDeepStrictEqual(await stored(page),audioExpected));
+ stage='native_full_library_backup';
+ const [libraryDownload]=await Promise.all([page.waitForEvent('download'),nativeFileCommand('backup-library')]);
+ const libraryPath=path.join(temporary,'native-library.json');await libraryDownload.saveAs(libraryPath);
+ const libraryBackup=JSON.parse(await fs.readFile(libraryPath,'utf8'));
+ check('native_backup_download_complete',await libraryDownload.failure()===null&&libraryBackup.format==='coconut-library'&&libraryBackup.documents.length===2&&libraryBackup.documents.some(doc=>isDeepStrictEqual(doc,expected))&&libraryBackup.documents.some(doc=>isDeepStrictEqual(doc,audioExpected)));
  // Exercise the exact packaged close handlers with native dialog answers, not
  // renderer-only beforeunload events. Cancel must leave its bridge operational.
  stage='native_close_preserves_dirty_work';
@@ -243,6 +267,10 @@ try{
  }
  await page.locator('#reading-settings > summary').click();await page.locator('#document-details').click();
  await page.locator('#document-title').fill('Authored uncommitted native title');
+ await nativeFileCommand('import-transcript');
+ await page.locator('#details-dialog [data-file-menu-hint]').waitFor({state:'visible'});
+ check('native_file_menu_respects_modal',await page.locator('#details-dialog').isVisible());
+ check('native_modal_feedback_preserves_focus',await page.locator('#details-dialog [data-file-menu-hint]').isVisible()&&await page.locator('#document-title').evaluate(node=>document.activeElement===node));
  await cancelNativeClose('window');
  check('cancel_window_retains_title_draft',await page.locator('#document-title').inputValue()==='Authored uncommitted native title');
  await page.locator('#details-dialog button[value="cancel"]').click();

@@ -9,6 +9,7 @@ import { createCaptionService } from './caption-service.mjs';
 import { Updater } from './updater.mjs';
 import { prepareInstall } from './update-install.mjs';
 import { createCloseCoordinator, createLifecycleOwnership } from './close-coordinator.mjs';
+import { createFileMenu } from './file-menu.mjs';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const PORT = 47831; // Stable origin preserves the local bookshelf between launches.
@@ -131,7 +132,9 @@ else {
       if(action==='install')return installUpdate();
       throw new Error('不支持的更新操作');
     });
-    Menu.setApplicationMenu(Menu.buildFromTemplate([{label:'Coconut',submenu:[{role:'about'},{label:'检查更新…',click:()=>{void updater.check({manual:true});void window.webContents.executeJavaScript('document.getElementById("app-updates").open=true');}},{type:'separator'},{role:'quit'}]},{role:'editMenu'},{role:'windowMenu'}]));
+    const {bind:bindFileMenu,...fileMenu}=createFileMenu({window,origin,blocked:()=>quitting||lifecycle.busy()});
+    Menu.setApplicationMenu(Menu.buildFromTemplate([{label:'Coconut',submenu:[{role:'about'},{label:'检查更新…',click:()=>{void updater.check({manual:true});void window.webContents.executeJavaScript('document.getElementById("app-updates").open=true');}},{type:'separator'},{role:'quit'}]},fileMenu,{role:'editMenu'},{role:'windowMenu'}]));
+    bindFileMenu(Menu.getApplicationMenu());
     window.webContents.session.setPermissionRequestHandler((_contents,_permission,callback)=>callback(false));
     window.webContents.session.setPermissionCheckHandler(()=>false);
     window.webContents.on('will-attach-webview',event=>event.preventDefault());
