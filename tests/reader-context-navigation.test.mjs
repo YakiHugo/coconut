@@ -147,3 +147,75 @@ test('source passage detail navigation retains the ordinary cue scroll behavior'
   assert.equal($('reading-context').hidden,true);
  }finally{await w.happyDOM.close();}
 });
+
+test('late search detour opens its own passage and keeps one visible result-return landmark',async()=>{
+ const {w,$,calls}=setup();try{
+  await load($);search($,'crossing-marker');$('next-match').click();row(w,'split-1750').querySelector('.context-button').click();
+  const bar=$('reading-context');$('mode-passages').click();
+  const target=w.document.querySelector('.passage-cue[data-cue-id="split-1750"]');assert.ok(target);assert.equal(w.document.activeElement,target.closest('.passage'));
+  assert.equal($('reading-context'),bar);assert.equal(w.document.querySelectorAll('#reading-context').length,1);assert.equal(bar.hidden,false);assert.equal(bar.nextElementSibling,$('passage-workspace'));
+  $('return-reading-results').click();assert.equal($('search').value,'crossing-marker');assert.equal(w.document.activeElement,row(w,'split-1750').querySelector('.context-button'));
+  assert.equal(bar.nextElementSibling,$('transcript-layout'));assert.equal($('passage-return-bar').hidden,true);assert.equal(stored(w)[0].readingPosition,'split-19');assert.equal(calls.length,0);
+ }finally{await w.happyDOM.close();}
+});
+
+test('outer query/filter/page survives passage note detour and source edits without replacing the bookmark',async()=>{
+ const {w,$}=setup();try{
+  const fixture=splitCueFixture(260);fixture.segments.forEach(cue=>{cue.text+=' needle';cue.translations.zh.source_text=cue.text;cue.saved_excerpt=true;cue.speaker='Mina';});
+  await load($,fixture);$('filter-excerpts').click();$('speaker-filter').value='"Mina"';$('speaker-filter').onchange();search($,'needle');$('next-page').click();
+  const target=row(w,'split-150');target.getBoundingClientRect=()=>({top:117});target.querySelector('.context-button').click();$('mode-passages').click();
+  const passage=w.document.activeElement;assert.ok(passage.querySelector('[data-cue-id="split-150"]'));passage.getBoundingClientRect=()=>({top:51});passage.querySelector('.passage-details').click();
+  row(w,'split-151').querySelector('.note-button').click();$('note').value='A retained note';$('note').oninput();
+  row(w,'split-151').querySelector('.edit-button').click();$('edit-segment').value='Corrected adjacent source';$('save-edit').click();
+  $('return-to-passages').click();assert.equal($('reading-context').hidden,false);assert.equal($('passage-return-bar').hidden,true);
+  $('return-reading-results').click();assert.equal($('search').value,'needle');assert.equal($('speaker-filter').value,'"Mina"');assert.equal($('filter-excerpts').getAttribute('aria-pressed'),'true');assert.equal($('mode-bilingual').getAttribute('aria-pressed'),'true');
+  assert.equal(rows(w)[0].dataset.segmentId,'split-100');assert.equal(w.document.activeElement,row(w,'split-150').querySelector('.context-button'));assert.equal($('notes-panel').hidden,true);
+  assert.equal((await w.flushContentForTest()).ok,true);const saved=stored(w)[0];assert.equal(saved.notes['split-151'],'A retained note');assert.equal(saved.segments[151].text,'Corrected adjacent source');assert.equal(saved.readingPosition,'split-19');
+ }finally{await w.happyDOM.close();}
+});
+
+test('direct filtered switch captures selected result and outer return cancels an inner note return',async()=>{
+ const {w,$}=setup();try{
+  await load($);search($,'crossing-marker');row(w,'split-1750').querySelector('.note-button').click();$('mode-passages').click();
+  assert.ok(w.document.activeElement.querySelector('[data-cue-id="split-1750"]'));w.document.activeElement.querySelector('.passage-details').click();
+  assert.equal($('passage-return-bar').hidden,false);$('return-reading-results').click();
+  assert.equal($('search').value,'crossing-marker');assert.equal($('passage-return-bar').hidden,true);assert.equal($('reading-context').hidden,true);
+  const focused=w.document.activeElement;$('return-to-passages').click();assert.equal(w.document.activeElement,focused);assert.equal($('transcript-layout').hidden,false);
+ }finally{await w.happyDOM.close();}
+});
+
+test('selected neighbor chooses the passage anchor without replacing the outer search result',async()=>{
+ const {w,$}=setup();try{
+  await load($);search($,'crossing-marker');row(w,'split-1750').querySelector('.context-button').click();
+  row(w,'split-1748').querySelector('.note-button').click();$('mode-passages').click();assert.ok(w.document.activeElement.querySelector('[data-cue-id="split-1748"]'));
+  $('return-reading-results').click();assert.equal(w.document.activeElement,row(w,'split-1750').querySelector('.context-button'));
+ }finally{await w.happyDOM.close();}
+});
+
+for(const action of ['dismiss','summary','query','document'])test(`passage search origin is retired after explicit ${action}`,async()=>{
+ const {w,$}=setup();try{
+  await load($,splitCueFixture(20));search($,'station');row(w,'split-0').querySelector('.context-button').click();$('mode-passages').click();
+  if(action==='dismiss'){$('dismiss-reading-context').click();assert.ok(w.document.activeElement.closest('.passage'));assert.equal(w.document.activeElement.closest('[hidden]'),null);}
+  if(action==='summary'){$('mode-summary').click();$('mode-passages').click();}
+  if(action==='query'){$('passage-search').click();search($,'road');}
+  if(action==='document')await load($,{...splitCueFixture(3),title:'Other source'});
+  assert.equal($('reading-context').hidden,true);const query=$('search').value;$('return-reading-results').click();assert.equal($('search').value,query);
+ }finally{await w.happyDOM.close();}
+});
+
+test('return from passages re-evaluates an edited-away result and preserves explicit bookmark changes',async()=>{
+ const {w,$}=setup();try{
+  await load($);search($,'crossing-marker');row(w,'split-1750').querySelector('.context-button').click();$('mode-passages').click();w.document.activeElement.querySelector('.passage-details').click();
+  row(w,'split-1750').querySelector('.edit-button').click();$('edit-segment').value='Corrected source without the query';$('save-edit').click();row(w,'split-1750').querySelector('.bookmark-button').click();
+  $('return-to-passages').click();$('return-reading-results').click();assert.equal(rows(w).length,0);assert.equal(w.document.activeElement,$('search'));assert.match($('notice').textContent,/没有匹配/);
+  await w.flushContentForTest();assert.equal(stored(w)[0].readingPosition,'split-1750');assert.equal(stored(w)[0].segments[1750].text,'Corrected source without the query');
+ }finally{await w.happyDOM.close();}
+});
+
+test('reselecting active passage mode keeps the browsed passage and the original search return',async()=>{
+ const {w,$}=setup();try{
+  await load($,splitCueFixture(100));search($,'station');row(w,'split-0').querySelector('.context-button').click();$('mode-passages').click();$('passage-next').click();
+  const anchor=w.document.activeElement.dataset.firstCueId;assert.equal(anchor,'split-48');$('mode-passages').click();assert.equal(w.document.activeElement.dataset.firstCueId,anchor);assert.equal($('reading-context').hidden,false);
+  $('return-reading-results').click();assert.equal($('search').value,'station');assert.equal(w.document.activeElement,row(w,'split-0').querySelector('.context-button'));
+ }finally{await w.happyDOM.close();}
+});

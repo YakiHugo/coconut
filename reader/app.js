@@ -42,6 +42,8 @@ function matchesReadingSegment(segment,doc,query){return (speakerFilter===null||
 let searchFocusedId=null;
 // A temporary detour, never a persisted reading position or an AI selection.
 let readingContext=null;
+const readingContextHome=document.createComment('reading context home');
+$('reading-context').before(readingContextHome);
 let workspace = "read";
 let readingScroll = 0;
 let editingTarget = null;
@@ -508,25 +510,32 @@ function clearReadingContext() {
  document.querySelectorAll('.context-target').forEach(row=>row.classList.remove('context-target'));
 }
 function renderReadingContext() {
- if(readingContext?.key!==active()?.key)readingContext=null;
- const origin=readingContext;
+ if(readingContext?.document!==active())readingContext=null;
+ const origin=readingContext,bar=$('reading-context');
+ // Move the one existing landmark, retaining its handlers and accessible IDs.
+ if(origin&&readingMode==='passages'){if(bar.nextElementSibling!==$('passage-workspace'))$('passage-workspace').before(bar);}
+ else if(readingContextHome.nextSibling!==bar)readingContextHome.after(bar);
  $('reading-context').hidden=!origin||workspace!=='read'||readingMode==='summary';
  if(origin)$('reading-context-label').textContent=origin.label+' · 第 '+(origin.index+1)+' / '+origin.count+' 个结果';
 }
-function openReadingContext(id) {
+function captureReadingContext(id) {
  const doc=active(),query=$('search').value;
  if(!doc||(!query.trim()&&!notesOnly&&!excerptsOnly&&speakerFilter===null))return;
  const matches=doc.segments.filter(s=>matchesReadingSegment(s,doc,query.trim().toLocaleLowerCase()));
  const index=matches.findIndex(s=>s.id===id);if(index<0)return;
  const row=[...$('transcript').querySelectorAll('.segment')].find(node=>node.dataset.segmentId===id);
  const labels=[query.trim()?'搜索“'+query.trim()+'”':'',excerptsOnly?'摘录':'',notesOnly?'笔记':'',speakerFilter!==null?'说话人：'+(speakerFilter||'未标注'):''].filter(Boolean);
- readingContext={key:doc.key,id,index,count:matches.length,label:labels.join(' · '),query,notesOnly,excerptsOnly,speakerFilter,pageStart,translationView:doc.translation_view||'',viewportTop:row?.getBoundingClientRect().top};
+ readingContext={key:doc.key,document:doc,id,index,count:matches.length,label:labels.join(' · '),query,notesOnly,excerptsOnly,speakerFilter,pageStart,translationView:doc.translation_view||'',viewportTop:row?.getBoundingClientRect().top};
  $('ai-consent').checked=false;
- goToSegment(id,true);
+ return true;
+}
+function openReadingContext(id) {
+ if(captureReadingContext(id))goToSegment(id,true);
 }
 function returnReadingResults() {
  const origin=readingContext,doc=active();clearReadingContext();
- if(!origin||doc?.key!==origin.key)return;
+ if(!origin||doc!==origin.document)return;
+ passageReturn=null;
  $('search').value=origin.query;notesOnly=origin.notesOnly;excerptsOnly=origin.excerptsOnly;speakerFilter=origin.speakerFilter;
  // Display choice can change during the detour; restore the original view without
  // reverting source edits, annotations, or the user's explicit reading bookmark.
@@ -551,8 +560,13 @@ function returnReadingResults() {
 $('return-reading-results').onclick=returnReadingResults;
 $('dismiss-reading-context').onclick=()=>{
  const id=readingContext?.id;clearReadingContext();
- const row=[...$('transcript').querySelectorAll('.segment')].find(node=>node.dataset.segmentId===id);
- (row||$('search')).focus({preventScroll:true});
+ if(readingMode==='passages'){
+  const cue=[...$('passage-body').querySelectorAll('.passage-cue')].find(node=>node.dataset.cueId===id);
+  (cue?.closest('.passage')||$('passage-body').querySelector('.passage')||$('mode-passages')).focus({preventScroll:true});
+ }else{
+  const row=[...$('transcript').querySelectorAll('.segment')].find(node=>node.dataset.segmentId===id);
+  (row||$('search')).focus({preventScroll:true});
+ }
 };
 function goToSegment(id,contextDetour=false,preservePassageReturn=false) {
  if(!preservePassageReturn)passageReturn=null;
@@ -2525,7 +2539,7 @@ function applyReadingMode() {
 function setReadingMode(mode) {
  const previousMode=readingMode;
  readingMode=['transcript','passages'].includes(mode)?mode:'summary';
- if(readingMode==='passages'){clearReadingContext();selected=null;$('notes-panel').hidden=true;if(typeof stopLanguageBatches==='function')stopLanguageBatches();$('language-panel').open=false;}
+ if(readingMode==='passages'){if(readingContext?.document!==active())clearReadingContext();selected=null;$('notes-panel').hidden=true;if(typeof stopLanguageBatches==='function')stopLanguageBatches();$('language-panel').open=false;}
  if(readingMode==='summary')passageReturn=null;
  if(readingMode==='summary'){
   clearReadingContext();
@@ -2610,7 +2624,23 @@ function renderSummary() {
  $('browse-ai-history').hidden=!(doc.ai_answers||[]).length;
  $('browse-ai-history').textContent='浏览全部 AI 历史（'+(doc.ai_answers||[]).length+' 则）';
 }
-$('mode-passages').onclick=()=>openPassage(passageAnchor||active()?.readingPosition||active()?.segments[0]?.id);
+$('mode-passages').onclick=()=>{
+ const doc=active();if(!doc)return;
+ if(readingMode==='passages'){openPassage(passageAnchor||doc.readingPosition||doc.segments[0]?.id);return;}
+ const origin=readingContext?.document===doc?readingContext:null;
+ let cueId=selected||origin?.id||searchFocusedId;
+ if(!doc.segments.some(cue=>cue.id===cueId))cueId=null;
+ const query=$('search').value;
+ if(!origin&&(query.trim()||notesOnly||excerptsOnly||speakerFilter!==null)){
+  const matches=doc.segments.filter(cue=>matchesReadingSegment(cue,doc,query.trim().toLocaleLowerCase()));
+  if(!matches.some(cue=>cue.id===cueId))cueId=matches[pageStart]?.id;
+  captureReadingContext(cueId);
+ }
+ // The outer result snapshot owns filters; passages and their note detours read
+ // full source context. Neither this anchor nor returning changes the bookmark.
+ if(readingContext?.document===doc){$('search').value='';notesOnly=false;excerptsOnly=false;speakerFilter=null;searchFocusedId=null;}
+ openPassage(cueId||passageAnchor||doc.readingPosition||doc.segments[0]?.id);
+};
 $('mode-summary').onclick=()=>setReadingMode('summary');
 $('mode-transcript').onclick=()=>{const doc=active();if(contentIngressAllowed(doc)&&doc?.translation_view){doc.translation_view='';queueDocument(doc);}setReadingMode('transcript');render();};
 $('mode-bilingual').onclick=()=>{const doc=active();if(!doc||!contentIngressAllowed(doc)||Coconut.isAudioProject(doc))return;const target=doc.translation_view||$('translation-target').value||'zh';if(doc.translation_view!==target){doc.translation_view=target;queueDocument(doc);}setReadingMode('transcript');render();};

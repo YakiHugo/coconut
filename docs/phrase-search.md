@@ -42,3 +42,20 @@ KMP scans each selected indexed stream and finds overlaps without query-length s
 - `tests/phrase-search-browser.mjs`: authored desktop/mobile browser acceptance, run by GitHub Actions; browser execution is separate from Node/HappyDOM results
 
 Performance diagnostics report timings and heap deltas for the actual authored test run. They are observations of that environment, not a promise for every device, transcript or translation dependency graph.
+
+## Continue reading a found passage
+
+“连贯阅读” follows the selected cue or the current search-context result rather
+than jumping back to the explicit reading bookmark. The original query, filters,
+translation view and result position remain a temporary return route while the
+reader explores the passage or edits a neighboring cue's note. The same return
+bar appears above continuous reading; “返回刚才的段落” returns within that detour,
+whereas “返回结果” ends it and restores the search. Notes and source corrections
+are retained. Returning never restores an older explicit bookmark.
+
+Changing the query or filters, opening a summary or another document, or choosing
+“留在全文” ends the temporary route. It is not a saved per-document reading session.
+If a correction removes the original match, returning uses the existing adjacent
+result or empty-results behavior. DOM regressions cover both nested returns and
+retirement; the authored phrase-search browser journey checks keyboard navigation,
+viewport restoration, the single return landmark and a durable note in CI.
