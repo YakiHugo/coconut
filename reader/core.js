@@ -466,17 +466,69 @@
   }
   return hits;
  }
+ const libraryTitleOrder=new Intl.Collator('zh-Hans',{numeric:true,sensitivity:'base'});
  function sortedLibrary(documents, order) {
   const result=documents.slice();
-  if(order==='title')result.sort((a,b)=>a.title.localeCompare(b.title,'zh-Hans',{numeric:true,sensitivity:'base'}));
-  if(order==='duration')result.sort((a,b)=>documentDuration(a)-documentDuration(b));
+  if(order==='title')result.sort((a,b)=>libraryTitleOrder.compare(a.title,b.title));
+  if(order==='duration'){const durations=new Map(result.map(doc=>[doc,documentDuration(doc)]));result.sort((a,b)=>durations.get(a)-durations.get(b));}
   return result;
+ }
+ // Cooperative shelf selection. Each document is one atomic phrase-engine
+ // operation: yielding never splits a phrase or publishes a partial result.
+ // A single completed snapshot is reused for page changes and reader refreshes.
+ function createLibrarySearch({getDocuments,getRevision=()=>0,schedule=run=>root.setTimeout(run,0),
+  now=()=>root.performance.now(),batchSize=32,budgetMs=4,onChange=()=>{}}) {
+  let generation=0,current=null;
+  const sameDocuments=job=>{
+   const live=getDocuments();
+   return live.length===job.documents.length&&live.every((doc,i)=>doc===job.documents[i]&&doc.segments===job.shapes[i][0]&&doc.segments.length===job.shapes[i][1]);
+  };
+  const valid=job=>current===job&&job.generation===generation&&job.revision===getRevision()&&job.sourceRevision===searchRevision&&sameDocuments(job);
+  function request(query,kind='all',scope='title',order='recent') {
+   const signature=JSON.stringify([query,kind,scope,order]);
+   if(current?.signature===signature&&valid(current))return current;
+   const documents=getDocuments().slice();
+   const job={generation:++generation,signature,revision:getRevision(),sourceRevision:searchRevision,documents,
+    shapes:documents.map(doc=>[doc.segments,doc.segments.length]),pending:false,scanned:0,docs:[],matches:[]};
+   current=job;
+   let cues=0;
+   const expensive=kind==='annotated'||Boolean(query.trim()&&scope!=='title');
+   if(expensive)for(const doc of documents){cues+=doc.segments.length;if(cues>4000)break;}
+   job.pending=expensive&&(documents.length>160||cues>4000);
+   function finish(){job.docs=sortedLibrary(job.matches,order);job.matches=[];job.pending=false;}
+   function step(){
+    if(!valid(job)){
+     // Content may change without a shelf render (e.g. a background import).
+     // Only the current generation may ask the view to start a fresh snapshot.
+     if(current===job){current=null;onChange();}return;
+    }
+    const started=now();let count=0;
+    while(job.scanned<documents.length){
+     const doc=documents[job.scanned++];
+     if(libraryMatches(doc,query,kind,scope)){
+      // Title/note matches can bypass the source matcher. Prepare its cached
+      // result here too, rather than cold-building up to 40 indexes at paint.
+      if(scope==='text'&&query.trim())searchDocument(doc,query,'text');
+      job.matches.push(doc);
+     }
+     if(++count>=batchSize||now()-started>=budgetMs)break;
+    }
+    if(job.scanned===documents.length)finish();
+    onChange();
+    if(job.pending&&current===job)schedule(step);
+   }
+   if(job.pending)schedule(step);
+   else{job.matches=documents.filter(doc=>libraryMatches(doc,query,kind,scope));job.scanned=documents.length;finish();}
+   return job;
+  }
+  return {request,cancel(){generation++;current=null;}};
  }
  // A document-identity cache, not persistent state. Ordinary note/bookmark/view
  // saves do not rebuild source text. Mutators must invalidate before readers or
  // AI scope checks observe changed text, translations, contexts or glossary.
  const searchIndexes=new WeakMap();
- function invalidateSearch(doc){searchIndexes.delete(doc);}
+ let searchRevision=0;
+ function invalidateSearch(doc){searchIndexes.delete(doc);searchRevision++;}
  function searchDocument(doc,query,scope='all') {
   let cache=searchIndexes.get(doc);
   if(!cache||cache.segments!==doc.segments||cache.length!==doc.segments.length||cache.language!==(doc.language||'')||cache.contexts!==doc.translation_contexts||cache.glossary!==doc.translation_glossary){
@@ -918,7 +970,7 @@
 			segments,
 		});
 	}
-	const api = { libraryCaptures, libraryNotebookMarkdown, mediaTiming, mediaTimingOffset, mediaTimingRange, localMediaSource, searchDocument, invalidateSearch, manualReviewSnapshot, manualReviewCurrent, saveManualTranslation, translationReviewQueue, hasNoteContent, segmentNoteCount, BACKUP_REVIEW_BYTES, SUBTITLE_IMPORT_BYTES, vttPayload, libraryHits, librarySnippet, hasProjectAnnotations, projectAnnotationCount, attachProjectTranscript, libraryMatches, documentDuration, sortedLibrary, AUDIO_NOTE_BUDGET, audioNoteCharacters, isAudioProject, audioProjectIdentity, podcastMediaIdentity, SUMMARY_QUESTION, summaryReadiness, podcastURL, podcastSource, cleanGlossary, relevantGlossary, translationQualityMessage, retainAnswers, summaryFreshness, latestSummary, summaryMarkdown, aiReadingMarkdown, parseReadingTime, createPlaybackIndex, segmentAtTime, subtitleExport, mergeLibraryBackup, time, source, media, validate, parse, matchesSegment, notebookSegments, notebookMarkdown, translationCurrent, sameCueSnapshot, subscriptionPlan, cleanContexts, answerFreshness };
+	const api = { createLibrarySearch, libraryCaptures, libraryNotebookMarkdown, mediaTiming, mediaTimingOffset, mediaTimingRange, localMediaSource, searchDocument, invalidateSearch, manualReviewSnapshot, manualReviewCurrent, saveManualTranslation, translationReviewQueue, hasNoteContent, segmentNoteCount, BACKUP_REVIEW_BYTES, SUBTITLE_IMPORT_BYTES, vttPayload, libraryHits, librarySnippet, hasProjectAnnotations, projectAnnotationCount, attachProjectTranscript, libraryMatches, documentDuration, sortedLibrary, AUDIO_NOTE_BUDGET, audioNoteCharacters, isAudioProject, audioProjectIdentity, podcastMediaIdentity, SUMMARY_QUESTION, summaryReadiness, podcastURL, podcastSource, cleanGlossary, relevantGlossary, translationQualityMessage, retainAnswers, summaryFreshness, latestSummary, summaryMarkdown, aiReadingMarkdown, parseReadingTime, createPlaybackIndex, segmentAtTime, subtitleExport, mergeLibraryBackup, time, source, media, validate, parse, matchesSegment, notebookSegments, notebookMarkdown, translationCurrent, sameCueSnapshot, subscriptionPlan, cleanContexts, answerFreshness };
 	if (typeof module !== "undefined" && module.exports) module.exports = api;
 	else root.Coconut = api;
 })(typeof window !== "undefined" ? window : globalThis);

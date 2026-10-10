@@ -37,10 +37,11 @@ test('query, scope, kind and sort reset paging over the complete library without
 
 test('late-page full-text hits navigate to the exact cue and note while keeping library filters and stored position',async()=>{
  const docs=largeLibraryFixture(81,{cues:221});for(const d of docs){d.segments[220].text='authored pagination needle';d.readingPosition=d.segments[0].id;}docs[80].notes['shelf-80-cue-219']='authored final private needle';
- const {w,$}=libraryHarness(docs);try{
-  search($,'pagination needle','text');assert.equal(cards($).length,40);jump($,3);assert.equal(cards($)[0].dataset.documentKey,'shelf-80');
+ const tasks=[];const drain=()=>{while(tasks.length)tasks.shift()();};
+ const {w,$}=libraryHarness(docs,{configureCore(w){const create=w.Coconut.createLibrarySearch;w.Coconut.createLibrarySearch=options=>create({...options,schedule:run=>tasks.push(run)});}});try{
+  search($,'pagination needle','text');drain();assert.equal(cards($).length,40);jump($,3);assert.equal(cards($)[0].dataset.documentKey,'shelf-80');
   $('library').querySelector('.library-hit').click();assert.equal($('title').textContent,docs[80].title);assert.equal(w.document.activeElement.dataset.segmentId,'shelf-80-cue-220');assert.ok(w.document.querySelectorAll('#transcript .segment').length<=100);assert.equal($('library-search').value,'pagination needle');assert.equal($('library-page-number').value,'3');assert.equal(saved(w).at(-1).readingPosition,'shelf-80-cue-0');
-  search($,'final private needle','notes');$('library').querySelector('.library-hit').click();assert.equal(w.document.activeElement,$('note'));assert.equal($('note').value,'authored final private needle');
+  search($,'final private needle','notes');drain();$('library').querySelector('.library-hit').click();assert.equal(w.document.activeElement,$('note'));assert.equal($('note').value,'authored final private needle');
  }finally{await w.happyDOM.close();}
 });
 
