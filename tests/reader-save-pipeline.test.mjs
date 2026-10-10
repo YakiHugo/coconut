@@ -135,3 +135,31 @@ test('a retry receipt cannot announce all content saved while a newer note is st
   assert.equal(f.$('note').value,'Newer while retry saves');const flush=f.saves.store.flush();f.saves.writes[2].commit();await flush;
  }finally{await f.w.happyDOM.close();}
 });
+
+test('two-tab conflict baseline waits for the first note durable receipt, including a held write',async()=>{
+ const clock=saveClock(),first=setup({clock}),stale=setup({clock:saveClock()});try{
+  const oldDisk=first.w.localStorage.getItem(KEY);
+  first.saves.hold();first.note('Newer saved note in first tab');
+  assert.equal(first.w.localStorage.getItem(KEY),oldDisk,'input is not a durable save');
+  await clock.tick(249);assert.equal(first.saves.writes.length,0);
+  await clock.tick(1);assert.equal(first.saves.writes.length,1);
+  let acknowledged=false;
+  const receipt=first.saves.store.flush().then(value=>{acknowledged=true;return value;});
+  await settle();assert.equal(acknowledged,false);
+  assert.equal(first.$('save-status').dataset.state,'pending');
+  assert.equal(first.w.localStorage.getItem(KEY),oldDisk,'held write must not change disk');
+  first.saves.writes[0].commit();assert.equal((await receipt).ok,true);
+  assert.equal(first.$('save-status').dataset.state,'saved');
+  const disk=first.w.localStorage.getItem(KEY);
+  assert.equal(JSON.parse(disk).documents[0].notes.one,'Newer saved note in first tab');
+  assert.notEqual(disk,oldDisk);
+  // The second tab loaded before the first edit; expose the newly committed
+  // shared storage bytes without replacing its stale in-memory baseline.
+  stale.w.localStorage.setItem(KEY,disk);stale.note('Unsaved conflicting note in second tab');
+  assert.equal((await stale.saves.store.flush()).ok,false);
+  assert.equal(stale.$('save-status').dataset.state,'failed');
+  assert.equal(stale.unload(),true);
+  assert.equal(stale.$('note').value,'Unsaved conflicting note in second tab');
+  assert.equal(stale.w.localStorage.getItem(KEY),disk);
+ }finally{await first.w.happyDOM.close();await stale.w.happyDOM.close();}
+});

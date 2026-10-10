@@ -100,7 +100,13 @@ try{
  await page.locator('#cancel-translation-glossary').click();await reload(page,false);check('canceling_glossary_restores_clean_reload',true);
  stage='two_tab_conflict';const other=await newPage();
  await page.locator('#mode-transcript').click();await page.locator('.note-button').click();await page.locator('#note').fill('Newer saved note in first tab');
+ // Note input queues a debounced write. Only its successful durable receipt
+ // can establish the bytes the stale second tab must leave untouched.
+ const receipt=await page.evaluate(()=>libraryStore.flush());
+ check('first_tab_note_has_a_successful_save_receipt',receipt.ok&&await page.locator('#save-status').getAttribute('data-state')==='saved');
  const disk=await page.evaluate(key=>localStorage.getItem(key),KEY);
+ const savedKey=await page.evaluate(()=>sessionStorage.getItem('coconut-reader-active-v1'));
+ check('first_tab_disk_contains_the_newer_saved_note',JSON.parse(disk).documents.find(doc=>doc.key===savedKey)?.notes['draft-cue']==='Newer saved note in first tab');
  await other.bringToFront();await other.locator('#mode-transcript').click();await other.locator('.note-button').click();await other.locator('#note').fill('Unsaved conflicting note in second tab');
  await other.waitForFunction(()=>document.getElementById('save-status').dataset.state==='failed');await reload(other,true);
  check('conflict_reload_dismiss_preserves_both_versions',await other.locator('#note').inputValue()==='Unsaved conflicting note in second tab'&&await other.evaluate(key=>localStorage.getItem(key),KEY)===disk);

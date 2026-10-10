@@ -472,7 +472,16 @@ try {
   await firstPassage.locator('.passage-listen').click();
   await page.waitForFunction(() => !document.querySelector('audio').paused);
   await page.locator('#passage-body').focus(); await page.keyboard.press('k');
-  check('k_pauses_a_bounded_passage_without_cancelling_preview', await page.locator('audio').evaluate(player => player.paused) && await page.locator('#passage-playback-controls').getAttribute('data-state') === 'paused');
+  // paused changes before the queued native pause event publishes preview UI.
+  // Await one atomic observation, including ownership of the original range.
+  stage = 'waiting_for_bounded_preview_pause';
+  const paused = await page.waitForFunction(range => {
+    const player = document.querySelector('audio'), preview = document.querySelector('#passage-playback-controls').dataset.state;
+    const current = passagePlayback.getState().range;
+    return player.paused && preview === 'paused' && current?.start === range.start && current?.end === range.end;
+  }, range);
+  check('k_pauses_a_bounded_passage_without_cancelling_preview', await paused.jsonValue());
+  await paused.dispose();
   await page.evaluate(() => {window.__readingKeyboardReturnFocus = document.activeElement;});
   const pausedPreview = await interactionState();
   await page.keyboard.press('?');
