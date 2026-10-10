@@ -68,6 +68,10 @@
     now = () => Date.now(), setTimer = (fn, ms) => root.setTimeout(fn, ms),
     clearTimer = timer => root.clearTimeout(timer)} = {}) {
     const entries = new Map(), listeners = new Set();
+    const perDocument = typeof adapter.prepareChanges === 'function';
+    // Dirty atomic groups are page-owned dependencies, not revision tokens.
+    // Overlap joins groups until their captured generations are acknowledged.
+    const groups = new Map();
     let generation = 0, timer = null, firstQueued = null, running = null, barrier = null;
     for (const doc of getDocuments()) entries.set(doc.key, entry(doc.key, doc, 0, 'update', 'saved'));
     function entry(key, identity, version, kind, state = 'pending') {
@@ -75,6 +79,41 @@
         kind, status: state, error: null, waiters: []};
     }
     const dirty = item => item.status !== 'saved';
+    function pruneGroups() {
+      for (const [key, group] of groups) if (!entries.has(key) || !dirty(entries.get(key))) {
+        groups.delete(key); group.keys.delete(key);
+      }
+    }
+    function joinGroups(changes) {
+      if (!perDocument || !changes.length) return null;
+      pruneGroups();
+      const joined = new Set(changes.map(change => groups.get(change.key)).filter(Boolean));
+      const group = {keys: new Set(changes.map(change => change.key)), conflict: null};
+      for (const previous of joined) {
+        group.conflict ||= previous.conflict;
+        for (const key of previous.keys) group.keys.add(key);
+      }
+      for (const key of group.keys) groups.set(key, group);
+      return group;
+    }
+    const quarantined = item => perDocument && groups.get(item.key)?.conflict;
+    const capturable = item => dirty(item) && !quarantined(item);
+    const hasPending = () => [...entries.values()].some(item => item.status === 'pending' && capturable(item));
+    function quarantine(group, result) {
+      if (!group) return;
+      group.conflict = Object.freeze({ok: false, status: result.status, error: result.error, key: result.key});
+      for (const key of [...group.keys]) {
+        const item = entries.get(key);
+        if (!item || !dirty(item) || groups.get(key) !== group) continue;
+        const version = item.generation;
+        item.status = result.status; item.error = result.error || null;
+        // An unsent structural command cannot remain provisionally applied once
+        // its dependency is known to conflict. Ordinary text stays recoverable.
+        reconcileFailure(item, version, result);
+        settle(item, version, result);
+      }
+      pruneGroups();
+    }
     function view(item) {
       return Object.freeze({key: item.key, identity: item.identity, generation: item.generation,
         committedGeneration: item.committedGeneration, kind: item.kind, status: item.status, error: item.error});
@@ -118,7 +157,7 @@
     function clearClock() { if (timer !== null) clearTimer(timer); timer = null; }
     function schedule() {
       clearClock();
-      if (running || barrier || ![...entries.values()].some(item => item.status === 'pending')) return;
+      if (running || barrier || !hasPending()) return;
       firstQueued ??= now();
       timer = setTimer(() => { timer = null; void start(); }, Math.max(0, Math.min(delay, maxWait - (now() - firstQueued))));
     }
@@ -132,7 +171,9 @@
         return duplicate || !identity || identity.key !== key || (kind === 'remove' ? live.has(key) : live.get(key) !== identity);
       }) ? 'identity' : null;
       if (invalid) return Object.freeze({accepted: false, tickets: Object.freeze(changes.map(({key, identity}) => rejected(key, identity, invalid)))});
+      const group = joinGroups(changes);
       const tickets = changes.map(({key, identity, kind = 'update', rollback}) => register(key, identity, kind, rollback));
+      if (group?.conflict) quarantine(group, group.conflict);
       if (tickets.length) { firstQueued ??= now(); schedule(); publish({type: 'queued', keys: Object.freeze(tickets.map(item => item.key))}); }
       return Object.freeze({accepted: true, tickets: Object.freeze(tickets)});
     }
@@ -155,7 +196,10 @@
     }
     function reconcileFailure(item, version, result) {
       const owner = item.operation;
-      if (owner?.generation !== version || item.generation !== version || entries.get(item.key) !== item) return;
+      if (owner?.generation !== version || owner.reconciled || item.generation !== version || entries.get(item.key) !== item) return;
+      // Disarm before calling user-owned rollback code: it can synchronously
+      // register another overlapping group and reenter conflict reconciliation.
+      owner.reconciled = true;
       // Undo only this structural mutation before receipt observers or a waiting
       // flush capture another whole-library write. No success is ever rolled back.
       let rolledBack = false;
@@ -176,11 +220,11 @@
     async function start() {
       if (running) return running.done;
       clearClock(); firstQueued = null;
-      if (![...entries.values()].some(item => item.status === 'pending')) return;
-      // Failed documents are retried atomically with new pending work. A legacy
-      // adapter captures the full library; a document adapter captures only this
-      // dirty batch. Both acknowledge exactly these identities/generations.
-      const batch = [...entries.values()].filter(dirty).map(item => ({item, generation: item.generation, kind: item.kind}));
+      if (!hasPending()) return;
+      // Legacy writes still capture the complete library. Per-document writes
+      // omit known-conflicted atomic groups, without rebasing their CAS tokens.
+      // Other failures retain the established full dirty-batch retry behavior.
+      const batch = [...entries.values()].filter(capturable).map(item => ({item, generation: item.generation, kind: item.kind}));
       const controller = new AbortController();
       const operation = {batch, controller, done: null}; running = operation;
       operation.done = (async () => {
@@ -193,7 +237,6 @@
             if (item.kind === 'remove' ? identities.has(item.key) : identities.get(item.key) !== item.identity) throw {code: 'identity', message: 'Document identity changed before capture'};
           }
           const changes = batch.map(({item, generation, kind}) => ({key: item.key, identity: item.identity, generation, kind}));
-          const perDocument = typeof adapter.prepareChanges === 'function';
           const value = perDocument ? adapter.prepareChanges(changes) : adapter.prepare(documents);
           const capturedDocuments = perDocument ? changes.filter(change => change.kind !== 'remove').map(change => change.identity) : documents;
           checkpoints = capturedDocuments.map(doc => Object.freeze({key: doc.key, identity: doc,
@@ -204,8 +247,19 @@
         const changes = batch.map(saved => Object.freeze({key: saved.item.key, identity: saved.item.identity,
           generation: saved.generation, kind: saved.kind}));
         result = Object.freeze({...result, changes: Object.freeze(changes), checkpoints: Object.freeze(checkpoints)});
+        // Only a keyed document CAS conflict is safely isolatable. Quota,
+        // protocol, fence, connection and keyless failures remain global.
+        const conflictGroup = perDocument && !controller.signal.aborted && !result.ok &&
+          result.error?.code === 'conflict' && batch.some(saved => saved.item.key === result.key) ? groups.get(result.key) : null;
+        if (conflictGroup) conflictGroup.conflict = Object.freeze({ok: false, status: result.status, error: result.error, key: result.key});
         for (const saved of batch) {
           const item = saved.item;
+          if (conflictGroup && !quarantined(item) && entries.get(item.key) === item) {
+            // The mixed transaction aborted; none of these generations saved.
+            // Keep independent tickets waiting for a newly validated transaction.
+            if (item.generation === saved.generation) { item.status = 'pending'; item.error = null; }
+            continue;
+          }
           if (result.ok) item.committedGeneration = Math.max(item.committedGeneration, saved.generation);
           // A late success or failure cannot clear a newer edit or failure.
           if (item.generation === saved.generation) { item.status = result.status; item.error = result.error || null; }
@@ -216,6 +270,8 @@
           // The app owns its explicit one-slot recovery copy.
           if (result.ok && saved.kind === 'remove' && item.generation === saved.generation && entries.get(item.key) === item) entries.delete(item.key);
         }
+        if (conflictGroup) quarantine(conflictGroup, result);
+        pruneGroups();
         running = null;
         publish({type: 'commit', result});
         schedule();
@@ -225,13 +281,13 @@
     }
     async function flush({token} = {}) {
       if (token && barrier?.token !== token) return problem('cancelled');
-      const willCapture = [...entries.values()].some(item => item.status === 'pending');
+      const willCapture = hasPending();
       const waits = [...entries.values()].filter(dirty).map(item =>
-        willCapture || running?.batch.some(saved => saved.item === item && saved.generation >= item.generation) ? ticket(item).committed :
+        (willCapture && capturable(item)) || running?.batch.some(saved => saved.item === item && saved.generation >= item.generation) ? ticket(item).committed :
         Promise.resolve({...problem(item.error?.code || item.status), key: item.key, identity: item.identity, generation: item.generation}));
       // Force this and any successor already included in the flush boundary.
       // Edits queued later remain pending rather than extending the boundary.
-      const force = () => { if (!running && [...entries.values()].some(item => item.status === 'pending')) void start(); };
+      const force = () => { if (!running && hasPending()) void start(); };
       const onChange = () => force(); listeners.add(onChange); force();
       const finish = Promise.all(waits).then(results => Object.freeze({ok: results.every(result => result.ok),
         status: results.every(result => result.ok) ? 'saved' : results.find(result => !result.ok).status, results}));
@@ -244,7 +300,9 @@
     }
     function retry(key) {
       if (barrier) return Promise.resolve(problem('cancelled'));
-      for (const item of entries.values()) if (dirty(item) && (key === undefined || item.key === key)) {
+      const retryGroup = key === undefined ? null : groups.get(key);
+      for (const item of entries.values()) if (dirty(item) && (key === undefined || item.key === key || groups.get(item.key) === retryGroup && retryGroup)) {
+        const group = groups.get(item.key); if (group) group.conflict = null;
         // A timed-out discard may still be waiting for its writer to abort.
         // Recovery is a new intent; that late abort must not consume it.
         if (running?.controller.signal.aborted && running.batch.some(saved => saved.item === item)) item.generation = ++generation;
@@ -275,6 +333,7 @@
         if (item.operation && item.operation.generation > captured) reconcileFailure(item, item.operation.generation, problem('cancelled'));
         cancelUncaptured(item, problem('cancelled'));
       }
+      pruneGroups();
       operation?.controller.abort();
       const released = barrier.released;
       const settled = Promise.resolve(operation?.done).then(result => barrier?.token === token ?
