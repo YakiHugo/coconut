@@ -730,6 +730,29 @@
 	function notebookSegments(doc) {
 		return doc.segments.filter(s => s.saved_excerpt === true || hasNoteContent(doc.notes?.[s.id]));
 	}
+ // A capture is owned by both its document and source. A cue with a note and
+ // excerpt is one capture; project notes and bookmark notes are never source text.
+ function libraryCaptures(documents, query = '', kind = 'all') {
+  const needle=query.trim().toLocaleLowerCase(), captures=[];
+  for(const doc of documents){
+   const add=(type,id,text,note,timestamp,excerpt=false)=>{
+    const capture={key:JSON.stringify([doc.key,type,id]),documentKey:doc.key,type,id,text,note,time:timestamp,excerpt};
+    if(kind!=='all'&&!(kind==='excerpt'&&excerpt)&&!(kind==='note'&&hasNoteContent(note)))return;
+    if(needle&&![doc.title,text,note,id,timestamp===null?'':time(timestamp)].some(value=>String(value||'').toLocaleLowerCase().includes(needle)))return;
+    captures.push(capture);
+   };
+   for(const cue of notebookSegments(doc))add('cue',cue.id,cue.text,doc.notes?.[cue.id]||'',cue.start,cue.saved_excerpt===true);
+   if(hasProjectAnnotations(doc)){
+    if(hasNoteContent(doc.project_note))add('project-note','', '',doc.project_note,null);
+    for(const item of doc.timestamp_bookmarks||[])add('bookmark',item.id,'',item.note||'',item.time);
+   }
+  }
+  return captures;
+ }
+ function libraryNotebookMarkdown(documents, selectedKeys) {
+  const selected=new Set(selectedKeys),docs=documents.filter(doc=>selected.has(doc.key));
+  return ['# 我的笔记与摘录','','包含所选 '+docs.length+' 篇的全部摘录、非空笔记与时间书签，不受笔记本搜索或分页影响。未选篇目不包含在内。Markdown 不是可恢复备份；完整恢复请另存 JSON，媒体不包含在内。','',...docs.map(doc=>'文档标识：'+markdownText(doc.key)+(doc.local_media_source?'\n本地媒体：'+markdownText(doc.local_media_source.name):'')+'\n\n'+notebookMarkdown(doc))].join('\n\n');
+ }
 	function markdownText(value) {
 		return String(value).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
 			.replace(/[\\`*_{}\[\]()#+.!|~$-]/g, "\\$&");
@@ -768,7 +791,7 @@
   if(hasProjectAnnotations(doc)&&projectAnnotationCount(doc)){
    lines.push('## 项目笔记与时间书签','','以下是用户自己的记录，不是原文或经过验证的引用。','');
    if(hasNoteContent(doc.project_note))lines.push('### 项目笔记','',quote(doc.project_note),'');
-   for(const item of doc.timestamp_bookmarks)lines.push('### '+time(item.time),'',hasNoteContent(item.note)?quote(item.note):'时间书签（未填写笔记）','');
+   for(const item of doc.timestamp_bookmarks)lines.push('### '+time(item.time),'','书签 ID：'+markdownText(item.id),'',hasNoteContent(item.note)?quote(item.note):'时间书签（未填写笔记）','');
   }
 		return lines.join("\n");
 	}
@@ -779,7 +802,7 @@
    'Markdown 用于阅读；完整恢复请保留 Coconut JSON 备份。备份不包含媒体，回听需重新获取或选择本地文件。',''];
   const origin=podcastOrigin(doc);if(origin)lines.push('[原始来源]('+origin+')','时间戳需在原声中手动定位。','');
   if(hasNoteContent(doc.project_note))lines.push('## 项目笔记','',quote(doc.project_note),'');
-  for(const item of doc.timestamp_bookmarks||[])lines.push('## '+time(item.time),'',hasNoteContent(item.note)?quote(item.note):'时间书签（未填写笔记）','');
+  for(const item of doc.timestamp_bookmarks||[])lines.push('## '+time(item.time),'','书签 ID：'+markdownText(item.id),'',hasNoteContent(item.note)?quote(item.note):'时间书签（未填写笔记）','');
   return lines.join('\n');
  }
 	function seconds(value) {
@@ -895,7 +918,7 @@
 			segments,
 		});
 	}
-	const api = { mediaTiming, mediaTimingOffset, mediaTimingRange, localMediaSource, searchDocument, invalidateSearch, manualReviewSnapshot, manualReviewCurrent, saveManualTranslation, translationReviewQueue, hasNoteContent, segmentNoteCount, BACKUP_REVIEW_BYTES, SUBTITLE_IMPORT_BYTES, vttPayload, libraryHits, librarySnippet, hasProjectAnnotations, projectAnnotationCount, attachProjectTranscript, libraryMatches, documentDuration, sortedLibrary, AUDIO_NOTE_BUDGET, audioNoteCharacters, isAudioProject, audioProjectIdentity, podcastMediaIdentity, SUMMARY_QUESTION, summaryReadiness, podcastURL, podcastSource, cleanGlossary, relevantGlossary, translationQualityMessage, retainAnswers, summaryFreshness, latestSummary, summaryMarkdown, aiReadingMarkdown, parseReadingTime, createPlaybackIndex, segmentAtTime, subtitleExport, mergeLibraryBackup, time, source, media, validate, parse, matchesSegment, notebookSegments, notebookMarkdown, translationCurrent, sameCueSnapshot, subscriptionPlan, cleanContexts, answerFreshness };
+	const api = { libraryCaptures, libraryNotebookMarkdown, mediaTiming, mediaTimingOffset, mediaTimingRange, localMediaSource, searchDocument, invalidateSearch, manualReviewSnapshot, manualReviewCurrent, saveManualTranslation, translationReviewQueue, hasNoteContent, segmentNoteCount, BACKUP_REVIEW_BYTES, SUBTITLE_IMPORT_BYTES, vttPayload, libraryHits, librarySnippet, hasProjectAnnotations, projectAnnotationCount, attachProjectTranscript, libraryMatches, documentDuration, sortedLibrary, AUDIO_NOTE_BUDGET, audioNoteCharacters, isAudioProject, audioProjectIdentity, podcastMediaIdentity, SUMMARY_QUESTION, summaryReadiness, podcastURL, podcastSource, cleanGlossary, relevantGlossary, translationQualityMessage, retainAnswers, summaryFreshness, latestSummary, summaryMarkdown, aiReadingMarkdown, parseReadingTime, createPlaybackIndex, segmentAtTime, subtitleExport, mergeLibraryBackup, time, source, media, validate, parse, matchesSegment, notebookSegments, notebookMarkdown, translationCurrent, sameCueSnapshot, subscriptionPlan, cleanContexts, answerFreshness };
 	if (typeof module !== "undefined" && module.exports) module.exports = api;
 	else root.Coconut = api;
 })(typeof window !== "undefined" ? window : globalThis);

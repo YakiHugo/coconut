@@ -83,6 +83,9 @@ jobs:
       - name: Verify cross-cue phrase matches, exact source scope and mobile context with authored fixtures
         if: ${{ !cancelled() && steps.browser_setup.outcome == 'success' }}
         run: node tests/phrase-search-browser.mjs
+      - name: Verify cross-library notebook, exact-source return and selected-document export
+        if: ${{ !cancelled() && steps.browser_setup.outcome == 'success' }}
+        run: node tests/library-notebook-browser.mjs
       - name: Verify bounded large-library pages, complete search, removal and backup with authored data
         if: ${{ !cancelled() && steps.browser_setup.outcome == 'success' }}
         run: node tests/large-library-browser.mjs

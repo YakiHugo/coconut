@@ -8,16 +8,16 @@
 <meta name="theme-color" content="#faf9f7">
 <link rel="icon" type="image/png" href="coconut-mark.png">
 <script src="appearance.js?v=86ea922669"></script>
-<link rel="stylesheet" href="style.css?v=3136cf7e80">
+<link rel="stylesheet" href="style.css?v=d8ac4eed84">
 <script src="summary.js?v=580ffdad1e" defer></script>
-<script src="core.js?v=679563eeef" defer>
+<script src="core.js?v=31623df115" defer>
 </script>
 <script src="passages.js?v=b4aee1081b" defer></script>
 <script src="passage-playback.js?v=162dbb3695" defer></script>
 <script src="library-store.js?v=7a0c1b8828" defer></script>
 <script src="indexeddb-document-adapter.js?v=65c0c5a814" defer></script>
 <script src="storage-provider.js?v=1cb898e984" defer></script>
-<script src="app.js?v=f9cc7111a5" type="text/coconut-pending" data-reader-script>
+<script src="app.js?v=d983567668" type="text/coconut-pending" data-reader-script>
 </script>
 <script src="language.js?v=8832e43c29" type="text/coconut-pending" data-reader-script></script>
 <script src="translation-review.js?v=ef64ceb824" type="text/coconut-pending" data-reader-script></script>
@@ -37,6 +37,7 @@
 <button id="add-content" class="primary">＋ 添加内容</button>
 <button id="toggle-library" aria-expanded="false" aria-controls="library-list">书架 <span id="library-total">0</span></button>
 <div id="library-list">
+<button id="open-library-notebook" type="button">我的笔记与摘录</button>
 <label class="library-search">查找书架<input id="library-search" type="search" placeholder="按标题查找"></label>
 <input type="file" id="file" accept=".json,.srt,.vtt" multiple hidden>
 <details class="library-backup"><summary>书架备份</summary><div class="disclosure-content"><button id="export-library">备份整个书架</button><button id="restore-library">恢复书架备份</button><button id="export-original-storage" hidden>导出升级前原始数据</button><p id="storage-backend-hint" class="hint" hidden></p><input id="library-file" type="file" accept=".json" hidden></div></details>
@@ -296,6 +297,7 @@ cd coconut
 </section>
 </div></details>
 </div>
+<button id="return-library-notebook" type="button" hidden>← 返回刚才的笔记本</button>
 <nav id="reading-context" class="reading-context" aria-label="原文上下文" hidden><span id="reading-context-label"></span><div><button id="return-reading-results" type="button">← 返回结果</button><button id="dismiss-reading-context" type="button">留在全文</button></div></nav>
 <div id="transcript-layout" class="reading-layout" hidden>
 <article id="transcript" tabindex="0" aria-label="文字稿">
@@ -407,6 +409,17 @@ cd coconut
 <dialog id="local-media-project-dialog" aria-labelledby="local-media-project-heading">
 <h2 id="local-media-project-heading">选择这个文件对应的项目</h2><p class="hint">书架里有多份同文件记录。请选择要继续的一份；不同版本的笔记与文字稿不会合并。文件信息与部分内容只是候选匹配，请核对声音。</p>
 <div id="local-media-project-options" class="local-media-project-options"></div><button id="cancel-local-media-project" type="button">取消打开</button>
+</dialog>
+<dialog id="library-notebook" class="library-notebook" aria-labelledby="library-notebook-title">
+<h2 id="library-notebook-title">我的笔记与摘录</h2>
+<p class="hint">书架中的摘录与笔记。片段的摘录和笔记合并显示；项目笔记与时间书签是你的记录，不是原文。浏览不会切换当前阅读或播放。</p>
+<label>查找记录<input id="notebook-search" type="search" placeholder="标题、原文、笔记或时间"></label>
+<label>内容<select id="notebook-kind"><option value="all">全部记录</option><option value="excerpt">摘录</option><option value="note">有笔记</option></select></label>
+<p id="notebook-status" role="status"></p><ol id="notebook-captures"></ol>
+<nav aria-label="笔记本分页"><button id="notebook-previous" type="button">上一页</button><button id="notebook-next" type="button">下一页</button></nav>
+<p id="notebook-export-scope" class="hint"></p><button id="notebook-export" type="button">导出所选篇目的全部记录</button><button id="notebook-clear-selection" type="button">清空选择</button>
+<p class="hint">勾选篇目后导出该篇全部记录，不受搜索和分页影响。完整恢复请使用书架 JSON 备份。</p>
+<button id="notebook-close" type="button">关闭笔记本</button>
 </dialog>
 </body>
 </html>
