@@ -253,3 +253,37 @@ test('snapshots are immutable and caller mutation cannot alter playback bounds',
   assert.throws(() => { state.returnPosition.time = 1; }, TypeError);
   env.player.advance(14); assert.equal(env.controller.getState().status, 'finished');
 });
+
+test('keyboard acceptance waits for the queued pause event and rejects a cancelled or different range', async () => {
+  const {readFile} = await import('node:fs/promises');
+  const {runInNewContext} = await import('node:vm');
+  const source = await readFile(new URL('./reading-keyboard-browser.mjs', import.meta.url), 'utf8');
+  const match = source.match(/const paused = await page\.waitForFunction\((range => \{[\s\S]*?\n  \}), range\);/);
+  assert.ok(match, 'exercise the exact browser acceptance predicate');
+  const env = setup(); await env.controller.listen(range);
+  const controls = {dataset: {get state() {return env.controller.getState().status;}}};
+  const predicate = runInNewContext('(' + match[1] + ')', {
+    document: {querySelector: selector => selector === 'audio' ? env.player : controls},
+    passagePlayback: env.controller,
+  });
+  assert.equal(predicate(range), false);
+  // Native pause() updates the property now but dispatches its event later.
+  env.player.pause = function () {this.pauses++; this.paused = true;};
+  env.player.pause();
+  assert.equal(env.player.paused, true);
+  assert.equal(env.controller.getState().status, 'playing');
+  assert.equal(predicate(range), false, 'a paused property alone is insufficient');
+  env.player.emit('pause');
+  assert.equal(predicate(range), true);
+  assert.equal(predicate({...range, end: range.end + 1}), false);
+  assert.deepEqual(env.controller.getState().range, range);
+  await env.player.play(); assert.equal(predicate(range), false);
+  env.player.advance(range.end);
+  assert.equal(env.player.paused, true);
+  assert.equal(env.controller.getState().status, 'finished');
+  assert.equal(env.player.currentTime, range.end);
+  assert.equal(predicate(range), false, 'a finished preview is not a paused preview');
+  env.player.emit('pause');
+  assert.equal(env.controller.getState().status, 'finished', 'late pause does not undo the end boundary');
+  env.controller.cancel(); assert.equal(predicate(range), false);
+});
