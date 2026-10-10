@@ -4,6 +4,7 @@ import {loadCaptionHelperBuild,stageCaptionHelper,verifyCaptionHelperResources} 
 import {signDevelopmentBundle} from './mac-signing.mjs';
 import {MAC_ICON_FILE,WINDOW_ICON_FILE,verifyMacAppIcon,verifyWindowIcon} from './icon-package.mjs';
 import {generateAppIcons} from '../scripts/generate-app-icons.mjs';
+import {verifyReaderResources} from './reader-package.mjs';
 import { mkdtemp, mkdir, readFile, writeFile, copyFile, rm } from 'node:fs/promises';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
@@ -30,7 +31,8 @@ try {
   await mkdir(app); await mkdir(reader,{recursive:true});
   for (const name of ['main.mjs','close-coordinator.mjs','update-preload.cjs','updater.mjs','update-http.mjs','update-install.mjs','providers.mjs','server.mjs','translation.mjs','podcast-sources.mjs','podcast-xml.mjs','public-http.mjs','caption-service.mjs','caption-helper.mjs','caption-helper-process.mjs','caption-helper-lock.json']) await copyFile(path.join(ROOT,name),path.join(app,name));
   await writeFile(path.join(app,'caption-helper-artifacts.json'),JSON.stringify({schemaVersion:1,artifacts:helperArtifacts}));
-  for (const name of ['index.html','summary.js','core.js','passages.js','passage-playback.js','app.js','language.js','jobs.js','podcasts.js','updates.js','style.css','coconut-mark.png']) await copyFile(path.join(ROOT,'../reader',name),path.join(reader,name));
+  for (const name of ['package.json','index.html','summary.js','core.js','passages.js','passage-playback.js','app.js','language.js','jobs.js','podcasts.js','updates.js','style.css','coconut-mark.png']) await copyFile(path.join(ROOT,'../reader',name),path.join(reader,name));
+  await verifyReaderResources(reader);
   const license = path.join(resources,'LICENSE.coconut'); await copyFile(path.join(ROOT,'../LICENSE'),license);
   const windowIcon=path.join(resources,WINDOW_ICON_FILE);
   await copyFile(path.join(icons,WINDOW_ICON_FILE),windowIcon);
@@ -45,6 +47,8 @@ try {
     osxSign:false,osxNotarize:false,extraResource:[reader,license,windowIcon],
     download:{cacheRoot:process.env.electron_config_cache || path.join(tmpdir(),'coconut-electron-cache')}});
   for (const directory of paths) {
+    const readerResources=path.join(directory,platform==='darwin'?'Coconut.app/Contents/Resources/reader':'resources/reader');
+    await verifyReaderResources(readerResources);
     if(mac||process.platform==='darwin') {
       const arch = directory.endsWith('-arm64') ? 'arm64' : 'x64';
       // Packager leaves Electron's own notices beside the .app; the ZIP contains
