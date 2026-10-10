@@ -4,7 +4,7 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import {chromium} from '@playwright/test';
+import {chromium, waitForPersistedLibrary} from './helpers/browser-storage.mjs';
 import {startBridge} from '../desktop/server.mjs';
 import {passageReadingFixture} from './helpers/passage-reading-fixture.mjs';
 let server,browser,stage='setup',release,hold=false,external=0;
@@ -14,7 +14,7 @@ const providers={status:async()=>({ready:true,reason:'Authored test provider'}),
  requests.push(body);if(hold)await new Promise(resolve=>{release=resolve;});
  return {answer:'Authored fixture answer. Compare the cited source.',citations:[body.segments[0].id],provider:'authored-fixture'};
 }};
-const snapshot=async page=>{await page.waitForFunction(()=>document.getElementById('save-status').dataset.state==='saved');return page.evaluate(()=>{const state=JSON.parse(localStorage.getItem('coconut-reader-v1'));return state.documents.find(doc=>doc.key===sessionStorage.getItem('coconut-reader-active-v1'));});};
+const snapshot=async page=>{await page.waitForFunction(()=>document.getElementById('save-status').dataset.state==='saved');return page.evaluate(async()=>{const state=await readPersistedLibrary();return state.documents.find(doc=>doc.key===sessionStorage.getItem('coconut-reader-active-v1'));});};
 const scopedIds=page=>page.locator('#passage-question-preview [data-cue-id]').evaluateAll(nodes=>nodes.map(node=>node.dataset.cueId));
 async function screenshot(page,label){if(process.env.COCONUT_UI_SCREENSHOTS){await fs.mkdir(process.env.COCONUT_UI_SCREENSHOTS,{recursive:true});await page.screenshot({path:path.join(process.env.COCONUT_UI_SCREENSHOTS,`passage-question-${label}.png`),fullPage:false,animations:'disabled'});}}
 async function load(page,doc){await page.locator('#file').setInputFiles({name:'authored-passage-question.json',mimeType:'application/json',buffer:Buffer.from(JSON.stringify(doc))});await page.waitForFunction(title=>document.getElementById('title').textContent===title,doc.title);await page.locator('#passage-workspace').waitFor({state:'visible'});}
@@ -53,7 +53,7 @@ try{
   await page.locator('#mode-passages').click();await page.locator('.passage-ask').nth(1).click();await page.locator('#ai-question').fill('This pending question will continue in the background.');hold=true;
   await page.locator('#ai-consent').check();await page.locator('#ask-ai').click();const deadline=Date.now()+15000;while(!release&&Date.now()<deadline)await new Promise(resolve=>setTimeout(resolve,20));assert.ok(release);
   await page.keyboard.press('Escape');release();release=null;hold=false;
-  await page.locator('.passage-ask').nth(1).click();await page.locator('#ai-question').fill('New edit after background request');await page.waitForFunction(()=>{const state=JSON.parse(localStorage.getItem('coconut-reader-v1'));return state.documents.find(doc=>doc.key===sessionStorage.getItem('coconut-reader-active-v1')).ai_answers.length===2;});
+  await page.locator('.passage-ask').nth(1).click();await page.locator('#ai-question').fill('New edit after background request');await waitForPersistedLibrary(page,async()=>{const state=await readPersistedLibrary();return state.documents.find(doc=>doc.key===sessionStorage.getItem('coconut-reader-active-v1')).ai_answers.length===2;});
   check(label+'_late_reply_preserves_draft_and_history',await page.locator('#ai-question').inputValue()==='New edit after background request'&&(await snapshot(page)).ai_answers.length===2);
   // Explicit cancellation is distinct from returning to reading.
   await page.locator('#ai-question').fill('Cancel receiving this request.');hold=true;await page.locator('#ai-consent').check();await page.locator('#ask-ai').click();

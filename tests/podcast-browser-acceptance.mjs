@@ -1,6 +1,6 @@
 /** Synthetic browser flow through the production source HTTP routes. No network sources or models. */
 import {startBridge} from '../desktop/server.mjs';
-import {chromium} from '@playwright/test';
+import {chromium,waitForPersistedLibrary} from './helpers/browser-storage.mjs';
 import {execFileSync} from 'node:child_process';
 import {mkdtemp,readFile,rm,mkdir} from 'node:fs/promises';
 import os from 'node:os';
@@ -55,15 +55,23 @@ try{
  stage='seek_downloaded_publisher_audio';await page.locator('.segment[data-segment-id="two"] .time > button').first().click();await page.waitForFunction(()=>document.querySelector('audio').currentTime>2.1);check('downloaded_audio_decodes_and_seeks',true);
  await page.locator('audio').evaluate(a=>a.pause());await page.locator('.segment[data-segment-id="two"] .note-button').click();await page.locator('#note').fill('Browser source note');await page.locator('#close-note').click();
  await page.evaluate(()=>libraryStore.flush());
- const saved=await page.evaluate(()=>JSON.parse(localStorage.getItem('coconut-reader-v1')).documents[0]);check('source_and_notes_saved',saved.podcast_source.episode_id===source.episode_id&&saved.notes.two==='Browser source note');
+ const saved=await page.evaluate(async () =>(await readPersistedLibrary()).documents[0]);check('source_and_notes_saved',saved.podcast_source.episode_id===source.episode_id&&saved.notes.two==='Browser source note');
  await page.reload();await page.locator('#mode-transcript').click();check('media_requires_explicit_reload',await page.locator('#source-media audio').count()===0);check('no_hidden_or_external_requests',calls.join(',')==='discover,import,media'&&external===0&&errors===0);
 
  stage='save_no_transcript_project';await page.locator('#add-content').click();await page.locator('#video-url').fill(source.feed_url);await page.locator('#process-url').click();await page.locator('.podcast-episode').nth(1).locator('button').first().click();await page.locator('#audio-project').waitFor({state:'visible'});
  check('audio_project_has_no_fake_summary',await page.locator('#summary-workspace').isHidden()&&await page.locator('#language-panel').isHidden()&&await page.locator('#transcript-layout').isHidden());
  await page.evaluate(()=>libraryStore.flush());
- const noTextSaved=await page.evaluate(()=>{const s=JSON.parse(localStorage.getItem('coconut-reader-v1'));return s.documents.find(d=>d.key===sessionStorage.getItem('coconut-reader-active-v1'));});
+ const noTextSaved=await page.evaluate(async () =>{const s=(await readPersistedLibrary());return s.documents.find(d=>d.key===sessionStorage.getItem('coconut-reader-active-v1'));});
  check('audio_project_source_saved_without_download',noTextSaved.project_kind==='audio_only'&&noTextSaved.segments.length===0&&noTextSaved.ai_answers.length===0&&calls.filter(c=>c==='media').length===1);
  await page.locator('#project-note').fill('浏览器验收项目笔记');await page.locator('#audio-bookmark-time').fill('00:02');await page.locator('#audio-bookmark-note').fill('这里需要回听核对');await page.locator('#audio-bookmark-form button[type=submit]').click();
+ // Bookmark rendering precedes its commit receipt. Do not reload a pending
+ // write: verify the exact notes, timestamp and original source in durable storage.
+ await waitForPersistedLibrary(page,async expected=>{
+  const doc=(await readPersistedLibrary()).documents.find(doc=>doc.key===expected.key);
+  return doc?.project_kind==='audio_only'&&doc.segments.length===0&&doc.project_note===expected.note&&
+   doc.timestamp_bookmarks.length===1&&doc.timestamp_bookmarks[0].time===2&&doc.timestamp_bookmarks[0].note===expected.bookmark&&
+   JSON.stringify(doc.podcast_source)===JSON.stringify(expected.source);
+ },{key:noTextSaved.key,note:'浏览器验收项目笔记',bookmark:'这里需要回听核对',source:noTextSaved.podcast_source});
  await page.reload();await page.locator('#audio-project').waitFor({state:'visible'});check('audio_notes_survive_refresh',await page.locator('#project-note').inputValue()==='浏览器验收项目笔记'&&await page.locator('#audio-bookmarks textarea').inputValue()==='这里需要回听核对');
  check('refresh_does_not_redownload_audio',await page.locator('#source-media audio').count()===0&&calls.filter(c=>c==='media').length===1);
  await page.locator('#download-podcast-media').click();await page.waitForFunction(()=>{const a=document.querySelector('#source-media audio');return a&&!a.error&&a.duration>0&&a.readyState>=2;});
@@ -72,12 +80,16 @@ try{
  const projectBackup=JSON.parse(await readFile(projectPath,'utf8'));check('audio_project_json_backup_is_complete',projectBackup.project_note==='浏览器验收项目笔记'&&projectBackup.timestamp_bookmarks[0].time===2&&projectBackup.segments.length===0&&!JSON.stringify(projectBackup).includes('blob:'));
  if(!await page.locator('.library-backup').evaluate(node=>node.open))await page.locator('.library-backup > summary').click();
  const [libraryDownload]=await Promise.all([page.waitForEvent('download'),page.locator('#export-library').click()]);const libraryPath=path.join(directory,'coconut-library.json');await libraryDownload.saveAs(libraryPath);
- await page.evaluate(()=>localStorage.removeItem('coconut-reader-v1'));await page.reload();await page.locator('#library-file').setInputFiles(libraryPath);await page.locator('#audio-project').waitFor({state:'visible'});
+ await page.evaluate(async()=>{CoconutStorageBootstrap.result.adapter.close();await new Promise((resolve,reject)=>{const request=indexedDB.deleteDatabase('coconut-reader-library-v1');request.onsuccess=resolve;request.onerror=()=>reject(request.error);});localStorage.clear();});await page.reload();await page.locator('#library-file').setInputFiles(libraryPath);await page.locator('#audio-project').waitFor({state:'visible'});
  check('full_library_backup_restores_audio_notes',await page.locator('#project-note').inputValue()==='浏览器验收项目笔记'&&await page.locator('#audio-bookmarks textarea').inputValue()==='这里需要回听核对');
- await page.evaluate(()=>localStorage.removeItem('coconut-reader-v1'));await page.reload();await page.locator('#file').setInputFiles(projectPath);await page.locator('#audio-project').waitFor({state:'visible'});
+ await page.evaluate(async()=>{CoconutStorageBootstrap.result.adapter.close();await new Promise((resolve,reject)=>{const request=indexedDB.deleteDatabase('coconut-reader-library-v1');request.onsuccess=resolve;request.onerror=()=>reject(request.error);});localStorage.clear();});await page.reload();await page.locator('#file').setInputFiles(projectPath);await page.locator('#audio-project').waitFor({state:'visible'});
  check('single_project_backup_restores_audio_notes',await page.locator('#project-note').inputValue()==='浏览器验收项目笔记'&&await page.locator('#audio-bookmarks textarea').inputValue()==='这里需要回听核对');
  if(process.env.COCONUT_AUDIO_SCREENSHOT)await page.screenshot({path:process.env.COCONUT_AUDIO_SCREENSHOT,fullPage:true});
  stage='direct_media_project';await page.locator('#add-content').click();await page.locator('#video-url').fill(source.media_url);await page.locator('#process-url').click();await page.getByRole('button',{name:'保存原声项目',exact:true}).click();await page.locator('#audio-project').waitFor({state:'visible'});
+ await waitForPersistedLibrary(page,async expected=>{
+  const doc=(await readPersistedLibrary()).documents.find(doc=>doc.key===expected.key);
+  return doc?.project_kind==='audio_only'&&doc.segments.length===0&&doc.podcast_source?.kind==='direct_media'&&doc.podcast_source.media_url===expected.url;
+ },{key:await page.evaluate(()=>sessionStorage.getItem('coconut-reader-active-v1')),url:source.media_url});
  await page.reload();await page.locator('#download-podcast-media').click();await page.waitForFunction(()=>{const a=document.querySelector('#source-media audio');return a&&!a.error&&a.readyState>=2;});
  check('direct_media_redownload_preserves_url_contract',JSON.stringify(mediaPayloads.at(-1))===JSON.stringify({url:source.media_url}));
  check('audio_projects_never_trigger_external_requests_or_inference',external===0&&errors===0&&calls.every(c=>['discover','import','media'].includes(c)));

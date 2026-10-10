@@ -13,6 +13,7 @@ import {fileURLToPath} from 'node:url';
 import {execFileSync} from 'node:child_process';
 import {isDeepStrictEqual} from 'node:util';
 import {_electron as electron} from '@playwright/test';
+import {installStorageAssertions,readerReady} from './helpers/browser-storage.mjs';
 
 const root=fileURLToPath(new URL('../',import.meta.url));
 const origin='http://127.0.0.1:47831';
@@ -54,7 +55,10 @@ async function launch(executable,profile,version,label){
   else{forbiddenRequests++;await route.abort();}
  });
  const page=await application.firstWindow();page.setDefaultTimeout(15000);page.on('pageerror',()=>pageErrors++);
- await page.waitForURL(origin+'/');await page.locator('#import').waitFor({state:'attached'});
+ await page.waitForURL(origin+'/');await installStorageAssertions(page);await readerReady(page);
+ await page.waitForFunction(()=>typeof window.coconutPrepareClose==='function'&&typeof window.coconutPrepareUpdate==='function');
+ check(label+'_default_indexeddb_backend',await page.evaluate(()=>window.CoconutStorageBootstrap.result.backend==='indexeddb'));
+ await page.locator('#import').waitFor({state:'attached'});
  await page.waitForFunction(()=>document.getElementById('worker-status').textContent.includes('轻量本地服务已连接'));
  const preferences=await application.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].webContents.getLastWebPreferences());
  check(label+'_production_renderer_security',preferences.sandbox===true&&preferences.contextIsolation===true&&preferences.nodeIntegration===false&&preferences.webSecurity===true);
@@ -77,8 +81,8 @@ async function close(){
 
 async function stored(page){
  await page.evaluate(()=>libraryStore.flush());
-return page.evaluate(()=>{
- const shelf=JSON.parse(localStorage.getItem('coconut-reader-v1')||'null');
+return page.evaluate(async()=>{
+ const shelf=await window.readPersistedLibrary();
  return shelf?.documents.find(doc=>doc.key===sessionStorage.getItem('coconut-reader-active-v1'))||null;
 });}
 async function importFile(page,filename){
@@ -180,7 +184,7 @@ try{
  check('failed_import_preserves_book',isDeepStrictEqual(await stored(page),expected));
  await importFile(page,fixturePath);
  await page.evaluate(()=>libraryStore.flush());
- check('retry_original_import_keeps_existing_edits',isDeepStrictEqual(await stored(page),expected)&&await page.evaluate(()=>JSON.parse(localStorage.getItem('coconut-reader-v1')).documents.length)===1);
+ check('retry_original_import_keeps_existing_edits',isDeepStrictEqual(await stored(page),expected)&&await page.evaluate(async()=>(await window.readPersistedLibrary()).documents.length)===1);
  await page.locator('#mode-transcript').click();
  const backup=await download(page,'#export','backup.json');
  check('json_disk_bytes_match_saved_document',isDeepStrictEqual(JSON.parse(await fs.readFile(backup,'utf8')),expected));
@@ -201,7 +205,7 @@ try{
  const audioFixturePath=path.join(temporary,'audio-project-fixture.json');await fs.writeFile(audioFixturePath,JSON.stringify(audioFixture));
  await importFile(page,audioFixturePath);await page.locator('#audio-project').waitFor({state:'visible'});
  await page.evaluate(()=>libraryStore.flush());
- check('packaged_audio_project_import_preserves_transcript_shelf',await page.evaluate(()=>JSON.parse(localStorage.getItem('coconut-reader-v1')).documents.length)===2);
+ check('packaged_audio_project_import_preserves_transcript_shelf',await page.evaluate(async()=>(await window.readPersistedLibrary()).documents.length)===2);
  check('packaged_audio_source_is_metadata_only',(await stored(page)).podcast_source.media_url===audioFixture.podcast_source.media_url&&await page.locator('#source-media audio').count()===0&&forbiddenRequests===0);
  await page.locator('#project-note').fill('Native project note survives app restart');
  if(!await page.locator('#attach-reader-media').isVisible())await page.locator('#toggle-reader-media').click();
@@ -242,13 +246,13 @@ try{
  await cancelNativeClose('window');
  check('cancel_window_retains_title_draft',await page.locator('#document-title').inputValue()==='Authored uncommitted native title');
  await page.locator('#details-dialog button[value="cancel"]').click();
- await page.evaluate(()=>{const original=Storage.prototype.setItem;window.restoreCloseProofStorage=()=>{Storage.prototype.setItem=original;};Storage.prototype.setItem=function(key,value){if(this===localStorage&&key==='coconut-reader-v1')throw new DOMException('Authored native quota failure','QuotaExceededError');return original.call(this,key,value);};});
+ await page.evaluate(()=>window.failContentWrites());
  await page.locator('#project-note').fill('Authored unsaved note to discard explicitly');
  await cancelNativeClose('quit');
  check('cancel_quit_retains_unsaved_note',await page.locator('#project-note').inputValue()==='Authored unsaved note to discard explicitly'&&await page.locator('#save-status').getAttribute('data-state')==='failed');
  // Restoring storage alone must not silently save the failed edit. Explicit
  // discard should recover the last successful bytes on the next app launch.
- await page.evaluate(()=>window.restoreCloseProofStorage());
+ await page.evaluate(()=>window.restoreContentWrites());
  await application.evaluate(()=>{globalThis.closeProof.response=1;});
  const exited=application.waitForEvent('close');
  await application.evaluate(({app})=>{setTimeout(()=>app.quit(),0);});await exited;application=null;
@@ -267,7 +271,7 @@ try{
  await importFile(page,audioBackup);const restoredAudio=await stored(page);
  await verifyAudioRestored(page,{...audioExpected,key:restoredAudio.key},'fresh_restore');
  await page.evaluate(()=>libraryStore.flush());
- check('clean_profile_retains_both_project_formats',await page.evaluate(()=>JSON.parse(localStorage.getItem('coconut-reader-v1')).documents.length)===2);
+ check('clean_profile_retains_both_project_formats',await page.evaluate(async()=>(await window.readPersistedLibrary()).documents.length)===2);
  check('no_unexpected_external_status_or_mutating_requests',forbiddenRequests===0);
  check('no_uncaught_renderer_errors',pageErrors===0);
  await close();

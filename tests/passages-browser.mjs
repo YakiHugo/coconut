@@ -7,10 +7,11 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
-import {chromium, expect} from '@playwright/test';
+import {chromium, expect} from './helpers/browser-storage.mjs';
 import {authoredAudioFixture} from './helpers/authored-audio-fixture.mjs';
 import {passageReadingFixture, irregularPassageFixture} from './helpers/passage-reading-fixture.mjs';
 import {openCueActions} from './cue-actions-browser.mjs';
+import Coconut from '../reader/core.js';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 const checks = [], geometry = [];
@@ -50,7 +51,7 @@ async function importFixture(page, fixture, name = 'authored-fragmented-reading.
 async function stored(page) {
 
  await page.evaluate(()=>libraryStore.flush());
-  return page.evaluate(() => {const shelf = JSON.parse(localStorage.getItem('coconut-reader-v1')); return shelf.documents.find(doc => doc.key === sessionStorage.getItem('coconut-reader-active-v1'));});
+  return page.evaluate(async () => {const shelf = (await readPersistedLibrary()); return shelf.documents.find(doc => doc.key === sessionStorage.getItem('coconut-reader-active-v1'));});
 }
 async function attachAudio(page, filename) {
   const previousSource = await page.locator('#source-media audio').count() ? await page.locator('#source-media audio').getAttribute('src') : null;
@@ -297,16 +298,36 @@ try {
     const blockedPage = await freshPage(viewport);
     // Inject only a normal persistence failure, never CSS, geometry or product
     // layout changes. Import must expose the real unsaved-work warning.
-    await blockedPage.evaluate(() => {
-      const original = Storage.prototype.setItem;
-      Storage.prototype.setItem = function(key, value) {
-        if (key === 'coconut-reader-v1') throw new DOMException('Authored acceptance storage quota failure', 'QuotaExceededError');
-        return original.call(this, key, value);
-      };
-    });
+    await blockedPage.evaluate(() => window.failContentWrites());
     await importFixture(blockedPage, longDocument, 'authored-unsaved-reading.json');
+    await expect(blockedPage.locator('#save-status')).toHaveAttribute('data-state', 'failed');
+    await expect(blockedPage.locator('#save-status')).toContainText('空间不足');
     await assertUnhiddenWarning(blockedPage, label + '-unsaved-work-warning', '#save-status');
     check(label + '_unsaved_work_never_claims_import_success', await blockedPage.locator('#notice').getAttribute('data-kind') !== 'success' && await blockedPage.locator('#passage-workspace').isVisible());
+    check(label + '_failed_import_has_no_durable_document', await blockedPage.evaluate(async () => (await readPersistedLibrary()).documents.length === 0));
+    const rescue = blockedPage.locator('#export-unsaved-documents');
+    await rescue.focus();
+    const [rescueDownload] = await Promise.all([blockedPage.waitForEvent('download'), rescue.press('Enter')]);
+    const rescuedPath = path.join(directory, label + '-unsaved-reading.json');
+    await rescueDownload.saveAs(rescuedPath);
+    const rescued = JSON.parse(await fs.readFile(rescuedPath, 'utf8'));
+    check(label + '_failed_import_rescue_preserves_full_document', rescued.format === 'coconut-library' && rescued.documents.length === 1 && rescued.documents[0].title === longTitle && rescued.documents[0].segments.length === 1771);
+    const {key: rescuedKey, ...rescuedContent} = rescued.documents[0];
+    assert.equal(typeof rescuedKey, 'string');
+    // Import validation supplies empty translation maps and other schema defaults.
+    // Compare the entire normalized payload, including notes/history/bookmark.
+    assert.deepEqual(rescuedContent, JSON.parse(JSON.stringify(Coconut.validate(longDocument))));
+    check(label + '_rescue_retains_failed_state_and_keyboard_focus', await blockedPage.locator('#save-status').getAttribute('data-state') === 'failed' && await rescue.evaluate(node => document.activeElement === node) && await blockedPage.evaluate(async () => (await readPersistedLibrary()).documents.length === 0));
+    await blockedPage.evaluate(() => window.restoreContentWrites());
+    await blockedPage.locator('#retry-save').click();
+    await expect(blockedPage.locator('#save-status')).toHaveAttribute('data-state', 'saved');
+    const recovered = await stored(blockedPage);
+    assert.deepEqual(recovered, rescued.documents[0]);
+    check(label + '_retry_commits_the_complete_rescued_document', true);
+    await blockedPage.reload();
+    await blockedPage.locator('#passage-workspace').waitFor({state: 'visible'});
+    assert.deepEqual(await stored(blockedPage), recovered);
+    check(label + '_retry_survives_reload_without_losing_reading', await blockedPage.locator('#title').textContent() === longTitle);
     await blockedPage.context().close();
   }
 
@@ -439,7 +460,7 @@ try {
   await importFixture(page, irregular, 'authored-replacement-document.json');
   check('document_replacement_cancels_old_playback_and_return_target', await page.evaluate(() => window.__replacedDocumentPlayer.paused && [...document.querySelectorAll('audio,video')].every(player => player.paused)) && await page.locator('#passage-playback-controls').isHidden());
   await page.evaluate(()=>libraryStore.flush());
-  check('passage_journey_has_no_upload_model_external_requests_or_browser_errors', external === 0 && mutations === 0 && browserErrors.length === 0 && await page.evaluate(() => !localStorage.getItem('coconut-reader-v1').includes('blob:')));
+  check('passage_journey_has_no_upload_model_external_requests_or_browser_errors', external === 0 && mutations === 0 && browserErrors.length === 0 && await page.evaluate(async () => !JSON.stringify(await readPersistedLibrary()).includes('blob:')));
   console.log(JSON.stringify({suite: 'authored-passage-reading-listen-once', status: 'passed', checks, geometry}));
 } catch (error) {
   if (stage.includes('compact_') && activePage && !activePage.isClosed()) await feedbackState(activePage, 'failure-' + stage).catch(() => {});

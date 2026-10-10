@@ -11,6 +11,7 @@ import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {execFileSync} from 'node:child_process';
 import {_electron as electron} from '@playwright/test';
+import {installStorageAssertions,readerReady} from './helpers/browser-storage.mjs';
 const root=fileURLToPath(new URL('../',import.meta.url));
 const origin='http://127.0.0.1:47831';
 const source='https://x.com/VaibhavSisinty/status/2105733670493651236';
@@ -37,7 +38,10 @@ try{
   forbidden++;await route.abort();
  });
  const page=await app.firstWindow();page.setDefaultTimeout(20000);page.on('pageerror',()=>errors++);
- await page.waitForURL(origin+'/');await page.waitForFunction(()=>!document.querySelector('#caption-language-control').hidden);
+ await page.waitForURL(origin+'/');await installStorageAssertions(page);await readerReady(page);
+ await page.waitForFunction(()=>typeof window.coconutPrepareClose==='function'&&typeof window.coconutPrepareUpdate==='function');
+ check('native_default_indexeddb_backend',await page.evaluate(()=>window.CoconutStorageBootstrap.result.backend==='indexeddb'));
+ await page.waitForFunction(()=>!document.querySelector('#caption-language-control').hidden);
  return page;
  }
  let page=await launch(profile);
@@ -46,14 +50,16 @@ try{
  await page.locator('#video-url').fill(source);await page.locator('#caption-language').selectOption('en');stage='public_caption_import';await page.locator('#process-url').click();
  await page.locator('#reader-workspace').waitFor({state:'visible',timeout:150000});
  await page.evaluate(()=>libraryStore.flush());
- const document=await page.evaluate(()=>{const s=JSON.parse(localStorage.getItem('coconut-reader-v1'));return s.documents.find(d=>d.key===sessionStorage.getItem('coconut-reader-active-v1'));});
+ const document=await page.evaluate(async()=>{const s=await window.readPersistedLibrary();return s.documents.find(d=>d.key===sessionStorage.getItem('coconut-reader-active-v1'));});
  check('1771_original_cues_saved',document.segments.length===1771&&document.segments[0].start===.22&&document.segments.at(-1).end===3251.49);
  check('source_and_language_evidence_preserved',document.source_url===source&&document.language==='en'&&document.provenance.language_basis==='user_hint'&&document.provenance.caption_track&&document.provenance.caption_method==='platform_provided'&&document.provenance.review_status==='unreviewed');
  check('summary_is_honestly_uncreated',await page.locator('#summary-state').textContent()==='未生成'&&document.ai_answers.length===0);
  await page.locator('#mode-summary').click();await page.locator('#prepare-summary').click();check('summary_plan_does_not_send',!await page.locator('#ai-consent').isChecked()&&await page.locator('#ask-ai').isDisabled());await page.locator('#close-summary-request').click();
  await page.locator('#mode-transcript').click();const link=new URL(await page.locator('.segment .time a').first().getAttribute('href'));check('cue_links_keep_original_post_and_time',link.origin==='https://x.com'&&link.pathname==='/VaibhavSisinty/status/2105733670493651236'&&link.searchParams.get('t')==='0');
  await page.locator('.segment .note-button').first().click();await page.locator('#note').fill('Authored native caption UI verification note');await page.locator('#close-note').click();
- await page.reload();await page.locator('#mode-transcript').click();await page.locator('.segment .note-button').first().click();check('reload_preserves_source_and_note_without_refetch',await page.locator('#note').inputValue()==='Authored native caption UI verification note'&&captionPosts===1);
+ await page.evaluate(()=>libraryStore.flush());await page.reload();await readerReady(page);
+ check('reload_retains_indexeddb_backend',await page.evaluate(()=>window.CoconutStorageBootstrap.result.backend==='indexeddb'));
+ await page.locator('#mode-transcript').click();await page.locator('.segment .note-button').first().click();check('reload_preserves_source_and_note_without_refetch',await page.locator('#note').inputValue()==='Authored native caption UI verification note'&&captionPosts===1);
  check('no_media_model_status_or_external_renderer_requests',forbidden===0&&errors===0&&await page.locator('#source-media audio,#source-media video').count()===0);
  await page.locator('#close-note').click();
  // Reuse this one real import. No additional source fetch or model requests.
@@ -67,7 +73,7 @@ try{
  await openCueActions(last);await last.locator('.edit-button').click();
  await page.locator('#edit-segment').fill('Authored acceptance correction; retain the original source.');await page.locator('#save-edit').click();
  await page.evaluate(()=>libraryStore.flush());
- const expected=await page.evaluate(()=>{const s=JSON.parse(localStorage.getItem('coconut-reader-v1'));return s.documents.find(d=>d.key===sessionStorage.getItem('coconut-reader-active-v1'));});
+ const expected=await page.evaluate(async()=>{const s=await window.readPersistedLibrary();return s.documents.find(d=>d.key===sessionStorage.getItem('coconut-reader-active-v1'));});
  check('real_last_cue_original_and_annotations_retained',expected.segments.at(-1).original_text===document.segments.at(-1).text&&expected.segments.at(-1).saved_excerpt===true&&expected.readingPosition===lastId);
  async function download(button,name){
   if(!await page.locator('#export-menu').evaluate(n=>n.open))await page.locator('#export-menu > summary').click();
@@ -80,7 +86,7 @@ try{
  check('real_caption_notebook_keeps_notes_and_source',markdown.includes('Authored final')&&markdown.includes(source)&&markdown.includes('Authored acceptance correction'));
  await app.close();app=null;
  page=await launch(profile);
- const readSaved = async () => {await page.evaluate(()=>libraryStore.flush());return page.evaluate(()=>{const s=JSON.parse(localStorage.getItem('coconut-reader-v1'));return s.documents.find(d=>d.key===sessionStorage.getItem('coconut-reader-active-v1'));});};
+ const readSaved = async () => {await page.evaluate(()=>libraryStore.flush());return page.evaluate(async()=>{const s=await window.readPersistedLibrary();return s.documents.find(d=>d.key===sessionStorage.getItem('coconut-reader-active-v1'));});};
  check('real_caption_process_restart_restores_complete_document',isDeepStrictEqual(await readSaved(),expected));
  await page.locator('#mode-transcript').click();await page.locator('#resume').click();
  check('real_caption_restart_resumes_last_cue',await page.locator('.segment').last().getAttribute('data-segment-id')===lastId);

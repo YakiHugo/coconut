@@ -7,7 +7,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
-import {chromium} from '@playwright/test';
+import {chromium, waitForPersistedLibrary} from './helpers/browser-storage.mjs';
 import {authoredAudioFixture} from './helpers/authored-audio-fixture.mjs';
 import {passageReadingFixture} from './helpers/passage-reading-fixture.mjs';
 
@@ -37,7 +37,7 @@ async function settled() {
 async function stored() {
 
  await page.evaluate(()=>libraryStore.flush());
-  return page.evaluate(() => {const shelf = JSON.parse(localStorage.getItem('coconut-reader-v1')); return shelf.documents.find(doc => doc.key === sessionStorage.getItem('coconut-reader-active-v1'));});
+  return page.evaluate(async () => {const shelf = (await readPersistedLibrary()); return shelf.documents.find(doc => doc.key === sessionStorage.getItem('coconut-reader-active-v1'));});
 }
 async function capture(name) {
   if (!process.env.COCONUT_UI_SCREENSHOTS) return;
@@ -110,7 +110,7 @@ async function helpFocusLoop(label) {
   check(label + '_is_a_native_modal_dialog', await page.locator('#keyboard-help').evaluate(node => node instanceof HTMLDialogElement && node.open && node.matches(':modal')));
   const focusableCount = await page.locator('#keyboard-help').evaluate(dialog => [...dialog.querySelectorAll('button,input,select,textarea,a[href],[tabindex]')].filter(node => !node.disabled && node.tabIndex >= 0 && node.getClientRects().length).length);
   const seen = new Set();
-  const focusBoundary = () => page.evaluate(() => {
+  const focusBoundary = () => page.evaluate(async () => {
     const active = document.activeElement, dialog = document.querySelector('#keyboard-help');
     // Native focus navigation may temporarily visit browser chrome, reporting
     // body/html as the document's active element. That is not a focusable page
@@ -181,8 +181,8 @@ try {
   // Prepare the noncurrent removal target before attaching media. Switching
   // active documents later would legitimately replace the player owner.
   await page.locator('#file').setInputFiles({name: 'authored-keyboard-other.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(otherFixture))});
-  await page.waitForFunction(title => {
-    const shelf = JSON.parse(localStorage.getItem('coconut-reader-v1') || '{"documents":[]}');
+  await waitForPersistedLibrary(page,async title => {
+    const shelf = (await readPersistedLibrary());
     return shelf.documents.some(doc => doc.key === sessionStorage.getItem('coconut-reader-active-v1') && doc.title === title);
   }, otherFixture.title);
   await page.locator('#file').setInputFiles({name: 'authored-keyboard-reading.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(fixture))});
@@ -363,7 +363,7 @@ try {
   await page.locator('#ai-task').selectOption('translation');
   if (!await page.locator('#translation-options').evaluate(panel => panel.open)) await page.locator('#translation-options > summary').click();
   await page.locator('#translation-glossary').fill(draft.glossary);
-  const listeningBeforeDetours = await page.evaluate(key => localStorage.getItem('coconut-listening-v1:' + key), (await stored()).key);
+  const listeningBeforeDetours = await page.evaluate(async key => localStorage.getItem('coconut-listening-v1:' + key), (await stored()).key);
   check('draft_detours_begin_with_a_real_saved_listening_checkpoint', listeningBeforeDetours !== null && Math.abs(JSON.parse(listeningBeforeDetours).time - 100.4) < .03);
   const detourRequests = requests.length, detourChoosers = fileChoosers;
   const checkDrafts = async label => {
@@ -376,7 +376,7 @@ try {
     check(label + '_preserves_saved_document_and_project_annotations', JSON.stringify(await stored()) === savedBeforeDrafts &&
       await page.locator('#project-note').inputValue() === fixture.project_note &&
       await bookmark.locator('textarea').inputValue() === fixture.timestamp_bookmarks[0].note);
-    check(label + '_preserves_the_same_paused_player_and_listening_checkpoint', await page.evaluate(({key, checkpoint}) => {
+    check(label + '_preserves_the_same_paused_player_and_listening_checkpoint', await page.evaluate(async ({key, checkpoint}) => {
       const player = document.querySelector('#source-media audio');
       return player === window.__readingKeyboardPlayer && document.querySelectorAll('audio,video').length === 1 &&
         player.paused && Math.abs(player.currentTime - 100.4) < .03 && localStorage.getItem('coconut-listening-v1:' + key) === checkpoint;
@@ -402,21 +402,21 @@ try {
 
   stage = 'new_native_dialogs_block_keys_with_media_and_drafts';
   await page.evaluate(()=>libraryStore.flush());
-  const shelfBeforeDialogs = await page.evaluate(() => localStorage.getItem('coconut-reader-v1'));
+  const shelfBeforeDialogs = await page.evaluate(async () => JSON.stringify(await readPersistedLibrary()));
   await openRemoval(fixture.title);
   await ignoredNativeDialog('remove_document_dialog', '#remove-document-dialog');
   await checkDrafts('remove_document_dialog_keys');
   await page.keyboard.press('Escape');
   await page.locator('#remove-document-dialog').waitFor({state: 'hidden'});
   await page.evaluate(()=>libraryStore.flush());
-  check('remove_dialog_escape_preserves_the_complete_shelf', await page.evaluate(() => localStorage.getItem('coconut-reader-v1')) === shelfBeforeDialogs);
+  check('remove_dialog_escape_preserves_the_complete_shelf', await page.evaluate(async () => JSON.stringify(await readPersistedLibrary())) === shelfBeforeDialogs);
   await checkDrafts('remove_document_dialog_escape');
 
   await openRemoval(otherFixture.title);
   await page.locator('#confirm-removal').click();
   await page.locator('#removal-recovery').waitFor({state: 'visible'});
   await page.evaluate(()=>libraryStore.flush());
-  const shelfWithRecovery = await page.evaluate(() => localStorage.getItem('coconut-reader-v1'));
+  const shelfWithRecovery = await page.evaluate(async () => JSON.stringify(await readPersistedLibrary()));
   check('noncurrent_removal_keeps_the_reading_document_active', (await stored()).title === fixture.title &&
     await page.getByRole('button', {name: '从书架移除 ' + otherFixture.title, exact: true}).count() === 0);
   const recoveryDetails = page.locator('#removal-recovery-details');
@@ -428,10 +428,10 @@ try {
   await page.locator('#finish-removal-dialog').waitFor({state: 'hidden'});
   await page.evaluate(()=>libraryStore.flush());
   check('finish_dialog_escape_keeps_the_recovery_available_and_shelf_unchanged', await page.locator('#removal-recovery').isVisible() &&
-    await page.evaluate(() => localStorage.getItem('coconut-reader-v1')) === shelfWithRecovery);
+    await page.evaluate(async () => JSON.stringify(await readPersistedLibrary())) === shelfWithRecovery);
   await page.locator('#undo-removal').click();
   await page.evaluate(()=>libraryStore.flush());
-  check('noncurrent_undo_restores_the_complete_shelf', await page.evaluate(() => localStorage.getItem('coconut-reader-v1')) === shelfBeforeDialogs && await page.locator('#removal-recovery').isHidden());
+  check('noncurrent_undo_restores_the_complete_shelf', await page.evaluate(async () => JSON.stringify(await readPersistedLibrary())) === shelfBeforeDialogs && await page.locator('#removal-recovery').isHidden());
   await checkDrafts('finish_removal_cancel_and_undo');
 
   // A real, valid JSON file crosses the native size review threshold. Padding
@@ -448,7 +448,7 @@ try {
   await page.locator('#large-backup-dialog').waitFor({state: 'hidden'});
   await page.waitForFunction(() => document.querySelector('#file').files.length === 0);
   await page.evaluate(()=>libraryStore.flush());
-  check('large_backup_cancel_clears_the_selection_and_preserves_the_complete_shelf', await page.evaluate(() => localStorage.getItem('coconut-reader-v1')) === shelfBeforeDialogs);
+  check('large_backup_cancel_clears_the_selection_and_preserves_the_complete_shelf', await page.evaluate(async () => JSON.stringify(await readPersistedLibrary())) === shelfBeforeDialogs);
   await checkDrafts('large_backup_dialog_cancel');
   check('combined_drafts_and_dialogs_make_no_network_requests_or_media_chooser', requests.length === detourRequests && fileChoosers === detourChoosers);
   // Explicitly cancel every in-memory draft before the pre-existing reload
@@ -570,7 +570,7 @@ try {
   check('reload_preserves_authored_source_and_keyboard_typed_note', JSON.stringify((await stored()).notes) === JSON.stringify(finalDoc.notes) && (await stored()).readingPosition === fixture.readingPosition);
   check('reload_preserves_project_annotations_without_saving_canceled_drafts', (await stored()).project_note === fixture.project_note && JSON.stringify((await stored()).timestamp_bookmarks) === JSON.stringify(fixture.timestamp_bookmarks) && JSON.stringify((await stored()).translation_glossary) === JSON.stringify(finalDoc.translation_glossary));
   await page.evaluate(()=>libraryStore.flush());
-  check('no_external_media_upload_ai_model_or_browser_error', external === 0 && mutations === 0 && browserErrors.length === 0 && fileChoosers === noMediaChoosers + 1 && await page.evaluate(() => !localStorage.getItem('coconut-reader-v1').includes('blob:')));
+  check('no_external_media_upload_ai_model_or_browser_error', external === 0 && mutations === 0 && browserErrors.length === 0 && fileChoosers === noMediaChoosers + 1 && await page.evaluate(async () => !JSON.stringify(await readPersistedLibrary()).includes('blob:')));
   console.log(JSON.stringify({suite: 'reading-keyboard-authored-media', status: 'passed', checks}));
 } catch (error) {
   // Snapshot before taking a screenshot, which can itself span media events.

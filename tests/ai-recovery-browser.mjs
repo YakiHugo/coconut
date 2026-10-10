@@ -5,7 +5,7 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import {chromium} from '@playwright/test';
+import {chromium} from './helpers/browser-storage.mjs';
 import {startBridge} from '../desktop/server.mjs';
 
 const title='阅读核对练习 · 自写流程样例';
@@ -32,9 +32,9 @@ try{
  browser=await chromium.launch({headless:true,...(process.env.COCONUT_CHROMIUM_EXECUTABLE?{executablePath:process.env.COCONUT_CHROMIUM_EXECUTABLE}:{})});
  const context=await browser.newContext({viewport:{width:390,height:844},serviceWorkers:'block'});let external=0,errors=0;
  await context.route('**/*',async route=>{const url=new URL(route.request().url());if(url.origin===origin||url.protocol==='blob:')await route.continue();else{external++;await route.abort();}});
- const page=await context.newPage();page.setDefaultTimeout(15000);page.on('pageerror',()=>errors++);await page.goto(origin);
+ const page=await context.newPage();page.setDefaultTimeout(15000);page.on('pageerror',()=>errors++);await page.goto(origin);await page.waitForFunction(()=>window.CoconutStorageBootstrap?.phase==='ready');
  const importFixture=async doc=>page.locator('#file').setInputFiles({name:'authored-recovery.json',mimeType:'application/json',buffer:Buffer.from(JSON.stringify(doc))});
- const readDocument = async name => {await page.evaluate(()=>libraryStore.flush());return page.evaluate(title=>JSON.parse(localStorage.getItem('coconut-reader-v1')).documents.find(doc=>doc.title===title),name);};
+ const readDocument = async name => {await page.evaluate(()=>libraryStore.flush());return page.evaluate(async title=>(await readPersistedLibrary()).documents.find(doc=>doc.title===title),name);};
  const translatedCount=doc=>doc.segments.filter(cue=>cue.translations?.zh).length;
  const openLanguage=async()=>{await page.locator('#mode-transcript').click();if(!await page.locator('#language-panel').evaluate(node=>node.open))await page.locator('#language-panel > summary').click();await page.locator('#ai-task').selectOption('translation');};
  const settled=()=>page.waitForFunction(()=>document.querySelector('#stop-subscription-translation').hidden);
@@ -62,7 +62,7 @@ try{
  stage='last_batch_failure';failNext=true;await page.locator('#ai-consent').check();await page.locator('#subscription-translate').click();await page.waitForFunction(()=>document.querySelector('#ai-progress').textContent.includes('Injected final-batch network rejection'));await settled();
  check('failure_unlocks_manual_retry_without_losing_results',requests.length===3&&translatedCount(await readDocument(title))===64&&!(await page.locator('#subscription-translate').isDisabled())&&!(await page.locator('#ai-consent').isChecked()));
  await page.setViewportSize({width:1440,height:960});await page.locator('#ai-progress').scrollIntoViewIfNeeded();await screenshot('ai-recovery-desktop-failure');
- stage='reload_and_resume';await page.reload();await openLanguage();await page.locator('#check-ai').click();
+ stage='reload_and_resume';await page.reload();await page.waitForFunction(()=>window.CoconutStorageBootstrap?.phase==='ready');await openLanguage();await page.locator('#check-ai').click();
  check('reload_does_not_send_or_retain_consent',requests.length===3&&!(await page.locator('#ai-consent').isChecked()));
  await page.locator('#subscription-translate').click();check('retry_without_consent_sends_nothing',requests.length===3);
  await page.locator('#ai-consent').check();await page.locator('#subscription-translate').click();await settled();saved=await readDocument(title);

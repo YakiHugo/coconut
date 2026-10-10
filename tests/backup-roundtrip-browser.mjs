@@ -6,7 +6,7 @@ import {createHash} from 'node:crypto';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import {chromium} from '@playwright/test';
+import {chromium} from './helpers/legacy-browser.mjs';
 import {MiB,annotatedDocument,chineseDocument,oversizedDocument} from './helpers/backup-fixtures.mjs';
 
 const root=new URL('../reader/',import.meta.url),KEY='coconut-reader-v1';

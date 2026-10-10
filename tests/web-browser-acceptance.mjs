@@ -8,9 +8,9 @@ import os from 'node:os';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {execFileSync} from 'node:child_process';
-import {chromium} from '@playwright/test';
+import {chromium} from './helpers/browser-storage.mjs';
 const root=fileURLToPath(new URL('../',import.meta.url));
-let directory,server,browser,stage='setup';
+let directory,server,browser,demoPage,stage='setup';
 const checks=[];
 // Only authored synthetic fixtures from this file may enter these review images.
 async function capture(page,name,fullPage=true){
@@ -22,6 +22,23 @@ async function capture(page,name,fullPage=true){
  if(fullPage)await page.evaluate(()=>scrollTo(0,0));
  await page.screenshot({path:path.join(process.env.COCONUT_UI_SCREENSHOTS,name+'.png'),fullPage});
  if(fullPage)await page.evaluate(({x,y})=>scrollTo(x,y),scroll);
+}
+// Click dispatch does not await the async sample handler. Its existing busy
+// control unlocks only after the real save receipt, bilingual render and scroll.
+async function openSample(page){
+ stage='sample_operation_completion';
+ await page.locator('#sample').click();
+ await page.waitForFunction(()=>!document.getElementById('sample').disabled);
+}
+async function captureDemoFailure(page){
+ // This page is restricted to the built-in authored demo at this point. Never
+ // include source text, URLs, library data or later imported content in logs.
+ const geometry=await page.evaluate(()=>{
+  const rect=selector=>{const n=document.querySelector(selector);if(!n)return null;const r=n.getBoundingClientRect();return {top:r.top,bottom:r.bottom,width:r.width,height:r.height};};
+  return {viewport:{width:innerWidth,height:innerHeight},scroll:{x:scrollX,y:scrollY},sampleBusy:document.getElementById('sample').disabled,transcriptHidden:document.getElementById('transcript-layout').hidden,summaryHidden:document.getElementById('summary-workspace').hidden,title:rect('#title'),words:rect('.words'),parallel:rect('.parallel-text')};
+ });
+ console.log(JSON.stringify({suite:'static-web-podcast',stage,demoFailureGeometry:geometry}));
+ await capture(page,'02-demo-failure-viewport',false);
 }
 function check(name,value){stage=name;assert.ok(value,name);checks.push(name);}
 try {
@@ -50,7 +67,7 @@ try {
   if(u.origin===origin||['blob:','data:'].includes(u.protocol))await route.continue();else{external++;await route.abort();}
  });
  const page=await context.newPage();page.on('pageerror',()=>pageErrors++);page.setDefaultTimeout(15000);
- await page.goto(origin);await page.locator('#sample').waitFor({state:'visible'});
+ await page.goto(origin);await page.waitForFunction(()=>window.CoconutStorageBootstrap?.phase==='ready');await page.locator('#sample').waitFor({state:'visible'});
  await page.waitForFunction(()=>!document.getElementById('worker-status').textContent.includes('正在检查'));
  await capture(page,'01-source-entry');
  check('brand_asset_loads',await page.locator('.brand-mark').evaluate(img=>img.complete&&img.naturalWidth>0));
@@ -61,7 +78,7 @@ try {
  await page.locator('#process-url').click();
  check('static_source_failure_has_an_honest_next_step',(await page.locator('#source-route-status').textContent()).includes('本地服务')&&await page.locator('#local-setup').evaluate(n=>n.open));
  await capture(page,'01-source-unavailable');await page.locator('#video-url').fill('');await page.locator('#local-setup > summary').click();
- await page.locator('#sample').click();await page.locator('#demo-guide').waitFor({state:'visible'});
+ demoPage=page;await openSample(page);await page.locator('#demo-guide').waitFor({state:'visible'});
  check('demo_opens_actual_bilingual_reading',await page.locator('#mode-bilingual').getAttribute('aria-pressed')==='true'&&await page.locator('.translation').count()===3);
  check('demo_discloses_authored_content',(await page.locator('#demo-guide').textContent()).includes('无音视频')&&await page.locator('#summary-body').textContent()==='');
  await capture(page,'02-bilingual-demo');
@@ -69,10 +86,10 @@ try {
  await page.setViewportSize({width:390,height:844});
  check('mobile_open_note_fits',await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth));await capture(page,'02-mobile-open-note');
  await page.locator('#close-note').click();await page.setViewportSize({width:1360,height:1000});
- await page.locator('#demo-finish').click();await page.locator('#sample').click();
+ await page.locator('#demo-finish').click();await openSample(page);
  check('repeated_demo_preserves_note',await page.locator('.saved-note').textContent()==='My authored first reading note');
  await page.setViewportSize({width:390,height:844});
- await page.locator('#demo-finish').click();await page.locator('#sample').click();
+ await page.locator('#demo-finish').click();await openSample(page);
  check('one_click_mobile_tryout_reveals_actual_source',await page.locator('.words').first().evaluate(n=>{const r=n.getBoundingClientRect();return r.top<innerHeight*0.6&&r.bottom>0;}));
  check('one_click_mobile_tryout_shows_both_languages',await page.locator('.parallel-text').first().evaluate(n=>{const r=n.getBoundingClientRect();return r.top>=0&&r.bottom<=innerHeight;}));
  await capture(page,'02-mobile-first-viewport',false);
@@ -84,7 +101,7 @@ try {
  await page.locator('#mode-summary').click();check('demo_search_tools_hidden_in_summary',await page.locator('#toggle-demo-tools').isHidden());
  await page.locator('#mode-bilingual').click();await page.locator('#toggle-demo-tools').click();
  check('demo_tools_return_to_visible_search',await page.locator('#search').isVisible()&&await page.locator('#search').evaluate(n=>n===document.activeElement));
- await page.setViewportSize({width:1360,height:1000});stage='import';
+ demoPage=null;await page.setViewportSize({width:1360,height:1000});stage='import';
  await page.locator('#file').setInputFiles(fixturePath);
  await page.locator('#reader-workspace').waitFor({state:'visible'});
  check('summary_is_default',await page.locator('#summary-workspace').isVisible()&&await page.locator('#transcript-layout').isHidden());
@@ -120,8 +137,8 @@ try {
  const exported=path.join(directory,'summary.md');await download.saveAs(exported);const markdown=await fs.readFile(exported,'utf8');
  check('summary_export_has_historical_input',markdown.includes('Audio and video stay in this browser')&&markdown.includes('播客摘要')&&markdown.includes('旧摘要可能过期'));
  await page.evaluate(()=>libraryStore.flush());
- check('object_urls_never_persist',await page.evaluate(()=>!localStorage.getItem('coconut-reader-v1').includes('blob:')));
- await page.reload();await page.locator('#summary-workspace').waitFor({state:'visible'});
+ check('object_urls_never_persist',await page.evaluate(async()=>!JSON.stringify(await readPersistedLibrary()).includes('blob:')));
+ await page.reload();await page.waitForFunction(()=>window.CoconutStorageBootstrap?.phase==='ready');await page.locator('#summary-workspace').waitFor({state:'visible'});
  check('refresh_keeps_summary_state',await page.locator('#summary-state').getAttribute('data-state')==='stale');
  check('refresh_requires_file_reselection',await page.locator('#source-media audio,#source-media video').count()===0);
  await page.locator('#mode-transcript').click();await page.locator('.segment[data-segment-id="second"] .note-button').click();
@@ -168,7 +185,7 @@ try {
   await target.locator('.context-button').click();
   check(label+'_context_shows_actual_adjacent_source',await page.locator('#reading-context').isVisible()&&await page.locator('.segment').count()<=100&&await page.locator('.segment[data-segment-id="split-1749"] .words').textContent()===split.segments[1749].text&&await page.locator('.segment[data-segment-id="split-1751"] .words').textContent()===split.segments[1751].text);
   await page.evaluate(()=>libraryStore.flush());
-  check(label+'_context_preserves_reading_bookmark',await page.evaluate(()=>{const s=JSON.parse(localStorage.getItem('coconut-reader-v1'));return s.documents.find(d=>d.key===sessionStorage.getItem('coconut-reader-active-v1')).readingPosition;})==='split-19');
+  check(label+'_context_preserves_reading_bookmark',await page.evaluate(async()=>{const s=await readPersistedLibrary();return s.documents.find(d=>d.key===sessionStorage.getItem('coconut-reader-active-v1')).readingPosition;})==='split-19');
   // Do not scroll from the test: the product jump itself must settle on the
   // intended fragment, not merely mount it somewhere in a 100-cue DOM window.
   const contextViewport=await page.evaluate(async()=>{
@@ -210,6 +227,7 @@ try {
  check('first_use_and_source_map_have_no_external_requests',mutations===0&&external===0&&pageErrors===0);
  console.log(JSON.stringify({suite:'static-web-podcast',status:'passed',checks}));
 } catch {
+ if(demoPage)try{await captureDemoFailure(demoPage);}catch{console.log(JSON.stringify({suite:'static-web-podcast',stage,demoFailureDiagnostics:'unavailable'}));}
  console.log(JSON.stringify({suite:'static-web-podcast',status:'failed',stage,checks}));process.exitCode=1;
 } finally {
  await browser?.close();await new Promise(resolve=>server?.listening?server.close(resolve):resolve());

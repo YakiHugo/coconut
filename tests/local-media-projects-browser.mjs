@@ -5,7 +5,7 @@ import {createServer} from 'node:http';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import {chromium} from '@playwright/test';
+import {chromium} from './helpers/browser-storage.mjs';
 import {authoredAudioFixture} from './helpers/authored-audio-fixture.mjs';
 let browser,server,directory,stage='setup',external=0,mutations=0;
 const checks=[],errors=[],apiRequests=[];
@@ -30,7 +30,7 @@ try{
  }
  async function choose(page,selector){const [picker]=await Promise.all([page.waitForEvent('filechooser'),page.locator(selector).click()]);await picker.setFiles(audio);}
  async function ready(page){await page.waitForFunction(()=>{const p=document.querySelector('#source-media audio');return p&&!p.error&&p.readyState>=2&&p.duration===40;});}
- async function shelf(page){await page.evaluate(()=>libraryStore.flush());return page.evaluate(()=>JSON.parse(localStorage.getItem('coconut-reader-v1')));}
+ async function shelf(page){await page.evaluate(()=>libraryStore.flush());return page.evaluate(()=>readPersistedLibrary());}
  const page=await newPage();stage='open local audio with no transcript';
  await page.waitForFunction(()=>!document.getElementById('worker-status').textContent.includes('正在检查'));
  check('local_entry_always_available_with_44px_touch_target',await page.locator('#open-local-media').isVisible()&&await page.locator('#open-local-media').evaluate(n=>n.getBoundingClientRect().height>=44));

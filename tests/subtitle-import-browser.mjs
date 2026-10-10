@@ -3,7 +3,7 @@
 import assert from 'node:assert/strict';
 import {createServer} from 'node:http';
 import fs from 'node:fs/promises';
-import {chromium} from '@playwright/test';
+import {chromium} from './helpers/browser-storage.mjs';
 import {openCueActions} from './cue-actions-browser.mjs';
 import {subtitleFixtures,expectedCues,note,correction,cueSnapshot} from './helpers/subtitle-import-fixtures.mjs';
 const root=new URL('../reader/',import.meta.url),KEY='coconut-reader-v1';
@@ -24,7 +24,7 @@ try{
   const page=await context.newPage();page.setDefaultTimeout(15000);page.on('pageerror',()=>errors++);
   await page.goto(origin);await page.locator('#import').waitFor({state:'visible'});return page;
  }
- const stored = async page => {await page.evaluate(()=>libraryStore.flush());return page.evaluate(key=>JSON.parse(localStorage.getItem(key)),KEY);};
+ const stored = async page => {await page.evaluate(async () =>libraryStore.flush());return page.evaluate(async key =>(await readPersistedLibrary()),KEY);};
  const active=async page=>{const state=await stored(page),selected=await page.evaluate(()=>sessionStorage.getItem('coconut-reader-active-v1'));return state.documents.find(doc=>doc.key===selected);};
  async function choose(page,file,title){
   if(await page.locator('#add-content').isVisible())await page.locator('#add-content').click();

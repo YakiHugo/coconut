@@ -6,11 +6,16 @@ write receipt acknowledges that generation, then `已保存`. A burst coalesces 
 250 ms debounce and a one-second maximum wait. Clean document navigation writes
 only the independent window selection preferences, never the document library.
 
-The legacy writer still serializes the **whole library synchronously** and writes
-one localStorage value. Queueing reduces writes; it does not solve storage
-capacity, make serialization asynchronous, or add IndexedDB. Read-before-write
-comparison and the migration fence fail closed but are not an atomic cross-window
-compare-and-swap. Unreadable original data is never overwritten by this page.
+The default writer now stores documents separately in IndexedDB, capturing only
+dirty identities in each transaction. A gated startup loads the complete library
+before admitting edits, and an additive verified migration preserves exact legacy
+bytes. Per-document epoch/revision checks reject stale same-document writes while
+allowing independent edits in other windows. See [storage and migration](indexeddb-library-storage.md).
+
+When IndexedDB is unavailable before migration, the explicitly labeled legacy
+fallback still serializes the **whole library synchronously** into localStorage.
+Its read-before-write comparison is not atomic cross-window compare-and-swap.
+Neither backend overwrites unreadable original data or silently evicts content.
 
 Failures remain visible with their actual reason: quota, denied access, changed
 library, migration fence, unreadable data, cancellation or identity mismatch.
@@ -27,7 +32,7 @@ remain explicitly separate and keep their own close protection.
 - `commitDocument(doc, kind, options)` forces a flush and returns the ticket's
   structured receipt. Only `receipt.ok` means the captured generation was saved.
 - `commitDocuments(documents)` registers all members atomically before any
-  subscriber can begin a whole-library snapshot, then awaits their receipts.
+  subscriber can begin a batch capture, then awaits their receipts.
 - `add(...)` and `attachTranscriptToProject(text, target)` return a receipt whose
   `identity` is the actual inserted/replaced document, including on writer
   failure. Their `mediaRevision` and `selectionRevision` describe the synchronous

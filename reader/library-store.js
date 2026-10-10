@@ -177,9 +177,9 @@
       if (running) return running.done;
       clearClock(); firstQueued = null;
       if (![...entries.values()].some(item => item.status === 'pending')) return;
-      // A legacy write contains the whole library, including previously failed
-      // documents. Confirm every captured identity/generation, not just the
-      // document whose edit happened to start this write.
+      // Failed documents are retried atomically with new pending work. A legacy
+      // adapter captures the full library; a document adapter captures only this
+      // dirty batch. Both acknowledge exactly these identities/generations.
       const batch = [...entries.values()].filter(dirty).map(item => ({item, generation: item.generation, kind: item.kind}));
       const controller = new AbortController();
       const operation = {batch, controller, done: null}; running = operation;
@@ -192,8 +192,11 @@
             const item = saved.item;
             if (item.kind === 'remove' ? identities.has(item.key) : identities.get(item.key) !== item.identity) throw {code: 'identity', message: 'Document identity changed before capture'};
           }
-          const value = adapter.prepare(documents);
-          checkpoints = documents.map(doc => Object.freeze({key: doc.key, identity: doc,
+          const changes = batch.map(({item, generation, kind}) => ({key: item.key, identity: item.identity, generation, kind}));
+          const perDocument = typeof adapter.prepareChanges === 'function';
+          const value = perDocument ? adapter.prepareChanges(changes) : adapter.prepare(documents);
+          const capturedDocuments = perDocument ? changes.filter(change => change.kind !== 'remove').map(change => change.identity) : documents;
+          checkpoints = capturedDocuments.map(doc => Object.freeze({key: doc.key, identity: doc,
             generation: entries.get(doc.key)?.generation ?? 0, checkpoint: copy(checkpoint(doc))}));
           result = await adapter.write(value, {signal: controller.signal});
           if (!result || typeof result.ok !== 'boolean') result = problem('unexpected', 'Writer returned no commit receipt');

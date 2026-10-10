@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import {mkdtemp,readFile,rm} from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import {chromium} from '@playwright/test';
+import {chromium} from './helpers/browser-storage.mjs';
 import {startBridge} from '../desktop/server.mjs';
 let server,browser,directory,stage='setup';const checks=[];
 const check=(name,value)=>{stage=name;assert.ok(value,name);checks.push(name);};
@@ -65,7 +65,17 @@ try {
  const [notebook]=await Promise.all([page.waitForEvent('download'),page.locator('#export-notebook').click()]);
  const notebookPath=path.join(directory,'notes.md');await notebook.saveAs(notebookPath);const markdown=await readFile(notebookPath,'utf8');
  check('notebook_contains_real_quote_note_and_publisher_link',markdown.includes(markdownText(original.text))&&markdown.includes(markdownText(saved.notes[segmentId]))&&markdown.includes(episode.source_url));
- await page.reload();await page.locator('#mode-transcript').click();await page.locator('#resume').click();
+ // Downloads prove the exported snapshot, not the debounced database receipt.
+ // A native beforeunload prompt is auto-accepted by Playwright without a handler.
+ stage='wait_for_transcript_save_receipt';
+ await page.waitForFunction(()=>document.getElementById('save-status').dataset.state==='saved');
+ check('transcript_note_and_position_committed_before_reload',await page.evaluate(async({segmentId,note})=>{
+  const doc=(await readPersistedLibrary()).documents.find(item=>item.key===sessionStorage.getItem('coconut-reader-active-v1'));
+  return doc?.readingPosition===segmentId&&doc.notes[segmentId]===note;
+ },{segmentId,note:saved.notes[segmentId]}));
+ stage='reload_saved_transcript';await page.reload();
+ stage='open_reloaded_transcript';await page.locator('#mode-transcript').click();
+ stage='resume_reloaded_reading_position';await page.locator('#resume').click();
  check('reload_restores_reading_position',await page.locator('.segment').first().getAttribute('data-segment-id')===segmentId);
  await page.locator('.segment').first().locator('.note-button').click();check('reload_restores_real_source_notes',(await page.locator('#note').inputValue())===saved.notes[segmentId]);await page.locator('#close-note').click();
  // A separate blank browser proves exported bytes restore the product state.
@@ -86,7 +96,7 @@ try {
  await page.waitForFunction(()=>document.getElementById('podcast-status').textContent.includes('没有可用的公开定时文字稿'));
  await page.locator('#audio-project').waitFor({state:'visible'});
  check('no_caption_truthful_state_saves_audio_project',await page.locator('#library .library-open').count()===2&&!calls.includes('media')&&await page.locator('#summary-workspace').isHidden()&&await page.locator('#language-panel').isHidden());
- const audioProject=await page.evaluate(()=>{const shelf=JSON.parse(localStorage.getItem('coconut-reader-v1'));return shelf.documents.find(doc=>doc.key===sessionStorage.getItem('coconut-reader-active-v1'));});
+ const audioProject=await page.evaluate(async () =>{const shelf=(await readPersistedLibrary());return shelf.documents.find(doc=>doc.key===sessionStorage.getItem('coconut-reader-active-v1'));});
  check('audio_project_preserves_real_source_without_transcript',audioProject.project_kind==='audio_only'&&audioProject.podcast_source.episode_id===sample.id&&audioProject.podcast_source.feed_url===xy.feed_url&&audioProject.segments.length===0&&audioProject.ai_answers.length===0);
  await page.locator('#project-note').fill('Coconut live audio project: my unverified listening note.');
  // The review sample must remain explicitly public and <=100 MiB. The production
@@ -122,8 +132,11 @@ try {
  await audioRestored.close();
  check('no_inference_upload_or_uncaught_errors',unexpected===0&&errors===0&&calls.filter(item=>item==='media').length===1);
  console.log(JSON.stringify({suite:'public-source-to-reader',status:'passed',checks,segments:imported.document.segments.length,audio_duration_seconds:Math.round(duration),source_requests:calls.length}));
-} catch {
- console.error(JSON.stringify({suite:'public-source-to-reader',status:'failed',stage,checks,message:'Actual public-source/UI acceptance failed. No models, accounts, access workaround, source bodies or upstream error logs were used or published.'}));process.exitCode=1;
+} catch(error) {
+ // Only fixed classification values are safe here; error messages/stacks may
+ // contain public-source text or upstream responses and must stay private.
+ const failureKind=error?.name==='TimeoutError'?'timeout':error?.name==='AssertionError'?'assertion':'operation';
+ console.error(JSON.stringify({suite:'public-source-to-reader',status:'failed',stage,failureKind,checks,message:'Actual public-source/UI acceptance failed. No models, accounts, access workaround, source bodies or upstream error logs were used or published.'}));process.exitCode=1;
 } finally {
  await browser?.close();if(server)await new Promise(resolve=>server.shutdown(resolve));if(directory)await rm(directory,{recursive:true,force:true});
 }

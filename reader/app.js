@@ -208,12 +208,12 @@ window.addEventListener('visibilitychange',()=>{if(document.hidden)flushListenin
 
 function saveWarning(text = "") { renderSaveStatus(libraryStore.status(),text); }
 function renderSaveStatus(snapshot,detail='') {
- const failure=snapshot.documents.find(item=>item.status!=='saved'&&item.status!=='pending')?.error;
- storageBlocked=!libraryLoad.ok||['conflict','fenced','unreadable'].includes(failure?.code);
- const reasons={quota:'浏览器保存空间不足',denied:'浏览器禁止了保存',conflict:'另一个页面更新了书架，先备份本页修改，再刷新读取',fenced:'存储版本已改变，先备份本页修改，再刷新读取',unreadable:'原有数据无法读取，已保留原数据',cancelled:'保存已取消，内容仍在本页',identity:'文档身份已改变，当前修改尚未保存'};
+ const failure=snapshot.documents.find(item=>item.status!=='saved'&&item.status!=='pending')?.error||libraryAdapter.status?.().error;
+ storageBlocked=!libraryLoad.ok||['conflict','fenced','unreadable','version','unavailable','legacy-changed','corruption'].includes(failure?.code);
+ const reasons={version:'存储版本已改变，请先导出修改，再刷新读取',unavailable:'文档数据库连接已中断，请先导出修改，再刷新重试',corruption:'原有存储记录无法完整核验，原数据仍保留', 'legacy-changed':'旧版页面修改了原书架，请先导出修改与原数据，再重新载入',quota:'浏览器保存空间不足',denied:'浏览器禁止了保存',conflict:'另一个页面更新了书架，先备份本页修改，再刷新读取',fenced:'存储版本已改变，先备份本页修改，再刷新读取',unreadable:'原有数据无法读取，已保留原数据',cancelled:'保存已取消，内容仍在本页',identity:'文档身份已改变，当前修改尚未保存'};
  const failed=snapshot.status!=='saved'&&snapshot.status!=='pending';
  $('save-status').hidden=false;$('save-status').dataset.state=storageBlocked||failed?'failed':snapshot.status;
- const message=detail||(storageBlocked&&!snapshot.unsaved?(reasons[failure?.code]||'原有数据无法读取，已保留原数据')+'。本次导入或修改请另存备份。':snapshot.status==='saved'?'已保存到本机浏览器':snapshot.status==='pending'?'正在保存 · '+snapshot.unsaved+' 份文档':(reasons[failure?.code]||'浏览器保存未成功')+'。'+snapshot.unsaved+' 份文档仍在本页，请重试或导出未保存文档备份。');
+ const message=detail||(storageBlocked&&!snapshot.unsaved?(reasons[failure?.code]||'原有数据无法读取，已保留原数据')+'。本次导入或修改请另存备份。':snapshot.status==='saved'?(libraryAdapter.backend==='indexeddb'?'已保存到本机文档数据库':'已保存到本机浏览器（兼容存储，容量较小）'):snapshot.status==='pending'?'正在保存 · '+snapshot.unsaved+' 份文档':(reasons[failure?.code]||'浏览器保存未成功')+'。'+snapshot.unsaved+' 份文档仍在本页，请重试或导出未保存文档备份。');
  const warning=storageBlocked||failed;
  $('save-status').textContent=warning?message:snapshot.status==='pending'?'保存中':'已保存';
  $('save-status').title=message;$('save-status').setAttribute('aria-label',message);
@@ -236,11 +236,14 @@ function notice(text,kind = "") {
  if(success)noticeTimer=setTimeout(()=>{noticeTimer=null;if($('notice').dataset.kind==='success'&&!$('notice-shell').contains(document.activeElement))notice('');},5000);
 }
 $('dismiss-notice').onclick=()=>{notice('');$('main-content').focus({preventScroll:true});};
+window.addEventListener('coconut-storage-export',event=>notice(event.detail.text));
 
 // The adapter is the only content writer. It retains the exact unreadable raw
 // value and never rebases over content another window wrote.
-const libraryAdapter=CoconutLibraryStore.createLegacyAdapter({getStorage:()=>localStorage,validate:Coconut.validate});
-const libraryLoad=libraryAdapter.load();
+const libraryAdapter=window.CoconutStorageBootstrap?.result?.adapter||CoconutLibraryStore.createLegacyAdapter({getStorage:()=>localStorage,validate:Coconut.validate});
+const libraryLoad=window.CoconutStorageBootstrap?.result?.loaded||libraryAdapter.load();
+// Direct embedding without the asynchronous bootstrap uses the legacy adapter.
+if(!window.CoconutStorageBootstrap){$('storage-startup').hidden=true;document.querySelector('.shell').inert=false;}
 state={documents:libraryLoad.documents,active:libraryLoad.active};
 if(libraryLoad.ok)for(const doc of state.documents)recordPersistenceCheckpoint(doc,persistenceCheckpoint(doc));
 else notice('上次保存的数据无法读取，已停止写入以保留原数据。本次内容可继续阅读，请导出备份后再关闭页面。');
@@ -254,8 +257,9 @@ libraryStore.subscribe((snapshot,event)=>{
   window.dispatchEvent(new CustomEvent('coconut-persistence-change',{detail:event.result}));
  }
 });
+libraryAdapter.subscribe?.(()=>renderSaveStatus(libraryStore.status()));
 function contentIngressAllowed(doc=null){
- return !readerClosing&&!libraryStore.status().blocked&&(!doc||state.documents.includes(doc)&&!pendingStructuralDocuments.has(doc.key));
+ return (!window.CoconutStorageBootstrap||window.CoconutStorageBootstrap.phase==='ready')&&!readerClosing&&!libraryStore.status().blocked&&(!doc||state.documents.includes(doc)&&!pendingStructuralDocuments.has(doc.key));
 }
 // Native final flush temporarily disables interaction. Retain an already queued
 // input/IME event rather than silently dropping its text at the ingress barrier.

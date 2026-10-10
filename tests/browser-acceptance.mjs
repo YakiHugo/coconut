@@ -16,7 +16,7 @@ const root = fileURLToPath(new URL('../', import.meta.url));
 const started = Date.now();
 const report = {schema_version: 1, suite: 'real-browser-acceptance', status: 'failed', checks: {}, counts: {}};
 let stage = 'configuration';
-let browser, server, temporary;
+let browser, server, temporary, waitForPersistedLibrary;
 let pageErrors = 0, blockedRequests = 0;
 process.umask(0o077);
 // Debug logging can include selectors or source URLs. This suite is deliberately
@@ -64,15 +64,15 @@ async function startServer(dataDir, port) {
 
 async function storedDocument(page) {
   await page.evaluate(()=>libraryStore.flush());
-  return await page.evaluate(() => {
-    const library = JSON.parse(localStorage.getItem('coconut-reader-v1') || 'null');
+  return await page.evaluate(async () => {
+    const library = (await readPersistedLibrary());
     return library?.documents.find(document => document.key === sessionStorage.getItem('coconut-reader-active-v1')) || null;
   });
 }
 
 async function waitForDocument(page, count) {
-  await page.waitForFunction(expected => {
-    const library = JSON.parse(localStorage.getItem('coconut-reader-v1') || 'null');
+  await waitForPersistedLibrary(page,async expected => {
+    const library = (await readPersistedLibrary());
     const document = library?.documents.find(item => item.key === sessionStorage.getItem('coconut-reader-active-v1'));
     return document?.segments.length === expected && !window.document.getElementById('reader-workspace').hidden;
   }, count);
@@ -299,7 +299,8 @@ try {
   check('prepared_job_available', jobs.jobs.filter(job => job.status === 'done').length === 1 && jobs.jobs.some(job => job.id === source.source_media.job_id && job.status === 'done'));
 
   stage = 'launch_installed_chromium';
-  const {chromium} = await import('@playwright/test');
+  const {chromium, waitForPersistedLibrary: pollStored} = await import('./helpers/browser-storage.mjs');
+  waitForPersistedLibrary = pollStored;
   browser = await chromium.launch({headless: true, ...(process.env.COCONUT_CHROMIUM_EXECUTABLE ? {executablePath:process.env.COCONUT_CHROMIUM_EXECUTABLE} : {})});
   const newContext = async () => {
     const context = await browser.newContext({acceptDownloads: true, viewport: {width: 1440, height: 1000}, serviceWorkers: 'block'});

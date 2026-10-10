@@ -94,7 +94,7 @@ try {
   check('fresh_real_queue_has_no_seeded_jobs', health.local_worker === true && initial.jobs.length === 0);
 
   stage = 'launch_chromium';
-  const {chromium} = await import('@playwright/test');
+  const {chromium} = await import('./helpers/browser-storage.mjs');
   browser = await chromium.launch({headless: true, ...(process.env.COCONUT_CHROMIUM_EXECUTABLE ? {executablePath:process.env.COCONUT_CHROMIUM_EXECUTABLE} : {})});
   const context = await browser.newContext({serviceWorkers: 'block', viewport: {width: 1440, height: 1000}});
   await context.route('**/*', async route => {

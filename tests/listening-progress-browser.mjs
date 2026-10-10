@@ -4,7 +4,7 @@ import {createServer} from 'node:http';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import {chromium} from '@playwright/test';
+import {chromium} from './helpers/browser-storage.mjs';
 const root=new URL('../reader/',import.meta.url),dir=await fs.mkdtemp(path.join(os.tmpdir(),'coconut-listening-'));
 let browser,server,page,stage='create authored WAV';
 const pageErrors=[],network=[],mediaEvents=[];
