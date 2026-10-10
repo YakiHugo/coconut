@@ -1,3 +1,4 @@
+import {installSavePipeline} from './helpers/save-pipeline.mjs';
 /** DOM integration only; native chooser/download evidence belongs to browser CI. */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -11,6 +12,7 @@ function setup(){
  w.document.body.innerHTML=fs.readFileSync(new URL('reader/index.html',root),'utf8').split('<body>')[1].split('</body>')[0];
  Object.defineProperty(w,'crypto',{value:webcrypto});
  w.fetch=()=>{throw new Error('Local subtitle imports must not contact a server');};
+ installSavePipeline(w);
  w.eval(['summary','core','passages','passage-playback','app','language','podcasts'].map(name=>fs.readFileSync(new URL('reader/'+name+'.js',root),'utf8')).join('\n'));
  const $=id=>w.document.getElementById(id),stored=()=>JSON.parse(w.localStorage.getItem(KEY));
  const choose=async(name,text)=>{Object.defineProperty($('file'),'files',{configurable:true,value:[{name,size:Buffer.byteLength(text),text:async()=>text}]});await $('file').onchange();};
@@ -26,6 +28,7 @@ for(const fixture of subtitleFixtures)test(`${fixture.format} file handler prese
   w.document.querySelector('.note-button').click();$('note').value=note;$('note').dispatchEvent(new w.Event('input'));$('close-note').click();
   const second=w.document.querySelectorAll('.segment')[1];second.querySelector('.cue-more > summary')?.click();second.querySelector('.edit-button').click();
   $('edit-segment').value=correction;$('save-edit').click();
+  assert.equal($('save-status').dataset.state,'pending');assert.equal((await w.flushContentForTest()).ok,true);
   const saved=stored(),current=saved.documents[0];assert.equal(current.notes['segment-1'],note);assert.equal(current.segments[1].original_text,expectedCues[1].text);
   const before=w.localStorage.getItem(KEY);await choose('broken.'+fixture.format,fixture.invalid);
   assert.match($('notice').textContent,/导入失败/);assert.equal(w.localStorage.getItem(KEY),before);assert.equal($('title').textContent,fixture.title);

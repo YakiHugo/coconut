@@ -45,6 +45,7 @@ try{
  check('no_automatic_source_request',captionPosts===0);
  await page.locator('#video-url').fill(source);await page.locator('#caption-language').selectOption('en');stage='public_caption_import';await page.locator('#process-url').click();
  await page.locator('#reader-workspace').waitFor({state:'visible',timeout:150000});
+ await page.evaluate(()=>libraryStore.flush());
  const document=await page.evaluate(()=>{const s=JSON.parse(localStorage.getItem('coconut-reader-v1'));return s.documents.find(d=>d.key===sessionStorage.getItem('coconut-reader-active-v1'));});
  check('1771_original_cues_saved',document.segments.length===1771&&document.segments[0].start===.22&&document.segments.at(-1).end===3251.49);
  check('source_and_language_evidence_preserved',document.source_url===source&&document.language==='en'&&document.provenance.language_basis==='user_hint'&&document.provenance.caption_track&&document.provenance.caption_method==='platform_provided'&&document.provenance.review_status==='unreviewed');
@@ -65,6 +66,7 @@ try{
  await openCueActions(last);await last.locator('.bookmark-button').click();
  await openCueActions(last);await last.locator('.edit-button').click();
  await page.locator('#edit-segment').fill('Authored acceptance correction; retain the original source.');await page.locator('#save-edit').click();
+ await page.evaluate(()=>libraryStore.flush());
  const expected=await page.evaluate(()=>{const s=JSON.parse(localStorage.getItem('coconut-reader-v1'));return s.documents.find(d=>d.key===sessionStorage.getItem('coconut-reader-active-v1'));});
  check('real_last_cue_original_and_annotations_retained',expected.segments.at(-1).original_text===document.segments.at(-1).text&&expected.segments.at(-1).saved_excerpt===true&&expected.readingPosition===lastId);
  async function download(button,name){
@@ -78,7 +80,7 @@ try{
  check('real_caption_notebook_keeps_notes_and_source',markdown.includes('Authored final')&&markdown.includes(source)&&markdown.includes('Authored acceptance correction'));
  await app.close();app=null;
  page=await launch(profile);
- const readSaved=()=>page.evaluate(()=>{const s=JSON.parse(localStorage.getItem('coconut-reader-v1'));return s.documents.find(d=>d.key===sessionStorage.getItem('coconut-reader-active-v1'));});
+ const readSaved = async () => {await page.evaluate(()=>libraryStore.flush());return page.evaluate(()=>{const s=JSON.parse(localStorage.getItem('coconut-reader-v1'));return s.documents.find(d=>d.key===sessionStorage.getItem('coconut-reader-active-v1'));});};
  check('real_caption_process_restart_restores_complete_document',isDeepStrictEqual(await readSaved(),expected));
  await page.locator('#mode-transcript').click();await page.locator('#resume').click();
  check('real_caption_restart_resumes_last_cue',await page.locator('.segment').last().getAttribute('data-segment-id')===lastId);

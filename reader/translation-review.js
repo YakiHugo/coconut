@@ -13,7 +13,11 @@
   if(editorDirty())drafts.set(signature(session),{...session,draftText:$('translation-edit-text').value});
   else drafts.delete(signature(session));
  }
- function hasDraft(){captureDraft();return drafts.size>0;}
+ function hasDraft(){
+  if(editorDirty())return true;
+  for(const key of drafts.keys())if(!editor.open||!session||key!==signature(session))return true;
+  return false;
+ }
  function sync(){if(unloadGuardReady)syncUnsavedUnloadGuard();}
  function discardAllowed(){return !editorDirty()||window.confirm('放弃这条尚未保存的译文修正？');}
  function suspendEditor(){
@@ -62,10 +66,10 @@
  function openEditor(key,id,target,returnQueue=false){
   if(readerClosing||!discardAllowed())return;
   const doc=state.documents.find(d=>d.key===key),segment=doc?.segments.find(s=>s.id===id),item=segment?.translations?.[target];
-  if(!item||active()?.key!==key)return;
+  if(!item||active()!==doc||!contentIngressAllowed(doc))return;
   if(editor.open){drafts.delete(signature(session));session=null;editor.close();}
   queueDialog.close();
-  goToSegment(id);doc.translation_view=target;setReadingMode('transcript');save();render();
+  goToSegment(id);if(doc.translation_view!==target){doc.translation_view=target;queueDocument(doc);}setReadingMode('transcript');render();
   const snapshot=Coconut.manualReviewSnapshot(doc,segment,target);
   const draft=drafts.get(signature({key,id,target}));
   session=draft?{...draft,returnQueue}:{key,id,target,document:doc,segment,snapshot,context:[...snapshot.cues.filter(c=>c.id!==id),...(snapshot.missing_cue_ids||[]).map(missing_id=>({missing_id}))],contextOffset:0,expected:JSON.stringify(item),text:item.text,returnQueue};
@@ -122,22 +126,32 @@
  $('translation-edit-cancel').onclick=()=>closeEditor();
  editor.addEventListener('cancel',event=>{event.preventDefault();closeEditor();});
  editor.addEventListener('close',sync);
- $('translation-edit-text').oninput=()=>{updateSaveAction();sync();};
- $('save-translation-edit').onclick=event=>{
+ $('translation-edit-text').oninput=()=>{captureDraft();updateSaveAction();sync();};
+ $('save-translation-edit').onclick=async event=>{
   event.preventDefault();if(readerClosing||!session)return;
-  const doc=state.documents.find(d=>d.key===session.key),segment=doc?.segments.find(s=>s.id===session.id);
+  const submittedSession=session,doc=state.documents.find(d=>d.key===session.key),segment=doc?.segments.find(s=>s.id===session.id);
   if(doc!==session.document||segment!==session.segment){$('translation-edit-error').textContent='原文条目已被替换或关闭，请先复制草稿，再重新打开当前译文核对。';return;}
-  if(!segment||active()?.key!==session.key){$('translation-edit-error').textContent='当前文档已切换，请保留草稿，回到原文档后重新核对。';return;}
+  if(!contentIngressAllowed(doc))return;
+  if(!segment||active()!==doc){$('translation-edit-error').textContent='当前文档已切换，请保留草稿，回到原文档后重新核对。';return;}
   try{
-   const text=$('translation-edit-text').value;
-   Coconut.saveManualTranslation(doc,segment,session.target,text,session.snapshot,session.expected);
-   // Retire already planned later batches as well as protecting this batch's result.
+   const text=$('translation-edit-text').value,owner={},focus=document.activeElement;
+   const item=Coconut.saveManualTranslation(doc,segment,session.target,text,session.snapshot,session.expected);
+   // The accepted text is now document content. Keep the editor available while
+   // its receipt waits, using that text as the baseline for any newer draft.
    stopLanguageBatches();
-   session.text=text;drafts.delete(signature(session));const persisted=save(),reopen=session.returnQueue,target=session;
-   session=null;editor.close();render();sync();
-   notice(persisted?'已保存为用户人工核对／修正，初始译文和上一版保留在 JSON 备份中。':'人工修正仅保留在当前页，尚未保存到浏览器。请立即导出 JSON 备份，暂时不要关闭页面。',persisted?'success':'');
+   session.text=text;session.expected=JSON.stringify(item);session.pending=owner;delete session.draftText;
+   drafts.delete(signature(session));updateSaveAction();$('translation-edit-error').textContent='正在保存人工修正…';
+   const pending=commitDocument(doc);sync();const receipt=await pending;
+   // A receipt must never close a newer editor, discard newer typing or restore
+   // old focus after navigation, removal, another submission or native close.
+   if(session!==submittedSession||session.pending!==owner||!contentIngressAllowed(doc)||active()!==doc||doc.segments.find(s=>s.id===session.id)!==segment)return;
+   if(JSON.stringify(segment.translations?.[session.target])!==session.expected||JSON.stringify(Coconut.manualReviewSnapshot(doc,segment,session.target))!==JSON.stringify(session.snapshot)){$('translation-edit-error').textContent='提交后的原文、上下文或译文又有变化，请重新核对；当前草稿仍保留。';captureDraft();sync();return;}
+   if($('translation-edit-text').value!==text){captureDraft();$('translation-edit-error').textContent=receipt.ok?'上次提交已保存；当前新修改仍是未提交草稿。':'上次提交仅保留在当前页；当前新修改仍是未提交草稿，请备份。';sync();return;}
+   if(document.activeElement!==focus){$('translation-edit-error').textContent=receipt.ok?'人工修正已保存。':'人工修正仅保留在当前页，尚未保存到浏览器。请立即导出 JSON 备份。';sync();return;}
+   const reopen=session.returnQueue,target=session;session=null;editor.close();render();sync();
+   notice(receipt.ok?'已保存为用户人工核对／修正，初始译文和上一版保留在 JSON 备份中。':'人工修正仅保留在当前页，尚未保存到浏览器。请立即导出 JSON 备份，暂时不要关闭页面。',receipt.ok?'success':'');
    if(reopen)openQueue();else focusReviewAction(target);
-  }catch(error){$('translation-edit-error').textContent=error.message;sync();}
+  }catch(error){if(session===submittedSession){$('translation-edit-error').textContent=error.message;sync();}}
  };
  function renderEntry(){
   if(editor.open&&session&&active()?.key!==session.key)suspendEditor();
@@ -145,16 +159,17 @@
   if(queueDialog.open){if(active()?.key!==queueKey)queueDialog.close();else renderQueue();}
  }
  window.addEventListener('coconut-workspace-change',event=>{if(event.detail?.workspace!=='read'&&editor.open)suspendEditor();});
- window.addEventListener('coconut-document-removed',event=>{
-  const key=event.detail?.key;captureDraft();
+ window.addEventListener('coconut-document-retiring',event=>{
+  const {key,bundle}=event.detail||{};if(!bundle)return;captureDraft();
   const removedDrafts=new Map();
   for(const [id,draft] of drafts)if(draft.key===key){removedDrafts.set(id,draft);drafts.delete(id);}
-  if(removedDocument?.doc.key===key)removedDocument.translationReviewDrafts=removedDrafts;
+  bundle.translationReviewDrafts=removedDrafts;
   if(session?.key===key){session=null;editor.close();}
  });
  window.addEventListener('coconut-document-restored',event=>{
   const doc=state.documents.find(d=>d.key===event.detail?.key);
   for(const [id,draft] of event.detail?.translationReviewDrafts||[]){
+   if(!doc||draft.key!==event.detail.key)continue;
    const segment=doc?.segments.find(s=>s.id===draft.id);
    // Only the explicit undo transaction can rebind a draft to a new identity.
    // Source or translation drift still fails the normal save checks.

@@ -29,6 +29,7 @@ try{
  await page.locator('#download-podcast-media').click();await page.waitForFunction(()=>{const p=document.querySelector('audio');return p&&!p.error&&p.duration>4&&p.readyState>=2;});
  const originalKey=await page.evaluate(()=>sessionStorage.getItem('coconut-reader-active-v1'));await page.locator('audio').evaluate(p=>{p.dataset.retained='yes';p.currentTime=1;});
  captionsReady=true;await page.locator('#fetch-project-transcript').click();await page.locator('#transcript-layout').waitFor({state:'visible'});
+ await page.evaluate(()=>libraryStore.flush());
  check('attachment_keeps_one_stable_project',await page.evaluate(key=>{const s=JSON.parse(localStorage.getItem('coconut-reader-v1'));return s.documents.length===1&&sessionStorage.getItem('coconut-reader-active-v1')===key;},originalKey));
  check('attachment_keeps_loaded_media_and_notes',await page.locator('audio').getAttribute('data-retained')==='yes'&&await page.locator('#project-note').inputValue()==='PRIVATE PROJECT NOTE'&&await page.locator('#audio-bookmarks textarea').inputValue()==='PRIVATE BOOKMARK');
  check('attachment_does_not_redownload_or_infer',sourceCalls.filter(c=>c==='media').length===1&&modelInputs.length===0);

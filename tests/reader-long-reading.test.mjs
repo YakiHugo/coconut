@@ -1,3 +1,4 @@
+import {installSavePipeline} from './helpers/save-pipeline.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -15,6 +16,7 @@ function setup(saved) {
   w.eval(fs.readFileSync(new URL('reader/core.js', root), 'utf8'));
   w.eval(fs.readFileSync(new URL('reader/passages.js', root), 'utf8'));
   w.eval(fs.readFileSync(new URL('reader/passage-playback.js', root), 'utf8'));
+  installSavePipeline(w);
   w.eval(['app', 'language', 'podcasts'].map(name => fs.readFileSync(new URL('reader/' + name + '.js', root), 'utf8')).join('\n'));
   const calls = [];
   w.fetch = async (...args) => {calls.push(args); throw new Error('Unexpected network request');};
@@ -93,7 +95,7 @@ test('last-page note, edit, excerpt and resume survive reload and both JSON reco
     assert.match(markdown, /第二行：这份笔记应随备份完整保留/);
     assert.match(markdown, /Corrected closing thought/); assert.match(markdown, /Harbor notebook 1771/);
     assert.doesNotMatch(markdown, /末段保留一扇安静的窗/, 'Stale translated wording is not exported as current');
-    assert.equal(calls.length, 0); saved = w.localStorage.getItem(key);
+    assert.equal(calls.length, 0); assert.equal((await w.flushContentForTest()).ok, true); saved = w.localStorage.getItem(key);
   } finally {await w.happyDOM.close();}
   for (const recovery of ['reload', 'document-import', 'library-restore']) {
     const env = setup(recovery === 'reload' ? saved : undefined);

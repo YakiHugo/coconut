@@ -77,7 +77,7 @@ else {
           buttons:['继续编辑','放弃未保存内容并退出'],defaultId:0,cancelId:0,noLink:true});
         return answer.response===1;
       },
-      finish:async attempt=>{await window.webContents.session.flushStorageData();if(!lifecycle.owns(attempt))throw new Error('关闭操作已取消');finishQuit();},
+      finish:async attempt=>{await lifecycle.call(attempt,()=>window.webContents.session.flushStorageData());if(!lifecycle.owns(attempt))throw new Error('关闭操作已取消');finishQuit();},
       onError:async()=>{if(window.isDestroyed())return;return dialog.showMessageBox(window,{type:'warning',title:'暂时无法安全关闭',message:'无法确认阅读器的保存状态，Coconut 已保持打开。',detail:'请等待阅读器恢复后保存或导出备份，再尝试退出。强制退出或系统终止仍可能丢失未保存内容。',buttons:['继续等待'],defaultId:0,cancelId:0});}
     });
     // Native close and Cmd-Q use the same gate. OS termination/crashes cannot be
@@ -108,7 +108,7 @@ else {
         // and final listening flush as native close. No second discard dialog
         // may cancel quit after the installer has already been launched.
         if(!await safe(true))throw new Error('出现新的工作或未保存修改，安装已暂停。完成后请重试。');
-        await window.webContents.session.flushStorageData();current();
+        await lifecycle.call(attempt,()=>window.webContents.session.flushStorageData());current();
         await install.start();started=true;current();
         finishQuit();return updater.snapshot();
       }catch(error){

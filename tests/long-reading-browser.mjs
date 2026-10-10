@@ -117,6 +117,7 @@ try {
   const backup = path.join(temporary, 'authored-long-reading.coconut.json'); await download.saveAs(backup);
   const exported = JSON.parse(await fs.readFile(backup, 'utf8'));
   check('download_contains_all_1771_cues_and_reading_work', exported.segments.length === 1771 && exported.readingPosition === 'harbor-1770' && exported.segments.at(-1).saved_excerpt === true && exported.notes['harbor-1770'].includes('末段笔记') && exported.segments.at(-1).original_text === fixture.segments.at(-1).text);
+  await page.evaluate(()=>libraryStore.flush());
   await page.reload(); await page.locator('#mode-bilingual').click(); await page.locator('#resume').click(); await visibleCue(page, 'harbor-1770');
   check('reload_can_resume_last_cue_with_note', (await last.locator('.saved-note').textContent()).includes('末段笔记'));
   await capture(page, '04-restored-desktop');

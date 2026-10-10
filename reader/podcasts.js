@@ -97,7 +97,7 @@ async function savePodcastProject(feedUrl,episode){
  const revision=documentLifecycleRevision,startingDocument=state.active,controller=new AbortController();podcastRequest=controller;setPodcastBusy(true);
  try{
   const persisted=await add(podcastProject(feedUrl,episode),()=>controller===podcastRequest&&!controller.signal.aborted&&state.active===startingDocument&&workspace==='add',true,revision);
-  if(persisted)notice('原声项目已保存在书架。尚未下载媒体或导入文字稿；可以写项目笔记，或单独获取原声并记录时间书签。');
+  if(persisted.ok&&controller===podcastRequest&&!controller.signal.aborted&&active()===persisted.identity&&contentIngressAllowed(persisted.identity))notice('原声项目已保存在书架。尚未下载媒体或导入文字稿；可以写项目笔记，或单独获取原声并记录时间书签。');
  }catch(error){if(controller===podcastRequest)podcastMessage(error.message);}
  finally{if(controller===podcastRequest){podcastRequest=null;setPodcastBusy(false);}}
 }
@@ -113,13 +113,13 @@ async function importPodcastEpisode(feedUrl,episodeId,transcriptUrl,discoveredEp
    const episode=result.episode||discoveredEpisode;
    if(episode?.media?.length){
     const persisted=await add(podcastProject(result.feed_url||feedUrl,episode,'unavailable'),()=>controller===podcastRequest&&!controller.signal.aborted&&state.active===startingDocument&&workspace==='add',true,revision);
-    if(persisted)notice('这集没有可用的公开定时文字稿，已保存原声项目。可写笔记、记录时间书签；回听需单独点击下载，未启动识别或模型。');
+    if(persisted.ok&&controller===podcastRequest&&!controller.signal.aborted&&active()===persisted.identity&&contentIngressAllowed(persisted.identity))notice('这集没有可用的公开定时文字稿，已保存原声项目。可写笔记、记录时间书签；回听需单独点击下载，未启动识别或模型。');
    }
    podcastMessage('这集没有可用的公开定时文字稿。节目简介不会代替原文；当前未启动识别、下载模型或扣费。');return;
   }
   const persisted=await add(Coconut.validate(result.document),()=>controller===podcastRequest&&!controller.signal.aborted&&state.active===startingDocument&&workspace==='add',false,revision);
-  podcastMessage('文字稿已打开。');
-  if(persisted)notice('发布者文字稿已导入。内容尚未经人工核对；可在「原文与音视频」中点击下载原声回听。');
+  if(controller===podcastRequest&&active()===persisted.identity)podcastMessage(persisted.ok?'文字稿已打开并保存。':'文字稿已在本页打开，尚未保存，请导出备份。');
+  if(persisted.ok&&controller===podcastRequest&&!controller.signal.aborted&&active()===persisted.identity&&contentIngressAllowed(persisted.identity))notice('发布者文字稿已导入。内容尚未经人工核对；可在「原文与音视频」中点击下载原声回听。');
  }catch(error){if(controller===podcastRequest)podcastMessage(controller.signal.aborted?'已取消导入，已有书架不变。':error.message);}
  finally{if(controller===podcastRequest){podcastRequest=null;setPodcastBusy(false);}}
 }
@@ -202,8 +202,8 @@ $('fetch-project-transcript').onclick=async()=>{
   const text=Coconut.validate(result.document);
   if(Coconut.audioProjectIdentity(text)!==Coconut.audioProjectIdentity(doc))throw new Error('返回文字稿与本项目来源不一致，未附加，请重新发现来源。');
   if(text.podcast_source?.media_url!==source.media_url||text.podcast_source?.media_kind!==source.media_kind||!['audio','video'].includes(source.media_kind))throw new Error('发布者媒体地址或类型已变化或无法核对，未把新文字稿配到旧原声。请重新发现来源并核对媒体后再补充。');
-  const persisted=attachTranscriptToProject(text,target);
-  notice(persisted?'发布者文字稿已补充到原项目，笔记、书签和当前媒体保留。尚未经人工核对；未调用模型。':'文字稿已在本页附加，但未能保存，请立即导出 JSON 备份。');
+  const persisted=await attachTranscriptToProject(text,target);
+  if(projectCaptionRequest?.controller===controller&&active()===persisted.identity&&contentIngressAllowed(persisted.identity))notice(persisted.ok?'发布者文字稿已补充到原项目，笔记、书签和当前媒体保留。尚未经人工核对；未调用模型。':'文字稿已在本页附加，但未能保存，请立即导出 JSON 备份。');
  }catch(error){if(active()?.key===target.key)$('audio-project-status').textContent=controller.signal.aborted?'已取消获取文字稿，原项目保留。':error.message;}
  finally{if(projectCaptionRequest?.controller===controller){projectCaptionRequest=null;renderProjectCaptionAction();}}
 };
@@ -214,6 +214,6 @@ window.addEventListener('coconut-worker-disconnected',()=>{projectCaptionRequest
 renderProjectCaptionAction();
 
 // Retire client-side imports; removing a reader entry never deletes server media or jobs.
-window.addEventListener('coconut-document-removed',event=>{
+window.addEventListener('coconut-document-retiring',event=>{
  if(projectCaptionRequest?.target.key===event.detail?.key){projectCaptionRequest.controller.abort();$('audio-project-status').textContent='已取消移除项目的文字稿请求，迟到结果不会覆盖恢复副本。';}
 });

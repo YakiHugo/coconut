@@ -17,7 +17,7 @@ function setup(stored){
   if(url.endsWith('translate-subscription'))return {ok:true,json:async()=>({translations:body.segments.map(s=>({id:s.id,source_text:s.text,text:'Injected translation.'}))})};
   return {ok:true,json:async()=>({answer:'Injected answer.',citations:[body.segments[0].id],provider:'fixture'})};
  };
- w.eval(['summary','core','passages','passage-playback','app','language'].map(name=>fs.readFileSync(new URL('reader/'+name+'.js',root),'utf8')).join('\n'));
+ w.eval(['summary','core','passages','passage-playback','library-store','app','language'].map(name=>fs.readFileSync(new URL('reader/'+name+'.js',root),'utf8')).join('\n'));
  const $=id=>w.document.getElementById(id),task=value=>{$('ai-task').value=value;$('ai-task').onchange();};
  return {w,$,task,requests};
 }
@@ -115,7 +115,7 @@ for(const operation of ['translation','summary'])test(`switching away and back c
  const {w,$,task,requests}=setup();let release,run;try{
   await importDocument(w,fixture(operation==='summary'?801:65));await $('check-ai').onclick();task(operation);let calls=0;
   w.fetch=async(url,options)=>{calls++;const body=JSON.parse(options.body);await new Promise(resolve=>{release=resolve;});return {ok:true,json:async()=>operation==='summary'?{answer:'Injected batch',citations:[body.segments[0].id],provider:'fixture'}:{translations:body.segments.map(c=>({id:c.id,source_text:c.text,text:'Injected translation'}))}};};
-  $('ai-consent').checked=true;run=$(operation==='summary'?'ask-ai':'subscription-translate').onclick();assert.equal(calls,1);
+  $('ai-consent').checked=true;run=$(operation==='summary'?'ask-ai':'subscription-translate').onclick();await new Promise(resolve=>setTimeout(resolve,0));assert.equal(calls,1);
   task('question');task(operation);$('ai-consent').checked=true;release();await run;
   assert.equal(calls,1);assert.equal($('ai-consent').checked,false);assert.match($('ai-progress').textContent,/已停止/);
  }finally{release?.();await run;await w.happyDOM.close();}

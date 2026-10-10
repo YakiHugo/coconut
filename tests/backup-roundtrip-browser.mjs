@@ -34,7 +34,7 @@ try{
  }
  const write=async(name,value)=>{const file=path.join(directory,name);await fs.writeFile(file,JSON.stringify(value));return file;};
  const finished=(page,count)=>page.waitForFunction(count=>window.backupProbe.finished===count,count);
- const disk=page=>page.evaluate(key=>localStorage.getItem(key),KEY);
+ const disk = async page => {await page.evaluate(()=>libraryStore.flush());return page.evaluate(key=>localStorage.getItem(key),KEY);};
  async function download(page,id,name){
   const details=page.locator(id==='export'?'#export-menu':'details.library-backup');
   if(id==='export-library'&&!await details.isVisible()){
@@ -50,7 +50,7 @@ try{
  page=await newPage();await page.locator('#file').setInputFiles(small);await finished(page,1);const before=await disk(page);
  stage='native_quota_and_17_mib_recovery';await page.locator('#file').setInputFiles(chinese);await finished(page,2);
  check('17_mib_json_reads_without_extra_confirmation',!await page.locator('#large-backup-dialog').isVisible()&&await page.locator('#title').textContent()==='600万汉字完整备份');
- check('native_quota_failure_preserves_original_disk_library',await disk(page)===before&&await page.locator('#save-status').isVisible());
+ check('native_quota_failure_preserves_original_disk_library',await disk(page)===before&&await page.locator('#save-status').getAttribute('data-state')==='failed');
  const rescued=await download(page,'export','chinese-rescue.json');const rescueText=await fs.readFile(rescued,'utf8');const rescue=JSON.parse(rescueText);
  check('actual_download_preserves_all_source_and_context',rescue.segments.length===6001&&rescue.segments.at(-1).text==='汉'.repeat(1000)&&rescue.ai_answers[0].input_snapshot.segments[0].text==='Authored source words'&&Object.keys(rescue.translation_contexts).length===1);
  await page.locator('#file').setInputFiles(rescued);await finished(page,3);check('actual_download_repeat_import_is_idempotent',await page.evaluate(()=>state.documents.length)===2);
@@ -82,7 +82,7 @@ try{
  await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));
  check('old_native_close_event_does_not_cancel_new_large_selection',await page.locator('#large-backup-dialog').isVisible()&&await page.evaluate(before=>window.backupProbe.reads===1&&window.backupProbe.dialogCloses>before,closesBefore));
  stage='large_file_approved_read';await page.locator('#continue-large-backup').click();await finished(page,5);
- check('approved_large_json_remains_readable_when_not_persisted',await page.locator('#title').textContent()==='含大笔记的完整备份'&&await disk(page)===saved&&await page.locator('#save-status').isVisible());
+ check('approved_large_json_remains_readable_when_not_persisted',await page.locator('#title').textContent()==='含大笔记的完整备份'&&await disk(page)===saved&&await page.locator('#save-status').getAttribute('data-state')==='failed');
  const library=await download(page,'export-library','whole-library.json');check('whole_library_over_50_mib_download_is_not_blocked',(await fs.stat(library)).size>50*MiB);
  await page.context().close();
  stage='large_library_actual_download_restore';page=await newPage();await page.locator('#file').setInputFiles(small);await finished(page,1);const preserved=await disk(page);

@@ -1,3 +1,4 @@
+import {installSavePipeline} from './helpers/save-pipeline.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -14,6 +15,7 @@ function setup(saved) {
  const calls = [];
  w.fetch = async (...args) => { calls.push(args); throw new Error('Unexpected request'); };
  for (const name of ['summary', 'core', 'passages', 'passage-playback']) w.eval(fs.readFileSync(new URL('reader/' + name + '.js', root), 'utf8'));
+ installSavePipeline(w);
  w.eval(['app', 'language', 'podcasts'].map(name => fs.readFileSync(new URL('reader/' + name + '.js', root), 'utf8')).join('\n'));
  w.HTMLElement.prototype.scrollIntoView = function () {};
  return {w, $: id => w.document.getElementById(id), calls, close: async () => {w.dispatchEvent(new w.Event('pagehide')); await w.happyDOM.close();}};
@@ -145,6 +147,8 @@ test('note membership updates while typing, retaining the editor and raw whitesp
    assert.equal(rows(env).length, 0); assert.equal($('note-count').textContent, '0');
    assert.match($('search-status').textContent, /找到 0 个片段/);
    assert.equal($('export-notebook').disabled, true);
+   assert.equal($('save-status').dataset.state, 'pending');
+   assert.equal((await w.flushContentForTest()).ok, true);
    assert.equal(saved(env).notes.a, blankNote);
    type(env, 'note', 'needle again');
    assert.equal(rows(env).length, 1); assert.equal($('note-count').textContent, '1');
@@ -164,7 +168,7 @@ test('note membership updates while typing, retaining the editor and raw whitesp
   assert.equal(rows(env).length, 0);
   $('filter-all').click(); row(env, 'a').querySelector('.note-button').click();
   assert.equal($('note').value, blankNote, 'Opening the editor keeps its stored whitespace');
-  $('close-note').click(); stored = w.localStorage.getItem(KEY);
+  $('close-note').click(); assert.equal((await w.flushContentForTest()).ok, true); stored = w.localStorage.getItem(KEY);
   assert.equal(saved(env).notes.a, blankNote, 'Opening an editor never rewrites saved bytes');
  } finally { await env.close(); }
  const restored = setup(stored);

@@ -1,3 +1,4 @@
+import {installSavePipeline} from './helpers/save-pipeline.mjs';
 /** Deterministic DOM/storage integration. Native two-page/reload/download proof runs only in browser CI. */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -22,6 +23,7 @@ function setup({disk=storage([[KEY,library()]]),session=storage(),sessionFailure
   return sessionFailure==='write'?{getItem:session.getItem,setItem(){throw new w.DOMException('Session quota','QuotaExceededError');},removeItem(){throw new w.DOMException('Session quota','QuotaExceededError');}}:session;
  }});
  w.fetch=()=>{throw new Error('Reading selection must not send a request');};
+ installSavePipeline(w);
  w.eval(['summary','core','passages','passage-playback','app','language','podcasts'].map(name=>fs.readFileSync(new URL('reader/'+name+'.js',root),'utf8')).join('\n'));
  w.eval(`window.selectionProbe={serializedDocuments:0};
  const originalStringify=JSON.stringify;
@@ -50,8 +52,8 @@ test('separate windows navigate without serializing or writing the library, then
   assert.equal(a.$('title').textContent,'Authored a');assert.equal(b.$('title').textContent,'Authored a');
   for(const key of ['b','c','a','b'])a.open(key);
   assert.equal(a.session.getItem(ACTIVE),'b');assert.equal(b.session.getItem(ACTIVE),'a');assert.equal(disk.writes.filter(([key])=>key===KEY).length,0);
-  b.note('Saved by B after A only navigated');
-  assert.equal(b.$('save-status').hidden,true);assert.equal(b.unloadBlocked(),false);
+  b.note('Saved by B after A only navigated');assert.equal(b.$('save-status').dataset.state,'pending');assert.equal(b.unloadBlocked(),true);assert.equal((await b.w.flushContentForTest()).ok,true);
+  assert.equal(b.$('save-status').dataset.state,'saved');assert.equal(b.unloadBlocked(),false);
   const saved=JSON.parse(disk.getItem(KEY));assert.equal(Object.hasOwn(saved,'active'),false);assert.equal(saved.documents.length,3);
   assert.equal(saved.documents.find(doc=>doc.key==='a').notes.cue,'Saved by B after A only navigated');
   assert.equal(saved.documents.find(doc=>doc.key==='b').notes.cue,'Saved b');
@@ -64,9 +66,9 @@ test('separate windows navigate without serializing or writing the library, then
 test('real remote content changes still block stale saves and navigation never clears unsaved protection',async()=>{
  const disk=storage([[KEY,library()]]),a=setup({disk}),b=setup({disk});
  try{
-  b.note('Newer remote note');const latest=disk.getItem(KEY);
-  a.open('b');assert.equal(a.$('save-status').hidden,true,'navigation is not a failed content save');
-  a.note('Unsaved local note');assert.equal(disk.getItem(KEY),latest);assert.match(a.$('save-status').textContent,/另一个页面/);assert.equal(a.unloadBlocked(),true);
+  b.note('Newer remote note');assert.equal((await b.w.flushContentForTest()).ok,true);const latest=disk.getItem(KEY);
+  a.open('b');assert.equal(a.$('save-status').dataset.state,'saved','navigation is not a failed content save');
+  a.note('Unsaved local note');assert.equal((await a.w.flushContentForTest()).ok,false);assert.equal(disk.getItem(KEY),latest);assert.match(a.$('save-status').textContent,/另一个页面/);assert.equal(a.unloadBlocked(),true);
   const warning=a.$('save-status').textContent;
   a.open('c');a.open('b');assert.equal(a.$('save-status').textContent,warning);assert.equal(a.unloadBlocked(),true);
   const backup=await a.exported('export-library');assert.equal(backup.active,'b');assert.equal(backup.documents.length,3);
@@ -101,7 +103,7 @@ test('invalid last-open hint falls through to the valid legacy selection without
 
 test('a denied last-open preference write does not block reading or durable notes',async()=>{
  const disk=storage([[KEY,library()]]),write=disk.setItem;disk.setItem=(key,value)=>{if(key===LAST_ACTIVE)throw new Error('Preference denied');write(key,value);};const env=setup({disk});
- try{env.open('b');env.note('Saved despite preference denial');assert.equal(env.$('save-status').hidden,true);assert.equal(env.unloadBlocked(),false);assert.equal(JSON.parse(disk.getItem(KEY)).documents.find(doc=>doc.key==='b').notes.cue,'Saved despite preference denial');}
+ try{env.open('b');env.note('Saved despite preference denial');assert.equal((await env.w.flushContentForTest()).ok,true);assert.equal(env.$('save-status').dataset.state,'saved');assert.equal(env.unloadBlocked(),false);assert.equal(JSON.parse(disk.getItem(KEY)).documents.find(doc=>doc.key==='b').notes.cue,'Saved despite preference denial');}
  finally{await env.w.happyDOM.close();}
 });
 
@@ -117,7 +119,7 @@ test('a disappeared selection falls back safely and an empty library does not ma
 for(const sessionFailure of ['access','write'])test(`unavailable session storage (${sessionFailure}) leaves reading and content saving usable`,async()=>{
  const env=setup({sessionFailure});
  try{
-  env.open('b');env.note('Still saves body without session storage');assert.equal(env.$('save-status').hidden,true);assert.equal(env.unloadBlocked(),false);
+  env.open('b');env.note('Still saves body without session storage');assert.equal((await env.w.flushContentForTest()).ok,true);assert.equal(env.$('save-status').dataset.state,'saved');assert.equal(env.unloadBlocked(),false);
   assert.equal(JSON.parse(env.disk.getItem(KEY)).documents.find(doc=>doc.key==='b').notes.cue,'Still saves body without session storage');
   const backup=await env.exported('export-library');assert.equal(backup.active,'b','export uses in-memory selection even when session storage is unavailable');
  }finally{await env.w.happyDOM.close();}
@@ -144,7 +146,7 @@ test('failed import save keeps current temporary selection without losing earlie
   const original=env.disk.getItem(KEY);env.disk.setItem=()=>{throw new env.w.DOMException('Full','QuotaExceededError');};
   env.note('Unsaved before importing');await env.choose('file',source('temporary'));
   assert.equal(env.$('title').textContent,'Authored temporary');assert.equal(env.unloadBlocked(),true);assert.equal(env.disk.getItem(KEY),original);
-  env.open('b');assert.equal(env.unloadBlocked(),true);assert.equal(env.$('save-status').hidden,false);
+  env.open('b');assert.equal(env.unloadBlocked(),true);assert.equal(env.$('save-status').dataset.state,'failed');
   const backup=await env.exported('export-library');assert.equal(backup.documents.length,4);assert.equal(backup.documents.find(doc=>doc.key==='a').notes.cue,'Unsaved before importing');assert.equal(env.unloadBlocked(),true);
  }finally{await env.w.happyDOM.close();}
 });
@@ -153,7 +155,7 @@ test('legacy active-only writes remain conservative conflicts rather than silent
  const env=setup();
  try{
   const legacy=JSON.parse(env.disk.getItem(KEY));legacy.active='c';env.disk.values.set(KEY,JSON.stringify(legacy));const external=env.disk.getItem(KEY);
-  env.open('b');assert.equal(env.$('save-status').hidden,true);env.note('Local edit after old-client navigation');
+  env.open('b');assert.equal(env.$('save-status').dataset.state,'saved');env.note('Local edit after old-client navigation');assert.equal((await env.w.flushContentForTest()).ok,false);
   assert.equal(env.disk.getItem(KEY),external);assert.match(env.$('save-status').textContent,/另一个页面/);assert.equal(env.unloadBlocked(),true);
  }finally{await env.w.happyDOM.close();}
 });
@@ -170,17 +172,17 @@ test('cross-document search hits retain selection-only navigation without serial
  }finally{await env.w.happyDOM.close();}
 });
 
-function requestRemoval(env,key){env.$('library').querySelector(`.library-entry[data-document-key="${key}"] .library-remove`).click();env.$('confirm-removal').click();}
+async function requestRemoval(env,key){env.$('library').querySelector(`.library-entry[data-document-key="${key}"] .library-remove`).click();await env.$('confirm-removal').onclick();}
 
 test('successful active removal and undo change preferences only after content persistence',async()=>{
  const disk=storage([[KEY,library('b')]]),session=storage(),env=setup({disk,session});
  try{
   const events=[],writeDisk=disk.setItem,writeSession=session.setItem;
   disk.setItem=(key,value)=>{events.push(key);writeDisk(key,value);};session.setItem=(key,value)=>{events.push(key);writeSession(key,value);};
-  requestRemoval(env,'b');
+  await requestRemoval(env,'b');
   assert.deepEqual(events,[KEY,ACTIVE,LAST_ACTIVE]);assert.equal(session.getItem(ACTIVE),'c');assert.equal(disk.getItem(LAST_ACTIVE),'c');assert.equal(env.$('title').textContent,'Authored c');
   assert.equal(Object.hasOwn(JSON.parse(disk.getItem(KEY)),'active'),false);
-  events.length=0;env.$('undo-removal').click();
+  events.length=0;await env.$('undo-removal').onclick();
   assert.deepEqual(events,[KEY,ACTIVE,LAST_ACTIVE]);assert.equal(session.getItem(ACTIVE),'b');assert.equal(disk.getItem(LAST_ACTIVE),'b');assert.equal(env.$('title').textContent,'Authored b');
  }finally{await env.w.happyDOM.close();}
 });
@@ -191,15 +193,15 @@ test('failed removal and failed undo preserve the existing selection and last-op
   env.open('b');const write=env.disk.setItem,original=env.disk.getItem(KEY);let blocked=true;
   env.disk.setItem=(key,value)=>{if(key===KEY&&blocked)throw new Error('Injected quota');write(key,value);};
   const sessionWrites=env.session.writes.length,preferenceWrites=env.disk.writes.filter(([key])=>key===LAST_ACTIVE).length;
-  requestRemoval(env,'b');
+  await requestRemoval(env,'b');
   assert.equal(env.disk.getItem(KEY),original);assert.equal(env.w.active().key,'b');assert.equal(env.session.getItem(ACTIVE),'b');assert.equal(env.disk.getItem(LAST_ACTIVE),'b');
   assert.equal(env.session.writes.length,sessionWrites);assert.equal(env.disk.writes.filter(([key])=>key===LAST_ACTIVE).length,preferenceWrites);
-  blocked=false;env.$('confirm-removal').click();assert.equal(env.w.active().key,'c');
+  blocked=false;await requestRemoval(env,'b');assert.equal(env.w.active().key,'c');
   const removed=env.disk.getItem(KEY),sessionAfter=env.session.writes.length,preferenceAfter=env.disk.writes.filter(([key])=>key===LAST_ACTIVE).length;
-  blocked=true;env.$('undo-removal').click();
+  blocked=true;await env.$('undo-removal').onclick();
   assert.equal(env.disk.getItem(KEY),removed);assert.equal(env.w.active().key,'c');assert.equal(env.session.getItem(ACTIVE),'c');assert.equal(env.disk.getItem(LAST_ACTIVE),'c');
   assert.equal(env.session.writes.length,sessionAfter);assert.equal(env.disk.writes.filter(([key])=>key===LAST_ACTIVE).length,preferenceAfter);assert.equal(env.$('removal-recovery').hidden,false);
-  blocked=false;env.$('undo-removal').click();assert.equal(env.session.getItem(ACTIVE),'b');assert.equal(env.disk.getItem(LAST_ACTIVE),'b');
+  blocked=false;await env.$('undo-removal').onclick();assert.equal(env.session.getItem(ACTIVE),'b');assert.equal(env.disk.getItem(LAST_ACTIVE),'b');
  }finally{await env.w.happyDOM.close();}
 });
 
@@ -207,7 +209,7 @@ test('noncurrent removal and undo do not overwrite another window last-open hint
  const env=setup();
  try{
   env.disk.values.set(LAST_ACTIVE,'c');const sessionWrites=env.session.writes.length,preferenceWrites=env.disk.writes.filter(([key])=>key===LAST_ACTIVE).length;
-  requestRemoval(env,'b');env.$('undo-removal').click();
+  await requestRemoval(env,'b');await env.$('undo-removal').onclick();
   assert.equal(env.w.active().key,'a');assert.equal(env.session.getItem(ACTIVE),'a');assert.equal(env.disk.getItem(LAST_ACTIVE),'c');
   assert.equal(env.session.writes.length,sessionWrites);assert.equal(env.disk.writes.filter(([key])=>key===LAST_ACTIVE).length,preferenceWrites);
  }finally{await env.w.happyDOM.close();}
@@ -216,7 +218,7 @@ test('noncurrent removal and undo do not overwrite another window last-open hint
 test('removing the last document clears selection preferences only after saving and undo restores them',async()=>{
  const env=setup({disk:storage([[KEY,JSON.stringify({documents:[source('a')],active:'a'})]])});
  try{
-  requestRemoval(env,'a');assert.equal(env.session.getItem(ACTIVE),null);assert.equal(env.disk.getItem(LAST_ACTIVE),null);assert.equal(JSON.parse(env.disk.getItem(KEY)).documents.length,0);
-  env.$('undo-removal').click();assert.equal(env.session.getItem(ACTIVE),'a');assert.equal(env.disk.getItem(LAST_ACTIVE),'a');assert.equal(env.w.active().key,'a');
+  await requestRemoval(env,'a');assert.equal(env.session.getItem(ACTIVE),null);assert.equal(env.disk.getItem(LAST_ACTIVE),null);assert.equal(JSON.parse(env.disk.getItem(KEY)).documents.length,0);
+  await env.$('undo-removal').onclick();assert.equal(env.session.getItem(ACTIVE),'a');assert.equal(env.disk.getItem(LAST_ACTIVE),'a');assert.equal(env.w.active().key,'a');
  }finally{await env.w.happyDOM.close();}
 });

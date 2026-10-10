@@ -24,7 +24,7 @@ try{
   const page=await context.newPage();page.setDefaultTimeout(15000);page.on('pageerror',()=>errors++);
   await page.goto(origin);await page.locator('#import').waitFor({state:'visible'});return page;
  }
- const stored=page=>page.evaluate(key=>JSON.parse(localStorage.getItem(key)),KEY);
+ const stored = async page => {await page.evaluate(()=>libraryStore.flush());return page.evaluate(key=>JSON.parse(localStorage.getItem(key)),KEY);};
  const active=async page=>{const state=await stored(page),selected=await page.evaluate(()=>sessionStorage.getItem('coconut-reader-active-v1'));return state.documents.find(doc=>doc.key===selected);};
  async function choose(page,file,title){
   if(await page.locator('#add-content').isVisible())await page.locator('#add-content').click();

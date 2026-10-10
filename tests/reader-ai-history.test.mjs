@@ -20,7 +20,7 @@ function setup(stored){
  const requests=[];w.fetch=async(url,options)=>{
   requests.push({url,options});throw new Error('Browsing/import/export must not make a request');
  };
- w.eval(['summary','core','passages','passage-playback','app','language'].map(name=>fs.readFileSync(new URL('reader/'+name+'.js',root),'utf8')).join('\n'));
+ w.eval(['summary','core','passages','passage-playback','library-store','app','language'].map(name=>fs.readFileSync(new URL('reader/'+name+'.js',root),'utf8')).join('\n'));
  return {w,$:id=>w.document.getElementById(id),requests};
 }
 async function importDocument(w,doc,inputId='file'){
@@ -136,8 +136,8 @@ for(const mode of ['QuotaExceededError','SecurityError'])for(const action of ['q
   $('export-ai-history-json').click();const rescue=JSON.parse(await blobs.at(-1).text());assert.equal(rescue.ai_answers.length,246);assert.deepEqual(rescue.ai_answers.slice(0,-1),before);
   assert.equal($('save-status').hidden,false);assert.equal(storage.backing.getItem(KEY),diskCheckpoint,'export cannot mark pending records saved or write them');
   const restored=setup();try{await importDocument(restored.w,rescue);assert.equal(storedDocument(restored.w).ai_answers.length,246);assert.match(restored.$('ai-history-storage').textContent,/246 则均已保存/);}finally{await restored.w.happyDOM.close();}
-  storage.unblock();$('document-details').click();$('document-title').value='Recovered full history';$('save-details').click();
-  assert.equal(storedDocument(w).ai_answers.length,246);assert.equal($('save-status').hidden,true);assert.match($('ai-history-storage').textContent,/246 则均已保存/);assert.equal(requests.length,1);
+  storage.unblock();$('document-details').click();$('document-title').value='Recovered full history';await $('save-details').onclick(new w.Event('click'));
+  assert.equal(storedDocument(w).ai_answers.length,246);assert.equal($('save-status').dataset.state,'saved');assert.match($('ai-history-storage').textContent,/246 则均已保存/);assert.equal(requests.length,1);
  }finally{storage?.unblock();await w.happyDOM.close();}
 });
 
@@ -163,22 +163,22 @@ test('empty history stays explicit and export/summary browse controls remain una
  }finally{await w.happyDOM.close();}
 });
 
-function removeHistoryDocument(w,title){
+async function removeHistoryDocument(w,title){
  const row=[...w.document.querySelectorAll('.library-entry')].find(row=>row.textContent.includes(title));
- assert.ok(row);row.querySelector('.library-remove').click();w.document.getElementById('confirm-removal').click();
+ assert.ok(row);row.querySelector('.library-remove').click();await w.document.getElementById('confirm-removal').onclick();
 }
 function unloadProtected(w){const event=new w.Event('beforeunload',{cancelable:true});w.dispatchEvent(event);return event.defaultPrevented;}
 
 test('full history survives removal rescue, failed undo and retry with correct persistence counts',async()=>{
  const {w,$,requests}=setup();let storage;try{
   await importDocument(w,fixture(245));const original=storedDocument(w),blobs=captureDownloads(w);
-  $('ai-history-oldest').click();removeHistoryDocument(w,original.title);
+  $('ai-history-oldest').click();await removeHistoryDocument(w,original.title);
   assert.equal(JSON.parse(w.localStorage.getItem(KEY)).documents.length,0);assert.equal(unloadProtected(w),true);
   $('export-removed-document').click();assert.deepEqual(JSON.parse(await blobs.at(-1).text()).ai_answers,original.ai_answers);
   storage=blockStorage(w,'QuotaExceededError');const disk=storage.backing.getItem(KEY);
-  $('undo-removal').click();assert.equal(storage.backing.getItem(KEY),disk);assert.equal($('reader-workspace').hidden,true);assert.equal(unloadProtected(w),true);
+  await $('undo-removal').onclick();assert.equal(storage.backing.getItem(KEY),disk);assert.equal($('reader-workspace').hidden,true);assert.equal(unloadProtected(w),true);
   $('export-removed-document').click();assert.deepEqual(JSON.parse(await blobs.at(-1).text()).ai_answers,original.ai_answers);
-  storage.unblock();$('undo-removal').click();assert.deepEqual(storedDocument(w).ai_answers,original.ai_answers);
+  storage.unblock();await $('undo-removal').onclick();assert.deepEqual(storedDocument(w).ai_answers,original.ai_answers);
   assert.match($('ai-history-storage').textContent,/245 则均已保存/);assert.equal($('ai-answers').firstElementChild.dataset.answerNumber,'245');assert.equal(unloadProtected(w),false);
   $('ai-history-oldest').click();assert.equal($('ai-answers').lastElementChild.dataset.answerNumber,'1');assert.equal(requests.length,0);
  }finally{storage?.unblock();await w.happyDOM.close();}
@@ -188,10 +188,10 @@ test('failed removal preserves pending full history and its saved count without 
  const {w,$}=setup();let storage;try{
   await importDocument(w,fixture(245));const before=w.localStorage.getItem(KEY),requests=installModel(w);
   storage=blockStorage(w,'QuotaExceededError');await prepareAction($,'question');await $('ask-ai').onclick();
-  removeHistoryDocument(w,'Authored AI history');assert.equal(storage.backing.getItem(KEY),before);assert.equal($('removal-recovery').hidden,true);assert.equal($('remove-document-dialog').open,true);
+  await removeHistoryDocument(w,'Authored AI history');assert.equal(storage.backing.getItem(KEY),before);assert.equal($('removal-recovery').hidden,true);assert.equal($('remove-document-dialog').open,false);assert.match($('notice').textContent,/移除未保存/);
   $('cancel-removal').click();$('ai-history-latest').click();assert.match($('ai-history-storage').textContent,/已保存 245 则 · 1 则仅在此页/);
   const blobs=captureDownloads(w);$('export-ai-history-json').click();assert.equal(JSON.parse(await blobs.at(-1).text()).ai_answers.length,246);assert.equal(unloadProtected(w),true);
-  storage.unblock();$('document-details').click();$('document-title').value='Recovered history after rollback';$('save-details').click();
+  storage.unblock();$('document-details').click();$('document-title').value='Recovered history after rollback';await $('save-details').onclick(new w.Event('click'));
   assert.equal(storedDocument(w).ai_answers.length,246);assert.match($('ai-history-storage').textContent,/246 则均已保存/);assert.equal(requests.length,1);
  }finally{storage?.unblock();await w.happyDOM.close();}
 });
@@ -204,9 +204,9 @@ for(const action of ['question','summary'])test(`late ${action} cannot alter ful
    assert.equal(url,'api/ask');requests++;const body=JSON.parse(options.body);await new Promise(resolve=>{release=resolve;});
    return {ok:true,json:async()=>({answer:'Late authored result must be retired',provider:'injected-fixture',citations:[body.segments[0].id]})};
   };
-  await prepareAction($,action);const pending=$('ask-ai').onclick();assert.equal(requests,1);
-  const blobs=captureDownloads(w);removeHistoryDocument(w,'Authored AI history');$('export-removed-document').click();const rescue=JSON.parse(await blobs.at(-1).text());
-  assert.equal(rescue.ai_answers.length,245);$('undo-removal').click();release();await pending;
+  await prepareAction($,action);const pending=$('ask-ai').onclick();await new Promise(resolve=>setTimeout(resolve,0));assert.equal(requests,1);
+  const blobs=captureDownloads(w);await removeHistoryDocument(w,'Authored AI history');$('export-removed-document').click();const rescue=JSON.parse(await blobs.at(-1).text());
+  assert.equal(rescue.ai_answers.length,245);await $('undo-removal').onclick();release();await pending;
   assert.deepEqual(storedDocument(w).ai_answers,rescue.ai_answers);assert.deepEqual(storedDocument(w).summary_job,rescue.summary_job);
   assert.match($('ai-history-storage').textContent,/245 则均已保存/);assert.equal($('summary-body').textContent,'Historical answer 25');assert.equal(requests,1);
   $('ai-history-oldest').click();assert.equal($('ai-answers').lastElementChild.dataset.answerNumber,'1');
@@ -228,7 +228,7 @@ for(const id of ['file','library-file'])test(`${id}: reviewed backup import reta
   assert.equal(reads,1);assert.equal(storage.backing.getItem(KEY),disk);assert.match($('ai-history-storage').textContent,/已保存 0 则 · 1205 则仅在此页/);
   const blobs=captureDownloads(w);$('export-ai-history-json').click();const recovered=JSON.parse(await blobs.at(-1).text());assert.equal(recovered.ai_answers.length,1205);assert.deepEqual(recovered.ai_answers[0].citations,['removed-cue']);
   $('export-ai-reading').click();assert.equal((await blobs.at(-1).text()).match(/^## 回答 /gm).length,1205);assert.equal(unloadProtected(w),true);
-  storage.unblock();$('document-details').click();$('document-title').value='Persisted full reviewed history';$('save-details').click();
+  storage.unblock();$('document-details').click();$('document-title').value='Persisted full reviewed history';await $('save-details').onclick(new w.Event('click'));
   assert.equal(storedDocument(w).ai_answers.length,1205);assert.match($('ai-history-storage').textContent,/1205 则均已保存/);assert.equal(requests.length,0);
  }finally{$('cancel-large-backup').onclick?.();await pending;storage?.unblock();await w.happyDOM.close();}
 });

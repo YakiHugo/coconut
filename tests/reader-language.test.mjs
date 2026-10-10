@@ -11,7 +11,7 @@ function setup(stored){
  Object.defineProperty(w,'crypto',{value:webcrypto});
  if(stored)w.localStorage.setItem('coconut-reader-v1',stored);
  w.fetch=async()=>{throw new Error('Import and language defaults must not make a request');};
- w.eval(['summary','core','passages','passage-playback','app','language'].map(name=>fs.readFileSync(new URL('reader/'+name+'.js',root),'utf8')).join('\n'));
+ w.eval(['summary','core','passages','passage-playback','library-store','app','language'].map(name=>fs.readFileSync(new URL('reader/'+name+'.js',root),'utf8')).join('\n'));
  return {w,$:id=>w.document.getElementById(id)};
 }
 async function importDocument(w,language,title='Regional source'){

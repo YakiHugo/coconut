@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import {webcrypto} from 'node:crypto';
 import {Window} from 'happy-dom';
+import {installSavePipeline,settle} from './helpers/save-pipeline.mjs';
 
 const root=new URL('../',import.meta.url),KEY='coconut-reader-v1';
 const source=title=>({title,language:'en',segments:[{id:'cue',start:0,end:4,text:'Authored source for '+title}],notes:{cue:'Private note for '+title}});
@@ -12,6 +13,7 @@ function setup(){
  w.document.body.innerHTML=fs.readFileSync(new URL('reader/index.html',root),'utf8').split('<body>')[1].split('</body>')[0];
  Object.defineProperty(w,'crypto',{value:{subtle:{digest:(...args)=>webcrypto.subtle.digest(...args)}}});
  w.fetch=()=>{throw new Error('File import must not send a network request');};
+ installSavePipeline(w);
  w.eval(['summary','core','passages','passage-playback','app','language','podcasts'].map(name=>fs.readFileSync(new URL('reader/'+name+'.js',root),'utf8')).join('\n'));
  const $=id=>w.document.getElementById(id),input=$('file');
  // The DOM shim cannot choose native files. Track the displayed selection to
@@ -37,7 +39,7 @@ test('slow first fingerprint cannot save or reopen after a newer file succeeds',
   await choose(source('Latest selection'));assert.equal($('title').textContent,'Latest selection');
   $('mode-transcript').click();w.document.querySelector('.note-button').click();
   $('note').value='A new private note';$('note').dispatchEvent(new w.Event('input'));
-  $('ai-consent').checked=true;const saved=w.localStorage.getItem(KEY),message=$('notice').textContent;
+  $('ai-consent').checked=true;await w.flushContentForTest();const saved=w.localStorage.getItem(KEY),message=$('notice').textContent;
   hold.release();await pending;
   assert.equal($('title').textContent,'Latest selection');assert.equal(w.localStorage.getItem(KEY),saved);
   assert.deepEqual(library().documents.map(doc=>doc.title),['Latest selection']);
@@ -76,7 +78,7 @@ for(const from of ['read','add'])test(`leaving and returning to the ${from} work
   await choose(source('Existing'));if(from==='add')$('add-content').click();
   hold=holdDigest(w);pending=choose(source('Abandoned import'));await hold.entered;
   $(from==='read'?'add-content':'back-reading').click();$(from==='read'?'back-reading':'add-content').click();
-  const saved=w.localStorage.getItem(KEY),message=$('notice').textContent;
+  await w.flushContentForTest();const saved=w.localStorage.getItem(KEY),message=$('notice').textContent;
   hold.release();await pending;
   assert.equal(w.document.body.dataset.workspace,from);assert.equal($('title').textContent,'Existing');
   assert.equal(w.localStorage.getItem(KEY),saved);assert.equal($('notice').textContent,message);
@@ -98,7 +100,7 @@ test('abandoning a duplicate import never deletes the existing copy or its later
  try{
   const doc=source('Existing');await choose(doc);hold=holdDigest(w);pending=choose(doc);await hold.entered;
   $('add-content').click();$('back-reading').click();$('mode-transcript').click();w.document.querySelector('.note-button').click();
-  $('note').value='Keep this latest edit';$('note').dispatchEvent(new w.Event('input'));const saved=w.localStorage.getItem(KEY);
+  $('note').value='Keep this latest edit';$('note').dispatchEvent(new w.Event('input'));await w.flushContentForTest();const saved=w.localStorage.getItem(KEY);
   hold.release();await pending;
   assert.equal(w.localStorage.getItem(KEY),saved);assert.equal(library().documents.length,1);assert.equal(library().documents[0].notes.cue,'Keep this latest edit');assert.equal($('notes-panel').hidden,false);
  }finally{hold?.release();await pending;await w.happyDOM.close();}
@@ -188,7 +190,7 @@ test('opening a document through the shared add path cannot be replaced by a pen
   pending=choose(source('Abandoned local file'));await hold.entered;
   // A completed server job uses this same production add path without calling
   // showWorkspace: it sets the active document and workspace during the commit.
-  await w.add(w.Coconut.validate(source('Opened job result')));const saved=w.localStorage.getItem(KEY),message=$('notice').textContent;
+  await w.add(w.Coconut.validate(source('Opened job result')));await w.flushContentForTest();const saved=w.localStorage.getItem(KEY),message=$('notice').textContent;
   hold.release();await pending;
   assert.equal(w.localStorage.getItem(KEY),saved);assert.equal($('title').textContent,'Opened job result');assert.equal(library().documents.length,1);assert.equal($('notice').textContent,message);
  }finally{hold.release();await pending;await w.happyDOM.close();}
@@ -203,7 +205,7 @@ test('pagehide abandons a pending file across simulated page restoration and all
   for(const type of ['pagehide','pageshow']){
    const event=new w.Event(type);Object.defineProperty(event,'persisted',{value:true});w.dispatchEvent(event);
   }
-  const saved=w.localStorage.getItem(KEY),message=$('notice').textContent;
+  await w.flushContentForTest();const saved=w.localStorage.getItem(KEY),message=$('notice').textContent;
   hold.release();await pending;
   assert.equal(w.localStorage.getItem(KEY),saved);assert.equal($('title').textContent,'Existing');assert.equal(w.document.body.dataset.workspace,'read');
   assert.equal($('notice').textContent,message);assert.equal(input.value,'');assert.equal(library().documents.length,1);

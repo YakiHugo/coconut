@@ -40,7 +40,7 @@ try{
   const page=await context.newPage();page.setDefaultTimeout(15000);page.on('pageerror',()=>errors++);
   await page.goto(origin);await page.locator('#import').waitFor({state:'visible'});return page;
  }
- const active=page=>page.evaluate(key=>{const state=JSON.parse(localStorage.getItem(key));return state?.documents.find(doc=>doc.key===sessionStorage.getItem('coconut-reader-active-v1'));},KEY);
+ const active = async page => {await page.evaluate(()=>libraryStore.flush());return page.evaluate(key=>{const state=JSON.parse(localStorage.getItem(key));return state?.documents.find(doc=>doc.key===sessionStorage.getItem('coconut-reader-active-v1'));},KEY);};
  async function choose(page,file){
   const [chooser]=await Promise.all([page.waitForEvent('filechooser'),page.locator('#import').click()]);await chooser.setFiles(file);
   await page.waitForFunction(key=>{const state=JSON.parse(localStorage.getItem(key));return state?.documents.find(doc=>doc.key===sessionStorage.getItem('coconut-reader-active-v1'))?.ai_answers.length===245&&!document.getElementById('reader-workspace').hidden;},KEY);

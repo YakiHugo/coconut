@@ -1,3 +1,4 @@
+import {installSavePipeline} from './helpers/save-pipeline.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -9,6 +10,7 @@ function setup(storage={}){
  w.document.body.innerHTML=fs.readFileSync(new URL('reader/index.html',root),'utf8').split('<body>')[1].split('</body>')[0];
  Object.defineProperty(w,'crypto',{value:webcrypto});for(const [k,v]of Object.entries(storage))w.localStorage.setItem(k,v);
  w.fetch=async()=>{throw new Error('No external requests');};
+ installSavePipeline(w);
  w.eval(['summary','core','passages','passage-playback','app'].map(n=>fs.readFileSync(new URL('reader/'+n+'.js',root),'utf8')).join('\n')+'\nwindow.testProgress={reset:()=>{listeningSession.engaged=false;renderListeningResume();},listen:range=>passagePlayback.listen(range),cancel:()=>passagePlayback.cancel(),return:()=>passagePlayback.returnToPrevious()};');
  return {w,$:id=>w.document.getElementById(id)};
 }

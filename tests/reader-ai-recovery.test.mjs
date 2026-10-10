@@ -12,7 +12,7 @@ function setup(stored){
  w.document.body.innerHTML=fs.readFileSync(new URL('reader/index.html',root),'utf8').split('<body>')[1].split('</body>')[0];
  Object.defineProperty(w,'crypto',{value:webcrypto});if(stored)w.localStorage.setItem(KEY,stored);
  w.fetch=async()=>{throw new Error('No automatic request is allowed in this fixture');};
- w.eval(['summary','core','passages','passage-playback','app','language'].map(name=>fs.readFileSync(new URL('reader/'+name+'.js',root),'utf8')).join('\n'));
+ w.eval(['summary','core','passages','passage-playback','library-store','app','language'].map(name=>fs.readFileSync(new URL('reader/'+name+'.js',root),'utf8')).join('\n'));
  return {w,$:id=>w.document.getElementById(id)};
 }
 async function importDocument(w,doc){
@@ -99,7 +99,7 @@ for(const operation of ['question','summary'])test(`${operation} outcome stays w
   await importDocument(w,fixture('A field guide to careful reading',1));
   w.fetch=async(url,options)=>{if(url.endsWith('language-tools'))return {ok:true,json:async()=>({ai:{codex:{ready:true}}})};const request=JSON.parse(options.body);await new Promise(resolve=>{release=resolve;});return {ok:true,json:async()=>({answer:'An injected answer for the first episode.',citations:[request.segments[0].id],provider:'injected-test-fixture'})};};
   await $('check-ai').onclick();if(operation==='summary')$('prepare-summary').click();else $('ai-question').value='What should a reader verify?';$('ai-consent').checked=true;
-  pending=$('ask-ai').onclick();await importDocument(w,fixture('An unrelated second episode',1));
+  pending=$('ask-ai').onclick();await new Promise(resolve=>setTimeout(resolve,0));await importDocument(w,fixture('An unrelated second episode',1));
   assert.match($('ai-progress').textContent,/A field guide to careful reading/,'blocked controls must explain which earlier document still has a request');
   release();await pending;assert.equal(storedDocument(w).ai_answers.length,1);assert.equal(storedDocument(w,'An unrelated second episode').ai_answers.length,0);
   assert.doesNotMatch($('ai-progress').textContent,/已保存|完成|injected answer/);

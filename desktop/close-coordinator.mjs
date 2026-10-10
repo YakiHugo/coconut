@@ -50,7 +50,7 @@ export function createCloseCoordinator({inspect,confirm,commit,finish,release=()
      let snapshot=await lifecycle.call(attempt,inspect);
      if(!snapshot||typeof snapshot.safe!=='boolean')throw new Error('无法确认阅读器保存状态');
      let locked=false;
-     if(snapshot.safe)locked=await lifecycle.call(attempt,request=>commit('safe',request));
+     if(snapshot.safe||snapshot.flushable===true)locked=await lifecycle.call(attempt,request=>commit('safe',request));
      if(!locked){
       // A late import/result may have changed the state since the first read.
       snapshot=await lifecycle.call(attempt,inspect);

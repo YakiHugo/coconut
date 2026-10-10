@@ -44,6 +44,7 @@ let workspace = "read";
 let readingScroll = 0;
 let editingTarget = null;
 let sourceTarget = null;
+let sourceTargetIdentity = null;
 let localImportRevision = 0;
 let projectTranscriptTarget = null;
 let pendingBackupReview = null;
@@ -100,23 +101,21 @@ function backupRecoveryHint(blob){return blob.size>Coconut.BACKUP_REVIEW_BYTES?'
 const PAGE_SIZE = 100;
 let pageStart = 0;
 let storageBlocked = false;
-let lastSavedValue = null;
-let savedDocumentsValue = "[]";
-let unsavedDocumentChanges = false;
 let unloadGuardReady = false;
 let unloadGuardAttached = false;
 let hasLanguageDrafts = () => false;
 const audioBookmarkDrafts = new Map();
-const persistedSummaries = new Map();
-let persistedAIAnswerCounts = new WeakMap();
-const persistedSummaryJobs = new Map();
+const persistedAIAnswerCounts = new WeakMap();
+const persistedSummaryJobs = new WeakMap();
+const pendingStructuralDocuments = new Map();
+let pendingLibraryOperation = null;
+const deferredContentInputs = new Map();
 function summaryCheckpointSignature(job){return job?JSON.stringify([job.provider,job.snapshot,job.results]):null;}
-function summaryCheckpointSaved(doc){return !!doc?.summary_job&&persistedSummaryJobs.get(doc.key)===summaryCheckpointSignature(doc.summary_job);}
-function recordPersistedSummaries() {
- // Answer arrays are append-only; capture counts only after a successful write.
- // Rebuild by document identity so replacement/restored documents cannot inherit it.
- persistedAIAnswerCounts = new WeakMap(state.documents.map(doc=>[doc,(doc.ai_answers||[]).length]));
- persistedSummaries.clear();persistedSummaryJobs.clear(); for(const doc of state.documents){persistedSummaries.set(doc.key,Coconut.latestSummary(doc));persistedSummaryJobs.set(doc.key,summaryCheckpointSignature(doc.summary_job));} }
+function summaryCheckpointSaved(doc){return !!doc?.summary_job&&persistedSummaryJobs.get(doc)===summaryCheckpointSignature(doc.summary_job);}
+function persistenceCheckpoint(doc){return {answerCount:(doc.ai_answers||[]).length,summarySignature:summaryCheckpointSignature(doc.summary_job)};}
+function recordPersistenceCheckpoint(doc,checkpoint){
+ persistedAIAnswerCounts.set(doc,checkpoint.answerCount);persistedSummaryJobs.set(doc,checkpoint.summarySignature);
+}
 let mediaWorkerReady = false;
 let readingMode = "summary";
 let demoToolsExpanded=false;
@@ -202,10 +201,22 @@ function bindListening(player,doc,attachment){
 window.addEventListener('pagehide',()=>flushListening(true));
 window.addEventListener('visibilitychange',()=>{if(document.hidden)flushListening(true);});
 
-function saveWarning(text = "") {
- $("save-status").hidden = !text;
- $("save-status").textContent = text;
- unsavedDocumentChanges = !!text && JSON.stringify(state.documents)!==savedDocumentsValue;
+function saveWarning(text = "") { renderSaveStatus(libraryStore.status(),text); }
+function renderSaveStatus(snapshot,detail='') {
+ const failure=snapshot.documents.find(item=>item.status!=='saved'&&item.status!=='pending')?.error;
+ storageBlocked=!libraryLoad.ok||['conflict','fenced','unreadable'].includes(failure?.code);
+ const reasons={quota:'浏览器保存空间不足',denied:'浏览器禁止了保存',conflict:'另一个页面更新了书架，先备份本页修改，再刷新读取',fenced:'存储版本已改变，先备份本页修改，再刷新读取',unreadable:'原有数据无法读取，已保留原数据',cancelled:'保存已取消，内容仍在本页',identity:'文档身份已改变，当前修改尚未保存'};
+ const failed=snapshot.status!=='saved'&&snapshot.status!=='pending';
+ $('save-status').hidden=false;$('save-status').dataset.state=storageBlocked||failed?'failed':snapshot.status;
+ const message=detail||(storageBlocked&&!snapshot.unsaved?(reasons[failure?.code]||'原有数据无法读取，已保留原数据')+'。本次导入或修改请另存备份。':snapshot.status==='saved'?'已保存到本机浏览器':snapshot.status==='pending'?'正在保存 · '+snapshot.unsaved+' 份文档':(reasons[failure?.code]||'浏览器保存未成功')+'。'+snapshot.unsaved+' 份文档仍在本页，请重试或导出未保存文档备份。');
+ const warning=storageBlocked||failed;
+ $('save-status').textContent=warning?message:snapshot.status==='pending'?'保存中':'已保存';
+ $('save-status').title=message;$('save-status').setAttribute('aria-label',message);
+ const panel=$('save-status').closest('.save-pipeline'),host=$(warning?'save-warning-home':'save-status-home');
+ if(panel.parentElement!==host)host.append(panel);
+ panel.classList.toggle('has-warning',warning);
+ $('retry-save').hidden=!snapshot.unsaved||snapshot.status==='pending';$('retry-save').disabled=snapshot.blocked;
+ $('export-unsaved-documents').hidden=!snapshot.unsaved;
  if(unloadGuardReady)syncUnsavedUnloadGuard();
 }
 function notice(text,kind = "") {
@@ -221,32 +232,70 @@ function notice(text,kind = "") {
 }
 $('dismiss-notice').onclick=()=>{notice('');$('main-content').focus({preventScroll:true});};
 
-try {
-	lastSavedValue = localStorage.getItem(KEY);
-	const stored = JSON.parse(lastSavedValue || "null");
-	if (
-		stored &&
-		(!Array.isArray(stored.documents) ||
-			stored.documents.some((d) => !d || typeof d.key !== "string"))
-	)
-		throw new Error("Invalid saved library");
-	if (stored && Array.isArray(stored.documents)) {
-		state = {
-			documents: stored.documents.map((d) => ({
-				...d,
-				...Coconut.validate(d),
-			})),
-			active: stored.active,
-		};
-	}
- recordPersistedSummaries();
-} catch {
-	storageBlocked = true;
- saveWarning("自动保存已暂停，原有数据未覆盖。关闭前请逐份导出本页修改过的文字稿与笔记。");
-	notice(
-		"上次保存的数据无法读取，已停止写入以保留原数据。本次内容可继续阅读，请导出备份后再关闭页面。",
-	);
+// The adapter is the only content writer. It retains the exact unreadable raw
+// value and never rebases over content another window wrote.
+const libraryAdapter=CoconutLibraryStore.createLegacyAdapter({getStorage:()=>localStorage,validate:Coconut.validate});
+const libraryLoad=libraryAdapter.load();
+state={documents:libraryLoad.documents,active:libraryLoad.active};
+if(libraryLoad.ok)for(const doc of state.documents)recordPersistenceCheckpoint(doc,persistenceCheckpoint(doc));
+else notice('上次保存的数据无法读取，已停止写入以保留原数据。本次内容可继续阅读，请导出备份后再关闭页面。');
+const libraryStore=CoconutLibraryStore.create({adapter:libraryAdapter,getDocuments:()=>state.documents,checkpoint:persistenceCheckpoint});
+libraryStore.subscribe((snapshot,event)=>{
+ if(event?.result?.ok)for(const captured of event.result.checkpoints)recordPersistenceCheckpoint(captured.identity,captured.checkpoint);
+ if(event?.type==='release')resumeDeferredContentInputs();
+ renderSaveStatus(libraryStore.status());
+ if(event?.type==='commit'){
+  renderSummaryPersistence();
+  window.dispatchEvent(new CustomEvent('coconut-persistence-change',{detail:event.result}));
+ }
+});
+function contentIngressAllowed(doc=null){
+ return !readerClosing&&!libraryStore.status().blocked&&(!doc||state.documents.includes(doc)&&!pendingStructuralDocuments.has(doc.key));
 }
+// Native final flush temporarily disables interaction. Retain an already queued
+// input/IME event rather than silently dropping its text at the ingress barrier.
+function deferContentInput(doc,input,previous,apply){
+ if(contentIngressAllowed(doc)){deferredContentInputs.delete(input);return false;}
+ if(!readerClosing&&libraryStore.status().blocked&&state.documents.includes(doc)&&!pendingStructuralDocuments.has(doc.key)){
+  if(input.value!==previous)deferredContentInputs.set(input,{doc,value:input.value,apply});else deferredContentInputs.delete(input);
+ }
+ return true;
+}
+function resumeDeferredContentInputs(){
+ const drafts=[...deferredContentInputs];deferredContentInputs.clear();
+ for(const [input,draft] of drafts){
+  if(contentIngressAllowed(draft.doc))draft.apply(draft.value);
+  else if(state.documents.includes(draft.doc))deferredContentInputs.set(input,draft);
+ }
+}
+function rejectedContentReceipt(doc){return {accepted:false,key:doc?.key,identity:doc,generation:libraryStore.status().generation,committed:Promise.resolve({ok:false,status:'cancelled',identity:doc})};}
+function queueDocument(doc,kind='update',options={}){
+ if(!contentIngressAllowed(kind==='remove'?null:doc))return rejectedContentReceipt(doc);
+ return libraryStore.queueDocument(doc.key,doc,kind,options);
+}
+async function commitDocument(doc,kind='update',options={}){
+ const ticket=queueDocument(doc,kind,options);if(ticket.accepted)void libraryStore.flush();return ticket.committed;
+}
+async function commitDocuments(documents){
+ if(!contentIngressAllowed()||documents.some(doc=>!contentIngressAllowed(doc)))return {ok:false,status:'cancelled'};
+ const batch=libraryStore.queueDocuments(documents.map(identity=>({key:identity.key,identity})));
+ if(batch.accepted)void libraryStore.flush();
+ const results=await Promise.all(batch.tickets.map(ticket=>ticket.committed));return {ok:batch.accepted&&results.every(result=>result.ok),results};
+}
+$('retry-save').onclick=async()=>{const result=await libraryStore.retry();if(result.ok&&!libraryStore.status().unsaved&&!readerClosing)notice('本页待保存修改已保存到本机浏览器。','success');};
+$('export-unsaved-documents').onclick=()=>{
+ let url,link;
+ try{
+  const snapshot=libraryStore.snapshotForExport(),backup={format:'coconut-library',version:1,documents:snapshot.documents,active:state.active};
+  const blob=new Blob([JSON.stringify(backup,null,2)],{type:'application/json'});
+  url=URL.createObjectURL(blob);link=el('a');link.href=url;link.download='coconut-unsaved-documents.json';link.hidden=true;document.body.append(link);link.click();
+  notice('已发起 '+snapshot.documents.length+' 份未保存文档的完整备份下载，请打开文件确认。包含文字、笔记、译文与 AI 历史；未提交表单草稿和移除恢复区仍仅在本页，请分别处理。下载不会改变保存状态。'+backupRecoveryHint(blob));
+ }catch{notice('未保存文档备份失败，完整内容仍在本页，请重试。');}
+ finally{link?.remove();if(url)setTimeout(()=>URL.revokeObjectURL(url),60000);}
+};
+window.addEventListener('pagehide',()=>{void libraryStore.flush();});
+window.addEventListener('visibilitychange',()=>{if(document.hidden)void libraryStore.flush();});
+renderSaveStatus(libraryStore.status());
 // Selection belongs to this window. The small shared hint is only a default
 // for a new window; neither preference is part of content conflict detection.
 // Old libraries remain a fallback, and JSON backups explicitly include active.
@@ -260,46 +309,17 @@ function rememberActiveDocument() {
   else localStorage.setItem(LAST_ACTIVE_KEY,state.active);
  } catch { /* A preference failure is not a failed document save. */ }
 }
-function selectActiveDocument(key) {
- state.active=state.documents.some(doc=>doc.key===key)?key:state.documents[0]?.key||null;
- rememberActiveDocument();
+let activeSelectionRevision=0;
+function selectActiveDocument(key,{persist=true}={}) {
+ activeSelectionRevision++;
+ const available=doc=>!pendingStructuralDocuments.has(doc.key);
+ state.active=state.documents.some(doc=>doc.key===key&&available(doc))?key:state.documents.find(available)?.key||null;
+ if(persist)rememberActiveDocument();
 }
 let windowActive=null,lastActive=null;
 try { windowActive=sessionStorage.getItem(ACTIVE_KEY); } catch {}
 try { lastActive=localStorage.getItem(LAST_ACTIVE_KEY); } catch {}
 selectActiveDocument([windowActive,lastActive,state.active].find(key=>state.documents.some(doc=>doc.key===key)));
-// Compare validated in-memory documents, not active-tab navigation or unread storage.
-savedDocumentsValue = JSON.stringify(state.documents);
-function save() {
- // Approved native discard must not persist late async results during teardown.
- if(readerClosing)return false;
-	if (storageBlocked) {
-  saveWarning("自动保存已暂停，原有数据未覆盖。关闭前请逐份导出本页修改过的文字稿与笔记。");
-		notice(
-			"自动保存已暂停，原有数据未覆盖。请导出本次文字稿与笔记后再关闭页面。",
-		);
-		return false;
-	}
-	try {
-		if (localStorage.getItem(KEY) !== lastSavedValue) {
-			storageBlocked = true;
-   saveWarning("另一个页面更新了书架，本页自动保存已暂停。先逐份导出本页修改，再刷新；否则修改可能丢失。");
-			notice("另一个页面更新了书架，已暂停保存以避免覆盖。请先导出本页修改，再刷新读取最新数据。");
-			return false;
-		}
-		const nextValue = JSON.stringify({documents:state.documents});
-		localStorage.setItem(KEY, nextValue);
-		lastSavedValue = nextValue;
-  savedDocumentsValue = JSON.stringify(state.documents);
-  recordPersistedSummaries();
-  saveWarning();
-		return true;
-	} catch {
-  saveWarning("修改尚未保存到浏览器。请逐份导出本页修改过的文字稿与笔记，暂时不要关闭或刷新页面。");
-		notice("浏览器保存空间不足或被禁用；当前内容仍在本页，请及时导出备份。");
-		return false;
-	}
-}
 function active() {
 	return state.documents.find((d) => d.key === state.active);
 }
@@ -310,12 +330,13 @@ function el(tag, className, text) {
 	return n;
 }
 async function add(doc, canCommit = null, reuseAudioSource = false, lifecycleRevision = documentLifecycleRevision, sourceKey = doc.key) {
+ if(!contentIngressAllowed())throw new Error("导入已取消，书架未改变");
 	const bytes = new TextEncoder().encode(JSON.stringify(doc));
 	const digest = await crypto.subtle.digest("SHA-256", bytes);
 	let key = Array.from(new Uint8Array(digest))
 		.map((x) => x.toString(16).padStart(2, "0"))
 		.join("");
- if(await wasRemovedSince(doc,lifecycleRevision,key) || (removedDocumentRevisions.get(sourceKey)||0)>lifecycleRevision || canCommit && !canCommit())throw new Error("导入已取消，书架未改变");
+ if(!contentIngressAllowed() || await wasRemovedSince(doc,lifecycleRevision,key) || (removedDocumentRevisions.get(sourceKey)||0)>lifecycleRevision || canCommit && !canCommit())throw new Error("导入已取消，书架未改变");
  // A repeated source save refreshes recoverable source metadata, preserving
  // user-owned title, language, notes, bookmark IDs and the stable library key.
  const identity=reuseAudioSource?Coconut.audioProjectIdentity(doc):'';
@@ -328,6 +349,7 @@ async function add(doc, canCommit = null, reuseAudioSource = false, lifecycleRev
   if(matching)key=matching.key;
  }
  const existing=identity&&state.documents.find(d=>Coconut.audioProjectIdentity(d)===identity);
+ if(!contentIngressAllowed()||pendingStructuralDocuments.has(existing?.key||key))throw new Error('这份文档正在移除或恢复，请稍候再导入');
  if(existing){
   key=existing.key;
   const mediaChanged=existing.podcast_source.media_url!==doc.podcast_source.media_url||existing.podcast_source.media_kind!==doc.podcast_source.media_kind;
@@ -353,9 +375,9 @@ async function add(doc, canCommit = null, reuseAudioSource = false, lifecycleRev
 	pageStart = 0;
 	notesOnly = false; excerptsOnly = false; speakerFilter=null;
 	workspace = "read";
-	const saved = save();
+	const inserted=active(),receipt=commitDocument(inserted);
 	render();
-	return saved;
+	return receipt;
 }
 function showWorkspace(next) {
  if(next!==workspace)cancelLocalImports();
@@ -408,7 +430,7 @@ function returnReadingResults() {
  $('search').value=origin.query;notesOnly=origin.notesOnly;excerptsOnly=origin.excerptsOnly;speakerFilter=origin.speakerFilter;
  // Display choice can change during the detour; restore the original view without
  // reverting source edits, annotations, or the user's explicit reading bookmark.
- if((doc.translation_view||'')!==origin.translationView){doc.translation_view=origin.translationView;save();}
+ if(contentIngressAllowed(doc)&&(doc.translation_view||'')!==origin.translationView){doc.translation_view=origin.translationView;queueDocument(doc);}
  readingMode='transcript';selected=null;
  const matches=doc.segments.filter(s=>matchesReadingSegment(s,doc,origin.query.trim().toLocaleLowerCase()));
  const exact=matches.findIndex(s=>s.id===origin.id);
@@ -476,6 +498,7 @@ function syncLibraryRemovalControls() {
 }
 $('library-options').addEventListener('toggle',syncLibraryRemovalControls);
 function renderRemovalRecovery() {
+ $('undo-removal').disabled=!!pendingLibraryOperation;$('finish-removal').disabled=!!pendingLibraryOperation;
  $('removal-recovery').hidden=!removedDocument;
  $('removal-recovery-title').textContent=removedDocument?'已移除：'+removedDocument.doc.title:'';
  $('removal-recovery-short-title').textContent=removedDocument?removedDocument.doc.title:'';
@@ -488,7 +511,7 @@ function showRemovalRecoveryError(message) {
  $('removal-recovery-details').open=true;
 }
 function requestLibraryRemoval(doc) {
- if(!state.documents.includes(doc))return;
+ if(!contentIngressAllowed(doc)||pendingLibraryOperation)return;
  removalTarget=doc;removalFocusKey=doc.key;
  $('remove-document-title').textContent=doc.title;
  $('remove-document-error').textContent='';delete $('remove-document-error').dataset.kind;
@@ -498,70 +521,81 @@ function requestLibraryRemoval(doc) {
  $('remove-document-dialog').showModal();$('cancel-removal').focus();
 }
 $('cancel-removal').onclick=()=>{$('remove-document-dialog').close();};
-$('remove-document-dialog').addEventListener('close',()=>{const confirmed=removalTarget===null;removalTarget=null;if(confirmed&&removedDocument)$('undo-removal').focus();else focusLibraryRemoval(removalFocusKey);});
-$('confirm-removal').onclick=()=>{
- const doc=removalTarget;if(!doc||!state.documents.includes(doc))return;
+$('remove-document-dialog').addEventListener('close',()=>{if(pendingLibraryOperation)return;const confirmed=removalTarget===null;removalTarget=null;if(confirmed&&removedDocument)$('undo-removal').focus();else focusLibraryRemoval(removalFocusKey);});
+function finishStructuralOperation(operation){
+ if(pendingStructuralDocuments.get(operation.key)===operation)pendingStructuralDocuments.delete(operation.key);
+ if(pendingLibraryOperation===operation)pendingLibraryOperation=null;
+}
+function restoreRemovedDrafts(bundle){
+ if(bundle.bookmarkDraft)audioBookmarkDrafts.set(bundle.doc.key,bundle.bookmarkDraft);
+ window.dispatchEvent(new CustomEvent('coconut-document-restored',{detail:{...bundle,key:bundle.doc.key}}));
+}
+$('confirm-removal').onclick=async()=>{
+ const doc=removalTarget;if(!doc||!contentIngressAllowed(doc)||pendingLibraryOperation)return;
  captureAudioBookmarkDrafts();
- const bookmarkDraft=audioBookmarkDrafts.get(doc.key);
- const previous=state,index=state.documents.indexOf(doc);
- // Clone before changing state: late AI results cannot mutate the recovery copy.
- const snapshot=JSON.parse(JSON.stringify(doc));
- state={...state,documents:state.documents.filter(item=>item!==doc),active:state.active===doc.key?null:state.active};
- if(!state.active)state.active=state.documents[Math.min(index,state.documents.length-1)]?.key||null;
- if(!save()){
-  state=previous;saveWarning('移除未保存，原书架仍在。请先导出需要保留的内容，再重试。');
-  $('remove-document-error').textContent='未能保存移除，书架未改变。请先备份，再重试。';delete $('remove-document-error').dataset.kind;return;
- }
- if(previous.active!==state.active)rememberActiveDocument();
- removedDocument={doc:snapshot,index,wasActive:previous.active===doc.key,bookmarkDraft};
- audioBookmarkDrafts.delete(doc.key);
- // Retire the old DOM owner before undo can restore the same key with a new identity.
- if($('audio-project').dataset.documentKey===doc.key){
-  delete $('audio-project').dataset.documentKey;$('audio-bookmark-form').reset();$('audio-bookmarks').replaceChildren();
- }
- $('removal-recovery-details').open=false;$('removal-recovery-error').hidden=true;$('removal-export-error').hidden=true;
+ const index=state.documents.indexOf(doc),wasActive=active()===doc;
+ const bundle={doc:JSON.parse(JSON.stringify(doc)),index,wasActive,bookmarkDraft:audioBookmarkDrafts.get(doc.key)};
+ const operation={key:doc.key,identity:doc,bundle,selectionRevision:null};
+ pendingLibraryOperation=operation;pendingStructuralDocuments.set(doc.key,operation);
+ // Retire request owners immediately, but keep the previous one-slot backup
+ // until this deletion has a successful disk receipt.
  documentLifecycleRevision++;removedDocumentRevisions.set(doc.key,documentLifecycleRevision);
- removedDocumentAliases.push({revision:documentLifecycleRevision,source:documentSourceIdentity(snapshot),signature:libraryDocumentSignature(snapshot).catch(()=>null)});
- changeMediaSelection(doc.key);
- if(projectTranscriptTarget?.key===doc.key)projectTranscriptTarget=null;
- window.dispatchEvent(new CustomEvent('coconut-document-removed',{detail:{key:doc.key}}));
- if(previous.active===doc.key){
-  resetReaderForDocumentNavigation();
-  $('source-media').replaceChildren();$('source-media').hidden=true;listeningSession=null;renderListeningResume();
-  setReadingMode(prefersPassageReading(active())?'passages':'summary');workspace=active()?'read':'add';
- }
- const attachment=browserMedia.get(doc.key);if(attachment){browserMedia.delete(doc.key);URL.revokeObjectURL(attachment.url);}
+ removedDocumentAliases.push({revision:documentLifecycleRevision,source:documentSourceIdentity(bundle.doc),signature:libraryDocumentSignature(bundle.doc).catch(()=>null)});
+ window.dispatchEvent(new CustomEvent('coconut-document-retiring',{detail:{key:doc.key,bundle}}));
+ changeMediaSelection(doc.key);if(projectTranscriptTarget?.key===doc.key)projectTranscriptTarget=null;
+ if(wasActive)resetReaderForDocumentNavigation();
+ audioBookmarkDrafts.delete(doc.key);
+ if($('audio-project').dataset.documentKey===doc.key){delete $('audio-project').dataset.documentKey;$('audio-bookmark-form').reset();$('audio-bookmarks').replaceChildren();}
+ state.documents.splice(index,1);
+ if(wasActive){selectActiveDocument(state.documents[Math.min(index,state.documents.length-1)]?.key||null,{persist:false});$('source-media').replaceChildren();$('source-media').hidden=true;listeningSession=null;renderListeningResume();setReadingMode(prefersPassageReading(active())?'passages':'summary');workspace=active()?'read':'add';}
+ operation.selectionRevision=activeSelectionRevision;
+ const ticket=libraryStore.queueDocument(doc.key,doc,'remove',{rollback(){
+  if(pendingStructuralDocuments.get(doc.key)!==operation||state.documents.some(item=>item.key===doc.key))return false;
+  state.documents.splice(Math.min(index,state.documents.length),0,doc);
+  finishStructuralOperation(operation);restoreRemovedDrafts(bundle);
+  if(wasActive&&activeSelectionRevision===operation.selectionRevision&&document.activeElement===operation.focusAtStart){resetReaderForDocumentNavigation();selectActiveDocument(doc.key,{persist:false});workspace='read';setReadingMode(prefersPassageReading(doc)?'passages':'summary');render();}else renderLibrary();
+  renderRemovalRecovery();return true;
+ }});
  removalTarget=null;$('remove-document-dialog').close();render();renderRemovalRecovery();
- $('toggle-library').setAttribute('aria-expanded','false');
+ $('main-content').focus({preventScroll:true});operation.focusAtStart=document.activeElement;
+ void libraryStore.flush();const receipt=await ticket.committed;
+ if(!receipt.ok){finishStructuralOperation(operation);renderRemovalRecovery();notice('移除未保存，原文档已留在书架。其他修改仍保留；请检查保存状态并先导出备份。');return;}
+ if(pendingStructuralDocuments.get(doc.key)!==operation)return;
+ finishStructuralOperation(operation);removedDocument=bundle;
+ if(wasActive&&activeSelectionRevision===operation.selectionRevision)rememberActiveDocument();
+ $('removal-recovery-details').open=false;$('removal-recovery-error').hidden=true;$('removal-export-error').hidden=true;
+ window.dispatchEvent(new CustomEvent('coconut-document-removed',{detail:{key:doc.key,bundle}}));
+ const attachment=browserMedia.get(doc.key);if(attachment){browserMedia.delete(doc.key);URL.revokeObjectURL(attachment.url);}
+ renderLibrary();renderRemovalRecovery();
  notice('已从保存的书架移除。可在本页撤销或导出这份备份；刷新、关闭或离开页面后不能撤销。','success');
- $('undo-removal').focus();
+ // Receipt callbacks never pull focus away from a newer document or input.
+ if(activeSelectionRevision===operation.selectionRevision&&document.activeElement===$('main-content')){$('toggle-library').setAttribute('aria-expanded','false');$('undo-removal').focus();}
 };
-$('undo-removal').onclick=()=>{
- const recovery=removedDocument;if(!recovery)return;
- const previous=state;
- // A new identity object retires callbacks created before removal, even with the same key.
+$('undo-removal').onclick=async()=>{
+ const recovery=removedDocument;if(!recovery||pendingLibraryOperation||!contentIngressAllowed())return;
  const doc=JSON.parse(JSON.stringify(recovery.doc));
  if(state.documents.some(item=>item.key===doc.key)){showRemovalRecoveryError('书架中已有同编号内容。请先导出备份，再通过添加文件恢复。');notice('书架中已有同编号内容。请导出移除备份，再通过添加文件恢复；不同版本会分别保留。');return;}
- const documents=[...state.documents];documents.splice(Math.min(recovery.index,documents.length),0,doc);
- state={...state,documents,active:recovery.wasActive?doc.key:state.active||doc.key};
- if(!save()){
-  state=previous;saveWarning('撤销尚未保存。移除的完整备份仍在本页，请重试撤销或导出移除备份，暂时不要关闭页面。');
-  showRemovalRecoveryError('撤销未保存。可重试或先导出备份，暂时不要离开本页。');
-  notice('撤销未成功，完整内容仍保留在本页恢复区。请导出移除备份，或释放空间后重试。');return;
- }
- const changedActive=previous.active!==state.active;
- if(changedActive)rememberActiveDocument();
- if(recovery.bookmarkDraft)audioBookmarkDrafts.set(doc.key,recovery.bookmarkDraft);
- window.dispatchEvent(new CustomEvent('coconut-document-restored',{detail:{key:doc.key,glossaryDrafts:recovery.glossaryDrafts,translationReviewDrafts:recovery.translationReviewDrafts}}));
- removedDocument=null;
- if(changedActive){
-  resetReaderForDocumentNavigation();
-  workspace=active()?'read':'add';setReadingMode(prefersPassageReading(active())?'passages':'summary');
- }
- render();renderRemovalRecovery();
+ const operation={key:doc.key,identity:doc,selectionRevision:activeSelectionRevision,previousActive:state.active,focusAtStart:document.activeElement};
+ pendingLibraryOperation=operation;pendingStructuralDocuments.set(doc.key,operation);
+ state.documents.splice(Math.min(recovery.index,state.documents.length),0,doc);
+ const ticket=libraryStore.queueDocument(doc.key,doc,'restore',{rollback(){
+  if(pendingStructuralDocuments.get(doc.key)!==operation||!state.documents.includes(doc))return false;
+  state.documents.splice(state.documents.indexOf(doc),1);finishStructuralOperation(operation);
+  if(active()===undefined||state.active===doc.key){selectActiveDocument(operation.previousActive);workspace=active()?'read':'add';render();}else renderLibrary();
+  renderRemovalRecovery();return true;
+ }});
+ renderLibrary();renderRemovalRecovery();void libraryStore.flush();const receipt=await ticket.committed;
+ if(!receipt.ok){finishStructuralOperation(operation);renderRemovalRecovery();showRemovalRecoveryError('撤销未保存。可重试或先导出备份，暂时不要离开本页。');notice('撤销未成功，完整内容和未提交草稿仍保留在本页恢复区。请导出移除备份，或释放空间后重试。');return;}
+ if(pendingStructuralDocuments.get(doc.key)!==operation)return;
+ finishStructuralOperation(operation);restoreRemovedDrafts(recovery);if(removedDocument===recovery)removedDocument=null;
+ const ownsFocus=document.activeElement===operation.focusAtStart||document.activeElement===document.body;
+ const canNavigate=activeSelectionRevision===operation.selectionRevision&&ownsFocus;
+ if(canNavigate&&(recovery.wasActive||!active())){resetReaderForDocumentNavigation();selectActiveDocument(doc.key);workspace='read';setReadingMode(prefersPassageReading(doc)?'passages':'summary');render();}else if(active()===doc)render();else renderLibrary();
+ renderRemovalRecovery();
  if(active()===doc&&Coconut.hasProjectAnnotations(doc))$('audio-project-status').textContent='项目已恢复；未提交的书签草稿仅在本页，请保存或取消。';
- if(changedActive&&active()?.key===doc.key&&doc.readingPosition){if(prefersPassageReading(doc))openPassage(doc.readingPosition);else goToSegment(doc.readingPosition);}
- notice('已撤销移除，并保存完整文字稿、译文、笔记与阅读位置。','success');focusLibraryRemoval(doc.key);
+ if(canNavigate&&active()===doc&&doc.readingPosition){if(prefersPassageReading(doc))openPassage(doc.readingPosition);else goToSegment(doc.readingPosition);}
+ notice('已撤销移除，并保存完整文字稿、译文、笔记与阅读位置。','success');
+ if(canNavigate)focusLibraryRemoval(doc.key);
 };
 $('export-removed-document').onclick=()=>{
  if(!removedDocument)return;let url,link;
@@ -580,7 +614,7 @@ $('export-removed-document').onclick=()=>{
  finally{link?.remove();if(url)setTimeout(()=>URL.revokeObjectURL(url),60000);}
 };
 $('finish-removal').onclick=()=>{
- if(!removedDocument)return;
+ if(!removedDocument||pendingLibraryOperation)return;
  $('finish-removal-dialog').showModal();$('cancel-finish-removal').focus();
 };
 $('export-previous-removal').onclick=()=>$('export-removed-document').onclick();
@@ -590,6 +624,7 @@ $('finish-removal-dialog').addEventListener('close',()=>{
  else focusLibraryRemoval(null);
 });
 $('confirm-finish-removal').onclick=()=>{
+ if(pendingLibraryOperation)return;
  removedDocument=null;$('finish-removal-dialog').close();renderRemovalRecovery();notice('已结束本页撤销。如果另有 JSON 备份，以后可用“添加文件”恢复。');
 };
 
@@ -611,7 +646,9 @@ function renderLibrary() {
   if(bookmark)metadata.push('读到 '+Coconut.time(bookmark.start));
   b.append(el('small','',metadata.join(' · ')));
 		b.setAttribute("aria-current", d.key === state.active ? "page" : "false");
+  b.disabled=pendingStructuralDocuments.has(d.key);if(b.disabled)b.title="正在保存恢复，完成后可打开";
 		const openDocument = (hit=null) => {
+   if(pendingStructuralDocuments.has(d.key)||!state.documents.includes(d))return;
    resetReaderForDocumentNavigation();selectActiveDocument(d.key);
    setReadingMode(prefersPassageReading(d)?"passages":"summary");
 			$("toggle-library").setAttribute("aria-expanded", "false");
@@ -623,7 +660,7 @@ function renderLibrary() {
 		};
 		b.onclick=()=>openDocument();
   const remove=el('button','library-remove','移除…');remove.type='button';remove.setAttribute('aria-label','从书架移除 '+d.title);
-  remove.hidden=!$('library-options').open;remove.onclick=()=>requestLibraryRemoval(d);
+  remove.hidden=!$('library-options').open;remove.disabled=!!pendingLibraryOperation;remove.onclick=()=>requestLibraryRemoval(d);
   entry.append(b,remove);
   const hits=Coconut.libraryHits(d,query,$('library-scope').value);
   if(hits.length){
@@ -633,7 +670,7 @@ function renderLibrary() {
     const label={'text':'原文','note':'片段笔记','project-note':'项目笔记','bookmark':'时间书签'}[hit.kind];
     button.append(el('small','',label+(hit.time===undefined?'':' · '+Coconut.time(hit.time))));
     const preview=el('span','library-hit-preview');preview.append(document.createTextNode(hit.snippet.before),el('mark','',hit.snippet.match),document.createTextNode(hit.snippet.after));
-    button.append(preview);button.onclick=()=>openDocument(hit);list.append(button);
+    button.append(preview);button.disabled=pendingStructuralDocuments.has(d.key);button.onclick=()=>openDocument(hit);list.append(button);
    }
    entry.append(list);
   }
@@ -668,6 +705,7 @@ function focusCueAction(target, viewportTop=null) {
  target?.focus({preventScroll:true});
 }
 function render({keepNoteEditor=false}={}) {
+ $('reader-workspace').inert=!!active()&&pendingStructuralDocuments.has(active().key);
  // All supported source changes render. Invalidate conservatively even when
  // the same array was edited in place; regular media events reuse the index.
  playbackIndex=null;
@@ -845,7 +883,7 @@ function render({keepNoteEditor=false}={}) {
 		const edit = el("button", "edit-button", "修正文字");
 		edit.onclick = () => {
 			editingTarget = {
-				documentKey: doc.key, segmentId: s.id,
+				documentKey: doc.key, identity:doc, segmentId: s.id,
 				position: [...$("transcript").querySelectorAll(".segment")].indexOf(row),
 			};
 			$("edit-error").textContent = "";
@@ -881,11 +919,12 @@ function render({keepNoteEditor=false}={}) {
 		excerptButton.setAttribute("aria-pressed", String(s.saved_excerpt === true));
 		excerptButton.setAttribute("aria-label", (s.saved_excerpt === true ? "取消摘录 " : "摘录整段 ") + Coconut.time(s.start));
 		excerptButton.onclick = () => {
+   if(!contentIngressAllowed(doc)||active()!==doc)return;
    const viewportTop=row.classList.contains('short-cue')?row.getBoundingClientRect().top:null;
 			const position = [...$("transcript").querySelectorAll(".segment")].indexOf(row);
 			if (s.saved_excerpt === true) delete s.saved_excerpt;
 			else s.saved_excerpt = true;
-			save();
+			queueDocument(doc);
 			render();
 			const rows = [...$("transcript").querySelectorAll(".segment")];
 			const target = rows.find(item => item.dataset.segmentId === s.id) || rows[Math.min(position, rows.length - 1)];
@@ -895,9 +934,10 @@ function render({keepNoteEditor=false}={}) {
 		const bookmarkButton = el("button", "bookmark-button", doc.readingPosition === s.id ? "已标记阅读位置" : "读到这里");
 		bookmarkButton.setAttribute("aria-pressed", String(doc.readingPosition === s.id));
 		bookmarkButton.onclick = () => {
+   if(!contentIngressAllowed(doc)||active()!==doc)return;
    const viewportTop=row.classList.contains('short-cue')?row.getBoundingClientRect().top:null;
 			doc.readingPosition = s.id;
-			save();
+			queueDocument(doc);
 			render();
    // Rendering replaces the focused control; keep keyboard readers at this cue.
    const target = [...$("transcript").querySelectorAll(".segment")].find(item => item.dataset.segmentId === s.id);
@@ -1017,7 +1057,7 @@ $("file").onchange = async () => {
  const revision = cancelLocalImports("file"), lifecycleRevision=documentLifecycleRevision;
  const startingDocument = state.active, startingWorkspace = workspace;
  const ownsRequest = () => revision === localImportRevision;
- const canCommit = () => ownsRequest() && state.active === startingDocument && workspace === startingWorkspace;
+ const canCommit = () => contentIngressAllowed() && ownsRequest() && state.active === startingDocument && workspace === startingWorkspace;
 	try {
   const review=localFileReview(f,canCommit);
   if(review!==true&&!(await review))return;
@@ -1029,7 +1069,7 @@ $("file").onchange = async () => {
   // Retain it only as async ownership evidence, never as an imported new key.
   let sourceKey;try{const raw=JSON.parse(text);if(typeof raw?.key==='string'&&raw.key.length<=200)sourceKey=raw.key;}catch{}
   const saved = await add(parsed,canCommit,false,lifecycleRevision,sourceKey);
-		if (saved && ownsRequest()) notice("已导入并保存在本机浏览器。没有向服务器上传文件。", "success");
+		if (saved.ok && ownsRequest() && active()===saved.identity) notice("已导入并保存在本机浏览器。没有向服务器上传文件。", "success");
 	} catch (e) {
 		if(canCommit())notice("导入失败：" + localFileError(e));
 	} finally {
@@ -1043,12 +1083,18 @@ $("search").oninput = () => {
 	render();
 };
 $("note").oninput = () => {
-	const d = active();
-	if (d && selected) {
-  const segment=d.segments.find(item=>item.id===selected),query=$('search').value;
+ const doc=active(),id=selected;if(!doc||!id||!doc.segments.some(segment=>segment.id===id))return;
+ if(deferContentInput(doc,$('note'),doc.notes[id]||'',value=>applyCueNote(doc,id,value)))return;
+ applyCueNote(doc,id,$('note').value);
+};
+function applyCueNote(d,id,value){
+ if(!contentIngressAllowed(d)||!d.segments.some(segment=>segment.id===id))return;
+ {
+  const segment=d.segments.find(item=>item.id===id),query=$('search').value;
   const matched=segment&&matchesReadingSegment(segment,d,query);
-		d.notes[selected] = $("note").value;
-		save();
+		d.notes[id] = value;
+		queueDocument(d);
+  if(active()!==d)return;
   // Reconcile membership while typing, but keep the mounted editor/caret even
   // if its cue no longer matches. Never replace pointer targets on blur.
   if(segment&&matched!==matchesReadingSegment(segment,d,query)){
@@ -1060,27 +1106,27 @@ $("note").oninput = () => {
 		// Keep pointer targets mounted while focus leaves the note editor.
 		// Re-rendering on blur swallows the subsequent click on another row.
 		const row = [...$("transcript").querySelectorAll(".segment")].find(
-			(item) => item.dataset.segmentId === selected,
+			(item) => item.dataset.segmentId === id,
 		);
 		if (row) {
-			row.querySelector(".note-button").textContent = Coconut.hasNoteContent(d.notes[selected]) ? "编辑笔记" : "＋ 记一笔";
+			row.querySelector(".note-button").textContent = Coconut.hasNoteContent(d.notes[id]) ? "编辑笔记" : "＋ 记一笔";
 			let preview = row.querySelector(".saved-note");
-			if (Coconut.hasNoteContent(d.notes[selected])) {
+			if (Coconut.hasNoteContent(d.notes[id])) {
 				if (!preview) {
 					preview = el("p", "saved-note");
 					row.lastElementChild.append(preview);
 				}
-				preview.textContent = d.notes[selected];
+				preview.textContent = d.notes[id];
 			} else if (preview) preview.remove();
 		}
 	}
-};
+}
 $("source").onclick = () => {
 	if (!active()) {
 		notice("请先导入文字稿");
 		return;
 	}
-	sourceTarget = active().key;
+	sourceTarget = active().key;sourceTargetIdentity=active();
 	$("source-url").value = active().source_url;
 	$("source-error").textContent = "";
 	$("source-dialog").showModal();
@@ -1093,12 +1139,12 @@ $("save-source").onclick = (e) => {
 		return;
 	}
 	const doc = state.documents.find((d) => d.key === sourceTarget);
-	if (!doc) {
+	if (!doc || doc!==sourceTargetIdentity || !contentIngressAllowed(doc)) {
 		$("source-error").textContent = "原文字稿已不可用，请重新打开来源设置";
 		return;
 	}
 	doc.source_url = url;
-	save();
+	queueDocument(doc);
 	$("source-dialog").close();
 	render();
 };
@@ -1157,7 +1203,7 @@ function renderAudioProject(doc) {
  if(query&&!bookmarks.length)host.append(el('p','hint','没有匹配的书签，请清除或更换关键词。'));
  for(const item of bookmarks){
   const row=el('section','audio-bookmark');row.dataset.bookmarkId=item.id;
-  const ownsBookmark=()=>active()===doc&&doc.timestamp_bookmarks.includes(item);
+  const ownsBookmark=()=>active()===doc&&doc.timestamp_bookmarks.includes(item)&&contentIngressAllowed(doc);
   const seek=el('button','',Coconut.time(item.time)+' · 定位原声');
   seek.onclick=()=>{
    if(!ownsBookmark())return;
@@ -1168,23 +1214,25 @@ function renderAudioProject(doc) {
    catch{$('audio-project-status').textContent='媒体暂时无法定位，书签仍然保留。';}
   };
   const input=el('textarea');input.rows=2;input.value=item.note;input.setAttribute('aria-label',Coconut.time(item.time)+' 的书签笔记');
-  input.oninput=()=>{if(!ownsBookmark())return;if(!allowAudioNoteChange(doc,item.note,input.value,10000)){input.value=item.note;return;}item.note=input.value;save();renderLibrary();renderNotebookAction(doc);};
+  const applyBookmarkNote=value=>{if(!contentIngressAllowed(doc)||!doc.timestamp_bookmarks.includes(item))return;if(!allowAudioNoteChange(doc,item.note,value,10000)){if(input.isConnected)input.value=item.note;return;}item.note=value;queueDocument(doc);if(active()===doc){renderLibrary();renderNotebookAction(doc);}};
+  input.oninput=()=>{if(active()!==doc||!doc.timestamp_bookmarks.includes(item))return;if(deferContentInput(doc,input,item.note,applyBookmarkNote))return;applyBookmarkNote(input.value);};
   const remove=el('button','','删除书签');remove.onclick=()=>{
    if(!ownsBookmark())return;
-   doc.timestamp_bookmarks=doc.timestamp_bookmarks.filter(bookmark=>bookmark.id!==item.id);save();renderAudioProject(doc);renderLibrary();renderNotebookAction(doc);$('audio-bookmark-time').focus();
+   doc.timestamp_bookmarks=doc.timestamp_bookmarks.filter(bookmark=>bookmark.id!==item.id);queueDocument(doc);renderAudioProject(doc);renderLibrary();renderNotebookAction(doc);$('audio-bookmark-time').focus();
   };
   const edit=el('button','','修正书签时间'),form=el('form'),timeInput=el('input'),apply=el('button','','保存时间'),cancel=el('button','','取消修正'),error=el('p','hint');
   edit.className='edit-bookmark-time';form.hidden=true;timeInput.value=String(item.time);timeInput.setAttribute('aria-label','修正书签时间（秒、分:秒或时:分:秒）');timeInput.inputMode='decimal';apply.type='submit';cancel.type='button';error.setAttribute('role','status');
   if(draft?.edits.has(item.id)){form.hidden=false;timeInput.value=draft.edits.get(item.id);}
   edit.onclick=()=>{if(!ownsBookmark())return;if(form.hidden){form.hidden=false;timeInput.value=String(item.time);error.textContent='';}timeInput.focus();};
   cancel.onclick=()=>{if(!ownsBookmark())return;form.hidden=true;edit.focus();};
-  form.onsubmit=event=>{
+  form.onsubmit=async event=>{
    event.preventDefault();if(!ownsBookmark())return;
    const next=Coconut.parseReadingTime(timeInput.value);
    if(next===null||next>604800){error.textContent='请输入最长7天的有效时间，原书签未改变。';return;}
-   item.time=next;form.hidden=true;doc.timestamp_bookmarks.sort((a,b)=>a.time-b.time);const persisted=save();renderAudioProject(doc);renderNotebookAction(doc);
-   $('audio-project-status').textContent=persisted?'书签时间已更新，笔记保留。':'书签时间仅在本页，请立即导出 JSON 备份。';
+   item.time=next;form.hidden=true;doc.timestamp_bookmarks.sort((a,b)=>a.time-b.time);const receipt=commitDocument(doc);renderAudioProject(doc);renderNotebookAction(doc);
    ([...host.children].find(element=>element.dataset.bookmarkId===item.id)?.querySelector('.edit-bookmark-time')||$('audio-bookmark-search')).focus();
+   const persisted=await receipt;
+   if(ownsBookmark()&&item.time===next&&libraryStore.status(doc.key)?.generation===persisted.generation)$('audio-project-status').textContent=persisted.ok?'书签时间已更新，笔记保留。':'书签时间仅在本页，请立即导出 JSON 备份。';
   };
   form.append(timeInput,apply,cancel,error);row.append(seek,input,remove,edit,form);host.append(row);
  }
@@ -1197,25 +1245,31 @@ function allowAudioNoteChange(doc,previous,value,limit){
 }
 $('cancel-audio-bookmark').onclick=()=>{$('audio-bookmark-form').reset();captureAudioBookmarkDrafts();$('audio-project-status').textContent='已取消未保存的时间书签。';$('audio-bookmark-time').focus();};
 $('audio-bookmark-search').oninput=()=>{const doc=active();if(Coconut.hasProjectAnnotations(doc))renderAudioProject(doc);};
+function applyProjectNote(doc,value){
+ if(!contentIngressAllowed(doc)||!Coconut.hasProjectAnnotations(doc))return;
+ if(!allowAudioNoteChange(doc,doc.project_note,value,100000)){if(active()===doc)$('project-note').value=doc.project_note;return;}
+ doc.project_note=value;queueDocument(doc);if(active()===doc){renderLibrary();renderNotebookAction(doc);}
+}
 $('project-note').oninput=()=>{
  const doc=active();if(!Coconut.hasProjectAnnotations(doc))return;
- const input=$('project-note');if(!allowAudioNoteChange(doc,doc.project_note,input.value,100000)){input.value=doc.project_note;return;}
- doc.project_note=input.value;save();renderLibrary();renderNotebookAction(doc);
+ const input=$('project-note');if(deferContentInput(doc,input,doc.project_note,value=>applyProjectNote(doc,value)))return;
+ applyProjectNote(doc,input.value);
 };
 $('use-playback-time').onclick=()=>{
  const player=$('source-media').querySelector('audio,video');if(!player||!Number.isFinite(player.currentTime))return;
  $('audio-bookmark-time').value=String(Math.floor(player.currentTime*1000)/1000);$('audio-bookmark-note').focus();
 };
-$('audio-bookmark-form').onsubmit=event=>{
- event.preventDefault();const doc=active();if(!Coconut.hasProjectAnnotations(doc))return;
+$('audio-bookmark-form').onsubmit=async event=>{
+ event.preventDefault();const doc=active();if(!Coconut.hasProjectAnnotations(doc)||!contentIngressAllowed(doc))return;
  const seconds=Coconut.parseReadingTime($('audio-bookmark-time').value);
  if(seconds===null||seconds>604800){$('audio-project-status').textContent='请输入有效的秒数、分:秒或时:分:秒，最长7天。';return;}
  if(doc.timestamp_bookmarks.length>=2000){$('audio-project-status').textContent='已达到2,000个时间书签上限，请先备份和整理。';return;}
  const note=$('audio-bookmark-note').value;if(!allowAudioNoteChange(doc,'',note,10000))return;
  doc.timestamp_bookmarks.push({id:crypto.randomUUID(),time:seconds,note});
  doc.timestamp_bookmarks.sort((a,b)=>a.time-b.time);
- const persisted=save();$('audio-bookmark-form').reset();renderAudioProject(doc);renderLibrary();renderNotebookAction(doc);
- $('audio-project-status').textContent=persisted?'时间书签已保存，可导出 JSON 备份。':'书签仅在本页，尚未保存成功，请立即导出 JSON 备份。';$('audio-bookmark-time').focus();
+ const receipt=commitDocument(doc);$('audio-bookmark-form').reset();renderAudioProject(doc);renderLibrary();renderNotebookAction(doc);$('audio-bookmark-time').focus();
+ const persisted=await receipt;
+ if(active()===doc&&contentIngressAllowed(doc)&&libraryStore.status(doc.key)?.generation===persisted.generation)$('audio-project-status').textContent=persisted.ok?'时间书签已保存，可导出 JSON 备份。':'书签仅在本页，尚未保存成功，请立即导出 JSON 备份。';
 };
 $("export-notebook").onclick = () => {
 	const doc = active();
@@ -1309,9 +1363,10 @@ $("sample").onclick = async () => {
   '时间戳是一条回去的路，不是结论。重要的细节，先回到原声核对，再把它变成自己的理解。'
  ];
  demo.segments.forEach((segment,index)=>{segment.translations={zh:{text:translations[index],source_text:segment.text,source_language:'en',document_language:'en',provider:'Coconut 自写示例译文'}};});
- await add(Coconut.validate(demo));
- // Explicitly reopening the bilingual tryout restores its view, never its edited content.
- active().translation_view='zh';save();demoToolsExpanded=false;
+ const result=await add(Coconut.validate(demo)),doc=result.identity;
+ // A delayed receipt cannot redirect or modify the user's newer selection.
+ if(active()!==doc||!contentIngressAllowed(doc))return;
+ if(doc.translation_view!=='zh'){doc.translation_view='zh';queueDocument(doc);}demoToolsExpanded=false;
  setReadingMode('transcript');render();
  $('title').scrollIntoView?.({block:'start'});
  } catch(error){notice('示例打开失败：'+error.message);}
@@ -1328,13 +1383,13 @@ $("save-edit").onclick = (event) => {
 	const segment =
 		doc && doc.segments.find((s) => s.id === editingTarget.segmentId);
 	const text = $("edit-segment").value.trim();
-	if (!segment || !text) {
+	if (!segment || !text || doc!==editingTarget.identity || !contentIngressAllowed(doc)) {
 		$("edit-error").textContent = "文字不能为空";
 		return;
 	}
 	if (segment.original_text === undefined) segment.original_text = segment.text;
 	segment.text = text;
-	save();
+	queueDocument(doc);
 	$("edit-dialog").close();
 	render();
 	// Rendering replaces the dialog’s original opener. Restore the reader’s
@@ -1380,7 +1435,7 @@ $("library-file").onchange = async () => {
  const revision = cancelLocalImports("library-file"), lifecycleRevision=documentLifecycleRevision;
  const startingDocument = state.active, startingWorkspace = workspace;
  const ownsRequest = () => revision === localImportRevision;
- const canCommit = () => ownsRequest() && state.active === startingDocument && workspace === startingWorkspace;
+ const canCommit = () => contentIngressAllowed() && ownsRequest() && state.active === startingDocument && workspace === startingWorkspace;
  try {
   const review=localFileReview(file,canCommit,true);
   if(review!==true&&!(await review))return;
@@ -1399,12 +1454,14 @@ $("library-file").onchange = async () => {
    // A later document's digest may have yielded while an earlier one was removed.
    // Recheck the batch at one stable lifecycle revision before the synchronous merge.
   }while(checkedRevision!==documentLifecycleRevision);
-  const before=state.documents.length,restored=Coconut.mergeLibraryBackup(state,backup);
+  const existing=new Set(state.documents),restored=Coconut.mergeLibraryBackup(state,backup),added=restored.documents.filter(doc=>!existing.has(doc));
+ if(added.some(doc=>pendingStructuralDocuments.has(doc.key)))throw new Error('文档正在移除或恢复，请稍候重试');
   // An empty restore stays in Add without looking like new navigation on render.
   clearReadingContext();
   state = restored; selectActiveDocument(restored.active); selected=null; pageStart=0; notesOnly=false; excerptsOnly=false; speakerFilter=null; $("search").value=""; workspace=active()?"read":"add";
-  const persisted = save(); render();
-  if(persisted && ownsRequest())notice("已恢复 " + (state.documents.length-before) + " 份文字稿；相同内容已跳过，不同版本分别保留，原书架未删除。");
+  const receipt=commitDocuments(added);render();
+  const persisted=await receipt;
+  if(persisted.ok && ownsRequest() && state.active===restored.active && workspace===(restored.active?"read":"add"))notice("已恢复 " + added.length + " 份文字稿；相同内容已跳过，不同版本分别保留，原书架未删除。");
  } catch(error) { if(canCommit())notice("恢复失败，原书架未改变："+localFileError(error)); }
  finally { if(ownsRequest())$("library-file").value=""; }
 };
@@ -1422,20 +1479,21 @@ $("export-subtitles").onclick = () => {
  finally {link?.remove();if(url)setTimeout(()=>URL.revokeObjectURL(url),60000);}
 };
 
-let detailsTarget=null;
+let detailsTarget=null,detailsTargetIdentity=null,detailsSaveRevision=0;
 $("document-details").onclick=()=>{
  const doc=active();if(!doc)return;
- detailsTarget=doc.key;$("document-title").value=doc.title;$("details-error").textContent="";
+ detailsTarget=doc.key;detailsTargetIdentity=doc;$("document-title").value=doc.title;$("details-error").textContent="";
  const language=$("document-language");language.querySelector('[data-custom]')?.remove();
  if(doc.language && ![...language.options].some(o=>o.value===doc.language)){const option=el("option","",doc.language);option.value=doc.language;option.dataset.custom="true";language.append(option);}
  language.value=doc.language||"";$("details-dialog").showModal();
 };
-$("save-details").onclick=event=>{
+$("save-details").onclick=async event=>{
  event.preventDefault();const doc=state.documents.find(d=>d.key===detailsTarget), title=$("document-title").value.trim();
- if(!doc || !title || title.length>200){$("details-error").textContent="请输入1–200字的标题";return;}
+ if(!doc || doc!==detailsTargetIdentity || !contentIngressAllowed(doc) || !title || title.length>200){$("details-error").textContent="请输入1–200字的标题";return;}
  doc.title=title;doc.language=$("document-language").value;
- const persisted=save();$("details-dialog").close();render();$("document-details").focus();
- if(persisted)notice("文字稿信息已保存；原始来源信息、时间戳和笔记保持不变。", "success");
+ const operation=++detailsSaveRevision,receipt=commitDocument(doc);$("details-dialog").close();render();$("document-details").focus();
+ const persisted=await receipt;
+ if(persisted.ok&&operation===detailsSaveRevision&&active()===doc&&!$("details-dialog").open&&contentIngressAllowed(doc))notice("文字稿信息已保存；原始来源信息、时间戳和笔记保持不变。", "success");
 };
 
 $("time-navigation").onsubmit=event=>{
@@ -1953,19 +2011,25 @@ function renderSourceOverview(doc,hasSummary){
   button.dataset.cueId=segment.id;button.onclick=()=>openPassage(segment.id);host.append(button);
  }
 }
-function renderSummary() {
+function renderSummaryPersistence(){
  const doc=active();if(!doc)return;
- const readiness=Coconut.summaryReadiness(doc);
  const answer=Coconut.latestSummary(doc),freshness=answer?Coconut.summaryFreshness(answer,doc):'empty';
- const persisted=answer && persistedSummaries.get(doc.key)===answer && !storageBlocked;
- renderSourceOverview(doc,!!answer);
- $('summary-heading').textContent=answer?'这篇的主要内容':'想先抓住重点？';
+ const persisted=answer&&(doc.ai_answers||[]).indexOf(answer)<(persistedAIAnswerCounts.get(doc)||0);
  $('summary-state').textContent=answer&&!persisted?'仅在此页 · 请备份':({current:'已保存 · 待核对',stale:'原文有更新',unknown:'依据待确认',empty:'未生成'})[freshness];
  $('summary-state').dataset.state=answer&&!persisted?'unsaved':freshness;
  $('summary-status').textContent=answer ? ({current:'覆盖当前整篇原文 · '+answer.provider+' · 摘要不代替原话',stale:'原文已经修改、增加或移除，下面是旧摘要。重新生成前请对照原文。',unknown:'这份摘要缺少完整发送记录，无法确认覆盖范围，请对照原文。'})[freshness] : '已有原文可直接阅读。连接已登录的本地 Codex 或 Claude Code，确认发送全文与使用额度后，才会生成摘要。';
  if(!answer&&doc.summary_job)$('summary-status').textContent=summaryCheckpointSaved(doc)?'分批进度已保存，整篇摘要尚未完成。查看计划后需再次确认发送与额度，才会继续；不会自动重新请求。':'最新分批进度尚未保存到浏览器，当前页面仍可导出 JSON 备份；关闭或刷新可能丢失进度，整篇摘要尚未完成。';
  if(answer?.summary_process?.batches>1)$('summary-status').textContent+=' · '+answer.summary_process.batches+' 批完成后汇总；引用来自被采用的批次依据，请回源核对。';
  if(answer&&!persisted)$('summary-status').textContent='这份摘要尚未保存到浏览器。关闭或刷新前请先导出摘要或 JSON 备份。'+$('summary-status').textContent;
+}
+function renderSummary() {
+ const doc=active();if(!doc)return;
+ const readiness=Coconut.summaryReadiness(doc);
+ const answer=Coconut.latestSummary(doc),freshness=answer?Coconut.summaryFreshness(answer,doc):'empty';
+ const persisted=answer && (doc.ai_answers||[]).indexOf(answer)<(persistedAIAnswerCounts.get(doc)||0);
+ renderSourceOverview(doc,!!answer);
+ $('summary-heading').textContent=answer?'这篇的主要内容':'想先抓住重点？';
+ renderSummaryPersistence();
  $('summary-body').textContent=answer?.answer||'';
  $('summary-citations').replaceChildren();
  if(answer){
@@ -1987,8 +2051,8 @@ function renderSummary() {
 }
 $('mode-passages').onclick=()=>openPassage(passageAnchor||active()?.readingPosition||active()?.segments[0]?.id);
 $('mode-summary').onclick=()=>setReadingMode('summary');
-$('mode-transcript').onclick=()=>{if(active()){active().translation_view='';save();}setReadingMode('transcript');render();};
-$('mode-bilingual').onclick=()=>{const doc=active();if(!doc||Coconut.isAudioProject(doc))return;doc.translation_view=doc.translation_view||$('translation-target').value||'zh';save();setReadingMode('transcript');render();};
+$('mode-transcript').onclick=()=>{const doc=active();if(contentIngressAllowed(doc)&&doc?.translation_view){doc.translation_view='';queueDocument(doc);}setReadingMode('transcript');render();};
+$('mode-bilingual').onclick=()=>{const doc=active();if(!doc||!contentIngressAllowed(doc)||Coconut.isAudioProject(doc))return;const target=doc.translation_view||$('translation-target').value||'zh';if(doc.translation_view!==target){doc.translation_view=target;queueDocument(doc);}setReadingMode('transcript');render();};
 $('prepare-bilingual').onclick=()=>{closeSummaryRequest(false);$('ai-task').value='translation';$('ai-task').dispatchEvent(new Event('change'));$('language-panel').open=true;$('ai-task').scrollIntoView?.({block:'center',behavior:'smooth'});$('translation-target').focus();};
 $('summary-open-transcript').onclick=()=>{setReadingMode('transcript');$('search').focus();};
 $('prepare-summary').onclick=()=>{
@@ -2087,18 +2151,18 @@ $('project-transcript-file').onchange=async()=>{
   const value=await file.text();
   if(!canCommit())return;
   const text=Coconut.parse(value,file.name);
-  const persisted=attachTranscriptToProject(text,target);
-  notice(persisted?'文字稿已附加到当前项目，原有笔记、时间书签与媒体保留。未调用识别、翻译或摘要模型。':'文字稿已在本页附加，但未能保存，请立即导出 JSON 备份。');
+  const persisted=await attachTranscriptToProject(text,target);
+  if(ownsRequest()&&active()===persisted.identity&&contentIngressAllowed(persisted.identity))notice(persisted.ok?'文字稿已附加到当前项目，原有笔记、时间书签与媒体保留。未调用识别、翻译或摘要模型。':'文字稿已在本页附加，但未能保存，请立即导出 JSON 备份。');
  }catch(error){if(ownsRequest())notice('补充文字稿失败：'+localFileError(error));}
  finally{if(ownsRequest())input.value='';}
 };
 
-function attachTranscriptToProject(text,target){
+async function attachTranscriptToProject(text,target){
  const index=state.documents.findIndex(doc=>doc.key===target.key),original=state.documents[index];
- if(original!==target.document||state.active!==target.key||workspace!=='read'||!Coconut.isAudioProject(original)||JSON.stringify(original.podcast_source)!==target.source)throw new Error('目标项目已经切换或更新，本次未附加文字稿，请重新选择');
+ if(!contentIngressAllowed(original)||original!==target.document||state.active!==target.key||workspace!=='read'||!Coconut.isAudioProject(original)||JSON.stringify(original.podcast_source)!==target.source)throw new Error('目标项目已经切换或更新，本次未附加文字稿，请重新选择');
  const attached={...Coconut.attachProjectTranscript(original,text),key:original.key};
  state.documents[index]=attached;selected=null;pageStart=0;notesOnly=false;excerptsOnly=false;speakerFilter=null;$('search').value='';
- const persisted=save();setReadingMode('transcript');render();return persisted;
+ const receipt=commitDocument(attached);setReadingMode('transcript');render();return receipt;
 }
 
 
@@ -2106,9 +2170,35 @@ function attachTranscriptToProject(text,target){
 // show their own text, and may omit this event on mobile or process termination.
 // Keep the existing export warnings. Attach only while actual changes remain.
 // https://developer.mozilla.org/en-US/docs/Web/API/Window/beforeunload_event
-function hasUnsavedReaderChanges() {
- captureAudioBookmarkDrafts();
- if(removedDocument||unsavedDocumentChanges||audioBookmarkDrafts.size||hasLanguageDrafts()||window.CoconutTranslationReview?.hasDraft())return true;
+function hasPendingOrFailedContent(){return libraryStore.status().unsaved>0;}
+function hasUnsavedReaderChanges(){return hasPendingOrFailedContent()||hasUnsubmittedReaderDrafts();}
+function hasUnsubmittedReaderDrafts() {
+ if(removedDocument||pendingLibraryOperation||[...deferredContentInputs.values()].some(draft=>state.documents.includes(draft.doc))||hasLanguageDrafts()||window.CoconutTranslationReview?.hasDraft())return true;
+ const current=active();
+ if(current&&selected&&!$('notes-panel').hidden&&current.segments.some(segment=>segment.id===selected)&&$('note').value!==(current.notes[selected]||''))return true;
+ const formKey=$('audio-project').dataset.documentKey;
+ for(const [key,draft] of audioBookmarkDrafts){
+  const doc=state.documents.find(item=>item.key===key);if(!doc||key===formKey)continue;
+  if(draft.time.trim()||draft.note.trim()||[...draft.edits].some(([id,value])=>{const item=doc.timestamp_bookmarks?.find(item=>item.id===id);return item&&Coconut.parseReadingTime(value)!==item.time;}))return true;
+ }
+ const formDoc=state.documents.find(doc=>doc.key===formKey);
+ if(Coconut.hasProjectAnnotations(formDoc)){
+  if(active()===formDoc&&!$('audio-project').hidden&&$('project-note').value!==formDoc.project_note)return true;
+  for(const input of active()===formDoc&&!$('audio-project').hidden?document.querySelectorAll('#audio-bookmarks textarea'):[]){
+   const original=formDoc.timestamp_bookmarks.find(item=>item.id===input.closest('[data-bookmark-id]')?.dataset.bookmarkId);
+   if(original&&input.value!==original.note)return true;
+  }
+  const visibleIds=new Set([...document.querySelectorAll('#audio-bookmarks form')].map(form=>form.parentElement.dataset.bookmarkId));
+  for(const [id,value] of audioBookmarkDrafts.get(formKey)?.edits||[]){
+   const original=formDoc.timestamp_bookmarks.find(item=>item.id===id);
+   if(!visibleIds.has(id)&&original&&Coconut.parseReadingTime(value)!==original.time)return true;
+  }
+  if($('audio-bookmark-time').value.trim()||$('audio-bookmark-note').value.trim())return true;
+  for(const form of document.querySelectorAll('#audio-bookmarks form')){
+   const original=formDoc.timestamp_bookmarks.find(item=>item.id===form.parentElement.dataset.bookmarkId);
+   if(!form.hidden&&original&&Coconut.parseReadingTime(form.querySelector('input').value)!==original.time)return true;
+  }
+ }
  if($("edit-dialog").open && editingTarget){
   const doc=state.documents.find(d=>d.key===editingTarget.documentKey);
   const segment=doc?.segments.find(s=>s.id===editingTarget.segmentId);
@@ -2141,7 +2231,7 @@ function syncUnsavedUnloadGuard() {
 // Web beforeunload remains separate.
 if(!window.coconutUpdates){
  unloadGuardReady=true;
- // Input handlers run first, so synchronously saved notes never install a guard.
+ // Input handlers register pending content first; the guard clears only on its receipt.
  for(const event of ["input","change","click","submit"])document.addEventListener(event,syncUnsavedUnloadGuard);
  // Dialog close does not bubble; capture also covers native Escape/Cancel.
  document.addEventListener("close",syncUnsavedUnloadGuard,true);

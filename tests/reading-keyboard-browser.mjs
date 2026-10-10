@@ -35,6 +35,8 @@ async function settled() {
   await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
 }
 async function stored() {
+
+ await page.evaluate(()=>libraryStore.flush());
   return page.evaluate(() => {const shelf = JSON.parse(localStorage.getItem('coconut-reader-v1')); return shelf.documents.find(doc => doc.key === sessionStorage.getItem('coconut-reader-active-v1'));});
 }
 async function capture(name) {
@@ -399,18 +401,21 @@ try {
   await checkDrafts('draft_help_detour');
 
   stage = 'new_native_dialogs_block_keys_with_media_and_drafts';
+  await page.evaluate(()=>libraryStore.flush());
   const shelfBeforeDialogs = await page.evaluate(() => localStorage.getItem('coconut-reader-v1'));
   await openRemoval(fixture.title);
   await ignoredNativeDialog('remove_document_dialog', '#remove-document-dialog');
   await checkDrafts('remove_document_dialog_keys');
   await page.keyboard.press('Escape');
   await page.locator('#remove-document-dialog').waitFor({state: 'hidden'});
+  await page.evaluate(()=>libraryStore.flush());
   check('remove_dialog_escape_preserves_the_complete_shelf', await page.evaluate(() => localStorage.getItem('coconut-reader-v1')) === shelfBeforeDialogs);
   await checkDrafts('remove_document_dialog_escape');
 
   await openRemoval(otherFixture.title);
   await page.locator('#confirm-removal').click();
   await page.locator('#removal-recovery').waitFor({state: 'visible'});
+  await page.evaluate(()=>libraryStore.flush());
   const shelfWithRecovery = await page.evaluate(() => localStorage.getItem('coconut-reader-v1'));
   check('noncurrent_removal_keeps_the_reading_document_active', (await stored()).title === fixture.title &&
     await page.getByRole('button', {name: '从书架移除 ' + otherFixture.title, exact: true}).count() === 0);
@@ -421,9 +426,11 @@ try {
   await checkDrafts('finish_removal_dialog_keys');
   await page.keyboard.press('Escape');
   await page.locator('#finish-removal-dialog').waitFor({state: 'hidden'});
+  await page.evaluate(()=>libraryStore.flush());
   check('finish_dialog_escape_keeps_the_recovery_available_and_shelf_unchanged', await page.locator('#removal-recovery').isVisible() &&
     await page.evaluate(() => localStorage.getItem('coconut-reader-v1')) === shelfWithRecovery);
   await page.locator('#undo-removal').click();
+  await page.evaluate(()=>libraryStore.flush());
   check('noncurrent_undo_restores_the_complete_shelf', await page.evaluate(() => localStorage.getItem('coconut-reader-v1')) === shelfBeforeDialogs && await page.locator('#removal-recovery').isHidden());
   await checkDrafts('finish_removal_cancel_and_undo');
 
@@ -440,6 +447,7 @@ try {
   await page.locator('#cancel-large-backup').click();
   await page.locator('#large-backup-dialog').waitFor({state: 'hidden'});
   await page.waitForFunction(() => document.querySelector('#file').files.length === 0);
+  await page.evaluate(()=>libraryStore.flush());
   check('large_backup_cancel_clears_the_selection_and_preserves_the_complete_shelf', await page.evaluate(() => localStorage.getItem('coconut-reader-v1')) === shelfBeforeDialogs);
   await checkDrafts('large_backup_dialog_cancel');
   check('combined_drafts_and_dialogs_make_no_network_requests_or_media_chooser', requests.length === detourRequests && fileChoosers === detourChoosers);
@@ -545,6 +553,7 @@ try {
   check('search_shortcut_works_after_queued_native_help_close', await focusIs('#search'));
   check('reload_preserves_authored_source_and_keyboard_typed_note', JSON.stringify((await stored()).notes) === JSON.stringify(finalDoc.notes) && (await stored()).readingPosition === fixture.readingPosition);
   check('reload_preserves_project_annotations_without_saving_canceled_drafts', (await stored()).project_note === fixture.project_note && JSON.stringify((await stored()).timestamp_bookmarks) === JSON.stringify(fixture.timestamp_bookmarks) && JSON.stringify((await stored()).translation_glossary) === JSON.stringify(finalDoc.translation_glossary));
+  await page.evaluate(()=>libraryStore.flush());
   check('no_external_media_upload_ai_model_or_browser_error', external === 0 && mutations === 0 && browserErrors.length === 0 && fileChoosers === noMediaChoosers + 1 && await page.evaluate(() => !localStorage.getItem('coconut-reader-v1').includes('blob:')));
   console.log(JSON.stringify({suite: 'reading-keyboard-authored-media', status: 'passed', checks}));
 } catch (error) {

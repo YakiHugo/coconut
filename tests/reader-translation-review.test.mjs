@@ -29,7 +29,7 @@ function setup(stored,desktop=false){
  w.localStorage.setItem(key,stored||JSON.stringify({documents:[doc]}));
  w.sessionStorage.setItem('coconut-reader-active-v1',doc.key);
  let calls=0;w.fetch=async()=>{calls++;throw new Error('No network permitted for manual review');};
- w.eval(['summary','core','passages','passage-playback','app','language','translation-review','podcasts'].map(file=>fs.readFileSync(new URL(`reader/${file}.js`,root),'utf8')).join('\n')+'\nwindow.reviewTest={doc:()=>active(),render,save,hasUnsavedReaderChanges,other(){const doc=JSON.parse(JSON.stringify(active()));doc.key="other";doc.title="Other review document";state.documents.push(doc);save();render();},navigate(key){[...$("library").children].find(row=>row.dataset.documentKey===key).querySelector(".library-open").click();},annotations(){active().project_note="";active().timestamp_bookmarks=[];save();render();},closing:value=>readerClosing=value,replace(scope,id){const doc=active();if(scope==="document")state.documents[state.documents.indexOf(doc)]={...doc};else{const index=doc.segments.findIndex(s=>s.id===id);doc.segments[index]={...doc.segments[index]};}}};'+(desktop?'\nlet sourceSubmitting=false,sourceCaptionRequest=null;\n'+fs.readFileSync(new URL('reader/updates.js',root),'utf8'):''));
+ w.eval(['summary','core','passages','passage-playback','library-store','app','language','translation-review','podcasts'].map(file=>fs.readFileSync(new URL(`reader/${file}.js`,root),'utf8')).join('\n')+'\nwindow.reviewTest={doc:()=>active(),render,flush:()=>libraryStore.flush(),hasUnsavedReaderChanges,other(){const doc=JSON.parse(JSON.stringify(active()));doc.key="other";doc.title="Other review document";state.documents.push(doc);queueDocument(doc);render();},navigate(key){[...$("library").children].find(row=>row.dataset.documentKey===key).querySelector(".library-open").click();},annotations(){active().project_note="";active().timestamp_bookmarks=[];queueDocument(active());render();},closing:value=>readerClosing=value,replace(scope,id){const doc=active();if(scope==="document")state.documents[state.documents.indexOf(doc)]={...doc};else{const index=doc.segments.findIndex(s=>s.id===id);doc.segments[index]={...doc.segments[index]};}}};'+(desktop?'\nlet sourceSubmitting=false,sourceCaptionRequest=null;\n'+fs.readFileSync(new URL('reader/updates.js',root),'utf8'):''));
  let requestId=0;const request=(kind='close')=>({id:++requestId,kind,expiresAt:Date.now()+60000});
  return {w,$:id=>w.document.getElementById(id),calls:()=>calls,request};
 }
@@ -152,14 +152,14 @@ test('DOM queue opens full late-cue editor across filters, exact save survives r
   assert.match($('translation-edit-text').value,/<script>/);assert.equal($('translation-edit-source').querySelector('script'),null);
   assert.equal($('search').value,'');assert.ok(w.document.querySelector('.segment[data-segment-id="review-102"]'));
   input(w,$('translation-edit-text'),'  手工核对 <img>\n103 个苹果  ');assert.equal(unload(w),true);assert.equal($('save-translation-edit').textContent,'保存人工修正');
-  $('save-translation-edit').click();assert.equal($('translation-edit-dialog').open,false);assert.equal($('translation-queue-dialog').open,true);assert.equal(unload(w),false);assert.match($('translation-queue-summary').textContent,/0 段过期/);
+  await $('save-translation-edit').onclick(new w.Event('click'));assert.equal($('translation-edit-dialog').open,false);assert.equal($('translation-queue-dialog').open,true);assert.equal(unload(w),false);assert.match($('translation-queue-summary').textContent,/0 段过期/);
   const doc=w.reviewTest.doc();assert.equal(doc.segments[102].translations.zh.text,'  手工核对 <img>\n103 个苹果  ');assert.match(w.Coconut.notebookMarkdown(doc),/手工核对 &lt;img&gt;/);assert.match(w.Coconut.subtitleExport(doc,'vtt',true).text,/手工核对 &lt;img&gt;/);assert.equal(calls(),0);disk=w.localStorage.getItem(key);
  }finally{await w.happyDOM.close();}
  const restored=setup(disk);try{const doc=restored.w.reviewTest.doc();assert.equal(restored.w.Coconut.translationCurrent(doc.segments[102],doc,doc.segments[102].translations.zh),true);assert.match(doc.segments[102].translations.zh.text,/103 个苹果/);}finally{await restored.w.happyDOM.close();}
 });
 
 test('explicit unchanged confirmation clears quality hint and preserves machine warning evidence',async()=>{
- const {w,$}=setup();try{open($,w,'review-1');assert.match($('save-translation-edit').textContent,/确认已核对当前原文/);$('save-translation-edit').click();
+ const {w,$}=setup();try{open($,w,'review-1');assert.match($('save-translation-edit').textContent,/确认已核对当前原文/);await $('save-translation-edit').onclick(new w.Event('click'));
   const item=w.reviewTest.doc().segments[1].translations.zh;assert.equal(item.quality_warnings[0],'numbers_changed');assert.equal(w.Coconut.translationQualityMessage(item),'');assert.equal(item.original_translation.quality_warnings[0],'numbers_changed');assert.match($('translation-queue-summary').textContent,/0 段质量提示/);
  }finally{await w.happyDOM.close();}
 });
@@ -170,7 +170,7 @@ test('cancel, Escape and editor switching protect dirty text; background changes
   $('translation-edit-cancel').click();assert.equal($('translation-edit-dialog').open,true);
   $('translation-edit-dialog').dispatchEvent(new w.Event('cancel',{cancelable:true}));assert.equal($('translation-edit-dialog').open,true);
   w.CoconutTranslationReview.openEditor('review-doc','review-1','zh');assert.equal($('translation-edit-text').value,'unsaved manual draft');assert.equal(questions,3);
-  w.reviewTest.doc().segments[102].text+=' newer source';w.reviewTest.render();assert.equal($('translation-edit-text').value,'unsaved manual draft');$('save-translation-edit').click();assert.match($('translation-edit-error').textContent,/已变化/);assert.equal(w.reviewTest.doc().segments[102].translations.zh.manual_review,undefined);assert.equal(unload(w),true);
+  w.reviewTest.doc().segments[102].text+=' newer source';w.reviewTest.render();assert.equal($('translation-edit-text').value,'unsaved manual draft');await $('save-translation-edit').onclick(new w.Event('click'));assert.match($('translation-edit-error').textContent,/已变化/);assert.equal(w.reviewTest.doc().segments[102].translations.zh.manual_review,undefined);assert.equal(unload(w),true);
   w.confirm=()=>true;$('translation-edit-cancel').click();assert.equal(unload(w),false);
  }finally{await w.happyDOM.close();}
 });
@@ -179,7 +179,7 @@ for(const scope of ['document','segment'])test(`replacement ${scope} with identi
  const {w,$}=setup();try{
   open($,w);input(w,$('translation-edit-text'),'Original document draft');
   const before=JSON.stringify(w.reviewTest.doc().segments[102].translations.zh);
-  w.reviewTest.replace(scope,'review-102');w.reviewTest.render();$('save-translation-edit').click();
+  w.reviewTest.replace(scope,'review-102');w.reviewTest.render();await $('save-translation-edit').onclick(new w.Event('click'));
   assert.match($('translation-edit-error').textContent,/替换或关闭/);assert.equal($('translation-edit-dialog').open,true);
   assert.equal($('translation-edit-text').value,'Original document draft');assert.equal(unload(w),true);
   assert.equal(JSON.stringify(w.reviewTest.doc().segments[102].translations.zh),before);
@@ -198,7 +198,7 @@ test('long context is paged in the editor while all reviewed evidence survives s
   assert.equal($('translation-edit-context').children.length,10);assert.equal($('translation-edit-context-position').textContent,'91–100 / 100 条上下文');
   assert.equal($('translation-edit-context-next').disabled,true);assert.equal($('translation-edit-text').value,'Manual draft across context pages');
   $('translation-edit-context-previous').click();assert.equal($('translation-edit-context-position').textContent,'61–90 / 100 条上下文');
-  $('save-translation-edit').click();assert.equal($('translation-edit-dialog').open,false);
+  await $('save-translation-edit').onclick(new w.Event('click'));assert.equal($('translation-edit-dialog').open,false);
   assert.equal(w.reviewTest.doc().segments[101].translations.zh.manual_review.cues.length,101);
   disk=w.localStorage.getItem(key);
  }finally{await w.happyDOM.close();}
@@ -214,7 +214,7 @@ test('editor displays missing historical context separately from current source 
  const {w,$}=setup(JSON.stringify({documents:[doc],active:doc.key}));try{
   w.CoconutTranslationReview.openEditor(doc.key,'review-7','zh');
   assert.match($('translation-edit-context').textContent,/历史上下文片段已不在当前文字稿：review-1/);
-  $('save-translation-edit').click();
+  await $('save-translation-edit').onclick(new w.Event('click'));
   const current=w.reviewTest.doc(),item=current.segments.at(-1).translations.zh;
   assert.deepEqual(Array.from(item.manual_review.missing_cue_ids),['review-1']);
   assert.equal(w.Coconut.translationCurrent(current.segments.at(-1),current,item),true);
@@ -224,12 +224,12 @@ test('editor displays missing historical context separately from current source 
 test('failed persistence retains human text in memory, exposes backup warning and keeps unload protection',async()=>{
  const {w,$}=setup();try{
   open($,w);const storage=w.localStorage,disk=storage.getItem(key);Object.defineProperty(w,'localStorage',{value:{getItem:k=>storage.getItem(k),setItem(){throw new Error('full');}}});
-  input(w,$('translation-edit-text'),'Human draft retained');$('save-translation-edit').click();assert.equal(w.reviewTest.doc().segments[102].translations.zh.text,'Human draft retained');assert.equal(storage.getItem(key),disk);assert.equal($('save-status').hidden,false);assert.equal(unload(w),true);assert.match($('notice').textContent,/尚未保存到浏览器/);
+  input(w,$('translation-edit-text'),'Human draft retained');await $('save-translation-edit').onclick(new w.Event('click'));assert.equal(w.reviewTest.doc().segments[102].translations.zh.text,'Human draft retained');assert.equal(storage.getItem(key),disk);assert.equal($('save-status').hidden,false);assert.equal(unload(w),true);assert.match($('notice').textContent,/尚未保存到浏览器/);
  }finally{await w.happyDOM.close();}
 });
 
 test('native closing prevents a manual save, with draft still available if close is released',async()=>{
- const {w,$}=setup();try{open($,w);input(w,$('translation-edit-text'),'Pending native draft');const before=w.localStorage.getItem(key);w.reviewTest.closing(true);$('save-translation-edit').click();assert.equal(w.localStorage.getItem(key),before);assert.equal($('translation-edit-dialog').open,true);assert.equal(w.reviewTest.hasUnsavedReaderChanges(),true);w.reviewTest.closing(false);$('save-translation-edit').click();assert.equal(w.reviewTest.doc().segments[102].translations.zh.text,'Pending native draft');}finally{await w.happyDOM.close();}
+ const {w,$}=setup();try{open($,w);input(w,$('translation-edit-text'),'Pending native draft');const before=w.localStorage.getItem(key);w.reviewTest.closing(true);await $('save-translation-edit').onclick(new w.Event('click'));assert.equal(w.localStorage.getItem(key),before);assert.equal($('translation-edit-dialog').open,true);assert.equal(w.reviewTest.hasUnsavedReaderChanges(),true);w.reviewTest.closing(false);await $('save-translation-edit').onclick(new w.Event('click'));assert.equal(w.reviewTest.doc().segments[102].translations.zh.text,'Pending native draft');}finally{await w.happyDOM.close();}
 });
 
 for(const mode of ['subscription','offline'])test(`${mode} in-flight response cannot overwrite a newer manual save`,async()=>{
@@ -243,7 +243,7 @@ for(const mode of ['subscription','offline'])test(`${mode} in-flight response ca
   };
   $('ai-task').value='translation';$('ai-task').onchange();await $('check-ai').onclick();$('ai-consent').checked=true;
   const run=$(mode==='subscription'?'subscription-translate':'translate-document').onclick();assert.equal(calls,1);
-  open($,w,'review-1');input(w,$('translation-edit-text'),'Newer human correction');$('save-translation-edit').click();release();await run;
+  open($,w,'review-1');input(w,$('translation-edit-text'),'Newer human correction');await $('save-translation-edit').onclick(new w.Event('click'));release();await run;
   assert.equal(w.reviewTest.doc().segments[1].translations.zh.text,'Newer human correction');assert.ok(w.reviewTest.doc().segments[1].translations.zh.manual_review);assert.equal(calls,1);
   assert.match($(mode==='subscription'?'ai-progress':'language-status').textContent,/已被人工修正或替换/);
  }finally{release?.();await w.happyDOM.close();}
@@ -269,7 +269,7 @@ for(const mode of ['subscription','offline'])test(`${mode} human save retires a 
   };
   $('ai-task').value='translation';$('ai-task').onchange();await $('check-ai').onclick();$('ai-consent').checked=true;
   const run=$(mode==='subscription'?'subscription-translate':'translate-document').onclick();assert.equal(calls,1);
-  w.CoconutTranslationReview.openEditor('review-doc','review-65','zh');input(w,$('translation-edit-text'),'Human revision in later batch');$('save-translation-edit').click();release();await run;
+  w.CoconutTranslationReview.openEditor('review-doc','review-65','zh');input(w,$('translation-edit-text'),'Human revision in later batch');await $('save-translation-edit').onclick(new w.Event('click'));release();await run;
   assert.equal(calls,1);assert.equal(w.reviewTest.doc().segments[65].translations.zh.text,'Human revision in later batch');assert.ok(w.reviewTest.doc().segments[65].translations.zh.manual_review);
  }finally{release?.();await w.happyDOM.close();}
 });
@@ -281,28 +281,28 @@ for(const desktop of [false,true])test(`${desktop?'native':'web'} manual drafts 
   input(w,$('translation-glossary'),'apples = 苹果');input(w,$('audio-bookmark-time'),'12');
   open($,w);input(w,$('translation-edit-text'),'First document human draft');
   w.reviewTest.navigate('other');assert.equal($('translation-edit-dialog').open,false);assert.equal(dirty(),true);
-  if(desktop){assert.equal(w.coconutPrepareUpdate(),false);assert.equal(w.coconutPrepareClose('safe',request()),false);}
+  if(desktop){assert.equal(await w.coconutPrepareUpdate(),false);assert.equal(await w.coconutPrepareClose('safe',request()),false);}
   w.CoconutTranslationReview.openEditor('other','review-1','zh');input(w,$('translation-edit-text'),'Second document human draft');
   w.reviewTest.navigate('review-doc');w.CoconutTranslationReview.openEditor('review-doc','review-102','zh');
   assert.equal($('translation-edit-text').value,'First document human draft');assert.equal($('translation-glossary').value,'apples = 苹果');assert.equal($('audio-bookmark-time').value,'12');
-  $('save-translation-edit').click();$('cancel-translation-glossary').click();$('cancel-audio-bookmark').click();assert.equal(dirty(),true,'other document still owns its draft');
+  await $('save-translation-edit').onclick(new w.Event('click'));$('cancel-translation-glossary').click();$('cancel-audio-bookmark').click();assert.equal(dirty(),true,'other document still owns its draft');
   w.reviewTest.navigate('other');w.CoconutTranslationReview.openEditor('other','review-1','zh');assert.equal($('translation-edit-text').value,'Second document human draft');
   w.confirm=()=>true;$('translation-edit-cancel').click();assert.equal(dirty(),false);
  }finally{await w.happyDOM.close();}
 });
 
-function removeReviewDocument(w,$,key='review-doc'){
- [...$('library').children].find(row=>row.dataset.documentKey===key).querySelector('.library-remove').click();$('confirm-removal').click();
+async function removeReviewDocument(w,$,key='review-doc'){
+ [...$('library').children].find(row=>row.dataset.documentKey===key).querySelector('.library-remove').click();await $('confirm-removal').onclick();
 }
 for(const desktop of [false,true])test(`${desktop?'native':'web'} manual draft removal and undo rebind only the explicit restored document`,async()=>{
  const {w,$}=setup(undefined,desktop),dirty=()=>desktop?!w.coconutPrepareClose('inspect').safe:unload(w);
  try{
   w.reviewTest.other();const original=w.reviewTest.doc();open($,w);input(w,$('translation-edit-text'),'Recovered human draft');
-  removeReviewDocument(w,$);assert.equal($('translation-edit-dialog').open,false);assert.equal(dirty(),true);
-  const disk=w.localStorage.getItem(key);$('save-translation-edit').click();assert.equal(w.localStorage.getItem(key),disk,'removed editor cannot save');
-  $('undo-removal').click();assert.notEqual(w.reviewTest.doc(),original);assert.equal(dirty(),true);
+  await removeReviewDocument(w,$);assert.equal($('translation-edit-dialog').open,false);assert.equal(dirty(),true);
+  const disk=w.localStorage.getItem(key);await $('save-translation-edit').onclick(new w.Event('click'));assert.equal(w.localStorage.getItem(key),disk,'removed editor cannot save');
+  await $('undo-removal').onclick();assert.notEqual(w.reviewTest.doc(),original);assert.equal(dirty(),true);
   w.CoconutTranslationReview.openEditor('review-doc','review-102','zh');assert.equal($('translation-edit-text').value,'Recovered human draft');
-  $('save-translation-edit').click();assert.equal(w.reviewTest.doc().segments[102].translations.zh.text,'Recovered human draft');assert.equal(dirty(),false);
+  await $('save-translation-edit').onclick(new w.Event('click'));assert.equal(w.reviewTest.doc().segments[102].translations.zh.text,'Recovered human draft');assert.equal(dirty(),false);
   assert.equal(original.segments[102].translations.zh.manual_review,undefined,'retired document identity is never mutated');
  }finally{await w.happyDOM.close();}
 });
@@ -312,12 +312,12 @@ test('failed noncurrent removal and undo preserve manual drafts, and ending remo
   w.reviewTest.other();open($,w);input(w,$('translation-edit-text'),'First hidden draft');w.reviewTest.navigate('other');
   w.CoconutTranslationReview.openEditor('other','review-1','zh');input(w,$('translation-edit-text'),'Other live draft');
   const backing=w.localStorage;let blocked=true;Object.defineProperty(w,'localStorage',{value:{getItem:k=>backing.getItem(k),setItem(k,v){if(blocked)throw Error('quota');backing.setItem(k,v);}}});
-  removeReviewDocument(w,$);assert.equal($('remove-document-dialog').open,true);$('cancel-removal').click();assert.equal($('translation-edit-text').value,'Other live draft');
-  blocked=false;removeReviewDocument(w,$);assert.equal($('translation-edit-text').value,'Other live draft');
-  blocked=true;$('undo-removal').click();assert.equal($('removal-recovery').hidden,false);assert.equal($('translation-edit-text').value,'Other live draft');
-  blocked=false;$('undo-removal').click();assert.equal(w.reviewTest.doc().key,'other');assert.equal($('translation-edit-text').value,'Other live draft');
+  await removeReviewDocument(w,$);assert.equal($('remove-document-dialog').open,false);assert.match($('notice').textContent,/移除未保存/);$('cancel-removal').click();assert.equal($('translation-edit-text').value,'Other live draft');
+  blocked=false;await removeReviewDocument(w,$);assert.equal($('translation-edit-text').value,'Other live draft');
+  blocked=true;await $('undo-removal').onclick();assert.equal($('removal-recovery').hidden,false);assert.equal($('translation-edit-text').value,'Other live draft');
+  blocked=false;await $('undo-removal').onclick();assert.equal(w.reviewTest.doc().key,'other');assert.equal($('translation-edit-text').value,'Other live draft');
   w.reviewTest.navigate('review-doc');w.CoconutTranslationReview.openEditor('review-doc','review-102','zh');assert.equal($('translation-edit-text').value,'First hidden draft');
-  w.reviewTest.navigate('other');removeReviewDocument(w,$);$('finish-removal').click();$('confirm-finish-removal').click();assert.equal(unload(w),true);
+  w.reviewTest.navigate('other');await removeReviewDocument(w,$);$('finish-removal').click();$('confirm-finish-removal').click();assert.equal(unload(w),true);
   w.CoconutTranslationReview.openEditor('other','review-1','zh');assert.equal($('translation-edit-text').value,'Other live draft');w.confirm=()=>true;$('translation-edit-cancel').click();assert.equal(unload(w),false);
  }finally{await w.happyDOM.close();}
 });
@@ -327,7 +327,7 @@ test('hidden manual draft keeps original evidence and exact identity across repl
   const {w,$}=setup();try{
    w.reviewTest.other();open($,w);input(w,$('translation-edit-text'),'Keep old evidence draft');w.reviewTest.navigate('other');
    w.reviewTest.navigate('review-doc');if(change==='source')w.reviewTest.doc().segments[102].text+=' New source';else w.reviewTest.replace(change,'review-102');
-   w.CoconutTranslationReview.openEditor('review-doc','review-102','zh');assert.equal($('translation-edit-text').value,'Keep old evidence draft');$('save-translation-edit').click();
+   w.CoconutTranslationReview.openEditor('review-doc','review-102','zh');assert.equal($('translation-edit-text').value,'Keep old evidence draft');await $('save-translation-edit').onclick(new w.Event('click'));
    assert.match($('translation-edit-error').textContent,change==='source'?/已变化/:/替换或关闭/);assert.equal(w.reviewTest.doc().segments[102].translations.zh.manual_review,undefined);assert.equal(unload(w),true);
   }finally{await w.happyDOM.close();}
  }
@@ -339,7 +339,7 @@ test('manual save preserves complete AI history and exact persisted summary iden
  const {w,$}=setup(JSON.stringify({documents:[doc],active:doc.key}));try{
   const history=JSON.stringify(w.reviewTest.doc().ai_answers);open($,w);input(w,$('translation-edit-text'),'Manual revision with complete history');
   const backing=w.localStorage;let writes=0;Object.defineProperty(w,'localStorage',{value:{getItem:k=>backing.getItem(k),setItem(k,v){writes++;backing.setItem(k,v);}}});
-  $('save-translation-edit').click();assert.equal(writes,1);assert.equal(JSON.stringify(w.reviewTest.doc().ai_answers),history);assert.equal(JSON.parse(backing.getItem(key)).documents[0].ai_answers.length,225);
+  await $('save-translation-edit').onclick(new w.Event('click'));assert.equal(writes,1);assert.equal(JSON.stringify(w.reviewTest.doc().ai_answers),history);assert.equal(JSON.parse(backing.getItem(key)).documents[0].ai_answers.length,225);
   assert.equal($('ai-history-storage').dataset.state,'saved');assert.equal($('summary-body').textContent,'Answer 3');
   const parsed=w.Coconut.parse(JSON.stringify(w.reviewTest.doc()),'combined.json');assert.equal(JSON.stringify(parsed.ai_answers),history);assert.equal(parsed.segments[102].translations.zh.text,'Manual revision with complete history');
  }finally{await w.happyDOM.close();}
@@ -356,8 +356,8 @@ for(const mode of ['subscription','offline'])test(`${mode} result from removed o
   $('ai-task').value='translation';$('ai-task').onchange();await $('check-ai').onclick();$('ai-consent').checked=true;
   const run=$(mode==='subscription'?'subscription-translate':'translate-document').onclick();
   open($,w,'review-1');input(w,$('translation-edit-text'),'Human draft restored with exact evidence');
-  removeReviewDocument(w,$);$('undo-removal').click();w.CoconutTranslationReview.openEditor('review-doc','review-1','zh');
-  assert.equal($('translation-edit-text').value,'Human draft restored with exact evidence');$('save-translation-edit').click();
+  await removeReviewDocument(w,$);await $('undo-removal').onclick();w.CoconutTranslationReview.openEditor('review-doc','review-1','zh');
+  assert.equal($('translation-edit-text').value,'Human draft restored with exact evidence');await $('save-translation-edit').onclick(new w.Event('click'));
   const disk=w.localStorage.getItem(key);release();await run;assert.equal(w.localStorage.getItem(key),disk);
   assert.equal(w.reviewTest.doc().segments[1].translations.zh.text,'Human draft restored with exact evidence');
   assert.match($(mode==='subscription'?'ai-progress':'language-status').textContent,/移除或更换/);
@@ -372,7 +372,7 @@ for(const id of ['review-1','review-2'])for(const action of ['cancel','escape','
   assert.equal(opener.isConnected,false,'opening the editor replaces the old opener');
   const updatedMore=row().querySelector('.cue-more');if(updatedMore)updatedMore.open=false;
   if(action==='escape')$('translation-edit-dialog').dispatchEvent(new w.Event('cancel',{cancelable:true}));
-  else $(action==='save'?'save-translation-edit':'translation-edit-cancel').click();
+  else if(action==='save')await $('save-translation-edit').onclick(new w.Event('click'));else $('translation-edit-cancel').click();
   const current=row().querySelector('.review-translation-button');assert.equal(w.document.activeElement,current);
   if(current.closest('.cue-more'))assert.equal(current.closest('.cue-more').open,true);assert.equal(current.closest('[hidden]'),null);assert.equal($('reading-settings').open,false);
  }finally{await w.happyDOM.close();}

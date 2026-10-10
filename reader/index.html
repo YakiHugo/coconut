@@ -7,20 +7,21 @@
 <meta name="description" content="把长视频和播客变成自己的阅读空间。对照原文与译文，按时间回听，留下摘录和笔记。">
 <meta name="theme-color" content="#faf9f7">
 <link rel="icon" type="image/png" href="coconut-mark.png">
-<link rel="stylesheet" href="style.css?v=9ae1fae27b">
+<link rel="stylesheet" href="style.css?v=c5c686bafc">
 <script src="summary.js?v=580ffdad1e" defer></script>
 <script src="core.js?v=356129146d" defer>
 </script>
 <script src="passages.js?v=aa95245d4c" defer></script>
 <script src="passage-playback.js?v=162dbb3695" defer></script>
-<script src="app.js?v=eae078317a" defer>
+<script src="library-store.js?v=b9bfd30793" defer></script>
+<script src="app.js?v=5ca6d0320c" defer>
 </script>
-<script src="language.js?v=dc1292bc9e" defer></script>
-<script src="translation-review.js?v=902ff4d03e" defer></script>
-<script src="podcasts.js?v=7486a33f77" defer></script>
-<script src="jobs.js?v=0d6d6a2410" defer>
+<script src="language.js?v=1652b76b45" defer></script>
+<script src="translation-review.js?v=cf09bebe3b" defer></script>
+<script src="podcasts.js?v=f9183ab7f3" defer></script>
+<script src="jobs.js?v=265b2e0e81" defer>
 </script>
-<script src="updates.js?v=61f796ce42" defer></script>
+<script src="updates.js?v=a959396cef" defer></script>
 </head>
 <body>
 <a class="skip-link" href="#main-content">跳到主要内容</a>
@@ -69,12 +70,13 @@
 <div id="reader-title-slot" hidden></div>
 <button id="back-reading" hidden>← 返回阅读</button><span id="count">阅读空间</span>
 <div>
+<div id="save-status-home"><section class="save-pipeline" aria-label="保存状态"><p id="save-status" class="save-warning" role="status" aria-live="polite"></p><div class="save-actions"><button id="retry-save" type="button" hidden>重试保存</button><button id="export-unsaved-documents" type="button" hidden>导出未保存文档备份</button></div></section></div>
 <button id="show-jobs" hidden>处理任务 <span id="job-count">0</span></button>
 <details id="export-menu" class="export-menu" hidden><summary>导出</summary><div class="export-panel"><h2>带走你的阅读成果</h2><button id="export">导出文字稿与笔记</button><p class="hint">完整 JSON 备份，可重新导入恢复；超过50 MiB 时先确认读取</p><div class="subtitle-export"><label>字幕格式<select id="subtitle-format"><option value="srt">SRT</option><option value="vtt">VTT</option></select></label><label><input type="checkbox" id="subtitle-bilingual">附加当前显示语言的有效译文</label><button id="export-subtitles">导出整篇字幕</button><span class="hint">使用修正后原文及原时间戳，不含笔记</span></div>
 <div class="notebook-export"><button id="export-notebook" disabled>导出阅读笔记（0 段）</button><span class="hint">Markdown · 本篇全部摘录与笔记，可用于整理和回顾</span></div></div></details>
 </div>
 </header>
-<p id="save-status" class="save-warning" role="alert" hidden></p>
+<div id="save-warning-home"></div>
 <div id="notice-home"><div id="notice-shell"><div id="notice" role="status" hidden></div><button id="dismiss-notice" type="button" aria-label="关闭成功提示" hidden>关闭</button></div></div>
 <section id="add-workspace" class="import-workspace" aria-label="添加与处理内容">
 <div class="welcome-hero">

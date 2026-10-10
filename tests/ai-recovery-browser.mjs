@@ -34,7 +34,7 @@ try{
  await context.route('**/*',async route=>{const url=new URL(route.request().url());if(url.origin===origin||url.protocol==='blob:')await route.continue();else{external++;await route.abort();}});
  const page=await context.newPage();page.setDefaultTimeout(15000);page.on('pageerror',()=>errors++);await page.goto(origin);
  const importFixture=async doc=>page.locator('#file').setInputFiles({name:'authored-recovery.json',mimeType:'application/json',buffer:Buffer.from(JSON.stringify(doc))});
- const readDocument=async name=>page.evaluate(title=>JSON.parse(localStorage.getItem('coconut-reader-v1')).documents.find(doc=>doc.title===title),name);
+ const readDocument = async name => {await page.evaluate(()=>libraryStore.flush());return page.evaluate(title=>JSON.parse(localStorage.getItem('coconut-reader-v1')).documents.find(doc=>doc.title===title),name);};
  const translatedCount=doc=>doc.segments.filter(cue=>cue.translations?.zh).length;
  const openLanguage=async()=>{await page.locator('#mode-transcript').click();if(!await page.locator('#language-panel').evaluate(node=>node.open))await page.locator('#language-panel > summary').click();await page.locator('#ai-task').selectOption('translation');};
  const settled=()=>page.waitForFunction(()=>document.querySelector('#stop-subscription-translation').hidden);
