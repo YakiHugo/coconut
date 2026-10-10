@@ -36,6 +36,18 @@ async function reload(page,expectPrompt){
  }
 }
 
+
+// Desktop keeps the shelf visible. Only a collapsed mobile shelf needs its
+// toggle; clicking an already expanded toggle would hide the intended card.
+async function openLibraryDocument(page,title){
+ const card=page.locator('#library .library-open').filter({has:page.locator('.library-title',{hasText:title})});
+ if(!await card.isVisible()){
+  const toggle=page.locator('#toggle-library');
+  if(await toggle.isVisible()&&await toggle.getAttribute('aria-expanded')==='false')await toggle.click();
+ }
+ await card.waitFor({state:'visible'});await card.click();
+}
+
 try{
  server=createServer(async(req,res)=>{
   if(!['GET','HEAD'].includes(req.method)){mutations++;res.writeHead(405).end();return;}
@@ -73,9 +85,9 @@ try{
  await reload(page,true);
  await page.locator('#audio-bookmark-search').fill('Other');await reload(page,true);await page.locator('#audio-bookmark-search').fill('');
  check('filtered_correction_draft_restores',await page.locator('#audio-bookmarks form input').first().inputValue()==='35');
- await page.locator('#toggle-library').click();await page.locator('#library button').filter({has:page.locator('.library-title',{hasText:'Authored reload proof'})}).click();
+ await openLibraryDocument(page,'Authored reload proof');
  await reload(page,true);
- await page.locator('#toggle-library').click();await page.locator('#library button').filter({has:page.locator('.library-title',{hasText:'Authored draft protection'})}).click();
+ await openLibraryDocument(page,'Authored draft protection');
  await page.locator('#mode-transcript').click();
  check('plain_transcript_detour_preserves_bookmark_drafts',await page.locator('#audio-bookmark-time').inputValue()==='1:02'&&await page.locator('#audio-bookmark-note').inputValue()==='An unfinished authored thought'&&await page.locator('#audio-bookmarks form input').first().inputValue()==='35');
  await page.locator('#cancel-audio-bookmark').click();await page.locator('#audio-bookmarks form button[type="button"]').first().click();await reload(page,false);
