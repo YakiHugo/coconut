@@ -532,6 +532,15 @@ try {
   await page.keyboard.press('Escape');
   await page.locator('#passage-body').focus(); await page.keyboard.press('/');
   check('restored_shortcuts_work_after_reload', await focusIs('#search'));
+  // A genuine native close queues its event. A newer synchronous focus move
+  // must survive that later event instead of jumping back to the help opener.
+  await page.locator('#mode-passages').click();
+  await page.locator('#keyboard-help-open').click();
+  await page.evaluate(() => {document.querySelector('#keyboard-help').close();document.querySelector('#passage-body').focus();});
+  await settled();
+  check('queued_native_help_close_preserves_newer_reader_focus', await focusIs('#passage-body'));
+  await page.keyboard.press('/');
+  check('search_shortcut_works_after_queued_native_help_close', await focusIs('#search'));
   check('reload_preserves_authored_source_and_keyboard_typed_note', JSON.stringify((await stored()).notes) === JSON.stringify(finalDoc.notes) && (await stored()).readingPosition === fixture.readingPosition);
   check('reload_preserves_project_annotations_without_saving_canceled_drafts', (await stored()).project_note === fixture.project_note && JSON.stringify((await stored()).timestamp_bookmarks) === JSON.stringify(fixture.timestamp_bookmarks) && JSON.stringify((await stored()).translation_glossary) === JSON.stringify(finalDoc.translation_glossary));
   check('no_external_media_upload_ai_model_or_browser_error', external === 0 && mutations === 0 && browserErrors.length === 0 && fileChoosers === noMediaChoosers + 1 && await page.evaluate(() => !localStorage.getItem('coconut-reader-v1').includes('blob:')));
