@@ -7,21 +7,15 @@ import os from 'node:os';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {chromium} from '@playwright/test';
+import {authoredAudioFixture} from './helpers/authored-audio-fixture.mjs';
 const root=fileURLToPath(new URL('../',import.meta.url));
 const checks=[];let server,browser,directory,stage='setup',external=0,mutations=0,errors=0;
 function check(name,value){stage=name;assert.ok(value,name);checks.push(name);}
-function audioFixture(){
- const rate=8000,seconds=180,bytes=Buffer.alloc(44+rate*seconds*2);
- bytes.write('RIFF');bytes.writeUInt32LE(bytes.length-8,4);bytes.write('WAVEfmt ',8);bytes.writeUInt32LE(16,16);bytes.writeUInt16LE(1,20);bytes.writeUInt16LE(1,22);bytes.writeUInt32LE(rate,24);bytes.writeUInt32LE(rate*2,28);bytes.writeUInt16LE(2,32);bytes.writeUInt16LE(16,34);bytes.write('data',36);bytes.writeUInt32LE(bytes.length-44,40);
- const cycle=Buffer.alloc(160);for(let i=0;i<80;i++)cycle.writeInt16LE(Math.round(500*Math.sin(2*Math.PI*i/80)),i*2);
- for(let offset=44;offset<bytes.length;offset+=cycle.length)cycle.copy(bytes,offset,0,Math.min(cycle.length,bytes.length-offset));
- return bytes;
-}
 const sourceParts=['A language model can work with','a limited context window. Keep the original','near the interpretation, and verify the detail.'];
 const translations=['语言模型能处理的，','是有限的上下文窗口。把原文','放在解释旁边，再核对重要细节。'];
 const fixture={title:'短句字幕、跨段语义与中英术语：从 context window 到自己的阅读笔记，这是一份带长标题的原创操作验证材料',language:'en',translation_view:'zh',provenance:{kind:'imported_subtitles',review_status:'Authored short-cue fixture with generated tone-only audio'},segments:Array.from({length:151},(_,i)=>({id:'clip-'+i,start:i*.8,end:(i+1)*.8,text:sourceParts[i%3],translations:{zh:{text:translations[i%3],source_text:sourceParts[i%3],source_language:'en',document_language:'en',provider:'Authored QA translation'}}}))};
 try{
- directory=await fs.mkdtemp(path.join(os.tmpdir(),'coconut-dock-'));const audio=path.join(directory,'authored-tone.wav');await fs.writeFile(audio,audioFixture());
+ directory=await fs.mkdtemp(path.join(os.tmpdir(),'coconut-dock-'));const audio=path.join(directory,'authored-tone.wav');await fs.writeFile(audio,authoredAudioFixture());
  server=createServer(async(req,res)=>{
   if(!['GET','HEAD'].includes(req.method)){mutations++;res.writeHead(405).end();return;}
   const pathname=new URL(req.url,'http://localhost').pathname,name=pathname==='/'?'index.html':pathname.slice(1);
@@ -35,6 +29,7 @@ try{
  const capture=async name=>{if(!process.env.COCONUT_UI_SCREENSHOTS)return;await fs.mkdir(process.env.COCONUT_UI_SCREENSHOTS,{recursive:true});await page.screenshot({path:path.join(process.env.COCONUT_UI_SCREENSHOTS,'dock-'+name+'.png'),fullPage:false,animations:'disabled'});};
  await page.goto(origin);check('no_dock_without_media',await page.locator('#media-dock').isHidden());
  await page.locator('#file').setInputFiles({name:'authored-short-cues.json',mimeType:'application/json',buffer:Buffer.from(JSON.stringify(fixture))});await page.locator('#mode-bilingual').click();
+ if(!await page.locator('#attach-reader-media').isVisible())await page.locator('#toggle-reader-media').click();
  const [chooser]=await Promise.all([page.waitForEvent('filechooser'),page.locator('#attach-reader-media').click()]);await chooser.setFiles(audio);
  await page.waitForFunction(()=>{const p=document.querySelector('#source-media audio');return p&&!p.error&&p.readyState>=2&&p.duration>=179;});
  await page.locator('audio').evaluate(p=>{window.__dockPlayer=p;});

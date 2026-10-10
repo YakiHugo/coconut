@@ -11,7 +11,7 @@ async function setup(handler,stored){
  const w=new Window({url:'http://127.0.0.1:8080/'});w.document.body.innerHTML=fs.readFileSync(new URL('reader/index.html',root),'utf8').split('<body>')[1].split('</body>')[0];Object.defineProperty(w,'crypto',{value:webcrypto});
  if(stored!==undefined)w.localStorage.setItem('coconut-reader-v1',stored);
  const calls=[];w.fetch=async(url,options)=>{calls.push({url,options});return url==='api/health'?{ok:true,json:async()=>({local_worker:false,capabilities:{local_agents:true,podcast_import:true,media_import:false}})}:handler(url,options);};
- w.eval(['summary','core','app','language','podcasts','jobs'].map(name=>fs.readFileSync(new URL('reader/'+name+'.js',root),'utf8')).join('\n'));
+ w.eval(['summary','core','passages','passage-playback','app','language','podcasts','jobs'].map(name=>fs.readFileSync(new URL('reader/'+name+'.js',root),'utf8')).join('\n'));
  w.URL.createObjectURL=()=> 'blob:http://127.0.0.1:8080/local-media';w.URL.revokeObjectURL=()=>{};
  await new Promise(resolve=>setTimeout(resolve,20));return {w,calls,$:id=>w.document.getElementById(id)};
 }
@@ -31,6 +31,10 @@ test('publisher transcript import retains source metadata and downloads media on
   await discover($);const row=$('podcast-results').querySelector('.podcast-episode');row.querySelector('select').value=source.transcript_url;await row.querySelector('button').onclick();
   const payload=JSON.parse(calls.at(-1).options.body);assert.equal(payload.transcriptUrl,source.transcript_url);assert.equal(payload.episodeId,episode);assert.ok(!calls.some(c=>c.url.endsWith('/media')));
   const doc=JSON.parse(w.localStorage.getItem('coconut-reader-v1')).documents[0];assert.deepEqual(doc.podcast_source,source);assert.match($('provenance').textContent,/发布者/);assert.equal($('summary-state').textContent,'未生成');
+  $('mode-transcript').click();assert.equal($('transcript-layout').hidden,false);
+  assert.equal($('episode-media').hidden,true);assert.equal($('toggle-reader-media').hidden,false);assert.equal($('toggle-reader-media').getAttribute('aria-expanded'),'false');
+  $('toggle-reader-media').click();assert.equal($('episode-media').hidden,false);assert.equal($('podcast-playback').hidden,false);assert.equal($('download-podcast-media').hidden,false);assert.equal($('download-podcast-media').disabled,false);assert.equal($('toggle-reader-media').getAttribute('aria-expanded'),'true');
+  assert.ok(!calls.some(c=>c.url.endsWith('/media')),'expanding source controls must not download media');
   await $('download-podcast-media').onclick();assert.ok(w.document.querySelector('#source-media audio'));assert.ok(!w.localStorage.getItem('coconut-reader-v1').includes('blob:'));assert.equal(calls.filter(c=>c.url.endsWith('/media')).length,1);assert.ok(!calls.some(c=>c.url.includes('/ask')||c.url.includes('language-tools')));
  }finally{await w.happyDOM.close();}
 });

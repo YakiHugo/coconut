@@ -11,7 +11,7 @@ function setup(){
  w.document.body.innerHTML=fs.readFileSync(new URL('reader/index.html',root),'utf8').split('<body>')[1].split('</body>')[0];
  Object.defineProperty(w,'crypto',{value:webcrypto});
  w.fetch=()=>{throw new Error('Local subtitle imports must not contact a server');};
- w.eval(['summary','core','app','language','podcasts'].map(name=>fs.readFileSync(new URL('reader/'+name+'.js',root),'utf8')).join('\n'));
+ w.eval(['summary','core','passages','passage-playback','app','language','podcasts'].map(name=>fs.readFileSync(new URL('reader/'+name+'.js',root),'utf8')).join('\n'));
  const $=id=>w.document.getElementById(id),stored=()=>JSON.parse(w.localStorage.getItem(KEY));
  const choose=async(name,text)=>{Object.defineProperty($('file'),'files',{configurable:true,value:[{name,size:Buffer.byteLength(text),text:async()=>text}]});await $('file').onchange();};
  return {w,$,stored,choose};

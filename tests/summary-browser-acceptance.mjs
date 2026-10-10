@@ -25,7 +25,7 @@ try{
  const page=await context.newPage();page.on('pageerror',()=>errors++);page.setDefaultTimeout(15000);
  await page.goto(origin);const fixture={title:'长文摘要测试 · 仅模拟结果',language:'en',segments:Array.from({length:5001},(_,i)=>({id:'source-'+i,start:i,end:i+1,text:'Synthetic source cue '+i}))};
  await page.locator('#file').setInputFiles({name:'long.json',mimeType:'application/json',buffer:Buffer.from(JSON.stringify(fixture))});
- await page.locator('#prepare-summary').click();check('plan_before_any_inference',requests.length===0&&(await page.locator('#summary-plan').textContent()).includes('共 14 次'));
+ await page.locator('#mode-summary').click();await page.locator('#prepare-summary').click();check('plan_before_any_inference',requests.length===0&&(await page.locator('#summary-plan').textContent()).includes('共 14 次'));
  check('mobile_plan_fits',await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
  await page.locator('#check-ai').click();await page.locator('#ai-consent').check();await page.locator('#ask-ai').click();
  await page.waitForFunction(()=>document.querySelector('#ai-progress').textContent.includes('第 1/13'));
@@ -33,7 +33,7 @@ try{
  await firstStarted;await page.locator('#stop-summary').click();release();
  await page.waitForFunction(()=>document.querySelector('#ai-progress').textContent.includes('已停止后续请求'));
  check('one_durable_batch_after_stop',requests.length===1&&await page.evaluate(()=>JSON.parse(localStorage.getItem('coconut-reader-v1')).documents[0].summary_job.results.length===1));
- await page.reload();await page.locator('#prepare-summary').click();
+ await page.reload();await page.locator('#mode-summary').click();await page.locator('#prepare-summary').click();
  check('reload_does_not_resume',requests.length===1&&!(await page.locator('#ai-consent').isChecked())&&(await page.locator('#summary-plan').textContent()).includes('本次继续 13 次'));
  await page.locator('#check-ai').click();await page.locator('#ai-consent').check();await page.locator('#ask-ai').click();
  await page.waitForFunction(()=>document.querySelector('#summary-state').dataset.state==='current');
@@ -45,7 +45,7 @@ try{
  const other=await browser.newContext({serviceWorkers:'block'}),restored=await other.newPage();restored.on('pageerror',()=>errors++);await restored.goto(origin);await restored.locator('#file').setInputFiles(exported);
  await restored.waitForFunction(()=>document.querySelector('#summary-state').dataset.state==='current');
  check('export_reimport_recovers_complete_summary',(await restored.locator('#summary-body').textContent()).includes('测试用汇总'));
- await restored.locator('#summary-citations button').first().click();await openCueActions(restored.locator('.segment').first());await restored.locator('.segment .edit-button').first().click();await restored.locator('#edit-segment').fill('Modified source, after summary');await restored.locator('#save-edit').click();await restored.locator('#mode-summary').click();
+ await restored.locator('#mode-summary').click();await restored.locator('#summary-citations button').first().click();await openCueActions(restored.locator('.segment').first());await restored.locator('.segment .edit-button').first().click();await restored.locator('#edit-segment').fill('Modified source, after summary');await restored.locator('#save-edit').click();await restored.locator('#mode-summary').click();
  check('changed_original_marks_summary_stale',await restored.locator('#summary-state').getAttribute('data-state')==='stale');
  check('no_external_requests_or_browser_errors',external===0&&errors===0);
  console.log(JSON.stringify({suite:'long-summary-mocked',status:'passed',checks}));

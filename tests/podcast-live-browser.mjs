@@ -49,7 +49,7 @@ try {
  const importResponse=page.waitForResponse(r=>r.url()===origin+'/api/podcasts/import'&&r.request().method()==='POST');
  await row.getByRole('button',{name:'导入发布者文字稿',exact:true}).click();const importedResponse=await importResponse;
  assert.equal(importedResponse.status(),200);const imported=await importedResponse.json();
- await page.locator('#summary-workspace').waitFor({state:'visible'});
+ await page.locator('#mode-summary').click();await page.locator('#summary-workspace').waitFor({state:'visible'});
  check('actual_publisher_transcript_reaches_reader',imported.status==='ready'&&imported.document.segments.length>10&&(await page.locator('#title').textContent())===episode.title);
  check('real_provenance_and_no_fabricated_summary',(await page.locator('#provenance').textContent()).includes('发布者')&&(await page.locator('#summary-state').textContent())==='未生成'&&imported.document.provenance.review_status==='unreviewed');
  check('no_automatic_media_download',!calls.includes('media'));

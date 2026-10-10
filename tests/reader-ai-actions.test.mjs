@@ -17,7 +17,7 @@ function setup(stored){
   if(url.endsWith('translate-subscription'))return {ok:true,json:async()=>({translations:body.segments.map(s=>({id:s.id,source_text:s.text,text:'Injected translation.'}))})};
   return {ok:true,json:async()=>({answer:'Injected answer.',citations:[body.segments[0].id],provider:'fixture'})};
  };
- w.eval(['summary','core','app','language'].map(name=>fs.readFileSync(new URL('reader/'+name+'.js',root),'utf8')).join('\n'));
+ w.eval(['summary','core','passages','passage-playback','app','language'].map(name=>fs.readFileSync(new URL('reader/'+name+'.js',root),'utf8')).join('\n'));
  const $=id=>w.document.getElementById(id),task=value=>{$('ai-task').value=value;$('ai-task').onchange();};
  return {w,$,task,requests};
 }

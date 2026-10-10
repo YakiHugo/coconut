@@ -12,6 +12,8 @@ function setup(stored, beforeLoad=null){
   beforeLoad?.(window);
   window.eval(fs.readFileSync(new URL('reader/summary.js',root),'utf8'));
   window.eval(fs.readFileSync(new URL('reader/core.js',root),'utf8'));
+  window.eval(fs.readFileSync(new URL('reader/passages.js',root),'utf8'));
+  window.eval(fs.readFileSync(new URL('reader/passage-playback.js',root),'utf8'));
   window.eval(fs.readFileSync(new URL('reader/app.js',root),'utf8') + '\n' + fs.readFileSync(new URL('reader/language.js',root),'utf8') + '\n' + fs.readFileSync(new URL('reader/podcasts.js',root),'utf8'));
   return window;
 }
