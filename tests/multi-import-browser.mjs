@@ -60,6 +60,23 @@ try{
  const final=await stored();check('explicit_retry_acknowledges_exact_failed_identity',final.documents.some(doc=>doc.title==='Quota file'&&doc.notes.cue==='Private note for Quota file'));
  await page.reload();assert.deepEqual((await stored()).documents,final.documents);check('reload_confirms_partial_batch_and_retry_without_unsaved_or_unstarted_files',final.documents.length===7&&!final.documents.some(doc=>/^(Slow|Never|After quota|Held navigation)/.test(doc.title)));
  check('all_file_inputs_are_reset_after_owned_requests',await page.locator('#file').evaluate(input=>input.files.length===0));
+ stage='file_drop_journey';await page.locator('#add-content').click();
+ await choose(file('Wrong picker','Not a transcript','mp3'));
+ await page.waitForFunction(()=>document.getElementById('transcript-drop-status').textContent.includes('Wrong picker.mp3'));
+ check('rejected_picker_clears_native_file_selection',await page.locator('#file').evaluate(input=>input.files.length===0&&input.value===''));
+ const dropFiles=async entries=>{
+  const transfer=await page.evaluateHandle(entries=>{const data=new DataTransfer();for(const entry of entries)data.items.add(new File([entry.text],entry.name,{type:entry.name.endsWith('.json')?'application/json':'text/plain'}));return data;},entries);
+  try{await page.locator('#transcript-drop-target').dispatchEvent('dragenter',{dataTransfer:transfer});await page.locator('#transcript-drop-target').dispatchEvent('dragover',{dataTransfer:transfer});await page.locator('#transcript-drop-target').dispatchEvent('drop',{dataTransfer:transfer});}finally{await transfer.dispose();}
+ };
+ await dropFiles([{name:'Rejected.json',text:JSON.stringify(source('Rejected'))},{name:'Wrong.mp3',text:'Not media'}]);
+ await page.waitForFunction(()=>document.getElementById('transcript-drop-status').textContent.includes('Wrong.mp3'));
+ check('mixed_drop_rejected_before_any_file_read',!await page.evaluate(()=>window.multiProbe.reads.includes('Rejected.json')||window.multiProbe.reads.includes('Wrong.mp3')));
+ await dropFiles([{name:'Dropped.json',text:JSON.stringify(source('Dropped'))},{name:'Drop captions.vtt',text:'WEBVTT\n\n00:00:01.000 --> 00:00:03.000\n<v Ada>Dropped local captions\n'}]);
+ await page.waitForFunction(()=>document.querySelectorAll('#transcript-import-list li').length===2&&[...document.querySelectorAll('#transcript-import-list li')].every(row=>row.dataset.status==='saved'));
+ check('actual_file_drop_preserves_order_and_receipts',JSON.stringify(await statuses())===JSON.stringify(['saved','saved']));
+ check('drop_highlight_clears_and_target_fits_mobile',await page.locator('#transcript-drop-target').evaluate(node=>!node.classList.contains('is-file-drag')&&node.getBoundingClientRect().right<=innerWidth));
+ const dropped=await stored();check('drop_preserves_vtt_speaker',dropped.documents.find(doc=>doc.title==='Drop captions').segments[0].speaker==='Ada');
+ await page.reload();assert.deepEqual((await stored()).documents,dropped.documents);check('drop_successes_survive_indexeddb_reload',true);
  check('no_network_upload_external_request_or_page_error',mutations===0&&external===0&&errors===0);
  console.log(JSON.stringify({suite:'multi-transcript-import',status:'passed',checks}));
 }catch(error){console.error(JSON.stringify({suite:'multi-transcript-import',status:'failed',stage,checks,error:error.message}));process.exitCode=1;}

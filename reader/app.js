@@ -55,7 +55,9 @@ let localMediaPickerTarget=null,pendingLocalMediaChoice=null;
 function projectSourceSnapshot(doc){return JSON.stringify(doc.podcast_source||doc.local_media_source);}
 let pendingBackupReview = null;
 let transcriptImportBatch = null;
+let transcriptDragDepth = 0;
 function cancelLocalImports(keepInput = null) {
+ resetTranscriptDropTarget();
  localImportRevision++;
  stopTranscriptImportBatch();
  pendingLocalMediaChoice?.(null);
@@ -1423,9 +1425,49 @@ document.addEventListener("keydown", event => {
 	if (event.key === "Escape" && selected && !$("export-menu").open && !document.querySelector("dialog[open]")) $("close-note").click();
 });
 $("import").onclick = () => $("file").click();
-$("file").onchange = async () => {
-	const files=Array.from($("file").files),f=files[0];
-	if (!f) return;
+$("file").onchange = () => selectTranscriptFiles(Array.from($("file").files),true);
+function resetTranscriptDropTarget(){
+ transcriptDragDepth=0;$('transcript-drop-target').classList.remove('is-file-drag');
+}
+function isTranscriptFileDrag(event){
+ return Array.from(event.dataTransfer?.types||[]).includes('Files');
+}
+const transcriptDropTarget=$('transcript-drop-target');
+transcriptDropTarget.ondragenter=event=>{
+ if(!isTranscriptFileDrag(event))return;
+ event.preventDefault();transcriptDragDepth++;
+ transcriptDropTarget.classList.add('is-file-drag');
+};
+transcriptDropTarget.ondragover=event=>{
+ if(!isTranscriptFileDrag(event))return;
+ event.preventDefault();event.dataTransfer.dropEffect=contentIngressAllowed()?'copy':'none';
+};
+transcriptDropTarget.ondragleave=event=>{
+ if(!isTranscriptFileDrag(event))return;
+ // Moving between children can leave before the matching enter. A related
+ // target inside the owned region must not clear its highlight.
+ transcriptDragDepth=Math.max(0,transcriptDragDepth-1);
+ if(event.relatedTarget?.nodeType&&transcriptDropTarget.contains(event.relatedTarget))return;
+ if(!transcriptDragDepth||event.relatedTarget)resetTranscriptDropTarget();
+};
+transcriptDropTarget.ondrop=event=>{
+ if(!isTranscriptFileDrag(event))return;
+ event.preventDefault();resetTranscriptDropTarget();
+ let directories;
+ try{directories=Array.from(event.dataTransfer.items||[]).filter(item=>item.kind==='file').map(item=>item.webkitGetAsEntry?.()).filter(entry=>entry?.isDirectory);}
+ catch{$('transcript-drop-status').textContent='未导入任何文件。无法检查拖放内容，请使用「导入文字稿」选择文件。';return;}
+ if(directories.length){$('transcript-drop-status').textContent='未导入任何文件。请拖放文字稿文件，不支持文件夹：'+directories.map(entry=>entry.name).join('、');return;}
+ return selectTranscriptFiles(Array.from(event.dataTransfer.files||[]));
+};
+async function selectTranscriptFiles(files,fromPicker=false){
+ const f=files[0];
+ if(!f)return;
+ // Both picker and drop share admission and the exact same receipt pipeline.
+ // Reject unsupported selections before retiring an existing import or reading.
+ const unsupported=files.filter(file=>! /\.(json|srt|vtt)$/i.test(file.name));
+ if(unsupported.length){if(fromPicker)$('file').value='';$('transcript-drop-status').textContent='未导入任何文件。仅支持 JSON、SRT、VTT；请移除：'+unsupported.map(file=>file.name).join('、');return;}
+ if(!contentIngressAllowed()){if(fromPicker)$('file').value='';$('transcript-drop-status').textContent='暂时无法导入，请等待当前保存、恢复或关闭操作完成后重试。';return;}
+ $('transcript-drop-status').textContent='';
  if(files.length>1)return importTranscriptFiles(files);
  const revision = cancelLocalImports("file"), lifecycleRevision=documentLifecycleRevision;
  transcriptImportBatch=null;$("transcript-import-results").hidden=true;

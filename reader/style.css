@@ -1055,3 +1055,9 @@ body[data-media-docked="true"] .reading-feedback { bottom: 94px; }
 }
 /* A retained search-return landmark must not cover the passage reached by it. */
 #reading-context:not([hidden]) + #passage-workspace .passage { scroll-margin-top: 112px; }
+
+/* Keep the native keyboard picker inside a compact, explicitly owned target. */
+.transcript-drop-target { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; max-width: 100%; min-width: 0; padding: 8px; border: 1px dashed var(--line); border-radius: 10px; }
+.transcript-drop-target.is-file-drag, .transcript-drop-target:focus-within { border-color: var(--accent); outline: 2px solid var(--accent); outline-offset: 2px; }
+#transcript-drop-status:empty { display: none; }
+#transcript-drop-status { color: var(--tone-error, #9a3e28); overflow-wrap: anywhere; }

@@ -18,13 +18,19 @@ function setup({held=false,raw=null,storageResult=null}={}){
  w.fetch=()=>{throw new Error('Transcript file imports must not send network requests');};if(raw)w.localStorage.setItem(KEY,raw);
  if(storageResult)w.CoconutStorageBootstrap={phase:'ready',result:storageResult};
  const saves=installSavePipeline(w,{held});
- w.eval(['summary','core','passages','passage-playback','app','language','translation-review','podcasts'].map(name=>fs.readFileSync(new URL('reader/'+name+'.js',root),'utf8')).join('\n')+'\nwindow.multiTest={get documents(){return state.documents},get active(){return active()},get batch(){return transcriptImportBatch}};');
+ w.eval(['summary','core','passages','passage-playback','app','language','translation-review','podcasts'].map(name=>fs.readFileSync(new URL('reader/'+name+'.js',root),'utf8')).join('\n')+'\nwindow.multiTest={get documents(){return state.documents},get active(){return active()},get batch(){return transcriptImportBatch},set closing(value){readerClosing=value}};');
  const $=id=>w.document.getElementById(id),input=$('file');
  Object.defineProperty(input,'value',{configurable:true,writable:true,value:''});
  const choose=files=>{Object.defineProperty(input,'files',{configurable:true,value:files});input.value=files.map(f=>f.name).join(',');return input.onchange();};
  const rows=()=>[...$('transcript-import-list').children],statuses=()=>rows().map(row=>row.dataset.status);
  const stored=()=>JSON.parse(w.localStorage.getItem(KEY)||'{"documents":[]}');
- return {w,$,saves,choose,rows,statuses,stored};
+ const drag=(type,{files=[],types=['Files'],relatedTarget=null,target=$('transcript-drop-target')}={})=>{
+  const event=new w.Event(type,{bubbles:true,cancelable:true});
+  Object.defineProperties(event,{dataTransfer:{value:{files,types,dropEffect:'none'}},relatedTarget:{value:relatedTarget}});
+  target.dispatchEvent(event);return event;
+ };
+ const drop=files=>$('transcript-drop-target').ondrop({dataTransfer:{types:['Files'],files},preventDefault(){}});
+ return {w,$,saves,choose,drop,drag,rows,statuses,stored};
 }
 
 test('native picker permits several transcripts while library restore remains single-file',async()=>{
@@ -158,4 +164,100 @@ for(const action of ['stop','escape'])test(`large-file batch review ${action} st
 test('batch failure text follows the selected reading theme error palette',()=>{
  const css=fs.readFileSync(new URL('reader/style.css',root),'utf8');
  assert.match(css,/\.transcript-import-item\[data-status="failed"\][^{}]+\{ color: var\(--tone-error, #9a3e28\); \}/);
+});
+
+
+test('drop target owns only file drags, including protected empty file lists, and keeps nested highlighting stable',async()=>{
+ const f=setup();try{
+  const target=f.$('transcript-drop-target'),child=f.$('import');
+  for(const types of [[],['text/plain'],['text/uri-list']])for(const type of ['dragenter','dragover','dragleave','drop']){
+   assert.equal(f.drag(type,{types}).defaultPrevented,false);
+   assert.equal(target.classList.contains('is-file-drag'),false);
+  }
+  assert.equal(f.drag('dragenter').defaultPrevented,true);
+  const over=f.drag('dragover');assert.equal(over.defaultPrevented,true);assert.equal(over.dataTransfer.dropEffect,'copy');
+  f.drag('dragenter',{target:child});f.drag('dragleave',{target:child,relatedTarget:target});
+  assert.equal(target.classList.contains('is-file-drag'),true);
+  f.drag('dragleave');assert.equal(target.classList.contains('is-file-drag'),false);
+  f.drag('dragenter');f.drag('dragleave',{relatedTarget:child});assert.equal(target.classList.contains('is-file-drag'),true);
+  f.drag('dragenter',{target:child});f.drag('dragleave',{relatedTarget:f.$('url')});assert.equal(target.classList.contains('is-file-drag'),false);
+  assert.equal(f.drag('dragover',{target:f.w.document.body}).defaultPrevented,false,'no global navigation interception');
+  f.drag('dragenter');f.w.dispatchEvent(new f.w.Event('pagehide'));assert.equal(target.classList.contains('is-file-drag'),false);
+  let picks=0;f.$('file').click=()=>picks++;child.focus();child.click();assert.equal(picks,1);assert.equal(f.w.document.activeElement,child);
+ }finally{await f.w.happyDOM.close();}
+});
+test('mixed unsupported drops reject before reading or retiring an active batch and render filenames as text',async()=>{
+ const f=setup(),gate=deferred();let pending,reads=0;try{
+  pending=f.choose([file('Held',{text:()=>gate.promise}),file('Next')]);await until(()=>f.statuses()[0]==='reading');
+  const batch=f.w.multiTest.batch;
+  await f.drop([file('Valid',{text:async()=>{reads++;return '{}';}}),file('unsupported',{name:'<img src=x>.mp3',text:async()=>{reads++;return '{}';}})]);
+  assert.equal(reads,0);assert.equal(f.w.multiTest.batch,batch);assert.equal(batch.cancelled,false);assert.equal(f.stored().documents.length,0);
+  assert.match(f.$('transcript-drop-status').textContent,/未导入任何文件.*<img src=x>.mp3/);assert.equal(f.$('transcript-drop-status').querySelector('img'),null);
+  gate.resolve(JSON.stringify(doc('Held')));await pending;assert.deepEqual(f.statuses(),['saved','saved']);
+ }finally{gate.resolve('{}');await pending;await f.w.happyDOM.close();}
+});
+test('drop shares ordering, malformed feedback, dedupe, subtitle sizes and large JSON review',async()=>{
+ const f=setup();let pending,reads=0;try{
+  pending=f.drop([file('First'),file('First'),file('Broken',{text:'{'}),file('Too big',{name:'Too big.srt',size:16*1024*1024,text:async()=>{reads++;return '';}}),file('Large',{size:51*1024*1024,text:async()=>{reads++;return '{}';}}),file('Captions',{name:'Captions.VTT',text:'WEBVTT\n\n00:00:01.000 --> 00:00:02.000\n<v Ada>Local voice\n'})]);
+  await until(()=>f.$('large-backup-dialog').open);assert.deepEqual(f.statuses(),['saved','duplicate','failed','failed','review','queued']);
+  f.$('cancel-large-backup').click();await pending;
+  assert.equal(reads,0);assert.deepEqual(f.statuses(),['saved','duplicate','failed','failed','skipped','saved']);
+  assert.deepEqual(f.stored().documents.map(d=>d.title),['First','Captions']);assert.equal(f.stored().documents[1].segments[0].speaker,'Ada');
+ }finally{f.$('cancel-large-backup').click();await pending;await f.w.happyDOM.close();}
+});
+test('drop uses the same durable receipt and stop ownership without reading later files',async()=>{
+ const f=setup({held:true});let pending,reads=0;try{
+  pending=f.drop([file('First'),file('Never',{text:async()=>{reads++;return '{}';}})]);await until(()=>f.saves.writes.length===1);
+  assert.deepEqual(f.statuses(),['saving','queued']);assert.equal(f.stored().documents.length,0);f.$('stop-transcript-import').click();
+  f.saves.writes[0].commit();await pending;assert.deepEqual(f.statuses(),['saved','cancelled']);assert.equal(reads,0);
+ }finally{for(const write of f.saves.writes)write.commit();await pending;await f.w.happyDOM.close();}
+});
+test('drop save failure stops remaining files and explicit retry updates its existing receipt',async()=>{
+ const f=setup({held:true});let pending,reads=0;try{
+  pending=f.drop([file('Pending'),file('Never',{text:async()=>{reads++;return '{}';}})]);await until(()=>f.saves.writes.length===1);f.saves.writes[0].fail();await pending;
+  assert.deepEqual(f.statuses(),['unsaved','cancelled']);assert.equal(reads,0);assert.equal(f.stored().documents.length,0);
+  f.saves.hold(false);await f.$('retry-save').onclick();assert.deepEqual(f.statuses(),['saved','cancelled']);assert.equal(f.stored().documents.length,1);
+ }finally{for(const write of f.saves.writes)write.commit();await pending;await f.w.happyDOM.close();}
+});
+test('drop admission obeys lifecycle locks before reads or cancelling an existing import',async()=>{
+ const f=setup(),gate=deferred();let pending,reads=0;try{
+  pending=f.choose([file('Held',{text:()=>gate.promise}),file('Next')]);await until(()=>f.statuses()[0]==='reading');const batch=f.w.multiTest.batch;
+  f.w.multiTest.closing=true;await f.drop([file('Blocked',{text:async()=>{reads++;return '{}';}})]);
+  assert.equal(reads,0);assert.equal(f.w.multiTest.batch,batch);assert.equal(batch.cancelled,false);assert.match(f.$('transcript-drop-status').textContent,/暂时无法导入/);
+  assert.equal(f.drag('dragover').dataTransfer.dropEffect,'none');f.w.multiTest.closing=false;gate.resolve(JSON.stringify(doc('Held')));await pending;
+ }finally{gate.resolve('{}');await pending;await f.w.happyDOM.close();}
+});
+test('new drop supersedes an old picker through the shared revision and single drop preserves picker activation',async()=>{
+ const f=setup(),gate=deferred();let pending;try{
+  pending=f.choose([file('Old',{text:()=>gate.promise}),file('Old remaining')]);await until(()=>f.statuses()[0]==='reading');
+  await f.drop([file('New')]);gate.resolve(JSON.stringify(doc('Old')));await pending;
+  assert.deepEqual(f.stored().documents.map(d=>d.title),['New']);assert.equal(f.$('title').textContent,'New');assert.equal(f.w.document.body.dataset.workspace,'read');
+ }finally{gate.resolve('{}');await pending;await f.w.happyDOM.close();}
+});
+
+
+test('mixed directory drops reject before reading or replacing an active batch even with a transcript extension',async()=>{
+ const f=setup(),gate=deferred();let pending,reads=0;try{
+  pending=f.choose([file('Held',{text:()=>gate.promise}),file('Next')]);await until(()=>f.statuses()[0]==='reading');const batch=f.w.multiTest.batch;
+  await f.$('transcript-drop-target').ondrop({preventDefault(){},dataTransfer:{types:['Files'],files:[file('Valid',{text:async()=>{reads++;return '{}';}}),file('Folder')],items:[{kind:'file',webkitGetAsEntry:()=>({isDirectory:true,name:'Folder.json'})}]}});
+  assert.equal(reads,0);assert.equal(f.w.multiTest.batch,batch);assert.equal(batch.cancelled,false);assert.match(f.$('transcript-drop-status').textContent,/未导入任何文件.*文件夹.*Folder.json/);
+  gate.resolve(JSON.stringify(doc('Held')));await pending;
+ }finally{gate.resolve('{}');await pending;await f.w.happyDOM.close();}
+});
+
+
+test('rejected picker resets its own selection while a rejected drop preserves the active picker input',async()=>{
+ const f=setup(),gate=deferred();let pending;try{
+  pending=f.choose([file('Held',{text:()=>gate.promise}),file('Next')]);await until(()=>f.statuses()[0]==='reading');const batch=f.w.multiTest.batch;
+  await f.drop([file('Wrong',{name:'wrong.mp3'})]);assert.equal(f.$('file').value,'Held.json,Next.json');
+  await f.choose([file('Wrong',{name:'wrong.mp3'})]);assert.equal(f.$('file').value,'');assert.equal(f.w.multiTest.batch,batch);assert.equal(batch.cancelled,false);
+  f.w.multiTest.closing=true;await f.choose([file('Blocked')]);assert.equal(f.$('file').value,'');f.w.multiTest.closing=false;
+  gate.resolve(JSON.stringify(doc('Held')));await pending;
+ }finally{gate.resolve('{}');await pending;await f.w.happyDOM.close();}
+});
+test('uninspectable dropped entries reject safely before any file reads',async()=>{
+ const f=setup();let reads=0;try{
+  await f.$('transcript-drop-target').ondrop({preventDefault(){},dataTransfer:{types:['Files'],files:[file('Valid',{text:async()=>{reads++;return '{}';}})],items:[{kind:'file',webkitGetAsEntry(){throw new Error('Unavailable entry');}}]}});
+  assert.equal(reads,0);assert.match(f.$('transcript-drop-status').textContent,/未导入任何文件.*无法检查/);assert.equal(f.stored().documents.length,0);
+ }finally{await f.w.happyDOM.close();}
 });
