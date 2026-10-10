@@ -330,7 +330,7 @@ function el(tag, className, text) {
 	if (text !== undefined) n.textContent = text;
 	return n;
 }
-async function add(doc, canCommit = null, reuseAudioSource = false, lifecycleRevision = documentLifecycleRevision, sourceKey = doc.key) {
+async function add(doc, canCommit = null, reuseAudioSource = false, lifecycleRevision = documentLifecycleRevision, sourceKey = doc.key, {target = null, separate = false} = {}) {
  if(!contentIngressAllowed())throw new Error("导入已取消，书架未改变");
 	const bytes = new TextEncoder().encode(JSON.stringify(doc));
 	const digest = await crypto.subtle.digest("SHA-256", bytes);
@@ -341,18 +341,22 @@ async function add(doc, canCommit = null, reuseAudioSource = false, lifecycleRev
  // A repeated source save refreshes recoverable source metadata, preserving
  // user-owned title, language, notes, bookmark IDs and the stable library key.
  const identity=reuseAudioSource?Coconut.audioProjectIdentity(doc):'';
+ if(separate)key=crypto.randomUUID();
  // Match the complete validated backup, just like whole-library restore. The
  // original hash remains the first choice when reopening an unedited source;
  // otherwise an exported edited snapshot should reuse the same library entry.
- if(!identity&&!state.documents.some(d=>d.key===key)){
+ if(!identity&&!separate&&!state.documents.some(d=>d.key===key)){
   const fingerprint=JSON.stringify(Coconut.validate(doc));
   const matching=state.documents.find(d=>JSON.stringify(Coconut.validate(d))===fingerprint);
   if(matching)key=matching.key;
  }
- const existing=identity&&state.documents.find(d=>Coconut.audioProjectIdentity(d)===identity);
+ const matches=identity?state.documents.filter(d=>Coconut.audioProjectIdentity(d)===identity):[];
+ if(identity&&!target&&matches.length>1)throw new Error('本集有多个书架版本，请明确选择目标项目或单独导入');
+ const existing=target?state.documents.find(d=>d.key===target.key):matches[0];
+ if(target&&(existing!==target.document||JSON.stringify(existing?.podcast_source)!==target.source||Coconut.audioProjectIdentity(existing)!==identity))throw new Error('目标项目已经更新，请重新选择');
  if(!contentIngressAllowed()||pendingStructuralDocuments.has(existing?.key||key))throw new Error('这份文档正在移除或恢复，请稍候再导入');
- if(existing){
-  key=existing.key;
+ if(existing)key=existing.key;
+ if(existing&&Coconut.isAudioProject(existing)){
   const mediaChanged=existing.podcast_source.media_url!==doc.podcast_source.media_url||existing.podcast_source.media_kind!==doc.podcast_source.media_kind;
   existing.podcast_source=doc.podcast_source;existing.source_url=doc.source_url;existing.transcript_status=doc.transcript_status;
   if(doc.media_duration!==undefined)existing.media_duration=doc.media_duration;else delete existing.media_duration;
@@ -376,9 +380,9 @@ async function add(doc, canCommit = null, reuseAudioSource = false, lifecycleRev
 	pageStart = 0;
 	notesOnly = false; excerptsOnly = false; speakerFilter=null;
 	workspace = "read";
-	const inserted=active(),receipt=commitDocument(inserted);
+	const inserted=active(),mediaRevision=mediaSelectionRevision(key),selectionRevision=activeSelectionRevision,receipt=commitDocument(inserted);
 	render();
-	return receipt;
+	return {...await receipt,mediaRevision,selectionRevision};
 }
 function showWorkspace(next) {
  if(next!==workspace)cancelLocalImports();
@@ -1527,7 +1531,11 @@ $("document-details").onclick=()=>{
 $("save-details").onclick=async event=>{
  event.preventDefault();const doc=state.documents.find(d=>d.key===detailsTarget), title=$("document-title").value.trim();
  if(!doc || doc!==detailsTargetIdentity || !contentIngressAllowed(doc) || !title || title.length>200){$("details-error").textContent="请输入1–200字的标题";return;}
- doc.title=title;doc.language=$("document-language").value;
+ const language=$("document-language").value;
+ // Feed/episode metadata is only a hint until real words arrive. Persist an
+ // override solely after an actual user language change, never a title edit.
+ if(Coconut.isAudioProject(doc)&&language!==doc.language)doc.project_language_override=true;
+ doc.title=title;doc.language=language;
  const operation=++detailsSaveRevision,receipt=commitDocument(doc);$("details-dialog").close();render();$("document-details").focus();
  const persisted=await receipt;
  if(persisted.ok&&operation===detailsSaveRevision&&active()===doc&&!$("details-dialog").open&&contentIngressAllowed(doc))notice("文字稿信息已保存；原始来源信息、时间戳和笔记保持不变。", "success");
@@ -2208,12 +2216,19 @@ $('project-transcript-file').onchange=async()=>{
  finally{if(ownsRequest())input.value='';}
 };
 
-async function attachTranscriptToProject(text,target){
- const index=state.documents.findIndex(doc=>doc.key===target.key),original=state.documents[index];
- if(!contentIngressAllowed(original)||original!==target.document||state.active!==target.key||workspace!=='read'||!Coconut.isAudioProject(original)||JSON.stringify(original.podcast_source)!==target.source)throw new Error('目标项目已经切换或更新，本次未附加文字稿，请重新选择');
+async function attachTranscriptToProject(text,target,{canCommit=null,activate=false,publisher=false}={}){
+ const index=state.documents.findIndex(doc=>doc.key===target?.key),original=state.documents[index];
+ // Both entry points must own the exact object and captured source. Discovery
+ // supplies its own live request/navigation owner, never the active reader key.
+ const ownsWorkspace=canCommit?canCommit():state.active===target?.key&&workspace==='read';
+ if(!contentIngressAllowed(original)||!original||original!==target?.document||!ownsWorkspace||!Coconut.isAudioProject(original)||JSON.stringify(original.podcast_source)!==target.source)throw new Error('目标项目已经切换或更新，本次未附加文字稿，请重新选择');
+ if(publisher&&(!Coconut.podcastMediaIdentity(original)||Coconut.podcastMediaIdentity(original)!==Coconut.podcastMediaIdentity(text)))throw new Error('发布者媒体地址或类型已变化，未把新文字稿配到旧原声。请重新发现并保存来源，或选择单独导入。');
  const attached={...Coconut.attachProjectTranscript(original,text),key:original.key};
- state.documents[index]=attached;selected=null;pageStart=0;notesOnly=false;excerptsOnly=false;speakerFilter=null;$('search').value='';
- const receipt=commitDocument(attached);setReadingMode('transcript');render();return receipt;
+ captureAudioBookmarkDrafts();
+ state.documents[index]=attached;
+ if(activate){selectActiveDocument(attached.key);workspace='read';passageReturn=null;passageDocumentKey=attached.key;passageAnchor=attached.segments[0]?.id||null;mediaExpandedKey=null;}
+ selected=null;pageStart=0;notesOnly=false;excerptsOnly=false;speakerFilter=null;searchFocusedId=null;$('search').value='';
+ const mediaRevision=mediaSelectionRevision(attached.key),selectionRevision=activeSelectionRevision,receipt=commitDocument(attached);setReadingMode('transcript');render();return {...await receipt,mediaRevision,selectionRevision};
 }
 
 

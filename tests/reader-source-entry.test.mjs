@@ -6,7 +6,7 @@ import {webcrypto} from 'node:crypto';
 import {Window} from 'happy-dom';
 const root=new URL('../',import.meta.url),feed='https://publisher.example.org/feed.xml';
 const discovery={kind:'feed',title:'Old source results',feed_url:feed,episodes:[{id:'a'.repeat(64),title:'Old episode',source_url:'https://publisher.example.org/episode',media:[],transcripts:[{url:'https://publisher.example.org/captions.vtt',type:'text/vtt',language:'en',supported:true}]}]};
-const documentFixture={title:'Old source document',language:'en',segments:[{id:'a',start:0,end:2,text:'Original authored source'}]};
+const documentFixture={title:'Old source document',language:'en',podcast_source:{feed_url:feed,episode_id:'a'.repeat(64)},segments:[{id:'a',start:0,end:2,text:'Original authored source'}]};
 const response=value=>({ok:true,json:async()=>value});
 async function setup(health,handler=()=>{throw new Error('Unexpected request');}){
  const w=new Window({url:'http://127.0.0.1:8080/'});w.document.body.innerHTML=fs.readFileSync(new URL('reader/index.html',root),'utf8').split('<body>')[1].split('</body>')[0];Object.defineProperty(w,'crypto',{value:webcrypto});

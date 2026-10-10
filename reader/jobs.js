@@ -37,9 +37,8 @@ function retirePodcastSource() {
  // A changed source owns a new result space, even if its URL is not valid yet.
  // Retire identity as well as aborting: delayed parsers/fixtures may still resolve.
  podcastRequest?.abort();podcastRequest=null;podcastDiscovery=null;
- $("podcast-results").querySelectorAll("audio,video").forEach(player=>player.pause());
- $("podcast-results").replaceChildren();
- if(podcastPreviewURL){URL.revokeObjectURL(podcastPreviewURL);podcastPreviewURL=null;}
+ clearPodcastPreview();
+ $("podcast-results").replaceChildren();podcastTargetRows=[];
  setPodcastBusy(false);podcastMessage("");
 }
 function updateSourceEntry() {

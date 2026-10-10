@@ -877,3 +877,5 @@ body[data-media-docked="true"] .reading-feedback { bottom: 94px; }
 .phrase-match small{font-size:inherit}
 
 .phrase-show-translation{font-size:12px;padding:2px 7px;margin-left:8px}
+.podcast-project-choice { display: grid; gap: 6px; margin: 12px 0; font-size: 13px; }
+.podcast-project-choice select { width: 100%; min-width: 0; }
