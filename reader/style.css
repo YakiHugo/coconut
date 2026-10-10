@@ -820,3 +820,14 @@ body[data-media-docked="true"] .reading-feedback { bottom: 94px; }
 .keyboard-keys dt,.keyboard-keys dd{margin:0}.keyboard-keys kbd{font:inherit;font-weight:650;border:1px solid var(--line);border-radius:5px;padding:1px 6px;white-space:nowrap}
 .keyboard-preference{display:flex;align-items:center;gap:8px}.keyboard-preference input{width:auto;margin:0;flex-shrink:0}
 #transcript:focus-visible,#passage-body:focus-visible{outline:2px solid var(--accent);outline-offset:4px}
+/* Local human review uses the reader's dialog/editor pattern. */
+.translation-review-dialog { max-width: 720px; max-height: calc(100dvh - 40px); overflow-y: auto; }
+.translation-review-dialog textarea { width: 100%; box-sizing: border-box; margin-top: 8px; }
+.translation-review-dialog h3 { font-size: 14px; margin: 16px 0 4px; }
+.translation-review-dialog .review-source { white-space: pre-wrap; overflow-wrap: anywhere; color: var(--ink); }
+.translation-review-dialog details { margin: 14px 0; }
+.translation-review-dialog details p { white-space: pre-wrap; overflow-wrap: anywhere; }
+.translation-queue-item { border-bottom: 1px solid var(--line); padding: 12px 0; }
+.translation-queue-preview { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
+#translation-queue-list { padding-left: 24px; }
+#translation-edit-error { color: #9a3412; }

@@ -275,7 +275,7 @@ test('translation text is searchable, stale translations are labelled after corr
  const w=setup();try{await importDocument(w,{translation_view:'zh',segments:[{id:'a',start:1,end:2,text:'Source',translations:{zh:{text:'唯一译文',source_text:'Source',provider:'local'}}}]});
   const search=w.document.getElementById('search');search.value='唯一译文';search.oninput();assert.equal(w.document.querySelectorAll('.segment').length,1);
   w.document.querySelector('.segment .edit-button').click();w.document.getElementById('edit-segment').value='Corrected';w.document.getElementById('save-edit').click();
-  search.value='';search.oninput();assert.match(w.document.querySelector('.translation.stale').textContent,/需要重新生成/);
+  search.value='';search.oninput();assert.match(w.document.querySelector('.translation.stale').textContent,/可核对／修正此译文或重新生成/);
  }finally{await w.happyDOM.close();}
 });
 
@@ -1298,7 +1298,7 @@ test('glossary save and contextual translation send only matching terms and pers
   const doc=JSON.parse(w.localStorage.getItem('coconut-reader-v1')).documents[0];assert.equal(doc.segments[0].translations.zh.context_version,2);assert.deepEqual(doc.segments[0].translations.zh.quality_warnings,['numbers_changed']);
   assert.match($('translation-quality').textContent,/1 段核对提示/);
   $('translation-glossary').value='Coconut = 椰子';$('translation-glossary').oninput();$('save-translation-glossary').click();
-  assert.match(w.document.querySelector('.translation.stale').textContent,/需要重新生成/);assert.equal(requests.length,1);
+  assert.match(w.document.querySelector('.translation.stale').textContent,/可核对／修正此译文或重新生成/);assert.equal(requests.length,1);
  }finally{await w.happyDOM.close();}
 });
 

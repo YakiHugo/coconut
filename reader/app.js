@@ -535,7 +535,7 @@ $('undo-removal').onclick=()=>{
  const changedActive=previous.active!==state.active;
  if(changedActive)rememberActiveDocument();
  if(recovery.bookmarkDraft)audioBookmarkDrafts.set(doc.key,recovery.bookmarkDraft);
- window.dispatchEvent(new CustomEvent('coconut-document-restored',{detail:{key:doc.key,glossaryDrafts:recovery.glossaryDrafts}}));
+ window.dispatchEvent(new CustomEvent('coconut-document-restored',{detail:{key:doc.key,glossaryDrafts:recovery.glossaryDrafts,translationReviewDrafts:recovery.translationReviewDrafts}}));
  removedDocument=null;
  if(changedActive){
   resetReaderForDocumentNavigation();
@@ -811,7 +811,7 @@ function render({keepNoteEditor=false}={}) {
 		body.className="segment-content";
   const parallel=el("div","parallel-text");
   parallel.append(highlightedText("p", "words", s.text, query));
-        if(translated) parallel.append(highlightedText("p", "translation"+(!Coconut.translationCurrent(s,doc,translated)?" stale":""), Coconut.translationCurrent(s,doc,translated) ? translated.text : "原文或上下文已变化，或旧译文缺少上下文记录，此译文需要重新生成", query));
+        if(translated) parallel.append(highlightedText("p", "translation"+(!Coconut.translationCurrent(s,doc,translated)?" stale":""), Coconut.translationCurrent(s,doc,translated) ? translated.text : "原文或上下文已变化，或旧译文缺少上下文记录，可核对／修正此译文或重新生成", query));
         body.append(parallel);
         if(translated && Coconut.translationCurrent(s,doc,translated)) { const warning=Coconut.translationQualityMessage(translated); if(warning)body.append(el("p","translation-review","待核对："+warning)); }
 
@@ -826,6 +826,12 @@ function render({keepNoteEditor=false}={}) {
 			$("edit-dialog").showModal();
 		};
 		body.append(edit);
+  let reviewTranslation=null;
+  if(translated){
+   reviewTranslation=el('button','review-translation-button',translated.manual_review?'核对／修正人工译文':'核对／修正译文');
+   reviewTranslation.onclick=()=>window.CoconutTranslationReview?.openEditor(doc.key,s.id,doc.translation_view);
+
+  }
 		const button = el("button", "", Coconut.hasNoteContent(doc.notes[s.id]) ? "编辑笔记" : "＋ 记一笔");
 		button.onclick = () => {
 			selected = s.id;
@@ -871,6 +877,7 @@ function render({keepNoteEditor=false}={}) {
    focusCueAction(target?.querySelector(".bookmark-button"),viewportTop);
 		};
 		body.append(bookmarkButton);
+  if(reviewTranslation)body.append(reviewTranslation);
   if(compact){
    const actions=el('div','cue-actions');
    const more=el('details','cue-more');more.dataset.cueKey=JSON.stringify([doc.key,s.id]);
@@ -879,6 +886,7 @@ function render({keepNoteEditor=false}={}) {
    const repeat=meta.querySelector('.repeat-button');
    summary.setAttribute('aria-label',summary.dataset.cueTime+' · '+summary.textContent+'：修正、摘录、阅读位置'+(repeat?'与循环回听':''));
    more.append(summary,edit,excerptButton,bookmarkButton);
+   if(reviewTranslation)more.append(reviewTranslation);
    if(repeat)more.append(repeat);
    more.open=openCueActions.has(more.dataset.cueKey);
    actions.append(button);if(contextButton)actions.append(contextButton);actions.append(more);body.append(actions);
@@ -2073,7 +2081,7 @@ function attachTranscriptToProject(text,target){
 // https://developer.mozilla.org/en-US/docs/Web/API/Window/beforeunload_event
 function hasUnsavedReaderChanges() {
  captureAudioBookmarkDrafts();
- if(removedDocument||unsavedDocumentChanges||audioBookmarkDrafts.size||hasLanguageDrafts())return true;
+ if(removedDocument||unsavedDocumentChanges||audioBookmarkDrafts.size||hasLanguageDrafts()||window.CoconutTranslationReview?.hasDraft())return true;
  if($("edit-dialog").open && editingTarget){
   const doc=state.documents.find(d=>d.key===editingTarget.documentKey);
   const segment=doc?.segments.find(s=>s.id===editingTarget.segmentId);

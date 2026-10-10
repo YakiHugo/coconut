@@ -21,6 +21,9 @@ class ServerTests(unittest.TestCase):
             with urlopen(self.base+'/summary.js') as response:
                 self.assertEqual(response.status,200)
                 self.assertIn(b'CoconutSummary',response.read())
+            with urlopen(self.base+'/translation-review.js') as response:
+                self.assertEqual(response.status,200)
+                self.assertIn(b'CoconutTranslationReview',response.read())
             ask.assert_not_called()
 
     def test_actual_upload_to_readable_document(self):

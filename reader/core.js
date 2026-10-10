@@ -125,6 +125,7 @@
 	}
  const QUALITY_LABELS={numbers_changed:'数字或百分比发生变化',glossary_missing:'术语译法未匹配',unchanged_translation:'译文与原文相同',repeated_phrase:'可能重复生成',length_outlier:'译文长度异常，可能漏译或扩写',reading_speed:'按原时间范围显示可能过快'};
  function translationQualityMessage(item) {
+  if(item?.manual_review?.version===1&&item.manual_review.text===item.text)return '';
   return (item?.quality_warnings||[]).filter(c=>Object.hasOwn(QUALITY_LABELS,c)).map(c=>QUALITY_LABELS[c]).join('；');
  }
  function cleanGlossary(value, strict=false) {
@@ -154,7 +155,7 @@
   }
   return result;
  }
- function cleanTranslations(value) {
+ function cleanTranslations(value, includeReview=true) {
   const output=Object.create(null);
   if(!value || typeof value!=="object" || Array.isArray(value)) return output;
   for(const language of ["en","zh","ja","ko","fr","de","es"]) {
@@ -168,9 +169,75 @@
      if(typeof item.input_revision==='string'&&/^[a-f0-9]{64}$/.test(item.input_revision))output[language].input_revision=item.input_revision;
     }
     if(Array.isArray(item.quality_warnings))output[language].quality_warnings=[...new Set(item.quality_warnings.filter(c=>typeof c==='string'&&Object.hasOwn(QUALITY_LABELS,c)))];
+    if(includeReview&&item.original_translation){const original=cleanTranslations({[language]:item.original_translation},false)[language];if(original)output[language].original_translation=original;}
+    if(includeReview&&Object.hasOwn(item,'manual_review'))output[language].manual_review=cleanManualReview(item.manual_review,language);
+
    }
   }
   return output;
+ }
+ // A human review is tied to exactly the source/context shown in its editor.
+ // Historical machine provenance remains intact and is never promoted to a new run.
+ function manualReviewSnapshot(doc, segment, target) {
+  const position=doc.segments.indexOf(segment);
+  if(position<0||!["en","zh","ja","ko","fr","de","es"].includes(target))throw new Error('找不到这段译文');
+  const item=segment.translations?.[target],ids=new Set(),pending=[item],seen=new Set(),byId=new Map(doc.segments.map(s=>[s.id,s]));
+  while(pending.length){
+   const translation=pending.pop();if(!translation||seen.has(translation))continue;seen.add(translation);
+   const context=translation.manual_review?.cues||doc.translation_contexts?.[translation.context_id]||[];
+   for(const cue of context){ids.add(cue.id);if(cue.memory_language)pending.push(byId.get(cue.id)?.translations?.[cue.memory_language]);}
+   for(const id of translation.manual_review?.missing_cue_ids||[])ids.add(id);
+  }
+  for(const cue of doc.segments.slice(Math.max(0,position-1),position+2))ids.add(cue.id);
+  const cues=doc.segments.flatMap((s,index)=>ids.has(s.id)?[{id:s.id,position:index,text:s.text,start:s.start,end:s.end,speaker:s.speaker||null}]:[]);
+  const missing=[...ids].filter(id=>!byId.has(id)).sort();
+  return {target_language:target,document_language:doc.language||'',cues,...(missing.length?{missing_cue_ids:missing}:{}),glossary_snapshot:relevantGlossary(doc,target,cues)};
+ }
+ function cleanManualReview(value,target) {
+  const invalid={invalid:true};
+  // Evidence can span the entire transitive memory graph, not one model batch.
+  // Match the document's supported cue count and source fields without dropping
+  // distant, empty, or long source cues that must still participate in freshness.
+  if(!value||value.version!==1||value.target_language!==target||typeof value.text!=='string'||!value.text.trim()||value.text.length>12000||typeof value.document_language!=='string'||typeof value.previous_text!=='string'||value.previous_text.length>12000||typeof value.previous_source_text!=='string'||!Array.isArray(value.cues)||!value.cues.length||value.cues.length>100000)return invalid;
+  const ids=new Set();let prior=-1;
+  for(const c of value.cues){
+   if(!c||typeof c.id!=='string'||ids.has(c.id)||!Number.isSafeInteger(c.position)||c.position<0||c.position<=prior||typeof c.text!=='string'||!Number.isFinite(c.start)||!Number.isFinite(c.end)||c.start<0||c.end<c.start||(c.speaker!==null&&typeof c.speaker!=='string'))return invalid;
+   ids.add(c.id);prior=c.position;
+  }
+  if(Object.hasOwn(value,'missing_cue_ids')){
+   if(!Array.isArray(value.missing_cue_ids)||value.missing_cue_ids.length>100000)return invalid;
+   for(const id of value.missing_cue_ids){if(typeof id!=='string'||ids.has(id))return invalid;ids.add(id);}
+  }
+  try{
+   if(!Array.isArray(value.glossary_snapshot))return invalid;
+   return {version:1,text:value.text,target_language:target,document_language:value.document_language,cues:value.cues.map(({id,position,text,start,end,speaker})=>({id,position,text,start,end,speaker})),...(value.missing_cue_ids?.length?{missing_cue_ids:[...value.missing_cue_ids]}:{}),glossary_snapshot:cleanGlossary(value.glossary_snapshot,true),previous_text:value.previous_text,previous_source_text:value.previous_source_text};
+  }catch{return invalid;}
+ }
+ function manualReviewCurrent(segment,doc,item) {
+  const review=item?.manual_review,missing=review?.missing_cue_ids?.length?new Set(review.missing_cue_ids):null;
+  return review?.version===1&&Array.isArray(review.cues)&&Array.isArray(review.glossary_snapshot)&&review.text===item.text&&review.document_language===(doc.language||'')&&review.cues.some(c=>c.id===segment.id&&c.text===segment.text)&&sameCueSnapshot(doc,review.cues,false)&&(!missing||!doc.segments.some(s=>missing.has(s.id)))&&JSON.stringify(review.glossary_snapshot)===JSON.stringify(relevantGlossary(doc,review.target_language,review.cues));
+ }
+ function saveManualTranslation(doc,segment,target,text,snapshot,expectedTranslation) {
+  const item=segment.translations?.[target];
+  if(!item||JSON.stringify(item)!==expectedTranslation||JSON.stringify(manualReviewSnapshot(doc,segment,target))!==JSON.stringify(snapshot))throw new Error('原文、上下文或译文已变化，请关闭后重新打开核对；草稿仍在此处，可先复制。');
+  if(typeof text!=='string'||!text.trim()||text.length>12000)throw new Error('译文不能为空，且最多 12,000 字符');
+  const review=cleanManualReview({version:1,...snapshot,text,previous_text:item.text,previous_source_text:item.manual_review?.cues?.find(c=>c.id===segment.id)?.text??item.source_text},target);
+  if(review.invalid)throw new Error('核对依据超过支持范围，未保存；请先导出 JSON 备份');
+  const original=item.original_translation||cleanTranslations({[target]:item},false)[target];
+  const result={...item,text,original_translation:original,manual_review:review};
+  segment.translations[target]=result;
+  return result;
+ }
+ function translationReviewQueue(doc,target) {
+  const result={entries:[],missing:0,current:0,stale:0,quality:0,total:doc?.segments.length||0};
+  for(const [position,segment] of (doc?.segments||[]).entries()){
+   const item=segment.translations?.[target];
+   if(!item){result.missing++;continue;}
+   const status=!translationCurrent(segment,doc,item)?'stale':!item.text.trim()||translationQualityMessage(item)?'quality':'current';
+   result[status]++;
+   if(status!=='current')result.entries.push({id:segment.id,position,status,reason:status==='stale'?'原文、上下文或语言依据已变化，或旧记录不完整':!item.text.trim()?'译文为空，需人工补全':translationQualityMessage(item)});
+  }
+  return result;
  }
  function sameCueSnapshot(doc, cues, checkMemory=true) {
   return Boolean(doc) && cues.every(c=>{
@@ -193,7 +260,9 @@
   const pending=[{segment,item}],seen=new Set();
   while(pending.length){
    const node=pending.pop(),s=node.segment,t=node.item;
-   if(!s||!t||t.source_text!==s.text)return false;
+   if(!s||!t)return false;
+   if(t.manual_review){if(!manualReviewCurrent(s,doc,t))return false;continue;}
+   if(t.source_text!==s.text)return false;
    if(seen.has(t))continue;seen.add(t);
    if(Object.hasOwn(t,'document_language')&&t.document_language!==(doc.language||''))return false;
    if(!t.context_id){if(t.provider?.endsWith('_subscription_translation'))return false;continue;}
@@ -250,7 +319,7 @@
     if(end<run.length)for(let candidate=end;candidate>=start+Math.max(1,Math.ceil((end-start)/2));candidate--){
      if(semanticBoundary(run[candidate-1],run[candidate])){end=candidate;break;}
     }
-    const segments=run.slice(start,end).filter(c=>{const s=doc.segments[c.position],t=s.translations?.[target];return !(translationCurrent(s,doc,t)&&t.source_language===source&&t.provider===provider);});
+    const segments=run.slice(start,end).filter(c=>{const s=doc.segments[c.position],t=s.translations?.[target];return !(translationCurrent(s,doc,t)&&(t.manual_review||t.source_language===source&&t.provider===provider));});
     const targetIds=new Set(segments.map(c=>c.id));
     const snapshot=run.slice(Math.max(0,start-2),Math.min(run.length,end+2)).map(c=>({...c}));
     if(segments.length){
@@ -258,7 +327,7 @@
      for(const cue of snapshot){
       if(targetIds.has(cue.id))continue;
       const s=doc.segments[cue.position],t=s.translations?.[target];
-      if(translationCurrent(s,doc,t)&&t.source_language===source&&t.provider===provider&&!t.quality_warnings?.length&&memoryChars+t.text.length<=24000){
+      if(translationCurrent(s,doc,t)&&!t.manual_review&&t.source_language===source&&t.provider===provider&&!t.quality_warnings?.length&&memoryChars+t.text.length<=24000){
        memory.push({id:cue.id,source_text:cue.text,text:t.text});memoryChars+=t.text.length;
        cue.memory_text=t.text;cue.memory_language=target;
       }
@@ -605,7 +674,7 @@
 			if (corrected) lines.push("修正前文字稿：", "", quote(segment.original_text), "");
 			const translated = segment.translations?.[doc.translation_view];
 			if (translated) {
-				if (translationCurrent(segment, doc, translated)) lines.push("译文（" + singleLine(doc.translation_view) + "；" + singleLine(translated.provider) + "，机器生成，需核对）：", "", quote(translated.text), "");
+				if (translationCurrent(segment, doc, translated)) lines.push("译文（" + singleLine(doc.translation_view) + "；初始来源：" + singleLine(translated.provider) + (translated.manual_review ? "；用户人工核对／修正）：" : "；机器生成，需核对）："), "", quote(translated.text), "");
 				else lines.push("此片段译文已过期，未导出。", "");
                 if(translationCurrent(segment,doc,translated)&&translationQualityMessage(translated))lines.push("译文待核对："+translationQualityMessage(translated), "");
 			}
@@ -738,7 +807,7 @@
 			segments,
 		});
 	}
-	const api = { hasNoteContent, segmentNoteCount, BACKUP_REVIEW_BYTES, SUBTITLE_IMPORT_BYTES, vttPayload, libraryHits, librarySnippet, hasProjectAnnotations, projectAnnotationCount, attachProjectTranscript, libraryMatches, documentDuration, sortedLibrary, AUDIO_NOTE_BUDGET, audioNoteCharacters, isAudioProject, audioProjectIdentity, SUMMARY_QUESTION, summaryReadiness, podcastURL, podcastSource, cleanGlossary, relevantGlossary, translationQualityMessage, retainAnswers, summaryFreshness, latestSummary, summaryMarkdown, aiReadingMarkdown, parseReadingTime, createPlaybackIndex, segmentAtTime, subtitleExport, mergeLibraryBackup, time, source, media, validate, parse, matchesSegment, notebookSegments, notebookMarkdown, translationCurrent, sameCueSnapshot, subscriptionPlan, cleanContexts, answerFreshness };
+	const api = { manualReviewSnapshot, manualReviewCurrent, saveManualTranslation, translationReviewQueue, hasNoteContent, segmentNoteCount, BACKUP_REVIEW_BYTES, SUBTITLE_IMPORT_BYTES, vttPayload, libraryHits, librarySnippet, hasProjectAnnotations, projectAnnotationCount, attachProjectTranscript, libraryMatches, documentDuration, sortedLibrary, AUDIO_NOTE_BUDGET, audioNoteCharacters, isAudioProject, audioProjectIdentity, SUMMARY_QUESTION, summaryReadiness, podcastURL, podcastSource, cleanGlossary, relevantGlossary, translationQualityMessage, retainAnswers, summaryFreshness, latestSummary, summaryMarkdown, aiReadingMarkdown, parseReadingTime, createPlaybackIndex, segmentAtTime, subtitleExport, mergeLibraryBackup, time, source, media, validate, parse, matchesSegment, notebookSegments, notebookMarkdown, translationCurrent, sameCueSnapshot, subscriptionPlan, cleanContexts, answerFreshness };
 	if (typeof module !== "undefined" && module.exports) module.exports = api;
 	else root.Coconut = api;
 })(typeof window !== "undefined" ? window : globalThis);

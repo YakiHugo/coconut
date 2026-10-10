@@ -130,7 +130,7 @@ function renderLanguage(){
  const signature=JSON.stringify([doc.key,$('translation-source').value,$('translation-target').value,$('ai-provider').value,$('ai-filtered').checked,task,doc.translation_glossary,matches.map(s=>[s.id,s.text,s.start,s.end,s.speaker]),questionSelected?sources:null,questionSelected?$('ai-question').value:null]);
  const glossarySignature=JSON.stringify([doc.key,$('translation-target').value]);
  if($('translation-glossary')&&glossaryDocumentSignature!==glossarySignature){glossaryDocumentSignature=glossarySignature;$('translation-glossary').value=glossaryDrafts.get(glossarySignature)??savedGlossaryText(doc,$('translation-target').value);}
- if($('translation-quality')){const warnings=doc.segments.filter(s=>Coconut.translationCurrent(s,doc,s.translations?.[$('translation-target').value])&&s.translations[$('translation-target').value].quality_warnings?.length);$('translation-quality').textContent=warnings.length?`当前译文有 ${warnings.length} 段核对提示，请回听检查数字、术语与漏译。`:'重要术语与数字可以点原文回听核对。';}
+ if($('translation-quality')){const warnings=doc.segments.filter(s=>Coconut.translationCurrent(s,doc,s.translations?.[$('translation-target').value])&&Coconut.translationQualityMessage(s.translations[$('translation-target').value]));$('translation-quality').textContent=warnings.length?`当前译文有 ${warnings.length} 段核对提示，请回听检查数字、术语与漏译。`:'重要术语与数字可以点原文回听核对。';}
  if(!subscriptionTranslating&&!summaryScope&&subscriptionSelectionSignature!==signature){subscriptionSelectionSignature=signature;$('ai-consent').checked=false;}
  $('subscription-translation-scope').hidden=!translationSelected;
  $('question-scope').hidden=!questionSelected;
@@ -272,7 +272,7 @@ $('translate-document').onclick=async()=>{
  if(asking||translating||subscriptionTranslating){notice('已有 AI 阅读或翻译正在运行，请先停止或等待完成');return;}
  if(!doc||!source||source===target){notice('请选择不同的原文和翻译语言');return;}
  if(!languageReady){notice('当前连接不提供离线模型；请使用本地 CLI 上下文翻译');return;}
- const documentLanguage=doc.language||'';const key=doc.key;const pending=doc.segments.filter(s=>!(Coconut.translationCurrent(s,doc,s.translations?.[target])&&s.translations[target].source_language===source));
+ const documentLanguage=doc.language||'';const key=doc.key;const pending=doc.segments.filter(s=>!(Coconut.translationCurrent(s,doc,s.translations?.[target])&&(s.translations[target].manual_review||s.translations[target].source_language===source)));
  if(!pending.length){doc.translation_view=target;save();render();return;}
  const watchSurface=translationSurfaceOpen();
  offlineTranslationKey=key;translating=true;stopTranslation=false;$('stop-translation').hidden=false;renderLanguage();let completed=0;
@@ -280,10 +280,13 @@ $('translate-document').onclick=async()=>{
   for(let index=0;index<pending.length&&!stopTranslation;index+=32){
    if(watchSurface&&!translationSurfaceOpen()){stopTranslation=true;break;}
    const batch=pending.slice(index,index+32).map(s=>({id:s.id,text:s.text}));
+   if(pending.slice(index,index+32).some(s=>s.translations?.[target]?.manual_review&&Coconut.translationCurrent(s,doc,s.translations[target])))throw new Error('本批已有新的人工核对译文，未发送请求；请重新确认剩余范围');
+   const targetVersions=new Map(batch.map(c=>[c.id,doc.segments.find(s=>s.id===c.id)?.translations?.[target]]));
    translationProgress(key,`本机翻译中：${completed}/${pending.length} 段；可以停止后续批次，已完成内容会保存。`);
    const result=await languageApi('translate',{source,target,segments:batch,allow_download:$('download-model').checked});
    if(!Array.isArray(result.translations)||result.translations.length!==batch.length||new Set(result.translations.map(t=>t.id)).size!==batch.length)throw new Error('翻译批次不完整，未覆盖原文');
    const destination=state.documents.find(d=>d.key===key);if(destination!==doc)throw new Error('原文字稿已移除或更换，本次结果未保存');
+   if(batch.some(c=>destination.segments.find(s=>s.id===c.id)?.translations?.[target]!==targetVersions.get(c.id)))throw new Error('本批译文已被人工修正或替换，返回结果未覆盖，后续请求已停止');
    for(const item of result.translations){const original=batch.find(s=>s.id===item.id);const segment=destination.segments.find(s=>s.id===item.id);if(!original||!segment||item.source_text!==original.text||typeof item.text!=='string'||!item.text.trim())throw new Error('翻译片段对应关系无效');}
    for(const item of result.translations){const segment=destination.segments.find(s=>s.id===item.id);if(segment.text!==item.source_text)continue;segment.translations||={};segment.translations[target]={text:item.text,source_text:item.source_text,source_language:source,document_language:documentLanguage,provider:item.provider};completed++;}
    destination.translation_view=target;if(!save())throw new Error('本批译文暂留在此页面，浏览器保存未成功，请立即导出备份；后续请求已停止');if(active()?.key===key)render();
@@ -405,10 +408,13 @@ $('subscription-translate').onclick=async()=>{
    if(stopSubscription||!$('ai-consent').checked)break;
    const batch=window.segments;const before=state.documents.find(d=>d.key===key);
    if(before!==doc||!Coconut.sameCueSnapshot(before,window.snapshot)||JSON.stringify(Coconut.relevantGlossary(before,target,window.snapshot))!==JSON.stringify(window.glossary))throw new Error('原文或所选上下文已修改，未发出本批模型请求，请重新开始');
+   if(batch.some(c=>{const s=before.segments.find(s=>s.id===c.id);return s?.translations?.[target]?.manual_review&&Coconut.translationCurrent(s,before,s.translations[target]);}))throw new Error('本批已有新的人工核对译文，未发送请求；请重新确认剩余范围');
+   const targetVersions=new Map(batch.map(c=>[c.id,before.segments.find(s=>s.id===c.id)?.translations?.[target]]));
    aiProgress(key,`订阅翻译中：${completed}/${plan.total} 段；上下文仅来自确认的筛选，不购买额度，不回退到API。`);
    const result=await languageApi('translate-subscription',{source,target,provider,segments:batch,context:window.context,glossary:window.glossary,memory:window.memory,consent:true});
    if(!Array.isArray(result.translations)||result.translations.length!==batch.length||result.translations.some((t,i)=>t.id!==batch[i].id||t.source_text!==batch[i].text||typeof t.text!=='string'||!t.text.trim()||t.text.length>12000))throw new Error('订阅结果与目标片段未完整对应，本批不保存');
    const destination=state.documents.find(d=>d.key===key);if(destination!==doc)throw new Error('原文字稿已移除或更换，本次结果未保存');
+   if(batch.some(c=>destination.segments.find(s=>s.id===c.id)?.translations?.[target]!==targetVersions.get(c.id)))throw new Error('本批译文已被人工修正或替换，返回结果未覆盖，后续请求已停止');
    if(!Coconut.sameCueSnapshot(destination,window.snapshot)||JSON.stringify(Coconut.relevantGlossary(destination,target,window.snapshot))!==JSON.stringify(window.glossary))throw new Error('本批原文或上下文已修改，为避免错配，本批全部不保存');
    checkSubscriptionReadingScope();
    const contextId=crypto.randomUUID();destination.translation_contexts||=Object.create(null);destination.translation_contexts[contextId]=window.snapshot;

@@ -10,7 +10,7 @@ function setup(){
  Object.defineProperty(w,'crypto',{configurable:true,value:webcrypto});
  w.coconutUpdates={state:async()=>({status:'idle',version:'test',arch:'arm64'}),subscribe:()=>{}};
  for(const file of ['summary','core','passages','passage-playback'])w.eval(fs.readFileSync(new URL(`reader/${file}.js`,root),'utf8'));
- w.eval(['app','language','podcasts'].map(file=>fs.readFileSync(new URL(`reader/${file}.js`,root),'utf8')).join('\n')+'\nlet sourceSubmitting=false,sourceCaptionRequest=null;\n'+fs.readFileSync(new URL('reader/updates.js',root),'utf8')+'\nlet closeTestFlushes=0;const originalCloseTestFlush=flushListening;flushListening=(...args)=>{closeTestFlushes++;return originalCloseTestFlush(...args);};\nwindow.closeTest={flushes:()=>closeTestFlushes,start(){asking=true;summaryScope={stop:false};},revision:()=>localImportRevision,stopped:()=>summaryScope.stop,answer(question){active().ai_answers=[{question,answer:"Authored answer",citations:["demo-1"],provider:"fixture"}];save();},requests(){sourceCaptionRequest=new AbortController();podcastRequest=new AbortController();podcastMediaRequest=new AbortController();projectCaptionRequest={controller:new AbortController()};return [sourceCaptionRequest,podcastRequest,podcastMediaRequest,projectCaptionRequest.controller];}};');
+ w.eval(['app','language','translation-review','podcasts'].map(file=>fs.readFileSync(new URL(`reader/${file}.js`,root),'utf8')).join('\n')+'\nlet sourceSubmitting=false,sourceCaptionRequest=null;\n'+fs.readFileSync(new URL('reader/updates.js',root),'utf8')+'\nlet closeTestFlushes=0;const originalCloseTestFlush=flushListening;flushListening=(...args)=>{closeTestFlushes++;return originalCloseTestFlush(...args);};\nwindow.closeTest={flushes:()=>closeTestFlushes,start(){asking=true;summaryScope={stop:false};},revision:()=>localImportRevision,stopped:()=>summaryScope.stop,answer(question){active().ai_answers=[{question,answer:"Authored answer",citations:["demo-1"],provider:"fixture"}];save();},requests(){sourceCaptionRequest=new AbortController();podcastRequest=new AbortController();podcastMediaRequest=new AbortController();projectCaptionRequest={controller:new AbortController()};return [sourceCaptionRequest,podcastRequest,podcastMediaRequest,projectCaptionRequest.controller];}};');
  let nextRequestId=0;
  const request=(kind='close')=>({id:++nextRequestId,kind,expiresAt:Date.now()+60000});
  return {w,$:id=>w.document.getElementById(id),request};
@@ -188,4 +188,15 @@ test('sample hashing blocks both update preflight and final commit without retir
   assert.equal(JSON.parse(w.localStorage.getItem(key)).documents.length,1);
   assert.equal(w.coconutPrepareUpdate(),true);
  }finally{complete?.();await w.happyDOM.close();}
+});
+
+ test('manual translation draft participates in native close inspection and approved discard guard',async()=>{
+ const {w,$,request}=setup();try{
+  await $('sample').onclick();w.document.querySelector('.review-translation-button').click();assert.equal(w.coconutPrepareClose('inspect').safe,true);
+  $('translation-edit-text').value='Uncommitted human translation';$('translation-edit-text').dispatchEvent(new w.Event('input',{bubbles:true}));
+  const owner=request(),disk=w.localStorage.getItem(key);assert.equal(w.coconutPrepareClose('inspect').safe,false);assert.equal(w.coconutPrepareClose('safe',owner),false);
+  assert.equal($('translation-edit-dialog').open,true);assert.equal($('translation-edit-text').value,'Uncommitted human translation');
+  assert.equal(w.coconutPrepareClose('discard',owner),true);$('save-translation-edit').click();assert.equal(w.localStorage.getItem(key),disk);
+  w.coconutPrepareClose('release',owner);$('save-translation-edit').click();assert.equal(w.coconutPrepareClose('inspect').safe,true);
+ }finally{await w.happyDOM.close();}
 });
