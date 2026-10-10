@@ -85,3 +85,44 @@ test('notebook labels user-written translation provenance and still suppresses s
   $('notebook-close').click();w.libraryProbe.documents[0].segments[0].text='Changed underlying source';$('open-library-notebook').click();assert.match(rows($)[0].textContent,/译文已过期/);assert.doesNotMatch(rows($)[0].textContent,/A user-written translation|用户自己写的译文/);
  }finally{await w.happyDOM.close();}
 });
+
+for(const audioOnly of [false,true])test(`shelf annotation hits reveal exact visible editors (${audioOnly?'audio-only':'transcript-bearing'}) without playback`,async()=>{
+ const doc=fixture()[0];doc.project_note='Needle project thought';doc.timestamp_bookmarks=[{id:'timestamp',time:90,note:'Needle timestamp thought'}];
+ if(audioOnly){doc.project_kind='audio_only';doc.segments=[];doc.podcast_source={kind:'direct_media',media_url:'https://example.org/a.mp3',media_kind:'audio'};}
+ const {w,$}=libraryHarness([doc]);try{
+  let plays=0;w.HTMLMediaElement.prototype.play=async()=>{plays++;};
+  $('library-scope').value='notes';$('library-scope').onchange();$('library-search').value='Needle';$('library-search').oninput();
+  for(const kind of ['project-note','bookmark']){
+   const hit=w.document.querySelector(`.library-hit[data-hit-kind="${kind}"]`);assert.ok(hit);hit.click();
+   const target=kind==='project-note'?$('project-note'):$('audio-bookmarks').querySelector('textarea');
+   assert.equal(Boolean(target.closest('[hidden]')),false,'matched editor must be visible');assert.equal(w.document.activeElement,target);
+   assert.equal($('title').textContent,doc.title);assert.equal(plays,0);
+  }
+ }finally{await w.happyDOM.close();}
+});
+function bookmarkFixture(){return {key:'audio',title:'Notebook recording',project_kind:'audio_only',podcast_source:{kind:'direct_media',media_url:'https://example.org/a.mp3',media_kind:'audio'},segments:[],project_note:'',timestamp_bookmarks:Array.from({length:65},(_,i)=>({id:'b'+i,time:i*10+10,note:'Retained bookmark '+i}))};}
+function openLastBookmark($){
+ $('open-library-notebook').click();$('notebook-search').value='Retained';$('notebook-search').oninput();$('notebook-kind').value='note';$('notebook-kind').onchange();
+ $('notebook-next').click();$('notebook-next').click();$('library-notebook').scrollTop=123;
+ const row=rows($).at(-1),key=row.dataset.captureKey;row.querySelector('.notebook-open').click();return key;
+}
+test('notebook return follows stable bookmark identity onto its new filtered page after time correction',async()=>{
+ const {w,$}=libraryHarness([bookmarkFixture()]);try{
+  let plays=0;w.HTMLMediaElement.prototype.play=async()=>{plays++;};
+  const key=openLastBookmark($),source=[...$('audio-bookmarks').children].find(row=>row.dataset.bookmarkId==='b64');
+  source.querySelector('.edit-bookmark-time').click();const form=source.querySelector('form');form.querySelector('input').value='1';await form.onsubmit(new w.Event('submit',{cancelable:true}));
+  $('return-library-notebook').click();
+  assert.equal($('notebook-search').value,'Retained');assert.equal($('notebook-kind').value,'note');assert.match($('notebook-status').textContent,/1–30 \/ 65/);
+  assert.equal(rows($)[0].dataset.captureKey,key);assert.equal(w.document.activeElement,rows($)[0].querySelector('.notebook-open'));assert.equal($('library-notebook').scrollTop,0);assert.equal(plays,0);
+ }finally{await w.happyDOM.close();}
+});
+for(const action of ['delete','no-longer-match'])test(`notebook return retains filtered page and safe focus when bookmark is ${action}`,async()=>{
+ const {w,$}=libraryHarness([bookmarkFixture()]);try{
+  const key=openLastBookmark($),source=[...$('audio-bookmarks').children].find(row=>row.dataset.bookmarkId==='b64');
+  if(action==='delete')[...source.querySelectorAll('button')].find(button=>button.textContent==='删除书签').click();
+  else{const note=source.querySelector('textarea');note.value='Changed idea';note.oninput();}
+  $('return-library-notebook').click();
+  assert.equal($('notebook-search').value,'Retained');assert.equal($('notebook-kind').value,'note');assert.match($('notebook-status').textContent,/61–64 \/ 64/);
+  assert.ok(rows($).every(row=>row.dataset.captureKey!==key));assert.equal(w.document.activeElement,$('notebook-search'));
+ }finally{await w.happyDOM.close();}
+});

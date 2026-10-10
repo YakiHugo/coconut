@@ -954,8 +954,10 @@ $('library-show-active').onclick=()=>{renderLibrary(state.active);const card=lib
 const notebookSelection=new Set();
 let notebookPage=0,notebookReturn=null,notebookOpener=null;
 const NOTEBOOK_PAGE_SIZE=30;
-function renderLibraryNotebook(){
+function renderLibraryNotebook(returnKey=null){
  const captures=Coconut.libraryCaptures(state.documents,$('notebook-search').value,$('notebook-kind').value);
+ const returnIndex=returnKey===null?-1:captures.findIndex(capture=>capture.key===returnKey);
+ if(returnIndex>=0)notebookPage=Math.floor(returnIndex/NOTEBOOK_PAGE_SIZE);
  for(const key of notebookSelection)if(!state.documents.some(doc=>doc.key===key))notebookSelection.delete(key);
  notebookPage=Math.min(notebookPage,Math.max(0,Math.ceil(captures.length/NOTEBOOK_PAGE_SIZE)-1));
  const start=notebookPage*NOTEBOOK_PAGE_SIZE,host=$('notebook-captures');host.replaceChildren();
@@ -979,7 +981,7 @@ function renderLibraryNotebook(){
   const open=el('button','notebook-open','打开原位置');open.type='button';open.onclick=()=>{
    const sourceCurrent=capture.type==='cue'?doc.segments.includes(source)&&source.text===capture.text&&source.start===capture.time:capture.type==='bookmark'?doc.timestamp_bookmarks.includes(source)&&source.time===capture.time:Coconut.hasNoteContent(doc.project_note);
    if(pendingStructuralDocuments.has(doc.key)||!state.documents.includes(doc)||!sourceCurrent){renderLibraryNotebook();$('notebook-status').textContent='这条记录的来源已变动，请从更新后的笔记本重新选择。';$('notebook-search').focus();return;}
-   notebookReturn={key:capture.key,scroll:$('library-notebook').scrollTop};$('library-notebook').close();
+   notebookReturn={key:capture.key,page:notebookPage,scroll:$('library-notebook').scrollTop};$('library-notebook').close();
    resetReaderForDocumentNavigation();selectActiveDocument(doc.key);setReadingMode('transcript');showWorkspace('read');render();
    openLibraryHit({kind:capture.type==='cue'?(Coconut.hasNoteContent(capture.note)?'note':'text'):capture.type,id:capture.id});
    $('return-library-notebook').hidden=false;
@@ -993,10 +995,13 @@ function syncNotebookSelection(){
  $('notebook-export').disabled=notebookSelection.size===0;
 }
 function openLibraryNotebook(returning=false){
- notebookOpener=document.activeElement;renderLibraryNotebook();$('library-notebook').showModal();
+ notebookOpener=document.activeElement;renderLibraryNotebook(returning?notebookReturn?.key:null);$('library-notebook').showModal();
  const row=returning&&notebookReturn?[...$('notebook-captures').children].find(row=>row.dataset.captureKey===notebookReturn.key):null;
  (row?.querySelector('.notebook-open')||$('notebook-search')).focus({preventScroll:true});
- if(returning&&notebookReturn)$('library-notebook').scrollTop=notebookReturn.scroll;
+ if(returning&&notebookReturn){
+  $('library-notebook').scrollTop=notebookPage===notebookReturn.page?notebookReturn.scroll:0;
+  row?.scrollIntoView?.({block:'nearest',behavior:'auto'});
+ }
 }
 $('open-library-notebook').onclick=()=>openLibraryNotebook();
 $('return-library-notebook').onclick=()=>openLibraryNotebook(true);
@@ -1021,6 +1026,7 @@ function openLibraryHit(hit) {
    row?.querySelector('.note-button')?.click();
   }
  }else{
+  setReadingMode('transcript');
   $('audio-bookmark-search').value='';renderAudioProject(active());
   const target=hit.kind==='project-note'?$('project-note'):[...$('audio-bookmarks').children].find(row=>row.dataset.bookmarkId===hit.id)?.querySelector('textarea');
   target?.scrollIntoView?.({block:'center',behavior:'auto'});target?.focus({preventScroll:true});
