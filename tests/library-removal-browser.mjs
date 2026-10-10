@@ -105,6 +105,56 @@ try{
  await page.locator('#ask-ai').click();let startedTimer;try{await Promise.race([requestStarted,new Promise((_,reject)=>{startedTimer=setTimeout(()=>reject(new Error('Injected question did not start')),15000);})]);}finally{clearTimeout(startedTimer);}const pendingSnapshot=await stored();
  await remove(second.title);await page.locator('#undo-removal').click();assert.equal(requests,1);release();await page.waitForFunction(()=>document.querySelector('#ai-progress').textContent.includes('本次结果未保存'));
  assert.deepEqual(await stored(),pendingSnapshot);checks.push('late_answer_cannot_mutate_restored_document');
+ // Keep the ordinary Escape/Space checks above. Here genuine native close()
+ // queues its own trusted close event; perform a newer intent synchronously in
+ // that gap, then observe the unmodified handler and two rendering frames.
+ const queuedNativeClose=async({dialogId,intent,title,confirm=false})=>page.evaluate(async({dialogId,intent,title,confirm})=>{
+  const dialog=document.getElementById(dialogId);
+  const closed=new Promise((resolve,reject)=>{
+   const timer=setTimeout(()=>reject(Error('Native removal close event did not arrive')),15000);
+   dialog.addEventListener('close',event=>{clearTimeout(timer);resolve(event.isTrusted);},{once:true});
+  });
+  if(confirm)document.getElementById('confirm-finish-removal').click();else dialog.close();
+  const nativeRestoredFocus=document.activeElement.id;
+  if(intent==='collapse'){
+   const details=document.getElementById('removal-recovery-details');details.querySelector('summary').focus();details.open=false;
+  }else if(intent==='reopen-finish')document.getElementById('finish-removal').click();
+  else if(intent==='new-removal'){
+   const action=[...document.querySelectorAll('.library-remove')].find(node=>node.getAttribute('aria-label')==='从书架移除 '+title);
+   if(!action)throw Error('Authored second removal target was not found');action.focus();action.click();
+  }else document.getElementById('main-content').focus();
+  const trusted=await closed;await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
+  return {trusted,nativeRestoredFocus,open:dialog.open,focused:document.activeElement.id,
+   collapsedSummary:!document.getElementById('removal-recovery-details').open&&document.activeElement===document.querySelector('#removal-recovery-details > summary')};
+ },{dialogId,intent,title,confirm});
+ stage='delayed_finish_close_after_collapse';const delayedOriginal=(await stored()).documents.find(doc=>doc.title===second.title);
+ await remove(second.title);await openDetails('#removal-recovery-details');await page.locator('#finish-removal').click();
+ const collapse=await queuedNativeClose({dialogId:'finish-removal-dialog',intent:'collapse'});
+ check('finish_collapse_observed_trusted_native_close',collapse.trusted);
+ check('native_finish_close_already_restored_opener',collapse.nativeRestoredFocus==='finish-removal');
+ check('delayed_finish_close_respects_summary_focus_and_collapsed_details',!collapse.open&&collapse.collapsedSummary);
+ check('delayed_finish_close_keeps_undo_visible',await page.locator('#undo-removal').isVisible()&&await page.locator('#finish-removal').isHidden());
+ await screenshot('library-removal-delayed-close-collapsed-recovery');
+ check('delayed_finish_close_keeps_complete_rescue',JSON.stringify(await download('export-removed-document'))===JSON.stringify(delayedOriginal));
+ stage='delayed_finish_close_after_reopen';await page.locator('#finish-removal').click();
+ const reopen=await queuedNativeClose({dialogId:'finish-removal-dialog',intent:'reopen-finish'});
+ check('finish_reopen_observed_trusted_native_close',reopen.trusted);
+ check('old_finish_close_preserves_new_modal_and_focus',reopen.open&&reopen.focused==='cancel-finish-removal');
+ await page.locator('#cancel-finish-removal').click();await page.locator('#finish-removal-dialog').waitFor({state:'hidden'});
+ check('new_finish_cancellation_restores_visible_action',await page.locator('#finish-removal').evaluate(node=>node===document.activeElement));
+ await page.locator('#undo-removal').click();
+ stage='delayed_remove_close_after_new_target';await importDoc(first);await request(second.title);
+ const newTarget=await queuedNativeClose({dialogId:'remove-document-dialog',intent:'new-removal',title:first.title});
+ check('remove_reopen_observed_trusted_native_close',newTarget.trusted);
+ check('old_remove_close_preserves_new_modal_target_and_focus',newTarget.open&&newTarget.focused==='cancel-removal'&&(await page.locator('#remove-document-title').textContent())===first.title);
+ await page.locator('#confirm-removal').click();await page.waitForFunction(()=>!document.querySelector('#removal-recovery').hidden);
+ check('new_removal_target_still_confirms_after_old_close',(await stored()).documents.length===1&&(await stored()).documents[0].title===second.title);
+ check('new_confirmed_removal_keeps_undo_focus',await page.locator('#undo-removal').evaluate(node=>node===document.activeElement));
+ stage='delayed_confirmed_finish_after_new_focus';await openDetails('#removal-recovery-details');await page.locator('#finish-removal').click();
+ const confirmed=await queuedNativeClose({dialogId:'finish-removal-dialog',intent:'new-focus',confirm:true});
+ check('confirmed_finish_observed_trusted_native_close',confirmed.trusted);
+ check('confirmed_finish_close_preserves_newer_focus',!confirmed.open&&confirmed.focused==='main-content');
+ check('confirmed_finish_retires_only_the_owned_recovery',await page.locator('#removal-recovery').isHidden()&&(await stored()).documents.length===1&&(await stored()).documents[0].title===second.title);
  check('no_external_requests_or_page_errors',external===0&&errors.length===0);console.log(JSON.stringify({checks,external,errors}));await context.close();
 }catch(error){console.error('Library removal browser stage:',stage);throw error;}
 finally{await browser?.close();if(server)await new Promise(resolve=>server.close(resolve));}
