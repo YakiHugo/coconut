@@ -32,11 +32,13 @@ try{
   `podcastMediaRequest=new AbortController()`,
   `projectCaptionRequest={controller:new AbortController()}`,
   `sourceCaptionRequest=new AbortController()`,
+  `sourceSubmitting=true`,
+  `document.getElementById('sample').disabled=true`,
   `asking=true`,
   `document.getElementById('save-status').hidden=false`
  ]){
   await page.evaluate(expression);assert.equal(await page.evaluate(()=>coconutPrepareUpdate()),false,expression);
-  await page.evaluate(()=>{document.getElementById('audio-bookmark-form').reset();document.getElementById('ai-question').value='';document.getElementById('translation-glossary').value='';document.getElementById('edit-dialog').close();podcastRequest=null;podcastMediaRequest=null;projectCaptionRequest=null;sourceCaptionRequest=null;asking=false;document.getElementById('save-status').hidden=true;});
+  await page.evaluate(()=>{document.getElementById('audio-bookmark-form').reset();document.getElementById('ai-question').value='';document.getElementById('translation-glossary').value='';document.getElementById('edit-dialog').close();podcastRequest=null;podcastMediaRequest=null;projectCaptionRequest=null;sourceCaptionRequest=null;sourceSubmitting=false;document.getElementById('sample').disabled=false;asking=false;document.getElementById('save-status').hidden=true;});
  }
  const fixture=path.join(temporary,'authored.json');await fs.writeFile(fixture,JSON.stringify({schema_version:1,title:'Update persistence fixture',language:'en',segments:[{id:'first',start:0,end:4,text:'Authored updater acceptance words.'}]}));
  await page.locator('#add-content').click();const [chooser]=await Promise.all([page.waitForEvent('filechooser'),page.locator('#import').click()]);await chooser.setFiles(fixture);
@@ -70,6 +72,52 @@ try{
  assert.equal(await page.evaluate(()=>localStorage.getItem('coconut-reader-v1')),expected);
  assert.equal(await page.locator('#update-developer').isChecked(),true);
  assert.equal(await page.evaluate(()=>coconutPrepareUpdate()),true);
+ // CI-only real-renderer ownership acceptance. Authored tokens are deliberately
+ // scoped to this page; reload afterward resets the page before native app quit.
+ assert.equal(await page.evaluate(()=>coconutPrepareClose('safe')),false);
+ assert.equal(await page.evaluate(()=>coconutPrepareUpdate(true)),false);
+ const expiredEffects=await page.evaluate(()=>{
+  const before=localImportRevision;sourceCaptionRequest=new AbortController();const controller=sourceCaptionRequest;
+  document.getElementById('ai-consent').checked=true;
+  const accepted=coconutPrepareClose('discard',{id:1,kind:'close',expiresAt:Date.now()-1});
+  const result={accepted,aborted:controller.signal.aborted,consent:document.getElementById('ai-consent').checked,revisionUnchanged:localImportRevision===before,inert:!!document.body.inert,closing:readerClosing};
+  sourceCaptionRequest=null;document.getElementById('ai-consent').checked=false;return result;
+ });
+ assert.deepEqual(expiredEffects,{accepted:false,aborted:false,consent:true,revisionUnchanged:true,inert:false,closing:false});
+ const ownership=await page.evaluate(()=>{
+  const close={id:2,kind:'close',expiresAt:Date.now()+60000},update={id:3,kind:'update',expiresAt:Date.now()+60000};
+  const closed=coconutPrepareClose('safe',close),locked=readerClosing&&document.body.inert;
+  const foreignRelease=coconutPrepareClose('release',{...close,kind:'update'}),stillLocked=readerClosing&&document.body.inert;
+  const released=coconutPrepareClose('release',close),editable=!readerClosing&&!document.body.inert;
+  const updateLocked=coconutPrepareUpdate(true,update),before=localImportRevision;
+  const oldCommit=coconutPrepareClose('discard',close),oldRelease=coconutPrepareClose('release',close);
+  const updateStillOwned=readerClosing&&document.body.inert&&localImportRevision===before;
+  const updateReleased=coconutPrepareClose('release',update),editableAgain=!readerClosing&&!document.body.inert;
+  return {closed,locked,foreignRelease,stillLocked,released,editable,updateLocked,oldCommit,oldRelease,updateStillOwned,updateReleased,editableAgain};
+ });
+ assert.deepEqual(ownership,{closed:true,locked:true,foreignRelease:false,stillLocked:true,released:true,editable:true,updateLocked:true,oldCommit:false,oldRelease:false,updateStillOwned:true,updateReleased:true,editableAgain:true});
+ await page.locator('#mode-transcript').click();await page.locator('.segment[data-segment-id="first"] .note-button').click();
+ await page.locator('#note').fill('Ownership release remains writable');await page.locator('#close-note').click();
+ assert.ok((await page.evaluate(()=>localStorage.getItem('coconut-reader-v1'))).includes('Ownership release remains writable'));
+ // Hold real sample hashing: update readiness must remain blocked at the final
+ // boundary without cancelling that import or making the visible UI inert.
+ await page.evaluate(()=>{
+  const original=crypto.subtle.digest.bind(crypto.subtle);let resolve;
+  const pending=new Promise(done=>{resolve=done;});
+  crypto.subtle.digest=async(...args)=>{await pending;return original(...args);};
+  window.finishNativeSample=()=>{crypto.subtle.digest=original;resolve();};
+  window.nativeSample=document.getElementById('sample').onclick();
+ });
+ await page.waitForFunction(()=>document.getElementById('sample').disabled);
+ assert.equal(await page.evaluate(()=>coconutPrepareUpdate()),false,'sample hashing blocks preflight');
+ assert.equal(await page.evaluate(()=>coconutPrepareUpdate(true,{id:4,kind:'update',expiresAt:Date.now()+60000})),false,'sample hashing blocks final commit');
+ assert.equal(await page.evaluate(()=>!!document.body.inert||readerClosing),false);
+ await page.evaluate(async()=>{window.finishNativeSample();await window.nativeSample;});
+ assert.equal(await page.evaluate(()=>document.getElementById('sample').disabled),false);
+ assert.equal(await page.evaluate(()=>coconutPrepareUpdate()),true);
+ const finalSaved=await page.evaluate(()=>localStorage.getItem('coconut-reader-v1'));
+ await page.reload();await page.waitForFunction(()=>typeof window.coconutPrepareUpdate==='function');
+ assert.equal(await page.evaluate(()=>localStorage.getItem('coconut-reader-v1')),finalSaved);
  await application.close();application=null;
- console.log('Update UI acceptance passed: sandboxed native IPC, developer opt-in, 11 restart guards, saved notes and settings across relaunch. No inference or model downloads.');
+ console.log('Update UI acceptance passed: sandboxed native IPC, developer opt-in, restart guards, expired/scoped ownership, sample hashing and writable notes across release/relaunch. No inference or model downloads.');
 }finally{if(application)await application.close();await fs.rm(temporary,{recursive:true,force:true});}
