@@ -225,7 +225,7 @@
   if(review.invalid)throw new Error('核对依据超过支持范围，未保存；请先导出 JSON 备份');
   const original=item.original_translation||cleanTranslations({[target]:item},false)[target];
   const result={...item,text,original_translation:original,manual_review:review};
-  segment.translations[target]=result;
+  segment.translations[target]=result;invalidateSearch(doc);
   return result;
  }
  function translationReviewQueue(doc,target) {
@@ -377,7 +377,7 @@
    const matchesNote=value=>hasNoteContent(value)&&matches(value);
    if(matchesNote(doc.project_note)||doc.segments.some(segment=>matchesNote(doc.notes?.[segment.id]))||(doc.timestamp_bookmarks||[]).some(item=>matchesNote(item.note)))return true;
   }
-  return scope==='text'&&doc.segments.some(segment=>matches(segment.text));
+  return scope==='text'&&searchDocument(doc,needle,'text').byCue.size>0;
  }
  // Return small, source-backed previews, never HTML or a synthetic summary.
  function librarySnippet(value, query) {
@@ -401,9 +401,11 @@
   const add=(kind,id,text,time)=>{if(hits.length>=cap||(kind!=='text'&&!hasNoteContent(text)))return;const snippet=librarySnippet(text,query);if(snippet)hits.push({kind,id,time,snippet});};
   add('project-note',null,doc.project_note);
   for(const bookmark of doc.timestamp_bookmarks||[]){add('bookmark',bookmark.id,bookmark.note,bookmark.time);if(hits.length>=cap)return hits;}
+  const sourceHits=scope==='text'?searchDocument(doc,query,'text').previews:null;
   for(const segment of doc.segments){
    add('note',segment.id,doc.notes?.[segment.id],segment.start);
-   if(scope==='text')add('text',segment.id,segment.text,segment.start);
+   const hit=sourceHits?.get('text:'+segment.id);
+   if(hit&&hits.length<cap)hits.push({kind:'text',id:segment.id,ids:hit.ids,time:segment.start,snippet:hit.snippet});
    if(hits.length>=cap)break;
   }
   return hits;
@@ -414,11 +416,32 @@
   if(order==='duration')result.sort((a,b)=>documentDuration(a)-documentDuration(b));
   return result;
  }
- function matchesSegment(segment, doc, query, notesOnly=false, excerptsOnly=false) {
-  const note=doc.notes?.[segment.id],hasNote=hasNoteContent(note);
-  return (!notesOnly || hasNote) && (!excerptsOnly || segment.saved_excerpt === true) &&
-   [segment.text,segment.speaker||"",hasNote?note:"",...Object.values(segment.translations||{}).filter(t=>translationCurrent(segment,doc,t)).map(t=>t.text)].join(" ").toLocaleLowerCase().includes(query.trim().toLocaleLowerCase());
+ // A document-identity cache, not persistent state. Ordinary note/bookmark/view
+ // saves do not rebuild source text. Mutators must invalidate before readers or
+ // AI scope checks observe changed text, translations, contexts or glossary.
+ const searchIndexes=new WeakMap();
+ function invalidateSearch(doc){searchIndexes.delete(doc);}
+ function searchDocument(doc,query,scope='all') {
+  let cache=searchIndexes.get(doc);
+  if(!cache||cache.segments!==doc.segments||cache.length!==doc.segments.length||cache.language!==(doc.language||'')||cache.contexts!==doc.translation_contexts||cache.glossary!==doc.translation_glossary){
+   const passages=typeof module!=="undefined"&&module.exports?require('./passages.js'):root.CoconutPassages;
+   const languages=new Set(doc.segments.flatMap(cue=>Object.keys(cue.translations||{})));
+   const translations=new Map([...languages].map(language=>[language,cue=>{const item=cue.translations?.[language];return translationCurrent(cue,doc,item)?item.text:null;}]));
+   cache={segments:doc.segments,length:doc.segments.length,language:doc.language||'',contexts:doc.translation_contexts,glossary:doc.translation_glossary,index:passages.searchIndex(doc.segments,translations)};searchIndexes.set(doc,cache);
+  }
+  return cache.index.search(query,scope==='text'?'text':'all');
  }
+ let lastSearchQuery='',lastSearchNeedle='';
+ function searchNeedle(query){if(query!==lastSearchQuery){lastSearchQuery=query;lastSearchNeedle=query.trim().toLocaleLowerCase();}return lastSearchNeedle;}
+ function matchesSegment(segment, doc, query, notesOnly=false, excerptsOnly=false) {
+  const note=doc.notes?.[segment.id],hasNote=hasNoteContent(note),needle=searchNeedle(query);
+  if(notesOnly&&!hasNote||excerptsOnly&&segment.saved_excerpt!==true)return false;
+  if(!needle)return true;
+  // Metadata fields are independent and live. Never invent a phrase by joining
+  // original, speaker, note, or different translation-language fields together.
+  return searchDocument(doc,needle).byCue.has(segment.id)||[segment.speaker||'',hasNote?note:''].some(text=>text.toLocaleLowerCase().includes(needle));
+ }
+
 	function validate(data) {
   if(isAudioProject(data))return validateAudioProject(data);
 		if (
@@ -807,7 +830,7 @@
 			segments,
 		});
 	}
-	const api = { manualReviewSnapshot, manualReviewCurrent, saveManualTranslation, translationReviewQueue, hasNoteContent, segmentNoteCount, BACKUP_REVIEW_BYTES, SUBTITLE_IMPORT_BYTES, vttPayload, libraryHits, librarySnippet, hasProjectAnnotations, projectAnnotationCount, attachProjectTranscript, libraryMatches, documentDuration, sortedLibrary, AUDIO_NOTE_BUDGET, audioNoteCharacters, isAudioProject, audioProjectIdentity, SUMMARY_QUESTION, summaryReadiness, podcastURL, podcastSource, cleanGlossary, relevantGlossary, translationQualityMessage, retainAnswers, summaryFreshness, latestSummary, summaryMarkdown, aiReadingMarkdown, parseReadingTime, createPlaybackIndex, segmentAtTime, subtitleExport, mergeLibraryBackup, time, source, media, validate, parse, matchesSegment, notebookSegments, notebookMarkdown, translationCurrent, sameCueSnapshot, subscriptionPlan, cleanContexts, answerFreshness };
+	const api = { searchDocument, invalidateSearch, manualReviewSnapshot, manualReviewCurrent, saveManualTranslation, translationReviewQueue, hasNoteContent, segmentNoteCount, BACKUP_REVIEW_BYTES, SUBTITLE_IMPORT_BYTES, vttPayload, libraryHits, librarySnippet, hasProjectAnnotations, projectAnnotationCount, attachProjectTranscript, libraryMatches, documentDuration, sortedLibrary, AUDIO_NOTE_BUDGET, audioNoteCharacters, isAudioProject, audioProjectIdentity, SUMMARY_QUESTION, summaryReadiness, podcastURL, podcastSource, cleanGlossary, relevantGlossary, translationQualityMessage, retainAnswers, summaryFreshness, latestSummary, summaryMarkdown, aiReadingMarkdown, parseReadingTime, createPlaybackIndex, segmentAtTime, subtitleExport, mergeLibraryBackup, time, source, media, validate, parse, matchesSegment, notebookSegments, notebookMarkdown, translationCurrent, sameCueSnapshot, subscriptionPlan, cleanContexts, answerFreshness };
 	if (typeof module !== "undefined" && module.exports) module.exports = api;
 	else root.Coconut = api;
 })(typeof window !== "undefined" ? window : globalThis);
