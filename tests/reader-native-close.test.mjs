@@ -86,3 +86,11 @@ for(const mode of ['safe','discard'])test(`approved native ${mode} close flushes
   const progressKey=Object.keys(w.localStorage).find(k=>k.startsWith('coconut-listening-v1:'));assert.equal(JSON.parse(w.localStorage.getItem(progressKey)).time,23);
  }finally{await w.happyDOM.close();}
 });
+
+test('native close explicitly warns that removal recovery exists only in this page',async()=>{
+ const {w,$}=setup();try{
+  await $('sample').onclick();w.document.querySelector('.library-remove').click();$('confirm-removal').click();
+  const snapshot=w.coconutPrepareClose('inspect');assert.equal(snapshot.safe,false);assert.match(JSON.stringify(snapshot),/移除备份仅在本页/);assert.equal(w.coconutPrepareUpdate(),false);assert.equal(w.coconutPrepareUpdate(true),false);assert.equal(w.document.body.inert,false);
+  $('undo-removal').click();assert.equal(w.coconutPrepareClose('inspect').safe,true);
+ }finally{await w.happyDOM.close();}
+});

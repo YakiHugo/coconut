@@ -94,16 +94,16 @@ function podcastProject(feedUrl,episode,transcriptStatus='not_imported'){
 }
 async function savePodcastProject(feedUrl,episode){
  if(!podcastReady||podcastRequest)return;
- const startingDocument=state.active,controller=new AbortController();podcastRequest=controller;setPodcastBusy(true);
+ const revision=documentLifecycleRevision,startingDocument=state.active,controller=new AbortController();podcastRequest=controller;setPodcastBusy(true);
  try{
-  const persisted=await add(podcastProject(feedUrl,episode),()=>controller===podcastRequest&&!controller.signal.aborted&&state.active===startingDocument&&workspace==='add',true);
+  const persisted=await add(podcastProject(feedUrl,episode),()=>controller===podcastRequest&&!controller.signal.aborted&&state.active===startingDocument&&workspace==='add',true,revision);
   if(persisted)notice('原声项目已保存在书架。尚未下载媒体或导入文字稿；可以写项目笔记，或单独获取原声并记录时间书签。');
  }catch(error){if(controller===podcastRequest)podcastMessage(error.message);}
  finally{if(controller===podcastRequest){podcastRequest=null;setPodcastBusy(false);}}
 }
 async function importPodcastEpisode(feedUrl,episodeId,transcriptUrl,discoveredEpisode){
  if(!podcastReady||podcastRequest)return;
- const startingDocument=state.active;
+ const startingDocument=state.active,revision=documentLifecycleRevision;
  const controller=new AbortController();podcastRequest=controller;setPodcastBusy(true);podcastMessage('正在读取发布者提供的文字稿；尚未下载音视频。');
  try{
   const response=await podcastAPI('import',{feedUrl,episodeId,...(transcriptUrl?{transcriptUrl}:{})},controller.signal),result=await response.json();
@@ -112,12 +112,12 @@ async function importPodcastEpisode(feedUrl,episodeId,transcriptUrl,discoveredEp
    if(result.status!=='needs_transcription')throw new Error('没有取得有效的文字稿结果，书架未改变，请重试。');
    const episode=result.episode||discoveredEpisode;
    if(episode?.media?.length){
-    const persisted=await add(podcastProject(result.feed_url||feedUrl,episode,'unavailable'),()=>controller===podcastRequest&&!controller.signal.aborted&&state.active===startingDocument&&workspace==='add',true);
+    const persisted=await add(podcastProject(result.feed_url||feedUrl,episode,'unavailable'),()=>controller===podcastRequest&&!controller.signal.aborted&&state.active===startingDocument&&workspace==='add',true,revision);
     if(persisted)notice('这集没有可用的公开定时文字稿，已保存原声项目。可写笔记、记录时间书签；回听需单独点击下载，未启动识别或模型。');
    }
    podcastMessage('这集没有可用的公开定时文字稿。节目简介不会代替原文；当前未启动识别、下载模型或扣费。');return;
   }
-  const persisted=await add(Coconut.validate(result.document),()=>controller===podcastRequest&&!controller.signal.aborted&&state.active===startingDocument&&workspace==='add');
+  const persisted=await add(Coconut.validate(result.document),()=>controller===podcastRequest&&!controller.signal.aborted&&state.active===startingDocument&&workspace==='add',false,revision);
   podcastMessage('文字稿已打开。');
   if(persisted)notice('发布者文字稿已导入。内容尚未经人工核对；可在「原文与音视频」中点击下载原声回听。');
  }catch(error){if(controller===podcastRequest)podcastMessage(controller.signal.aborted?'已取消导入，已有书架不变。':error.message);}
@@ -193,7 +193,7 @@ function renderProjectCaptionAction(){
 }
 $('fetch-project-transcript').onclick=async()=>{
  const doc=active(),source=doc?.podcast_source;if(!podcastReady||projectCaptionRequest||!Coconut.isAudioProject(doc)||!source?.feed_url)return;
- const target={key:doc.key,source:JSON.stringify(source)},controller=new AbortController();projectCaptionRequest={controller,target};renderProjectCaptionAction();$('audio-project-status').textContent='正在检查本集发布者文字稿，不会下载媒体或运行识别。';
+ const target={key:doc.key,source:JSON.stringify(source),document:doc},controller=new AbortController();projectCaptionRequest={controller,target};renderProjectCaptionAction();$('audio-project-status').textContent='正在检查本集发布者文字稿，不会下载媒体或运行识别。';
  try{
   const response=await podcastAPI('import',{feedUrl:source.feed_url,episodeId:source.episode_id},controller.signal),result=await response.json();
   if(controller.signal.aborted||projectCaptionRequest?.controller!==controller)return;
@@ -212,3 +212,8 @@ window.addEventListener('coconut-render',renderProjectCaptionAction);
 window.addEventListener('coconut-worker-ready',renderProjectCaptionAction);
 window.addEventListener('coconut-worker-disconnected',()=>{projectCaptionRequest?.controller.abort();renderProjectCaptionAction();});
 renderProjectCaptionAction();
+
+// Retire client-side imports; removing a reader entry never deletes server media or jobs.
+window.addEventListener('coconut-document-removed',event=>{
+ if(projectCaptionRequest?.target.key===event.detail?.key){projectCaptionRequest.controller.abort();$('audio-project-status').textContent='已取消移除项目的文字稿请求，迟到结果不会覆盖恢复副本。';}
+});

@@ -388,3 +388,10 @@ test('episode filters cannot unlock an in-flight import and single-episode resul
  }finally{await w.happyDOM.close();}
  const single=await setup(()=>response(discovery));try{await discover(single.$);assert.equal(single.$('podcast-episode-search'),null);assert.ok(single.$('podcast-results').querySelector('.podcast-episode button'));}finally{await single.w.happyDOM.close();}
 });
+test('removed and undone audio project rejects its earlier publisher transcript request',async()=>{
+ let release;const {w,$}=await setup(()=>new Promise(resolve=>{release=()=>resolve(response({status:'ready',document:documentFixture}));}));try{
+  await importDocument(w,originalAudioProject());const before=w.localStorage.getItem('coconut-reader-v1');const pending=$('fetch-project-transcript').onclick();
+  w.document.querySelector('.library-remove').click();$('confirm-removal').click();$('undo-removal').click();release();await pending;
+  assert.equal(w.localStorage.getItem('coconut-reader-v1'),before);assert.match($('audio-project-status').textContent,/取消|原声|书签|项目/);
+ }finally{release?.();await w.happyDOM.close();}
+});

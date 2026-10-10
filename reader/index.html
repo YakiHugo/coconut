@@ -7,19 +7,19 @@
 <meta name="description" content="把长视频和播客变成自己的阅读空间。对照原文与译文，按时间回听，留下摘录和笔记。">
 <meta name="theme-color" content="#faf9f7">
 <link rel="icon" type="image/png" href="coconut-mark.png">
-<link rel="stylesheet" href="style.css?v=866ceca5f7">
+<link rel="stylesheet" href="style.css?v=706d987a80">
 <script src="summary.js?v=580ffdad1e" defer></script>
 <script src="core.js?v=f5cea37cc1" defer>
 </script>
 <script src="passages.js?v=aa95245d4c" defer></script>
 <script src="passage-playback.js?v=162dbb3695" defer></script>
-<script src="app.js?v=6f1a85c714" defer>
+<script src="app.js?v=10b576d0c3" defer>
 </script>
-<script src="language.js?v=5f0cf838fb" defer></script>
-<script src="podcasts.js?v=28e36ac142" defer></script>
-<script src="jobs.js?v=660c7c538d" defer>
+<script src="language.js?v=503dd0a19a" defer></script>
+<script src="podcasts.js?v=7486a33f77" defer></script>
+<script src="jobs.js?v=0d6d6a2410" defer>
 </script>
-<script src="updates.js?v=7cf97bae78" defer></script>
+<script src="updates.js?v=280bce30bc" defer></script>
 </head>
 <body>
 <a class="skip-link" href="#main-content">跳到主要内容</a>
@@ -33,6 +33,10 @@
 <label class="library-search">查找书架<input id="library-search" type="search" placeholder="按标题查找"></label>
 <input type="file" id="file" accept=".json,.srt,.vtt" hidden>
 <details class="library-backup"><summary>书架备份</summary><div class="disclosure-content"><button id="export-library">备份整个书架</button><button id="restore-library">恢复书架备份</button><input id="library-file" type="file" accept=".json" hidden></div></details>
+<section id="removal-recovery" class="removal-recovery" aria-label="移除恢复区" hidden>
+<strong id="removal-recovery-title"></strong><p class="hint">仅保留上一份移除的完整备份，只在本页有效。刷新、关闭或离开页面后无法撤销。整库备份不含已移除内容，媒体需重新选择。</p>
+<button id="undo-removal" type="button">撤销移除</button><button id="export-removed-document" type="button">导出移除备份</button><button id="finish-removal" type="button">结束本页撤销…</button>
+</section>
 <p class="eyebrow">你的书架</p>
 <details class="library-options"><summary>整理书架</summary><label>排序<select id="library-sort"><option value="added">按添加顺序</option><option value="title">按标题</option><option value="duration">按时长（短到长）</option></select></label><label>内容<select id="library-kind"><option value="all">全部</option><option value="transcript">有文字稿</option><option value="audio">原声项目</option><option value="annotated">有笔记或摘录</option></select></label><label>查找范围<select id="library-scope"><option value="title">标题</option><option value="notes">标题与笔记</option><option value="text">标题、原文与笔记</option></select></label></details>
 <nav id="library" aria-label="文字稿书架">
@@ -301,5 +305,11 @@ cd coconut
 </div>
 </form>
 </dialog>
+<dialog id="remove-document-dialog" aria-labelledby="remove-document-heading" aria-describedby="remove-document-description">
+<h2 id="remove-document-heading">从书架移除？</h2><p id="remove-document-title"></p>
+<p id="remove-document-description">这会释放浏览器保存空间。原稿、译文、笔记与阅读位置仅在本页暂存，可撤销或单独导出；刷新、关闭或离开后无法撤销。不会删除原始媒体文件或后台任务。</p>
+<p id="replace-removal-warning" class="save-warning" hidden></p><button id="export-previous-removal" type="button" hidden>先导出上一篇备份</button>
+<p id="remove-document-error" role="alert"></p><button id="cancel-removal" type="button">取消，保留内容</button><button id="confirm-removal" type="button">移除并保留本页撤销</button></dialog>
+<dialog id="finish-removal-dialog" aria-labelledby="finish-removal-heading"><h2 id="finish-removal-heading">结束本页撤销？</h2><p>结束后不再保留本页恢复副本，也不能再撤销。如果没有另存的 JSON 备份，这份内容将无法恢复。</p><button id="cancel-finish-removal" type="button">保留撤销</button><button id="confirm-finish-removal" type="button">结束撤销</button></dialog>
 </body>
 </html>
