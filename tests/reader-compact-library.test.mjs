@@ -7,7 +7,7 @@ function setup(mobile=true){
  let media,listener;const h=libraryHarness(largeLibraryFixture(500),{configureCore(w){
   const original=w.matchMedia.bind(w);media={matches:mobile,addEventListener(type,fn){listener=fn;}};
   w.matchMedia=query=>query==='(max-width: 650px)'?media:original(query);
- }});return {...h,resize(value){media.matches=value;listener();}};
+ }});return {...h,resize(value){media.matches=value;listener();},setViewport(value){media.matches=value;},deliverChange(){listener();}};
 }
 test('mobile tools keep original nodes, edits, open state and focus through repeated desktop resize',async()=>{
  const {w,$,resize}=setup();try{
@@ -103,4 +103,44 @@ test('browser proof waits for this query to finish and render the exact expected
  cards=[{dataset:{documentKey:expected.key}},{dataset:{documentKey:'shelf-0'}}];assert.equal(compactShelfResultReady(expected,root),false);
  cards=[];assert.equal(compactShelfResultReady(expected,root),false);
  cards=[{dataset:{documentKey:expected.key}}];assert.equal(compactShelfResultReady(expected,root),true);
+});
+
+test('desktop shelf focus owns narrow visibility before delayed MQL delivery without changing caret',async()=>{
+ const {w,$,setViewport,deliverChange}=setup(false);try{
+  const search=$('library-search');assert.equal($('toggle-library').getAttribute('aria-expanded'),'false');
+  search.value='authored query';search.focus();search.setSelectionRange(2,7,'forward');
+  assert.equal($('toggle-library').getAttribute('aria-expanded'),'true');
+  setViewport(true); // CSS may apply now; the change callback has not run.
+  assert.equal($('toggle-library').getAttribute('aria-expanded'),'true');assert.equal(w.document.activeElement,search);
+  assert.equal(search.selectionStart,2);assert.equal(search.selectionEnd,7);
+  deliverChange();assert.equal(w.document.activeElement,search);assert.equal(search.selectionStart,2);assert.equal(search.selectionEnd,7);
+ }finally{await w.happyDOM.close();}
+});
+test('desktop reader navigation and explicit blur clear shelf ownership before narrowing',async()=>{
+ const {w,$,setViewport,deliverChange}=setup(false);try{
+  for(const leave of [()=> $('title').focus(),()=> $('library-search').blur(),()=> $('add-content').click()]){
+   setViewport(false);deliverChange();$('library-search').focus();assert.equal($('toggle-library').getAttribute('aria-expanded'),'true');
+   leave();const intended=w.document.activeElement;assert.equal($('toggle-library').getAttribute('aria-expanded'),'false');
+   setViewport(true);deliverChange();assert.equal($('toggle-library').getAttribute('aria-expanded'),'false');assert.equal(w.document.activeElement,intended);
+  }
+ }finally{await w.happyDOM.close();}
+});
+test('rapid mobile desktop-focus mobile crossing does not require an MQL event to retain ownership',async()=>{
+ const {w,$,setViewport,deliverChange}=setup();try{
+  setViewport(false); // No callback: the browser may coalesce this transition.
+  $('library-search').focus();assert.equal($('toggle-library').getAttribute('aria-expanded'),'true');
+  setViewport(true);assert.equal($('toggle-library').getAttribute('aria-expanded'),'true');assert.equal(w.document.activeElement,$('library-search'));
+  $('toggle-library').click();assert.equal($('toggle-library').getAttribute('aria-expanded'),'false');const intended=w.document.activeElement;
+  deliverChange();assert.equal($('toggle-library').getAttribute('aria-expanded'),'false');assert.equal(w.document.activeElement,intended);
+ }finally{await w.happyDOM.close();}
+});
+
+test('new desktop reader focus clears ownership even when a focused shelf node was removed',async()=>{
+ const {w,$,setViewport,deliverChange}=setup(false);try{
+  const search=$('library-search');search.focus();search.remove();
+  // A browser need not dispatch focusout for a removed focused element.
+  $('toggle-library').setAttribute('aria-expanded','true');$('title').focus();
+  assert.equal($('toggle-library').getAttribute('aria-expanded'),'false');
+  setViewport(true);deliverChange();assert.equal($('toggle-library').getAttribute('aria-expanded'),'false');assert.equal(w.document.activeElement,$('title'));
+ }finally{await w.happyDOM.close();}
 });
