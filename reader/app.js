@@ -764,6 +764,14 @@ const libraryToolAnchors=libraryToolNodes.map(node=>{const anchor=document.creat
 let libraryReaderFocus=null,libraryBrowseOrigin=null;
 document.addEventListener('focusin',event=>{
  if($('main-content').contains(event.target))libraryReaderFocus={node:event.target,key:active()?.key};
+ // CSS applies the narrow breakpoint before MQL callbacks. Record genuine
+ // desktop shelf ownership now, so narrowing cannot hide and blur its control.
+ if(!libraryMobile.matches)$('toggle-library').setAttribute('aria-expanded',String($('library-list').contains(event.target)));
+});
+document.addEventListener('focusout',event=>{
+ // A deliberate desktop departure/blur ends that ownership. Do not remember
+ // or refocus an old node when the user has already moved back to the reader.
+ if(!libraryMobile.matches&&$('library-list').contains(event.target)&&!$('library-list').contains(event.relatedTarget))$('toggle-library').setAttribute('aria-expanded','false');
 });
 function arrangeLibraryTools(){
  const focused=document.activeElement,ownsFocus=libraryToolNodes.some(node=>node.contains(focused)),shelfOwnsFocus=$('library-list').contains(focused);

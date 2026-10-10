@@ -98,3 +98,26 @@ test('passage quota acceptance injects the selected backend and waits for a fail
  assert.match(scenario, /toHaveAttribute\('data-state', 'failed'\)/);
  assert.match(scenario, /window\.restoreContentWrites\(\)/);
 });
+
+test('two-tab conflict proof predicate waits for the exact committed key and note, not a truthy pending read',async()=>{
+ const source=await fs.readFile(new URL('./indexeddb-library-browser.mjs',import.meta.url),'utf8');
+ const helper=source.slice(source.indexOf('async function persistedNoteMatches('),source.indexOf('const flush='));
+ let release,settled=false;
+ const predicate=vm.runInNewContext(helper+'\npersistedNoteMatches',{readPersistedLibrary:()=>new Promise(resolve=>{release=resolve;})});
+ const pending=predicate({key:'b',text:'Independent B after conflict'}).then(value=>{settled=true;return value;});
+ await Promise.resolve();assert.equal(settled,false);release({documents:[{key:'b',notes:{one:'Other window B'}}]});assert.equal(await pending,false);
+ for(const [saved,expected] of [[null,false],[{documents:[{key:'a',notes:{one:'Independent B after conflict'}}]},false],[{documents:[{key:'b',notes:{one:'Independent B after conflict'}}]},true]]){
+  const check=vm.runInNewContext(helper+'\npersistedNoteMatches',{readPersistedLibrary:async()=>saved});
+  assert.equal(await check({key:'b',text:'Independent B after conflict'}),expected);
+ }
+});
+
+test('two-tab conflict proof uses natural autosave and verifies rescue before accepting reload',async()=>{
+ const source=await fs.readFile(new URL('./indexeddb-library-browser.mjs',import.meta.url),'utf8');
+ const scenario=source.slice(source.indexOf(" stage='two real windows"),source.indexOf(" stage='quota failure"));
+ assert.doesNotMatch(scenario,/\bflush\(|libraryStore\.flush/);
+ assert.match(scenario,/await waitForPersistedLibrary\(other,persistedNoteMatches,\{key:'b',text:'Independent B after conflict'\}\)/);
+ assert.match(scenario,/closeState\.contentFailed===true/);assert.match(scenario,/coconutPrepareClose\('safe'/);
+ assert.ok(scenario.indexOf('assert.deepEqual(rescued.documents')<scenario.indexOf("other.once('dialog'"));
+ assert.ok(scenario.indexOf('await other.reload()')<scenario.indexOf('assert.deepEqual(reloaded.documents'));
+});
