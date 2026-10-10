@@ -305,7 +305,9 @@ state={documents:libraryLoad.documents,active:libraryLoad.active};
 if(libraryLoad.ok)for(const doc of state.documents)recordPersistenceCheckpoint(doc,persistenceCheckpoint(doc));
 else notice('上次保存的数据无法读取，已停止写入以保留原数据。本次内容可继续阅读，请导出备份后再关闭页面。');
 const libraryStore=CoconutLibraryStore.create({adapter:libraryAdapter,getDocuments:()=>state.documents,checkpoint:persistenceCheckpoint});
+let libraryContentRevision=0;
 libraryStore.subscribe((snapshot,event)=>{
+ libraryContentRevision=snapshot.generation;
  if(event?.result?.ok)for(const captured of event.result.checkpoints)recordPersistenceCheckpoint(captured.identity,captured.checkpoint);
  if(event?.type==='release')resumeDeferredContentInputs();
  renderSaveStatus(libraryStore.status());
@@ -756,11 +758,29 @@ function createLibraryCard(d){
  entry.append(open,remove);
  return {doc:d,entry,open,title,metadata,remove,openDocument,hitSignature:null,hits:null};
 }
+const librarySearch=Coconut.createLibrarySearch({getDocuments:()=>state.documents,getRevision:()=>libraryContentRevision,onChange:()=>renderLibrary()});
+let libraryPendingReveal=null;
 function renderLibrary(revealKey=null) {
  const host=$('library'),query=$('library-search').value.trim().toLocaleLowerCase(),scope=$('library-scope').value;
  const signature=JSON.stringify([query,$('library-sort').value,$('library-kind').value,scope]);
  const viewChanged=libraryViewSignature!==null&&signature!==libraryViewSignature;
- const docs=Coconut.sortedLibrary(state.documents,$('library-sort').value).filter(d=>Coconut.libraryMatches(d,query,$('library-kind').value,scope));
+ const selection=librarySearch.request(query,$('library-kind').value,scope,$('library-sort').value);
+ if(typeof revealKey==='string')libraryPendingReveal={signature,key:revealKey};
+ if(libraryPendingReveal?.signature!==signature)libraryPendingReveal=null;
+ host.setAttribute('aria-busy',String(selection.pending));
+ if(selection.pending){
+  if(viewChanged)libraryPage=0;
+  libraryViewSignature=signature;
+  // Never advertise a partial count or leave old-query hits actionable.
+  if(host.contains(document.activeElement))$('library-search').focus({preventScroll:true});
+  host.hidden=true;$('library-empty').hidden=true;$('library-pagination').hidden=true;$('library-show-active').hidden=true;
+  $('library-total').textContent=String(state.documents.length);
+  $('library-page-status').textContent='正在查找… 已检查 '+selection.scanned+' / '+selection.documents.length+' 份';
+  return;
+ }
+ host.hidden=false;
+ if(libraryPendingReveal){revealKey=libraryPendingReveal.key;libraryPendingReveal=null;}
+ const docs=selection.docs;
  const activeIndex=docs.findIndex(d=>d.key===state.active);
  if(viewChanged)libraryPage=0;
  else if(state.active!==libraryActiveKey&&activeIndex>=0)libraryPage=Math.floor(activeIndex/LIBRARY_PAGE_SIZE);

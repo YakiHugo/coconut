@@ -1,0 +1,113 @@
+{
+  "environment": "Node v24.19.0 CPU-only; document is atomic; no browser/input latency measurement",
+  "results": [
+    {
+      "documents": 5000,
+      "cuesPerDocument": 8,
+      "temperature": "cold",
+      "inputMs": 0.66,
+      "totalMs": 140.97,
+      "medianSliceMs": 0.7,
+      "p95SliceMs": 1.49,
+      "maxSliceMs": 8.2,
+      "slices": 158,
+      "matched": 5000
+    },
+    {
+      "documents": 5000,
+      "cuesPerDocument": 8,
+      "temperature": "warm-index",
+      "inputMs": 0.56,
+      "totalMs": 71.95,
+      "medianSliceMs": 0.39,
+      "p95SliceMs": 0.68,
+      "maxSliceMs": 3.23,
+      "slices": 157,
+      "matched": 5000
+    },
+    {
+      "documents": 5000,
+      "cuesPerDocument": 8,
+      "temperature": "warm-result",
+      "inputMs": 0.15,
+      "totalMs": 0.15,
+      "medianSliceMs": 0,
+      "p95SliceMs": 0,
+      "maxSliceMs": 0,
+      "slices": 0,
+      "matched": 5000
+    },
+    {
+      "documents": 150,
+      "cuesPerDocument": 2000,
+      "temperature": "cold",
+      "inputMs": 0.03,
+      "totalMs": 454.26,
+      "medianSliceMs": 5.19,
+      "p95SliceMs": 13.95,
+      "maxSliceMs": 25.82,
+      "slices": 75,
+      "matched": 150
+    },
+    {
+      "documents": 150,
+      "cuesPerDocument": 2000,
+      "temperature": "warm-index",
+      "inputMs": 0.02,
+      "totalMs": 147.3,
+      "medianSliceMs": 4.54,
+      "p95SliceMs": 5.19,
+      "maxSliceMs": 5.6,
+      "slices": 32,
+      "matched": 150
+    },
+    {
+      "documents": 150,
+      "cuesPerDocument": 2000,
+      "temperature": "warm-result",
+      "inputMs": 0.01,
+      "totalMs": 0.01,
+      "medianSliceMs": 0,
+      "p95SliceMs": 0,
+      "maxSliceMs": 0,
+      "slices": 0,
+      "matched": 150
+    },
+    {
+      "documents": 1,
+      "cuesPerDocument": 50000,
+      "temperature": "cold",
+      "inputMs": 0.01,
+      "totalMs": 70.62,
+      "medianSliceMs": 70.6,
+      "p95SliceMs": 70.6,
+      "maxSliceMs": 70.6,
+      "slices": 1,
+      "matched": 1
+    },
+    {
+      "documents": 1,
+      "cuesPerDocument": 50000,
+      "temperature": "warm-index",
+      "inputMs": 0.01,
+      "totalMs": 21.01,
+      "medianSliceMs": 20.99,
+      "p95SliceMs": 20.99,
+      "maxSliceMs": 20.99,
+      "slices": 1,
+      "matched": 1
+    },
+    {
+      "documents": 1,
+      "cuesPerDocument": 50000,
+      "temperature": "warm-result",
+      "inputMs": 0.01,
+      "totalMs": 0.01,
+      "medianSliceMs": 0,
+      "p95SliceMs": 0,
+      "maxSliceMs": 0,
+      "slices": 0,
+      "matched": 1
+    }
+  ]
+}
