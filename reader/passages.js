@@ -33,7 +33,9 @@
   * No joining/spacing, translation, summary, semantic heading, or model work is
   * performed. `cues` contains the exact input references in the original order.
   */
- function sourceEntries(segments, options={}) {
+ function drain(iterator){let step;do{step=iterator.next();}while(!step.done);return step.value;}
+ function sourceEntries(segments, options={}) {return drain(sourceEntriesSteps(segments,options));}
+ function* sourceEntriesSteps(segments, options={}) {
   if(!Array.isArray(segments))throw new TypeError('Passages require an array of source cues');
   let sourcePositions=null;
   if(options.source!==undefined){
@@ -61,6 +63,7 @@
     position=cue.position;
    }
    entries.push({cue,position,inputPosition:i});
+   if((i+1)%128===0)yield;
   }
 
   return entries;
@@ -142,56 +145,66 @@
   * paragraph/page caps do not break a phrase; actual source gaps always do.
   * Offsets point into verbatim UTF-16 cue text; separator characters own no cue.
   * The caller owns invalidation when source or translation evidence changes.
-  * Only the last reading and original-only query results are retained. No sliding windows or per-cue joins. */
- function searchIndex(segments, translations=new Map()) {
-  const runs=[],entries=sourceEntries(segments);let characters=0;
-  const add=(field,getText,language='')=>{
+  * Only the last reading and original-only query results are retained. No sliding windows or per-cue joins.
+  * Steps yield after bounded cue/span/character work; callers may stop by closing
+  * the iterator. Only a completed build/query publishes a result. Whole-run
+  * join/lowercasing and individual cue access remain atomic; this is not a hard
+  * millisecond deadline. Synchronous callers drain exactly the same engine. */
+ function searchIndex(segments, translations=new Map()) {return drain(searchIndexSteps(segments,translations));}
+ function* searchIndexSteps(segments, translations=new Map()) {
+  const runs=[],entries=yield* sourceEntriesSteps(segments);let characters=0,spanCount=0;
+  function* add(field,getText,language=''){
    let pieces=[],spans=[],length=0,previous=null,previousEntry=null;
-   const flush=()=>{
-    if(spans.length){const text=pieces.join(''),folded=text.toLocaleLowerCase();runs.push({field,language,text,folded,spans,expansions:folded.length===text.length?[]:foldExpansions(text)});characters+=text.length;}
+   function* flush(){
+    if(spans.length){const text=pieces.join(''),folded=text.toLocaleLowerCase();runs.push({field,language,text,folded,spans,expansions:folded.length===text.length?[]:yield* foldExpansionsSteps(text)});characters+=text.length;spanCount+=spans.length;}
     pieces=[];spans=[];length=0;previous=null;
    };
+   let processed=0;
    for(const entry of entries){
-    if(previousEntry&&!adjacent(previousEntry,entry))flush();previousEntry=entry;
+    if(++processed%128===0)yield;
+    if(previousEntry&&!adjacent(previousEntry,entry))yield* flush();previousEntry=entry;
     const cue=entry.cue,text=getText(cue);
-    if(text===null){flush();continue;}
+    if(text===null){yield* flush();continue;}
     const space=previous===null?'':separator(previous,text);pieces.push(space,text);length+=space.length;
     if(text.length)spans.push({cue,start:length,end:length+text.length});length+=text.length;previous=text;
    }
-   flush();
+   yield* flush();
   };
-  add('text',cue=>cue.text);for(const [language,getText] of translations)add('translation',getText,language);
+  yield* add('text',cue=>cue.text);for(const [language,getText] of translations)yield* add('translation',getText,language);
   const results=new Map();
-  return {stats:Object.freeze({runs:runs.length,characters,spans:runs.reduce((n,run)=>n+run.spans.length,0)}),search(query,scope='all'){
+  const index={stats:Object.freeze({runs:runs.length,characters,spans:spanCount}),search(query,scope='all'){return drain(index.searchSteps(query,scope));},*searchSteps(query,scope='all'){
    scope=scope==='text'?'text':'all';const cached=results.get(scope);
    if(query===cached?.input)return cached.result;
    const needle=query.trim().toLocaleLowerCase();
    if(needle===cached?.query){cached.input=query;return cached.result;}
-   const byCue=new Map(),previews=new Map(),failure=prefixTable(needle);
+   const byCue=new Map(),previews=new Map(),failure=yield* prefixTableSteps(needle);
    const entryFor=span=>{let entry=byCue.get(span.cue.id);if(!entry){entry={text:[],translations:Object.create(null),phrases:Object.create(null)};byCue.set(span.cue.id,entry);}return entry;};
+   let processedRuns=0;
    if(needle)for(const run of runs){
     if(scope==='text'&&run.field!=='text')continue;
     let firstSpan=0,lastSpan=0,nextPhraseSpan=0,highlightSpan=0,unionStart=-1,unionEnd=-1;
     const fieldKey=run.field+(run.language?':'+run.language:'');
-    const flushHighlight=()=>{
+    function* flushHighlight(){
      if(unionStart<0)return;
-     while(highlightSpan<run.spans.length&&run.spans[highlightSpan].end<=unionStart)highlightSpan++;
+     while(highlightSpan<run.spans.length&&run.spans[highlightSpan].end<=unionStart){highlightSpan++;if(highlightSpan%128===0)yield;}
      for(let position=highlightSpan;position<run.spans.length;position++){
+      if((position+1)%128===0)yield;
       const span=run.spans[position];if(span.start>=unionEnd)break;
       const entry=entryFor(span),ranges=run.field==='text'?entry.text:(entry.translations[run.language]??=[]);
       const range={start:Math.max(0,unionStart-span.start),end:Math.min(span.end,unionEnd)-span.start},previous=ranges.at(-1);
       if(previous&&range.start<=previous.end)previous.end=Math.max(previous.end,range.end);else ranges.push(range);
      }
     };
-    eachMatch(run.folded,needle,failure,offset=>{
+    for(const offset of eachMatchSteps(run.folded,needle,failure)){
+     if(offset===null){yield;continue;}
      const start=sourceOffset(run.expansions,offset,false),end=sourceOffset(run.expansions,offset+needle.length,true);
      // Merge overlapping occurrences BEFORE mapping their contributing spans.
      // A repeated long phrase must not revisit thousands of cues per match.
-     if(start>unionEnd){flushHighlight();unionStart=start;unionEnd=end;}else unionEnd=Math.max(unionEnd,end);
-     while(firstSpan<run.spans.length&&run.spans[firstSpan].end<=start)firstSpan++;
+     if(start>unionEnd){yield* flushHighlight();unionStart=start;unionEnd=end;}else unionEnd=Math.max(unionEnd,end);
+     while(firstSpan<run.spans.length&&run.spans[firstSpan].end<=start){firstSpan++;if(firstSpan%128===0)yield;}
      lastSpan=Math.max(lastSpan,firstSpan);
-     while(lastSpan<run.spans.length&&run.spans[lastSpan].start<end)lastSpan++;
-     const count=lastSpan-firstSpan;if(!count)return;
+     while(lastSpan<run.spans.length&&run.spans[lastSpan].start<end){lastSpan++;if(lastSpan%128===0)yield;}
+     const count=lastSpan-firstSpan;if(!count)continue;
      const key=fieldKey+':'+run.spans[firstSpan].cue.id,existing=previews.get(key);
      const needsPreview=!existing||existing.cueCount===1&&count>1;
      const assignFrom=Math.max(nextPhraseSpan,firstSpan);
@@ -200,33 +213,36 @@
       const hit={field:run.field,language:run.language,id:run.spans[first].cue.id,lastId:run.spans[last-1].cue.id,cueCount:count,
        get ids(){return ids??=run.spans.slice(first,last).map(span=>span.cue.id);},snippet:rangeSnippet(run.text,start,end)};
       if(needsPreview)previews.set(key,hit);
-      if(count>1){for(let position=assignFrom;position<last;position++)entryFor(run.spans[position]).phrases[fieldKey]=hit;nextPhraseSpan=last;}
+      if(count>1){for(let position=assignFrom;position<last;position++){entryFor(run.spans[position]).phrases[fieldKey]=hit;if((position+1)%128===0)yield;}nextPhraseSpan=last;}
      }
-    });
-    flushHighlight();
+    }
+    yield* flushHighlight();
+    if(++processedRuns%128===0)yield;
    }
    const result={byCue,previews};results.set(scope,{input:query,query:needle,result});return result;
   }};
+  return index;
  }
  // KMP keeps even heavily overlapping, repetitive long queries linear in
- // indexed characters + query length. The callback never rescans source text.
- function prefixTable(needle){
+ // indexed characters + query length. Resuming never rescans source text.
+ function* prefixTableSteps(needle){
   const table=new Uint32Array(needle.length);let matched=0;
-  for(let i=1;i<needle.length;i++){while(matched&&needle[i]!==needle[matched])matched=table[matched-1];if(needle[i]===needle[matched])matched++;table[i]=matched;}
+  for(let i=1;i<needle.length;i++){while(matched&&needle[i]!==needle[matched])matched=table[matched-1];if(needle[i]===needle[matched])matched++;table[i]=matched;if(i%2048===0)yield;}
   return table;
  }
- function eachMatch(text,needle,table,visit){
+ function* eachMatchSteps(text,needle,table){
   let matched=0;for(let i=0;i<text.length;i++){
    while(matched&&text[i]!==needle[matched])matched=table[matched-1];
    if(text[i]===needle[matched])matched++;
-   if(matched===needle.length){visit(i-needle.length+1);matched=table[matched-1];}
+   if(matched===needle.length){yield i-needle.length+1;matched=table[matched-1];}
+   if((i+1)%2048===0)yield null;
   }
  }
  // Locale case folding can expand a code point (İ → i + combining dot). Keep
  // only expansion boundaries, rather than an O(characters) numeric offset map.
- function foldExpansions(text){
-  const expansions=[];let source=0,folded=0;
-  for(const char of text){const width=char.toLocaleLowerCase().length;if(width!==char.length)expansions.push({start:folded,end:folded+width,source,endSource:source+char.length});source+=char.length;folded+=width;}
+ function* foldExpansionsSteps(text){
+  const expansions=[];let source=0,folded=0,count=0;
+  for(const char of text){const width=char.toLocaleLowerCase().length;if(width!==char.length)expansions.push({start:folded,end:folded+width,source,endSource:source+char.length});source+=char.length;folded+=width;if(++count%2048===0)yield;}
   return expansions;
  }
  function sourceOffset(expansions,offset,end){
@@ -245,7 +261,7 @@
   return {before:(start>before.length?'…':'')+before,match:match+(end-start>match.length?'…':''),after:after+(end+after.length<text.length?'…':'')};
  }
 
- const api=Object.freeze({LIMITS,build,locate,atTime,separator,continuous,searchIndex,rangeSnippet});
+ const api=Object.freeze({LIMITS,build,locate,atTime,separator,continuous,searchIndex,searchIndexSteps,rangeSnippet});
  if(typeof module!=='undefined'&&module.exports)module.exports=api;
  else root.CoconutPassages=api;
 })(typeof window!=='undefined'?window:globalThis);

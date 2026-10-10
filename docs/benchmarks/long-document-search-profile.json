@@ -1,0 +1,344 @@
+{
+  "beforeTree": "1fab4d03d552b6ad28bbe5390987e7dbd4cbef83",
+  "command": "flock /tmp/coconut-full-gates.lock node scripts/profile_cooperative_library.mjs",
+  "before": {
+    "environment": "Node v24.19.0 CPU-only; document is atomic; no browser/input latency measurement",
+    "results": [
+      {
+        "documents": 5000,
+        "cuesPerDocument": 8,
+        "temperature": "cold",
+        "inputMs": 5.41,
+        "totalMs": 221.47,
+        "medianSliceMs": 0.89,
+        "p95SliceMs": 3.62,
+        "maxSliceMs": 10.72,
+        "slices": 159,
+        "matched": 5000
+      },
+      {
+        "documents": 5000,
+        "cuesPerDocument": 8,
+        "temperature": "warm-index",
+        "inputMs": 1.27,
+        "totalMs": 123.48,
+        "medianSliceMs": 0.78,
+        "p95SliceMs": 1.38,
+        "maxSliceMs": 4.03,
+        "slices": 157,
+        "matched": 5000
+      },
+      {
+        "documents": 5000,
+        "cuesPerDocument": 8,
+        "temperature": "warm-result",
+        "inputMs": 0.06,
+        "totalMs": 0.07,
+        "medianSliceMs": 0,
+        "p95SliceMs": 0,
+        "maxSliceMs": 0,
+        "slices": 0,
+        "matched": 5000
+      },
+      {
+        "documents": 150,
+        "cuesPerDocument": 2000,
+        "temperature": "cold",
+        "inputMs": 0.1,
+        "totalMs": 636.29,
+        "medianSliceMs": 5.83,
+        "p95SliceMs": 16.45,
+        "maxSliceMs": 46.18,
+        "slices": 90,
+        "matched": 150
+      },
+      {
+        "documents": 150,
+        "cuesPerDocument": 2000,
+        "temperature": "warm-index",
+        "inputMs": 0.02,
+        "totalMs": 152,
+        "medianSliceMs": 4.61,
+        "p95SliceMs": 5.4,
+        "maxSliceMs": 5.5,
+        "slices": 33,
+        "matched": 150
+      },
+      {
+        "documents": 150,
+        "cuesPerDocument": 2000,
+        "temperature": "warm-result",
+        "inputMs": 0.02,
+        "totalMs": 0.02,
+        "medianSliceMs": 0,
+        "p95SliceMs": 0,
+        "maxSliceMs": 0,
+        "slices": 0,
+        "matched": 150
+      },
+      {
+        "documents": 1,
+        "cuesPerDocument": 50000,
+        "temperature": "cold",
+        "inputMs": 0.01,
+        "totalMs": 141.12,
+        "medianSliceMs": 141.1,
+        "p95SliceMs": 141.1,
+        "maxSliceMs": 141.1,
+        "slices": 1,
+        "matched": 1
+      },
+      {
+        "documents": 1,
+        "cuesPerDocument": 50000,
+        "temperature": "warm-index",
+        "inputMs": 0.33,
+        "totalMs": 29.49,
+        "medianSliceMs": 29.15,
+        "p95SliceMs": 29.15,
+        "maxSliceMs": 29.15,
+        "slices": 1,
+        "matched": 1
+      },
+      {
+        "documents": 1,
+        "cuesPerDocument": 50000,
+        "temperature": "warm-result",
+        "inputMs": 0.01,
+        "totalMs": 0.01,
+        "medianSliceMs": 0,
+        "p95SliceMs": 0,
+        "maxSliceMs": 0,
+        "slices": 0,
+        "matched": 1
+      }
+    ]
+  },
+  "after": {
+    "environment": "Node v24.19.0 CPU-only; resumable cue/character work; whole-run join/fold and final sort remain atomic; no browser/input latency measurement",
+    "results": [
+      {
+        "documents": 5000,
+        "cuesPerDocument": 8,
+        "temperature": "cold",
+        "inputMs": 4.63,
+        "totalMs": 208.87,
+        "medianSliceMs": 1.02,
+        "p95SliceMs": 2.46,
+        "maxSliceMs": 7.43,
+        "slices": 158,
+        "matched": 5000
+      },
+      {
+        "documents": 5000,
+        "cuesPerDocument": 8,
+        "temperature": "warm-index",
+        "inputMs": 0.99,
+        "totalMs": 108.72,
+        "medianSliceMs": 0.53,
+        "p95SliceMs": 0.92,
+        "maxSliceMs": 9.11,
+        "slices": 157,
+        "matched": 5000
+      },
+      {
+        "documents": 5000,
+        "cuesPerDocument": 8,
+        "temperature": "warm-result",
+        "inputMs": 0.08,
+        "totalMs": 0.08,
+        "medianSliceMs": 0,
+        "p95SliceMs": 0,
+        "maxSliceMs": 0,
+        "slices": 0,
+        "matched": 5000
+      },
+      {
+        "documents": 150,
+        "cuesPerDocument": 2000,
+        "temperature": "cold",
+        "inputMs": 0.03,
+        "totalMs": 442.19,
+        "medianSliceMs": 0.62,
+        "p95SliceMs": 1.4,
+        "maxSliceMs": 10.43,
+        "slices": 628,
+        "matched": 150
+      },
+      {
+        "documents": 150,
+        "cuesPerDocument": 2000,
+        "temperature": "warm-index",
+        "inputMs": 0.03,
+        "totalMs": 174.2,
+        "medianSliceMs": 0.44,
+        "p95SliceMs": 0.76,
+        "maxSliceMs": 1.29,
+        "slices": 414,
+        "matched": 150
+      },
+      {
+        "documents": 150,
+        "cuesPerDocument": 2000,
+        "temperature": "warm-result",
+        "inputMs": 0.02,
+        "totalMs": 0.02,
+        "medianSliceMs": 0,
+        "p95SliceMs": 0,
+        "maxSliceMs": 0,
+        "slices": 0,
+        "matched": 150
+      },
+      {
+        "documents": 1,
+        "cuesPerDocument": 50000,
+        "temperature": "cold",
+        "inputMs": 0.01,
+        "totalMs": 77.02,
+        "medianSliceMs": 0.43,
+        "p95SliceMs": 1.71,
+        "maxSliceMs": 11.06,
+        "slices": 109,
+        "matched": 1
+      },
+      {
+        "documents": 1,
+        "cuesPerDocument": 50000,
+        "temperature": "warm-index",
+        "inputMs": 0.01,
+        "totalMs": 25.3,
+        "medianSliceMs": 0.5,
+        "p95SliceMs": 0.63,
+        "maxSliceMs": 0.73,
+        "slices": 70,
+        "matched": 1
+      },
+      {
+        "documents": 1,
+        "cuesPerDocument": 50000,
+        "temperature": "warm-result",
+        "inputMs": 0.01,
+        "totalMs": 0.01,
+        "medianSliceMs": 0,
+        "p95SliceMs": 0,
+        "maxSliceMs": 0,
+        "slices": 0,
+        "matched": 1
+      }
+    ]
+  },
+  "intermediateAfter": {
+    "environment": "Node v24.19.0 CPU-only; document is atomic; no browser/input latency measurement",
+    "results": [
+      {
+        "documents": 5000,
+        "cuesPerDocument": 8,
+        "temperature": "cold",
+        "inputMs": 4.33,
+        "totalMs": 206.63,
+        "medianSliceMs": 0.52,
+        "p95SliceMs": 1.12,
+        "maxSliceMs": 8.6,
+        "slices": 314,
+        "matched": 5000
+      },
+      {
+        "documents": 5000,
+        "cuesPerDocument": 8,
+        "temperature": "warm-index",
+        "inputMs": 0.65,
+        "totalMs": 106.83,
+        "medianSliceMs": 0.29,
+        "p95SliceMs": 0.5,
+        "maxSliceMs": 5.22,
+        "slices": 313,
+        "matched": 5000
+      },
+      {
+        "documents": 5000,
+        "cuesPerDocument": 8,
+        "temperature": "warm-result",
+        "inputMs": 0.07,
+        "totalMs": 0.07,
+        "medianSliceMs": 0,
+        "p95SliceMs": 0,
+        "maxSliceMs": 0,
+        "slices": 0,
+        "matched": 5000
+      },
+      {
+        "documents": 150,
+        "cuesPerDocument": 2000,
+        "temperature": "cold",
+        "inputMs": 0.04,
+        "totalMs": 484.85,
+        "medianSliceMs": 0.59,
+        "p95SliceMs": 1.14,
+        "maxSliceMs": 54.66,
+        "slices": 631,
+        "matched": 150
+      },
+      {
+        "documents": 150,
+        "cuesPerDocument": 2000,
+        "temperature": "warm-index",
+        "inputMs": 0.03,
+        "totalMs": 172.34,
+        "medianSliceMs": 0.42,
+        "p95SliceMs": 0.72,
+        "maxSliceMs": 1.54,
+        "slices": 419,
+        "matched": 150
+      },
+      {
+        "documents": 150,
+        "cuesPerDocument": 2000,
+        "temperature": "warm-result",
+        "inputMs": 0.01,
+        "totalMs": 0.01,
+        "medianSliceMs": 0,
+        "p95SliceMs": 0,
+        "maxSliceMs": 0,
+        "slices": 0,
+        "matched": 150
+      },
+      {
+        "documents": 1,
+        "cuesPerDocument": 50000,
+        "temperature": "cold",
+        "inputMs": 0.01,
+        "totalMs": 73.72,
+        "medianSliceMs": 0.42,
+        "p95SliceMs": 1.77,
+        "maxSliceMs": 10.82,
+        "slices": 108,
+        "matched": 1
+      },
+      {
+        "documents": 1,
+        "cuesPerDocument": 50000,
+        "temperature": "warm-index",
+        "inputMs": 0.01,
+        "totalMs": 28.1,
+        "medianSliceMs": 0.5,
+        "p95SliceMs": 0.68,
+        "maxSliceMs": 1.71,
+        "slices": 70,
+        "matched": 1
+      },
+      {
+        "documents": 1,
+        "cuesPerDocument": 50000,
+        "temperature": "warm-result",
+        "inputMs": 0.01,
+        "totalMs": 0.01,
+        "medianSliceMs": 0,
+        "p95SliceMs": 0,
+        "maxSliceMs": 0,
+        "slices": 0,
+        "matched": 1
+      }
+    ]
+  },
+  "limitations": "Authored CPU-only fixtures; deterministic scheduler drain, no browser input/audio/layout/timer latency; whole-run joins/lowercasing, final sort and per-cue validity remain atomic; allocation/GC outliers are retained."
+}
