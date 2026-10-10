@@ -7,15 +7,15 @@
 <meta name="description" content="把长视频和播客变成自己的阅读空间。对照原文与译文，按时间回听，留下摘录和笔记。">
 <meta name="theme-color" content="#faf9f7">
 <link rel="icon" type="image/png" href="coconut-mark.png">
-<link rel="stylesheet" href="style.css?v=706d987a80">
+<link rel="stylesheet" href="style.css?v=ac50cdcb01">
 <script src="summary.js?v=580ffdad1e" defer></script>
-<script src="core.js?v=47c9649bad" defer>
+<script src="core.js?v=9746a739f9" defer>
 </script>
 <script src="passages.js?v=aa95245d4c" defer></script>
 <script src="passage-playback.js?v=162dbb3695" defer></script>
-<script src="app.js?v=1be4ef8c0a" defer>
+<script src="app.js?v=e349917d0e" defer>
 </script>
-<script src="language.js?v=41117aaa91" defer></script>
+<script src="language.js?v=7ab2806c61" defer></script>
 <script src="podcasts.js?v=7486a33f77" defer></script>
 <script src="jobs.js?v=0d6d6a2410" defer>
 </script>
@@ -184,7 +184,7 @@ cd coconut
 <p id="summary-status" class="hint" role="status"></p><div id="summary-body"></div>
 <div id="summary-citations" class="summary-citations" aria-label="摘要引用"></div>
 <p id="summary-readiness" class="hint" role="status" hidden></p>
-<div class="summary-actions"><button id="prepare-summary" class="primary" aria-describedby="summary-readiness">使用本地 AI 工具生成摘要</button><button id="summary-open-transcript">直接读原文</button><button id="summary-select-excerpt" hidden>筛选原文后提问</button><button id="export-summary" hidden>导出这份摘要</button></div>
+<div class="summary-actions"><button id="prepare-summary" class="primary" aria-describedby="summary-readiness">使用本地 AI 工具生成摘要</button><button id="summary-open-transcript">直接读原文</button><button id="summary-select-excerpt" hidden>筛选原文后提问</button><button id="export-summary" hidden>导出这份摘要</button><button id="browse-ai-history" type="button" hidden>浏览全部 AI 历史</button></div>
 <section id="summary-request" class="summary-request" hidden aria-label="生成摘要"><div class="summary-request-heading"><h3 tabindex="-1" id="summary-request-heading">生成这篇的摘要</h3><button id="close-summary-request" type="button">收起</button></div><p class="hint">确认全文范围，生成带原文引用的中文摘要。</p><p id="summary-connection-help" class="hint"></p><button id="summary-connection-setup" type="button">查看连接步骤</button><div id="summary-request-slot"></div></section>
 <p class="hint summary-boundary">摘要仅展示明确生成并保存的结果。模型可能遗漏或理解有误，请点引用核对；打开页面不会发送原文或使用额度。</p>
 </section>
@@ -243,7 +243,18 @@ cd coconut
 <div class="ai-submit-actions"><button id="subscription-translate" class="primary" disabled hidden>翻译原文</button><button id="ask-ai" class="primary" disabled>发送问题</button></div>
 <div class="ai-run-controls"><button id="stop-subscription-translation" hidden>停止后续翻译</button><button id="stop-summary" type="button" hidden>停止后续摘要</button><button id="stop-translation" hidden>停止后续离线批次</button></div>
 <p id="ai-progress" role="status"></p><p id="language-status" role="status" class="hint" hidden>连接本地服务后可翻译；现有译文可直接阅读与备份。</p>
-</section></div><button id="export-ai-reading" disabled>导出 AI 阅读记录</button><div id="ai-answers"></div>
+</section></div>
+<section id="ai-history" aria-labelledby="ai-history-heading">
+<h3 id="ai-history-heading" tabindex="-1">AI 阅读历史</h3>
+<p id="ai-history-status" class="hint" role="status"></p>
+<p id="ai-history-storage" class="hint" role="status"></p>
+<button id="export-ai-reading" type="button" disabled>导出全部 AI 历史（Markdown）</button>
+<button id="export-ai-history-json" type="button" disabled>备份本篇全部内容（JSON）</button>
+<nav id="ai-history-pages" class="ai-history-pages" aria-label="AI 历史翻页" hidden>
+<button id="ai-history-latest" type="button">最新一页</button><button id="ai-history-newer" type="button">较新记录</button><button id="ai-history-older" type="button">较旧记录</button><button id="ai-history-oldest" type="button">最早一页</button>
+</nav>
+<div id="ai-answers"></div>
+</section>
 </div></details>
 </div>
 <nav id="reading-context" class="reading-context" aria-label="原文上下文" hidden><span id="reading-context-label"></span><div><button id="return-reading-results" type="button">← 返回结果</button><button id="dismiss-reading-context" type="button">留在全文</button></div></nav>

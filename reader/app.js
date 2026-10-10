@@ -106,10 +106,15 @@ let unloadGuardAttached = false;
 let hasLanguageDrafts = () => false;
 const audioBookmarkDrafts = new Map();
 const persistedSummaries = new Map();
+let persistedAIAnswerCounts = new WeakMap();
 const persistedSummaryJobs = new Map();
 function summaryCheckpointSignature(job){return job?JSON.stringify([job.provider,job.snapshot,job.results]):null;}
 function summaryCheckpointSaved(doc){return !!doc?.summary_job&&persistedSummaryJobs.get(doc.key)===summaryCheckpointSignature(doc.summary_job);}
-function recordPersistedSummaries() { persistedSummaries.clear();persistedSummaryJobs.clear(); for(const doc of state.documents){persistedSummaries.set(doc.key,Coconut.latestSummary(doc));persistedSummaryJobs.set(doc.key,summaryCheckpointSignature(doc.summary_job));} }
+function recordPersistedSummaries() {
+ // Answer arrays are append-only; capture counts only after a successful write.
+ // Rebuild by document identity so replacement/restored documents cannot inherit it.
+ persistedAIAnswerCounts = new WeakMap(state.documents.map(doc=>[doc,(doc.ai_answers||[]).length]));
+ persistedSummaries.clear();persistedSummaryJobs.clear(); for(const doc of state.documents){persistedSummaries.set(doc.key,Coconut.latestSummary(doc));persistedSummaryJobs.set(doc.key,summaryCheckpointSignature(doc.summary_job));} }
 let mediaWorkerReady = false;
 let readingMode = "summary";
 let demoToolsExpanded=false;
@@ -1804,7 +1809,8 @@ function renderSummary() {
  $('summary-citations').replaceChildren();
  if(answer){
   for(const id of [...new Set(answer.citations)]){
-   const segment=doc.segments.find(s=>s.id===id);if(!segment)continue;
+   const segment=doc.segments.find(s=>s.id===id);
+   if(!segment){$('summary-citations').append(el('p','hint','原片段已不存在：'+id+'。请查看历史记录中的依据状态。'));continue;}
    const button=el('button','',Coconut.time(segment.start)+' · 核对原文');
    button.onclick=()=>goToSegment(id);$('summary-citations').append(button);
   }
@@ -1815,6 +1821,8 @@ function renderSummary() {
  $('summary-readiness').hidden=readiness.ready;$('summary-readiness').textContent=readiness.reason;
  $('summary-select-excerpt').hidden=readiness.ready;
  $('export-summary').hidden=!answer;
+ $('browse-ai-history').hidden=!(doc.ai_answers||[]).length;
+ $('browse-ai-history').textContent='浏览全部 AI 历史（'+(doc.ai_answers||[]).length+' 则）';
 }
 $('mode-passages').onclick=()=>openPassage(passageAnchor||active()?.readingPosition||active()?.segments[0]?.id);
 $('mode-summary').onclick=()=>setReadingMode('summary');

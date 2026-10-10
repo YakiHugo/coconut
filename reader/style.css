@@ -802,3 +802,9 @@ body[data-media-docked="true"] .reading-feedback { bottom: 94px; }
 .removal-recovery button { display: block; width: 100%; margin-top: 7px; font-size: 12px; }
 #remove-document-dialog, #finish-removal-dialog { max-width: min(480px, calc(100vw - 32px)); }
 #remove-document-dialog p, #finish-removal-dialog p { overflow-wrap: anywhere; }
+
+/* History storage is complete; only a small page is mounted for reading. */
+#ai-history { margin-top: 24px; }
+.ai-history-pages { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
+.ai-answer-heading { font-size: 13px; font-weight: 600; margin: 0 0 8px; }
+#ai-history-storage[data-state="unsaved"] { color: #715319; background: #fff7e2; padding: 10px; border-radius: 8px; }
