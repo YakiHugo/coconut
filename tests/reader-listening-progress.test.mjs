@@ -11,7 +11,7 @@ function setup(storage={}){
  Object.defineProperty(w,'crypto',{value:webcrypto});for(const [k,v]of Object.entries(storage))w.localStorage.setItem(k,v);
  w.fetch=async()=>{throw new Error('No external requests');};
  installSavePipeline(w);
- w.eval(['summary','core','passages','passage-playback','app'].map(n=>fs.readFileSync(new URL('reader/'+n+'.js',root),'utf8')).join('\n')+'\nwindow.testProgress={reset:()=>{listeningSession.engaged=false;renderListeningResume();},listen:range=>passagePlayback.listen(range),cancel:()=>passagePlayback.cancel(),return:()=>passagePlayback.returnToPrevious()};');
+ w.eval(['summary','core','passages','passage-playback','app'].map(n=>fs.readFileSync(new URL('reader/'+n+'.js',root),'utf8')).join('\n')+'\nwindow.testProgress={reset:()=>{listeningSession.engaged=false;renderListeningResume();},listen:range=>passagePlayback.listen(range),cancel:()=>passagePlayback.cancel(),return:()=>passagePlayback.returnToPrevious(),replaceDocument:()=>{state.documents[state.documents.indexOf(active())]={...active()};},replaceAttachment:()=>browserMedia.set(active().key,{origin:"local",identity:"new-authored-attachment",url:$("source-media").querySelector("audio,video").getAttribute("src"),kind:"audio"})};');
  return {w,$:id=>w.document.getElementById(id)};
 }
 const fixture={title:'Authored listening fixture',source_media:{job_id:'a'.repeat(32),kind:'audio'},segments:[{id:'one',start:0,end:40,text:'Authored text'}]};
@@ -87,5 +87,65 @@ test('a canceled native picker retires its target; a fresh chooser selection att
   $('attach-reader-media').click();await choose();
   assert.equal($('source-media').querySelector('audio').getAttribute('src'),'blob:authored-selection');
   assert.match($('notice').textContent,/媒体只在本次页面读取/);
+ }finally{await env.w.happyDOM.close();}
+});
+
+test('late cue play abort after navigation does not replace the new document notice',async()=>{
+ const env=setup();try{
+ const {w,$}=env,p=await media(env);$('mode-transcript').click();
+ let rejectPlay;p.play=()=>new Promise((resolve,reject)=>{rejectPlay=reject;});
+ $('transcript').querySelector('.segment .time button').click();
+ const next=JSON.stringify({title:'New document without media',segments:[{id:'new',start:0,end:5,text:'New authored text'}]});
+ Object.defineProperty($('file'),'files',{configurable:true,value:[{name:'new.json',size:next.length,text:async()=>next}]});await $('file').onchange();
+ const before=$('notice').textContent;assert.equal($('title').textContent,'New document without media');
+ rejectPlay(Object.assign(new Error('play interrupted by pause'),{name:'AbortError'}));await Promise.resolve();await Promise.resolve();
+ assert.equal($('notice').textContent,before);
+ }finally{await env.w.happyDOM.close();}
+});
+test('a genuine cue playback rejection for the current owner remains visible',async()=>{
+ const env=setup();try{const {w,$}=env,p=await media(env);$('mode-transcript').click();
+ p.play=async()=>{throw Object.assign(new Error('permission denied'),{name:'NotAllowedError'});};
+ $('transcript').querySelector('.segment .time button').click();await Promise.resolve();await Promise.resolve();
+ assert.equal($('notice').textContent,'请点击播放器开始播放，再按时间戳定位。');
+ }finally{await env.w.happyDOM.close();}
+});
+test('cue playback rejection cannot report for a replaced source, attachment or document on the same player',async()=>{
+ for(const replacement of ['source','attachment','document']){
+  const env=setup();try{const {w,$}=env,p=await media(env);$('mode-transcript').click();
+   let rejectPlay;p.play=()=>new Promise((resolve,reject)=>{rejectPlay=reject;});
+   $('transcript').querySelector('.segment .time button').click();
+   if(replacement==='source')p.setAttribute('src','blob:authored-replacement');else if(replacement==='attachment')w.testProgress.replaceAttachment();else w.testProgress.replaceDocument();
+   const before=$('notice').textContent;
+   rejectPlay(Object.assign(new Error('obsolete playback failed'),{name:'NotAllowedError'}));await Promise.resolve();await Promise.resolve();
+   assert.equal($('source-media').querySelector('audio'),p,'same element is deliberately reused');
+   assert.equal($('notice').textContent,before,replacement+' owns its own guidance');
+  }finally{await env.w.happyDOM.close();}
+ }
+});
+test('expected cue playback AbortError is quiet even while the same owner remains active',async()=>{
+ const env=setup();try{const {w,$}=env,p=await media(env);$('mode-transcript').click();
+  const before=$('notice').textContent;
+  p.play=async()=>{throw Object.assign(new Error('pause interrupted playback'),{name:'AbortError'});};
+  $('transcript').querySelector('.segment .time button').click();await Promise.resolve();await Promise.resolve();
+  assert.equal($('notice').textContent,before);
+ }finally{await env.w.happyDOM.close();}
+});
+
+test('same-document library reselection retires delayed rejection',async()=>{
+ const env=setup();try{const {w,$}=env,p=await media(env);$('mode-transcript').click();
+ let rejectPlay;p.play=()=>new Promise((resolve,reject)=>{rejectPlay=reject;});
+ $('transcript').querySelector('.segment .time button').click();
+ $('library').querySelector('.library-open').click();
+ const before=$('notice').textContent;
+ assert.equal($('source-media').querySelector('audio'),p);
+ rejectPlay(Object.assign(new Error('old permission denial'),{name:'NotAllowedError'}));await Promise.resolve();await Promise.resolve();
+ assert.equal($('notice').textContent,before);
+ }finally{await env.w.happyDOM.close();}
+});
+test('delayed permission denial cannot overwrite different-document notice',async()=>{
+ const env=setup();try{const {w,$}=env,p=await media(env);$('mode-transcript').click();
+ let rejectPlay;p.play=()=>new Promise((resolve,reject)=>{rejectPlay=reject;});$('transcript').querySelector('.segment .time button').click();
+ const text=JSON.stringify({title:'Other source',source_media:{job_id:'b'.repeat(32),kind:'audio'},segments:[{id:'other',start:0,end:10,text:'Other text'}]});Object.defineProperty($('file'),'files',{configurable:true,value:[{name:'other.json',size:text.length,text:async()=>text}]});await $('file').onchange();
+ assert.notEqual($('source-media').querySelector('audio'),p);const before=$('notice').textContent;rejectPlay(Object.assign(new Error('old denial'),{name:'NotAllowedError'}));await Promise.resolve();await Promise.resolve();assert.equal($('notice').textContent,before);
  }finally{await env.w.happyDOM.close();}
 });

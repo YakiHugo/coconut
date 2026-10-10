@@ -13,6 +13,10 @@ let server,browser,stage='setup',external=0,mutations=0;const errors=[],checks=[
 const check=(name,value)=>{assert.ok(value,name);checks.push(name);};
 const ready=page=>page.waitForFunction(()=>window.CoconutStorageBootstrap?.phase==='ready');
 const disk=page=>page.evaluate(()=>readPersistedLibrary());
+async function persistedNoteMatches({key,text}){
+ const saved=await readPersistedLibrary();
+ return saved?.documents.some(doc=>doc.key===key&&doc.notes?.one===text)===true;
+}
 const flush=async page=>{await page.evaluate(()=>libraryStore.flush());};
 const note=async(page,text)=>{if(await page.locator('#mode-transcript').isVisible())await page.locator('#mode-transcript').click();await page.locator('.note-button').first().click();await page.locator('#note').fill(text);};
 const download=async(page,selector)=>{const [file]=await Promise.all([page.waitForEvent('download'),page.locator(selector).click()]);assert.equal(await file.failure(),null);const chunks=[];for await(const bytes of await file.createReadStream())chunks.push(bytes);return Buffer.concat(chunks).toString('utf8');};
@@ -54,15 +58,39 @@ try{
  check('full_large_document_commits_without_truncation',(await disk(page)).documents.find(doc=>doc.key==='large').notes.one.length===large.notes.one.length);
  await page.reload();await ready(page);check('large_restore_survives_reload',(await disk(page)).documents.find(doc=>doc.key==='large').notes.one.length===large.notes.one.length);
  check('legacy_original_remains_unchanged_after_large_restore',await page.evaluate(key=>localStorage.getItem(key),KEY)===original);
- stage='two real windows preserve distinct keys and fence stale same-key writes';
- const other=await c.newPage();other.on('pageerror',error=>errors.push(error.message));await other.goto(origin);await ready(other);
+ stage='two real windows isolate conflicts while natural autosave preserves unrelated edits';
+ const other=await c.newPage();other.on('pageerror',error=>errors.push(error.message));
+ // Exercise the production loaded-reader close guard with an inert host bridge;
+ // this is a renderer proof in Chromium, not an Electron/native-app proof.
+ await other.addInitScript(()=>{window.coconutUpdates={state:async()=>({status:'idle',version:'authored',arch:'arm64',message:'Authored lifecycle proof'}),subscribe:()=>{}};});
+ await other.goto(origin);await ready(other);
  const select=async(page,key)=>{await page.locator('.library-entry[data-document-key="'+key+'"] .library-open').click();};
- await select(page,'a');await note(page,'First window A');await flush(page);await select(other,'b');await note(other,'Other window B');await flush(other);
- let saved=await disk(page);check('different_documents_merge_without_clobbering',saved.documents.find(d=>d.key==='a').notes.one==='First window A'&&saved.documents.find(d=>d.key==='b').notes.one==='Other window B');
- await select(other,'a');await note(other,'Stale second window A');await flush(other);check('same_document_compare_and_swap_conflicts',await other.locator('#save-status').getAttribute('data-state')==='failed');
- const rescued=JSON.parse(await download(other,'#export-unsaved-documents'));check('conflict_rescue_keeps_full_transcript_and_history',rescued.documents[0].notes.one==='Stale second window A'&&rescued.documents[0].ai_answers.length===26&&rescued.documents[0].segments[0].text===fixture('a').segments[0].text);
- check('stale_write_never_overwrites_newer_content',(await disk(other)).documents.find(d=>d.key==='a').notes.one==='First window A');
- other.once('dialog',dialog=>dialog.accept());await other.close({runBeforeUnload:true});
+ await select(page,'a');await note(page,'First window A');await waitForPersistedLibrary(page,persistedNoteMatches,{key:'a',text:'First window A'});
+ await select(other,'b');await note(other,'Other window B');await waitForPersistedLibrary(other,persistedNoteMatches,{key:'b',text:'Other window B'});
+ const beforeConflict=await disk(other),remoteA=beforeConflict.documents.find(d=>d.key==='a'),originalB=beforeConflict.documents.find(d=>d.key==='b');
+ check('different_documents_merge_without_clobbering',remoteA.notes.one==='First window A'&&originalB.notes.one==='Other window B');
+ await select(other,'a');await note(other,'Stale second window A');
+ await other.waitForFunction(()=>libraryStore.status('a').status==='conflict'&&document.getElementById('save-status').dataset.state==='failed');
+ check('same_document_compare_and_swap_conflicts',await other.locator('#save-status').getAttribute('data-state')==='failed');
+ await select(other,'b');await note(other,'Independent B after conflict');
+ await waitForPersistedLibrary(other,persistedNoteMatches,{key:'b',text:'Independent B after conflict'});
+ await other.waitForFunction(()=>libraryStore.status('b').status==='saved'&&libraryStore.status('a').status==='conflict');
+ const afterConflict=await disk(other),committedB={...originalB,notes:{...originalB.notes,one:'Independent B after conflict'}};
+ assert.deepEqual(afterConflict.documents.find(d=>d.key==='a'),remoteA);assert.deepEqual(afterConflict.documents.find(d=>d.key==='b'),committedB);
+ checks.push('post_conflict_independent_autosave_preserves_exact_remote_a_and_current_b');
+ check('independent_receipt_does_not_clear_global_conflict',await other.locator('#save-status').getAttribute('data-state')==='failed'&&await other.evaluate(()=>libraryStore.status().unsaved===1));
+ const closeState=await other.evaluate(()=>coconutPrepareClose('inspect'));
+ check('loaded_reader_close_guard_identifies_unresolved_content',closeState.contentFailed===true&&closeState.safe===false&&closeState.contentPending===0);
+ check('safe_close_cannot_discard_conflict_after_independent_save',await other.evaluate(()=>coconutPrepareClose('safe',{id:1,kind:'close',expiresAt:Date.now()+10000}))===false);
+ const rescued=JSON.parse(await download(other,'#export-unsaved-documents'));
+ assert.deepEqual(rescued.documents,[{...remoteA,notes:{...remoteA.notes,one:'Stale second window A'}}]);
+ check('conflict_rescue_keeps_full_transcript_and_history',rescued.documents[0].ai_answers.length===26&&rescued.documents[0].segments[0].text===fixture('a').segments[0].text);
+ // Only after obtaining and checking the complete rescue do we allow reload to
+ // discard page-owned A. Reload must read remote A plus the independently saved B.
+ other.once('dialog',dialog=>dialog.accept());await other.reload();await ready(other);
+ const reloaded=await disk(other);assert.deepEqual(reloaded.documents.find(d=>d.key==='a'),remoteA);assert.deepEqual(reloaded.documents.find(d=>d.key==='b'),committedB);
+ check('post_conflict_independent_save_survives_actual_reload',await other.evaluate(()=>libraryStore.status().unsaved===0));
+ await other.close();
  stage='quota failure and explicit retry';await page.evaluate(()=>failContentWrites());await note(page,'Recovery after IDB quota');await flush(page);check('native_idb_failure_retains_unsaved_edit',await page.locator('#save-status').getAttribute('data-state')==='failed');
  const quotaRescue=JSON.parse(await download(page,'#export-unsaved-documents'));assert.equal(quotaRescue.documents[0].notes.one,'Recovery after IDB quota');
  await page.evaluate(()=>restoreContentWrites());await page.locator('#retry-save').click();await page.waitForFunction(()=>document.getElementById('save-status').dataset.state==='saved');await page.reload();await ready(page);check('retry_acknowledges_real_transaction',(await disk(page)).documents.find(d=>d.key==='a').notes.one==='Recovery after IDB quota');

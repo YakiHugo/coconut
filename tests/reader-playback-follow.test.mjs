@@ -170,3 +170,33 @@ test('browser wheel settlement rejects intent-only, delayed movement and stale s
  w.__followScrollObserver.stop();assert.equal(w.scrollTo,original);
  }finally{await w.happyDOM.close();}
 });
+
+test('changing transport playback speed preserves active follow',async()=>{
+ const env=setup();try{const m=await media(env),{$,w,tick}=env;await m.player.play();enable(env);
+ assert.equal($('follow-playback').dataset.state,'following');
+ $('playback-rate').focus();$('playback-rate').value='1.5';
+ $('playback-rate').dispatchEvent(new w.Event('input',{bubbles:true}));
+ $('playback-rate').dispatchEvent(new w.Event('change',{bubbles:true}));
+ m.player.dispatchEvent(new w.Event('ratechange'));tick();
+ assert.equal(m.player.playbackRate,1.5);assert.equal($('follow-playback').dataset.state,'following');
+ }finally{await env.w.happyDOM.close();}
+});
+test('focusing playback speed alone preserves follow on the next time update',async()=>{
+ const env=setup();try{const m=await media(env),{$,w,tick}=env;await m.player.play();enable(env);
+ $('playback-rate').focus();assert.equal($('follow-playback').dataset.state,'following');
+ m.player.currentTime=500;m.refresh();tick();
+ assert.equal($('follow-playback').dataset.state,'following');
+ }finally{await env.w.happyDOM.close();}
+});
+test('transport input exemption never exempts search or note editing from manual ownership',async()=>{
+ const env=setup();try{const m=await media(env),{$,w,tick}=env;await m.player.play();
+  for(const id of ['search','note']){
+   enable(env);assert.equal($('follow-playback').dataset.state,'following');
+   $(id).value='authored manual input';$(id).dispatchEvent(new w.Event('input',{bubbles:true}));
+   assert.equal($('follow-playback').dataset.state,'suspended',id+' input suspends');
+   $(id).value='';if(id==='search')$('search').oninput();
+   enable(env);$(id).focus();m.refresh();tick();
+   assert.equal($('follow-playback').dataset.state,'suspended',id+' focus suspends');
+  }
+ }finally{await env.w.happyDOM.close();}
+});
