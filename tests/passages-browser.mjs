@@ -7,7 +7,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
-import {chromium, expect} from '@playwright/test';
+import {chromium, expect} from './helpers/browser-storage.mjs';
 import {authoredAudioFixture} from './helpers/authored-audio-fixture.mjs';
 import {passageReadingFixture, irregularPassageFixture} from './helpers/passage-reading-fixture.mjs';
 import {openCueActions} from './cue-actions-browser.mjs';
@@ -50,7 +50,7 @@ async function importFixture(page, fixture, name = 'authored-fragmented-reading.
 async function stored(page) {
 
  await page.evaluate(()=>libraryStore.flush());
-  return page.evaluate(() => {const shelf = JSON.parse(localStorage.getItem('coconut-reader-v1')); return shelf.documents.find(doc => doc.key === sessionStorage.getItem('coconut-reader-active-v1'));});
+  return page.evaluate(async () => {const shelf = (await readPersistedLibrary()); return shelf.documents.find(doc => doc.key === sessionStorage.getItem('coconut-reader-active-v1'));});
 }
 async function attachAudio(page, filename) {
   const previousSource = await page.locator('#source-media audio').count() ? await page.locator('#source-media audio').getAttribute('src') : null;
@@ -439,7 +439,7 @@ try {
   await importFixture(page, irregular, 'authored-replacement-document.json');
   check('document_replacement_cancels_old_playback_and_return_target', await page.evaluate(() => window.__replacedDocumentPlayer.paused && [...document.querySelectorAll('audio,video')].every(player => player.paused)) && await page.locator('#passage-playback-controls').isHidden());
   await page.evaluate(()=>libraryStore.flush());
-  check('passage_journey_has_no_upload_model_external_requests_or_browser_errors', external === 0 && mutations === 0 && browserErrors.length === 0 && await page.evaluate(() => !localStorage.getItem('coconut-reader-v1').includes('blob:')));
+  check('passage_journey_has_no_upload_model_external_requests_or_browser_errors', external === 0 && mutations === 0 && browserErrors.length === 0 && await page.evaluate(async () => !JSON.stringify(await readPersistedLibrary()).includes('blob:')));
   console.log(JSON.stringify({suite: 'authored-passage-reading-listen-once', status: 'passed', checks, geometry}));
 } catch (error) {
   if (stage.includes('compact_') && activePage && !activePage.isClosed()) await feedbackState(activePage, 'failure-' + stage).catch(() => {});

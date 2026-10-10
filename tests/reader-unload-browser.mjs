@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict';
 import {createServer} from 'node:http';
 import fs from 'node:fs/promises';
-import {chromium} from '@playwright/test';
+import {chromium} from './helpers/legacy-browser.mjs';
 import {openCueActions} from './cue-actions-browser.mjs';
 const root=new URL('../reader/',import.meta.url),KEY='coconut-reader-v1';
 let browser,server,stage='setup',external=0,mutations=0,pageErrors=0;

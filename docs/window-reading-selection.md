@@ -4,7 +4,7 @@
 
 Selecting a document in the library changes the current window only. It does not stringify the document array or whole library and does not read or write the shared content library key. It leaves any outstanding save warning, summary persistence evidence and unload protection unchanged.
 
-- Shared `localStorage['coconut-reader-v1']`: new writes contain `{documents}` only. Document contents, notes, bookmarks, AI work and existing display fields still use the existing synchronous whole-library `save()` path. This change does not introduce IndexedDB, promises, partial writes or automatic conflict resolution.
+- Content is stored per document in IndexedDB by default; ordinary navigation does not issue content transactions. The original legacy `localStorage['coconut-reader-v1']` remains unchanged after verified migration. The explicitly labeled compatibility fallback writes `{documents}` as one localStorage value. See [storage and migration](indexeddb-library-storage.md).
 - Window-local `sessionStorage['coconut-reader-active-v1']`: the selected document key as a plain string, with no document content. Same-window reload retains the choice. A browser-created duplicate or opener may initially copy a session, but later changes remain independent.
 - Separate lightweight `localStorage['coconut-reader-last-active-v1']`: the most recently opened key as a plain string, used only as a default for a new window or native application relaunch. Existing windows never follow this hint when another window changes it. It is not part of the content library or its conflict comparison.
 - Startup chooses a valid session key, then a valid last-open hint, then a valid legacy library `active`, then the first document in saved order, or no document for an empty library. An unknown or removed selection cannot manufacture or remove documents. Startup does not rewrite the content library.
@@ -20,13 +20,11 @@ Actual JSON library exports still contain `{format, version, documents, active}`
 
 ## Compatibility and honest limits
 
-Old `{documents, active}` libraries are read without an up-front migration write. The next successful content save omits the obsolete shared selection. Existing backup JSON selection semantics are unchanged.
+Old `{documents, active}` libraries migrate additively with their exact original text retained. In compatibility fallback, the next successful content save omits the obsolete shared selection. Existing backup JSON selection semantics are unchanged.
 
-An older application can read the new `{documents}` payload but may initially show no open document; choosing a document in its library opens it. Its document data remains available and can still be exported in full. Its subsequent content or navigation saves may reintroduce `active`.
+Two modern IndexedDB windows navigate independently and can commit different documents without overwriting one another. Same-document stale revisions fail atomically and preserve the losing window's edits for rescue. The library is loaded at startup; other windows' new rows do not automatically appear without reload.
 
-Mixed-version simultaneous use is **not** made safe by this change: old windows still rewrite the full library on navigation. The existing raw-value comparison conservatively treats any external library difference, including an old client's active-only write, as a conflict. The stale window stops saving, keeps its in-memory work for export and instructs the user to back up before refreshing. We do not ignore unknown fields, parse away differences or use last-writer-wins.
-
-Two modern windows may navigate independently without causing this conflict. A real write in either window still makes the other's next content save stale, even if the documents being edited differ. The pre-existing synchronous read-then-write localStorage check is not an atomic cross-window compare-and-swap; truly overlapping writes are not guaranteed safe. This is not complete multi-window editing support.
+Mixed-version simultaneous use is not universally safe. Cooperative legacy clients respect the migration fence; older clients predating it can still rewrite the legacy value. New clients stop once that discrepancy is observed and preserve both stores. They never parse away an active-only difference or use last-writer-wins. The fallback's synchronous read-then-write localStorage comparison remains non-atomic, and any external content-library change conflicts, even for different documents.
 
 ## Integration with adjacent features
 
@@ -38,4 +36,4 @@ Library titles and cross-document search hits share the selection-only `openDocu
 
 Existing DOM and browser acceptance helpers still inspect real persisted documents; only selection lookup moves to session storage. Library backups continue to test their explicit `active` field. Native relaunch retains automatic selection through the lightweight last-open hint.
 
-`tests/window-selection-browser.mjs` is a CI-only Chromium check using authored fixtures, two same-origin pages, reloads and real downloads. It is wired into Browser acceptance. No local Chromium/Electron, real AI service or new Codex session is used. Local unit/HTTP results and final browser/native CI results must be reported separately.
+`tests/window-selection-browser.mjs` is an explicitly legacy-fallback CI-only Chromium check using authored fixtures, two same-origin pages, reloads and real downloads. The production IndexedDB cross-window path is covered by `indexeddb-library-browser.mjs`. It is wired into Browser acceptance. No local Chromium/Electron, real AI service or new Codex session is used. Local unit/HTTP results and final browser/native CI results must be reported separately.

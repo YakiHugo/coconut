@@ -6,7 +6,7 @@ import {execFileSync} from 'node:child_process';
 import {mkdtemp,readFile,rm} from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import {chromium} from '@playwright/test';
+import {chromium} from './helpers/browser-storage.mjs';
 import {startBridge} from '../desktop/server.mjs';
 let server,browser,directory,stage='setup';const checks=[],modelInputs=[],sourceCalls=[];
 const check=(name,value)=>{stage=name;assert.ok(value,name);checks.push(name);};
@@ -21,7 +21,7 @@ try{
  const origin='http://127.0.0.1:'+server.address().port;
  browser=await chromium.launch({headless:true,...(process.env.COCONUT_CHROMIUM_EXECUTABLE?{executablePath:process.env.COCONUT_CHROMIUM_EXECUTABLE}:{})});
  let external=0,errors=0;
- async function newPage(){const context=await browser.newContext({acceptDownloads:true,serviceWorkers:'block'});await context.route('**/*',async route=>{const u=new URL(route.request().url());if(u.origin===origin||u.protocol==='blob:')await route.continue();else{external++;await route.abort();}});const page=await context.newPage();page.on('pageerror',()=>errors++);page.setDefaultTimeout(15000);await page.goto(origin);return page;}
+ async function newPage(){const context=await browser.newContext({acceptDownloads:true,serviceWorkers:'block'});await context.route('**/*',async route=>{const u=new URL(route.request().url());if(u.origin===origin||u.protocol==='blob:')await route.continue();else{external++;await route.abort();}});const page=await context.newPage();page.on('pageerror',()=>errors++);page.setDefaultTimeout(15000);await page.goto(origin);await page.waitForFunction(()=>window.CoconutStorageBootstrap?.phase==='ready');return page;}
  const page=await newPage();stage='save_audio_project';await page.locator('#podcast-import').waitFor({state:'visible'});await page.locator('#video-url').fill(source.feed_url);await page.locator('#process-url').click();await page.getByRole('button',{name:'保存原声项目',exact:true}).click();await page.locator('#audio-project').waitFor({state:'visible'});
  await page.locator('#project-note').fill('PRIVATE PROJECT NOTE');await page.locator('#audio-bookmark-time').fill('2');await page.locator('#audio-bookmark-note').fill('PRIVATE BOOKMARK');await page.locator('#audio-bookmark-form button[type=submit]').click();
  await page.locator('#fetch-project-transcript').click();await page.waitForFunction(()=>document.querySelector('#audio-project-status').textContent.includes('仍未提供'));
@@ -30,7 +30,7 @@ try{
  const originalKey=await page.evaluate(()=>sessionStorage.getItem('coconut-reader-active-v1'));await page.locator('audio').evaluate(p=>{p.dataset.retained='yes';p.currentTime=1;});
  captionsReady=true;await page.locator('#fetch-project-transcript').click();await page.locator('#transcript-layout').waitFor({state:'visible'});
  await page.evaluate(()=>libraryStore.flush());
- check('attachment_keeps_one_stable_project',await page.evaluate(key=>{const s=JSON.parse(localStorage.getItem('coconut-reader-v1'));return s.documents.length===1&&sessionStorage.getItem('coconut-reader-active-v1')===key;},originalKey));
+ check('attachment_keeps_one_stable_project',await page.evaluate(async key=>{const s=await readPersistedLibrary();return s.documents.length===1&&sessionStorage.getItem('coconut-reader-active-v1')===key;},originalKey));
  check('attachment_keeps_loaded_media_and_notes',await page.locator('audio').getAttribute('data-retained')==='yes'&&await page.locator('#project-note').inputValue()==='PRIVATE PROJECT NOTE'&&await page.locator('#audio-bookmarks textarea').inputValue()==='PRIVATE BOOKMARK');
  check('attachment_does_not_redownload_or_infer',sourceCalls.filter(c=>c==='media').length===1&&modelInputs.length===0);
  stage='explicit_translation';await page.locator('#language-panel > summary').click();await page.locator('#ai-task').selectOption('translation');await page.locator('#check-ai').click();await page.locator('#translation-target').selectOption('zh');await page.locator('#ai-consent').check();await page.locator('#subscription-translate').click();await page.waitForFunction(()=>document.querySelectorAll('.translation').length===2);

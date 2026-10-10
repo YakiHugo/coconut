@@ -3,7 +3,7 @@
 import assert from 'node:assert/strict';
 import {createServer} from 'node:http';
 import fs from 'node:fs/promises';
-import {chromium} from '@playwright/test';
+import {chromium} from './helpers/browser-storage.mjs';
 import {blankNote, writtenNote, readingMetadataFixture, audioMetadataFixture} from './helpers/reading-metadata-fixture.mjs';
 const root = new URL('../reader/', import.meta.url), KEY = 'coconut-reader-v1';
 const checks = []; let browser, server, stage = 'setup', external = 0, mutations = 0, errors = 0;
@@ -47,7 +47,7 @@ try {
   await page.locator('#export-menu > summary').click();
   return Buffer.concat(chunks).toString('utf8');
  }
- const active = async page => {await page.evaluate(()=>libraryStore.flush());return page.evaluate(key => {const state = JSON.parse(localStorage.getItem(key)); return state.documents.find(doc => doc.key === sessionStorage.getItem('coconut-reader-active-v1'));}, KEY);};
+ const active = async page => {await page.evaluate(async () =>libraryStore.flush());return page.evaluate(async key => {const state = (await readPersistedLibrary()); return state.documents.find(doc => doc.key === sessionStorage.getItem('coconut-reader-active-v1'));}, KEY);};
  for (const width of [1360, 390]) {
   const page = await open(width), label = width === 390 ? 'mobile' : 'desktop';
   const fixture = readingMetadataFixture(); stage = label + '_overlap';

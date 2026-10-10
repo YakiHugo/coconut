@@ -5,7 +5,7 @@ import {createServer} from 'node:http';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import {chromium} from '@playwright/test';
+import {chromium} from './helpers/browser-storage.mjs';
 const root=new URL('../reader/',import.meta.url),KEY='coconut-reader-v1';
 const checks=[];let browser,server,directory,stage='setup',external=0,mutations=0,modelRequests=0,errors=0;
 function check(name,value){stage=name;assert.ok(value,name);checks.push(name);}
@@ -38,12 +38,12 @@ try{
    else{external++;await route.abort();}
   });
   const page=await context.newPage();page.setDefaultTimeout(15000);page.on('pageerror',()=>errors++);
-  await page.goto(origin);await page.locator('#import').waitFor({state:'visible'});return page;
+  await page.goto(origin);await page.waitForFunction(()=>window.CoconutStorageBootstrap?.phase==='ready');await page.locator('#import').waitFor({state:'visible'});return page;
  }
- const active = async page => {await page.evaluate(()=>libraryStore.flush());return page.evaluate(key=>{const state=JSON.parse(localStorage.getItem(key));return state?.documents.find(doc=>doc.key===sessionStorage.getItem('coconut-reader-active-v1'));},KEY);};
+ const active = async page => {await page.evaluate(()=>libraryStore.flush());return page.evaluate(async key=>{const state=await readPersistedLibrary();return state?.documents.find(doc=>doc.key===sessionStorage.getItem('coconut-reader-active-v1'));},KEY);};
  async function choose(page,file){
   const [chooser]=await Promise.all([page.waitForEvent('filechooser'),page.locator('#import').click()]);await chooser.setFiles(file);
-  await page.waitForFunction(key=>{const state=JSON.parse(localStorage.getItem(key));return state?.documents.find(doc=>doc.key===sessionStorage.getItem('coconut-reader-active-v1'))?.ai_answers.length===245&&!document.getElementById('reader-workspace').hidden;},KEY);
+  await page.waitForFunction(async key=>{const state=await readPersistedLibrary();return state?.documents.find(doc=>doc.key===sessionStorage.getItem('coconut-reader-active-v1'))?.ai_answers.length===245&&!document.getElementById('reader-workspace').hidden;},KEY);
   await page.waitForFunction(()=>document.getElementById('file').value==='');
  }
  async function download(page,selector,name){
@@ -79,7 +79,7 @@ try{
  check('real_markdown_keeps_removed_historical_source',markdown.includes('Historical source that no longer exists')&&markdown.includes('原片段已移除'));
  const jsonFile=await download(page,'#export-ai-history-json','history.json'),json=JSON.parse(await fs.readFile(jsonFile,'utf8'));
  assert.deepEqual(json.ai_answers,(await active(page)).ai_answers);check('real_json_download_keeps_every_record_snapshot_and_missing_reference',json.ai_answers.length===245&&json.ai_answers[0].citations[0]==='removed-cue');
- stage='reload';await page.reload();await page.locator('#reader-workspace').waitFor({state:'visible'});
+ stage='reload';await page.reload();await page.waitForFunction(()=>window.CoconutStorageBootstrap?.phase==='ready');await page.locator('#reader-workspace').waitFor({state:'visible'});
  check('refresh_keeps_all_records_and_latest_summary',(await active(page)).ai_answers.length===245&&await page.locator('#summary-body').textContent()==='Authored answer 25');
  await page.locator('#browse-ai-history').click();check('refresh_shows_bounded_latest_page_and_saved_count',await page.locator('.ai-answer').count()===10&&(await page.locator('#ai-history-storage').textContent()).includes('245 则均已保存'));
  stage='clean_browser_restore';const restored=await newPage(390);await choose(restored,jsonFile);assert.deepEqual((await active(restored)).ai_answers,json.ai_answers);

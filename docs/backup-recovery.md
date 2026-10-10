@@ -30,7 +30,9 @@ memory beyond the file's byte count. A file may exceed a device's available
 memory or the JavaScript engine's string limit. Catchable read/allocation errors
 suggest retaining the original backup and retrying on a more capable device;
 a browser process terminated by its OS cannot be recovered by an exception
-handler. Streaming storage/IndexedDB migration is outside this change.
+handler. Streaming parsing remains outside this change. Default local storage now
+uses [per-document IndexedDB](indexeddb-library-storage.md); the same large-file
+review and memory boundaries still apply.
 
 ## When local saving fails
 
@@ -58,7 +60,9 @@ JSON larger than the old
 
 `tests/backup-roundtrip-browser.mjs` is wired into GitHub Browser acceptance.
 It uses authored local files, native file selection, real downloads, fresh
-browser contexts and real localStorage quota failure. It verifies ordinary
+browser contexts and real localStorage quota failure in the explicitly selected
+legacy fallback. Production IndexedDB capacity and restore/reload are separately
+covered by `indexeddb-library-browser.mjs`. It verifies ordinary
 large-document restoration, oversized confirmation cancellation and retry,
 whole-library >50 MiB recovery, deduplication and rescue exports. It makes no
 model calls or remote media requests, removes its temporary files and uploads

@@ -3,7 +3,7 @@
 import assert from 'node:assert/strict';
 import {createServer} from 'node:http';
 import fs from 'node:fs/promises';
-import {chromium} from '@playwright/test';
+import {chromium} from './helpers/browser-storage.mjs';
 
 const root=new URL('../reader/',import.meta.url),KEY='coconut-reader-v1';
 const source=title=>({title,language:'en',segments:[{id:'cue',start:0,end:4,text:'An authored sentence for '+title}],notes:{cue:'Private authored note for '+title}});
@@ -35,10 +35,10 @@ try{
   };
  });
  await page.goto(origin);await page.locator('#sample').waitFor({state:'visible'});
- await page.evaluate(()=>{for(const id of ['file','library-file']){const input=document.getElementById(id),handler=input.onchange;input.onchange=async event=>{await handler.call(input,event);window.importProbe.finished++;};}});
+ await page.evaluate(async () =>{for(const id of ['file','library-file']){const input=document.getElementById(id),handler=input.onchange;input.onchange=async event=>{await handler.call(input,event);window.importProbe.finished++;};}});
  const choose=(title,text=JSON.stringify(source(title)))=>page.locator('#file').setInputFiles({name:title+'.json',mimeType:'application/json',buffer:Buffer.from(text)});
  const finished=number=>page.waitForFunction(number=>window.importProbe.finished===number,number);
- const stored = async () => {await page.evaluate(()=>libraryStore.flush());return page.evaluate(key=>JSON.parse(localStorage.getItem(key)),KEY);};
+ const stored = async () => {await page.evaluate(async () =>libraryStore.flush());return page.evaluate(async key =>(await readPersistedLibrary()),KEY);};
  const hold=()=>page.evaluate(()=>{window.importProbe.holdFingerprint=true;});
  const entered=()=>page.waitForFunction(()=>!!window.importProbe.releaseFingerprint);
  const release=()=>page.evaluate(()=>window.importProbe.releaseFingerprint());

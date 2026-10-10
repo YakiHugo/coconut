@@ -7,7 +7,7 @@ import {createServer} from 'node:http';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
-import {chromium} from '@playwright/test';
+import {chromium} from './helpers/browser-storage.mjs';
 import {openCueActions} from './cue-actions-browser.mjs';
 import {phraseSearchFixture, phraseContributorIds, SOURCE_PHRASE, TRANSLATED_PHRASE} from './helpers/phrase-search-fixture.mjs';
 
@@ -17,7 +17,7 @@ const checks = [], errors = [], injected = [];
 const check = (name, value) => {stage = name;assert.ok(value, name);checks.push(name);};
 const cue = (page, id) => page.locator('.segment[data-segment-id="' + id + '"]');
 const renderedIds = page => page.locator('#transcript .segment').evaluateAll(nodes => nodes.map(node => node.dataset.segmentId));
-const stored = async page => {await page.waitForFunction(()=>document.querySelector('#save-status').dataset.state==='saved');return page.evaluate(() => JSON.parse(localStorage.getItem('coconut-reader-v1')).documents.find(doc => doc.key === sessionStorage.getItem('coconut-reader-active-v1')));};
+const stored = async page => {await page.waitForFunction(()=>document.querySelector('#save-status').dataset.state==='saved');return page.evaluate(async () => (await readPersistedLibrary()).documents.find(doc => doc.key === sessionStorage.getItem('coconut-reader-active-v1')));};
 async function importDocument(page, fixture) {
   await page.locator('#file').setInputFiles({name: 'authored-phrase-search.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(fixture))});
   await page.waitForFunction(title => document.querySelector('#title').textContent === title, fixture.title);

@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import {mkdtemp,readFile,rm} from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import {chromium} from '@playwright/test';
+import {chromium} from './helpers/browser-storage.mjs';
 import {startBridge} from '../desktop/server.mjs';
 let server,browser,directory,stage='setup';const checks=[];
 const check=(name,value)=>{stage=name;assert.ok(value,name);checks.push(name);};
@@ -86,7 +86,7 @@ try {
  await page.waitForFunction(()=>document.getElementById('podcast-status').textContent.includes('没有可用的公开定时文字稿'));
  await page.locator('#audio-project').waitFor({state:'visible'});
  check('no_caption_truthful_state_saves_audio_project',await page.locator('#library .library-open').count()===2&&!calls.includes('media')&&await page.locator('#summary-workspace').isHidden()&&await page.locator('#language-panel').isHidden());
- const audioProject=await page.evaluate(()=>{const shelf=JSON.parse(localStorage.getItem('coconut-reader-v1'));return shelf.documents.find(doc=>doc.key===sessionStorage.getItem('coconut-reader-active-v1'));});
+ const audioProject=await page.evaluate(async () =>{const shelf=(await readPersistedLibrary());return shelf.documents.find(doc=>doc.key===sessionStorage.getItem('coconut-reader-active-v1'));});
  check('audio_project_preserves_real_source_without_transcript',audioProject.project_kind==='audio_only'&&audioProject.podcast_source.episode_id===sample.id&&audioProject.podcast_source.feed_url===xy.feed_url&&audioProject.segments.length===0&&audioProject.ai_answers.length===0);
  await page.locator('#project-note').fill('Coconut live audio project: my unverified listening note.');
  // The review sample must remain explicitly public and <=100 MiB. The production

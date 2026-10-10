@@ -6,7 +6,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
-import {chromium} from '@playwright/test';
+import {chromium} from './helpers/browser-storage.mjs';
 import {authoredAudioFixture} from './helpers/authored-audio-fixture.mjs';
 const root=fileURLToPath(new URL('../',import.meta.url));
 const checks=[];let server,browser,directory,stage='setup',external=0,mutations=0,errors=0;
@@ -84,14 +84,14 @@ try{
  await page.locator('#return-excerpt').click();
  await page.waitForFunction(id=>{const row=document.activeElement;if(row.dataset?.segmentId!==id)return false;const words=row.querySelector('.words').getBoundingClientRect(),dock=document.querySelector('#media-dock').getBoundingClientRect();return words.top>=0&&words.bottom<dock.top;},noteCue);
  await page.evaluate(()=>libraryStore.flush());
- check('compact_note_return_is_operable_and_preserves_saved_note',await page.locator('#notes-panel').isHidden()&&await page.evaluate(id=>{const shelf=JSON.parse(localStorage.getItem('coconut-reader-v1'));return shelf.documents.find(doc=>doc.key===sessionStorage.getItem('coconut-reader-active-v1')).notes[id]==='留在当前原声旁边的想法。';},noteCue));
+ check('compact_note_return_is_operable_and_preserves_saved_note',await page.locator('#notes-panel').isHidden()&&await page.evaluate(async id =>{const shelf=(await readPersistedLibrary());return shelf.documents.find(doc=>doc.key===sessionStorage.getItem('coconut-reader-active-v1')).notes[id]==='留在当前原声旁边的想法。';},noteCue));
  await page.setViewportSize({width:390,height:844});await page.locator('#dock-return').click();
  await page.waitForFunction(()=>{const p=document.querySelector('audio'),r=p.getBoundingClientRect();return r.top>=0&&r.bottom<=innerHeight;});
  check('return_restores_native_player_without_autoplay',await page.locator('#media-dock').isHidden()&&await page.locator('audio').evaluate(p=>p.paused&&p===document.activeElement));
  await page.locator('#detach-reader-media').click();
  check('removing_media_removes_all_dock_controls',await page.locator('#media-dock').isHidden()&&await page.locator('audio,video').count()===0);
  await page.evaluate(()=>libraryStore.flush());
- check('no_media_urls_saved_and_no_network_or_model_side_effects',await page.evaluate(()=>!localStorage.getItem('coconut-reader-v1').includes('blob:'))&&external===0&&mutations===0&&errors===0);
+ check('no_media_urls_saved_and_no_network_or_model_side_effects',await page.evaluate(async () =>!JSON.stringify(await readPersistedLibrary()).includes('blob:'))&&external===0&&mutations===0&&errors===0);
  console.log(JSON.stringify({suite:'playback-dock-authored-media',status:'passed',checks}));
 }catch(error){console.log(JSON.stringify({suite:'playback-dock-authored-media',status:'failed',stage,error:error.message,checks}));process.exitCode=1;}
 finally{await browser?.close();await new Promise(resolve=>server?.listening?server.close(resolve):resolve());if(directory)await fs.rm(directory,{recursive:true,force:true});}

@@ -8,7 +8,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
-import {chromium} from '@playwright/test';
+import {chromium} from './helpers/browser-storage.mjs';
 import {longReadingFixture} from './helpers/long-reading-fixture.mjs';
 const root = fileURLToPath(new URL('../', import.meta.url));
 let server, browser, temporary, stage = 'setup';

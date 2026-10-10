@@ -6,7 +6,7 @@ import {createServer} from 'node:http';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
-import {chromium} from '@playwright/test';
+import {chromium} from './helpers/browser-storage.mjs';
 import {splitCueFixture} from './helpers/split-cue-fixture.mjs';
 const root = fileURLToPath(new URL('../', import.meta.url));
 let server, browser, stage = 'setup';

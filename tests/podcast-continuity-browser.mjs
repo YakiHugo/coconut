@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import {mkdtemp, readFile, rm} from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import {chromium} from '@playwright/test';
+import {chromium} from './helpers/browser-storage.mjs';
 import {startBridge} from '../desktop/server.mjs';
 import {authoredAudioFixture} from './helpers/authored-audio-fixture.mjs';
 
@@ -114,7 +114,7 @@ try {
   }
   async function stored(target = page) {
     await target.evaluate(() => libraryStore.flush());
-    return target.evaluate(key => JSON.parse(localStorage.getItem(key)), LIBRARY_KEY);
+    return target.evaluate(() => readPersistedLibrary());
   }
   async function decoded(selector, target = page) {
     await target.waitForFunction(selector => {

@@ -4,7 +4,7 @@ import {createServer} from 'node:http';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
-import {chromium} from '@playwright/test';
+import {chromium} from './helpers/browser-storage.mjs';
 import {translationReviewFixture} from './helpers/translation-review-fixture.mjs';
 const root=fileURLToPath(new URL('../',import.meta.url));
 let server,browser,stage='setup';const checks=[];
@@ -21,7 +21,7 @@ try{
  let external=0,mutations=0,errors=0;
  await context.route('**/*',async route=>{const req=route.request(),url=new URL(req.url());if(!['GET','HEAD'].includes(req.method())){mutations++;await route.abort();return;}if(url.origin===origin||['blob:','data:'].includes(url.protocol))await route.continue();else{external++;await route.abort();}});
  const page=await context.newPage();page.setDefaultTimeout(15000);page.on('pageerror',()=>errors++);
- await page.goto(origin);const doc=translationReviewFixture();
+ await page.goto(origin);await page.waitForFunction(()=>window.CoconutStorageBootstrap?.phase==='ready');const doc=translationReviewFixture();
  await page.locator('#file').setInputFiles({name:'authored-review.json',mimeType:'application/json',buffer:Buffer.from(JSON.stringify(doc))});
  await page.locator('#mode-bilingual').click();
  async function queue(){
@@ -50,7 +50,7 @@ try{
  check('actual_json_download_preserves_exact_text_and_bounded_history',item.text===corrected&&item.original_translation.text===doc.segments[102].translations.zh.text&&item.original_translation.manual_review===undefined&&item.manual_review.cues.some(c=>c.id==='review-102'&&c.text===doc.segments[102].text));
  await page.locator('#subtitle-format').selectOption('vtt');await page.locator('#subtitle-bilingual').check();const vtt=await download('#export-subtitles');check('actual_vtt_download_contains_current_human_translation',vtt.startsWith('WEBVTT')&&vtt.includes('人工修正 &lt;img&gt;')&&vtt.includes('00:06:48.000 --> 00:06:51.000'));
  const markdown=await download('#export-notebook');check('actual_markdown_download_identifies_human_provenance',markdown.includes('用户人工核对／修正')&&markdown.includes('人工修正 &lt;img&gt;')&&!markdown.includes('机器生成'));
- await page.reload();await page.locator('#mode-bilingual').click();await queue();
+ await page.reload();await page.waitForFunction(()=>window.CoconutStorageBootstrap?.phase==='ready');await page.locator('#mode-bilingual').click();await queue();
  check('reload_keeps_saved_review_out_of_queue',await page.locator('.translation-queue-open[data-segment-id="review-102"]').count()===0);
  await page.locator('.translation-queue-open[data-segment-id="review-1"]').click();check('unchanged_review_requires_explicit_current_source_confirmation',(await page.locator('#save-translation-edit').textContent()).includes('确认已核对当前原文'));
  await page.locator('#save-translation-edit').click();check('no_unnecessary_warning_entries_remain',await page.locator('.translation-queue-open').count()===0);await page.locator('#translation-queue-close').click();

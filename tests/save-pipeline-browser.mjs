@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict';
 import {createServer} from 'node:http';
 import fs from 'node:fs/promises';
-import {chromium} from '@playwright/test';
+import {chromium} from './helpers/legacy-browser.mjs';
 const root=new URL('../reader/',import.meta.url),KEY='coconut-reader-v1';
 const fixture=key=>({schema_version:1,key,title:'Authored save '+key,language:'en',notes:{},segments:[{id:'one',start:0,end:5,text:'A complete authored reading fixture '+key}],ai_answers:Array.from({length:26},(_,i)=>({question:'Authored question '+i,answer:'Complete answer '+i,citations:['one'],provider:'fixture'}))});
 let server,browser,stage='setup',requests=0;

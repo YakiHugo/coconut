@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import {chromium} from '@playwright/test';
+import {chromium} from './helpers/browser-storage.mjs';
 import {startBridge} from '../desktop/server.mjs';
 const fixture=title=>({title,language:'en',readingPosition:'cue',notes:{cue:'Authored private note'},segments:[{id:'cue',start:0,end:3,text:'An authored correction.',original_text:'An authored original.',translations:{zh:{text:'自写译文',provider:'authored-fixture',source_text:'An authored correction.',source_language:'en',document_language:'en'}}}]});
 const checks=[],check=(name,condition)=>{assert.ok(condition,name);checks.push(name);};
@@ -12,9 +12,9 @@ try{
  browser=await chromium.launch({headless:true,...(process.env.COCONUT_CHROMIUM_EXECUTABLE?{executablePath:process.env.COCONUT_CHROMIUM_EXECUTABLE}:{})});
  const context=await browser.newContext({viewport:{width:390,height:844},serviceWorkers:'block',acceptDownloads:true});let external=0;const errors=[];
  await context.route('**/*',async route=>{const url=new URL(route.request().url());if(url.origin===origin||url.protocol==='blob:')await route.continue();else{external++;await route.abort();}});
- const page=await context.newPage();page.setDefaultTimeout(15000);page.on('pageerror',error=>errors.push(error.message));await page.goto(origin);
- const stored=async()=>{await page.evaluate(()=>libraryStore.flush());return page.evaluate(()=>JSON.parse(localStorage.getItem('coconut-reader-v1')));};
- const importDoc=async doc=>{await page.locator('#file').setInputFiles({name:'authored-removal.json',mimeType:'application/json',buffer:Buffer.from(JSON.stringify(doc))});await page.waitForFunction(title=>JSON.parse(localStorage.getItem('coconut-reader-v1')||'{"documents":[]}').documents.some(d=>d.title===title),doc.title);};
+ const page=await context.newPage();page.setDefaultTimeout(15000);page.on('pageerror',error=>errors.push(error.message));await page.goto(origin);await page.waitForFunction(()=>window.CoconutStorageBootstrap?.phase==='ready');
+ const stored=async()=>{await page.evaluate(()=>libraryStore.flush());return page.evaluate(()=>readPersistedLibrary());};
+ const importDoc=async doc=>{await page.locator('#file').setInputFiles({name:'authored-removal.json',mimeType:'application/json',buffer:Buffer.from(JSON.stringify(doc))});await page.waitForFunction(async title=>(await readPersistedLibrary()).documents.some(d=>d.title===title),doc.title);};
  const openShelf=async()=>{if(await page.locator('#toggle-library').isVisible()&&await page.locator('#toggle-library').getAttribute('aria-expanded')==='false')await page.locator('#toggle-library').click();};
  const openDetails=async selector=>{if(!await page.locator(selector).evaluate(node=>node.open))await page.locator(selector+' > summary').click();};
  const request=async title=>{await openShelf();await openDetails('#library-options');await page.getByRole('button',{name:'从书架移除 '+title,exact:true}).click();};
@@ -60,7 +60,7 @@ try{
  await screenshot('library-layout-small-mobile-expanded-long-recovery');
  check('long_title_rescue_download_is_complete',(await download('export-removed-document')).title===unbroken);
  await page.locator('#undo-removal').click();await page.evaluate(()=>libraryStore.flush());check('long_title_undo_restores_focus',await page.getByRole('button',{name:'从书架移除 '+unbroken,exact:true}).evaluate(node=>node===document.activeElement));
- await page.evaluate(()=>localStorage.clear());await page.reload();await page.setViewportSize({width:390,height:844});
+ await page.evaluate(async()=>{await CoconutStorageBootstrap.result.adapter.close();await new Promise((resolve,reject)=>{const r=indexedDB.deleteDatabase('coconut-reader-library-v1');r.onsuccess=resolve;r.onerror=()=>reject(r.error);});localStorage.clear();});await page.reload();await page.waitForFunction(()=>window.CoconutStorageBootstrap?.phase==='ready');await page.setViewportSize({width:390,height:844});
  const first=fixture('第一篇自写稿'),second=fixture('第二篇自写稿');await importDoc(first);await importDoc(second);const before=await stored(),original=before.documents.find(d=>d.title===second.title);
  stage='keyboard_cancel_and_confirm';await request(second.title);check('cancel_is_initial_focus',await page.locator('#cancel-removal').evaluate(node=>node===document.activeElement));await page.keyboard.press('Escape');
  check('escape_keeps_complete_shelf',JSON.stringify(await stored())===JSON.stringify(before));check('escape_restores_action_focus',await page.getByRole('button',{name:'从书架移除 '+second.title,exact:true}).evaluate(node=>node===document.activeElement));
@@ -92,11 +92,11 @@ try{
  check('undo_reopens_shelf_and_focuses_visible_title_when_organize_closed',await page.locator('#toggle-library').getAttribute('aria-expanded')==='true'&&await page.locator('.library-open').filter({hasText:second.title}).evaluate(node=>node===document.activeElement));
  stage='noncurrent_and_slot_replacement';await remove(first.title);await request(second.title);check('replacement_explains_previous_recovery_loss',(await page.locator('#replace-removal-warning').textContent()).includes(first.title));await screenshot('library-removal-replace-confirmation');await page.locator('#cancel-removal').click();check('cancel_preserves_old_slot',(await download('export-removed-document')).title===first.title);
  await remove(second.title);check('last_document_removed',(await stored()).documents.length===0&&await page.locator('#reader-workspace').isHidden());
- stage='quota_undo_rescue';await page.evaluate(()=>{window.removalOriginalSetItem=Storage.prototype.setItem;Storage.prototype.setItem=function(key,value){if(key==='coconut-reader-v1')throw new DOMException('Injected quota','QuotaExceededError');return window.removalOriginalSetItem.call(this,key,value);};});await page.locator('#undo-removal').click();await page.evaluate(()=>libraryStore.flush());
+ stage='quota_undo_rescue';await page.evaluate(()=>failContentWrites());await page.locator('#undo-removal').click();await page.evaluate(()=>libraryStore.flush());
  check('failed_undo_opens_rescue_and_keeps_error_visible',await page.locator('#removal-recovery-details').evaluate(node=>node.open)&&await page.locator('#removal-recovery-error').isVisible());
  check('failed_undo_stays_honest',(await stored()).documents.length===0&&(await page.locator('#notice').textContent()).includes('撤销未成功'));check('failed_undo_retains_full_rescue',(await download('export-removed-document')).title===second.title);
- await page.setViewportSize({width:1440,height:960});await screenshot('library-removal-desktop-quota-recovery');await page.evaluate(()=>{Storage.prototype.setItem=window.removalOriginalSetItem;});await page.locator('#undo-removal').click();await page.evaluate(()=>libraryStore.flush());check('retry_undo_saved',(await stored()).documents.length===1);
- stage='reload_and_download_restore';await remove(second.title);const rescue=await download('export-removed-document');let warned=false;page.once('dialog',async dialog=>{assert.equal(dialog.type(),'beforeunload');warned=true;await dialog.accept();});await page.reload();check('reload_warns_about_memory_recovery',warned);check('reload_does_not_resurrect_removed_content',(await stored()).documents.length===0&&await page.locator('#removal-recovery').isHidden());
+ await page.setViewportSize({width:1440,height:960});await screenshot('library-removal-desktop-quota-recovery');await page.evaluate(()=>restoreContentWrites());await page.locator('#undo-removal').click();await page.evaluate(()=>libraryStore.flush());check('retry_undo_saved',(await stored()).documents.length===1);
+ stage='reload_and_download_restore';await remove(second.title);const rescue=await download('export-removed-document');let warned=false;page.once('dialog',async dialog=>{assert.equal(dialog.type(),'beforeunload');warned=true;await dialog.accept();});await page.reload();await page.waitForFunction(()=>window.CoconutStorageBootstrap?.phase==='ready');check('reload_warns_about_memory_recovery',warned);check('reload_does_not_resurrect_removed_content',(await stored()).documents.length===0&&await page.locator('#removal-recovery').isHidden());
  await importDoc(rescue);const restored=(await stored()).documents[0];check('download_can_restore_complete_work',JSON.stringify(restored.segments)===JSON.stringify(original.segments)&&JSON.stringify(restored.notes)===JSON.stringify(original.notes)&&restored.readingPosition===original.readingPosition);
  stage='late_question_after_remove_and_undo';let release,started,requests=0;const requestStarted=new Promise(resolve=>{started=resolve;});
  await page.route('**/api/language-tools',route=>route.fulfill({json:{ai:{codex:{ready:true},claude:{ready:true}}}}));

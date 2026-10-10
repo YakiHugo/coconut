@@ -7,25 +7,29 @@
 <meta name="description" content="把长视频和播客变成自己的阅读空间。对照原文与译文，按时间回听，留下摘录和笔记。">
 <meta name="theme-color" content="#faf9f7">
 <link rel="icon" type="image/png" href="coconut-mark.png">
-<link rel="stylesheet" href="style.css?v=7e7282f8bf">
+<link rel="stylesheet" href="style.css?v=8debf46adf">
 <script src="summary.js?v=580ffdad1e" defer></script>
 <script src="core.js?v=a976b03fad" defer>
 </script>
 <script src="passages.js?v=b4aee1081b" defer></script>
 <script src="passage-playback.js?v=162dbb3695" defer></script>
-<script src="library-store.js?v=b9bfd30793" defer></script>
-<script src="app.js?v=b03cd641ab" defer>
+<script src="library-store.js?v=7a0c1b8828" defer></script>
+<script src="indexeddb-document-adapter.js?v=65c0c5a814" defer></script>
+<script src="storage-provider.js?v=1cb898e984" defer></script>
+<script src="app.js?v=77d5707687" type="text/coconut-pending" data-reader-script>
 </script>
-<script src="language.js?v=8832e43c29" defer></script>
-<script src="translation-review.js?v=cf09bebe3b" defer></script>
-<script src="podcasts.js?v=d3e7d5a124" defer></script>
-<script src="jobs.js?v=9a38654a89" defer>
+<script src="language.js?v=8832e43c29" type="text/coconut-pending" data-reader-script></script>
+<script src="translation-review.js?v=cf09bebe3b" type="text/coconut-pending" data-reader-script></script>
+<script src="podcasts.js?v=d3e7d5a124" type="text/coconut-pending" data-reader-script></script>
+<script src="jobs.js?v=9a38654a89" type="text/coconut-pending" data-reader-script>
 </script>
-<script src="updates.js?v=2d62c64493" defer></script>
+<script src="updates.js?v=2d62c64493" type="text/coconut-pending" data-reader-script></script>
+<script src="storage-bootstrap.js?v=bf60514d5d" defer></script>
 </head>
 <body>
+<section id="storage-startup" class="storage-startup" role="status" aria-live="polite"><h1>正在载入 Coconut</h1><p id="storage-startup-message">正在打开本机书架…</p><button id="storage-startup-retry" type="button" hidden>重试载入</button><button id="storage-startup-export" type="button" hidden>导出原始数据备份</button><button id="storage-startup-recovery" type="button" hidden>导出完整存储恢复文件</button><p id="storage-recovery-hint" class="hint">首次升级会保留完整原始数据。请勿清除浏览器存储。</p></section>
 <a class="skip-link" href="#main-content">跳到主要内容</a>
-<div class="shell">
+<div class="shell" inert>
 <aside>
 <a class="brand" href="#" aria-label="Coconut 首页"><img class="brand-mark" src="coconut-mark.png" width="36" height="36" alt=""> <span>coconut<span class="brand-caption">留住值得重读的声音</span></span>
 </a>
@@ -34,7 +38,7 @@
 <div id="library-list">
 <label class="library-search">查找书架<input id="library-search" type="search" placeholder="按标题查找"></label>
 <input type="file" id="file" accept=".json,.srt,.vtt" hidden>
-<details class="library-backup"><summary>书架备份</summary><div class="disclosure-content"><button id="export-library">备份整个书架</button><button id="restore-library">恢复书架备份</button><input id="library-file" type="file" accept=".json" hidden></div></details>
+<details class="library-backup"><summary>书架备份</summary><div class="disclosure-content"><button id="export-library">备份整个书架</button><button id="restore-library">恢复书架备份</button><button id="export-original-storage" hidden>导出升级前原始数据</button><p id="storage-backend-hint" class="hint" hidden></p><input id="library-file" type="file" accept=".json" hidden></div></details>
 <p class="eyebrow">你的书架</p>
 <details id="library-options" class="library-options"><summary>整理书架</summary><p class="hint library-manage-hint">展开时，每篇下方可移除内容。</p><label>排序<select id="library-sort"><option value="added">按添加顺序</option><option value="title">按标题</option><option value="duration">按时长（短到长）</option></select></label><label>内容<select id="library-kind"><option value="all">全部</option><option value="transcript">有文字稿</option><option value="audio">原声项目</option><option value="annotated">有笔记或摘录</option></select></label><label>查找范围<select id="library-scope"><option value="title">标题</option><option value="notes">标题与笔记</option><option value="text">标题、原文与笔记</option></select></label></details>
 <nav id="library" aria-label="文字稿书架">

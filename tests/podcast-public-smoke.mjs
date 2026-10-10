@@ -4,7 +4,7 @@ import http from 'node:http';
 import { createPodcastSources } from '../desktop/podcast-sources.mjs';
 const sources=createPodcastSources(),signal=AbortSignal.timeout(180000);
 async function verifyAudioPlayback(media) {
- const { chromium }=await import('@playwright/test');
+ const { chromium }=await import('./helpers/browser-storage.mjs');
  // This test serves only the already downloaded buffer; no arbitrary proxy,
  // source URL, saved transcript or filesystem path is exposed to the browser.
  const server=http.createServer((req,res)=>{

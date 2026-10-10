@@ -8,7 +8,7 @@ import os from 'node:os';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {execFileSync} from 'node:child_process';
-import {chromium} from '@playwright/test';
+import {chromium} from './helpers/browser-storage.mjs';
 const root=fileURLToPath(new URL('../',import.meta.url));
 let directory,server,browser,stage='setup';
 const checks=[];
@@ -50,7 +50,7 @@ try {
   if(u.origin===origin||['blob:','data:'].includes(u.protocol))await route.continue();else{external++;await route.abort();}
  });
  const page=await context.newPage();page.on('pageerror',()=>pageErrors++);page.setDefaultTimeout(15000);
- await page.goto(origin);await page.locator('#sample').waitFor({state:'visible'});
+ await page.goto(origin);await page.waitForFunction(()=>window.CoconutStorageBootstrap?.phase==='ready');await page.locator('#sample').waitFor({state:'visible'});
  await page.waitForFunction(()=>!document.getElementById('worker-status').textContent.includes('正在检查'));
  await capture(page,'01-source-entry');
  check('brand_asset_loads',await page.locator('.brand-mark').evaluate(img=>img.complete&&img.naturalWidth>0));
@@ -120,8 +120,8 @@ try {
  const exported=path.join(directory,'summary.md');await download.saveAs(exported);const markdown=await fs.readFile(exported,'utf8');
  check('summary_export_has_historical_input',markdown.includes('Audio and video stay in this browser')&&markdown.includes('播客摘要')&&markdown.includes('旧摘要可能过期'));
  await page.evaluate(()=>libraryStore.flush());
- check('object_urls_never_persist',await page.evaluate(()=>!localStorage.getItem('coconut-reader-v1').includes('blob:')));
- await page.reload();await page.locator('#summary-workspace').waitFor({state:'visible'});
+ check('object_urls_never_persist',await page.evaluate(async()=>!JSON.stringify(await readPersistedLibrary()).includes('blob:')));
+ await page.reload();await page.waitForFunction(()=>window.CoconutStorageBootstrap?.phase==='ready');await page.locator('#summary-workspace').waitFor({state:'visible'});
  check('refresh_keeps_summary_state',await page.locator('#summary-state').getAttribute('data-state')==='stale');
  check('refresh_requires_file_reselection',await page.locator('#source-media audio,#source-media video').count()===0);
  await page.locator('#mode-transcript').click();await page.locator('.segment[data-segment-id="second"] .note-button').click();
@@ -168,7 +168,7 @@ try {
   await target.locator('.context-button').click();
   check(label+'_context_shows_actual_adjacent_source',await page.locator('#reading-context').isVisible()&&await page.locator('.segment').count()<=100&&await page.locator('.segment[data-segment-id="split-1749"] .words').textContent()===split.segments[1749].text&&await page.locator('.segment[data-segment-id="split-1751"] .words').textContent()===split.segments[1751].text);
   await page.evaluate(()=>libraryStore.flush());
-  check(label+'_context_preserves_reading_bookmark',await page.evaluate(()=>{const s=JSON.parse(localStorage.getItem('coconut-reader-v1'));return s.documents.find(d=>d.key===sessionStorage.getItem('coconut-reader-active-v1')).readingPosition;})==='split-19');
+  check(label+'_context_preserves_reading_bookmark',await page.evaluate(async()=>{const s=await readPersistedLibrary();return s.documents.find(d=>d.key===sessionStorage.getItem('coconut-reader-active-v1')).readingPosition;})==='split-19');
   // Do not scroll from the test: the product jump itself must settle on the
   // intended fragment, not merely mount it somewhere in a 100-cue DOM window.
   const contextViewport=await page.evaluate(async()=>{

@@ -905,3 +905,4 @@ body[data-media-docked="true"] .reading-feedback { bottom: 94px; }
 #passage-question-source { overflow-wrap: anywhere; }
 .ai-answer-evidence { margin: 12px 0; }
 @media(max-width: 600px) { .passage-question-dialog { padding: 18px; } }
+.storage-startup{position:fixed;inset:0;z-index:10000;display:grid;align-content:center;justify-items:start;gap:1rem;padding:clamp(1.5rem,8vw,8rem);background:var(--bg,#faf9f7);overflow:auto}.storage-startup[hidden]{display:none}.storage-startup p{max-width:48rem}.storage-startup h1{font-size:1.6rem}
