@@ -19,9 +19,12 @@ test('renderer errors fail closed and allow a later retry',async()=>{
  let failed=true,errors=0,finished=0;const c=createCloseCoordinator({inspect:async()=>{if(failed)throw Error('gone');return {safe:true};},confirm:async()=>assert.fail('no discard on unknown state'),commit:async()=>true,finish:()=>finished++,onError:()=>errors++});
  assert.equal(await c.request(),false);assert.equal(finished,0);assert.equal(errors,1);failed=false;assert.equal(await c.request(),true);assert.equal(finished,1);
 });
-test('unanswered renderer inspection times out without teardown',async()=>{
- let errors=0,finished=0;const c=createCloseCoordinator({inspect:()=>new Promise(()=>{}),confirm:async()=>true,commit:async()=>true,finish:()=>finished++,onError:()=>errors++,timeoutMs:10});
- assert.equal(await c.request(),false);assert.equal(errors,1);assert.equal(finished,0);
+test('unanswered renderer inspection times out without teardown',async t=>{
+ t.mock.timers.enable({apis:['setTimeout','Date'],now:1800000000000});
+ const entered=deferred();
+ let errors=0,finished=0;const c=createCloseCoordinator({inspect:()=>{entered.resolve();return new Promise(()=>{});},confirm:async()=>true,commit:async()=>true,finish:()=>finished++,onError:()=>errors++,timeoutMs:10});
+ const result=c.request();await entered.promise;t.mock.timers.tick(11);
+ assert.equal(await result,false);assert.equal(errors,1);assert.equal(finished,0);
 });
 test('packaged application includes the imported lifecycle coordinator',async()=>{
  const {readFile}=await import('node:fs/promises');
@@ -47,11 +50,13 @@ test('a final update owns quit until installation settles; no second native ques
  lifecycle.retire(update);assert.equal(lifecycle.busy(),false);
 });
 
-test('timeout retires ownership before reporting, and late main results never finish',async()=>{
+test('timeout retires ownership before reporting, and late main results never finish',async t=>{
+ t.mock.timers.enable({apis:['setTimeout','Date'],now:1800000000000});
  const {createLifecycleOwnership}=await import('../desktop/close-coordinator.mjs');
- const lifecycle=createLifecycleOwnership({timeoutMs:10}),commit=deferred();let released,request,finished=0;
- const c=createCloseCoordinator({lifecycle,inspect:()=>({safe:true}),confirm:()=>assert.fail('no prompt'),commit:(_mode,token)=>{request=token;return commit.promise;},finish:()=>finished++,release:attempt=>{released=attempt;assert.equal(lifecycle.owns(attempt),false);},onError:()=>assert.equal(lifecycle.busy(),false)});
- assert.equal(await c.request(),false);assert.equal(released.id,request.id);assert.equal(request.kind,'close');assert.ok(Number.isFinite(request.expiresAt));
+ const lifecycle=createLifecycleOwnership({timeoutMs:10}),commit=deferred(),entered=deferred();let released,request,finished=0;
+ const c=createCloseCoordinator({lifecycle,inspect:()=>({safe:true}),confirm:()=>assert.fail('no prompt'),commit:(_mode,token)=>{request=token;entered.resolve();return commit.promise;},finish:()=>finished++,release:attempt=>{released=attempt;assert.equal(lifecycle.owns(attempt),false);},onError:()=>assert.equal(lifecycle.busy(),false)});
+ const result=c.request();await entered.promise;t.mock.timers.tick(11);
+ assert.equal(await result,false);assert.equal(released.id,request.id);assert.equal(request.kind,'close');assert.ok(Number.isFinite(request.expiresAt));
  commit.resolve(true);await Promise.resolve();assert.equal(finished,0);
  const update=lifecycle.begin('update');assert.equal(lifecycle.claim(update),true);lifecycle.retire(released);assert.equal(lifecycle.owns(update),true);
 });

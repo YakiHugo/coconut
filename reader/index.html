@@ -7,15 +7,16 @@
 <meta name="description" content="把长视频和播客变成自己的阅读空间。对照原文与译文，按时间回听，留下摘录和笔记。">
 <meta name="theme-color" content="#faf9f7">
 <link rel="icon" type="image/png" href="coconut-mark.png">
-<link rel="stylesheet" href="style.css?v=e972d289d8">
+<link rel="stylesheet" href="style.css?v=4219078751">
 <script src="summary.js?v=580ffdad1e" defer></script>
-<script src="core.js?v=6daa1b5bf5" defer>
+<script src="core.js?v=356129146d" defer>
 </script>
 <script src="passages.js?v=aa95245d4c" defer></script>
 <script src="passage-playback.js?v=162dbb3695" defer></script>
-<script src="app.js?v=a2312f711f" defer>
+<script src="app.js?v=5513b0a6ad" defer>
 </script>
-<script src="language.js?v=7ab2806c61" defer></script>
+<script src="language.js?v=dc1292bc9e" defer></script>
+<script src="translation-review.js?v=902ff4d03e" defer></script>
 <script src="podcasts.js?v=7486a33f77" defer></script>
 <script src="jobs.js?v=0d6d6a2410" defer>
 </script>
@@ -215,6 +216,7 @@ cd coconut
 <div id="reader-options" class="reader-options">
 <details id="reading-settings" class="reading-settings"><summary>阅读设置</summary><div class="disclosure-content"><div class="settings-actions"><button id="document-details">标题与语言</button>
 <button id="source">原始来源链接</button>
+<button id="review-translations" type="button">译文核对</button>
 </div>
 <label class="reading-comfort">阅读排版<select id="reading-layout"><option value="standard">标准</option><option value="large">大字</option><option value="spacious">大字 · 宽松行距</option></select></label><span id="layout-status" class="hint" role="status"></span>
 <form id="time-navigation" class="time-navigation"><label for="reading-time">跳到时间</label><input id="reading-time" placeholder="12:34 或 1:02:03" inputmode="decimal" aria-describedby="time-navigation-status"><button type="submit">定位文字</button><span id="time-navigation-status" class="hint" role="status"></span></form>
@@ -337,5 +339,22 @@ cd coconut
 <p id="replace-removal-warning" class="save-warning" hidden></p><button id="export-previous-removal" type="button" hidden>先导出上一篇备份</button>
 <p id="remove-document-error" role="alert"></p><button id="cancel-removal" type="button">取消，保留内容</button><button id="confirm-removal" type="button">移除并保留本页撤销</button></dialog>
 <dialog id="finish-removal-dialog" aria-labelledby="finish-removal-heading"><h2 id="finish-removal-heading">结束本页撤销？</h2><p>结束后不再保留本页恢复副本，也不能再撤销。如果没有另存的 JSON 备份，这份内容将无法恢复。</p><button id="cancel-finish-removal" type="button">保留撤销</button><button id="confirm-finish-removal" type="button">结束撤销</button></dialog>
+<dialog id="translation-queue-dialog" class="translation-review-dialog" aria-labelledby="translation-queue-title">
+<h2 id="translation-queue-title">译文核对</h2><p>整篇已存译文，不受搜索、分页或摘录筛选影响。过期与质量提示分别列出，不自动调用 AI。</p>
+<label for="translation-queue-language">核对语言</label><select id="translation-queue-language"></select>
+<p id="translation-queue-summary" role="status"></p><ol id="translation-queue-list"></ol><p id="translation-queue-empty"></p>
+<nav class="dialog-actions" aria-label="译文核对队列分页"><button id="translation-queue-previous" type="button">上一页</button><span id="translation-queue-position"></span><button id="translation-queue-next" type="button">下一页</button></nav>
+<div class="dialog-actions"><button id="translation-queue-close" type="button">返回阅读</button></div>
+</dialog>
+<dialog id="translation-edit-dialog" class="translation-review-dialog" aria-labelledby="translation-edit-heading">
+<h2 id="translation-edit-heading">核对译文</h2><p id="translation-edit-origin"></p><p id="translation-edit-status" role="status"></p>
+<h3>本次核对的原文</h3><p id="translation-edit-source" class="review-source"></p>
+<h3>这份译文当时的原文</h3><p id="translation-edit-previous-source" class="review-source"></p>
+<details><summary>本次核对的上下文与术语（保存后一起作为核对依据）</summary><div id="translation-edit-context"></div><div id="translation-edit-context-pages" class="dialog-actions"><button id="translation-edit-context-previous" type="button">上一页上下文</button><span id="translation-edit-context-position" role="status"></span><button id="translation-edit-context-next" type="button">下一页上下文</button></div><p id="translation-edit-glossary" class="review-source"></p></details>
+<label for="translation-edit-text">译文（可直接修正）</label><textarea id="translation-edit-text" rows="7" maxlength="12000"></textarea>
+<details id="translation-edit-history"><summary>已保留的译文版本</summary><h3>初始译文</h3><p id="translation-edit-original-text" class="review-source"></p><h3>上一版译文</h3><p id="translation-edit-prior-text" class="review-source"></p></details>
+<p class="hint">只表示你已核对当前原文，不保证事实或模型质量。保存会保留初始译文与上一版，较早人工版本不会累积；完整备份请导出 JSON。</p>
+<p id="translation-edit-error" role="alert"></p><div class="dialog-actions"><button id="translation-edit-cancel" type="button">取消，返回</button><button id="save-translation-edit" type="button" class="primary">保存人工修正</button></div>
+</dialog>
 </body>
 </html>
