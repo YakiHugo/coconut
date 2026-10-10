@@ -48,6 +48,10 @@ jobs:
         env:
           COCONUT_UI_SCREENSHOTS: ${{ runner.temp }}/coconut-authored-ui
         run: node tests/web-browser-acceptance.mjs
+      - name: Verify persistent reading appearance, dark contrast, keyboard and narrow mobile reading
+        env:
+          COCONUT_UI_SCREENSHOTS: ${{ runner.temp }}/coconut-authored-ui
+        run: node tests/reading-appearance-browser.mjs
       - name: Verify skim to complete bilingual passages and bounded listen-once with authored media
         env:
           COCONUT_UI_SCREENSHOTS: ${{ runner.temp }}/coconut-authored-ui
