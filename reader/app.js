@@ -359,12 +359,14 @@ function renderLibrary() {
 	$("library-empty").hidden = docs.length > 0;
 	$("library-empty").textContent = state.documents.length ? "没有匹配的内容，可调整书架筛选或查找范围" : "还没有内容。添加一份，或体验示例。";
 	for (const d of docs) {
-		const b = el("button", d.key === state.active ? "active" : "");
+		const entry=el("div","library-entry");entry.dataset.documentKey=d.key;
+		const b = el("button", "library-open"+(d.key === state.active ? " active" : ""));
 		b.append(el("span", "library-title", d.title));
 		const bookmark = d.segments.find(s => s.id === d.readingPosition);
 		b.append(el("small", "", Coconut.isAudioProject(d)?"原声项目 · 未导入文字稿 · "+(d.timestamp_bookmarks||[]).length+" 个时间书签":Coconut.time(d.segments.at(-1).end) + " · " + Object.values(d.notes).filter(Boolean).length + " 则笔记" + (bookmark ? " · 读到 " + Coconut.time(bookmark.start) : "")));
 		b.setAttribute("aria-current", d.key === state.active ? "page" : "false");
-		b.onclick = () => {
+		const openDocument = (hit=null) => {
+   clearReadingContext();
    cancelLocalImports();
    stopRepeating();$("source-media").querySelector("audio,video")?.pause();closeSummaryRequest(false);
 			state.active = d.key;
@@ -379,11 +381,39 @@ function renderLibrary() {
 			save();
 			showWorkspace("read");
 			render();
-			if (bookmark){if(prefersPassageReading(d))openPassage(bookmark.id);else goToSegment(bookmark.id);}
+			if(hit)openLibraryHit(hit);
+			else if (bookmark){if(prefersPassageReading(d))openPassage(bookmark.id);else goToSegment(bookmark.id);}
 			else $("title").scrollIntoView?.({block: "start"});
 		};
-		$("library").append(b);
+		b.onclick=()=>openDocument();
+  entry.append(b);
+  const hits=Coconut.libraryHits(d,query,$('library-scope').value);
+  if(hits.length){
+   const list=el('div','library-hits');list.setAttribute('aria-label','匹配预览（最多 3 项）');
+   for(const hit of hits){
+    const button=el('button','library-hit');button.type='button';button.dataset.hitKind=hit.kind;button.dataset.hitId=hit.id||'';
+    const label={'text':'原文','note':'片段笔记','project-note':'项目笔记','bookmark':'时间书签'}[hit.kind];
+    button.append(el('small','',label+(hit.time===undefined?'':' · '+Coconut.time(hit.time))));
+    const preview=el('span','library-hit-preview');preview.append(document.createTextNode(hit.snippet.before),el('mark','',hit.snippet.match),document.createTextNode(hit.snippet.after));
+    button.append(preview);button.onclick=()=>openDocument(hit);list.append(button);
+   }
+   entry.append(list);
+  }
+  $("library").append(entry);
 	}
+}
+function openLibraryHit(hit) {
+ if(hit.kind==='text'||hit.kind==='note'){
+  goToSegment(hit.id,true);
+  if(hit.kind==='note'){
+   const row=[...$('transcript').querySelectorAll('.segment')].find(row=>row.dataset.segmentId===hit.id);
+   row?.querySelector('.note-button')?.click();
+  }
+ }else{
+  $('audio-bookmark-search').value='';renderAudioProject(active());
+  const target=hit.kind==='project-note'?$('project-note'):[...$('audio-bookmarks').children].find(row=>row.dataset.bookmarkId===hit.id)?.querySelector('textarea');
+  target?.scrollIntoView?.({block:'center',behavior:'auto'});target?.focus({preventScroll:true});
+ }
 }
 function isLightCueText(text) {
  // Count wider glyphs conservatively so a 160-character Chinese paragraph
