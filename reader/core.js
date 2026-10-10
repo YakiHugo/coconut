@@ -409,7 +409,9 @@
   return isAudioProject(doc)?doc.media_duration||0:doc.segments.reduce((end,segment)=>Math.max(end,segment.end),0);
  }
  function libraryMatches(doc, query, kind='all', scope='title') {
-  const audio=isAudioProject(doc), annotated=Boolean(projectAnnotationCount(doc)||doc.segments.some(s=>s.saved_excerpt)||doc.segments.some(segment=>hasNoteContent(doc.notes?.[segment.id])));
+  const audio=isAudioProject(doc);
+  // Ordinary title browsing must not scan every saved cue for unused filters.
+  const annotated=kind==='annotated'&&Boolean(projectAnnotationCount(doc)||doc.segments.some(s=>s.saved_excerpt)||doc.segments.some(segment=>hasNoteContent(doc.notes?.[segment.id])));
   if(kind==='audio'&&!audio||kind==='transcript'&&audio||kind==='annotated'&&!annotated)return false;
   const needle=query.trim().toLocaleLowerCase(),matches=value=>typeof value==='string'&&value.toLocaleLowerCase().includes(needle);
   if(matches(doc.title))return true;

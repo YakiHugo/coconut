@@ -8,16 +8,16 @@
 <meta name="theme-color" content="#faf9f7">
 <link rel="icon" type="image/png" href="coconut-mark.png">
 <script src="appearance.js?v=86ea922669"></script>
-<link rel="stylesheet" href="style.css?v=6b59ec5036">
+<link rel="stylesheet" href="style.css?v=8b0c2d164a">
 <script src="summary.js?v=580ffdad1e" defer></script>
-<script src="core.js?v=aee49d839f" defer>
+<script src="core.js?v=b6b9ba562b" defer>
 </script>
 <script src="passages.js?v=b4aee1081b" defer></script>
 <script src="passage-playback.js?v=162dbb3695" defer></script>
 <script src="library-store.js?v=7a0c1b8828" defer></script>
 <script src="indexeddb-document-adapter.js?v=65c0c5a814" defer></script>
 <script src="storage-provider.js?v=1cb898e984" defer></script>
-<script src="app.js?v=9bd90b730e" type="text/coconut-pending" data-reader-script>
+<script src="app.js?v=b997500d7a" type="text/coconut-pending" data-reader-script>
 </script>
 <script src="language.js?v=8832e43c29" type="text/coconut-pending" data-reader-script></script>
 <script src="translation-review.js?v=cf09bebe3b" type="text/coconut-pending" data-reader-script></script>
@@ -42,7 +42,13 @@
 <details class="library-backup"><summary>书架备份</summary><div class="disclosure-content"><button id="export-library">备份整个书架</button><button id="restore-library">恢复书架备份</button><button id="export-original-storage" hidden>导出升级前原始数据</button><p id="storage-backend-hint" class="hint" hidden></p><input id="library-file" type="file" accept=".json" hidden></div></details>
 <p class="eyebrow">你的书架</p>
 <details id="library-options" class="library-options"><summary>整理书架</summary><p class="hint library-manage-hint">展开时，每篇下方可移除内容。</p><label>排序<select id="library-sort"><option value="added">按添加顺序</option><option value="title">按标题</option><option value="duration">按时长（短到长）</option></select></label><label>内容<select id="library-kind"><option value="all">全部</option><option value="transcript">有文字稿</option><option value="audio">原声项目</option><option value="annotated">有笔记或摘录</option></select></label><label>查找范围<select id="library-scope"><option value="title">标题</option><option value="notes">标题与笔记</option><option value="text">标题、原文与笔记</option></select></label></details>
-<nav id="library" aria-label="文字稿书架">
+<p id="library-page-status" class="hint" role="status" aria-live="polite" aria-atomic="true"></p>
+<div id="library-pagination" class="library-pagination" role="group" aria-label="书架分页" hidden>
+<div class="library-page-actions"><button id="library-previous" type="button" aria-controls="library">上一页</button><button id="library-next" type="button" aria-controls="library">下一页</button></div>
+<form id="library-page-form"><label for="library-page-number">第 <input id="library-page-number" type="number" inputmode="numeric" min="1" max="1" step="1" value="1" required aria-label="书架页码"> / <span id="library-page-count">1</span> 页</label><button type="submit" aria-controls="library">跳转</button></form>
+<button id="library-show-active" type="button" aria-controls="library" hidden>定位正在阅读</button>
+</div>
+<nav id="library" aria-label="文字稿书架" aria-describedby="library-page-status">
 </nav>
 <p id="library-empty" class="hint">还没有文字稿。添加一份，或体验示例。</p>
 </div>
@@ -167,7 +173,7 @@ cd coconut
 <div id="reader-workspace" tabindex="-1" hidden>
 <section class="intro">
 <div class="reader-kicker"><p class="eyebrow">你的阅读空间</p><span id="reader-kind" class="reader-kind">原文可回查</span></div>
-<div id="reader-title-home"><h1 id="title">把听过的，<br>真正留下来。</h1></div>
+<div id="reader-title-home"><h1 id="title" tabindex="-1">把听过的，<br>真正留下来。</h1></div>
 <div id="reader-meta-home"><p id="subtitle">导入 Coconut JSON、SRT 或 VTT。读原话，记想法，在时间戳处回到声音的现场。</p>
 <p id="provenance" class="hint">
 </p></div>
