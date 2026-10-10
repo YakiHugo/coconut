@@ -7,16 +7,16 @@
 <meta name="description" content="把长视频和播客变成自己的阅读空间。对照原文与译文，按时间回听，留下摘录和笔记。">
 <meta name="theme-color" content="#faf9f7">
 <link rel="icon" type="image/png" href="coconut-mark.png">
-<link rel="stylesheet" href="style.css?v=dc4dd47fff">
+<link rel="stylesheet" href="style.css?v=7e7282f8bf">
 <script src="summary.js?v=580ffdad1e" defer></script>
-<script src="core.js?v=81227b195b" defer>
+<script src="core.js?v=a976b03fad" defer>
 </script>
 <script src="passages.js?v=b4aee1081b" defer></script>
 <script src="passage-playback.js?v=162dbb3695" defer></script>
 <script src="library-store.js?v=b9bfd30793" defer></script>
-<script src="app.js?v=f823e999b2" defer>
+<script src="app.js?v=b03cd641ab" defer>
 </script>
-<script src="language.js?v=c9bc04eda3" defer></script>
+<script src="language.js?v=8832e43c29" defer></script>
 <script src="translation-review.js?v=cf09bebe3b" defer></script>
 <script src="podcasts.js?v=d3e7d5a124" defer></script>
 <script src="jobs.js?v=9a38654a89" defer>
@@ -183,6 +183,7 @@ cd coconut
 <article id="passage-body" tabindex="0" aria-label="按原顺序连续阅读"></article>
 <nav class="passage-pagination" aria-label="连贯阅读翻页"><button id="passage-previous" type="button">前面的原文</button><span id="passage-page-status" class="hint"></span><button id="passage-next" type="button">继续读后面的原文</button></nav>
 </section>
+<nav id="passage-question-return" class="reading-context" aria-label="返回段落提问" hidden><span>引用原文 · 保留本次提问范围</span><button id="return-passage-question" type="button">← 返回段落提问</button><button id="dismiss-passage-question-return" type="button">结束核对</button></nav>
 <nav id="passage-return-bar" class="reading-context passage-return-bar" aria-label="返回连贯阅读" hidden><span>逐句核对 · 原时间戳与笔记</span><button id="return-to-passages" type="button">← 返回刚才的段落</button></nav>
 <section id="summary-workspace" aria-label="播客摘要">
 <section id="source-overview" class="source-overview" aria-label="原文速览">
@@ -253,7 +254,7 @@ cd coconut
 </details>
 <label class="ai-consent"><input id="ai-consent" type="checkbox"><span id="ai-consent-copy">同意将上述原文发送给所选提供商，并使用我的订阅额度。</span></label>
 <div class="ai-submit-actions"><button id="subscription-translate" class="primary" disabled hidden>翻译原文</button><button id="ask-ai" class="primary" disabled>发送问题</button></div>
-<div class="ai-run-controls"><button id="stop-subscription-translation" hidden>停止后续翻译</button><button id="stop-summary" type="button" hidden>停止后续摘要</button><button id="stop-translation" hidden>停止后续离线批次</button></div>
+<div class="ai-run-controls"><button id="stop-question" type="button" hidden>取消接收本次回答</button><button id="stop-subscription-translation" hidden>停止后续翻译</button><button id="stop-summary" type="button" hidden>停止后续摘要</button><button id="stop-translation" hidden>停止后续离线批次</button></div>
 <p id="ai-progress" role="status"></p><p id="language-status" role="status" class="hint" hidden>连接本地服务后可翻译；现有译文可直接阅读与备份。</p>
 </section></div>
 <section id="ai-history" aria-labelledby="ai-history-heading">
@@ -305,6 +306,16 @@ cd coconut
 <label class="keyboard-preference"><input id="keyboard-shortcuts-enabled" type="checkbox" checked>启用阅读单字符快捷键</label>
 <p class="hint">关闭后恢复浏览器默认键位（如 Firefox 的 / 快速查找）；仍可点击「快捷键」重新启用。Ctrl / ⌘ 等组合键保持原样。</p>
 <p id="keyboard-preference-status" class="hint" role="status"></p>
+</dialog>
+<dialog id="passage-question-dialog" class="passage-question-dialog" aria-labelledby="passage-question-heading">
+<div class="passage-question-heading"><h2 id="passage-question-heading" tabindex="-1">问这一段</h2><button id="close-passage-question" type="button">返回阅读</button></div>
+<p id="passage-question-source"></p><p id="passage-question-state" role="status"></p>
+<div id="passage-question-preview" class="passage-question-preview" aria-label="本次发送的确切原文"></div>
+<label class="passage-question-expand"><input id="passage-question-neighbors" type="checkbox">加入前后各一段原文（如有）</label>
+<p class="hint">仅发送下面确认范围内的原文与问题。已有译文、笔记和音视频不发送。</p>
+<button id="refresh-passage-question" type="button" hidden>按当前原文重新核对范围</button>
+<div id="passage-question-connection"><p id="passage-question-connection-help" class="hint"></p><button id="passage-question-setup" type="button">查看本地连接步骤</button></div>
+<div id="passage-question-slot"></div><div id="passage-question-history"></div>
 </dialog>
 <dialog id="details-dialog" aria-labelledby="details-heading">
 <form method="dialog"><h2 id="details-heading">文字稿信息</h2>

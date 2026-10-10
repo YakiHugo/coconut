@@ -364,7 +364,8 @@
   try {const plan=Summaries.plan(doc);return {ready:true,reason:'',characters:plan.characters,plan};}
   catch(error){return {ready:false,reason:'整篇摘要暂不可用：'+error.message+'。可直接读原文，或筛选较小范围提问；局部回答不会保存为整篇摘要。'};}
  }
- // Only the exact ordered {id,text} payload is evidence for a saved answer.
+ // The exact ordered {id,text} payload is evidence for a saved answer.
+ // Passage questions additionally retain source identity and timing as local provenance.
  // Never discard missing IDs: doing so would make a removed dependency look current.
  function cleanAnswerInput(value) {
   if(!value || value.version!==1 || !Array.isArray(value.segments) || !value.segments.length || value.segments.length>20000)return undefined;
@@ -373,14 +374,34 @@
    if(!s || typeof s.id!=="string" || !s.id.length || s.id.length>400 || ids.has(s.id) || typeof s.text!=="string"||s.text.length>1000000)return false;
    ids.add(s.id);chars+=s.id.length+s.text.length;return chars<=2200000;
   }))return undefined;
-  return {version:1,segments:value.segments.map(s=>({id:s.id,text:s.text}))};
+  const segments=value.segments.map(s=>({id:s.id,text:s.text}));
+  let scope;
+  if(value.scope!==undefined){
+   const v=value.scope,ordered=segments.map(s=>s.id);
+   if(!v||v.kind!=="passage"||segments.length>48||!Array.isArray(v.passage_ids)||!v.passage_ids.length||v.passage_ids.length>16||
+    !Array.isArray(v.cues)||v.cues.length!==segments.length||typeof v.expanded!=="boolean"||
+    !["source_title","source_url","source_language","provider","answer_language"].every(key=>typeof v[key]==="string"&&v[key].length<=4000))return undefined;
+   const start=ordered.indexOf(v.passage_ids[0]);
+   if(start<0||!v.expanded&&v.passage_ids.length!==segments.length||v.passage_ids.some((id,index)=>typeof id!=="string"||ordered[start+index]!==id)||
+    !v.cues.every((cue,index)=>cue&&cue.id===ordered[index]&&Number.isFinite(cue.start)&&cue.start>=0&&Number.isFinite(cue.end)&&cue.end>=cue.start&&(cue.speaker===null||typeof cue.speaker==="string"&&cue.speaker.length<=1000)))return undefined;
+   scope={kind:"passage",passage_ids:[...v.passage_ids],expanded:v.expanded,
+    source_title:v.source_title,source_url:v.source_url,source_language:v.source_language,provider:v.provider,answer_language:v.answer_language,
+    cues:v.cues.map(({id,start,end,speaker})=>({id,start,end,speaker}))};
+  }
+  return {version:1,segments,...(scope?{scope}:{})};
  }
  function answerFreshness(answer, doc) {
   const input=cleanAnswerInput(answer.input_snapshot);
   if(!input)return 'unknown'; // Legacy source_snapshot only covered citations.
   const selected=new Set(input.segments.map(s=>s.id));
   const current=doc.segments.filter(s=>selected.has(s.id));
-  return current.length===input.segments.length && current.every((s,i)=>s.id===input.segments[i].id && s.text===input.segments[i].text) ? 'current' : 'stale';
+  const same=current.length===input.segments.length&&current.every((s,i)=>s.id===input.segments[i].id&&s.text===input.segments[i].text);
+  if(!same)return 'stale';
+  const scope=input.scope;
+  if(scope){const start=doc.segments.findIndex(cue=>cue.id===input.segments[0].id);if(input.segments.some((cue,index)=>doc.segments[start+index]?.id!==cue.id))return 'stale';}
+  if(scope&&(scope.source_title!==(doc.title||'')||scope.source_url!==(doc.source_url||'')||scope.source_language!==(doc.language||'')||
+   current.some((cue,index)=>cue.start!==scope.cues[index].start||cue.end!==scope.cues[index].end||(cue.speaker??null)!==scope.cues[index].speaker)))return 'stale';
+  return 'current';
  }
  // Transcript length is the latest cue end, including gaps and overlaps;
  // audio-only projects use known media length. Neither route mutates cues.
@@ -596,8 +617,9 @@
    }
    lines.push("","### 本次实际发送的原文","");
    if(!input){lines.push("旧记录没有完整发送原文；不能用当前稿替代历史依据。","");continue;}
+   if(input.scope){const scope=input.scope;lines.push("范围：问这一段"+(scope.expanded?"（明确加入前后相邻段落）":"（仅所选段落）"),"来源："+line(scope.source_title),"来源地址："+line(scope.source_url||"未提供"),"原文语言："+line(scope.source_language||"未标注"),"所选工具："+line(scope.provider)+" · 回答语言："+line(scope.answer_language),"原段落片段："+scope.passage_ids.map(line).join("、"),"");}
    lines.push(input.segments.length+" 个片段；包括模型读到但未引用的内容。","");
-   for(const segment of input.segments)lines.push("片段 "+line(segment.id),"",quote(segment.text),"");
+   for(const [position,segment] of input.segments.entries()){const cue=input.scope?.cues[position];lines.push("片段 "+line(segment.id)+(cue?" · 请求时 "+time(cue.start)+"–"+time(cue.end)+" · "+cue.start+"–"+cue.end+" 秒"+(cue.speaker?" · "+line(cue.speaker):""):""),"",quote(segment.text),"");}
   }
   lines.push("完整编辑和恢复请保留 Coconut JSON 备份；本文件不包含媒体或订阅凭据。","");
   return lines.join("\n");
