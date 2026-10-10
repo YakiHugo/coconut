@@ -18,7 +18,7 @@ async function setup(t,{failed=false,head=sha,wrongDigest=false,existing,tag=nul
 test('release is main-only and publishes only after exact checks and asset digests',async t=>{
  const s=await setup(t);await assert.rejects(()=>publishDesktopRelease({...s,context:{...context,eventName:'pull_request'},core,version:'0.2.0'}),/main push/);assert.equal(s.calls.length,0);
  await publishDesktopRelease({...s,context,core,version:'0.2.0'});assert.equal(s.calls[0][0],'create');assert.equal(s.calls[0][1].draft,true);assert.deepEqual(s.calls.filter(c=>c[0]==='upload').map(c=>c[1]),['Coconut-0.2.0-arm64-unsigned.zip','Coconut-0.2.0-x64-unsigned.zip','SHA256SUMS.txt']);assert.equal(s.calls.at(-1)[0],'publish');
- const body=s.calls[0][1].body;assert.match(body,/continuous source-linked passages/);assert.match(body,/whole-passage listen-once/);assert.match(body,/compact mobile header/);
+ const body=s.calls[0][1].body;assert.match(body,/faster long-transcript playback/);assert.match(body,/source-backed cross-document search/);assert.match(body,/explicit per-document listening resume/);assert.match(body,/recoverable library removal/);assert.match(body,/preserved WebVTT speakers/);assert.match(body,/unsaved draft protection/);assert.match(body,/one in-page undo slot/);assert.match(body,/coordinated native update\/quit ownership/);
  assert.ok(body.includes(`https://github.com/${repo.owner}/${repo.repo}/blob/${sha}/docs/release-notes.md`));assert.match(body,/No real-account inference quality is claimed/);
 });
 test('failed checks, moved main and foreign versions never publish',async t=>{

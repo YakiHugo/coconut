@@ -66,7 +66,7 @@
 [在线阅读预览](https://yakihugo.github.io/coconut/) 是纯静态页面，不能替你的电脑运行转录。
 Web 也可直接选择本地媒体与文字稿对照；AI 连接使用轻量本地服务或 macOS 开发版。当前没有公开云转录后端，也没有跨设备自动同步。
 
-本轮阅读体验改进已进入源码 `main`，桌面版本更新为 `0.5.0`，改动与验证边界见 [0.5.0 发布说明](docs/release-notes.md)。既有 Actions 会在主分支精确提交的全部必需检查通过后，自动发布对应的 macOS 开发包；是否已完成以 [GitHub Releases](https://github.com/YakiHugo/coconut/releases) 为准。CI 测试包不等于已发布版本，公开 Web 预览也不会随桌面发布自动更新。
+本轮阅读体验改进已进入源码 `main`，桌面版本更新为 `0.6.0`，改动与验证边界见 [0.6.0 发布说明](docs/release-notes.md)。既有 Actions 会在主分支精确提交的全部必需检查通过后，自动发布对应的 macOS 开发包；是否已完成以 [GitHub Releases](https://github.com/YakiHugo/coconut/releases) 为准。CI 测试包不等于已发布版本，公开 Web 预览也不会随桌面发布自动更新。
 
 ## 可选高级 Python 服务（macOS / Linux）
 
