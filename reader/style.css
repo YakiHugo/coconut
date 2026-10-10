@@ -1053,3 +1053,5 @@ body[data-media-docked="true"] .reading-feedback { bottom: 94px; }
   grid-column: 1 / -1; grid-row: 4; max-height: 45dvh; overflow-y: auto;
  }
 }
+/* A retained search-return landmark must not cover the passage reached by it. */
+#reading-context:not([hidden]) + #passage-workspace .passage { scroll-margin-top: 112px; }
