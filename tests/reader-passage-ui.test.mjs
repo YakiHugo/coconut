@@ -144,3 +144,54 @@ test('confirmed import success is a complete status message, while a later failu
   assert.equal($('notice').dataset.kind,'');assert.match($('notice').textContent,/导入失败/);assert.equal($('notice').hidden,false);assert.equal($('passage-workspace').hidden,false);
  }finally{await env.close();}
 });
+
+test('the focused header reuses the original title, metadata and settings and restores them in cue mode',async()=>{
+ const env=setup();try{const fixture=passageReadingFixture();fixture.title='A long source title 中文原题 '.repeat(12);await load(env,fixture);const {$,w}=env;
+  const title=$('title'),settings=$('reading-settings'),subtitle=$('subtitle'),provenance=$('provenance'),original=saved(env);
+  assert.equal(title.parentElement,$('reader-title-slot'));assert.equal(title.textContent,fixture.title);assert.equal($('reading-info-title').textContent,fixture.title);
+  assert.equal(subtitle.parentElement,$('reading-info-meta'));assert.equal(provenance.parentElement,$('reading-info-meta'));assert.equal(settings.parentElement,$('reading-info-settings'));assert.equal(settings.open,true);assert.equal($('reading-info').open,false);
+  assert.equal($('count').hidden,true);assert.equal($('reading-info').hidden,false);assert.equal(w.document.querySelectorAll('#reading-settings').length,1);
+  $('mode-transcript').click();assert.equal(title.parentElement,$('reader-title-home'));assert.equal(subtitle.parentElement,$('reader-meta-home'));assert.equal(settings.parentElement,$('reader-options'));assert.equal(settings.open,false);assert.equal($('reading-info').hidden,true);
+  settings.open=true;$('mode-passages').click();assert.equal(settings.parentElement,$('reading-info-settings'));$('mode-transcript').click();assert.equal(settings.open,true);
+  $('mode-passages').click();$('add-content').click();assert.equal(title.parentElement,$('reader-title-home'));let restoredAfterComposition=false;w.scrollTo=()=>{restoredAfterComposition=title.parentElement===$('reader-title-slot');};$('back-reading').click();assert.equal(restoredAfterComposition,true);assert.equal(title.parentElement,$('reader-title-slot'));
+  assert.deepEqual(saved(env).segments,original.segments);assert.deepEqual(saved(env).notes,original.notes);assert.equal(env.calls.length,0);
+ }finally{await env.close();}
+});
+
+test('information close restores its trigger without rerendering the passage or changing source and reading position',async()=>{
+ const env=setup();try{await load(env);const {$,w}=env,first=passages(env)[0],prior=saved(env);let scrolls=0;w.scrollTo=()=>scrolls++;w.scrollBy=()=>scrolls++;
+  const summary=$('reading-info').querySelector('summary');summary.click();assert.equal($('reading-info').open,true);assert.equal($('reading-info-position').textContent,$('passage-position').textContent);
+  $('close-reading-info').click();assert.equal($('reading-info').open,false);assert.equal(w.document.activeElement,summary);assert.equal(passages(env)[0],first);assert.equal(scrolls,0);
+  assert.equal(saved(env).readingPosition,prior.readingPosition);assert.deepEqual(saved(env).segments,prior.segments);assert.deepEqual(saved(env).notes,prior.notes);
+ }finally{await env.close();}
+});
+
+test('closing media settings keeps the same playing audio and the dock can reopen it in every reader mode',async()=>{
+ const env=setup();try{await load(env);const player=await media(env),{$,w}=env,first=passages(env)[0];await player.play();player.currentTime=53;
+  assert.equal($('notice').dataset.kind,'success');$('close-reader-media').click();assert.equal($('episode-media').hidden,true);assert.equal(player.paused,false);assert.equal(player.currentTime,53);assert.equal($('source-media').querySelector('audio'),player);assert.equal(passages(env)[0],first);assert.equal(w.document.activeElement,$('toggle-reader-media'));
+  $('dock-return').click();assert.equal($('episode-media').hidden,false);assert.equal($('toggle-reader-media').getAttribute('aria-expanded'),'true');assert.equal($('source-media').querySelector('audio'),player);assert.equal(player.paused,false);assert.equal(player.currentTime,53);
+  $('close-reader-media').click();$('mode-transcript').click();$('toggle-reader-media').click();assert.equal($('episode-media').hidden,false);$('toggle-reader-media').click();assert.equal($('episode-media').hidden,true);
+  $('mode-summary').click();$('toggle-reader-media').click();assert.equal($('close-reader-media').hidden,false);$('close-reader-media').click();assert.equal($('episode-media').hidden,true);assert.equal(player.paused,false);assert.equal(player.currentTime,53);
+ }finally{await env.close();}
+});
+
+test('success feedback is dismissible and temporary but a subsequent error is never hidden by its timer',async()=>{
+ const env=setup();try{const {$,w}=env,timers=[];const schedule=w.setTimeout.bind(w);w.setTimeout=(callback,delay,...args)=>{if(delay===5000){timers.push(callback);return schedule(()=>{},delay);}return schedule(callback,delay,...args);};await load(env);
+  assert.equal($('notice-shell').classList.contains('is-success'),true);assert.equal($('dismiss-notice').hidden,false);timers.at(-1)();assert.equal($('notice').hidden,true);
+  await load(env);$('dismiss-notice').focus();timers.at(-1)();assert.equal($('notice').hidden,false);$('dismiss-notice').click();assert.equal($('notice').hidden,true);assert.equal(w.document.activeElement,$('main-content'));
+  await load(env);const oldTimer=timers.at(-1);Object.defineProperty($('file'),'files',{configurable:true,value:[{name:'broken.json',size:2,text:async()=>'{bad'}]});await $('file').onchange();oldTimer();
+  assert.equal($('notice').hidden,false);assert.match($('notice').textContent,/导入失败/);assert.equal($('notice-shell').classList.contains('is-success'),false);assert.equal($('dismiss-notice').hidden,true);
+ }finally{await env.close();}
+});
+
+
+test('reading popovers close on Escape or a new reading target without stealing pointer focus or modal ownership',async()=>{
+ const env=setup();try{await load(env);const {$,w}=env,summary=$('reading-info').querySelector('summary');
+  summary.click();$('close-reading-info').focus();w.document.dispatchEvent(new w.KeyboardEvent('keydown',{key:'Escape',bubbles:true}));assert.equal($('reading-info').open,false);assert.equal(w.document.activeElement,summary);
+  summary.click();const range=$('passage-time-range');range.focus();range.click();assert.equal($('reading-info').open,false);assert.equal(w.document.activeElement,range);
+  summary.click();$('document-details').click();assert.equal($('details-dialog').open,true);$('document-title').click();assert.equal($('reading-info').open,true);w.document.dispatchEvent(new w.KeyboardEvent('keydown',{key:'Escape',bubbles:true}));assert.equal($('reading-info').open,true);$('details-dialog').close();$('close-reading-info').click();
+  $('toggle-reader-media').click();w.document.dispatchEvent(new w.KeyboardEvent('keydown',{key:'Escape',bubbles:true}));assert.equal($('episode-media').hidden,true);assert.equal(w.document.activeElement,$('toggle-reader-media'));
+  $('toggle-reader-media').click();range.focus();range.click();assert.equal($('episode-media').hidden,true);assert.equal(w.document.activeElement,range);
+  summary.click();$('export-menu').querySelector('summary').click();assert.equal($('reading-info').open,false);assert.equal($('export-menu').open,true);
+ }finally{await env.close();}
+});

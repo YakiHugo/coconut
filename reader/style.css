@@ -714,3 +714,55 @@ html[data-reading-layout="spacious"] .passage { padding-top: 34px; padding-botto
  body[data-reading-mode="passages"] #library-list { grid-column: 1 / -1; grid-row: 2; }
  body[data-reading-mode="passages"] #notice[data-kind="success"] { margin: 8px 0; padding: 0; border-radius: 0; background: transparent; color: var(--muted); font-size: 12px; line-height: 1.6; }
 }
+
+/* The default workspace starts with the source, not a document setup screen. */
+#notice-shell { display: contents; }
+#notice-shell.is-success { display: flex; align-items: center; gap: 12px; position: fixed; z-index: 16; right: 24px; bottom: 20px; max-width: min(480px,calc(100vw - 40px)); padding: 8px 10px 8px 16px; background: #fffaf1; border: 1px solid #e6d9c6; border-radius: 12px; box-shadow: 0 6px 24px #28252018; }
+#notice-shell.is-success #notice { margin: 0; padding: 0; background: transparent; color: #655844; font-size: 12px; line-height: 1.6; }
+#dismiss-notice { flex-shrink: 0; min-height: 44px; min-width: 44px; padding: 6px; font-size: 11px; background: transparent; border-color: transparent; }
+body[data-reading-mode="passages"][data-workspace="read"] > .shell > main > header { min-height: 74px; padding: 12px 0; align-items: flex-start; gap: 16px; }
+#reader-title-slot { min-width: 0; flex: 1; }
+#reader-title-slot #title { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; margin: 0; color: var(--ink); font-size: 25px; line-height: 1.35; letter-spacing: -.55px; }
+body[data-reading-mode="passages"][data-workspace="read"] .intro { padding-top: 0; }
+body[data-reading-mode="passages"] #reader-meta-home:empty, body[data-reading-mode="passages"] #reader-title-home:empty { display: none; }
+.reading-utility { position: relative; }
+.reading-utility.is-compact { display: flex; align-items: center; flex-wrap: wrap; column-gap: 14px; min-height: 44px; }
+.reading-info { position: relative; flex-shrink: 0; }
+.reading-info > summary { display: flex; align-items: center; min-height: 44px; padding: 4px 0; font-size: 12px; }
+.reading-info > summary::after { font-size: 12px; margin-left: 6px; }
+.reading-info-panel { position: absolute; z-index: 11; top: calc(100% + 6px); left: 0; width: min(460px,calc(100vw - 40px)); max-height: min(70dvh,580px); overflow-y: auto; padding: 18px; border: 1px solid #ded3c7; border-radius: 12px; background: #fffcf8; box-shadow: 0 12px 40px #30251b20; }
+.reading-info-heading { display: flex; align-items: flex-start; gap: 12px; margin-bottom: 14px; }
+.reading-info-heading h2 { min-width: 0; flex: 1; margin: 0; font-size: 17px; line-height: 1.5; overflow-wrap: anywhere; }
+.reading-info-heading button { flex-shrink: 0; min-height: 44px; padding: 6px 9px; font-size: 12px; }
+.reading-info-panel #subtitle, .reading-info-panel #provenance, .reading-info-panel #passage-browse-help { font-size: 12px; line-height: 1.8; margin: 6px 0; }
+.reading-info-panel #reading-settings > summary { display: none; }
+.reading-info-panel #reading-settings > .disclosure-content { padding: 10px 0 0; border-top: 1px solid var(--line); }
+.reading-info-panel .reading-comfort, .reading-info-panel .time-navigation { margin: 10px 0; }
+.reading-info-panel .settings-actions { gap: 8px; }
+.reading-info-panel .settings-actions button { font-size: 12px; }
+.reading-utility.is-compact .media-disclosure { margin: 0; min-height: 44px; padding: 4px 0; font-size: 12px; }
+.reading-utility.is-compact .passage-toolbar { margin-left: auto; gap: 14px; padding: 0; }
+.reading-utility.is-compact .passage-toolbar button { min-height: 44px; min-width: 44px; font-size: 12px; }
+.reading-utility.is-compact .episode-media { position: absolute; z-index: 10; top: calc(100% + 6px); left: 0; right: 0; margin: 0; max-height: min(70dvh,580px); overflow-y: auto; border: 1px solid #ded3c7; background: #fffcf8; box-shadow: 0 12px 40px #30251b20; }
+#close-reader-media { margin-left: auto; flex-shrink: 0; min-height: 44px; padding: 6px 9px; font-size: 12px; }
+body[data-reading-mode="passages"] .reading-modes { margin-top: 0; min-height: 44px; gap: 22px; }
+body[data-reading-mode="passages"] .reading-modes button { padding-top: 9px; padding-bottom: 9px; min-height: 44px; }
+body[data-reading-mode="passages"] .passage-workspace { padding-top: 0; }
+body[data-reading-mode="passages"] .passage-browse { position: relative; display: grid; grid-template-columns: auto minmax(0,1fr) auto; align-items: center; column-gap: 12px; min-height: 44px; padding: 0; border-bottom: 0; }
+body[data-reading-mode="passages"] .passage-browse-heading { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+body[data-reading-mode="passages"] #passage-time-range { grid-column: 2; grid-row: 1; margin: 0; height: 44px; width: 100%; }
+body[data-reading-mode="passages"] .passage-browse-caption { display: contents; }
+body[data-reading-mode="passages"] #passage-time-label { grid-column: 1; grid-row: 1; font-size: 11px; font-variant-numeric: tabular-nums; color: var(--muted); }
+body[data-reading-mode="passages"] #passage-total-time { grid-column: 3; grid-row: 1; font-size: 11px; font-variant-numeric: tabular-nums; color: var(--muted); }
+body[data-reading-mode="passages"] .passage:first-child { padding-top: 8px; }
+@media (max-width:650px) {
+ body[data-reading-mode="passages"][data-workspace="read"] > .shell > main > header { min-height: 64px; padding: 10px 0; gap: 10px; }
+ #reader-title-slot #title { font-size: 20px; line-height: 1.4; letter-spacing: -.25px; }
+ body[data-reading-mode="passages"] .reading-utility.is-compact { column-gap: 10px; }
+ .reading-utility.is-compact .passage-toolbar { gap: 10px; }
+ .reading-utility.is-compact .passage-toolbar button, .reading-utility.is-compact .media-disclosure, .reading-info > summary { font-size: 11px; }
+ body[data-reading-mode="passages"] .reading-modes { gap: 20px; }
+ .reading-info-panel { padding: 14px; }
+ #notice-shell.is-success { right: 12px; bottom: 12px; max-width: calc(100vw - 24px); padding-left: 12px; }
+ body[data-media-docked="true"] #notice-shell.is-success { bottom: 94px; }
+}

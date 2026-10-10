@@ -7,13 +7,13 @@
 <meta name="description" content="把长视频和播客变成自己的阅读空间。对照原文与译文，按时间回听，留下摘录和笔记。">
 <meta name="theme-color" content="#faf9f7">
 <link rel="icon" type="image/png" href="coconut-mark.png">
-<link rel="stylesheet" href="style.css?v=1dd95d4c3a">
+<link rel="stylesheet" href="style.css?v=24de7cd83b">
 <script src="summary.js?v=580ffdad1e" defer></script>
 <script src="core.js?v=ce1ae62390" defer>
 </script>
 <script src="passages.js?v=aa95245d4c" defer></script>
 <script src="passage-playback.js?v=f22d297164" defer></script>
-<script src="app.js?v=c5bc6d8512" defer>
+<script src="app.js?v=87f756d56b" defer>
 </script>
 <script src="language.js?v=5f0cf838fb" defer></script>
 <script src="podcasts.js?v=093725361c" defer></script>
@@ -55,6 +55,7 @@
 </aside>
 <main id="main-content" tabindex="-1">
 <header>
+<div id="reader-title-slot" hidden></div>
 <button id="back-reading" hidden>← 返回阅读</button><span id="count">阅读空间</span>
 <div>
 <button id="show-jobs" hidden>处理任务 <span id="job-count">0</span></button>
@@ -63,8 +64,7 @@
 </div>
 </header>
 <p id="save-status" class="save-warning" role="alert" hidden></p>
-<div id="notice" role="status" hidden>
-</div>
+<div id="notice-shell"><div id="notice" role="status" hidden></div><button id="dismiss-notice" type="button" aria-label="关闭成功提示" hidden>关闭</button></div>
 <section id="add-workspace" class="import-workspace" aria-label="添加与处理内容">
 <div class="welcome-hero">
 <div class="welcome-story"><p class="eyebrow"><span class="live-dot" aria-hidden="true"></span> 给好奇心，一个阅读空间</p>
@@ -144,23 +144,26 @@ cd coconut
 <div id="reader-workspace" hidden>
 <section class="intro">
 <div class="reader-kicker"><p class="eyebrow">你的阅读空间</p><span id="reader-kind" class="reader-kind">原文可回查</span></div>
-<h1 id="title">把听过的，<br>真正留下来。</h1>
-<p id="subtitle">导入 Coconut JSON、SRT 或 VTT。读原话，记想法，在时间戳处回到声音的现场。</p>
+<div id="reader-title-home"><h1 id="title">把听过的，<br>真正留下来。</h1></div>
+<div id="reader-meta-home"><p id="subtitle">导入 Coconut JSON、SRT 或 VTT。读原话，记想法，在时间戳处回到声音的现场。</p>
 <p id="provenance" class="hint">
-</p>
+</p></div>
 <div id="demo-guide" class="demo-guide" hidden><div><strong>内置自写示例</strong><span>原文与译文均为预置 · 无音视频 · 不调用 AI</span></div><div><button id="demo-note" type="button">记下第一个想法 <span aria-hidden="true">↗</span></button><button id="demo-finish" type="button">添加自己的内容</button></div></div>
+<div id="reading-utility" class="reading-utility">
+<details id="reading-info" class="reading-info" hidden><summary>信息与设置</summary><div class="reading-info-panel"><div class="reading-info-heading"><h2 id="reading-info-title"></h2><button id="close-reading-info" type="button" aria-label="关闭信息与设置">关闭</button></div><div id="reading-info-meta"></div><p id="reading-info-position" class="hint"></p><div id="reading-info-help"></div><div id="reading-info-settings"></div></div></details>
 <button id="toggle-reader-media" class="media-disclosure" type="button" aria-expanded="false" aria-controls="episode-media">关联原声 · 回听这一篇</button>
-<section id="episode-media" class="episode-media" aria-label="本集声音与回源"><div class="episode-media-heading"><span class="eyebrow">原声与来源</span><span class="hint">阅读时随时回听</span></div><div id="podcast-playback" class="podcast-playback" hidden><button id="download-podcast-media" type="button">下载并回听本集原声</button><button id="cancel-podcast-media" type="button" hidden>取消下载</button><p id="podcast-media-status" class="hint">只在点击后下载（最多 200 MiB），媒体仅保留在本次页面，刷新后需重新获取。</p></div>
+<section id="episode-media" class="episode-media" aria-label="本集声音与回源"><div class="episode-media-heading"><span class="eyebrow">原声与来源</span><span class="hint">阅读时随时回听</span><button id="close-reader-media" type="button" aria-label="关闭原声设置" hidden>关闭</button></div><div id="podcast-playback" class="podcast-playback" hidden><button id="download-podcast-media" type="button">下载并回听本集原声</button><button id="cancel-podcast-media" type="button" hidden>取消下载</button><p id="podcast-media-status" class="hint">只在点击后下载（最多 200 MiB），媒体仅保留在本次页面，刷新后需重新获取。</p></div>
 <div class="local-media-entry"><button id="attach-reader-media" type="button">选择对应的音频或视频</button><button id="detach-reader-media" type="button" hidden>移除本次媒体</button><input id="reader-media-file" type="file" accept="audio/*,video/*,.mp3,.m4a,.wav,.ogg,.flac,.mp4,.webm,.mov" hidden><p id="reader-media-status" class="hint">在浏览器中打开文件，不上传。请选与文字稿对应的原文件；刷新页面后需重新选择。</p></div>
 <button id="locate-playback" hidden>定位正在播放的文字</button>
 <div id="playback-controls" hidden><button id="skip-back" type="button" disabled>后退10秒</button><button id="skip-forward" type="button" disabled>前进10秒</button><label>播放速度<select id="playback-rate"><option value="0.75">0.75×</option><option value="1" selected>1×</option><option value="1.25">1.25×</option><option value="1.5">1.5×</option><option value="1.75">1.75×</option><option value="2">2×</option></select></label><button id="stop-repeat" type="button" hidden>停止循环</button><span id="repeat-status" class="hint" role="status"></span><span id="playback-status" class="hint" role="status"></span></div>
 <div id="source-media" hidden>
 </div>
 </section>
+<div class="passage-toolbar"><button id="passage-toggle-translation" type="button" aria-pressed="true" hidden>收起已存译文</button><button id="passage-search" type="button">搜索原文</button></div></div>
 <nav id="reading-modes" class="reading-modes" aria-label="播客阅读方式"><button id="mode-passages" aria-pressed="false">连贯阅读</button><button id="mode-summary" aria-pressed="true">摘要</button><button id="mode-transcript" aria-pressed="false">原文</button><button id="mode-bilingual" aria-pressed="false">双语对照</button><button id="toggle-demo-tools" type="button" aria-expanded="false" aria-controls="transcript-reading-tools reader-options" hidden>搜索与工具</button></nav>
 <section id="passage-workspace" class="passage-workspace" aria-label="连贯原文阅读" hidden>
 <div class="passage-browse"><div class="passage-browse-heading"><label for="passage-time-range">沿时间浏览原文</label><span id="passage-position" class="hint" role="status"></span></div><input id="passage-time-range" type="range" min="0" max="1" step="1" value="0" aria-describedby="passage-browse-help"><div class="passage-browse-caption"><span id="passage-time-label">00:00</span><span id="passage-total-time"></span></div><p id="passage-browse-help" class="hint">连续字幕排成段落，原话与时间不变。</p></div>
-<div class="passage-toolbar"><button id="passage-toggle-translation" type="button" aria-pressed="true" hidden>收起已存译文</button><button id="passage-search" type="button">搜索原文</button></div>
+
 
 <article id="passage-body" aria-label="按原顺序连续阅读"></article>
 <nav class="passage-pagination" aria-label="连贯阅读翻页"><button id="passage-previous" type="button">前面的原文</button><span id="passage-page-status" class="hint"></span><button id="passage-next" type="button">继续读后面的原文</button></nav>
