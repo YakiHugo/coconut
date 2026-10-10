@@ -727,6 +727,9 @@ body[data-reading-mode="passages"][data-workspace="read"] .intro { padding-top: 
 body[data-reading-mode="passages"] #reader-meta-home:empty, body[data-reading-mode="passages"] #reader-title-home:empty { display: none; }
 .reading-utility { position: relative; }
 .reading-utility.is-compact { display: flex; align-items: center; flex-wrap: wrap; column-gap: 14px; min-height: 44px; }
+/* Match the compact toolbar instead of adding a full-size button row on mobile.
+   Keep the complete help label and an unshrinking 44px touch target. */
+.reading-utility.is-compact #keyboard-help-open { flex-shrink: 0; min-width: 44px; min-height: 44px; padding: 4px 0; font-size: 12px; white-space: nowrap; }
 .reading-info { position: relative; flex-shrink: 0; }
 .reading-info > summary { display: flex; align-items: center; min-height: 44px; padding: 4px 0; font-size: 12px; }
 .reading-info > summary::after { font-size: 12px; margin-left: 6px; }
@@ -760,7 +763,7 @@ body[data-reading-mode="passages"] .passage:first-child { padding-top: 8px; }
  #reader-title-slot #title { font-size: 20px; line-height: 1.4; letter-spacing: -.25px; }
  body[data-reading-mode="passages"] .reading-utility.is-compact { column-gap: 10px; }
  .reading-utility.is-compact .passage-toolbar { gap: 10px; }
- .reading-utility.is-compact .passage-toolbar button, .reading-utility.is-compact .media-disclosure, .reading-info > summary { font-size: 11px; }
+ .reading-utility.is-compact #keyboard-help-open, .reading-utility.is-compact .passage-toolbar button, .reading-utility.is-compact .media-disclosure, .reading-info > summary { font-size: 11px; }
  body[data-reading-mode="passages"] .reading-modes { gap: 20px; }
  .reading-info-panel { padding: 14px; }
  #notice-shell.is-success { right: 12px; bottom: 12px; max-width: calc(100vw - 24px); padding-left: 12px; }
