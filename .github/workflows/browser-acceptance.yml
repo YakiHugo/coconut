@@ -52,6 +52,10 @@ jobs:
         run: node tests/passages-browser.mjs
       - name: Verify human translation review, draft protection and actual JSON VTT Markdown exports
         run: node tests/translation-review-browser.mjs
+      - name: Verify exact passage questions, explicit consent, citation return and interrupted requests
+        env:
+          COCONUT_UI_SCREENSHOTS: ${{ runner.temp }}/coconut-authored-ui
+        run: node tests/passage-question-browser.mjs
       - name: Verify cross-cue phrase matches, exact source scope and mobile context with authored fixtures
         run: node tests/phrase-search-browser.mjs
       - name: Verify cross-document search previews and keyboard destinations with authored fixtures

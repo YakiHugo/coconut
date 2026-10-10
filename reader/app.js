@@ -486,6 +486,7 @@ function goToSegment(id,contextDetour=false,preservePassageReturn=false) {
 }
 // Ordinary library navigation, active removal, and active undo share ownership teardown.
 function resetReaderForDocumentNavigation(){
+ if(typeof closePassageQuestion==='function')closePassageQuestion();
  // Flush while the old player owns its own key. Preview clocks never become
  // the main position, and a same-URL destination still gets new ownership.
  flushListening(true);
@@ -1796,6 +1797,7 @@ function renderPassages(doc){
   renderedPassageRanges.set(listen,passage);
   listen.onclick=()=>{stopRepeating();passagePlayback.listen({id:passage.key,start:passage.start,end:passage.end,label:Coconut.time(passage.start)+'–'+Coconut.time(passage.end)});};
   actions.append(listen);
+  const ask=el('button','passage-ask','问这一段');ask.type='button';ask.setAttribute('aria-label','问这一段 '+Coconut.time(passage.start)+' 的原文');ask.onclick=()=>preparePassageQuestion(doc,passage);actions.append(ask);
   const details=el('button','passage-details','逐句核对');details.type='button';details.setAttribute('aria-label','逐句核对 '+Coconut.time(passage.start)+' 的原文与笔记');details.onclick=()=>openPassageDetails(passage.cues[0].id,section);actions.append(details);
   const external=Coconut.source(doc.source_url,passage.start);
   if(external){const source=el('a','passage-source-link','原站 ↗');source.href=external;source.target='_blank';source.rel='noopener noreferrer';actions.append(source);}
