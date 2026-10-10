@@ -7,7 +7,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
-import {chromium} from '@playwright/test';
+import {chromium, expect} from '@playwright/test';
 import {authoredAudioFixture} from './helpers/authored-audio-fixture.mjs';
 import {passageReadingFixture, irregularPassageFixture} from './helpers/passage-reading-fixture.mjs';
 import {openCueActions} from './cue-actions-browser.mjs';
@@ -26,6 +26,21 @@ async function capture(page, name) {
   await fs.mkdir(process.env.COCONUT_UI_SCREENSHOTS, {recursive: true});
   // Preserve the real user-action viewport. Never scroll, hide or resize layout.
   await page.screenshot({path: path.join(process.env.COCONUT_UI_SCREENSHOTS, 'passages-' + name + '.png'), fullPage: false, animations: 'disabled'});
+}
+async function feedbackState(page, label) {
+  const state = await page.evaluate(() => ({
+    paused: document.querySelector('audio')?.paused,
+    mediaTime: document.querySelector('audio')?.currentTime,
+    previewState: document.querySelector('#passage-playback-controls')?.dataset.state,
+    feedbackDisplay: getComputedStyle(document.querySelector('#reading-feedback')).display,
+    noteHidden: document.querySelector('#notes-panel')?.hidden,
+    noticeKind: document.querySelector('#notice')?.dataset.kind,
+    noticeHidden: document.querySelector('#notice')?.hidden,
+    noticeText: document.querySelector('#notice')?.textContent,
+  }));
+  geometry.push({label, ...state});
+  console.log(JSON.stringify({suite: 'compact-feedback-state', label, ...state}));
+  return state;
 }
 async function importFixture(page, fixture, name = 'authored-fragmented-reading.json') {
   await page.locator('#file').setInputFiles({name, mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(fixture))});
@@ -137,7 +152,7 @@ try {
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   const origin = 'http://127.0.0.1:' + server.address().port;
   browser = await chromium.launch({headless: true, ...(process.env.COCONUT_CHROMIUM_EXECUTABLE ? {executablePath: process.env.COCONUT_CHROMIUM_EXECUTABLE} : {})});
-  async function freshPage(viewport) {
+  async function freshPage(viewport, {controlledClock = false} = {}) {
     const context = await browser.newContext({viewport, acceptDownloads: true, serviceWorkers: 'block'});
     await context.route('**/*', async route => {
       const request = route.request(), url = new URL(request.url());
@@ -147,6 +162,7 @@ try {
     });
     const page = await context.newPage();
     page.setDefaultTimeout(15000); page.on('pageerror', error => browserErrors.push(error.message));
+    if (controlledClock) await page.clock.install({time: new Date('2026-10-10T10:00:00Z')});
     await page.goto(origin); activePage = page;
     return page;
   }
@@ -306,30 +322,61 @@ try {
   check('source_only_passages_do_not_invent_translation', await page.locator('.passage-original .passage-cue').count() > 4 && await page.locator('.passage-translation').count() === 0 && await page.locator('#passage-toggle-translation').isHidden());
 
   stage = 'compact_success_feedback_note';
-  const compactPage = await freshPage({width: 390, height: 480});
+  const compactPage = await freshPage({width: 390, height: 480}, {controlledClock: true});
   await importFixture(compactPage, fixture);
   await attachAudio(compactPage, audioPath);
   await compactPage.locator('#close-reader-media').click();
   await compactPage.locator('#dismiss-notice').click();
+  // Hold only this scenario's application clock so slow download delivery or
+  // screenshots cannot consume the success notice's real five-second lifetime.
+  // Native media decoding/events and all keyboard/pointer actions remain real.
+  await compactPage.clock.pauseAt(new Date('2026-10-10T12:00:00Z'));
   const compactPassage = compactPage.locator('.passage[data-first-cue-id="split-0"]');
-  await compactPassage.locator('.passage-listen').click();
-  await compactPage.waitForFunction(() => !document.querySelector('audio').paused);
   await compactPage.locator('#export-menu > summary').click();
   await Promise.all([compactPage.waitForEvent('download'), compactPage.locator('#export').click()]);
   await compactPage.locator('#export-menu > summary').click();
+  // Start the bounded preview after the download has completed, rather than
+  // spending its short source range waiting on an unrelated download event.
+  await compactPassage.locator('.passage-listen').press('Enter');
+  await expect(compactPage.locator('#passage-playback-controls')).toHaveAttribute('data-state', 'playing');
+  await expect(compactPage.locator('audio')).toHaveJSProperty('paused', false);
   // Keyboard activation is a supported route into the cue editor while the
   // transport is present; note Close and dock controls below use real pointers.
   await compactPassage.locator('.passage-details').press('Enter');
   await compactPage.locator('.segment[data-segment-id="split-0"] .note-button').press('Enter');
-  check('compact_note_pauses_preview_and_temporarily_yields_the_feedback_stack', await compactPage.locator('audio').evaluate(player => player.paused) && await compactPage.locator('#passage-playback-controls').getAttribute('data-state') === 'paused' && await compactPage.locator('#reading-feedback').isHidden() && await compactPage.locator('#notice').getAttribute('data-kind') === 'success');
+  // pause() changes the native paused property before the browser dispatches
+  // its pause event. Await the observable controller update, not an extra sleep.
+  stage = 'compact_note_waits_for_async_preview_pause';
+  await expect(compactPage.locator('audio')).toHaveJSProperty('paused', true);
+  await expect(compactPage.locator('#passage-playback-controls')).toHaveAttribute('data-state', 'paused');
+  await compactPage.clock.runFor(32); // Flush the product's queued dock frame.
+  const compactNote = await feedbackState(compactPage, 'compact-note-paused');
+  check('compact_note_pauses_the_native_media', compactNote.paused);
+  check('compact_note_retains_a_paused_bounded_preview', compactNote.previewState === 'paused');
+  check('compact_note_temporarily_yields_the_feedback_stack', compactNote.feedbackDisplay === 'none');
+  check('compact_note_preserves_the_unexpired_success_notice', compactNote.noticeKind === 'success' && !compactNote.noticeHidden);
+  check('compact_note_pauses_preview_and_temporarily_yields_the_feedback_stack', compactNote.paused && compactNote.previewState === 'paused' && compactNote.feedbackDisplay === 'none' && compactNote.noticeKind === 'success');
   await controlsGeometry(compactPage, 'compact-success-feedback-note', ['#close-note', '#dock-play', '#dock-return']);
   await capture(compactPage, '11-compact-note-feedback-yields');
   await compactPage.locator('#close-note').click();
+  await compactPage.clock.runFor(32);
   check('closing_compact_note_restores_the_live_success_message_and_paused_preview', await compactPage.locator('#reading-feedback').isVisible() && await compactPage.locator('#notice').isVisible() && await compactPage.locator('#passage-playback-controls').getAttribute('data-state') === 'paused');
   await controlsGeometry(compactPage, 'compact-success-feedback-restored', ['#dismiss-notice', '#passage-replay', '#passage-stop', '#dock-play']);
   await compactPage.locator('#dismiss-notice').click();
   await compactPage.locator('#passage-return-playback').click();
   check('compact_feedback_dismiss_and_playback_return_are_operable', await compactPage.locator('#notice').isHidden() && await compactPage.locator('#passage-playback-controls').isHidden() && await compactPage.locator('audio').evaluate(player => player.paused));
+  // Independently prove natural expiry, including the legitimate case where a
+  // user spends longer than five seconds editing before closing the note.
+  await compactPage.locator('#export-menu > summary').click();
+  await Promise.all([compactPage.waitForEvent('download'), compactPage.locator('#export').click()]);
+  await compactPage.locator('#export-menu > summary').click();
+  await compactPage.locator('.segment[data-segment-id="split-0"] .note-button').press('Enter');
+  await compactPage.clock.runFor(4999);
+  check('compact_note_success_remains_live_before_its_five_second_deadline', await compactPage.locator('#notice').getAttribute('data-kind') === 'success' && !await compactPage.locator('#notice').evaluate(node => node.hidden));
+  await compactPage.clock.runFor(1);
+  check('compact_note_success_expires_at_its_five_second_deadline', await compactPage.locator('#notice').evaluate(node => node.hidden && node.dataset.kind === '') && await compactPage.locator('#notes-panel').isVisible());
+  await compactPage.locator('#close-note').click();
+  check('closing_compact_note_does_not_resurrect_expired_success', await compactPage.locator('#notice').isHidden());
   await compactPage.context().close();
   activePage = page;
 
@@ -384,6 +431,7 @@ try {
   check('passage_journey_has_no_upload_model_external_requests_or_browser_errors', external === 0 && mutations === 0 && browserErrors.length === 0 && await page.evaluate(() => !localStorage.getItem('coconut-reader-v1').includes('blob:')));
   console.log(JSON.stringify({suite: 'authored-passage-reading-listen-once', status: 'passed', checks, geometry}));
 } catch (error) {
+  if (stage.includes('compact_') && activePage && !activePage.isClosed()) await feedbackState(activePage, 'failure-' + stage).catch(() => {});
   if (activePage && !activePage.isClosed()) await capture(activePage, 'failure-' + stage).catch(() => {});
   console.log(JSON.stringify({suite: 'authored-passage-reading-listen-once', status: 'failed', stage, message: error.message, browserErrors, checks, geometry}));
   process.exitCode = 1;
