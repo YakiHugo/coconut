@@ -88,8 +88,8 @@ for(const mode of ['question','subscription','offline'])test(`late ${mode} respo
   w.fetch=async(url,options)=>{if(url.endsWith('language-tools'))return {ok:true,json:async()=>({local_translation:true,ai:{codex:{ready:true}}})};requests++;const payload=JSON.parse(options.body);await new Promise(resolve=>{release=resolve;});return {ok:true,json:async()=>mode==='question'?{answer:'Injected late answer',citations:['cue']}:{translations:payload.segments.map(cue=>({id:cue.id,source_text:cue.text,text:'迟到译文',provider:'fixture'}))}};};
   $('mode-transcript').click();$('language-panel').open=true;await $('check-ai').onclick();$('ai-task').value=mode==='question'?'question':'translation';$('ai-task').onchange();$('ai-question').value='What is this authored sentence?';$('ai-consent').checked=true;
   const run=$(mode==='question'?'ask-ai':mode==='subscription'?'subscription-translate':'translate-document').onclick();assert.equal(requests,1);
-  await remove(w,source.title);const rescue=await download(w,'export-removed-document');await $('undo-removal').onclick();release();await run;
-  assert.deepEqual(read(w).documents[0],rescue);assert.equal(requests,1);
+  await remove(w,source.title);const rescue=await download(w,'export-removed-document');await $('undo-removal').onclick();const retiredMessage=$('ai-progress').textContent;if(mode==='question')assert.match(retiredMessage,/旧请求已停止/);release();await run;
+  assert.deepEqual(read(w).documents[0],rescue);assert.equal(requests,1);if(mode==='question')assert.equal($('ai-progress').textContent,retiredMessage);
  }finally{release?.();await w.happyDOM.close();}
 });
 test('pending local import cannot return after successful removal',async()=>{

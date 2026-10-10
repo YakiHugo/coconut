@@ -103,7 +103,15 @@ try{
  await page.route('**/api/ask',async route=>{requests++;await new Promise(resolve=>{release=resolve;started();});await route.fulfill({json:{answer:'Injected late answer',citations:['cue']}});});
  await page.locator('#mode-transcript').click();await page.locator('#language-panel').evaluate(node=>{node.open=true;});await page.locator('#ai-task').selectOption('question');await page.locator('#ai-question').fill('What is this authored sentence?');await page.locator('#check-ai').click();await page.locator('#ai-consent').check();
  await page.locator('#ask-ai').click();let startedTimer;try{await Promise.race([requestStarted,new Promise((_,reject)=>{startedTimer=setTimeout(()=>reject(new Error('Injected question did not start')),15000);})]);}finally{clearTimeout(startedTimer);}const pendingSnapshot=await stored();
- await remove(second.title);await page.locator('#undo-removal').click();await page.evaluate(()=>libraryStore.flush());assert.equal(requests,1);release();await page.waitForFunction(()=>document.querySelector('#ai-progress').textContent.includes('本次结果未保存'));
+ await remove(second.title);await page.locator('#undo-removal').click();await page.evaluate(()=>libraryStore.flush());assert.equal(requests,1);
+ // Removal retires the original request immediately. Its delayed callback must
+ // not overwrite that status (or the restored document) with a fresh error.
+ check('removal_reports_retired_question', (await page.locator('#ai-progress').textContent()).includes('旧请求已停止'));
+ const lateResponse = page.waitForResponse(response=>response.url().endsWith('/api/ask'));
+ release();const completedResponse=await lateResponse;await completedResponse.finished();
+ await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));
+ await page.evaluate(()=>libraryStore.flush());
+ check('late_reply_keeps_retirement_status', (await page.locator('#ai-progress').textContent()).includes('旧请求已停止'));
  assert.deepEqual(await stored(),pendingSnapshot);checks.push('late_answer_cannot_mutate_restored_document');
  check('no_external_requests_or_page_errors',external===0&&errors.length===0);console.log(JSON.stringify({checks,external,errors}));await context.close();
 }catch(error){console.error('Library removal browser stage:',stage);throw error;}
