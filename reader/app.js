@@ -58,6 +58,69 @@ let playbackIndex=null;
 const renderedPassageRanges=new WeakMap();
 try {const saved=Number(localStorage.getItem("coconut-playback-rate-v1"));if(PLAYBACK_RATES.includes(saved))playbackRate=saved;}catch{}
 
+// Resume state is deliberately separate from transcript/reading bookmarks.
+let listeningSession=null;
+function listeningStatus(text=''){$('listening-progress-status').textContent=text;}
+async function fingerprintMedia(file){
+ if(!globalThis.crypto?.subtle||typeof file.slice(0,1).arrayBuffer!=='function')return null;
+ // Three bounded 64 KiB samples plus metadata are a candidate match, not a
+ // full-file integrity proof. Even a match requires an explicit resume click.
+ const size=64*1024,offsets=[...new Set([0,Math.max(0,Math.floor((file.size-size)/2)),Math.max(0,file.size-size)])];
+ const samples=[];
+ for(const offset of offsets){
+  const bytes=await file.slice(offset,offset+size).arrayBuffer();
+  samples.push(Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',bytes)),b=>b.toString(16).padStart(2,'0')).join(''));
+ }
+ return 'file-candidate-v1:'+JSON.stringify([file.name,file.size,file.lastModified,file.type,offsets,samples]);
+}
+function takeListeningOwnership(){if(listeningSession){listeningSession.preview=false;listeningSession.engaged=true;}}
+function listeningPreview(){return passagePlayback?.getState();}
+function renderListeningResume(){
+ const s=listeningSession,button=$('resume-listening');
+ const valid=s&&s.record&&s.record.identity===s.identity&&Number.isFinite(s.player.duration)&&s.player.duration>=15&&
+  Math.abs(s.record.duration-s.player.duration)<1&&s.record.time>=5&&s.record.time<s.player.duration-3;
+ button.hidden=!valid;
+ if(valid){button.textContent='继续收听 '+Coconut.time(s.record.time)+' · 仅定位';button.title=s.identity.startsWith('file-candidate')?'文件信息、部分内容及媒体时长与上次匹配；请核对原声，点击后仅定位。':'点击后仅定位，不自动播放。';}
+}
+function flushListening(force=false){
+ const s=listeningSession;if(!s||!s.identity||s.blocked||readerClosing)return;
+ const preview=listeningPreview();
+ if(preview?.range){s.preview=true;return;}
+ if(s.preview||!s.engaged||!Number.isFinite(s.player.duration)||s.player.duration<15||s.player.seeking)return;
+ const time=s.player.currentTime;if(!Number.isFinite(time)||time<0)return;
+ if(!force&&Date.now()-s.savedAt<5000)return;
+ const record={version:1,identity:s.identity,time:time>=s.player.duration-3||time<5?0:time,duration:s.player.duration};
+ const value=JSON.stringify(record);if(value===s.raw)return;
+ s.savedAt=Date.now();
+ try{
+  if(localStorage.getItem(s.key)!==s.raw){s.blocked=true;throw new Error('changed');}
+  localStorage.setItem(s.key,value);s.raw=value;s.record=record;s.savedAt=Date.now();listeningStatus('');renderListeningResume();
+ }catch{listeningStatus(s.blocked?'另一个页面更新了收听进度，本页已暂停保存；刷新后读取。':'收听进度未能保存；'+(s.raw?'上次已保存的位置仍保留。':'本次还没有已保存的位置。')+'本次位置 '+Coconut.time(time)+'。');}
+}
+function bindListening(player,doc,attachment){
+ const identity=attachment?attachment.identity:doc.source_media?'job-v1:'+JSON.stringify(doc.source_media):null;
+ const s={player,identity,key:'coconut-listening-v1:'+doc.key,raw:null,record:null,engaged:false,preview:false,savedAt:0,blocked:false};
+ listeningSession=s;listeningStatus('');
+ try{
+  s.raw=localStorage.getItem(s.key);
+  if(s.raw){const r=JSON.parse(s.raw);if(r?.version!==1||typeof r.identity!=='string'||!Number.isFinite(r.time)||!Number.isFinite(r.duration)||r.time<0||r.duration<=0)throw new Error('invalid');s.record=r;}
+ }catch{s.blocked=true;listeningStatus('已保存的收听进度无法读取，原记录未覆盖。');}
+ if(!identity)listeningStatus('无法核验此文件内容，本次不保存收听进度。');
+ const current=()=>listeningSession===s;
+ player.addEventListener('play',()=>{
+  if(!current())return;const preview=listeningPreview();
+  if(preview?.range&&!['finished','error'].includes(preview.status)){s.preview=true;return;}
+  s.preview=false;s.engaged=true;
+ });
+ player.addEventListener('seeking',()=>{if(current()&&!listeningPreview()?.range){if(!s.preview||Math.abs(player.currentTime-s.previewStoppedAt)>.03){s.preview=false;s.engaged=true;}}});
+ for(const event of ['pause','seeked','ended'])player.addEventListener(event,()=>{if(current())flushListening(true);});
+ player.addEventListener('timeupdate',()=>{if(current())flushListening();});
+ for(const event of ['loadedmetadata','durationchange'])player.addEventListener(event,()=>{if(current())renderListeningResume();});
+ renderListeningResume();
+}
+window.addEventListener('pagehide',()=>flushListening(true));
+window.addEventListener('visibilitychange',()=>{if(document.hidden)flushListening(true);});
+
 function saveWarning(text = "") {
  $("save-status").hidden = !text;
  $("save-status").textContent = text;
@@ -371,11 +434,11 @@ function render() {
  if(repeating && (repeating.key!==doc.key || repeating.path!==mediaPath))stopRepeating();
 	const currentPlayer = mediaHost.querySelector("audio,video");
 	if (!mediaPath) {
-  currentPlayer?.pause();
+  flushListening(true);currentPlayer?.pause();listeningSession=null;renderListeningResume();
 		mediaHost.replaceChildren();
 		mediaHost.hidden = true;
-	} else if (!currentPlayer || currentPlayer.getAttribute("src") !== mediaPath) {
-  currentPlayer?.pause();
+	} else if (!currentPlayer || currentPlayer.getAttribute("src") !== mediaPath || listeningSession?.key!=='coconut-listening-v1:'+doc.key) {
+  flushListening(true);currentPlayer?.pause();
 		const player = el(mediaKind, "source-player");
 		player.controls = true;
   player.defaultPlaybackRate=playbackRate;
@@ -386,6 +449,7 @@ function render() {
 		player.ontimeupdate = () => {if(mediaHost.querySelector("audio,video")!==player)return;repeatPlayback(false,player);highlightPlayback();};
   player.onended=()=>repeatPlayback(true,player);
   for(const event of ["play","pause","timeupdate","ratechange","loadedmetadata","durationchange","ended","error","emptied"])player.addEventListener(event,refreshPlaybackDock);
+  bindListening(player,doc,attachment);
 		player.preload = "metadata";
 		player.src = mediaPath;
 		player.setAttribute("aria-label", "原始音视频");
@@ -407,7 +471,7 @@ function render() {
  $('demo-guide').hidden=!isDemo;
  // The authored tryout has no media; don't suggest attaching an unrelated recording.
  updateReaderMediaVisibility(doc,!!mediaPath);
- if(!passagePlayback)passagePlayback=CoconutPassagePlayback.create({getPlayer:()=>$('source-media').querySelector('audio,video'),getDocumentKey:()=>active()?.key,onChange:renderPassagePlayback});
+ if(!passagePlayback)passagePlayback=CoconutPassagePlayback.create({getPlayer:()=>$('source-media').querySelector('audio,video'),getDocumentKey:()=>active()?.key,onTakeover:takeListeningOwnership,onChange:state=>{if(listeningSession){if(state.range)listeningSession.preview=true;else if(listeningSession.preview)listeningSession.previewStoppedAt=listeningSession.player.currentTime;}renderPassagePlayback(state);}});
  passagePlayback.sync();
  $('reader-kind').textContent=isDemo?'一分钟试读':audioOnly?'原声项目':doc.language?doc.language.toUpperCase()+' · 原文可回查':'原文可回查';
  renderReadingNavigation(doc);
@@ -491,7 +555,7 @@ function render() {
 				const player = mediaHost.querySelector("audio,video");
 				if (!player) return;
 				passagePlayback?.cancel();stopRepeating();
-				player.currentTime = s.start;
+				player.currentTime = s.start;takeListeningOwnership();
 				player.play().catch(() => notice("请点击播放器开始播放，再按时间戳定位。"));
 			};
 			meta.append(seek);
@@ -777,7 +841,7 @@ function renderAudioProject(doc) {
    const player=$('source-media').querySelector('audio,video');
    if(!player||!Number.isFinite(player.duration)||player.duration<=0){$('audio-project-status').textContent='请先单独获取原声，或选择对应的本地文件，等加载完成后再定位。';return;}
    if(item.time>player.duration){$('audio-project-status').textContent='书签超出当前媒体范围，请核对是否选择了对应文件。';return;}
-   try{passagePlayback?.cancel();stopRepeating();player.currentTime=item.time;$('audio-project-status').textContent='已定位到 '+Coconut.time(item.time)+'；未自动播放。';}
+   try{passagePlayback?.cancel();stopRepeating();player.currentTime=item.time;takeListeningOwnership();$('audio-project-status').textContent='已定位到 '+Coconut.time(item.time)+'；未自动播放。';}
    catch{$('audio-project-status').textContent='媒体暂时无法定位，书签仍然保留。';}
   };
   const input=el('textarea');input.rows=2;input.value=item.note;input.setAttribute('aria-label',Coconut.time(item.time)+' 的书签笔记');
@@ -1119,7 +1183,7 @@ function skipPlayback(delta){
  passagePlayback?.cancel();
  const player=$("source-media").querySelector("audio,video");if(!player || !Number.isFinite(player.duration) || player.duration<=0)return;
  stopRepeating();
- try{player.currentTime=Math.max(0,Math.min(player.duration,player.currentTime+delta));highlightPlayback();$("playback-status").textContent="已定位到 "+Coconut.time(player.currentTime);}
+ try{player.currentTime=Math.max(0,Math.min(player.duration,player.currentTime+delta));takeListeningOwnership();highlightPlayback();$("playback-status").textContent="已定位到 "+Coconut.time(player.currentTime);}
  catch{$("playback-status").textContent="媒体暂时无法定位，请等待加载后重试。";}
 }
 $("skip-back").onclick=()=>skipPlayback(-10);$("skip-forward").onclick=()=>skipPlayback(10);
@@ -1537,7 +1601,14 @@ $('export-summary').onclick=()=>{
  }catch{notice('摘要导出失败，已保存的摘要仍在此页面，请重试。');}
  finally{link?.remove();if(url)setTimeout(()=>URL.revokeObjectURL(url),60000);}
 };
-$('reader-media-file').addEventListener('cancel',()=>{pendingMediaDocument=null;});
+$('resume-listening').onclick=()=>{
+ const s=listeningSession;if(!s||$('resume-listening').hidden)return;
+ const time=s.record.time;passagePlayback?.cancel();stopRepeating();
+ s.player.pause();
+ try{s.player.currentTime=time;s.preview=false;s.engaged=true;listeningStatus('已定位到 '+Coconut.time(time)+'；请点击播放器开始，未自动播放。');}
+ catch{listeningStatus('暂时无法定位，请等待媒体加载后重试。');}
+};
+$('reader-media-file').addEventListener('cancel' ,()=>{pendingMediaDocument=null;});
 $('attach-reader-media').onclick=()=>{pendingMediaDocument=active()?.key||null;if(pendingMediaDocument)$('reader-media-file').click();};
 $('reader-media-file').onchange=async()=>{
  const input=$('reader-media-file'),file=input.files[0],key=pendingMediaDocument;pendingMediaDocument=null;
@@ -1554,9 +1625,11 @@ $('reader-media-file').onchange=async()=>{
   const prefix=await file.slice(0,1024).text();
   if(/(?:mpegurl|scpls|dash\+xml)/i.test(file.type)||/^\s*(?:#EXTM3U|\[playlist\]|<\?xml|<MPD|<SmoothStreamingMedia|<ASX|<smil)/i.test(prefix))throw new Error('请选择实际音视频文件，不支持会连接远程地址的播放列表');
   if(mediaSelectionRevision(key)!==revision)return;
+  const identity=await fingerprintMedia(file);
+  if(mediaSelectionRevision(key)!==revision)return;
   nextURL=URL.createObjectURL(file);const previous=browserMedia.get(key);
   if(key===active()?.key){stopRepeating();$('source-media').querySelector('audio,video')?.pause();}
-  browserMedia.set(key,{url:nextURL,kind,name:file.name});if(previous)URL.revokeObjectURL(previous.url);
+  browserMedia.set(key,{url:nextURL,kind,name:file.name,identity});if(previous)URL.revokeObjectURL(previous.url);
   if(key===active()?.key){render();}
   notice('媒体只在本次页面读取，未上传。请核对内容和文字稿对应；刷新后重新选择文件即可继续回听。', "success");
  }catch(error){if(nextURL)URL.revokeObjectURL(nextURL);notice('打开媒体失败：'+error.message);}

@@ -56,6 +56,7 @@
    // A corrupt/stale untouched library needs no rewrite merely to close it.
    // All actual mutations already use synchronous save() and its dirty flag.
   }
+  flushListening(true);
   readerClosing=true;document.body.inert=true;
   // Only an approved final close reaches here. Async readers lose ownership;
   // submitted model calls cannot advance to another consented batch.

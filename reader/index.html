@@ -12,14 +12,14 @@
 <script src="core.js?v=6956fe16cd" defer>
 </script>
 <script src="passages.js?v=aa95245d4c" defer></script>
-<script src="passage-playback.js?v=f22d297164" defer></script>
-<script src="app.js?v=20201121c5" defer>
+<script src="passage-playback.js?v=162dbb3695" defer></script>
+<script src="app.js?v=7300ab6dee" defer>
 </script>
 <script src="language.js?v=5f0cf838fb" defer></script>
-<script src="podcasts.js?v=093725361c" defer></script>
+<script src="podcasts.js?v=28e36ac142" defer></script>
 <script src="jobs.js?v=660c7c538d" defer>
 </script>
-<script src="updates.js?v=e7003f34ec" defer></script>
+<script src="updates.js?v=7cf97bae78" defer></script>
 </head>
 <body>
 <a class="skip-link" href="#main-content">跳到主要内容</a>
@@ -156,6 +156,7 @@ cd coconut
 <div class="local-media-entry"><button id="attach-reader-media" type="button">选择对应的音频或视频</button><button id="detach-reader-media" type="button" hidden>移除本次媒体</button><input id="reader-media-file" type="file" accept="audio/*,video/*,.mp3,.m4a,.wav,.ogg,.flac,.mp4,.webm,.mov" hidden><p id="reader-media-status" class="hint">在浏览器中打开文件，不上传。请选与文字稿对应的原文件；刷新页面后需重新选择。</p></div>
 <button id="locate-playback" hidden>定位正在播放的文字</button>
 <div id="playback-controls" hidden><button id="skip-back" type="button" disabled>后退10秒</button><button id="skip-forward" type="button" disabled>前进10秒</button><label>播放速度<select id="playback-rate"><option value="0.75">0.75×</option><option value="1" selected>1×</option><option value="1.25">1.25×</option><option value="1.5">1.5×</option><option value="1.75">1.75×</option><option value="2">2×</option></select></label><button id="stop-repeat" type="button" hidden>停止循环</button><span id="repeat-status" class="hint" role="status"></span><span id="playback-status" class="hint" role="status"></span></div>
+<div class="listening-progress"><button id="resume-listening" type="button" hidden>继续收听</button><p id="listening-progress-status" class="hint" role="status"></p></div>
 <div id="source-media" hidden>
 </div>
 </section>
