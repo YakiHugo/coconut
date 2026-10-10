@@ -994,3 +994,9 @@ body[data-media-docked="true"] .reading-feedback { bottom: 94px; }
 #library-page-form label { display: flex; align-items: center; gap: 4px; color: var(--muted); font-size: 12px; }
 #library-page-number { width: 64px; min-height: 44px; padding: 6px; background: var(--surface, #fff); }
 #library-show-active { text-align: left; color: var(--accent); }
+
+.media-timing { margin: 14px 0; padding: 14px; border: 1px solid var(--line); border-radius: 10px; min-width: 0; }
+.media-timing legend { padding: 0 6px; font-weight: 600; }
+.media-timing-fields, .media-timing-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.media-timing-fields label { display: grid; gap: 4px; min-width: 0; max-width: 100%; }
+.media-timing-fields input { width: 9rem; }

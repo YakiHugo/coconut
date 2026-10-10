@@ -149,6 +149,57 @@ let playbackIndex=null;
 const renderedPassageRanges=new WeakMap();
 try {const saved=Number(localStorage.getItem("coconut-playback-rate-v1"));if(PLAYBACK_RATES.includes(saved))playbackRate=saved;}catch{}
 
+// A draft never changes ordinary playback until Save. Preview owns a temporary
+// physical-media range, reusing passage playback's cancellation/return semantics.
+let timingEditor=null,timingRevision=0,timingPreview=null;
+function timingAttachment(){const a=browserMedia.get(active()?.key);return a?.origin==='local'&&a.identity?a:null;}
+function timingOffset(){return Coconut.mediaTimingOffset(active(),timingAttachment()?.identity);}
+function timingRange(range,offset=timingOffset()){return Coconut.mediaTimingRange(range,offset,$('source-media').querySelector('audio,video')?.duration);}
+function timingDraft(){const raw=$('media-timing-offset').value;const value=Number(raw);return raw.trim()&&Number.isFinite(value)&&Math.abs(value)<=3600?Math.round(value*1000)/1000:null;}
+function timingCue(){const index=Number($('media-timing-cue').value);return Number.isInteger(index)&&index>=1?active()?.segments[index-1]:undefined;}
+function timingExample(){const cue=timingCue(),offset=timingDraft();$('media-timing-example').textContent=cue&&offset!==null?'第 '+$('media-timing-cue').value+' 段 · 字幕 '+Coconut.time(cue.start)+' → 媒体 '+(cue.start+offset<0?'小于 00:00':Coconut.time(cue.start+offset))+' · '+cue.text.slice(0,100):'请选择有效片段和偏移。';}
+function renderMediaTiming(){
+ const doc=active(),attachment=timingAttachment(),host=$('media-timing');
+ host.hidden=!attachment||!doc?.segments.length;
+ if(host.hidden){timingEditor=null;return;}
+ if(timingEditor?.doc!==doc||timingEditor.attachment!==attachment){
+  timingEditor={doc,attachment};timingRevision++;timingPreview=null;
+  $('media-timing-offset').value=String(timingOffset());
+  $('media-timing-cue').max=String(doc.segments.length);$('media-timing-cue').value='1';timingExample();
+  $('media-timing-status').textContent=doc.media_timing&&doc.media_timing.identity!==attachment.identity?'此文件与已保存的校准不同，当前按零偏移回听。':'当前偏移 '+timingOffset()+' 秒；修改后可先试听，再保存。';
+ }
+}
+function timingChanged(){timingExample();timingRevision++;$('media-timing-status').textContent='尚未保存；普通回听仍使用已保存的偏移。';}
+$('media-timing-offset').oninput=timingChanged;
+$('media-timing-cue').oninput=timingChanged;
+$('media-timing-reset').onclick=()=>{$('media-timing-offset').value='0';timingChanged();};
+$('media-timing-align').onclick=()=>{
+ const cue=timingCue(),player=$('source-media').querySelector('audio,video');if(!cue||!player||!Number.isFinite(player.duration))return;
+ const offset=Math.round((player.currentTime-cue.start)*1000)/1000;
+ if(Math.abs(offset)>3600){$('media-timing-status').textContent='偏移必须在正负 3600 秒内。';return;}
+ $('media-timing-offset').value=String(offset);timingChanged();
+};
+$('media-timing-preview').onclick=()=>{
+ const offset=timingDraft(),cue=timingCue(),range=offset===null?null:timingRange(cue,offset);
+ if(!range){$('media-timing-status').textContent='无法试听：偏移须在正负 3600 秒内，整个片段须位于媒体时长内。';return;}
+ stopRepeating();timingPreview={offset,doc:active(),attachment:timingAttachment()};
+ passagePlayback.listen({...range,id:'media-timing-preview',label:'校准试听 · '+Coconut.time(cue.start)});
+};
+$('media-timing-return').onclick=()=>passagePlayback?.returnToPrevious();
+$('media-timing-save').onclick=async()=>{
+ const editor=timingEditor,offset=timingDraft();
+ if(!editor||editor.doc!==active()||editor.attachment!==timingAttachment()||!contentIngressAllowed(editor.doc))return;
+ if(offset===null){$('media-timing-status').textContent='请输入正负 3600 秒内的偏移。';return;}
+ if(passagePlayback?.getState().range?.id==='media-timing-preview')$('source-media').querySelector('audio,video')?.pause();
+ passagePlayback?.cancel();stopRepeating();timingPreview=null;
+ editor.doc.media_timing={version:1,identity:editor.attachment.identity,offset};
+ const revision=++timingRevision;const receipt=commitDocument(editor.doc);
+ $('media-timing-status').textContent='对齐已在本页应用，正在保存…';highlightPlayback();renderPassagePlayback(passagePlayback?.getState());
+ const result=await receipt;
+ if(timingEditor!==editor||revision!==timingRevision||active()!==editor.doc||timingAttachment()!==editor.attachment)return;
+ $('media-timing-status').textContent=result.ok?'已保存偏移 '+offset+' 秒；重新选择同一文件后继续应用。':'对齐仅在本页应用，保存失败；请重试保存或导出 JSON 备份。';
+};
+
 // Resume state is deliberately separate from transcript/reading bookmarks.
 let listeningSession=null;
 function listeningStatus(text=''){$('listening-progress-status').textContent=text;}
@@ -899,7 +950,7 @@ function render({keepNoteEditor=false}={}) {
  $('toggle-demo-tools').textContent=demoToolsExpanded?'收起工具':hasReadingFilter?'筛选中 · 查看':'搜索与工具';
  $('demo-guide').hidden=!isDemo;
  // The authored tryout has no media; don't suggest attaching an unrelated recording.
- updateReaderMediaVisibility(doc,!!mediaPath);
+ updateReaderMediaVisibility(doc,!!mediaPath);renderMediaTiming();
  if(!passagePlayback)passagePlayback=CoconutPassagePlayback.create({getPlayer:()=>$('source-media').querySelector('audio,video'),getDocumentKey:()=>active()?.key,onTakeover:takeListeningOwnership,onChange:state=>{if(listeningSession){if(state.range)listeningSession.preview=true;else if(listeningSession.preview)listeningSession.previewStoppedAt=listeningSession.player.currentTime;}renderPassagePlayback(state);}});
  passagePlayback.sync();
  $('reader-kind').textContent=isDemo?'一分钟试读':audioOnly?'原声项目':doc.language?doc.language.toUpperCase()+' · 原文可回查':'原文可回查';
@@ -985,7 +1036,8 @@ function render({keepNoteEditor=false}={}) {
 				const player = mediaHost.querySelector("audio,video");
 				if (!player) return;
 				passagePlayback?.cancel();stopRepeating();
-				player.currentTime = s.start;takeListeningOwnership();
+				const mapped=s.start+timingOffset();if(!Number.isFinite(mapped)||mapped<0||(Number.isFinite(player.duration)&&mapped>player.duration)){notice('校准后的时间超出媒体范围，未定位。');return;}
+                player.currentTime = mapped;takeListeningOwnership();
 				player.play().catch(() => notice("请点击播放器开始播放，再按时间戳定位。"));
 			};
 			meta.append(seek);
@@ -1140,7 +1192,9 @@ function playbackSegment() {
  const segments=active()?.segments;
  if(!player||!segments)return undefined;
  if(playbackIndex?.segments!==segments)playbackIndex={segments,index:Coconut.createPlaybackIndex(segments)};
- return playbackIndex.index.find(player.currentTime);
+ const preview=passagePlayback?.getState();
+ const offset=preview?.range?.id==='media-timing-preview'&&timingPreview?.doc===active()&&timingPreview?.attachment===timingAttachment()?timingPreview.offset:timingOffset();
+ return playbackIndex.index.find(player.currentTime-offset);
 }
 function highlightPlayback() {
  const segment=playbackSegment();
@@ -1839,9 +1893,10 @@ function toggleRepeat(segment){
  passagePlayback?.cancel();
  if(repeating?.key===active()?.key && repeating?.id===segment.id){stopRepeating();return;}
  const player=$("source-media").querySelector("audio,video");
- if(!player || !Number.isFinite(player.duration) || segment.end<=segment.start || segment.end>player.duration){$("repeat-status").textContent="请等待媒体加载，并确认片段时间在媒体范围内。";return;}
- stopRepeating();const target={key:active().key,id:segment.id,path:player.getAttribute("src"),start:segment.start,end:segment.end};repeating=target;
- try{player.currentTime=segment.start;const pending=player.play();pending?.catch(()=>{if(repeating===target){stopRepeating();$("repeat-status").textContent="请先在播放器中开始播放，再循环此段。";}});}
+ const range=timingRange(segment);
+ if(!player || !range){$("repeat-status").textContent="请等待媒体加载，并确认片段时间在媒体范围内。";return;}
+ stopRepeating();const target={key:active().key,id:segment.id,path:player.getAttribute("src"),start:range.start,end:range.end};repeating=target;
+ try{player.currentTime=range.start;const pending=player.play();pending?.catch(()=>{if(repeating===target){stopRepeating();$("repeat-status").textContent="请先在播放器中开始播放，再循环此段。";}});}
  catch{stopRepeating();$("repeat-status").textContent="此媒体暂时无法循环播放。";return;}
  $("stop-repeat").hidden=false;$("repeat-status").textContent="循环 · "+Coconut.time(segment.start)+"–"+Coconut.time(segment.end);
  for(const row of $("transcript").querySelectorAll(".segment")){const button=row.querySelector(".repeat-button");if(button){const selected=row.dataset.segmentId===segment.id;button.textContent=selected?"正在循环 · 停止":"循环回听此段";button.setAttribute("aria-pressed",String(selected));}}
@@ -1965,7 +2020,7 @@ function renderPassages(doc){
   const actions=el('div','passage-actions');
   const listen=el('button','passage-listen','回听这一段');listen.type='button';listen.dataset.passageId=passage.key;
   renderedPassageRanges.set(listen,passage);
-  listen.onclick=()=>{stopRepeating();passagePlayback.listen({id:passage.key,start:passage.start,end:passage.end,label:Coconut.time(passage.start)+'–'+Coconut.time(passage.end)});};
+  listen.onclick=()=>{const range=timingRange(passage);if(!range)return;stopRepeating();passagePlayback.listen({...range,id:passage.key,label:Coconut.time(passage.start)+'–'+Coconut.time(passage.end)});};
   actions.append(listen);
   const ask=el('button','passage-ask','问这一段');ask.type='button';ask.setAttribute('aria-label','问这一段 '+Coconut.time(passage.start)+' 的原文');ask.onclick=()=>preparePassageQuestion(doc,passage);actions.append(ask);
   const details=el('button','passage-details','逐句核对');details.type='button';details.setAttribute('aria-label','逐句核对 '+Coconut.time(passage.start)+' 的原文与笔记');details.onclick=()=>openPassageDetails(passage.cues[0].id,section);actions.append(details);
@@ -2009,6 +2064,7 @@ function movePassagePage(direction){
  if(passages[index])openPassage(passages[index].cues[0].id);
 }
 function renderPassagePlayback(state){
+ $('media-timing-return').hidden=state?.range?.id!=='media-timing-preview'||!state?.returnPosition;
  const status=state?.status||'idle',host=$('passage-playback-controls');if(!host)return;
  host.dataset.state=status;host.hidden=status==='idle'||workspace!=='read';document.body.dataset.passageListening=String(!host.hidden);
  $('passage-playback-status').textContent=({loading:'正在打开这一段…',playing:'回听 '+(state?.range?.label||'')+' · 到段尾自动停下',paused:'这一段已暂停',finished:'这一段已听完 · '+(state?.range?.label||''),error:state?.error||'这段暂时无法回听'})[status]||'';
@@ -2016,7 +2072,7 @@ function renderPassagePlayback(state){
  $('passage-stop').hidden=status==='finished'||status==='error';
  const player=$('source-media').querySelector('audio,video'),available=player&&!player.error&&Number.isFinite(player.duration)&&player.duration>0;
  for(const button of $('passage-body').querySelectorAll('.passage-listen')){
-  const passage=renderedPassageRanges.get(button),bounded=available&&passage&&passage.end>passage.start&&passage.end<=player.duration;
+  const passage=renderedPassageRanges.get(button),bounded=available&&passage&&!!timingRange(passage);
   const current=state?.range?.id===button.dataset.passageId&&['loading','playing'].includes(status);
   button.disabled=!bounded||current;button.textContent=current?'正在回听这一段':'回听这一段';
   button.title=bounded?'只回听这段，到段尾自动停下':player?'等待原声加载，或检查文字稿时间与媒体对应':'先关联对应的原声文件，即可回听这段';
