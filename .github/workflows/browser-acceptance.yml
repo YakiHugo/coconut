@@ -82,6 +82,8 @@ jobs:
         run: node tests/reader-unload-browser.mjs
       - name: Verify native SRT and VTT import, notes, failed files and actual download recovery
         run: node tests/subtitle-import-browser.mjs
+      - name: Verify consistent reading metadata, live note filters and exports with authored fixtures
+        run: node tests/reading-metadata-browser.mjs
       - name: Verify bounded long-summary plans with injected fixtures only
         run: node tests/summary-browser-acceptance.mjs
       - name: Verify explicit podcast source imports through the desktop HTTP bridge

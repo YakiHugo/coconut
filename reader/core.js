@@ -65,7 +65,13 @@
   return JSON.stringify(origin.kind==='direct_media'?['direct_media',origin.media_url]:['podcast',origin.feed_url,origin.episode_id]);
  }
  function hasProjectAnnotations(doc){return Boolean(doc&&Object.hasOwn(doc,'project_note')&&Array.isArray(doc.timestamp_bookmarks));}
- function projectAnnotationCount(doc){return (doc.project_note?.trim()?1:0)+(doc.timestamp_bookmarks?.length||0);}
+ // Presence is a view/export decision only: never trim or rewrite a saved note.
+ // Unicode White_Space includes NEL; FEFF also follows JavaScript trim semantics.
+ // Zero-width joiners and combining marks are not whitespace.
+ function hasNoteContent(value){return typeof value==='string'&&/[^\p{White_Space}\uFEFF]/u.test(value);}
+ function segmentNoteCount(doc){return doc.segments.reduce((count,segment)=>count+Number(hasNoteContent(doc.notes?.[segment.id])),0);}
+ // A timestamp bookmark is useful even without a note, and counts as one item.
+ function projectAnnotationCount(doc){return Number(hasNoteContent(doc.project_note))+(doc.timestamp_bookmarks?.length||0);}
  function projectAnnotations(data){
   if(data.project_note!==undefined&&(typeof data.project_note!=='string'||data.project_note.length>100000))throw new Error('项目笔记不能超过100,000字符');
   const bookmarks=data.timestamp_bookmarks??[],ids=new Set();
@@ -288,16 +294,19 @@
   const current=doc.segments.filter(s=>selected.has(s.id));
   return current.length===input.segments.length && current.every((s,i)=>s.id===input.segments[i].id && s.text===input.segments[i].text) ? 'current' : 'stale';
  }
+ // Transcript length is the latest cue end, including gaps and overlaps;
+ // audio-only projects use known media length. Neither route mutates cues.
  function documentDuration(doc) {
   return isAudioProject(doc)?doc.media_duration||0:doc.segments.reduce((end,segment)=>Math.max(end,segment.end),0);
  }
  function libraryMatches(doc, query, kind='all', scope='title') {
-  const audio=isAudioProject(doc), annotated=Boolean(projectAnnotationCount(doc)||doc.segments.some(s=>s.saved_excerpt)||Object.values(doc.notes||{}).some(n=>n.trim()));
+  const audio=isAudioProject(doc), annotated=Boolean(projectAnnotationCount(doc)||doc.segments.some(s=>s.saved_excerpt)||doc.segments.some(segment=>hasNoteContent(doc.notes?.[segment.id])));
   if(kind==='audio'&&!audio||kind==='transcript'&&audio||kind==='annotated'&&!annotated)return false;
   const needle=query.trim().toLocaleLowerCase(),matches=value=>typeof value==='string'&&value.toLocaleLowerCase().includes(needle);
   if(matches(doc.title))return true;
   if(scope==='notes'||scope==='text'){
-   if(matches(doc.project_note)||Object.values(doc.notes||{}).some(matches)||(doc.timestamp_bookmarks||[]).some(item=>matches(item.note)))return true;
+   const matchesNote=value=>hasNoteContent(value)&&matches(value);
+   if(matchesNote(doc.project_note)||doc.segments.some(segment=>matchesNote(doc.notes?.[segment.id]))||(doc.timestamp_bookmarks||[]).some(item=>matchesNote(item.note)))return true;
   }
   return scope==='text'&&doc.segments.some(segment=>matches(segment.text));
  }
@@ -320,7 +329,7 @@
  function libraryHits(doc,query,scope='title',limit=3) {
   if(!query.trim()||scope==='title')return [];
   const hits=[],cap=Math.max(0,Math.min(10,Math.floor(limit)||0));
-  const add=(kind,id,text,time)=>{if(hits.length>=cap)return;const snippet=librarySnippet(text,query);if(snippet)hits.push({kind,id,time,snippet});};
+  const add=(kind,id,text,time)=>{if(hits.length>=cap||(kind!=='text'&&!hasNoteContent(text)))return;const snippet=librarySnippet(text,query);if(snippet)hits.push({kind,id,time,snippet});};
   add('project-note',null,doc.project_note);
   for(const bookmark of doc.timestamp_bookmarks||[]){add('bookmark',bookmark.id,bookmark.note,bookmark.time);if(hits.length>=cap)return hits;}
   for(const segment of doc.segments){
@@ -337,8 +346,9 @@
   return result;
  }
  function matchesSegment(segment, doc, query, notesOnly=false, excerptsOnly=false) {
-  return (!notesOnly || Boolean(doc.notes?.[segment.id])) && (!excerptsOnly || segment.saved_excerpt === true) &&
-   [segment.text,segment.speaker||"",doc.notes?.[segment.id]||"",...Object.values(segment.translations||{}).filter(t=>translationCurrent(segment,doc,t)).map(t=>t.text)].join(" ").toLocaleLowerCase().includes(query.trim().toLocaleLowerCase());
+  const note=doc.notes?.[segment.id],hasNote=hasNoteContent(note);
+  return (!notesOnly || hasNote) && (!excerptsOnly || segment.saved_excerpt === true) &&
+   [segment.text,segment.speaker||"",hasNote?note:"",...Object.values(segment.translations||{}).filter(t=>translationCurrent(segment,doc,t)).map(t=>t.text)].join(" ").toLocaleLowerCase().includes(query.trim().toLocaleLowerCase());
  }
 	function validate(data) {
   if(isAudioProject(data))return validateAudioProject(data);
@@ -564,7 +574,7 @@
   return {documents, active:mapping.get(backup.active) || current.active || documents[0]?.key || null};
  }
 	function notebookSegments(doc) {
-		return doc.segments.filter(s => s.saved_excerpt === true || Boolean(doc.notes?.[s.id]?.trim()));
+		return doc.segments.filter(s => s.saved_excerpt === true || hasNoteContent(doc.notes?.[s.id]));
 	}
 	function markdownText(value) {
 		return String(value).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
@@ -599,12 +609,12 @@
 				else lines.push("此片段译文已过期，未导出。", "");
                 if(translationCurrent(segment,doc,translated)&&translationQualityMessage(translated))lines.push("译文待核对："+translationQualityMessage(translated), "");
 			}
-			if (doc.notes?.[segment.id]?.trim()) lines.push("我的笔记：", "", quote(doc.notes[segment.id]), "");
+			if (hasNoteContent(doc.notes?.[segment.id])) lines.push("我的笔记：", "", quote(doc.notes[segment.id]), "");
 		}
-  if(hasProjectAnnotations(doc)){
+  if(hasProjectAnnotations(doc)&&projectAnnotationCount(doc)){
    lines.push('## 项目笔记与时间书签','','以下是用户自己的记录，不是原文或经过验证的引用。','');
-   if(doc.project_note.trim())lines.push('### 项目笔记','',quote(doc.project_note),'');
-   for(const item of doc.timestamp_bookmarks)lines.push('### '+time(item.time),'',item.note?quote(item.note):'时间书签（未填写笔记）','');
+   if(hasNoteContent(doc.project_note))lines.push('### 项目笔记','',quote(doc.project_note),'');
+   for(const item of doc.timestamp_bookmarks)lines.push('### '+time(item.time),'',hasNoteContent(item.note)?quote(item.note):'时间书签（未填写笔记）','');
   }
 		return lines.join("\n");
 	}
@@ -614,8 +624,8 @@
    '尚未导入文字稿，没有摘要。以下仅为用户笔记和时间书签，不是原文或经过验证的引用。','',
    'Markdown 用于阅读；完整恢复请保留 Coconut JSON 备份。备份不包含媒体，回听需重新获取或选择本地文件。',''];
   const origin=podcastOrigin(doc);if(origin)lines.push('[原始来源]('+origin+')','时间戳需在原声中手动定位。','');
-  if(doc.project_note?.trim())lines.push('## 项目笔记','',quote(doc.project_note),'');
-  for(const item of doc.timestamp_bookmarks||[])lines.push('## '+time(item.time),'',item.note?quote(item.note):'时间书签（未填写笔记）','');
+  if(hasNoteContent(doc.project_note))lines.push('## 项目笔记','',quote(doc.project_note),'');
+  for(const item of doc.timestamp_bookmarks||[])lines.push('## '+time(item.time),'',hasNoteContent(item.note)?quote(item.note):'时间书签（未填写笔记）','');
   return lines.join('\n');
  }
 	function seconds(value) {
@@ -728,7 +738,7 @@
 			segments,
 		});
 	}
-	const api = { BACKUP_REVIEW_BYTES, SUBTITLE_IMPORT_BYTES, vttPayload, libraryHits, librarySnippet, hasProjectAnnotations, projectAnnotationCount, attachProjectTranscript, libraryMatches, documentDuration, sortedLibrary, AUDIO_NOTE_BUDGET, audioNoteCharacters, isAudioProject, audioProjectIdentity, SUMMARY_QUESTION, summaryReadiness, podcastURL, podcastSource, cleanGlossary, relevantGlossary, translationQualityMessage, retainAnswers, summaryFreshness, latestSummary, summaryMarkdown, aiReadingMarkdown, parseReadingTime, createPlaybackIndex, segmentAtTime, subtitleExport, mergeLibraryBackup, time, source, media, validate, parse, matchesSegment, notebookSegments, notebookMarkdown, translationCurrent, sameCueSnapshot, subscriptionPlan, cleanContexts, answerFreshness };
+	const api = { hasNoteContent, segmentNoteCount, BACKUP_REVIEW_BYTES, SUBTITLE_IMPORT_BYTES, vttPayload, libraryHits, librarySnippet, hasProjectAnnotations, projectAnnotationCount, attachProjectTranscript, libraryMatches, documentDuration, sortedLibrary, AUDIO_NOTE_BUDGET, audioNoteCharacters, isAudioProject, audioProjectIdentity, SUMMARY_QUESTION, summaryReadiness, podcastURL, podcastSource, cleanGlossary, relevantGlossary, translationQualityMessage, retainAnswers, summaryFreshness, latestSummary, summaryMarkdown, aiReadingMarkdown, parseReadingTime, createPlaybackIndex, segmentAtTime, subtitleExport, mergeLibraryBackup, time, source, media, validate, parse, matchesSegment, notebookSegments, notebookMarkdown, translationCurrent, sameCueSnapshot, subscriptionPlan, cleanContexts, answerFreshness };
 	if (typeof module !== "undefined" && module.exports) module.exports = api;
 	else root.Coconut = api;
 })(typeof window !== "undefined" ? window : globalThis);
