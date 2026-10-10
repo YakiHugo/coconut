@@ -8,16 +8,16 @@
 <meta name="theme-color" content="#faf9f7">
 <link rel="icon" type="image/png" href="coconut-mark.png">
 <script src="appearance.js?v=86ea922669"></script>
-<link rel="stylesheet" href="style.css?v=9263c7e344">
+<link rel="stylesheet" href="style.css?v=3136cf7e80">
 <script src="summary.js?v=580ffdad1e" defer></script>
-<script src="core.js?v=b6b9ba562b" defer>
+<script src="core.js?v=4d0e10a2f0" defer>
 </script>
 <script src="passages.js?v=b4aee1081b" defer></script>
 <script src="passage-playback.js?v=162dbb3695" defer></script>
 <script src="library-store.js?v=7a0c1b8828" defer></script>
 <script src="indexeddb-document-adapter.js?v=65c0c5a814" defer></script>
 <script src="storage-provider.js?v=1cb898e984" defer></script>
-<script src="app.js?v=b997500d7a" type="text/coconut-pending" data-reader-script>
+<script src="app.js?v=ea37e8b14a" type="text/coconut-pending" data-reader-script>
 </script>
 <script src="language.js?v=8832e43c29" type="text/coconut-pending" data-reader-script></script>
 <script src="translation-review.js?v=cf09bebe3b" type="text/coconut-pending" data-reader-script></script>
@@ -184,6 +184,10 @@ cd coconut
 <button id="toggle-reader-media" class="media-disclosure" type="button" aria-expanded="false" aria-controls="episode-media">关联原声 · 回听这一篇</button>
 <section id="episode-media" class="episode-media" aria-label="本集声音与回源"><div class="episode-media-heading"><span class="eyebrow">原声与来源</span><span class="hint">阅读时随时回听</span><button id="close-reader-media" type="button" aria-label="关闭原声设置" hidden>关闭</button></div><div id="podcast-playback" class="podcast-playback" hidden><button id="download-podcast-media" type="button">下载并回听本集原声</button><button id="cancel-podcast-media" type="button" hidden>取消下载</button><p id="podcast-media-status" class="hint">只在点击后下载（最多 200 MiB），媒体仅保留在本次页面，刷新后需重新获取。</p></div>
 <div class="local-media-entry"><button id="attach-reader-media" type="button">选择对应的音频或视频</button><button id="detach-reader-media" type="button" hidden>移除本次媒体</button><input id="reader-media-file" type="file" accept="audio/*,video/*,.mp3,.m4a,.wav,.ogg,.flac,.mp4,.webm,.mov" hidden><p id="reader-media-status" class="hint">在浏览器中打开文件，不上传。请选与文字稿对应的原文件；刷新页面后需重新选择。</p></div>
+<fieldset id="media-timing" class="media-timing" hidden><legend>字幕与原声对齐</legend>
+<p class="hint">媒体时间 = 字幕时间 + 偏移秒数。正数表示原声较晚；只调整此文件的回听，不改字幕、导出或原站链接。</p>
+<div class="media-timing-fields"><label>偏移（秒）<input id="media-timing-offset" type="number" min="-3600" max="3600" step="0.1" value="0"></label><label>校准片段编号<input id="media-timing-cue" type="number" min="1" step="1" value="1"></label></div><p id="media-timing-example" class="hint"></p>
+<div class="media-timing-actions"><button id="media-timing-align" type="button">用当前播放位置对齐片段开头</button><button id="media-timing-preview" type="button">试听此片段</button><button id="media-timing-return" type="button" hidden>返回试听前</button><button id="media-timing-save" type="button">保存对齐</button><button id="media-timing-reset" type="button">恢复零偏移</button></div><p id="media-timing-status" class="hint" role="status"></p></fieldset>
 <button id="locate-playback" hidden>定位正在播放的文字</button>
 <div id="playback-controls" hidden><button id="skip-back" type="button" disabled>后退10秒</button><button id="skip-forward" type="button" disabled>前进10秒</button><label>播放速度<select id="playback-rate"><option value="0.75">0.75×</option><option value="1" selected>1×</option><option value="1.25">1.25×</option><option value="1.5">1.5×</option><option value="1.75">1.75×</option><option value="2">2×</option></select></label><button id="stop-repeat" type="button" hidden>停止循环</button><span id="repeat-status" class="hint" role="status"></span><span id="playback-status" class="hint" role="status"></span></div>
 <div class="listening-progress"><button id="resume-listening" type="button" hidden>继续收听</button><p id="listening-progress-status" class="hint" role="status"></p></div>

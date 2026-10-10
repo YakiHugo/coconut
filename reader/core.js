@@ -2,6 +2,16 @@
 	"use strict";
  const BACKUP_REVIEW_BYTES=50*1024*1024, SUBTITLE_IMPORT_BYTES=15*1024*1024;
  const Summaries=typeof module!=="undefined"&&module.exports?require("./summary.js"):root.CoconutSummary;
+ // Calibration is a local playback mapping; source cue timestamps are immutable.
+ function mediaTiming(value) {
+  if(value?.version!==1||typeof value.identity!=='string'||!value.identity.startsWith('file-candidate-v1:')||value.identity.length>4096||!Number.isFinite(value.offset)||Math.abs(value.offset)>3600)return null;
+  return {version:1,identity:value.identity,offset:Math.round(value.offset*1000)/1000};
+ }
+ function mediaTimingOffset(doc,identity){const value=mediaTiming(doc?.media_timing);return identity&&value?.identity===identity?value.offset:0;}
+ function mediaTimingRange(range,offset,duration){
+  const start=range?.start+offset,end=range?.end+offset;
+  return Number.isFinite(start)&&Number.isFinite(end)&&Number.isFinite(duration)&&start>=0&&end>start&&end<=duration?{...range,start,end}:null;
+ }
 	function time(seconds) {
 		const n = Math.max(0, Math.floor(seconds));
 		return (
@@ -549,6 +559,7 @@
   const sourceMedia = mediaSource(data.source_media);
 		return {
 			notes,
+   ...(mediaTiming(data.media_timing)?{media_timing:mediaTiming(data.media_timing)}:{}),
    ...((data.project_note!==undefined||data.timestamp_bookmarks!==undefined)?projectAnnotations(data):{}),
    ...(data.project_language_override===true&&hasProjectAnnotations(data)?{project_language_override:true}:{}),
    ...(Number.isFinite(data.media_duration)&&data.media_duration>0&&data.media_duration<=604800?{media_duration:data.media_duration}:{}),
@@ -880,7 +891,7 @@
 			segments,
 		});
 	}
-	const api = { localMediaSource, searchDocument, invalidateSearch, manualReviewSnapshot, manualReviewCurrent, saveManualTranslation, translationReviewQueue, hasNoteContent, segmentNoteCount, BACKUP_REVIEW_BYTES, SUBTITLE_IMPORT_BYTES, vttPayload, libraryHits, librarySnippet, hasProjectAnnotations, projectAnnotationCount, attachProjectTranscript, libraryMatches, documentDuration, sortedLibrary, AUDIO_NOTE_BUDGET, audioNoteCharacters, isAudioProject, audioProjectIdentity, podcastMediaIdentity, SUMMARY_QUESTION, summaryReadiness, podcastURL, podcastSource, cleanGlossary, relevantGlossary, translationQualityMessage, retainAnswers, summaryFreshness, latestSummary, summaryMarkdown, aiReadingMarkdown, parseReadingTime, createPlaybackIndex, segmentAtTime, subtitleExport, mergeLibraryBackup, time, source, media, validate, parse, matchesSegment, notebookSegments, notebookMarkdown, translationCurrent, sameCueSnapshot, subscriptionPlan, cleanContexts, answerFreshness };
+	const api = { mediaTiming, mediaTimingOffset, mediaTimingRange, localMediaSource, searchDocument, invalidateSearch, manualReviewSnapshot, manualReviewCurrent, saveManualTranslation, translationReviewQueue, hasNoteContent, segmentNoteCount, BACKUP_REVIEW_BYTES, SUBTITLE_IMPORT_BYTES, vttPayload, libraryHits, librarySnippet, hasProjectAnnotations, projectAnnotationCount, attachProjectTranscript, libraryMatches, documentDuration, sortedLibrary, AUDIO_NOTE_BUDGET, audioNoteCharacters, isAudioProject, audioProjectIdentity, podcastMediaIdentity, SUMMARY_QUESTION, summaryReadiness, podcastURL, podcastSource, cleanGlossary, relevantGlossary, translationQualityMessage, retainAnswers, summaryFreshness, latestSummary, summaryMarkdown, aiReadingMarkdown, parseReadingTime, createPlaybackIndex, segmentAtTime, subtitleExport, mergeLibraryBackup, time, source, media, validate, parse, matchesSegment, notebookSegments, notebookMarkdown, translationCurrent, sameCueSnapshot, subscriptionPlan, cleanContexts, answerFreshness };
 	if (typeof module !== "undefined" && module.exports) module.exports = api;
 	else root.Coconut = api;
 })(typeof window !== "undefined" ? window : globalThis);
