@@ -7,6 +7,7 @@ let sourceCaptionReady=false,sourceCaptionRequest=null,sourceCaptionURL=null;
 let pollTimer;
 let connectingWorker = false;
 let queueRefreshSequence = 0;
+let jobOpenSequence = 0;
 let workerWasConnected = false;
 const pendingJobActions = new Set();
 const jobStatus = {
@@ -111,10 +112,11 @@ function renderJobs(jobs) {
    if (job.playback_retryable) detail.append(el("p", "hint", "文字稿已保留，本地视频尚不可用。重试会复用已完成的文字稿；原站链接仍可使用。"));
    replacement.append(detail);
    if (job.status === "done") replacement.append(jobButton("打开阅读", async () => {
-    const revision=documentLifecycleRevision;
+    const revision=documentLifecycleRevision,request=++jobOpenSequence,selection=activeSelectionRevision,navigation=localImportRevision,startingWorkspace=workspace;
+    const canActivate=()=>request===jobOpenSequence&&selection===activeSelectionRevision&&navigation===localImportRevision&&workspace===startingWorkspace;
     const doc = Coconut.validate(await jobApi("jobs/" + job.id + "/result"));
-    const receipt=await add(doc,null,false,revision);
-    if(active()===receipt.identity&&contentIngressAllowed(receipt.identity)){if(!receipt.ok)notice("文字稿已在本页打开，尚未保存，请导出备份。");$("title").scrollIntoView({ behavior: "smooth" });}
+    const receipt=await add(doc,null,false,revision,doc.key,{canActivate});
+    if(request===jobOpenSequence&&navigation===localImportRevision&&receipt.selectionRevision===activeSelectionRevision&&workspace==='read'&&active()===receipt.identity&&contentIngressAllowed(receipt.identity)){if(!receipt.ok)notice("文字稿已在本页打开，尚未保存，请导出备份。");$("title").scrollIntoView({ behavior: "smooth" });}
    }, job.id, "open"));
    if (["queued", "running"].includes(job.status)) replacement.append(jobButton("取消", () => jobApi("jobs/" + job.id + "/cancel", jsonPost()), job.id, "cancel"));
    if (job.playback_retryable || ["failed", "cancelled", "interrupted"].includes(job.status)) replacement.append(jobButton(job.playback_retryable ? "重试本地视频" : "重试", () => jobApi("jobs/" + job.id + "/retry", jsonPost()), job.id, "retry"));
