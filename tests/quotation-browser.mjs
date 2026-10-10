@@ -73,6 +73,7 @@ async function noReadyPreview(label) {
 }
 async function modalGeometry(label) {
   check(label + '_is_a_real_native_modal', await page.locator('#quotation-dialog').evaluate(node => node instanceof HTMLDialogElement && node.open && node.matches(':modal')));
+  check(label + '_visible_dialog_actions_have_touch_targets', await page.locator('#quotation-dialog button:visible').evaluateAll(nodes => nodes.every(node => {const rect=node.getBoundingClientRect();return rect.height>=44&&rect.width>=44;})));
   check(label + '_dialog_fits_the_viewport', await page.locator('#quotation-dialog').evaluate(node => {
     const rect = node.getBoundingClientRect();
     return rect.left >= 0 && rect.right <= innerWidth && node.scrollWidth <= node.clientWidth && document.documentElement.scrollWidth <= innerWidth;

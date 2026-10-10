@@ -116,3 +116,12 @@ test('metadata line breaks are represented explicitly instead of changing previe
 test('app keeps its strict-mode directive before quotation state initialization',()=>{
  const app=fs.readFileSync(new URL('../reader/app.js',import.meta.url),'utf8');assert.match(app,/^\s*[\"']use strict[\"'];\s*let quotationController;/);
 });
+
+test('quotation action keeps a labeled 44px minimum target independent of mobile rules',async()=>{
+ const {w}=setup();try{
+  const style=w.document.createElement('style');style.textContent=fs.readFileSync(new URL('../reader/style.css',import.meta.url),'utf8');w.document.head.append(style);
+  const button=action(w),computed=w.getComputedStyle(button);assert.equal(button.textContent,'引用原文');assert.ok(button.getAttribute('aria-label').includes('原文'));
+  assert.equal(computed.minHeight,'44px');assert.equal(computed.minWidth,'44px');
+  for(const control of w.document.querySelectorAll('#quotation-dialog button')){const size=w.getComputedStyle(control);assert.equal(size.minHeight,'44px',control.id);assert.equal(size.minWidth,'44px',control.id);}
+ }finally{await w.happyDOM.close();}
+});
