@@ -151,3 +151,17 @@ test('contrast waits for actual control and ancestor theme transitions, includin
  context.getComputedStyle=()=>{discovered=true;surface.playState='running';return {backgroundColor:'#282624'};};
  assert.equal(settled(),false,'a transition created by the style flush is detected');assert.equal(discovered,true);
 });
+
+
+test('mobile settings panels use the utility width while desktop keeps the trigger anchor',async()=>{
+ for(const width of [320,360,390,640,1360]){
+  const e=setup();try{
+   e.w.happyDOM.setViewport({width,height:width===640?480:900});
+   const style=e.w.document.createElement('style');style.textContent=source('style.css');e.w.document.head.append(style);
+   e.$('reading-utility').classList.add('is-compact');e.$('reading-info').hidden=false;e.$('reading-info').open=true;
+   assert.equal(e.w.getComputedStyle(e.$('reading-utility')).position,'relative');
+   assert.equal(e.w.getComputedStyle(e.$('reading-info')).position,width<=650?'static':'relative');
+   assert.equal(e.w.getComputedStyle(e.w.document.querySelector('.reading-info-panel')).position,'absolute');
+  }finally{await e.close();}
+ }
+});
