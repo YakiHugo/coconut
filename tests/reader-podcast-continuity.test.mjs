@@ -212,3 +212,27 @@ for(const edit of ['none','title-only','explicit-language','cleared-override'])t
   const exported=restored.w.Coconut.validate(JSON.parse(JSON.stringify(doc)));assert.equal(exported.language,doc.language);assert.equal(exported.project_language_override,doc.project_language_override);
  }finally{await h.w.happyDOM.close();await restored?.w.happyDOM.close();}
 });
+
+for(const failed of [false,true])test('project publisher attachment ends pending copy only after its save receipt, failed='+failed,async()=>{
+ const h=await setup({documents:[audio()]});try{
+  h.pipeline.hold();const pending=h.$('fetch-project-transcript').onclick();await until(()=>h.pipeline.writes.length===1);
+  assert.match(h.$('audio-project-status').textContent,/正在确认/);assert.doesNotMatch(h.$('notice').textContent,/已补充/);
+  if(failed)h.pipeline.writes[0].fail();else h.pipeline.writes[0].commit();await pending;
+  assert.equal(h.$('audio-project').hidden,false);assert.match(h.$('audio-project-status').textContent,failed?/未能保存/:/已补充/);assert.doesNotMatch(h.$('audio-project-status').textContent,/正在/);assert.equal(h.$('cancel-project-transcript').hidden,true);
+ }finally{h.pipeline.hold(false);await h.w.happyDOM.close();}
+});
+for(const change of ['cancel','navigate-return'])test('project attachment receipt respects '+change,async()=>{
+ const h=await setup({documents:[audio()]});try{
+  h.pipeline.hold();const pending=h.$('fetch-project-transcript').onclick();await until(()=>h.pipeline.writes.length===1);
+  if(change==='cancel')h.$('cancel-project-transcript').click();else{h.$('add-content').click();h.$('back-reading').click();}
+  const status=h.$('audio-project-status').textContent;assert.doesNotMatch(status,/正在/);
+  h.pipeline.writes[0].commit();await pending;assert.equal(h.$('audio-project-status').textContent,status);assert.doesNotMatch(h.$('notice').textContent,/已补充/);
+ }finally{h.pipeline.hold(false);await h.w.happyDOM.close();}
+});
+test('project publisher read cancelled by Add and Back cannot attach its late response',async()=>{
+ let resolve;const h=await setup({documents:[audio()],handler:()=>new Promise(done=>resolve=done)});try{
+  const pending=h.$('fetch-project-transcript').onclick();await until(()=>resolve);h.$('add-content').click();h.$('back-reading').click();
+  const status=h.$('audio-project-status').textContent;assert.match(status,/已取消/);resolve(json({status:'ready',document:transcript}));await pending;
+  assert.equal(h.api.active().project_kind,'audio_only');assert.equal(h.$('audio-project-status').textContent,status);
+ }finally{await h.w.happyDOM.close();}
+});

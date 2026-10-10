@@ -11,9 +11,9 @@ const response=value=>({ok:true,json:async()=>value});
 async function setup(health,handler=()=>{throw new Error('Unexpected request');}){
  const w=new Window({url:'http://127.0.0.1:8080/'});w.document.body.innerHTML=fs.readFileSync(new URL('reader/index.html',root),'utf8').split('<body>')[1].split('</body>')[0];Object.defineProperty(w,'crypto',{value:webcrypto});
  const calls=[];w.fetch=async(url,options)=>{calls.push([url,options]);return url==='api/health'?response(typeof health==='function'?health():health):url==='api/jobs'?response({jobs:[]}):handler(url,options);};
- installSavePipeline(w);
+ const pipeline=installSavePipeline(w);
  w.eval(['summary','core','passages','passage-playback','app','language','podcasts','jobs'].map(n=>fs.readFileSync(new URL('reader/'+n+'.js',root),'utf8')).join('\n'));await new Promise(r=>setTimeout(r,20));
- return {w,calls,$:id=>w.document.getElementById(id),label:()=>w.document.querySelector('label[for="video-url"]').textContent};
+ return {w,calls,pipeline,$:id=>w.document.getElementById(id),label:()=>w.document.querySelector('label[for="video-url"]').textContent};
 }
 const light=capabilities=>({local_worker:false,capabilities:{local_agents:true,...capabilities}});
 async function submit($,url=feed){$('video-url').value=url;return $('url-form').onsubmit({preventDefault(){}});}
@@ -91,5 +91,49 @@ test('without source fetching the primary import is available and connection hel
   health=light({podcast_import:true});await $('retry-worker').onclick();
   assert.equal($('process-url').type,'submit');assert.equal($('process-url').textContent,'添加到阅读空间');
   assert.equal($('import').classList.contains('primary'),false);assert.equal(entry.parentElement.lastElementChild,entry);
+ }finally{await w.happyDOM.close();}
+});
+
+async function feedbackUntil(check){for(let i=0;i<1000;i++){if(check())return;await new Promise(resolve=>setTimeout(resolve,1));}assert.fail('Import feedback checkpoint');}
+for(const failed of [false,true])test('X captions publish the actual final save receipt, failed='+failed,async()=>{
+ const {w,$,pipeline}=await setup(light({caption_import:true}),()=>response({status:'ready',document:documentFixture}));
+ try{
+  pipeline.hold();const pending=submit($,'https://x.com/author/status/123');await feedbackUntil(()=>pipeline.writes.length===1);
+  assert.match($('source-route-status').textContent,/正在确认/);assert.doesNotMatch($('notice').textContent,/字幕已保存/);
+  if(failed)pipeline.writes[0].fail();else pipeline.writes[0].commit();await pending;
+  assert.match($('notice').textContent,failed?/尚未保存/:/字幕已保存/);
+  $('add-content').click();assert.match($('source-route-status').textContent,failed?/尚未保存/:/字幕已保存/);
+  assert.doesNotMatch($('source-route-status').textContent,/正在/);assert.equal($('cancel-source').hidden,true);assert.equal($('process-url').disabled,false);
+ }finally{pipeline.hold(false);await w.happyDOM.close();}
+});
+for(const change of ['cancel','navigation','url','language'])test('X late receipt cannot announce completion after '+change,async()=>{
+ const {w,$,pipeline}=await setup(light({caption_import:true}),()=>response({status:'ready',document:documentFixture}));
+ try{
+  pipeline.hold();const pending=submit($,'https://x.com/author/status/123');await feedbackUntil(()=>pipeline.writes.length===1);
+  if(change==='cancel')$('cancel-source').click();
+  if(change==='navigation'){$('add-content').click();$('back-reading').click();}
+  if(change==='url'){$('video-url').value='https://x.com/author/status/456';$('video-url').dispatchEvent(new w.Event('input'));}
+  if(change==='language'){$('caption-language').value='en';$('caption-language').dispatchEvent(new w.Event('change'));}
+  const status=$('source-route-status').textContent;assert.doesNotMatch(status,/正在/);
+  pipeline.writes[0].commit();await pending;assert.equal($('source-route-status').textContent,status);assert.doesNotMatch($('notice').textContent,/字幕已保存/);
+ }finally{pipeline.hold(false);await w.happyDOM.close();}
+});
+test('cancelled X response cannot replace a newer source request status',async()=>{
+ const replies=[];const {w,$}=await setup(light({caption_import:true}),()=>new Promise(resolve=>replies.push(resolve)));
+ try{
+  const old=submit($,'https://x.com/author/status/123');await feedbackUntil(()=>replies.length===1);$('cancel-source').click();assert.match($('source-route-status').textContent,/已取消/);
+  const fresh=submit($,'https://x.com/author/status/456');await feedbackUntil(()=>replies.length===2);const status=$('source-route-status').textContent;
+  replies[0](response({status:'ready',document:documentFixture}));await old;assert.equal($('source-route-status').textContent,status);assert.equal($('process-url').disabled,true);
+  replies[1](response({status:'unavailable',message:'New source has no captions'}));await fresh;assert.equal($('source-route-status').textContent,'New source has no captions');
+ }finally{await w.happyDOM.close();}
+});
+test('removing the reading target in Add ends a late X request without importing',async()=>{
+ let release,calls=0;const {w,$}=await setup(light({caption_import:true}),()=>++calls===1?response({status:'ready',document:documentFixture}):new Promise(resolve=>release=resolve));
+ try{
+  await submit($,'https://x.com/author/status/123');$('add-content').click();
+  const pending=submit($,'https://x.com/author/status/456');await feedbackUntil(()=>release);
+  w.document.querySelector('.library-remove').click();await $('confirm-removal').onclick();
+  release(response({status:'ready',document:documentFixture}));await pending;
+  assert.doesNotMatch($('source-route-status').textContent,/正在/);assert.equal(JSON.parse(w.localStorage.getItem('coconut-reader-v1')).documents.length,0);
  }finally{await w.happyDOM.close();}
 });
