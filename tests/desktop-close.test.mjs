@@ -28,3 +28,30 @@ test('packaged application includes the imported lifecycle coordinator',async()=
  const script=await readFile(new URL('../desktop/package.mjs',import.meta.url),'utf8');
  assert.match(script,/\['main\.mjs','close-coordinator\.mjs'/);
 });
+
+test('quit invalidates older update staging even when the user then cancels quit',async()=>{
+ const {createLifecycleOwnership}=await import('../desktop/close-coordinator.mjs');
+ const lifecycle=createLifecycleOwnership(),update=lifecycle.begin('update'),close=lifecycle.begin('close');
+ assert.equal(lifecycle.current(update),true);assert.equal(lifecycle.claim(close),true);
+ assert.equal(lifecycle.current(update),false);lifecycle.retire(close);
+ assert.equal(lifecycle.busy(),false);assert.equal(lifecycle.claim(update),false);
+ const next=lifecycle.begin('update');assert.equal(lifecycle.claim(next),true);
+ lifecycle.retire(update);assert.equal(lifecycle.owns(next),true);
+});
+
+test('a final update owns quit until installation settles; no second native question runs',async()=>{
+ const {createLifecycleOwnership}=await import('../desktop/close-coordinator.mjs');
+ const lifecycle=createLifecycleOwnership(),update=lifecycle.begin('update');assert.equal(lifecycle.claim(update),true);
+ const c=createCloseCoordinator({lifecycle,inspect:()=>assert.fail('update already owns final close'),confirm:()=>assert.fail('no second prompt'),commit:()=>assert.fail('no competing commit'),finish:()=>assert.fail('update finishes its own quit')});
+ assert.equal(await c.request(),false);assert.equal(lifecycle.owns(update),true);
+ lifecycle.retire(update);assert.equal(lifecycle.busy(),false);
+});
+
+test('timeout retires ownership before reporting, and late main results never finish',async()=>{
+ const {createLifecycleOwnership}=await import('../desktop/close-coordinator.mjs');
+ const lifecycle=createLifecycleOwnership({timeoutMs:10}),commit=deferred();let released,request,finished=0;
+ const c=createCloseCoordinator({lifecycle,inspect:()=>({safe:true}),confirm:()=>assert.fail('no prompt'),commit:(_mode,token)=>{request=token;return commit.promise;},finish:()=>finished++,release:attempt=>{released=attempt;assert.equal(lifecycle.owns(attempt),false);},onError:()=>assert.equal(lifecycle.busy(),false)});
+ assert.equal(await c.request(),false);assert.equal(released.id,request.id);assert.equal(request.kind,'close');assert.ok(Number.isFinite(request.expiresAt));
+ commit.resolve(true);await Promise.resolve();assert.equal(finished,0);
+ const update=lifecycle.begin('update');assert.equal(lifecycle.claim(update),true);lifecycle.retire(released);assert.equal(lifecycle.owns(update),true);
+});

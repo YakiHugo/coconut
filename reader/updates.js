@@ -36,38 +36,60 @@
   if(translating||asking||subscriptionTranslating)reasons.push('AI 请求仍在进行，当前结果可能尚未保存');
   return {safe:reasons.length===0,reasons};
  }
- window.coconutPrepareClose=(mode='inspect')=>{
-  if(mode==='inspect')return closeSnapshot();
-  if(mode==='release'){
-   if(readerClosing&&JSON.stringify(state.documents)!==savedDocumentsValue)saveWarning('退出未完成，当前页仍有未保存内容；请保存或导出备份后再退出。');
-   readerClosing=false;document.body.inert=false;return true;
-  }
-  if(mode!=='safe'&&mode!=='discard')return false;
-  if(mode==='safe'){
-   if(!closeSnapshot().safe)return false;
-   // A corrupt/stale untouched library needs no rewrite merely to close it.
-   // All actual mutations already use synchronous save() and its dirty flag.
-  }
+ // Main-process attempts are monotonically numbered for this renderer. Keep
+ // only two watermarks: no old release may unlock a newer close/update, and a
+ // call queued before a timeout cannot acquire a lock when it finally arrives.
+ let lifecycleOwner=null,latestAttempt=0,latestKind=null,retiredThrough=0;
+ const attemptId=request=>request&&Number.isSafeInteger(request.id)&&request.id>0&&['close','update'].includes(request.kind);
+ function currentAttempt(request,kind){
+  if(!attemptId(request)||request.kind!==kind||!Number.isFinite(request.expiresAt)||request.expiresAt<=Date.now()||
+     request.id<=retiredThrough||request.id<latestAttempt||lifecycleOwner&&(lifecycleOwner.id!==request.id||lifecycleOwner.kind!==request.kind))return false;
+  latestAttempt=request.id;latestKind=request.kind;return true;
+ }
+ function releaseAttempt(request){
+  if(!attemptId(request)||request.id>latestAttempt||request.id===latestAttempt&&request.kind!==latestKind)return false;
+  retiredThrough=Math.max(retiredThrough,request.id);
+  if(!lifecycleOwner||lifecycleOwner.id!==request.id||lifecycleOwner.kind!==request.kind)return false;
+  lifecycleOwner=null;
+  if(readerClosing&&JSON.stringify(state.documents)!==savedDocumentsValue)saveWarning('退出未完成，当前页仍有未保存内容；请保存或导出备份后再退出。');
+  readerClosing=false;document.body.inert=false;return true;
+ }
+ function commitClose(mode,request){
+  if(!currentAttempt(request,request?.kind))return false;
+  if(lifecycleOwner)return lifecycleOwner.id===request.id;
+  if(mode==='safe'&&!closeSnapshot().safe)return false;
+  // All content mutations currently save synchronously. A clean lifecycle
+  // transition need not rewrite a corrupt/stale untouched library.
   flushListening(true);
-  readerClosing=true;document.body.inert=true;
-  // Only an approved final close reaches here. Async readers lose ownership;
-  // submitted model calls cannot advance to another consented batch.
+  lifecycleOwner={id:request.id,kind:request.kind};readerClosing=true;document.body.inert=true;
+  // Only an approved final close/install reaches here. Async readers lose
+  // ownership; submitted model calls cannot advance another consented batch.
   cancelLocalImports();stopLanguageBatches();pendingMediaDocument=null;
   sourceCaptionRequest?.abort();sourceCaptionRequest=null;
   podcastRequest?.abort();podcastRequest=null;
   podcastMediaRequest?.abort();podcastMediaRequest=null;
   projectCaptionRequest?.controller.abort();projectCaptionRequest=null;
   return true;
+ }
+ window.coconutPrepareClose=(mode='inspect',request)=>{
+  if(mode==='inspect')return !request||currentAttempt(request,'close')?closeSnapshot():null;
+  if(mode==='release')return releaseAttempt(request);
+  if((mode!=='safe'&&mode!=='discard')||!currentAttempt(request,'close'))return false;
+  return commitClose(mode,request);
  };
- // Returning false always keeps the window and original user data open.
- window.coconutPrepareUpdate=(lock=false)=>{
-  if(hasUnsavedReaderChanges()||document.querySelector('dialog[open]')||storageBlocked||!document.getElementById('save-status').hidden||pendingMediaDocument||
-     [...document.querySelectorAll('input[type="file"]')].some(input=>input.files.length>0)||
-     document.getElementById('audio-bookmark-time').value.trim()||document.getElementById('audio-bookmark-note').value.trim()||
-     document.getElementById('ai-question').value.trim()||
-     [...document.querySelectorAll('#audio-bookmarks form')].some(form=>!form.hidden)||
-     sourceSubmitting||sourceCaptionRequest||podcastRequest||podcastMediaRequest||projectCaptionRequest||translating||asking||subscriptionTranslating||Number(document.getElementById('job-count').textContent)>0||
-     [...document.querySelectorAll('audio,video')].some(media=>!media.paused))return false;
-  const saved=save();if(saved&&lock)document.body.inert=true;return saved;
+ function updateReady(){
+  // Share all native busy/draft predicates, including the asynchronous sample
+  // fingerprint. Update has additional media/dialog restrictions.
+  return closeSnapshot().safe&&!document.querySelector('dialog[open]')&&!storageBlocked&&button('save-status').hidden&&!pendingMediaDocument&&
+   !button('audio-bookmark-time').value.trim()&&!button('audio-bookmark-note').value.trim()&&!button('ai-question').value.trim()&&
+   ![...document.querySelectorAll('#audio-bookmarks form')].some(form=>!form.hidden)&&
+   ![...document.querySelectorAll('audio,video')].some(media=>!media.paused);
+ }
+ window.coconutPrepareUpdate=(lock=false,request)=>{
+  if(request&&!currentAttempt(request,'update'))return false;
+  if(lock&&!request)return false;
+  if(lifecycleOwner)return !!lock&&lifecycleOwner.id===request?.id&&lifecycleOwner.kind==='update';
+  if(!updateReady())return false;
+  return lock?commitClose('safe',request):true;
  };
 })();
