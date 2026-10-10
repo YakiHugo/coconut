@@ -18,6 +18,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
+      - name: Install deterministic renderer test dependencies
+        run: npm ci --ignore-scripts
       - run: node --test tests/desktop-*.test.mjs
   caption-helper:
     name: Native caption helper (${{ matrix.arch }})
