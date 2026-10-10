@@ -1,6 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import vm from 'node:vm';
+import {themeTransitionsSettled} from './helpers/theme-transitions.mjs';
 import {Window} from 'happy-dom';
 import {installSavePipeline} from './helpers/save-pipeline.mjs';
 import {passageReadingFixture} from './helpers/passage-reading-fixture.mjs';
@@ -129,4 +131,23 @@ test('the inert IndexedDB startup and recovery overlay uses the selected canvas 
    assert.equal(e.w.getComputedStyle(e.w.document.documentElement).backgroundColor,color);
   }finally{await e.close();}
  }
+});
+
+
+test('contrast waits for actual control and ancestor theme transitions, including cancellation',()=>{
+ class Transition {constructor(playState,pending=false){this.playState=playState;this.pending=pending;}}
+ const surface=new Transition('running'),ancestor=new Transition('finished');
+ const parent={parentElement:null,getAnimations:()=>[ancestor]};
+ const button={parentElement:parent,getAnimations:()=>[surface]};
+ let flushed=0;
+ const context={document:{querySelector:()=>button},CSSTransition:Transition,getComputedStyle(){flushed++;return {backgroundColor:'#282624'};}};
+ const settled=()=>vm.runInNewContext('('+themeTransitionsSettled.toString()+')(["#close-reading-info"])',context);
+ assert.equal(settled(),false,'running surface must not be sampled');assert.ok(flushed>0,'style is calculated before testing transitions');
+ surface.playState='finished';ancestor.playState='running';assert.equal(settled(),false,'an ancestor transition also delays sampling');
+ ancestor.playState='finished';surface.pending=true;assert.equal(settled(),false,'a pending transition delays sampling');
+ surface.pending=false;assert.equal(settled(),true,'finished transitions permit contrast sampling');
+ surface.playState='idle';assert.equal(settled(),true,'cancelled transitions do not leave the wait stuck');
+ let discovered=false;
+ context.getComputedStyle=()=>{discovered=true;surface.playState='running';return {backgroundColor:'#282624'};};
+ assert.equal(settled(),false,'a transition created by the style flush is detected');assert.equal(discovered,true);
 });
