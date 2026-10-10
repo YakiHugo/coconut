@@ -479,8 +479,15 @@ try {
   await helpFocusLoop('paused_preview_help');
   await escapeHelp('paused_preview_help', pausedPreview);
   await page.keyboard.press('k');
-  await page.waitForFunction(time => {const player = document.querySelector('audio'); return !player.paused && player.currentTime > time;}, pausedPreview.time);
-  check('k_resumes_the_same_bounded_preview', await page.locator('#passage-playback-controls').getAttribute('data-state') === 'playing');
+  // HTML media properties may advance before the queued native play event
+  // updates the bounded-preview UI. Observe both in the same browser turn.
+  stage = 'waiting_for_bounded_preview_resume';
+  const resumed = await page.waitForFunction(time => {
+    const player = document.querySelector('audio'), preview = document.querySelector('#passage-playback-controls').dataset.state;
+    return !player.paused && player.currentTime > time && preview === 'playing' ? {preview, time: player.currentTime, paused: player.paused} : false;
+  }, pausedPreview.time);
+  const resumedState = await resumed.jsonValue(); await resumed.dispose();
+  check('k_resumes_the_same_bounded_preview', resumedState.preview === 'playing' && !resumedState.paused && resumedState.time > pausedPreview.time);
   await page.waitForFunction(end => {const player = document.querySelector('audio'); return player.paused && Math.abs(player.currentTime - end) < .15;}, range.end);
   check('resumed_preview_still_stops_at_its_original_passage_end', await page.locator('#passage-playback-controls').getAttribute('data-state') === 'finished');
   const stoppedTime = (await interactionState()).time;
@@ -557,8 +564,10 @@ try {
   check('no_external_media_upload_ai_model_or_browser_error', external === 0 && mutations === 0 && browserErrors.length === 0 && fileChoosers === noMediaChoosers + 1 && await page.evaluate(() => !localStorage.getItem('coconut-reader-v1').includes('blob:')));
   console.log(JSON.stringify({suite: 'reading-keyboard-authored-media', status: 'passed', checks}));
 } catch (error) {
+  // Snapshot before taking a screenshot, which can itself span media events.
+  const interaction = page && !page.isClosed() ? await interactionState().catch(() => null) : null;
   if (page && !page.isClosed()) await capture('failure-' + stage).catch(() => {});
-  console.log(JSON.stringify({suite: 'reading-keyboard-authored-media', status: 'failed', stage, message: error.message, browserErrors, checks}));
+  console.log(JSON.stringify({suite: 'reading-keyboard-authored-media', status: 'failed', stage, message: error.message, interaction, browserErrors, checks}));
   process.exitCode = 1;
 } finally {
   await browser?.close();

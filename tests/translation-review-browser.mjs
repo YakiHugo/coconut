@@ -24,7 +24,15 @@ try{
  await page.goto(origin);const doc=translationReviewFixture();
  await page.locator('#file').setInputFiles({name:'authored-review.json',mimeType:'application/json',buffer:Buffer.from(JSON.stringify(doc))});
  await page.locator('#mode-bilingual').click();
- async function queue(){if(!await page.locator('#review-translations').isVisible())await page.locator('#reading-settings > summary').click();await page.locator('#review-translations').click();await page.locator('#translation-queue-dialog').waitFor({state:'visible'});}
+ async function queue(){
+  if(!await page.locator('#review-translations').isVisible()){
+   // Passage reading nests settings in Information and Settings; its inner
+   // settings summary is intentionally hidden. Use the same visible entry as a reader.
+   const information=page.locator('#reading-info > summary');
+   await (await information.isVisible()?information:page.locator('#reading-settings > summary')).click();
+  }
+  await page.locator('#review-translations').click();await page.locator('#translation-queue-dialog').waitFor({state:'visible'});
+ }
  await queue();
  check('whole_document_queue_separates_missing_stale_and_quality',/1 段过期.*1 段质量提示.*1 段未保存/.test(await page.locator('#translation-queue-summary').textContent()));
  await page.locator('#translation-queue-language').selectOption('ja');check('target_language_is_exact',await page.locator('.translation-queue-open').count()===1&&await page.locator('.translation-queue-open').getAttribute('data-segment-id')==='review-2');
@@ -87,7 +95,11 @@ try{
  }
  longDoc.segments[69].translations.zh.source_text='Earlier authored source';
  await page.locator('#file').setInputFiles({name:'authored-long-review.json',mimeType:'application/json',buffer:Buffer.from(JSON.stringify(longDoc))});
- await queue();await page.locator('.translation-queue-open[data-segment-id="review-69"]').click();
+ await page.locator('#title').filter({hasText:longDoc.title}).waitFor({state:'visible'});
+ check('long_import_starts_in_passages_with_visible_information_entry',await page.locator('#passage-workspace').isVisible()&&await page.locator('#reading-info > summary').isVisible()&&!await page.locator('#reading-settings > summary').isVisible());
+ await queue();
+ check('passage_queue_opens_through_visible_settings_without_changing_reading_mode',await page.locator('#passage-workspace').isVisible()&&await page.locator('#reading-info').evaluate(el=>el.open));
+ await page.locator('.translation-queue-open[data-segment-id="review-69"]').click();
  await page.locator('#translation-edit-dialog details > summary').first().click();
  check('long_context_has_bounded_first_page',await page.locator('#translation-edit-context > p').count()===30&&await page.locator('#translation-edit-context-position').textContent()==='1–30 / 68 条上下文');
  await page.locator('#translation-edit-text').fill('Long context human correction');
