@@ -47,6 +47,9 @@ aside { display: flex; flex-direction: column; position: sticky; top: 0; height:
 .brand-caption { display: block; margin-left: 0; font-size: 10px; font-weight: 400; letter-spacing: 2px; color: var(--muted); }
 #add-content { width: 100%; }
 #toggle-library { display: none; }
+/* Preserve real mobile-close focus through the reverse breakpoint until the
+   existing arrangement handler transfers it to visible desktop search. */
+#toggle-library:focus { display: block; }
 #library-list { min-height: 0; overflow-y: auto; margin-top: 22px; }
 .library-search { color: var(--muted); font-size: 12px; }
 .library-search input { display: block; width: 100%; margin: 7px 0 6px; background: var(--surface, #fff); }
