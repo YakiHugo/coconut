@@ -31,7 +31,7 @@
   const reasons=[],nonContentReasons=[],content=libraryStore.status();
   if(removedDocument)nonContentReasons.push('移除备份仅在本页，关闭后无法撤销；可以撤销或导出备份后再关闭');
   if(hasUnsubmittedReaderDrafts())nonContentReasons.push('笔记或输入草稿有未提交修改');
-  if(button('sample').disabled||[...document.querySelectorAll('input[type="file"]')].some(input=>input.files.length>0)||
+  if(button('sample').disabled||localMediaPickerTarget||pendingLocalMediaChoice||[...document.querySelectorAll('input[type="file"]')].some(input=>input.files.length>0)||
      sourceSubmitting||sourceCaptionRequest||podcastRequest||podcastMediaRequest||projectCaptionRequest||Number(button('job-count').textContent)>0)nonContentReasons.push('导入、恢复或媒体任务仍在进行');
   if(translating||asking||subscriptionTranslating)nonContentReasons.push('AI 请求仍在进行，当前结果可能尚未保存');
   const contentPending=content.pending,contentFailed=content.unsaved>content.pending;
@@ -72,7 +72,7 @@
   return lifecycleOwner===owner&&!owner.retired&&owner.id>retiredThrough&&owner.expiresAt>Date.now()&&libraryStore.barrierActive(owner.token);
  }
  function updateNonContentReady(snapshot=closeSnapshot()){
-  return snapshot.nonContentReasons.length===0&&!document.querySelector('dialog[open]')&&!pendingMediaDocument&&
+  return snapshot.nonContentReasons.length===0&&!document.querySelector('dialog[open]')&&!pendingMediaDocument&&!localMediaPickerTarget&&
    !button('audio-bookmark-time').value.trim()&&!button('audio-bookmark-note').value.trim()&&!button('ai-question').value.trim()&&
    ![...document.querySelectorAll('#audio-bookmarks form')].some(form=>!form.hidden)&&
    ![...document.querySelectorAll('audio,video')].some(media=>!media.paused);

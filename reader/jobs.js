@@ -149,7 +149,7 @@ function disconnectedWorker() {
   : "Web 阅读 · 文件导入可用 · 未连接本地服务";
  $("worker-help").textContent = workerWasConnected
   ? "请检查运行 Coconut 的终端。已提交的任务可能仍在处理；恢复连接后先查看任务列表，避免重复提交。阅读和笔记仍可使用。"
-  : "Web 阅读无需安装。导入文字稿后可选择本地音频或视频同步回听，文件不上传。生成摘要与翻译需连接本地 AI 工具。";
+  : "Web 无需安装。打开本地音视频即可回听、写项目笔记和时间书签，不需要文字稿或语音识别，文件不上传。摘要与翻译需要文字稿及本地 AI 工具。";
  updateSourceEntry();
  // Keep the setup guide available without expanding it on every failed probe.
  window.dispatchEvent(new Event("coconut-worker-disconnected"));

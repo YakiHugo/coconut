@@ -879,3 +879,13 @@ body[data-media-docked="true"] .reading-feedback { bottom: 94px; }
 .phrase-show-translation{font-size:12px;padding:2px 7px;margin-left:8px}
 .podcast-project-choice { display: grid; gap: 6px; margin: 12px 0; font-size: 13px; }
 .podcast-project-choice select { width: 100%; min-width: 0; }
+/* Local-only entry shares the existing first-source card and touch budget. */
+.file-entry #open-local-media { min-height: 44px; padding: 10px 12px; font-size: 13px; }
+.local-media-project-options { display: grid; gap: 10px; margin: 14px 0; }
+.local-media-project-options button { min-height: 44px; text-align: left; overflow-wrap: anywhere; }
+.local-media-project-options small { display: block; margin-top: 4px; color: var(--muted); }
+@media (max-width: 620px) {
+ .file-entry .add-actions { gap: 8px; }
+ .file-entry #open-local-media, .file-entry #import { flex: 1 1 135px; }
+ .file-entry .add-actions > .hint { display: none; }
+}

@@ -124,7 +124,7 @@ function resolvePodcastTarget(feedUrl,episode,row){
  const doc=choice?matches.find(doc=>'project:'+doc.key===choice):!row?.explicit&&matches.length===1?matches[0]:null;
  if(matches.length&&!doc)throw new Error('本集有多个书架版本，请先选择目标项目，或选择「单独导入」');
  if(doc&&!contentIngressAllowed(doc))throw new Error('目标项目正在移除或恢复，请稍候再选择');
- return {identity,target:doc?{key:doc.key,document:doc,source:JSON.stringify(doc.podcast_source)}:null,separate:false};
+ return {identity,target:doc?{key:doc.key,document:doc,source:projectSourceSnapshot(doc)}:null,separate:false};
 }
 function podcastDiscoveryOwner(controller,resolution){
  const selection=activeSelectionRevision,startingDocument=state.active;
@@ -292,7 +292,7 @@ function renderProjectCaptionAction(){
 }
 $('fetch-project-transcript').onclick=async()=>{
  const doc=active(),source=doc?.podcast_source;if(!podcastReady||projectCaptionRequest||!Coconut.isAudioProject(doc)||!source?.feed_url)return;
- const target={key:doc.key,source:JSON.stringify(source),document:doc},controller=new AbortController();projectCaptionRequest={controller,target};renderProjectCaptionAction();$('audio-project-status').textContent='正在检查本集发布者文字稿，不会下载媒体或运行识别。';
+ const target={key:doc.key,source:projectSourceSnapshot(doc),document:doc},controller=new AbortController();projectCaptionRequest={controller,target};renderProjectCaptionAction();$('audio-project-status').textContent='正在检查本集发布者文字稿，不会下载媒体或运行识别。';
  try{
   const response=await podcastAPI('import',{feedUrl:source.feed_url,episodeId:source.episode_id},controller.signal),result=await response.json();
   if(controller.signal.aborted||projectCaptionRequest?.controller!==controller)return;
