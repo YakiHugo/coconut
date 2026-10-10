@@ -100,6 +100,8 @@ jobs:
         run: node tests/podcast-browser-acceptance.mjs
       - name: Verify audio project to transcript, injected AI, playback and clean-browser recovery
         run: node tests/project-continuity-browser.mjs
+      - name: Verify discovery preview to same-project transcript, media ownership and actual backup recovery without models
+        run: node tests/podcast-continuity-browser.mjs
       - name: Probe anonymous video caption feasibility without enabling import
         if: github.event_name == 'pull_request' && github.head_ref == 'dot/primary-journey'
         run: node scripts/probe_public_captions.mjs

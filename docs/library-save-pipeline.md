@@ -30,12 +30,16 @@ remain explicitly separate and keep their own close protection.
   subscriber can begin a whole-library snapshot, then awaits their receipts.
 - `add(...)` and `attachTranscriptToProject(text, target)` return a receipt whose
   `identity` is the actual inserted/replaced document, including on writer
-  failure. Callers must check `.ok` and exact identity after awaiting. They must
+  failure. Their `mediaRevision` and `selectionRevision` describe the synchronous
+  insertion/replacement; preview handoff must still own both after the receipt. Callers must check `.ok` and exact identity after awaiting. They must
   not use Promise/object truthiness or mutate whichever document is now active.
-- Transcript attachment still requires the explicit captured project identity,
-  source and current read workspace. Reusing it for a new discovery workflow
-  requires an explicitly resolved target and its own ownership contract; merely
-  enabling same-source metadata refresh does not attach a transcript.
+- Transcript attachment requires the exact captured project object/key and full
+  source snapshot. The default file/reader path additionally owns the active read
+  workspace. Discovery passes its own request/navigation predicate and an
+  explicitly resolved target; publisher attachment also requires matching episode,
+  enclosure URL and media kind. Merely enabling metadata refresh never attaches
+  segments. Same-source backup versions require a selected target or an explicit
+  separate import; no first-match fallback is allowed for ambiguous sources.
 
 AI count/job evidence is captured before the writer can yield, then applied by
 exact document identity. A receipt cannot acknowledge an answer appended later

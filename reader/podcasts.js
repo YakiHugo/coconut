@@ -1,10 +1,11 @@
 "use strict";
 // Feed discovery and media acquisition are always explicit clicks, never page-load work.
-let podcastReady=false,podcastRequest=null,podcastMediaRequest=null,podcastMediaKey=null,podcastDiscovery=null,podcastPreviewURL=null;
+let podcastReady=false,podcastRequest=null,podcastMediaRequest=null,podcastMediaKey=null,podcastDiscovery=null,podcastPreviewURL=null,podcastPreview=null;
+let podcastTargetRows=[];
 function podcastMessage(message){$('podcast-status').textContent=message;}
 function setPodcastBusy(busy){
  $('discover-podcast').disabled=busy||!podcastReady;$('process-url').disabled=busy;$('cancel-podcast').hidden=!busy;
- for(const button of $('podcast-results').querySelectorAll('button'))button.disabled=busy||!podcastReady;
+ for(const button of $('podcast-results').querySelectorAll('button,select'))button.disabled=busy||!podcastReady;
 }
 async function podcastAPI(action,payload,signal){
  const response=await fetch('api/podcasts/'+action,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload),signal});
@@ -19,7 +20,7 @@ function episodeDescription(episode){
  return kind+duration+captions;
 }
 function renderPodcastResults(result){
- const host=$('podcast-results');host.querySelector('audio,video')?.pause();if(podcastPreviewURL){URL.revokeObjectURL(podcastPreviewURL);podcastPreviewURL=null;}host.replaceChildren();
+ const host=$('podcast-results');clearPodcastPreview();host.replaceChildren();podcastTargetRows=[];
  if(result.title)host.append(el('h2','',result.title));
  if(result.episode_selection?.status==='matched')host.append(el('p','hint','已匹配分享的这一集，请核对标题后保存或导入。'));
  if(result.episode_selection?.status==='choice_required')host.append(el('p','hint','未能唯一匹配分享单集。下面是节目列表，请先核对标题和来源并手动选择。'));
@@ -64,14 +65,15 @@ function renderPodcastResults(result){
    tracks=el('select');tracks.setAttribute('aria-label','选择文字稿版本');const auto=el('option','','按原语言选择');auto.value='';tracks.append(auto);
    for(const track of episode.transcripts.filter(item=>item.supported)){const option=el('option','',(track.language||'未标明语言')+' · '+track.type);option.value=track.url;tracks.append(option);}section.append(tracks);
   }
-  if(!episode.direct){const button=el('button','',episode.transcripts?.some(track=>track.supported)?'导入发布者文字稿':'检查本集文字稿');button.onclick=()=>importPodcastEpisode(result.feed_url,episode.id,tracks?.value||undefined,episode);section.append(button);}
+  const targetChoice=createPodcastTargetChoice(result.feed_url,episode,section);
+  if(!episode.direct){const button=el('button','',episode.transcripts?.some(track=>track.supported)?'导入发布者文字稿':'检查本集文字稿');button.onclick=()=>importPodcastEpisode(result.feed_url,episode.id,tracks?.value||undefined,episode,targetChoice);section.append(button);}
   if(episode.media?.length){const listen=el('button','','回听原声（最多200 MiB）');listen.onclick=()=>previewPodcastEpisode(result.feed_url,episode,section);section.append(listen);}
-  if(episode.media?.length){const keep=el('button','','保存原声项目');keep.onclick=()=>savePodcastProject(result.feed_url,episode);section.append(keep);}
+  if(episode.media?.length){const keep=el('button','','保存原声项目');keep.onclick=()=>savePodcastProject(result.feed_url,episode,targetChoice);section.append(keep);}
   const url=Coconut.podcastURL(episode.source_url);
   if(url){const link=el('a','','打开原站');link.href=url;link.target='_blank';link.rel='noopener noreferrer';section.append(link);}
   host.append(section);rows.push({episode,section});
  }
- applyEpisodeFilters();
+ applyEpisodeFilters();refreshPodcastTargetChoices();
  for(const warning of result.warnings||[])if(typeof warning==='string')host.append(el('p','hint',warning));
  if(!episodes.length&&!result.feeds?.length)host.append(el('p','hint','未发现可导入的单集。可以使用发布者 RSS 或合法取得的字幕、音视频文件。'));
 }
@@ -92,36 +94,130 @@ function podcastProject(feedUrl,episode,transcriptStatus='not_imported'){
  return Coconut.validate({project_kind:'audio_only',transcript_status:transcriptStatus,title:episode.title||'未命名原声项目',language:episode.language||'',source_url:episode.source_url||feedUrl||medium.url,media_duration:episode.duration,
   podcast_source:feedUrl?{feed_url:feedUrl,episode_id:episode.id,media_url:medium.url,media_kind:medium.kind}:{kind:'direct_media',media_url:medium.url,media_kind:medium.kind},segments:[]});
 }
-async function savePodcastProject(feedUrl,episode){
- if(!podcastReady||podcastRequest)return;
- const revision=documentLifecycleRevision,startingDocument=state.active,controller=new AbortController();podcastRequest=controller;setPodcastBusy(true);
- try{
-  const persisted=await add(podcastProject(feedUrl,episode),()=>controller===podcastRequest&&!controller.signal.aborted&&state.active===startingDocument&&workspace==='add',true,revision);
-  if(persisted.ok&&controller===podcastRequest&&!controller.signal.aborted&&active()===persisted.identity&&contentIngressAllowed(persisted.identity))notice('原声项目已保存在书架。尚未下载媒体或导入文字稿；可以写项目笔记，或单独获取原声并记录时间书签。');
- }catch(error){if(controller===podcastRequest)podcastMessage(error.message);}
- finally{if(controller===podcastRequest){podcastRequest=null;setPodcastBusy(false);}}
+function podcastEpisodeSource(feedUrl,episode){
+ if(feedUrl)return {podcast_source:{feed_url:feedUrl,episode_id:episode.id}};
+ return podcastProject(feedUrl,episode);
 }
-async function importPodcastEpisode(feedUrl,episodeId,transcriptUrl,discoveredEpisode){
+function podcastTargets(identity){return state.documents.filter(doc=>Coconut.audioProjectIdentity(doc)===identity);}
+function createPodcastTargetChoice(feedUrl,episode,section){
+ const identity=Coconut.audioProjectIdentity(podcastEpisodeSource(feedUrl,episode));
+ const label=el('label','podcast-project-choice','书架项目'),select=el('select');select.setAttribute('aria-label','选择本集的书架项目');label.append(select);
+ const hint=el('p','hint');section.append(label,hint);
+ const row={identity,select,label,hint,explicit:false};select.onchange=()=>{row.explicit=true;};podcastTargetRows.push(row);return row;
+}
+function refreshPodcastTargetChoice(row,matches=podcastTargets(row.identity)){
+ const prior=row.select.value;
+ const options=[['','请选择要继续的版本'],...matches.map(doc=>['project:'+doc.key,(Coconut.isAudioProject(doc)?'补充原声项目：':'打开已有文字稿：')+doc.title+' · '+Coconut.projectAnnotationCount(doc)+' 条项目记录 · '+doc.key.slice(-8)]),['separate','单独导入']];
+ const signature=JSON.stringify(options);
+ if(row.signature!==signature){
+  row.signature=signature;row.select.replaceChildren(...options.map(([value,title])=>{const option=el('option','',title);option.value=value;return option;}));
+  row.select.value=row.explicit?(options.some(([value])=>value===prior)?prior:''):matches.length===1?'project:'+matches[0].key:'';
+ }
+ row.label.hidden=row.hint.hidden=!matches.length;row.select.disabled=!!podcastRequest;
+ row.hint.textContent=matches.length>1?'本集有多个书架版本。请明确选择一个，或单独导入；不会覆盖其他版本。':matches.length?'继续同一项目会保留笔记、书签和当前媒体。已有文字稿只会重新打开；要导入另一份文字稿请选择「单独导入」。':'';
+}
+function resolvePodcastTarget(feedUrl,episode,row){
+ const identity=Coconut.audioProjectIdentity(podcastEpisodeSource(feedUrl,episode)),matches=podcastTargets(identity);
+ if(row)refreshPodcastTargetChoice(row);
+ const choice=row?.select.value;
+ if(choice==='separate')return {identity,target:null,separate:true};
+ const doc=choice?matches.find(doc=>'project:'+doc.key===choice):!row?.explicit&&matches.length===1?matches[0]:null;
+ if(matches.length&&!doc)throw new Error('本集有多个书架版本，请先选择目标项目，或选择「单独导入」');
+ if(doc&&!contentIngressAllowed(doc))throw new Error('目标项目正在移除或恢复，请稍候再选择');
+ return {identity,target:doc?{key:doc.key,document:doc,source:JSON.stringify(doc.podcast_source)}:null,separate:false};
+}
+function podcastDiscoveryOwner(controller,resolution){
+ const selection=activeSelectionRevision,startingDocument=state.active;
+ return ()=>controller===podcastRequest&&!controller.signal.aborted&&contentIngressAllowed()&&workspace==='add'&&state.active===startingDocument&&activeSelectionRevision===selection&&
+  (resolution.target?contentIngressAllowed(resolution.target.document)&&state.documents.find(doc=>doc.key===resolution.target.key)===resolution.target.document&&JSON.stringify(resolution.target.document.podcast_source)===resolution.target.source:resolution.separate||podcastTargets(resolution.identity).length===0);
+}
+async function storePodcastProject(doc,resolution,canCommit,revision){
+ return add(doc,canCommit,!!resolution.target,revision,doc.key,{target:resolution.target,separate:resolution.separate});
+}
+async function savePodcastProject(feedUrl,episode,row){
  if(!podcastReady||podcastRequest)return;
- const startingDocument=state.active,revision=documentLifecycleRevision;
- const controller=new AbortController();podcastRequest=controller;setPodcastBusy(true);podcastMessage('正在读取发布者提供的文字稿；尚未下载音视频。');
+ let resolution;try{resolution=resolvePodcastTarget(feedUrl,episode,row);}catch(error){podcastMessage(error.message);return;}
+ const revision=documentLifecycleRevision,controller=new AbortController(),preview=podcastPreview;podcastRequest=controller;setPodcastBusy(true);
+ const canCommit=podcastDiscoveryOwner(controller,resolution);
  try{
-  const response=await podcastAPI('import',{feedUrl,episodeId,...(transcriptUrl?{transcriptUrl}:{})},controller.signal),result=await response.json();
-  if(controller!==podcastRequest||controller.signal.aborted)return;
-  if(result.status!=='ready'||!result.document){
-   if(result.status!=='needs_transcription')throw new Error('没有取得有效的文字稿结果，书架未改变，请重试。');
-   const episode=result.episode||discoveredEpisode;
-   if(episode?.media?.length){
-    const persisted=await add(podcastProject(result.feed_url||feedUrl,episode,'unavailable'),()=>controller===podcastRequest&&!controller.signal.aborted&&state.active===startingDocument&&workspace==='add',true,revision);
-    if(persisted.ok&&controller===podcastRequest&&!controller.signal.aborted&&active()===persisted.identity&&contentIngressAllowed(persisted.identity))notice('这集没有可用的公开定时文字稿，已保存原声项目。可写笔记、记录时间书签；回听需单独点击下载，未启动识别或模型。');
-   }
-   podcastMessage('这集没有可用的公开定时文字稿。节目简介不会代替原文；当前未启动识别、下载模型或扣费。');return;
+  const persisted=await storePodcastProject(podcastProject(feedUrl,episode),resolution,canCommit,revision);
+  if(controller===podcastRequest&&!controller.signal.aborted&&active()===persisted.identity&&workspace==='read'&&activeSelectionRevision===persisted.selectionRevision&&contentIngressAllowed(persisted.identity)){
+   const transferred=transferPodcastPreview(preview,persisted.identity,persisted.mediaRevision);
+   notice(persisted.ok?(Coconut.isAudioProject(persisted.identity)?'原声项目已保存在书架。可以写项目笔记和记录时间书签。':'已打开书架中的文字稿项目，已有内容和记录保留。')+(transferred?'已接续本次预览原声，未重复下载；请点击播放。':'尚未获取的媒体仍需单独点击下载。'): '原声项目已在本页打开，但尚未保存，请导出备份。');
   }
-  const persisted=await add(Coconut.validate(result.document),()=>controller===podcastRequest&&!controller.signal.aborted&&state.active===startingDocument&&workspace==='add',false,revision);
-  if(controller===podcastRequest&&active()===persisted.identity)podcastMessage(persisted.ok?'文字稿已打开并保存。':'文字稿已在本页打开，尚未保存，请导出备份。');
-  if(persisted.ok&&controller===podcastRequest&&!controller.signal.aborted&&active()===persisted.identity&&contentIngressAllowed(persisted.identity))notice('发布者文字稿已导入。内容尚未经人工核对；可在「原文与音视频」中点击下载原声回听。');
+ }catch(error){if(controller===podcastRequest)podcastMessage(controller.signal.aborted?'已取消保存，已有书架不变。':error.message);}
+ finally{if(controller===podcastRequest){podcastRequest=null;setPodcastBusy(false);refreshPodcastTargetChoices();}}
+}
+async function importPodcastEpisode(feedUrl,episodeId,transcriptUrl,discoveredEpisode,row){
+ if(!podcastReady||podcastRequest)return;
+ let resolution;try{resolution=resolvePodcastTarget(feedUrl,discoveredEpisode,row);}catch(error){podcastMessage(error.message);return;}
+ const revision=documentLifecycleRevision,controller=new AbortController(),preview=podcastPreview;podcastRequest=controller;setPodcastBusy(true);
+ const canCommit=podcastDiscoveryOwner(controller,resolution);
+ podcastMessage('正在读取发布者提供的文字稿；不会另行下载音视频。');
+ try{
+  let persisted;
+  if(resolution.target&&!Coconut.isAudioProject(resolution.target.document)){
+   // Existing edited words/translation/history are never replaced by rediscovery.
+   persisted=await storePodcastProject(resolution.target.document,resolution,canCommit,revision);
+  }else{
+   const response=await podcastAPI('import',{feedUrl,episodeId,...(transcriptUrl?{transcriptUrl}:{})},controller.signal),result=await response.json();
+   if(!canCommit())throw new Error('目标项目或页面已改变，本次未导入文字稿，请重新选择');
+   if(result.status!=='ready'||!result.document){
+    if(result.status!=='needs_transcription')throw new Error('没有取得有效的文字稿结果，书架未改变，请重试。');
+    const episode=result.episode||discoveredEpisode;
+    if(episode?.media?.length){
+     const project=podcastProject(result.feed_url||feedUrl,episode,'unavailable');
+     if(Coconut.audioProjectIdentity(project)!==resolution.identity)throw new Error('返回单集与所选来源不一致，原项目保留。');
+     persisted=await storePodcastProject(project,resolution,canCommit,revision);
+     if(controller===podcastRequest&&!controller.signal.aborted&&active()===persisted.identity&&workspace==='read'&&activeSelectionRevision===persisted.selectionRevision&&contentIngressAllowed(persisted.identity)){
+      transferPodcastPreview(preview,persisted.identity,persisted.mediaRevision);
+      notice(persisted.ok?'这集没有可用的公开定时文字稿，已保存原声项目。可写笔记和记录时间书签，未启动识别或模型。':'原声项目已在本页打开，但尚未保存，请导出备份。');
+     }
+    }
+    podcastMessage('这集没有可用的公开定时文字稿。节目简介不会代替原文；当前未启动识别、下载模型或扣费。');return;
+   }
+   const text=Coconut.validate(result.document);
+   if(Coconut.isAudioProject(text))throw new Error('没有取得真正的定时文字稿，原项目保留。');
+   if(Coconut.audioProjectIdentity(text)!==resolution.identity)throw new Error('返回文字稿与所选单集来源不一致，原项目保留。');
+   persisted=resolution.target?await attachTranscriptToProject(text,resolution.target,{canCommit,activate:true,publisher:true}):await storePodcastProject(text,resolution,canCommit,revision);
+  }
+  if(controller===podcastRequest&&!controller.signal.aborted&&active()===persisted.identity&&workspace==='read'&&activeSelectionRevision===persisted.selectionRevision&&contentIngressAllowed(persisted.identity)){
+   const transferred=transferPodcastPreview(preview,persisted.identity,persisted.mediaRevision);
+   podcastMessage(persisted.ok?'文字稿已打开并保存。':'文字稿已在本页打开，尚未保存，请导出备份。');
+   notice(persisted.ok?'文字稿项目已打开，原有笔记、书签和当前媒体保留。'+(transferred?'已接续预览原声，未重复下载。':'')+'发布者文字稿尚未经人工核对，未调用模型。':'文字稿已在本页附加，但尚未保存，请立即导出 JSON 备份。');
+  }
  }catch(error){if(controller===podcastRequest)podcastMessage(controller.signal.aborted?'已取消导入，已有书架不变。':error.message);}
- finally{if(controller===podcastRequest){podcastRequest=null;setPodcastBusy(false);}}
+ finally{if(controller===podcastRequest){podcastRequest=null;setPodcastBusy(false);refreshPodcastTargetChoices();}}
+}
+function refreshPodcastTargetChoices(){
+ if(!podcastTargetRows.length)return;
+ // Discovery may contain 200 rows. Resolve library identities once per render,
+ // not once for every row while the user is editing a reader note.
+ const matches=new Map();
+ for(const doc of state.documents){const identity=Coconut.audioProjectIdentity(doc);if(!identity)continue;if(!matches.has(identity))matches.set(identity,[]);matches.get(identity).push(doc);}
+ for(const row of podcastTargetRows)refreshPodcastTargetChoice(row,matches.get(row.identity)||[]);
+}
+window.addEventListener('coconut-render',refreshPodcastTargetChoices);
+window.addEventListener('coconut-workspace-change',()=>{podcastRequest?.abort();refreshPodcastTargetChoices();});
+function clearPodcastPreview(){
+ const preview=podcastPreview;podcastPreview=null;podcastPreviewURL=null;
+ if(preview){preview.player.pause();preview.player.remove();URL.revokeObjectURL(preview.url);}
+}
+function transferPodcastPreview(preview,doc,revision){
+ if(!preview||podcastPreview!==preview||mediaSelectionRevision(doc.key)!==revision||!contentIngressAllowed(doc)||Coconut.podcastMediaIdentity(doc)!==preview.mediaIdentity||browserMedia.has(doc.key))return false;
+ const time=preview.player.currentTime;
+ // Move the sole object-URL owner before rendering. New discovery cleanup can
+ // only revoke its own preview, never media already owned by the reader.
+ podcastPreview=null;podcastPreviewURL=null;preview.player.pause();preview.player.remove();
+ changeMediaSelection(doc.key);
+ const attachment={url:preview.url,kind:preview.kind,name:'本集发布者原声',origin:'publisher',identity:preview.identity,mediaIdentity:preview.mediaIdentity};
+ browserMedia.set(doc.key,attachment);render();
+ const player=$('source-media').querySelector('audio,video');
+ const restoreTime=()=>{
+  if(active()===doc&&browserMedia.get(doc.key)===attachment&&$('source-media').querySelector('audio,video')===player&&Number.isFinite(time)&&time>0&&Number.isFinite(player.duration)&&time<player.duration){try{player.currentTime=time;}catch{}}
+ };
+ if(player?.readyState)restoreTime();else player?.addEventListener('loadedmetadata',restoreTime,{once:true});
+ return true;
 }
 async function readPodcastMedia(response){
  const blob=await response.blob();if(blob.size>200*1024*1024)throw new Error('媒体超过 200 MiB 限制');
@@ -133,14 +229,16 @@ async function readPodcastMedia(response){
 }
 async function previewPodcastEpisode(feedUrl,episode,section){
  if(!podcastReady||podcastRequest)return;
- const controller=new AbortController();podcastRequest=controller;setPodcastBusy(true);podcastMessage('正在下载本集公开原声（最多200 MiB）。取消可停止本次获取；不会转录或调用模型。');
+ const controller=new AbortController(),project=podcastProject(feedUrl,episode),source=project.podcast_source;podcastRequest=controller;setPodcastBusy(true);podcastMessage('正在下载本集公开原声（最多200 MiB）。取消可停止本次获取；不会转录或调用模型。');
  try{
-  const response=await podcastAPI('media',feedUrl?{feedUrl,episodeId:episode.id,mediaUrl:episode.media[0].url}:{url:episode.media[0].url},controller.signal);
+  const response=await podcastAPI('media',feedUrl?{feedUrl:source.feed_url,episodeId:source.episode_id,mediaUrl:source.media_url}:{url:source.media_url},controller.signal);
   const {blob,kind}=await readPodcastMedia(response);
-  if(controller.signal.aborted||controller!==podcastRequest||!section.isConnected)return;
-  $('podcast-results').querySelector('audio,video')?.pause();$('podcast-results').querySelector('audio,video')?.remove();
-  if(podcastPreviewURL)URL.revokeObjectURL(podcastPreviewURL);podcastPreviewURL=URL.createObjectURL(blob);
+  if(kind!==source.media_kind)throw new Error('下载媒体类型与所选来源不一致，未关联到项目，请重新发现来源。');
+  const fingerprint=await fingerprintMedia(blob);
+  if(controller.signal.aborted||controller!==podcastRequest||!section.isConnected||workspace!=='add')return;
+  clearPodcastPreview();podcastPreviewURL=URL.createObjectURL(blob);
   const player=el(kind,'podcast-preview');player.controls=true;player.preload='metadata';player.src=podcastPreviewURL;player.setAttribute('aria-label','本集公开原声');player.onerror=()=>podcastMessage('浏览器无法播放该媒体。未运行转录，仍可打开原站。');section.append(player);
+  podcastPreview={url:podcastPreviewURL,player,kind,identity:fingerprint?'publisher-v1:'+source.media_url+':'+fingerprint:null,mediaIdentity:Coconut.podcastMediaIdentity(project)};
   podcastMessage('原声已在本次页面就绪，尚未运行转录。可以直接播放；需要文字阅读时请导入真正的文字稿。');
  }catch(error){if(controller===podcastRequest)podcastMessage(controller.signal.aborted?'已取消原声下载。':error.message);}
  finally{if(controller===podcastRequest){podcastRequest=null;setPodcastBusy(false);}}
@@ -158,19 +256,20 @@ function renderPodcastPlayback(){
 }
 $('download-podcast-media').onclick=async()=>{
  const doc=active(),source=doc?.podcast_source;if(!podcastReady||podcastMediaRequest||!source?.media_url)return;
- const key=doc.key,revision=mediaSelectionRevision(key),controller=new AbortController();podcastMediaRequest=controller;podcastMediaKey=key;$('cancel-podcast-media').hidden=false;renderPodcastPlayback();$('podcast-media-status').textContent='正在下载公开原声（最多 200 MiB），可随时取消；不会发起转录。';
+ const key=doc.key,revision=mediaSelectionRevision(key),mediaIdentity=Coconut.podcastMediaIdentity(doc),controller=new AbortController();podcastMediaRequest=controller;podcastMediaKey=key;$('cancel-podcast-media').hidden=false;renderPodcastPlayback();$('podcast-media-status').textContent='正在下载公开原声（最多 200 MiB），可随时取消；不会发起转录。';
  let url;
  try{
   const payload=source.kind==='direct_media'?{url:source.media_url}:{feedUrl:source.feed_url,episodeId:source.episode_id,mediaUrl:source.media_url};
   const response=await podcastAPI('media',payload,controller.signal);
   const {blob,kind}=await readPodcastMedia(response);
+  if(kind!==source.media_kind)throw new Error('下载媒体类型与项目来源不一致，请重新发现来源。');
   const fingerprint=await fingerprintMedia(blob);
   const identity=fingerprint?'publisher-v1:'+source.media_url+':'+fingerprint:null;
-  if(controller.signal.aborted||mediaSelectionRevision(key)!==revision||!state.documents.some(d=>d.key===key)){if(active()?.key===key)$('podcast-media-status').textContent='本次下载已取消，保留当前选择的媒体。';return;}
+  if(controller.signal.aborted||mediaSelectionRevision(key)!==revision||!state.documents.some(d=>d===doc)||Coconut.podcastMediaIdentity(doc)!==mediaIdentity){if(active()?.key===key)$('podcast-media-status').textContent='本次下载已取消，保留当前选择的媒体。';return;}
   changeMediaSelection(key,false);
   url=URL.createObjectURL(blob);const previous=browserMedia.get(key);
   if(active()?.key===key){stopRepeating();$('source-media').querySelector('audio,video')?.pause();}
-  browserMedia.set(key,{url,kind,name:'本集发布者原声',origin:'publisher',identity});if(previous)URL.revokeObjectURL(previous.url);
+  browserMedia.set(key,{url,kind,name:'本集发布者原声',origin:'publisher',identity,mediaIdentity});if(previous)URL.revokeObjectURL(previous.url);
   if(active()?.key===key){render();$('podcast-media-status').textContent='原声已在本次页面就绪。未发起转录；刷新后可重新获取。';}
   url=null;
  }catch(error){if(url)URL.revokeObjectURL(url);if(active()?.key===key)$('podcast-media-status').textContent=controller.signal.aborted?'已取消下载，文字稿和笔记保留。':error.message;}
@@ -203,7 +302,7 @@ $('fetch-project-transcript').onclick=async()=>{
   if(Coconut.audioProjectIdentity(text)!==Coconut.audioProjectIdentity(doc))throw new Error('返回文字稿与本项目来源不一致，未附加，请重新发现来源。');
   if(text.podcast_source?.media_url!==source.media_url||text.podcast_source?.media_kind!==source.media_kind||!['audio','video'].includes(source.media_kind))throw new Error('发布者媒体地址或类型已变化或无法核对，未把新文字稿配到旧原声。请重新发现来源并核对媒体后再补充。');
   const persisted=await attachTranscriptToProject(text,target);
-  if(projectCaptionRequest?.controller===controller&&active()===persisted.identity&&contentIngressAllowed(persisted.identity))notice(persisted.ok?'发布者文字稿已补充到原项目，笔记、书签和当前媒体保留。尚未经人工核对；未调用模型。':'文字稿已在本页附加，但未能保存，请立即导出 JSON 备份。');
+  if(projectCaptionRequest?.controller===controller&&active()===persisted.identity&&workspace==='read'&&activeSelectionRevision===persisted.selectionRevision&&contentIngressAllowed(persisted.identity))notice(persisted.ok?'发布者文字稿已补充到原项目，笔记、书签和当前媒体保留。尚未经人工核对；未调用模型。':'文字稿已在本页附加，但未能保存，请立即导出 JSON 备份。');
  }catch(error){if(active()?.key===target.key)$('audio-project-status').textContent=controller.signal.aborted?'已取消获取文字稿，原项目保留。':error.message;}
  finally{if(projectCaptionRequest?.controller===controller){projectCaptionRequest=null;renderProjectCaptionAction();}}
 };

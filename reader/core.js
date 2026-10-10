@@ -64,6 +64,12 @@
   if(!origin)return '';
   return JSON.stringify(origin.kind==='direct_media'?['direct_media',origin.media_url]:['podcast',origin.feed_url,origin.episode_id]);
  }
+ // Episode identity chooses a library project; media identity separately owns
+ // temporary publisher bytes. A new enclosure/type must never inherit old audio.
+ function podcastMediaIdentity(doc) {
+  const source=podcastSource(doc?.podcast_source),episode=audioProjectIdentity(doc);
+  return episode&&source?.media_url&&['audio','video'].includes(source.media_kind)?JSON.stringify([episode,source.media_url,source.media_kind]):'';
+ }
  function hasProjectAnnotations(doc){return Boolean(doc&&Object.hasOwn(doc,'project_note')&&Array.isArray(doc.timestamp_bookmarks));}
  // Presence is a view/export decision only: never trim or rewrite a saved note.
  // Unicode White_Space includes NEL; FEFF also follows JavaScript trim semantics.
@@ -87,7 +93,7 @@
   if(!isAudioProject(project))throw new Error('只能为尚未导入文字稿的原声项目补充原文');
   const original=validateAudioProject(project),text=validate(transcript);
   if(isAudioProject(text))throw new Error('请选择真正的 JSON / SRT / VTT 定时文字稿，原声项目没有可附加的原文');
-  const result={...text,title:original.title,language:text.language||original.language,source_url:original.source_url,podcast_source:original.podcast_source,
+  const result={...text,title:original.title,language:original.project_language_override?original.language:text.language||original.language,project_language_override:original.project_language_override===true,source_url:original.source_url,podcast_source:original.podcast_source,
    ...projectAnnotations(original),...(original.media_duration?{media_duration:original.media_duration}:{})};
   // The selected file supplies words, not an unrelated local media job association.
   delete result.source_media;
@@ -106,6 +112,7 @@
   return {schema_version:1,project_kind:'audio_only',transcript_status:data.transcript_status==='unavailable'?'unavailable':'not_imported',
    title:typeof data.title==='string'?data.title:'未命名原声项目',source_url:podcastURL(data.source_url)||origin.feed_url||origin.media_url,
    language:typeof data.language==='string'?data.language:'',podcast_source:origin,
+   ...(data.project_language_override===true?{project_language_override:true}:{}),
    ...(Number.isFinite(data.media_duration)&&data.media_duration>0&&data.media_duration<=604800?{media_duration:data.media_duration}:{}),
    ...annotations,
    // Audio metadata and user notes are never transcript evidence or model output.
@@ -506,6 +513,7 @@
 		return {
 			notes,
    ...((data.project_note!==undefined||data.timestamp_bookmarks!==undefined)?projectAnnotations(data):{}),
+   ...(data.project_language_override===true&&hasProjectAnnotations(data)?{project_language_override:true}:{}),
    ...(Number.isFinite(data.media_duration)&&data.media_duration>0&&data.media_duration<=604800?{media_duration:data.media_duration}:{}),
 			...(typeof data.readingPosition === "string" && ids.has(data.readingPosition) ? {readingPosition: data.readingPosition} : {}),
 			...(provenance ? { provenance } : {}),
@@ -830,7 +838,7 @@
 			segments,
 		});
 	}
-	const api = { searchDocument, invalidateSearch, manualReviewSnapshot, manualReviewCurrent, saveManualTranslation, translationReviewQueue, hasNoteContent, segmentNoteCount, BACKUP_REVIEW_BYTES, SUBTITLE_IMPORT_BYTES, vttPayload, libraryHits, librarySnippet, hasProjectAnnotations, projectAnnotationCount, attachProjectTranscript, libraryMatches, documentDuration, sortedLibrary, AUDIO_NOTE_BUDGET, audioNoteCharacters, isAudioProject, audioProjectIdentity, SUMMARY_QUESTION, summaryReadiness, podcastURL, podcastSource, cleanGlossary, relevantGlossary, translationQualityMessage, retainAnswers, summaryFreshness, latestSummary, summaryMarkdown, aiReadingMarkdown, parseReadingTime, createPlaybackIndex, segmentAtTime, subtitleExport, mergeLibraryBackup, time, source, media, validate, parse, matchesSegment, notebookSegments, notebookMarkdown, translationCurrent, sameCueSnapshot, subscriptionPlan, cleanContexts, answerFreshness };
+	const api = { searchDocument, invalidateSearch, manualReviewSnapshot, manualReviewCurrent, saveManualTranslation, translationReviewQueue, hasNoteContent, segmentNoteCount, BACKUP_REVIEW_BYTES, SUBTITLE_IMPORT_BYTES, vttPayload, libraryHits, librarySnippet, hasProjectAnnotations, projectAnnotationCount, attachProjectTranscript, libraryMatches, documentDuration, sortedLibrary, AUDIO_NOTE_BUDGET, audioNoteCharacters, isAudioProject, audioProjectIdentity, podcastMediaIdentity, SUMMARY_QUESTION, summaryReadiness, podcastURL, podcastSource, cleanGlossary, relevantGlossary, translationQualityMessage, retainAnswers, summaryFreshness, latestSummary, summaryMarkdown, aiReadingMarkdown, parseReadingTime, createPlaybackIndex, segmentAtTime, subtitleExport, mergeLibraryBackup, time, source, media, validate, parse, matchesSegment, notebookSegments, notebookMarkdown, translationCurrent, sameCueSnapshot, subscriptionPlan, cleanContexts, answerFreshness };
 	if (typeof module !== "undefined" && module.exports) module.exports = api;
 	else root.Coconut = api;
 })(typeof window !== "undefined" ? window : globalThis);
