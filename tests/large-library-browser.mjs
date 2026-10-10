@@ -1,3 +1,4 @@
+import {openLibraryTools} from './helpers/library-tools-browser.mjs';
 /** CI-only native browser journey. Authored fixtures, no model/media/external requests. */
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
@@ -15,8 +16,8 @@ try{
   const page=await context.newPage();page.setDefaultTimeout(20000);page.on('pageerror',e=>errors.push(e.message));await page.goto(origin);return page;
  }
  const page=await newPage();
- async function shelf(p=page,options=false){if(!await p.locator('#library-search').isVisible())await p.locator('#toggle-library').click();if(options&&!await p.locator('#library-sort').isVisible())await p.locator('#library-options > summary').click();}
- async function jump(number){await shelf();await page.locator('#library-page-number').fill(String(number));await page.locator('#library-page-number').press('Enter');await page.waitForFunction(()=>document.activeElement?.classList.contains('library-open'));}
+ async function shelf(p=page,options=false){if(!await p.locator('#library-search').isVisible())await p.locator('#toggle-library').click();if(options)await openLibraryTools(p);if(options&&!await p.locator('#library-sort').isVisible())await p.locator('#library-options > summary').click();}
+ async function jump(number){await shelf();await openLibraryTools(page);await page.locator('#library-page-number').fill(String(number));await page.locator('#library-page-number').press('Enter');await page.waitForFunction(()=>document.activeElement?.classList.contains('library-open'));}
  async function stored(p=page){await p.evaluate(()=>libraryStore.flush());return p.evaluate(()=>readPersistedLibrary());}
  async function restore(p,buffer){await p.locator('#library-file').setInputFiles({name:'authored-large-shelf.json',mimeType:'application/json',buffer});await waitForPersistedLibrary(p,async()=>(await readPersistedLibrary()).documents.length===1001,undefined,{timeout:20000});}
  const docs=largeLibraryFixture();docs[1].title='ZZZ last by title, added second';docs[0].segments[7].end=10000;for(const doc of docs)doc.segments.at(-1).text='Shared authored pagination needle';
@@ -67,7 +68,7 @@ try{
  await page.locator('#undo-removal').click();await page.waitForFunction(()=>document.activeElement?.classList.contains('library-remove')&&document.activeElement.closest('.library-entry').dataset.documentKey==='shelf-1000');
  check('undo_restores_exact_last_document_and_keyboard_focus',await page.locator('#library-page-number').inputValue()==='26'&&await page.locator('.library-entry').count()===1);
  assert.deepEqual((await stored()).documents.at(-1),original);check('undo_preserves_complete_last_document',true);
- stage='real complete backup and clean-context restore';await shelf();await page.locator('.library-backup > summary').click();const pending=page.waitForEvent('download');await page.locator('#export-library').click();const download=await pending,bytes=await fs.readFile(await download.path()),backup=JSON.parse(bytes);
+ stage='real complete backup and clean-context restore';await shelf();await openLibraryTools(page);await page.locator('.library-backup > summary').click();const pending=page.waitForEvent('download');await page.locator('#export-library').click();const download=await pending,bytes=await fs.readFile(await download.path()),backup=JSON.parse(bytes);
  check('actual_download_contains_every_document',backup.documents.length===1001);assert.deepEqual(backup.documents.at(-1),original);
  const clean=await newPage();await restore(clean,bytes);await shelf(clean,true);await clean.locator('#library-search').fill(last.title);
  check('clean_restore_finds_last_complete_title',await clean.locator('.library-title').textContent()===last.title&&(await stored(clean)).documents.length===1001);

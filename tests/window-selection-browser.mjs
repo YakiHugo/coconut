@@ -1,3 +1,4 @@
+import {openLibraryTools} from './helpers/library-tools-browser.mjs';
 /** CI-only Chromium proof with authored fixtures. Do not run in a browser-denied
  * environment. Two real same-origin pages share content, but not selection. */
 import assert from 'node:assert/strict';
@@ -90,7 +91,7 @@ async function openNote(page) {
 }
 async function downloadJSON(page, wholeLibrary = false) {
  if (wholeLibrary) {
-  await showLibrary(page);
+  await showLibrary(page);await openLibraryTools(page);
   const details = page.locator('.library-backup');
   if (!await details.evaluate(node => node.open)) await details.locator('summary').click();
  } else if (!await page.locator('#export-menu').evaluate(node => node.open)) {

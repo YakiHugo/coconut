@@ -81,9 +81,10 @@ test('versionchange is visible even before another edit and cannot produce a fal
  s.documents[0].notes.one='rescue';s.store.queueDocument('a',s.documents[0]);assert.equal((await s.store.flush()).ok,false);assert.equal(s.store.status('a').error.code,'version');assert.equal(s.store.snapshotForExport().documents[0].notes.one,'rescue');
 });
 
-async function ui(f){
+async function ui(f,{mobile=false}={}){
  f??=await fixture();
  const w=new Window({url:'https://coconut.example/'});w.document.body.innerHTML=fs.readFileSync(new URL('reader/index.html',root),'utf8').split('<body>')[1].split('</body>')[0];Object.defineProperty(w,'crypto',{value:webcrypto});
+ if(mobile){w.document.querySelector('.shell').inert=false;w.document.getElementById('storage-startup').hidden=true;const match=w.matchMedia.bind(w);w.matchMedia=query=>query==='(max-width: 650px)'?{matches:true,addEventListener(){}}:match(query);}
  w.CoconutStorageBootstrap={phase:'ready',result:f.result};w.eval(fs.readFileSync(new URL('reader/library-store.js',root),'utf8'));
  w.eval(['summary','core','passages','passage-playback','app','language','translation-review','podcasts'].map(file=>fs.readFileSync(new URL('reader/'+file+'.js',root),'utf8')).join('\n')+'\nwindow.idbUI={get documents(){return state.documents;},get store(){return libraryStore;},get checkpoint(){return persistedAIAnswerCounts;}};');
  return {w,f,$:id=>w.document.getElementById(id)};
@@ -271,4 +272,23 @@ for(const joinSource of [false,true])for(const throws of [false,true])test(`conf
  assert.equal(local.store.snapshotForExport().documents.find(doc=>doc.key===source.key).notes.one,'New generation inside rollback');
  const before=writeCount(f);d.notes.one='Independent D';const td=local.store.queueDocument('d',d);assert.equal((await local.store.flush()).ok,false);assert.equal((await td.committed).ok,true);assert.equal(writeCount(f),before+1);
  assert.equal(rows().get('d').payload.notes.one,'Independent D');assert.equal(rows().get('a').payload.notes.one,'Remote A');assert.equal(rows().get('b').payload.notes.one,undefined);assert.equal(rollbacks,1);
+});
+
+
+test('combined mobile current-document return preserves note focus while independent receipt leaves conflict warning intact',async()=>{
+ const {f,second,rows}=await conflictedWindows(2),{w,$}=await ui(second,{mobile:true});
+ try{
+  const a=w.idbUI.documents[0];a.notes.one='Unresolved mobile A';w.idbUI.store.queueDocument('a',a);await w.idbUI.store.flush();
+  $('mode-transcript').click();w.document.querySelector('.note-button').click();const note=$('note');note.value='  Mobile B exact\n note  ';note.oninput();note.focus();note.selectionStart=3;note.selectionEnd=8;
+  f.engine.control.holdNextWrite=true;const flushing=w.idbUI.store.flush();await f.engine.tick();assert.equal(f.engine.control.held.length,1);
+  $('toggle-library').click();assert.equal($('toggle-library').getAttribute('aria-expanded'),'true');
+  const search=$('library-search');search.focus();assert.equal(w.document.activeElement?.id,'library-search','search focus acquired before receipt');f.engine.control.held.shift().complete();assert.equal((await flushing).ok,false);
+  assert.equal(w.document.activeElement?.id,search.id,'durable independent receipt does not steal shelf focus');
+  $('library').querySelector('[data-document-key="b"] .library-open').click();
+  assert.equal($('toggle-library').getAttribute('aria-expanded'),'false');assert.equal(w.document.activeElement?.id,note.id,'current document returns focus to note');assert.ok($('note')===note,'note identity preserved');
+  assert.equal(note.value,'  Mobile B exact\n note  ');assert.equal(note.selectionStart,3);assert.equal(note.selectionEnd,8);
+  assert.equal(rows().get('b').payload.notes.one,note.value);assert.equal(rows().get('a').payload.notes.one,'Remote A');
+  assert.equal(w.idbUI.store.status('b').status,'saved');assert.equal(w.idbUI.store.status('a').status,'conflict');assert.equal($('save-status').dataset.state,'failed');
+  assert.deepEqual(JSON.parse(JSON.stringify(w.idbUI.store.snapshotForExport().documents.map(d=>[d.key,d.notes.one]))),[['a','Unresolved mobile A']]);
+ }finally{await w.happyDOM.close();}
 });

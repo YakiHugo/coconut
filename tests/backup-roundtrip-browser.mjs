@@ -1,3 +1,4 @@
+import {openLibraryTools} from './helpers/library-tools-browser.mjs';
 /** GitHub browser-CI-only proof: authored files, real downloads/pickers and
  * native storage quota. No AI, remote media, traces or private artifacts. */
 import assert from 'node:assert/strict';
@@ -36,6 +37,7 @@ try{
  const finished=(page,count)=>page.waitForFunction(count=>window.backupProbe.finished===count,count);
  const disk = async page => {await page.evaluate(()=>libraryStore.flush());return page.evaluate(key=>localStorage.getItem(key),KEY);};
  async function download(page,id,name){
+  if(id==='export-library')await openLibraryTools(page);
   const details=page.locator(id==='export'?'#export-menu':'details.library-backup');
   if(id==='export-library'&&!await details.isVisible()){
    const toggle=page.locator('#toggle-library');

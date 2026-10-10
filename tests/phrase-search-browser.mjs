@@ -1,3 +1,4 @@
+import {openLibraryTools} from './helpers/library-tools-browser.mjs';
 /** Real-browser acceptance, intended for CI or an explicitly approved browser
  * environment. Authored files and injected answers only; no model, CLI, media,
  * provider, external request or account is used. This file may be syntax-checked
@@ -31,6 +32,7 @@ async function screenshot(page, label) {
 }
 async function openLibrary(page, options = false) {
   if (!await page.locator('#library-search').isVisible()) await page.locator('#toggle-library').click();
+  if(options)await openLibraryTools(page);
   if (options && !await page.locator('#library-scope').isVisible()) await page.locator('.library-options > summary').click();
 }
 async function showLanguageTools(page) {

@@ -93,6 +93,11 @@ jobs:
       - name: Verify cross-library notebook, exact-source return and selected-document export
         if: ${{ !cancelled() && steps.browser_setup.outcome == 'success' }}
         run: node tests/library-notebook-browser.mjs
+      - name: Verify small-mobile library viewport, 500-document search, pages and resize focus
+        if: ${{ !cancelled() && steps.browser_setup.outcome == 'success' }}
+        env:
+          COCONUT_UI_SCREENSHOTS: ${{ runner.temp }}/coconut-authored-ui
+        run: node tests/compact-library-browser.mjs
       - name: Verify bounded large-library pages, complete search, removal and backup with authored data
         if: ${{ !cancelled() && steps.browser_setup.outcome == 'success' }}
         run: node tests/large-library-browser.mjs
@@ -192,6 +197,8 @@ jobs:
             ${{ runner.temp }}/coconut-authored-ui/autosave-geometry.json
             ${{ runner.temp }}/coconut-authored-ui/playback-follow-geometry.json
             ${{ runner.temp }}/coconut-authored-ui/playback-follow-scroll.json
+            ${{ runner.temp }}/coconut-authored-ui/compact-library-geometry.json
+            ${{ runner.temp }}/coconut-authored-ui/compact-library-failure.png
           if-no-files-found: ignore
           retention-days: 7
       - name: Remove temporary media and exports

@@ -1,3 +1,4 @@
+import {openLibraryTools} from './helpers/library-tools-browser.mjs';
 /** Real Chromium project continuity through production HTTP/UI code.
  * All model responses and publisher endpoints are explicitly injected fixtures.
  * This verifies storage, scopes, playback and recovery, never model quality. */
@@ -42,7 +43,7 @@ try{
  async function download(button,filename){const [item]=await Promise.all([page.waitForEvent('download'),page.locator(button).click()]);const file=path.join(directory,filename);await item.saveAs(file);return file;}
  await page.locator('#export-menu > summary').click();const backup=await download('#export','project.json');
  if(!await page.locator('#export-menu').evaluate(n=>n.open))await page.locator('#export-menu > summary').click();const notes=await download('#export-notebook','notes.md');const markdown=await readFile(notes,'utf8');check('notebook_exports_all_original_project_annotations',markdown.includes('PRIVATE PROJECT NOTE')&&markdown.includes('PRIVATE BOOKMARK')&&markdown.includes('不是原文'));
- await page.locator('.library-backup > summary').click();const library=await download('#export-library','library.json');
+ await openLibraryTools(page);await page.locator('.library-backup > summary').click();const library=await download('#export-library','library.json');
  const restored=await newPage();await restored.locator('#file').setInputFiles(backup);await restored.waitForFunction(()=>document.querySelector('#summary-state').dataset.state==='current');await restored.locator('#summary-citations button').click();
  check('single_json_restores_summary_translation_and_root_annotations',await restored.locator('#project-note').inputValue()==='PRIVATE PROJECT NOTE'&&await restored.locator('.translation').count()===2&&await restored.locator('#audio-bookmarks textarea').inputValue()==='PRIVATE BOOKMARK');
  check('restore_never_reuses_blob_or_downloads_without_click',await restored.locator('audio').count()===0&&sourceCalls.filter(c=>c==='media').length===1&&modelInputs.length===2);

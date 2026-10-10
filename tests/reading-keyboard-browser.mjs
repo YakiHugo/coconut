@@ -1,3 +1,4 @@
+import {openLibraryTools} from './helpers/library-tools-browser.mjs';
 /** CI-only real Chromium keyboard acceptance. All text and translations are
  * authored fixtures; the only audio is a locally generated tone-only WAV.
  * No provider, AI response, CLI session, recording or external service is used. */
@@ -72,6 +73,7 @@ async function ignoredKeys(label, selector, keys = shortcuts) {
   check(label + '_preserves_media_preview_and_reading_mode', sameInteraction(before, await interactionState()));
 }
 async function openRemoval(title) {
+  await openLibraryTools(page);
   const options = page.locator('#library-options, details.library-options');
   if (!await options.evaluate(node => node.open)) await options.locator('summary').click();
   await page.getByRole('button', {name: '从书架移除 ' + title, exact: true}).click();

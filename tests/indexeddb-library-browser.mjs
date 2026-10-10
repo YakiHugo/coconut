@@ -1,3 +1,4 @@
+import {openLibraryTools} from './helpers/library-tools-browser.mjs';
 /** GitHub Actions only: native IndexedDB, authored fixtures, no external content or models. */
 import assert from 'node:assert/strict';
 import {createServer} from 'node:http';
@@ -40,7 +41,7 @@ try{
  stage='complete migration and exact raw recovery';check('production_backend_is_indexeddb',await page.evaluate(()=>CoconutStorageBootstrap.result.backend==='indexeddb'));
  check('migration_reads_all_original_documents',(await disk(page)).documents.length===2);check('original_localstorage_bytes_never_rewritten',await page.evaluate(key=>localStorage.getItem(key),KEY)===original);
  const snapshot=await page.evaluate(name=>new Promise((resolve,reject)=>{const open=indexedDB.open(name);open.onsuccess=()=>{const db=open.result,tx=db.transaction('legacySnapshots'),request=tx.objectStore('legacySnapshots').get('legacy-v1');tx.oncomplete=()=>{db.close();resolve(request.result.raw);};tx.onabort=()=>reject(tx.error);};}),NAME);assert.equal(snapshot,original);
- await page.locator('.library-backup > summary').click();assert.equal(await download(page,'#export-original-storage'),original);checks.push('original_raw_download_bytes_match');
+ await openLibraryTools(page);await page.locator('.library-backup > summary').click();assert.equal(await download(page,'#export-original-storage'),original);checks.push('original_raw_download_bytes_match');
  stage='dirty-only generation receipt';await page.evaluate(()=>{storageProof.writes.length=0;storageProof.held=true;});await note(page,'First captured note');await page.waitForFunction(()=>storageProof.pending.length===1);
  await page.locator('#note').fill('Newer note while commit waits');check('pending_label_is_not_a_disk_receipt',await page.locator('#save-status').getAttribute('data-state')==='pending'&&!(await disk(page)).documents[0].notes.one);
  await page.evaluate(()=>{storageProof.pending[0].commit();storageProof.held=false;});await flush(page);await page.waitForFunction(()=>document.getElementById('save-status').dataset.state==='saved');

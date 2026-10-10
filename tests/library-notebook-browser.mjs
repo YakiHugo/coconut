@@ -1,3 +1,4 @@
+import {openLibraryTools} from './helpers/library-tools-browser.mjs';
 /** CI-only: authored captures, actual downloads and narrow-screen source return. */
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
@@ -14,7 +15,7 @@ try{
  const docs=largeLibraryFixture(2,{cues:65});for(const doc of docs){doc.segments.forEach((cue,i)=>{cue.id='shared-'+i;cue.saved_excerpt=true;});doc.notes={'shared-64':'Final private note '+doc.key};}
  await page.locator('#library-file').setInputFiles({name:'authored-notebook.json',mimeType:'application/json',buffer:Buffer.from(JSON.stringify({format:'coconut-library',version:1,documents:docs,active:docs[0].key}))});
  await waitForPersistedLibrary(page,async()=>(await readPersistedLibrary()).documents.length===2);
- const originalTitle=await page.locator('#title').textContent();if(!await page.locator('#open-library-notebook').isVisible())await page.locator('#toggle-library').click();await page.locator('#open-library-notebook').click();
+ const originalTitle=await page.locator('#title').textContent();if(!await page.locator('#open-library-notebook').isVisible())await page.locator('#toggle-library').click();await openLibraryTools(page);await page.locator('#open-library-notebook').click();
  assert.equal(await page.locator('.notebook-capture').count(),30);assert.equal(await page.locator('#title').textContent(),originalTitle);
  assert.ok(await page.locator('#library-notebook').evaluate(n=>n.getBoundingClientRect().right<=innerWidth&&n.scrollWidth<=n.clientWidth));
  await page.locator('#notebook-search').fill('Authored shelf 00001');await page.locator('#notebook-next').click();await page.locator('#notebook-next').click();assert.equal(await page.locator('.notebook-capture').count(),5);
@@ -26,7 +27,7 @@ try{
  const pending=page.waitForEvent('download');await page.locator('#notebook-export').click();const download=await pending,markdown=await fs.readFile(await download.path(),'utf8');
  assert.match(markdown,/所选 1 篇/);assert.match(markdown,/Authored document 1, source sentence 0/);assert.match(markdown,/source sentence 64/);assert.doesNotMatch(markdown,/Authored document 0/);
  await page.keyboard.press('Escape');assert.equal(await page.locator('#library-notebook').evaluate(n=>n.open),false);
- if(!await page.locator('#open-library-notebook').isVisible())await page.locator('#toggle-library').click();await page.locator('#open-library-notebook').click();await page.locator('#notebook-close').click();
+ if(!await page.locator('#open-library-notebook').isVisible())await page.locator('#toggle-library').click();await openLibraryTools(page);await page.locator('#open-library-notebook').click();await page.locator('#notebook-close').click();
  assert.equal(external,0);assert.equal(mutations,0);assert.deepEqual(errors,[]);
  console.log('Library notebook: bounded mobile browsing, qualified source, keyboard return, actual full-document export, Escape and reopen passed.');
 }finally{await browser?.close();await new Promise(resolve=>server?server.close(resolve):resolve());}

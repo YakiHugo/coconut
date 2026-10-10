@@ -1,3 +1,4 @@
+import {openLibraryTools} from './helpers/library-tools-browser.mjs';
 /** CI-only Chromium, authored data and an injected writer delay. No model calls. */
 import assert from 'node:assert/strict';
 import {createServer} from 'node:http';
@@ -44,7 +45,7 @@ try{
  assert.equal(prompt,true);assert.equal(await page.locator('#note').inputValue(),'Recover this complete document');
  await page.evaluate(()=>window.restoreSaveStorage());await page.locator('#retry-save').click();await page.waitForFunction(()=>document.getElementById('save-status').dataset.state==='saved');await page.reload();
  assert.equal(await page.evaluate(key=>JSON.parse(localStorage.getItem(key)).documents[0].notes.one,KEY),'Recover this complete document');
- stage='pending removal and inaccessible provisional undo';if(!await page.locator('#library').isVisible())await page.locator('#toggle-library').click();await page.locator('#library-options > summary').click();
+ stage='pending removal and inaccessible provisional undo';if(!await page.locator('#library').isVisible())await page.locator('#toggle-library').click();await openLibraryTools(page);await page.locator('#library-options > summary').click();
  await page.locator('.library-entry[data-document-key="a"] .library-remove').click();await page.locator('#confirm-removal').click();await page.waitForFunction(()=>!document.getElementById('removal-recovery').hidden);
  await page.evaluate(()=>{saveProof.hold=true;});await page.locator('#undo-removal').click();
  assert.equal(await page.locator('.library-entry[data-document-key="a"] .library-open').isDisabled(),true);
