@@ -216,6 +216,12 @@ async function fingerprintMedia(file){
  }
  return 'file-candidate-v1:'+JSON.stringify([file.name,file.size,file.lastModified,file.type,offsets,samples]);
 }
+// A reselected document can reuse its player and source while retiring the
+// earlier navigation's playback request. Error guidance follows that lifetime.
+function playbackErrorOwner(player,doc=active()){
+ const source=player.getAttribute('src'),attachment=browserMedia.get(doc?.key),selection=activeSelectionRevision;
+ return ()=>active()===doc&&activeSelectionRevision===selection&&$('source-media').querySelector('audio,video')===player&&player.getAttribute('src')===source&&browserMedia.get(doc?.key)===attachment;
+}
 function takeListeningOwnership(){if(listeningSession){listeningSession.preview=false;listeningSession.engaged=true;}}
 function listeningPreview(){return passagePlayback?.getState();}
 function renderListeningResume(){
@@ -1188,7 +1194,11 @@ function render({keepNoteEditor=false}={}) {
 				passagePlayback?.cancel();stopRepeating();
 				const mapped=s.start+timingOffset();if(!Number.isFinite(mapped)||mapped<0||(Number.isFinite(player.duration)&&mapped>player.duration)){notice('校准后的时间超出媒体范围，未定位。');return;}
                 player.currentTime = mapped;takeListeningOwnership();
-				player.play().catch(() => notice("请点击播放器开始播放，再按时间戳定位。"));
+				const ownsPlaybackError=playbackErrorOwner(player,doc);
+                player.play().catch(error=>{
+                 if(error?.name==='AbortError'||!ownsPlaybackError())return;
+                 notice("请点击播放器开始播放，再按时间戳定位。");
+                });
 			};
 			meta.append(seek);
    const repeat=el("button","repeat-button",repeating?.id===s.id?"正在循环 · 停止":"循环回听此段");
@@ -1994,7 +2004,7 @@ function suspendReadingFollow(reason='手动浏览'){
 function followBlocked(){
  if(workspace!=='read'||document.hidden||document.querySelector('dialog[open]')||selected||readingContext||passageReturn)return true;
  const focused=document.activeElement;
- return !!(focused?.matches('input,textarea,select,[contenteditable="true"]')||focused?.closest('#transcript,#passage-body'));
+ return !!((focused?.matches('input,textarea,select,[contenteditable="true"]')&&!focused.closest(followTransport))||focused?.closest('#transcript,#passage-body'));
 }
 function advanceReadingFollow(){
  if(!followOwns()||readingFollow.suspended||!followAvailable())return;
@@ -2048,7 +2058,7 @@ window.addEventListener('wheel',()=>suspendReadingFollow(),{capture:true,passive
 window.addEventListener('touchstart',event=>{if(!event.target.closest?.(followTransport))suspendReadingFollow();},{capture:true,passive:true});
 document.addEventListener('pointerdown',event=>{if(!event.target.closest?.(followTransport))suspendReadingFollow();},true);
 document.addEventListener('click',event=>{if(event.target.closest?.('button,a,summary,input,select,textarea')&&!event.target.closest(followTransport))suspendReadingFollow();},true);
-document.addEventListener('input',()=>suspendReadingFollow('正在输入'),true);
+document.addEventListener('input',event=>{if(!event.target.closest?.(followTransport))suspendReadingFollow('正在输入');},true);
 document.addEventListener('focusin',event=>{if(event.target.matches?.('input,textarea,select,[contenteditable="true"]')&&!event.target.closest(followTransport))suspendReadingFollow('正在输入');},true);
 document.addEventListener('keydown',event=>{if(['ArrowUp','ArrowDown','PageUp','PageDown','Home','End',' '].includes(event.key)&&!event.target.closest?.(followTransport))suspendReadingFollow();},true);
 window.addEventListener('coconut-render',refreshReadingFollow);
@@ -2084,8 +2094,9 @@ $('dock-play').onclick=async()=>{
  if(!player||player.error||!Number.isFinite(player.duration)||player.duration<=0)return;
  if(!player.paused){player.pause();refreshPlaybackDock();return;}
  if(passagePlayback?.getState().status==='finished')passagePlayback.cancel();
+ const ownsPlaybackError=playbackErrorOwner(player);
  try{if(player.ended){stopRepeating();player.currentTime=0;}await player.play();}
- catch(error){if(error?.name!=='AbortError'&&player===$('source-media').querySelector('audio,video'))notice('媒体暂时无法播放，请回到播放器检查文件或重试。');}
+ catch(error){if(error?.name!=='AbortError'&&ownsPlaybackError())notice('媒体暂时无法播放，请回到播放器检查文件或重试。');}
  refreshPlaybackDock();
 };
 $('media-dock').addEventListener('focusout',schedulePlaybackDock);

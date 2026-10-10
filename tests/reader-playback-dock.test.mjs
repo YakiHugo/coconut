@@ -110,3 +110,17 @@ test('subsecond time events do not rewrite the dock or reset its focused control
   m.player.currentTime=2.1;m.refresh();assert.ok(observer.takeRecords().length>0);assert.equal($('dock-current').textContent,'00:02');observer.disconnect();
  }finally{await env.w.happyDOM.close();}
 });
+test('dock playback errors follow selection and source ownership while current failures remain visible',async()=>{
+ for(const action of ['reselect','source','current']){
+  const env=setup();try{const {$,w}=env,m=await media(env);let rejectPlay;
+   m.player.play=()=>new Promise((resolve,reject)=>{rejectPlay=reject;});
+   const pending=$('dock-play').onclick();
+   if(action==='reselect')$('library').querySelector('.library-open').click();
+   if(action==='source')m.player.setAttribute('src','blob:authored-replacement');
+   const before=$('notice').textContent;
+   rejectPlay(Object.assign(new Error('play permission denied'),{name:'NotAllowedError'}));await pending;
+   assert.equal($('source-media').querySelector('audio'),m.player);
+   assert.equal($('notice').textContent,action==='current'?'媒体暂时无法播放，请回到播放器检查文件或重试。':before,action);
+  }finally{await env.w.happyDOM.close();}
+ }
+});
