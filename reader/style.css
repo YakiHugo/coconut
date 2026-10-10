@@ -771,6 +771,14 @@ body[data-reading-mode="passages"] .passage:first-child { padding-top: 8px; }
 }
 
 
+/* At the narrowest phone widths the utility controls wrap onto two rows.
+   Trim only surrounding chrome, preserving the two-line title and 44px targets. */
+@media (max-width:360px) {
+ body[data-reading-mode="passages"] aside { padding-bottom: 4px; }
+ body[data-reading-mode="passages"][data-workspace="read"] > .shell > main > header { padding: 4px 0; }
+}
+
+
 /* Success feedback and bounded playback share one measured-by-layout stack.
    Neither can intercept the other's controls when labels wrap or media docks. */
 #notice-home { display: contents; }
