@@ -300,6 +300,35 @@
   }
   return scope==='text'&&doc.segments.some(segment=>matches(segment.text));
  }
+ // Return small, source-backed previews, never HTML or a synthetic summary.
+ function librarySnippet(value, query) {
+  if(typeof value!=='string'||!query.trim())return null;
+  const needle=query.trim().toLocaleLowerCase(),folded=value.toLocaleLowerCase(),offset=folded.indexOf(needle);
+  if(offset<0)return null;
+  // Case folding may expand a character (e.g. İ); map back to real code points.
+  const chars=Array.from(value);let position=0,start=0,end=chars.length;
+  for(let i=0;i<chars.length;i++){
+   const next=position+chars[i].toLocaleLowerCase().length;
+   if(position<=offset&&next>offset)start=i;
+   if(next>=offset+needle.length){end=i+1;break;}
+   position=next;
+  }
+  const left=Math.max(0,start-35),right=Math.min(chars.length,Math.max(end,start+100),end+65);
+  return {before:(left?'…':'')+chars.slice(left,start).join(''),match:chars.slice(start,Math.min(end,start+120)).join('')+(end-start>120?'…':''),after:chars.slice(end,right).join('')+(right<chars.length?'…':'')};
+ }
+ function libraryHits(doc,query,scope='title',limit=3) {
+  if(!query.trim()||scope==='title')return [];
+  const hits=[],cap=Math.max(0,Math.min(10,Math.floor(limit)||0));
+  const add=(kind,id,text,time)=>{if(hits.length>=cap)return;const snippet=librarySnippet(text,query);if(snippet)hits.push({kind,id,time,snippet});};
+  add('project-note',null,doc.project_note);
+  for(const bookmark of doc.timestamp_bookmarks||[]){add('bookmark',bookmark.id,bookmark.note,bookmark.time);if(hits.length>=cap)return hits;}
+  for(const segment of doc.segments){
+   add('note',segment.id,doc.notes?.[segment.id],segment.start);
+   if(scope==='text')add('text',segment.id,segment.text,segment.start);
+   if(hits.length>=cap)break;
+  }
+  return hits;
+ }
  function sortedLibrary(documents, order) {
   const result=documents.slice();
   if(order==='title')result.sort((a,b)=>a.title.localeCompare(b.title,'zh-Hans',{numeric:true,sensitivity:'base'}));
@@ -686,7 +715,7 @@
 			segments,
 		});
 	}
-	const api = { vttPayload, hasProjectAnnotations, projectAnnotationCount, attachProjectTranscript, libraryMatches, documentDuration, sortedLibrary, AUDIO_NOTE_BUDGET, audioNoteCharacters, isAudioProject, audioProjectIdentity, SUMMARY_QUESTION, summaryReadiness, podcastURL, podcastSource, cleanGlossary, relevantGlossary, translationQualityMessage, retainAnswers, summaryFreshness, latestSummary, summaryMarkdown, aiReadingMarkdown, parseReadingTime, createPlaybackIndex, segmentAtTime, subtitleExport, mergeLibraryBackup, time, source, media, validate, parse, matchesSegment, notebookSegments, notebookMarkdown, translationCurrent, sameCueSnapshot, subscriptionPlan, cleanContexts, answerFreshness };
+	const api = { vttPayload, libraryHits, librarySnippet, hasProjectAnnotations, projectAnnotationCount, attachProjectTranscript, libraryMatches, documentDuration, sortedLibrary, AUDIO_NOTE_BUDGET, audioNoteCharacters, isAudioProject, audioProjectIdentity, SUMMARY_QUESTION, summaryReadiness, podcastURL, podcastSource, cleanGlossary, relevantGlossary, translationQualityMessage, retainAnswers, summaryFreshness, latestSummary, summaryMarkdown, aiReadingMarkdown, parseReadingTime, createPlaybackIndex, segmentAtTime, subtitleExport, mergeLibraryBackup, time, source, media, validate, parse, matchesSegment, notebookSegments, notebookMarkdown, translationCurrent, sameCueSnapshot, subscriptionPlan, cleanContexts, answerFreshness };
 	if (typeof module !== "undefined" && module.exports) module.exports = api;
 	else root.Coconut = api;
 })(typeof window !== "undefined" ? window : globalThis);

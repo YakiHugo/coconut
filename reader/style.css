@@ -788,3 +788,10 @@ body[data-media-docked="true"] .reading-feedback { bottom: 94px; }
     feedback also yields until it closes. Persistent errors stay in notice-home. */
  body:has(#notes-panel:not([hidden])) .reading-feedback { display: none; }
 }
+
+.library-entry { display: grid; grid-template-columns: minmax(0, 1fr) auto; min-width: 0; }
+.library-hits { grid-column: 1 / -1; display: grid; gap: 2px; padding: 0 5px 8px; }
+#library .library-hit { font-size: 12px; line-height: 1.6; border-left: 2px solid var(--line); border-radius: 0 6px 6px 0; }
+.library-hit-preview { display: block; white-space: pre-wrap; }
+.library-hit mark { background: #f5e5a2; color: inherit; }
+#library button:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
