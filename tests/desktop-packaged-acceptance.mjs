@@ -150,6 +150,7 @@ try{
  check('ai_remains_unverified_without_cli_probe',(await page.locator('#ai-status').textContent()).includes('点击')&&await page.locator('#ask-ai').isDisabled()&&!await page.locator('#ai-consent').isChecked());
  check('no_silent_inference',!(await stored(page)).ai_answers?.length);
  await page.locator('#mode-transcript').click();
+ if(!await page.locator('#attach-reader-media').isVisible())await page.locator('#toggle-reader-media').click();
  const [chooser]=await Promise.all([page.waitForEvent('filechooser'),page.locator('#attach-reader-media').click()]);await chooser.setFiles(audioPath);
  await page.waitForFunction(()=>{const media=document.querySelector('#source-media audio');return media&&!media.error&&media.readyState>=2&&media.duration>9;});
  check('packaged_audio_decodes',await page.locator('#source-media audio').evaluate(media=>Math.abs(media.duration-10)<0.1));
@@ -199,6 +200,7 @@ try{
  check('packaged_audio_project_import_preserves_transcript_shelf',await page.evaluate(()=>JSON.parse(localStorage.getItem('coconut-reader-v1')).documents.length)===2);
  check('packaged_audio_source_is_metadata_only',(await stored(page)).podcast_source.media_url===audioFixture.podcast_source.media_url&&await page.locator('#source-media audio').count()===0&&forbiddenRequests===0);
  await page.locator('#project-note').fill('Native project note survives app restart');
+ if(!await page.locator('#attach-reader-media').isVisible())await page.locator('#toggle-reader-media').click();
  const [audioChooser]=await Promise.all([page.waitForEvent('filechooser'),page.locator('#attach-reader-media').click()]);await audioChooser.setFiles(audioPath);
  await page.waitForFunction(()=>{const media=document.querySelector('#source-media audio');return media&&!media.error&&media.readyState>=2&&media.duration>9;});
  await page.locator('#source-media audio').evaluate(media=>{media.pause();media.currentTime=4.25;});

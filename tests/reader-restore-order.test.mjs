@@ -11,7 +11,7 @@ function setup(){
  const w=new Window({url:'https://coconut.example/'});
  w.document.body.innerHTML=fs.readFileSync(new URL('reader/index.html',root),'utf8').split('<body>')[1].split('</body>')[0];Object.defineProperty(w,'crypto',{value:webcrypto});
  w.fetch=()=>{throw new Error('Local import and restore must not send a network request');};
- w.eval(['summary','core','app','language','podcasts'].map(name=>fs.readFileSync(new URL('reader/'+name+'.js',root),'utf8')).join('\n'));
+ w.eval(['summary','core','passages','passage-playback','app','language','podcasts'].map(name=>fs.readFileSync(new URL('reader/'+name+'.js',root),'utf8')).join('\n'));
  const $=id=>w.document.getElementById(id);
  for(const id of ['file','library-file'])Object.defineProperty($(id),'value',{configurable:true,writable:true,value:''});
  const choose=(kind,data,{text=async()=>JSON.stringify(data),name=kind+'.json'}={})=>{

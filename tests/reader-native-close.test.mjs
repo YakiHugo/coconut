@@ -9,7 +9,7 @@ function setup(){
  w.document.body.innerHTML=fs.readFileSync(new URL('reader/index.html',root),'utf8').split('<body>')[1].split('</body>')[0];
  Object.defineProperty(w,'crypto',{value:webcrypto});
  w.coconutUpdates={state:async()=>({status:'idle',version:'test',arch:'arm64'}),subscribe:()=>{}};
- for(const file of ['summary','core'])w.eval(fs.readFileSync(new URL(`reader/${file}.js`,root),'utf8'));
+ for(const file of ['summary','core','passages','passage-playback'])w.eval(fs.readFileSync(new URL(`reader/${file}.js`,root),'utf8'));
  w.eval(['app','language','podcasts'].map(file=>fs.readFileSync(new URL(`reader/${file}.js`,root),'utf8')).join('\n')+'\nlet sourceSubmitting=false,sourceCaptionRequest=null;\n'+fs.readFileSync(new URL('reader/updates.js',root),'utf8')+'\nwindow.closeTest={start(){asking=true;summaryScope={stop:false};},revision:()=>localImportRevision,stopped:()=>summaryScope.stop,answer(question){active().ai_answers=[{question,answer:"Authored answer",citations:["demo-1"],provider:"fixture"}];save();},requests(){sourceCaptionRequest=new AbortController();podcastRequest=new AbortController();podcastMediaRequest=new AbortController();projectCaptionRequest={controller:new AbortController()};return [sourceCaptionRequest,podcastRequest,podcastMediaRequest,projectCaptionRequest.controller];}};');
  return {w,$:id=>w.document.getElementById(id)};
 }

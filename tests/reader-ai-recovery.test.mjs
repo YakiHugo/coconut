@@ -12,7 +12,7 @@ function setup(stored){
  w.document.body.innerHTML=fs.readFileSync(new URL('reader/index.html',root),'utf8').split('<body>')[1].split('</body>')[0];
  Object.defineProperty(w,'crypto',{value:webcrypto});if(stored)w.localStorage.setItem(KEY,stored);
  w.fetch=async()=>{throw new Error('No automatic request is allowed in this fixture');};
- w.eval(['summary','core','app','language'].map(name=>fs.readFileSync(new URL('reader/'+name+'.js',root),'utf8')).join('\n'));
+ w.eval(['summary','core','passages','passage-playback','app','language'].map(name=>fs.readFileSync(new URL('reader/'+name+'.js',root),'utf8')).join('\n'));
  return {w,$:id=>w.document.getElementById(id)};
 }
 async function importDocument(w,doc){
@@ -42,6 +42,7 @@ async function leave(w,$,reason){
  if(reason==='demo-tools'){$('toggle-demo-tools').click();$('toggle-demo-tools').click();}
  if(reason==='undelivered-toggle'){$('language-panel').addEventListener('toggle',event=>event.stopImmediatePropagation(),{capture:true});$('language-panel').open=false;}
  if(reason==='add-workspace'){$('add-content').click();$('back-reading').click();}
+ if(reason==='passages-tab'){$('mode-passages').click();$('mode-transcript').click();$('language-panel').open=true;}
  if(reason==='summary-tab'){$('mode-summary').click();$('mode-transcript').click();}
  if(reason==='other-document')await importDocument(w,fixture('An unrelated second episode',1));
  if(reason==='consent-revoked'){$('ai-consent').checked=false;$('ai-consent').dispatchEvent(new w.Event('change'));}
@@ -49,7 +50,7 @@ async function leave(w,$,reason){
  $('ai-consent').checked=true;
 }
 
-for(const mode of ['subscription','offline'])for(const reason of ['pagehide','close-panel','demo-tools','undelivered-toggle','add-workspace','summary-tab','other-document',...(mode==='subscription'?['consent-revoked']:[])]){
+for(const mode of ['subscription','offline'])for(const reason of ['pagehide','close-panel','demo-tools','undelivered-toggle','add-workspace','summary-tab','passages-tab','other-document',...(mode==='subscription'?['consent-revoked']:[])]){
  test(`${mode} translation stops after its current batch on ${reason}, even after reopening`,async()=>{
   const {w,$}=setup();let mock;
   try{

@@ -95,6 +95,7 @@ try {
  await page.locator('#summary-citations button').click();
  check('citation_opens_original',await page.locator('#transcript-layout').isVisible()&&await page.locator('.segment[data-segment-id="second"]').evaluate(n=>n===document.activeElement));
  async function attach(filename,kind){
+  if(!await page.locator('#attach-reader-media').isVisible())await page.locator('#toggle-reader-media').click();
   const [chooser]=await Promise.all([page.waitForEvent('filechooser'),page.locator('#attach-reader-media').click()]);await chooser.setFiles(filename);
   await page.waitForFunction(kind=>{const p=document.querySelector('#source-media '+kind);return p&&!p.error&&p.readyState>=2&&p.duration>0;},kind);
   check(kind+'_uses_browser_file',(await page.locator('#source-media '+kind).getAttribute('src')).startsWith('blob:'));
@@ -131,7 +132,7 @@ try {
  check('mobile_summary_fits',await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth));await capture(page,'04-mobile-summary');
  const oversize={title:'Synthetic summary limit test',language:'en',segments:Array.from({length:20001},(_,i)=>({id:'limit-'+i,start:i,end:i+1,text:i?'Other cue':'Unique selected source'}))};
  await page.locator('#file').setInputFiles({name:'summary-limit.json',mimeType:'application/json',buffer:Buffer.from(JSON.stringify(oversize))});
- await page.locator('#summary-readiness').waitFor({state:'visible'});
+ await page.locator('#mode-summary').click();await page.locator('#summary-readiness').waitFor({state:'visible'});
  check('oversize_summary_blocked_before_consent',await page.locator('#prepare-summary').isDisabled()&&!(await page.locator('#ai-consent').isChecked()));
  check('mobile_summary_limit_fits',await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth));
  await page.locator('#summary-select-excerpt').click();await page.locator('#search').fill('Unique selected');
@@ -144,11 +145,14 @@ try {
  // Navigation uses real authored source text, including the last page, never invented chapters.
  const longSource={title:'一份长文字稿 · 自写导航验证',language:'en',segments:Array.from({length:221},(_,i)=>({id:'map-'+i,start:i*10,end:i*10+9,text:'Original authored passage '+(i+1)+'. Click a source position to keep reading, then leave your own note.'}))};
  await page.locator('#file').setInputFiles({name:'authored-long-source.json',mimeType:'application/json',buffer:Buffer.from(JSON.stringify(longSource))});
- await page.setViewportSize({width:1360,height:1000});
+ await page.setViewportSize({width:1360,height:1000});await page.locator('#mode-summary').click();
  check('source_map_is_bounded',await page.locator('#overview-segments button').count()===6&&await page.locator('#reading-jump option').count()===21);
  await capture(page,'05-source-overview');
  await page.locator('#overview-segments button').last().click();
- check('source_map_opens_last_page',await page.locator('.segment[data-segment-id="map-220"]').evaluate(n=>n===document.activeElement));
+ check('source_map_opens_last_original_passage',await page.locator('.passage-original .passage-cue[data-cue-id="map-220"]').count()===1);
+ await page.locator('.passage').filter({has:page.locator('.passage-original .passage-cue[data-cue-id="map-220"]')}).locator('.passage-details').click();
+ await page.locator('#reading-jump').selectOption('map-220');
+ check('source_passage_details_keep_exact_last_cue',await page.locator('.segment[data-segment-id="map-220"]').evaluate(n=>n===document.activeElement));
  await page.locator('#search').fill('absent phrase');await page.locator('#reading-jump').selectOption('map-0');
  check('source_navigation_recovers_from_empty_search',await page.locator('#search').inputValue()===''&&await page.locator('.segment[data-segment-id="map-0"]').evaluate(n=>n===document.activeElement));
  // Search isolates a real sentence fragment; context must recover its actual

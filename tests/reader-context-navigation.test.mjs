@@ -12,6 +12,8 @@ function setup() {
  const calls=[];w.fetch=async(...args)=>{calls.push(args);throw new Error('Unexpected network request');};
  w.eval(fs.readFileSync(new URL('reader/summary.js',root),'utf8'));
  w.eval(fs.readFileSync(new URL('reader/core.js',root),'utf8'));
+ w.eval(fs.readFileSync(new URL('reader/passages.js',root),'utf8'));
+ w.eval(fs.readFileSync(new URL('reader/passage-playback.js',root),'utf8'));
  w.eval(['app','language','podcasts'].map(name=>fs.readFileSync(new URL('reader/'+name+'.js',root),'utf8')).join('\n'));
  w.HTMLElement.prototype.scrollIntoView=function(options){w.scrolled=this.dataset.segmentId;w.lastScrollOptions=options;};
  return {w,$:id=>w.document.getElementById(id),calls};
@@ -130,9 +132,13 @@ test('context detour latches stop for queued translation even after returning an
 });
 
 
-test('ordinary source navigation retains its existing scroll behavior',async()=>{
+test('source passage detail navigation retains the ordinary cue scroll behavior',async()=>{
  const {w,$}=setup();try{
   await load($);$('mode-summary').click();$('overview-segments').lastElementChild.click();
+  const passage=w.document.activeElement;
+  assert.equal(passage.dataset.firstCueId,'split-1770');assert.equal(w.lastScrollOptions.behavior,'auto');
+  passage.querySelector('.passage-details').click();
+  assert.equal(w.document.activeElement.dataset.segmentId,'split-1770');
   assert.equal(w.scrolled,'split-1770');assert.equal(w.lastScrollOptions.behavior,'smooth');
   assert.equal($('reading-context').hidden,true);
  }finally{await w.happyDOM.close();}

@@ -13,6 +13,8 @@ function setup(saved) {
   if (saved) w.localStorage.setItem(key, saved);
   w.eval(fs.readFileSync(new URL('reader/summary.js', root), 'utf8'));
   w.eval(fs.readFileSync(new URL('reader/core.js', root), 'utf8'));
+  w.eval(fs.readFileSync(new URL('reader/passages.js', root), 'utf8'));
+  w.eval(fs.readFileSync(new URL('reader/passage-playback.js', root), 'utf8'));
   w.eval(['app', 'language', 'podcasts'].map(name => fs.readFileSync(new URL('reader/' + name + '.js', root), 'utf8')).join('\n'));
   const calls = [];
   w.fetch = async (...args) => {calls.push(args); throw new Error('Unexpected network request');};
@@ -69,7 +71,11 @@ test('last-page note, edit, excerpt and resume survive reload and both JSON reco
   const {w, $, calls} = setup(); let saved, singleBackup, libraryBackup;
   try {
     await importDocument($, longReadingFixture());
-    $('overview-segments').lastElementChild.click();
+    $('mode-summary').click(); $('overview-segments').lastElementChild.click();
+    const passage = w.document.activeElement;
+    assert.ok(passage.classList.contains('passage'));
+    assert.ok(passage.querySelector('.passage-original [data-cue-id="harbor-1770"]'));
+    passage.querySelector('.passage-details').click();
     let last = rows(w).at(-1); assert.equal(last.dataset.segmentId, 'harbor-1770');
     last.querySelector('.note-button').click();
     $('note').value = 'My own closing thought.\n第二行：这份笔记应随备份完整保留。'; $('note').oninput();
@@ -100,7 +106,8 @@ test('last-page note, edit, excerpt and resume survive reload and both JSON reco
       const doc = activeDoc(env.w); assert.equal(doc.segments.length, 1771, recovery);
       assert.equal(doc.readingPosition, 'harbor-1770', recovery); assert.equal(doc.segments.at(-1).saved_excerpt, true, recovery);
       assert.match(doc.notes['harbor-1770'], /第二行/); assert.match(doc.segments.at(-1).original_text, /Harbor notebook 1771/);
-      env.$('resume').click(); assert.equal(env.w.document.activeElement.dataset.segmentId, 'harbor-1770', recovery);
+      env.$('mode-bilingual').click(); env.$('resume').click();
+      assert.equal(env.w.document.activeElement.dataset.segmentId, 'harbor-1770', recovery);
       assert.equal(rows(env.w).length, 71); assert.equal(env.calls.length, 0);
     } finally {await env.w.happyDOM.close();}
   }
@@ -131,7 +138,11 @@ test('long-document content state survives layout changes, note edits and litera
 test('bookmark activation should keep keyboard focus on the replacement bookmark control', async () => {
   const {w, $} = setup();
   try {
-    await importDocument($, longReadingFixture()); $('overview-segments').lastElementChild.click();
+    await importDocument($, longReadingFixture());
+    $('mode-summary').click(); $('overview-segments').lastElementChild.click();
+    const passage = w.document.activeElement;
+    assert.ok(passage.querySelector('.passage-original [data-cue-id="harbor-1770"]'));
+    passage.querySelector('.passage-details').click();
     const button = rows(w).at(-1).querySelector('.bookmark-button');
     button.focus(); button.click();
     assert.equal(w.document.activeElement.closest('.segment')?.dataset.segmentId, 'harbor-1770');
@@ -152,7 +163,8 @@ test('navigation aligns tall cue openings while ordinary cues stay centered', as
     };
     for (const [measuredHeight, expected] of [[1600, 'start'], [320, 'center']]) {
       height = measuredHeight;
-      $('overview-segments').lastElementChild.click();
+      $('mode-bilingual').click();
+      $('reading-jump').value = 'harbor-1770'; $('reading-jump').onchange();
       assert.equal(w.scrollRequests.at(-1).id, 'harbor-1770');
       assert.equal(w.scrollRequests.at(-1).options.block, expected);
       assert.equal(w.document.activeElement.dataset.segmentId, 'harbor-1770');

@@ -159,7 +159,7 @@ class Handler(SimpleHTTPRequestHandler):
             match = re.fullmatch(r'/api/jobs/([a-f0-9]{32})(/result)?', path)
             if match:
                 return self._json(200, self.jobs.result(match[1]) if match[2] else self.jobs.get(match[1]))
-            if path not in ('/', '/index.html', '/app.js', '/summary.js', '/core.js', '/jobs.js', '/language.js', '/podcasts.js', '/updates.js', '/style.css'):
+            if path not in ('/', '/index.html', '/app.js', '/summary.js', '/core.js', '/passages.js', '/passage-playback.js', '/jobs.js', '/language.js', '/podcasts.js', '/updates.js', '/style.css'):
                 return self._json(404, {'error': 'Not found'})
             if self.command == 'HEAD':
                 super().do_HEAD()

@@ -39,6 +39,10 @@ function recordPersistedSummaries() { persistedSummaries.clear();persistedSummar
 let mediaWorkerReady = false;
 let readingMode = "summary";
 let demoToolsExpanded=false;
+const PASSAGES_PER_PAGE=8;
+let passageDocumentKey=null,passageAnchor=null,passagePageStart=0,passageReturn=null;
+let passageTranslations=true,mediaExpandedKey=null,passagePlayback=null;
+function prefersPassageReading(doc){return !Coconut.isAudioProject(doc)&&doc?.provenance?.kind!=='authored_demo'&&doc?.segments.length>=12;}
 const browserMedia = new Map();
 const mediaSelectionRevisions = new Map();
 function mediaSelectionRevision(key){return mediaSelectionRevisions.get(key)||0;}
@@ -163,7 +167,8 @@ async function add(doc, canCommit = null, reuseAudioSource = false) {
 	if (!state.documents.some((d) => d.key === key))
 		state.documents.push({ ...doc, key, notes: doc.notes || {} });
 	state.active = key;
- setReadingMode("summary");
+ passageReturn=null;passageDocumentKey=key;passageAnchor=active()?.segments[0]?.id||null;
+ setReadingMode(prefersPassageReading(active())?"passages":"summary");
  searchFocusedId=null;
 	$("search").value = "";
 	selected = null;
@@ -176,7 +181,7 @@ async function add(doc, canCommit = null, reuseAudioSource = false) {
 }
 function showWorkspace(next) {
  if(next!==workspace)cancelLocalImports();
- if(next!=="read")clearReadingContext();
+ if(next!=="read"){clearReadingContext();passageReturn=null;passagePlayback?.cancel();}
  if(next!==workspace)window.dispatchEvent(new CustomEvent("coconut-workspace-change",{detail:{workspace:next}}));
  if(next!=="read"&&typeof closeSummaryRequest==="function")closeSummaryRequest(false);
  if(next!=="add")$("podcast-results")?.querySelectorAll("audio,video").forEach(player=>player.pause());
@@ -248,7 +253,8 @@ $('dismiss-reading-context').onclick=()=>{
  const row=[...$('transcript').querySelectorAll('.segment')].find(node=>node.dataset.segmentId===id);
  (row||$('search')).focus({preventScroll:true});
 };
-function goToSegment(id,contextDetour=false) {
+function goToSegment(id,contextDetour=false,preservePassageReturn=false) {
+ if(!preservePassageReturn)passageReturn=null;
  if(readingMode==='summary'||!$('summary-request').hidden||$('ai-task').value==='summary')closeSummaryRequest(false);
  readingMode = "transcript";
 	const doc = active();
@@ -285,7 +291,8 @@ function renderLibrary() {
    cancelLocalImports();
    stopRepeating();$("source-media").querySelector("audio,video")?.pause();closeSummaryRequest(false);
 			state.active = d.key;
-   setReadingMode("summary");
+   passageReturn=null;passageDocumentKey=null;
+   setReadingMode(prefersPassageReading(d)?"passages":"summary");
    searchFocusedId=null;
 			selected = null;
 			notesOnly = false; excerptsOnly = false; speakerFilter=null;
@@ -295,7 +302,7 @@ function renderLibrary() {
 			save();
 			showWorkspace("read");
 			render();
-			if (bookmark) goToSegment(bookmark.id);
+			if (bookmark){if(prefersPassageReading(d))openPassage(bookmark.id);else goToSegment(bookmark.id);}
 			else $("title").scrollIntoView?.({block: "start"});
 		};
 		$("library").append(b);
@@ -382,7 +389,13 @@ function render() {
  $('toggle-demo-tools').textContent=demoToolsExpanded?'收起工具':hasReadingFilter?'筛选中 · 查看':'搜索与工具';
  $('demo-guide').hidden=!isDemo;
  // The authored tryout has no media; don't suggest attaching an unrelated recording.
- $('episode-media').hidden=isDemo&&!mediaPath;
+ const mediaVisible=!!mediaPath||audioOnly||mediaExpandedKey===doc.key;
+ $('episode-media').hidden=(isDemo&&!mediaPath)||!mediaVisible;
+ $('toggle-reader-media').hidden=isDemo||audioOnly||!!mediaPath;
+ $('toggle-reader-media').setAttribute('aria-expanded',String(mediaVisible));
+ $('toggle-reader-media').textContent=mediaVisible?'收起原声设置':'关联原声 · 回听这一篇';
+ if(!passagePlayback)passagePlayback=CoconutPassagePlayback.create({getPlayer:()=>$('source-media').querySelector('audio,video'),getDocumentKey:()=>active()?.key,onChange:renderPassagePlayback});
+ passagePlayback.sync();
  $('reader-kind').textContent=isDemo?'一分钟试读':audioOnly?'原声项目':doc.language?doc.language.toUpperCase()+' · 原文可回查':'原文可回查';
  renderReadingNavigation(doc);
 	$("time-navigation-status").textContent="";
@@ -464,7 +477,7 @@ function render() {
 			seek.onclick = () => {
 				const player = mediaHost.querySelector("audio,video");
 				if (!player) return;
-				stopRepeating();
+				passagePlayback?.cancel();stopRepeating();
 				player.currentTime = s.start;
 				player.play().catch(() => notice("请点击播放器开始播放，再按时间戳定位。"));
 			};
@@ -575,7 +588,9 @@ function render() {
 		$("transcript").append(navigation);
 	}
  renderSummary();
+ renderPassages(doc);
  applyReadingMode();
+ pauseBoundedForCompactNote();
  if(cueFocus){
   const disclosure=[...document.querySelectorAll('.cue-more')].find(node=>node.dataset.cueKey===cueFocus.key);
   focusCueAction(disclosure?.querySelector(cueFocus.selector));
@@ -599,9 +614,10 @@ function playbackSegment() {
 }
 function highlightPlayback() {
  const segment=playbackSegment();
+ for(const span of $("passage-body").querySelectorAll(".passage-cue"))span.classList.toggle("passage-current",span.dataset.cueId===segment?.id);
  for(const row of $("transcript").querySelectorAll(".segment")) row.classList.toggle("playing",row.dataset.segmentId===segment?.id);
 }
-$("locate-playback").onclick=()=>{const segment=playbackSegment();if(segment){goToSegment(segment.id);highlightPlayback();}};
+$("locate-playback").onclick=()=>locateReadingPlayback();
 $("add-content").onclick = () => { showWorkspace("add"); ($("video-url")).focus(); };
  document.querySelector('.brand').onclick=event=>{event.preventDefault();showWorkspace('add');$('sample').focus();};
  $('demo-finish').onclick=()=>$('add-content').click();
@@ -634,7 +650,7 @@ $("close-note").onclick = () => {
 	const row = [...$("transcript").querySelectorAll(".segment")].find(row => row.dataset.segmentId === id);
 	row?.querySelector(".note-button")?.focus();
 };
-$("return-excerpt").onclick = () => goToSegment(selected);
+$("return-excerpt").onclick = () => goToSegment(selected,false,!!passageReturn);
 document.addEventListener("keydown", event => {
 	if (event.key === "Escape" && selected && !$("export-menu").open && !document.querySelector("dialog[open]")) $("close-note").click();
 });
@@ -745,7 +761,7 @@ function renderAudioProject(doc) {
    const player=$('source-media').querySelector('audio,video');
    if(!player||!Number.isFinite(player.duration)||player.duration<=0){$('audio-project-status').textContent='请先单独获取原声，或选择对应的本地文件，等加载完成后再定位。';return;}
    if(item.time>player.duration){$('audio-project-status').textContent='书签超出当前媒体范围，请核对是否选择了对应文件。';return;}
-   try{stopRepeating();player.currentTime=item.time;$('audio-project-status').textContent='已定位到 '+Coconut.time(item.time)+'；未自动播放。';}
+   try{passagePlayback?.cancel();stopRepeating();player.currentTime=item.time;$('audio-project-status').textContent='已定位到 '+Coconut.time(item.time)+'；未自动播放。';}
    catch{$('audio-project-status').textContent='媒体暂时无法定位，书签仍然保留。';}
   };
   const input=el('textarea');input.rows=2;input.value=item.note;input.setAttribute('aria-label',Coconut.time(item.time)+' 的书签笔记');
@@ -895,6 +911,7 @@ $("sample").onclick = async () => {
  } catch(error){notice('示例打开失败：'+error.message);}
  finally{$('sample').disabled=false;}
 };
+if(prefersPassageReading(active()))readingMode='passages';
 render();
 
 $("save-edit").onclick = (event) => {
@@ -1037,6 +1054,7 @@ function updatePlaybackControls(){
  if(!PLAYBACK_RATES.includes(actual)){const option=el("option","","当前 "+actual+"×");option.value=String(actual);option.dataset.current="true";selector.append(option);}
  selector.value=String(actual);
  refreshPlaybackDock();
+ renderPassagePlayback(passagePlayback?.getState());
 }
 // The dock controls the existing source player; it never owns or starts media.
 function refreshPlaybackDock(){
@@ -1066,11 +1084,12 @@ $('dock-play').onclick=async()=>{
  const player=$('source-media').querySelector('audio,video');
  if(!player||player.error||!Number.isFinite(player.duration)||player.duration<=0)return;
  if(!player.paused){player.pause();refreshPlaybackDock();return;}
+ if(passagePlayback?.getState().status==='finished')passagePlayback.cancel();
  try{if(player.ended){stopRepeating();player.currentTime=0;}await player.play();}
  catch(error){if(error?.name!=='AbortError'&&player===$('source-media').querySelector('audio,video'))notice('媒体暂时无法播放，请回到播放器检查文件或重试。');}
  refreshPlaybackDock();
 };
-$('dock-locate').onclick=()=>{const segment=playbackSegment();if(segment){goToSegment(segment.id);highlightPlayback();}};
+$('dock-locate').onclick=()=>locateReadingPlayback();
 $('dock-return').onclick=()=>{
  const player=$('source-media').querySelector('audio,video');if(!player)return;
  $('source-media').scrollIntoView?.({block:'center',behavior:'smooth'});player.focus({preventScroll:true});
@@ -1080,6 +1099,7 @@ window.addEventListener('resize',schedulePlaybackDock);
 window.visualViewport?.addEventListener('resize',schedulePlaybackDock);
 window.addEventListener('coconut-render',refreshPlaybackDock);
 function skipPlayback(delta){
+ passagePlayback?.cancel();
  const player=$("source-media").querySelector("audio,video");if(!player || !Number.isFinite(player.duration) || player.duration<=0)return;
  stopRepeating();
  try{player.currentTime=Math.max(0,Math.min(player.duration,player.currentTime+delta));highlightPlayback();$("playback-status").textContent="已定位到 "+Coconut.time(player.currentTime);}
@@ -1108,6 +1128,7 @@ function stopRepeating(){
  refreshCueActionLabels();
 }
 function toggleRepeat(segment){
+ passagePlayback?.cancel();
  if(repeating?.key===active()?.key && repeating?.id===segment.id){stopRepeating();return;}
  const player=$("source-media").querySelector("audio,video");
  if(!player || !Number.isFinite(player.duration) || segment.end<=segment.start || segment.end>player.duration){$("repeat-status").textContent="请等待媒体加载，并确认片段时间在媒体范围内。";return;}
@@ -1169,18 +1190,148 @@ document.addEventListener("keydown", event => {
  }
 });
 
+// Reading composition is transient: source cues, annotations, exports and AI scope stay cue-based.
+function readingPassages(doc=active()){return doc&&!Coconut.isAudioProject(doc)?CoconutPassages.build(doc.segments):[];}
+function passageTargetLanguage(doc){
+ if(doc.translation_view)return doc.translation_view;
+ for(const cue of doc.segments)for(const [language,item] of Object.entries(cue.translations||{}))if(Coconut.translationCurrent(cue,doc,item))return language;
+ return '';
+}
+function appendPassageCue(paragraph,cue,text,previousText){
+ if(previousText!==null)paragraph.append(document.createTextNode(CoconutPassages.separator(previousText,text)));
+ const span=el('span','passage-cue',text);span.dataset.cueId=cue.id;paragraph.append(span);
+ return text;
+}
+function renderPassages(doc){
+ const passages=readingPassages(doc),host=$('passage-body');
+ if(!passages.length){host.replaceChildren();return;}
+ if(passageDocumentKey!==doc.key){passageDocumentKey=doc.key;passageAnchor=doc.readingPosition||passages[0].cues[0].id;passagePageStart=0;passageReturn=null;passageTranslations=true;}
+ const anchored=CoconutPassages.locate(passages,passageAnchor)||passages[0];
+ const index=passages.indexOf(anchored);passagePageStart=Math.floor(index/PASSAGES_PER_PAGE)*PASSAGES_PER_PAGE;
+ const visible=passages.slice(passagePageStart,passagePageStart+PASSAGES_PER_PAGE),target=passageTargetLanguage(doc);
+ const hasTranslation=!!target&&doc.segments.some(cue=>Coconut.translationCurrent(cue,doc,cue.translations?.[target]));
+ const toggle=$('passage-toggle-translation');toggle.hidden=!hasTranslation;toggle.setAttribute('aria-pressed',String(passageTranslations));toggle.textContent=passageTranslations?'收起已存译文':'对照已存译文';
+ const duration=Math.max(0,...passages.map(passage=>passage.end));
+ const slider=$('passage-time-range');slider.max=String(Math.max(1,Math.ceil(duration)));slider.value=String(anchored.start);slider.disabled=duration<=0;
+ slider.setAttribute('aria-valuetext',Coconut.time(anchored.start)+'，共 '+Coconut.time(duration));
+ $('passage-time-label').textContent=Coconut.time(anchored.start);$('passage-total-time').textContent=Coconut.time(duration);
+ $('passage-position').textContent='第 '+(index+1)+' / '+passages.length+' 段';
+ $('passage-page-status').textContent=(passagePageStart+1)+'–'+(passagePageStart+visible.length)+' / '+passages.length+' 段';
+ $('passage-previous').disabled=passagePageStart===0;$('passage-next').disabled=passagePageStart+PASSAGES_PER_PAGE>=passages.length;
+ host.replaceChildren();
+ for(const passage of visible){
+  const section=el('section','passage');section.dataset.passageId=passage.key;section.dataset.firstCueId=passage.cues[0].id;section.tabIndex=-1;
+  const meta=el('div','passage-meta');meta.append(el('span','passage-time',Coconut.time(passage.start)+'–'+Coconut.time(passage.end)));
+  if(passage.speaker)meta.append(el('span','passage-speaker',passage.speaker));section.append(meta);
+  const columns=el('div','passage-columns');columns.classList.toggle('has-translation',!!target&&passageTranslations);
+  const original=el('p','passage-original');original.lang=doc.language||'';let previous=null;
+  for(const cue of passage.cues)previous=appendPassageCue(original,cue,cue.text,previous);columns.append(original);
+  if(target&&passageTranslations){
+   const translated=el('p','passage-translation');translated.lang=target;previous=null;
+   for(const cue of passage.cues){
+    const item=cue.translations?.[target],current=item&&Coconut.translationCurrent(cue,doc,item);
+    if(current){previous=appendPassageCue(translated,cue,item.text,previous);}
+    else{
+     const gap=el('span','passage-translation-gap',Coconut.time(cue.start)+(item?' 译文已过期，请核对原文':' 暂无译文'));
+     gap.dataset.cueId=cue.id;gap.dataset.state=item?'stale':'missing';translated.append(gap);previous=null;
+    }
+   }
+   columns.append(translated);
+  }
+  section.append(columns);
+  if(target&&passageTranslations)for(const cue of passage.cues){const item=cue.translations?.[target];if(item&&Coconut.translationCurrent(cue,doc,item)){const warning=Coconut.translationQualityMessage(item);if(warning)section.append(el('p','passage-translation-warning',Coconut.time(cue.start)+' · 译文待核对：'+warning));}}
+  const actions=el('div','passage-actions');
+  const listen=el('button','passage-listen','回听这一段');listen.type='button';listen.dataset.passageId=passage.key;
+  listen.onclick=()=>{stopRepeating();passagePlayback.listen({id:passage.key,start:passage.start,end:passage.end,label:Coconut.time(passage.start)+'–'+Coconut.time(passage.end)});};
+  actions.append(listen);
+  const details=el('button','passage-details','逐句核对');details.type='button';details.setAttribute('aria-label','逐句核对 '+Coconut.time(passage.start)+' 的原文与笔记');details.onclick=()=>openPassageDetails(passage.cues[0].id,section);actions.append(details);
+  const external=Coconut.source(doc.source_url,passage.start);
+  if(external){const source=el('a','passage-source-link','原站 ↗');source.href=external;source.target='_blank';source.rel='noopener noreferrer';actions.append(source);}
+  section.append(actions);
+  for(const cue of passage.cues)if(doc.notes[cue.id]||cue.saved_excerpt){
+   const annotation=el('button','passage-annotation',Coconut.time(cue.start)+' · '+(doc.notes[cue.id]||'已摘录原文'));annotation.type='button';annotation.dataset.cueId=cue.id;
+   annotation.onclick=()=>openPassageDetails(cue.id,section);section.append(annotation);
+  }
+  host.append(section);
+ }
+ renderPassagePlayback(passagePlayback?.getState());
+}
+function openPassage(cueId,scroll=true){
+ const doc=active(),passages=readingPassages(doc),passage=CoconutPassages.locate(passages,cueId)||passages[0];if(!passage)return;
+ passageReturn=null;passageDocumentKey=doc.key;passageAnchor=passage.cues[0].id;
+ setReadingMode('passages');render();
+ const target=[...$('passage-body').querySelectorAll('.passage')].find(row=>row.dataset.firstCueId===passageAnchor);
+ if(scroll){target?.scrollIntoView?.({block:'start',behavior:'auto'});target?.focus({preventScroll:true});}
+}
+function openPassageDetails(cueId,section){
+ const doc=active();if(!doc)return;
+ passageAnchor=section.dataset.firstCueId;
+ passageReturn={key:doc.key,cueId:passageAnchor,viewportTop:section.getBoundingClientRect().top,scrollY:window.scrollY,focusCueId:cueId};
+ goToSegment(cueId,false,true);
+}
+function returnToPassages(){
+ const origin=passageReturn,doc=active();if(!origin||origin.key!==doc?.key)return;
+ passageAnchor=origin.cueId;passageReturn=null;setReadingMode('passages');render();
+ const passage=CoconutPassages.locate(readingPassages(doc),origin.cueId);
+ const section=[...$('passage-body').querySelectorAll('.passage')].find(row=>row.dataset.firstCueId===passage?.cues[0].id);
+ if(section){window.scrollBy(0,section.getBoundingClientRect().top-origin.viewportTop);section.querySelector('.passage-details')?.focus({preventScroll:true});}
+ else{$('passage-body').scrollIntoView?.({block:'start'});$('mode-passages').focus({preventScroll:true});}
+}
+function movePassagePage(direction){
+ const passages=readingPassages(),index=Math.max(0,Math.min(passages.length-1,passagePageStart+direction*PASSAGES_PER_PAGE));
+ if(passages[index])openPassage(passages[index].cues[0].id);
+}
+function renderPassagePlayback(state){
+ const status=state?.status||'idle',host=$('passage-playback-controls');if(!host)return;
+ host.dataset.state=status;host.hidden=status==='idle'||workspace!=='read';document.body.dataset.passageListening=String(!host.hidden);
+ $('passage-playback-status').textContent=({loading:'正在打开这一段…',playing:'回听 '+(state?.range?.label||'')+' · 到段尾自动停下',paused:'这一段已暂停',finished:'这一段已听完 · '+(state?.range?.label||''),error:state?.error||'这段暂时无法回听'})[status]||'';
+ $('passage-replay').disabled=status==='loading';$('passage-continue').disabled=status==='loading';$('passage-return-playback').hidden=!state?.returnPosition;
+ $('passage-stop').hidden=status==='finished'||status==='error';
+ const player=$('source-media').querySelector('audio,video'),available=player&&!player.error&&Number.isFinite(player.duration)&&player.duration>0;
+ for(const button of $('passage-body').querySelectorAll('.passage-listen')){
+  const passage=readingPassages().find(item=>item.key===button.dataset.passageId),bounded=available&&passage&&passage.end>passage.start&&passage.end<=player.duration;
+  const current=state?.range?.id===button.dataset.passageId&&['loading','playing'].includes(status);
+  button.disabled=!bounded||current;button.textContent=current?'正在回听这一段':'回听这一段';
+  button.title=bounded?'只回听这段，到段尾自动停下':player?'等待原声加载，或检查文字稿时间与媒体对应':'先关联对应的原声文件，即可回听这段';
+ }
+}
+function locateReadingPlayback(){const cue=playbackSegment();if(cue){if(readingMode==='passages')openPassage(cue.id);else goToSegment(cue.id);highlightPlayback();}}
+$('toggle-reader-media').onclick=()=>{const doc=active();if(!doc)return;mediaExpandedKey=mediaExpandedKey===doc.key?null:doc.key;render();};
+$('passage-time-range').oninput=()=>{$('passage-time-label').textContent=Coconut.time(Number($('passage-time-range').value));};
+$('passage-time-range').onchange=()=>{const passage=CoconutPassages.atTime(readingPassages(),Number($('passage-time-range').value));if(passage)openPassage(passage.cues[0].id);};
+$('passage-previous').onclick=()=>movePassagePage(-1);$('passage-next').onclick=()=>movePassagePage(1);
+$('return-to-passages').onclick=returnToPassages;
+$('passage-toggle-translation').onclick=()=>{passageTranslations=!passageTranslations;renderPassages(active());};
+$('passage-search').onclick=()=>{passageReturn=null;setReadingMode('transcript');$('search').focus();};
+$('passage-replay').onclick=()=>{stopRepeating();passagePlayback?.replay();};
+$('passage-continue').onclick=()=>passagePlayback?.continue();
+$('passage-return-playback').onclick=()=>passagePlayback?.returnToPrevious();
+$('passage-stop').onclick=()=>{const player=$('source-media').querySelector('audio,video');passagePlayback?.cancel();player?.pause();};
+function pauseBoundedForCompactNote(){
+ if(!$('notes-panel').hidden&&(window.visualViewport?.height||window.innerHeight)<=520&&['loading','playing'].includes(passagePlayback?.getState().status))$('source-media').querySelector('audio,video')?.pause();
+}
+window.addEventListener('resize',pauseBoundedForCompactNote);
+window.visualViewport?.addEventListener('resize',pauseBoundedForCompactNote);
+window.addEventListener('pagehide',()=>{if(passagePlayback?.getState().range)$('source-media').querySelector('audio,video')?.pause();passagePlayback?.cancel();});
+
 function applyReadingMode() {
  const audioOnly=Coconut.isAudioProject(active());
+ if($('source-media').querySelector('audio,video')&&!$('source-media').hidden)$('episode-media').hidden=false;
  const summary=readingMode==='summary'&&!audioOnly;
+ const passages=readingMode==='passages'&&!audioOnly;
+ document.body.dataset.readingMode=readingMode;
+ $('passage-workspace').hidden=!passages;
+ $('mode-passages').setAttribute('aria-pressed',String(passages));
+ $('passage-return-bar').hidden=!passageReturn||passageReturn.key!==active()?.key||readingMode!=='transcript';
  $('toggle-demo-tools').hidden=summary||active()?.provenance?.kind!=='authored_demo';
  $('summary-workspace').hidden=!summary;
- $('transcript-controls').hidden=summary;
- $('transcript-layout').hidden=summary||audioOnly;
- $('reading-settings').hidden=summary;
- $('language-panel').hidden=audioOnly||summary;
+ $('transcript-controls').hidden=summary||passages;
+ $('transcript-layout').hidden=summary||passages||audioOnly;
+ $('reading-settings').hidden=summary||passages;
+ $('language-panel').hidden=audioOnly||summary||passages;
  $('mode-summary').setAttribute('aria-pressed',String(summary));
- const bilingual=!summary&&!audioOnly&&!!active()?.translation_view;
- $('mode-transcript').setAttribute('aria-pressed',String(!summary&&!bilingual));
+ const bilingual=!summary&&!passages&&!audioOnly&&!!active()?.translation_view;
+ $('mode-transcript').setAttribute('aria-pressed',String(!summary&&!passages&&!bilingual));
  $('mode-bilingual').setAttribute('aria-pressed',String(bilingual));
  $('transcript-layout').classList.toggle('is-bilingual',bilingual);
  $('mode-bilingual').disabled=audioOnly;
@@ -1191,7 +1342,9 @@ function applyReadingMode() {
 }
 function setReadingMode(mode) {
  const previousMode=readingMode;
- readingMode=mode==='transcript'?'transcript':'summary';
+ readingMode=['transcript','passages'].includes(mode)?mode:'summary';
+ if(readingMode==='passages'){clearReadingContext();selected=null;$('notes-panel').hidden=true;if(typeof stopLanguageBatches==='function')stopLanguageBatches();$('language-panel').open=false;}
+ if(readingMode==='summary')passageReturn=null;
  if(readingMode==='summary'){
   clearReadingContext();
   selected=null;$('notes-panel').hidden=true;
@@ -1221,16 +1374,20 @@ function renderReadingNavigation(doc){
  }
  select.value=[...select.options].some(option=>option.value===previous)?previous:'';
 }
+function sourceTimeStops(doc,limit){
+ const cues=doc.segments||[];if(!cues.length)return [];
+ const first=cues[0].start,last=cues.at(-1).start,count=Math.min(limit,cues.length);
+ return [...new Map(Array.from({length:count},(_,index)=>{const time=first+(last-first)*index/Math.max(1,count-1);const cue=cues.findLast(item=>item.start<=time)||cues[0];return [cue.id,cue];})).values()];
+}
 function renderSourceOverview(doc,hasSummary){
- $('source-overview').hidden=hasSummary||Coconut.isAudioProject(doc);
+ $('source-overview').hidden=Coconut.isAudioProject(doc);
  $('overview-duration').textContent=Coconut.time(doc.segments.at(-1)?.end||0)+' · '+doc.segments.length+' 段';
  const host=$('overview-segments');host.replaceChildren();
- if(hasSummary)return;
- for(const segment of sourceStops(doc,6)){
+ for(const segment of sourceTimeStops(doc,6)){
   const button=el('button','overview-segment');
   button.append(el('span','overview-time',Coconut.time(segment.start)),el('span','overview-quote',sourcePreview(segment)),el('span','overview-arrow','↗'));
   button.setAttribute('aria-label',Coconut.time(segment.start)+' · '+sourcePreview(segment));
-  button.onclick=()=>goToSegment(segment.id);host.append(button);
+  button.dataset.cueId=segment.id;button.onclick=()=>openPassage(segment.id);host.append(button);
  }
 }
 function renderSummary() {
@@ -1262,6 +1419,7 @@ function renderSummary() {
  $('summary-select-excerpt').hidden=readiness.ready;
  $('export-summary').hidden=!answer;
 }
+$('mode-passages').onclick=()=>openPassage(passageAnchor||active()?.readingPosition||active()?.segments[0]?.id);
 $('mode-summary').onclick=()=>setReadingMode('summary');
 $('mode-transcript').onclick=()=>{if(active()){active().translation_view='';save();}setReadingMode('transcript');render();};
 $('mode-bilingual').onclick=()=>{const doc=active();if(!doc||Coconut.isAudioProject(doc))return;doc.translation_view=doc.translation_view||$('translation-target').value||'zh';save();setReadingMode('transcript');render();};

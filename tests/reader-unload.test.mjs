@@ -13,7 +13,7 @@ function setup(stored,desktop=false){
  const attached=new Set(),add=w.addEventListener.bind(w),remove=w.removeEventListener.bind(w);
  w.addEventListener=(type,fn,...args)=>{if(type==='beforeunload')attached.add(fn);return add(type,fn,...args);};
  w.removeEventListener=(type,fn,...args)=>{if(type==='beforeunload')attached.delete(fn);return remove(type,fn,...args);};
- for(const file of ['summary','core'])w.eval(fs.readFileSync(new URL(`reader/${file}.js`,root),'utf8'));
+ for(const file of ['summary','core','passages','passage-playback'])w.eval(fs.readFileSync(new URL(`reader/${file}.js`,root),'utf8'));
  w.eval(['app','language','podcasts'].map(file=>fs.readFileSync(new URL(`reader/${file}.js`,root),'utf8')).join('\n'));
  return {w,$:id=>w.document.getElementById(id),attached};
 }

@@ -10,7 +10,7 @@ const response=value=>({ok:true,json:async()=>value});
 async function setup(health,handler=()=>{throw new Error('Unexpected request');}){
  const w=new Window({url:'http://127.0.0.1:8080/'});w.document.body.innerHTML=fs.readFileSync(new URL('reader/index.html',root),'utf8').split('<body>')[1].split('</body>')[0];Object.defineProperty(w,'crypto',{value:webcrypto});
  const calls=[];w.fetch=async(url,options)=>{calls.push([url,options]);return url==='api/health'?response(typeof health==='function'?health():health):url==='api/jobs'?response({jobs:[]}):handler(url,options);};
- w.eval(['summary','core','app','language','podcasts','jobs'].map(n=>fs.readFileSync(new URL('reader/'+n+'.js',root),'utf8')).join('\n'));await new Promise(r=>setTimeout(r,20));
+ w.eval(['summary','core','passages','passage-playback','app','language','podcasts','jobs'].map(n=>fs.readFileSync(new URL('reader/'+n+'.js',root),'utf8')).join('\n'));await new Promise(r=>setTimeout(r,20));
  return {w,calls,$:id=>w.document.getElementById(id),label:()=>w.document.querySelector('label[for="video-url"]').textContent};
 }
 const light=capabilities=>({local_worker:false,capabilities:{local_agents:true,...capabilities}});

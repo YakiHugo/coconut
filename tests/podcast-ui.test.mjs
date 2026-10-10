@@ -11,7 +11,7 @@ async function setup(handler,stored){
  const w=new Window({url:'http://127.0.0.1:8080/'});w.document.body.innerHTML=fs.readFileSync(new URL('reader/index.html',root),'utf8').split('<body>')[1].split('</body>')[0];Object.defineProperty(w,'crypto',{value:webcrypto});
  if(stored!==undefined)w.localStorage.setItem('coconut-reader-v1',stored);
  const calls=[];w.fetch=async(url,options)=>{calls.push({url,options});return url==='api/health'?{ok:true,json:async()=>({local_worker:false,capabilities:{local_agents:true,podcast_import:true,media_import:false}})}:handler(url,options);};
- w.eval(['summary','core','app','language','podcasts','jobs'].map(name=>fs.readFileSync(new URL('reader/'+name+'.js',root),'utf8')).join('\n'));
+ w.eval(['summary','core','passages','passage-playback','app','language','podcasts','jobs'].map(name=>fs.readFileSync(new URL('reader/'+name+'.js',root),'utf8')).join('\n'));
  w.URL.createObjectURL=()=> 'blob:http://127.0.0.1:8080/local-media';w.URL.revokeObjectURL=()=>{};
  await new Promise(resolve=>setTimeout(resolve,20));return {w,calls,$:id=>w.document.getElementById(id)};
 }

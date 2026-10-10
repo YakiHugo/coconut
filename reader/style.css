@@ -622,3 +622,83 @@ body[data-media-docked="true"] main { padding-bottom: 112px; }
  .podcast-filters { grid-template-columns: minmax(0, 1fr); }
  .podcast-filters .podcast-clear { justify-self: start; min-height: 44px; }
 }
+
+/* Source-first long reading. Cue spans remain addressable without caption-card chrome. */
+.media-disclosure { margin: 12px 0 0; border-color: transparent; background: transparent; padding: 4px 0; color: var(--accent); font-size: 12px; text-align: left; }
+body[data-reading-mode="passages"] .reader-kicker { display: none; }
+body[data-reading-mode="passages"] .intro { padding-top: 18px; }
+body[data-reading-mode="passages"] .intro h1 { font-size: clamp(24px, 2.5vw, 32px); margin-bottom: 5px; }
+body[data-reading-mode="passages"] .reading-modes { margin-top: 12px; }
+body[data-reading-mode="passages"] .reader-options { display: none; }
+.passage-workspace { padding-top: 16px; }
+.passage-browse { border-bottom: 1px solid var(--line); padding-bottom: 8px; }
+.passage-browse-heading, .passage-browse-caption { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
+.passage-browse-heading label { font-weight: 600; font-size: 12px; }
+.passage-browse-heading .hint { margin: 0; font-size: 11px; }
+#passage-time-range { display: block; width: 100%; height: 28px; margin: 2px 0 0; padding: 0; accent-color: var(--accent); cursor: pointer; }
+.passage-browse-caption { font-size: 10px; color: var(--muted); font-variant-numeric: tabular-nums; margin-top: -2px; }
+#passage-browse-help { margin: 3px 0 0; font-size: 11px; }
+.passage-toolbar { display: flex; justify-content: flex-end; align-items: center; gap: 16px; padding-top: 3px; }
+.passage-toolbar button { padding: 3px 0; background: transparent; border-color: transparent; font-size: 11px; color: var(--muted); min-height: 32px; }
+.passage { padding: 24px 0 28px; border-bottom: 1px solid var(--line); scroll-margin-top: 20px; overflow-wrap: anywhere; }
+.passage:first-child { padding-top: 8px; }
+.passage:focus { outline: none; }
+.passage:focus-visible { outline: 2px solid #db7452; outline-offset: 8px; }
+.passage-meta { display: flex; flex-wrap: wrap; gap: 10px 18px; color: var(--muted); font-size: 11px; margin-bottom: 8px; font-variant-numeric: tabular-nums; }
+.passage-speaker { color: #514a43; font-weight: 600; }
+.passage-columns { max-width: 840px; }
+.passage-columns.has-translation { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr); max-width: none; gap: 28px; }
+.passage-original, .passage-translation { font-size: 18px; line-height: 1.9; margin: 0; white-space: pre-wrap; min-width: 0; font-family: Georgia, "Noto Serif SC", "Songti SC", serif; }
+.passage-translation { color: #766a5f; }
+.passage-cue { border-radius: 3px; transition: background-color .1s; }
+.passage-cue.passage-current { background: #ffe5d3; color: #4f291b; }
+.passage-translation-gap { display: block; font: 11px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color: #99613e; padding: 4px 8px; margin: 4px 0; border-left: 2px solid #dabba5; background: #f7f2ec; }
+.passage-translation-warning { font-size: 12px; color: #99613e; margin: 8px 0; }
+.passage-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 18px; margin-top: 12px; }
+.passage-actions button { font-size: 11px; min-height: 36px; padding: 5px 0; border-color: transparent; background: transparent; color: var(--muted); }
+.passage-actions .passage-listen:not(:disabled) { color: var(--accent); }
+.passage-actions button:disabled { opacity: .62; }
+.passage-source-link { font-size: 11px; }
+.passage-annotation { display: block; max-width: 100%; margin-top: 10px; padding: 7px 10px; background: #faf0e8; text-align: left; border-left: 2px solid #d49972; border-radius: 0 6px 6px 0; font-size: 12px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.passage-pagination { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 24px 0; }
+.passage-pagination button { font-size: 12px; }
+.passage-pagination .hint { font-size: 11px; }
+.passage-return-bar { margin-top: 16px; }
+.passage-playback-controls { position: fixed; z-index: 12; bottom: 20px; right: 24px; width: min(580px,calc(100vw - 288px)); padding: 13px 16px; border: 1px solid #dac8b8; border-radius: 13px; background: #fffaf4; box-shadow: 0 7px 32px #28252020; }
+body[data-media-docked="true"] .passage-playback-controls { bottom: 94px; }
+.passage-playback-controls p { margin: 0 0 8px; font-size: 12px; color: #805034; }
+.passage-playback-controls > div { display: flex; flex-wrap: wrap; gap: 6px; }
+.passage-playback-controls button { min-height: 36px; font-size: 11px; padding: 6px 10px; }
+body[data-passage-listening="true"] #passage-body { padding-bottom: 150px; }
+html[data-reading-layout="large"] .passage-original, html[data-reading-layout="large"] .passage-translation { font-size: 21px; }
+@media (max-width: 760px) {
+ .reading-modes { gap: 14px; flex-wrap: wrap; }
+ .reading-modes button { font-size: 12px; }
+ .passage-columns.has-translation { grid-template-columns: minmax(0,1fr); gap: 12px; }
+ .passage-original, .passage-translation { font-size: 17px; line-height: 1.85; }
+ .passage-translation { border-left: 2px solid #dfccbd; padding-left: 13px; }
+ .passage-actions button, .passage-toolbar button { min-height: 44px; }
+ .passage { padding-bottom: 22px; }
+ .passage:first-child { padding-top: 4px; }
+ .passage-playback-controls { right: 12px; bottom: 12px; width: calc(100vw - 24px); padding: 10px 12px; }
+ .passage-playback-controls button { min-height: 44px; padding: 5px 8px; }
+ .passage-pagination { flex-wrap: wrap; justify-content: center; }
+ .passage-pagination .hint { order: -1; flex-basis: 100%; text-align: center; }
+ body[data-reading-mode="passages"] .intro { padding-top: 12px; }
+ body[data-reading-mode="passages"] #provenance { font-size: 10px; line-height: 1.55; }
+ body[data-reading-mode="passages"] #subtitle { font-size: 11px; }
+}
+
+html[data-reading-layout="spacious"] .passage-original, html[data-reading-layout="spacious"] .passage-translation { font-size: 19px; line-height: 2.2; }
+html[data-reading-layout="spacious"] .passage { padding-top: 34px; padding-bottom: 34px; }
+/* The note editor and bounded listening transport must never stack over each other. */
+@media (max-width:1100px) {
+ body:has(#notes-panel:not([hidden])) .passage-playback-controls { top: 8px; bottom: auto; left: 12px; right: 12px; width: auto; max-height: 150px; overflow-y: auto; }
+ body[data-passage-listening="true"] #notes-panel { max-height: min(50dvh, calc(100dvh - 270px)); }
+}
+
+@media (max-width:1100px) and (max-height:520px) {
+ /* Small-height note editing pauses the bounded preview and yields this bar until Close. */
+ body:has(#notes-panel:not([hidden])) .passage-playback-controls { display: none; }
+ body[data-passage-listening="true"] #notes-panel { max-height: min(65dvh, calc(100dvh - 108px)); }
+}

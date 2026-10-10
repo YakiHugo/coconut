@@ -13,6 +13,8 @@ function setup(stored, fetchMock, layout, contextControls=false){
   if(layout!==undefined)window.localStorage.setItem('coconut-reading-layout-v1',layout);
   window.eval(fs.readFileSync(new URL('reader/summary.js',root),'utf8'));
   window.eval(fs.readFileSync(new URL('reader/core.js',root),'utf8'));
+  window.eval(fs.readFileSync(new URL('reader/passages.js',root),'utf8'));
+  window.eval(fs.readFileSync(new URL('reader/passage-playback.js',root),'utf8'));
   if(fetchMock)window.fetch=fetchMock;
   window.eval(fs.readFileSync(new URL('reader/app.js',root),'utf8') + '\n' + fs.readFileSync(new URL('reader/language.js',root),'utf8') + '\n' + fs.readFileSync(new URL('reader/podcasts.js',root),'utf8') + (fetchMock ? '\n' + fs.readFileSync(new URL('reader/jobs.js',root),'utf8') : ''));
   return window;
@@ -195,17 +197,23 @@ test('reading position beyond first page survives reload, backup validation and 
  const w=setup();let stored;try{
   const $=id=>w.document.getElementById(id);
   await importDocument(w,{title:'Long document',segments:Array.from({length:205},(_,i)=>({id:'s'+i,start:i,end:i+1,text:'Part '+i}))});
+  $('mode-transcript').click();
   [...$('transcript').querySelectorAll('button')].find(b=>b.textContent==='继续阅读后面的片段').click();
   w.document.querySelectorAll('.bookmark-button')[50].click();stored=w.localStorage.getItem('coconut-reader-v1');
   assert.equal(w.Coconut.validate(JSON.parse(stored).documents[0]).readingPosition,'s150');
  }finally{await w.happyDOM.close();}
  const restored=setup(stored);try{
-  const $=id=>restored.document.getElementById(id);$('resume').click();
+  const $=id=>restored.document.getElementById(id);$('mode-transcript').click();$('resume').click();
   assert.equal(restored.document.activeElement.dataset.segmentId,'s150');assert.equal(restored.document.querySelectorAll('.segment').length,100);
   await $('sample').onclick();$('library-search').value='Long';$('library-search').oninput();
   assert.equal($('library').querySelectorAll('button').length,1);$('library').querySelector('button').click();
-  assert.equal(restored.document.activeElement.dataset.segmentId,'s150');
-  $('library').querySelector('button').click();assert.equal(restored.document.activeElement.dataset.segmentId,'s150');
+  for(let visit=0;visit<2;visit++){
+   assert.equal($('passage-workspace').hidden,false);
+   const passage=restored.document.activeElement;assert.ok(passage.classList.contains('passage'));
+   assert.ok(passage.querySelector('.passage-original [data-cue-id="s150"]'));
+   $('mode-transcript').click();$('resume').click();assert.equal(restored.document.activeElement.dataset.segmentId,'s150');
+   if(visit===0)$('library').querySelector('button').click();
+  }
  }finally{await restored.happyDOM.close();}
 });
 
@@ -258,7 +266,7 @@ test('local playback takes priority over source URL and highlights the matching 
   await importDocument(w,{title:'Video',source_url:'https://x.com/example/status/123',source_media:{job_id:id,kind:'video'},segments:[{id:'a',start:2,end:4,text:'First'},{id:'b',start:5,end:8,text:'Second'}]});
   w.dispatchEvent(new w.Event('coconut-worker-ready'));const player=w.document.querySelector('video');assert.ok(player);
   player.play=async()=>{};w.document.querySelector('.time button').click();assert.equal(player.currentTime,2);assert.equal(w.document.querySelector('.original-source').href,'https://x.com/example/status/123?t=2');
-  player.currentTime=6;player.ontimeupdate();assert.equal(w.document.querySelector('.playing').dataset.segmentId,'b');w.document.getElementById('locate-playback').click();assert.equal(w.document.activeElement.dataset.segmentId,'b');
+  player.currentTime=6;player.ontimeupdate();assert.equal(w.document.querySelector('#transcript .segment.playing').dataset.segmentId,'b');w.document.getElementById('locate-playback').click();assert.equal(w.document.activeElement.dataset.segmentId,'b');
  }finally{await w.happyDOM.close();}
 });
 
@@ -652,12 +660,12 @@ test('late resume and playback re-renders keep a bounded reading window and acti
   w.dispatchEvent(new w.Event('coconut-worker-ready'));
   const player=w.document.querySelector('video');
   player.currentTime=3501;player.ontimeupdate();
-  $('resume').click();
+  $('mode-transcript').click();$('resume').click();
   assert.equal(w.document.activeElement.dataset.segmentId,'long-1750');
   assert.ok(w.document.querySelectorAll('.segment').length<=100,'late jumps must not mount all preceding cues');
-  assert.equal(w.document.querySelector('.playing')?.dataset.segmentId,'long-1750','paused playback survives rendering');
+  assert.equal(w.document.querySelector('#transcript .segment.playing')?.dataset.segmentId,'long-1750','paused playback survives rendering');
   w.document.querySelector('[data-segment-id="long-1750"] .note-button').click();
-  assert.equal(w.document.querySelector('.playing')?.dataset.segmentId,'long-1750');
+  assert.equal(w.document.querySelector('#transcript .segment.playing')?.dataset.segmentId,'long-1750');
   assert.equal(w.document.querySelector('video'),player);
   assert.equal(player.currentTime,3501);
  }finally{await w.happyDOM.close();}
@@ -1581,10 +1589,15 @@ test('summary composer uses one consent control and returns it on close or docum
 
 test('summary and bilingual tabs preserve the visible player and never generate translations',async()=>{
  const w=setup();try{const $=id=>w.document.getElementById(id);await importDocument(w,{title:'No translations yet',language:'en',segments:[{id:'one',start:0,end:10,text:'A source sentence.'}]});let pauses=0,calls=0;w.fetch=async()=>{calls++;throw new Error('No calls expected');};
-  const player=w.document.createElement('audio');player.pause=()=>pauses++;$('source-media').append(player);$('source-media').hidden=false;
+  w.URL.createObjectURL=()=> 'blob:https://coconut.example/tab-test';w.URL.revokeObjectURL=()=>{};
+  $('toggle-reader-media').click();$('attach-reader-media').click();
+  Object.defineProperty($('reader-media-file'),'files',{configurable:true,value:[{name:'episode.mp3',type:'audio/mpeg',size:10,slice:()=>({text:async()=> 'ID3 audio'})}]});
+  await $('reader-media-file').onchange();
+  const player=$('source-media').querySelector('audio');assert.ok(player);player.pause=()=>pauses++;
   $('mode-summary').click();assert.equal(pauses,0);assert.equal($('source-media').closest('#transcript-controls'),null);assert.equal($('episode-media').hidden,false);
   $('mode-bilingual').click();assert.equal($('mode-bilingual').getAttribute('aria-pressed'),'true');assert.equal($('bilingual-readiness').hidden,false);assert.match($('bilingual-status').textContent,/还没有/);assert.equal(calls,0);assert.equal($('ai-consent').checked,false);
   $('mode-transcript').click();assert.equal($('translation-view').value,'');assert.equal($('bilingual-readiness').hidden,true);assert.equal(calls,0);
+  assert.equal($('source-media').querySelector('audio'),player);assert.equal($('episode-media').hidden,false);assert.equal(pauses,0);
  }finally{await w.happyDOM.close();}
 });
 
@@ -1665,18 +1678,21 @@ test('one-minute demo opens labelled bilingual reading without fabricating an AI
  }finally{await w.happyDOM.close();}
 });
 
-test('source overview previews actual bounded cues and navigates to the last page without playing',async()=>{
+test('source overview previews actual bounded time positions and opens a source passage without playing',async()=>{
  const w=setup();try{
   const $=id=>w.document.getElementById(id);
-  const segments=Array.from({length:221},(_,i)=>({id:'cue-'+i,start:i*10,end:i*10+9,text:i===220?'<img src=x> Final exact source sentence':'Authored source cue '+i}));
-  await importDocument(w,{title:'Long source',segments});
+  const segments=Array.from({length:221},(_,i)=>{const start=i<200?i*2:400+(i-200)*90;return {id:'cue-'+i,start,end:start+1,text:i===220?'<img src=x> Final exact source sentence':'Authored source cue '+i};});
+  await importDocument(w,{title:'Long source',segments});$('mode-summary').click();
   assert.equal($('source-overview').hidden,false);
-  assert.equal($('overview-segments').querySelectorAll('button').length,6);
+  assert.deepEqual([...$('overview-segments').querySelectorAll('button')].map(button=>button.dataset.cueId),['cue-0','cue-200','cue-205','cue-210','cue-215','cue-220']);
   assert.equal($('overview-segments').querySelector('img'),null);
   const last=$('overview-segments').querySelector('button:last-child');
   assert.match(last.textContent,/<img src=x> Final exact source sentence/);
   let calls=0;w.fetch=async()=>{calls++;throw new Error('Must not request');};
-  last.click();assert.equal(w.document.activeElement.dataset.segmentId,'cue-220');
+  last.click();const passage=w.document.activeElement;assert.equal(passage.dataset.firstCueId,'cue-220');
+  assert.equal(passage.querySelector('.passage-original [data-cue-id="cue-220"]').textContent,segments.at(-1).text);
+  assert.equal(passage.querySelector('img'),null);assert.equal($('passage-workspace').hidden,false);assert.equal($('transcript-layout').hidden,true);
+  passage.querySelector('.passage-details').click();assert.equal(w.document.activeElement.dataset.segmentId,'cue-220');
   assert.equal($('transcript-layout').hidden,false);assert.equal($('search').value,'');
   assert.equal($('reading-jump').options.length,21);
   $('search').value='no matches';$('search').oninput();
@@ -1686,12 +1702,16 @@ test('source overview previews actual bounded cues and navigates to the last pag
  }finally{await w.happyDOM.close();}
 });
 
-test('source overview does not masquerade as or duplicate a saved summary',async()=>{
+test('source overview remains distinct from a saved summary and its citations',async()=>{
  const w=setup();try{
   const $=id=>w.document.getElementById(id);
   await importDocument(w,{title:'Saved summary',segments:[{id:'a',start:0,end:4,text:'Original'}],ai_answers:[{purpose:'summary',question:'Summary',answer:'Saved model output',citations:['a'],provider:'fixture',input_snapshot:{version:1,segments:[{id:'a',text:'Original'}]}}]});
-  assert.equal($('source-overview').hidden,true);assert.equal($('overview-segments').childElementCount,0);
+  assert.equal($('source-overview').hidden,false);assert.equal($('overview-segments').childElementCount,1);
+  assert.equal($('overview-segments').querySelector('.overview-quote').textContent,'Original');
+  assert.doesNotMatch($('source-overview').textContent,/Saved model output/);
   assert.equal($('summary-body').textContent,'Saved model output');
+  assert.equal($('summary-citations').childElementCount,1);$('summary-citations').firstElementChild.click();
+  assert.equal(w.document.activeElement.dataset.segmentId,'a');assert.equal($('summary-body').textContent,'Saved model output');
   $('add-content').click();w.document.querySelector('.brand').click();
   assert.equal($('add-workspace').hidden,false);assert.equal(w.document.activeElement,$('sample'));
  }finally{await w.happyDOM.close();}

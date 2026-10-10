@@ -8,7 +8,7 @@ function setup(){
  const w=new Window({url:'https://coconut.example/'});
  w.document.body.innerHTML=fs.readFileSync(new URL('reader/index.html',root),'utf8').split('<body>')[1].split('</body>')[0];
  Object.defineProperty(w,'crypto',{value:webcrypto});
- w.eval(['summary','core','app','language','podcasts'].map(name=>fs.readFileSync(new URL('reader/'+name+'.js',root),'utf8')).join('\n'));
+ w.eval(['summary','core','passages','passage-playback','app','language','podcasts'].map(name=>fs.readFileSync(new URL('reader/'+name+'.js',root),'utf8')).join('\n'));
  return {w,$:id=>w.document.getElementById(id),row:id=>w.document.querySelector(`[data-segment-id="${id}"]`)};
 }
 const cue=(id,text='A short source fragment',translation='一小段译文')=>({id,start:10,end:10.8,text,translations:{zh:{text:translation,source_text:text,source_language:'en',document_language:'en',provider:'Authored QA'}}});
