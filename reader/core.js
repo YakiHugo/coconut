@@ -473,23 +473,25 @@
   if(order==='duration'){const durations=new Map(result.map(doc=>[doc,documentDuration(doc)]));result.sort((a,b)=>durations.get(a)-durations.get(b));}
   return result;
  }
- // Cooperative shelf selection. Each document is one atomic phrase-engine
- // operation: yielding never splits a phrase or publishes a partial result.
+ // Cooperative shelf selection resumes the shared phrase engine within long
+ // documents; incomplete indexes and query results are never published.
  // A single completed snapshot is reused for page changes and reader refreshes.
  function createLibrarySearch({getDocuments,getRevision=()=>0,schedule=run=>root.setTimeout(run,0),
-  now=()=>root.performance.now(),batchSize=32,budgetMs=4,onChange=()=>{}}) {
+  now=()=>root.performance.now(),batchSize=32,budgetMs=4,workSize=32,onChange=()=>{}}) {
   let generation=0,current=null;
   const sameDocuments=job=>{
    const live=getDocuments();
-   return live.length===job.documents.length&&live.every((doc,i)=>doc===job.documents[i]&&doc.segments===job.shapes[i][0]&&doc.segments.length===job.shapes[i][1]);
+   return live.length===job.documents.length&&live.every((doc,i)=>doc===job.documents[i]&&doc.segments===job.shapes[i][0]&&doc.segments.length===job.shapes[i][1]&&doc.language===job.shapes[i][2]&&doc.translation_contexts===job.shapes[i][3]&&doc.translation_glossary===job.shapes[i][4]);
   };
   const valid=job=>current===job&&job.generation===generation&&job.revision===getRevision()&&job.sourceRevision===searchRevision&&sameDocuments(job);
+  function retire(job){if(job?.operation){job.operation.return();job.operation=null;}}
   function request(query,kind='all',scope='title',order='recent') {
    const signature=JSON.stringify([query,kind,scope,order]);
    if(current?.signature===signature&&valid(current))return current;
+   retire(current);
    const documents=getDocuments().slice();
    const job={generation:++generation,signature,revision:getRevision(),sourceRevision:searchRevision,documents,
-    shapes:documents.map(doc=>[doc.segments,doc.segments.length]),pending:false,scanned:0,docs:[],matches:[]};
+    shapes:documents.map(doc=>[doc.segments,doc.segments.length,doc.language,doc.translation_contexts,doc.translation_glossary]),pending:false,scanned:0,docs:[],matches:[]};
    current=job;
    let cues=0;
    const expensive=kind==='annotated'||Boolean(query.trim()&&scope!=='title');
@@ -500,18 +502,18 @@
     if(!valid(job)){
      // Content may change without a shelf render (e.g. a background import).
      // Only the current generation may ask the view to start a fresh snapshot.
-     if(current===job){current=null;onChange();}return;
+     retire(job);if(current===job){current=null;onChange();}return;
     }
-    const started=now();let count=0;
+    const started=now();let count=0,work=0;
     while(job.scanned<documents.length){
-     const doc=documents[job.scanned++];
-     if(libraryMatches(doc,query,kind,scope)){
-      // Title/note matches can bypass the source matcher. Prepare its cached
-      // result here too, rather than cold-building up to 40 indexes at paint.
-      if(scope==='text'&&query.trim())searchDocument(doc,query,'text');
-      job.matches.push(doc);
+     const doc=documents[job.scanned];
+     job.operation??=libraryMatchSteps(doc,query,kind,scope);
+     const result=job.operation.next();
+     if(result.done){
+      if(result.value)job.matches.push(doc);
+      job.operation=null;job.scanned++;count++;
      }
-     if(++count>=batchSize||now()-started>=budgetMs)break;
+     if(++work>=workSize||count>=batchSize||now()-started>=budgetMs)break;
     }
     if(job.scanned===documents.length)finish();
     onChange();
@@ -521,7 +523,7 @@
    else{job.matches=documents.filter(doc=>libraryMatches(doc,query,kind,scope));job.scanned=documents.length;finish();}
    return job;
   }
-  return {request,cancel(){generation++;current=null;}};
+  return {request,cancel(){retire(current);generation++;current=null;}};
  }
  // A document-identity cache, not persistent state. Ordinary note/bookmark/view
  // saves do not rebuild source text. Mutators must invalidate before readers or
@@ -529,15 +531,48 @@
  const searchIndexes=new WeakMap();
  let searchRevision=0;
  function invalidateSearch(doc){searchIndexes.delete(doc);searchRevision++;}
- function searchDocument(doc,query,scope='all') {
+ function drainSearch(iterator){let step;do{step=iterator.next();}while(!step.done);return step.value;}
+ function* libraryMatchSteps(doc,query,kind,scope){
+  const audio=isAudioProject(doc),needle=query.trim().toLocaleLowerCase();
+  const matches=value=>typeof value==='string'&&value.toLocaleLowerCase().includes(needle);
+  if(kind==='audio'&&!audio||kind==='transcript'&&audio)return false;
+  if(kind==='annotated'){
+   let annotated=Boolean(projectAnnotationCount(doc));
+   for(let i=0;!annotated&&i<doc.segments.length;i++){
+    const cue=doc.segments[i];annotated=Boolean(cue.saved_excerpt||hasNoteContent(doc.notes?.[cue.id]));
+    if((i+1)%128===0)yield;
+   }
+   if(!annotated)return false;
+  }
+  let match=matches(doc.title);
+  if(!match&&(scope==='notes'||scope==='text')){
+   const matchesNote=value=>hasNoteContent(value)&&matches(value);
+   match=matchesNote(doc.project_note);
+   for(let i=0;!match&&i<doc.segments.length;i++){
+    match=matchesNote(doc.notes?.[doc.segments[i].id]);if((i+1)%128===0)yield;
+   }
+   for(let i=0;!match&&i<(doc.timestamp_bookmarks||[]).length;i++){
+    match=matchesNote(doc.timestamp_bookmarks[i].note);if((i+1)%128===0)yield;
+   }
+  }
+  // Also warm title/note-hit previews here, before the completed shelf paints.
+  if(scope==='text'&&needle){const result=yield* searchDocumentSteps(doc,query,'text');match=match||result.byCue.size>0;}
+  return match;
+ }
+ function searchDocument(doc,query,scope='all') {return drainSearch(searchDocumentSteps(doc,query,scope));}
+ function* searchDocumentSteps(doc,query,scope='all') {
   let cache=searchIndexes.get(doc);
   if(!cache||cache.segments!==doc.segments||cache.length!==doc.segments.length||cache.language!==(doc.language||'')||cache.contexts!==doc.translation_contexts||cache.glossary!==doc.translation_glossary){
    const passages=typeof module!=="undefined"&&module.exports?require('./passages.js'):root.CoconutPassages;
-   const languages=new Set(doc.segments.flatMap(cue=>Object.keys(cue.translations||{})));
+   const languages=new Set();
+   for(let i=0;i<doc.segments.length;i++){
+    for(const language of Object.keys(doc.segments[i].translations||{}))languages.add(language);
+    if((i+1)%128===0)yield;
+   }
    const translations=new Map([...languages].map(language=>[language,cue=>{const item=cue.translations?.[language];return translationCurrent(cue,doc,item)?item.text:null;}]));
-   cache={segments:doc.segments,length:doc.segments.length,language:doc.language||'',contexts:doc.translation_contexts,glossary:doc.translation_glossary,index:passages.searchIndex(doc.segments,translations)};searchIndexes.set(doc,cache);
+   cache={segments:doc.segments,length:doc.segments.length,language:doc.language||'',contexts:doc.translation_contexts,glossary:doc.translation_glossary,index:yield* passages.searchIndexSteps(doc.segments,translations)};searchIndexes.set(doc,cache);
   }
-  return cache.index.search(query,scope==='text'?'text':'all');
+  return yield* cache.index.searchSteps(query,scope==='text'?'text':'all');
  }
  let lastSearchQuery='',lastSearchNeedle='';
  function searchNeedle(query){if(query!==lastSearchQuery){lastSearchQuery=query;lastSearchNeedle=query.trim().toLocaleLowerCase();}return lastSearchNeedle;}
