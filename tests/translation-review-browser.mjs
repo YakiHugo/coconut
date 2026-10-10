@@ -86,6 +86,37 @@ try{
  await page.locator('#translation-edit-cancel').click();
  check('missing_cue_focus_uses_visible_settings_without_discarding_newer_filter',await page.locator('#review-translations').isVisible()&&await page.locator('#review-translations').evaluate(el=>document.activeElement===el)&&await page.locator('.segment').count()===0&&await page.locator('#search').inputValue()==='No matching source after editor opened');
  await page.locator('#clear-search').click();
+ // Missing-cue authoring is entirely local, including a language with no prior output.
+ const manualDoc=translationReviewFixture(4);manualDoc.title='Authored missing translations';manualDoc.segments.forEach(cue=>delete cue.translations);
+ await page.locator('#file').setInputFiles({name:'authored-missing.json',mimeType:'application/json',buffer:Buffer.from(JSON.stringify(manualDoc))});
+ await page.locator('#title').filter({hasText:manualDoc.title}).waitFor({state:'visible'});await page.locator('#mode-bilingual').click();
+ const missingCue=page.locator('.segment[data-segment-id="review-0"]');
+ if(!await missingCue.locator('.review-translation-button').isVisible())await missingCue.locator('.cue-more > summary').click();
+ await missingCue.locator('.review-translation-button').click();await page.locator('#translation-edit-language').selectOption('fr');
+ check('missing_editor_has_exact_source_and_explicit_user_origin',await page.locator('#translation-edit-source').textContent()===manualDoc.segments[0].text&&(await page.locator('#translation-edit-origin').textContent()).includes('用户自己写'));
+ const authored='  Traduction personnelle <b>\nUne pomme.  ';await page.locator('#translation-edit-text').fill(authored);
+ page.once('dialog',dialog=>dialog.dismiss());await page.locator('#translation-edit-language').selectOption('de');
+ check('declined_language_change_keeps_owned_draft',await page.locator('#translation-edit-language').inputValue()==='fr'&&await page.locator('#translation-edit-text').inputValue()===authored);
+ check('mobile_missing_editor_fits',await page.locator('#translation-edit-dialog').evaluate(el=>el.getBoundingClientRect().left>=0&&el.getBoundingClientRect().right<=innerWidth&&el.scrollWidth<=el.clientWidth));
+ await page.locator('#save-next-missing-translation').click();
+ await page.waitForFunction(text=>document.getElementById('translation-edit-source').textContent===text,manualDoc.segments[1].text);
+ check('save_next_missing_keeps_target_and_exact_next_source',await page.locator('#translation-edit-language').inputValue()==='fr'&&await page.locator('#translation-edit-text').inputValue()==='');
+ await page.locator('#translation-edit-cancel').click();
+ await page.locator('#search').fill('Traduction personnelle');
+ check('user_translation_is_searchable_and_bilingual',await page.locator('.segment').count()===1&&(await page.locator('.segment .translation').textContent())===authored);
+ await page.locator('#clear-search').click();
+ const manualJson=JSON.parse(await download('#export'));check('missing_save_json_is_user_authored_without_fake_machine_history',manualJson.segments[0].translations.fr.provider==='user'&&manualJson.segments[0].translations.fr.text===authored&&!manualJson.segments[0].translations.fr.original_translation&&!manualJson.segments[0].translations.zh);
+ await page.locator('#subtitle-format').selectOption('vtt');await page.locator('#subtitle-bilingual').check();check('missing_save_subtitle_export_keeps_authored_text',(await download('#export-subtitles')).includes('Traduction personnelle &lt;b&gt;'));
+ await page.reload();await page.waitForFunction(()=>window.CoconutStorageBootstrap?.phase==='ready');await page.locator('#mode-bilingual').click();
+ check('missing_save_survives_real_reload',(await page.locator('.segment[data-segment-id="review-0"] .translation').textContent())===authored);
+ manualJson.title='Restored user translations';
+ await page.locator('#file').setInputFiles({name:'restored-user-translations.json',mimeType:'application/json',buffer:Buffer.from(JSON.stringify(manualJson))});
+ await page.locator('#title').filter({hasText:manualJson.title}).waitFor({state:'visible'});await page.locator('#mode-bilingual').click();
+ check('user_translation_survives_actual_json_restore',(await page.locator('.segment[data-segment-id="review-0"] .translation').textContent())===authored);
+
+ await queue();await page.locator('#translation-queue-mode').selectOption('missing');
+ check('missing_queue_excludes_saved_exact_language',await page.locator('.translation-queue-open').count()===3&&await page.locator('.translation-queue-open[data-segment-id="review-0"]').count()===0);
+ await page.locator('#translation-queue-mode').selectOption('review');await page.locator('#translation-queue-close').click();
  const longDoc=translationReviewFixture(70);longDoc.title='Authored long review context';longDoc.translation_contexts={};
  const cue=i=>{const s=longDoc.segments[i];return {id:s.id,position:i,text:s.text,start:s.start,end:s.end,speaker:s.speaker};};
  for(let i=1;i<longDoc.segments.length;i++){

@@ -186,3 +186,30 @@ test('manual source drift during a receipt keeps the editor and never claims cur
   assert.equal(h.$('translation-edit-dialog').open,true);assert.equal(h.$('translation-edit-text').value,'Submitted text');assert.match(h.$('translation-edit-error').textContent,/又有变化/);assert.doesNotMatch(h.$('notice').textContent,/已保存为用户人工核对/);
  }finally{h.release();await run;await h.w.happyDOM.close();}
 });
+
+
+for(const change of ['typing','source','navigation','new-editor','none'])test(`missing translation receipt with ${change} never advances over newer ownership`,async()=>{
+ const doc={...translationReviewFixture(4),key:'review',translation_view:'ja'},h=setup(doc,{hold:1});let run;try{
+  h.w.CoconutTranslationReview.openEditor('review','review-0','ja');input(h,'translation-edit-text','User authored first');
+  run=h.$('save-next-missing-translation').onclick(new h.w.Event('click'));await until(()=>h.writes.length===1);
+  assert.equal(h.$('translation-edit-source').textContent,doc.segments[0].text,'no early next cue');
+  if(change==='typing')input(h,'translation-edit-text','Newer draft');
+  if(change==='source'){h.w.pipeline.doc().segments[0].text+=' changed';h.w.pipeline.queue(h.w.pipeline.doc());}
+  if(change==='navigation')h.w.dispatchEvent(new h.w.CustomEvent('coconut-workspace-change',{detail:{workspace:'library'}}));
+  if(change==='new-editor')h.w.CoconutTranslationReview.openEditor('review','review-3','ja');
+  h.release();await run;assert.equal(h.disk().segments[0].translations.ja.text,'User authored first');assert.equal(h.requests.length,0);
+  if(change==='none')assert.equal(h.$('translation-edit-source').textContent,doc.segments[1].text);
+  if(change==='typing'){assert.equal(h.$('translation-edit-text').value,'Newer draft');assert.equal(h.w.CoconutTranslationReview.hasDraft(),true);}
+  if(change==='source')assert.match(h.$('translation-edit-error').textContent,/又有变化/);
+  if(change==='navigation')assert.equal(h.$('translation-edit-dialog').open,false);
+  if(change==='new-editor')assert.equal(h.$('translation-edit-source').textContent,doc.segments[3].text);
+ }finally{h.release();await run;await h.w.happyDOM.close();}
+});
+
+test('missing translation quota failure does not advance and explicit retry persists without model requests',async()=>{
+ const doc={...translationReviewFixture(4),key:'review',translation_view:'ja'},h=setup(doc,{fail:1});try{
+  h.w.CoconutTranslationReview.openEditor('review','review-0','ja');input(h,'translation-edit-text','Retained on quota failure');await h.$('save-next-missing-translation').onclick(new h.w.Event('click'));
+  assert.equal(h.disk().segments[0].translations?.ja,undefined);assert.equal(h.w.pipeline.doc().segments[0].translations.ja.text,'Retained on quota failure');assert.equal(h.$('translation-edit-dialog').open,false);assert.match(h.$('notice').textContent,/尚未保存/);
+  h.failAt(0);const receipt=await h.w.pipeline.store.retry();assert.equal(receipt.ok,true);assert.equal(h.disk().segments[0].translations.ja.text,'Retained on quota failure');assert.equal(h.requests.length,0);
+ }finally{await h.w.happyDOM.close();}
+});

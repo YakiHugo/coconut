@@ -1078,8 +1078,8 @@ function render({keepNoteEditor=false}={}) {
 		};
 		body.append(edit);
   let reviewTranslation=null;
-  if(translated){
-   reviewTranslation=el('button','review-translation-button',translated.manual_review?'核对／修正人工译文':'核对／修正译文');
+  if(translated||doc.translation_view){
+   reviewTranslation=el('button','review-translation-button',!translated?'自己写译文':translated.provider==='user'?'核对／修正自己写的译文':translated.manual_review?'核对／修正人工译文':'核对／修正译文');
    reviewTranslation.onclick=()=>window.CoconutTranslationReview?.openEditor(doc.key,s.id,doc.translation_view);
 
   }
@@ -2262,7 +2262,7 @@ function applyReadingMode() {
  $('bilingual-readiness').hidden=!bilingual||active()?.provenance?.kind==='authored_demo';
  composeReadingHeader();
  if(bilingual){const doc=active(),target=doc.translation_view,count=doc.segments.filter(s=>Coconut.translationCurrent(s,doc,s.translations?.[target])).length;
- $('bilingual-status').textContent=count?`当前语言已有 ${count}/${doc.segments.length} 段有效译文；缺失或过期部分仍保留原文，可在翻译选项中继续。`:'还没有当前语言的有效译文。先读原文，或打开翻译选项，核对发送范围与额度后生成；切换视图不会调用模型。';}
+ $('bilingual-status').textContent=count?`当前语言已有 ${count}/${doc.segments.length} 段有效译文；缺失部分可逐段「自己写译文」，过期译文可核对／修正；也可在翻译选项中继续。`:'还没有当前语言的有效译文。可逐段「自己写译文」，或打开翻译选项，核对发送范围与额度后生成；切换视图和自己写译文不会调用模型。';}
 }
 function setReadingMode(mode) {
  const previousMode=readingMode;

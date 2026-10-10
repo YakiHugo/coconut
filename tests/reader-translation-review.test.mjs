@@ -411,3 +411,69 @@ test('real library detours with a hidden translation draft update only window se
   w.JSON.stringify=stringify;w.CoconutTranslationReview.openEditor('review-doc','review-102','zh');assert.equal($('translation-edit-text').value,'Draft protected across real navigation');
  }finally{await w.happyDOM.close();}
 });
+
+
+test('missing cue authoring retains exact text and user provenance through JSON, search and subtitle export',()=>{
+ const doc=C.validate(translationReviewFixture(3)),cue=doc.segments[0],text='  自己写的苹果 <b>\n第二行  ';
+ cue.saved_excerpt=true;const snapshot=C.manualReviewSnapshot(doc,cue,'zh');
+ const item=C.saveManualTranslation(doc,cue,'zh',text,snapshot,undefined);
+ assert.equal(item.provider,'user');assert.equal(item.original_translation,undefined);assert.equal(item.manual_review.previous_text,'');
+ assert.equal(item.text,text);assert.equal(C.translationCurrent(cue,doc,item),true);
+ const restored=C.parse(JSON.stringify(doc),'manual.json');assert.deepEqual(restored.segments[0].translations.zh,item);
+ assert.equal(C.translationReviewQueue(restored,'zh',true).missing,0);
+ assert.match(C.notebookMarkdown(restored),/用户自己写的译文/);
+ assert.match(C.subtitleExport(restored,'vtt',true).text,/自己写的苹果/);
+ assert.ok(C.searchDocument(restored,'自己写的苹果').byCue.has(cue.id));
+ restored.segments[1].text+=' changed';assert.equal(C.translationCurrent(restored.segments[0],restored,restored.segments[0].translations.zh),false);
+ assert.doesNotMatch(C.subtitleExport(restored,'vtt',true).text,/自己写的苹果/);
+});
+
+for(const change of ['empty','oversized','source','context','language','glossary','duplicate'])test(`missing translation rejects ${change} without changing saved content`,()=>{
+ const doc=C.validate(translationReviewFixture(3)),cue=doc.segments[0],snapshot=C.manualReviewSnapshot(doc,cue,'zh');
+ let text='Authored draft';
+ if(change==='empty')text=' \n ';if(change==='oversized')text='a'.repeat(12001);
+ if(change==='source')cue.text+=' changed';if(change==='context')doc.segments[1].text+=' changed';if(change==='language')doc.language='fr';
+ if(change==='glossary')doc.translation_glossary.zh=[{source:'apples',target:'果实'}];
+ if(change==='duplicate')C.saveManualTranslation(doc,cue,'zh','Other saved text',snapshot,undefined);
+ const before=JSON.stringify(cue.translations);assert.throws(()=>C.saveManualTranslation(doc,cue,'zh',text,snapshot,undefined));assert.equal(JSON.stringify(cue.translations),before);
+});
+
+test('long exact source survives user authoring and backup validation',()=>{
+ const doc=C.validate(translationReviewFixture(2)),cue=doc.segments[0];cue.text='Long source '.repeat(100000);
+ C.saveManualTranslation(doc,cue,'zh','User translation',C.manualReviewSnapshot(doc,cue,'zh'),undefined);
+ const restored=C.parse(JSON.stringify(doc),'long.json');assert.equal(restored.segments[0].translations.zh.source_text,cue.text);assert.equal(C.translationCurrent(restored.segments[0],restored,restored.segments[0].translations.zh),true);
+});
+
+test('bilingual missing cue opens language picker, saves locally and advances only to next missing cue',async()=>{
+ const {w,$,calls}=setup();try{
+  $('mode-bilingual').click();w.document.querySelector('.segment[data-segment-id="review-0"] .review-translation-button').click();
+  assert.equal($('translation-edit-source').textContent,w.reviewTest.doc().segments[0].text);assert.equal($('translation-edit-text').value,'');assert.equal($('translation-edit-language-field').hidden,false);
+  $('translation-edit-language').value='ja';$('translation-edit-language').onchange();assert.match($('translation-edit-heading').textContent,/日语/);
+  input(w,$('translation-edit-text'),'自分で書いた訳文');await $('save-next-missing-translation').onclick(new w.Event('click'));
+  assert.equal(w.reviewTest.doc().segments[0].translations.ja.provider,'user');assert.equal(w.reviewTest.doc().segments[0].translations.zh,undefined);
+  assert.equal($('translation-edit-source').textContent,w.reviewTest.doc().segments[1].text);assert.equal($('translation-edit-text').value,'');assert.equal($('translation-edit-language').value,'ja');
+  input(w,$('translation-edit-text'),'次の訳文');await $('save-next-missing-translation').onclick(new w.Event('click'));
+  assert.equal($('translation-edit-source').textContent,w.reviewTest.doc().segments[3].text,'skip existing Japanese translation');assert.equal(calls(),0);
+ }finally{await w.happyDOM.close();}
+});
+
+test('missing queue works for a new language and dirty language changes need explicit discard',async()=>{
+ const {w,$}=setup();try{
+  $('review-translations').click();$('translation-queue-language').value='fr';$('translation-queue-language').onchange();$('translation-queue-mode').value='missing';$('translation-queue-mode').onchange();
+  assert.equal(w.document.querySelectorAll('.translation-queue-open').length,30);assert.equal($('translation-queue-position').textContent,'1–30 / 105');w.document.querySelector('.translation-queue-open').click();
+  input(w,$('translation-edit-text'),'Brouillon');w.confirm=()=>false;$('translation-edit-language').value='de';$('translation-edit-language').onchange();assert.equal($('translation-edit-language').value,'fr');assert.equal($('translation-edit-text').value,'Brouillon');
+  $('translation-edit-cancel').click();assert.equal($('translation-edit-dialog').open,true);
+  w.confirm=()=>true;$('translation-edit-cancel').click();assert.equal($('translation-edit-dialog').open,false);assert.equal(w.CoconutTranslationReview.hasDraft(),false);assert.equal(w.reviewTest.doc().segments[0].translations.fr,undefined);
+ }finally{await w.happyDOM.close();}
+});
+
+test('missing drafts survive document detours and reject concurrent source edits and duplicate translations',async()=>{
+ for(const change of ['source','duplicate']){
+  const {w,$}=setup();try{
+   w.reviewTest.other();w.CoconutTranslationReview.openEditor('review-doc','review-0','zh');input(w,$('translation-edit-text'),'Unsubmitted human draft');w.reviewTest.navigate('other');w.reviewTest.navigate('review-doc');
+   const doc=w.reviewTest.doc(),cue=doc.segments[0];if(change==='source')cue.text+=' changed';else w.Coconut.saveManualTranslation(doc,cue,'zh','Other saved text',w.Coconut.manualReviewSnapshot(doc,cue,'zh'),undefined);
+   w.CoconutTranslationReview.openEditor('review-doc','review-0','zh');assert.equal($('translation-edit-text').value,'Unsubmitted human draft');await $('save-translation-edit').onclick(new w.Event('click'));assert.match($('translation-edit-error').textContent,/已变化/);assert.equal(unload(w),true);
+   assert.equal(cue.translations.zh?.text,change==='duplicate'?'Other saved text':undefined);
+  }finally{await w.happyDOM.close();}
+ }
+});
