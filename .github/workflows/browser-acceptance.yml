@@ -191,6 +191,7 @@ jobs:
             ${{ runner.temp }}/coconut-authored-ui/passages-geometry.json
             ${{ runner.temp }}/coconut-authored-ui/autosave-geometry.json
             ${{ runner.temp }}/coconut-authored-ui/playback-follow-geometry.json
+            ${{ runner.temp }}/coconut-authored-ui/playback-follow-scroll.json
           if-no-files-found: ignore
           retention-days: 7
       - name: Remove temporary media and exports

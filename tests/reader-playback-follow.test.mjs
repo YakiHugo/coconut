@@ -1,3 +1,4 @@
+import {installFollowScrollObserver,followWheelSettled} from './helpers/follow-scroll-observer.mjs';
 import {installSavePipeline,settle} from './helpers/save-pipeline.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -18,7 +19,7 @@ function setup(){
  w.eval(['summary','core'].map(name=>fs.readFileSync(new URL('reader/'+name+'.js',root),'utf8')).join('\n'));
  const createSearch=w.Coconut.createLibrarySearch;w.Coconut.createLibrarySearch=options=>createSearch({...options,schedule:fn=>shelfTasks.push(fn),now:()=>0,batchSize:7});
  w.eval(['passages','passage-playback','app','language','translation-review','podcasts'].map(name=>fs.readFileSync(new URL('reader/'+name+'.js',root),'utf8')).join('\n')+`\nwindow.followTest={doc:()=>active(),seedShelf:()=>{for(let i=0;i<181;i++)state.documents.push({...Coconut.validate({title:"Shelf "+i,segments:[{id:"shelf-cue",start:0,end:1,text:"authored shelf needle"}]}),key:"shelf-"+i});renderLibrary();},queue:()=>queueDocument(active()),render:()=>render(),replace:()=>{active().segments=[...active().segments];render();},offset:value=>{browserMedia.set(active().key,{origin:'local',identity:'file-candidate-v1:authored',url:followPlayer().getAttribute('src'),kind:'audio'});active().media_timing={version:1,identity:'file-candidate-v1:authored',offset:value};},media:()=>{browserMedia.set(active().key,{origin:'local',identity:'replacement',url:followPlayer().getAttribute('src'),kind:'audio'});render();},range:()=>passagePageStart};`);
- return {w,$:id=>w.document.getElementById(id),calls,tick,scrolls,pipeline,shelfTasks};
+ return {w,$:id=>w.document.getElementById(id),calls,tick,frames,scrolls,pipeline,shelfTasks};
 }
 async function add($,doc){
  const text=JSON.stringify(doc);Object.defineProperty($('file'),'files',{configurable:true,value:[{name:'authored-dock.json',size:text.length,text:async()=>text}]});await $('file').onchange();
@@ -133,4 +134,39 @@ test('combined notebook and manual translation editing interrupt queued follow w
  seek(env,m,580);assert.equal(scrolls.length,after);assert.equal(w.document.activeElement,editor);assert.equal(editor.value,'  exact\n human draft  ');assert.equal(editor.selectionStart,3);assert.equal(editor.selectionEnd,8);
  assert.equal($('notebook-search').value,'  exact notebook query  ');assert.equal(env.calls.length,0);
  }finally{await env.w.happyDOM.close();}
+});
+
+
+test('wheel retires even already-dequeued follow callbacks and subsequent media events',async()=>{
+ const env=setup();try{const m=await media(env),{w,$,tick,frames,scrolls}=env;
+ await m.player.play();enable(env);const count=scrolls.length,first=w.document.querySelector('.segment');
+ m.player.currentTime=500;m.refresh();const stale=[...frames.values()];assert.ok(stale.length);
+ w.dispatchEvent(new w.WheelEvent('wheel',{deltaY:100}));assert.equal($('dock-follow').dataset.state,'suspended');
+ // Model callbacks already taken out of the browser queue before cancellation.
+ for(const callback of stale)callback();tick();
+ for(const time of [580,20,599]){seek(env,m,time);assert.equal(scrolls.length,count);assert.equal(w.document.querySelector('.segment'),first);assert.equal($('dock-follow').dataset.state,'suspended');}
+ }finally{await env.w.happyDOM.close();}
+});
+
+test('browser wheel settlement rejects intent-only, delayed movement and stale scrollend',async()=>{
+ const w=new Window();try{
+ w.document.body.innerHTML='<button id="dock-follow" data-state="suspended"></button>';
+ let y=100;Object.defineProperty(w,'scrollY',{get:()=>y});
+ const forwarded=[];w.scrollTo=function(...args){forwarded.push({receiver:this,args});return 'original-result';};
+ const original=w.scrollTo;
+ w.eval('('+installFollowScrollObserver.toString()+')()');
+ const sample=()=>w.eval('('+followWheelSettled.toString()+')()');
+ const event=type=>w.document.dispatchEvent(new w.Event(type));
+ w.dispatchEvent(new w.WheelEvent('wheel',{deltaY:100}));
+ for(let i=0;i<10;i++)assert.equal(sample(),false,'suspended intent and stationary pre-wheel Y are insufficient');
+ event('scrollend');for(let i=0;i<3;i++)assert.equal(sample(),false,'scrollend without movement is insufficient');
+ y=125;event('scroll');for(let i=0;i<3;i++)assert.equal(sample(),false,'movement without completion is insufficient');
+ event('scrollend');y=150;event('scroll');for(let i=0;i<3;i++)assert.equal(sample(),false,'later movement invalidates prior scrollend');
+ event('scrollend');assert.equal(sample(),true);
+ y=175;event('scroll');event('scrollend');assert.equal(sample(),false);assert.equal(sample(),false);assert.equal(sample(),true);
+ w.document.querySelector('button').dataset.state='following';assert.equal(sample(),false,'lost manual ownership never settles');
+ assert.equal(w.scrollTo(0,200),'original-result');assert.equal(forwarded[0].receiver,w);assert.deepEqual(forwarded[0].args,[0,200]);
+ assert.equal(w.__followScrollObserver.state.calls.at(-1).afterWheel,true);
+ w.__followScrollObserver.stop();assert.equal(w.scrollTo,original);
+ }finally{await w.happyDOM.close();}
 });
