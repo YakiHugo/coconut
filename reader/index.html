@@ -7,7 +7,8 @@
 <meta name="description" content="把长视频和播客变成自己的阅读空间。对照原文与译文，按时间回听，留下摘录和笔记。">
 <meta name="theme-color" content="#faf9f7">
 <link rel="icon" type="image/png" href="coconut-mark.png">
-<link rel="stylesheet" href="style.css?v=8debf46adf">
+<script src="appearance.js?v=86ea922669"></script>
+<link rel="stylesheet" href="style.css?v=a52ee4928d">
 <script src="summary.js?v=580ffdad1e" defer></script>
 <script src="core.js?v=a976b03fad" defer>
 </script>
@@ -232,7 +233,13 @@ cd coconut
 <button id="source">原始来源链接</button>
 <button id="review-translations" type="button">译文核对</button>
 </div>
+<section class="reading-appearance" aria-label="阅读外观">
 <label class="reading-comfort">阅读排版<select id="reading-layout"><option value="standard">标准</option><option value="large">大字</option><option value="spacious">大字 · 宽松行距</option></select></label><span id="layout-status" class="hint" role="status"></span>
+<label class="reading-comfort">正文宽度<select id="reading-measure"><option value="full">随窗口</option><option value="narrow">窄栏 · 适合长读</option></select></label>
+<label class="reading-comfort">页面外观<select id="reading-theme"><option value="light">明亮</option><option value="dark">深色</option><option value="system">跟随系统</option></select></label>
+<p class="hint">仅保存在此浏览器；不改变正文与笔记。选择标准、随窗口、明亮可恢复默认。</p>
+<p id="appearance-status" class="hint" role="status" aria-live="polite"></p>
+</section>
 <form id="time-navigation" class="time-navigation"><label for="reading-time">跳到时间</label><input id="reading-time" placeholder="12:34 或 1:02:03" inputmode="decimal" aria-describedby="time-navigation-status"><button type="submit">定位文字</button><span id="time-navigation-status" class="hint" role="status"></span></form>
 </div></details>
 <section id="empty">
