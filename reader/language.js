@@ -287,7 +287,7 @@ if($('save-translation-glossary'))$('save-translation-glossary').onclick=async()
  const target=$('translation-target').value,signature=glossaryDocumentSignature,submitted=$('translation-glossary').value,owner={};
  try{
   const entries=submitted.split(/\r?\n/).filter(line=>line.trim()).map(line=>{if(line.trim().startsWith('"')){const match=line.trim().match(/^("(?:[^"\\]|\\.)*")\s*=\s*(.+)$/);if(!match)throw new Error('带引号的术语请按「"原词" = "译法"」填写');return {source:JSON.parse(match[1]),target:match[2].startsWith('"')?JSON.parse(match[2]):match[2].trim()};}const index=line.indexOf('=');if(index<1)throw new Error('请按每行「原词 = 统一译法」填写');return {source:line.slice(0,index).trim(),target:line.slice(index+1).trim()};});
-  const terms=Coconut.cleanGlossary(entries,true);doc.translation_glossary||=Object.create(null);doc.translation_glossary[target]=terms;
+  const terms=Coconut.cleanGlossary(entries,true);doc.translation_glossary||=Object.create(null);doc.translation_glossary[target]=terms;Coconut.invalidateSearch(doc);
   glossarySubmissions.set(signature,owner);glossaryDrafts.delete(signature);$('translation-glossary').value=savedGlossaryText(doc,target);
   $('ai-consent').checked=false;if(subscriptionTranslating)stopSubscription=true;
   const pending=commitDocument(doc);render();const receipt=await pending;
@@ -326,7 +326,7 @@ $('translate-document').onclick=async()=>{
    if(batch.some(c=>destination.segments.find(s=>s.id===c.id)?.translations?.[target]!==targetVersions.get(c.id)))throw new Error('本批译文已被人工修正或替换，返回结果未覆盖，后续请求已停止');
    for(const item of result.translations){const original=batch.find(s=>s.id===item.id);const segment=destination.segments.find(s=>s.id===item.id);if(!original||!segment||item.source_text!==original.text||typeof item.text!=='string'||!item.text.trim())throw new Error('翻译片段对应关系无效');}
    for(const item of result.translations){const segment=destination.segments.find(s=>s.id===item.id);if(segment.text!==item.source_text)continue;segment.translations||={};segment.translations[target]={text:item.text,source_text:item.source_text,source_language:source,document_language:documentLanguage,provider:item.provider};completed++;}
-   destination.translation_view=target;const pendingSave=commitDocument(destination);if(active()===doc)render();
+   Coconut.invalidateSearch(destination);destination.translation_view=target;const pendingSave=commitDocument(destination);if(active()===doc)render();
    const receipt=await pendingSave;if(offlineTranslationScope!==owner||!languageOwnerLive(owner))return;
    if(!receipt.ok)throw new Error('本批译文暂留在此页面，浏览器保存未成功，请立即导出备份；后续请求已停止');
   }
@@ -491,7 +491,7 @@ $('subscription-translate').onclick=async()=>{
    const contextId=crypto.randomUUID();destination.translation_contexts||=Object.create(null);destination.translation_contexts[contextId]=window.snapshot;
    for(const item of result.translations){const segment=destination.segments.find(s=>s.id===item.id);segment.translations||={};segment.translations[target]={text:item.text,source_text:item.source_text,source_language:source,document_language:documentLanguage,provider:providerName,context_id:contextId,context_version:2,target_language:target,glossary_snapshot:window.glossary,input_revision:item.input_revision,quality_warnings:Array.isArray(item.quality_warnings)?item.quality_warnings.filter(code=>Coconut.translationQualityMessage({quality_warnings:[code]})):[]};}
    destination.translation_contexts=Coconut.cleanContexts(destination.translation_contexts,destination.segments);
-   destination.translation_view=target;
+   Coconut.invalidateSearch(destination);destination.translation_view=target;
    // The confirmed request plan is immutable. Our own translated wording can
    // change search matches; adopt that display change without canceling targets
    // the user already approved. Any prior user scope change stays latched.

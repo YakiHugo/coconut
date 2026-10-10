@@ -666,7 +666,7 @@ function renderLibrary() {
   if(hits.length){
    const list=el('div','library-hits');list.setAttribute('aria-label','匹配预览（最多 3 项）');
    for(const hit of hits){
-    const button=el('button','library-hit');button.type='button';button.dataset.hitKind=hit.kind;button.dataset.hitId=hit.id||'';
+    const button=el('button','library-hit');button.type='button';button.dataset.hitKind=hit.kind;button.dataset.hitId=hit.id||'';if(hit.ids){button.dataset.cueCount=String(hit.ids.length);if(hit.ids.length<=32)button.dataset.cueIds=JSON.stringify(hit.ids);}
     const label={'text':'原文','note':'片段笔记','project-note':'项目笔记','bookmark':'时间书签'}[hit.kind];
     button.append(el('small','',label+(hit.time===undefined?'':' · '+Coconut.time(hit.time))));
     const preview=el('span','library-hit-preview');preview.append(document.createTextNode(hit.snippet.before),el('mark','',hit.snippet.match),document.createTextNode(hit.snippet.after));
@@ -808,6 +808,7 @@ function render({keepNoteEditor=false}={}) {
  selector.value=speakerFilter===null?'all':JSON.stringify(speakerFilter);$('speaker-filter-control').hidden=speakers.length<2;
 	const query = $("search").value.trim().toLocaleLowerCase();
 	const filtered = doc.segments.filter(s=>matchesReadingSegment(s,doc,query));
+ const searchMatches=query?Coconut.searchDocument(doc,query):null;
 	// Clamp after removing the last matching note/excerpt on a later page.
 	pageStart = Math.min(pageStart, Math.max(0, Math.floor((filtered.length - 1) / PAGE_SIZE) * PAGE_SIZE));
 	const visible = filtered.slice(pageStart, pageStart + PAGE_SIZE);
@@ -875,8 +876,18 @@ function render({keepNoteEditor=false}={}) {
 		if (s.speaker) body.append(highlightedText("p", "speaker", s.speaker, query));
 		body.className="segment-content";
   const parallel=el("div","parallel-text");
-  parallel.append(highlightedText("p", "words", s.text, query));
-        if(translated) parallel.append(highlightedText("p", "translation"+(!Coconut.translationCurrent(s,doc,translated)?" stale":""), Coconut.translationCurrent(s,doc,translated) ? translated.text : "原文或上下文已变化，或旧译文缺少上下文记录，可核对／修正此译文或重新生成", query));
+  parallel.append(highlightedText("p", "words", s.text, query, searchMatches?.byCue.get(s.id)?.text||[]));
+        if(translated) parallel.append(highlightedText("p", "translation"+(!Coconut.translationCurrent(s,doc,translated)?" stale":""), Coconut.translationCurrent(s,doc,translated) ? translated.text : "原文或上下文已变化，或旧译文缺少上下文记录，可核对／修正此译文或重新生成", query, searchMatches?.byCue.get(s.id)?.translations[doc.translation_view]||[]));
+  const textHit=searchMatches?.byCue.get(s.id)?.phrases.text;
+  if(textHit?.cueCount>1)body.append(phrasePreview(textHit));
+  for(const [language,ranges] of Object.entries(searchMatches?.byCue.get(s.id)?.translations||{})){
+   const hit=searchMatches.byCue.get(s.id).phrases['translation:'+language]||searchMatches.previews.get('translation:'+language+':'+s.id),hidden=language!==doc.translation_view;
+   if(hit?.cueCount>1||hidden){
+    const preview=phrasePreview(hit||{field:'translation',language,id:s.id,ids:[s.id],snippet:CoconutPassages.rangeSnippet(s.translations[language].text,ranges[0].start,ranges[0].end)});
+    if(hidden){const reveal=el('button','phrase-show-translation','查看'+translationLabel(language)+'译文');reveal.type='button';reveal.onclick=()=>{if(active()!==doc||!contentIngressAllowed(doc))return;doc.translation_view=language;queueDocument(doc);render();[...$('transcript').querySelectorAll('.segment')].find(row=>row.dataset.segmentId===s.id)?.focus({preventScroll:true});};preview.append(reveal);}
+    body.append(preview);
+   }
+  }
         body.append(parallel);
         if(translated && Coconut.translationCurrent(s,doc,translated)) { const warning=Coconut.translationQualityMessage(translated); if(warning)body.append(el("p","translation-review","待核对："+warning)); }
 
@@ -1389,6 +1400,7 @@ $("save-edit").onclick = (event) => {
 	}
 	if (segment.original_text === undefined) segment.original_text = segment.text;
 	segment.text = text;
+ Coconut.invalidateSearch(doc);
 	queueDocument(doc);
 	$("edit-dialog").close();
 	render();
@@ -1625,9 +1637,23 @@ function repeatPlayback(ended=false,player=$("source-media").querySelector("audi
 }
 $("stop-repeat").onclick=stopRepeating;
 
-function highlightedText(tag,className,value,query){
+function translationLabel(language){return {zh:'中文',en:'英文',ja:'日文',ko:'韩文',fr:'法文',de:'德文',es:'西班牙文'}[language]||language;}
+function phrasePreview(hit){
+ const preview=el('p','phrase-match'),count=hit.cueCount??hit.ids.length;preview.dataset.cueCount=String(count);
+ // Complete membership stays in the source index. Avoid repeating enormous ID
+ // lists in every result DOM node for a long, heavily overlapping query.
+ if(count<=32)preview.dataset.cueIds=JSON.stringify(hit.ids);else{preview.dataset.firstCueId=hit.id;preview.dataset.lastCueId=hit.lastId;}
+ preview.dataset.field=hit.field;if(hit.language)preview.dataset.language=hit.language;
+ const label=(hit.language?translationLabel(hit.language)+'译文':'原文')+(count>1?` · 跨 ${count} 个片段`:'');
+ preview.append(el('small','',label+' · '),document.createTextNode(hit.snippet.before),el('mark','',hit.snippet.match),document.createTextNode(hit.snippet.after));return preview;
+}
+function highlightedText(tag,className,value,query,ranges=null){
  const node=el(tag,className),text=String(value),needle=query.trim();
  if(!needle){node.textContent=text;return node;}
+ if(ranges){
+  let end=0;for(const range of ranges){node.append(document.createTextNode(text.slice(end,range.start)),el('mark','',text.slice(range.start,range.end)));end=range.end;}
+  node.append(document.createTextNode(text.slice(end)));return node;
+ }
  // Escape all regexp operators; imported text is always a text node.
  const expression=new RegExp(needle.replace(/[.*+?^${}()|[\]\\]/g,"\\$&"),"giu");
  let end=0;

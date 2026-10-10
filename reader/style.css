@@ -871,3 +871,9 @@ body[data-media-docked="true"] .reading-feedback { bottom: 94px; }
 .save-actions {display:flex;flex-wrap:wrap;gap:8px;}
 .save-actions:has(button:not([hidden])) {margin-top:8px;}
 .save-actions button {min-height:44px;}
+
+/* Cross-cue previews preserve the exact visible phrase without unbounded cards. */
+.phrase-match{white-space:pre-wrap;font-size:.85rem;line-height:1.65;color:var(--muted);overflow-wrap:anywhere;margin:.35rem 0 .65rem}
+.phrase-match small{font-size:inherit}
+
+.phrase-show-translation{font-size:12px;padding:2px 7px;margin-left:8px}

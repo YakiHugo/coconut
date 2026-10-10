@@ -7,16 +7,16 @@
 <meta name="description" content="把长视频和播客变成自己的阅读空间。对照原文与译文，按时间回听，留下摘录和笔记。">
 <meta name="theme-color" content="#faf9f7">
 <link rel="icon" type="image/png" href="coconut-mark.png">
-<link rel="stylesheet" href="style.css?v=c5c686bafc">
+<link rel="stylesheet" href="style.css?v=c1b0ac09de">
 <script src="summary.js?v=580ffdad1e" defer></script>
-<script src="core.js?v=356129146d" defer>
+<script src="core.js?v=b3ebc8381e" defer>
 </script>
-<script src="passages.js?v=aa95245d4c" defer></script>
+<script src="passages.js?v=b4aee1081b" defer></script>
 <script src="passage-playback.js?v=162dbb3695" defer></script>
 <script src="library-store.js?v=b9bfd30793" defer></script>
-<script src="app.js?v=5ca6d0320c" defer>
+<script src="app.js?v=72d3ef8adf" defer>
 </script>
-<script src="language.js?v=1652b76b45" defer></script>
+<script src="language.js?v=c9bc04eda3" defer></script>
 <script src="translation-review.js?v=cf09bebe3b" defer></script>
 <script src="podcasts.js?v=f9183ab7f3" defer></script>
 <script src="jobs.js?v=265b2e0e81" defer>
@@ -213,9 +213,10 @@ cd coconut
 <div class="transcript-navigation"><label for="reading-jump">浏览全文</label><select id="reading-jump" aria-label="按片段位置浏览全文"></select><span id="reading-page-status" class="hint"></span></div>
 <div id="bilingual-readiness" class="bilingual-readiness" hidden><p id="bilingual-status" class="hint" role="status"></p><button id="prepare-bilingual" type="button">翻译选项</button></div>
 <div class="tools">
-<label class="search">⌕ <input id="search" type="search" placeholder="搜索原话、说话人或笔记" aria-label="搜索文字稿">
+<label class="search">⌕ <input id="search" type="search" placeholder="搜索原话、已存译文、说话人或笔记" aria-label="搜索文字稿" aria-describedby="search-help">
 </label>
 </div>
+<p id="search-help" class="hint">支持连贯阅读中的跨片段短语与各语言有效译文；结果与 AI 筛选按命中的原片段计数。书架全文查找包含原文与笔记，不包含译文。</p>
 <label id="speaker-filter-control" hidden>说话人标签<select id="speaker-filter"><option value="all">全部说话人</option></select></label>
 <div class="reading-controls"><div role="group" aria-label="阅读视图"><button id="filter-all" aria-pressed="true">全文</button><button id="filter-excerpts" aria-pressed="false">摘录 <span id="excerpt-count">0</span></button><button id="filter-notes" aria-pressed="false" title="本篇全部非空片段笔记；不含项目笔记和时间书签，不受搜索筛选影响">片段笔记 <span id="note-count">0</span></button></div><button id="resume" hidden></button></div><p id="search-status" class="hint" role="status"></p><div id="search-navigation" hidden><button id="previous-match" type="button">上一匹配段</button><span id="match-position" class="hint" role="status"></span><button id="next-match" type="button">下一匹配段</button></div><button id="clear-search" hidden>清除筛选，返回全文</button>
 </div>
