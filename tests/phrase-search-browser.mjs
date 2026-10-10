@@ -3,16 +3,14 @@
  * provider, external request or account is used. This file may be syntax-checked
  * in constrained environments without launching Chromium. */
 import assert from 'node:assert/strict';
-import {createServer} from 'node:http';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import {fileURLToPath} from 'node:url';
 import {chromium} from '@playwright/test';
+import {startBridge} from '../desktop/server.mjs';
 import {openCueActions} from './cue-actions-browser.mjs';
 import {phraseSearchFixture, phraseContributorIds, SOURCE_PHRASE, TRANSLATED_PHRASE} from './helpers/phrase-search-fixture.mjs';
 
-const root = fileURLToPath(new URL('../', import.meta.url));
-let server, browser, stage = 'setup', external = 0, mutations = 0;
+let server, browser, currentLabel, stage = 'setup', external = 0, mutations = 0;
 const checks = [], errors = [], injected = [];
 const check = (name, value) => {stage = name;assert.ok(value, name);checks.push(name);};
 const cue = (page, id) => page.locator('.segment[data-segment-id="' + id + '"]');
@@ -39,35 +37,33 @@ async function showLanguageTools(page) {
   if (!await page.locator('#language-panel').evaluate(node => node.open)) await page.locator('#language-panel > summary').click();
 }
 try {
-  server = createServer(async (req, res) => {
-    if (!['GET', 'HEAD'].includes(req.method)) {mutations++;res.writeHead(405).end();return;}
-    const pathname = new URL(req.url, 'http://localhost').pathname, name = pathname === '/' ? 'index.html' : pathname.slice(1);
-    if (!/^[a-z-]+\.(html|js|css|png|webmanifest)$/.test(name)) {res.writeHead(404).end();return;}
-    try {
-      const bytes = await fs.readFile(path.join(root, 'reader', name));
-      res.writeHead(200, {'Content-Type': name.endsWith('.js') ? 'text/javascript' : name.endsWith('.css') ? 'text/css' : name.endsWith('.png') ? 'image/png' : 'text/html'}).end(bytes);
-    } catch {res.writeHead(404).end();}
-  });
-  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  // Exercise the real health/capability lifecycle. A static server leaves the
+  // reader disconnected even when language-tools and ask routes are stubbed.
+  server = await startBridge({port: 0, providers: {
+    status: async () => ({ready: true, reason: 'Authored fixture; no real CLI'}),
+    exclusive: async action => action(),
+    structured: async () => {throw new Error('Unexpected translation request');},
+    ask: async body => {
+      injected.push({label: currentLabel, body});
+      return {answer: 'Authored injected answer; no model call.', citations: [body.segments[0].id], provider: 'fixture'};
+    },
+  }});
   const origin = 'http://127.0.0.1:' + server.address().port;
   browser = await chromium.launch({headless: true, ...(process.env.COCONUT_CHROMIUM_EXECUTABLE ? {executablePath: process.env.COCONUT_CHROMIUM_EXECUTABLE} : {})});
   for (const [label, viewport] of [['desktop', {width: 1360, height: 1000}], ['mobile', {width: 390, height: 844}]]) {
-    stage = label + '_setup';
+    stage = label + '_setup';currentLabel = label;
     const context = await browser.newContext({viewport, acceptDownloads: true, serviceWorkers: 'block'});
     await context.route('**/*', async route => {
       const request = route.request(), url = new URL(request.url());
-      if (url.origin === origin && url.pathname === '/api/language-tools' && request.method() === 'GET') {
-        await route.fulfill({json: {ai: {codex: {ready: true}}}});return;
-      }
       if (url.origin === origin && url.pathname === '/api/ask' && request.method() === 'POST') {
-        const body = request.postDataJSON();injected.push({label, body});
-        await route.fulfill({json: {answer: 'Authored injected answer; no model call.', citations: [body.segments[0].id], provider: 'fixture'}});return;
+        await route.continue();return;
       }
       if (!['GET', 'HEAD'].includes(request.method())) {mutations++;await route.abort();return;}
       if (url.origin === origin || ['blob:', 'data:'].includes(url.protocol)) await route.continue();
       else {external++;await route.abort();}
     });
     const page = await context.newPage();page.setDefaultTimeout(15000);page.on('pageerror', error => errors.push(error.message));await page.goto(origin);
+    await page.waitForFunction(() => !document.querySelector('#check-ai').disabled);
     const fixture = phraseSearchFixture(1771);fixture.title += ' · ' + label;fixture.segments[0].text = SOURCE_PHRASE + '.';
     await importDocument(page, fixture);const before = await stored(page);await enter(page, SOURCE_PHRASE);
     const all = ['split-0', ...phraseContributorIds(1771)];
@@ -144,5 +140,5 @@ try {
 } catch (error) {
   console.error(JSON.stringify({suite: 'cross-cue-phrase-search', status: 'failed', stage, checks, errors, error: error.message}));process.exitCode = 1;
 } finally {
-  await browser?.close();await new Promise(resolve => server ? server.close(resolve) : resolve());
+  await browser?.close();await new Promise(resolve => server?.listening ? server.shutdown(resolve) : resolve());
 }
