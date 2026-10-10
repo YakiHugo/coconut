@@ -5,8 +5,9 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import {chromium} from './helpers/browser-storage.mjs';
+import {installFollowScrollObserver,followWheelSettled} from './helpers/follow-scroll-observer.mjs';
 import {authoredAudioFixture} from './helpers/authored-audio-fixture.mjs';
-let browser,server,directory,stage='setup',external=0;
+let browser,server,directory,page,manualScroll,stage='setup',external=0;
 const checks=[],errors=[],geometry=[];
 function check(name,value){stage=name;assert.ok(value,name);checks.push(name);}
 try{
@@ -22,7 +23,7 @@ try{
  browser=await chromium.launch({headless:true});
  const context=await browser.newContext({viewport:{width:390,height:844},reducedMotion:'reduce',hasTouch:true,serviceWorkers:'block'});
  await context.route('**/*',route=>{const url=new URL(route.request().url());if(url.origin===origin||url.protocol==='blob:')return route.continue();external++;return route.abort();});
- const page=await context.newPage();page.setDefaultTimeout(15000);page.on('pageerror',error=>errors.push(error.message));await page.goto(origin);
+ page=await context.newPage();page.setDefaultTimeout(15000);page.on('pageerror',error=>errors.push(error.message));await page.goto(origin);
  await page.waitForFunction(()=>window.CoconutStorageBootstrap?.phase==='ready');
  const fixture={title:'Authored follow reading',language:'en',segments:Array.from({length:151},(_,i)=>({id:'cue-'+i,start:i*4,end:i*4+4,text:'This is authored reading passage '+i+'. The original voice stays alongside its words.'}))};
  await page.locator('#file').setInputFiles({name:'authored-follow.json',mimeType:'application/json',buffer:Buffer.from(JSON.stringify(fixture))});
@@ -39,12 +40,23 @@ try{
  check('page_crossing_keeps_follow_control_focus',await page.evaluate(()=>document.activeElement.id==='follow-playback'));
  await page.locator('#media-dock').waitFor({state:'visible'});
  check('playing_cue_is_comfortably_above_dock',await page.evaluate(()=>{const cue=document.querySelector('.segment.playing').getBoundingClientRect(),dock=document.querySelector('#media-dock').getBoundingClientRect();return cue.top>=0&&cue.bottom<=dock.top;}));
+ await page.evaluate(installFollowScrollObserver);
+ stage='manual_wheel_settlement';
  await page.mouse.wheel(0,100);
  await page.waitForFunction(()=>document.querySelector('#dock-follow').dataset.state==='suspended');
- const manualY=await page.evaluate(()=>scrollY);
+ // Suspended is synchronous wheel intent, not completion of native scrolling.
+ // Require real movement and its scrollend, then two unchanged frame samples.
+ // The existing finite page timeout fails if wheel movement never completes.
+ await page.evaluate(()=>window.__followScrollObserver.record('suspended_observed'));
+ await page.waitForFunction(followWheelSettled,null,{polling:'raf'});
+ const manualY=await page.evaluate(()=>{window.__followScrollObserver.record('manual_baseline');return scrollY;});
+ await page.evaluate(()=>window.__followScrollObserver.record('before_seek'));
  await page.locator('audio').evaluate(p=>{p.currentTime=580;p.dispatchEvent(new Event('timeupdate'));});
  await page.waitForTimeout(150);
- check('manual_scroll_remains_owned_by_reader',await page.evaluate(y=>Math.abs(scrollY-y)<2,manualY));
+ manualScroll=await page.evaluate(y=>{const observer=window.__followScrollObserver;observer.record('after_seek');return {...observer.state,baselineY:y,finalY:scrollY,delta:scrollY-y,follow:document.querySelector('#dock-follow').dataset.state};},manualY);
+ check('manual_scroll_remains_owned_by_reader',Math.abs(manualScroll.delta)<2&&manualScroll.follow==='suspended');
+ check('manual_wheel_and_seek_have_no_programmatic_scroll',manualScroll.calls.every(call=>!call.afterWheel));
+ await page.evaluate(()=>window.__followScrollObserver.stop());
  await page.locator('#dock-follow').click();
  await page.waitForFunction(()=>document.querySelector('.segment.playing')?.dataset.segmentId==='cue-145');
  // Pause leaves the opt-in armed but must not reposition on subsequent seeks.
@@ -68,6 +80,20 @@ try{
  }
  if(process.env.COCONUT_UI_SCREENSHOTS){await fs.mkdir(process.env.COCONUT_UI_SCREENSHOTS,{recursive:true});await page.screenshot({path:path.join(process.env.COCONUT_UI_SCREENSHOTS,'playback-follow-mobile.png')});await fs.writeFile(path.join(process.env.COCONUT_UI_SCREENSHOTS,'playback-follow-geometry.json'),JSON.stringify(geometry,null,2));}
  check('no_external_calls_or_page_errors',external===0&&errors.length===0);
- console.log(JSON.stringify({ok:true,checks,geometry,errors},null,2));
-}catch(error){console.error(JSON.stringify({ok:false,stage,checks,error:error.stack,geometry,errors},null,2));process.exitCode=1;}
+ if(process.env.COCONUT_UI_SCREENSHOTS)await fs.writeFile(path.join(process.env.COCONUT_UI_SCREENSHOTS,'playback-follow-scroll.json'),JSON.stringify(manualScroll,null,2));
+ console.log(JSON.stringify({ok:true,checks,geometry,manualScroll,errors},null,2));
+}catch(error){
+ try{
+  if(page&&!page.isClosed()){
+   const observed=await page.evaluate(()=>{const observer=window.__followScrollObserver;observer?.record('failure');return observer?.state||null;});
+   manualScroll={...manualScroll,...observed};
+   if(process.env.COCONUT_UI_SCREENSHOTS){
+    await fs.mkdir(process.env.COCONUT_UI_SCREENSHOTS,{recursive:true});
+    await fs.writeFile(path.join(process.env.COCONUT_UI_SCREENSHOTS,'playback-follow-scroll.json'),JSON.stringify(manualScroll,null,2));
+    await page.screenshot({path:path.join(process.env.COCONUT_UI_SCREENSHOTS,'playback-follow-failure.png')});
+   }
+  }
+ }catch(captureError){errors.push('failure diagnostics: '+captureError.message);}
+ console.error(JSON.stringify({ok:false,stage,checks,error:error.stack,geometry,manualScroll,errors},null,2));process.exitCode=1;
+}
 finally{await browser?.close();await new Promise(resolve=>server?server.close(resolve):resolve());if(directory)await fs.rm(directory,{recursive:true,force:true});}

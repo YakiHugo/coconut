@@ -90,6 +90,13 @@ class BrowserWorkflowTests(unittest.TestCase):
                 self.assertEqual(allows(playback['if'], outcomes, cancelled, prior_success),
                                  setup == fixture == 'success' and not cancelled)
 
+    def test_follow_scroll_diagnostics_are_explicitly_retained(self):
+        upload = SMOKE.split('      - name: Upload authored UI review images only', 1)[1].split('      - name:', 1)[0]
+        paths = re.findall(r'^            \$\{\{ runner.temp \}\}/coconut-authored-ui/(.+)$', upload, re.M)
+        self.assertEqual(paths, ['*.png', 'passages-geometry.json', 'autosave-geometry.json',
+                                 'playback-follow-geometry.json', 'playback-follow-scroll.json'])
+        self.assertIn('if: always()', upload)
+
     def test_no_failure_masks_and_existing_probe_and_cleanup_guards_are_preserved(self):
         self.assertNotRegex(WORKFLOW, re.compile(r'^\s*continue-on-error:', re.M))
         probe = next(step for step in STEPS
