@@ -1,5 +1,5 @@
 /** Browser acceptance utilities: real selected-backend reads, no in-memory save evidence. */
-import {chromium as nativeChromium} from '@playwright/test';
+import {chromium as nativeChromium, expect} from '@playwright/test';
 export {expect} from '@playwright/test';
 export function storageAssertions(){
  window.readPersistedLibrary=async()=>{
@@ -25,6 +25,14 @@ export function storageAssertions(){
    const original=Storage.prototype.setItem;window.restoreContentWrites=()=>{Storage.prototype.setItem=original;};Storage.prototype.setItem=function(key,value){if(this===localStorage&&key==='coconut-reader-v1')throw new DOMException('Authored quota failure','QuotaExceededError');return original.call(this,key,value);};
   }
  };
+}
+// Playwright waitForFunction truth-tests its predicate before awaiting a returned
+// Promise. Poll async committed-record reads from Node instead, awaiting each
+// evaluation and returning only a boolean to keep diagnostics content-free.
+export async function waitForPersistedLibrary(page,predicate,arg,{timeout=15000}={}){
+ await expect.poll(async()=>Boolean(await page.evaluate(predicate,arg)),{
+  timeout,message:'Committed library storage did not reach the expected state',
+ }).toBe(true);
 }
 export async function installStorageAssertions(page){await page.addInitScript(storageAssertions);await page.evaluate(storageAssertions);}
 export async function readerReady(page){await page.waitForFunction(()=>window.CoconutStorageBootstrap?.phase==='ready');if(await page.evaluate(()=>CoconutStorageBootstrap.result.backend)!=='indexeddb')throw new Error('Production browser journey unexpectedly fell back from IndexedDB');}

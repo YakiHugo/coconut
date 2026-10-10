@@ -170,10 +170,22 @@ try {
 
  const context = await newContext(), a = await newPage(context);
  stage = 'authored_imports_and_probe_calibration';
+ // Calibrate both shapes explicitly. The save coordinator needs only one
+ // envelope serialization per import; the removed dirty-array snapshot must
+ // remain detectable without requiring production to do that redundant work.
+ const calibrationBefore = await counts(a);
+ await a.evaluate(() => JSON.stringify({documents:[]}));
+ assert.deepEqual(await counts(a), {...calibrationBefore, librarySerializations:calibrationBefore.librarySerializations + 1}, 'the envelope hook must count exactly one serialization without a content write');
+ await a.evaluate(() => JSON.stringify([{segments:[]}]));
+ assert.deepEqual(await counts(a), {...calibrationBefore, librarySerializations:calibrationBefore.librarySerializations + 2}, 'the document-array hook must independently count exactly one serialization without a content write');
+ check('instrumentation_detects_envelope_and_document_array_serialization', true);
+ // Discard only the synthetic calibration, before any imports or navigation.
+ await resetCounts(a);
  const alpha = await importDocument(a, 'Window Alpha');
+ const alphaCounts = await counts(a);
  const beta = await importDocument(a, 'Window Beta');
  const initialCounts = await counts(a);
- check('instrumentation_detects_real_content_serialization_and_writes', initialCounts.librarySerializations >= 4 && initialCounts.contentWrites >= 2);
+ check('instrumentation_detects_real_content_serialization_and_writes', alphaCounts.librarySerializations >= 1 && alphaCounts.contentWrites >= 1 && initialCounts.librarySerializations > alphaCounts.librarySerializations && initialCounts.contentWrites > alphaCounts.contentWrites);
  check('explicit_import_selects_raw_window_key_and_content_omits_active', await selected(a) === beta.key);
 
  stage = 'legacy_startup_and_window_precedence';

@@ -3,7 +3,7 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import {chromium} from './helpers/browser-storage.mjs';
+import {chromium, waitForPersistedLibrary} from './helpers/browser-storage.mjs';
 import {startBridge} from '../desktop/server.mjs';
 let server,browser,stage='setup',release,holdTranslation=false,holdSummary=false;
 const checks=[],posts=[];let providerCalls=0,external=0,errors=0;
@@ -24,7 +24,7 @@ try{
  const planFor={question:'#question-scope',translation:'#subscription-translation-scope',summary:'#summary-plan'};
  async function planCount(action,segments,requests){const plan=page.locator(planFor[action]);check(action+'_plan_matches_scope_'+segments,await plan.isVisible()&&Number(await plan.getAttribute('data-segment-count'))===segments&&Number(await plan.getAttribute('data-request-count'))===requests);}
  async function select(action){await page.locator('#ai-task').selectOption(action);}
- async function savedAnswers(count){await page.waitForFunction(async count=>{const s=await readPersistedLibrary();return s.documents.find(d=>d.key===sessionStorage.getItem('coconut-reader-active-v1')).ai_answers.length===count;},count);}
+ async function savedAnswers(count){await waitForPersistedLibrary(page,async count=>{const s=await readPersistedLibrary();return s.documents.find(d=>d.key===sessionStorage.getItem('coconut-reader-active-v1')).ai_answers.length===count;},count);}
  async function sendQuestion(){await page.locator('#ai-consent').check();await page.locator('#ask-ai').click();}
  async function waitHeld(){const deadline=Date.now()+15000;while(!release&&Date.now()<deadline)await new Promise(resolve=>setTimeout(resolve,25));assert.ok(release,'Injected provider reached bounded hold');}
  await importFixture(fixture('三种 AI 阅读动作 · 自写验收'));await page.locator('#search').fill('selected-needle');

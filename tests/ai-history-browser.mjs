@@ -5,7 +5,7 @@ import {createServer} from 'node:http';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import {chromium} from './helpers/browser-storage.mjs';
+import {chromium, waitForPersistedLibrary} from './helpers/browser-storage.mjs';
 const root=new URL('../reader/',import.meta.url),KEY='coconut-reader-v1';
 const checks=[];let browser,server,directory,stage='setup',external=0,mutations=0,modelRequests=0,errors=0;
 function check(name,value){stage=name;assert.ok(value,name);checks.push(name);}
@@ -43,7 +43,7 @@ try{
  const active = async page => {await page.evaluate(()=>libraryStore.flush());return page.evaluate(async key=>{const state=await readPersistedLibrary();return state?.documents.find(doc=>doc.key===sessionStorage.getItem('coconut-reader-active-v1'));},KEY);};
  async function choose(page,file){
   const [chooser]=await Promise.all([page.waitForEvent('filechooser'),page.locator('#import').click()]);await chooser.setFiles(file);
-  await page.waitForFunction(async key=>{const state=await readPersistedLibrary();return state?.documents.find(doc=>doc.key===sessionStorage.getItem('coconut-reader-active-v1'))?.ai_answers.length===245&&!document.getElementById('reader-workspace').hidden;},KEY);
+  await waitForPersistedLibrary(page,async key=>{const state=await readPersistedLibrary();return state?.documents.find(doc=>doc.key===sessionStorage.getItem('coconut-reader-active-v1'))?.ai_answers.length===245&&!document.getElementById('reader-workspace').hidden;},KEY);
   await page.waitForFunction(()=>document.getElementById('file').value==='');
  }
  async function download(page,selector,name){

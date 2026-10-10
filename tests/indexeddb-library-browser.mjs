@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {createServer} from 'node:http';
 import fs from 'node:fs/promises';
 import {chromium} from '@playwright/test';
-import {storageAssertions} from './helpers/browser-storage.mjs';
+import {storageAssertions, waitForPersistedLibrary} from './helpers/browser-storage.mjs';
 if(process.env.GITHUB_ACTIONS!=='true')throw new Error('Run this real-browser storage proof in GitHub Actions only.');
 const root=new URL('../reader/',import.meta.url),KEY='coconut-reader-v1',NAME='coconut-reader-library-v1';
 const fixture=key=>({schema_version:1,key,title:'Storage '+key,language:'en',notes:{},segments:[{id:'one',start:0,end:5,text:'Complete authored storage fixture '+key}],ai_answers:Array.from({length:26},(_,i)=>({question:'Question '+i,answer:'Full answer '+i,citations:['one'],provider:'authored'}))});
@@ -49,7 +49,7 @@ try{
  stage='large restore bypasses actual localStorage quota';check('native_localstorage_limit_is_smaller_than_fixture',await page.evaluate(()=>{try{localStorage.setItem('authored-too-large','q'.repeat(12*1024*1024));localStorage.removeItem('authored-too-large');return false;}catch(error){return error.name==='QuotaExceededError';}}));
  const large={...fixture('large'),notes:{one:'完整保留。'.repeat(1200000)}};const backup=JSON.stringify({format:'coconut-library',version:1,documents:[large],active:'large'});
  await page.locator('#library-file').setInputFiles({name:'large-authored-library.json',mimeType:'application/json',buffer:Buffer.from(backup)});
- await page.waitForFunction(async()=> (await readPersistedLibrary()).documents.some(doc=>doc.key==='large'));await flush(page);
+ await waitForPersistedLibrary(page,async()=> (await readPersistedLibrary()).documents.some(doc=>doc.key==='large'),undefined,{timeout:30000});await flush(page);
  check('full_large_document_commits_without_truncation',(await disk(page)).documents.find(doc=>doc.key==='large').notes.one.length===large.notes.one.length);
  await page.reload();await ready(page);check('large_restore_survives_reload',(await disk(page)).documents.find(doc=>doc.key==='large').notes.one.length===large.notes.one.length);
  check('legacy_original_remains_unchanged_after_large_restore',await page.evaluate(key=>localStorage.getItem(key),KEY)===original);

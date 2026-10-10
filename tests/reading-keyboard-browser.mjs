@@ -7,7 +7,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
-import {chromium} from './helpers/browser-storage.mjs';
+import {chromium, waitForPersistedLibrary} from './helpers/browser-storage.mjs';
 import {authoredAudioFixture} from './helpers/authored-audio-fixture.mjs';
 import {passageReadingFixture} from './helpers/passage-reading-fixture.mjs';
 
@@ -181,7 +181,7 @@ try {
   // Prepare the noncurrent removal target before attaching media. Switching
   // active documents later would legitimately replace the player owner.
   await page.locator('#file').setInputFiles({name: 'authored-keyboard-other.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(otherFixture))});
-  await page.waitForFunction(async title => {
+  await waitForPersistedLibrary(page,async title => {
     const shelf = (await readPersistedLibrary());
     return shelf.documents.some(doc => doc.key === sessionStorage.getItem('coconut-reader-active-v1') && doc.title === title);
   }, otherFixture.title);

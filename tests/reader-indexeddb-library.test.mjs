@@ -81,9 +81,10 @@ test('versionchange is visible even before another edit and cannot produce a fal
  s.documents[0].notes.one='rescue';s.store.queueDocument('a',s.documents[0]);assert.equal((await s.store.flush()).ok,false);assert.equal(s.store.status('a').error.code,'version');assert.equal(s.store.snapshotForExport().documents[0].notes.one,'rescue');
 });
 
-async function ui(){
+async function ui(f){
+ f??=await fixture();
  const w=new Window({url:'https://coconut.example/'});w.document.body.innerHTML=fs.readFileSync(new URL('reader/index.html',root),'utf8').split('<body>')[1].split('</body>')[0];Object.defineProperty(w,'crypto',{value:webcrypto});
- const f=await fixture();w.CoconutStorageBootstrap={phase:'ready',result:f.result};w.eval(fs.readFileSync(new URL('reader/library-store.js',root),'utf8'));
+ w.CoconutStorageBootstrap={phase:'ready',result:f.result};w.eval(fs.readFileSync(new URL('reader/library-store.js',root),'utf8'));
  w.eval(['summary','core','passages','passage-playback','app','language','translation-review','podcasts'].map(file=>fs.readFileSync(new URL('reader/'+file+'.js',root),'utf8')).join('\n')+'\nwindow.idbUI={get documents(){return state.documents;},get store(){return libraryStore;},get checkpoint(){return persistedAIAnswerCounts;}};');
  return {w,f,$:id=>w.document.getElementById(id)};
 }
@@ -95,6 +96,32 @@ test('actual IndexedDB provider feeds the existing reader UI, pending receipt, f
   $('note').value='UI recovery after versionchange';$('note').oninput();assert.equal((await w.idbUI.store.flush()).ok,false);assert.equal($('export-unsaved-documents').hidden,false);
   let blob;w.URL.createObjectURL=value=>{blob=value;return 'blob:authored';};w.HTMLAnchorElement.prototype.click=function(){};$('export-unsaved-documents').click();assert.equal(JSON.parse(await blob.text()).documents[0].notes.one,'UI recovery after versionchange');
  }finally{await w.happyDOM.close();}
+});
+
+test('JSON and notebook exports cannot substitute for a committed note/bookmark receipt before reload',async()=>{
+ const first=await ui(),{w,f,$}=first;let interrupted,reloaded;
+ try{
+  w.document.querySelector('.note-button').click();$('note').value='Authored pending reload note';$('note').oninput();$('close-note').click();
+  w.document.querySelector('.bookmark-button').click();
+  f.engine.control.holdNextWrite=true;const saving=w.idbUI.store.flush();await f.engine.tick();
+  let blob;w.URL.createObjectURL=value=>{blob=value;return 'blob:authored';};w.HTMLAnchorElement.prototype.click=function(){};
+  $('export').click();const exported=JSON.parse(await blob.text());
+  $('export-notebook').click();const notebook=await blob.text();
+  assert.equal(exported.readingPosition,'one');assert.equal(exported.notes.one,'Authored pending reload note');assert.match(notebook,/Authored pending reload note/);
+  assert.equal($('save-status').dataset.state,'pending');
+  const unload=new w.Event('beforeunload',{cancelable:true});w.dispatchEvent(unload);assert.equal(unload.defaultPrevented,true);
+  // Reproduce the storage state if navigation terminates this uncommitted
+  // transaction. Exports succeeded, but the next reader still has no bookmark.
+  f.engine.control.held.shift().abort();assert.equal((await saving).ok,false);
+  interrupted=await ui(await fixture({engine:f.engine,storage:f.storage}));
+  assert.equal(interrupted.$('resume').hidden,true);assert.equal(interrupted.w.idbUI.documents.find(doc=>doc.key==='b').notes.one,undefined);
+  // The required save receipt, followed by an independent provider reload,
+  // proves both the note and reading position actually survive navigation.
+  assert.equal((await w.idbUI.store.retry()).ok,true);assert.equal($('save-status').dataset.state,'saved');
+  reloaded=await ui(await fixture({engine:f.engine,storage:f.storage}));
+  assert.equal(reloaded.$('resume').hidden,false);reloaded.$('resume').click();reloaded.w.document.querySelector('.note-button').click();
+  assert.equal(reloaded.$('note').value,exported.notes.one);assert.equal(reloaded.w.idbUI.documents.find(doc=>doc.key==='b').readingPosition,exported.readingPosition);
+ }finally{await w.happyDOM.close();await interrupted?.w.happyDOM.close();await reloaded?.w.happyDOM.close();}
 });
 
 test('an access-denied IndexedDB property getter can use unfenced legacy fallback',async()=>{

@@ -4,7 +4,7 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import {chromium} from './helpers/browser-storage.mjs';
+import {chromium, waitForPersistedLibrary} from './helpers/browser-storage.mjs';
 import {startBridge} from '../desktop/server.mjs';
 import {passageReadingFixture} from './helpers/passage-reading-fixture.mjs';
 let server,browser,stage='setup',release,hold=false,external=0;
@@ -53,7 +53,7 @@ try{
   await page.locator('#mode-passages').click();await page.locator('.passage-ask').nth(1).click();await page.locator('#ai-question').fill('This pending question will continue in the background.');hold=true;
   await page.locator('#ai-consent').check();await page.locator('#ask-ai').click();const deadline=Date.now()+15000;while(!release&&Date.now()<deadline)await new Promise(resolve=>setTimeout(resolve,20));assert.ok(release);
   await page.keyboard.press('Escape');release();release=null;hold=false;
-  await page.locator('.passage-ask').nth(1).click();await page.locator('#ai-question').fill('New edit after background request');await page.waitForFunction(async()=>{const state=await readPersistedLibrary();return state.documents.find(doc=>doc.key===sessionStorage.getItem('coconut-reader-active-v1')).ai_answers.length===2;});
+  await page.locator('.passage-ask').nth(1).click();await page.locator('#ai-question').fill('New edit after background request');await waitForPersistedLibrary(page,async()=>{const state=await readPersistedLibrary();return state.documents.find(doc=>doc.key===sessionStorage.getItem('coconut-reader-active-v1')).ai_answers.length===2;});
   check(label+'_late_reply_preserves_draft_and_history',await page.locator('#ai-question').inputValue()==='New edit after background request'&&(await snapshot(page)).ai_answers.length===2);
   // Explicit cancellation is distinct from returning to reading.
   await page.locator('#ai-question').fill('Cancel receiving this request.');hold=true;await page.locator('#ai-consent').check();await page.locator('#ask-ai').click();

@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import {chromium} from './helpers/browser-storage.mjs';
+import {chromium, waitForPersistedLibrary} from './helpers/browser-storage.mjs';
 import {startBridge} from '../desktop/server.mjs';
 const fixture=title=>({title,language:'en',readingPosition:'cue',notes:{cue:'Authored private note'},segments:[{id:'cue',start:0,end:3,text:'An authored correction.',original_text:'An authored original.',translations:{zh:{text:'自写译文',provider:'authored-fixture',source_text:'An authored correction.',source_language:'en',document_language:'en'}}}]});
 const checks=[],check=(name,condition)=>{assert.ok(condition,name);checks.push(name);};
@@ -14,7 +14,7 @@ try{
  await context.route('**/*',async route=>{const url=new URL(route.request().url());if(url.origin===origin||url.protocol==='blob:')await route.continue();else{external++;await route.abort();}});
  const page=await context.newPage();page.setDefaultTimeout(15000);page.on('pageerror',error=>errors.push(error.message));await page.goto(origin);await page.waitForFunction(()=>window.CoconutStorageBootstrap?.phase==='ready');
  const stored=async()=>{await page.evaluate(()=>libraryStore.flush());return page.evaluate(()=>readPersistedLibrary());};
- const importDoc=async doc=>{await page.locator('#file').setInputFiles({name:'authored-removal.json',mimeType:'application/json',buffer:Buffer.from(JSON.stringify(doc))});await page.waitForFunction(async title=>(await readPersistedLibrary()).documents.some(d=>d.title===title),doc.title);};
+ const importDoc=async doc=>{await page.locator('#file').setInputFiles({name:'authored-removal.json',mimeType:'application/json',buffer:Buffer.from(JSON.stringify(doc))});await waitForPersistedLibrary(page,async title=>(await readPersistedLibrary()).documents.some(d=>d.title===title),doc.title);};
  const openShelf=async()=>{if(await page.locator('#toggle-library').isVisible()&&await page.locator('#toggle-library').getAttribute('aria-expanded')==='false')await page.locator('#toggle-library').click();};
  const openDetails=async selector=>{if(!await page.locator(selector).evaluate(node=>node.open))await page.locator(selector+' > summary').click();};
  const request=async title=>{await openShelf();await openDetails('#library-options');await page.getByRole('button',{name:'从书架移除 '+title,exact:true}).click();};
