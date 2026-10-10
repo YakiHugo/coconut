@@ -227,12 +227,26 @@ try {
     await capture(page, '08-' + label + '-attached-media-reading');
     completeFirstViewport(label + '_attached_media', attached, longDocument);
     await controlsGeometry(page, label + '-attached-media-toolbar', ['#reading-info > summary', '#toggle-reader-media', '#passage-search', '#export-menu > summary', '.passage[data-first-cue-id="split-0"] .passage-listen']);
+    // Produce fresh feedback through a real download, then immediately listen.
+    // Waiting for the success timer or forcing a covered click would miss PR58's bug.
+    await page.locator('#export-menu > summary').click();
+    await Promise.all([page.waitForEvent('download'), page.locator('#export').click()]);
+    await page.locator('#export-menu > summary').click();
     const firstPassage = page.locator('.passage[data-first-cue-id="split-0"]');
     await firstPassage.locator('.passage-listen').click();
     await page.waitForFunction(() => {const player = document.querySelector('audio'); return !player.paused && player.currentTime > .05;});
     check(label + '_collapsed_media_preserves_real_playback', await page.locator('audio').evaluate(player => player === window.__headerPlayer && player.currentTime > 0));
+    check(label + '_success_feedback_remains_visible_during_actual_playback', await page.locator('#notice').isVisible() && await page.locator('#notice').getAttribute('data-kind') === 'success');
+    await controlsGeometry(page, label + '-success-feedback-playing', ['#passage-stop', '#dismiss-notice', '#dock-play', '#dock-return']);
+    check(label + '_success_feedback_does_not_overlap_listening_or_dock', await page.evaluate(() => {
+      const notice = document.querySelector('#notice-shell').getBoundingClientRect();
+      return ['#passage-playback-controls', '#media-dock'].every(selector => {const box = document.querySelector(selector).getBoundingClientRect(); return notice.bottom <= box.top || notice.top >= box.bottom || notice.right <= box.left || notice.left >= box.right;});
+    }));
+    await capture(page, '10-' + label + '-success-feedback-playing');
     await page.locator('#passage-stop').click();
     check(label + '_playback_stop_remains_operable_after_header_changes', await page.locator('audio').evaluate(player => player.paused));
+    await page.locator('#dismiss-notice').click();
+    check(label + '_success_feedback_can_be_closed_without_waiting', await page.locator('#notice').isHidden());
     await page.locator('#export-menu > summary').click();
     const [download] = await Promise.all([page.waitForEvent('download'), page.locator('#export').click()]);
     const exportedPath = path.join(directory, label + '-long-title-reader.json');
@@ -290,6 +304,34 @@ try {
     segments: fixture.segments.map(({translations, ...cue}) => cue)};
   await importFixture(page, sourceOnly, 'authored-source-only.json');
   check('source_only_passages_do_not_invent_translation', await page.locator('.passage-original .passage-cue').count() > 4 && await page.locator('.passage-translation').count() === 0 && await page.locator('#passage-toggle-translation').isHidden());
+
+  stage = 'compact_success_feedback_note';
+  const compactPage = await freshPage({width: 390, height: 480});
+  await importFixture(compactPage, fixture);
+  await attachAudio(compactPage, audioPath);
+  await compactPage.locator('#close-reader-media').click();
+  await compactPage.locator('#dismiss-notice').click();
+  const compactPassage = compactPage.locator('.passage[data-first-cue-id="split-0"]');
+  await compactPassage.locator('.passage-listen').click();
+  await compactPage.waitForFunction(() => !document.querySelector('audio').paused);
+  await compactPage.locator('#export-menu > summary').click();
+  await Promise.all([compactPage.waitForEvent('download'), compactPage.locator('#export').click()]);
+  await compactPage.locator('#export-menu > summary').click();
+  // Keyboard activation is a supported route into the cue editor while the
+  // transport is present; note Close and dock controls below use real pointers.
+  await compactPassage.locator('.passage-details').press('Enter');
+  await compactPage.locator('.segment[data-segment-id="split-0"] .note-button').press('Enter');
+  check('compact_note_pauses_preview_and_temporarily_yields_the_feedback_stack', await compactPage.locator('audio').evaluate(player => player.paused) && await compactPage.locator('#passage-playback-controls').getAttribute('data-state') === 'paused' && await compactPage.locator('#reading-feedback').isHidden() && await compactPage.locator('#notice').getAttribute('data-kind') === 'success');
+  await controlsGeometry(compactPage, 'compact-success-feedback-note', ['#close-note', '#dock-play', '#dock-return']);
+  await capture(compactPage, '11-compact-note-feedback-yields');
+  await compactPage.locator('#close-note').click();
+  check('closing_compact_note_restores_the_live_success_message_and_paused_preview', await compactPage.locator('#reading-feedback').isVisible() && await compactPage.locator('#notice').isVisible() && await compactPage.locator('#passage-playback-controls').getAttribute('data-state') === 'paused');
+  await controlsGeometry(compactPage, 'compact-success-feedback-restored', ['#dismiss-notice', '#passage-replay', '#passage-stop', '#dock-play']);
+  await compactPage.locator('#dismiss-notice').click();
+  await compactPage.locator('#passage-return-playback').click();
+  check('compact_feedback_dismiss_and_playback_return_are_operable', await compactPage.locator('#notice').isHidden() && await compactPage.locator('#passage-playback-controls').isHidden() && await compactPage.locator('audio').evaluate(player => player.paused));
+  await compactPage.context().close();
+  activePage = page;
 
   stage = 'bounded_audio_preview';
   await importFixture(page, fixture);

@@ -766,3 +766,25 @@ body[data-reading-mode="passages"] .passage:first-child { padding-top: 8px; }
  #notice-shell.is-success { right: 12px; bottom: 12px; max-width: calc(100vw - 24px); padding-left: 12px; }
  body[data-media-docked="true"] #notice-shell.is-success { bottom: 94px; }
 }
+
+
+/* Success feedback and bounded playback share one measured-by-layout stack.
+   Neither can intercept the other's controls when labels wrap or media docks. */
+#notice-home { display: contents; }
+.reading-feedback { position: fixed; z-index: 16; right: 24px; bottom: 20px; width: min(580px,calc(100vw - 288px)); display: flex; flex-direction: column; align-items: stretch; gap: 8px; pointer-events: none; }
+.reading-feedback > * { pointer-events: auto; }
+body[data-media-docked="true"] .reading-feedback { bottom: 94px; }
+#reading-feedback #notice-shell.is-success { position: static; order: 0; align-self: flex-end; max-width: 100%; margin: 0; }
+#reading-feedback .passage-playback-controls { position: static; order: 1; width: 100%; margin: 0; }
+@media (max-width:760px) {
+ .reading-feedback { right: 12px; bottom: 12px; width: calc(100vw - 24px); }
+}
+@media (max-width:1100px) {
+ body:has(#notes-panel:not([hidden])) .reading-feedback { top: 8px; bottom: auto; left: 12px; right: 12px; width: auto; max-height: 150px; overflow-y: auto; }
+ body:has(#notes-panel:not([hidden])) #reading-feedback #notice-shell.is-success { order: 2; }
+}
+@media (max-width:1100px) and (max-height:520px) {
+ /* The compact note editor already pauses bounded playback; auxiliary success
+    feedback also yields until it closes. Persistent errors stay in notice-home. */
+ body:has(#notes-panel:not([hidden])) .reading-feedback { display: none; }
+}

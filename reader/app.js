@@ -53,6 +53,9 @@ const PLAYBACK_RATES=[0.75,1,1.25,1.5,1.75,2];
 let playbackRate=1;
 let repeating=null;
 let dockFramePending=false;
+let playbackIndex=null;
+// Range metadata belongs to the rendered button and expires with that render.
+const renderedPassageRanges=new WeakMap();
 try {const saved=Number(localStorage.getItem("coconut-playback-rate-v1"));if(PLAYBACK_RATES.includes(saved))playbackRate=saved;}catch{}
 
 function saveWarning(text = "") {
@@ -67,6 +70,8 @@ function notice(text,kind = "") {
  $("notice").dataset.kind=success?'success':'';
  $("notice").hidden=!text;$("notice").textContent=text;
  $('notice-shell').classList.toggle('is-success',success);
+ const host=success?$('reading-feedback'):$('notice-home');
+ if($('notice-shell').parentElement!==host)host.append($('notice-shell'));
  $('dismiss-notice').hidden=!success;
  if(success)noticeTimer=setTimeout(()=>{noticeTimer=null;if($('notice').dataset.kind==='success'&&!$('notice-shell').contains(document.activeElement))notice('');},5000);
 }
@@ -332,6 +337,9 @@ function focusCueAction(target, viewportTop=null) {
  target?.focus({preventScroll:true});
 }
 function render() {
+ // All supported source changes render. Invalidate conservatively even when
+ // the same array was edited in place; regular media events reuse the index.
+ playbackIndex=null;
  const focusedCueAction=document.activeElement?.closest('.cue-more');
  const cueFocus=focusedCueAction?{key:focusedCueAction.dataset.cueKey,selector:document.activeElement.tagName==='SUMMARY'?'summary':'.'+document.activeElement.className}:null;
  const openCueActions=new Set([...document.querySelectorAll(".cue-more[open]")].map(node=>node.dataset.cueKey));
@@ -615,7 +623,10 @@ function changeReadingPage(direction) {
 }
 function playbackSegment() {
  const player=$("source-media").querySelector("audio,video");
- return player && active()?.segments.findLast(s=>s.start<=player.currentTime && s.end>=player.currentTime);
+ const segments=active()?.segments;
+ if(!player||!segments)return undefined;
+ if(playbackIndex?.segments!==segments)playbackIndex={segments,index:Coconut.createPlaybackIndex(segments)};
+ return playbackIndex.index.find(player.currentTime);
 }
 function highlightPlayback() {
  const segment=playbackSegment();
@@ -1248,6 +1259,7 @@ function renderPassages(doc){
   if(target&&passageTranslations)for(const cue of passage.cues){const item=cue.translations?.[target];if(item&&Coconut.translationCurrent(cue,doc,item)){const warning=Coconut.translationQualityMessage(item);if(warning)section.append(el('p','passage-translation-warning',Coconut.time(cue.start)+' · 译文待核对：'+warning));}}
   const actions=el('div','passage-actions');
   const listen=el('button','passage-listen','回听这一段');listen.type='button';listen.dataset.passageId=passage.key;
+  renderedPassageRanges.set(listen,passage);
   listen.onclick=()=>{stopRepeating();passagePlayback.listen({id:passage.key,start:passage.start,end:passage.end,label:Coconut.time(passage.start)+'–'+Coconut.time(passage.end)});};
   actions.append(listen);
   const details=el('button','passage-details','逐句核对');details.type='button';details.setAttribute('aria-label','逐句核对 '+Coconut.time(passage.start)+' 的原文与笔记');details.onclick=()=>openPassageDetails(passage.cues[0].id,section);actions.append(details);
@@ -1296,7 +1308,7 @@ function renderPassagePlayback(state){
  $('passage-stop').hidden=status==='finished'||status==='error';
  const player=$('source-media').querySelector('audio,video'),available=player&&!player.error&&Number.isFinite(player.duration)&&player.duration>0;
  for(const button of $('passage-body').querySelectorAll('.passage-listen')){
-  const passage=readingPassages().find(item=>item.key===button.dataset.passageId),bounded=available&&passage&&passage.end>passage.start&&passage.end<=player.duration;
+  const passage=renderedPassageRanges.get(button),bounded=available&&passage&&passage.end>passage.start&&passage.end<=player.duration;
   const current=state?.range?.id===button.dataset.passageId&&['loading','playing'].includes(status);
   button.disabled=!bounded||current;button.textContent=current?'正在回听这一段':'回听这一段';
   button.title=bounded?'只回听这段，到段尾自动停下':player?'等待原声加载，或检查文字稿时间与媒体对应':'先关联对应的原声文件，即可回听这段';

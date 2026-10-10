@@ -195,3 +195,15 @@ test('reading popovers close on Escape or a new reading target without stealing 
   summary.click();$('export-menu').querySelector('summary').click();assert.equal($('reading-info').open,false);assert.equal($('export-menu').open,true);
  }finally{await env.close();}
 });
+
+
+test('success feedback shares the playback stack while failures return to the persistent document flow',async()=>{
+ const env=setup();try{await load(env);const {$}=env;
+  assert.equal($('notice-shell').parentElement,$('reading-feedback'));assert.equal($('passage-playback-controls').parentElement,$('reading-feedback'));
+  const player=await media(env);$('close-reader-media').click();passages(env)[0].querySelector('.passage-listen').click();await new Promise(resolve=>setTimeout(resolve,0));
+  assert.equal(player.paused,false);assert.equal($('notice').hidden,false);assert.equal($('passage-stop').hidden,false);assert.equal($('notice-shell').parentElement,$('reading-feedback'));
+  $('passage-stop').click();assert.equal(player.paused,true);$('dismiss-notice').click();assert.equal($('notice').hidden,true);assert.equal($('notice-shell').parentElement,$('notice-home'));
+  Object.defineProperty($('file'),'files',{configurable:true,value:[{name:'broken.json',size:2,text:async()=>'{bad'}]});await $('file').onchange();
+  assert.equal($('notice').hidden,false);assert.equal($('notice-shell').parentElement,$('notice-home'));assert.equal($('dismiss-notice').hidden,true);
+ }finally{await env.close();}
+});

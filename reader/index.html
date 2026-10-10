@@ -7,13 +7,13 @@
 <meta name="description" content="把长视频和播客变成自己的阅读空间。对照原文与译文，按时间回听，留下摘录和笔记。">
 <meta name="theme-color" content="#faf9f7">
 <link rel="icon" type="image/png" href="coconut-mark.png">
-<link rel="stylesheet" href="style.css?v=24de7cd83b">
+<link rel="stylesheet" href="style.css?v=e354364321">
 <script src="summary.js?v=580ffdad1e" defer></script>
-<script src="core.js?v=ce1ae62390" defer>
+<script src="core.js?v=6956fe16cd" defer>
 </script>
 <script src="passages.js?v=aa95245d4c" defer></script>
 <script src="passage-playback.js?v=f22d297164" defer></script>
-<script src="app.js?v=87f756d56b" defer>
+<script src="app.js?v=20201121c5" defer>
 </script>
 <script src="language.js?v=5f0cf838fb" defer></script>
 <script src="podcasts.js?v=093725361c" defer></script>
@@ -64,7 +64,7 @@
 </div>
 </header>
 <p id="save-status" class="save-warning" role="alert" hidden></p>
-<div id="notice-shell"><div id="notice" role="status" hidden></div><button id="dismiss-notice" type="button" aria-label="关闭成功提示" hidden>关闭</button></div>
+<div id="notice-home"><div id="notice-shell"><div id="notice" role="status" hidden></div><button id="dismiss-notice" type="button" aria-label="关闭成功提示" hidden>关闭</button></div></div>
 <section id="add-workspace" class="import-workspace" aria-label="添加与处理内容">
 <div class="welcome-hero">
 <div class="welcome-story"><p class="eyebrow"><span class="live-dot" aria-hidden="true"></span> 给好奇心，一个阅读空间</p>
@@ -168,7 +168,6 @@ cd coconut
 <article id="passage-body" aria-label="按原顺序连续阅读"></article>
 <nav class="passage-pagination" aria-label="连贯阅读翻页"><button id="passage-previous" type="button">前面的原文</button><span id="passage-page-status" class="hint"></span><button id="passage-next" type="button">继续读后面的原文</button></nav>
 </section>
-<div id="passage-playback-controls" class="passage-playback-controls" hidden><p id="passage-playback-status" role="status"></p><div><button id="passage-replay" type="button">再听一次</button><button id="passage-continue" type="button">接着听后面</button><button id="passage-return-playback" type="button">回到之前播放处</button><button id="passage-stop" type="button">停止回听</button></div></div>
 <nav id="passage-return-bar" class="reading-context passage-return-bar" aria-label="返回连贯阅读" hidden><span>逐句核对 · 原时间戳与笔记</span><button id="return-to-passages" type="button">← 返回刚才的段落</button></nav>
 <section id="summary-workspace" aria-label="播客摘要">
 <section id="source-overview" class="source-overview" aria-label="原文速览">
@@ -259,6 +258,7 @@ cd coconut
 </div>
 </main>
 </div>
+<div id="reading-feedback" class="reading-feedback"><div id="passage-playback-controls" class="passage-playback-controls" hidden><p id="passage-playback-status" role="status"></p><div><button id="passage-replay" type="button">再听一次</button><button id="passage-continue" type="button">接着听后面</button><button id="passage-return-playback" type="button">回到之前播放处</button><button id="passage-stop" type="button">停止回听</button></div></div></div>
 <section id="media-dock" class="media-dock" aria-label="当前原声播放控制" hidden>
 <button id="dock-play" class="dock-play" type="button">播放</button>
 <div class="dock-copy"><strong id="dock-title"></strong><span class="dock-clock"><span id="dock-current">00:00</span><span id="dock-total"></span><span id="dock-rate"></span></span></div>
