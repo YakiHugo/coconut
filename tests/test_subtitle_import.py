@@ -8,6 +8,7 @@ class SubtitleTests(unittest.TestCase):
     def test_vtt_voice_and_settings(self):
         result = parse_subtitles('WEBVTT\n\nNOTE ignore this\n\nfirst\n00:01.000 --> 00:02.000 align:start\n<v Speaker>Hello</v>\n', '.vtt')
         self.assertEqual(result[0]['text'], 'Hello')
+        self.assertEqual(result[0]['speaker'], 'Speaker')
     def test_vtt_metadata_is_not_spoken_text_but_similar_cue_ids_are(self):
         value = 'WEBVTT\n\nNOTE comment\n00:00.000 --> 00:00.500\nNot spoken\n\nNOTEworthy\n00:00.500 --> 00:01.000\nActual cue\n'
         self.assertEqual(parse_subtitles(value, '.vtt'), [{'start': .5, 'end': 1, 'text': 'Actual cue'}])
@@ -185,3 +186,36 @@ class CaptionProvenanceTests(unittest.TestCase):
                               'en': [{'ext': 'srt', 'data': 'English translation'}]}}
         self.assertIsNone(select_track(info))
         self.assertEqual(select_track(info, 'zh'), ('subtitles', 'ai-zh'))
+
+class VoiceImportTests(unittest.TestCase):
+    def test_shared_voice_fixtures_and_document_backup(self):
+        import json
+        import tempfile
+        from pathlib import Path
+        from subtitle_import import subtitle_document
+        cases = json.loads((Path(__file__).parent / 'fixtures/vtt-voices.json').read_text())
+        for fixture in cases:
+            with self.subTest(name=fixture['name']), tempfile.TemporaryDirectory() as directory:
+                path = Path(directory) / 'voices.vtt'
+                path.write_text('WEBVTT\n\nvoice-cue\n00:01.125 --> 00:03.875 align:start\n' + fixture['payload'] + '\n')
+                doc = subtitle_document(path)
+                expected = {'id': 'segment-1', 'start': 1.125, 'end': 3.875,
+                            'text': fixture['text'], 'speaker': fixture['speaker']}
+                self.assertEqual(doc['segments'], [expected])
+                self.assertEqual(json.loads(json.dumps(doc))['segments'], [expected])
+
+    def test_same_words_and_times_with_different_voices_are_not_duplicates(self):
+        body = 'WEBVTT\n\n00:01.000 --> 00:02.000\n<v Alice>Yes</v>\n\n00:01.000 --> 00:02.000\n<v Bob>Yes</v>'
+        self.assertEqual([s['speaker'] for s in parse_subtitles(body, '.vtt')], ['Alice', 'Bob'])
+
+    def test_srt_voice_like_markup_does_not_gain_speaker_semantics(self):
+        self.assertEqual(parse_subtitles('1\n00:01.000 --> 00:02.000\n<v Alice>Text</v>', '.srt'),
+                         [{'start': 1, 'end': 2, 'text': 'Text'}])
+
+    def test_generated_html_reference_table_matches_standard_library(self):
+        import json
+        from html.entities import html5
+        from pathlib import Path
+        source = (Path(__file__).resolve().parents[1] / 'reader/core.js').read_text()
+        table = source.split('const VTT_ENTITIES = Object.freeze(', 1)[1].split(');', 1)[0]
+        self.assertEqual(json.loads(table), html5)
