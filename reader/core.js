@@ -443,6 +443,35 @@
   const seconds=numbers.reduce((sum,n)=>sum*60+n,0);
   return Number.isFinite(seconds) && seconds<=Number.MAX_SAFE_INTEGER/1000 ? seconds : null;
  }
+ // Snapshot the cue timeline for repeated playback lookups. Source order, not
+ // chronological order, wins overlaps, exactly as Array.findLast does. Each
+ // node bounds its source-order interval; right-first traversal finds the last
+ // matching cue without assuming sorted starts or non-overlapping timestamps.
+ // Ordinary chronological transcripts take O(log n) per lookup; adversarial
+ // interleaved bounds can still require O(n). Rebuild after timeline mutations.
+ function createPlaybackIndex(segments) {
+  const cues=Array.from(segments);
+  let size=1;while(size<cues.length)size*=2;
+  const starts=new Float64Array(size*2).fill(Infinity);
+  const ends=new Float64Array(size*2).fill(-Infinity);
+  for(let i=0;i<cues.length;i++){
+   starts[size+i]=cues[i].start;ends[size+i]=cues[i].end;
+  }
+  for(let node=size-1;node>0;node--){
+   starts[node]=Math.min(starts[node*2],starts[node*2+1]);
+   ends[node]=Math.max(ends[node*2],ends[node*2+1]);
+  }
+  function find(seconds) {
+   if(!Number.isFinite(seconds))return undefined;
+   function visit(node) {
+    if(starts[node]>seconds||ends[node]<seconds)return undefined;
+    if(node>=size)return cues[node-size];
+    return visit(node*2+1)||visit(node*2);
+   }
+   return visit(1);
+  }
+  return Object.freeze({find});
+ }
  function segmentAtTime(doc,seconds) {
   if(!Number.isFinite(seconds) || seconds<0 || !doc.segments.length || seconds>doc.segments.reduce((end,s)=>Math.max(end,s.end),0))return null;
   return doc.segments.findLast(s=>s.start<=seconds && s.end>=seconds) || doc.segments.find(s=>s.start>=seconds) || null;
@@ -657,7 +686,7 @@
 			segments,
 		});
 	}
-	const api = { vttPayload, hasProjectAnnotations, projectAnnotationCount, attachProjectTranscript, libraryMatches, documentDuration, sortedLibrary, AUDIO_NOTE_BUDGET, audioNoteCharacters, isAudioProject, audioProjectIdentity, SUMMARY_QUESTION, summaryReadiness, podcastURL, podcastSource, cleanGlossary, relevantGlossary, translationQualityMessage, retainAnswers, summaryFreshness, latestSummary, summaryMarkdown, aiReadingMarkdown, parseReadingTime, segmentAtTime, subtitleExport, mergeLibraryBackup, time, source, media, validate, parse, matchesSegment, notebookSegments, notebookMarkdown, translationCurrent, sameCueSnapshot, subscriptionPlan, cleanContexts, answerFreshness };
+	const api = { vttPayload, hasProjectAnnotations, projectAnnotationCount, attachProjectTranscript, libraryMatches, documentDuration, sortedLibrary, AUDIO_NOTE_BUDGET, audioNoteCharacters, isAudioProject, audioProjectIdentity, SUMMARY_QUESTION, summaryReadiness, podcastURL, podcastSource, cleanGlossary, relevantGlossary, translationQualityMessage, retainAnswers, summaryFreshness, latestSummary, summaryMarkdown, aiReadingMarkdown, parseReadingTime, createPlaybackIndex, segmentAtTime, subtitleExport, mergeLibraryBackup, time, source, media, validate, parse, matchesSegment, notebookSegments, notebookMarkdown, translationCurrent, sameCueSnapshot, subscriptionPlan, cleanContexts, answerFreshness };
 	if (typeof module !== "undefined" && module.exports) module.exports = api;
 	else root.Coconut = api;
 })(typeof window !== "undefined" ? window : globalThis);
