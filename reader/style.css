@@ -72,7 +72,7 @@ header > div { display: flex; align-items: center; gap: 10px; }
 header button { font-size: 12px; }
 #count { min-width: 0; overflow-wrap: anywhere; }
 .export-menu { position: relative; flex-shrink: 0; }
-.export-menu > summary { border: 1px solid var(--line); border-radius: 8px; padding: 8px 14px; background: var(--surface, #fff); color: var(--ink); white-space: nowrap; }
+.export-menu > summary { min-height: 44px; border: 1px solid var(--line); border-radius: 8px; padding: 8px 14px; background: var(--surface, #fff); color: var(--ink); white-space: nowrap; }
 .export-panel { position: absolute; z-index: 5; right: 0; top: calc(100% + 8px); width: min(340px, calc(100vw - 40px)); padding: 22px; border: 1px solid var(--line); border-radius: 14px; background: var(--surface, #fff); box-shadow: 0 12px 42px #2825201c; color: var(--ink); max-height: 75dvh; overflow-y: auto; }
 .export-panel h2 { margin: 0 0 16px; }
 .export-panel button { width: 100%; font-size: 13px; }
