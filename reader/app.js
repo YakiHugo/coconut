@@ -51,8 +51,10 @@ let projectTranscriptTarget = null;
 let localMediaPickerTarget=null,pendingLocalMediaChoice=null;
 function projectSourceSnapshot(doc){return JSON.stringify(doc.podcast_source||doc.local_media_source);}
 let pendingBackupReview = null;
+let transcriptImportBatch = null;
 function cancelLocalImports(keepInput = null) {
  localImportRevision++;
+ stopTranscriptImportBatch();
  pendingLocalMediaChoice?.(null);
  if(keepInput!=="local-media-file")localMediaPickerTarget=null;
  pendingBackupReview?.(false);
@@ -63,7 +65,7 @@ function cancelLocalImports(keepInput = null) {
 }
 window.addEventListener("pagehide", () => cancelLocalImports());
 function backupSize(bytes){return (bytes/1024/1024).toFixed(2)+' MiB';}
-function localFileReview(file, canCommit, library = false) {
+function localFileReview(file, canCommit, library = false, batch = false) {
  const json=library||file.name.toLowerCase().endsWith('.json');
  if(!json){
   if(file.size>Coconut.SUBTITLE_IMPORT_BYTES)throw new Error('字幕文件超过15 MiB，请先拆分 SRT / VTT；完整 JSON 备份不受此字幕限制');
@@ -78,7 +80,7 @@ function localFileReview(file, canCommit, library = false) {
   const finish=proceed=>{
    if(settled)return;settled=true;
    dialog.removeEventListener('close',cancel);dialog.removeEventListener('cancel',cancel);
-   $('continue-large-backup').onclick=null;$('cancel-large-backup').onclick=null;
+   $('continue-large-backup').onclick=null;$('cancel-large-backup').onclick=null;$('stop-large-backup-batch').onclick=null;
    pendingBackupReview=null;if(dialog.open)dialog.close();
    const accepted=proceed&&canCommit();
    if(accepted)notice('正在完整读取 '+backupSize(file.size)+' 的备份，请稍候；请保留原备份文件。');
@@ -88,10 +90,14 @@ function localFileReview(file, canCommit, library = false) {
    // Native dialog.close() queues its event. An earlier selection's queued
    // close must not dismiss a newer review that is already open.
    if(event?.type==='close'&&dialog.open)return;
-   event?.preventDefault();finish(false);
+   event?.preventDefault();
+   if(batch&&['cancel','close'].includes(event?.type))cancelLocalImports();
+   finish(false);
   };
   pendingBackupReview=finish;
-  $('large-backup-size').textContent='文件大小：'+backupSize(file.size)+'（通常直接读取的预算为50 MiB）。';
+  $('large-backup-size').textContent=file.name+' · 文件大小：'+backupSize(file.size)+'（通常直接读取的预算为50 MiB）。';
+  $('cancel-large-backup').textContent=batch?'跳过此文件':'取消';
+  $('stop-large-backup-batch').hidden=!batch;$('stop-large-backup-batch').onclick=()=>cancelLocalImports();
   $('continue-large-backup').onclick=()=>finish(true);$('cancel-large-backup').onclick=cancel;
   dialog.addEventListener('close',cancel);dialog.addEventListener('cancel',cancel);
   dialog.showModal();$('cancel-large-backup').focus();
@@ -99,7 +105,7 @@ function localFileReview(file, canCommit, library = false) {
 }
 function localFileError(error) {
  if(['RangeError','NotReadableError','AbortError'].includes(error?.name))return '读取或处理文件失败，可能超出当前设备可用内存。请保留原备份，在内存更充足的浏览器或电脑上重试。';
- return error.message;
+ return error?.message||'无法读取此文件，请检查文件内容后重试';
 }
 function backupRecoveryHint(blob){return blob.size>Coconut.BACKUP_REVIEW_BYTES?' 文件为'+backupSize(blob.size)+'，恢复时需要确认继续读取；需要足够可用内存，浏览器可能无法自动保存，请保留下载文件。':'';}
 
@@ -338,7 +344,7 @@ function el(tag, className, text) {
 	if (text !== undefined) n.textContent = text;
 	return n;
 }
-async function add(doc, canCommit = null, reuseAudioSource = false, lifecycleRevision = documentLifecycleRevision, sourceKey = doc.key, {target = null, separate = false} = {}) {
+async function add(doc, canCommit = null, reuseAudioSource = false, lifecycleRevision = documentLifecycleRevision, sourceKey = doc.key, {target = null, separate = false, activate = true} = {}) {
  if(!contentIngressAllowed())throw new Error("导入已取消，书架未改变");
 	const bytes = new TextEncoder().encode(JSON.stringify(doc));
 	const digest = await crypto.subtle.digest("SHA-256", bytes);
@@ -377,8 +383,13 @@ async function add(doc, canCommit = null, reuseAudioSource = false, lifecycleRev
    }
   }
  }
-	if (!state.documents.some((d) => d.key === key))
-		state.documents.push({ ...doc, key, notes: doc.notes || {} });
+ const duplicate=state.documents.some(d=>d.key===key);
+	if (!duplicate)state.documents.push({ ...doc, key, notes: doc.notes || {} });
+ if(!activate){
+  const inserted=state.documents.find(d=>d.key===key),receipt=commitDocument(inserted);
+  renderLibrary();
+  return {...await receipt,duplicate};
+ }
 	selectActiveDocument(key);
  passageReturn=null;passageDocumentKey=key;passageAnchor=active()?.segments[0]?.id||null;mediaExpandedKey=null;
  setReadingMode(prefersPassageReading(active())?"passages":"summary");
@@ -1113,9 +1124,11 @@ document.addEventListener("keydown", event => {
 });
 $("import").onclick = () => $("file").click();
 $("file").onchange = async () => {
-	const f = $("file").files[0];
+	const files=Array.from($("file").files),f=files[0];
 	if (!f) return;
+ if(files.length>1)return importTranscriptFiles(files);
  const revision = cancelLocalImports("file"), lifecycleRevision=documentLifecycleRevision;
+ transcriptImportBatch=null;$("transcript-import-results").hidden=true;
  const startingDocument = state.active, startingWorkspace = workspace;
  const ownsRequest = () => revision === localImportRevision;
  const canCommit = () => contentIngressAllowed() && ownsRequest() && state.active === startingDocument && workspace === startingWorkspace;
@@ -1137,6 +1150,97 @@ $("file").onchange = async () => {
 		if(ownsRequest())$("file").value = "";
 	}
 };
+// A batch owns its files, not the reader. Each file awaits its actual save
+// receipt before the next read, retaining successful identities after failure
+// or cancellation without accumulating file contents or imposing a batch cap.
+function stopTranscriptImportBatch(){
+ const batch=transcriptImportBatch;if(!batch||batch.finished||batch.cancelled)return;
+ batch.cancelled=true;
+ for(const item of batch.items)if(item.status==='queued')item.status='cancelled';
+ renderTranscriptImportBatch(batch);
+}
+function renderTranscriptImportBatch(batch){
+ if(transcriptImportBatch!==batch)return;
+ const labels={queued:'等待导入',review:'等待确认大文件',reading:'读取中',saving:'校验并保存中',saved:'已保存',duplicate:'书架已有，未重复添加',unsaved:'仅在本页，尚未保存。请重试保存或导出备份',failed:'导入失败',skipped:'已跳过，未读取',cancelled:'未导入，已停止'};
+ const counts={};for(const item of batch.items){
+  // Results are navigation handles, never a second hidden removal archive.
+  if(item.identity&&!state.documents.includes(item.identity))item.identity=null;
+  counts[item.status]=(counts[item.status]||0)+1;
+  if(item.row.dataset.status!==item.status)item.row.dataset.status=item.status;
+  const readable=['saved','duplicate','unsaved'].includes(item.status),available=state.documents.includes(item.identity)&&!pendingStructuralDocuments.has(item.identity?.key);
+  const label=readable&&!available?'这份内容已移除或正在恢复，请在书架确认':labels[item.status]+(item.error?'：'+item.error:'');
+  if(item.result.textContent!==label)item.result.textContent=label;
+  item.open.hidden=!readable||!available;
+ }
+ const pending=(counts.review||0)+(counts.reading||0)+(counts.saving||0),done=batch.items.length-(counts.queued||0)-pending;
+ const parts=[batch.finished?(batch.cancelled?'已停止导入':'导入完成'):batch.cancelled?'已停止后续文件，等待当前文件确认':'正在导入',done+' / '+batch.items.length+' 个文件'];
+ for(const [status,label] of [['saved','已保存'],['duplicate','已有'],['failed','失败'],['skipped','跳过'],['unsaved','未保存'],['cancelled','未导入']])if(counts[status])parts.push(label+' '+counts[status]);
+ $('transcript-import-progress').textContent=parts.join(' · ');
+ $('stop-transcript-import').hidden=batch.finished||batch.cancelled;
+}
+window.addEventListener('coconut-persistence-change',()=>{
+ const batch=transcriptImportBatch;if(!batch)return;
+ for(const item of batch.items){
+  if(item.status!=='unsaved'||!state.documents.includes(item.identity))continue;
+  const saved=libraryStore.status(item.identity.key);
+  if(saved?.identity===item.identity&&saved.status==='saved')item.status=item.duplicate?'duplicate':'saved';
+ }
+ renderTranscriptImportBatch(batch);
+});
+function openTranscriptImportResult(item){
+ const doc=item.identity;
+ if(!state.documents.includes(doc)||pendingStructuralDocuments.has(doc?.key)){
+  item.result.textContent='这份内容已移除或正在恢复，请在书架确认';item.open.hidden=true;return;
+ }
+ resetReaderForDocumentNavigation();selectActiveDocument(doc.key);
+ setReadingMode(prefersPassageReading(doc)?'passages':'summary');
+ $('toggle-library').setAttribute('aria-expanded','false');showWorkspace('read');render();
+ const bookmark=doc.segments.find(cue=>cue.id===doc.readingPosition);
+ if(bookmark){if(prefersPassageReading(doc))openPassage(bookmark.id);else goToSegment(bookmark.id);}
+ else{$('title').scrollIntoView?.({block:'start'});$('reader-workspace').focus({preventScroll:true});}
+}
+async function importTranscriptFiles(files){
+ const revision=cancelLocalImports('file'),lifecycleRevision=documentLifecycleRevision;
+ const startingDocument=state.active,startingWorkspace=workspace,selectionRevision=activeSelectionRevision;
+ const ownsRequest=()=>revision===localImportRevision;
+ const batch={items:[],cancelled:false,finished:false};transcriptImportBatch=batch;
+ const canCommit=()=>!batch.cancelled&&ownsRequest()&&contentIngressAllowed()&&state.active===startingDocument&&workspace===startingWorkspace&&activeSelectionRevision===selectionRevision;
+ $('transcript-import-list').replaceChildren();$('transcript-import-results').hidden=false;
+ for(const file of files){
+  const row=el('li','transcript-import-item'),result=el('span','transcript-import-outcome'),open=el('button','','阅读');open.type='button';
+  const item={status:'queued',row,result,open,identity:null};open.hidden=true;open.onclick=()=>openTranscriptImportResult(item);
+  open.setAttribute('aria-label','阅读 '+file.name);row.append(el('span','transcript-import-name',file.name),result,open);
+  batch.items.push(item);$('transcript-import-list').append(row);
+ }
+ $('stop-transcript-import').onclick=()=>{if(transcriptImportBatch===batch)cancelLocalImports();};
+ renderTranscriptImportBatch(batch);
+ try{
+  for(const [index,file] of files.entries()){
+   const item=batch.items[index];if(!canCommit())break;
+   try{
+    item.status='review';renderTranscriptImportBatch(batch);
+    const review=localFileReview(file,canCommit,false,true);
+    if(review!==true&&!(await review)){item.status=canCommit()?'skipped':'cancelled';renderTranscriptImportBatch(batch);continue;}
+    if(!canCommit()){item.status='cancelled';break;}
+    item.status='reading';renderTranscriptImportBatch(batch);
+    const text=await file.text();if(!canCommit()){item.status='cancelled';break;}
+    const parsed=Coconut.parse(text,file.name);
+    let sourceKey;try{const raw=JSON.parse(text);if(typeof raw?.key==='string'&&raw.key.length<=200)sourceKey=raw.key;}catch{}
+    item.status='saving';renderTranscriptImportBatch(batch);
+    const receipt=await add(parsed,canCommit,false,lifecycleRevision,sourceKey,{activate:false});
+    item.identity=receipt.identity;item.duplicate=receipt.duplicate;
+    item.status=receipt.ok?(receipt.duplicate?'duplicate':'saved'):'unsaved';
+    if(!receipt.ok){stopTranscriptImportBatch();break;}
+   }catch(error){item.status=canCommit()?'failed':'cancelled';if(item.status==='failed')item.error=localFileError(error);}
+   renderTranscriptImportBatch(batch);
+  }
+ }finally{
+  for(const item of batch.items)if(['queued','review','reading','saving'].includes(item.status))item.status='cancelled';
+  if(batch.items.some(item=>item.status==='cancelled'))batch.cancelled=true;
+  batch.finished=true;renderTranscriptImportBatch(batch);
+  if(ownsRequest())$('file').value='';
+ }
+}
 $("search").oninput = () => {
  clearReadingContext();
  searchFocusedId=null;

@@ -34,6 +34,32 @@ handler. Streaming parsing remains outside this change. Default local storage no
 uses [per-document IndexedDB](indexeddb-library-storage.md); the same large-file
 review and memory boundaries still apply.
 
+## Selecting several transcript files
+
+The transcript picker accepts multiple JSON, SRT and VTT files. It reads and
+commits one file at a time, with no total batch byte/count cap. Individual format
+limits and the full-JSON review still apply. The Add workspace lists each file's
+actual outcome; a malformed file, a duplicate or a declined large-file review
+does not roll back earlier successes or prevent a later valid file from importing.
+The batch review labels its choices explicitly: skip this file, stop remaining
+files, or continue reading. Escape stops the batch.
+Whole-library JSON is explicitly rejected here with directions to the distinct
+single-file **Restore library backup** action. Even a library envelope containing
+an extra `segments` field cannot masquerade as a transcript.
+
+A save is acknowledged only by its durable receipt. A storage failure retains
+that complete document in the page, stops further reads and exposes the existing
+retry/rescue controls; successful retry updates its outcome. Stop, newer file
+selection, page teardown or reader navigation retires remaining files. A write
+already in progress still receives its real success/failure outcome; cancellation
+never deletes saved documents. Opening a result uses that exact live identity and
+its existing reading bookmark. The result list stays out of the reader.
+
+The progress list belongs to this page, not the saved library. Reload preserves
+saved documents; it does not resume unstarted imports or restore the old result
+list. Re-selecting files remains duplicate-safe. Only ordinary transcript files
+are batched; project subtitle attachment and whole-library restore remain separate.
+
 ## When local saving fails
 
 A quota or disabled-storage failure keeps imported content in the current page,
@@ -67,3 +93,11 @@ large-document restoration, oversized confirmation cancellation and retry,
 whole-library >50 MiB recovery, deduplication and rescue exports. It makes no
 model calls or remote media requests, removes its temporary files and uploads
 no user material. Browser execution is intentionally left to CI.
+
+`tests/reader-multi-import.test.mjs` covers mixed formats, partial failure,
+deduplication, explicit library separation, large-file review, receipt ordering,
+cancellation, newer navigation, source/note edits and exact result identities. Its
+production-provider test uses a deterministic transaction double, not a browser.
+`tests/multi-import-browser.mjs` is CI-only actual multiple-file selection,
+partial failure, cancellation, newer note/navigation, quota/retry and IndexedDB
+reload proof. No local browser execution is claimed.
