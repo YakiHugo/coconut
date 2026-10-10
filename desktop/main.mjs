@@ -8,7 +8,7 @@ import { createCaptionHelper } from './caption-helper.mjs';
 import { createCaptionService } from './caption-service.mjs';
 import { Updater } from './updater.mjs';
 import { prepareInstall } from './update-install.mjs';
-import { createCloseCoordinator } from './close-coordinator.mjs';
+import { createCloseCoordinator, createLifecycleOwnership } from './close-coordinator.mjs';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const PORT = 47831; // Stable origin preserves the local bookshelf between launches.
@@ -64,18 +64,21 @@ else {
     const origin = `http://127.0.0.1:${PORT}`;
     window = new BrowserWindow({width:1280,height:880,minWidth:780,minHeight:620,show:process.env.COCONUT_SMOKE_TEST !== '1',title:'Coconut',icon:windowIcon,
       webPreferences:{preload:path.join(ROOT,'update-preload.cjs'),nodeIntegration:false,contextIsolation:true,sandbox:true,webSecurity:true,allowRunningInsecureContent:false,webviewTag:false}});
-    const readerClose=mode=>window.webContents.executeJavaScript(`typeof window.coconutPrepareClose === "function" ? window.coconutPrepareClose(${JSON.stringify(mode)}) : null`);
+    const lifecycle=createLifecycleOwnership();
+    const readerClose=(mode,request)=>window.webContents.executeJavaScript(`typeof window.coconutPrepareClose === "function" ? window.coconutPrepareClose(${JSON.stringify(mode)},${JSON.stringify(request)}) : null`);
     closeCoordinator=createCloseCoordinator({
-      inspect:()=>readerClose('inspect'),
-      commit:mode=>readerClose(mode),
+      lifecycle,
+      inspect:request=>readerClose('inspect',request),
+      commit:(mode,request)=>readerClose(mode,request),
+      release:attempt=>{void readerClose('release',attempt).catch(()=>{});},
       confirm:async snapshot=>{
         const answer=await dialog.showMessageBox(window,{type:'warning',title:'关闭 Coconut？',message:'还有未保存的编辑或进行中的工作',
           detail:(snapshot.reasons||[]).join('；')+'。继续编辑可保存或导出备份。直接退出会丢弃未保存内容并中断任务；已发送的模型请求可能已经使用额度。',
           buttons:['继续编辑','放弃未保存内容并退出'],defaultId:0,cancelId:0,noLink:true});
         return answer.response===1;
       },
-      finish:async()=>{await window.webContents.session.flushStorageData();finishQuit();},
-      onError:async()=>{if(window.isDestroyed())return;void readerClose('release').catch(()=>{});return dialog.showMessageBox(window,{type:'warning',title:'暂时无法安全关闭',message:'无法确认阅读器的保存状态，Coconut 已保持打开。',detail:'请等待阅读器恢复后保存或导出备份，再尝试退出。强制退出或系统终止仍可能丢失未保存内容。',buttons:['继续等待'],defaultId:0,cancelId:0});}
+      finish:async attempt=>{await window.webContents.session.flushStorageData();if(!lifecycle.owns(attempt))throw new Error('关闭操作已取消');finishQuit();},
+      onError:async()=>{if(window.isDestroyed())return;return dialog.showMessageBox(window,{type:'warning',title:'暂时无法安全关闭',message:'无法确认阅读器的保存状态，Coconut 已保持打开。',detail:'请等待阅读器恢复后保存或导出备份，再尝试退出。强制退出或系统终止仍可能丢失未保存内容。',buttons:['继续等待'],defaultId:0,cancelId:0});}
     });
     // Native close and Cmd-Q use the same gate. OS termination/crashes cannot be
     // guaranteed recoverable; no browser beforeunload prompt is involved here.
@@ -84,22 +87,39 @@ else {
     await updater.initialize();
     updater.on('state',state=>{if(!window.isDestroyed())window.webContents.send('coconut:update-state',state);});
     async function installUpdate(){
-      if(updater.state.status!=='ready'||!updater.release)return updater.snapshot();
+      if(updater.state.status!=='ready'||!updater.release||lifecycle.busy())return updater.snapshot();
       if(!app.isPackaged)throw new Error('开发运行不能替换已安装应用');
-      // Take the lock before the first await; repeated IPC cannot prompt/stage twice.
+      const attempt=lifecycle.begin('update');let install,started=false;
+      // Reserve this updater before the first await, but leave ordinary quit
+      // available while the confirmation/staging work is still non-final.
       updater.change({status:'installing',message:'正在确认安装，当前版本继续运行…'});
+      const safe=lock=>lifecycle.call(attempt,request=>window.webContents.executeJavaScript(`typeof window.coconutPrepareUpdate === "function" && window.coconutPrepareUpdate(${lock?'true':'false'},${JSON.stringify(request)})`));
+      const current=()=>{if(!lifecycle.current(attempt))throw new Error('已有关闭操作，安装已暂停。');};
       try{
-      const safe=(lock=false)=>window.webContents.executeJavaScript(`typeof window.coconutPrepareUpdate === "function" && window.coconutPrepareUpdate(${lock?'true':'false'})`);
-      if(!await safe())throw new Error('请先完成编辑、暂停播放和处理任务，并确保书架已保存，再安装更新。');
-      const confirmation=await dialog.showMessageBox(window,{type:'question',title:'安装 Coconut 更新',message:`安装 ${updater.release.version} 并重启？`,detail:'书架已保存。未签名应用可能需要 macOS 安全确认；旧应用会保留在 Applications 中。书架、笔记和设置不会移动。重启后本地媒体需重新选择。',buttons:['稍后','安装并重启'],defaultId:0,cancelId:0});
-      if(confirmation.response!==1)return updater.change({status:'ready',message:'已推迟安装，下载保留，可以稍后重试。'});
-      updater.change({status:'installing',message:'正在验证应用结构并准备安装…'});
-        const install=await prepareInstall({directory:updater.directory,release:updater.release,appPath:path.resolve(process.resourcesPath,'../..'),version:app.getVersion(),arch:process.arch});
-        // Recheck after staging: work may have begun while the bundle was copied.
-        if(!await safe(true)){await install.discard();throw new Error('出现新的工作或未保存修改，安装已暂停。完成后请重试。');}
-        await window.webContents.session.flushStorageData();
-        await install.start();app.quit();return updater.snapshot();
-      }catch(error){if(!window.isDestroyed())await window.webContents.executeJavaScript('document.body.inert=false').catch(()=>{});return updater.change({status:'ready',message:'安装未完成：'+error.message+'。当前应用和数据保留，可以重试。'});}
+        if(!await safe(false))throw new Error('请先完成编辑、暂停播放和处理任务，并确保书架已保存，再安装更新。');
+        const confirmation=await dialog.showMessageBox(window,{type:'question',title:'安装 Coconut 更新',message:`安装 ${updater.release.version} 并重启？`,detail:'书架已保存。未签名应用可能需要 macOS 安全确认；旧应用会保留在 Applications 中。书架、笔记和设置不会移动。重启后本地媒体需重新选择。',buttons:['稍后','安装并重启'],defaultId:0,cancelId:0});
+        current();
+        if(confirmation.response!==1)return updater.change({status:'ready',message:'已推迟安装，下载保留，可以稍后重试。'});
+        updater.change({status:'installing',message:'正在验证应用结构并准备安装…'});
+        install=await prepareInstall({directory:updater.directory,release:updater.release,appPath:path.resolve(process.resourcesPath,'../..'),version:app.getVersion(),arch:process.arch});
+        current();
+        if(!lifecycle.claim(attempt))throw new Error('已有关闭操作，安装已暂停。');
+        // Recheck after staging, then use exactly the same renderer ownership
+        // and final listening flush as native close. No second discard dialog
+        // may cancel quit after the installer has already been launched.
+        if(!await safe(true))throw new Error('出现新的工作或未保存修改，安装已暂停。完成后请重试。');
+        await window.webContents.session.flushStorageData();current();
+        await install.start();started=true;current();
+        finishQuit();return updater.snapshot();
+      }catch(error){
+        if(install&&!started)await install.discard().catch(()=>{});
+        return updater.change({status:'ready',message:'安装未完成：'+error.message+'。当前应用和数据保留，可以重试。'});
+      }finally{
+        if(!started){
+          lifecycle.retire(attempt);
+          if(!window.isDestroyed())void readerClose('release',attempt).catch(()=>{});
+        }
+      }
     }
     ipcMain.handle('coconut:update',async(event,action,value)=>{
       if(event.sender!==window.webContents||event.senderFrame!==window.webContents.mainFrame||![origin+'/',origin+'/index.html'].includes(event.senderFrame.url))throw new Error('更新请求来源无效');
