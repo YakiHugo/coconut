@@ -413,7 +413,7 @@
             language: typeof data.language === "string" ? data.language : "",
             translation_view: ["en","zh","ja","ko","fr","de","es"].includes(data.translation_view) ? data.translation_view : "",
             summary_job: Summaries.clean(data.summary_job),
-            ai_answers: Array.isArray(data.ai_answers) ? retainAnswers(data.ai_answers).filter(a=>a && typeof a.question==="string" && typeof a.answer==="string" && Array.isArray(a.citations)).map(a=>({question:a.question.slice(0,4000),answer:a.answer.slice(0,100000),citations:a.citations.filter(id=>ids.has(id)),...(cleanAnswerInput(a.input_snapshot) ? {input_snapshot:cleanAnswerInput(a.input_snapshot)} : {}),...(a.purpose==="summary"?{purpose:"summary"}:a.purpose==="question"?{purpose:"question"}:{}),...(a.summary_process?.version===1&&Number.isInteger(a.summary_process.batches)&&a.summary_process.batches>=1&&a.summary_process.batches<=64?{summary_process:{version:1,batches:a.summary_process.batches,requests:a.summary_process.batches+(a.summary_process.batches>1?1:0),citation_basis:a.summary_process.batches>1?"batch_sources":"direct"}}:{}),provider:typeof a.provider==="string"?a.provider.slice(0,100):"unknown"})) : [],
+            ai_answers: Array.isArray(data.ai_answers) ? retainAnswers(data.ai_answers).map(cleanAnswer) : [],
 			title: typeof data.title === "string" ? data.title : "未命名文字稿",
 			source_url: typeof data.source_url === "string" ? data.source_url : "",
 			segments,
@@ -421,10 +421,22 @@
             translation_glossary: cleanDocumentGlossary(data.translation_glossary),
 		};
 	}
+ function cleanAnswer(answer) {
+  const input=cleanAnswerInput(answer.input_snapshot),process=answer.summary_process;
+  return {
+   question:answer.question.slice(0,4000),answer:answer.answer.slice(0,100000),
+   // References are historical data too. Missing current cues must stay visible
+   // as unavailable references, never be silently erased or retargeted.
+   citations:answer.citations.filter(id=>typeof id==="string"),
+   ...(input?{input_snapshot:input}:{}),
+   ...(["summary","question"].includes(answer.purpose)?{purpose:answer.purpose}:{}),
+   ...(process?.version===1&&Number.isInteger(process.batches)&&process.batches>=1&&process.batches<=64?{summary_process:{version:1,batches:process.batches,requests:process.batches+(process.batches>1?1:0),citation_basis:process.batches>1?"batch_sources":"direct"}}:{}),
+   provider:typeof answer.provider==="string"?answer.provider.slice(0,100):"unknown"
+  };
+ }
  function retainAnswers(answers) {
-  const recent=answers.slice(-20);
-  const summary=answers.findLast(a=>a?.purpose==="summary"&&typeof a.question==="string"&&typeof a.answer==="string"&&Array.isArray(a.citations));
-  return summary&&!recent.includes(summary)?[summary,...recent.slice(-19)]:recent;
+  // Storage is append-only history. Limit the rendered page, never the records.
+  return answers.filter(a=>a && typeof a.question==="string" && typeof a.answer==="string" && Array.isArray(a.citations));
  }
  function summaryFreshness(answer, doc) {
   if(answer?.purpose!=="summary")return "unknown";
@@ -443,12 +455,12 @@
  function aiReadingMarkdown(doc) {
   const line=value=>markdownText(value).replace(/[\r\n]+/g," ");
   const quote=value=>markdownText(value).replace(/\r\n?/g,"\n").split("\n").map(s=>"> "+s).join("\n");
-  const lines=["# "+line(doc.title)+" · 本地 AI 记录","","AI 输出仍需核对；以下是本篇已保存的全部回答，不受当前筛选影响。","来源定位使用当前文字稿的时间与链接，可能不同于生成回答时的媒体信息。",""];
+  const lines=["# "+line(doc.title)+" · 本地 AI 记录","","AI 输出仍需核对；以下是本篇当前保留的全部回答，不受当前筛选或历史分页影响。包含当前页尚未保存到浏览器的结果，请结合页面保存提示核对。","来源定位使用当前文字稿的时间与链接，可能不同于生成回答时的媒体信息。",""];
   const origin=podcastOrigin(doc);if(origin)lines.push("[播客原站]("+origin+")","时间戳需在原声中手动定位；没有伪造平台时间跳转链接。", "");
   for(const [index,answer] of (doc.ai_answers||[]).entries()){
-   const freshness=answerFreshness(answer,doc), input=cleanAnswerInput(answer.input_snapshot);
+   const freshness=answer.purpose==="summary"?summaryFreshness(answer,doc):answerFreshness(answer,doc), input=cleanAnswerInput(answer.input_snapshot);
    lines.push("## 回答 "+(index+1),"","提供商："+line(answer.provider||"unknown"),"",
-    "依据状态："+({current:"完整发送原文仍与当前稿一致（不代表回答正确）",stale:"发送原文已变化或移除，回答依据可能过期",unknown:"缺少完整发送原文，无法确认依据是否仍有效"}[freshness]),"",
+    "依据状态："+({current:"完整发送原文仍与当前稿一致（不代表回答正确）",stale:"发送原文或整篇范围已变化，回答依据可能过期",unknown:"缺少完整发送原文，无法确认依据是否仍有效"}[freshness]),"",
     "问题：","",quote(answer.question),"","回答：","",quote(answer.answer),"","引用：","");
    const cited=[...new Set(answer.citations||[])];
    if(!cited.length)lines.push("未提供片段引用，请回听核对。","");

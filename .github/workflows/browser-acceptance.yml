@@ -60,6 +60,10 @@ jobs:
         env:
           COCONUT_UI_SCREENSHOTS: ${{ runner.temp }}/coconut-authored-ui
         run: node tests/ai-recovery-browser.mjs
+      - name: Verify complete AI history, bounded pages and real download recovery without model calls
+        env:
+          COCONUT_UI_SCREENSHOTS: ${{ runner.temp }}/coconut-authored-ui
+        run: node tests/ai-history-browser.mjs
       - name: Verify deep-reading audio controls and notes with authored short cues
         env:
           COCONUT_UI_SCREENSHOTS: ${{ runner.temp }}/coconut-authored-ui

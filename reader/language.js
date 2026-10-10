@@ -154,19 +154,67 @@ function renderLanguage(){
  const sentData=summarySelected?(summaryReadiness?.plan?.chunks.length>1?'上述全文，以及汇总所需的分批笔记与引用':'上述全文'):translationSelected?'上述原文、说话人标签、匹配术语与已有译文建议':'问题和上述原文';
  $('ai-consent-copy').textContent=`同意将${sentData}发送给 ${providerName}，按上述请求次数使用我的订阅额度。`;
 
- $("export-ai-reading").disabled=!(doc.ai_answers||[]).length;
+ renderAIHistory(doc);
+}
+const AI_HISTORY_PAGE_SIZE=10;
+let aiHistoryDocument=null,aiHistoryCount=0,aiHistoryPage=0;
+function renderAIHistory(doc){
+ const answers=doc.ai_answers||[],total=answers.length;
+ if(aiHistoryDocument!==doc||aiHistoryCount!==total){aiHistoryDocument=doc;aiHistoryCount=total;aiHistoryPage=0;}
+ const pages=Math.max(1,Math.ceil(total/AI_HISTORY_PAGE_SIZE));
+ aiHistoryPage=Math.max(0,Math.min(aiHistoryPage,pages-1));
+ const start=aiHistoryPage*AI_HISTORY_PAGE_SIZE,end=Math.min(total,start+AI_HISTORY_PAGE_SIZE);
+ const saved=Math.min(total,persistedAIAnswerCounts.get(doc)||0),unsaved=total-saved;
+ $('ai-history-status').textContent=total?`共 ${total} 则 · 第 ${aiHistoryPage+1} / ${pages} 页 · 最新在前，每页最多 ${AI_HISTORY_PAGE_SIZE} 则`:'还没有 AI 阅读记录。只有确认发送原文后才会请求模型。';
+ $('ai-history-storage').textContent=!total?'':storageBlocked?'浏览器自动保存已暂停，无法确认当前持久记录。请导出全部历史或本篇 JSON，暂时不要关闭或刷新。':unsaved?`已保存 ${saved} 则 · ${unsaved} 则仅在此页，尚未保存到浏览器。请立即导出全部历史或本篇 JSON，暂时不要关闭或刷新。`:`${total} 则均已保存在此浏览器。历史不会自动删除，建议定期导出 JSON 备份。`;
+ $('ai-history-storage').dataset.state=storageBlocked||unsaved?'unsaved':'saved';
+ $('export-ai-reading').disabled=!total;$('export-ai-history-json').disabled=!total;
+ $('ai-history-pages').hidden=pages<=1;
+ $('ai-history-latest').disabled=$('ai-history-newer').disabled=aiHistoryPage===0;
+ $('ai-history-oldest').disabled=$('ai-history-older').disabled=aiHistoryPage===pages-1;
  const host=$('ai-answers');host.replaceChildren();
- for(const answer of (doc.ai_answers||[]).slice().reverse()){
-  const section=el('section','ai-answer');
-  const freshness=Coconut.answerFreshness(answer,doc);
-  if(freshness==='stale')section.append(el('p','hint','本次发送的原文已修改或移除，此回答依据可能过期，请重新提问'));
-  if(freshness==='unknown')section.append(el('p','hint','此回答缺少完整的发送原文记录，无法确认依据是否仍有效，请核对或重新提问'));
+ // Only inspect/render the visible records, without reversing/copying the full history.
+ const segments=new Map(doc.segments.map(cue=>[cue.id,cue]));
+ for(let offset=start;offset<end;offset++){
+  const index=total-1-offset,answer=answers[index],section=el('section','ai-answer');
+  section.dataset.answerNumber=String(index+1);
+  const freshness=answer.purpose==='summary'?Coconut.summaryFreshness(answer,doc):Coconut.answerFreshness(answer,doc);
+  section.append(el('h4','ai-answer-heading',`第 ${index+1} 则 · ${answer.purpose==='summary'?'整篇摘要':'问答'} · ${answer.provider||'unknown'}`));
+  if(!storageBlocked&&index>=saved)section.append(el('p','hint','仅在此页，尚未保存到浏览器；请先导出备份。'));
+  if(freshness==='stale')section.append(el('p','hint','本次发送的原文或全文范围已变化，此回答依据可能过期，请核对历史原文或重新提问。'));
+  if(freshness==='unknown')section.append(el('p','hint','此回答缺少完整的发送原文记录，无法确认依据是否仍有效，请核对或重新提问。'));
+  if(freshness==='current')section.append(el('p','hint','发送原文仍与当前稿一致，AI 判断仍需核对。'));
   section.append(el('strong','',answer.question),el('p','',answer.answer));
-  for(const id of answer.citations){const segment=doc.segments.find(s=>s.id===id);if(!segment)continue;const button=el('button','',Coconut.time(segment.start)+' · 原文');button.onclick=()=>goToSegment(id);section.append(button);}
-  if(!answer.citations.length)section.append(el('p','hint','回答未提供片段引用，请回听核对'));
+  for(const id of [...new Set(answer.citations)]){
+   const segment=segments.get(id);
+   if(!segment){
+    const historical=answer.input_snapshot?.segments.some(cue=>cue.id===id);
+    section.append(el('p','hint','原片段已不存在：'+id+'。'+(historical?'可在导出记录中核对当时发送的原文。':'原记录未提供该片段的历史原文。')));continue;
+   }
+   const button=el('button','',Coconut.time(segment.start)+' · 原文');button.onclick=()=>goToSegment(id);section.append(button);
+  }
+  if(!answer.citations.length)section.append(el('p','hint','回答未提供片段引用，请回听核对。'));
   host.append(section);
  }
 }
+function turnAIHistory(page){
+ const doc=active();if(!doc)return;
+ aiHistoryPage=page;renderAIHistory(doc);
+ $('ai-history-heading').focus();$('ai-history-heading').scrollIntoView?.({block:'start'});
+}
+$('ai-history-latest').onclick=()=>turnAIHistory(0);
+$('ai-history-newer').onclick=()=>turnAIHistory(aiHistoryPage-1);
+$('ai-history-older').onclick=()=>turnAIHistory(aiHistoryPage+1);
+$('ai-history-oldest').onclick=()=>turnAIHistory(Math.ceil((active()?.ai_answers?.length||0)/AI_HISTORY_PAGE_SIZE)-1);
+$('browse-ai-history').onclick=()=>{
+ if(!active()?.ai_answers?.length)return;
+ closeSummaryRequest(false);setReadingMode('transcript');
+ if(!$('toggle-demo-tools').hidden&&$('toggle-demo-tools').getAttribute('aria-expanded')!=='true')$('toggle-demo-tools').click();
+ $('language-panel').open=true;renderAIHistory(active());
+ $('ai-history-heading').focus();$('ai-history-heading').scrollIntoView?.({block:'start'});
+};
+$('export-ai-history-json').onclick=()=>$('export').onclick();
+
 async function checkLanguageTools(){
  const checkButton=$('check-ai');if(!checkButton)return;const sequence=++languageCheckSequence;checkButton.disabled=true;
  try{const status=await languageApi('language-tools');if(!checkButton.isConnected||sequence!==languageCheckSequence)return;languageReady=status.local_translation!==false;aiStatuses=status.ai||{};aiReady=aiStatuses[$('ai-provider').value]?.ready===true;$('ai-status').textContent=aiStatuses[$('ai-provider').value]?.reason||'认证状态未知';languageAvailability(languageReady?'离线模型只提供逐段粗稿，不能理解跨段指代；上下文翻译请使用已连接的本地 CLI。未安装模型仍需你允许下载。':'桌面版不安装重型离线翻译模型；可连接本地 CLI 使用已有订阅做上下文翻译。不会自动发送文字或切换付费 API。');}
@@ -290,7 +338,7 @@ async function runDocumentSummary(doc){
    if(latest!==doc||latest.summary_job!==job||!CoconutSummary.current(job,latest))throw new Error('请求期间原文已修改，本批结果未保存；旧进度仅供恢复，不能生成当前整篇摘要');
    finalAnswer=CoconutSummary.accept(plan,job,response);
    if(finalAnswer){
-    latest.ai_answers||=[];latest.ai_answers.push(finalAnswer);latest.ai_answers=Coconut.retainAnswers(latest.ai_answers);latest.summary_job=null;
+    latest.ai_answers||=[];latest.ai_answers.push(finalAnswer);latest.summary_job=null;
     if(!save())throw new Error('最终摘要仅在此页，保存失败；请立即导出摘要或 JSON 备份');
     aiProgress(key,'整篇摘要已保存，点击引用可以继续读原文、核对关键观点。');
     window.dispatchEvent(new Event('coconut-summary-updated'));break;
@@ -302,7 +350,7 @@ async function runDocumentSummary(doc){
   if(!finalAnswer){job.status='paused';job.in_flight=null;if(!save())throw new Error('已停止，但暂停状态未保存，请立即备份');aiProgress(key,`已停止后续请求，保存 ${job.results.length}/${plan.chunks.length} 批。还没有完整摘要；下次需重新确认发送与额度后继续。`);}
  }catch(error){
   if(!finalAnswer){job.status=job.in_flight===null?'failed':'interrupted';save();}
-  aiProgress(key,'整篇摘要未完成：'+error.message+'。不会自动重试；已保存的分批进度可在再次确认后继续。');
+  aiProgress(key,finalAnswer?'整篇摘要已生成，但尚未保存到浏览器：'+error.message+'。请先导出备份，勿关闭页面。':'整篇摘要未完成：'+error.message+'。不会自动重试；已保存的分批进度可在再次确认后继续。');
  }finally{summaryScope=null;asking=false;$('ai-consent').checked=false;renderLanguage();if(typeof renderSummary==='function')renderSummary();}
 }
 $('ask-ai').onclick=async()=>{
@@ -327,7 +375,7 @@ $('ask-ai').onclick=async()=>{
   const destination=state.documents.find(d=>d.key===key);if(destination!==doc)throw new Error('原文字稿已移除或更换，本次结果未保存');
   if(Coconut.answerFreshness({purpose,input_snapshot:{version:1,segments}},destination)!=='current'||purpose==='summary'&&destination.segments.length!==segments.length)throw new Error('请求期间原文已修改，请按新原文重新提问');
   if(typeof answer.answer!=='string'||!Array.isArray(answer.citations)||answer.citations.some(id=>!segments.some(s=>s.id===id)))throw new Error('回答引用无效');
-  destination.ai_answers||=[];destination.ai_answers.push({...answer,question,purpose,input_snapshot:{version:1,segments}});destination.ai_answers=Coconut.retainAnswers?Coconut.retainAnswers(destination.ai_answers):destination.ai_answers.slice(-20);const persisted=save();if(typeof renderSummary==='function')renderSummary();
+  destination.ai_answers||=[];destination.ai_answers.push({...answer,question,purpose,input_snapshot:{version:1,segments}});const persisted=save();if(typeof renderSummary==='function')renderSummary();
   aiProgress(key,persisted?'回答已保存在这份文字稿中，可点击引用返回原文；AI 判断仍需核对。':'回答暂留在当前页，浏览器保存未成功；请先导出备份，勿关闭页面。');
  }catch(error){aiProgress(key,'AI 阅读未完成：'+error.message);}
  finally{asking=false;questionKey=null;$('ai-consent').checked=false;renderLanguage();}

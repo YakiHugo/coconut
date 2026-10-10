@@ -101,7 +101,7 @@ test('platform media evidence survives backup without copying download URLs',()=
 test('bilingual backup keeps source alignment and refuses injected translation fields',()=>{
  const doc=validate({language:'en',translation_view:'zh',segments:[{id:'a',start:1.2,end:3.4,text:'Source',translations:{zh:{text:'译文',source_text:'Source',source_language:'en',provider:'local_argos_test',url:'https://evil.example'},bad:{text:'bad'}}}],ai_answers:[{question:'Q',answer:'A',citations:['a','missing'],provider:'claude_subscription'}]});
  const restored=parse(JSON.stringify(doc),'backup.json');
- assert.equal(restored.language,'en');assert.equal(restored.translation_view,'zh');assert.equal(restored.segments[0].translations.zh.text,'译文');assert.equal(restored.segments[0].translations.zh.url,undefined);assert.equal(restored.segments[0].translations.bad,undefined);assert.deepEqual(restored.ai_answers[0].citations,['a']);assert.equal(restored.segments[0].start,1.2);
+ assert.equal(restored.language,'en');assert.equal(restored.translation_view,'zh');assert.equal(restored.segments[0].translations.zh.text,'译文');assert.equal(restored.segments[0].translations.zh.url,undefined);assert.equal(restored.segments[0].translations.bad,undefined);assert.deepEqual(restored.ai_answers[0].citations,['a','missing']);assert.equal(restored.segments[0].start,1.2);
 });
 
 test('subscription windows preserve consented adjacency, character budgets and completed context',()=>{
@@ -268,11 +268,11 @@ test('only explicit whole-document summaries are current and survive backups',()
  assert.match(Coconut.summaryMarkdown(doc),/播客摘要/);assert.match(Coconut.summaryMarkdown(doc),/Second/);
 });
 
-test('later questions never evict the latest saved summary from the bounded history',()=>{
+test('later questions never evict older answers or any saved summary',()=>{
  const {retainAnswers,latestSummary}=require('../reader/core.js');
  const summary={purpose:'summary',question:'Summary',answer:'Keep this work',citations:[]};
  const answers=[summary,...Array.from({length:25},(_,i)=>({purpose:'question',question:String(i),answer:'Later question',citations:[]}))];
- const retained=retainAnswers(answers);assert.equal(retained.length,20);assert.equal(latestSummary({ai_answers:retained}),summary);assert.equal(retained.at(-1).question,'24');
+ const retained=retainAnswers(answers);assert.equal(retained.length,26);assert.equal(latestSummary({ai_answers:retained}),summary);assert.equal(retained.at(-1).question,'24');
  const doc=validate({segments:[{id:'a',start:0,end:1,text:'Source'}],ai_answers:answers});assert.equal(latestSummary(doc).answer,'Keep this work');
 });
 
