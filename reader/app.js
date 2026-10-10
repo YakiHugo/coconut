@@ -512,6 +512,7 @@ function resetReaderForDocumentNavigation(){
  passageReturn=null;passageDocumentKey=null;searchFocusedId=null;$('search').value='';
 }
 function focusLibraryRemoval(key) {
+ if(key)renderLibrary(key);
  const row=[...$('library').children].find(node=>node.dataset.documentKey===key);
  // Undo can run with the mobile shelf or its organizing controls collapsed.
  // Restore focus to an available action, never a hidden removal button.
@@ -677,55 +678,116 @@ $('confirm-finish-removal').onclick=()=>{
  finishRemovalDialogOrigin.confirmed=true;removedDocument=null;$('finish-removal-dialog').close();renderRemovalRecovery();notice('已结束本页撤销。如果另有 JSON 备份，以后可用“添加文件”恢复。');
 };
 
-function renderLibrary() {
-	$("library").replaceChildren();
-	const query = $("library-search").value.trim().toLocaleLowerCase();
-	const docs = Coconut.sortedLibrary(state.documents, $("library-sort").value).filter(d => Coconut.libraryMatches(d,query,$("library-kind").value,$("library-scope").value));
-	$("library-total").textContent = String(state.documents.length);
-	$("library-empty").hidden = docs.length > 0;
-	$("library-empty").textContent = state.documents.length ? "没有匹配的内容，可调整书架筛选或查找范围" : "还没有内容。添加一份，或体验示例。";
-	for (const d of docs) {
-		const entry=el("div","library-entry");entry.dataset.documentKey=d.key;
-		const b = el("button", "library-open"+(d.key === state.active ? " active" : ""));
-		b.append(el("span", "library-title", d.title));
-		const bookmark = d.segments.find(s => s.id === d.readingPosition);
-  const audioOnly=Coconut.isAudioProject(d),duration=Coconut.documentDuration(d);
+// Shelf paging bounds DOM work only. Filtering, sorting, storage, and backup
+// always use the complete document array; the cache retains this page alone.
+const LIBRARY_PAGE_SIZE=40;
+let libraryPage=0,libraryViewSignature=null,libraryActiveKey=null,libraryCards=new Map();
+function libraryPageFocus(){
+ $('toggle-library').setAttribute('aria-expanded','true');
+ ($('library').querySelector('.library-open:not(:disabled)')||$('library-search')).focus();
+}
+function createLibraryCard(d){
+ const entry=el('div','library-entry');entry.dataset.documentKey=d.key;
+ const open=el('button','library-open');open.type='button';
+ const title=el('span','library-title'),metadata=el('small');open.append(title,metadata);
+ const openDocument=(hit=null)=>{
+  if(pendingStructuralDocuments.has(d.key)||!state.documents.includes(d))return;
+  resetReaderForDocumentNavigation();selectActiveDocument(d.key);
+  setReadingMode(prefersPassageReading(d)?'passages':'summary');
+  $('toggle-library').setAttribute('aria-expanded','false');showWorkspace('read');render();
+  const bookmark=d.segments.find(s=>s.id===d.readingPosition);
+  if(hit)openLibraryHit(hit);
+  else if(bookmark){if(prefersPassageReading(d))openPassage(bookmark.id);else goToSegment(bookmark.id);}
+  else{$('title').scrollIntoView?.({block:'start'});$('title').focus({preventScroll:true});}
+ };
+ open.onclick=()=>openDocument();
+ const remove=el('button','library-remove','移除…');remove.type='button';remove.onclick=()=>requestLibraryRemoval(d);
+ entry.append(open,remove);
+ return {doc:d,entry,open,title,metadata,remove,openDocument,hitSignature:null,hits:null};
+}
+function renderLibrary(revealKey=null) {
+ const host=$('library'),query=$('library-search').value.trim().toLocaleLowerCase(),scope=$('library-scope').value;
+ const signature=JSON.stringify([query,$('library-sort').value,$('library-kind').value,scope]);
+ const viewChanged=libraryViewSignature!==null&&signature!==libraryViewSignature;
+ const docs=Coconut.sortedLibrary(state.documents,$('library-sort').value).filter(d=>Coconut.libraryMatches(d,query,$('library-kind').value,scope));
+ const activeIndex=docs.findIndex(d=>d.key===state.active);
+ if(viewChanged)libraryPage=0;
+ else if(state.active!==libraryActiveKey&&activeIndex>=0)libraryPage=Math.floor(activeIndex/LIBRARY_PAGE_SIZE);
+ if(typeof revealKey==='string'){
+  const index=docs.findIndex(d=>d.key===revealKey);if(index>=0)libraryPage=Math.floor(index/LIBRARY_PAGE_SIZE);
+ }
+ const pageCount=Math.ceil(docs.length/LIBRARY_PAGE_SIZE);
+ libraryPage=Math.max(0,Math.min(libraryPage,pageCount-1));
+ libraryViewSignature=signature;libraryActiveKey=state.active;
+ const start=libraryPage*LIBRARY_PAGE_SIZE,visible=docs.slice(start,start+LIBRARY_PAGE_SIZE);
+ $('library-total').textContent=String(state.documents.length);
+ $('library-empty').hidden=docs.length>0;
+ $('library-empty').textContent=state.documents.length?'没有匹配的内容，可调整书架筛选或查找范围':'还没有内容。添加一份，或体验示例。';
+ const range=docs.length?(start+1)+'–'+(start+visible.length):'0';
+ const status='显示 '+range+' / '+docs.length+' 份'+(docs.length!==state.documents.length?' · 书架共 '+state.documents.length+' 份':'');
+ if($('library-page-status').textContent!==status)$('library-page-status').textContent=status;
+ $('library-pagination').hidden=pageCount<=1;
+ $('library-previous').disabled=libraryPage===0;$('library-next').disabled=libraryPage+1>=pageCount;
+ $('library-page-count').textContent=String(pageCount||1);$('library-page-number').max=String(pageCount||1);
+ if(document.activeElement!==$('library-page-number'))$('library-page-number').value=String(libraryPage+1);
+ $('library-show-active').hidden=activeIndex<0||Math.floor(activeIndex/LIBRARY_PAGE_SIZE)===libraryPage;
+ const focused=document.activeElement,focusedEntry=focused?.closest('.library-entry');
+ const focusKey=focusedEntry?.dataset.documentKey,hitKind=focused?.dataset.hitKind,hitId=focused?.dataset.hitId;
+ const nextCards=new Map();
+ for(const d of visible){
+  const previous=libraryCards.get(d.key),card=previous?.doc===d?previous:createLibraryCard(d);
+  const bookmark=d.segments.find(s=>s.id===d.readingPosition),audioOnly=Coconut.isAudioProject(d),duration=Coconut.documentDuration(d);
   const metadata=audioOnly?['原声项目','未导入文字稿',duration?Coconut.time(duration):'时长待确认']:[Coconut.time(duration),Coconut.segmentNoteCount(d)+' 则片段笔记'];
   if(Coconut.hasProjectAnnotations(d))metadata.push((Coconut.hasNoteContent(d.project_note)?1:0)+' 则项目笔记',d.timestamp_bookmarks.length+' 个时间书签');
   if(bookmark)metadata.push('读到 '+Coconut.time(bookmark.start));
-  b.append(el('small','',metadata.join(' · ')));
-		b.setAttribute("aria-current", d.key === state.active ? "page" : "false");
-  b.disabled=pendingStructuralDocuments.has(d.key);if(b.disabled)b.title="正在保存恢复，完成后可打开";
-		const openDocument = (hit=null) => {
-   if(pendingStructuralDocuments.has(d.key)||!state.documents.includes(d))return;
-   resetReaderForDocumentNavigation();selectActiveDocument(d.key);
-   setReadingMode(prefersPassageReading(d)?"passages":"summary");
-			$("toggle-library").setAttribute("aria-expanded", "false");
-			showWorkspace("read");
-			render();
-			if(hit)openLibraryHit(hit);
-			else if (bookmark){if(prefersPassageReading(d))openPassage(bookmark.id);else goToSegment(bookmark.id);}
-			else $("title").scrollIntoView?.({block: "start"});
-		};
-		b.onclick=()=>openDocument();
-  const remove=el('button','library-remove','移除…');remove.type='button';remove.setAttribute('aria-label','从书架移除 '+d.title);
-  remove.hidden=!$('library-options').open;remove.disabled=!!pendingLibraryOperation;remove.onclick=()=>requestLibraryRemoval(d);
-  entry.append(b,remove);
-  const hits=Coconut.libraryHits(d,query,$('library-scope').value);
-  if(hits.length){
-   const list=el('div','library-hits');list.setAttribute('aria-label','匹配预览（最多 3 项）');
-   for(const hit of hits){
-    const button=el('button','library-hit');button.type='button';button.dataset.hitKind=hit.kind;button.dataset.hitId=hit.id||'';if(hit.ids){button.dataset.cueCount=String(hit.ids.length);if(hit.ids.length<=32)button.dataset.cueIds=JSON.stringify(hit.ids);}
-    const label={'text':'原文','note':'片段笔记','project-note':'项目笔记','bookmark':'时间书签'}[hit.kind];
-    button.append(el('small','',label+(hit.time===undefined?'':' · '+Coconut.time(hit.time))));
-    const preview=el('span','library-hit-preview');preview.append(document.createTextNode(hit.snippet.before),el('mark','',hit.snippet.match),document.createTextNode(hit.snippet.after));
-    button.append(preview);button.disabled=pendingStructuralDocuments.has(d.key);button.onclick=()=>openDocument(hit);list.append(button);
+  if(card.title.textContent!==d.title)card.title.textContent=d.title;
+  const description=metadata.join(' · ');if(card.metadata.textContent!==description)card.metadata.textContent=description;
+  card.open.classList.toggle('active',d.key===state.active);card.open.setAttribute('aria-current',d.key===state.active?'page':'false');
+  card.open.disabled=pendingStructuralDocuments.has(d.key);card.open.title=card.open.disabled?'正在保存恢复，完成后可打开':'';
+  card.remove.setAttribute('aria-label','从书架移除 '+d.title);card.remove.hidden=!$('library-options').open;card.remove.disabled=!!pendingLibraryOperation;
+  const hits=Coconut.libraryHits(d,query,scope),hitSignature=JSON.stringify(hits);
+  if(card.hitSignature!==hitSignature){
+   card.hits?.remove();card.hits=null;card.hitSignature=hitSignature;
+   if(hits.length){
+    const list=el('div','library-hits');list.setAttribute('aria-label','匹配预览（最多 3 项）');
+    for(const hit of hits){
+     const button=el('button','library-hit');button.type='button';button.dataset.hitKind=hit.kind;button.dataset.hitId=hit.id||'';
+     if(hit.ids){button.dataset.cueCount=String(hit.ids.length);if(hit.ids.length<=32)button.dataset.cueIds=JSON.stringify(hit.ids);}
+     const label={'text':'原文','note':'片段笔记','project-note':'项目笔记','bookmark':'时间书签'}[hit.kind];
+     button.append(el('small','',label+(hit.time===undefined?'':' · '+Coconut.time(hit.time))));
+     const preview=el('span','library-hit-preview');preview.append(document.createTextNode(hit.snippet.before),el('mark','',hit.snippet.match),document.createTextNode(hit.snippet.after));
+     button.append(preview);button.onclick=()=>card.openDocument(hit);list.append(button);
+    }
+    card.entry.append(list);card.hits=list;
    }
-   entry.append(list);
   }
-  $("library").append(entry);
-	}
+  for(const hit of card.hits?.children||[])hit.disabled=pendingStructuralDocuments.has(d.key);
+  nextCards.set(d.key,card);
+ }
+ // Avoid moving unchanged nodes: moving a focused button can reset focus in a
+ // native browser even if it returns to the same parent in the same task.
+ let index=0;
+ for(const {entry} of nextCards.values()){if(host.children[index]!==entry)host.insertBefore(entry,host.children[index]||null);index++;}
+ while(host.children.length>index)host.lastElementChild.remove();
+ libraryCards=nextCards;
+ // A refreshed preview or reordered card keeps the exact action when it still
+ // exists. Never steal focus from an editor, dialog, or async operation.
+ if(focusKey&&(!focused.isConnected||document.activeElement===document.body)){
+  const card=libraryCards.get(focusKey);
+  const target=hitKind?[...(card?.hits?.children||[])].find(node=>node.dataset.hitKind===hitKind&&node.dataset.hitId===hitId):focused.classList.contains('library-remove')?card?.remove:card?.open;
+  if(target&&!target.disabled&&!target.hidden)target.focus({preventScroll:true});
+  else if(card&&!card.open.disabled)card.open.focus({preventScroll:true});
+  else $('library-search').focus({preventScroll:true});
+ }
 }
+$('library-previous').onclick=()=>{if(libraryPage>0){libraryPage--;renderLibrary();libraryPageFocus();}};
+$('library-next').onclick=()=>{if(!$('library-next').disabled){libraryPage++;renderLibrary();libraryPageFocus();}};
+$('library-page-form').onsubmit=event=>{
+ event.preventDefault();const page=Number($('library-page-number').value),max=Number($('library-page-number').max);
+ if(!Number.isInteger(page)||page<1||page>max){$('library-page-number').reportValidity?.();return;}
+ libraryPage=page-1;renderLibrary();libraryPageFocus();$('library-page-number').value=String(libraryPage+1);
+};
+$('library-show-active').onclick=()=>{renderLibrary(state.active);const card=libraryCards.get(state.active);$('toggle-library').setAttribute('aria-expanded','true');card?.open.focus();};
 function openLibraryHit(hit) {
  if(hit.kind==='text'||hit.kind==='note'){
   goToSegment(hit.id,true);

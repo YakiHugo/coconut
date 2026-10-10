@@ -61,3 +61,8 @@ At every size, first-render passage builds fall from 9 to 1; twenty control refr
 - `python -m unittest discover -s tests -v`: 139 tests, passed with 3 existing pinned-extractor live-proof skips.
 - `python scripts/reader_assets.py --check`, JavaScript syntax checks, and `git diff --check`: passed. Only the affected script cache tokens changed in `reader/index.html`.
 - No browser or real-media performance claim is made; this is a production-module/DOM-harness measurement. Remote CI remains a separate check on the published commit.
+
+
+## Large-library shelf
+
+The separate [large-library rendering record](large-library-rendering.md) covers bounded 40-card pages, complete-library search and backup, card reuse, and authored 100/1,000/5,000-document profiles. Transcript pagination and shelf pagination have independent bounds.

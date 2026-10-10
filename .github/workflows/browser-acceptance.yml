@@ -64,6 +64,8 @@ jobs:
         run: node tests/passage-question-browser.mjs
       - name: Verify cross-cue phrase matches, exact source scope and mobile context with authored fixtures
         run: node tests/phrase-search-browser.mjs
+      - name: Verify bounded large-library pages, complete search, removal and backup with authored data
+        run: node tests/large-library-browser.mjs
       - name: Verify cross-document search previews and keyboard destinations with authored fixtures
         run: node tests/library-search-browser.mjs
       - name: Verify 1,771-cue bilingual reading and recovery with authored fixtures
