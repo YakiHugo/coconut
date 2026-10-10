@@ -130,3 +130,145 @@ test('an access-denied IndexedDB property getter can use unfenced legacy fallbac
  try{const result=await provider.initialize({getStorage:()=>storage,validate:Coconut.validate,legacyModule,documentModule});assert.equal(result.ok,true);assert.equal(result.backend,'legacy');assert.equal(result.loaded.documents.length,2);assert.equal(storage.getItem(FENCE),null);}
  finally{if(original)Object.defineProperty(globalThis,'indexedDB',original);else delete globalThis.indexedDB;}
 });
+
+async function conflictedWindows(count=3){
+ const f=await fixture({raw:JSON.stringify({documents:Array.from({length:count},(_,i)=>doc(String.fromCharCode(97+i))),active:'b'})});
+ const second=await fixture({engine:f.engine,storage:f.storage}),remote=storeFor(f),local=storeFor(second);
+ remote.documents[0].notes.one='Remote A';remote.store.queueDocument('a',remote.documents[0]);assert.equal((await remote.store.flush()).ok,true);
+ return {f,second,remote,local,rows:()=>f.engine.rows(provider.NAME).get('documents')};
+}
+const writeCount=f=>f.engine.transactions.filter(tx=>tx.mode==='readwrite').length;
+
+test('known A conflict no longer prevents independent B from saving, while global flush remains false',async()=>{
+ const {f,local,rows}=await conflictedWindows();const [a,b]=local.documents;
+ a.notes.one='Local A';local.store.queueDocument('a',a);assert.equal((await local.store.flush()).ok,false);
+ const before=writeCount(f);b.notes.one='Independent B';const ticket=local.store.queueDocument('b',b),flushing=local.store.flush();
+ assert.equal((await ticket.committed).ok,true);assert.equal((await flushing).ok,false);
+ assert.equal(writeCount(f),before+1);assert.equal(rows().get('a').payload.notes.one,'Remote A');assert.equal(rows().get('b').payload.notes.one,'Independent B');
+ assert.equal(local.store.status('a').status,'conflict');assert.equal(local.store.status('b').status,'saved');assert.equal(local.store.status().unsaved,1);
+ assert.deepEqual(local.store.snapshotForExport().documents.map(d=>[d.key,d.notes.one]),[['a','Local A']]);
+ const after=writeCount(f);assert.equal((await local.store.flush()).ok,false);assert.equal(writeCount(f),after,'a clean independent flush does not implicitly retry A');
+});
+
+test('reader UI saves an unrelated note after conflict but continues warning and exporting the conflicted draft',async()=>{
+ const {f,second,rows}=await conflictedWindows(2),{w,$}=await ui(second);
+ try{
+  const a=w.idbUI.documents[0];a.notes.one='Local A';w.idbUI.store.queueDocument('a',a);await w.idbUI.store.flush();
+  w.document.querySelector('.note-button').click();$('note').value='Independent B typed in UI';$('note').oninput();assert.equal((await w.idbUI.store.flush()).ok,false);
+  assert.equal(rows().get('b').payload.notes.one,'Independent B typed in UI');assert.equal($('save-status').dataset.state,'failed');assert.match($('save-status').textContent,/另一个页面更新了书架/);
+  let blob;w.URL.createObjectURL=value=>{blob=value;return 'blob:conflict';};w.HTMLAnchorElement.prototype.click=function(){};
+  $('export-unsaved-documents').click();const rescued=JSON.parse(await blob.text()).documents;
+  assert.deepEqual(rescued.map(d=>[d.key,d.notes.one]),[['a','Local A']]);
+  await $('retry-save').onclick();assert.equal(rows().get('a').payload.notes.one,'Remote A');assert.equal(w.idbUI.store.status().unsaved,1);
+ }finally{await w.happyDOM.close();}
+});
+
+test('aborted mixed transaction retries only independent groups, waits for actual commit, and captures newer typing',async()=>{
+ const {f,local,rows}=await conflictedWindows(),[a,b]=local.documents;
+ a.notes.one='Local A';b.notes.one='B before abort';const ta=local.store.queueDocument('a',a),tb=local.store.queueDocument('b',b);
+ f.engine.control.holdAbortEvents=true;let flushSettled=false,bSettled=false;const flushing=local.store.flush().then(result=>{flushSettled=true;return result;});tb.committed.then(()=>{bSettled=true;});await f.engine.tick();
+ assert.equal(f.engine.control.abortEvents.length,1);assert.equal(rows().get('b').payload.notes.one,undefined);
+ b.notes.one='B typed during abort';const newer=local.store.queueDocument('b',b);f.engine.control.holdNextWrite=true;f.engine.control.abortEvents.shift()();await f.engine.tick();
+ assert.equal((await ta.committed).ok,false);assert.equal(f.engine.control.held.length,1);assert.equal(bSettled,false);assert.equal(flushSettled,false);
+ assert.equal(rows().get('b').payload.notes.one,undefined,'an aborted or request-successful transaction is not saved');
+ f.engine.control.held.shift().complete();assert.equal((await tb.committed).ok,true);assert.equal((await newer.committed).ok,true);assert.equal((await flushing).ok,false);
+ assert.equal(rows().get('b').payload.notes.one,'B typed during abort');assert.equal(local.store.status('a').status,'conflict');
+});
+
+test('explicit atomic groups and transitive overlaps remain quarantined together, including later joins and retry by member',async()=>{
+ const {f,local,rows}=await conflictedWindows(4),[a,b,c,d]=local.documents;
+ a.notes.one='Local A';b.notes.one='Atomic B';c.notes.one='Overlapping C';
+ const ab=local.store.queueDocuments([{key:'a',identity:a},{key:'b',identity:b}]);const bc=local.store.queueDocuments([{key:'b',identity:b},{key:'c',identity:c}]);
+ assert.equal((await local.store.flush()).ok,false);assert.ok((await Promise.all([...ab.tickets,...bc.tickets].map(t=>t.committed))).every(r=>!r.ok));
+ assert.equal(rows().get('b').payload.notes.one,undefined);assert.equal(rows().get('c').payload.notes.one,undefined);
+ const before=writeCount(f);b.notes.one='New B in quarantine';d.notes.one='Joining D';const bd=local.store.queueDocuments([{key:'b',identity:b},{key:'d',identity:d}]);
+ assert.ok((await Promise.all(bd.tickets.map(t=>t.committed))).every(r=>!r.ok));assert.equal((await local.store.flush()).ok,false);assert.equal(writeCount(f),before);
+ assert.equal(local.store.status().unsaved,4);assert.equal(local.store.snapshotForExport().documents.find(d=>d.key==='b').notes.one,'New B in quarantine');
+ assert.equal((await local.store.retry('d')).ok,false);assert.equal(writeCount(f),before+1,'explicit retry attempts one full connected group');
+ assert.deepEqual([...rows().values()].map(row=>row.payload.notes.one),['Remote A',undefined,undefined,undefined]);
+});
+
+test('a new overlapping generation during conflict abort is quarantined without losing new text or hanging tickets',async()=>{
+ const {f,local,rows}=await conflictedWindows(),[a,b,c]=local.documents;
+ a.notes.one='Old A';b.notes.one='B';local.store.queueDocument('a',a);local.store.queueDocument('b',b);f.engine.control.holdAbortEvents=true;
+ const flushing=local.store.flush();await f.engine.tick();a.notes.one='New A during abort';c.notes.one='C joining A';const ac=local.store.queueDocuments([{key:'a',identity:a},{key:'c',identity:c}]);
+ f.engine.control.abortEvents.shift()();assert.ok((await Promise.all(ac.tickets.map(t=>t.committed))).every(r=>!r.ok));assert.equal((await flushing).ok,false);
+ assert.equal(rows().get('b').payload.notes.one,'B');assert.equal(rows().get('c').payload.notes.one,undefined);assert.equal(local.store.snapshotForExport().documents.find(d=>d.key==='a').notes.one,'New A during abort');
+});
+
+test('durable acknowledgement removes old atomic dependencies before a later conflict',async()=>{
+ const f=await fixture(),local=storeFor(f),[a,b]=local.documents;
+ a.notes.one='First A';b.notes.one='First B';local.store.queueDocuments([{key:'a',identity:a},{key:'b',identity:b}]);assert.equal((await local.store.flush()).ok,true);
+ const other=storeFor(await fixture({engine:f.engine,storage:f.storage}));other.documents[0].notes.one='Remote A';other.store.queueDocument('a',other.documents[0]);await other.store.flush();
+ a.notes.one='Conflicting A';local.store.queueDocument('a',a);await local.store.flush();b.notes.one='Independent later B';const ticket=local.store.queueDocument('b',b);assert.equal((await local.store.flush()).ok,false);assert.equal((await ticket.committed).ok,true);
+ assert.equal(f.engine.rows(provider.NAME).get('documents').get('b').payload.notes.one,'Independent later B');
+});
+
+test('native-close barrier waits for unrelated receipt but cannot report fully saved with a quarantined group',async()=>{
+ const {f,local}=await conflictedWindows(),[a,b]=local.documents;
+ a.notes.one='Local A';local.store.queueDocument('a',a);await local.store.flush();b.notes.one='B before close';const tb=local.store.queueDocument('b',b);
+ const owner=local.store.acquireBarrier('conflict-close');f.engine.control.holdNextWrite=true;let settled=false;
+ const close=local.store.flush({token:owner}).then(result=>{settled=true;return result;});await f.engine.tick();assert.equal(settled,false);
+ f.engine.control.held.shift().complete();assert.equal((await tb.committed).ok,true);assert.equal((await close).ok,false);assert.equal(local.store.status().unsaved,1);
+ assert.equal(local.store.releaseBarrier(owner),true);assert.equal(local.store.snapshotForExport().documents[0].notes.one,'Local A');
+ const discardOwner=local.store.acquireBarrier('discard-conflict');assert.equal((await local.store.discardPending(discardOwner)).ok,true);local.store.releaseBarrier(discardOwner);
+ assert.equal(local.store.status().unsaved,1,'cancelled close retains recovery content');assert.equal((await local.store.retry()).ok,false,'explicit retry never rebases CAS');
+});
+
+test('independent remove/restore survives a mixed conflict without premature rollback or changing tombstone CAS',async()=>{
+ const {f,local,rows}=await conflictedWindows(),[a,b,c]=local.documents;let rollbacks=0;
+ a.notes.one='Local A';local.store.queueDocument('a',a);local.documents=[a,c];
+ const removal=local.store.queueDocument('b',b,'remove',{rollback(){rollbacks++;local.documents=[a,b,c];return true;}});
+ assert.equal((await local.store.flush()).ok,false);assert.equal((await removal.committed).ok,true);assert.equal(rollbacks,0);
+ assert.equal(rows().has('b'),false);assert.equal(f.engine.rows(provider.NAME).get('tombstones').get('b').revision,2);
+ const restored={...b,notes:{one:'Restored B'}};local.documents=[a,restored,c];
+ const undo=local.store.queueDocument('b',restored,'restore',{rollback(){rollbacks++;local.documents=[a,c];return true;}});
+ assert.equal((await local.store.flush()).ok,false);assert.equal((await undo.committed).ok,true);assert.equal(rollbacks,0);
+ assert.equal(rows().get('b').epoch,2);assert.equal(rows().get('b').revision,3);assert.equal(rows().get('b').payload.notes.one,'Restored B');assert.equal(rows().get('a').payload.notes.one,'Remote A');
+});
+
+test('a structural operation joining quarantine rolls back only itself and preserves the preexisting local conflict',async()=>{
+ const {f,local,rows}=await conflictedWindows(),[a,b,c]=local.documents;
+ a.notes.one='Local A draft';local.store.queueDocument('a',a);await local.store.flush();const before=writeCount(f);local.documents=[b,c];let rollbacks=0;
+ const removal=local.store.queueDocument('a',a,'remove',{rollback(){rollbacks++;local.documents=[a,b,c];return true;}});
+ assert.equal((await removal.committed).ok,false);assert.equal(rollbacks,1);assert.equal(local.documents[0],a);assert.equal(local.store.status('a').identity,a);assert.equal(writeCount(f),before);
+ assert.equal(local.store.snapshotForExport().documents[0].notes.one,'Local A draft');
+ b.notes.one='B after rollback';const independent=local.store.queueDocument('b',b);await local.store.flush();assert.equal((await independent.committed).ok,true);assert.equal(rows().get('b').payload.notes.one,'B after rollback');assert.equal(rows().get('a').payload.notes.one,'Remote A');
+});
+
+for(const code of ['conflict','quota','unavailable','legacy-changed'])test(`non-isolatable ${code} failure retains whole dirty-batch retry semantics`,async()=>{
+ const f=await fixture({raw:JSON.stringify({documents:[doc('a'),doc('b'),doc('c')]})}),original=f.result.adapter.write;
+ let calls=0;f.result.adapter.write=async(...args)=>{calls++;if(calls===1)return {ok:false,status:code==='conflict'?'conflict':'failed',error:{code},...(code==='conflict'?{}:{key:'a'})};return original(...args);};
+ const local=storeFor(f),[a,b,c]=local.documents;a.notes.one='A';b.notes.one='B';local.store.queueDocument('a',a);local.store.queueDocument('b',b);
+ assert.equal((await local.store.flush()).ok,false);await f.engine.tick();assert.equal(calls,1,'global failure cannot create an automatic retry loop');assert.equal(local.store.status('a').error.code,code);assert.equal(local.store.status('b').error.code,code);
+ c.notes.one='C';local.store.queueDocument('c',c);assert.equal((await local.store.flush()).ok,true);assert.equal(calls,2);assert.equal(local.store.status().unsaved,0);
+ assert.deepEqual([...f.engine.rows(provider.NAME).get('documents').values()].map(row=>row.payload.notes.one),['A','B','C']);
+});
+
+test('superseded identity during a mixed abort gets a failed old receipt and a truthful independent replacement receipt',async()=>{
+ const {f,local,rows}=await conflictedWindows(),[a,b,c]=local.documents;
+ a.notes.one='Local A';b.notes.one='Old B';local.store.queueDocument('a',a);const old=local.store.queueDocument('b',b);f.engine.control.holdAbortEvents=true;
+ const flushing=local.store.flush();await f.engine.tick();const replacement={...b,notes:{one:'Replacement B'}};local.documents=[a,replacement,c];const newer=local.store.queueDocument('b',replacement);
+ f.engine.control.abortEvents.shift()();assert.equal((await old.committed).ok,false);assert.equal((await flushing).ok,false);await local.store.flush();assert.equal((await newer.committed).ok,true);
+ assert.equal(rows().get('b').payload.notes.one,'Replacement B');assert.equal(local.store.status('b').identity,replacement);assert.equal(local.store.status('b').status,'saved');
+});
+
+for(const joinSource of [false,true])for(const throws of [false,true])test(`conflict rollback is disarmed before reentrant ${joinSource?'source':'peer'} group joins${throws?' and throws':''}`,async()=>{
+ const {f,local,rows}=await conflictedWindows(4),[a,b,c,d]=local.documents;let rollbacks=0,joined;
+ local.documents=[b,c,d];b.notes.one='B before rollback';
+ const atomic=local.store.queueDocuments([{key:'a',identity:a,kind:'remove',rollback(){
+  rollbacks++;local.documents=[a,b,c,d];const source=joinSource?a:b;
+  source.notes.one='New generation inside rollback';c.notes.one='Joined C';
+  joined=local.store.queueDocuments([{key:source.key,identity:source},{key:'c',identity:c}]);
+  if(throws)throw Error('Rollback interrupted');return true;
+ }},{key:'b',identity:b}]);
+ const flushing=local.store.flush();assert.equal((await flushing).ok,false);
+ assert.equal(rollbacks,1,'one failed structural owner invokes its callback at most once');assert.ok((await Promise.all(atomic.tickets.map(t=>t.committed))).every(result=>!result.ok));
+ assert.ok((await Promise.all(joined.tickets.map(t=>t.committed))).every(result=>!result.ok));
+ assert.equal(local.store.status('b').status,'conflict','outer receipt must not turn a newly joined quarantined peer pending');
+ assert.equal(local.store.status('c').status,'conflict');const source=joinSource?a:b;
+ assert.equal(local.store.status(source.key).generation,joined.tickets[0].generation,'old reconciliation cannot erase new ownership');
+ assert.equal(local.store.snapshotForExport().documents.find(doc=>doc.key===source.key).notes.one,'New generation inside rollback');
+ const before=writeCount(f);d.notes.one='Independent D';const td=local.store.queueDocument('d',d);assert.equal((await local.store.flush()).ok,false);assert.equal((await td.committed).ok,true);assert.equal(writeCount(f),before+1);
+ assert.equal(rows().get('d').payload.notes.one,'Independent D');assert.equal(rows().get('a').payload.notes.one,'Remote A');assert.equal(rows().get('b').payload.notes.one,undefined);assert.equal(rollbacks,1);
+});

@@ -68,10 +68,9 @@ Each document has an epoch/revision token. A transaction checks expected tokens
 before updating the document and catalog together. Different documents can be
 edited in different windows without replacing the rest of the library. A stale
 same-document edit fails visibly; retry does not silently rebase over newer data.
-After a conflict, other document edits in that same window may also be unable to
-save. Export every unsaved document from that window before refreshing to load
-the current persisted data. This release does not isolate pending saves into
-independent conflict groups.
+Conflicts are isolated by connected atomic operation group, as described below;
+they do not prevent independent dirty-document groups from committing. The global
+unsaved status still includes every unresolved conflict.
 Removal writes a small tombstone, Undo checks its identity and restores the prior
 catalog position with a new epoch. Tombstones do not retain removed transcripts.
 The existing page-owned removal/draft bundle and provisional Undo UI remain intact.
@@ -82,6 +81,21 @@ exact legacy text/fence before and within writes and stop once a discrepancy is
 observed. localStorage and IndexedDB cannot provide one atomic cross-API
 transaction, so this is not a universal lock over uncooperative older versions.
 No automatic merge or conflict overwrite is attempted.
+
+A known document conflict leaves that document's local edits recoverable and
+unsaved, but no longer prevents later independent documents from saving.
+Explicit multi-document operations stay atomic; operations sharing dirty
+documents remain one connected group until acknowledged. A conflict pauses that
+whole group. If a mixed transaction aborts, unrelated groups can retry in a new
+transaction; they receive success only after their own durable commit. Retry
+rechecks the original revision tokens and never overwrites the other window.
+The global save warning and close/update checks remain unsuccessful while any
+conflicted edits are unresolved, even when an independent document saves.
+Export the remaining unsaved documents before refreshing to read remote changes.
+Whole-library legacy storage and global storage failures retain their existing
+failure behavior. Group bookkeeping is bounded by outstanding dirty keys and
+retired after acknowledged writes or structural reconciliation. A cancelled
+close keeps its recoverable edits and atomic dependencies until resolved.
 
 `versionchange` immediately closes the old connection and surfaces an error,
 including when there is no pending edit. Unsaved content can still be exported.
