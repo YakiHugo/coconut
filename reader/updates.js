@@ -3,6 +3,28 @@
  const api=window.coconutUpdates;if(!api)return;
  const panel=document.getElementById('app-updates'),status=document.getElementById('update-status');panel.hidden=false;
  const button=id=>document.getElementById(id);
+ // Only the native menu calls this bounded adapter. Web shortcuts stay native
+ // to the browser, and all import/save work stays in the existing UI handlers.
+ let fileMenuClosed=false;
+ window.addEventListener('pagehide',()=>{fileMenuClosed=true;},{once:true});
+ window.coconutFileCommand=(command,request)=>{
+  const targets={'import-transcript':'import','open-local-media':'open-local-media','backup-library':'export-library'};
+  if(!Object.hasOwn(targets,command)||fileMenuClosed||!request||!Number.isFinite(request.issuedAt)||
+     request.issuedAt<performance.timeOrigin||!Number.isFinite(request.expiresAt)||request.expiresAt<=Date.now())return false;
+  if(window.CoconutStorageBootstrap?.phase!=='ready'||readerClosing||document.body.inert||document.querySelector('.shell')?.inert)return false;
+  const modal=document.querySelector('dialog[open]');
+  if(modal){
+   let hint=modal.querySelector('[data-file-menu-hint]');
+   if(!hint){hint=document.createElement('p');hint.dataset.fileMenuHint='';hint.setAttribute('role','status');modal.append(hint);modal.addEventListener('close',()=>hint.remove(),{once:true});}
+   hint.textContent='请先完成或关闭当前对话框，再使用文件菜单。';return false;
+  }
+  const target=button(targets[command]);
+  if(!target||target.disabled||target.closest('[inert]')||command!=='backup-library'&&!contentIngressAllowed()){
+   notice('当前操作暂不可用，请先处理书架保存状态后重试。');return false;
+  }
+  target.click();return true;
+ };
+
  function render(s){
   panel.querySelector('summary').textContent='应用更新'+(s.status==='ready'?' · 可安装':s.status==='downloading'?' · 下载中':s.status==='error'?' · 请重试':'');
   button('update-version').textContent=`Coconut ${s.version} · ${s.arch==='arm64'?'Apple Silicon':'Intel'}`;
