@@ -33,97 +33,134 @@ jobs:
           cache: npm
       - run: npm ci --ignore-scripts
       - run: npx playwright install --with-deps chromium
-      - run: sudo apt-get update && sudo apt-get install -y ffmpeg fonts-noto-cjk
+      - id: browser_setup
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg fonts-noto-cjk
+      # Setup retains implicit success(); its final step must succeed before tests run.
+      # Independent authored suites continue after sibling failures, never cancellation.
+      # No continue-on-error: any failed suite still fails the job.
       - name: Verify local-only media projects, annotations, subtitle continuity and explicit reselection
+        if: ${{ !cancelled() && steps.browser_setup.outcome == 'success' }}
         run: node tests/local-media-projects-browser.mjs
       - name: Verify production IndexedDB migration, dirty receipts, capacity, conflicts and recovery
+        if: ${{ !cancelled() && steps.browser_setup.outcome == 'success' }}
         run: node tests/indexeddb-library-browser.mjs
       - name: Verify legacy fallback pending save receipts, retry, complete rescue and provisional Undo with authored data
+        if: ${{ !cancelled() && steps.browser_setup.outcome == 'success' }}
         run: node tests/save-pipeline-browser.mjs
       - name: Verify recoverable library removal and rescue downloads with authored data
+        if: ${{ !cancelled() && steps.browser_setup.outcome == 'success' }}
         env:
           COCONUT_UI_SCREENSHOTS: ${{ runner.temp }}/coconut-authored-ui
         run: node tests/library-removal-browser.mjs
       - name: Verify standalone Web reading without a Python service
+        if: ${{ !cancelled() && steps.browser_setup.outcome == 'success' }}
         env:
           COCONUT_UI_SCREENSHOTS: ${{ runner.temp }}/coconut-authored-ui
         run: node tests/web-browser-acceptance.mjs
       - name: Verify persistent reading appearance, dark contrast, keyboard and narrow mobile reading
+        if: ${{ !cancelled() && steps.browser_setup.outcome == 'success' }}
         env:
           COCONUT_UI_SCREENSHOTS: ${{ runner.temp }}/coconut-authored-ui
         run: node tests/reading-appearance-browser.mjs
       - name: Verify skim to complete bilingual passages and bounded listen-once with authored media
+        if: ${{ !cancelled() && steps.browser_setup.outcome == 'success' }}
         env:
           COCONUT_UI_SCREENSHOTS: ${{ runner.temp }}/coconut-authored-ui
         run: node tests/passages-browser.mjs
       - name: Verify human translation review, draft protection and actual JSON VTT Markdown exports
+        if: ${{ !cancelled() && steps.browser_setup.outcome == 'success' }}
         run: node tests/translation-review-browser.mjs
       - name: Verify exact passage questions, explicit consent, citation return and interrupted requests
+        if: ${{ !cancelled() && steps.browser_setup.outcome == 'success' }}
         env:
           COCONUT_UI_SCREENSHOTS: ${{ runner.temp }}/coconut-authored-ui
         run: node tests/passage-question-browser.mjs
       - name: Verify cross-cue phrase matches, exact source scope and mobile context with authored fixtures
+        if: ${{ !cancelled() && steps.browser_setup.outcome == 'success' }}
         run: node tests/phrase-search-browser.mjs
       - name: Verify bounded large-library pages, complete search, removal and backup with authored data
+        if: ${{ !cancelled() && steps.browser_setup.outcome == 'success' }}
         run: node tests/large-library-browser.mjs
       - name: Verify cross-document search previews and keyboard destinations with authored fixtures
+        if: ${{ !cancelled() && steps.browser_setup.outcome == 'success' }}
         run: node tests/library-search-browser.mjs
       - name: Verify 1,771-cue bilingual reading and recovery with authored fixtures
+        if: ${{ !cancelled() && steps.browser_setup.outcome == 'success' }}
         env:
           COCONUT_UI_SCREENSHOTS: ${{ runner.temp }}/coconut-authored-ui
         run: node tests/long-reading-browser.mjs
       - name: Verify distinct AI actions and exact approved scopes with injected responses only
+        if: ${{ !cancelled() && steps.browser_setup.outcome == 'success' }}
         env:
           COCONUT_UI_SCREENSHOTS: ${{ runner.temp }}/coconut-authored-ui
         run: node tests/ai-actions-browser.mjs
       - name: Verify AI request ownership and explicit retry with injected responses only
+        if: ${{ !cancelled() && steps.browser_setup.outcome == 'success' }}
         env:
           COCONUT_UI_SCREENSHOTS: ${{ runner.temp }}/coconut-authored-ui
         run: node tests/ai-recovery-browser.mjs
       - name: Verify complete AI history, bounded pages and real download recovery without model calls
+        if: ${{ !cancelled() && steps.browser_setup.outcome == 'success' }}
         env:
           COCONUT_UI_SCREENSHOTS: ${{ runner.temp }}/coconut-authored-ui
         run: node tests/ai-history-browser.mjs
       - name: Verify deep-reading audio controls and notes with authored short cues
+        if: ${{ !cancelled() && steps.browser_setup.outcome == 'success' }}
         env:
           COCONUT_UI_SCREENSHOTS: ${{ runner.temp }}/coconut-authored-ui
         run: node tests/playback-dock-browser.mjs
       - name: Verify explicit listening resume with authored WAV and changed media
+        if: ${{ !cancelled() && steps.browser_setup.outcome == 'success' }}
         run: node tests/listening-progress-browser.mjs
       - name: Verify reading shortcuts, search, modal focus and bounded playback with authored media
+        if: ${{ !cancelled() && steps.browser_setup.outcome == 'success' }}
         env:
           COCONUT_UI_SCREENSHOTS: ${{ runner.temp }}/coconut-authored-ui
         run: node tests/reading-keyboard-browser.mjs
       - name: Verify multiple transcript files, partial outcomes, cancellation and IndexedDB reload
+        if: ${{ !cancelled() && steps.browser_setup.outcome == 'success' }}
         run: node tests/multi-import-browser.mjs
       - name: Verify latest local-file selection and navigation ownership with authored files
+        if: ${{ !cancelled() && steps.browser_setup.outcome == 'success' }}
         run: node tests/import-order-browser.mjs
       - name: Verify large complete backups, real downloads and native quota recovery
+        if: ${{ !cancelled() && steps.browser_setup.outcome == 'success' }}
         run: node tests/backup-roundtrip-browser.mjs
       - name: Verify per-window reading selection, no-content-write navigation and actual conflict recovery downloads
+        if: ${{ !cancelled() && steps.browser_setup.outcome == 'success' }}
         run: node tests/window-selection-browser.mjs
       - name: Verify native reload protection after user activation with authored reading changes
+        if: ${{ !cancelled() && steps.browser_setup.outcome == 'success' }}
         run: node tests/reader-unload-browser.mjs
       - name: Verify native SRT and VTT import, notes, failed files and actual download recovery
+        if: ${{ !cancelled() && steps.browser_setup.outcome == 'success' }}
         run: node tests/subtitle-import-browser.mjs
       - name: Verify consistent reading metadata, live note filters and exports with authored fixtures
+        if: ${{ !cancelled() && steps.browser_setup.outcome == 'success' }}
         run: node tests/reading-metadata-browser.mjs
       - name: Verify bounded long-summary plans with injected fixtures only
+        if: ${{ !cancelled() && steps.browser_setup.outcome == 'success' }}
         run: node tests/summary-browser-acceptance.mjs
       - name: Verify explicit podcast source imports through the desktop HTTP bridge
+        if: ${{ !cancelled() && steps.browser_setup.outcome == 'success' }}
         env:
           COCONUT_UI_SCREENSHOTS: ${{ runner.temp }}/coconut-authored-ui
         run: node tests/podcast-browser-acceptance.mjs
       - name: Verify audio project to transcript, injected AI, playback and clean-browser recovery
+        if: ${{ !cancelled() && steps.browser_setup.outcome == 'success' }}
         run: node tests/project-continuity-browser.mjs
       - name: Verify discovery preview to same-project transcript, media ownership and actual backup recovery without models
+        if: ${{ !cancelled() && steps.browser_setup.outcome == 'success' }}
         run: node tests/podcast-continuity-browser.mjs
       - name: Probe anonymous video caption feasibility without enabling import
         if: github.event_name == 'pull_request' && github.head_ref == 'dot/primary-journey'
         run: node scripts/probe_public_captions.mjs
       - name: Prepare original synthetic media and timed text
+        id: synthetic_fixture
+        if: ${{ !cancelled() && steps.browser_setup.outcome == 'success' }}
         run: python scripts/prepare_browser_acceptance.py --mode synthetic --directory "$RUNNER_TEMP/coconut-acceptance"
       - name: Verify actual browser playback, reading, downloads and restore
+        if: ${{ !cancelled() && steps.browser_setup.outcome == 'success' && steps.synthetic_fixture.outcome == 'success' }}
         env:
           COCONUT_ACCEPTANCE_MODE: synthetic
           COCONUT_ACCEPTANCE_DATA_DIR: ${{ runner.temp }}/coconut-acceptance
