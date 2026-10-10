@@ -11,9 +11,9 @@ function setup(stored){
  const w=new Window({url:'https://coconut.example/'});w.document.body.innerHTML=fs.readFileSync(new URL('reader/index.html',root),'utf8').split('<body>')[1].split('</body>')[0];
  Object.defineProperty(w,'crypto',{configurable:true,value:webcrypto});if(stored)w.localStorage.setItem(KEY,stored);
  w.fetch=async()=>{throw new Error('No real network in authored fixtures');};
- installSavePipeline(w);
+ const pipeline=installSavePipeline(w);
  w.eval(['summary','core','passages','passage-playback','app','language'].map(name=>fs.readFileSync(new URL('reader/'+name+'.js',root),'utf8')).join('\n')+'\nwindow.removalPlayback={listen:range=>passagePlayback.listen(range),cancel:()=>passagePlayback.cancel()};');
- return {w,$:id=>w.document.getElementById(id)};
+ return {w,pipeline,$:id=>w.document.getElementById(id)};
 }
 async function add(w,doc=fixture()){
  const input=w.document.getElementById('file'),text=JSON.stringify(doc);Object.defineProperty(input,'files',{configurable:true,value:[{name:'authored.json',size:text.length,text:async()=>text}]});await input.onchange();
@@ -333,5 +333,110 @@ test('collapsed recovery names the removed document without truncating its acces
   assert.equal(shortTitle.textContent,title);assert.equal(guard(w),true);
   await $('undo-removal').onclick();assert.equal(shortTitle.textContent,'');
   assert.equal(read(w).documents[0].title,title);
+ }finally{await w.happyDOM.close();}
+});
+
+// Happy DOM fires close synchronously. Split the native closed-state/event gap
+// explicitly so a later focus change or opening always precedes the old event.
+for(const next of ['collapsed recovery','library search'])test(`delayed finish cancellation preserves newer ${next} intent`,async()=>{
+ const {w,$}=setup();try{
+  await add(w);await remove(w,'Authored removal fixture');$('removal-recovery-details').open=true;
+  $('finish-removal').focus();$('finish-removal').click();$('finish-removal-dialog').open=false;
+  $('finish-removal').focus(); // Native close restores its opener before close is dispatched.
+  const target=next==='collapsed recovery'?$('removal-recovery-details').querySelector('summary'):$('library-search');
+  if(next==='library search')$('toggle-library').setAttribute('aria-expanded','true');
+  target.focus();$('removal-recovery-details').open=false;
+  $('finish-removal-dialog').dispatchEvent(new w.Event('close'));
+  assert.equal(w.document.activeElement===target,true);assert.equal($('removal-recovery-details').open,false);
+  assert.equal(guard(w),true);assert.equal((await download(w,'export-removed-document')).title,'Authored removal fixture');
+ }finally{await w.happyDOM.close();}
+});
+
+test('an old finish close cannot steal focus from a reopened dialog or retire its owner',async()=>{
+ const {w,$}=setup();try{
+  await add(w);await remove(w,'Authored removal fixture');$('removal-recovery-details').open=true;
+  $('finish-removal').click();$('finish-removal-dialog').open=false;$('finish-removal').click();
+  $('finish-removal-dialog').dispatchEvent(new w.Event('close'));
+  assert.equal($('finish-removal-dialog').open,true);assert.equal(w.document.activeElement===$('cancel-finish-removal'),true);
+  $('cancel-finish-removal').click();assert.equal(w.document.activeElement===$('finish-removal'),true);assert.equal(guard(w),true);
+  $('finish-removal').click();$('confirm-finish-removal').click();
+  assert.equal($('finish-removal-dialog').open,false);assert.equal($('removal-recovery').hidden,true);assert.equal(guard(w),false);
+  assert.equal(w.document.activeElement===$('library-search'),true);
+ }finally{await w.happyDOM.close();}
+});
+
+for(const replacement of [false,true])test(`delayed finish close ignores ${replacement?'a replacement recovery with the same key':'an already restored recovery'}`,async()=>{
+ const {w,$}=setup();try{
+  await add(w);await remove(w,'Authored removal fixture');$('removal-recovery-details').open=true;
+  $('finish-removal').click();$('finish-removal-dialog').open=false;
+  await $('undo-removal').onclick();if(replacement)await remove(w,'Authored removal fixture');
+  $('toggle-library').setAttribute('aria-expanded','false');w.document.activeElement.blur();
+  $('finish-removal-dialog').dispatchEvent(new w.Event('close'));
+  assert.equal(w.document.activeElement===w.document.body,true);assert.equal($('toggle-library').getAttribute('aria-expanded'),'false');
+  assert.equal($('removal-recovery-details').open,false);assert.equal(guard(w),replacement);
+  assert.equal(read(w).documents.length,replacement?0:1);
+  if(replacement)assert.equal((await download(w,'export-removed-document')).title,'Authored removal fixture');
+ }finally{await w.happyDOM.close();}
+});
+
+test('an old removal close cannot reset a newly opened removal target',async()=>{
+ const {w,$}=setup();try{
+  await add(w);await add(w,fixture('Second authored fixture'));
+  request(w,'Authored removal fixture');$('remove-document-dialog').open=false;
+  request(w,'Second authored fixture');$('remove-document-dialog').dispatchEvent(new w.Event('close'));
+  assert.equal($('remove-document-dialog').open,true);assert.equal(w.document.activeElement===$('cancel-removal'),true);
+  await $('confirm-removal').onclick();assert.deepEqual(read(w).documents.map(doc=>doc.title),['Authored removal fixture']);
+  assert.equal((await download(w,'export-removed-document')).title,'Second authored fixture');
+  assert.equal(w.document.activeElement===$('undo-removal'),true);
+ }finally{await w.happyDOM.close();}
+});
+
+test('delayed removal cancellation clears its own target without stealing newer focus',async()=>{
+ const {w,$}=setup();try{
+  await add(w);request(w,'Authored removal fixture');$('remove-document-dialog').open=false;
+  $('library-search').focus();const before=read(w);
+  $('remove-document-dialog').dispatchEvent(new w.Event('close'));
+  assert.equal(w.document.activeElement===$('library-search'),true);assert.deepEqual(read(w),before);
+  await $('confirm-removal').onclick();assert.deepEqual(read(w),before);assert.equal(guard(w),false);
+ }finally{await w.happyDOM.close();}
+});
+
+test('delayed confirmed removal never steals newer focus or another dialog',async()=>{
+ const {w,$}=setup();try{
+  await add(w);request(w,'Authored removal fixture');
+  $('remove-document-dialog').close=()=>{$('remove-document-dialog').open=false;};
+  await $('confirm-removal').onclick();assert.equal(w.document.activeElement===$('undo-removal'),true);
+  $('removal-recovery-details').open=true;$('finish-removal').click();
+  $('remove-document-dialog').dispatchEvent(new w.Event('close'));
+  assert.equal($('finish-removal-dialog').open,true);assert.equal(w.document.activeElement===$('cancel-finish-removal'),true);
+  $('cancel-finish-removal').click();assert.equal(w.document.activeElement===$('finish-removal'),true);assert.equal(guard(w),true);
+ }finally{await w.happyDOM.close();}
+});
+
+test('delayed confirmed finish does not steal newer shelf focus',async()=>{
+ const {w,$}=setup();try{
+  await add(w);await remove(w,'Authored removal fixture');$('removal-recovery-details').open=true;$('finish-removal').click();
+  $('finish-removal-dialog').close=()=>{$('finish-removal-dialog').open=false;};
+  $('confirm-finish-removal').click();$('toggle-library').focus();
+  $('finish-removal-dialog').dispatchEvent(new w.Event('close'));
+  assert.equal(w.document.activeElement===$('toggle-library'),true);assert.equal($('removal-recovery').hidden,true);assert.equal(guard(w),false);
+ }finally{await w.happyDOM.close();}
+});
+
+for(const order of ['before receipt','after receipt'])test(`confirmed removal close ${order} cannot acknowledge an old recovery or steal newer focus`,async()=>{
+ const {w,$,pipeline}=setup();try{
+  await add(w,fixture('Previous recovery'));await remove(w,'Previous recovery');
+  await add(w);request(w,'Authored removal fixture');
+  $('remove-document-dialog').close=()=>{$('remove-document-dialog').open=false;};
+  pipeline.hold();const removal=$('confirm-removal').onclick();await settle();
+  assert.equal(pipeline.writes.length,1);assert.equal((await download(w,'export-removed-document')).title,'Previous recovery');
+  $('library-search').focus();
+  if(order==='before receipt')$('remove-document-dialog').dispatchEvent(new w.Event('close'));
+  assert.equal(w.document.activeElement===$('library-search'),true);
+  pipeline.writes[0].commit();await removal;
+  if(order==='after receipt')$('remove-document-dialog').dispatchEvent(new w.Event('close'));
+  assert.equal(w.document.activeElement===$('library-search'),true);
+  assert.equal((await download(w,'export-removed-document')).title,'Authored removal fixture');
+  assert.equal(read(w).documents.length,0);
  }finally{await w.happyDOM.close();}
 });

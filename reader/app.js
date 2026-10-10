@@ -9,7 +9,8 @@ let readerClosing = false;
 // Never replace it silently or mistake a requested download for a saved backup.
 let removedDocument = null;
 let removalTarget = null;
-let removalFocusKey = null;
+let removalDialogOrigin = null;
+let finishRemovalDialogOrigin = null;
 let documentLifecycleRevision = 0;
 const removedDocumentRevisions = new Map();
 // Tombstones retain small identities/digests, never another document-sized trash copy.
@@ -493,6 +494,10 @@ function focusLibraryRemoval(key) {
  $('toggle-library').setAttribute('aria-expanded','true');
  (row?.querySelector($('library-options').open?'.library-remove':'.library-open')||$('library-search')).focus();
 }
+function removalDialogMayRestoreFocus(dialog,opener) {
+ const focused=document.activeElement;
+ return !focused||focused===document.body||focused===opener||dialog.contains(focused);
+}
 function syncLibraryRemovalControls() {
  for(const button of $('library').querySelectorAll('.library-remove'))button.hidden=!$('library-options').open;
 }
@@ -512,7 +517,7 @@ function showRemovalRecoveryError(message) {
 }
 function requestLibraryRemoval(doc) {
  if(!contentIngressAllowed(doc)||pendingLibraryOperation)return;
- removalTarget=doc;removalFocusKey=doc.key;
+ removalTarget=doc;removalDialogOrigin={doc,node:document.activeElement,recovery:removedDocument,confirmed:false};
  $('remove-document-title').textContent=doc.title;
  $('remove-document-error').textContent='';delete $('remove-document-error').dataset.kind;
  $('replace-removal-warning').hidden=!removedDocument;
@@ -521,7 +526,17 @@ function requestLibraryRemoval(doc) {
  $('remove-document-dialog').showModal();$('cancel-removal').focus();
 }
 $('cancel-removal').onclick=()=>{$('remove-document-dialog').close();};
-$('remove-document-dialog').addEventListener('close',()=>{if(pendingLibraryOperation)return;const confirmed=removalTarget===null;removalTarget=null;if(confirmed&&removedDocument)$('undo-removal').focus();else focusLibraryRemoval(removalFocusKey);});
+$('remove-document-dialog').addEventListener('close',()=>{
+ const dialog=$('remove-document-dialog');
+ if(dialog.open)return; // A queued close must not retire a newer confirmation.
+ const origin=removalDialogOrigin;removalDialogOrigin=null;if(!origin)return;
+ if(removalTarget===origin.doc)removalTarget=null;
+ // Confirmation closes before the writer settles. Its receipt alone owns
+ // success focus; a queued close must never focus the previous recovery bundle.
+ if(origin.confirmed||pendingLibraryOperation)return;
+ if(origin.recovery!==removedDocument||!removalDialogMayRestoreFocus(dialog,origin.node))return;
+ if(state.documents.includes(origin.doc))focusLibraryRemoval(origin.doc.key);
+});
 function finishStructuralOperation(operation){
  if(pendingStructuralDocuments.get(operation.key)===operation)pendingStructuralDocuments.delete(operation.key);
  if(pendingLibraryOperation===operation)pendingLibraryOperation=null;
@@ -556,7 +571,8 @@ $('confirm-removal').onclick=async()=>{
   if(wasActive&&activeSelectionRevision===operation.selectionRevision&&document.activeElement===operation.focusAtStart){resetReaderForDocumentNavigation();selectActiveDocument(doc.key,{persist:false});workspace='read';setReadingMode(prefersPassageReading(doc)?'passages':'summary');render();}else renderLibrary();
   renderRemovalRecovery();return true;
  }});
- removalTarget=null;$('remove-document-dialog').close();render();renderRemovalRecovery();
+ removalTarget=null;if(removalDialogOrigin?.doc===doc)removalDialogOrigin.confirmed=true;
+ $('remove-document-dialog').close();render();renderRemovalRecovery();
  $('main-content').focus({preventScroll:true});operation.focusAtStart=document.activeElement;
  void libraryStore.flush();const receipt=await ticket.committed;
  if(!receipt.ok){finishStructuralOperation(operation);renderRemovalRecovery();notice('移除未保存，原文档已留在书架。其他修改仍保留；请检查保存状态并先导出备份。');return;}
@@ -615,17 +631,26 @@ $('export-removed-document').onclick=()=>{
 };
 $('finish-removal').onclick=()=>{
  if(!removedDocument||pendingLibraryOperation)return;
+ finishRemovalDialogOrigin={recovery:removedDocument,confirmed:false};
  $('finish-removal-dialog').showModal();$('cancel-finish-removal').focus();
 };
 $('export-previous-removal').onclick=()=>$('export-removed-document').onclick();
 $('cancel-finish-removal').onclick=()=>{$('finish-removal-dialog').close();};
 $('finish-removal-dialog').addEventListener('close',()=>{
- if(removedDocument){$('removal-recovery-details').open=true;$('finish-removal').focus();}
- else focusLibraryRemoval(null);
+ const dialog=$('finish-removal-dialog');
+ if(dialog.open)return;
+ const origin=finishRemovalDialogOrigin;finishRemovalDialogOrigin=null;if(!origin)return;
+ if(!removalDialogMayRestoreFocus(dialog,$('finish-removal')))return;
+ if(origin.confirmed){if(!removedDocument)focusLibraryRemoval(null);}
+ else if(removedDocument===origin.recovery){
+  // Native close already restores the opener. Never reopen a disclosure that
+  // the user collapsed while the close event was waiting to be dispatched.
+  ($('removal-recovery-details').open?$('finish-removal'):$('removal-recovery-details').querySelector('summary')).focus();
+ }
 });
 $('confirm-finish-removal').onclick=()=>{
- if(pendingLibraryOperation)return;
- removedDocument=null;$('finish-removal-dialog').close();renderRemovalRecovery();notice('已结束本页撤销。如果另有 JSON 备份，以后可用“添加文件”恢复。');
+ if(pendingLibraryOperation||!finishRemovalDialogOrigin||removedDocument!==finishRemovalDialogOrigin.recovery)return;
+ finishRemovalDialogOrigin.confirmed=true;removedDocument=null;$('finish-removal-dialog').close();renderRemovalRecovery();notice('已结束本页撤销。如果另有 JSON 备份，以后可用“添加文件”恢复。');
 };
 
 function renderLibrary() {
