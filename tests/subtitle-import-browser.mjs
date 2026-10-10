@@ -50,6 +50,12 @@ try{
   assert.deepEqual(await page.locator('.words').allTextContents(),expectedCues.map(cue=>cue.text));
   check(label+'_renders_only_spoken_cues',await page.locator('.segment').count()===3);
   check(label+'_reading_fits_viewport',await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
+  if(label==='vtt') {
+   check('vtt_native_import_preserves_voice', (await active(page)).segments[0].speaker==='Narrator');
+   await page.locator('#speaker-filter').selectOption(JSON.stringify('Narrator'));
+   check('vtt_voice_filter_selects_only_named_cue',await page.locator('.segment').count()===1&&(await page.locator('.words').textContent())===expectedCues[0].text);
+   await page.locator('#speaker-filter').selectOption('all');
+  }
   stage=label+'_note_and_correction';
   await page.locator('.segment').first().locator('.note-button').click();await page.locator('#note').fill(note);await page.locator('#close-note').click();
   const second=page.locator('.segment').nth(1);await openCueActions(second);await second.locator('.edit-button').click();
@@ -78,6 +84,7 @@ try{
   const roundtrip=await newPage(width);await choose(roundtrip,{...subtitle,mimeType:fixture.mimeType},fixture.title);await roundtrip.locator('#mode-transcript').click();
   assert.deepEqual(cueSnapshot(await active(roundtrip)),cueSnapshot(current));
   check(label+'_actual_subtitle_download_restores_all_cues_and_milliseconds',await roundtrip.locator('.segment').count()===3&&await roundtrip.locator('.saved-note').count()===0);
+  if(label==='vtt') check('vtt_actual_download_and_json_restore_keep_voice',(await active(roundtrip)).segments[0].speaker==='Narrator'&&restoredDocument.segments[0].speaker==='Narrator');
   // Refresh checks browser persistence rather than only exported data.
   await restored.reload();await restored.locator('#reader-workspace').waitFor({state:'visible'});await restored.locator('#mode-transcript').click();
   check(label+'_refresh_keeps_reimported_notes_and_correction',await restored.locator('.saved-note').textContent()===note&&await restored.locator('.words').nth(1).textContent()===correction);

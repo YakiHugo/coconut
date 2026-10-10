@@ -9,6 +9,7 @@ import {execFileSync} from 'node:child_process';
 import {proveCaptionHelper} from './desktop-caption-helper-proof.mjs';
 import {verifyCaptionHelperResources} from '../desktop/caption-helper-package.mjs';
 import {createCaptionHelper} from '../desktop/caption-helper.mjs';
+import {verifyReaderResources} from '../desktop/reader-package.mjs';
 
 const root=fileURLToPath(new URL('../',import.meta.url));
 const require=createRequire(new URL('../desktop/package.json',import.meta.url));
@@ -23,6 +24,8 @@ try {
     const extracted=path.join(work,arch);await fs.mkdir(extracted);
     execFileSync('/usr/bin/ditto',['-x','-k',archive,extracted],{timeout:60000,stdio:'pipe'});
     const candidate=path.join(extracted,'Coconut.app/Contents/Resources');
+    await verifyReaderResources(path.join(candidate,'reader'));
+    assert.deepEqual(await fs.readFile(path.join(candidate,'reader/package.json')),await fs.readFile(path.join(root,'reader/package.json')),'Packaged reader module boundary matches reviewed source');
     const manifest=JSON.parse(extractFile(path.join(candidate,'app.asar'),'caption-helper-artifacts.json').toString('utf8'));
     for(const name of ['caption-helper.mjs','caption-helper-process.mjs','caption-helper-lock.json'])assert.deepEqual(extractFile(path.join(candidate,'app.asar'),name),await fs.readFile(path.join(root,'desktop',name)),`Packaged ${name} matches reviewed runtime`);
     const receipt=manifest.artifacts[`darwin-${arch}`];assert.ok(receipt,'Native helper receipt is inside app.asar');

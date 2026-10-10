@@ -29,6 +29,7 @@
  // must not stop a request, revoke consent, cancel imports, or close a draft.
  function closeSnapshot(){
   const reasons=[];
+  if(removedDocument)reasons.push('移除备份仅在本页，关闭后无法撤销；可以撤销或导出备份后再关闭');
   if(hasUnsavedReaderChanges())reasons.push('文字稿、笔记或输入草稿有未保存修改');
   if(button('sample').disabled||[...document.querySelectorAll('input[type="file"]')].some(input=>input.files.length>0)||
      sourceSubmitting||sourceCaptionRequest||podcastRequest||podcastMediaRequest||projectCaptionRequest||Number(button('job-count').textContent)>0)reasons.push('导入、恢复或媒体任务仍在进行');
@@ -47,6 +48,7 @@
    // A corrupt/stale untouched library needs no rewrite merely to close it.
    // All actual mutations already use synchronous save() and its dirty flag.
   }
+  flushListening(true);
   readerClosing=true;document.body.inert=true;
   // Only an approved final close reaches here. Async readers lose ownership;
   // submitted model calls cannot advance to another consented batch.

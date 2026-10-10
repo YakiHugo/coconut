@@ -144,3 +144,53 @@ for(const desktop of [false,true])test(`${desktop?'Desktop':'Web'} drafts surviv
   blocked=false;input(w,$('project-note'),'Saved after retry');assert.equal(dirty(),false);assert.equal($('save-status').hidden,true);
  }finally{await w.happyDOM.close();}
 });
+
+function removeFixture(w,$,key){
+ const row=[...$('library').children].find(node=>node.dataset.documentKey===key);assert.ok(row);
+ row.querySelector('.library-remove').click();$('confirm-removal').click();
+}
+for(const desktop of [false,true])test(`${desktop?'Desktop':'Web'} active removal and undo restore bookmark drafts with new callback ownership`,async()=>{
+ const {w,$}=setup(undefined,desktop);const dirty=()=>desktop?!w.coconutPrepareClose('inspect').safe:unload(w);
+ try{
+  await annotationFixture(w,$);const key=JSON.parse(w.localStorage.getItem('coconut-reader-v1')).active;
+  input(w,$('translation-glossary'),'Restored = 恢复');input(w,$('audio-bookmark-time'),'8');input(w,$('audio-bookmark-note'),'Keep my unfinished bookmark');
+  const row=$('audio-bookmarks').querySelector('[data-bookmark-id="first"]');row.querySelector('.edit-bookmark-time').click();const oldForm=row.querySelector('form');input(w,oldForm.querySelector('input'),'41');
+  removeFixture(w,$,key);assert.equal($('removal-recovery').hidden,false);assert.equal(dirty(),true);
+  $('undo-removal').click();assert.equal($('audio-bookmark-time').value,'8');assert.equal($('audio-bookmark-note').value,'Keep my unfinished bookmark');assert.equal($('audio-bookmarks').querySelector('[data-bookmark-id="first"] form input').value,'41');
+  const disk=w.localStorage.getItem('coconut-reader-v1');row.querySelector('textarea').value='Late stale note';row.querySelector('textarea').oninput();oldForm.onsubmit({preventDefault(){}});row.querySelectorAll('button')[1].onclick();
+  assert.equal(w.localStorage.getItem('coconut-reader-v1'),disk);assert.equal($('audio-bookmark-time').value,'8');assert.equal($('audio-bookmarks').querySelector('[data-bookmark-id="first"] form input').value,'41');
+  assert.equal($('translation-glossary').value,'Restored = 恢复');$('cancel-translation-glossary').click();
+  $('cancel-audio-bookmark').click();$('audio-bookmarks').querySelector('[data-bookmark-id="first"] form [type="button"]').click();assert.equal(dirty(),false);
+ }finally{await w.happyDOM.close();}
+});
+for(const desktop of [false,true])test(`${desktop?'Desktop':'Web'} noncurrent remove and undo preserve the current document drafts`,async()=>{
+ const {w,$}=setup(undefined,desktop);const dirty=()=>desktop?!w.coconutPrepareClose('inspect').safe:unload(w);
+ try{
+  await annotationFixture(w,$);const key=JSON.parse(w.localStorage.getItem('coconut-reader-v1')).active;
+  input(w,$('audio-bookmark-time'),'11');w.draftTest.switchDoc(true);input(w,$('audio-bookmark-note'),'Current unfinished note');input(w,$('translation-glossary'),'Current = 当前');
+  removeFixture(w,$,key);assert.equal($('audio-bookmark-note').value,'Current unfinished note');assert.equal($('translation-glossary').value,'Current = 当前');
+  $('undo-removal').click();assert.equal(JSON.parse(w.localStorage.getItem('coconut-reader-v1')).active,'other');assert.equal($('audio-bookmark-note').value,'Current unfinished note');assert.equal($('translation-glossary').value,'Current = 当前');
+  $('cancel-audio-bookmark').click();$('cancel-translation-glossary').click();assert.equal(dirty(),true);
+  w.draftTest.switchDoc(false);assert.equal($('audio-bookmark-time').value,'11');$('cancel-audio-bookmark').click();assert.equal(dirty(),false);
+ }finally{await w.happyDOM.close();}
+});
+test('failed noncurrent removal retains hidden drafts and ending successful removal cannot resurrect them',async()=>{
+ const {w,$}=setup();try{
+  await annotationFixture(w,$);const key=JSON.parse(w.localStorage.getItem('coconut-reader-v1')).active;
+  input(w,$('audio-bookmark-time'),'19');w.draftTest.switchDoc(true);
+  const backing=w.localStorage;let blocked=true;Object.defineProperty(w,'localStorage',{value:{getItem:k=>backing.getItem(k),setItem(k,v){if(blocked)throw Error('quota');backing.setItem(k,v);}}});
+  removeFixture(w,$,key);assert.equal($('remove-document-dialog').open,true);$('cancel-removal').click();w.draftTest.switchDoc(false);assert.equal($('audio-bookmark-time').value,'19');
+  blocked=false;input(w,$('project-note'),'Saved retry');removeFixture(w,$,key);$('finish-removal').click();$('confirm-finish-removal').click();assert.equal(unload(w),false);
+ }finally{await w.happyDOM.close();}
+});
+test('failed undo retains its recovery drafts and leaves another document draft alone until retry',async()=>{
+ const {w,$}=setup();try{
+  await annotationFixture(w,$);const key=JSON.parse(w.localStorage.getItem('coconut-reader-v1')).active;
+  input(w,$('audio-bookmark-time'),'12');input(w,$('translation-glossary'),'Recovered = 恢复');w.draftTest.switchDoc(true);input(w,$('audio-bookmark-note'),'Still editing the other document');
+  removeFixture(w,$,key);
+  const backing=w.localStorage;let blocked=true;Object.defineProperty(w,'localStorage',{value:{getItem:k=>backing.getItem(k),setItem(k,v){if(blocked)throw Error('quota');backing.setItem(k,v);}}});
+  $('undo-removal').click();assert.equal($('removal-recovery').hidden,false);assert.equal($('audio-bookmark-note').value,'Still editing the other document');
+  blocked=false;$('undo-removal').click();assert.equal($('removal-recovery').hidden,true);assert.equal($('audio-bookmark-note').value,'Still editing the other document');
+  w.draftTest.switchDoc(false);assert.equal($('audio-bookmark-time').value,'12');assert.equal($('translation-glossary').value,'Recovered = 恢复');
+ }finally{await w.happyDOM.close();}
+});

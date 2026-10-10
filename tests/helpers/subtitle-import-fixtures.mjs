@@ -14,7 +14,7 @@ export const subtitleFixtures = ['srt','vtt'].map(format=>{
   'NOTE original fixture metadata\nThis metadata is not a spoken cue.',
   'STYLE\n::cue { color: lime; }',
   'REGION\nid:harbor\nwidth:80%',
-  'harbor-opening\n00:01.125 --> 00:03.875 align:start position:10%\n<v Narrator><b>Café by the harbor — 你好。</b></v>\nWe kept one quiet detail &amp; a question.',
+  'harbor-opening\n00:01.125 --> 00:03.875 align:start position:10%\n<v Narrator><b>Café by the harbor — 你好。</b>\nWe kept one quiet detail &amp; a question.</v>',
   'harbor-question\n01:05.010 --> 01:08.456 line:80%\nIs 2 &lt; 3? Keep <code> as written. &#x1F33F;',
   'harbor-closing\n01:00:01.002 --> 01:00:04.999\n最后一段：再见，港口。',
  ];
