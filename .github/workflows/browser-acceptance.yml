@@ -68,6 +68,8 @@ jobs:
         run: node tests/listening-progress-browser.mjs
       - name: Verify latest local-file selection and navigation ownership with authored files
         run: node tests/import-order-browser.mjs
+      - name: Verify large complete backups, real downloads and native quota recovery
+        run: node tests/backup-roundtrip-browser.mjs
       - name: Verify native reload protection after user activation with authored reading changes
         run: node tests/reader-unload-browser.mjs
       - name: Verify native SRT and VTT import, notes, failed files and actual download recovery

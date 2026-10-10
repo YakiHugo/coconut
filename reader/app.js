@@ -43,13 +43,58 @@ let readingScroll = 0;
 let editingTarget = null;
 let sourceTarget = null;
 let localImportRevision = 0;
+let projectTranscriptTarget = null;
+let pendingBackupReview = null;
 function cancelLocalImports(keepInput = null) {
  localImportRevision++;
- // Retire both import paths while preserving a newly selected input's file.
- for(const id of ["file", "library-file"])if(id!==keepInput)$(id).value = "";
+ pendingBackupReview?.(false);
+ if(keepInput!=="project-transcript-file")projectTranscriptTarget=null;
+ // Retire all import paths while preserving a newly selected input's file.
+ for(const id of ["file", "library-file", "project-transcript-file"])if(id!==keepInput)$(id).value = "";
  return localImportRevision;
 }
 window.addEventListener("pagehide", () => cancelLocalImports());
+function backupSize(bytes){return (bytes/1024/1024).toFixed(2)+' MiB';}
+function localFileReview(file, canCommit, library = false) {
+ const json=library||file.name.toLowerCase().endsWith('.json');
+ if(!json){
+  if(file.size>Coconut.SUBTITLE_IMPORT_BYTES)throw new Error('字幕文件超过15 MiB，请先拆分 SRT / VTT；完整 JSON 备份不受此字幕限制');
+  return true;
+ }
+ if(file.size<=Coconut.BACKUP_REVIEW_BYTES)return true;
+ // File.size is available before reading any content. The budget is a review
+ // threshold, not a dead end for files Coconut itself can export.
+ return new Promise(resolve=>{
+  const dialog=$('large-backup-dialog');
+  let settled=false;
+  const finish=proceed=>{
+   if(settled)return;settled=true;
+   dialog.removeEventListener('close',cancel);dialog.removeEventListener('cancel',cancel);
+   $('continue-large-backup').onclick=null;$('cancel-large-backup').onclick=null;
+   pendingBackupReview=null;if(dialog.open)dialog.close();
+   const accepted=proceed&&canCommit();
+   if(accepted)notice('正在完整读取 '+backupSize(file.size)+' 的备份，请稍候；请保留原备份文件。');
+   resolve(accepted);
+  };
+  const cancel=event=>{
+   // Native dialog.close() queues its event. An earlier selection's queued
+   // close must not dismiss a newer review that is already open.
+   if(event?.type==='close'&&dialog.open)return;
+   event?.preventDefault();finish(false);
+  };
+  pendingBackupReview=finish;
+  $('large-backup-size').textContent='文件大小：'+backupSize(file.size)+'（通常直接读取的预算为50 MiB）。';
+  $('continue-large-backup').onclick=()=>finish(true);$('cancel-large-backup').onclick=cancel;
+  dialog.addEventListener('close',cancel);dialog.addEventListener('cancel',cancel);
+  dialog.showModal();$('cancel-large-backup').focus();
+ });
+}
+function localFileError(error) {
+ if(['RangeError','NotReadableError','AbortError'].includes(error?.name))return '读取或处理文件失败，可能超出当前设备可用内存。请保留原备份，在内存更充足的浏览器或电脑上重试。';
+ return error.message;
+}
+function backupRecoveryHint(blob){return blob.size>Coconut.BACKUP_REVIEW_BYTES?' 文件为'+backupSize(blob.size)+'，恢复时需要确认继续读取；需要足够可用内存，浏览器可能无法自动保存，请保留下载文件。':'';}
+
 const PAGE_SIZE = 100;
 let pageStart = 0;
 let storageBlocked = false;
@@ -434,10 +479,10 @@ $('confirm-removal').onclick=()=>{
  documentLifecycleRevision++;removedDocumentRevisions.set(doc.key,documentLifecycleRevision);
  removedDocumentAliases.push({revision:documentLifecycleRevision,source:documentSourceIdentity(snapshot),signature:libraryDocumentSignature(snapshot).catch(()=>null)});
  changeMediaSelection(doc.key);
- if(projectTranscriptTarget?.key===doc.key){projectTranscriptRead++;projectTranscriptTarget=null;}
+ if(projectTranscriptTarget?.key===doc.key)projectTranscriptTarget=null;
  window.dispatchEvent(new CustomEvent('coconut-document-removed',{detail:{key:doc.key}}));
  if(previous.active===doc.key){
-  resetReaderForDocumentNavigation();projectTranscriptRead++;
+  resetReaderForDocumentNavigation();
   $('source-media').replaceChildren();$('source-media').hidden=true;listeningSession=null;renderListeningResume();
   setReadingMode(prefersPassageReading(active())?'passages':'summary');workspace=active()?'read':'add';
  }
@@ -476,7 +521,7 @@ $('export-removed-document').onclick=()=>{
  try{
   const blob=new Blob([JSON.stringify(removedDocument.doc,null,2)],{type:'application/json'});
   url=URL.createObjectURL(blob);link=el('a');link.href=url;link.download='coconut-removed-document.json';link.hidden=true;document.body.append(link);link.click();
-  notice('已发起移除备份下载，请打开文件确认已保存。可用“添加文件”恢复；下载不会自动结束撤销。');
+  notice('已发起移除备份下载，请打开文件确认已保存。可用“添加文件”恢复；下载不会自动结束撤销。'+backupRecoveryHint(blob));
  }catch{notice('移除备份下载失败，完整内容仍在本页，请重试或撤销移除。');}
  finally{link?.remove();if(url)setTimeout(()=>URL.revokeObjectURL(url),60000);}
 };
@@ -906,8 +951,9 @@ $("file").onchange = async () => {
  const ownsRequest = () => revision === localImportRevision;
  const canCommit = () => ownsRequest() && state.active === startingDocument && workspace === startingWorkspace;
 	try {
-		if (f.size > 15 * 1024 * 1024)
-			throw new Error("文件超过15MB，请先拆分文字稿");
+  const review=localFileReview(f,canCommit);
+  if(review!==true&&!(await review))return;
+  if(!canCommit())return;
 		const text = await f.text();
   if(!canCommit())return;
 		const parsed=Coconut.parse(text,f.name);
@@ -917,7 +963,7 @@ $("file").onchange = async () => {
   const saved = await add(parsed,canCommit,false,lifecycleRevision,sourceKey);
 		if (saved && ownsRequest()) notice("已导入并保存在本机浏览器。没有向服务器上传文件。", "success");
 	} catch (e) {
-		if(canCommit())notice("导入失败：" + e.message);
+		if(canCommit())notice("导入失败：" + localFileError(e));
 	} finally {
 		if(ownsRequest())$("file").value = "";
 	}
@@ -1137,7 +1183,7 @@ $("export").onclick = () => {
 		document.body.append(link);
 		link.click();
 		// A click requests a download; only the user/browser can confirm disk persistence.
-		notice(Coconut.isAudioProject(d)?"已发起项目备份下载，包含来源、项目笔记与时间书签，不包含媒体。请检查下载记录并确认保存。":"已发起备份下载，请检查浏览器下载记录并确认文件已保存。备份包含原稿、修正、摘录与笔记。", "success");
+		notice((Coconut.isAudioProject(d)?"已发起项目备份下载，包含来源、项目笔记与时间书签，不包含媒体。请检查下载记录并确认保存。":"已发起完整 JSON 备份下载，请检查下载记录并确认保存；包含原稿、修正、摘录、笔记、译文与 AI 记录及依据，不包含媒体。")+backupRecoveryHint(blob), "success");
 	} catch {
 		notice("备份导出失败，文字稿与笔记仍保留在本页。请重试，暂时不要关闭页面。");
 	} finally {
@@ -1247,10 +1293,9 @@ $("export-library").onclick = () => {
  try {
   const backup = {format:"coconut-library", version:1, documents:state.documents, active:state.active};
   const blob = new Blob([JSON.stringify(backup, null, 2)], {type:"application/json"});
-  if(backup.documents.length>500 || blob.size>50*1024*1024) { notice("书架超过整库恢复限制（500份或50MB），请使用逐份文字稿备份，避免生成无法恢复的文件。"); return; }
   url = URL.createObjectURL(blob);
   link = el("a"); link.href=url; link.download="coconut-library.json"; link.hidden=true; document.body.append(link); link.click();
-  notice("已发起整个书架的备份下载，请确认文件已保存；包含文字、笔记及 AI 回答，不包含媒体文件。", "success");
+  notice("已发起整个书架的完整 JSON 备份下载，请确认文件已保存；包含文字、笔记、译文与 AI 记录及依据，不包含媒体文件。"+backupRecoveryHint(blob), "success");
  } catch { notice("书架备份失败，内容仍在本页，请重试后再关闭。"); }
  finally { link?.remove(); if(url)setTimeout(()=>URL.revokeObjectURL(url),60000); }
 };
@@ -1262,7 +1307,9 @@ $("library-file").onchange = async () => {
  const ownsRequest = () => revision === localImportRevision;
  const canCommit = () => ownsRequest() && state.active === startingDocument && workspace === startingWorkspace;
  try {
-  if(file.size > 50*1024*1024)throw new Error("书架备份超过50MB，请改用逐份导入");
+  const review=localFileReview(file,canCommit,true);
+  if(review!==true&&!(await review))return;
+  if(!canCommit())return;
   const text = await file.text();
   if(!canCommit())return;
   const backup = JSON.parse(text);
@@ -1283,7 +1330,7 @@ $("library-file").onchange = async () => {
   state = restored; selected=null; pageStart=0; notesOnly=false; excerptsOnly=false; speakerFilter=null; $("search").value=""; workspace=active()?"read":"add";
   const persisted = save(); render();
   if(persisted && ownsRequest())notice("已恢复 " + (state.documents.length-before) + " 份文字稿；相同内容已跳过，不同版本分别保留，原书架未删除。");
- } catch(error) { if(canCommit())notice("恢复失败，原书架未改变："+error.message); }
+ } catch(error) { if(canCommit())notice("恢复失败，原书架未改变："+localFileError(error)); }
  finally { if(ownsRequest())$("library-file").value=""; }
 };
 
@@ -1856,20 +1903,25 @@ $('detach-reader-media').onclick=()=>{
  stopRepeating();$('source-media').querySelector('audio,video')?.pause();browserMedia.delete(key);URL.revokeObjectURL(attachment.url);render();
 };
 
-let projectTranscriptTarget=null,projectTranscriptRead=0;
-$('attach-project-transcript').onclick=()=>{const doc=active();if(Coconut.isAudioProject(doc)){projectTranscriptTarget={key:doc.key,source:JSON.stringify(doc.podcast_source),document:doc};$('project-transcript-file').click();}};
+$('attach-project-transcript').onclick=()=>{const doc=active();if(Coconut.isAudioProject(doc)){projectTranscriptTarget={key:doc.key,document:doc,source:JSON.stringify(doc.podcast_source)};$('project-transcript-file').click();}};
 $('project-transcript-file').onchange=async()=>{
- const input=$('project-transcript-file'),file=input.files[0],target=projectTranscriptTarget,read=++projectTranscriptRead;projectTranscriptTarget=null;
+ const input=$('project-transcript-file'),file=input.files[0],target=projectTranscriptTarget;projectTranscriptTarget=null;
  if(!file)return;
+ const revision=cancelLocalImports('project-transcript-file');
+ const ownsRequest=()=>revision===localImportRevision;
+ const canCommit=()=>ownsRequest()&&state.active===target?.key&&workspace==='read'&&state.documents.find(doc=>doc.key===target.key)===target.document;
  try{
   if(!target)throw new Error('请从目标原声项目重新选择文字稿');
-  if(file.size>15*1024*1024)throw new Error('文件超过15MB，请先拆分文字稿');
-  const text=Coconut.parse(await file.text(),file.name);
-  if(read!==projectTranscriptRead)throw new Error('已经选择更新的文字稿，本次导入已取消');
+  const review=localFileReview(file,canCommit);
+  if(review!==true&&!(await review))return;
+  if(!canCommit())return;
+  const value=await file.text();
+  if(!canCommit())return;
+  const text=Coconut.parse(value,file.name);
   const persisted=attachTranscriptToProject(text,target);
   notice(persisted?'文字稿已附加到当前项目，原有笔记、时间书签与媒体保留。未调用识别、翻译或摘要模型。':'文字稿已在本页附加，但未能保存，请立即导出 JSON 备份。');
- }catch(error){notice('补充文字稿失败：'+error.message);}
- finally{input.value='';}
+ }catch(error){if(ownsRequest())notice('补充文字稿失败：'+localFileError(error));}
+ finally{if(ownsRequest())input.value='';}
 };
 
 function attachTranscriptToProject(text,target){

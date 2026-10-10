@@ -286,7 +286,7 @@ test('invalid or late file attachment never alters an old or different project',
   await importDocument(w,originalAudioProject());const before=w.localStorage.getItem('coconut-reader-v1');await attachFile(w,$,{segments:[]});assert.equal(w.localStorage.getItem('coconut-reader-v1'),before);
   let release;$('attach-project-transcript').click();Object.defineProperty($('project-transcript-file'),'files',{configurable:true,value:[{name:'text.json',size:10,text:()=>new Promise(resolve=>{release=resolve;})}]});const pending=$('project-transcript-file').onchange();
   await importDocument(w,{...documentFixture,title:'Other document'});release(JSON.stringify(documentFixture));await pending;
-  const shelf=JSON.parse(w.localStorage.getItem('coconut-reader-v1'));assert.equal(shelf.documents[0].project_kind,'audio_only');assert.equal(shelf.documents[0].project_note,'PRIVATE PROJECT NOTE');assert.equal($('title').textContent,'Other document');assert.match($('notice').textContent,/已经切换/);
+  const shelf=JSON.parse(w.localStorage.getItem('coconut-reader-v1'));assert.equal(shelf.documents[0].project_kind,'audio_only');assert.equal(shelf.documents[0].project_note,'PRIVATE PROJECT NOTE');assert.equal($('title').textContent,'Other document');assert.match($('notice').textContent,/已导入并保存在本机浏览器/,'obsolete attachment does not replace the current import success');
  }finally{await w.happyDOM.close();}
 });
 test('publisher attachment checks exact identity and never downgrades an attached project when re-saved',async()=>{

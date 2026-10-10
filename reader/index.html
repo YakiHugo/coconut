@@ -9,11 +9,11 @@
 <link rel="icon" type="image/png" href="coconut-mark.png">
 <link rel="stylesheet" href="style.css?v=706d987a80">
 <script src="summary.js?v=580ffdad1e" defer></script>
-<script src="core.js?v=5de3f795bc" defer>
+<script src="core.js?v=47c9649bad" defer>
 </script>
 <script src="passages.js?v=aa95245d4c" defer></script>
 <script src="passage-playback.js?v=162dbb3695" defer></script>
-<script src="app.js?v=0de320758e" defer>
+<script src="app.js?v=1be4ef8c0a" defer>
 </script>
 <script src="language.js?v=41117aaa91" defer></script>
 <script src="podcasts.js?v=7486a33f77" defer></script>
@@ -63,7 +63,7 @@
 <button id="back-reading" hidden>← 返回阅读</button><span id="count">阅读空间</span>
 <div>
 <button id="show-jobs" hidden>处理任务 <span id="job-count">0</span></button>
-<details id="export-menu" class="export-menu" hidden><summary>导出</summary><div class="export-panel"><h2>带走你的阅读成果</h2><button id="export">导出文字稿与笔记</button><p class="hint">JSON 备份，可重新导入恢复</p><div class="subtitle-export"><label>字幕格式<select id="subtitle-format"><option value="srt">SRT</option><option value="vtt">VTT</option></select></label><label><input type="checkbox" id="subtitle-bilingual">附加当前显示语言的有效译文</label><button id="export-subtitles">导出整篇字幕</button><span class="hint">使用修正后原文及原时间戳，不含笔记</span></div>
+<details id="export-menu" class="export-menu" hidden><summary>导出</summary><div class="export-panel"><h2>带走你的阅读成果</h2><button id="export">导出文字稿与笔记</button><p class="hint">完整 JSON 备份，可重新导入恢复；超过50 MiB 时先确认读取</p><div class="subtitle-export"><label>字幕格式<select id="subtitle-format"><option value="srt">SRT</option><option value="vtt">VTT</option></select></label><label><input type="checkbox" id="subtitle-bilingual">附加当前显示语言的有效译文</label><button id="export-subtitles">导出整篇字幕</button><span class="hint">使用修正后原文及原时间戳，不含笔记</span></div>
 <div class="notebook-export"><button id="export-notebook" disabled>导出阅读笔记（0 段）</button><span class="hint">Markdown · 本篇全部摘录与笔记，可用于整理和回顾</span></div></div></details>
 </div>
 </header>
@@ -117,7 +117,7 @@
 <p class="hint">优先读取发布者提供的文字稿。只访问公开来源，不使用登录、会员或私有订阅链接；没有文字稿时会明确提示，不自动转录或扣费。</p>
 <button id="cancel-podcast" type="button" hidden>取消读取</button><p id="podcast-status" class="hint" role="status"></p><div id="podcast-results"></div>
 </section>
-<div class="file-entry"><div class="add-actions"><button id="import">＋ 导入文字稿</button><span class="hint">JSON、SRT、VTT</span></div><p class="hint">已有字幕？直接开始读，再选择对应的本地音视频同步回听。</p></div>
+<div class="file-entry"><div class="add-actions"><button id="import">＋ 导入文字稿</button><span class="hint">JSON、SRT、VTT</span></div><p class="hint">已有字幕？直接开始读，再选择对应的本地音视频同步回听。JSON 备份超过50 MiB 时先确认读取；SRT / VTT 字幕限15 MiB。</p></div>
 </div>
 <p id="worker-help" class="hint">Web 阅读无需安装：导入文字稿后，可选择对应的本地音频或视频同步回听。文件不上传；生成摘要需要连接本地 AI 工具并确认使用额度。</p>
 <details id="local-setup" class="setup-guide">
@@ -191,7 +191,7 @@ cd coconut
 <div id="transcript-controls" hidden>
 <section id="audio-project" hidden aria-label="原声项目与笔记">
 <h2 id="audio-project-heading">先留下声音和想法</h2><p id="audio-project-boundary" class="hint">尚未导入文字稿，没有可生成摘要的原文。节目简介不会代替文字稿；项目笔记和时间书签只记录你的想法，不会作为原文发送给 AI。</p>
-<button id="attach-project-transcript" type="button">为此项目补充文字稿</button><button id="fetch-project-transcript" type="button" hidden>检查并补充发布者文字稿</button><button id="cancel-project-transcript" type="button" hidden>取消获取文字稿</button><input id="project-transcript-file" type="file" accept=".json,.srt,.vtt" hidden><p id="attach-project-help" class="hint">选择与本集声音对应的定时文字稿，包括已完成的字幕或 ASR JSON。只导入文件，不自动识别或调用模型；保留当前项目的标题、笔记、书签及已选择的媒体。</p>
+<button id="attach-project-transcript" type="button">为此项目补充文字稿</button><button id="fetch-project-transcript" type="button" hidden>检查并补充发布者文字稿</button><button id="cancel-project-transcript" type="button" hidden>取消获取文字稿</button><input id="project-transcript-file" type="file" accept=".json,.srt,.vtt" hidden><p id="attach-project-help" class="hint">选择与本集声音对应的定时文字稿，包括已完成的字幕或 ASR JSON。JSON 超过50 MiB 时先确认读取；SRT / VTT 字幕限15 MiB。只导入文件，不自动识别或调用模型；保留当前项目的标题、笔记、书签及已选择的媒体。</p>
 <label for="project-note">项目笔记</label><textarea id="project-note" rows="4" placeholder="记下想法、疑问或之后要核对的内容"></textarea>
 <p class="hint">来源、笔记与时间书签自动保存在此浏览器；媒体只在本次页面可用，刷新后请单独重新获取。迁移请导出 JSON 备份。</p>
 <form id="audio-bookmark-form"><label for="audio-bookmark-time">时间书签</label><input id="audio-bookmark-time" required placeholder="12:34 或秒数" inputmode="decimal"><button id="use-playback-time" type="button">填入正在播放的时间</button><label for="audio-bookmark-note">书签笔记（可选）</label><input id="audio-bookmark-note" placeholder="此刻想记住什么？"><button type="submit">保存时间书签</button><button id="cancel-audio-bookmark" type="button">取消新书签</button></form>
@@ -270,6 +270,11 @@ cd coconut
 <div class="dock-copy"><strong id="dock-title"></strong><span class="dock-clock"><span id="dock-current">00:00</span><span id="dock-total"></span><span id="dock-rate"></span></span></div>
 <button id="dock-locate" type="button">定位原文</button><button id="dock-return" type="button" aria-label="回到原声播放器">播放器 ↑</button>
 </section>
+<dialog id="large-backup-dialog" aria-labelledby="large-backup-heading" aria-describedby="large-backup-size large-backup-help">
+<h2 id="large-backup-heading">文件较大，继续读取？</h2>
+<p id="large-backup-size"></p><p id="large-backup-help">完整读取和校验需要额外内存，可能暂时卡顿或超出设备能力。恢复不会删除原书架；若本机保存空间不足，内容仍可在本页阅读与导出，关闭前请保留原备份文件。文件不会上传，也不会调用 AI。</p>
+<div class="dialog-actions"><button id="cancel-large-backup" type="button" autofocus>取消</button><button id="continue-large-backup" type="button" class="primary">继续完整读取</button></div>
+</dialog>
 <dialog id="details-dialog" aria-labelledby="details-heading">
 <form method="dialog"><h2 id="details-heading">文字稿信息</h2>
 <label for="document-title">标题</label><input id="document-title" maxlength="200" required>
