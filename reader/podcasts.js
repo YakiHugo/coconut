@@ -136,7 +136,8 @@ async function previewPodcastEpisode(feedUrl,episode,section){
  const controller=new AbortController();podcastRequest=controller;setPodcastBusy(true);podcastMessage('正在下载本集公开原声（最多200 MiB）。取消可停止本次获取；不会转录或调用模型。');
  try{
   const response=await podcastAPI('media',feedUrl?{feedUrl,episodeId:episode.id,mediaUrl:episode.media[0].url}:{url:episode.media[0].url},controller.signal);
-  const {blob,kind}=await readPodcastMedia(response);if(controller.signal.aborted||controller!==podcastRequest||!section.isConnected)return;
+  const {blob,kind}=await readPodcastMedia(response);
+  if(controller.signal.aborted||controller!==podcastRequest||!section.isConnected)return;
   $('podcast-results').querySelector('audio,video')?.pause();$('podcast-results').querySelector('audio,video')?.remove();
   if(podcastPreviewURL)URL.revokeObjectURL(podcastPreviewURL);podcastPreviewURL=URL.createObjectURL(blob);
   const player=el(kind,'podcast-preview');player.controls=true;player.preload='metadata';player.src=podcastPreviewURL;player.setAttribute('aria-label','本集公开原声');player.onerror=()=>podcastMessage('浏览器无法播放该媒体。未运行转录，仍可打开原站。');section.append(player);
@@ -163,11 +164,13 @@ $('download-podcast-media').onclick=async()=>{
   const payload=source.kind==='direct_media'?{url:source.media_url}:{feedUrl:source.feed_url,episodeId:source.episode_id,mediaUrl:source.media_url};
   const response=await podcastAPI('media',payload,controller.signal);
   const {blob,kind}=await readPodcastMedia(response);
+  const fingerprint=await fingerprintMedia(blob);
+  const identity=fingerprint?'publisher-v1:'+source.media_url+':'+fingerprint:null;
   if(controller.signal.aborted||mediaSelectionRevision(key)!==revision||!state.documents.some(d=>d.key===key)){if(active()?.key===key)$('podcast-media-status').textContent='本次下载已取消，保留当前选择的媒体。';return;}
   changeMediaSelection(key,false);
   url=URL.createObjectURL(blob);const previous=browserMedia.get(key);
   if(active()?.key===key){stopRepeating();$('source-media').querySelector('audio,video')?.pause();}
-  browserMedia.set(key,{url,kind,name:'本集发布者原声',origin:'publisher'});if(previous)URL.revokeObjectURL(previous.url);
+  browserMedia.set(key,{url,kind,name:'本集发布者原声',origin:'publisher',identity});if(previous)URL.revokeObjectURL(previous.url);
   if(active()?.key===key){render();$('podcast-media-status').textContent='原声已在本次页面就绪。未发起转录；刷新后可重新获取。';}
   url=null;
  }catch(error){if(url)URL.revokeObjectURL(url);if(active()?.key===key)$('podcast-media-status').textContent=controller.signal.aborted?'已取消下载，文字稿和笔记保留。':error.message;}

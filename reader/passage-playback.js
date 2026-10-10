@@ -3,7 +3,7 @@
 
   // A temporary range on the existing player, not another media element. Call
   // cancel() before ordinary seeking or cue-loop playback takes ownership.
-  function create({getPlayer, getDocumentKey, onChange = () => {},
+  function create({getPlayer, getDocumentKey, onChange = () => {}, onTakeover = () => {},
     setTimer = (callback, delay) => root.setTimeout(callback, delay),
     clearTimer = handle => root.clearTimeout(handle)} = {}) {
     if (typeof getPlayer !== 'function' || typeof getDocumentKey !== 'function') {
@@ -26,9 +26,10 @@
       if (session) for (const [name, handler] of session.listeners) session.player.removeEventListener(name, handler);
       session = null;
     }
-    function cancel() {
+    function cancel(reason) {
       const changed = !!session || !!lastError;
       release(); lastError = '';
+      if (reason === 'takeover') onTakeover();
       if (changed) publish();
     }
     function sync() {
@@ -91,10 +92,10 @@
         else fail(target, '媒体在这段结束前停止了，请检查原文件与时间范围。');
       });
       listen('seeking', () => {
-        if (target.expectedSeek === null || Math.abs(target.player.currentTime - target.expectedSeek) > .03) cancel();
+        if (target.expectedSeek === null || Math.abs(target.player.currentTime - target.expectedSeek) > .03) cancel('takeover');
       });
       listen('seeked', () => {
-        if (target.expectedSeek !== null && Math.abs(target.player.currentTime - target.expectedSeek) > .03) { cancel(); return; }
+        if (target.expectedSeek !== null && Math.abs(target.player.currentTime - target.expectedSeek) > .03) { cancel('takeover'); return; }
         target.expectedSeek = null; observe(target);
       });
       listen('play', () => {
@@ -165,6 +166,7 @@
       cancel(); const operation = revision;
       try {
         if (returning) { player.pause(); player.currentTime = Math.min(origin.time, player.duration); }
+        onTakeover();
         if (!returning || origin.wasPlaying) await player.play();
         if (disposed || operation !== revision || !sameSource(target)) { quietDetachedPlayer(target); return false; }
         return true;
