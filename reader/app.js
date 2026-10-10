@@ -1765,6 +1765,10 @@ $('keyboard-help').addEventListener('close',()=>{
  if($('keyboard-help').open)return; // A queued close must not undo a newer opening.
  const origin=keyboardHelpOrigin;keyboardHelpOrigin=null;
  if(workspace!=='read'||origin?.key!==active()?.key)return;
+ // Native close events are queued. Do not overwrite a newer intentional focus
+ // move (for example Slash opening search after Escape closes this dialog).
+ const focused=document.activeElement;
+ if(focused&&focused!==document.body&&focused!==origin.node&&!$('keyboard-help').contains(focused))return;
  const target=origin.node?.isConnected&&!origin.node.closest?.('[hidden],[inert]')?origin.node:$('keyboard-help-open');
  target?.focus({preventScroll:true});
 });
