@@ -41,6 +41,20 @@ rejected visibly instead of producing a lossy file; storage is left intact for
 specialized recovery. The normal in-app library and unsaved-document exports
 remain full-fidelity additive-restorable `coconut-library` backups.
 
+## Downgrade warning
+
+Retaining the previous application does not provide lossless data downgrade.
+After migration, edits are stored in IndexedDB and are not copied back into the
+preserved legacy localStorage value. v0.6.0 reads only that legacy value, so it
+cannot show new or changed documents saved by this version. Export and verify a
+fresh complete library JSON backup in the current version before attempting
+recovery. Avoid editing the same library in v0.6.0: it predates the migration-fence
+protocol and can change the legacy value, causing the current reader to stop
+writes and preserve both stores for explicit recovery. Closing the old application
+does not itself reconcile changed legacy data. Do not clear browser storage or
+delete the migration fence to retry. Technical raw-storage exports are not
+directly importable library backups.
+
 ## Writes and concurrent windows
 
 The existing coordinator owns live object identity, generation, mutation ticket,
@@ -54,6 +68,10 @@ Each document has an epoch/revision token. A transaction checks expected tokens
 before updating the document and catalog together. Different documents can be
 edited in different windows without replacing the rest of the library. A stale
 same-document edit fails visibly; retry does not silently rebase over newer data.
+After a conflict, other document edits in that same window may also be unable to
+save. Export every unsaved document from that window before refreshing to load
+the current persisted data. This release does not isolate pending saves into
+independent conflict groups.
 Removal writes a small tombstone, Undo checks its identity and restores the prior
 catalog position with a new epoch. Tombstones do not retain removed transcripts.
 The existing page-owned removal/draft bundle and provisional Undo UI remain intact.
