@@ -94,3 +94,16 @@ test('native close explicitly warns that removal recovery exists only in this pa
   $('undo-removal').click();assert.equal(w.coconutPrepareClose('inspect').safe,true);
  }finally{await w.happyDOM.close();}
 });
+
+test('owned glossary input blocks native close and update until cancel or save',async()=>{
+ const {w,$}=setup();try{
+  assert.equal(w.coconutPrepareUpdate(),true);
+  await $('sample').onclick();$('mode-transcript').click();$('language-panel').open=true;
+  $('ai-task').value='translation';$('ai-task').dispatchEvent(new w.Event('change',{bubbles:true}));$('translation-options').open=true;
+  const input=value=>{$('translation-glossary').value=value;$('translation-glossary').dispatchEvent(new w.Event('input',{bubbles:true}));};
+  input('Coconut = 椰子');assert.equal(w.coconutPrepareUpdate(),false);assert.equal(w.coconutPrepareClose('inspect').safe,false);
+  $('cancel-translation-glossary').click();assert.equal(w.coconutPrepareUpdate(),true);assert.equal(w.coconutPrepareClose('inspect').safe,true);
+  input('Coconut = 椰子');assert.equal(w.coconutPrepareUpdate(),false);$('save-translation-glossary').click();assert.equal(w.coconutPrepareUpdate(),true);assert.equal(w.coconutPrepareClose('inspect').safe,true);
+  assert.deepEqual(JSON.parse(w.localStorage.getItem(key)).documents[0].translation_glossary.zh,[{source:'Coconut',target:'椰子'}]);
+ }finally{await w.happyDOM.close();}
+});

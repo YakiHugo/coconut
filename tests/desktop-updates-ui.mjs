@@ -27,7 +27,6 @@ try{
   `document.getElementById('audio-bookmark-time').value='12:34'`,
   `document.getElementById('audio-bookmark-note').value='未提交的书签笔记'`,
   `document.getElementById('ai-question').value='尚未提交的问题'`,
-  `document.getElementById('translation-glossary').value='Coconut = 椰子'`,
   `document.getElementById('edit-dialog').showModal()`,
   `podcastRequest=new AbortController()`,
   `podcastMediaRequest=new AbortController()`,
@@ -42,6 +41,17 @@ try{
  const fixture=path.join(temporary,'authored.json');await fs.writeFile(fixture,JSON.stringify({schema_version:1,title:'Update persistence fixture',language:'en',segments:[{id:'first',start:0,end:4,text:'Authored updater acceptance words.'}]}));
  await page.locator('#add-content').click();const [chooser]=await Promise.all([page.waitForEvent('filechooser'),page.locator('#import').click()]);await chooser.setFiles(fixture);
  await page.locator('#mode-transcript').click();await page.locator('.segment[data-segment-id="first"] .note-button').click();await page.locator('#note').fill('更新重启后保留这则笔记');await page.locator('#close-note').click();
+ // A glossary belongs to an imported document. Exercise the actual visible
+ // controls instead of assigning a hidden field on the empty startup page.
+ await page.locator('#language-panel > summary').click();await page.locator('#ai-task').selectOption('translation');await page.locator('#translation-options > summary').click();
+ await page.locator('#translation-glossary').fill('Coconut = 椰子');
+ assert.equal(await page.evaluate(()=>coconutPrepareUpdate()),false,'an owned glossary draft blocks update');
+ assert.equal(await page.evaluate(()=>coconutPrepareClose('inspect').safe),false,'the same glossary draft blocks native close');
+ await page.locator('#cancel-translation-glossary').click();assert.equal(await page.evaluate(()=>coconutPrepareUpdate()),true,'canceling the draft releases the update guard');
+ await page.locator('#translation-glossary').fill('Coconut = 椰子');assert.equal(await page.evaluate(()=>coconutPrepareUpdate()),false);
+ await page.locator('#save-translation-glossary').click();assert.equal(await page.evaluate(()=>coconutPrepareUpdate()),true,'saving the glossary releases the update guard');
+ assert.equal(await page.evaluate(()=>coconutPrepareClose('inspect').safe),true);
+ await page.locator('#language-panel > summary').click();
  // Web unload prompts must not intercept native quit after service teardown.
  const webUnloadAbsent=()=>page.evaluate(()=>{const event=new Event('beforeunload',{cancelable:true});window.dispatchEvent(event);return !!window.coconutUpdates&&!unloadGuardReady&&!unloadGuardAttached&&!event.defaultPrevented;});
  await page.locator('#reading-settings > summary').click();
