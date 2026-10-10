@@ -1,3 +1,4 @@
+import {compactShelfResultReady} from './helpers/compact-library-proof.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {libraryHarness} from './helpers/large-library-harness.mjs';
@@ -87,4 +88,19 @@ test('desktop transition moves focus from mobile-only close and tools summary to
    assert.equal($('library-tools').hidden,true);assert.equal(w.document.activeElement,$('library-search'));
   }
  }finally{await w.happyDOM.close();}
+});
+
+test('browser proof waits for this query to finish and render the exact expected result',()=>{
+ const expected={query:'last authored title',key:'shelf-499',count:1};
+ const input={value:expected.query};let busy='false',cards=[{dataset:{documentKey:expected.key}}];
+ const host={hidden:false,getAttribute:name=>name==='aria-busy'?busy:null,querySelectorAll:()=>cards};
+ const root={getElementById:id=>id==='library'?host:id==='library-search'?input:null};
+ assert.equal(compactShelfResultReady(expected,root),true);
+ busy='true';assert.equal(compactShelfResultReady(expected,root),false);busy='false';
+ input.value='earlier query';assert.equal(compactShelfResultReady(expected,root),false);input.value=expected.query;
+ host.hidden=true;assert.equal(compactShelfResultReady(expected,root),false);host.hidden=false;
+ cards=[{dataset:{documentKey:'shelf-0'}}];assert.equal(compactShelfResultReady(expected,root),false);
+ cards=[{dataset:{documentKey:expected.key}},{dataset:{documentKey:'shelf-0'}}];assert.equal(compactShelfResultReady(expected,root),false);
+ cards=[];assert.equal(compactShelfResultReady(expected,root),false);
+ cards=[{dataset:{documentKey:expected.key}}];assert.equal(compactShelfResultReady(expected,root),true);
 });
