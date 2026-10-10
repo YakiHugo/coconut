@@ -13,13 +13,13 @@
 </script>
 <script src="passages.js?v=aa95245d4c" defer></script>
 <script src="passage-playback.js?v=162dbb3695" defer></script>
-<script src="app.js?v=10b576d0c3" defer>
+<script src="app.js?v=0de320758e" defer>
 </script>
-<script src="language.js?v=503dd0a19a" defer></script>
+<script src="language.js?v=41117aaa91" defer></script>
 <script src="podcasts.js?v=7486a33f77" defer></script>
 <script src="jobs.js?v=0d6d6a2410" defer>
 </script>
-<script src="updates.js?v=280bce30bc" defer></script>
+<script src="updates.js?v=3aed128bc9" defer></script>
 </head>
 <body>
 <a class="skip-link" href="#main-content">跳到主要内容</a>
@@ -194,7 +194,8 @@ cd coconut
 <button id="attach-project-transcript" type="button">为此项目补充文字稿</button><button id="fetch-project-transcript" type="button" hidden>检查并补充发布者文字稿</button><button id="cancel-project-transcript" type="button" hidden>取消获取文字稿</button><input id="project-transcript-file" type="file" accept=".json,.srt,.vtt" hidden><p id="attach-project-help" class="hint">选择与本集声音对应的定时文字稿，包括已完成的字幕或 ASR JSON。只导入文件，不自动识别或调用模型；保留当前项目的标题、笔记、书签及已选择的媒体。</p>
 <label for="project-note">项目笔记</label><textarea id="project-note" rows="4" placeholder="记下想法、疑问或之后要核对的内容"></textarea>
 <p class="hint">来源、笔记与时间书签自动保存在此浏览器；媒体只在本次页面可用，刷新后请单独重新获取。迁移请导出 JSON 备份。</p>
-<form id="audio-bookmark-form"><label for="audio-bookmark-time">时间书签</label><input id="audio-bookmark-time" required placeholder="12:34 或秒数" inputmode="decimal"><button id="use-playback-time" type="button">填入正在播放的时间</button><label for="audio-bookmark-note">书签笔记（可选）</label><input id="audio-bookmark-note" placeholder="此刻想记住什么？"><button type="submit">保存时间书签</button></form>
+<form id="audio-bookmark-form"><label for="audio-bookmark-time">时间书签</label><input id="audio-bookmark-time" required placeholder="12:34 或秒数" inputmode="decimal"><button id="use-playback-time" type="button">填入正在播放的时间</button><label for="audio-bookmark-note">书签笔记（可选）</label><input id="audio-bookmark-note" placeholder="此刻想记住什么？"><button type="submit">保存时间书签</button><button id="cancel-audio-bookmark" type="button">取消新书签</button></form>
+<p class="hint">未提交的时间书签草稿仅在当前页面保留，切换篇目后可返回继续；刷新或关闭前请保存或取消。</p>
 <label>查找时间书签<input id="audio-bookmark-search" type="search" placeholder="笔记关键词或 12:34"></label><p id="audio-bookmark-results" class="hint" role="status"></p>
 <p id="audio-project-status" class="hint" role="status"></p><div id="audio-bookmarks" aria-label="已保存的时间书签"></div>
 </section>
@@ -235,7 +236,7 @@ cd coconut
 <details id="ai-send-details" class="ai-send-details"><summary>发送详情</summary><p id="ai-send-description" class="hint"></p><p class="hint">使用本机已登录的官方工具。额度耗尽会停止，不购买额度、不切换 API；具体 token 和剩余额度未知。</p></details>
 <details id="translation-options" class="ai-translation-only translation-options"><summary>术语与翻译设置</summary>
 <label>阅读显示<select id="translation-view"><option value="">仅原文</option></select></label>
-<label for="translation-glossary">本篇术语表</label><textarea id="translation-glossary" rows="3" placeholder="每行：原词 = 统一译法，例如 Coconut = Coconut"></textarea><button id="save-translation-glossary" type="button">保存术语表</button><p class="hint">相关术语会随翻译发送。更改术语表后，依赖它的译文需要重新生成。</p><p id="translation-quality" class="hint"></p>
+<label for="translation-glossary">本篇术语表</label><textarea id="translation-glossary" rows="3" placeholder="每行：原词 = 统一译法，例如 Coconut = Coconut"></textarea><button id="save-translation-glossary" type="button">保存术语表</button><button id="cancel-translation-glossary" type="button">取消术语表修改</button><p class="hint">相关术语会随翻译发送。更改术语表后，依赖它的译文需要重新生成。</p><p id="translation-quality" class="hint"></p>
 <details id="offline-translation-options"><summary>离线粗译</summary><p class="hint">逐段在本机翻译，适合先看大意；上下文与术语请对照原文。</p><label><input id="download-model" type="checkbox">允许首次下载离线模型（约 1 GB 磁盘）</label><button id="translate-document" disabled>离线粗译全文 / 继续未完成翻译</button></details>
 </details>
 <label class="ai-consent"><input id="ai-consent" type="checkbox"><span id="ai-consent-copy">同意将上述原文发送给所选提供商，并使用我的订阅额度。</span></label>

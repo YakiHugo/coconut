@@ -36,6 +36,18 @@ async function reload(page,expectPrompt){
  }
 }
 
+
+// Desktop keeps the shelf visible. Only a collapsed mobile shelf needs its
+// toggle; clicking an already expanded toggle would hide the intended card.
+async function openLibraryDocument(page,title){
+ const card=page.locator('#library .library-open').filter({has:page.locator('.library-title',{hasText:title})});
+ if(!await card.isVisible()){
+  const toggle=page.locator('#toggle-library');
+  if(await toggle.isVisible()&&await toggle.getAttribute('aria-expanded')==='false')await toggle.click();
+ }
+ await card.waitFor({state:'visible'});await card.click();
+}
+
 try{
  server=createServer(async(req,res)=>{
   if(!['GET','HEAD'].includes(req.method)){mutations++;res.writeHead(405).end();return;}
@@ -62,6 +74,30 @@ try{
  stage='changed_edit_dialog';await page.locator('#mode-transcript').click();await openCueActions(page.locator('.segment').first());await page.locator('.edit-button').click();await page.locator('#edit-segment').fill('Unsaved authored correction');await reload(page,true);
  check('dismissed_reload_keeps_edit_draft',await page.locator('#edit-segment').inputValue()==='Unsaved authored correction');
  await page.locator('#edit-dialog button[value="cancel"]').click();await page.locator('#edit-dialog').waitFor({state:'hidden'});await reload(page,false);check('canceling_edit_restores_clean_reload',true);
+ stage='bookmark_drafts_and_navigation';
+ await page.locator('#file').setInputFiles({name:'drafts.json',mimeType:'application/json',buffer:Buffer.from(JSON.stringify({title:'Authored draft protection',project_note:'',timestamp_bookmarks:[{id:'first',time:10,note:'Keep me'},{id:'second',time:20,note:'Other'}],segments:[{id:'draft-cue',start:0,end:3,text:'An authored transcript with project annotations.'}]}))});
+ // Imported and reopened transcripts start in summary mode. Use the visible
+ // reading-mode control before interacting with project annotations.
+ await page.locator('#mode-transcript').click();
+ check('transcript_mode_exposes_bookmark_form',await page.locator('#audio-bookmark-form').isVisible());
+ await page.locator('#audio-bookmark-time').fill('1:02');await page.locator('#audio-bookmark-note').fill('An unfinished authored thought');
+ await page.locator('#audio-bookmarks .edit-bookmark-time').first().click();await page.locator('#audio-bookmarks form input').first().fill('35');
+ await reload(page,true);
+ await page.locator('#audio-bookmark-search').fill('Other');await reload(page,true);await page.locator('#audio-bookmark-search').fill('');
+ check('filtered_correction_draft_restores',await page.locator('#audio-bookmarks form input').first().inputValue()==='35');
+ await openLibraryDocument(page,'Authored reload proof');
+ await reload(page,true);
+ await openLibraryDocument(page,'Authored draft protection');
+ await page.locator('#mode-transcript').click();
+ check('plain_transcript_detour_preserves_bookmark_drafts',await page.locator('#audio-bookmark-time').inputValue()==='1:02'&&await page.locator('#audio-bookmark-note').inputValue()==='An unfinished authored thought'&&await page.locator('#audio-bookmarks form input').first().inputValue()==='35');
+ await page.locator('#cancel-audio-bookmark').click();await page.locator('#audio-bookmarks form button[type="button"]').first().click();await reload(page,false);
+ check('canceling_all_bookmark_drafts_restores_clean_reload',true);
+ stage='glossary_draft_reload';
+ await page.locator('#mode-transcript').click();
+ await page.locator('#language-panel > summary').click();await page.locator('#ai-task').selectOption('translation');await page.locator('#translation-options > summary').click();
+ await page.locator('#translation-glossary').fill('Authored = 自写');await reload(page,true);
+ check('dismissed_reload_preserves_glossary',await page.locator('#translation-glossary').inputValue()==='Authored = 自写');
+ await page.locator('#cancel-translation-glossary').click();await reload(page,false);check('canceling_glossary_restores_clean_reload',true);
  stage='two_tab_conflict';const other=await newPage();
  await page.locator('#mode-transcript').click();await page.locator('.note-button').click();await page.locator('#note').fill('Newer saved note in first tab');
  const disk=await page.evaluate(key=>localStorage.getItem(key),KEY);

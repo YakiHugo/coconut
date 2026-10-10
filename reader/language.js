@@ -206,7 +206,7 @@ $('note').addEventListener('input',()=>{queueMicrotask(()=>renderLanguage());});
 for(const id of ['translation-source','translation-target'])$(id).onchange=()=>{$('ai-consent').checked=false;if(subscriptionTranslating)stopSubscription=true;renderLanguage();};
 if($('ai-task'))$('ai-task').onchange=()=>{stopLanguageBatches();$('ai-send-details').open=false;renderLanguage();};
 $('ai-question').oninput=()=>{$('ai-consent').checked=false;renderLanguage();};
-if($('translation-glossary'))$('translation-glossary').oninput=()=>{glossaryDrafts.set(glossaryDocumentSignature,$('translation-glossary').value);$('ai-consent').checked=false;if(subscriptionTranslating)stopSubscription=true;};
+if($('translation-glossary'))$('translation-glossary').oninput=()=>{if(glossaryDirty())glossaryDrafts.set(glossaryDocumentSignature,$('translation-glossary').value);else glossaryDrafts.delete(glossaryDocumentSignature);$('ai-consent').checked=false;if(subscriptionTranslating)stopSubscription=true;};
 if($('save-translation-glossary'))$('save-translation-glossary').onclick=()=>{
  const doc=active();if(!doc)return;
  try{
@@ -245,7 +245,17 @@ $('translate-document').onclick=async()=>{
  finally{translating=false;offlineTranslationKey=null;$('ai-consent').checked=false;$('stop-translation').hidden=true;if(active()?.key===key)render();renderLanguage();}
 };
 window.addEventListener('pagehide',stopLanguageBatches);
-window.addEventListener('coconut-document-removed',event=>{if([offlineTranslationKey,questionKey,summaryScope?.key,subscriptionScope?.key].includes(event.detail?.key))stopLanguageBatches();});
+window.addEventListener('coconut-document-removed',event=>{
+ const key=event.detail?.key;
+ if([offlineTranslationKey,questionKey,summaryScope?.key,subscriptionScope?.key].includes(key))stopLanguageBatches();
+ const drafts=new Map();
+ for(const [signature,value] of glossaryDrafts)if(JSON.parse(signature)[0]===key){drafts.set(signature,value);glossaryDrafts.delete(signature);}
+ if(removedDocument?.doc.key===key)removedDocument.glossaryDrafts=drafts;
+ if(glossaryDocumentSignature&&JSON.parse(glossaryDocumentSignature)[0]===key){glossaryDocumentSignature='';$('translation-glossary').value='';}
+});
+window.addEventListener('coconut-document-restored',event=>{
+ for(const [signature,value] of event.detail?.glossaryDrafts||[])glossaryDrafts.set(signature,value);
+});
 window.addEventListener('coconut-summary-stop',()=>{if(summaryScope)summaryScope.stop=true;if(readingMode==='summary')stopLanguageBatches();});
 window.addEventListener('coconut-workspace-change',event=>{if(event.detail?.workspace!=='read')stopLanguageBatches();});
 // Native details toggle events are queued. Latch real closing clicks before a
@@ -379,3 +389,23 @@ $("export-ai-reading").onclick=()=>{
  }catch{notice("本地 AI 记录导出失败，回答仍在本页，请重试。");}
  finally{link?.remove();if(url)setTimeout(()=>URL.revokeObjectURL(url),60000);}
 };
+
+// One draft predicate is shared by Web unload and native desktop close. Bind
+// after language state initializes because app.js can render before this file.
+hasLanguageDrafts=()=>{
+ for(const [signature,value] of glossaryDrafts){
+  const [key,target]=JSON.parse(signature),doc=state.documents.find(item=>item.key===key);
+  if(doc&&value!==savedGlossaryText(doc,target))return true;
+ }
+ const [key,target]=glossaryDocumentSignature?JSON.parse(glossaryDocumentSignature):[];
+ const doc=state.documents.find(item=>item.key===key);
+ if(doc&&$('translation-glossary').value!==savedGlossaryText(doc,target))return true;
+ const question=$('ai-question').value.trim();
+ return !!question&&!active()?.ai_answers?.some(answer=>answer.question===question);
+};
+$('cancel-translation-glossary').onclick=()=>{
+ glossaryDrafts.delete(glossaryDocumentSignature);
+ $('translation-glossary').value=savedGlossaryText(active(),$('translation-target').value);
+ $('ai-consent').checked=false;$('translation-glossary').focus();
+};
+if(unloadGuardReady)syncUnsavedUnloadGuard();
