@@ -1004,3 +1004,13 @@ body[data-media-docked="true"] .reading-feedback { bottom: 94px; }
 @media(max-width:760px){#open-library-notebook,#return-library-notebook{grid-column:1 / -1;margin:0}.library-notebook button{min-height:44px}}
 /* Pending rescue lives in existing disclosures, never in the typing toolbar. */
 #export-pending-documents, #export-pending-library {min-height:44px;}
+
+/* Follow shares the existing playback controls, never another header row. */
+#follow-playback, #dock-follow { min-height: 44px; min-width: 44px; }
+#follow-playback[aria-pressed="true"], #dock-follow[aria-pressed="true"] { border-color: var(--accent, #a95832); }
+#follow-playback[data-state="suspended"], #dock-follow[data-state="suspended"] { border-style: dashed; }
+@media (max-width: 420px) {
+ .media-dock { gap: 5px; }
+ .media-dock .dock-copy { display: none; }
+ .media-dock button { flex: 1; min-width: 44px; padding-inline: 4px; }
+}
