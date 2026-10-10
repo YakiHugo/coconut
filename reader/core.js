@@ -1,5 +1,6 @@
 (function (root) {
 	"use strict";
+ const BACKUP_REVIEW_BYTES=50*1024*1024, SUBTITLE_IMPORT_BYTES=15*1024*1024;
  const Summaries=typeof module!=="undefined"&&module.exports?require("./summary.js"):root.CoconutSummary;
 	function time(seconds) {
 		const n = Math.max(0, Math.floor(seconds));
@@ -87,9 +88,9 @@
   if(audioProjectIdentity(original)===audioProjectIdentity(text)&&original.podcast_source.media_url===text.podcast_source?.media_url&&original.podcast_source.media_kind===text.podcast_source?.media_kind&&text.podcast_source.transcript_url){
    result.podcast_source={...original.podcast_source,transcript_url:text.podcast_source.transcript_url};
   }
-  const attached=validate(result),key=typeof project.key==='string'?project.key:'k'.repeat(200);
-  if(new TextEncoder().encode(JSON.stringify({...attached,key},null,2)).byteLength>15*1024*1024)throw new Error('合并后的 JSON 备份超过15MB，无法可靠重新导入；原项目保留，请先整理或拆分文字稿与笔记');
-  return attached;
+  // JSON backups have a reviewed large-file recovery path. Combining a valid
+  // transcript with project notes must not impose the subtitle file budget.
+  return validate(result);
  }
  function validateAudioProject(data) {
   const origin=podcastSource(data.podcast_source);
@@ -528,8 +529,8 @@
   return {text:(format === "vtt" ? "WEBVTT\n\n" : "") + cues.join("\n\n") + "\n", translated};
  }
  function mergeLibraryBackup(current, backup) {
-  if (!backup || backup.format !== "coconut-library" || backup.version !== 1 || !Array.isArray(backup.documents) || backup.documents.length > 500)
-   throw new Error("不是支持的 Coconut 书架备份（最多500份）");
+  if (!backup || backup.format !== "coconut-library" || backup.version !== 1 || !Array.isArray(backup.documents))
+   throw new Error("不是支持的 Coconut 书架备份");
   const keys = new Set();
   // Validate the entire file before changing any live state.
   const incoming = backup.documents.map(item => {
@@ -715,7 +716,7 @@
 			segments,
 		});
 	}
-	const api = { vttPayload, libraryHits, librarySnippet, hasProjectAnnotations, projectAnnotationCount, attachProjectTranscript, libraryMatches, documentDuration, sortedLibrary, AUDIO_NOTE_BUDGET, audioNoteCharacters, isAudioProject, audioProjectIdentity, SUMMARY_QUESTION, summaryReadiness, podcastURL, podcastSource, cleanGlossary, relevantGlossary, translationQualityMessage, retainAnswers, summaryFreshness, latestSummary, summaryMarkdown, aiReadingMarkdown, parseReadingTime, createPlaybackIndex, segmentAtTime, subtitleExport, mergeLibraryBackup, time, source, media, validate, parse, matchesSegment, notebookSegments, notebookMarkdown, translationCurrent, sameCueSnapshot, subscriptionPlan, cleanContexts, answerFreshness };
+	const api = { BACKUP_REVIEW_BYTES, SUBTITLE_IMPORT_BYTES, vttPayload, libraryHits, librarySnippet, hasProjectAnnotations, projectAnnotationCount, attachProjectTranscript, libraryMatches, documentDuration, sortedLibrary, AUDIO_NOTE_BUDGET, audioNoteCharacters, isAudioProject, audioProjectIdentity, SUMMARY_QUESTION, summaryReadiness, podcastURL, podcastSource, cleanGlossary, relevantGlossary, translationQualityMessage, retainAnswers, summaryFreshness, latestSummary, summaryMarkdown, aiReadingMarkdown, parseReadingTime, createPlaybackIndex, segmentAtTime, subtitleExport, mergeLibraryBackup, time, source, media, validate, parse, matchesSegment, notebookSegments, notebookMarkdown, translationCurrent, sameCueSnapshot, subscriptionPlan, cleanContexts, answerFreshness };
 	if (typeof module !== "undefined" && module.exports) module.exports = api;
 	else root.Coconut = api;
 })(typeof window !== "undefined" ? window : globalThis);

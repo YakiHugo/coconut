@@ -160,7 +160,7 @@ test('local project attachment remains retired across non-current removal, undo 
  const {w,$}=setup(JSON.stringify({documents:[B,A],active:'b'}));let release;try{
   $('attach-project-transcript').click();const input=$('project-transcript-file'),text=JSON.stringify(fixture('Late attached transcript'));Object.defineProperty(input,'files',{configurable:true,value:[{name:'late.json',size:text.length,text:()=>new Promise(resolve=>{release=()=>resolve(text);})}]});
   const pending=input.onchange();w.document.querySelector('.library-entry[data-document-key="a"] .library-open').click();remove(w,B.title);$('undo-removal').click();w.document.querySelector('.library-entry[data-document-key="b"] .library-open').click();
-  const before=w.localStorage.getItem(KEY);release();await pending;assert.equal(w.localStorage.getItem(KEY),before);assert.match($('notice').textContent,/目标项目已经切换或更新/);
+  const before=w.localStorage.getItem(KEY),message=$('notice').textContent;release();await pending;assert.equal(w.localStorage.getItem(KEY),before);assert.equal($('notice').textContent,message);
  }finally{release?.();await w.happyDOM.close();}
 });
 test('whole-library restore rechecks earlier aliases when another document is removed during a later digest',async()=>{

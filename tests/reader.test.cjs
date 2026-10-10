@@ -406,12 +406,13 @@ test('attaching a transcript keeps root annotations recoverable and separate fro
  assert.throws(()=>C.attachProjectTranscript(audio,audio),/真正/);assert.throws(()=>C.validate({...attached,timestamp_bookmarks:[{id:'x',time:-1,note:''}]}),/时间书签/);
 });
 
-test('attachment rejects independently valid files whose combined recovery JSON exceeds the import limit',()=>{
+test('attachment preserves the complete combined backup above the old subtitle import budget',()=>{
  const C=require('../reader/core.js'),limit=15*1024*1024;
  const project=C.validate({project_kind:'audio_only',title:'Notes',podcast_source:{kind:'direct_media',media_url:'https://publisher.example/audio.mp3',media_kind:'audio'},segments:[],project_note:'\0'.repeat(100000),timestamp_bookmarks:Array.from({length:900},(_,i)=>({id:'b'+i,time:i,note:'\0'.repeat(1000)}))});
  const text=C.validate({title:'Large valid file',segments:Array.from({length:2000},(_,i)=>({id:'s'+i,start:i,end:i+1,text:'t'.repeat(6000)}))});
  const size=value=>Buffer.byteLength(JSON.stringify(value,null,2));assert.ok(size(project)<limit);assert.ok(size(text)<limit);
- const before=JSON.stringify(project);assert.throws(()=>C.attachProjectTranscript(project,text),/超过15MB/);assert.equal(JSON.stringify(project),before);
+ const before=JSON.stringify(project),attached=C.attachProjectTranscript(project,text);assert.ok(size(attached)>limit);assert.equal(JSON.stringify(project),before);
+ const restored=C.parse(JSON.stringify(attached),'combined.coconut.json');assert.deepEqual(restored,attached);assert.equal(restored.project_note,project.project_note);assert.deepEqual(restored.timestamp_bookmarks,project.timestamp_bookmarks);
 });
 
 

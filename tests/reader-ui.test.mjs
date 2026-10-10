@@ -859,11 +859,12 @@ test('whole bookshelf export and additive recovery retain both documents and rep
  }finally{await w.happyDOM.close();}
 });
 
-test('oversized library export refuses to create a backup that recovery cannot accept',async()=>{
+test('whole-library export over 500 documents remains recoverable',async()=>{
  const seed={documents:Array.from({length:501},(_,i)=>({key:'k'+i,title:'Book '+i,segments:[{start:0,end:1,text:'A'}]})),active:'k0'};
  const w=setup(JSON.stringify(seed));try{
-  let downloads=0;w.URL.createObjectURL=()=>{downloads++;return 'blob:bad';};
-  w.document.getElementById('export-library').click();assert.equal(downloads,0);assert.match(w.document.getElementById('notice').textContent,/逐份文字稿备份/);
+  let downloads=0,blob;w.URL.createObjectURL=value=>{downloads++;blob=value;return 'blob:backup';};w.URL.revokeObjectURL=()=>{};
+  w.document.getElementById('export-library').click();assert.equal(downloads,1);assert.match(w.document.getElementById('notice').textContent,/完整 JSON 备份下载/);
+  const recovered=w.Coconut.mergeLibraryBackup({documents:[],active:null},JSON.parse(await blob.text()));assert.equal(recovered.documents.length,501);assert.equal(recovered.active,'k0');
  }finally{await w.happyDOM.close();}
 });
 
