@@ -46,8 +46,9 @@ test('retry persists all current notes and histories without touching the focuse
  const f=setup({held:true});try{
   f.note('Failed then rescued');const first=f.saves.store.flush();f.saves.writes[0].fail();await first;
   const a=f.w.saveTest.active;a.ai_answers=Array.from({length:25},(_,index)=>({answer:'History '+index}));f.w.saveTest.queue(a);
+  const failedHistory=f.saves.store.flush();f.saves.writes[1].fail();await failedHistory;
   f.$('ai-question').value='A newer unsubmitted question';f.$('ai-question').focus();const retry=f.$('retry-save').onclick();
-  f.saves.writes[1].commit();await retry;
+  f.saves.writes[2].commit();await retry;
   assert.equal(f.$('save-status').dataset.state,'saved');assert.equal(f.$('ai-question').value,'A newer unsubmitted question');assert.equal(f.w.document.activeElement,f.$('ai-question'));assert.equal(f.unload(),true,'draft stays separate from saved content');
   const saved=JSON.parse(f.w.localStorage.getItem(KEY)).documents[0];assert.equal(saved.notes.one,'Failed then rescued');assert.equal(saved.ai_answers.length,25);
  }finally{await f.w.happyDOM.close();}
@@ -56,7 +57,7 @@ test('dirty rescue is full-fidelity and importable; starting download never ackn
  const f=setup({held:true});try{
   f.note('Full note');const a=f.w.saveTest.active;a.ai_answers=Array.from({length:24},(_,i)=>({question:'Question '+i,answer:'Answer '+i,citations:['one'],provider:'fixture'}));a.segments[0].translations={zh:{text:'人工译文',source_text:a.segments[0].text,source_language:'en',document_language:'en',provider:'fixture'}};f.w.saveTest.queue(a);
   let blob;f.w.URL.createObjectURL=value=>{blob=value;return 'blob:fixture';};f.w.HTMLAnchorElement.prototype.click=function(){};
-  f.$('export-unsaved-documents').click();const backup=JSON.parse(await blob.text());
+  f.$('export-menu').open=true;f.$('export-pending-documents').click();const backup=JSON.parse(await blob.text());
   assert.equal(backup.format,'coconut-library');assert.equal(backup.documents.length,1);assert.equal(backup.documents[0].ai_answers.length,24);assert.equal(backup.documents[0].notes.one,'Full note');assert.equal(backup.documents[0].segments[0].translations.zh.text,'人工译文');
   assert.equal(f.unload(),true);assert.match(f.$('notice').textContent,/未提交表单草稿/);
   const restored=f.w.Coconut.mergeLibraryBackup({documents:[],active:null},backup);assert.equal(restored.documents[0].ai_answers.length,24);
@@ -162,4 +163,45 @@ test('two-tab conflict baseline waits for the first note durable receipt, includ
   assert.equal(stale.$('note').value,'Unsaved conflicting note in second tab');
   assert.equal(stale.w.localStorage.getItem(KEY),disk);
  }finally{await first.w.happyDOM.close();await stale.w.happyDOM.close();}
+});
+
+test('held autosave keeps header structure, note focus and one unchanged pending announcement',async()=>{
+ const f=setup({held:true,clock:saveClock()});try{
+  const status=f.$('save-status'),panel=status.closest('.save-pipeline'),header=f.w.document.querySelector('header');
+  const initialNodes=[...header.querySelectorAll('*')];
+  f.note('First held note');f.$('note').focus();const pendingText=status.firstChild;
+  const saving=f.saves.store.flush();f.note('Newest held note');
+  assert.equal(status.dataset.state,'pending');assert.equal(status.textContent,'保存中');
+  assert.equal(status.firstChild,pendingText,'unchanged pending status is not repeatedly announced');
+  assert.equal(panel.parentElement,f.$('save-status-home'));assert.equal(f.$('retry-save').hidden,true);assert.equal(f.$('export-unsaved-documents').hidden,true);
+  assert.equal(f.$('pending-export').hidden,false);assert.equal(f.$('export-pending-documents').closest('details'),f.$('export-menu'));
+  assert.equal(f.$('export-pending-library').hidden,false);assert.equal(f.$('export-pending-library').closest('details').className,'library-backup');
+  assert.deepEqual([...header.querySelectorAll('*')],initialNodes);assert.equal(f.w.document.activeElement,f.$('note'));
+  f.saves.writes[0].commit();await saving;assert.equal(status.dataset.state,'pending','older receipt cannot claim the newer text is durable');
+  const next=f.saves.store.flush();f.saves.writes[1].commit();await next;
+  assert.equal(status.dataset.state,'saved');assert.equal(panel.parentElement,f.$('save-status-home'));assert.equal(f.w.document.activeElement,f.$('note'));
+  assert.deepEqual([...header.querySelectorAll('*')],initialNodes);assert.equal(f.$('pending-export').hidden,true);
+ }finally{await f.w.happyDOM.close();}
+});
+test('pending rescue keeps identity and focus when saved, then retires on blur without exporting an empty backup',async()=>{
+ const f=setup({held:true,clock:saveClock()});try{
+  f.note('Pending rescue');f.$('export-menu').open=true;const action=f.$('export-pending-documents');action.focus();
+  const flushing=f.saves.store.flush();f.saves.writes[0].commit();await flushing;
+  assert.equal(f.$('save-status').dataset.state,'saved');assert.equal(f.$('pending-export').hidden,false);
+  assert.equal(f.w.document.activeElement,action);assert.equal(f.$('export-menu').open,true);
+  f.$('ai-question').value='Still an unsubmitted question';f.$('ai-question').dispatchEvent(new f.w.Event('input',{bubbles:true}));assert.equal(f.unload(),true);
+  let downloads=0;f.w.URL.createObjectURL=()=>{downloads++;return 'blob:fixture';};action.click();assert.equal(downloads,0);assert.match(f.$('notice').textContent,/没有待保存文档/);assert.match(f.$('notice').textContent,/未提交表单草稿/);assert.doesNotMatch(f.$('notice').textContent,/本页修改已保存/);assert.equal(f.unload(),true);
+  f.$('export-menu').querySelector('summary').focus();await settle();assert.equal(f.$('pending-export').hidden,true);
+ }finally{await f.w.happyDOM.close();}
+});
+for(const focusedId of ['retry-save','export-unsaved-documents'])test('focused '+focusedId+' survives retry and receipt before compacting on blur',async()=>{
+ const f=setup({held:true,clock:saveClock()});try{
+  f.note('Failed note');const failing=f.saves.store.flush();f.saves.writes[0].fail();await failing;
+  const action=f.$(focusedId),panel=f.$('save-status').closest('.save-pipeline');action.focus();
+  const retry=f.saves.store.retry();assert.equal(f.w.document.activeElement,action);assert.equal(action.hidden,false);
+  if(focusedId==='retry-save'){assert.equal(action.getAttribute('aria-disabled'),'true');let completed=0;void action.onclick().then(()=>completed++);void action.onclick().then(()=>completed++);await settle();assert.equal(completed,2,'retained pending action returns immediately without registering retry completions');assert.equal(f.saves.writes.length,2);}
+  f.saves.writes[1].commit();await retry;
+  assert.equal(f.$('save-status').dataset.state,'saved');assert.equal(f.w.document.activeElement,action);assert.equal(action.hidden,false);assert.equal(panel.parentElement,f.$('save-warning-home'));
+  f.$('note').focus();await settle();assert.equal(action.hidden,true);assert.equal(panel.parentElement,f.$('save-status-home'));assert.equal(f.w.document.activeElement,f.$('note'));
+ }finally{await f.w.happyDOM.close();}
 });

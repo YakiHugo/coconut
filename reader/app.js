@@ -272,13 +272,22 @@ function renderSaveStatus(snapshot,detail='') {
  $('save-status').hidden=false;$('save-status').dataset.state=storageBlocked||failed?'failed':snapshot.status;
  const message=detail||(storageBlocked&&!snapshot.unsaved?(reasons[failure?.code]||'原有数据无法读取，已保留原数据')+'。本次导入或修改请另存备份。':snapshot.status==='saved'?(libraryAdapter.backend==='indexeddb'?'已保存到本机文档数据库':'已保存到本机浏览器（兼容存储，容量较小）'):snapshot.status==='pending'?'正在保存 · '+snapshot.unsaved+' 份文档':(reasons[failure?.code]||'浏览器保存未成功')+'。'+snapshot.unsaved+' 份文档仍在本页，请重试或导出未保存文档备份。');
  const warning=storageBlocked||failed;
- $('save-status').textContent=warning?message:snapshot.status==='pending'?'保存中':'已保存';
- $('save-status').title=message;$('save-status').setAttribute('aria-label',message);
+ const statusText=warning?message:snapshot.status==='pending'?'保存中':'已保存';
+ if($('save-status').textContent!==statusText)$('save-status').textContent=statusText;
+ if($('save-status').title!==message)$('save-status').title=message;
+ if($('save-status').getAttribute('aria-label')!==message)$('save-status').setAttribute('aria-label',message);
  const panel=$('save-status').closest('.save-pipeline'),host=$(warning?'save-warning-home':'save-status-home');
- if(panel.parentElement!==host)host.append(panel);
- panel.classList.toggle('has-warning',warning);
- $('retry-save').hidden=!snapshot.unsaved||snapshot.status==='pending';$('retry-save').disabled=snapshot.blocked;
- $('export-unsaved-documents').hidden=!snapshot.unsaved;
+ // Never move or hide a focused recovery action when a receipt arrives.
+ // Its truthful status updates immediately; compacting waits until focus leaves.
+ const focused=document.activeElement,retainRecovery=panel.contains(focused);
+ if(panel.parentElement!==host&&!retainRecovery)host.append(panel);
+ panel.classList.toggle('has-warning',warning||panel.parentElement===$('save-warning-home'));
+ $('retry-save').hidden=(!snapshot.unsaved||snapshot.status==='pending')&&focused!==$('retry-save');
+ $('retry-save').disabled=snapshot.blocked&&focused!==$('retry-save');
+ $('retry-save').setAttribute('aria-disabled',String(snapshot.blocked||snapshot.status==='pending'||!snapshot.unsaved));
+ $('export-unsaved-documents').hidden=(!snapshot.unsaved||!warning)&&focused!==$('export-unsaved-documents');
+ $('pending-export').hidden=!snapshot.unsaved&&!$('pending-export').contains(focused);
+ $('export-pending-library').hidden=!snapshot.unsaved&&focused!==$('export-pending-library');
  if(unloadGuardReady)syncUnsavedUnloadGuard();
 }
 function notice(text,kind = "") {
@@ -350,11 +359,16 @@ async function commitDocuments(documents){
  if(batch.accepted)void libraryStore.flush();
  const results=await Promise.all(batch.tickets.map(ticket=>ticket.committed));return {ok:batch.accepted&&results.every(result=>result.ok),results};
 }
-$('retry-save').onclick=async()=>{const result=await libraryStore.retry();if(result.ok&&!libraryStore.status().unsaved&&!readerClosing)notice('本页待保存修改已保存到本机浏览器。','success');};
-$('export-unsaved-documents').onclick=()=>{
+document.addEventListener('focusout',event=>{
+ if(event.target.closest?.('.save-pipeline, #pending-export, #export-pending-library'))queueMicrotask(()=>renderSaveStatus(libraryStore.status()));
+});
+$('retry-save').onclick=async()=>{if(libraryStore.status().blocked||libraryStore.status().status==='pending'||!libraryStore.status().unsaved)return;const result=await libraryStore.retry();if(result.ok&&!libraryStore.status().unsaved&&!readerClosing)notice('本页待保存修改已保存到本机浏览器。','success');};
+$('export-unsaved-documents').onclick=$('export-pending-documents').onclick=$('export-pending-library').onclick=()=>{
  let url,link;
  try{
-  const snapshot=libraryStore.snapshotForExport(),backup={format:'coconut-library',version:1,documents:snapshot.documents,active:state.active};
+  const snapshot=libraryStore.snapshotForExport();
+  if(!snapshot.documents.length){notice('没有待保存文档。未提交表单草稿和移除恢复区仍仅在本页，请分别处理；可从导出菜单备份文字稿与笔记。');return;}
+  const backup={format:'coconut-library',version:1,documents:snapshot.documents,active:state.active};
   const blob=new Blob([JSON.stringify(backup,null,2)],{type:'application/json'});
   url=URL.createObjectURL(blob);link=el('a');link.href=url;link.download='coconut-unsaved-documents.json';link.hidden=true;document.body.append(link);link.click();
   notice('已发起 '+snapshot.documents.length+' 份未保存文档的完整备份下载，请打开文件确认。包含文字、笔记、译文与 AI 历史；未提交表单草稿和移除恢复区仍仅在本页，请分别处理。下载不会改变保存状态。'+backupRecoveryHint(blob));

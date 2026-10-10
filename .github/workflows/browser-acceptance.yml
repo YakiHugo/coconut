@@ -51,6 +51,8 @@ jobs:
         run: node tests/indexeddb-library-browser.mjs
       - name: Verify legacy fallback pending save receipts, retry, complete rescue and provisional Undo with authored data
         if: ${{ !cancelled() && steps.browser_setup.outcome == 'success' }}
+        env:
+          COCONUT_UI_SCREENSHOTS: ${{ runner.temp }}/coconut-authored-ui
         run: node tests/save-pipeline-browser.mjs
       - name: Verify recoverable library removal and rescue downloads with authored data
         if: ${{ !cancelled() && steps.browser_setup.outcome == 'success' }}
@@ -182,6 +184,7 @@ jobs:
           path: |
             ${{ runner.temp }}/coconut-authored-ui/*.png
             ${{ runner.temp }}/coconut-authored-ui/passages-geometry.json
+            ${{ runner.temp }}/coconut-authored-ui/autosave-geometry.json
           if-no-files-found: ignore
           retention-days: 7
       - name: Remove temporary media and exports

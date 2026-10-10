@@ -2,6 +2,7 @@
 import assert from 'node:assert/strict';
 import {createServer} from 'node:http';
 import fs from 'node:fs/promises';
+import path from 'node:path';
 import {chromium} from './helpers/legacy-browser.mjs';
 const root=new URL('../reader/',import.meta.url),KEY='coconut-reader-v1';
 const fixture=key=>({schema_version:1,key,title:'Authored save '+key,language:'en',notes:{},segments:[{id:'one',start:0,end:5,text:'A complete authored reading fixture '+key}],ai_answers:Array.from({length:26},(_,i)=>({question:'Authored question '+i,answer:'Complete answer '+i,citations:['one'],provider:'fixture'}))});
@@ -52,7 +53,38 @@ try{
  await page.evaluate(()=>saveProof.writes[0].fail());await page.waitForFunction(()=>!document.querySelector('.library-entry[data-document-key="a"]'));
  assert.equal(await page.locator('#note').inputValue(),'B remains editable while undo waits');assert.equal(await page.locator('#removal-recovery').isVisible(),true);
  await page.evaluate(()=>{saveProof.hold=false;for(const write of saveProof.writes.slice(1))write.commit();return saveProof.store.retry();});
+
+ // CI-only authored geometry: compare the actual compact reader before, during
+ // and after a held write, at mobile and desktop sizes in both appearances.
+ await page.close();const geometry=[];
+ const measure=page=>page.evaluate(()=>{
+  const rect=selector=>{const r=document.querySelector(selector).getBoundingClientRect();return {x:r.x+scrollX,y:r.y+scrollY,width:r.width,height:r.height};};
+  return {header:rect('main > header'),source:rect('.passage-original'),width:document.documentElement.scrollWidth,viewport:innerWidth,state:document.getElementById('save-status').dataset.state};
+ });
+ const capture=async(page,name)=>{if(!process.env.COCONUT_UI_SCREENSHOTS)return;await fs.mkdir(process.env.COCONUT_UI_SCREENSHOTS,{recursive:true});await page.screenshot({path:path.join(process.env.COCONUT_UI_SCREENSHOTS,'autosave-'+name+'.png'),fullPage:false,animations:'disabled'});};
+ for(const width of [320,360,1280])for(const theme of ['light','dark']){
+  stage=`stable autosave ${width} ${theme}`;const proof=await context.newPage();proof.on('pageerror',error=>errors.push(`${width} ${theme}: ${error.message}`));await proof.setViewportSize({width,height:900});
+  await proof.goto(origin);await proof.evaluate(({KEY,document,theme})=>{localStorage.setItem(KEY,JSON.stringify({documents:[document],active:'layout'}));localStorage.setItem('coconut-reading-theme-v1',theme);},{KEY,document:fixture('layout'),theme});await proof.reload();
+  await proof.locator('#mode-passages').click();const before=await measure(proof);assert.ok(before.source.y<=350);assert.equal(before.width,width);
+  await proof.locator('#mode-transcript').click();await proof.locator('.note-button').first().click();
+  await proof.evaluate(()=>{saveProof.hold=true;});await proof.locator('#note').fill('Complete authored pending rescue '+width+' '+theme);
+  const typing=await proof.evaluate(()=>({focus:document.activeElement.id,actions:[...document.querySelectorAll('#save-status-home button')].filter(n=>!n.hidden).length}));assert.equal(typing.focus,'note');assert.equal(typing.actions,0);
+  await capture(proof,`${width}-${theme}-typing`);
+  await proof.locator('#close-note').click();await proof.locator('#mode-passages').click();await proof.waitForFunction(()=>saveProof.writes.length===1);
+  const pending=await measure(proof);assert.equal(pending.state,'pending');assert.deepEqual(pending.header,before.header);assert.deepEqual(pending.source,before.source);assert.ok(pending.source.y<=350);assert.equal(pending.width,width);
+  await capture(proof,`${width}-${theme}-pending`);
+  await proof.locator('#export-menu > summary').click();const rescue=proof.locator('#export-pending-documents');await rescue.focus();assert.ok((await rescue.boundingBox()).height>=44);
+  const [pendingDownload]=await Promise.all([proof.waitForEvent('download'),rescue.click()]);const bytes=[];for await(const part of await pendingDownload.createReadStream())bytes.push(part);
+  const restored=JSON.parse(Buffer.concat(bytes));assert.equal(restored.documents[0].notes.one,'Complete authored pending rescue '+width+' '+theme);assert.equal(restored.documents[0].ai_answers.length,26);assert.equal(restored.documents[0].segments[0].text,fixture('layout').segments[0].text);
+  assert.equal(await proof.locator('#save-status').getAttribute('data-state'),'pending');const exported=await measure(proof);
+  await proof.evaluate(()=>saveProof.writes[0].commit());await proof.waitForFunction(()=>document.getElementById('save-status').dataset.state==='saved');
+  assert.equal(await proof.evaluate(()=>document.activeElement.id),'export-pending-documents');assert.equal(await rescue.isVisible(),true);
+  await proof.keyboard.press('Escape');await proof.waitForFunction(()=>document.getElementById('pending-export').hidden);
+  const after=await measure(proof);assert.deepEqual(after.header,before.header);assert.deepEqual(after.source,exported.source,'the receipt itself must not shift the reading surface after the explicit download notice');assert.equal(after.width,width);await capture(proof,`${width}-${theme}-saved`);
+  geometry.push({width,theme,before,pending,exported,after});await proof.close();
+ }
+ if(process.env.COCONUT_UI_SCREENSHOTS)await fs.writeFile(path.join(process.env.COCONUT_UI_SCREENSHOTS,'autosave-geometry.json'),JSON.stringify(geometry,null,2));
  assert.equal(requests,0);assert.deepEqual(errors,[]);
- console.log(JSON.stringify({ok:true,checks:['pending-debounce','actual-disk-reload','quota-retention','complete-rescue-download','real-beforeunload','retry-disk-proof','provisional-undo-gate','concurrent-B-edit']},null,2));
+ console.log(JSON.stringify({ok:true,checks:['pending-debounce','actual-disk-reload','quota-retention','complete-rescue-download','real-beforeunload','retry-disk-proof','provisional-undo-gate','concurrent-B-edit','stable-mobile-desktop-autosave','light-dark-layout','pending-full-fidelity-download','focused-rescue-receipt']},null,2));
 }catch(error){throw new Error(stage+': '+error.message,{cause:error});}
 finally{await browser?.close();if(server)await new Promise(resolve=>server.close(resolve));}

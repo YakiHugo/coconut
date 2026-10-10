@@ -77,7 +77,7 @@ header button { font-size: 12px; }
 .export-panel h2 { margin: 0 0 16px; }
 .export-panel button { width: 100%; font-size: 13px; }
 .export-panel .hint { margin: 6px 0 0; font-size: 12px; }
-.subtitle-export, .notebook-export { display: grid; gap: 10px; border-top: 1px solid var(--line); margin-top: 18px; padding-top: 18px; }
+.pending-export, .subtitle-export, .notebook-export { display: grid; gap: 10px; border-top: 1px solid var(--line); margin-top: 18px; padding-top: 18px; }
 .subtitle-export select { margin-left: 8px; }
 .import-workspace { max-width: 1050px; margin: 42px auto 0; }
 .welcome-mark { width: 54px; height: 54px; border: 1px solid var(--edge, #ead8ce); border-radius: 18px; background: var(--surface-selected, #fff0e8); text-align: center; line-height: 50px; font-size: 35px; color: var(--accent); }
@@ -860,7 +860,7 @@ body[data-media-docked="true"] .reading-feedback { bottom: 94px; }
 
 /* Save state shares existing header height; failures retain a clear full-width
    warning and 44px recovery actions without hiding the reader's content. */
-#save-status-home {flex-shrink:0;}
+#save-status-home {flex-shrink:0;min-width:3em;}
 .save-pipeline {margin:0;padding:0;border:0;}
 .save-pipeline .save-warning {margin:0;background:transparent;border:0;padding:0;}
 .save-pipeline:not(.has-warning) .save-warning {white-space:nowrap;font-size:11px;line-height:1.4;}
@@ -1002,3 +1002,5 @@ body[data-media-docked="true"] .reading-feedback { bottom: 94px; }
 
 #open-library-notebook,#return-library-notebook{font-size:12px;background:transparent;color:var(--muted);text-align:left;margin-top:6px}
 @media(max-width:760px){#open-library-notebook,#return-library-notebook{grid-column:1 / -1;margin:0}.library-notebook button{min-height:44px}}
+/* Pending rescue lives in existing disclosures, never in the typing toolbar. */
+#export-pending-documents, #export-pending-library {min-height:44px;}
