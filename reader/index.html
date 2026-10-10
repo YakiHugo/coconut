@@ -7,13 +7,13 @@
 <meta name="description" content="把长视频和播客变成自己的阅读空间。对照原文与译文，按时间回听，留下摘录和笔记。">
 <meta name="theme-color" content="#faf9f7">
 <link rel="icon" type="image/png" href="coconut-mark.png">
-<link rel="stylesheet" href="style.css?v=4219078751">
+<link rel="stylesheet" href="style.css?v=9ae1fae27b">
 <script src="summary.js?v=580ffdad1e" defer></script>
 <script src="core.js?v=356129146d" defer>
 </script>
 <script src="passages.js?v=aa95245d4c" defer></script>
 <script src="passage-playback.js?v=162dbb3695" defer></script>
-<script src="app.js?v=560526cb98" defer>
+<script src="app.js?v=eae078317a" defer>
 </script>
 <script src="language.js?v=dc1292bc9e" defer></script>
 <script src="translation-review.js?v=902ff4d03e" defer></script>
@@ -34,16 +34,22 @@
 <label class="library-search">查找书架<input id="library-search" type="search" placeholder="按标题查找"></label>
 <input type="file" id="file" accept=".json,.srt,.vtt" hidden>
 <details class="library-backup"><summary>书架备份</summary><div class="disclosure-content"><button id="export-library">备份整个书架</button><button id="restore-library">恢复书架备份</button><input id="library-file" type="file" accept=".json" hidden></div></details>
-<section id="removal-recovery" class="removal-recovery" aria-label="移除恢复区" hidden>
-<strong id="removal-recovery-title"></strong><p class="hint">仅保留上一份移除的完整备份，只在本页有效。刷新、关闭或离开页面后无法撤销。整库备份不含已移除内容，媒体需重新选择。</p>
-<button id="undo-removal" type="button">撤销移除</button><button id="export-removed-document" type="button">导出移除备份</button><button id="finish-removal" type="button">结束本页撤销…</button>
-</section>
 <p class="eyebrow">你的书架</p>
-<details class="library-options"><summary>整理书架</summary><label>排序<select id="library-sort"><option value="added">按添加顺序</option><option value="title">按标题</option><option value="duration">按时长（短到长）</option></select></label><label>内容<select id="library-kind"><option value="all">全部</option><option value="transcript">有文字稿</option><option value="audio">原声项目</option><option value="annotated">有笔记或摘录</option></select></label><label>查找范围<select id="library-scope"><option value="title">标题</option><option value="notes">标题与笔记</option><option value="text">标题、原文与笔记</option></select></label></details>
+<details id="library-options" class="library-options"><summary>整理书架</summary><p class="hint library-manage-hint">展开时，每篇下方可移除内容。</p><label>排序<select id="library-sort"><option value="added">按添加顺序</option><option value="title">按标题</option><option value="duration">按时长（短到长）</option></select></label><label>内容<select id="library-kind"><option value="all">全部</option><option value="transcript">有文字稿</option><option value="audio">原声项目</option><option value="annotated">有笔记或摘录</option></select></label><label>查找范围<select id="library-scope"><option value="title">标题</option><option value="notes">标题与笔记</option><option value="text">标题、原文与笔记</option></select></label></details>
 <nav id="library" aria-label="文字稿书架">
 </nav>
 <p id="library-empty" class="hint">还没有文字稿。添加一份，或体验示例。</p>
 </div>
+<section id="removal-recovery" class="removal-recovery" aria-label="移除恢复区" hidden>
+<div class="removal-recovery-heading"><div class="removal-recovery-label"><span>已移除</span><strong id="removal-recovery-short-title"></strong></div><button id="undo-removal" type="button" aria-label="撤销移除" aria-describedby="removal-recovery-short-title removal-recovery-limit">撤销移除</button></div>
+<p id="removal-recovery-limit" class="hint">仅保留上一份；刷新、关闭或离开本页后无法撤销。</p>
+<p id="removal-recovery-error" role="alert" hidden></p>
+<details id="removal-recovery-details"><summary>备份与详情</summary><div class="removal-recovery-actions">
+<strong id="removal-recovery-title"></strong><p class="hint">整库备份不含这份内容。可单独导出完整文字稿与笔记；恢复后需重新选择媒体。</p>
+<p id="removal-export-error" role="alert" hidden></p>
+<button id="export-removed-document" type="button">导出移除备份</button><button id="finish-removal" type="button">结束本页撤销…</button>
+</div></details>
+</section>
 <div class="privacy">笔记保存在此浏览器<br>AI 发送前会征求你的同意</div>
 <details id="app-updates" hidden><summary>应用更新</summary><div class="disclosure-content">
 <p id="update-version" class="hint"></p>

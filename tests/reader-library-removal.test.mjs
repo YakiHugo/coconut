@@ -16,7 +16,7 @@ function setup(stored){
 async function add(w,doc=fixture()){
  const input=w.document.getElementById('file'),text=JSON.stringify(doc);Object.defineProperty(input,'files',{configurable:true,value:[{name:'authored.json',size:text.length,text:async()=>text}]});await input.onchange();
 }
-function request(w,title){const row=[...w.document.querySelectorAll('.library-entry')].find(row=>row.textContent.includes(title));assert.ok(row);row.querySelector('.library-remove').click();}
+function request(w,title){const options=w.document.getElementById('library-options');options.open=true;options.dispatchEvent(new w.Event('toggle'));const row=[...w.document.querySelectorAll('.library-entry')].find(row=>row.textContent.includes(title));assert.ok(row);row.querySelector('.library-remove').click();}
 function remove(w,title){request(w,title);w.document.getElementById('confirm-removal').click();}
 function read(w){return JSON.parse(w.localStorage.getItem(KEY));}
 function guard(w){const event=new w.Event('beforeunload',{cancelable:true});w.dispatchEvent(event);return event.defaultPrevented;}
@@ -239,5 +239,97 @@ test('removing and undoing a non-current search result never pauses or resets cu
   w.dispatchEvent(new w.CustomEvent('coconut-worker-ready',{detail:{media_import:true}}));const current=w.sessionStorage.getItem('coconut-reader-active-v1'),player=simulateListeningPlayer(w,$('source-media').querySelector('audio'));await player.play();player.currentTime=36;
   $('library-scope').value='text';$('library-scope').onchange();$('library-search').value='needle';$('library-search').oninput();remove(w,B.title);assert.equal(player.paused,false);$('undo-removal').click();
   assert.equal(w.sessionStorage.getItem('coconut-reader-active-v1'),current);assert.equal($('source-media').querySelector('audio'),player);assert.equal(player.paused,false);assert.equal(player.currentTime,36);assert.equal($('library-search').value,'needle');player.pause();assert.equal(JSON.parse(w.localStorage.getItem('coconut-listening-v1:'+current)).time,36);
+ }finally{await w.happyDOM.close();}
+});
+
+
+test('organizing reveals removal without replacing full-width title or source-backed search content',async()=>{
+ const {w,$}=setup();try{
+  const title='路口观察 · 先读完整意思，再回听一次 · '+ '无空格LongAuthoredTitle'.repeat(12);
+  await add(w,fixture(title));const entry=$('library').firstElementChild;
+  assert.equal(entry.querySelector('.library-title').textContent,title);
+  assert.equal(entry.querySelector('.library-remove').hidden,true);
+  assert.equal($('library-options').open,false);
+  $('library-options').open=true;$('library-options').dispatchEvent(new w.Event('toggle'));
+  assert.equal(entry.querySelector('.library-remove').hidden,false);
+  assert.equal(entry.querySelector('.library-open').getAttribute('aria-current'),'page');
+  $('library-options').open=false;$('library-options').dispatchEvent(new w.Event('toggle'));
+  assert.equal(entry.querySelector('.library-remove').hidden,true);
+  assert.equal(read(w).documents[0].title,title);
+ }finally{await w.happyDOM.close();}
+});
+test('recovery is outside the collapsed shelf; disclosure changes retain the complete slot and guard',async()=>{
+ const {w,$}=setup();try{
+  await add(w);const original=read(w).documents[0];remove(w,original.title);
+  assert.equal($('toggle-library').getAttribute('aria-expanded'),'false');
+  assert.equal($('library-list').contains($('removal-recovery')),false);
+  assert.equal($('removal-recovery-details').open,false);
+  assert.equal($('undo-removal').closest('details'),null);
+  assert.match($('removal-recovery-limit').textContent,/上一份.*刷新、关闭或离开/);
+  assert.equal($('export-removed-document').closest('details'),$('removal-recovery-details'));
+  for(const open of [true,false,true,false]){
+   $('removal-recovery-details').open=open;
+   assert.equal(guard(w),true);assert.deepEqual(await download(w,'export-removed-document'),original);
+  }
+  $('library-options').open=false;$('library-options').dispatchEvent(new w.Event('toggle'));
+  $('undo-removal').click();assert.deepEqual(read(w).documents[0],original);
+  assert.equal(w.document.activeElement.classList.contains('library-open'),true);
+  assert.equal($('toggle-library').getAttribute('aria-expanded'),'true');
+  assert.equal($('removal-recovery').hidden,true);assert.equal(guard(w),false);
+ }finally{await w.happyDOM.close();}
+});
+test('failed undo reveals export controls and a persistent local error; collapsing details never hides the error',async()=>{
+ const {w,$}=setup();try{
+  await add(w);remove(w,'Authored removal fixture');const backing=w.localStorage;
+  Object.defineProperty(w,'localStorage',{value:{getItem:k=>backing.getItem(k),setItem:()=>{throw Error('Injected quota');}}});
+  $('undo-removal').click();assert.equal($('removal-recovery-details').open,true);
+  assert.equal($('removal-recovery-error').hidden,false);assert.match($('removal-recovery-error').textContent,/撤销未保存/);
+  $('removal-recovery-details').open=false;assert.equal($('removal-recovery-error').closest('details'),null);
+  assert.equal(guard(w),true);assert.equal(read(w).documents.length,0);
+ }finally{await w.happyDOM.close();}
+});
+test('finish cancellation restores the actual visible disclosure action, without losing recovery',async()=>{
+ const {w,$}=setup();try{
+  await add(w);remove(w,'Authored removal fixture');$('removal-recovery-details').open=true;
+  $('finish-removal').click();$('cancel-finish-removal').click();
+  // Happy DOM does not dispatch the native dialog close event automatically.
+  $('finish-removal-dialog').dispatchEvent(new w.Event('close'));
+  assert.equal(w.document.activeElement,$('finish-removal'));assert.equal($('removal-recovery-details').open,true);assert.equal(guard(w),true);
+  $('undo-removal').click();assert.equal($('removal-recovery-details').open,false);assert.equal($('removal-recovery-error').hidden,true);
+ }finally{await w.happyDOM.close();}
+});
+
+
+test('rescue download failures are visible in the active confirmation and retry clears only export errors',async()=>{
+ const {w,$}=setup();try{
+  await add(w);await add(w,fixture('Second authored fixture'));remove(w,'Authored removal fixture');
+  const original=await download(w,'export-removed-document');request(w,'Second authored fixture');
+  w.URL.createObjectURL=()=>{throw Error('Injected download failure');};$('export-previous-removal').click();
+  assert.equal($('removal-export-error').hidden,false);assert.match($('remove-document-error').textContent,/下载失败/);
+  assert.equal($('remove-document-dialog').open,true);assert.equal(guard(w),true);
+  assert.deepEqual(await download(w,'export-previous-removal'),original);
+  assert.equal($('removal-export-error').hidden,true);assert.equal($('remove-document-error').textContent,'');
+  $('cancel-removal').click();const backing=w.localStorage;
+  Object.defineProperty(w,'localStorage',{value:{getItem:k=>backing.getItem(k),setItem:()=>{throw Error('Injected quota');}}});
+  $('undo-removal').click();assert.equal($('removal-recovery-error').hidden,false);
+  await download(w,'export-removed-document');assert.equal($('removal-recovery-error').hidden,false);
+  assert.match($('removal-recovery-error').textContent,/撤销未保存/);
+ }finally{await w.happyDOM.close();}
+});
+
+
+test('collapsed recovery names the removed document without truncating its accessible text',async()=>{
+ const {w,$}=setup();try{
+  const title='很长的移除标题 '+ '完整名称LongUnbrokenTitle'.repeat(20);
+  await add(w,fixture(title));remove(w,title);
+  const shortTitle=$('removal-recovery-short-title');
+  assert.equal(shortTitle.textContent,title);assert.equal(shortTitle.closest('details'),null);
+  assert.equal($('removal-recovery-details').open,false);
+  assert.equal($('removal-recovery-title').textContent,'已移除：'+title);
+  assert.ok($('undo-removal').getAttribute('aria-describedby').split(' ').includes(shortTitle.id));
+  $('removal-recovery-details').open=true;$('removal-recovery-details').open=false;
+  assert.equal(shortTitle.textContent,title);assert.equal(guard(w),true);
+  $('undo-removal').click();assert.equal(shortTitle.textContent,'');
+  assert.equal(read(w).documents[0].title,title);
  }finally{await w.happyDOM.close();}
 });

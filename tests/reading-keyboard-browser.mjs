@@ -414,6 +414,8 @@ try {
   const shelfWithRecovery = await page.evaluate(() => localStorage.getItem('coconut-reader-v1'));
   check('noncurrent_removal_keeps_the_reading_document_active', (await stored()).title === fixture.title &&
     await page.getByRole('button', {name: '从书架移除 ' + otherFixture.title, exact: true}).count() === 0);
+  const recoveryDetails = page.locator('#removal-recovery-details');
+  if (!await recoveryDetails.evaluate(details => details.open)) await recoveryDetails.locator(':scope > summary').click();
   await page.locator('#finish-removal').click();
   await ignoredNativeDialog('finish_removal_dialog', '#finish-removal-dialog');
   await checkDrafts('finish_removal_dialog_keys');

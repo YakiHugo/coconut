@@ -792,17 +792,43 @@ body[data-media-docked="true"] .reading-feedback { bottom: 94px; }
  body:has(#notes-panel:not([hidden])) .reading-feedback { display: none; }
 }
 
-.library-entry { display: grid; grid-template-columns: minmax(0, 1fr) auto; min-width: 0; align-items: center; }
+.library-entry { display: grid; grid-template-columns: minmax(0, 1fr); min-width: 0; }
 .library-hits { grid-column: 1 / -1; display: grid; gap: 2px; padding: 0 5px 8px; }
 #library .library-hit { font-size: 12px; line-height: 1.6; border-left: 2px solid var(--line); border-radius: 0 6px 6px 0; }
 .library-hit-preview { display: block; white-space: pre-wrap; }
 .library-hit mark { background: #f5e5a2; color: inherit; }
 #library button:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
-/* Library removal is an explicit secondary action; no nested buttons. */
-#library .library-remove { font-size: 11px; padding: 9px 7px; color: var(--muted); }
-.removal-recovery { margin: 14px 0; padding: 12px; border: 1px solid var(--accent); border-radius: 10px; background: #fff; overflow-wrap: anywhere; }
-.removal-recovery strong { display: block; font-size: 13px; }
-.removal-recovery button { display: block; width: 100%; margin-top: 7px; font-size: 12px; }
+/* Titles keep the full card width. Organizing is explicit and works equally
+   with touch and keyboard; secondary actions never rely on hovering. */
+#library .library-open { width: 100%; min-width: 0; }
+#library .library-remove { justify-self: end; min-width: 64px; min-height: 44px; font-size: 12px; padding: 9px 10px; color: var(--muted); }
+.shell > aside :is(button, summary), .library-search input, .library-options select { min-height: 44px; }
+.library-options label { display: grid; gap: 4px; margin: 10px 0; font-size: 12px; color: var(--muted); }
+.library-options select { width: 100%; }
+.library-manage-hint { margin: 2px 0 10px; font-size: 12px; }
+#library-list { padding: 6px; margin-left: -6px; margin-right: -6px; }
+.library-options > summary, .library-backup > summary { min-height: 44px; }
+/* The one-page recovery stays reachable even with the mobile shelf closed. */
+.removal-recovery { flex-shrink: 0; margin: 14px 0 0; padding: 10px 12px 0; border: 1px solid #dfd5c9; border-left: 3px solid var(--accent); border-radius: 10px; background: #fff; overflow-wrap: anywhere; }
+.removal-recovery-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.removal-recovery strong { font-size: 13px; }
+.removal-recovery-label { flex: 1; min-width: 0; }
+.removal-recovery-label > span { display: block; color: var(--muted); font-size: 11px; line-height: 1.5; }
+#removal-recovery-short-title { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.removal-recovery button { min-height: 44px; font-size: 12px; }
+#undo-removal { padding: 8px 10px; flex-shrink: 0; color: var(--accent); }
+#removal-recovery-limit { margin: 6px 0 0; font-size: 12px; line-height: 1.65; }
+#removal-recovery-details > summary { min-height: 44px; font-size: 12px; }
+.removal-recovery-actions { display: grid; gap: 8px; max-height: 36dvh; overflow-y: auto; padding: 6px 6px 12px; margin: 0 -6px; }
+.removal-recovery-actions .hint { margin: 0 0 4px; font-size: 12px; }
+#removal-recovery-error, #removal-export-error { margin: 8px 0 0; color: #a13930; font-size: 12px; line-height: 1.65; }
+@media (max-width:650px) {
+ .removal-recovery { grid-column: 1 / -1; margin: 0; padding: 8px 12px 0; }
+ .removal-recovery-heading { justify-content: start; }
+ #undo-removal { margin-left: auto; }
+ #removal-recovery-limit { margin-top: 2px; }
+ #library-list:has(~ .removal-recovery:not([hidden])) { max-height: 32dvh; }
+}
 #remove-document-dialog, #finish-removal-dialog { max-width: min(480px, calc(100vw - 32px)); }
 #remove-document-dialog p, #finish-removal-dialog p { overflow-wrap: anywhere; }
 
