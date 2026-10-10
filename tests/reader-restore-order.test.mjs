@@ -19,7 +19,7 @@ function setup(){
  };
  const library=()=>JSON.parse(w.localStorage.getItem(KEY)||'{"documents":[]}');
  const backup=title=>({format:'coconut-library',version:1,active:title,documents:[{...w.Coconut.validate(source(title)),key:title}]});
- const open=title=>[...$('library').querySelectorAll('button')].find(button=>button.querySelector('.library-title').textContent===title).click();
+ const open=title=>[...$('library').querySelectorAll('.library-open')].find(button=>button.querySelector('.library-title').textContent===title).click();
  return {w,$,choose,library,backup,open};
 }
 

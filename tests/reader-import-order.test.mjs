@@ -21,7 +21,7 @@ function setup(){
   Object.defineProperty(input,'files',{configurable:true,value:[{name,size:100,text}]});input.value=name;return input.onchange();
  };
  const library=()=>JSON.parse(w.localStorage.getItem(KEY)||'{"documents":[]}');
- const open=title=>[...$('library').querySelectorAll('button')].find(button=>button.querySelector('.library-title').textContent===title).click();
+ const open=title=>[...$('library').querySelectorAll('.library-open')].find(button=>button.querySelector('.library-title').textContent===title).click();
  return {w,$,input,choose,library,open};
 }
 function holdDigest(w){

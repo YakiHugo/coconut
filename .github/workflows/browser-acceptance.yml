@@ -34,6 +34,10 @@ jobs:
       - run: npm ci --ignore-scripts
       - run: npx playwright install --with-deps chromium
       - run: sudo apt-get update && sudo apt-get install -y ffmpeg fonts-noto-cjk
+      - name: Verify recoverable library removal and rescue downloads with authored data
+        env:
+          COCONUT_UI_SCREENSHOTS: ${{ runner.temp }}/coconut-authored-ui
+        run: node tests/library-removal-browser.mjs
       - name: Verify standalone Web reading without a Python service
         env:
           COCONUT_UI_SCREENSHOTS: ${{ runner.temp }}/coconut-authored-ui
@@ -60,6 +64,8 @@ jobs:
         env:
           COCONUT_UI_SCREENSHOTS: ${{ runner.temp }}/coconut-authored-ui
         run: node tests/playback-dock-browser.mjs
+      - name: Verify explicit listening resume with authored WAV and changed media
+        run: node tests/listening-progress-browser.mjs
       - name: Verify latest local-file selection and navigation ownership with authored files
         run: node tests/import-order-browser.mjs
       - name: Verify native reload protection after user activation with authored reading changes

@@ -206,7 +206,7 @@ test('reading position beyond first page survives reload, backup validation and 
   const $=id=>restored.document.getElementById(id);$('mode-transcript').click();$('resume').click();
   assert.equal(restored.document.activeElement.dataset.segmentId,'s150');assert.equal(restored.document.querySelectorAll('.segment').length,100);
   await $('sample').onclick();$('library-search').value='Long';$('library-search').oninput();
-  assert.equal($('library').querySelectorAll('button').length,1);$('library').querySelector('button').click();
+  assert.equal($('library').querySelectorAll('.library-open').length,1);$('library').querySelector('button').click();
   for(let visit=0;visit<2;visit++){
    assert.equal($('passage-workspace').hidden,false);
    const passage=restored.document.activeElement;assert.ok(passage.classList.contains('passage'));
