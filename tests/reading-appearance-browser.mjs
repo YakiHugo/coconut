@@ -117,7 +117,8 @@ try{
  }
  // Preference changes never replace the media element, seek it, or start it.
  await page.locator('#toggle-reader-media').click();
- await page.locator('#reader-media-file').setInputFiles({name:'authored-tone.wav',mimeType:'audio/wav',buffer:authoredAudioFixture(180)});
+ const [mediaChooser]=await Promise.all([page.waitForEvent('filechooser'),page.locator('#attach-reader-media').click()]);
+ await mediaChooser.setFiles({name:'authored-tone.wav',mimeType:'audio/wav',buffer:authoredAudioFixture(180)});
  await page.waitForFunction(()=>{const p=document.querySelector('#source-media audio');return p&&p.readyState>=2&&p.duration===180;});
  await page.locator('#source-media audio').evaluate(p=>{window.appearancePlayer=p;p.currentTime=24;});
  await settings();await page.locator('#reading-theme').selectOption('light');await page.locator('#reading-theme').selectOption('dark');await closeSettings();
