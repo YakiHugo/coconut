@@ -38,7 +38,7 @@ try{
  await page.evaluate(()=>{for(const id of ['file','library-file']){const input=document.getElementById(id),handler=input.onchange;input.onchange=async event=>{await handler.call(input,event);window.importProbe.finished++;};}});
  const choose=(title,text=JSON.stringify(source(title)))=>page.locator('#file').setInputFiles({name:title+'.json',mimeType:'application/json',buffer:Buffer.from(text)});
  const finished=number=>page.waitForFunction(number=>window.importProbe.finished===number,number);
- const stored=()=>page.evaluate(key=>JSON.parse(localStorage.getItem(key)),KEY);
+ const stored = async () => {await page.evaluate(()=>libraryStore.flush());return page.evaluate(key=>JSON.parse(localStorage.getItem(key)),KEY);};
  const hold=()=>page.evaluate(()=>{window.importProbe.holdFingerprint=true;});
  const entered=()=>page.waitForFunction(()=>!!window.importProbe.releaseFingerprint);
  const release=()=>page.evaluate(()=>window.importProbe.releaseFingerprint());

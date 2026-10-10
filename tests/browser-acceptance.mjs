@@ -63,6 +63,7 @@ async function startServer(dataDir, port) {
 }
 
 async function storedDocument(page) {
+  await page.evaluate(()=>libraryStore.flush());
   return await page.evaluate(() => {
     const library = JSON.parse(localStorage.getItem('coconut-reader-v1') || 'null');
     return library?.documents.find(document => document.key === sessionStorage.getItem('coconut-reader-active-v1')) || null;

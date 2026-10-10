@@ -28,7 +28,9 @@ async function layout(t,kind,{boundary=true}={}) {
   await mkdir(app,{recursive:true});await mkdir(reader,{recursive:true});
   await writeFile(path.join(app,'package.json'),JSON.stringify({type:'module'}));
   for(const name of ['podcast-sources.mjs','public-http.mjs','podcast-xml.mjs','caption-service.mjs'])await copyFile(path.join(root,'desktop',name),path.join(app,name));
-  for(const name of ['core.js','summary.js',...(boundary?['package.json']:[])])await copyFile(path.join(root,'reader',name),path.join(reader,name));
+  const index=await readFile(path.join(root,'reader/index.html'),'utf8');
+  const scripts=[...index.matchAll(/<(?:script|link|img)\b[^>]*\b(?:src|href)="([^"]+)"/g)].map(match=>match[1].split('?')[0]);
+  for(const name of ['index.html',...new Set(scripts),...(boundary?['package.json']:[])])await copyFile(path.join(root,'reader',name),path.join(reader,name));
   return {app,reader};
 }
 async function loadReader({app,reader}) {
@@ -61,9 +63,17 @@ test('verification rejects wrong module type and missing reader dependencies',as
   await rm(path.join(fixture.reader,'summary.js'));
   await assert.rejects(verifyReaderResources(fixture.reader),/Cannot find module/);
 });
+test('verification rejects a missing page-declared save coordinator before packaging',async t=>{
+  const fixture=await layout(t,'extracted');
+  await rm(path.join(fixture.reader,'library-store.js'));
+  await assert.rejects(verifyReaderResources(fixture.reader),error=>error.code==='ENOENT'&&error.path.endsWith('library-store.js'));
+});
 test('packager stages the boundary and checks each output before signing; exact ZIP proof also verifies it',async()=>{
   const source=await readFile(path.join(root,'desktop/package.mjs'),'utf8');
   assert.match(source,/\['package.json','index.html','summary.js','core.js'/);
+  const index=await readFile(path.join(root,'reader/index.html'),'utf8');
+  const stagedNames=source.match(/for \(const name of (\['package.json','index.html'[^\]]+\])/)[1];
+  for(const [,src] of index.matchAll(/<(?:script|link|img)\b[^>]*\b(?:src|href)="([^"]+)"/g))assert.ok(stagedNames.includes("'"+src.split('?')[0]+"'"),'packager stages '+src);
   const staged=source.indexOf('await verifyReaderResources(reader)'),pack=source.indexOf('await packager('),output=source.indexOf('await verifyReaderResources(readerResources)'),sign=source.indexOf('await signDevelopmentBundle(');
   assert.ok(staged>=0&&staged<pack&&pack<output&&output<sign);
   const proof=await readFile(path.join(root,'tests/desktop-caption-helper-packaged-proof.mjs'),'utf8');

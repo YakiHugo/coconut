@@ -1,3 +1,4 @@
+import {installSavePipeline} from './helpers/save-pipeline.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -10,6 +11,7 @@ function setup(){
  const w=new Window({url:'https://coconut.example/'});
  w.document.body.innerHTML=fs.readFileSync(new URL('reader/index.html',root),'utf8').split('<body>')[1].split('</body>')[0];
  Object.defineProperty(w,'crypto',{configurable:true,value:webcrypto});w.fetch=()=>{throw new Error('Backups must stay local');};
+ installSavePipeline(w);
  w.eval(['summary','core','passages','passage-playback','app','language','podcasts'].map(name=>fs.readFileSync(new URL('reader/'+name+'.js',root),'utf8')).join('\n')+'\nwindow.replaceActiveForTest=()=>{state.documents=state.documents.map(doc=>doc.key===state.active?{...doc}:doc);};');
  const $=id=>w.document.getElementById(id);
  for(const id of ['file','library-file','project-transcript-file'])Object.defineProperty($(id),'value',{configurable:true,writable:true,value:''});
@@ -96,7 +98,7 @@ test('over-50 MiB whole-library export restores every note despite quota failure
   source.blockStorage();await source.w.add(source.w.Coconut.validate(oversizedDocument()));
   const exported=await source.download('export-library');assert.ok(Buffer.byteLength(exported)>50*MiB);assert.match(source.$('notice').textContent,/恢复时需要确认/);
   pending=target.choose(exported,{id:'library-file'});assert.equal(target.$('large-backup-dialog').open,true);target.$('continue-large-backup').click();await pending;
-  assert.equal(backing.getItem(KEY),saved);assert.equal(target.$('title').textContent,'含大笔记的完整备份');assert.equal(target.$('save-status').hidden,false);
+  assert.equal(backing.getItem(KEY),saved);assert.equal(target.$('title').textContent,'含大笔记的完整备份');assert.equal(target.$('save-status').dataset.state,'failed');
   const rescue=await target.download();assert.equal(JSON.parse(rescue).notes.cue.length,17600000);assert.equal(digest(JSON.parse(rescue).notes.cue),digest(JSON.parse(exported).documents[0].notes.cue));
   pending=target.choose(exported,{id:'library-file'});target.$('continue-large-backup').click();await pending;
   const again=JSON.parse(await target.download('export-library'));assert.equal(again.documents.length,2);assert.equal(again.documents[0].notes.cue,'Keep this private note');assert.equal(backing.getItem(KEY),saved);
@@ -143,7 +145,7 @@ test('audio-project JSON attachment above 15 MiB preserves annotations and a com
   await choose(JSON.stringify({project_kind:'audio_only',title:'My audio project',segments:[],podcast_source:{kind:'direct_media',media_url:'https://publisher.example/authored.mp3',media_kind:'audio'},project_note:'Keep project note',timestamp_bookmarks:[{id:'mark',time:2,note:'Keep bookmark'}]}));
   const old=w.localStorage.getItem(KEY),oldKey=w.sessionStorage.getItem('coconut-reader-active-v1'),backing=blockStorage();
   $('attach-project-transcript').click();await choose(JSON.stringify(chineseDocument()),{id:'project-transcript-file'});
-  assert.equal($('large-backup-dialog').open,false);assert.equal($('title').textContent,'My audio project');assert.equal(backing.getItem(KEY),old);assert.equal($('save-status').hidden,false);
+  assert.equal($('large-backup-dialog').open,false);assert.equal($('title').textContent,'My audio project');assert.equal(backing.getItem(KEY),old);assert.equal($('save-status').dataset.state,'failed');
   const exported=JSON.parse(await download());assert.equal(exported.key,oldKey);assert.equal(exported.segments.length,6001);assert.equal(exported.project_note,'Keep project note');assert.equal(exported.timestamp_bookmarks[0].note,'Keep bookmark');
   const restored=w.Coconut.parse(JSON.stringify(exported),'attachment.coconut.json');assert.equal(digest(JSON.stringify(restored)),digest(JSON.stringify(w.Coconut.validate(exported))));
  }finally{await w.happyDOM.close();}
@@ -182,7 +184,7 @@ for(const id of ['file','library-file'])test(`${id}: removal and undo while over
   await choose(JSON.stringify(annotatedDocument('Current document')));$('add-content').click();
   const payload=JSON.stringify(id==='library-file'?{format:'coconut-library',version:1,documents:[old],active:old.key}:old);let reads=0;
   pending=choose(payload,{id,size:50*MiB+1,read:async()=>{reads++;return payload;}});
-  const row=[...$('library').children].find(node=>node.dataset.documentKey===old.key);row.querySelector('.library-remove').click();$('confirm-removal').click();$('undo-removal').click();
+  const row=[...$('library').children].find(node=>node.dataset.documentKey===old.key);row.querySelector('.library-remove').click();await $('confirm-removal').onclick();await $('undo-removal').onclick();
   const restored=w.localStorage.getItem(KEY);assert.equal($('large-backup-dialog').open,true);
   $('continue-large-backup').click();await pending;assert.equal(reads,1);assert.equal(w.localStorage.getItem(KEY),restored);assert.match($('notice').textContent,/取消/);
   assert.equal(library().documents.find(doc=>doc.key===old.key).notes.cue,'Newer saved note');

@@ -66,9 +66,9 @@ try{
  check('ordinary_click_supplies_sticky_activation',await page.evaluate(()=>navigator.userActivation.hasBeenActive));
  stage='dirty_note_reload';
  await page.evaluate(key=>{const original=Storage.prototype.setItem;window.restoreStorageWrites=()=>{Storage.prototype.setItem=original;};Storage.prototype.setItem=function(name,value){if(this===localStorage&&name===key)throw new DOMException('Authored quota failure','QuotaExceededError');return original.call(this,name,value);};},KEY);
- await page.locator('#note').fill('Keep this unsaved authored note');await page.locator('#save-status').waitFor({state:'visible'});
+ await page.locator('#note').fill('Keep this unsaved authored note');await page.waitForFunction(()=>document.getElementById('save-status').dataset.state==='failed');
  await reload(page,true);check('dismissed_dirty_reload_keeps_note',await page.locator('#note').inputValue()==='Keep this unsaved authored note');
- stage='recovered_clean_reload';await page.evaluate(()=>window.restoreStorageWrites());await page.locator('#note').fill('Saved after retry');await page.locator('#save-status').waitFor({state:'hidden'});
+ stage='recovered_clean_reload';await page.evaluate(()=>window.restoreStorageWrites());await page.locator('#note').fill('Saved after retry');await page.waitForFunction(()=>document.getElementById('save-status').dataset.state==='saved');
  await reload(page,false);await page.locator('#mode-transcript').click();await page.locator('.note-button').click();check('successful_save_removes_prompt_and_survives_reload',await page.locator('#note').inputValue()==='Saved after retry');
  stage='unchanged_edit_dialog';await page.locator('#close-note').click();await openCueActions(page.locator('.segment').first());await page.locator('.edit-button').click();await reload(page,false);check('open_unchanged_dialog_has_no_prompt',true);
  stage='changed_edit_dialog';await page.locator('#mode-transcript').click();await openCueActions(page.locator('.segment').first());await page.locator('.edit-button').click();await page.locator('#edit-segment').fill('Unsaved authored correction');await reload(page,true);
@@ -100,9 +100,15 @@ try{
  await page.locator('#cancel-translation-glossary').click();await reload(page,false);check('canceling_glossary_restores_clean_reload',true);
  stage='two_tab_conflict';const other=await newPage();
  await page.locator('#mode-transcript').click();await page.locator('.note-button').click();await page.locator('#note').fill('Newer saved note in first tab');
+ // Note input queues a debounced write. Only its successful durable receipt
+ // can establish the bytes the stale second tab must leave untouched.
+ const receipt=await page.evaluate(()=>libraryStore.flush());
+ check('first_tab_note_has_a_successful_save_receipt',receipt.ok&&await page.locator('#save-status').getAttribute('data-state')==='saved');
  const disk=await page.evaluate(key=>localStorage.getItem(key),KEY);
+ const savedKey=await page.evaluate(()=>sessionStorage.getItem('coconut-reader-active-v1'));
+ check('first_tab_disk_contains_the_newer_saved_note',JSON.parse(disk).documents.find(doc=>doc.key===savedKey)?.notes['draft-cue']==='Newer saved note in first tab');
  await other.bringToFront();await other.locator('#mode-transcript').click();await other.locator('.note-button').click();await other.locator('#note').fill('Unsaved conflicting note in second tab');
- await other.locator('#save-status').waitFor({state:'visible'});await reload(other,true);
+ await other.waitForFunction(()=>document.getElementById('save-status').dataset.state==='failed');await reload(other,true);
  check('conflict_reload_dismiss_preserves_both_versions',await other.locator('#note').inputValue()==='Unsaved conflicting note in second tab'&&await other.evaluate(key=>localStorage.getItem(key),KEY)===disk);
  check('no_external_requests_mutations_or_page_errors',external===0&&mutations===0&&pageErrors===0);
  console.log(JSON.stringify({suite:'reader-unsaved-unload',status:'passed',checks}));

@@ -54,11 +54,13 @@ try{
  stage='decode_publisher_audio';await page.waitForFunction(()=>{const a=document.querySelector('#source-media audio');return a&&!a.error&&a.duration>0&&a.readyState>=2;});check('media_download_is_explicit',calls.join(',')==='discover,import,media');
  stage='seek_downloaded_publisher_audio';await page.locator('.segment[data-segment-id="two"] .time > button').first().click();await page.waitForFunction(()=>document.querySelector('audio').currentTime>2.1);check('downloaded_audio_decodes_and_seeks',true);
  await page.locator('audio').evaluate(a=>a.pause());await page.locator('.segment[data-segment-id="two"] .note-button').click();await page.locator('#note').fill('Browser source note');await page.locator('#close-note').click();
+ await page.evaluate(()=>libraryStore.flush());
  const saved=await page.evaluate(()=>JSON.parse(localStorage.getItem('coconut-reader-v1')).documents[0]);check('source_and_notes_saved',saved.podcast_source.episode_id===source.episode_id&&saved.notes.two==='Browser source note');
  await page.reload();await page.locator('#mode-transcript').click();check('media_requires_explicit_reload',await page.locator('#source-media audio').count()===0);check('no_hidden_or_external_requests',calls.join(',')==='discover,import,media'&&external===0&&errors===0);
 
  stage='save_no_transcript_project';await page.locator('#add-content').click();await page.locator('#video-url').fill(source.feed_url);await page.locator('#process-url').click();await page.locator('.podcast-episode').nth(1).locator('button').first().click();await page.locator('#audio-project').waitFor({state:'visible'});
  check('audio_project_has_no_fake_summary',await page.locator('#summary-workspace').isHidden()&&await page.locator('#language-panel').isHidden()&&await page.locator('#transcript-layout').isHidden());
+ await page.evaluate(()=>libraryStore.flush());
  const noTextSaved=await page.evaluate(()=>{const s=JSON.parse(localStorage.getItem('coconut-reader-v1'));return s.documents.find(d=>d.key===sessionStorage.getItem('coconut-reader-active-v1'));});
  check('audio_project_source_saved_without_download',noTextSaved.project_kind==='audio_only'&&noTextSaved.segments.length===0&&noTextSaved.ai_answers.length===0&&calls.filter(c=>c==='media').length===1);
  await page.locator('#project-note').fill('浏览器验收项目笔记');await page.locator('#audio-bookmark-time').fill('00:02');await page.locator('#audio-bookmark-note').fill('这里需要回听核对');await page.locator('#audio-bookmark-form button[type=submit]').click();

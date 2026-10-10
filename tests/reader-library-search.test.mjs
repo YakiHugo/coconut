@@ -1,3 +1,4 @@
+import {installSavePipeline} from './helpers/save-pipeline.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -14,6 +15,7 @@ function setup() {
  w.eval(fs.readFileSync(new URL('reader/core.js',root),'utf8'));
  w.eval(fs.readFileSync(new URL('reader/passages.js',root),'utf8'));
  w.eval(fs.readFileSync(new URL('reader/passage-playback.js',root),'utf8'));
+ installSavePipeline(w);
  w.eval(['app','language','podcasts'].map(name=>fs.readFileSync(new URL('reader/'+name+'.js',root),'utf8')).join('\n'));
  w.HTMLElement.prototype.scrollIntoView=function(options){w.scrolled=this.dataset.segmentId;w.lastScrollOptions=options;};
  return {w,$:id=>w.document.getElementById(id),calls};

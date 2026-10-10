@@ -1,3 +1,4 @@
+import {installSavePipeline} from './helpers/save-pipeline.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -11,6 +12,7 @@ async function setup(handler,stored){
  const w=new Window({url:'http://127.0.0.1:8080/'});w.document.body.innerHTML=fs.readFileSync(new URL('reader/index.html',root),'utf8').split('<body>')[1].split('</body>')[0];Object.defineProperty(w,'crypto',{value:webcrypto});
  if(stored!==undefined)w.localStorage.setItem('coconut-reader-v1',stored);
  const calls=[];w.fetch=async(url,options)=>{calls.push({url,options});return url==='api/health'?{ok:true,json:async()=>({local_worker:false,capabilities:{local_agents:true,podcast_import:true,media_import:false}})}:handler(url,options);};
+ installSavePipeline(w);
  w.eval(['summary','core','passages','passage-playback','app','language','podcasts','jobs'].map(name=>fs.readFileSync(new URL('reader/'+name+'.js',root),'utf8')).join('\n'));
  w.URL.createObjectURL=()=> 'blob:http://127.0.0.1:8080/local-media';w.URL.revokeObjectURL=()=>{};
  await new Promise(resolve=>setTimeout(resolve,20));return {w,calls,$:id=>w.document.getElementById(id)};
@@ -158,8 +160,9 @@ test('timestamp bookmarks validate input and can be edited or removed without lo
   $('audio-bookmark-time').value='NaN';await $('audio-bookmark-form').onsubmit({preventDefault(){}});assert.match($('audio-project-status').textContent,/有效/);
   $('audio-bookmark-time').value='12';await $('audio-bookmark-form').onsubmit({preventDefault(){}});
   const note=$('audio-bookmarks').querySelector('textarea');note.value='Revised';note.dispatchEvent(new w.Event('input'));
+  assert.equal($('save-status').dataset.state,'pending');assert.equal((await w.flushContentForTest()).ok,true);
   assert.equal(JSON.parse(w.localStorage.getItem('coconut-reader-v1')).documents[0].timestamp_bookmarks[0].note,'Revised');
-  $('audio-bookmarks').querySelectorAll('button')[1].click();const doc=JSON.parse(w.localStorage.getItem('coconut-reader-v1')).documents[0];assert.equal(doc.timestamp_bookmarks.length,0);assert.equal(doc.project_note,'Keep');
+  $('audio-bookmarks').querySelectorAll('button')[1].click();assert.equal((await w.flushContentForTest()).ok,true);const doc=JSON.parse(w.localStorage.getItem('coconut-reader-v1')).documents[0];assert.equal(doc.timestamp_bookmarks.length,0);assert.equal(doc.project_note,'Keep');
  }finally{await w.happyDOM.close();}
 });
 test('importing a changed audio JSON backup preserves both versions instead of silently reusing source identity',async()=>{
@@ -206,6 +209,7 @@ test('audio note edits and added bookmarks reject aggregate overflow before muta
   assert.equal(w.localStorage.getItem('coconut-reader-v1'),before);assert.equal($('audio-bookmark-note').value,'one more');
   $('project-note').value='p'.repeat(99);$('project-note').dispatchEvent(new w.Event('input'));
   note.value='x'.repeat(10000);note.dispatchEvent(new w.Event('input'));
+  assert.equal((await w.flushContentForTest()).ok,true);
   const saved=JSON.parse(w.localStorage.getItem('coconut-reader-v1')).documents[0];assert.equal(saved.project_note.length,99);assert.equal(saved.timestamp_bookmarks[0].note.length,10000);
  }finally{await w.happyDOM.close();}
 });
@@ -233,8 +237,8 @@ test('audio bookmark time correction validates, reorders and retains its saved n
  const {w,$}=await setup(()=>response({}));try{
   await importDocument(w,{project_kind:'audio_only',title:'Audio',podcast_source:source,segments:[],timestamp_bookmarks:[{id:'first',time:10,note:'keep me'},{id:'second',time:20,note:'next'}]});
   let row=$('audio-bookmarks').querySelector('.audio-bookmark');row.querySelector('.edit-bookmark-time').click();
-  let form=row.querySelector('form');form.querySelector('input').value='nonsense';form.onsubmit({preventDefault(){}});assert.match(form.textContent,/未改变/);
-  form.querySelector('input').value='0:30';form.onsubmit({preventDefault(){}});
+  let form=row.querySelector('form');form.querySelector('input').value='nonsense';await form.onsubmit({preventDefault(){}});assert.match(form.textContent,/未改变/);
+  form.querySelector('input').value='0:30';await form.onsubmit({preventDefault(){}});
   const saved=JSON.parse(w.localStorage.getItem('coconut-reader-v1')).documents[0];assert.deepEqual(saved.timestamp_bookmarks.map(b=>b.id),['second','first']);assert.equal(saved.timestamp_bookmarks[1].note,'keep me');assert.equal(saved.timestamp_bookmarks[1].time,30);
   assert.equal(w.document.activeElement.closest('.audio-bookmark').dataset.bookmarkId,'first');
   row=[...$('audio-bookmarks').children].at(-1);row.querySelector('.edit-bookmark-time').click();form=row.querySelector('form');form.querySelector('input').value='40';form.querySelector('[type="button"]').click();assert.equal(JSON.parse(w.localStorage.getItem('coconut-reader-v1')).documents[0].timestamp_bookmarks[1].time,30);
@@ -255,7 +259,7 @@ test('editing a filtered timestamp restores focus to bookmark search when the ro
  const {w,$}=await setup(()=>response({}));try{
   await importDocument(w,{project_kind:'audio_only',title:'Audio',podcast_source:source,segments:[],timestamp_bookmarks:[{id:'a',time:10,note:'Keep'}]});
   $('audio-bookmark-search').value='00:10';$('audio-bookmark-search').oninput();
-  const row=$('audio-bookmarks').querySelector('.audio-bookmark');row.querySelector('.edit-bookmark-time').click();const form=row.querySelector('form');form.querySelector('input').value='20';form.onsubmit({preventDefault(){}});
+  const row=$('audio-bookmarks').querySelector('.audio-bookmark');row.querySelector('.edit-bookmark-time').click();const form=row.querySelector('form');form.querySelector('input').value='20';await form.onsubmit({preventDefault(){}});
   assert.equal($('audio-bookmarks').querySelectorAll('.audio-bookmark').length,0);assert.equal(w.document.activeElement,$('audio-bookmark-search'));
   assert.equal(JSON.parse(w.localStorage.getItem('coconut-reader-v1')).documents[0].timestamp_bookmarks[0].note,'Keep');
  }finally{await w.happyDOM.close();}
@@ -275,7 +279,7 @@ test('explicit transcript attachment keeps one project, loaded media, notes and 
   assert.equal(shelf.documents.length,1);assert.equal(w.sessionStorage.getItem('coconut-reader-active-v1'),key);assert.equal(doc.title,'Retain my title');assert.equal(doc.segments[0].text,'Publisher words');assert.equal(doc.project_note,'PRIVATE PROJECT NOTE');assert.equal(doc.timestamp_bookmarks[0].id,'saved-mark');
   assert.equal($('source-media').querySelector('audio'),player);assert.equal($('audio-project').hidden,false);assert.equal($('transcript-layout').hidden,false);assert.equal($('language-panel').hidden,false);assert.equal($('export-notebook').disabled,false);assert.equal($('attach-project-transcript').hidden,true);assert.equal($('summary-state').textContent,'未生成');
   assert.equal(calls.filter(c=>c.url.endsWith('/media')).length,1);assert.equal(calls.filter(c=>/ask|translate/.test(c.url)).length,0);
-  $('project-note').value='Updated after attachment';$('project-note').oninput();stored=w.localStorage.getItem('coconut-reader-v1');
+  $('project-note').value='Updated after attachment';$('project-note').oninput();assert.equal((await w.flushContentForTest()).ok,true);stored=w.localStorage.getItem('coconut-reader-v1');
  }finally{await w.happyDOM.close();}
  const restored=await setup(()=>response({}),stored);try{
   restored.$('mode-transcript').click();assert.equal(restored.$('project-note').value,'Updated after attachment');assert.equal(restored.w.document.querySelector('#audio-bookmarks textarea').value,'PRIVATE BOOKMARK');assert.equal(restored.$('source-media').querySelector('audio'),null);
@@ -391,7 +395,7 @@ test('episode filters cannot unlock an in-flight import and single-episode resul
 test('removed and undone audio project rejects its earlier publisher transcript request',async()=>{
  let release;const {w,$}=await setup(()=>new Promise(resolve=>{release=()=>resolve(response({status:'ready',document:documentFixture}));}));try{
   await importDocument(w,originalAudioProject());const before=w.localStorage.getItem('coconut-reader-v1');const pending=$('fetch-project-transcript').onclick();
-  w.document.querySelector('.library-remove').click();$('confirm-removal').click();$('undo-removal').click();release();await pending;
+  w.document.querySelector('.library-remove').click();await $('confirm-removal').onclick();await $('undo-removal').onclick();release();await pending;
   assert.equal(w.localStorage.getItem('coconut-reader-v1'),before);assert.match($('audio-project-status').textContent,/取消|原声|书签|项目/);
  }finally{release?.();await w.happyDOM.close();}
 });

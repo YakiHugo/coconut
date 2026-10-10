@@ -114,8 +114,8 @@ function renderJobs(jobs) {
    if (job.status === "done") replacement.append(jobButton("打开阅读", async () => {
     const revision=documentLifecycleRevision;
     const doc = Coconut.validate(await jobApi("jobs/" + job.id + "/result"));
-    await add(doc,null,false,revision);
-    $("title").scrollIntoView({ behavior: "smooth" });
+    const receipt=await add(doc,null,false,revision);
+    if(active()===receipt.identity&&contentIngressAllowed(receipt.identity)){if(!receipt.ok)notice("文字稿已在本页打开，尚未保存，请导出备份。");$("title").scrollIntoView({ behavior: "smooth" });}
    }, job.id, "open"));
    if (["queued", "running"].includes(job.status)) replacement.append(jobButton("取消", () => jobApi("jobs/" + job.id + "/cancel", jsonPost()), job.id, "cancel"));
    if (job.playback_retryable || ["failed", "cancelled", "interrupted"].includes(job.status)) replacement.append(jobButton(job.playback_retryable ? "重试本地视频" : "重试", () => jobApi("jobs/" + job.id + "/retry", jsonPost()), job.id, "retry"));
@@ -255,7 +255,7 @@ async function importVideoCaptions(url) {
    return;
   }
   const persisted=await add(Coconut.validate(result.document),current,false,revision);
-  if(persisted)notice('原语言字幕已保存。尚未经人工核对；摘要需单独确认，时间戳可回到原站。未下载媒体或运行识别。');
+  if(persisted.ok&&sourceCaptionRequest===controller&&!controller.signal.aborted&&active()===persisted.identity&&contentIngressAllowed(persisted.identity))notice('原语言字幕已保存。尚未经人工核对；摘要需单独确认，时间戳可回到原站。未下载媒体或运行识别。');
  }catch(error){if(sourceCaptionRequest===controller)$('source-route-status').textContent=controller.signal.aborted?'已取消获取字幕，书架保留。':error.message;}
  finally{if(sourceCaptionRequest===controller){sourceCaptionRequest=null;sourceCaptionURL=null;$('cancel-source').hidden=true;$('process-url').disabled=false;}}
 }

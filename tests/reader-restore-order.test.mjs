@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import {webcrypto} from 'node:crypto';
 import {Window} from 'happy-dom';
+import {installSavePipeline,settle} from './helpers/save-pipeline.mjs';
 
 const root=new URL('../',import.meta.url),KEY='coconut-reader-v1';
 const source=title=>({title,language:'en',segments:[{id:'cue',start:0,end:4,text:'Authored source for '+title}],notes:{cue:'Private note for '+title}});
@@ -11,6 +12,7 @@ function setup(){
  const w=new Window({url:'https://coconut.example/'});
  w.document.body.innerHTML=fs.readFileSync(new URL('reader/index.html',root),'utf8').split('<body>')[1].split('</body>')[0];Object.defineProperty(w,'crypto',{value:webcrypto});
  w.fetch=()=>{throw new Error('Local import and restore must not send a network request');};
+ installSavePipeline(w);
  w.eval(['summary','core','passages','passage-playback','app','language','podcasts'].map(name=>fs.readFileSync(new URL('reader/'+name+'.js',root),'utf8')).join('\n'));
  const $=id=>w.document.getElementById(id);
  for(const id of ['file','library-file'])Object.defineProperty($(id),'value',{configurable:true,writable:true,value:''});

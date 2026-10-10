@@ -19,7 +19,13 @@ test('startup, assets and health are passive; declared capabilities match runtim
   const health = await (await fetch(origin+'/api/health')).json();
   assert.equal(health.local_worker,false); assert.equal(health.runtime,'desktop-bridge');
   assert.equal(health.capabilities.local_agents,true); assert.equal(health.capabilities.media_import,false); assert.equal(health.capabilities.local_translation,false);
-  const page = await fetch(origin+'/'); assert.equal(page.status,200); assert.match(await page.text(),/Coconut/);
+  const page = await fetch(origin+'/'); assert.equal(page.status,200); const index=await page.text(); assert.match(index,/Coconut/);
+  for(const [,src] of index.matchAll(/<(?:script|link|img)\b[^>]*\b(?:src|href)="([^"]+)"/g)){
+    const script=await fetch(origin+'/'+src);assert.equal(script.status,200,'index-declared asset '+src);const payload=await script.arrayBuffer();
+    const head=await fetch(origin+'/'+src,{method:'HEAD'});assert.equal(head.status,200);assert.equal(head.headers.get('content-type'),script.headers.get('content-type'));
+    assert.equal((await head.arrayBuffer()).byteLength,0);
+    if(src.startsWith('library-store.js'))assert.match(Buffer.from(payload).toString('utf8'),/CoconutLibraryStore/);
+  }
   assert.equal((await fetch(origin+'/summary.js')).status,200);
   for(const name of ['passages.js','passage-playback.js','translation-review.js'])assert.equal((await fetch(origin+'/'+name)).status,200);
   assert.equal((await fetch(origin+'/updates.js')).status,200);

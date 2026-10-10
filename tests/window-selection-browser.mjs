@@ -16,7 +16,7 @@ const source = title => ({title, language:'en', segments:[
 const checks = [];
 let browser, server, stage = 'setup', external = 0, mutations = 0, pageErrors = 0;
 function check(name, value) { assert.ok(value, name); checks.push(name); }
-const stored = page => page.evaluate(key => localStorage.getItem(key), KEY);
+const stored = async page => {await page.evaluate(()=>libraryStore.flush());return page.evaluate(key => localStorage.getItem(key), KEY);};
 const selected = page => page.evaluate(key => sessionStorage.getItem(key), ACTIVE_KEY);
 const counts = page => page.evaluate(() => ({...window.selectionProbe}));
 const resetCounts = page => page.evaluate(() => {
@@ -112,7 +112,7 @@ async function restoreLibrary(page, download, doc) {
  await page.waitForFunction(() => document.getElementById('library-file').files.length === 0);
  await expectSelection(page, doc);
  assert.deepEqual(Object.keys(JSON.parse(await stored(page))), ['documents']);
- assert.equal(await page.locator('#save-status').isVisible(), false, 'restore must be durably saved');
+ assert.equal(await page.locator('#save-status').getAttribute('data-state'), 'saved', 'restore must be durably saved');
 }
 
 try {
@@ -170,10 +170,22 @@ try {
 
  const context = await newContext(), a = await newPage(context);
  stage = 'authored_imports_and_probe_calibration';
+ // Calibrate both shapes explicitly. The save coordinator needs only one
+ // envelope serialization per import; the removed dirty-array snapshot must
+ // remain detectable without requiring production to do that redundant work.
+ const calibrationBefore = await counts(a);
+ await a.evaluate(() => JSON.stringify({documents:[]}));
+ assert.deepEqual(await counts(a), {...calibrationBefore, librarySerializations:calibrationBefore.librarySerializations + 1}, 'the envelope hook must count exactly one serialization without a content write');
+ await a.evaluate(() => JSON.stringify([{segments:[]}]));
+ assert.deepEqual(await counts(a), {...calibrationBefore, librarySerializations:calibrationBefore.librarySerializations + 2}, 'the document-array hook must independently count exactly one serialization without a content write');
+ check('instrumentation_detects_envelope_and_document_array_serialization', true);
+ // Discard only the synthetic calibration, before any imports or navigation.
+ await resetCounts(a);
  const alpha = await importDocument(a, 'Window Alpha');
+ const alphaCounts = await counts(a);
  const beta = await importDocument(a, 'Window Beta');
  const initialCounts = await counts(a);
- check('instrumentation_detects_real_content_serialization_and_writes', initialCounts.librarySerializations >= 4 && initialCounts.contentWrites >= 2);
+ check('instrumentation_detects_real_content_serialization_and_writes', alphaCounts.librarySerializations >= 1 && alphaCounts.contentWrites >= 1 && initialCounts.librarySerializations > alphaCounts.librarySerializations && initialCounts.contentWrites > alphaCounts.contentWrites);
  check('explicit_import_selects_raw_window_key_and_content_omits_active', await selected(a) === beta.key);
 
  stage = 'legacy_startup_and_window_precedence';
@@ -200,7 +212,7 @@ try {
  assert.deepEqual(Object.keys(afterBSave), ['documents']);
  assert.equal(afterBSave.documents.find(doc => doc.key === beta.key).notes.cue, 'A saved note in window B after window A navigated.');
  const savedCounts = await counts(b);
- check('other_window_content_save_is_real_and_not_a_conflict', savedCounts.contentWrites > 0 && savedCounts.librarySerializations > 0 && !await b.locator('#save-status').isVisible());
+ check('other_window_content_save_is_real_and_not_a_conflict', savedCounts.contentWrites > 0 && savedCounts.librarySerializations > 0 && await b.locator('#save-status').getAttribute('data-state')==='saved');
  await cleanReload(a, alpha);
  await cleanReload(b, beta);
  check('both_windows_reload_their_own_selection_after_a_shared_content_save', await selected(a) === alpha.key && await selected(b) === beta.key);
@@ -251,7 +263,7 @@ try {
  const latestDisk = await stored(a);
  assert.equal(JSON.parse(latestDisk).documents.find(doc => doc.key === alpha.key).notes.cue, 'Newest disk note written by window A.');
  await b.locator('#note').fill('Temporary conflicting note kept in window B.');
- await b.locator('#save-status').waitFor({state:'visible'});
+ await b.waitForFunction(()=>document.getElementById('save-status').dataset.state==='failed');
  assert.match(await b.locator('#save-status').textContent(), /另一个页面|暂停/);
  assert.equal(await stored(b), latestDisk);
  await b.locator('#close-note').click();
@@ -259,14 +271,14 @@ try {
  await b.locator('.edit-button').first().click();
  await b.locator('#edit-segment').fill('Temporary authored transcript correction in window B.');
  await b.locator('#save-edit').click();
- check('genuine_content_conflict_keeps_latest_disk_and_visible_temporary_work', await stored(b) === latestDisk && await b.locator('#save-status').isVisible());
+ check('genuine_content_conflict_keeps_latest_disk_and_visible_temporary_work', await stored(b) === latestDisk && await b.locator('#save-status').getAttribute('data-state')==='failed');
  await navigate(b, a, beta, 'dirty_window_navigation_away_does_zero_library_work');
  await navigate(b, a, alpha, 'dirty_window_navigation_back_does_zero_library_work');
  const temporary = await downloadJSON(b);
  assert.equal(temporary.data.notes.cue, 'Temporary conflicting note kept in window B.');
  assert.equal(temporary.data.segments[0].text, 'Temporary authored transcript correction in window B.');
  assert.equal(temporary.data.segments[0].original_text, alpha.segments[0].text);
- check('actual_download_retains_temporary_note_and_correction_without_clearing_warning', await stored(b) === latestDisk && await b.locator('#save-status').isVisible());
+ check('actual_download_retains_temporary_note_and_correction_without_clearing_warning', await stored(b) === latestDisk && await b.locator('#save-status').getAttribute('data-state')==='failed');
  const latest = await downloadJSON(a);
  check('latest_disk_version_remains_independently_exportable', latest.data.notes.cue === 'Newest disk note written by window A.' && latest.data.segments[0].text === alpha.segments[0].text);
 

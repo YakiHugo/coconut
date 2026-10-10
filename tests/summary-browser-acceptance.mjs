@@ -32,12 +32,14 @@ try{
  check('no_summary_from_partial_work',await page.locator('#summary-body').textContent()==='');
  await firstStarted;await page.locator('#stop-summary').click();release();
  await page.waitForFunction(()=>document.querySelector('#ai-progress').textContent.includes('已停止后续请求'));
+ await page.evaluate(()=>libraryStore.flush());
  check('one_durable_batch_after_stop',requests.length===1&&await page.evaluate(()=>JSON.parse(localStorage.getItem('coconut-reader-v1')).documents[0].summary_job.results.length===1));
  await page.reload();await page.locator('#mode-summary').click();await page.locator('#prepare-summary').click();
  check('reload_does_not_resume',requests.length===1&&!(await page.locator('#ai-consent').isChecked())&&(await page.locator('#summary-plan').textContent()).includes('本次继续 13 次'));
  await page.locator('#check-ai').click();await page.locator('#ai-consent').check();await page.locator('#ask-ai').click();
  await page.waitForFunction(()=>document.querySelector('#summary-state').dataset.state==='current');
  check('all_source_batches_then_one_aggregate',requests.length===14&&requests.slice(0,13).flatMap(r=>r.segments).length===5001&&requests[13].segments.length===13);
+ await page.evaluate(()=>libraryStore.flush());
  const doc=await page.evaluate(()=>JSON.parse(localStorage.getItem('coconut-reader-v1')).documents[0]);
  check('final_has_full_source_and_original_citations',doc.summary_job===null&&doc.ai_answers[0].input_snapshot.segments.length===5001&&doc.ai_answers[0].citations.every(id=>fixture.segments.some(s=>s.id===id))&&doc.ai_answers[0].summary_process.batches===13);
  if(!await page.locator('#export-menu').evaluate(node=>node.open))await page.locator('#export-menu > summary').click();

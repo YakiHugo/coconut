@@ -1,3 +1,4 @@
+import {installSavePipeline} from './helpers/save-pipeline.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -14,6 +15,7 @@ function setup() {
  w.eval(fs.readFileSync(new URL('reader/core.js',root),'utf8'));
  w.eval(fs.readFileSync(new URL('reader/passages.js',root),'utf8'));
  w.eval(fs.readFileSync(new URL('reader/passage-playback.js',root),'utf8'));
+ installSavePipeline(w);
  w.eval(['app','language','podcasts'].map(name=>fs.readFileSync(new URL('reader/'+name+'.js',root),'utf8')).join('\n'));
  w.HTMLElement.prototype.scrollIntoView=function(options){w.scrolled=this.dataset.segmentId;w.lastScrollOptions=options;};
  return {w,$:id=>w.document.getElementById(id),calls};
@@ -76,7 +78,7 @@ test('removing an excerpt in context returns to a surviving result and keeps the
   await load($,fixture);$('filter-excerpts').click();row(w,'split-2').querySelector('.context-button').click();
   row(w,'split-2').querySelector('.excerpt-button').click();$('return-reading-results').click();
   assert.deepEqual(rows(w).map(r=>r.dataset.segmentId),['split-8']);assert.match($('notice').textContent,/相邻结果/);
-  assert.equal(w.document.activeElement.closest('.segment').dataset.segmentId,'split-8');assert.equal(stored(w)[0].segments[2].saved_excerpt,undefined);
+  assert.equal(w.document.activeElement.closest('.segment').dataset.segmentId,'split-8');assert.equal((await w.flushContentForTest()).ok,true);assert.equal(stored(w)[0].segments[2].saved_excerpt,undefined);
   row(w,'split-8').querySelector('.context-button').click();row(w,'split-8').querySelector('.excerpt-button').click();$('return-reading-results').click();
   assert.equal(rows(w).length,0);assert.equal(w.document.activeElement,$('search'));assert.match($('notice').textContent,/没有匹配/);
  }finally{await w.happyDOM.close();}
@@ -87,6 +89,7 @@ test('editing a searched cue keeps source correction and truthfully returns to e
   await load($);search($,'crossing-marker');row(w,'split-1750').querySelector('.context-button').click();
   row(w,'split-1750').querySelector('.edit-button').click();$('edit-segment').value='Corrected source wording.';$('save-edit').click();
   $('return-reading-results').click();assert.equal(rows(w).length,0);assert.equal($('search').value,'crossing-marker');
+  assert.equal((await w.flushContentForTest()).ok,true);
   assert.equal(stored(w)[0].segments[1750].text,'Corrected source wording.');assert.equal(stored(w)[0].readingPosition,'split-19');
  }finally{await w.happyDOM.close();}
 });
@@ -110,6 +113,7 @@ test('returning after deleting a note keeps notes filter and updated annotation'
   row(w,'split-3').querySelector('.context-button').click();row(w,'split-3').querySelector('.note-button').click();
   $('note').value='';$('note').oninput();$('return-reading-results').click();
   assert.equal(rows(w).length,0);assert.equal($('filter-notes').getAttribute('aria-pressed'),'true');assert.equal($('notes-panel').hidden,true);
+  assert.equal((await w.flushContentForTest()).ok,true);
   assert.equal(stored(w)[0].notes['split-3'],'');
  }finally{await w.happyDOM.close();}
 });

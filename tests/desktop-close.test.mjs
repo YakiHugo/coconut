@@ -60,3 +60,15 @@ test('timeout retires ownership before reporting, and late main results never fi
  commit.resolve(true);await Promise.resolve();assert.equal(finished,0);
  const update=lifecycle.begin('update');assert.equal(lifecycle.claim(update),true);lifecycle.retire(released);assert.equal(lifecycle.owns(update),true);
 });
+
+test('pending-only content attempts safe flush before any discard question',async()=>{
+ const write=deferred(),entered=deferred(),calls=[];
+ const c=createCloseCoordinator({inspect:()=>({safe:false,flushable:true,contentPending:1}),confirm:()=>assert.fail('pending content should be flushed before prompting'),commit:(mode)=>{calls.push(mode);entered.resolve();return write.promise;},finish:()=>calls.push('finish')});
+ const result=c.request();await entered.promise;assert.deepEqual(calls,['safe']);write.resolve(true);assert.equal(await result,true);assert.deepEqual(calls,['safe','finish']);
+});
+
+test('failed pending flush uses fresh failure details for the discard decision',async()=>{
+ let inspections=0;const calls=[];
+ const c=createCloseCoordinator({inspect:()=>++inspections===1?{safe:false,flushable:true,contentPending:1}:{safe:false,flushable:false,contentFailed:true,reasons:['quota']},confirm:snapshot=>{assert.equal(snapshot.contentFailed,true);assert.deepEqual(snapshot.reasons,['quota']);calls.push('prompt');return true;},commit:mode=>{calls.push(mode);return mode==='discard';},finish:()=>calls.push('finish')});
+ assert.equal(await c.request(),true);assert.deepEqual(calls,['safe','prompt','discard','finish']);assert.equal(inspections,2);
+});

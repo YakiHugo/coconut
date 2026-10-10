@@ -1,3 +1,4 @@
+import {installSavePipeline} from './helpers/save-pipeline.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -14,7 +15,8 @@ function setup(stored,desktop=false){
  w.addEventListener=(type,fn,...args)=>{if(type==='beforeunload')attached.add(fn);return add(type,fn,...args);};
  w.removeEventListener=(type,fn,...args)=>{if(type==='beforeunload')attached.delete(fn);return remove(type,fn,...args);};
  for(const file of ['summary','core','passages','passage-playback'])w.eval(fs.readFileSync(new URL(`reader/${file}.js`,root),'utf8'));
- w.eval(['app','language','podcasts'].map(file=>fs.readFileSync(new URL(`reader/${file}.js`,root),'utf8')).join('\n')+'\nwindow.draftTest={fixture(){active().project_note="";active().timestamp_bookmarks=[{id:"first",time:10,note:"Keep me"},{id:"second",time:20,note:"Other"}];state.documents.push({...JSON.parse(JSON.stringify(active())),key:"other",title:"Other document"});save();render();},switchDoc(other){selectActiveDocument(other?"other":state.documents[0].key);render();},plain(){const doc={...JSON.parse(JSON.stringify(active())),key:"plain",title:"Plain transcript"};delete doc.project_note;delete doc.timestamp_bookmarks;state.documents.push(doc);selectActiveDocument(doc.key);save();render();}};'+(desktop?'\nlet sourceSubmitting=false,sourceCaptionRequest=null;\n'+fs.readFileSync(new URL('reader/updates.js',root),'utf8'):''));
+ installSavePipeline(w);
+ w.eval(['app','language','podcasts'].map(file=>fs.readFileSync(new URL(`reader/${file}.js`,root),'utf8')).join('\n')+'\nwindow.draftTest={async fixture(){active().project_note="";active().timestamp_bookmarks=[{id:"first",time:10,note:"Keep me"},{id:"second",time:20,note:"Other"}];state.documents.push({...JSON.parse(JSON.stringify(active())),key:"other",title:"Other document"});await commitDocuments(state.documents);render();},switchDoc(other){selectActiveDocument(other?"other":state.documents[0].key);render();},async plain(){const doc={...JSON.parse(JSON.stringify(active())),key:"plain",title:"Plain transcript"};delete doc.project_note;delete doc.timestamp_bookmarks;state.documents.push(doc);selectActiveDocument(doc.key);await commitDocument(doc);render();}};'+(desktop?'\nlet sourceSubmitting=false,sourceCaptionRequest=null;\n'+fs.readFileSync(new URL('reader/updates.js',root),'utf8'):''));
  return {w,$:id=>w.document.getElementById(id),attached};
 }
 function unload(w){const event=new w.Event('beforeunload',{cancelable:true});w.dispatchEvent(event);return event.defaultPrevented;}
@@ -22,7 +24,7 @@ function input(w,node,value){node.value=value;node.dispatchEvent(new w.Event('in
 function note(w,text){w.document.querySelector('.segment .note-button').click();input(w,w.document.getElementById('note'),text);}
 test('clean, saved notes, and background work have no unload listener',async()=>{
  const {w,$,attached}=setup();try{
-  assert.equal(attached.size,0);await $('sample').onclick();note(w,'Saved now');
+  assert.equal(attached.size,0);await $('sample').onclick();note(w,'Saved now');assert.equal(attached.size,1);assert.equal(unload(w),true);assert.equal($('save-status').dataset.state,'pending');assert.equal((await w.flushContentForTest()).ok,true);
   assert.equal(attached.size,0);assert.equal(unload(w),false);
   w.eval('asking=true;translating=true;subscriptionTranslating=true');
   $('search').click();assert.equal(attached.size,0);assert.equal(unload(w),false);
@@ -33,15 +35,15 @@ test('failed note persistence protects unload and a successful retry removes pro
  const {w,$,attached}=setup();try{
   await $('sample').onclick();const backing=w.localStorage;let blocked=true;
   Object.defineProperty(w,'localStorage',{value:{getItem:k=>backing.getItem(k),setItem(k,v){if(blocked)throw new Error('quota');backing.setItem(k,v);}}});
-  note(w,'Unsaved note');assert.equal(attached.size,1);assert.equal(unload(w),true);assert.equal($('save-status').hidden,false);
-  blocked=false;input(w,$('note'),'Saved after retry');assert.equal(attached.size,0);assert.equal(unload(w),false);assert.equal($('save-status').hidden,true);
+  note(w,'Unsaved note');assert.equal((await w.flushContentForTest()).ok,false);assert.equal(attached.size,1);assert.equal(unload(w),true);assert.equal($('save-status').dataset.state,'failed');
+  blocked=false;input(w,$('note'),'Saved after retry');assert.equal((await w.flushContentForTest()).ok,true);assert.equal(attached.size,0);assert.equal(unload(w),false);assert.equal($('save-status').dataset.state,'saved');
  }finally{await w.happyDOM.close();}
 });
 test('stale-tab navigation alone stays clean, conflicting edits protect unload without overwriting disk',async()=>{
  const {w,$,attached}=setup();try{
   await $('sample').onclick();const external=JSON.parse(w.localStorage.getItem(key));external.documents[0].notes['demo-1']='Other tab';const disk=JSON.stringify(external);w.localStorage.setItem(key,disk);
   $('library').querySelector('button').click();assert.equal(attached.size,0);assert.equal(unload(w),false);
-  note(w,'This tab unsaved');assert.equal(attached.size,1);assert.equal(unload(w),true);assert.equal(w.localStorage.getItem(key),disk);assert.equal($('save-status').hidden,false);
+  note(w,'This tab unsaved');assert.equal((await w.flushContentForTest()).ok,false);assert.equal(attached.size,1);assert.equal(unload(w),true);assert.equal(w.localStorage.getItem(key),disk);assert.equal($('save-status').dataset.state,'failed');
  }finally{await w.happyDOM.close();}
 });
 for(const kind of ['edit','source','details'])test(`${kind} dialog guards changed values only and clears after cancel or save`,async()=>{
@@ -53,7 +55,7 @@ for(const kind of ['edit','source','details'])test(`${kind} dialog guards change
   const original=$(id).value;input(w,$(id),original+' changed');assert.equal(attached.size,1);assert.equal(unload(w),true);
   input(w,$(id),original);assert.equal(attached.size,0);
   input(w,$(id),'changed again');$(kind+'-dialog').close();await new Promise(resolve=>setTimeout(resolve,0));assert.equal(unload(w),false);assert.equal(attached.size,0);
-  open();input(w,$(id),kind==='source'?'https://www.youtube.com/watch?v=jNQXAC9IVRw':'Saved change');$('save-'+kind).click();await new Promise(resolve=>setTimeout(resolve,0));assert.equal(attached.size,0);assert.equal(unload(w),false);
+  open();input(w,$(id),kind==='source'?'https://www.youtube.com/watch?v=jNQXAC9IVRw':'Saved change');$('save-'+kind).click();assert.equal((await w.flushContentForTest()).ok,true);await new Promise(resolve=>setTimeout(resolve,0));assert.equal(attached.size,0);assert.equal(unload(w),false);
  }finally{await w.happyDOM.close();}
 });
 test('unreadable startup storage does not guard an empty page',async()=>{
@@ -65,13 +67,13 @@ test('Electron preload capability keeps the Web unload guard absent for draft an
   await $('sample').onclick();w.document.querySelector('.segment .edit-button').click();input(w,$('edit-segment'),'Uncommitted native draft');
   assert.equal(attached.size,0);assert.equal(unload(w),false);$('edit-dialog').close();
   const backing=w.localStorage;Object.defineProperty(w,'localStorage',{value:{getItem:k=>backing.getItem(k),setItem(){throw new Error('quota');}}});
-  note(w,'Native unsaved note');assert.equal($('save-status').hidden,false);assert.equal(attached.size,0);assert.equal(unload(w),false);
+  note(w,'Native unsaved note');assert.equal((await w.flushContentForTest()).ok,false);assert.equal($('save-status').dataset.state,'failed');assert.equal(attached.size,0);assert.equal(unload(w),false);
  }finally{await w.happyDOM.close();}
 });
 
 async function annotationFixture(w,$){
  await $('sample').onclick();
- w.draftTest.fixture();
+ await w.draftTest.fixture();
 }
 test('Web protects glossary drafts, including drafts on another document, and clears a reverted draft',async()=>{
  const {w,$,attached}=setup();try{
@@ -86,7 +88,7 @@ test('new timestamp drafts survive document switching and protect Web unload',as
   await annotationFixture(w,$);input(w,$('audio-bookmark-time'),'1:02');input(w,$('audio-bookmark-note'),'An unfinished thought');assert.equal(unload(w),true);
   w.draftTest.switchDoc(true);assert.equal($('audio-bookmark-time').value,'');assert.equal(unload(w),true);
   w.draftTest.switchDoc(false);assert.equal($('audio-bookmark-time').value,'1:02');assert.equal($('audio-bookmark-note').value,'An unfinished thought');
-  $('audio-bookmark-form').dispatchEvent(new w.Event('submit',{bubbles:true,cancelable:true}));assert.equal(unload(w),false);
+  $('audio-bookmark-form').dispatchEvent(new w.Event('submit',{bubbles:true,cancelable:true}));assert.equal(unload(w),true);assert.equal((await w.flushContentForTest()).ok,true);assert.equal(unload(w),false);
  }finally{await w.happyDOM.close();}
 });
 test('timestamp corrections survive search rerenders and navigation, while untouched edits and search stay clean',async()=>{
@@ -105,15 +107,15 @@ for(const desktop of [false,true])test(`${desktop?'Desktop':'Web'} shares draft 
  try{
   await annotationFixture(w,$);assert.equal(dirty(),false);
   input(w,$('translation-glossary'),'Word = 词');assert.equal(dirty(),true);$('cancel-translation-glossary').click();assert.equal(dirty(),false);
-  input(w,$('translation-glossary'),'Word = 词');$('save-translation-glossary').click();assert.equal(dirty(),false);
+  input(w,$('translation-glossary'),'Word = 词');$('save-translation-glossary').click();assert.equal(dirty(),true);assert.equal((await w.flushContentForTest()).ok,true);assert.equal(dirty(),false);
   input(w,$('translation-glossary'),'Bad line');$('save-translation-glossary').click();assert.equal(dirty(),true);$('cancel-translation-glossary').click();assert.equal(dirty(),false);
   input(w,$('audio-bookmark-note'),'Draft without time');assert.equal(dirty(),true);$('cancel-audio-bookmark').click();assert.equal(dirty(),false);
   $('audio-bookmarks').querySelector('.edit-bookmark-time').click();let form=$('audio-bookmarks').querySelector('form');input(w,form.querySelector('input'),'bad');assert.equal(dirty(),true);
   form.dispatchEvent(new w.Event('submit',{bubbles:true,cancelable:true}));assert.equal(dirty(),true);
   $('audio-bookmarks').querySelector('.edit-bookmark-time').click();assert.equal(form.querySelector('input').value,'bad');
   input(w,form.querySelector('input'),'0:10');assert.equal(dirty(),false);
-  input(w,form.querySelector('input'),'30');form.dispatchEvent(new w.Event('submit',{bubbles:true,cancelable:true}));assert.equal(dirty(),false);
-  input(w,$('project-note'),'Saved project note');input(w,$('audio-bookmarks').querySelector('textarea'),'Saved bookmark note');assert.equal(dirty(),false);
+  input(w,form.querySelector('input'),'30');form.dispatchEvent(new w.Event('submit',{bubbles:true,cancelable:true}));assert.equal(dirty(),true);assert.equal((await w.flushContentForTest()).ok,true);assert.equal(dirty(),false);
+  input(w,$('project-note'),'Saved project note');input(w,$('audio-bookmarks').querySelector('textarea'),'Saved bookmark note');assert.equal(dirty(),true);assert.equal((await w.flushContentForTest()).ok,true);assert.equal(dirty(),false);
   input(w,$('audio-bookmark-search'),'Saved');assert.equal(dirty(),false);
   input(w,$('ai-question'),'Unsubmitted question');assert.equal(dirty(),true);input(w,$('ai-question'),'');assert.equal(dirty(),false);
   if(desktop)assert.equal(attached.size,0);
@@ -135,19 +137,20 @@ for(const desktop of [false,true])test(`${desktop?'Desktop':'Web'} drafts surviv
  const {w,$}=setup(undefined,desktop);const dirty=()=>desktop?!w.coconutPrepareClose('inspect').safe:unload(w);
  try{
   await annotationFixture(w,$);input(w,$('audio-bookmark-time'),'9');$('audio-bookmarks').querySelector('.edit-bookmark-time').click();input(w,$('audio-bookmarks').querySelector('form input'),'44');
-  w.draftTest.plain();assert.equal($('audio-project').hidden,true);assert.equal(dirty(),true);w.draftTest.switchDoc(false);
+  await w.draftTest.plain();assert.equal($('audio-project').hidden,true);assert.equal(dirty(),true);w.draftTest.switchDoc(false);
   assert.equal($('audio-bookmark-time').value,'9');assert.equal($('audio-bookmarks').querySelector('form input').value,'44');
   const backing=w.localStorage;let blocked=true;Object.defineProperty(w,'localStorage',{value:{getItem:k=>backing.getItem(k),setItem(k,v){if(blocked)throw Error('quota');backing.setItem(k,v);}}});
   $('audio-bookmark-form').dispatchEvent(new w.Event('submit',{bubbles:true,cancelable:true}));
   const form=$('audio-bookmarks').querySelector('[data-bookmark-id="first"] form');form.dispatchEvent(new w.Event('submit',{bubbles:true,cancelable:true}));
-  assert.equal($('audio-bookmark-time').value,'');assert.equal(dirty(),true);assert.equal($('save-status').hidden,false);
-  blocked=false;input(w,$('project-note'),'Saved after retry');assert.equal(dirty(),false);assert.equal($('save-status').hidden,true);
+  assert.equal($('audio-bookmark-time').value,'');assert.equal(dirty(),true);assert.equal($('save-status').dataset.state,'pending');
+  assert.equal((await w.flushContentForTest()).ok,false);assert.equal(dirty(),true);assert.equal($('save-status').dataset.state,'failed');
+  blocked=false;input(w,$('project-note'),'Saved after retry');assert.equal((await w.flushContentForTest()).ok,true);assert.equal(dirty(),false);assert.equal($('save-status').dataset.state,'saved');
  }finally{await w.happyDOM.close();}
 });
 
-function removeFixture(w,$,key){
+async function removeFixture(w,$,key){
  const row=[...$('library').children].find(node=>node.dataset.documentKey===key);assert.ok(row);
- row.querySelector('.library-remove').click();$('confirm-removal').click();
+ row.querySelector('.library-remove').click();await $('confirm-removal').onclick();
 }
 for(const desktop of [false,true])test(`${desktop?'Desktop':'Web'} active removal and undo restore bookmark drafts with new callback ownership`,async()=>{
  const {w,$}=setup(undefined,desktop);const dirty=()=>desktop?!w.coconutPrepareClose('inspect').safe:unload(w);
@@ -155,8 +158,8 @@ for(const desktop of [false,true])test(`${desktop?'Desktop':'Web'} active remova
   await annotationFixture(w,$);const key=w.sessionStorage.getItem('coconut-reader-active-v1');
   input(w,$('translation-glossary'),'Restored = 恢复');input(w,$('audio-bookmark-time'),'8');input(w,$('audio-bookmark-note'),'Keep my unfinished bookmark');
   const row=$('audio-bookmarks').querySelector('[data-bookmark-id="first"]');row.querySelector('.edit-bookmark-time').click();const oldForm=row.querySelector('form');input(w,oldForm.querySelector('input'),'41');
-  removeFixture(w,$,key);assert.equal($('removal-recovery').hidden,false);assert.equal(dirty(),true);
-  $('undo-removal').click();assert.equal($('audio-bookmark-time').value,'8');assert.equal($('audio-bookmark-note').value,'Keep my unfinished bookmark');assert.equal($('audio-bookmarks').querySelector('[data-bookmark-id="first"] form input').value,'41');
+  await removeFixture(w,$,key);assert.equal($('removal-recovery').hidden,false);assert.equal(dirty(),true);
+  await $('undo-removal').onclick();assert.equal($('audio-bookmark-time').value,'8');assert.equal($('audio-bookmark-note').value,'Keep my unfinished bookmark');assert.equal($('audio-bookmarks').querySelector('[data-bookmark-id="first"] form input').value,'41');
   const disk=w.localStorage.getItem('coconut-reader-v1');row.querySelector('textarea').value='Late stale note';row.querySelector('textarea').oninput();oldForm.onsubmit({preventDefault(){}});row.querySelectorAll('button')[1].onclick();
   assert.equal(w.localStorage.getItem('coconut-reader-v1'),disk);assert.equal($('audio-bookmark-time').value,'8');assert.equal($('audio-bookmarks').querySelector('[data-bookmark-id="first"] form input').value,'41');
   assert.equal($('translation-glossary').value,'Restored = 恢复');$('cancel-translation-glossary').click();
@@ -168,8 +171,8 @@ for(const desktop of [false,true])test(`${desktop?'Desktop':'Web'} noncurrent re
  try{
   await annotationFixture(w,$);const key=w.sessionStorage.getItem('coconut-reader-active-v1');
   input(w,$('audio-bookmark-time'),'11');w.draftTest.switchDoc(true);input(w,$('audio-bookmark-note'),'Current unfinished note');input(w,$('translation-glossary'),'Current = 当前');
-  removeFixture(w,$,key);assert.equal($('audio-bookmark-note').value,'Current unfinished note');assert.equal($('translation-glossary').value,'Current = 当前');
-  $('undo-removal').click();assert.equal(w.sessionStorage.getItem('coconut-reader-active-v1'),'other');assert.equal($('audio-bookmark-note').value,'Current unfinished note');assert.equal($('translation-glossary').value,'Current = 当前');
+  await removeFixture(w,$,key);assert.equal($('audio-bookmark-note').value,'Current unfinished note');assert.equal($('translation-glossary').value,'Current = 当前');
+  await $('undo-removal').onclick();assert.equal(w.sessionStorage.getItem('coconut-reader-active-v1'),'other');assert.equal($('audio-bookmark-note').value,'Current unfinished note');assert.equal($('translation-glossary').value,'Current = 当前');
   $('cancel-audio-bookmark').click();$('cancel-translation-glossary').click();assert.equal(dirty(),true);
   w.draftTest.switchDoc(false);assert.equal($('audio-bookmark-time').value,'11');$('cancel-audio-bookmark').click();assert.equal(dirty(),false);
  }finally{await w.happyDOM.close();}
@@ -179,18 +182,18 @@ test('failed noncurrent removal retains hidden drafts and ending successful remo
   await annotationFixture(w,$);const key=w.sessionStorage.getItem('coconut-reader-active-v1');
   input(w,$('audio-bookmark-time'),'19');w.draftTest.switchDoc(true);
   const backing=w.localStorage;let blocked=true;Object.defineProperty(w,'localStorage',{value:{getItem:k=>backing.getItem(k),setItem(k,v){if(blocked)throw Error('quota');backing.setItem(k,v);}}});
-  removeFixture(w,$,key);assert.equal($('remove-document-dialog').open,true);$('cancel-removal').click();w.draftTest.switchDoc(false);assert.equal($('audio-bookmark-time').value,'19');
-  blocked=false;input(w,$('project-note'),'Saved retry');removeFixture(w,$,key);$('finish-removal').click();$('confirm-finish-removal').click();assert.equal(unload(w),false);
+  await removeFixture(w,$,key);assert.equal($('remove-document-dialog').open,false);assert.equal($('removal-recovery').hidden,true);assert.match($('notice').textContent,/移除未保存/);w.draftTest.switchDoc(false);assert.equal($('audio-bookmark-time').value,'19');
+  blocked=false;input(w,$('project-note'),'Saved retry');await removeFixture(w,$,key);$('finish-removal').click();$('confirm-finish-removal').click();assert.equal(unload(w),false);
  }finally{await w.happyDOM.close();}
 });
 test('failed undo retains its recovery drafts and leaves another document draft alone until retry',async()=>{
  const {w,$}=setup();try{
   await annotationFixture(w,$);const key=w.sessionStorage.getItem('coconut-reader-active-v1');
   input(w,$('audio-bookmark-time'),'12');input(w,$('translation-glossary'),'Recovered = 恢复');w.draftTest.switchDoc(true);input(w,$('audio-bookmark-note'),'Still editing the other document');
-  removeFixture(w,$,key);
+  await removeFixture(w,$,key);
   const backing=w.localStorage;let blocked=true;Object.defineProperty(w,'localStorage',{value:{getItem:k=>backing.getItem(k),setItem(k,v){if(blocked)throw Error('quota');backing.setItem(k,v);}}});
-  $('undo-removal').click();assert.equal($('removal-recovery').hidden,false);assert.equal($('audio-bookmark-note').value,'Still editing the other document');
-  blocked=false;$('undo-removal').click();assert.equal($('removal-recovery').hidden,true);assert.equal($('audio-bookmark-note').value,'Still editing the other document');
+  await $('undo-removal').onclick();assert.equal($('removal-recovery').hidden,false);assert.equal($('audio-bookmark-note').value,'Still editing the other document');
+  blocked=false;await $('undo-removal').onclick();assert.equal($('removal-recovery').hidden,true);assert.equal($('audio-bookmark-note').value,'Still editing the other document');
   w.draftTest.switchDoc(false);assert.equal($('audio-bookmark-time').value,'12');assert.equal($('translation-glossary').value,'Recovered = 恢复');
  }finally{await w.happyDOM.close();}
 });

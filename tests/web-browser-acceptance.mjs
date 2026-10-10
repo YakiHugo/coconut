@@ -119,6 +119,7 @@ try {
  const [download]=await Promise.all([page.waitForEvent('download'),page.locator('#export-summary').click()]);
  const exported=path.join(directory,'summary.md');await download.saveAs(exported);const markdown=await fs.readFile(exported,'utf8');
  check('summary_export_has_historical_input',markdown.includes('Audio and video stay in this browser')&&markdown.includes('播客摘要')&&markdown.includes('旧摘要可能过期'));
+ await page.evaluate(()=>libraryStore.flush());
  check('object_urls_never_persist',await page.evaluate(()=>!localStorage.getItem('coconut-reader-v1').includes('blob:')));
  await page.reload();await page.locator('#summary-workspace').waitFor({state:'visible'});
  check('refresh_keeps_summary_state',await page.locator('#summary-state').getAttribute('data-state')==='stale');
@@ -166,6 +167,7 @@ try {
   check(label+'_fragment_search_is_one_bilingual_result',await page.locator('.segment').count()===1&&await target.locator('.translation').count()===1);
   await target.locator('.context-button').click();
   check(label+'_context_shows_actual_adjacent_source',await page.locator('#reading-context').isVisible()&&await page.locator('.segment').count()<=100&&await page.locator('.segment[data-segment-id="split-1749"] .words').textContent()===split.segments[1749].text&&await page.locator('.segment[data-segment-id="split-1751"] .words').textContent()===split.segments[1751].text);
+  await page.evaluate(()=>libraryStore.flush());
   check(label+'_context_preserves_reading_bookmark',await page.evaluate(()=>{const s=JSON.parse(localStorage.getItem('coconut-reader-v1'));return s.documents.find(d=>d.key===sessionStorage.getItem('coconut-reader-active-v1')).readingPosition;})==='split-19');
   // Do not scroll from the test: the product jump itself must settle on the
   // intended fragment, not merely mount it somewhere in a 100-cue DOM window.

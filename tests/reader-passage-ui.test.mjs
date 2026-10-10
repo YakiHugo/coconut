@@ -1,3 +1,4 @@
+import {installSavePipeline} from './helpers/save-pipeline.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -11,6 +12,7 @@ function setup(saved){
  Object.defineProperty(w,'crypto',{value:webcrypto});if(saved)w.localStorage.setItem(key,saved);
  const calls=[];w.fetch=async(...args)=>{calls.push(args);throw new Error('Unexpected request');};
  for(const name of ['summary','core','passages','passage-playback'])w.eval(fs.readFileSync(new URL('reader/'+name+'.js',root),'utf8'));
+ installSavePipeline(w);
  w.eval(['app','language','podcasts'].map(name=>fs.readFileSync(new URL('reader/'+name+'.js',root),'utf8')).join('\n'));
  const $=id=>w.document.getElementById(id);w.HTMLElement.prototype.scrollIntoView=function(){w.lastScrolled=this;};
  return {w,$,calls,close:async()=>{w.dispatchEvent(new w.Event('pagehide'));await w.happyDOM.close();}};
@@ -65,6 +67,7 @@ test('cue details reuse existing editing and notes, then restore same source pas
   assert.equal($('passage-workspace').hidden,false);assert.equal($('passage-return-bar').hidden,true);assert.deepEqual(scroll,{x:0,y:-73});
   assert.equal(w.document.activeElement.closest('.passage').dataset.firstCueId,'split-0');
   assert.equal($('passage-body').querySelector('.passage-original [data-cue-id="split-1"]').textContent,'but we had initially left out');assert.ok($('passage-body').querySelector('[data-cue-id="split-1"][data-state="stale"]'));
+  assert.equal((await env.w.flushContentForTest()).ok,true);
   assert.equal(saved(env).notes['split-1'],'A source-linked observation');assert.equal(saved(env).readingPosition,'split-1');assert.equal(saved(env).segments.length,1771);
  }finally{await env.close();}
 });

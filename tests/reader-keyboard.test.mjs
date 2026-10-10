@@ -1,3 +1,4 @@
+import {installSavePipeline} from './helpers/save-pipeline.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -12,6 +13,7 @@ function setup({saved,enabled,native=false}={}){
  const calls=[];w.fetch=async(...args)=>{calls.push(args);throw new Error('No remote operation authorized');};
  w.HTMLElement.prototype.scrollIntoView=function(){w.lastScrolled=this;};
  if(native)w.coconutUpdates={state:async()=>({status:'idle',version:'test',arch:'arm64'}),subscribe:()=>{}};
+ installSavePipeline(w);
  w.eval(['summary','core','passages','passage-playback','app','language','podcasts'].map(name=>fs.readFileSync(new URL('reader/'+name+'.js',root),'utf8')).join('\n')+(native?'\nlet sourceSubmitting=false,sourceCaptionRequest=null;\n'+fs.readFileSync(new URL('reader/updates.js',root),'utf8'):''));
  const $=id=>w.document.getElementById(id);
  const press=(key,options={},target=w.document.activeElement)=>{const event=new w.KeyboardEvent('keydown',{key,bubbles:true,cancelable:true,...options});target.dispatchEvent(event);return event;};
@@ -70,7 +72,7 @@ test('editing, widgets, native media and sidebar focus keep their own character 
  for(const control of controls){control.focus();for(const key of ['j','k','l','g','/','?',' '])assert.equal(press(key).defaultPrevented,false,control.tagName+' '+key);}
  edit.focus();assert.equal(press('k',{},$('editing-child')).defaultPrevented,false);
  $('transcript').focus();w.document.body.setAttribute('contenteditable','true');assert.equal(press('k').defaultPrevented,false);w.document.body.removeAttribute('contenteditable');
- assert.equal(m.played,0);assert.equal(m.player.currentTime,40);assert.equal($('keyboard-help').open,false);assert.equal(saved(env).documents[0].notes['cue-2'],'jkl / ? g are my note');
+ assert.equal(m.played,0);assert.equal(m.player.currentTime,40);assert.equal($('keyboard-help').open,false);assert.equal((await w.flushContentForTest()).ok,true);assert.equal(saved(env).documents[0].notes['cue-2'],'jkl / ? g are my note');
  }finally{await env.close();}
 });
 
@@ -152,7 +154,7 @@ test('native close and inert locks reject body/document shortcuts until release'
  // A real final native-close approval owns the lock. Clearing only the DOM
  // attribute must not release readerClosing or allow a stale body event.
  Object.defineProperty($('file'),'files',{configurable:true,value:[]});
- const owner=env.request();assert.equal(w.coconutPrepareClose('safe',owner),true);assert.equal(w.document.body.inert,true);inertKeys();
+ const owner=env.request();assert.equal(await w.coconutPrepareClose('safe',owner),true);assert.equal(w.document.body.inert,true);inertKeys();
  w.document.body.inert=false;inertKeys();
  assert.equal(w.coconutPrepareClose('release',owner),true);
  for(const node of [w.document.body,$('reader-workspace')]){node.inert=true;inertKeys();node.inert=false;node.setAttribute('inert','');inertKeys();node.removeAttribute('inert');}
@@ -195,7 +197,7 @@ for(const preview of [false,true])test(`native close flush after keyboard use ${
  m.player.currentTime=70;press('k');press('k');assert.equal(checkpoint(env).time,70);
  if(preview){$('mode-passages').click();$('passage-body').querySelector('.passage-listen').click();await new Promise(resolve=>setImmediate(resolve));$('passage-body').focus();m.player.currentTime=8;press('k');}
  else m.player.currentTime=73;
- assert.equal(w.coconutPrepareClose('safe',env.request()),true);assert.equal(checkpoint(env).time,preview?70:73);
+ assert.equal(await w.coconutPrepareClose('safe',env.request()),true);assert.equal(checkpoint(env).time,preview?70:73);
  const time=m.player.currentTime,played=m.played;for(const target of [w.document,w.document.body])for(const key of ['j','k','g','?'])assert.equal(press(key,{},target).defaultPrevented,false);
  assert.equal(m.player.currentTime,time);assert.equal(m.played,played);assert.equal($('keyboard-help').open,false);
  }finally{await env.close();}

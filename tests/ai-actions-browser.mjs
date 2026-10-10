@@ -71,12 +71,14 @@ try{
  await select('question');check('switch_from_translation_revokes_consent',!await page.locator('#ai-consent').isChecked());await select('translation');await page.locator('#ai-consent').check();release();
  await page.waitForFunction(()=>document.getElementById('stop-subscription-translation').hidden);
  check('mode_roundtrip_does_not_restart_translation_batches',posts.length===beforeTranslation+1);
+ await page.evaluate(()=>libraryStore.flush());
  const translated=await page.evaluate(()=>{const s=JSON.parse(localStorage.getItem('coconut-reader-v1'));return s.documents.find(d=>d.key===sessionStorage.getItem('coconut-reader-active-v1')).segments.filter(c=>c.translations?.zh).length;});check('completed_translation_batch_remains_durable',translated===32);
  await importFixture(fixture('动作切换中止摘要 · 自写验收',801));await select('summary');await page.locator('#check-ai').click();await page.waitForFunction(()=>!document.getElementById('ask-ai').disabled);
  const beforeSummary=posts.length;holdSummary=true;await sendQuestion();await waitHeld();
  await select('question');check('switch_from_summary_revokes_consent',!await page.locator('#ai-consent').isChecked());await select('summary');await page.locator('#ai-consent').check();release();
  await page.waitForFunction(()=>document.getElementById('stop-summary').hidden);
  check('mode_roundtrip_does_not_restart_summary_batches',posts.length===beforeSummary+1);
+ await page.evaluate(()=>libraryStore.flush());
  check('stopped_summary_keeps_partial_work_without_final_claim',await page.evaluate(()=>{const s=JSON.parse(localStorage.getItem('coconut-reader-v1')),d=s.documents.find(d=>d.key===sessionStorage.getItem('coconut-reader-active-v1'));return d.summary_job?.results.length===1&&!d.ai_answers.some(a=>a.purpose==='summary');}));
  check('only_injected_requests_and_no_browser_errors',external===0&&errors===0&&providerCalls===posts.length);
  console.log(JSON.stringify({suite:'ai-actions-injected-provider',status:'passed',checks}));

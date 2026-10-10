@@ -857,3 +857,17 @@ body[data-media-docked="true"] .reading-feedback { bottom: 94px; }
 .translation-queue-preview { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
 #translation-queue-list { padding-left: 24px; }
 #translation-edit-error { color: #9a3412; }
+
+/* Save state shares existing header height; failures retain a clear full-width
+   warning and 44px recovery actions without hiding the reader's content. */
+#save-status-home {flex-shrink:0;}
+.save-pipeline {margin:0;padding:0;border:0;}
+.save-pipeline .save-warning {margin:0;background:transparent;border:0;padding:0;}
+.save-pipeline:not(.has-warning) .save-warning {white-space:nowrap;font-size:11px;line-height:1.4;}
+.save-warning[data-state="saved"] {color:var(--muted,#53645b);}
+.save-warning[data-state="pending"] {color:#735719;}
+.save-warning[data-state="failed"] {color:#8e3426;}
+.save-pipeline.has-warning {margin:12px 0;padding:12px 14px;border:1px solid #e6c889;border-radius:9px;background:#fff7e2;}
+.save-actions {display:flex;flex-wrap:wrap;gap:8px;}
+.save-actions:has(button:not([hidden])) {margin-top:8px;}
+.save-actions button {min-height:44px;}

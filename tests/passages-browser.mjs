@@ -48,6 +48,8 @@ async function importFixture(page, fixture, name = 'authored-fragmented-reading.
   await settled(page);
 }
 async function stored(page) {
+
+ await page.evaluate(()=>libraryStore.flush());
   return page.evaluate(() => {const shelf = JSON.parse(localStorage.getItem('coconut-reader-v1')); return shelf.documents.find(doc => doc.key === sessionStorage.getItem('coconut-reader-active-v1'));});
 }
 async function attachAudio(page, filename) {
@@ -436,6 +438,7 @@ try {
   await page.locator('audio').evaluate(player => {window.__replacedDocumentPlayer = player;});
   await importFixture(page, irregular, 'authored-replacement-document.json');
   check('document_replacement_cancels_old_playback_and_return_target', await page.evaluate(() => window.__replacedDocumentPlayer.paused && [...document.querySelectorAll('audio,video')].every(player => player.paused)) && await page.locator('#passage-playback-controls').isHidden());
+  await page.evaluate(()=>libraryStore.flush());
   check('passage_journey_has_no_upload_model_external_requests_or_browser_errors', external === 0 && mutations === 0 && browserErrors.length === 0 && await page.evaluate(() => !localStorage.getItem('coconut-reader-v1').includes('blob:')));
   console.log(JSON.stringify({suite: 'authored-passage-reading-listen-once', status: 'passed', checks, geometry}));
 } catch (error) {

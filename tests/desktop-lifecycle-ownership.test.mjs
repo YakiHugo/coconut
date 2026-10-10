@@ -36,10 +36,15 @@ function setup(t){
  w.document.body.innerHTML=read('reader/index.html').split('<body>')[1].split('</body>')[0];
  Object.defineProperty(w,'crypto',{value:{subtle:{digest:(...args)=>webcrypto.subtle.digest(...args)}}});
  w.coconutUpdates={state:async()=>({status:'idle',version:'test',arch:'arm64'}),subscribe:()=>{}};
- for(const file of ['summary','core','passages','passage-playback'])w.eval(read(`reader/${file}.js`));
- w.eval(['app','language','podcasts'].map(file=>read(`reader/${file}.js`)).join('\n')+'\nlet sourceSubmitting=false,sourceCaptionRequest=null;\n'+read('reader/updates.js')+'\nwindow.ownershipTest={closing:()=>readerClosing,revision:()=>localImportRevision,save};');
+ for(const file of ['summary','core','passages','passage-playback','library-store'])w.eval(read(`reader/${file}.js`));
+ const writes={held:false,pending:[]};const createAdapter=w.CoconutLibraryStore.createLegacyAdapter;
+ w.CoconutLibraryStore.createLegacyAdapter=options=>{const adapter=createAdapter(options);return {...adapter,write(value,context){
+  if(!writes.held)return adapter.write(value,context);
+  return new Promise(resolve=>writes.pending.push({signal:context.signal,settle:()=>resolve(adapter.write(value,context)),fail:()=>resolve({ok:false,status:'failed',error:{code:'quota'}})}));
+ }}};
+ w.eval(['app','language','podcasts'].map(file=>read(`reader/${file}.js`)).join('\n')+'\nlet sourceSubmitting=false,sourceCaptionRequest=null;\n'+read('reader/updates.js')+'\nwindow.ownershipTest={closing:()=>readerClosing,revision:()=>localImportRevision,save:()=>commitDocument(active()),flush:()=>libraryStore.flush(),status:()=>libraryStore.status()};');
  const shutdown=deferred(),stage=deferred(),start=deferred();
- let paused=false,holdNext=null,runtime,closeDecision=false,updateDecision=1;
+ let paused=false,holdNext=null,runtime,closeDecision=false,updateDecision=1,storageFlush=null;
  const classify=source=>source.includes('coconutPrepareClose')?source.match(/coconutPrepareClose\("([^"]+)"/)?.[1]:source.includes('coconutPrepareUpdate')?'update:'+source.match(/coconutPrepareUpdate\((true|false)/)?.[1]:'unknown';
  const execute=source=>{
   const mode=classify(source);trace.push('queue '+mode);
@@ -52,11 +57,12 @@ function setup(t){
  const closeRequests=[];
  const app={isPackaged:true,getVersion:()=> 'fixture',quit(){trace.push('app.quit');if(!runtime.quitReady)closeRequests.push(runtime.closeCoordinator.request());}};
  const dialog={showMessageBox:async(_window,options)=>{trace.push('dialog '+options.title);return {response:options.title==='安装 Coconut 更新'?updateDecision:options.title==='关闭 Coconut？'?(closeDecision?1:0):0};}};
- runtime=factory({window:{isDestroyed:()=>false,webContents:{executeJavaScript:execute,session:{flushStorageData(){trace.push('flushStorageData');}}}},app,updater,prepareInstall:()=>{trace.push('prepareInstall');return stage.promise;},dialog,path,process:{resourcesPath:'/Applications/Coconut.app/Contents/Resources',arch:'arm64'},createCloseCoordinator,createLifecycleOwnership:()=>createLifecycleOwnership({timeoutMs}),captionHelper:{shutdown(){trace.push('helper.shutdown');return shutdown.promise;}},server:{shutdown(){trace.push('server.shutdown');}}});
+ runtime=factory({window:{isDestroyed:()=>false,webContents:{executeJavaScript:execute,session:{flushStorageData(){trace.push('flushStorageData');return storageFlush?.promise;}}}},app,updater,prepareInstall:()=>{trace.push('prepareInstall');return stage.promise;},dialog,path,process:{resourcesPath:'/Applications/Coconut.app/Contents/Resources',arch:'arm64'},createCloseCoordinator,createLifecycleOwnership:()=>createLifecycleOwnership({timeoutMs}),captionHelper:{shutdown(){trace.push('helper.shutdown');return shutdown.promise;}},server:{shutdown(){trace.push('server.shutdown');}}});
  const install={async discard(){trace.push('install.discard');},start(){trace.push('install.start');return start.promise;}};
  const drain=async()=>{paused=false;while(queue.length){queue.shift().run();await turn();}};
  t.after(async()=>{stage.resolve(install);start.resolve();shutdown.resolve();await drain();await turn();await w.happyDOM.close();});
- return {w,$:id=>w.document.getElementById(id),trace,executions,queue,runtime,updater,stage,start,shutdown,install,closeRequests,
+ return {w,$:id=>w.document.getElementById(id),trace,executions,queue,runtime,updater,stage,start,shutdown,install,closeRequests,writes,
+  holdStorage(){return storageFlush=deferred();},
   result:()=>({inert:!!w.document.body.inert,closing:w.ownershipTest.closing(),quitting:runtime.quitting,quitReady:runtime.quitReady,status:updater.state.status}),
   freeze(){paused=true;},hold(mode){holdNext=mode;},drain,
   setCloseDecision(value){closeDecision=value;},setUpdateDecision(value){updateDecision=value;},
@@ -67,7 +73,7 @@ async function assertEditable(s,text){
  assert.equal(s.result().inert,false);assert.equal(s.result().closing,false);
  if(!s.w.document.querySelector('.note-button'))await s.$('sample').onclick();
  s.w.document.querySelector('.note-button').click();const note=s.$('note');note.value=text;note.dispatchEvent(new s.w.Event('input',{bubbles:true}));
- assert.ok(s.w.localStorage.getItem(key).includes(text),'visible note edit must actually persist');
+ await s.w.ownershipTest.flush();assert.ok(s.w.localStorage.getItem(key).includes(text),'visible note edit must actually persist');
 }
 
 test('staging failure cannot unlock accepted Cmd-Q during helper shutdown',async t=>{
@@ -77,7 +83,7 @@ test('staging failure cannot unlock accepted Cmd-Q during helper shutdown',async
  assert.deepEqual(s.result(),{inert:true,closing:true,quitting:true,quitReady:false,status:'installing'});
  s.stage.reject(Error('authored staging failure'));await update;await turn();
  assert.equal(s.result().inert,true);assert.equal(s.result().closing,true);
- assert.equal(s.w.ownershipTest.save(),false);assert.equal(s.result().quitReady,false);
+ assert.equal((await s.w.ownershipTest.save()).ok,false);assert.equal(s.result().quitReady,false);
  assert.equal(s.trace.includes('install.start'),false);assert.equal(s.trace.includes('app.quit'),false);
  s.shutdown.resolve();await until(()=>s.result().quitReady,'helper shutdown completion');
  assert.equal(s.trace.filter(event=>event==='app.quit').length,1);
@@ -169,4 +175,57 @@ test('successful final update flushes and quits once without a second native clo
  s.shutdown.resolve();await until(()=>s.result().quitReady,'final quit');
  assert.equal(s.trace.filter(event=>event==='app.quit').length,1);assert.equal(s.closeRequests.length,0);
  assert.equal(s.result().inert,true);assert.equal(s.result().closing,true);
+});
+
+function queueNote(s,text){s.w.document.querySelector('.note-button').click();s.$('note').value=text;s.$('note').dispatchEvent(new s.w.Event('input',{bubbles:true}));}
+test('pending-only native close waits for the real writer with no discard prompt or early DOM-storage flush',async t=>{
+ const s=setup(t);await s.$('sample').onclick();s.writes.held=true;queueNote(s,'Pending close reaches legacy storage');
+ const close=s.runtime.closeCoordinator.request();await until(()=>s.writes.pending.length===1,'native pending writer');
+ assert.equal(s.trace.includes('dialog 关闭 Coconut？'),false);assert.equal(s.trace.includes('flushStorageData'),false);assert.equal(s.result().closing,false);assert.equal(s.result().quitting,false);
+ assert.equal(s.runtime.closeCoordinator.request(),close,'repeated Cmd-Q shares the same pending receipt');
+ s.writes.pending[0].settle();assert.equal(await close,true);assert.match(s.w.localStorage.getItem(key),/Pending close reaches legacy storage/);
+ assert.equal(s.trace.filter(item=>item==='flushStorageData').length,1);assert.equal(s.trace.includes('dialog 关闭 Coconut？'),false);assert.equal(s.result().closing,true);
+});
+
+test('failed pending native write re-inspects and Cancel preserves memory and editing',async t=>{
+ const s=setup(t);await s.$('sample').onclick();s.writes.held=true;queueNote(s,'Failed native content stays visible');
+ const close=s.runtime.closeCoordinator.request();await until(()=>s.writes.pending.length===1,'failing native writer');s.writes.pending[0].fail();assert.equal(await close,false);await turn();
+ assert.equal(s.trace.filter(item=>item==='dialog 关闭 Coconut？').length,1);assert.equal(s.trace.includes('flushStorageData'),false);assert.equal(s.result().quitting,false);
+ assert.equal(s.$('note').value,'Failed native content stays visible');assert.equal(s.w.ownershipTest.status().blocked,false);
+ s.writes.held=false;await assertEditable(s,'Recovery edit after failed native flush');
+});
+
+test('native writer timeout releases ingress, and a late real receipt never closes the reader',async t=>{
+ const s=setup(t);await s.$('sample').onclick();s.writes.held=true;queueNote(s,'Late disk acknowledgement');
+ const close=s.runtime.closeCoordinator.request();await until(()=>s.writes.pending.length===1,'timed writer');s.expire();assert.equal(await close,false);
+ await until(()=>!s.w.ownershipTest.status().blocked,'matching renderer release');assert.equal(s.result().closing,false);
+ s.writes.pending[0].settle();await s.w.ownershipTest.flush();await turn();
+ assert.equal(s.result().quitting,false);assert.equal(s.result().closing,false);assert.equal(s.trace.includes('flushStorageData'),false);assert.equal(s.trace.includes('app.quit'),false);
+ s.writes.held=false;await assertEditable(s,'Writable after late acknowledgement');
+});
+
+test('DOM-storage timeout retires the same final owner and its late completion cannot quit',async t=>{
+ const s=setup(t);await s.$('sample').onclick();const storage=s.holdStorage(),close=s.runtime.closeCoordinator.request();
+ await until(()=>s.trace.includes('flushStorageData'),'held DOM-storage flush');assert.equal(s.result().closing,true);
+ s.expire();assert.equal(await close,false);await until(()=>!s.result().closing,'DOM-storage timeout release');
+ storage.resolve();await turn();assert.equal(s.result().quitting,false);assert.equal(s.trace.includes('app.quit'),false);await assertEditable(s,'Edit after DOM-storage timeout');
+});
+
+test('update flushes a staging-time edit behind its final barrier before installer start',async t=>{
+ const s=setup(t);await s.$('sample').onclick();const update=s.runtime.installUpdate();await until(()=>s.trace.includes('prepareInstall'),'staging');
+ s.writes.held=true;queueNote(s,'Edit made during update staging');s.stage.resolve(s.install);await until(()=>s.writes.pending.length===1,'update final writer');
+ assert.equal(s.trace.includes('install.start'),false);assert.equal(s.trace.includes('flushStorageData'),false);assert.equal(s.w.ownershipTest.status().blocked,true);assert.equal(s.result().closing,false);
+ assert.equal(await s.runtime.closeCoordinator.request(),false,'Cmd-Q cannot race the final update writer');
+ s.writes.pending[0].settle();await until(()=>s.trace.includes('install.start'),'installer after receipt');assert.match(s.w.localStorage.getItem(key),/Edit made during update staging/);
+ s.start.reject(Error('authored installer failure'));await update;await until(()=>!s.result().closing,'installer failure release');
+ assert.equal(s.w.ownershipTest.status().blocked,false);s.writes.held=false;await assertEditable(s,'Edit after held update and installer failure');
+});
+
+for(const failure of ['failure','timeout'])test(`staging-time content ${failure} never starts installation`,async t=>{
+ const s=setup(t);await s.$('sample').onclick();const update=s.runtime.installUpdate();await until(()=>s.trace.includes('prepareInstall'),'staging');
+ s.writes.held=true;queueNote(s,'Update timeout retains memory');s.stage.resolve(s.install);await until(()=>s.writes.pending.length===1,'timed update writer');
+ if(failure==='timeout')s.expire();else s.writes.pending[0].fail();await update;await until(()=>!s.w.ownershipTest.status().blocked,'update failure release');
+ assert.equal(s.trace.includes('install.start'),false);assert.equal(s.trace.includes('flushStorageData'),false);assert.equal(s.result().closing,false);assert.equal(s.result().status,'ready');
+ if(failure==='timeout'){s.writes.pending[0].settle();await s.w.ownershipTest.flush();await turn();}assert.equal(s.trace.includes('install.start'),false);
+ s.writes.held=false;await assertEditable(s,'Edit after failed update writer');
 });
