@@ -3,7 +3,7 @@
 import assert from 'node:assert/strict';
 import {createServer} from 'node:http';
 import fs from 'node:fs/promises';
-import {chromium} from './helpers/browser-storage.mjs';
+import {chromium, waitForPersistedLibrary} from './helpers/browser-storage.mjs';
 import {blankNote, writtenNote, readingMetadataFixture, audioMetadataFixture} from './helpers/reading-metadata-fixture.mjs';
 const root = new URL('../reader/', import.meta.url), KEY = 'coconut-reader-v1';
 const checks = []; let browser, server, stage = 'setup', external = 0, mutations = 0, errors = 0;
@@ -47,7 +47,7 @@ try {
   await page.locator('#export-menu > summary').click();
   return Buffer.concat(chunks).toString('utf8');
  }
- const active = async page => {await page.evaluate(async () =>libraryStore.flush());return page.evaluate(async key => {const state = (await readPersistedLibrary()); return state.documents.find(doc => doc.key === sessionStorage.getItem('coconut-reader-active-v1'));}, KEY);};
+ const active = async page => {return page.evaluate(async key => {const state = (await readPersistedLibrary()); return state.documents.find(doc => doc.key === sessionStorage.getItem('coconut-reader-active-v1'));}, KEY);};
  for (const width of [1360, 390]) {
   const page = await open(width), label = width === 390 ? 'mobile' : 'desktop';
   const fixture = readingMetadataFixture(); stage = label + '_overlap';
@@ -78,9 +78,19 @@ try {
   check(label + '_next_note_remains_clickable', await page.locator('#note-count').textContent() === '1' && await page.locator('.segment[data-segment-id="last"] .saved-note').textContent() === 'A different note');
   await page.locator('#mode-passages').click();
   check(label + '_passage_annotations_agree', await page.locator('.passage-annotation').count() === 2 && (await page.locator('.passage-annotation[data-cue-id="excerpt"]').textContent()).includes('已摘录原文'));
+  // Note rendering is immediate; reload only after the exact input generations
+  // have reached the selected durable backend, preserving raw Unicode and cues.
+  const persistedNotes = {...fixture.notes, noted: typedBlank, last: 'A different note'};
+  await waitForPersistedLibrary(page, async expected => {
+   const doc = (await readPersistedLibrary()).documents.find(doc => doc.key === expected.key);
+   return JSON.stringify(doc?.notes) === JSON.stringify(expected.notes) &&
+    JSON.stringify(doc?.segments.map(({id, start, end, text}) => ({id, start, end, text}))) === JSON.stringify(expected.cues);
+  }, {key: await page.evaluate(() => sessionStorage.getItem('coconut-reader-active-v1')), notes: persistedNotes,
+   cues: fixture.segments.map(({id, start, end, text}) => ({id, start, end, text}))});
   await page.reload(); await page.locator('#reader-workspace').waitFor({state: 'visible'});
   assert.equal((await active(page)).notes.wide, blankNote);
   assert.equal((await active(page)).notes.noted, typedBlank);
+  assert.deepEqual((await active(page)).notes, persistedNotes);
   assert.equal(await page.locator('#note-count').textContent(), '1');
   check(label + '_reload_preserves_presence_and_original_whitespace', true);
   stage = label + '_audio'; await choose(page, audioMetadataFixture());
