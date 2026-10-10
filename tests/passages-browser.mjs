@@ -49,7 +49,8 @@ async function passageGeometry(page, label) {
       documentWidth: document.documentElement.scrollWidth, passage: rect(passage),
       source: rect(source), translation: translation ? rect(translation) : null,
       sourceIds: [...source.querySelectorAll('.passage-cue')].map(cue => cue.dataset.cueId),
-      sourceText: source.textContent, translationText: translation?.textContent || ''};
+      sourceText: source.textContent, translationText: translation?.textContent || '',
+      chrome: {brand: rect(document.querySelector('.brand')), library: rect(document.querySelector('#toggle-library')), add: rect(document.querySelector('#add-content')), notice: rect(document.querySelector('#notice'))}};
   });
   geometry.push({label, ...result});
   console.log(JSON.stringify({suite: 'passage-viewport', label, ...result}));
@@ -100,6 +101,11 @@ try {
     const imported = await passageGeometry(page, label + '-import');
     await capture(page, '01-' + label + '-first-expression');
     completeFirstViewport(label + '_import', imported, fixture);
+    if (label === 'mobile') {
+      const {brand, library, add} = imported.chrome;
+      check('mobile_reader_navigation_stays_on_one_row_with_full_touch_targets', Math.abs(brand.top-library.top) <= 1 && Math.abs(library.top-add.top) <= 1 && library.height >= 44 && library.width >= 44 && add.height >= 44 && add.width >= 44);
+      check('mobile_success_status_keeps_complete_import_and_privacy_message', await page.locator('#notice').getAttribute('data-kind') === 'success' && await page.locator('#notice').textContent() === '已导入并保存在本机浏览器。没有向服务器上传文件。');
+    }
     check(label + '_passage_joins_original_cues_without_rewriting', await page.locator('.passage-original .passage-cue').evaluateAll(nodes => nodes.map(node => ({id: node.dataset.cueId, text: node.textContent}))).then(cues => cues.every(cue => fixture.segments.find(source => source.id === cue.id)?.text === cue.text)));
     check(label + '_missing_and_stale_translation_are_explicit', await page.locator('.passage-translation-gap[data-cue-id="split-8"][data-state="stale"]').count() === 1 && await page.locator('.passage-translation-gap[data-cue-id="split-10"][data-state="missing"]').count() === 1 && !(await page.locator('.passage-translation').allTextContents()).join('').includes('这句旧译文不应混进连贯译文'));
     check(label + '_reading_does_not_change_original_bookmark_or_existing_note', (await stored(page)).readingPosition === 'split-19' && (await stored(page)).notes['split-2'] === fixture.notes['split-2']);

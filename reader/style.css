@@ -702,3 +702,15 @@ html[data-reading-layout="spacious"] .passage { padding-top: 34px; padding-botto
  body:has(#notes-panel:not([hidden])) .passage-playback-controls { display: none; }
  body[data-passage-listening="true"] #notes-panel { max-height: min(65dvh, calc(100dvh - 108px)); }
 }
+
+/* Keep first-use reading content ahead of redundant mobile navigation chrome.
+   All three top-level actions remain visible with 44px targets; expanded library
+   content keeps its own full-width row. Only confirmed success is subdued. */
+@media (max-width:650px) {
+ body[data-reading-mode="passages"] aside { grid-template-columns: minmax(0,1fr) auto auto; gap: 8px 10px; padding-top: 12px; padding-bottom: 8px; }
+ body[data-reading-mode="passages"] aside .brand { grid-column: 1; grid-row: 1; font-size: 23px; }
+ body[data-reading-mode="passages"] #toggle-library { grid-column: 2; grid-row: 1; min-width: 44px; min-height: 44px; padding: 6px; }
+ body[data-reading-mode="passages"] #add-content { grid-column: 3; grid-row: 1; min-height: 44px; }
+ body[data-reading-mode="passages"] #library-list { grid-column: 1 / -1; grid-row: 2; }
+ body[data-reading-mode="passages"] #notice[data-kind="success"] { margin: 8px 0; padding: 0; border-radius: 0; background: transparent; color: var(--muted); font-size: 12px; line-height: 1.6; }
+}

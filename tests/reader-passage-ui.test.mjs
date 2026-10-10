@@ -134,3 +134,13 @@ test('opening the reading surface closes the AI request panel and revokes pendin
   $('mode-passages').click();assert.equal($('language-panel').open,false);assert.equal($('language-panel').hidden,true);assert.equal($('ai-consent').checked,false);assert.equal(env.calls.length,0);
  }finally{await env.close();}
 });
+
+
+test('confirmed import success is a complete status message, while a later failure resets its subdued treatment',async()=>{
+ const env=setup();try{await load(env);const {$}=env;
+  assert.equal($('notice').dataset.kind,'success');assert.equal($('notice').getAttribute('role'),'status');
+  assert.equal($('notice').textContent,'已导入并保存在本机浏览器。没有向服务器上传文件。');
+  Object.defineProperty($('file'),'files',{configurable:true,value:[{name:'broken.json',size:2,text:async()=> '{bad'}]});await $('file').onchange();
+  assert.equal($('notice').dataset.kind,'');assert.match($('notice').textContent,/导入失败/);assert.equal($('notice').hidden,false);assert.equal($('passage-workspace').hidden,false);
+ }finally{await env.close();}
+});

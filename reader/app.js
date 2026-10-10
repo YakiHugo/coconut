@@ -60,7 +60,8 @@ function saveWarning(text = "") {
  unsavedDocumentChanges = !!text && JSON.stringify(state.documents)!==savedDocumentsValue;
  if(unloadGuardReady)syncUnsavedUnloadGuard();
 }
-function notice(text) {
+function notice(text,kind = "") {
+ $("notice").dataset.kind = kind;
 	$("notice").hidden = !text;
 	$("notice").textContent = text;
 }
@@ -668,7 +669,7 @@ $("file").onchange = async () => {
 		const text = await f.text();
   if(!canCommit())return;
 		const saved = await add(Coconut.parse(text, f.name), canCommit);
-		if (saved && ownsRequest()) notice("已导入并保存在本机浏览器。没有向服务器上传文件。");
+		if (saved && ownsRequest()) notice("已导入并保存在本机浏览器。没有向服务器上传文件。", "success");
 	} catch (e) {
 		if(canCommit())notice("导入失败：" + e.message);
 	} finally {
