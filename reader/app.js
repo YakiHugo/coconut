@@ -33,6 +33,7 @@ async function wasRemovedSince(doc,revision,key=doc.key){
  }
  return (removedDocumentRevisions.get(key)||0)>revision;
 }
+let readingFollow = null, readingFollowFrame = null, readingFollowRevision = 0, readingFollowMoving = false;
 let selected = null;
 let notesOnly = false;
 let excerptsOnly = false;
@@ -1022,6 +1023,12 @@ function render({keepNoteEditor=false}={}) {
 		player.ontimeupdate = () => {if(mediaHost.querySelector("audio,video")!==player)return;repeatPlayback(false,player);highlightPlayback();};
   player.onended=()=>repeatPlayback(true,player);
   for(const event of ["play","pause","timeupdate","ratechange","loadedmetadata","durationchange","ended","error","emptied"])player.addEventListener(event,refreshPlaybackDock);
+  for(const event of ["play","pause","timeupdate","ended","error","emptied"])player.addEventListener(event,()=>{
+   if(followPlayer()!==player)return;
+   if(event==='emptied'){cancelFollowFrame();readingFollow=null;}
+   else if(event==='error')suspendReadingFollow('原声暂不可用');
+   scheduleReadingFollow();
+  });
   bindListening(player,doc,attachment);
 		player.preload = "metadata";
 		player.src = mediaPath;
@@ -1914,12 +1921,100 @@ function updatePlaybackControls(){
  refreshPlaybackDock();
  renderPassagePlayback(passagePlayback?.getState());
 }
+// Opt-in, page-local following. Media events alone advance the viewport: a save
+// receipt may render, but must never acquire scrolling ownership.
+
+function followPlayer(){return $('source-media').querySelector('audio,video');}
+function followAvailable(){const p=followPlayer();return !!(p&&!p.error&&Number.isFinite(p.duration)&&p.duration>0&&active()?.segments?.length&&!Coconut.isAudioProject(active()));}
+function followOwns(){const f=readingFollow;return !!(f&&f.doc===active()&&f.segments===active()?.segments&&f.player===followPlayer()&&f.src===f.player.getAttribute('src')&&f.source===documentSourceIdentity(active())&&f.attachment===browserMedia.get(active()?.key));}
+function cancelFollowFrame(){readingFollowRevision++;if(readingFollowFrame!==null)cancelAnimationFrame(readingFollowFrame);readingFollowFrame=null;}
+function refreshReadingFollow(){
+ if(readingFollow&&!followOwns()){cancelFollowFrame();readingFollow=null;}
+ const available=followAvailable(),f=readingFollow;
+ for(const id of ['follow-playback','dock-follow']){
+  const button=$(id);if(button.disabled!==!available)button.disabled=!available;
+  if(button.getAttribute('aria-pressed')!==String(!!f))button.setAttribute('aria-pressed',String(!!f));
+  const state=!f?'off':f.suspended?'suspended':'following';if(button.dataset.state!==state)button.dataset.state=state;
+  const label=!available?'跟随不可用':!f?'跟随原声':f.suspended?'恢复跟随':f.player.paused?'跟随待播放':'停止跟随';
+  if(button.textContent!==label)button.textContent=label;
+  const title=!available?'关联可播放的原声和定时文字稿后可用':f?.suspended?'跟随已暂停：'+f.suspended+'。点击恢复，不会清除筛选或开始播放。':f?'手动浏览会暂停跟随；点击关闭':'仅播放时跟随当前原文；手动浏览会暂停，不会自动播放';
+  if(button.title!==title)button.title=title;
+ }
+}
+function suspendReadingFollow(reason='手动浏览'){
+ if(!readingFollow||readingFollow.suspended)return;
+ cancelFollowFrame();readingFollow.suspended=reason;refreshReadingFollow();
+}
+function followBlocked(){
+ if(workspace!=='read'||document.hidden||document.querySelector('dialog[open]')||selected||readingContext||passageReturn)return true;
+ const focused=document.activeElement;
+ return !!(focused?.matches('input,textarea,select,[contenteditable="true"]')||focused?.closest('#transcript,#passage-body'));
+}
+function advanceReadingFollow(){
+ if(!followOwns()||readingFollow.suspended||!followAvailable())return;
+ const player=followPlayer();if(player.paused||player.ended)return;
+ if(followBlocked()){suspendReadingFollow('正在编辑或查看其他内容');return;}
+ if(!['transcript','bilingual','passages'].includes(readingMode)){suspendReadingFollow('请先打开原文或连贯阅读');return;}
+ const cue=playbackSegment();if(!cue)return;
+ const doc=active(),query=$('search').value.trim().toLocaleLowerCase();
+ if(!matchesReadingSegment(cue,doc,query)){suspendReadingFollow('当前原声不在筛选结果中');return;}
+ let row;
+ if(readingMode==='passages'){
+  row=[...$('passage-body').querySelectorAll('.passage-cue')].find(node=>node.dataset.cueId===cue.id);
+  if(!row){const passages=readingPassages(doc),passage=CoconutPassages.locate(passages,cue.id);if(!passage)return;
+  const nextPage=Math.floor(passages.indexOf(passage)/PASSAGES_PER_PAGE)*PASSAGES_PER_PAGE;
+  if(nextPage!==passagePageStart){passageAnchor=passage.cues[0].id;renderPassages(doc);highlightPlayback();}}
+  row=[...$('passage-body').querySelectorAll('.passage-cue')].find(node=>node.dataset.cueId===cue.id);
+ }else{
+  row=[...$('transcript').querySelectorAll('.segment')].find(node=>node.dataset.segmentId===cue.id);
+  if(!row){const matches=doc.segments.filter(s=>matchesReadingSegment(s,doc,query)),index=matches.indexOf(cue);
+  if(index<0)return;
+  const nextPage=Math.floor(index/PAGE_SIZE)*PAGE_SIZE;
+  if(nextPage!==pageStart){pageStart=nextPage;render({keepNoteEditor:true});}}
+  row=[...$('transcript').querySelectorAll('.segment')].find(node=>node.dataset.segmentId===cue.id);
+ }
+ if(!row)return;
+ const rect=row.getBoundingClientRect(),height=window.visualViewport?.height||window.innerHeight;
+ // An instant bounded correction avoids queued smooth scrolling competing with
+ // manual intent and also respects reduced-motion preferences.
+ if(rect.top<64||rect.bottom>height-128)row.scrollIntoView?.({block:rect.height>height-192?'start':'center',behavior:'auto'});
+}
+function scheduleReadingFollow(){
+ refreshReadingFollow();if(!readingFollow||readingFollow.suspended||readingFollowFrame!==null)return;
+ const revision=readingFollowRevision;
+ readingFollowFrame=requestAnimationFrame(()=>{readingFollowFrame=null;if(revision===readingFollowRevision){readingFollowMoving=true;try{advanceReadingFollow();}finally{readingFollowMoving=false;if(readingFollow)readingFollow.scrollY=window.scrollY;}}});
+}
+function toggleReadingFollow(){
+ if(!followAvailable())return;
+ cancelFollowFrame();
+ if(readingFollow&&!readingFollow.suspended)readingFollow=null;
+ else{const player=followPlayer();readingFollow={doc:active(),segments:active().segments,player,src:player.getAttribute('src'),source:documentSourceIdentity(active()),attachment:browserMedia.get(active().key),scrollY:window.scrollY,suspended:null};scheduleReadingFollow();}
+ refreshReadingFollow();
+}
+$('follow-playback').onclick=toggleReadingFollow;$('dock-follow').onclick=toggleReadingFollow;
+// Input intent cancels a queued correction before it runs. A scroll to any
+// other position also suspends (including scrollbar/assistive navigation);
+// our instant correction records its final position before async scroll events.
+// Capture runs before navigation removes a focused row or opens an editor.
+window.addEventListener('scroll',()=>{if(readingFollow&&!readingFollowMoving&&Math.abs(window.scrollY-readingFollow.scrollY)>1)suspendReadingFollow();},{passive:true});
+const followTransport='#follow-playback,#dock-follow,#dock-play,#skip-back,#skip-forward,#playback-rate,audio,video';
+window.addEventListener('wheel',()=>suspendReadingFollow(),{capture:true,passive:true});
+window.addEventListener('touchstart',event=>{if(!event.target.closest?.(followTransport))suspendReadingFollow();},{capture:true,passive:true});
+document.addEventListener('pointerdown',event=>{if(!event.target.closest?.(followTransport))suspendReadingFollow();},true);
+document.addEventListener('click',event=>{if(event.target.closest?.('button,a,summary,input,select,textarea')&&!event.target.closest(followTransport))suspendReadingFollow();},true);
+document.addEventListener('input',()=>suspendReadingFollow('正在输入'),true);
+document.addEventListener('focusin',event=>{if(event.target.matches?.('input,textarea,select,[contenteditable="true"]')&&!event.target.closest(followTransport))suspendReadingFollow('正在输入');},true);
+document.addEventListener('keydown',event=>{if(['ArrowUp','ArrowDown','PageUp','PageDown','Home','End',' '].includes(event.key)&&!event.target.closest?.(followTransport))suspendReadingFollow();},true);
+window.addEventListener('coconut-render',refreshReadingFollow);
+document.addEventListener('visibilitychange',()=>{if(document.hidden)suspendReadingFollow('页面已离开');});
+
 // The dock controls the existing source player; it never owns or starts media.
 function refreshPlaybackDock(){
+ refreshReadingFollow();
  const dock=$('media-dock'),player=$('source-media').querySelector('audio,video');
  const playable=player&&!player.error&&Number.isFinite(player.duration)&&player.duration>0;
- const visible=!!(playable&&workspace==='read'&&!$('reader-workspace').hidden&&!$('source-media').hidden&&$('episode-media').getBoundingClientRect().bottom<=0);
- if(!visible&&!dock.hidden&&dock.contains(document.activeElement)&&player&&workspace==='read')player.focus({preventScroll:true});
+ const visible=!!(playable&&workspace==='read'&&!$('reader-workspace').hidden&&!$('source-media').hidden&&($('episode-media').getBoundingClientRect().bottom<=0||(readingFollow&&!readingFollow.suspended&&dock.contains(document.activeElement))));
+ if(!readingFollowMoving&&(!readingFollow||readingFollow.suspended)&&!visible&&!dock.hidden&&dock.contains(document.activeElement)&&player&&workspace==='read')player.focus({preventScroll:true});
  if(dock.hidden!==!visible)dock.hidden=!visible;
  if(document.body.dataset.mediaDocked!==String(visible))document.body.dataset.mediaDocked=String(visible);
  if(!visible)return;
@@ -1947,6 +2042,7 @@ $('dock-play').onclick=async()=>{
  catch(error){if(error?.name!=='AbortError'&&player===$('source-media').querySelector('audio,video'))notice('媒体暂时无法播放，请回到播放器检查文件或重试。');}
  refreshPlaybackDock();
 };
+$('media-dock').addEventListener('focusout',schedulePlaybackDock);
 $('dock-locate').onclick=()=>locateReadingPlayback();
 $('dock-return').onclick=()=>{
  const player=$('source-media').querySelector('audio,video');if(!player)return;

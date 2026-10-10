@@ -38,6 +38,11 @@ jobs:
       # Setup retains implicit success(); its final step must succeed before tests run.
       # Independent authored suites continue after sibling failures, never cancellation.
       # No continue-on-error: any failed suite still fails the job.
+      - name: Verify opt-in follow playback and compact dock geometry
+        if: ${{ !cancelled() && steps.browser_setup.outcome == 'success' }}
+        env:
+          COCONUT_UI_SCREENSHOTS: ${{ runner.temp }}/coconut-authored-ui
+        run: node tests/playback-follow-browser.mjs
       - name: Verify local media timing calibration with authored audio
         if: ${{ !cancelled() && steps.browser_setup.outcome == 'success' }}
         env:
@@ -185,6 +190,7 @@ jobs:
             ${{ runner.temp }}/coconut-authored-ui/*.png
             ${{ runner.temp }}/coconut-authored-ui/passages-geometry.json
             ${{ runner.temp }}/coconut-authored-ui/autosave-geometry.json
+            ${{ runner.temp }}/coconut-authored-ui/playback-follow-geometry.json
           if-no-files-found: ignore
           retention-days: 7
       - name: Remove temporary media and exports

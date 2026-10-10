@@ -8,7 +8,7 @@
 <meta name="theme-color" content="#faf9f7">
 <link rel="icon" type="image/png" href="coconut-mark.png">
 <script src="appearance.js?v=86ea922669"></script>
-<link rel="stylesheet" href="style.css?v=74dd230b4d">
+<link rel="stylesheet" href="style.css?v=1df2b242e2">
 <script src="summary.js?v=580ffdad1e" defer></script>
 <script src="core.js?v=2038a3784b" defer>
 </script>
@@ -17,7 +17,7 @@
 <script src="library-store.js?v=7a0c1b8828" defer></script>
 <script src="indexeddb-document-adapter.js?v=65c0c5a814" defer></script>
 <script src="storage-provider.js?v=1cb898e984" defer></script>
-<script src="app.js?v=22c5fe91a8" type="text/coconut-pending" data-reader-script>
+<script src="app.js?v=9fdda99dd7" type="text/coconut-pending" data-reader-script>
 </script>
 <script src="language.js?v=8832e43c29" type="text/coconut-pending" data-reader-script></script>
 <script src="translation-review.js?v=ef64ceb824" type="text/coconut-pending" data-reader-script></script>
@@ -190,7 +190,7 @@ cd coconut
 <div class="media-timing-fields"><label>偏移（秒）<input id="media-timing-offset" type="number" min="-3600" max="3600" step="0.1" value="0"></label><label>校准片段编号<input id="media-timing-cue" type="number" min="1" step="1" value="1"></label></div><p id="media-timing-example" class="hint"></p>
 <div class="media-timing-actions"><button id="media-timing-align" type="button">用当前播放位置对齐片段开头</button><button id="media-timing-preview" type="button">试听此片段</button><button id="media-timing-return" type="button" hidden>返回试听前</button><button id="media-timing-save" type="button">保存对齐</button><button id="media-timing-reset" type="button">恢复零偏移</button></div><p id="media-timing-status" class="hint" role="status"></p></fieldset>
 <button id="locate-playback" hidden>定位正在播放的文字</button>
-<div id="playback-controls" hidden><button id="skip-back" type="button" disabled>后退10秒</button><button id="skip-forward" type="button" disabled>前进10秒</button><label>播放速度<select id="playback-rate"><option value="0.75">0.75×</option><option value="1" selected>1×</option><option value="1.25">1.25×</option><option value="1.5">1.5×</option><option value="1.75">1.75×</option><option value="2">2×</option></select></label><button id="stop-repeat" type="button" hidden>停止循环</button><span id="repeat-status" class="hint" role="status"></span><span id="playback-status" class="hint" role="status"></span></div>
+<div id="playback-controls" hidden><button id="skip-back" type="button" disabled>后退10秒</button><button id="skip-forward" type="button" disabled>前进10秒</button><label>播放速度<select id="playback-rate"><option value="0.75">0.75×</option><option value="1" selected>1×</option><option value="1.25">1.25×</option><option value="1.5">1.5×</option><option value="1.75">1.75×</option><option value="2">2×</option></select></label><button id="follow-playback" type="button" aria-pressed="false" disabled>跟随原声</button><button id="stop-repeat" type="button" hidden>停止循环</button><span id="repeat-status" class="hint" role="status"></span><span id="playback-status" class="hint" role="status"></span></div>
 <div class="listening-progress"><button id="resume-listening" type="button" hidden>继续收听</button><p id="listening-progress-status" class="hint" role="status"></p></div>
 <div id="source-media" hidden>
 </div>
@@ -320,7 +320,7 @@ cd coconut
 <section id="media-dock" class="media-dock" aria-label="当前原声播放控制" hidden>
 <button id="dock-play" class="dock-play" type="button">播放</button>
 <div class="dock-copy"><strong id="dock-title"></strong><span class="dock-clock"><span id="dock-current">00:00</span><span id="dock-total"></span><span id="dock-rate"></span></span></div>
-<button id="dock-locate" type="button">定位原文</button><button id="dock-return" type="button" aria-label="回到原声播放器">播放器 ↑</button>
+<button id="dock-follow" type="button" aria-pressed="false" disabled>跟随原声</button><button id="dock-locate" type="button">定位原文</button><button id="dock-return" type="button" aria-label="回到原声播放器">播放器 ↑</button>
 </section>
 <dialog id="large-backup-dialog" aria-labelledby="large-backup-heading" aria-describedby="large-backup-size large-backup-help">
 <h2 id="large-backup-heading">文件较大，继续读取？</h2>
