@@ -6,8 +6,8 @@ import {mkdtemp,readFile,rm,mkdir} from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import assert from 'node:assert/strict';
-let server,browser,directory,stage='setup';const checks=[];
-const check=(name,value)=>{stage=name;assert.ok(value);checks.push(name);};
+let server,browser,page,directory,stage='setup';const checks=[],pageErrors=[];
+const check=(name,value)=>{stage=name;assert.ok(value,name);checks.push(name);};
 try{
  directory=await mkdtemp(path.join(os.tmpdir(),'coconut-source-ui-'));const filename=path.join(directory,'synthetic.mp3');
  execFileSync('ffmpeg',['-nostdin','-loglevel','error','-f','lavfi','-i','sine=frequency=440:sample_rate=16000','-t','6','-c:a','libmp3lame',filename],{timeout:30000});const body=await readFile(filename);
@@ -19,8 +19,8 @@ try{
  const calls=[],mediaPayloads=[];
  server=await startBridge({port:0,providers:{status:async()=>{throw new Error('No CLI checks expected');}},podcastSources:{discover:async data=>{calls.push('discover');return data.url.endsWith('.mp3')?{kind:'media',title:'原声直链项目',media:episode.media[0]}:{kind:'feed',title:'Synthetic source',feed_url:source.feed_url,episodes:[episode,noTextEpisode,unsupportedEpisode],warnings:[]};},importEpisode:async data=>{calls.push('import');return data.episodeId===noTextEpisode.id?{status:'needs_transcription',episode:noTextEpisode,feed_url:source.feed_url}:{status:'ready',document:doc,episode};},downloadMedia:async data=>{calls.push('media');mediaPayloads.push(data);return {body,type:'audio/mpeg',kind:'audio',filename:'synthetic.mp3'};}}});
  const origin='http://127.0.0.1:'+server.address().port;browser=await chromium.launch({headless:true,...(process.env.COCONUT_CHROMIUM_EXECUTABLE?{executablePath:process.env.COCONUT_CHROMIUM_EXECUTABLE}:{})});
- const page=await browser.newPage();let external=0,errors=0;
- await page.route('**/*',async route=>{const u=new URL(route.request().url());if(u.origin===origin||u.protocol==='blob:')await route.continue();else{external++;await route.abort();}});page.on('pageerror',()=>errors++);page.setDefaultTimeout(15000);
+ page=await browser.newPage();let external=0,errors=0;
+ await page.route('**/*',async route=>{const u=new URL(route.request().url());if(u.origin===origin||u.protocol==='blob:')await route.continue();else{external++;await route.abort();}});page.on('pageerror',error=>{errors++;pageErrors.push(error.message);});page.setDefaultTimeout(15000);
  await page.goto(origin);await page.locator('#podcast-import').waitFor({state:'visible'});check('no_automatic_source_requests',calls.length===0);
  stage='discover';await page.locator('#video-url').fill(source.feed_url);await page.locator('#process-url').click();await page.locator('.podcast-episode').first().waitFor();
  check('discovery_only',calls.join(',')==='discover');
@@ -46,9 +46,13 @@ try{
  }
  await page.locator('.podcast-episode button').first().click();await page.locator('#summary-workspace').waitFor({state:'visible'});
  check('no_fabricated_summary',await page.locator('#summary-state').textContent()==='未生成');check('no_automatic_media_download',calls.join(',')==='discover,import');
- await page.locator('#mode-transcript').click();await page.locator('#download-podcast-media').click();
- await page.waitForFunction(()=>{const a=document.querySelector('#source-media audio');return a&&!a.error&&a.duration>0&&a.readyState>=2;});check('media_download_is_explicit',calls.join(',')==='discover,import,media');
- await page.locator('.segment[data-segment-id="two"] .time > button').first().click();await page.waitForFunction(()=>document.querySelector('audio').currentTime>2.1);check('downloaded_audio_decodes_and_seeks',true);
+ stage='open_transcript_source_media';await page.locator('#mode-transcript').click();
+ check('source_media_stays_collapsed_until_requested',await page.locator('#transcript-layout').isVisible()&&await page.locator('#episode-media').isHidden()&&await page.locator('#toggle-reader-media').isVisible());
+ await page.locator('#toggle-reader-media').click();
+ check('expanding_source_media_never_downloads',await page.locator('#episode-media').isVisible()&&await page.locator('#download-podcast-media').isVisible()&&calls.join(',')==='discover,import');
+ stage='download_publisher_media';await page.locator('#download-podcast-media').click();
+ stage='decode_publisher_audio';await page.waitForFunction(()=>{const a=document.querySelector('#source-media audio');return a&&!a.error&&a.duration>0&&a.readyState>=2;});check('media_download_is_explicit',calls.join(',')==='discover,import,media');
+ stage='seek_downloaded_publisher_audio';await page.locator('.segment[data-segment-id="two"] .time > button').first().click();await page.waitForFunction(()=>document.querySelector('audio').currentTime>2.1);check('downloaded_audio_decodes_and_seeks',true);
  await page.locator('audio').evaluate(a=>a.pause());await page.locator('.segment[data-segment-id="two"] .note-button').click();await page.locator('#note').fill('Browser source note');await page.locator('#close-note').click();
  const saved=await page.evaluate(()=>JSON.parse(localStorage.getItem('coconut-reader-v1')).documents[0]);check('source_and_notes_saved',saved.podcast_source.episode_id===source.episode_id&&saved.notes.two==='Browser source note');
  await page.reload();await page.locator('#mode-transcript').click();check('media_requires_explicit_reload',await page.locator('#source-media audio').count()===0);check('no_hidden_or_external_requests',calls.join(',')==='discover,import,media'&&external===0&&errors===0);
@@ -76,5 +80,12 @@ try{
  check('direct_media_redownload_preserves_url_contract',JSON.stringify(mediaPayloads.at(-1))===JSON.stringify({url:source.media_url}));
  check('audio_projects_never_trigger_external_requests_or_inference',external===0&&errors===0&&calls.every(c=>['discover','import','media'].includes(c)));
  console.log(JSON.stringify({suite:'podcast-source-browser',status:'passed',checks}));
-}catch{console.error(JSON.stringify({suite:'podcast-source-browser',status:'failed',stage,checks}));process.exitCode=1;}
+}catch(error){
+ const ui=page&&!page.isClosed()?await page.evaluate(()=>{
+  const element=id=>document.getElementById(id),player=element('source-media')?.querySelector('audio,video');
+  const control=id=>{const node=element(id);if(!node)return null;const rect=node.getBoundingClientRect();return {hidden:node.hidden,disabled:node.disabled,expanded:node.getAttribute('aria-expanded'),width:rect.width,height:rect.height};};
+  return {readingMode:document.body.dataset.readingMode,media:control('episode-media'),toggle:control('toggle-reader-media'),download:control('download-podcast-media'),mediaStatus:element('podcast-media-status')?.textContent,player:player?{readyState:player.readyState,networkState:player.networkState,paused:player.paused,currentTime:player.currentTime,error:player.error?{code:player.error.code,message:player.error.message}:null}:null};
+ }).catch(diagnosticError=>({unavailable:diagnosticError.message})):null;
+ console.error(JSON.stringify({suite:'podcast-source-browser',status:'failed',stage,error:{name:error.name,message:error.message,stack:error.stack},ui,pageErrors,checks}));process.exitCode=1;
+}
 finally{await browser?.close();if(server)await new Promise(resolve=>server.shutdown(resolve));if(directory)await rm(directory,{recursive:true,force:true});}
