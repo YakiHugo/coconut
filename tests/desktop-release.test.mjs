@@ -19,7 +19,7 @@ test('release is main-only and publishes only after exact checks and asset diges
  const s=await setup(t);await assert.rejects(()=>publishDesktopRelease({...s,context:{...context,eventName:'pull_request'},core,version:'0.2.0'}),/main push/);assert.equal(s.calls.length,0);
  await publishDesktopRelease({...s,context,core,version:'0.2.0'});assert.equal(s.calls[0][0],'create');assert.equal(s.calls[0][1].draft,true);assert.deepEqual(s.calls.filter(c=>c[0]==='upload').map(c=>c[1]),['Coconut-0.2.0-arm64-unsigned.zip','Coconut-0.2.0-x64-unsigned.zip','SHA256SUMS.txt']);assert.equal(s.calls.at(-1)[0],'publish');
  const body=s.calls[0][1].body;
- for(const phrase of ['Changes since 0.7.0','cooperative long-document search','independent-document autosave','full-height compact mobile library','responsive focus repair','completed-job selection ownership','stale playback-error ownership','Playback-rate changes no longer pause optional playback-follow','do not guarantee smooth rendering on every frame','Same-document stale writes fail visibly','independent documents can still autosave','global unsaved warning and close guard','export each unsaved document before refreshing','immutable legacy snapshot','new edits live in IndexedDB','Downgrading to v0.6.0 cannot read those new edits','Do not clear browser storage','not ordinary importable library backups'])assert.ok(body.includes(phrase),'Missing release scope or limitation: '+phrase);
+ for(const phrase of ['Changes since 0.7.1','search-to-passage-to-note return continuity','manual native-player seeking exits the cue loop','transcript drag-and-drop import','visible annotation editors from library search','stable bookmark return after time edits','recently opened library sorting','completed X/podcast import feedback','native File menu commands for transcript import, local media and full-library backup','Same-document stale writes fail visibly','independent documents can still autosave','global unsaved warning and close guard','export each unsaved document before refreshing','immutable legacy snapshot','new edits live in IndexedDB','Downgrading to v0.6.0 cannot read those new edits','Do not clear browser storage','not ordinary importable library backups'])assert.ok(body.includes(phrase),'Missing release scope or limitation: '+phrase);
  assert.match(body,/do not require model calls/);assert.match(body,/without Developer ID or notarization/);assert.match(body,/Do not bypass an OS security warning/);
  assert.ok(body.includes(`https://github.com/${repo.owner}/${repo.repo}/blob/${sha}/docs/release-notes.md`));assert.match(body,/No real-account inference quality is claimed/);
 });
@@ -52,4 +52,12 @@ test('desktop version, lock metadata and checked-in release notes agree',async()
  for(const phrase of ['IndexedDB','localStorage','v0.6.0','无法读取新版新增或修改的内容','其他独立文档仍可自动保存','全局未保存警告与关闭保护','导出未保存文档备份','本窗口所有待保存内容','未提交表单草稿需另行保留','不要为了重试而清空存储','新增的阅读、整理和导出操作不需要调用模型','不能直接当作普通书架备份导入'])assert.ok(notes.includes(phrase),'Missing release-note boundary: '+phrase);
  assert.ok(notes.includes('尚未在用户自己的 Mac'));
  assert.match(notes,/真实 Codex \/ Claude Code/);assert.match(notes,/Developer ID/);assert.match(notes,/公证/);
+});
+
+
+test('prior release notes remain byte-identical historical records',async()=>{
+ for(const [version,digest] of [['0.7.0','2ec4424bcef49240abcdd009e1fe7d80ad2b4e19d9ae6d803193e101a86d995b'],['0.7.1','c2605dbe061b84462c64f720b620e6db57a7cbb558bc67adf015e3a2bd896ea4']]){
+  const bytes=await readFile(new URL('../docs/release-notes-'+version+'.md',import.meta.url));
+  assert.equal(createHash('sha256').update(bytes).digest('hex'),digest);
+ }
 });
