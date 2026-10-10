@@ -42,6 +42,8 @@ jobs:
         env:
           COCONUT_UI_SCREENSHOTS: ${{ runner.temp }}/coconut-authored-ui
         run: node tests/passages-browser.mjs
+      - name: Verify cross-document search previews and keyboard destinations with authored fixtures
+        run: node tests/library-search-browser.mjs
       - name: Verify 1,771-cue bilingual reading and recovery with authored fixtures
         env:
           COCONUT_UI_SCREENSHOTS: ${{ runner.temp }}/coconut-authored-ui

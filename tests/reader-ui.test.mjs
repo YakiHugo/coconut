@@ -884,7 +884,7 @@ test('document details persist and target the document that opened the dialog',a
   await importDocument(w,{title:'Other',segments:[{start:0,end:1,text:'B'}]});$('document-title').value='<New title>'; $('document-language').value='en';$('save-details').click();
   const stored=JSON.parse(w.localStorage.getItem('coconut-reader-v1'));const doc=stored.documents.find(d=>d.key===key);
   assert.equal(doc.title,'<New title>');assert.equal(doc.language,'en');assert.equal(doc.notes.a,'Keep');assert.equal($('title').textContent,'Other');assert.equal($('library').querySelector('New'),null);
-  $('library-search').value='new title';$('library-search').oninput();assert.equal($('library').children.length,1);$('library').firstElementChild.click();assert.equal($('title').textContent,'<New title>');
+  $('library-search').value='new title';$('library-search').oninput();assert.equal($('library').children.length,1);$('library').querySelector('.library-open').click();assert.equal($('title').textContent,'<New title>');
   $('document-details').click();$('document-title').value='Not saved';$('details-dialog').close();assert.equal($('title').textContent,'<New title>');
  }finally{await w.happyDOM.close();}
 });
