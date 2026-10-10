@@ -1,3 +1,4 @@
+import {openLibraryTools} from './helpers/library-tools-browser.mjs';
 /** Real Chromium acceptance of authored cross-document search and keyboard navigation.
  * No model, media, third-party text, or external network calls are used.
  * Run in CI or an explicitly permitted browser environment. */
@@ -54,6 +55,7 @@ try {
   async function openLibrary(options=false){
     if(!await page.locator('#library-search').isVisible())await page.locator('#toggle-library').click();
     await page.locator('#library-search').waitFor({state:'visible'});
+    if(options)await openLibraryTools(page);
     if(options&&!await page.locator('#library-scope').isVisible())await page.locator('.library-options > summary').click();
     if(options)await page.locator('#library-scope').waitFor({state:'visible'});
   }

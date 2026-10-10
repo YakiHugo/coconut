@@ -1,3 +1,4 @@
+import {openLibraryTools} from './helpers/library-tools-browser.mjs';
 /** Run in Browser acceptance CI: discovery → audio project → same-episode transcript.
  * Publisher responses and 40-second PCM media are authored fixtures.
  * No external sources, credentials, real providers or model quota. */
@@ -140,6 +141,7 @@ try {
     await page.getByRole('button', {name: '保存原声项目', exact: true}).waitFor();
   }
   async function download(id, filename, target = page) {
+    if(id==='export-library')await openLibraryTools(target);
     const details = target.locator(id === 'export-library' ? '.library-backup' : '#export-menu');
     if (!await details.isVisible()) {
       const toggle = target.locator('#toggle-library');

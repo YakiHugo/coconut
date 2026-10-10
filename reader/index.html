@@ -8,7 +8,7 @@
 <meta name="theme-color" content="#faf9f7">
 <link rel="icon" type="image/png" href="coconut-mark.png">
 <script src="appearance.js?v=86ea922669"></script>
-<link rel="stylesheet" href="style.css?v=1df2b242e2">
+<link rel="stylesheet" href="style.css?v=fd8a0e6306">
 <script src="summary.js?v=580ffdad1e" defer></script>
 <script src="core.js?v=02595738d9" defer>
 </script>
@@ -17,7 +17,7 @@
 <script src="library-store.js?v=e76ded9456" defer></script>
 <script src="indexeddb-document-adapter.js?v=65c0c5a814" defer></script>
 <script src="storage-provider.js?v=1cb898e984" defer></script>
-<script src="app.js?v=9fdda99dd7" type="text/coconut-pending" data-reader-script>
+<script src="app.js?v=26ac074c56" type="text/coconut-pending" data-reader-script>
 </script>
 <script src="language.js?v=8832e43c29" type="text/coconut-pending" data-reader-script></script>
 <script src="translation-review.js?v=ef64ceb824" type="text/coconut-pending" data-reader-script></script>
@@ -35,10 +35,11 @@
 <a class="brand" href="#" aria-label="Coconut 首页"><img class="brand-mark" src="coconut-mark.png" width="36" height="36" alt=""> <span>coconut<span class="brand-caption">留住值得重读的声音</span></span>
 </a>
 <button id="add-content" class="primary">＋ 添加内容</button>
-<button id="toggle-library" aria-expanded="false" aria-controls="library-list">书架 <span id="library-total">0</span></button>
+<button id="toggle-library" aria-expanded="false" aria-controls="library-list"><span class="library-open-label">书架</span><span class="library-close-label">← 收起书架</span> <span id="library-total">0</span></button>
 <div id="library-list">
 <button id="open-library-notebook" type="button">我的笔记与摘录</button>
 <label class="library-search">查找书架<input id="library-search" type="search" placeholder="按标题查找"></label>
+<details id="library-tools" hidden><summary>书架工具与分页</summary><div id="library-tools-content"></div></details>
 <input type="file" id="file" accept=".json,.srt,.vtt" multiple hidden>
 <details class="library-backup"><summary>书架备份</summary><div class="disclosure-content"><button id="export-library">备份整个书架</button><button id="export-pending-library" type="button" hidden>导出未保存文档备份</button><button id="restore-library">恢复书架备份</button><button id="export-original-storage" hidden>导出升级前原始数据</button><p id="storage-backend-hint" class="hint" hidden></p><input id="library-file" type="file" accept=".json" hidden></div></details>
 <p class="eyebrow">你的书架</p>

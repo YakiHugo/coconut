@@ -1,3 +1,4 @@
+import {openLibraryTools} from './helpers/library-tools-browser.mjs';
 /** Real Chromium acceptance for authored local data; run in browser CI only. */
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
@@ -16,7 +17,7 @@ try{
  const stored=async()=>{await page.evaluate(()=>libraryStore.flush());return page.evaluate(()=>readPersistedLibrary());};
  const importDoc=async doc=>{await page.locator('#file').setInputFiles({name:'authored-removal.json',mimeType:'application/json',buffer:Buffer.from(JSON.stringify(doc))});await waitForPersistedLibrary(page,async title=>(await readPersistedLibrary()).documents.some(d=>d.title===title),doc.title);};
  const openShelf=async()=>{if(await page.locator('#toggle-library').isVisible()&&await page.locator('#toggle-library').getAttribute('aria-expanded')==='false')await page.locator('#toggle-library').click();};
- const openDetails=async selector=>{if(!await page.locator(selector).evaluate(node=>node.open))await page.locator(selector+' > summary').click();};
+ const openDetails=async selector=>{if(['#library-options','.library-backup'].includes(selector))await openLibraryTools(page);if(!await page.locator(selector).evaluate(node=>node.open))await page.locator(selector+' > summary').click();};
  const request=async title=>{await openShelf();await openDetails('#library-options');await page.getByRole('button',{name:'从书架移除 '+title,exact:true}).click();};
  const remove=async title=>{await request(title);await page.locator('#confirm-removal').click();await page.evaluate(()=>libraryStore.flush());};
  const download=async id=>{if(id==='export-removed-document')await openDetails('#removal-recovery-details');if(id==='export-library'){await openShelf();await openDetails('.library-backup');}const pending=page.waitForEvent('download');await page.locator('#'+id).click();const file=await pending;return JSON.parse(await fs.readFile(await file.path(),'utf8'));};
@@ -40,12 +41,12 @@ try{
  check('organize_keyboard_reveals_removal',await page.locator('.library-remove').first().isVisible());
  check('organizing_does_not_squeeze_titles',await page.locator('.library-entry').evaluateAll(nodes=>nodes.every(node=>Math.abs(node.getBoundingClientRect().width-node.querySelector('.library-open').getBoundingClientRect().width)<1)));
  for(const [selector,label] of [['#add-content','desktop_add'],['#library-search','desktop_search'],['#library-options > summary','desktop_organize'],['#library-sort','desktop_sort'],['#library-kind','desktop_kind'],['#library-scope','desktop_scope'],['.library-entry:first-child .library-open','desktop_open'],['.library-entry:first-child .library-remove','desktop_remove']])await target(selector,label);
- await page.setViewportSize({width:320,height:568});await openShelf();
+ await page.setViewportSize({width:320,height:568});await openShelf();await openLibraryTools(page);
  check('small_mobile_long_titles_fit',await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
  for(const [selector,label] of [['#toggle-library','small_mobile_shelf'],['#library-options > summary','small_mobile_organize'],['.library-entry:first-child .library-open','small_mobile_open'],['.library-entry:first-child .library-remove','small_mobile_remove']])await target(selector,label);
  await page.locator('#library-options > summary').focus();await page.keyboard.press('Space');await page.waitForFunction(()=>document.querySelector('.library-remove').hidden);
  check('collapsed_organize_removes_actions_from_keyboard_order',await page.locator('.library-remove').first().isHidden());
- await page.locator('#library-list').evaluate(node=>{node.scrollTop=0;});await screenshot('library-layout-small-mobile-full-width-titles');
+ await page.locator('#library-tools > summary').click();await page.locator('#library-list').evaluate(node=>{node.scrollTop=0;});await screenshot('library-layout-small-mobile-full-width-titles');
  stage='long_title_recovery';await remove(unbroken);await dismissSuccess();
  check('long_recovery_title_does_not_expand_compact_card',(await page.locator('#removal-recovery').boundingBox()).height<170);
  check('collapsed_recovery_keeps_full_title_text',(await page.locator('#removal-recovery-short-title').textContent())===unbroken);
@@ -87,7 +88,7 @@ try{
  check('rescue_download_contains_full_document',JSON.stringify(await download('export-removed-document'))===JSON.stringify(original));
  check('whole_library_backup_excludes_removed',(await download('export-library')).documents.every(d=>d.key!==original.key));
  check('mobile_recovery_fits',await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));await screenshot('library-removal-mobile-recovery');
- await page.locator('#library-options > summary').focus();await page.keyboard.press('Enter');await page.waitForFunction(()=>!document.querySelector('#library-options').open);
+ await openLibraryTools(page);await page.locator('#library-options > summary').focus();await page.keyboard.press('Enter');await page.waitForFunction(()=>!document.querySelector('#library-options').open);
  await page.locator('#toggle-library').click();await page.locator('#undo-removal').focus();await page.keyboard.press('Enter');assert.deepEqual(await stored(),before);checks.push('undo_persists_original_notes_translations_and_position');
  check('undo_reopens_shelf_and_focuses_visible_title_when_organize_closed',await page.locator('#toggle-library').getAttribute('aria-expanded')==='true'&&await page.locator('.library-open').filter({hasText:second.title}).evaluate(node=>node===document.activeElement));
  stage='noncurrent_and_slot_replacement';await remove(first.title);await request(second.title);check('replacement_explains_previous_recovery_loss',(await page.locator('#replace-removal-warning').textContent()).includes(first.title));await screenshot('library-removal-replace-confirmation');await page.locator('#cancel-removal').click();check('cancel_preserves_old_slot',(await download('export-removed-document')).title===first.title);
