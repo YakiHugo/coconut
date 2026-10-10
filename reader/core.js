@@ -56,10 +56,20 @@
   if(!feed||typeof value.episode_id!=="string"||!value.episode_id||value.episode_id.length>1000)return undefined;
   return {feed_url:feed,episode_id:value.episode_id,...(mediaURL?{media_url:mediaURL}:{}),...(transcriptURL?{transcript_url:transcriptURL}:{}),...(['audio','video'].includes(value.media_kind)?{media_kind:value.media_kind}:{})};
  }
+ // Durable local media identity contains metadata and a bounded candidate hash,
+ // never file bytes, paths, object URLs, or a permission to upload/read the file.
+ function localMediaSource(value) {
+  if(!value||typeof value!=='object'||Array.isArray(value)||value.version!==1||!['audio','video'].includes(value.kind))return undefined;
+  if(typeof value.name!=='string'||!value.name||value.name.length>500||/[\\/\x00-\x1f\x7f]/.test(value.name)||!Number.isSafeInteger(value.size)||value.size<=0||!Number.isSafeInteger(value.last_modified)||value.last_modified<0)return undefined;
+  if(typeof value.type!=='string'||value.type.length>100||/[\x00-\x1f\x7f]/.test(value.type)||typeof value.fingerprint!=='string'||!/^[a-f0-9]{64}$/.test(value.fingerprint))return undefined;
+  return {version:1,kind:value.kind,name:value.name,size:value.size,last_modified:value.last_modified,type:value.type,fingerprint:value.fingerprint};
+ }
  function isAudioProject(doc) { return doc?.project_kind==='audio_only'; }
  const AUDIO_NOTE_BUDGET=1000000;
  function audioNoteCharacters(doc) {return (doc.project_note?.length||0)+(doc.timestamp_bookmarks||[]).reduce((total,item)=>total+item.note.length,0);}
  function audioProjectIdentity(doc) {
+  const local=localMediaSource(doc?.local_media_source);
+  if(local)return JSON.stringify(['local_media',local.fingerprint]);
   const origin=podcastSource(doc?.podcast_source);
   if(!origin)return '';
   return JSON.stringify(origin.kind==='direct_media'?['direct_media',origin.media_url]:['podcast',origin.feed_url,origin.episode_id]);
@@ -96,8 +106,9 @@
   const result={...text,title:original.title,language:original.project_language_override?original.language:text.language||original.language,project_language_override:original.project_language_override===true,source_url:original.source_url,podcast_source:original.podcast_source,
    ...projectAnnotations(original),...(original.media_duration?{media_duration:original.media_duration}:{})};
   // The selected file supplies words, not an unrelated local media job association.
-  delete result.source_media;
-  if(audioProjectIdentity(original)===audioProjectIdentity(text)&&original.podcast_source.media_url===text.podcast_source?.media_url&&original.podcast_source.media_kind===text.podcast_source?.media_kind&&text.podcast_source.transcript_url){
+  delete result.source_media;delete result.local_media_source;
+  if(original.local_media_source){result.local_media_source=original.local_media_source;delete result.podcast_source;}
+  if(original.podcast_source&&audioProjectIdentity(original)===audioProjectIdentity(text)&&original.podcast_source.media_url===text.podcast_source?.media_url&&original.podcast_source.media_kind===text.podcast_source?.media_kind&&text.podcast_source.transcript_url){
    result.podcast_source={...original.podcast_source,transcript_url:text.podcast_source.transcript_url};
   }
   // JSON backups have a reviewed large-file recovery path. Combining a valid
@@ -105,13 +116,14 @@
   return validate(result);
  }
  function validateAudioProject(data) {
-  const origin=podcastSource(data.podcast_source);
-  if(!Array.isArray(data.segments)||data.segments.length||!origin?.media_url)throw new Error('原声项目必须保留公开媒体来源，且不能把简介或笔记当作文字稿');
+  const origin=podcastSource(data.podcast_source),local=localMediaSource(data.local_media_source);
+  if(data.local_media_source!==undefined&&!local)throw new Error('本地文件信息无效，请重新选择原音视频；项目备份未改变');
+  if(!Array.isArray(data.segments)||data.segments.length||(!origin?.media_url&&!local)||origin&&local)throw new Error('原声项目必须保留一个公开媒体或本地文件来源，且不能把简介或笔记当作文字稿');
   if(typeof data.title==='string'&&data.title.length>500||typeof data.language==='string'&&data.language.length>100)throw new Error('原声项目标题不能超过500字符，语言标记不能超过100字符');
   const annotations=projectAnnotations(data);
   return {schema_version:1,project_kind:'audio_only',transcript_status:data.transcript_status==='unavailable'?'unavailable':'not_imported',
-   title:typeof data.title==='string'?data.title:'未命名原声项目',source_url:podcastURL(data.source_url)||origin.feed_url||origin.media_url,
-   language:typeof data.language==='string'?data.language:'',podcast_source:origin,
+   title:typeof data.title==='string'?data.title:'未命名原声项目',source_url:local?(podcastURL(data.source_url)||''):podcastURL(data.source_url)||origin.feed_url||origin.media_url,
+   language:typeof data.language==='string'?data.language:'',...(local?{local_media_source:local}:{podcast_source:origin}),
    ...(data.project_language_override===true?{project_language_override:true}:{}),
    ...(Number.isFinite(data.media_duration)&&data.media_duration>0&&data.media_duration<=604800?{media_duration:data.media_duration}:{}),
    ...annotations,
@@ -509,7 +521,9 @@
 				: undefined;
 		if (provenance && Number.isFinite(data.provenance.media_duration) && data.provenance.media_duration > 0 && data.provenance.media_duration <= 21600)
 			provenance.media_duration = data.provenance.media_duration;
-		const sourceMedia = mediaSource(data.source_media);
+		const localSource=localMediaSource(data.local_media_source);
+  if(data.local_media_source!==undefined&&(!localSource||data.podcast_source!==undefined||data.source_media!==undefined))throw new Error('本地文件来源无效或混入其他媒体来源');
+  const sourceMedia = mediaSource(data.source_media);
 		return {
 			notes,
    ...((data.project_note!==undefined||data.timestamp_bookmarks!==undefined)?projectAnnotations(data):{}),
@@ -518,6 +532,7 @@
 			...(typeof data.readingPosition === "string" && ids.has(data.readingPosition) ? {readingPosition: data.readingPosition} : {}),
 			...(provenance ? { provenance } : {}),
 			...(sourceMedia ? { source_media: sourceMedia } : {}),
+   ...(localSource?{local_media_source:localSource}:{}),
             ...(podcastSource(data.podcast_source)?{podcast_source:podcastSource(data.podcast_source)}:{}),
 			schema_version: 1,
             language: typeof data.language === "string" ? data.language : "",
@@ -525,7 +540,7 @@
             summary_job: Summaries.clean(data.summary_job),
             ai_answers: Array.isArray(data.ai_answers) ? retainAnswers(data.ai_answers).map(cleanAnswer) : [],
 			title: typeof data.title === "string" ? data.title : "未命名文字稿",
-			source_url: typeof data.source_url === "string" ? data.source_url : "",
+			source_url: localSource?(podcastURL(data.source_url)||''):typeof data.source_url === "string" ? data.source_url : "",
 			segments,
             translation_contexts: cleanContexts(data.translation_contexts, segments),
             translation_glossary: cleanDocumentGlossary(data.translation_glossary),
@@ -838,7 +853,7 @@
 			segments,
 		});
 	}
-	const api = { searchDocument, invalidateSearch, manualReviewSnapshot, manualReviewCurrent, saveManualTranslation, translationReviewQueue, hasNoteContent, segmentNoteCount, BACKUP_REVIEW_BYTES, SUBTITLE_IMPORT_BYTES, vttPayload, libraryHits, librarySnippet, hasProjectAnnotations, projectAnnotationCount, attachProjectTranscript, libraryMatches, documentDuration, sortedLibrary, AUDIO_NOTE_BUDGET, audioNoteCharacters, isAudioProject, audioProjectIdentity, podcastMediaIdentity, SUMMARY_QUESTION, summaryReadiness, podcastURL, podcastSource, cleanGlossary, relevantGlossary, translationQualityMessage, retainAnswers, summaryFreshness, latestSummary, summaryMarkdown, aiReadingMarkdown, parseReadingTime, createPlaybackIndex, segmentAtTime, subtitleExport, mergeLibraryBackup, time, source, media, validate, parse, matchesSegment, notebookSegments, notebookMarkdown, translationCurrent, sameCueSnapshot, subscriptionPlan, cleanContexts, answerFreshness };
+	const api = { localMediaSource, searchDocument, invalidateSearch, manualReviewSnapshot, manualReviewCurrent, saveManualTranslation, translationReviewQueue, hasNoteContent, segmentNoteCount, BACKUP_REVIEW_BYTES, SUBTITLE_IMPORT_BYTES, vttPayload, libraryHits, librarySnippet, hasProjectAnnotations, projectAnnotationCount, attachProjectTranscript, libraryMatches, documentDuration, sortedLibrary, AUDIO_NOTE_BUDGET, audioNoteCharacters, isAudioProject, audioProjectIdentity, podcastMediaIdentity, SUMMARY_QUESTION, summaryReadiness, podcastURL, podcastSource, cleanGlossary, relevantGlossary, translationQualityMessage, retainAnswers, summaryFreshness, latestSummary, summaryMarkdown, aiReadingMarkdown, parseReadingTime, createPlaybackIndex, segmentAtTime, subtitleExport, mergeLibraryBackup, time, source, media, validate, parse, matchesSegment, notebookSegments, notebookMarkdown, translationCurrent, sameCueSnapshot, subscriptionPlan, cleanContexts, answerFreshness };
 	if (typeof module !== "undefined" && module.exports) module.exports = api;
 	else root.Coconut = api;
 })(typeof window !== "undefined" ? window : globalThis);

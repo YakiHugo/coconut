@@ -34,6 +34,8 @@ jobs:
       - run: npm ci --ignore-scripts
       - run: npx playwright install --with-deps chromium
       - run: sudo apt-get update && sudo apt-get install -y ffmpeg fonts-noto-cjk
+      - name: Verify local-only media projects, annotations, subtitle continuity and explicit reselection
+        run: node tests/local-media-projects-browser.mjs
       - name: Verify pending save receipts, retry, complete rescue and provisional Undo with authored data
         run: node tests/save-pipeline-browser.mjs
       - name: Verify recoverable library removal and rescue downloads with authored data

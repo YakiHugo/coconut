@@ -311,3 +311,10 @@ for(const kind of ['close','update'])for(const field of ['note','project-note','
   assert.equal(actual,'Queued newest text');assert.equal(w.document.activeElement,input,'release retains the owned editor focus');
  }finally{await w.happyDOM.close();}
 });
+
+test('local-only file picker blocks update while open and native cancellation leaves no phantom task',async()=>{
+ const {w,$,request}=setup();try{
+  $('open-local-media').click();assert.equal(w.coconutPrepareClose('inspect').safe,false);assert.equal(await w.coconutPrepareUpdate(),false);
+  $('local-media-file').dispatchEvent(new w.Event('cancel'));assert.equal(w.coconutPrepareClose('inspect').safe,true);assert.equal(await w.coconutPrepareUpdate(),true);
+ }finally{await w.happyDOM.close();}
+});
