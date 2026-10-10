@@ -73,3 +73,17 @@ test('failed skip keeps a canceled preview from replacing the primary position',
  $('skip-forward').click();w.dispatchEvent(new w.Event('pagehide'));assert.equal(JSON.parse(w.localStorage.getItem(key)).time,70);
  }finally{await env.w.happyDOM.close();}
 });
+test('a canceled native picker retires its target; a fresh chooser selection attaches normally',async()=>{
+ const env=setup();try{
+  const {w,$}=env,original=await media(env),originalSource=original.getAttribute('src');
+  w.URL.createObjectURL=()=> 'blob:authored-selection';w.URL.revokeObjectURL=()=>{};
+  const file={name:'authored.wav',type:'audio/wav',size:4,lastModified:7,slice:()=>({text:async()=> 'RIFF',arrayBuffer:async()=>new Uint8Array([82,73,70,70]).buffer})};
+  const choose=async()=>{Object.defineProperty($('reader-media-file'),'files',{configurable:true,value:[file]});await $('reader-media-file').onchange();};
+  $('attach-reader-media').click();$('reader-media-file').dispatchEvent(new w.Event('cancel'));await choose();
+  assert.equal($('source-media').querySelector('audio').getAttribute('src'),originalSource);
+  assert.match($('notice').textContent,/打开媒体失败：原文字稿已关闭，请重新选择/);
+  $('attach-reader-media').click();await choose();
+  assert.equal($('source-media').querySelector('audio').getAttribute('src'),'blob:authored-selection');
+  assert.match($('notice').textContent,/媒体只在本次页面读取/);
+ }finally{await env.w.happyDOM.close();}
+});
