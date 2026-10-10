@@ -29,16 +29,7 @@
  // must not stop a request, revoke consent, cancel imports, or close a draft.
  function closeSnapshot(){
   const reasons=[];
-  if(hasUnsavedReaderChanges())reasons.push('文字稿或笔记有未保存修改');
-  if(glossaryDirty()||glossaryDrafts.size>0)reasons.push('术语表有未保存修改');
-  if(button('audio-bookmark-time').value.trim()||button('audio-bookmark-note').value.trim()||
-     [...document.querySelectorAll('#audio-bookmarks form')].some(form=>{
-      if(form.hidden)return false;
-      const original=active()?.timestamp_bookmarks?.find(item=>item.id===form.parentElement.dataset.bookmarkId);
-      return original&&Coconut.parseReadingTime(form.querySelector('input').value)!==original.time;
-     }))reasons.push('时间书签尚未提交');
-  const question=button('ai-question').value.trim();
-  if(question&&!active()?.ai_answers?.some(answer=>answer.question===question))reasons.push('提问草稿仍在输入框');
+  if(hasUnsavedReaderChanges())reasons.push('文字稿、笔记或输入草稿有未保存修改');
   if(button('sample').disabled||[...document.querySelectorAll('input[type="file"]')].some(input=>input.files.length>0)||
      sourceSubmitting||sourceCaptionRequest||podcastRequest||podcastMediaRequest||projectCaptionRequest||Number(button('job-count').textContent)>0)reasons.push('导入、恢复或媒体任务仍在进行');
   if(translating||asking||subscriptionTranslating)reasons.push('AI 请求仍在进行，当前结果可能尚未保存');
@@ -68,7 +59,7 @@
  };
  // Returning false always keeps the window and original user data open.
  window.coconutPrepareUpdate=(lock=false)=>{
-  if(document.querySelector('dialog[open]')||storageBlocked||!document.getElementById('save-status').hidden||glossaryDirty()||glossaryDrafts.size>0||pendingMediaDocument||
+  if(hasUnsavedReaderChanges()||document.querySelector('dialog[open]')||storageBlocked||!document.getElementById('save-status').hidden||pendingMediaDocument||
      [...document.querySelectorAll('input[type="file"]')].some(input=>input.files.length>0)||
      document.getElementById('audio-bookmark-time').value.trim()||document.getElementById('audio-bookmark-note').value.trim()||
      document.getElementById('ai-question').value.trim()||

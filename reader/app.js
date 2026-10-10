@@ -31,6 +31,8 @@ let savedDocumentsValue = "[]";
 let unsavedDocumentChanges = false;
 let unloadGuardReady = false;
 let unloadGuardAttached = false;
+let hasLanguageDrafts = () => false;
+const audioBookmarkDrafts = new Map();
 const persistedSummaries = new Map();
 const persistedSummaryJobs = new Map();
 function summaryCheckpointSignature(job){return job?JSON.stringify([job.provider,job.snapshot,job.results]):null;}
@@ -740,13 +742,42 @@ function renderNotebookAction(doc) {
 	$("export-notebook").disabled = count === 0;
 	$("export-notebook").textContent = Coconut.isAudioProject(doc)?"导出原声项目笔记（"+count+" 项）":"导出阅读笔记（" + count + (Coconut.hasProjectAnnotations(doc)?" 项）":" 段）");
 }
+// Drafts belong to a document, not to the currently rendered form. Keep them
+// in memory across navigation/search; only a successful save writes to storage.
+function captureAudioBookmarkDrafts() {
+ const documents=new Map(state.documents.map(doc=>[doc.key,doc]));
+ const key=$('audio-project').dataset.documentKey;
+ const doc=documents.get(key);
+ if(Coconut.hasProjectAnnotations(doc)){
+  const draft=audioBookmarkDrafts.get(key)||{time:'',note:'',edits:new Map()};
+  const bookmarks=new Map(doc.timestamp_bookmarks.map(item=>[item.id,item]));
+  draft.time=$('audio-bookmark-time').value;draft.note=$('audio-bookmark-note').value;
+  for(const form of document.querySelectorAll('#audio-bookmarks form')){
+   const id=form.parentElement.dataset.bookmarkId,original=bookmarks.get(id);
+   const value=form.querySelector('input').value;
+   if(original&&!form.hidden&&Coconut.parseReadingTime(value)!==original.time)draft.edits.set(id,value);
+   else draft.edits.delete(id);
+  }
+  audioBookmarkDrafts.set(key,draft);
+ }
+ for(const [key,draft] of audioBookmarkDrafts){
+  const doc=documents.get(key),bookmarks=new Map((doc?.timestamp_bookmarks||[]).map(item=>[item.id,item]));
+  for(const [id,value] of draft.edits){
+   const original=bookmarks.get(id);
+   if(!original||Coconut.parseReadingTime(value)===original.time)draft.edits.delete(id);
+  }
+  if(!doc||(!draft.time.trim()&&!draft.note.trim()&&!draft.edits.size))audioBookmarkDrafts.delete(key);
+ }
+}
 function renderAudioProject(doc) {
+ captureAudioBookmarkDrafts();
+ const draft=audioBookmarkDrafts.get(doc.key);
  const panel=$('audio-project'),audioOnly=Coconut.isAudioProject(doc);
  $('audio-project-heading').textContent=audioOnly?'先留下声音和想法':'项目笔记与时间书签';
  $('audio-project-boundary').textContent=audioOnly?'尚未导入文字稿，没有可生成摘要的原文。项目笔记和时间书签只记录你的想法，不会作为原文发送给 AI。':'已补充文字稿。以下项目笔记和时间书签仍是你的记录，不是原文，不会加入发送给 AI 的原文范围。';
  $('attach-project-transcript').hidden=!audioOnly;$('attach-project-help').hidden=!audioOnly;
  if(panel.dataset.documentKey!==doc.key){
-  panel.dataset.documentKey=doc.key;$('audio-bookmark-form').reset();$('audio-bookmark-search').value='';$('audio-project-status').textContent='';
+  panel.dataset.documentKey=doc.key;$('audio-bookmark-form').reset();$('audio-bookmark-time').value=draft?.time||'';$('audio-bookmark-note').value=draft?.note||'';$('audio-bookmark-search').value='';$('audio-project-status').textContent='';
  }
  $('project-note').value=doc.project_note;
  const host=$('audio-bookmarks');host.replaceChildren();
@@ -772,13 +803,14 @@ function renderAudioProject(doc) {
   };
   const edit=el('button','','修正书签时间'),form=el('form'),timeInput=el('input'),apply=el('button','','保存时间'),cancel=el('button','','取消修正'),error=el('p','hint');
   edit.className='edit-bookmark-time';form.hidden=true;timeInput.value=String(item.time);timeInput.setAttribute('aria-label','修正书签时间（秒、分:秒或时:分:秒）');timeInput.inputMode='decimal';apply.type='submit';cancel.type='button';error.setAttribute('role','status');
-  edit.onclick=()=>{form.hidden=false;timeInput.value=String(item.time);error.textContent='';timeInput.focus();};
+  if(draft?.edits.has(item.id)){form.hidden=false;timeInput.value=draft.edits.get(item.id);}
+  edit.onclick=()=>{if(form.hidden){form.hidden=false;timeInput.value=String(item.time);error.textContent='';}timeInput.focus();};
   cancel.onclick=()=>{form.hidden=true;edit.focus();};
   form.onsubmit=event=>{
    event.preventDefault();if(active()?.key!==doc.key||!doc.timestamp_bookmarks.includes(item))return;
    const next=Coconut.parseReadingTime(timeInput.value);
    if(next===null||next>604800){error.textContent='请输入最长7天的有效时间，原书签未改变。';return;}
-   item.time=next;doc.timestamp_bookmarks.sort((a,b)=>a.time-b.time);const persisted=save();renderAudioProject(doc);renderNotebookAction(doc);
+   item.time=next;form.hidden=true;doc.timestamp_bookmarks.sort((a,b)=>a.time-b.time);const persisted=save();renderAudioProject(doc);renderNotebookAction(doc);
    $('audio-project-status').textContent=persisted?'书签时间已更新，笔记保留。':'书签时间仅在本页，请立即导出 JSON 备份。';
    ([...host.children].find(element=>element.dataset.bookmarkId===item.id)?.querySelector('.edit-bookmark-time')||$('audio-bookmark-search')).focus();
   };
@@ -791,6 +823,7 @@ function allowAudioNoteChange(doc,previous,value,limit){
  }
  return true;
 }
+$('cancel-audio-bookmark').onclick=()=>{$('audio-bookmark-form').reset();captureAudioBookmarkDrafts();$('audio-project-status').textContent='已取消未保存的时间书签。';$('audio-bookmark-time').focus();};
 $('audio-bookmark-search').oninput=()=>{const doc=active();if(Coconut.hasProjectAnnotations(doc))renderAudioProject(doc);};
 $('project-note').oninput=()=>{
  const doc=active();if(!Coconut.hasProjectAnnotations(doc))return;
@@ -1528,7 +1561,8 @@ function attachTranscriptToProject(text,target){
 // Keep the existing export warnings. Attach only while actual changes remain.
 // https://developer.mozilla.org/en-US/docs/Web/API/Window/beforeunload_event
 function hasUnsavedReaderChanges() {
- if(unsavedDocumentChanges)return true;
+ captureAudioBookmarkDrafts();
+ if(unsavedDocumentChanges||audioBookmarkDrafts.size||hasLanguageDrafts())return true;
  if($("edit-dialog").open && editingTarget){
   const doc=state.documents.find(d=>d.key===editingTarget.documentKey);
   const segment=doc?.segments.find(s=>s.id===editingTarget.segmentId);
@@ -1562,7 +1596,7 @@ function syncUnsavedUnloadGuard() {
 if(!window.coconutUpdates){
  unloadGuardReady=true;
  // Input handlers run first, so synchronously saved notes never install a guard.
- for(const event of ["input","change","click"])document.addEventListener(event,syncUnsavedUnloadGuard);
+ for(const event of ["input","change","click","submit"])document.addEventListener(event,syncUnsavedUnloadGuard);
  // Dialog close does not bubble; capture also covers native Escape/Cancel.
  document.addEventListener("close",syncUnsavedUnloadGuard,true);
  syncUnsavedUnloadGuard();
