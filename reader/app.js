@@ -42,6 +42,7 @@ let demoToolsExpanded=false;
 const PASSAGES_PER_PAGE=8;
 let passageDocumentKey=null,passageAnchor=null,passagePageStart=0,passageReturn=null;
 let passageTranslations=true,mediaExpandedKey=null,passagePlayback=null;
+let noticeTimer=null,readingSettingsPriorOpen=null,headerDocumentKey=null,mediaCollapsedKey=null;
 function prefersPassageReading(doc){return !Coconut.isAudioProject(doc)&&doc?.provenance?.kind!=='authored_demo'&&doc?.segments.length>=12;}
 const browserMedia = new Map();
 const mediaSelectionRevisions = new Map();
@@ -64,10 +65,18 @@ function saveWarning(text = "") {
  if(unloadGuardReady)syncUnsavedUnloadGuard();
 }
 function notice(text,kind = "") {
- $("notice").dataset.kind = kind;
-	$("notice").hidden = !text;
-	$("notice").textContent = text;
+ if(noticeTimer!==null){clearTimeout(noticeTimer);noticeTimer=null;}
+ const success=!!text&&kind==='success';
+ $("notice").dataset.kind=success?'success':'';
+ $("notice").hidden=!text;$("notice").textContent=text;
+ $('notice-shell').classList.toggle('is-success',success);
+ const host=success?$('reading-feedback'):$('notice-home');
+ if($('notice-shell').parentElement!==host)host.append($('notice-shell'));
+ $('dismiss-notice').hidden=!success;
+ if(success)noticeTimer=setTimeout(()=>{noticeTimer=null;if($('notice').dataset.kind==='success'&&!$('notice-shell').contains(document.activeElement))notice('');},5000);
 }
+$('dismiss-notice').onclick=()=>{notice('');$('main-content').focus({preventScroll:true});};
+
 try {
 	lastSavedValue = localStorage.getItem(KEY);
 	const stored = JSON.parse(lastSavedValue || "null");
@@ -171,7 +180,7 @@ async function add(doc, canCommit = null, reuseAudioSource = false) {
 	if (!state.documents.some((d) => d.key === key))
 		state.documents.push({ ...doc, key, notes: doc.notes || {} });
 	state.active = key;
- passageReturn=null;passageDocumentKey=key;passageAnchor=active()?.segments[0]?.id||null;
+ passageReturn=null;passageDocumentKey=key;passageAnchor=active()?.segments[0]?.id||null;mediaExpandedKey=null;
  setReadingMode(prefersPassageReading(active())?"passages":"summary");
  searchFocusedId=null;
 	$("search").value = "";
@@ -202,6 +211,7 @@ function showWorkspace(next) {
  $("count").textContent = next === "add" ? "你的内容，从这里开始" : active() ? "书架 / " + active().title : "阅读空间";
  if (next !== "read") $("export-menu").open = false;
 	$("add-content").setAttribute("aria-pressed", String(next === "add"));
+ composeReadingHeader();
 	if (returning) window.scrollTo(0, readingScroll);
  refreshPlaybackDock();
 }
@@ -396,11 +406,7 @@ function render() {
  $('toggle-demo-tools').textContent=demoToolsExpanded?'收起工具':hasReadingFilter?'筛选中 · 查看':'搜索与工具';
  $('demo-guide').hidden=!isDemo;
  // The authored tryout has no media; don't suggest attaching an unrelated recording.
- const mediaVisible=!!mediaPath||audioOnly||mediaExpandedKey===doc.key;
- $('episode-media').hidden=(isDemo&&!mediaPath)||!mediaVisible;
- $('toggle-reader-media').hidden=isDemo||audioOnly||!!mediaPath;
- $('toggle-reader-media').setAttribute('aria-expanded',String(mediaVisible));
- $('toggle-reader-media').textContent=mediaVisible?'收起原声设置':'关联原声 · 回听这一篇';
+ updateReaderMediaVisibility(doc,!!mediaPath);
  if(!passagePlayback)passagePlayback=CoconutPassagePlayback.create({getPlayer:()=>$('source-media').querySelector('audio,video'),getDocumentKey:()=>active()?.key,onChange:renderPassagePlayback});
  passagePlayback.sync();
  $('reader-kind').textContent=isDemo?'一分钟试读':audioOnly?'原声项目':doc.language?doc.language.toUpperCase()+' · 原文可回查':'原文可回查';
@@ -834,7 +840,7 @@ $("export-notebook").onclick = () => {
 		link = el("a"); link.href = url;
 		link.download = doc.title.replace(/[\\/:*?"<>|\x00-\x1f\x7f]/g, "_") + ".notes.md";
 		link.hidden = true; document.body.append(link); link.click();
-		notice(Coconut.isAudioProject(doc)?"已发起项目笔记下载，包含项目笔记与时间书签；没有文字稿或摘要。完整恢复请使用 JSON 备份。":"已发起 Markdown 下载，包含本篇全部摘录与笔记。请检查浏览器下载记录；完整恢复仍需 JSON 备份。");
+		notice(Coconut.isAudioProject(doc)?"已发起项目笔记下载，包含项目笔记与时间书签；没有文字稿或摘要。完整恢复请使用 JSON 备份。":"已发起 Markdown 下载，包含本篇全部摘录与笔记。请检查浏览器下载记录；完整恢复仍需 JSON 备份。", "success");
 	} catch {
 		notice("阅读笔记导出失败，摘录与笔记仍在本页。请重试，暂时不要关闭页面。");
 	} finally {
@@ -862,7 +868,7 @@ $("export").onclick = () => {
 		document.body.append(link);
 		link.click();
 		// A click requests a download; only the user/browser can confirm disk persistence.
-		notice(Coconut.isAudioProject(d)?"已发起项目备份下载，包含来源、项目笔记与时间书签，不包含媒体。请检查下载记录并确认保存。":"已发起备份下载，请检查浏览器下载记录并确认文件已保存。备份包含原稿、修正、摘录与笔记。");
+		notice(Coconut.isAudioProject(d)?"已发起项目备份下载，包含来源、项目笔记与时间书签，不包含媒体。请检查下载记录并确认保存。":"已发起备份下载，请检查浏览器下载记录并确认文件已保存。备份包含原稿、修正、摘录与笔记。", "success");
 	} catch {
 		notice("备份导出失败，文字稿与笔记仍保留在本页。请重试，暂时不要关闭页面。");
 	} finally {
@@ -975,7 +981,7 @@ $("export-library").onclick = () => {
   if(backup.documents.length>500 || blob.size>50*1024*1024) { notice("书架超过整库恢复限制（500份或50MB），请使用逐份文字稿备份，避免生成无法恢复的文件。"); return; }
   url = URL.createObjectURL(blob);
   link = el("a"); link.href=url; link.download="coconut-library.json"; link.hidden=true; document.body.append(link); link.click();
-  notice("已发起整个书架的备份下载，请确认文件已保存；包含文字、笔记及 AI 回答，不包含媒体文件。");
+  notice("已发起整个书架的备份下载，请确认文件已保存；包含文字、笔记及 AI 回答，不包含媒体文件。", "success");
  } catch { notice("书架备份失败，内容仍在本页，请重试后再关闭。"); }
  finally { link?.remove(); if(url)setTimeout(()=>URL.revokeObjectURL(url),60000); }
 };
@@ -1010,7 +1016,7 @@ $("export-subtitles").onclick = () => {
   const result=Coconut.subtitleExport(doc,format,bilingual);
   url=URL.createObjectURL(new Blob([result.text],{type:format==="vtt"?"text/vtt;charset=utf-8":"text/plain;charset=utf-8"}));
   link=el("a");link.href=url;link.download=doc.title.replace(/[\\/:*?"<>|\x00-\x1f\x7f]/g,"_")+"."+format;link.hidden=true;document.body.append(link);link.click();
-  notice("已发起整篇字幕下载（"+doc.segments.length+" 段）"+(bilingual?"，附加 "+result.translated+" 段有效译文；缺失或过期译文未导出":"")+"。请确认文件已保存。");
+  notice("已发起整篇字幕下载（"+doc.segments.length+" 段）"+(bilingual?"，附加 "+result.translated+" 段有效译文；缺失或过期译文未导出":"")+"。请确认文件已保存。", "success");
  } catch { notice("字幕导出失败，内容仍在本页，请重试。"); }
  finally {link?.remove();if(url)setTimeout(()=>URL.revokeObjectURL(url),60000);}
 };
@@ -1028,7 +1034,7 @@ $("save-details").onclick=event=>{
  if(!doc || !title || title.length>200){$("details-error").textContent="请输入1–200字的标题";return;}
  doc.title=title;doc.language=$("document-language").value;
  const persisted=save();$("details-dialog").close();render();$("document-details").focus();
- if(persisted)notice("文字稿信息已保存；原始来源信息、时间戳和笔记保持不变。");
+ if(persisted)notice("文字稿信息已保存；原始来源信息、时间戳和笔记保持不变。", "success");
 };
 
 $("time-navigation").onsubmit=event=>{
@@ -1102,6 +1108,7 @@ $('dock-play').onclick=async()=>{
 $('dock-locate').onclick=()=>locateReadingPlayback();
 $('dock-return').onclick=()=>{
  const player=$('source-media').querySelector('audio,video');if(!player)return;
+ $('reading-info').open=false;mediaExpandedKey=active()?.key||null;mediaCollapsedKey=null;updateReaderMediaVisibility(active());refreshPlaybackDock();
  $('source-media').scrollIntoView?.({block:'center',behavior:'smooth'});player.focus({preventScroll:true});
 };
 window.addEventListener('scroll',schedulePlaybackDock,{passive:true});
@@ -1269,6 +1276,7 @@ function renderPassages(doc){
 }
 function openPassage(cueId,scroll=true){
  const doc=active(),passages=readingPassages(doc),passage=CoconutPassages.locate(passages,cueId)||passages[0];if(!passage)return;
+ $('reading-info').open=false;mediaExpandedKey=null;
  passageReturn=null;passageDocumentKey=doc.key;passageAnchor=passage.cues[0].id;
  setReadingMode('passages');render();
  const target=[...$('passage-body').querySelectorAll('.passage')].find(row=>row.dataset.firstCueId===passageAnchor);
@@ -1307,7 +1315,25 @@ function renderPassagePlayback(state){
  }
 }
 function locateReadingPlayback(){const cue=playbackSegment();if(cue){if(readingMode==='passages')openPassage(cue.id);else goToSegment(cue.id);highlightPlayback();}}
-$('toggle-reader-media').onclick=()=>{const doc=active();if(!doc)return;mediaExpandedKey=mediaExpandedKey===doc.key?null:doc.key;render();};
+$('toggle-reader-media').onclick=()=>{const doc=active();if(!doc)return;$('reading-info').open=false;$('export-menu').open=false;mediaExpandedKey=$('episode-media').hidden?doc.key:null;mediaCollapsedKey=mediaExpandedKey?null:doc.key;updateReaderMediaVisibility(doc);refreshPlaybackDock();};
+$('close-reader-media').onclick=()=>{mediaExpandedKey=null;mediaCollapsedKey=active()?.key||null;updateReaderMediaVisibility(active());refreshPlaybackDock();$('toggle-reader-media').focus({preventScroll:true});};
+$('close-reading-info').onclick=()=>{$('reading-info').open=false;$('reading-info').querySelector('summary').focus({preventScroll:true});};
+$('reading-info').querySelector('summary').addEventListener('click',()=>{if(!$('reading-info').open){$('export-menu').open=false;mediaExpandedKey=null;updateReaderMediaVisibility(active());refreshPlaybackDock();}});
+$('export-menu').querySelector('summary').addEventListener('click',()=>{if(!$('export-menu').open){$('reading-info').open=false;if(readingMode==='passages'){mediaExpandedKey=null;updateReaderMediaVisibility(active());refreshPlaybackDock();}}});
+document.addEventListener('keydown',event=>{
+ if(event.key!=='Escape'||document.querySelector('dialog[open]'))return;
+ if($('reading-info').open){event.preventDefault();$('close-reading-info').click();}
+ else if(readingMode==='passages'&&!$('episode-media').hidden){event.preventDefault();$('close-reader-media').click();}
+});
+document.addEventListener('click',event=>{
+ const target=event.target;
+ if(target.closest?.('dialog,a[download]'))return;
+ // A pointer dismissal keeps focus on the newly chosen reading control.
+ if($('reading-info').open&&!$('reading-info').contains(target))$('reading-info').open=false;
+ if(readingMode==='passages'&&!$('episode-media').hidden&&!$('episode-media').contains(target)&&!$('toggle-reader-media').contains(target)&&!$('dock-return').contains(target)){
+  mediaExpandedKey=null;updateReaderMediaVisibility(active());refreshPlaybackDock();
+ }
+});
 $('passage-time-range').oninput=()=>{$('passage-time-label').textContent=Coconut.time(Number($('passage-time-range').value));};
 $('passage-time-range').onchange=()=>{const passage=CoconutPassages.atTime(readingPassages(),Number($('passage-time-range').value));if(passage)openPassage(passage.cues[0].id);};
 $('passage-previous').onclick=()=>movePassagePage(-1);$('passage-next').onclick=()=>movePassagePage(1);
@@ -1325,9 +1351,42 @@ window.addEventListener('resize',pauseBoundedForCompactNote);
 window.visualViewport?.addEventListener('resize',pauseBoundedForCompactNote);
 window.addEventListener('pagehide',()=>{if(passagePlayback?.getState().range)$('source-media').querySelector('audio,video')?.pause();passagePlayback?.cancel();});
 
+function updateReaderMediaVisibility(doc=active(),hasMedia=!!$('source-media').querySelector('audio,video')){
+ if(!doc)return;
+ const audioOnly=Coconut.isAudioProject(doc),demo=doc.provenance?.kind==='authored_demo',compact=readingMode==='passages'&&!audioOnly;
+ const expanded=mediaExpandedKey===doc.key,visible=audioOnly||expanded||(!compact&&hasMedia&&mediaCollapsedKey!==doc.key);
+ $('episode-media').hidden=(demo&&!hasMedia)||!visible;
+ $('toggle-reader-media').hidden=(demo&&!hasMedia)||audioOnly;
+ $('toggle-reader-media').setAttribute('aria-expanded',String(visible));
+ $('toggle-reader-media').textContent=compact?(visible?'收起原声':hasMedia?'原声':'关联原声'):(visible?'收起原声设置':'关联原声 · 回听这一篇');
+ $('close-reader-media').hidden=audioOnly||!visible;
+}
+function composeReadingHeader(){
+ const doc=active(),compact=workspace==='read'&&readingMode==='passages'&&doc&&!Coconut.isAudioProject(doc);
+ $('reader-title-slot').hidden=!compact;$('count').hidden=!!compact;$('reading-info').hidden=!compact;
+ $('reading-utility').classList.toggle('is-compact',!!compact);
+ const toolbar=document.querySelector('.passage-toolbar');toolbar.hidden=!compact;
+ const titleTarget=compact?$('reader-title-slot'):$('reader-title-home');
+ if($('title').parentElement!==titleTarget)titleTarget.append($('title'));
+ const metaTarget=compact?$('reading-info-meta'):$('reader-meta-home');
+ for(const id of ['subtitle','provenance'])if($(id).parentElement!==metaTarget)metaTarget.append($(id));
+ $('reading-info-title').textContent=doc?.title||'';$('title').title=doc?.title||'';
+ if(headerDocumentKey!==doc?.key){headerDocumentKey=doc?.key;$('reading-info').open=false;}
+ const settings=$('reading-settings');
+ if(compact){
+  if(settings.parentElement!==$('reading-info-settings')){readingSettingsPriorOpen=settings.open;$('reading-info-settings').append(settings);settings.open=true;}
+  if($('passage-browse-help').parentElement!==$('reading-info-help'))$('reading-info-help').append($('passage-browse-help'));
+  $('reading-info-position').textContent=$('passage-position').textContent;
+ }else{
+  if(settings.parentElement!==$('reader-options')){$('reader-options').insertBefore(settings,$('language-panel'));settings.open=readingSettingsPriorOpen===true;readingSettingsPriorOpen=null;}
+  if($('passage-browse-help').parentElement!==document.querySelector('.passage-browse'))document.querySelector('.passage-browse').append($('passage-browse-help'));
+  $('reading-info').open=false;
+ }
+}
+
 function applyReadingMode() {
  const audioOnly=Coconut.isAudioProject(active());
- if($('source-media').querySelector('audio,video')&&!$('source-media').hidden)$('episode-media').hidden=false;
+ updateReaderMediaVisibility(active());
  const summary=readingMode==='summary'&&!audioOnly;
  const passages=readingMode==='passages'&&!audioOnly;
  document.body.dataset.readingMode=readingMode;
@@ -1338,7 +1397,7 @@ function applyReadingMode() {
  $('summary-workspace').hidden=!summary;
  $('transcript-controls').hidden=summary||passages;
  $('transcript-layout').hidden=summary||passages||audioOnly;
- $('reading-settings').hidden=summary||passages;
+ $('reading-settings').hidden=summary;
  $('language-panel').hidden=audioOnly||summary||passages;
  $('mode-summary').setAttribute('aria-pressed',String(summary));
  const bilingual=!summary&&!passages&&!audioOnly&&!!active()?.translation_view;
@@ -1348,6 +1407,7 @@ function applyReadingMode() {
  $('mode-bilingual').disabled=audioOnly;
  renderReadingContext();
  $('bilingual-readiness').hidden=!bilingual||active()?.provenance?.kind==='authored_demo';
+ composeReadingHeader();
  if(bilingual){const doc=active(),target=doc.translation_view,count=doc.segments.filter(s=>Coconut.translationCurrent(s,doc,s.translations?.[target])).length;
  $('bilingual-status').textContent=count?`当前语言已有 ${count}/${doc.segments.length} 段有效译文；缺失或过期部分仍保留原文，可在翻译选项中继续。`:'还没有当前语言的有效译文。先读原文，或打开翻译选项，核对发送范围与额度后生成；切换视图不会调用模型。';}
 }
@@ -1473,7 +1533,7 @@ $('export-summary').onclick=()=>{
  try{
   url=URL.createObjectURL(new Blob([Coconut.summaryMarkdown(doc)],{type:'text/markdown;charset=utf-8'}));
   link=el('a');link.href=url;link.download=doc.title.replace(/[\\/:*?"<>|\x00-\x1f\x7f]/g,'_')+'.summary.md';link.hidden=true;document.body.append(link);link.click();
-  notice('已发起摘要下载，包含引用与历史依据。请检查浏览器下载记录。');
+  notice('已发起摘要下载，包含引用与历史依据。请检查浏览器下载记录。', "success");
  }catch{notice('摘要导出失败，已保存的摘要仍在此页面，请重试。');}
  finally{link?.remove();if(url)setTimeout(()=>URL.revokeObjectURL(url),60000);}
 };
@@ -1498,7 +1558,7 @@ $('reader-media-file').onchange=async()=>{
   if(key===active()?.key){stopRepeating();$('source-media').querySelector('audio,video')?.pause();}
   browserMedia.set(key,{url:nextURL,kind,name:file.name});if(previous)URL.revokeObjectURL(previous.url);
   if(key===active()?.key){render();}
-  notice('媒体只在本次页面读取，未上传。请核对内容和文字稿对应；刷新后重新选择文件即可继续回听。');
+  notice('媒体只在本次页面读取，未上传。请核对内容和文字稿对应；刷新后重新选择文件即可继续回听。', "success");
  }catch(error){if(nextURL)URL.revokeObjectURL(nextURL);notice('打开媒体失败：'+error.message);}
  finally{input.value='';}
 };
