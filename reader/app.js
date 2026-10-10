@@ -1,4 +1,5 @@
 "use strict";
+let quotationController;
 const $ = (id) => document.getElementById(id);
 const KEY = "coconut-reader-v1";
 const ACTIVE_KEY = "coconut-reader-active-v1";
@@ -2389,6 +2390,11 @@ function renderPassages(doc){
   section.append(columns);
   if(target&&passageTranslations)for(const cue of passage.cues){const item=cue.translations?.[target];if(item&&Coconut.translationCurrent(cue,doc,item)){const warning=Coconut.translationQualityMessage(item);if(warning)section.append(el('p','passage-translation-warning',Coconut.time(cue.start)+' · 译文待核对：'+warning));}}
   const actions=el('div','passage-actions');
+  if(window.CoconutQuotation){
+   quotationController??=CoconutQuotation.create({isCurrent:owner=>active()===owner&&state.documents.includes(owner)&&contentIngressAllowed(owner)});
+   const quote=el('button','passage-quote','引用原文');quote.type='button';quote.setAttribute('aria-label','引用 '+Coconut.time(passage.start)+' 的原文');
+   quotationController.bind(quote,original,doc,passage.cues);actions.append(quote);
+  }
   const listen=el('button','passage-listen','回听这一段');listen.type='button';listen.dataset.passageId=passage.key;
   renderedPassageRanges.set(listen,passage);
   listen.onclick=()=>{const range=timingRange(passage);if(!range)return;stopRepeating();passagePlayback.listen({...range,id:passage.key,label:Coconut.time(passage.start)+'–'+Coconut.time(passage.end)});};

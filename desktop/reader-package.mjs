@@ -1,6 +1,7 @@
 /** Read-only build verification; never changes staged or sealed reader resources. */
 import {readFile} from 'node:fs/promises';
 import path from 'node:path';
+import {createHash} from 'node:crypto';
 import {pathToFileURL} from 'node:url';
 
 export async function verifyReaderResources(readerDirectory) {
@@ -18,6 +19,9 @@ export async function verifyReaderResources(readerDirectory) {
   if(!assets.length)throw new Error('Packaged reader has no declared assets');
   for(const name of new Set(assets)){
     if(name!==path.basename(name)||!/\.(?:js|css|png)$/.test(name))throw new Error('Unexpected packaged reader asset: '+name);
-    await readFile(path.join(readerDirectory,name));
+    const bytes=await readFile(path.join(readerDirectory,name));
+    const reference=[...index.matchAll(/(?:src|href)=["']([^"']+)["']/g)].map(match=>match[1]).find(value=>value.startsWith(name+'?v='));
+    if(reference&&reference.split('?v=')[1]!==createHash('sha256').update(bytes).digest('hex').slice(0,10))
+      throw new Error('Packaged reader asset bytes do not match page token: '+name);
   }
 }

@@ -80,3 +80,10 @@ test('packager stages the boundary and checks each output before signing; exact 
   assert.match(proof,/await verifyReaderResources\(path.join\(candidate,'reader'\)\)/);
   assert.match(proof,/reader\/package.json/);
 });
+test('quotation is staged byte-for-byte, loads before app, and corrupt packaged bytes fail verification',async t=>{
+ const fixture=await layout(t,'extracted'),index=await readFile(path.join(root,'reader/index.html'),'utf8');
+ assert.ok(index.indexOf('quotation.js')<index.indexOf('app.js'));assert.match(index,/<script src="quotation\.js\?v=[a-f0-9]{10}" defer><\/script>/);
+ assert.deepEqual(await readFile(path.join(fixture.reader,'quotation.js')),await readFile(path.join(root,'reader/quotation.js')));
+ await verifyReaderResources(fixture.reader);await writeFile(path.join(fixture.reader,'quotation.js'),'/* mismatched package */');
+ await assert.rejects(verifyReaderResources(fixture.reader),/asset bytes do not match page token: quotation.js/);
+});

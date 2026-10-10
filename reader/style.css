@@ -1061,3 +1061,5 @@ body[data-media-docked="true"] .reading-feedback { bottom: 94px; }
 .transcript-drop-target.is-file-drag, .transcript-drop-target:focus-within { border-color: var(--accent); outline: 2px solid var(--accent); outline-offset: 2px; }
 #transcript-drop-status:empty { display: none; }
 #transcript-drop-status { color: var(--tone-error, #9a3e28); overflow-wrap: anywhere; }
+
+.quotation-dialog{width:min(42rem,calc(100vw - 2rem));max-height:calc(100dvh - 2rem);overflow:auto}.quotation-dialog textarea{display:block;box-sizing:border-box;width:100%;margin:.5rem 0 1rem;white-space:pre-wrap}.quotation-dialog button{margin:.25rem .5rem .25rem 0}
