@@ -200,3 +200,18 @@ for(const preview of [false,true])test(`native close flush after keyboard use ${
  assert.equal(m.player.currentTime,time);assert.equal(m.played,played);assert.equal($('keyboard-help').open,false);
  }finally{await env.close();}
 });
+
+test('a delayed native help close event never steals newer search or reader focus',async()=>{
+ const env=setup();try{const {w,$,press}=env;await load(env);
+ for(const target of ['passage-body','search']){
+  $('mode-passages').click();$('keyboard-help-open').focus();$('keyboard-help-open').click();
+  // Native close queues its close event. Model only that event gap, allowing
+  // a newer intentional focus/shortcut before the event reaches our listener.
+  $('keyboard-help').open=false;
+  $('passage-body').focus();if(target==='search')press('/');
+  assert.equal(w.document.activeElement?.id,target);
+  $('keyboard-help').dispatchEvent(new w.Event('close'));
+  assert.equal(w.document.activeElement?.id,target);
+ }
+ }finally{await env.close();}
+});
