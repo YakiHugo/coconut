@@ -18,11 +18,40 @@ import {installStorageAssertions,readerReady} from './helpers/browser-storage.mj
 const root=fileURLToPath(new URL('../',import.meta.url));
 const origin='http://127.0.0.1:47831';
 const checks=[];
-let temporary,application,stage='configuration',pageErrors=0,forbiddenRequests=0;
+let temporary,application,diagnosticPage,importDiagnostic,stage='configuration',pageErrors=0,forbiddenRequests=0;
 process.umask(0o077);
 delete process.env.DEBUG;
 delete process.env.PWDEBUG;
 function check(name,value){stage=name;assert.ok(value,name);checks.push(name);}
+
+// Failure evidence contains only this test's isolated authored fixture UI. Never
+// retain profiles, storage dumps, downloads, network bodies or arbitrary paths.
+function sanitizedFailure(error){
+ const clean=value=>String(value||'').replaceAll(temporary||'\0','<fixture-temp>').replaceAll(root,'<checkout>')
+  .replace(/https?:\/\/[^\s)\]}]+/g,'<url>').replace(/file:\/\/[^\s)\]}]+/g,'<file-url>')
+  .replace(/(?:\/Users\/|\/home\/|\/private\/|\/var\/)[^\s)\]}]+/g,'<path>')
+  .replace(/(?:token|authorization|cookie|password|secret)\s*[:=]\s*\S+/gi,'<redacted>');
+ return {message:clean(error.message).slice(0,4000),stack:clean(error.stack).slice(0,8000)};
+}
+async function retainFailure(error){
+ const directory=process.env.COCONUT_NATIVE_DIAGNOSTICS;
+ if(!directory)return;
+ await fs.mkdir(directory,{recursive:true});
+ const report={suite:'packaged-macos-product',stage,category:error.name,...sanitizedFailure(error),checks,
+  import:importDiagnostic,pageErrors,forbiddenRequests};
+ if(diagnosticPage&&!diagnosticPage.isClosed()){
+  try{report.state=await diagnosticPage.evaluate(()=>{
+   const visible=id=>{const node=document.getElementById(id);if(!node)return false;const rect=node.getBoundingClientRect();return rect.width>0&&rect.height>0&&getComputedStyle(node).visibility!=='hidden';};
+   return {activeId:document.activeElement?.id||null,readyState:document.readyState,
+    addVisible:visible('add-workspace'),readerVisible:visible('reader-workspace'),
+    importVisible:visible('import'),fileCount:document.getElementById('file')?.files?.length??null,
+    fileValueEmpty:document.getElementById('file')?.value==='',openDialogs:document.querySelectorAll('dialog[open]').length,
+    segmentCount:document.querySelectorAll('.segment').length,saveState:document.getElementById('save-status')?.dataset.state||null};
+  });}catch{report.stateUnavailable=true;}
+  try{await diagnosticPage.screenshot({path:path.join(directory,'native-import-failure.png'),fullPage:false,timeout:5000});report.screenshot=true;}catch{report.screenshot=false;}
+ }
+ await fs.writeFile(path.join(directory,'native-import-failure.json'),JSON.stringify(report,null,2));
+}
 
 // A complete 10-second mono PCM WAV needs no encoder, network or model.
 function authoredAudio(){
@@ -54,7 +83,7 @@ async function launch(executable,profile,version,label){
   if(['blob:','data:'].includes(url.protocol)||(url.origin===origin&&['GET','HEAD'].includes(request.method())&&url.pathname!=='/api/language-tools'))await route.continue();
   else{forbiddenRequests++;await route.abort();}
  });
- const page=await application.firstWindow();page.setDefaultTimeout(15000);page.on('pageerror',()=>pageErrors++);
+ const page=await application.firstWindow();diagnosticPage=page;page.setDefaultTimeout(15000);page.on('pageerror',()=>pageErrors++);
  await page.waitForURL(origin+'/');await installStorageAssertions(page);await readerReady(page);
  await page.waitForFunction(()=>typeof window.coconutPrepareClose==='function'&&typeof window.coconutPrepareUpdate==='function');
  check(label+'_default_indexeddb_backend',await page.evaluate(()=>window.CoconutStorageBootstrap.result.backend==='indexeddb'));
@@ -94,10 +123,16 @@ async function nativeFileCommand(id){
  },id);
 }
 async function importFile(page,filename,native=false){
- stage='file_chooser_import';await page.locator('#add-content').click();
- const [chooser]=await Promise.all([page.waitForEvent('filechooser'),native?nativeFileCommand('import-transcript'):page.locator('#import').click()]);await chooser.setFiles(filename);
- await page.locator('#reader-workspace').waitFor({state:'visible'});
- await page.waitForFunction(()=>document.getElementById('file').value==='');
+ importDiagnostic={native,chooserReceived:false,commandResolved:false};
+ stage='file_import_open_add';await page.locator('#add-content').click();
+ stage='file_import_request_chooser';
+ const [chooser]=await Promise.all([
+  page.waitForEvent('filechooser').then(value=>{importDiagnostic.chooserReceived=true;return value;}),
+  (native?nativeFileCommand('import-transcript'):page.locator('#import').click()).then(value=>{importDiagnostic.commandResolved=true;return value;})
+ ]);
+ stage='file_import_set_files';await chooser.setFiles(filename);
+ stage='file_import_wait_reader';await page.locator('#reader-workspace').waitFor({state:'visible'});
+ stage='file_import_wait_input_reset';await page.waitForFunction(()=>document.getElementById('file').value==='');
 }
 const row=(page,id)=>page.locator('.segment[data-segment-id="'+id+'"]');
 async function download(page,button,filename){
@@ -306,7 +341,8 @@ try{
  console.log(JSON.stringify({suite:'packaged-macos-product',status:'passed',architecture:process.arch,checks,
   gatekeeper_install_verified:false,real_inference_verified:false}));
 }catch(error){
- console.error(JSON.stringify({suite:'packaged-macos-product',status:'failed',stage,category:error.name,checks}));process.exitCode=1;
+ console.error(JSON.stringify({suite:'packaged-macos-product',status:'failed',stage,category:error.name,...sanitizedFailure(error),import:importDiagnostic,checks}));process.exitCode=1;
+ try{await retainFailure(error);}catch{console.error('Authored native diagnostic capture unavailable');}
 }finally{
  // A failed assertion may leave the authored dirty fixture open. Cleanup may
  // discard only that isolated test profile so it cannot wait on a native dialog.
