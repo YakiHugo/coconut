@@ -8,7 +8,7 @@
 <meta name="theme-color" content="#faf9f7">
 <link rel="icon" type="image/png" href="coconut-mark.png">
 <script src="appearance.js?v=86ea922669"></script>
-<link rel="stylesheet" href="style.css?v=0fb837eee9">
+<link rel="stylesheet" href="style.css?v=9f483ddf63">
 <script src="summary.js?v=580ffdad1e" defer></script>
 <script src="core.js?v=02595738d9" defer>
 </script>
@@ -17,7 +17,7 @@
 <script src="library-store.js?v=e76ded9456" defer></script>
 <script src="indexeddb-document-adapter.js?v=65c0c5a814" defer></script>
 <script src="storage-provider.js?v=1cb898e984" defer></script>
-<script src="app.js?v=bf393e3996" type="text/coconut-pending" data-reader-script>
+<script src="app.js?v=e7ca51ee45" type="text/coconut-pending" data-reader-script>
 </script>
 <script src="language.js?v=8832e43c29" type="text/coconut-pending" data-reader-script></script>
 <script src="translation-review.js?v=ef64ceb824" type="text/coconut-pending" data-reader-script></script>
@@ -139,7 +139,8 @@
 <p class="hint">优先读取发布者提供的文字稿。只访问公开来源，不使用登录、会员或私有订阅链接；没有文字稿时会明确提示，不自动转录或扣费。</p>
 <button id="cancel-podcast" type="button" hidden>取消读取</button><p id="podcast-status" class="hint" role="status"></p><div id="podcast-results"></div>
 </section>
-<div class="file-entry"><div class="add-actions"><button id="open-local-media" type="button">打开本地音视频</button><input id="local-media-file" type="file" accept="audio/*,video/*,.mp3,.m4a,.wav,.ogg,.flac,.aac,.opus,.mp4,.webm,.mov,.m4v" hidden><button id="import">＋ 导入文字稿</button><span class="hint">JSON、SRT、VTT · 可多选</span></div><p class="hint">没有文字稿也能先听、记笔记和时间书签；文件不上传，不运行识别或 AI。有字幕时可补充到同一项目。JSON 超过50 MiB 先确认读取；SRT / VTT 限15 MiB。</p></div>
+<div class="file-entry"><div class="add-actions"><button id="open-local-media" type="button">打开本地音视频</button><input id="local-media-file" type="file" accept="audio/*,video/*,.mp3,.m4a,.wav,.ogg,.flac,.aac,.opus,.mp4,.webm,.mov,.m4v" hidden><div id="transcript-drop-target" class="transcript-drop-target" role="group" aria-label="导入本地文字稿" aria-describedby="transcript-drop-help"><button id="import" type="button">＋ 导入文字稿</button><span id="transcript-drop-help" class="hint">或拖放文件到这里 · JSON、SRT、VTT · 可多选</span></div></div><p class="hint">没有文字稿也能先听、记笔记和时间书签；文件不上传，不运行识别或 AI。有字幕时可补充到同一项目。JSON 超过50 MiB 先确认读取；SRT / VTT 限15 MiB。</p></div>
+<p id="transcript-drop-status" class="hint" role="status" aria-live="polite"></p>
 <section id="transcript-import-results" class="transcript-import-results" aria-label="文字稿导入结果" hidden>
 <div class="transcript-import-heading"><p id="transcript-import-progress" role="status" aria-live="polite"></p><button id="stop-transcript-import" type="button">停止后续文件</button></div>
 <p class="hint">逐份在本机读取，已保存内容会保留。整书架 JSON 请使用「恢复书架备份」。</p>
