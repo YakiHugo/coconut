@@ -402,6 +402,15 @@ function rememberActiveDocument() {
   else localStorage.setItem(LAST_ACTIVE_KEY,state.active);
  } catch { /* A preference failure is not a failed document save. */ }
 }
+const readingRecency=Coconut.createReadingRecency({getStorage:()=>localStorage});
+function markDocumentOpened(doc){
+ if(doc&&state.documents.includes(doc)&&!pendingStructuralDocuments.has(doc.key))readingRecency.record(doc.key);
+}
+window.addEventListener('storage',event=>{
+ if(event.key!==readingRecency.key&&event.key!==null)return;
+ readingRecency.refresh();if($('library-sort').value==='opened')renderLibrary();
+});
+window.addEventListener('coconut-document-removed',event=>readingRecency.record(event.detail.key,true));
 let activeSelectionRevision=0;
 function selectActiveDocument(key,{persist=true}={}) {
  activeSelectionRevision++;
@@ -835,7 +844,8 @@ function createLibraryCard(d){
  const title=el('span','library-title'),metadata=el('small');open.append(title,metadata);
  const openDocument=(hit=null)=>{
   if(pendingStructuralDocuments.has(d.key)||!state.documents.includes(d))return;
-  if(!hit&&libraryMobile.matches&&$('toggle-library').getAttribute('aria-expanded')==='true'&&d.key===active()?.key&&libraryBrowseOrigin?.reading&&libraryBrowseOrigin.doc===d&&libraryBrowseOrigin.selectionRevision===activeSelectionRevision){returnFromLibrary();return;}
+  markDocumentOpened(d);
+  if(!hit&&libraryMobile.matches&&$('toggle-library').getAttribute('aria-expanded')==='true'&&d.key===active()?.key&&libraryBrowseOrigin?.reading&&libraryBrowseOrigin.doc===d&&libraryBrowseOrigin.selectionRevision===activeSelectionRevision){returnFromLibrary();renderLibrary();return;}
   resetReaderForDocumentNavigation();selectActiveDocument(d.key);
   setReadingMode(prefersPassageReading(d)?'passages':'summary');
   $('toggle-library').setAttribute('aria-expanded','false');showWorkspace('read');render();
@@ -871,7 +881,7 @@ function renderLibrary(revealKey=null) {
  }
  host.hidden=false;
  if(libraryPendingReveal){revealKey=libraryPendingReveal.key;libraryPendingReveal=null;}
- const docs=selection.docs;
+ const docs=$('library-sort').value==='opened'?Coconut.sortedLibrary(selection.docs,'opened',readingRecency.time):selection.docs;
  const activeIndex=docs.findIndex(d=>d.key===state.active);
  if(viewChanged)libraryPage=0;
  else if(state.active!==libraryActiveKey&&activeIndex>=0)libraryPage=Math.floor(activeIndex/LIBRARY_PAGE_SIZE);
@@ -982,7 +992,7 @@ function renderLibraryNotebook(returnKey=null){
    const sourceCurrent=capture.type==='cue'?doc.segments.includes(source)&&source.text===capture.text&&source.start===capture.time:capture.type==='bookmark'?doc.timestamp_bookmarks.includes(source)&&source.time===capture.time:Coconut.hasNoteContent(doc.project_note);
    if(pendingStructuralDocuments.has(doc.key)||!state.documents.includes(doc)||!sourceCurrent){renderLibraryNotebook();$('notebook-status').textContent='这条记录的来源已变动，请从更新后的笔记本重新选择。';$('notebook-search').focus();return;}
    notebookReturn={key:capture.key,page:notebookPage,scroll:$('library-notebook').scrollTop};$('library-notebook').close();
-   resetReaderForDocumentNavigation();selectActiveDocument(doc.key);setReadingMode('transcript');showWorkspace('read');render();
+   markDocumentOpened(doc);resetReaderForDocumentNavigation();selectActiveDocument(doc.key);setReadingMode('transcript');showWorkspace('read');render();
    openLibraryHit({kind:capture.type==='cue'?(Coconut.hasNoteContent(capture.note)?'note':'text'):capture.type,id:capture.id});
    $('return-library-notebook').hidden=false;
   };row.append(details,open);host.append(row);
@@ -1199,7 +1209,7 @@ function render({keepNoteEditor=false}={}) {
 	const bookmark = doc.segments.find(s => s.id === doc.readingPosition);
 	$("resume").hidden = !bookmark;
 	$("resume").textContent = bookmark ? "继续阅读 · " + Coconut.time(bookmark.start) : "";
-	$("resume").onclick = () => bookmark && goToSegment(bookmark.id);
+	$("resume").onclick = () => {if(bookmark){markDocumentOpened(doc);goToSegment(bookmark.id);}};
 	$("transcript").replaceChildren();
 	for (const s of visible) {
 		const row = el(
@@ -1405,13 +1415,13 @@ $("add-content").onclick = () => { if(libraryMobile.matches)$("toggle-library").
  };
  $('demo-note').onclick=()=>{const id=active()?.segments[0]?.id;if(!id)return;goToSegment(id);$('transcript').querySelector('.note-button')?.click();};
  $('reading-jump').onchange=()=>{const id=$('reading-jump').value;if(id)goToSegment(id);};
-$("back-reading").onclick = () => showWorkspace("read");
+$("back-reading").onclick = () => {markDocumentOpened(active());showWorkspace("read");renderLibrary();};
 $("show-jobs").onclick = () => { showWorkspace("add"); $("jobs-heading").scrollIntoView?.(); };
 $("toggle-library").onclick = toggleLibraryBrowsing;
 $("library-search").oninput = renderLibrary;
 $("library-kind").onchange=renderLibrary;
 $("library-scope").onchange=renderLibrary;
-try{const order=localStorage.getItem('coconut-library-sort-v1');if(['added','title','duration'].includes(order))$('library-sort').value=order;}catch{}
+try{const order=localStorage.getItem('coconut-library-sort-v1');if(['added','opened','title','duration'].includes(order))$('library-sort').value=order;}catch{}
 $('library-sort').onchange=()=>{renderLibrary();try{localStorage.setItem('coconut-library-sort-v1',$('library-sort').value);}catch{notice('本次排序已应用，但浏览器未保存偏好。');}};
 
 $('speaker-filter').onchange=()=>{clearReadingContext();speakerFilter=$('speaker-filter').value==='all'?null:JSON.parse($('speaker-filter').value);pageStart=0;searchFocusedId=null;render();};
@@ -1540,7 +1550,7 @@ function openTranscriptImportResult(item){
  if(!state.documents.includes(doc)||pendingStructuralDocuments.has(doc?.key)){
   item.result.textContent='这份内容已移除或正在恢复，请在书架确认';item.open.hidden=true;return;
  }
- resetReaderForDocumentNavigation();selectActiveDocument(doc.key);
+ markDocumentOpened(doc);resetReaderForDocumentNavigation();selectActiveDocument(doc.key);
  setReadingMode(prefersPassageReading(doc)?'passages':'summary');
  $('toggle-library').setAttribute('aria-expanded','false');showWorkspace('read');render();
  const bookmark=doc.segments.find(cue=>cue.id===doc.readingPosition);

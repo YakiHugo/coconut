@@ -146,6 +146,9 @@ jobs:
       - name: Verify large complete backups, real downloads and native quota recovery
         if: ${{ !cancelled() && steps.browser_setup.outcome == 'success' }}
         run: node tests/backup-roundtrip-browser.mjs
+      - name: Verify recent-open sort, reload and cross-window content isolation
+        if: ${{ !cancelled() && steps.browser_setup.outcome == 'success' }}
+        run: node tests/recent-reading-browser.mjs
       - name: Verify per-window reading selection, no-content-write navigation and actual conflict recovery downloads
         if: ${{ !cancelled() && steps.browser_setup.outcome == 'success' }}
         run: node tests/window-selection-browser.mjs

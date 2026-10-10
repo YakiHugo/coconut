@@ -180,7 +180,7 @@ test('successful active removal and undo change preferences only after content p
   const events=[],writeDisk=disk.setItem,writeSession=session.setItem;
   disk.setItem=(key,value)=>{events.push(key);writeDisk(key,value);};session.setItem=(key,value)=>{events.push(key);writeSession(key,value);};
   await requestRemoval(env,'b');
-  assert.deepEqual(events,[KEY,ACTIVE,LAST_ACTIVE]);assert.equal(session.getItem(ACTIVE),'c');assert.equal(disk.getItem(LAST_ACTIVE),'c');assert.equal(env.$('title').textContent,'Authored c');
+  assert.deepEqual(events,[KEY,ACTIVE,LAST_ACTIVE,'coconut-reading-recency-v1']);assert.equal(session.getItem(ACTIVE),'c');assert.equal(disk.getItem(LAST_ACTIVE),'c');assert.equal(env.$('title').textContent,'Authored c');
   assert.equal(Object.hasOwn(JSON.parse(disk.getItem(KEY)),'active'),false);
   events.length=0;await env.$('undo-removal').onclick();
   assert.deepEqual(events,[KEY,ACTIVE,LAST_ACTIVE]);assert.equal(session.getItem(ACTIVE),'b');assert.equal(disk.getItem(LAST_ACTIVE),'b');assert.equal(env.$('title').textContent,'Authored b');
