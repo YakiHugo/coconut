@@ -45,7 +45,32 @@ try{
  await page.locator('#dock-locate').click();
  check('dock_locates_current_sound_across_pages',await page.evaluate(()=>document.activeElement.classList.contains('segment')&&Number(document.activeElement.dataset.segmentId.split('-')[1])>=126&&document.querySelector('audio')===window.__dockPlayer));
  await page.setViewportSize({width:390,height:844});await page.locator('#media-dock').waitFor({state:'visible'});
- await page.locator('#dock-locate').click();await page.waitForFunction(()=>{const row=document.activeElement,words=row.querySelector?.('.words'),dock=document.querySelector('#media-dock');if(!words)return false;const r=words.getBoundingClientRect();return r.top>=0&&r.bottom<dock.getBoundingClientRect().top;});
+ // A visible source can be passing through the viewport during goToSegment's
+ // smooth scroll. Observe completion before opening its disclosure; a no-op
+ // locate is complete only at the centered destination requested by the app.
+ await page.evaluate(()=>{
+  const controller=new AbortController(),state={ended:false,last:null,stationary:0};
+  window.__dockLocateSettlement={state,controller};
+  document.addEventListener('scroll',()=>{state.ended=false;state.stationary=0;},{signal:controller.signal});
+  document.addEventListener('scrollend',()=>{state.ended=true;},{signal:controller.signal});
+  document.querySelector('#dock-locate').addEventListener('click',()=>{state.ended=false;state.last=null;state.stationary=0;},{once:true,capture:true,signal:controller.signal});
+ });
+ try{
+ await page.locator('#dock-locate').click();
+ await page.waitForFunction(()=>{
+  const row=document.activeElement,words=row.querySelector?.('.words');if(!words)return false;
+  const {state}=window.__dockLocateSettlement,rect=row.getBoundingClientRect(),style=getComputedStyle(row);
+  const geometry=JSON.stringify([scrollY,rect.top,rect.height]);
+  state.stationary=geometry===state.last?state.stationary+1:0;state.last=geometry;
+  const center=rect.top+rect.height/2+(parseFloat(style.scrollMarginBottom)||0)/2-(parseFloat(style.scrollMarginTop)||0)/2;
+  const requestedScroll=scrollY+center-innerHeight/2;
+  const clampedScroll=Math.max(0,Math.min(document.documentElement.scrollHeight-innerHeight,requestedScroll));
+  const atDestination=Math.abs(scrollY-clampedScroll)<=1;
+  const r=words.getBoundingClientRect();
+  return state.stationary>=2&&(state.ended||atDestination)&&r.top>=0&&r.bottom<document.querySelector('#media-dock').getBoundingClientRect().top;
+ },null,{polling:'raf'});
+ console.log(JSON.stringify({suite:'dock-locate-settlement',...await page.evaluate(()=>window.__dockLocateSettlement.state)}));
+ }finally{await page.evaluate(()=>{window.__dockLocateSettlement?.controller.abort();delete window.__dockLocateSettlement;});}
  check('mobile_current_source_is_not_covered_by_dock',true);await capture('02-short-cues-mobile');
  check('three_bilingual_short_cues_fit_a_readable_mobile_span',await page.evaluate(()=>{const rows=[...document.querySelectorAll('.segment.short-cue')].slice(26,29);return rows.length===3&&rows.reduce((sum,row)=>sum+row.getBoundingClientRect().height,0)<=550&&rows.every(row=>row.querySelector('.words').textContent&&row.querySelector('.translation').textContent);}));
  check('short_cue_primary_targets_remain_touch_sized',await page.locator('.segment.playing').evaluate(row=>['.note-button','.cue-more > summary','.time > button'].every(selector=>{const r=row.querySelector(selector).getBoundingClientRect();return r.height>=44&&r.width>=44;})));
@@ -56,6 +81,7 @@ try{
  check('short_cue_more_opens_by_keyboard',await cueMore.evaluate(node=>node.open));await page.keyboard.press('Tab');
  check('short_cue_correction_is_keyboard_reachable',await page.evaluate(()=>document.activeElement.classList.contains('edit-button')));
  const beforeExcerpt=await cueViewport();
+ check('short_cue_bilingual_context_and_action_visible_before_click',beforeExcerpt.parts.every(part=>part.top>=0&&part.bottom<beforeExcerpt.dockTop));
  await cueMore.locator('.excerpt-button').evaluate(button=>{for(const type of ['pointerdown','click'])button.addEventListener(type,()=>{window['__excerpt'+type]={top:button.closest('.segment').getBoundingClientRect().top,scrollY:window.scrollY,active:document.activeElement.className};},{once:true,capture:true});});
  await cueMore.locator('.excerpt-button').click();
  // Native pointerdown is after Playwright's normal pre-click scrolling and
