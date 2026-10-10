@@ -431,7 +431,7 @@ function el(tag, className, text) {
 	if (text !== undefined) n.textContent = text;
 	return n;
 }
-async function add(doc, canCommit = null, reuseAudioSource = false, lifecycleRevision = documentLifecycleRevision, sourceKey = doc.key, {target = null, separate = false, activate = true, canActivate = null} = {}) {
+async function add(doc, canCommit = null, reuseAudioSource = false, lifecycleRevision = documentLifecycleRevision, sourceKey = doc.key, {target = null, separate = false, activate = true, canActivate = null, onActivate = null} = {}) {
  if(!contentIngressAllowed())throw new Error("导入已取消，书架未改变");
 	const bytes = new TextEncoder().encode(JSON.stringify(doc));
 	const digest = await crypto.subtle.digest("SHA-256", bytes);
@@ -489,6 +489,7 @@ async function add(doc, canCommit = null, reuseAudioSource = false, lifecycleRev
 	notesOnly = false; excerptsOnly = false; speakerFilter=null;
 	workspace = "read";
 	const inserted=active(),mediaRevision=mediaSelectionRevision(key),selectionRevision=activeSelectionRevision,receipt=commitDocument(inserted);
+ onActivate?.({identity:inserted,selectionRevision,navigationRevision:localImportRevision});
 	render();
 	return {...await receipt,mediaRevision,selectionRevision};
 }

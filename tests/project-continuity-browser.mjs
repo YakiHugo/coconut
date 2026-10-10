@@ -31,6 +31,8 @@ try{
  const originalKey=await page.evaluate(()=>sessionStorage.getItem('coconut-reader-active-v1'));await page.locator('audio').evaluate(p=>{p.dataset.retained='yes';p.currentTime=1;});
  captionsReady=true;await page.locator('#fetch-project-transcript').click();await page.locator('#transcript-layout').waitFor({state:'visible'});
  await page.evaluate(()=>libraryStore.flush());
+ await page.waitForFunction(()=>document.querySelector('#audio-project-status').textContent.includes('已补充'));
+ check('attachment_completion_feedback_matches_saved_receipt',!/正在/.test(await page.locator('#audio-project-status').textContent())&&await page.locator('#cancel-project-transcript').isHidden());
  check('attachment_keeps_one_stable_project',await page.evaluate(async key=>{const s=await readPersistedLibrary();return s.documents.length===1&&sessionStorage.getItem('coconut-reader-active-v1')===key;},originalKey));
  check('attachment_keeps_loaded_media_and_notes',await page.locator('audio').getAttribute('data-retained')==='yes'&&await page.locator('#project-note').inputValue()==='PRIVATE PROJECT NOTE'&&await page.locator('#audio-bookmarks textarea').inputValue()==='PRIVATE BOOKMARK');
  check('attachment_does_not_redownload_or_infer',sourceCalls.filter(c=>c==='media').length===1&&modelInputs.length===0);

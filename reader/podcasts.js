@@ -288,11 +288,14 @@ function renderProjectCaptionAction(){
  const available=Coconut.isAudioProject(doc)&&source?.feed_url&&source?.episode_id;
  $('fetch-project-transcript').hidden=!available;$('fetch-project-transcript').disabled=!podcastReady||!!projectCaptionRequest;
  $('cancel-project-transcript').hidden=!projectCaptionRequest;
- if(projectCaptionRequest&&(active()?.key!==projectCaptionRequest.target.key||workspace!=='read'||!Coconut.isAudioProject(doc)))projectCaptionRequest.controller.abort();
+ if(projectCaptionRequest&&(active()?.key!==projectCaptionRequest.target.key||workspace!=='read'||activeSelectionRevision!==projectCaptionRequest.selection||localImportRevision!==projectCaptionRequest.navigation||(!Coconut.isAudioProject(doc)&&!projectCaptionRequest.saving)))projectCaptionRequest.controller.abort();
 }
 $('fetch-project-transcript').onclick=async()=>{
  const doc=active(),source=doc?.podcast_source;if(!podcastReady||projectCaptionRequest||!Coconut.isAudioProject(doc)||!source?.feed_url)return;
- const target={key:doc.key,source:projectSourceSnapshot(doc),document:doc},controller=new AbortController();projectCaptionRequest={controller,target};renderProjectCaptionAction();$('audio-project-status').textContent='正在检查本集发布者文字稿，不会下载媒体或运行识别。';
+ const target={key:doc.key,source:projectSourceSnapshot(doc),document:doc},controller=new AbortController();const request={controller,target,selection:activeSelectionRevision,navigation:localImportRevision,saving:false};projectCaptionRequest=request;
+ const ownsStatus=()=>projectCaptionRequest===request&&active()?.key===target.key&&workspace==='read'&&activeSelectionRevision===request.selection&&localImportRevision===request.navigation;
+ controller.signal.addEventListener('abort',()=>{if(ownsStatus())$('audio-project-status').textContent=request.saving?'已停止等待文字稿结果，请查看当前保存状态。':'已取消获取文字稿，原项目保留。';});
+ renderProjectCaptionAction();$('audio-project-status').textContent='正在检查本集发布者文字稿，不会下载媒体或运行识别。';
  try{
   const response=await podcastAPI('import',{feedUrl:source.feed_url,episodeId:source.episode_id},controller.signal),result=await response.json();
   if(controller.signal.aborted||projectCaptionRequest?.controller!==controller)return;
@@ -301,12 +304,17 @@ $('fetch-project-transcript').onclick=async()=>{
   const text=Coconut.validate(result.document);
   if(Coconut.audioProjectIdentity(text)!==Coconut.audioProjectIdentity(doc))throw new Error('返回文字稿与本项目来源不一致，未附加，请重新发现来源。');
   if(text.podcast_source?.media_url!==source.media_url||text.podcast_source?.media_kind!==source.media_kind||!['audio','video'].includes(source.media_kind))throw new Error('发布者媒体地址或类型已变化或无法核对，未把新文字稿配到旧原声。请重新发现来源并核对媒体后再补充。');
+  request.saving=true;$('audio-project-status').textContent='文字稿已取得，正在确认本机保存结果。';
   const persisted=await attachTranscriptToProject(text,target);
-  if(projectCaptionRequest?.controller===controller&&active()===persisted.identity&&workspace==='read'&&activeSelectionRevision===persisted.selectionRevision&&contentIngressAllowed(persisted.identity))notice(persisted.ok?'发布者文字稿已补充到原项目，笔记、书签和当前媒体保留。尚未经人工核对；未调用模型。':'文字稿已在本页附加，但未能保存，请立即导出 JSON 备份。');
- }catch(error){if(active()?.key===target.key)$('audio-project-status').textContent=controller.signal.aborted?'已取消获取文字稿，原项目保留。':error.message;}
+  if(ownsStatus()&&!controller.signal.aborted&&active()===persisted.identity&&contentIngressAllowed(persisted.identity)){
+   const message=persisted.ok?'发布者文字稿已补充到原项目，笔记、书签和当前媒体保留。尚未经人工核对；未调用模型。':'文字稿已在本页附加，但未能保存，请立即导出 JSON 备份。';
+   $('audio-project-status').textContent=message;notice(message);
+  }
+ }catch(error){if(ownsStatus()&&!controller.signal.aborted)$('audio-project-status').textContent=error.message;}
  finally{if(projectCaptionRequest?.controller===controller){projectCaptionRequest=null;renderProjectCaptionAction();}}
 };
 $('cancel-project-transcript').onclick=()=>projectCaptionRequest?.controller.abort();
+window.addEventListener('coconut-workspace-change',()=>{const request=projectCaptionRequest;if(!request)return;if(active()?.key===request.target.key)$('audio-project-status').textContent=request.saving?'已停止等待文字稿结果，请查看当前保存状态。':'已取消获取文字稿，原项目保留。';request.controller.abort();});
 window.addEventListener('coconut-render',renderProjectCaptionAction);
 window.addEventListener('coconut-worker-ready',renderProjectCaptionAction);
 window.addEventListener('coconut-worker-disconnected',()=>{projectCaptionRequest?.controller.abort();renderProjectCaptionAction();});
