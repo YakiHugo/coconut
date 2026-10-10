@@ -765,6 +765,9 @@ body[data-reading-mode="passages"] .passage:first-child { padding-top: 8px; }
  .reading-utility.is-compact .passage-toolbar { gap: 10px; }
  .reading-utility.is-compact #keyboard-help-open, .reading-utility.is-compact .passage-toolbar button, .reading-utility.is-compact .media-disclosure, .reading-info > summary { font-size: 11px; }
  body[data-reading-mode="passages"] .reading-modes { gap: 20px; }
+ /* Anchor the panel to the full utility row, not the offset settings trigger. */
+ .reading-utility.is-compact .reading-info { position: static; }
+ .reading-utility.is-compact .reading-info-panel { width: min(460px,100%); }
  .reading-info-panel { padding: 14px; }
  #notice-shell.is-success { right: 12px; bottom: 12px; max-width: calc(100vw - 24px); padding-left: 12px; }
  body[data-media-docked="true"] #notice-shell.is-success { bottom: 94px; }
