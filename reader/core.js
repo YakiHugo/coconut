@@ -466,9 +466,45 @@
   }
   return hits;
  }
+ // A bounded, best-effort view preference. Never serialize document content.
+ // Read before each write so ordinary alternating windows retain each other's
+ // events; localStorage is not an atomic multi-window transaction.
+ function createReadingRecency({getStorage,now=()=>Date.now(),limit=512}={}) {
+  const key='coconut-reading-recency-v1';
+  let events=new Map();
+  function merge(raw){
+   try{
+    const data=JSON.parse(raw);if(data?.version!==1||!Array.isArray(data.events))return;
+    for(const item of data.events){
+     if(!Array.isArray(item)||item.length!==3)continue;
+     const [id,time,removed]=item;
+     if(typeof id!=='string'||!id||id.length>1024||!Number.isSafeInteger(time)||time<1||typeof removed!=='boolean')continue;
+     const previous=events.get(id);
+     if(!previous||time>previous[1]||time===previous[1]&&removed)events.set(id,item);
+    }
+   }catch{} // Corrupt/denied preferences never prevent reading or content saves.
+  }
+  function trim(){
+   events=new Map([...events.values()].sort((a,b)=>b[1]-a[1]||(a[0]<b[0]?-1:a[0]>b[0]?1:0)).slice(0,limit).map(item=>[item[0],item]));
+  }
+  function refresh(){try{merge(getStorage().getItem(key));}catch{}trim();}
+  function record(id,removed=false){
+   if(typeof id!=='string'||!id||id.length>1024)return;
+   refresh();
+   // A monotonic local event also works when the system clock moves backwards.
+   const latest=Math.max(0,...[...events.values()].map(item=>item[1]));
+   const time=Math.max(1,Math.trunc(now())||1,latest+1);
+   if(!Number.isSafeInteger(time))return;
+   events.set(id,[id,time,removed]);trim();
+   try{getStorage().setItem(key,JSON.stringify({version:1,events:[...events.values()]}));}catch{}
+  }
+  refresh();
+  return {key,refresh,record,time:id=>{const item=events.get(id);return item&&!item[2]?item[1]:0;}};
+ }
  const libraryTitleOrder=new Intl.Collator('zh-Hans',{numeric:true,sensitivity:'base'});
- function sortedLibrary(documents, order) {
+ function sortedLibrary(documents, order,openedAt=()=>0) {
   const result=documents.slice();
+  if(order==='opened')result.sort((a,b)=>openedAt(b.key)-openedAt(a.key));
   if(order==='title')result.sort((a,b)=>libraryTitleOrder.compare(a.title,b.title));
   if(order==='duration'){const durations=new Map(result.map(doc=>[doc,documentDuration(doc)]));result.sort((a,b)=>durations.get(a)-durations.get(b));}
   return result;
@@ -1005,7 +1041,7 @@
 			segments,
 		});
 	}
-	const api = { createLibrarySearch, libraryCaptures, libraryNotebookMarkdown, mediaTiming, mediaTimingOffset, mediaTimingRange, localMediaSource, searchDocument, invalidateSearch, manualReviewSnapshot, manualReviewCurrent, saveManualTranslation, translationReviewQueue, hasNoteContent, segmentNoteCount, BACKUP_REVIEW_BYTES, SUBTITLE_IMPORT_BYTES, vttPayload, libraryHits, librarySnippet, hasProjectAnnotations, projectAnnotationCount, attachProjectTranscript, libraryMatches, documentDuration, sortedLibrary, AUDIO_NOTE_BUDGET, audioNoteCharacters, isAudioProject, audioProjectIdentity, podcastMediaIdentity, SUMMARY_QUESTION, summaryReadiness, podcastURL, podcastSource, cleanGlossary, relevantGlossary, translationQualityMessage, retainAnswers, summaryFreshness, latestSummary, summaryMarkdown, aiReadingMarkdown, parseReadingTime, createPlaybackIndex, segmentAtTime, subtitleExport, mergeLibraryBackup, time, source, media, validate, parse, matchesSegment, notebookSegments, notebookMarkdown, translationCurrent, sameCueSnapshot, subscriptionPlan, cleanContexts, answerFreshness };
+	const api = { createReadingRecency, createLibrarySearch, libraryCaptures, libraryNotebookMarkdown, mediaTiming, mediaTimingOffset, mediaTimingRange, localMediaSource, searchDocument, invalidateSearch, manualReviewSnapshot, manualReviewCurrent, saveManualTranslation, translationReviewQueue, hasNoteContent, segmentNoteCount, BACKUP_REVIEW_BYTES, SUBTITLE_IMPORT_BYTES, vttPayload, libraryHits, librarySnippet, hasProjectAnnotations, projectAnnotationCount, attachProjectTranscript, libraryMatches, documentDuration, sortedLibrary, AUDIO_NOTE_BUDGET, audioNoteCharacters, isAudioProject, audioProjectIdentity, podcastMediaIdentity, SUMMARY_QUESTION, summaryReadiness, podcastURL, podcastSource, cleanGlossary, relevantGlossary, translationQualityMessage, retainAnswers, summaryFreshness, latestSummary, summaryMarkdown, aiReadingMarkdown, parseReadingTime, createPlaybackIndex, segmentAtTime, subtitleExport, mergeLibraryBackup, time, source, media, validate, parse, matchesSegment, notebookSegments, notebookMarkdown, translationCurrent, sameCueSnapshot, subscriptionPlan, cleanContexts, answerFreshness };
 	if (typeof module !== "undefined" && module.exports) module.exports = api;
 	else root.Coconut = api;
 })(typeof window !== "undefined" ? window : globalThis);
