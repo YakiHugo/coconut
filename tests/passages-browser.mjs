@@ -183,7 +183,15 @@ try {
     check(label + '_passage_joins_original_cues_without_rewriting', await page.locator('.passage-original .passage-cue').evaluateAll(nodes => nodes.map(node => ({id: node.dataset.cueId, text: node.textContent}))).then(cues => cues.every(cue => fixture.segments.find(source => source.id === cue.id)?.text === cue.text)));
     check(label + '_missing_and_stale_translation_are_explicit', await page.locator('.passage-translation-gap[data-cue-id="split-8"][data-state="stale"]').count() === 1 && await page.locator('.passage-translation-gap[data-cue-id="split-10"][data-state="missing"]').count() === 1 && !(await page.locator('.passage-translation').allTextContents()).join('').includes('这句旧译文不应混进连贯译文'));
     check(label + '_reading_does_not_change_original_bookmark_or_existing_note', (await stored(page)).readingPosition === 'split-19' && (await stored(page)).notes['split-2'] === fixture.notes['split-2']);
-    await controlsGeometry(page, label + '-default-reading-toolbar', ['#reading-info > summary', '#toggle-reader-media', '#passage-search', '#passage-toggle-translation', '#export-menu > summary']);
+    const toolbar = await controlsGeometry(page, label + '-default-reading-toolbar', ['#keyboard-help-open', '#reading-info > summary', '#toggle-reader-media', '#passage-search', '#passage-toggle-translation', '#export-menu > summary']);
+    const help = toolbar.controls.find(control => control.selector === '#keyboard-help-open');
+    check(label + '_compact_toolbar_keeps_help_and_reading_actions_on_one_row', toolbar.controls.filter(control => control.selector !== '#export-menu > summary').every(control => Math.abs(control.rect.top - help.rect.top) <= 1));
+    check(label + '_keyboard_help_keeps_a_full_label_and_44_pixel_target', help.rect.width >= 44 && help.rect.height >= 44 && await page.locator('#keyboard-help-open').evaluate(button => button.textContent.includes('快捷键') && button.scrollWidth <= button.clientWidth && button.scrollHeight <= button.clientHeight));
+    await page.locator('#keyboard-help-open').click();
+    check(label + '_toolbar_help_opens_the_real_modal', await page.locator('#keyboard-help').evaluate(dialog => dialog.open && dialog.matches(':modal')));
+    await page.keyboard.press('Escape');
+    await page.locator('#keyboard-help').waitFor({state: 'hidden'}); await settled(page);
+    check(label + '_toolbar_help_returns_focus_without_moving_first_source', await page.locator('#keyboard-help-open').evaluate(button => document.activeElement === button) && await page.locator('.passage-original').first().evaluate((source, top) => Math.abs(source.getBoundingClientRect().top - top) <= 1, imported.source.top) && (await stored(page)).readingPosition === 'split-19');
     await readingInfoRoundTrip(page, label + '-default-reading', fixture.title);
     await page.locator('#mode-summary').click();
     check(label + '_skim_uses_actual_source', (await page.locator('.overview-segment').first().getAttribute('data-cue-id')) === 'split-0' && (await page.locator('.overview-segment').first().textContent()).includes(fixture.segments[0].text));

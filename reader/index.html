@@ -7,13 +7,13 @@
 <meta name="description" content="把长视频和播客变成自己的阅读空间。对照原文与译文，按时间回听，留下摘录和笔记。">
 <meta name="theme-color" content="#faf9f7">
 <link rel="icon" type="image/png" href="coconut-mark.png">
-<link rel="stylesheet" href="style.css?v=ac50cdcb01">
+<link rel="stylesheet" href="style.css?v=e972d289d8">
 <script src="summary.js?v=580ffdad1e" defer></script>
 <script src="core.js?v=9746a739f9" defer>
 </script>
 <script src="passages.js?v=aa95245d4c" defer></script>
 <script src="passage-playback.js?v=162dbb3695" defer></script>
-<script src="app.js?v=e349917d0e" defer>
+<script src="app.js?v=6febc001d3" defer>
 </script>
 <script src="language.js?v=7ab2806c61" defer></script>
 <script src="podcasts.js?v=7486a33f77" defer></script>
@@ -145,7 +145,7 @@ cd coconut
 <h3 id="jobs-heading" tabindex="-1" hidden>处理任务</h3><div id="jobs" aria-live="polite">
 </div>
 </section>
-<div id="reader-workspace" hidden>
+<div id="reader-workspace" tabindex="-1" hidden>
 <section class="intro">
 <div class="reader-kicker"><p class="eyebrow">你的阅读空间</p><span id="reader-kind" class="reader-kind">原文可回查</span></div>
 <div id="reader-title-home"><h1 id="title">把听过的，<br>真正留下来。</h1></div>
@@ -154,6 +154,7 @@ cd coconut
 </p></div>
 <div id="demo-guide" class="demo-guide" hidden><div><strong>内置自写示例</strong><span>原文与译文均为预置 · 无音视频 · 不调用 AI</span></div><div><button id="demo-note" type="button">记下第一个想法 <span aria-hidden="true">↗</span></button><button id="demo-finish" type="button">添加自己的内容</button></div></div>
 <div id="reading-utility" class="reading-utility">
+<button id="keyboard-help-open" type="button" aria-haspopup="dialog" aria-controls="keyboard-help">快捷键 <span aria-hidden="true">?</span></button>
 <details id="reading-info" class="reading-info" hidden><summary>信息与设置</summary><div class="reading-info-panel"><div class="reading-info-heading"><h2 id="reading-info-title"></h2><button id="close-reading-info" type="button" aria-label="关闭信息与设置">关闭</button></div><div id="reading-info-meta"></div><p id="reading-info-position" class="hint"></p><div id="reading-info-help"></div><div id="reading-info-settings"></div></div></details>
 <button id="toggle-reader-media" class="media-disclosure" type="button" aria-expanded="false" aria-controls="episode-media">关联原声 · 回听这一篇</button>
 <section id="episode-media" class="episode-media" aria-label="本集声音与回源"><div class="episode-media-heading"><span class="eyebrow">原声与来源</span><span class="hint">阅读时随时回听</span><button id="close-reader-media" type="button" aria-label="关闭原声设置" hidden>关闭</button></div><div id="podcast-playback" class="podcast-playback" hidden><button id="download-podcast-media" type="button">下载并回听本集原声</button><button id="cancel-podcast-media" type="button" hidden>取消下载</button><p id="podcast-media-status" class="hint">只在点击后下载（最多 200 MiB），媒体仅保留在本次页面，刷新后需重新获取。</p></div>
@@ -170,7 +171,7 @@ cd coconut
 <div class="passage-browse"><div class="passage-browse-heading"><label for="passage-time-range">沿时间浏览原文</label><span id="passage-position" class="hint" role="status"></span></div><input id="passage-time-range" type="range" min="0" max="1" step="1" value="0" aria-describedby="passage-browse-help"><div class="passage-browse-caption"><span id="passage-time-label">00:00</span><span id="passage-total-time"></span></div><p id="passage-browse-help" class="hint">连续字幕排成段落，原话与时间不变。</p></div>
 
 
-<article id="passage-body" aria-label="按原顺序连续阅读"></article>
+<article id="passage-body" tabindex="0" aria-label="按原顺序连续阅读"></article>
 <nav class="passage-pagination" aria-label="连贯阅读翻页"><button id="passage-previous" type="button">前面的原文</button><span id="passage-page-status" class="hint"></span><button id="passage-next" type="button">继续读后面的原文</button></nav>
 </section>
 <nav id="passage-return-bar" class="reading-context passage-return-bar" aria-label="返回连贯阅读" hidden><span>逐句核对 · 原时间戳与笔记</span><button id="return-to-passages" type="button">← 返回刚才的段落</button></nav>
@@ -259,7 +260,7 @@ cd coconut
 </div>
 <nav id="reading-context" class="reading-context" aria-label="原文上下文" hidden><span id="reading-context-label"></span><div><button id="return-reading-results" type="button">← 返回结果</button><button id="dismiss-reading-context" type="button">留在全文</button></div></nav>
 <div id="transcript-layout" class="reading-layout" hidden>
-<article id="transcript" aria-label="文字稿">
+<article id="transcript" tabindex="0" aria-label="文字稿">
 </article>
 <section id="notes-panel" hidden>
 <div class="note-heading"><p class="eyebrow">留一点自己的理解</p><button id="close-note" aria-label="关闭笔记">关闭</button></div>
@@ -285,6 +286,14 @@ cd coconut
 <h2 id="large-backup-heading">文件较大，继续读取？</h2>
 <p id="large-backup-size"></p><p id="large-backup-help">完整读取和校验需要额外内存，可能暂时卡顿或超出设备能力。恢复不会删除原书架；若本机保存空间不足，内容仍可在本页阅读与导出，关闭前请保留原备份文件。文件不会上传，也不会调用 AI。</p>
 <div class="dialog-actions"><button id="cancel-large-backup" type="button" autofocus>取消</button><button id="continue-large-backup" type="button" class="primary">继续完整读取</button></div>
+</dialog>
+<dialog id="keyboard-help" aria-labelledby="keyboard-help-heading" aria-describedby="keyboard-help-boundary">
+<div class="keyboard-help-heading"><h2 id="keyboard-help-heading">阅读快捷键</h2><button id="keyboard-help-close" type="button" autofocus aria-label="关闭快捷键帮助">关闭</button></div>
+<p id="keyboard-help-boundary" class="hint">在阅读正文中使用。输入文字、操作按钮或播放器时不触发；可用 Tab 进入正文。媒体键只控制已经关联的原声。</p>
+<dl class="keyboard-keys"><div><dt><kbd>/</kbd></dt><dd>搜索原文；搜索框中 Enter 下一匹配，Shift + Enter 上一匹配</dd></div><div><dt><kbd>J</kbd> / <kbd>L</kbd></dt><dd>后退 / 前进 10 秒，结束段落试听或循环</dd></div><div><dt><kbd>K</kbd></dt><dd>暂停 / 继续；正在试听的段落仍到段尾停下</dd></div><div><dt><kbd>G</kbd></dt><dd>定位正在播放的原文，不开始播放</dd></div><div><dt><kbd>?</kbd></dt><dd>打开此帮助；Escape 关闭并返回原焦点</dd></div></dl>
+<label class="keyboard-preference"><input id="keyboard-shortcuts-enabled" type="checkbox" checked>启用阅读单字符快捷键</label>
+<p class="hint">关闭后恢复浏览器默认键位（如 Firefox 的 / 快速查找）；仍可点击「快捷键」重新启用。Ctrl / ⌘ 等组合键保持原样。</p>
+<p id="keyboard-preference-status" class="hint" role="status"></p>
 </dialog>
 <dialog id="details-dialog" aria-labelledby="details-heading">
 <form method="dialog"><h2 id="details-heading">文字稿信息</h2>
