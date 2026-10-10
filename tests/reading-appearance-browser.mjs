@@ -55,6 +55,11 @@ async function controls(name){
   const node=document.getElementById(id),rect=node.getBoundingClientRect(),style=getComputedStyle(node);
   return {id,width:rect.width,height:rect.height,left:rect.left,right:rect.right,clientWidth:innerWidth,label:node.closest('label').textContent,display:style.display};
  }));
+ const panel=await page.locator('.reading-info-panel').evaluate(node=>{const rect=node.getBoundingClientRect();return {left:rect.left,right:rect.right,width:rect.width,viewport:innerWidth};});
+ const close=await page.locator('#close-reading-info').evaluate(node=>{const rect=node.getBoundingClientRect();return {left:rect.left,right:rect.right,width:rect.width,height:rect.height};});
+ evidence.push({name,panel,close});console.log(JSON.stringify({suite:'reading-appearance',name,panel,close}));
+ check(name+'_panel_within_viewport',panel.left>=0&&panel.right<=panel.viewport);
+ check(name+'_close_within_viewport',close.left>=0&&close.right<=panel.viewport&&close.width>=44&&close.height>=44);
  evidence.push({name,controls:rows});for(const row of rows)check(name+' '+row.id,row.height>=44&&row.width>=44&&row.left>=0&&row.right<=row.clientWidth&&row.label.length>0);
  // Native controls participate in real keyboard tab order and retain their
  // visible focus ring; Escape still returns through the reader's own disclosure.
@@ -79,7 +84,7 @@ try{
  await page.locator('#file').setInputFiles({name:'authored-appearance.json',mimeType:'application/json',buffer:Buffer.from(JSON.stringify(doc))});
  await expect(page.locator('#passage-workspace')).toBeVisible();const original=await saved();
  const prose=await page.locator('#passage-body').textContent();
- for(const width of [1360,390,320]){
+ for(const width of [1360,390,360,320]){
   await page.setViewportSize({width,height:900});await page.evaluate(()=>scrollTo(0,0));
   // Log the real layout before asserting so a failure retains useful geometry.
   const geometry=await page.evaluate(()=>Object.fromEntries([
@@ -106,8 +111,8 @@ try{
  await page.keyboard.press('Escape');await expect(page.locator('#reading-info > summary')).toBeFocused();await contrast('dark_bilingual',['.passage-original','.passage-translation','.passage-speaker','.passage-ask','#reading-info > summary']);
  check('appearance_does_not_rewrite_or_drop_source',await page.locator('#passage-body').textContent()===prose);check('appearance_does_not_change_stored_document',JSON.stringify(await saved())===JSON.stringify(original));
  await capture('dark-spacious-narrow-desktop');
- for(const width of [390,320]){
-  await page.setViewportSize({width,height:900});await page.evaluate(()=>scrollTo(0,0));await noOverflow('dark_'+width+'_no_overflow');await capture('dark-spacious-'+width);
+ for(const width of [640,390,360,320]){
+  await page.setViewportSize({width,height:width===640?480:900});await page.evaluate(()=>scrollTo(0,0));await noOverflow('dark_'+width+'_no_overflow');await capture('dark-spacious-'+width);
   await settings();await controls('mobile_'+width+'_preferences');await noOverflow('settings_'+width+'_no_overflow');await capture('dark-settings-'+width);await closeSettings();
  }
  // Preference changes never replace the media element, seek it, or start it.
