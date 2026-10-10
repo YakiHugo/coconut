@@ -325,9 +325,10 @@ state={documents:libraryLoad.documents,active:libraryLoad.active};
 if(libraryLoad.ok)for(const doc of state.documents)recordPersistenceCheckpoint(doc,persistenceCheckpoint(doc));
 else notice('上次保存的数据无法读取，已停止写入以保留原数据。本次内容可继续阅读，请导出备份后再关闭页面。');
 const libraryStore=CoconutLibraryStore.create({adapter:libraryAdapter,getDocuments:()=>state.documents,checkpoint:persistenceCheckpoint});
-let libraryContentRevision=0;
+let libraryContentRevision=0,notebookRefreshQueued=false;
 libraryStore.subscribe((snapshot,event)=>{
- libraryContentRevision=snapshot.generation;
+ const changed=libraryContentRevision!==snapshot.generation;libraryContentRevision=snapshot.generation;
+ if(changed&&!notebookRefreshQueued){notebookRefreshQueued=true;queueMicrotask(()=>{notebookRefreshQueued=false;if($('library-notebook').open)renderLibraryNotebook();});}
  if(event?.result?.ok)for(const captured of event.result.checkpoints)recordPersistenceCheckpoint(captured.identity,captured.checkpoint);
  if(event?.type==='release')resumeDeferredContentInputs();
  renderSaveStatus(libraryStore.status());
@@ -963,20 +964,30 @@ $('library-page-form').onsubmit=event=>{
 $('library-show-active').onclick=()=>{renderLibrary(state.active);const card=libraryCards.get(state.active);$('toggle-library').setAttribute('aria-expanded','true');card?.open.focus();};
 // This modal deliberately leaves the reader, selection and media untouched.
 const notebookSelection=new Set();
-let notebookPage=0,notebookReturn=null,notebookOpener=null;
+let notebookPage=0,notebookReturn=null,notebookOpener=null,notebookRestore=null,notebookPainted=null;
+const notebookSearch=Coconut.createLibraryNotebookSearch({getDocuments:()=>state.documents,getRevision:()=>libraryContentRevision,
+ onChange:()=>{if($('library-notebook').open)renderLibraryNotebook();else notebookSearch.cancel();}});
 const NOTEBOOK_PAGE_SIZE=30;
-function renderLibraryNotebook(returnKey=null){
- const captures=Coconut.libraryCaptures(state.documents,$('notebook-search').value,$('notebook-kind').value);
- const returnIndex=returnKey===null?-1:captures.findIndex(capture=>capture.key===returnKey);
+function pruneNotebookSelection(){
+ const keys=new Set(state.documents.map(doc=>doc.key));for(const key of notebookSelection)if(!keys.has(key))notebookSelection.delete(key);
+}
+function renderLibraryNotebook(){
+ const selection=notebookSearch.request($('notebook-search').value,$('notebook-kind').value),host=$('notebook-captures');
+ pruneNotebookSelection();host.setAttribute('aria-busy',String(selection.pending));
+ if(selection.pending){
+  notebookPainted=null;host.replaceChildren();$('notebook-status').textContent='正在查找笔记与摘录…';
+  $('notebook-previous').disabled=true;$('notebook-next').disabled=true;syncNotebookSelection();return;
+ }
+ const captures=selection.captures,returnIndex=notebookRestore?selection.indexes.get(notebookRestore.key)??-1:-1;
  if(returnIndex>=0)notebookPage=Math.floor(returnIndex/NOTEBOOK_PAGE_SIZE);
- for(const key of notebookSelection)if(!state.documents.some(doc=>doc.key===key))notebookSelection.delete(key);
  notebookPage=Math.min(notebookPage,Math.max(0,Math.ceil(captures.length/NOTEBOOK_PAGE_SIZE)-1));
- const start=notebookPage*NOTEBOOK_PAGE_SIZE,host=$('notebook-captures');host.replaceChildren();
+ if(notebookPainted?.selection===selection&&notebookPainted.page===notebookPage&&!notebookRestore){syncNotebookSelection();return;}
+ notebookPainted={selection,page:notebookPage};
+ const start=notebookPage*NOTEBOOK_PAGE_SIZE;host.replaceChildren();
  $('notebook-status').textContent=captures.length?`${start+1}–${Math.min(start+NOTEBOOK_PAGE_SIZE,captures.length)} / ${captures.length} 条记录`:'没有匹配的记录。阅读时摘录原话或记下笔记后，会在这里出现。';
  $('notebook-previous').disabled=notebookPage===0;$('notebook-next').disabled=start+NOTEBOOK_PAGE_SIZE>=captures.length;
  for(const capture of captures.slice(start,start+NOTEBOOK_PAGE_SIZE)){
   const doc=state.documents.find(doc=>doc.key===capture.documentKey),row=el('li','notebook-capture');row.dataset.captureKey=capture.key;
-  const source=capture.type==='cue'?doc.segments.find(cue=>cue.id===capture.id):capture.type==='bookmark'?doc.timestamp_bookmarks.find(item=>item.id===capture.id):doc;
   const label=el('label'),check=el('input');check.type='checkbox';check.checked=notebookSelection.has(doc.key);check.setAttribute('aria-label','选择篇目 '+doc.title);check.onchange=()=>{check.checked?notebookSelection.add(doc.key):notebookSelection.delete(doc.key);syncNotebookSelection();};label.append(check,document.createTextNode(doc.title));row.append(label);
   row.append(el('p','hint',(capture.type==='cue'?(capture.excerpt?'摘录':'片段')+(Coconut.hasNoteContent(capture.note)?' · 笔记':''):capture.type==='project-note'?'项目笔记':'时间书签')+(capture.time===null?'':' · '+Coconut.time(capture.time))));
   const details=el('details'),summary=el('summary','','查看完整记录与来源');details.append(summary);
@@ -990,15 +1001,25 @@ function renderLibraryNotebook(returnKey=null){
    if(cue.original_text!==undefined&&cue.original_text!==cue.text)details.append(el('p','notebook-content','修正前文字稿：\n'+cue.original_text));
   }
   const open=el('button','notebook-open','打开原位置');open.type='button';open.onclick=()=>{
-   const sourceCurrent=capture.type==='cue'?doc.segments.includes(source)&&source.text===capture.text&&source.start===capture.time:capture.type==='bookmark'?doc.timestamp_bookmarks.includes(source)&&source.time===capture.time:Coconut.hasNoteContent(doc.project_note);
-   if(pendingStructuralDocuments.has(doc.key)||!state.documents.includes(doc)||!sourceCurrent){renderLibraryNotebook();$('notebook-status').textContent='这条记录的来源已变动，请从更新后的笔记本重新选择。';$('notebook-search').focus();return;}
-   notebookReturn={key:capture.key,page:notebookPage,scroll:$('library-notebook').scrollTop};$('library-notebook').close();
+   if(!$('library-notebook').open)return;
+   const sourceCurrent=Coconut.libraryCaptureCurrent(capture,state.documents);
+   if(!notebookSearch.isCurrent(selection)||pendingStructuralDocuments.has(doc.key)||!sourceCurrent){notebookSearch.cancel();renderLibraryNotebook();$('notebook-status').textContent='这条记录的来源已变动，请从更新后的笔记本重新选择。';$('notebook-search').focus();return;}
+   notebookReturn={key:capture.key,page:notebookPage,scroll:$('library-notebook').scrollTop};notebookSearch.cancel();$('library-notebook').close();
    markDocumentOpened(doc);resetReaderForDocumentNavigation();selectActiveDocument(doc.key);setReadingMode('transcript');showWorkspace('read');render();
    openLibraryHit({kind:capture.type==='cue'?(Coconut.hasNoteContent(capture.note)?'note':'text'):capture.type,id:capture.id});
    $('return-library-notebook').hidden=false;
   };row.append(details,open);host.append(row);
  }
  syncNotebookSelection();
+ if(notebookRestore){
+  const restore=notebookRestore;notebookRestore=null;
+  const row=[...host.children].find(row=>row.dataset.captureKey===restore.key);
+  // Completion may arrive after the user has moved focus; never reclaim it.
+  if(restore.focusOwned&&document.activeElement===$('notebook-search')){
+   (row?.querySelector('.notebook-open')||$('notebook-search')).focus({preventScroll:true});
+   $('library-notebook').scrollTop=notebookPage===restore.page?restore.scroll:0;row?.scrollIntoView?.({block:'nearest',behavior:'auto'});
+  }
+ }
 }
 function syncNotebookSelection(){
  for(const row of $('notebook-captures').children){const key=JSON.parse(row.dataset.captureKey)[0];row.querySelector('input').checked=notebookSelection.has(key);}
@@ -1006,24 +1027,25 @@ function syncNotebookSelection(){
  $('notebook-export').disabled=notebookSelection.size===0;
 }
 function openLibraryNotebook(returning=false){
- notebookOpener=document.activeElement;renderLibraryNotebook(returning?notebookReturn?.key:null);$('library-notebook').showModal();
- const row=returning&&notebookReturn?[...$('notebook-captures').children].find(row=>row.dataset.captureKey===notebookReturn.key):null;
- (row?.querySelector('.notebook-open')||$('notebook-search')).focus({preventScroll:true});
- if(returning&&notebookReturn){
-  $('library-notebook').scrollTop=notebookPage===notebookReturn.page?notebookReturn.scroll:0;
-  row?.scrollIntoView?.({block:'nearest',behavior:'auto'});
- }
+ notebookOpener=document.activeElement;notebookRestore=null;
+ $('library-notebook').showModal();$('notebook-search').focus({preventScroll:true});
+ notebookRestore=returning&&notebookReturn?{...notebookReturn,focusOwned:true}:null;renderLibraryNotebook();
 }
 $('open-library-notebook').onclick=()=>openLibraryNotebook();
 $('return-library-notebook').onclick=()=>openLibraryNotebook(true);
-$('notebook-close').onclick=()=>{$('library-notebook').close();notebookOpener?.focus?.();};
-for(const id of ['notebook-search','notebook-kind'])$(id)[id==='notebook-search'?'oninput':'onchange']=()=>{notebookPage=0;renderLibraryNotebook();};
+// Leaving the initial return focus relinquishes its intent permanently; coming
+// back to the search box later is a new user choice, not permission to jump.
+$('notebook-search').addEventListener('focusout',()=>{if(notebookRestore)notebookRestore.focusOwned=false;});
+$('library-notebook').addEventListener('close',()=>{if(!$('library-notebook').open){notebookSearch.cancel();notebookRestore=null;}});
+$('notebook-close').onclick=()=>{$('library-notebook').close();notebookSearch.cancel();notebookRestore=null;notebookOpener?.focus?.();};
+for(const id of ['notebook-search','notebook-kind'])$(id)[id==='notebook-search'?'oninput':'onchange']=()=>{notebookRestore=null;notebookPage=0;renderLibraryNotebook();};
 for(const [id,delta] of [['notebook-previous',-1],['notebook-next',1]])$(id).onclick=()=>{notebookPage+=delta;renderLibraryNotebook();$('notebook-captures').querySelector('.notebook-open')?.focus();};
 $('notebook-clear-selection').onclick=()=>{notebookSelection.clear();syncNotebookSelection();};
 $('notebook-export').onclick=()=>{
  let url,link;
  try{
-  renderLibraryNotebook();if(!notebookSelection.size)return;
+  pruneNotebookSelection();syncNotebookSelection();if(!notebookSelection.size)return;
+  if([...notebookSelection].some(key=>pendingStructuralDocuments.has(key))){$('notebook-status').textContent='所选篇目的来源正在变动，请稍后重新导出。';return;}
   url=URL.createObjectURL(new Blob([Coconut.libraryNotebookMarkdown(state.documents,notebookSelection)],{type:'text/markdown;charset=utf-8'}));
   link=el('a');link.href=url;link.download='coconut-library.notes.md';link.hidden=true;document.body.append(link);link.click();
   notice('已发起所选篇目全部记录的 Markdown 下载，请检查下载记录。完整恢复仍需 JSON 备份。','success');

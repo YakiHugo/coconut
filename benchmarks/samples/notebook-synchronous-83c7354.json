@@ -1,0 +1,160 @@
+{
+  "tree": "83c73549a066a7c47815b4ba0541e9a5e6e43edf",
+  "node": "v24.19.0",
+  "measurement": "Node synchronous CPU wall duration; not browser frame latency",
+  "cases": [
+    {
+      "label": "sparse initial open",
+      "documents": 100,
+      "cues": 100000,
+      "query": "",
+      "kind": "all",
+      "count": 100,
+      "samplesMs": [
+        2.7371029999999905,
+        2.225155000000001,
+        2.992678000000012,
+        3.1145239999999887,
+        2.313198
+      ],
+      "medianMs": 2.7371029999999905,
+      "timerDelayMs": 2.6249070000000074
+    },
+    {
+      "label": "sparse missing search",
+      "documents": 100,
+      "cues": 100000,
+      "query": "never-present-marker",
+      "kind": "all",
+      "count": 0,
+      "samplesMs": [
+        4.870706999999982,
+        2.5378499999999917,
+        3.830594000000019,
+        3.4298300000000097,
+        3.942551000000009
+      ],
+      "medianMs": 3.830594000000019,
+      "timerDelayMs": 5.557803000000007
+    },
+    {
+      "label": "sparse page-change same query",
+      "documents": 100,
+      "cues": 100000,
+      "query": "Private",
+      "kind": "all",
+      "count": 100,
+      "samplesMs": [
+        2.5832029999999975,
+        3.0883770000000084,
+        3.279375999999985,
+        2.3670290000000023,
+        3.0866249999999695
+      ],
+      "medianMs": 3.0866249999999695,
+      "timerDelayMs": 3.5349219999999946
+    },
+    {
+      "label": "sparse initial open",
+      "documents": 1000,
+      "cues": 1000000,
+      "query": "",
+      "kind": "all",
+      "count": 1000,
+      "samplesMs": [
+        29.464191000000028,
+        25.067459999999983,
+        24.160871000000043,
+        27.354489000000058,
+        24.470556999999985
+      ],
+      "medianMs": 25.067459999999983,
+      "timerDelayMs": 25.728534999999965
+    },
+    {
+      "label": "sparse missing search",
+      "documents": 1000,
+      "cues": 1000000,
+      "query": "never-present-marker",
+      "kind": "all",
+      "count": 0,
+      "samplesMs": [
+        24.182309999999916,
+        18.886397999999986,
+        21.391729000000055,
+        21.50803600000006,
+        18.425903999999946
+      ],
+      "medianMs": 21.391729000000055,
+      "timerDelayMs": 18.406387999999993
+    },
+    {
+      "label": "sparse page-change same query",
+      "documents": 1000,
+      "cues": 1000000,
+      "query": "Private",
+      "kind": "all",
+      "count": 1000,
+      "samplesMs": [
+        20.912987000000044,
+        18.503227000000038,
+        17.402765000000045,
+        18.055734999999913,
+        16.683048999999983
+      ],
+      "medianMs": 18.055734999999913,
+      "timerDelayMs": 27.736996999999974
+    },
+    {
+      "label": "dense initial open",
+      "documents": 100,
+      "cues": 100000,
+      "query": "",
+      "kind": "all",
+      "count": 100000,
+      "samplesMs": [
+        95.07061899999985,
+        82.26431699999989,
+        36.96067500000004,
+        63.56694700000003,
+        27.73352900000009
+      ],
+      "medianMs": 63.56694700000003,
+      "timerDelayMs": 88.68734900000004
+    },
+    {
+      "label": "dense missing search",
+      "documents": 100,
+      "cues": 100000,
+      "query": "never-present-marker",
+      "kind": "all",
+      "count": 0,
+      "samplesMs": [
+        129.34435499999972,
+        101.22585800000024,
+        313.54401499999994,
+        293.1089240000001,
+        106.13121300000012
+      ],
+      "medianMs": 129.34435499999972,
+      "timerDelayMs": 82.21007000000009
+    },
+    {
+      "label": "dense title query",
+      "documents": 100,
+      "cues": 100000,
+      "query": "Authored notebook",
+      "kind": "all",
+      "count": 100000,
+      "samplesMs": [
+        313.9820730000001,
+        278.460337,
+        41.27176999999983,
+        43.78174199999967,
+        40.058518999999706
+      ],
+      "medianMs": 43.78174199999967,
+      "timerDelayMs": 41.934249000000364
+    }
+  ]
+}

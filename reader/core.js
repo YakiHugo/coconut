@@ -855,22 +855,90 @@
 	}
  // A capture is owned by both its document and source. A cue with a note and
  // excerpt is one capture; project notes and bookmark notes are never source text.
- function libraryCaptures(documents, query = '', kind = 'all') {
-  const needle=query.trim().toLocaleLowerCase(), captures=[];
+ const captureOwners=new WeakMap();
+ // Yield while scanning unannotated cues too: a sparse notebook can own very
+ // long transcripts. Captures retain source identity without changing the API.
+ function* libraryCaptureSteps(documents, query = '', kind = 'all') {
+  const needle=query.trim().toLocaleLowerCase();let work=0;
   for(const doc of documents){
-   const add=(type,id,text,note,timestamp,excerpt=false)=>{
-    const capture={key:JSON.stringify([doc.key,type,id]),documentKey:doc.key,type,id,text,note,time:timestamp,excerpt};
-    if(kind!=='all'&&!(kind==='excerpt'&&excerpt)&&!(kind==='note'&&hasNoteContent(note)))return;
-    if(needle&&![doc.title,text,note,id,timestamp===null?'':time(timestamp)].some(value=>String(value||'').toLocaleLowerCase().includes(needle)))return;
-    captures.push(capture);
+   const capture=(type,id,text,note,timestamp,excerpt,source)=>{
+    if(kind!=='all'&&!(kind==='excerpt'&&excerpt)&&!(kind==='note'&&hasNoteContent(note)))return null;
+    if(needle&&![doc.title,text,note,id,timestamp===null?'':time(timestamp)].some(value=>String(value||'').toLocaleLowerCase().includes(needle)))return null;
+    const result={key:JSON.stringify([doc.key,type,id]),documentKey:doc.key,type,id,text,note,time:timestamp,excerpt};
+    captureOwners.set(result,{doc,source});return result;
    };
-   for(const cue of notebookSegments(doc))add('cue',cue.id,cue.text,doc.notes?.[cue.id]||'',cue.start,cue.saved_excerpt===true);
-   if(hasProjectAnnotations(doc)){
-    if(hasNoteContent(doc.project_note))add('project-note','', '',doc.project_note,null);
-    for(const item of doc.timestamp_bookmarks||[])add('bookmark',item.id,'',item.note||'',item.time);
+   for(const cue of doc.segments){
+    if(cue.saved_excerpt===true||hasNoteContent(doc.notes?.[cue.id])){
+     const result=capture('cue',cue.id,cue.text,doc.notes?.[cue.id]||'',cue.start,cue.saved_excerpt===true,cue);if(result)yield result;
+    }
+    if(++work%128===0)yield null;
    }
+   if(hasProjectAnnotations(doc)){
+    if(hasNoteContent(doc.project_note)){const result=capture('project-note','','',doc.project_note,null,false,doc);if(result)yield result;}
+    for(const item of doc.timestamp_bookmarks||[]){
+     const result=capture('bookmark',item.id,'',item.note||'',item.time,false,item);if(result)yield result;
+     if(++work%128===0)yield null;
+    }
+   }
+   // Bound work across libraries of empty or tiny documents as well.
+   if(++work%128===0)yield null;
   }
-  return captures;
+ }
+ function libraryCaptures(documents, query = '', kind = 'all') {
+  const captures=[];for(const capture of libraryCaptureSteps(documents,query,kind))if(capture)captures.push(capture);return captures;
+ }
+ function libraryCaptureCurrent(capture,documents){
+  const owner=captureOwners.get(capture);if(!owner||!documents.includes(owner.doc))return false;
+  const {doc,source}=owner;
+  if(capture.type==='cue')return doc.segments.includes(source)&&source.id===capture.id&&source.text===capture.text&&source.start===capture.time&&
+   (source.saved_excerpt===true)===capture.excerpt&&(doc.notes?.[source.id]||'')===capture.note;
+  if(capture.type==='bookmark')return hasProjectAnnotations(doc)&&doc.timestamp_bookmarks.includes(source)&&source.id===capture.id&&source.time===capture.time&&(source.note||'')===capture.note;
+  return hasProjectAnnotations(doc)&&hasNoteContent(doc.project_note)&&doc.project_note===capture.note;
+ }
+ function createLibraryNotebookSearch({getDocuments,getRevision=()=>0,schedule=run=>root.setTimeout(run,0),
+  now=()=>root.performance.now(),budgetMs=4,workSize=32,onChange=()=>{}}){
+  let generation=0,current=null;
+  const shape=doc=>[doc.segments,doc.segments.length,doc.notes,doc.title,doc.project_note,doc.timestamp_bookmarks,doc.timestamp_bookmarks?.length,
+   doc.translation_view,doc.translation_contexts,doc.translation_glossary,doc.language];
+  const valid=job=>{
+   if(current!==job||job.generation!==generation||job.revision!==getRevision()||job.sourceRevision!==searchRevision)return false;
+   const documents=getDocuments();return documents.length===job.documents.length&&documents.every((doc,i)=>{
+    const saved=job.shapes[i];return doc===job.documents[i]&&doc.segments===saved[0]&&doc.segments.length===saved[1]&&doc.notes===saved[2]&&doc.title===saved[3]&&
+     doc.project_note===saved[4]&&doc.timestamp_bookmarks===saved[5]&&doc.timestamp_bookmarks?.length===saved[6]&&doc.translation_view===saved[7]&&
+     doc.translation_contexts===saved[8]&&doc.translation_glossary===saved[9]&&doc.language===saved[10];
+   });
+  };
+  const retire=job=>{job?.operation?.return();if(job){job.operation=null;job.building=[];job.buildingIndexes.clear();}};
+  function request(query='',kind='all'){
+   const signature=JSON.stringify([query,kind]);if(current?.signature===signature&&valid(current))return current;
+   retire(current);const documents=getDocuments().slice();
+   const job={generation:++generation,signature,revision:getRevision(),sourceRevision:searchRevision,documents,shapes:documents.map(shape),
+    pending:false,captures:[],indexes:new Map(),building:[],buildingIndexes:new Map(),operation:libraryCaptureSteps(documents,query,kind)};
+   current=job;let work=documents.length;
+   for(const doc of documents){work+=doc.segments.length+(doc.timestamp_bookmarks?.length||0);if(work>4000)break;}
+   job.pending=work>4000||documents.length>160;
+   let yieldedCapture=false;
+   const advance=()=>{
+    const result=job.operation.next();
+    if(result.done){job.captures=job.building;job.indexes=job.buildingIndexes;job.building=[];job.buildingIndexes=new Map();job.operation=null;job.pending=false;return true;}
+    yieldedCapture=Boolean(result.value);
+    if(result.value){job.buildingIndexes.set(result.value.key,job.building.length);job.building.push(result.value);}return false;
+   };
+   function step(){
+    if(!valid(job)){retire(job);if(current===job){current=null;onChange();}return;}
+    const started=now();let scans=0,captures=0;
+    // The iterator yields each capture for incremental ownership/indexing, but
+    // schedule by 128-item work units rather than one timer per few captures.
+    while(!advance()){
+     if(yieldedCapture)captures++;else scans++;
+     if(scans>=workSize||captures>=workSize*128||now()-started>=budgetMs)break;
+    }
+    onChange();if(job.pending&&current===job)schedule(step);
+   }
+   if(job.pending)schedule(step);else while(!advance()){}
+   return job;
+  }
+  return {request,isCurrent:job=>Boolean(job)&&valid(job),cancel(){retire(current);generation++;current=null;}};
  }
  function libraryNotebookMarkdown(documents, selectedKeys) {
   const selected=new Set(selectedKeys),docs=documents.filter(doc=>selected.has(doc.key));
@@ -1041,7 +1109,7 @@
 			segments,
 		});
 	}
-	const api = { createReadingRecency, createLibrarySearch, libraryCaptures, libraryNotebookMarkdown, mediaTiming, mediaTimingOffset, mediaTimingRange, localMediaSource, searchDocument, invalidateSearch, manualReviewSnapshot, manualReviewCurrent, saveManualTranslation, translationReviewQueue, hasNoteContent, segmentNoteCount, BACKUP_REVIEW_BYTES, SUBTITLE_IMPORT_BYTES, vttPayload, libraryHits, librarySnippet, hasProjectAnnotations, projectAnnotationCount, attachProjectTranscript, libraryMatches, documentDuration, sortedLibrary, AUDIO_NOTE_BUDGET, audioNoteCharacters, isAudioProject, audioProjectIdentity, podcastMediaIdentity, SUMMARY_QUESTION, summaryReadiness, podcastURL, podcastSource, cleanGlossary, relevantGlossary, translationQualityMessage, retainAnswers, summaryFreshness, latestSummary, summaryMarkdown, aiReadingMarkdown, parseReadingTime, createPlaybackIndex, segmentAtTime, subtitleExport, mergeLibraryBackup, time, source, media, validate, parse, matchesSegment, notebookSegments, notebookMarkdown, translationCurrent, sameCueSnapshot, subscriptionPlan, cleanContexts, answerFreshness };
+	const api = { createReadingRecency, createLibrarySearch, createLibraryNotebookSearch, libraryCaptureSteps, libraryCaptureCurrent, libraryCaptures, libraryNotebookMarkdown, mediaTiming, mediaTimingOffset, mediaTimingRange, localMediaSource, searchDocument, invalidateSearch, manualReviewSnapshot, manualReviewCurrent, saveManualTranslation, translationReviewQueue, hasNoteContent, segmentNoteCount, BACKUP_REVIEW_BYTES, SUBTITLE_IMPORT_BYTES, vttPayload, libraryHits, librarySnippet, hasProjectAnnotations, projectAnnotationCount, attachProjectTranscript, libraryMatches, documentDuration, sortedLibrary, AUDIO_NOTE_BUDGET, audioNoteCharacters, isAudioProject, audioProjectIdentity, podcastMediaIdentity, SUMMARY_QUESTION, summaryReadiness, podcastURL, podcastSource, cleanGlossary, relevantGlossary, translationQualityMessage, retainAnswers, summaryFreshness, latestSummary, summaryMarkdown, aiReadingMarkdown, parseReadingTime, createPlaybackIndex, segmentAtTime, subtitleExport, mergeLibraryBackup, time, source, media, validate, parse, matchesSegment, notebookSegments, notebookMarkdown, translationCurrent, sameCueSnapshot, subscriptionPlan, cleanContexts, answerFreshness };
 	if (typeof module !== "undefined" && module.exports) module.exports = api;
 	else root.Coconut = api;
 })(typeof window !== "undefined" ? window : globalThis);

@@ -66,3 +66,7 @@ At every size, first-render passage builds fall from 9 to 1; twenty control refr
 ## Large-library shelf
 
 The separate [large-library rendering record](large-library-rendering.md) covers bounded 40-card pages, complete-library search and backup, card reuse, and authored 100/1,000/5,000-document profiles. Transcript pagination and shelf pagination have independent bounds.
+
+## Cross-library notebook
+
+The [cooperative notebook record](notebook-performance.md) documents resumable complete capture collection, query cancellation, same-query page reuse, source/export ownership, reproducible fixed-fixture Node probes and unfiltered raw timing samples. It distinguishes partitioned CPU work from browser responsiveness and total elapsed time.
