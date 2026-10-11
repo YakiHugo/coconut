@@ -1455,7 +1455,7 @@ for(const [id,direction] of [['reading-excerpts-previous',-1],['reading-excerpts
 // Native dialogs make the page inert but may hand the last Tab to browser
 // chrome. Only the two actual boundaries are ours; interior traversal remains
 // native, including readonly evidence and expanded details.
-for(const id of ['reading-excerpts-dialog','exact-note-dialog','subtitle-encoding-dialog'])$(id).addEventListener('keydown',event=>{
+for(const id of ['reading-excerpts-dialog','exact-note-dialog','subtitle-encoding-dialog','local-media-project-dialog'])$(id).addEventListener('keydown',event=>{
  const dialog=$(id);
  if(!dialog.open||event.key!=='Tab'||event.defaultPrevented||event.isComposing||event.keyCode===229||event.altKey||event.ctrlKey||event.metaKey||event.target.closest?.('dialog')!==dialog)return;
  const controls=[...dialog.querySelectorAll('button,input,select,textarea,a[href],summary,[tabindex]')].filter(node=>{

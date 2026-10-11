@@ -67,6 +67,78 @@ function delayedFile(env,chosen=file(env.w)){
  return {selected:{name:chosen.name,size:chosen.size,lastModified:chosen.lastModified,type:chosen.type,slice:(start,end)=>{const part=chosen.slice(start,end);return {text:()=>part.text(),arrayBuffer:async()=>{if(!held){held=true;reading=true;await gate;}return part.arrayBuffer();}};}},release,get reading(){return reading;}};
 }
 async function bound(env,selected=file(env.w)){await importJSON(env,transcript());const doc=env.w.associationTest.active();await pick(env,selected);return doc;}
+function pressChooserKey(env,node,options={}){
+ node.focus();const event=new env.w.KeyboardEvent('keydown',{key:'Tab',bubbles:true,cancelable:true,...options});node.dispatchEvent(event);return event;
+}
+
+// Happy DOM does not perform native Tab traversal: only boundary keys should
+// be canceled and move focus; interior keys must remain available to the browser.
+for(const origin of ['home-singleton','home-multiple','first-bind','replace','unlink'])test(`${origin} media chooser keeps both Tab boundaries inside its visible enabled controls`,async()=>{
+ const env=setup();try{
+  const existing=await bound(env);
+  if(origin==='home-multiple')await importJSON(env,{...clone(existing),title:'Another matching transcript'});
+  if(origin==='first-bind')await importJSON(env,transcript({title:'Unbound current transcript'}));
+  if(origin.startsWith('home'))env.$('add-content').click();
+  const pending=origin==='unlink'?env.$('unlink-reader-media').onclick():pick(env,file(env.w,origin==='replace'?'Replacement.wav':'Original.wav'),origin.startsWith('home')?'open-local-media':origin==='replace'?'replace-reader-media':'attach-reader-media');
+  const dialog=await chooser(env),cancel=env.$('cancel-local-media-project'),current=env.$('local-media-current-project'),fresh=env.$('new-local-media-project'),candidates=[...env.$('local-media-project-options').children],before=JSON.stringify(env.w.associationTest.docs());
+  assert.equal(env.w.document.activeElement,cancel,'the chooser starts on its safe cancel action');
+  assert.equal(current.hidden,origin.startsWith('home'));assert.equal(fresh.hidden,!origin.startsWith('home'));
+  assert.equal(candidates.length,origin==='home-multiple'?2:origin==='replace'||origin==='unlink'?0:1);
+  const controls=[...(!current.hidden?[current]:[]),...candidates,...(!fresh.hidden?[fresh]:[]),cancel],first=controls[0];
+  assert.equal(pressChooserKey(env,cancel).defaultPrevented,true,'Tab from initially focused cancel must wrap instead of escaping to browser chrome');
+  assert.equal(env.w.document.activeElement,first,'forward wrap skips hidden current/new actions');
+  assert.equal(pressChooserKey(env,first,{shiftKey:true}).defaultPrevented,true);assert.equal(env.w.document.activeElement,cancel);
+  for(const node of controls.slice(0,-1)){assert.equal(pressChooserKey(env,node).defaultPrevented,false,'forward interior traversal stays native');assert.equal(env.w.document.activeElement,node);}
+  for(const node of controls.slice(1)){assert.equal(pressChooserKey(env,node,{shiftKey:true}).defaultPrevented,false,'backward interior traversal stays native');assert.equal(env.w.document.activeElement,node);}
+  assert.equal(JSON.stringify(env.w.associationTest.docs()),before,'keyboard traversal never chooses or changes a project');
+  cancel.click();await pending;assert.equal(dialog.open,false);assert.equal(JSON.stringify(env.w.associationTest.docs()),before);assert.equal(env.calls.length,0);
+ }finally{await close(env);}
+});
+
+test('media chooser Tab boundaries skip disabled, hidden, inert and styled-out controls on each keypress',async()=>{
+ const env=setup();try{
+  const firstDoc=await bound(env);await importJSON(env,{...clone(firstDoc),title:'Second matching transcript'});env.$('add-content').click();
+  const pending=pick(env,file(env.w),'open-local-media');await chooser(env);
+  const [first,second]=env.$('local-media-project-options').children,cancel=env.$('cancel-local-media-project'),fresh=env.$('new-local-media-project'),actions=cancel.parentElement;
+  const forward=target=>{assert.equal(pressChooserKey(env,cancel).defaultPrevented,true);assert.equal(env.w.document.activeElement===target,true,'forward boundary reaches the expected visible first control');};
+  // Happy DOM needs an explicit tabindex for the native summary focus target.
+  const details=env.w.document.createElement('details'),summary=env.w.document.createElement('summary'),inside=env.w.document.createElement('button');summary.textContent='Authored candidate details';summary.tabIndex=0;inside.textContent='Authored details action';details.append(summary,inside);env.$('local-media-project-options').prepend(details);
+  forward(summary);assert.equal(pressChooserKey(env,summary,{shiftKey:true}).defaultPrevented,true);assert.equal(env.w.document.activeElement,cancel);
+  summary.tabIndex=-1;forward(first);assert.equal(pressChooserKey(env,first,{shiftKey:true}).defaultPrevented,true,'closed details exclude their inner control');assert.equal(env.w.document.activeElement,cancel);
+  details.open=true;forward(inside);assert.equal(pressChooserKey(env,inside,{shiftKey:true}).defaultPrevented,true);assert.equal(env.w.document.activeElement,cancel);details.remove();forward(first);
+  for(const [name,hide,restore] of [
+   ['disabled',()=>{first.disabled=true;},()=>{first.disabled=false;}],
+   ['hidden',()=>{first.hidden=true;},()=>{first.hidden=false;}],
+   ['inert',()=>first.setAttribute('inert',''),()=>first.removeAttribute('inert')],
+   ['negative tabindex',()=>{first.tabIndex=-1;},()=>first.removeAttribute('tabindex')],
+   ['display none',()=>{first.style.display='none';},()=>{first.style.display='';}],
+   ['visibility hidden',()=>{first.style.visibility='hidden';},()=>{first.style.visibility='';}],
+   ['visibility collapse',()=>{first.style.visibility='collapse';},()=>{first.style.visibility='';}]
+  ]){hide();forward(second);assert.equal(pressChooserKey(env,second,{shiftKey:true}).defaultPrevented,true,name+' skips the previous first control');assert.equal(env.w.document.activeElement,cancel);restore();forward(first);}
+  env.$('local-media-project-options').hidden=true;forward(fresh);env.$('local-media-project-options').hidden=false;
+  cancel.disabled=true;assert.equal(pressChooserKey(env,fresh).defaultPrevented,true);assert.equal(env.w.document.activeElement,first);assert.equal(pressChooserKey(env,first,{shiftKey:true}).defaultPrevented,true);assert.equal(env.w.document.activeElement,fresh);cancel.disabled=false;
+  actions.hidden=true;assert.equal(pressChooserKey(env,second).defaultPrevented,true);assert.equal(env.w.document.activeElement,first);assert.equal(pressChooserKey(env,first,{shiftKey:true}).defaultPrevented,true);assert.equal(env.w.document.activeElement,second);actions.hidden=false;
+  env.$('local-media-project-options').hidden=true;fresh.hidden=true;forward(cancel);assert.equal(pressChooserKey(env,cancel,{shiftKey:true}).defaultPrevented,true);assert.equal(env.w.document.activeElement,cancel);
+  cancel.click();await pending;assert.equal(env.calls.length,0);
+ }finally{await close(env);}
+});
+
+test('media chooser leaves modified, composing, handled and closed-dialog keys untouched',async()=>{
+ const env=setup();try{
+  const doc=await bound(env);env.$('add-content').click();const pending=pick(env,file(env.w),'open-local-media');const dialog=await chooser(env),cancel=env.$('cancel-local-media-project'),first=candidate(env,doc.key);
+  for(const [node,shiftKey] of [[cancel,false],[first,true]])for(const options of [{altKey:true},{ctrlKey:true},{metaKey:true},{isComposing:true},{keyCode:229},{key:'ArrowRight'}]){
+   assert.equal(pressChooserKey(env,node,{shiftKey,...options}).defaultPrevented,false);assert.equal(env.w.document.activeElement,node);
+  }
+  for(const [node,shiftKey] of [[cancel,false],[first,true]]){
+   node.focus();const event=new env.w.KeyboardEvent('keydown',{key:'Tab',shiftKey,bubbles:true,cancelable:true});event.preventDefault();node.dispatchEvent(event);assert.equal(env.w.document.activeElement,node,'an already handled Tab must not move focus');
+  }
+  const nested=env.w.document.createElement('dialog'),nestedButton=env.w.document.createElement('button');nested.append(nestedButton);dialog.append(nested);
+  assert.equal(pressChooserKey(env,nestedButton).defaultPrevented,false,'nested dialog events belong to that dialog');nested.remove();
+  cancel.click();await pending;assert.equal(dialog.open,false);
+  for(const [node,shiftKey] of [[cancel,false],[first,true],[env.$('open-local-media'),false]])assert.equal(pressChooserKey(env,node,{shiftKey}).defaultPrevented,false,'closed chooser must not intercept Tab');
+  assert.equal(env.calls.length,0);
+ }finally{await close(env);}
+});
 
 // Core export/import invariants do not depend on object URL or DOM behavior.
 test('transcript local source roundtrips only metadata and never accepts a competing hosted source',()=>{
