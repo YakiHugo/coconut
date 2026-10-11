@@ -62,7 +62,7 @@ class BrowserWorkflowTests(unittest.TestCase):
         # future direct authored suites are also covered by the guard check above.
         for filename in ('reading-appearance-browser.mjs', 'multi-import-browser.mjs',
                          'large-library-browser.mjs', 'inline-excerpts-browser.mjs',
-                         'chapter-markers-browser.mjs'):
+                         'chapter-markers-browser.mjs', 'subtitle-encoding-browser.mjs'):
             self.assertTrue((ROOT / 'tests' / filename).is_file())
             self.assertEqual([step['run'] for step in suites].count('node tests/' + filename), 1)
 
@@ -98,6 +98,7 @@ class BrowserWorkflowTests(unittest.TestCase):
                                  'playback-follow-geometry.json', 'playback-follow-scroll.json',
                                  'compact-library-geometry.json', 'search-return-checks.json',
                                  'inline-excerpts-checks.json', 'chapter-markers-checks.json',
+                                 'subtitle-encoding-checks.json',
                                  'compact-library-failure.png'])
         self.assertIn('if: always()', upload)
 

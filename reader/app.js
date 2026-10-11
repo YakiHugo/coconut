@@ -74,6 +74,7 @@ let projectTranscriptTarget = null;
 let localMediaPickerTarget=null,pendingLocalMediaChoice=null;
 function projectSourceSnapshot(doc){return JSON.stringify(doc.podcast_source||doc.local_media_source);}
 let pendingBackupReview = null;
+let pendingSubtitleEncoding = null;
 let transcriptImportBatch = null;
 let transcriptDragDepth = 0;
 function cancelLocalImports(keepInput = null) {
@@ -83,6 +84,7 @@ function cancelLocalImports(keepInput = null) {
  pendingLocalMediaChoice?.(null);
  if(keepInput!=="local-media-file")localMediaPickerTarget=null;
  pendingBackupReview?.(false);
+ pendingSubtitleEncoding?.(null);
  if(keepInput!=="project-transcript-file")projectTranscriptTarget=null;
  // Retire all import paths while preserving a newly selected input's file.
  for(const id of ["file", "library-file", "project-transcript-file", "local-media-file"])if(id!==keepInput)$(id).value = "";
@@ -126,6 +128,77 @@ function localFileReview(file, canCommit, library = false, batch = false) {
   $('continue-large-backup').onclick=()=>finish(true);$('cancel-large-backup').onclick=cancel;
   dialog.addEventListener('close',cancel);dialog.addEventListener('cancel',cancel);
   dialog.showModal();$('cancel-large-backup').focus();
+ });
+}
+// JSON keeps its backup contract. Subtitle bytes live only for this attempt;
+// no encoding guess or lossy File.text() result can enter the save pipeline.
+async function readTranscriptFile(file,canCommit,{batch=null,item=null}={}){
+ if(file.name.toLowerCase().endsWith('.json')){
+  const text=await file.text();
+  if(!canCommit())return null;
+  // Blob.text() is UTF-8: every decoding error produces U+FFFD. Only that
+  // case needs a second byte read, avoiding another large backup buffer for
+  // ordinary JSON while distinguishing a real, valid U+FFFD in the source.
+  if(!text.includes('\ufffd'))return text;
+  const bytes=await file.arrayBuffer();if(!canCommit())return null;
+  try{new TextDecoder('utf-8',{fatal:true}).decode(bytes);return text;}
+  catch{throw new Error('JSON 备份包含无法按 UTF-8 解码的字节，未导入。请保留原文件并重新导出 UTF-8 JSON；字幕编码选项不适用于 JSON。');}
+ }
+ const bytes=new Uint8Array(await file.arrayBuffer());
+ if(!canCommit())return null;
+ const decoded=Coconut.decodeSubtitleBytes(bytes);
+ if(decoded.ok)return decoded.text;
+ if(item){item.status='encoding';renderTranscriptImportBatch(batch);}
+ return chooseSubtitleEncoding(file,bytes,decoded,canCommit,!!batch);
+}
+function chooseSubtitleEncoding(file,bytes,initial,canCommit,batch){
+ return new Promise(resolve=>{
+  const dialog=$('subtitle-encoding-dialog'),select=$('subtitle-encoding'),preview=$('subtitle-encoding-preview'),status=$('subtitle-encoding-status'),confirm=$('confirm-subtitle-encoding');
+  let settled=false,decoded=null;
+  const returnFocus=document.activeElement;
+  const finish=value=>{
+   if(settled)return;settled=true;
+   dialog.removeEventListener('close',cancel);dialog.removeEventListener('cancel',cancel);
+   select.onchange=null;confirm.onclick=null;$('cancel-subtitle-encoding').onclick=null;$('stop-subtitle-encoding').onclick=null;
+   pendingSubtitleEncoding=null;preview.textContent='';decoded=null;bytes=null;
+   const owned=canCommit();if(dialog.open)dialog.close();
+   if(owned&&value===null){
+    const target=returnFocus?.isConnected&&returnFocus!==document.body&&!returnFocus.closest('[hidden],[inert]')?returnFocus:workspace==='read'&&Coconut.isAudioProject(active())?$('attach-project-transcript'):$('import');
+    target?.focus({preventScroll:true});
+   }
+   resolve(owned?value:null);
+  };
+  const cancel=event=>{
+   if(event?.type==='close'&&dialog.open)return;
+   event?.preventDefault();
+   if(batch&&['cancel','close'].includes(event?.type))cancelLocalImports();
+   finish(null);
+  };
+  pendingSubtitleEncoding=finish;
+  $('subtitle-encoding-file').textContent=file.name;
+  $('subtitle-encoding-reason').textContent=initial.error;
+  select.replaceChildren();const placeholder=el('option','','请选择原文件编码');placeholder.value='';select.append(placeholder);
+  for(const option of Coconut.subtitleEncodings()){
+   const node=el('option','',option.label+(option.available?'':'（此浏览器不可用）'));node.value=option.id;node.disabled=!option.available;select.append(node);
+  }
+  preview.textContent='';status.textContent='选择编码后显示原文件文字预览；请确认文字可读，再导入。';confirm.disabled=true;
+  select.onchange=()=>{
+   if(!canCommit()){finish(null);return;}
+   decoded=null;preview.textContent='';confirm.disabled=true;
+   if(!select.value){status.textContent='请选择原文件编码。';return;}
+   const candidate=Coconut.decodeSubtitleBytes(bytes,select.value);
+   if(!candidate.ok){status.textContent=candidate.error;return;}
+   preview.textContent=candidate.text.slice(0,4000).replace(/[\uD800-\uDBFF]$/,'');
+   try{
+    const parsed=Coconut.parseWithDiagnostics(candidate.text,file.name);
+    status.textContent='可读取 '+parsed.document.segments.length+' 段字幕'+(parsed.diagnostics.length?'，另有 '+parsed.diagnostics.length+' 个字幕块未识别（导入后可查看行号）':'')+'。'+(candidate.text.length>4000?'预览为前 4,000 个字符；完整文件已解码检查。':'已显示完整文字。')+' 请核对是否有乱码。';
+    decoded=candidate;confirm.disabled=false;
+   }catch(error){status.textContent='字节已解码，但无法解析字幕：'+localFileError(error)+'。请重新选择编码或取消检查原文件。';}
+  };
+  confirm.onclick=()=>{if(decoded?.ok)finish(decoded.text);};
+  $('cancel-subtitle-encoding').textContent=batch?'跳过此文件':'取消导入';$('cancel-subtitle-encoding').onclick=cancel;
+  $('stop-subtitle-encoding').hidden=!batch;$('stop-subtitle-encoding').onclick=()=>cancelLocalImports();
+  dialog.addEventListener('close',cancel);dialog.addEventListener('cancel',cancel);dialog.showModal();select.focus();
  });
 }
 function localFileError(error) {
@@ -1378,7 +1451,7 @@ for(const [id,direction] of [['reading-excerpts-previous',-1],['reading-excerpts
 // Native dialogs make the page inert but may hand the last Tab to browser
 // chrome. Only the two actual boundaries are ours; interior traversal remains
 // native, including readonly evidence and expanded details.
-for(const id of ['reading-excerpts-dialog','exact-note-dialog'])$(id).addEventListener('keydown',event=>{
+for(const id of ['reading-excerpts-dialog','exact-note-dialog','subtitle-encoding-dialog'])$(id).addEventListener('keydown',event=>{
  const dialog=$(id);
  if(!dialog.open||event.key!=='Tab'||event.defaultPrevented||event.isComposing||event.keyCode===229||event.altKey||event.ctrlKey||event.metaKey||event.target.closest?.('dialog')!==dialog)return;
  const controls=[...dialog.querySelectorAll('button,input,select,textarea,a[href],summary,[tabindex]')].filter(node=>{
@@ -2465,7 +2538,8 @@ async function selectTranscriptFiles(files,fromPicker=false){
   const review=localFileReview(f,canCommit);
   if(review!==true&&!(await review))return;
   if(!canCommit())return;
-		const text = await f.text();
+		const text = await readTranscriptFile(f,canCommit);
+  if(text===null)return;
   if(!canCommit())return;
 		const {document:parsed,diagnostics}=Coconut.parseWithDiagnostics(text,f.name);
   if(diagnostics.length){warningBatch=createTranscriptImportBatch([f]);setTranscriptImportDiagnostics(warningBatch.items[0],diagnostics);warningBatch.items[0].status='saving';renderTranscriptImportBatch(warningBatch);}
@@ -2537,7 +2611,7 @@ function stopTranscriptImportBatch(){
 }
 function renderTranscriptImportBatch(batch){
  if(transcriptImportBatch!==batch)return;
- const labels={queued:'等待导入',review:'等待确认大文件',reading:'读取中',saving:'校验并保存中',saved:'已保存',duplicate:'书架已有，未重复添加',unsaved:'仅在本页，尚未保存。请重试保存或导出备份',failed:'导入失败',skipped:'已跳过，未读取',cancelled:'未导入，已停止'};
+ const labels={queued:'等待导入',review:'等待确认大文件',encoding:'等待选择字幕编码',reading:'读取中',saving:'校验并保存中',saved:'已保存',duplicate:'书架已有，未重复添加',unsaved:'仅在本页，尚未保存。请重试保存或导出备份',failed:'导入失败',skipped:'已跳过，未导入',cancelled:'未导入，已停止'};
  const counts={};for(const item of batch.items){
   // Results are navigation handles, never a second hidden removal archive.
   if(item.identity&&!state.documents.includes(item.identity))item.identity=null;
@@ -2548,7 +2622,7 @@ function renderTranscriptImportBatch(batch){
   if(item.result.textContent!==label)item.result.textContent=label;
   item.open.hidden=!readable||!available;
  }
- const pending=(counts.review||0)+(counts.reading||0)+(counts.saving||0),done=batch.items.length-(counts.queued||0)-pending;
+ const pending=(counts.review||0)+(counts.encoding||0)+(counts.reading||0)+(counts.saving||0),done=batch.items.length-(counts.queued||0)-pending;
  const parts=[batch.finished?(batch.cancelled?'已停止导入':'导入完成'):batch.cancelled?'已停止后续文件，等待当前文件确认':'正在导入',done+' / '+batch.items.length+' 个文件'];
  for(const [status,label] of [['saved','已保存'],['duplicate','已有'],['failed','失败'],['skipped','跳过'],['unsaved','未保存'],['cancelled','未导入']])if(counts[status])parts.push(label+' '+counts[status]);
  const warnings=batch.items.reduce((count,item)=>count+(item.diagnostics?.length||0),0);
@@ -2591,7 +2665,8 @@ async function importTranscriptFiles(files){
     if(review!==true&&!(await review)){item.status=canCommit()?'skipped':'cancelled';renderTranscriptImportBatch(batch);continue;}
     if(!canCommit()){item.status='cancelled';break;}
     item.status='reading';renderTranscriptImportBatch(batch);
-    const text=await file.text();if(!canCommit()){item.status='cancelled';break;}
+    const text=await readTranscriptFile(file,canCommit,{batch,item});if(!canCommit()){item.status='cancelled';break;}
+    if(text===null){item.status='skipped';renderTranscriptImportBatch(batch);continue;}
     const {document:parsed,diagnostics}=Coconut.parseWithDiagnostics(text,file.name);
     setTranscriptImportDiagnostics(item,diagnostics);
     let sourceKey;try{const raw=JSON.parse(text);if(typeof raw?.key==='string'&&raw.key.length<=200)sourceKey=raw.key;}catch{}
@@ -2603,7 +2678,7 @@ async function importTranscriptFiles(files){
    renderTranscriptImportBatch(batch);
   }
  }finally{
-  for(const item of batch.items)if(['queued','review','reading','saving'].includes(item.status))item.status='cancelled';
+  for(const item of batch.items)if(['queued','review','encoding','reading','saving'].includes(item.status))item.status='cancelled';
   if(batch.items.some(item=>item.status==='cancelled'))batch.cancelled=true;
   batch.finished=true;renderTranscriptImportBatch(batch);
   if(ownsRequest())$('file').value='';
@@ -4218,7 +4293,8 @@ $('project-transcript-file').onchange=async()=>{
   const review=localFileReview(file,canCommit);
   if(review!==true&&!(await review))return;
   if(!canCommit())return;
-  const value=await file.text();
+  const value=await readTranscriptFile(file,canCommit);
+  if(value===null)return;
   if(!canCommit())return;
   const {document:text,diagnostics}=Coconut.parseWithDiagnostics(value,file.name);
   if(diagnostics.length){warningBatch=createTranscriptImportBatch([file]);setTranscriptImportDiagnostics(warningBatch.items[0],diagnostics);warningBatch.items[0].status='saving';renderTranscriptImportBatch(warningBatch);}

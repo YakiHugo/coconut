@@ -8,9 +8,9 @@
 <meta name="theme-color" content="#faf9f7">
 <link rel="icon" type="image/png" href="coconut-mark.png">
 <script src="appearance.js?v=86ea922669"></script>
-<link rel="stylesheet" href="style.css?v=c0983709aa">
+<link rel="stylesheet" href="style.css?v=3d1a552ff2">
 <script src="summary.js?v=580ffdad1e" defer></script>
-<script src="core.js?v=8b8bc4b86a" defer>
+<script src="core.js?v=d3d26c66b2" defer>
 </script>
 <script src="passages.js?v=d02200c5a9" defer></script>
 <script src="quotation.js?v=dd1ac21240" defer></script>
@@ -18,7 +18,7 @@
 <script src="library-store.js?v=e76ded9456" defer></script>
 <script src="indexeddb-document-adapter.js?v=65c0c5a814" defer></script>
 <script src="storage-provider.js?v=1cb898e984" defer></script>
-<script src="app.js?v=f623d0ace1" type="text/coconut-pending" data-reader-script>
+<script src="app.js?v=85a040d7d5" type="text/coconut-pending" data-reader-script>
 </script>
 <script src="language.js?v=492470a705" type="text/coconut-pending" data-reader-script></script>
 <script src="translation-review.js?v=ef64ceb824" type="text/coconut-pending" data-reader-script></script>
@@ -328,6 +328,15 @@ cd coconut
 <div class="dock-copy"><strong id="dock-title"></strong><span class="dock-clock"><span id="dock-current">00:00</span><span id="dock-total"></span><span id="dock-rate"></span></span></div>
 <button id="dock-follow" type="button" aria-pressed="false" disabled>跟随原声</button><button id="dock-locate" type="button">定位原文</button><button id="dock-return" type="button" aria-label="回到原声播放器">播放器 ↑</button>
 </section>
+<dialog id="subtitle-encoding-dialog" aria-labelledby="subtitle-encoding-heading" aria-describedby="subtitle-encoding-file subtitle-encoding-reason">
+<h2 id="subtitle-encoding-heading">选择字幕编码重新读取</h2>
+<p id="subtitle-encoding-file"></p><p id="subtitle-encoding-reason"></p>
+<p class="hint">只在本机读取，尚未导入。不会猜测编码或替换无法解码的字节；原文件保留到本次确认或取消。</p>
+<label for="subtitle-encoding">原文件编码</label><select id="subtitle-encoding"></select>
+<p id="subtitle-encoding-status" role="status" aria-live="polite"></p>
+<pre id="subtitle-encoding-preview" tabindex="0" aria-label="所选编码的字幕文字预览"></pre>
+<div class="dialog-actions"><button id="cancel-subtitle-encoding" type="button">取消导入</button><button id="stop-subtitle-encoding" type="button" hidden>停止全部剩余文件</button><button id="confirm-subtitle-encoding" type="button" class="primary" disabled>按此编码导入</button></div>
+</dialog>
 <dialog id="large-backup-dialog" aria-labelledby="large-backup-heading" aria-describedby="large-backup-size large-backup-help">
 <h2 id="large-backup-heading">文件较大，继续读取？</h2>
 <p id="large-backup-size"></p><p id="large-backup-help">完整读取和校验需要额外内存，可能暂时卡顿或超出设备能力。恢复不会删除原书架；若本机保存空间不足，内容仍可在本页阅读与导出，关闭前请保留原备份文件。文件不会上传，也不会调用 AI。</p>

@@ -8,7 +8,7 @@ import {transactionDouble} from './helpers/indexeddb-transaction-double.mjs';
 import {installSavePipeline} from './helpers/save-pipeline.mjs';
 const root=new URL('../',import.meta.url),KEY='coconut-reader-v1';
 const doc=title=>({title,language:'en',segments:[{id:'cue',start:0,end:3,text:'Authored source '+title}],notes:{cue:'Keep '+title}});
-const file=(title,{name=title+'.json',text=JSON.stringify(doc(title)),size=100}={})=>({name,size,text:typeof text==='function'?text:async()=>text});
+const file=(title,{name=title+'.json',text=JSON.stringify(doc(title)),size=100}={})=>({name,size,text:typeof text==='function'?text:async()=>text,arrayBuffer:async()=>new TextEncoder().encode(typeof text==='function'?await text():text).buffer});
 const deferred=()=>{let resolve;const promise=new Promise(done=>resolve=done);return {promise,resolve};};
 async function until(predicate,timeoutMs=5000){
  const deadline=performance.now()+timeoutMs;
