@@ -972,6 +972,22 @@ $('library-page-form').onsubmit=event=>{
 };
 $('library-show-active').onclick=()=>{renderLibrary(state.active);const card=libraryCards.get(state.active);$('toggle-library').setAttribute('aria-expanded','true');card?.open.focus();};
 // This modal deliberately leaves the reader, selection and media untouched.
+function exactExcerptSaveState(doc,record){
+ const status=libraryStore.status(doc.key);
+ return state.documents.includes(doc)&&doc.exact_excerpts?.includes(record)&&status?.identity===doc&&status.status==='saved'?'saved':'unsaved';
+}
+const exactExcerptWrites=new WeakMap();
+async function saveExactExcerpt(doc,record){
+ if(active()!==doc||!contentIngressAllowed(doc))return {ok:false};
+ const existing=Coconut.exactExcerptDuplicate(doc,record);
+ if(existing&&exactExcerptSaveState(doc,existing)==='saved')return {ok:true};
+ if(!existing)(doc.exact_excerpts??=[]).push(record);
+ const owned=existing||record,pending=exactExcerptWrites.get(doc)||new Map();
+ if(pending.has(owned))return pending.get(owned);
+ const receipt=commitDocument(doc);pending.set(owned,receipt);exactExcerptWrites.set(doc,pending);
+ renderLibrary();renderNotebookAction(doc);
+ try{return await receipt;}finally{pending.delete(owned);if(!pending.size)exactExcerptWrites.delete(doc);}
+}
 const notebookSelection=new Set();
 let notebookPage=0,notebookReturn=null,notebookOpener=null,notebookRestore=null,notebookPainted=null;
 const notebookSearch=Coconut.createLibraryNotebookSearch({getDocuments:()=>state.documents,getRevision:()=>libraryContentRevision,
@@ -995,29 +1011,80 @@ function renderLibraryNotebook(){
  const start=notebookPage*NOTEBOOK_PAGE_SIZE;host.replaceChildren();
  $('notebook-status').textContent=captures.length?`${start+1}–${Math.min(start+NOTEBOOK_PAGE_SIZE,captures.length)} / ${captures.length} 条记录`:'没有匹配的记录。阅读时摘录原话或记下笔记后，会在这里出现。';
  $('notebook-previous').disabled=notebookPage===0;$('notebook-next').disabled=start+NOTEBOOK_PAGE_SIZE>=captures.length;
- for(const capture of captures.slice(start,start+NOTEBOOK_PAGE_SIZE)){
+ const pageCaptures=captures.slice(start,start+NOTEBOOK_PAGE_SIZE),exactGroups=new Map();
+ for(const capture of pageCaptures)if(capture.type==='exact-excerpt'){
+  if(!exactGroups.has(capture.documentKey))exactGroups.set(capture.documentKey,{ids:new Set()});
+  exactGroups.get(capture.documentKey).ids.add(capture.id);
+ }
+ // One ephemeral current-source index per document/page; never cache through edits.
+ for(const [key,group] of exactGroups){
+  const doc=state.documents.find(doc=>doc.key===key),records=doc.exact_excerpts.filter(record=>group.ids.has(record.id));
+  group.records=new Map(records.map(record=>[record.id,record]));group.states=Coconut.exactExcerptStateBatch(records,doc);
+ }
+ for(const capture of pageCaptures){
   const doc=state.documents.find(doc=>doc.key===capture.documentKey),row=el('li','notebook-capture');row.dataset.captureKey=capture.key;
   const label=el('label'),check=el('input');check.type='checkbox';check.checked=notebookSelection.has(doc.key);check.setAttribute('aria-label','选择篇目 '+doc.title);check.onchange=()=>{check.checked?notebookSelection.add(doc.key):notebookSelection.delete(doc.key);syncNotebookSelection();};label.append(check,document.createTextNode(doc.title));row.append(label);
-  row.append(el('p','hint',(capture.type==='cue'?(capture.excerpt?'摘录':'片段')+(Coconut.hasNoteContent(capture.note)?' · 笔记':''):capture.type==='project-note'?'项目笔记':'时间书签')+(capture.time===null?'':' · '+Coconut.time(capture.time))));
+  row.append(el('p','hint',(capture.type==='cue'?(capture.excerpt?'整段摘录':'片段')+(Coconut.hasNoteContent(capture.note)?' · 笔记':''):capture.type==='exact-excerpt'?'所选文字摘录 · 历史快照':capture.type==='project-note'?'项目笔记':'时间书签')+(capture.time===null?'':' · '+Coconut.time(capture.time))));
   const details=el('details'),summary=el('summary','','查看完整记录与来源');details.append(summary);
   if(capture.text){row.append(el('p','notebook-preview',capture.text));details.append(el('p','notebook-content',capture.text));}
   if(capture.note){row.append(el('p','notebook-preview',capture.note));details.append(el('p','notebook-content','我的笔记：\n'+capture.note));}
   details.append(el('p','hint','文档标识：'+doc.key+' · '+capture.type+' · '+capture.id));
-  details.append(el('p','hint',doc.local_media_source?'本地媒体：'+doc.local_media_source.name:(doc.source_url||doc.podcast_source?.media_url||'未关联原站链接；可打开原位置核对。')));
+  if(capture.type!=='exact-excerpt')details.append(el('p','hint',doc.local_media_source?'本地媒体：'+doc.local_media_source.name:(doc.source_url||doc.podcast_source?.media_url||'未关联原站链接；可打开原位置核对。')));
   if(capture.type==='cue'){
    const cue=doc.segments.find(cue=>cue.id===capture.id),translation=cue.translations?.[doc.translation_view];
    if(translation)details.append(el('p','notebook-content',Coconut.translationCurrent(cue,doc,translation)?'译文（'+doc.translation_view+'；'+(translation.provider==='user'?'用户自己写的译文':translation.manual_review?'用户已核对':'机器生成，需核对')+'）：\n'+translation.text:'译文已过期，请在原文中核对。'));
    if(cue.original_text!==undefined&&cue.original_text!==cue.text)details.append(el('p','notebook-content','修正前文字稿：\n'+cue.original_text));
   }
-  const open=el('button','notebook-open','打开原位置');open.type='button';open.onclick=()=>{
+  const exact=capture.type==='exact-excerpt'?exactGroups.get(doc.key)?.records.get(capture.id):null;
+  const exactState=exact?exactGroups.get(doc.key).states.get(exact.id):null,freshness=exactState?.freshness;
+  if(exact&&freshness!=='current')row.append(el('p','hint',freshness==='missing'?'原位置已删除；保留摘录时快照':'原文或出处已变化；保留摘录时快照'));
+  if(exact){
+   let populated=false;
+   details.addEventListener('toggle',()=>{
+    if(!details.open||populated)return;populated=true;
+    const parts=Coconut.exactExcerptParts(exact),quote={text:exact.text,parts,start:parts[0].cue.start,end:Math.max(...parts.map(part=>part.cue.end))};
+    details.append(el('p','notebook-content',CoconutQuotation.attribution(Coconut.exactExcerptSource(exact),quote,Coconut)));
+    details.append(el('p','hint','摘录时间：'+exact.created_at+' · '+({current:'来源仍一致',stale:'原文或出处已变化；保留摘录时快照',missing:'原位置已删除；保留摘录时快照'})[freshness]));
+    // Historical context is opt-in and bounded per click, including a giant single cue.
+    const context=el('p','notebook-content','摘录时上下文：\n'),more=el('button','notebook-more-context','显示更多摘录时上下文');more.type='button';
+    const pieces=exact.snapshot.cues.flatMap((cue,i)=>i?[exact.snapshot.separators[i-1],cue.text]:[cue.text]);
+    for(const cue of exact.snapshot.cues)if(cue.original_text!==undefined&&cue.original_text!==cue.text)pieces.push('\n摘录时保留的修正前文字稿：\n',cue.original_text);
+    let piece=0,offset=0;
+    const appendContext=()=>{
+     let budget=8000;
+     while(piece<pieces.length&&budget>0){
+      const text=pieces[piece];if(offset===text.length){piece++;offset=0;continue;}let end=Math.min(text.length,offset+budget);
+      if(end<text.length&&/[\uD800-\uDBFF]/.test(text[end-1])&&/[\uDC00-\uDFFF]/.test(text[end]))end--;
+      if(end===offset)break;
+      context.append(document.createTextNode(text.slice(offset,end)));budget-=end-offset;offset=end;
+      if(offset===text.length){piece++;offset=0;}
+     }
+     if(piece>=pieces.length){more.textContent='摘录时上下文已完整显示';more.setAttribute('aria-disabled','true');more.hidden=document.activeElement!==more;}
+    };
+    more.onclick=appendContext;more.addEventListener('focusout',()=>{if(piece>=pieces.length)more.hidden=true;});details.append(context,more);appendContext();
+   });
+  }
+  const open=el('button','notebook-open',exact&&freshness==='stale'?'查看当前对应原文':'打开原位置');
+  if(exact&&!exactState.cueId){open.disabled=true;open.textContent=freshness==='missing'?'原位置已删除':'原位置无法确认';}
+  open.type='button';open.onclick=()=>{
    if(!$('library-notebook').open)return;
-   const sourceCurrent=Coconut.libraryCaptureCurrent(capture,state.documents);
-   if(!notebookSearch.isCurrent(selection)||pendingStructuralDocuments.has(doc.key)||!sourceCurrent){notebookSearch.cancel();renderLibraryNotebook();$('notebook-status').textContent='这条记录的来源已变动，请从更新后的笔记本重新选择。';$('notebook-search').focus();return;}
+   const sourceCurrent=Coconut.libraryCaptureCurrent(capture,state.documents),exactLocation=exact?Coconut.exactExcerptState(exact,doc).cueId:null;
+   if(!notebookSearch.isCurrent(selection)||pendingStructuralDocuments.has(doc.key)||!sourceCurrent||(exact&&!exactLocation)){notebookSearch.cancel();renderLibraryNotebook();$('notebook-status').textContent='这条记录的来源已变动，请从更新后的笔记本重新选择。';$('notebook-search').focus();return;}
    notebookReturn={key:capture.key,page:notebookPage,scroll:$('library-notebook').scrollTop};notebookSearch.cancel();$('library-notebook').close();
    markDocumentOpened(doc);resetReaderForDocumentNavigation();selectActiveDocument(doc.key);setReadingMode('transcript');showWorkspace('read');render();
-   openLibraryHit({kind:capture.type==='cue'?(Coconut.hasNoteContent(capture.note)?'note':'text'):capture.type,id:capture.id});
+   openLibraryHit(exact?{kind:'text',id:exactLocation}:{kind:capture.type==='cue'?(Coconut.hasNoteContent(capture.note)?'note':'text'):capture.type,id:capture.id});
    $('return-library-notebook').hidden=false;
-  };row.append(details,open);host.append(row);
+  };row.append(details,open);
+  if(exact){
+   const remove=el('button','notebook-remove','移除所选摘录');remove.type='button';
+   remove.onclick=()=>{
+    if(!$('library-notebook').open||!contentIngressAllowed(doc)||!Coconut.libraryCaptureCurrent(capture,state.documents)||!notebookSearch.isCurrent(selection))return;
+    doc.exact_excerpts=doc.exact_excerpts.filter(record=>record!==exact);if(!doc.exact_excerpts.length)delete doc.exact_excerpts;queueDocument(doc);
+    // Focus moves only for this explicit removal, never for a later save receipt.
+    $('notebook-search').focus({preventScroll:true});renderLibrary();if(active()===doc)renderNotebookAction(doc);renderLibraryNotebook();
+   };row.append(remove);
+  }
+  host.append(row);
  }
  syncNotebookSelection();
  if(notebookRestore){
@@ -1702,9 +1769,9 @@ $("save-source").onclick = (e) => {
 	render();
 };
 function renderNotebookAction(doc) {
-	const count = Coconut.projectAnnotationCount(doc)+Coconut.notebookSegments(doc).length;
+	const count = Coconut.projectAnnotationCount(doc)+Coconut.notebookSegments(doc).length+Coconut.exactExcerptCount(doc);
 	$("export-notebook").disabled = count === 0;
-	$("export-notebook").textContent = Coconut.isAudioProject(doc)?"导出原声项目笔记（"+count+" 项）":"导出阅读笔记（" + count + (Coconut.hasProjectAnnotations(doc)?" 项）":" 段）");
+	$("export-notebook").textContent = Coconut.isAudioProject(doc)?"导出原声项目笔记（"+count+" 项）":"导出阅读笔记（" + count + (Coconut.hasProjectAnnotations(doc)||Coconut.exactExcerptCount(doc)?" 项）":" 段）");
 }
 // Drafts belong to a document, not to the currently rendered form. Keep them
 // in memory across navigation/search; only a successful save writes to storage.
@@ -1862,7 +1929,7 @@ $('audio-bookmark-form').onsubmit=async event=>{
 };
 $("export-notebook").onclick = () => {
 	const doc = active();
-	if (!doc || (!Coconut.projectAnnotationCount(doc)&&!Coconut.notebookSegments(doc).length)) {
+	if (!doc || (!Coconut.projectAnnotationCount(doc)&&!Coconut.notebookSegments(doc).length&&!Coconut.exactExcerptCount(doc))) {
 		notice("先摘录一段原话，或写一则笔记，再导出阅读笔记。");
 		return;
 	}
@@ -2433,7 +2500,7 @@ function renderPassages(doc){
   if(target&&passageTranslations)for(const cue of passage.cues){const item=cue.translations?.[target];if(item&&Coconut.translationCurrent(cue,doc,item)){const warning=Coconut.translationQualityMessage(item);if(warning)section.append(el('p','passage-translation-warning',Coconut.time(cue.start)+' · 译文待核对：'+warning));}}
   const actions=el('div','passage-actions');
   if(window.CoconutQuotation){
-   quotationController??=CoconutQuotation.create({isCurrent:owner=>active()===owner&&state.documents.includes(owner)&&contentIngressAllowed(owner)});
+   quotationController??=CoconutQuotation.create({isCurrent:owner=>active()===owner&&state.documents.includes(owner)&&contentIngressAllowed(owner),saveExcerpt:saveExactExcerpt,excerptState:exactExcerptSaveState});
    const quote=el('button','passage-quote','引用原文');quote.type='button';quote.setAttribute('aria-label','引用 '+Coconut.time(passage.start)+' 的原文');
    quotationController.bind(quote,original,doc,passage.cues);actions.append(quote);
   }

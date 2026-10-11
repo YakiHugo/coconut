@@ -8,17 +8,17 @@
 <meta name="theme-color" content="#faf9f7">
 <link rel="icon" type="image/png" href="coconut-mark.png">
 <script src="appearance.js?v=86ea922669"></script>
-<link rel="stylesheet" href="style.css?v=f8949e9722">
+<link rel="stylesheet" href="style.css?v=6866eb0ed1">
 <script src="summary.js?v=580ffdad1e" defer></script>
-<script src="core.js?v=44add0e7aa" defer>
+<script src="core.js?v=3e266d251a" defer>
 </script>
 <script src="passages.js?v=0dca7d6c63" defer></script>
-<script src="quotation.js?v=eb13389e90" defer></script>
+<script src="quotation.js?v=bf4666831b" defer></script>
 <script src="passage-playback.js?v=162dbb3695" defer></script>
 <script src="library-store.js?v=e76ded9456" defer></script>
 <script src="indexeddb-document-adapter.js?v=65c0c5a814" defer></script>
 <script src="storage-provider.js?v=1cb898e984" defer></script>
-<script src="app.js?v=d6689f0e5e" type="text/coconut-pending" data-reader-script>
+<script src="app.js?v=cc72a725db" type="text/coconut-pending" data-reader-script>
 </script>
 <script src="language.js?v=c8e5b0d999" type="text/coconut-pending" data-reader-script></script>
 <script src="translation-review.js?v=ef64ceb824" type="text/coconut-pending" data-reader-script></script>
@@ -242,7 +242,7 @@ cd coconut
 </div>
 <p id="search-help" class="hint">支持连贯阅读中的跨片段短语与各语言有效译文；结果与 AI 筛选按命中的原片段计数。书架全文查找包含原文与笔记，不包含译文。</p>
 <label id="speaker-filter-control" hidden>说话人标签<select id="speaker-filter"><option value="all">全部说话人</option></select></label>
-<div class="reading-controls"><div role="group" aria-label="阅读视图"><button id="filter-all" aria-pressed="true">全文</button><button id="filter-excerpts" aria-pressed="false">摘录 <span id="excerpt-count">0</span></button><button id="filter-notes" aria-pressed="false" title="本篇全部非空片段笔记；不含项目笔记和时间书签，不受搜索筛选影响">片段笔记 <span id="note-count">0</span></button></div><button id="resume" hidden></button></div><p id="search-status" class="hint" role="status"></p><div id="search-navigation" hidden><button id="previous-match" type="button">上一匹配段</button><span id="match-position" class="hint" role="status"></span><button id="next-match" type="button">下一匹配段</button></div><button id="clear-search" hidden>清除筛选，返回全文</button>
+<div class="reading-controls"><div role="group" aria-label="阅读视图"><button id="filter-all" aria-pressed="true">全文</button><button id="filter-excerpts" aria-pressed="false">整段摘录 <span id="excerpt-count">0</span></button><button id="filter-notes" aria-pressed="false" title="本篇全部非空片段笔记；不含项目笔记和时间书签，不受搜索筛选影响">片段笔记 <span id="note-count">0</span></button></div><button id="resume" hidden></button></div><p id="search-status" class="hint" role="status"></p><div id="search-navigation" hidden><button id="previous-match" type="button">上一匹配段</button><span id="match-position" class="hint" role="status"></span><button id="next-match" type="button">下一匹配段</button></div><button id="clear-search" hidden>清除筛选，返回全文</button>
 </div>
 </div>
 </section>
@@ -428,7 +428,8 @@ cd coconut
 <div id="quotation-result" hidden><label for="quotation-preview">引用与出处</label><textarea id="quotation-preview" readonly rows="6" aria-describedby="quotation-status"></textarea></div>
 <div id="quotation-selector"><label for="quotation-source">选择原文 · 可用 Shift + 左右方向键</label><textarea id="quotation-source" readonly rows="6"></textarea><button id="quotation-preview-selection" type="button">预览所选引用</button></div>
 <p id="quotation-status" role="status"></p>
-<div class="quotation-actions"><button id="quotation-copy" type="button" hidden disabled>复制引用与出处</button><button id="quotation-close" type="button">返回阅读</button><button id="quotation-reselect" type="button" aria-controls="quotation-selector" hidden>重新选择原文</button></div>
+<p id="quotation-save-status" role="status"></p>
+<div class="quotation-actions"><button id="quotation-save" type="button" hidden>保存所选摘录</button><button id="quotation-copy" type="button" hidden disabled>复制引用与出处</button><button id="quotation-close" type="button">返回阅读</button><button id="quotation-reselect" type="button" aria-controls="quotation-selector" hidden>重新选择原文</button></div>
 </dialog>
 </body>
 </html>

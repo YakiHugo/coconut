@@ -1,6 +1,6 @@
 # Copy a selected quotation with attribution
 
-The paragraph reader's **引用原文** action creates a local, transient quotation preview. Select continuous original text in one paragraph, including across its cue boundaries, then open the action. Without a selection, use the readonly original-text field and Shift + left/right arrow keys, then **预览所选引用**. A valid selection opens directly into the quotation preview with copy and return actions. **重新选择原文** reveals the picker and retires the previous copy candidate; previewing the new selection hides the picker again. The primary action area remains available on narrow screens. A separate explicit copy button writes the complete quotation and attribution to the clipboard. No clipboard reads occur.
+The paragraph reader's **引用原文** action creates a local quotation preview. Select continuous original text in one paragraph, including across its cue boundaries, then open the action. Without a selection, use the readonly original-text field and Shift + left/right arrow keys, then **预览所选引用**. A valid selection opens directly into the quotation preview with copy and return actions. **重新选择原文** reveals the picker and retires the previous copy candidate; previewing the new selection hides the picker again. The primary action area remains available on narrow screens. A separate explicit copy button writes the complete quotation and attribution to the clipboard. No clipboard reads occur.
 
 ## Accuracy and boundaries
 
@@ -14,7 +14,7 @@ The paragraph reader's **引用原文** action creates a local, transient quotat
 
 ## Local state and recovery
 
-The feature does not create a saved excerpt, modify notes, alter reading position or change JSON/subtitle exports. It neither changes AI scope nor invokes AI. The existing whole-cue excerpt action remains independent. Closing returns focus to the paragraph action when it still exists, without starting or pausing audio. Clipboard failure preserves a selectable readonly preview for manual copying.
+Preview and copy do not modify document state. The explicit **保存所选摘录** action stores a versioned, immutable exact-text snapshot through the document save receipt pipeline. Saving preserves notes, reading position and whole-cue excerpts. JSON backups include the record; subtitles continue to represent the current transcript. It neither changes AI scope nor invokes AI. The existing whole-cue excerpt action remains independent. Closing returns focus to the paragraph action when it still exists, without starting or pausing audio. Clipboard failure preserves a selectable readonly preview for manual copying.
 
 ## Integration and verification
 
@@ -24,7 +24,13 @@ Focused Node/HappyDOM tests cover exact text, Unicode, source links, overlapping
 
 `tests/quotation-browser.mjs` runs only in CI. It exercises native Range selection followed by real pointer clicks, readonly keyboard selection, modal focus, both viewport sizes, audited clipboard success/failure, and full stored-document equality. Its clipboard methods are fixture-controlled: no host clipboard is read. A syntax check or DOM test is not a successful Chromium run. No browser or Electron execution is part of local verification in the restricted task environment.
 
-This is quotation reuse, not persistent exact-text annotation. That separate feature requires versioned snapshots plus notebook and backup/restore work; this change deliberately adds no storage field.
+## Persistent exact-text excerpts
+
+Saving captures the exact UTF-16 range, full paragraph composition and separators, cue-based attribution, corrected-text history, and capture time. Grapheme endpoints and live cue adjacency are revalidated before mutation. Duplicate saves of the same snapshot/range reuse the existing record. Pending and failed receipts are not reported as saved; a failed save retains the record in the page and enables retry or the existing unsaved-document backup. Reopening or reselecting retires the old operation’s UI ownership.
+
+The library notebook searches and exports exact excerpts alongside clearly labeled whole-cue excerpts. Exact records are historical evidence: their details retain the captured title/source and context even after edits or cue deletion. Navigation uses only surviving, same-order contiguous captured cue IDs. After text or metadata corrections it is labeled as viewing the corresponding current source, with a historical-change warning; missing, reordered or interrupted cue sequences remain unavailable. They never become current-transcript search hits. Removing a record is an explicit notebook action; its persistence uses the existing save/recovery controls. Exact-only documents remain annotated and their notebook export stays available.
+
+`reader-exact-excerpt-ui.test.mjs` covers held/failing receipts, deduplication, retries, stale ownership, adjacency/grapheme rejection, retained history, removal and export. Native browser additions are authored CI-only checks, not a claim of local browser execution.
 
 Readonly selection compatibility: Chromium may focus readonly text controls without moving their native selection on arrow keys ([Chromium issue 40903304](https://issues.chromium.org/issues/40903304), comments 7 and 12, and its linked follow-up 382291453). The official issue identifies this as form-control selection behavior; the CI failure is consistent with it, not a local browser reproduction. The original-text picker handles only unmodified Left/Right, Shift+Left/Right and Ctrl/Meta+Home/End, moving selection over grapheme boundaries without editing text. Other shortcuts retain browser behavior. Native CI still drives real keyboard events and checks the exact selected source before preview.
 

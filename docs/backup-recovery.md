@@ -101,3 +101,28 @@ production-provider test uses a deterministic transaction double, not a browser.
 `tests/multi-import-browser.mjs` is CI-only actual multiple-file selection,
 partial failure, cancellation, newer note/navigation, quota/retry and IndexedDB
 reload proof. No local browser execution is claimed.
+
+## Exact-text excerpt snapshots
+
+Complete document and library JSON now preserve optional `exact_excerpts`
+(version 1 records), separately from legacy `segment.saved_excerpt` whole-cue
+annotations. Each exact record stores the original paragraph composition,
+separators and selected range, captured cue text/corrections, capture-time source
+metadata, and capture time. Restoring does not reattach by similar wording or
+replace missing source cues. Stale and missing-source records remain historical
+evidence available in the notebook and Markdown export.
+
+Use a reader that supports exact excerpts to open, edit, re-save or restore these
+libraries and backups. Older readers do not retain this field: opening and then
+editing/re-saving the same library can discard it, as can JSON import or library
+restore; re-exporting from those versions cannot preserve it. Retain an untouched
+original JSON backup when moving between versions. This is an optional document-
+field addition, not an IndexedDB schema/database or backup-protocol migration. Existing
+backups without the field retain their behavior. Unsupported or malformed exact
+records reject validation rather than being silently dropped; keep the original
+backup. Markdown and subtitles are not complete restoration formats.
+
+Saving an excerpt is complete only when its document's durable receipt succeeds.
+Failed saves remain in the current page, with retry and unsaved-document export.
+A rescue download request alone does not prove the file reached disk. No source
+media, credential, word-level timing or guessed source association is created.
