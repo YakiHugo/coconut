@@ -114,6 +114,11 @@ jobs:
         env:
           COCONUT_UI_SCREENSHOTS: ${{ runner.temp }}/coconut-authored-ui
         run: node tests/text-export-browser.mjs
+      - name: Verify displayed fallback languages in actual SRT VTT and single-document Markdown downloads
+        if: ${{ !cancelled() && steps.browser_setup.outcome == 'success' }}
+        env:
+          COCONUT_UI_SCREENSHOTS: ${{ runner.temp }}/coconut-authored-ui
+        run: node tests/displayed-translation-exports-browser.mjs
       - name: Verify human translation review, draft protection and actual JSON VTT Markdown exports
         if: ${{ !cancelled() && steps.browser_setup.outcome == 'success' }}
         run: node tests/translation-review-browser.mjs
@@ -273,13 +278,17 @@ jobs:
           COCONUT_ACCEPTANCE_DATA_DIR: ${{ runner.temp }}/coconut-acceptance
           COCONUT_ACCEPTANCE_RESULT: ${{ runner.temp }}/coconut-acceptance/acceptance-result.json
         run: npm run test:browser
-      - name: Upload authored UI review images only
+      - name: Upload authored UI review evidence only
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: Coconut-authored-UI
           path: |
             ${{ runner.temp }}/coconut-authored-ui/*.png
+            ${{ runner.temp }}/coconut-authored-ui/displayed-exports-*.srt
+            ${{ runner.temp }}/coconut-authored-ui/displayed-exports-*.vtt
+            ${{ runner.temp }}/coconut-authored-ui/displayed-exports-*.notes.md
+            ${{ runner.temp }}/coconut-authored-ui/displayed-exports-*.json
             ${{ runner.temp }}/coconut-authored-ui/passages-geometry.json
             ${{ runner.temp }}/coconut-authored-ui/autosave-geometry.json
             ${{ runner.temp }}/coconut-authored-ui/playback-follow-geometry.json
@@ -334,5 +343,5 @@ jobs:
         if: always()
         run: rm -rf -- "$RUNNER_TEMP"/coconut-queued-original-*
 
-# Review images and viewport geometry use only authored synthetic fixtures.
+# Review images, viewport geometry and displayed-exports-* use only authored synthetic fixtures.
 # Original source media, captions, storage, traces and downloads are never artifacts.

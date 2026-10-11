@@ -232,6 +232,7 @@ function recordPersistenceCheckpoint(doc,checkpoint){
 }
 let mediaWorkerReady = false;
 let readingMode = "summary";
+let subtitleExportDocument=null,subtitleExportLanguage='';
 let demoToolsExpanded=false;
 const PASSAGES_PER_PAGE=8;
 let passageDocumentKey=null,passageAnchor=null,passagePageStart=0,passageReturn=null;
@@ -3115,7 +3116,7 @@ $("export-notebook").onclick = () => {
 	}
 	let url, link;
 	try {
-		const blob = new Blob([Coconut.notebookMarkdown(doc)], {type: "text/markdown;charset=utf-8"});
+		const blob = new Blob([Coconut.notebookMarkdown(doc,textExportLanguage(doc))], {type: "text/markdown;charset=utf-8"});
 		url = URL.createObjectURL(blob);
 		link = el("a"); link.href = url;
 		link.download = doc.title.replace(/[\\/:*?"<>|\x00-\x1f\x7f]/g, "_") + ".notes.md";
@@ -3532,6 +3533,12 @@ function textExportLanguage(doc=active()){
 }
 function renderTextExportAction(){
  const doc=active(),unavailable=!doc||Coconut.isAudioProject(doc)||!doc.segments.length,target=textExportLanguage(doc);
+ $('export-subtitles').disabled=unavailable;
+ const subtitleOption=$('subtitle-bilingual');
+ subtitleOption.disabled=unavailable||!target;
+ if(subtitleOption.disabled||subtitleExportDocument!==doc||subtitleExportLanguage!==target)subtitleOption.checked=false;
+ subtitleExportDocument=doc;subtitleExportLanguage=target;
+ $('subtitle-bilingual-label').textContent=target?'附加当前显示的'+translationLabel(target)+'（'+target+'）有效译文':'当前未显示译文';
  $('export-text').disabled=unavailable;
  $('text-bilingual').disabled=unavailable||!target;
  if($('text-bilingual').disabled)$('text-bilingual').checked=false;
@@ -3554,8 +3561,8 @@ $("export-subtitles").onclick = () => {
  const doc=active(); if(!doc)return;
  let url,link;
  try {
-  const format=$("subtitle-format").value, bilingual=$("subtitle-bilingual").checked;
-  const result=Coconut.subtitleExport(doc,format,bilingual);
+  const format=$("subtitle-format").value, target=textExportLanguage(doc), bilingual=$("subtitle-bilingual").checked&&!!target;
+  const result=Coconut.subtitleExport(doc,format,bilingual,target);
   url=URL.createObjectURL(new Blob([result.text],{type:format==="vtt"?"text/vtt;charset=utf-8":"text/plain;charset=utf-8"}));
   link=el("a");link.href=url;link.download=doc.title.replace(/[\\/:*?"<>|\x00-\x1f\x7f]/g,"_")+"."+format;link.hidden=true;document.body.append(link);link.click();
   notice("已发起整篇字幕下载（"+doc.segments.length+" 段）"+(bilingual?"，附加 "+result.translated+" 段有效译文；缺失或过期译文未导出":"")+"。请确认文件已保存。", "success");

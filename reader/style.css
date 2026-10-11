@@ -77,11 +77,16 @@ header button { font-size: 12px; }
 .export-menu { position: relative; flex-shrink: 0; }
 .export-menu > summary { min-height: 44px; border: 1px solid var(--line); border-radius: 8px; padding: 8px 14px; background: var(--surface, #fff); color: var(--ink); white-space: nowrap; }
 .export-panel { position: absolute; z-index: 5; right: 0; top: calc(100% + 8px); width: min(340px, calc(100vw - 40px)); padding: 22px; border: 1px solid var(--line); border-radius: 14px; background: var(--surface, #fff); box-shadow: 0 12px 42px #2825201c; color: var(--ink); max-height: 75dvh; overflow-y: auto; }
+.export-panel { scroll-padding: 10px; }
+.export-panel :is(button, input, select) { scroll-margin-block: 10px; }
 .export-panel h2 { margin: 0 0 16px; }
 .export-panel button { width: 100%; font-size: 13px; }
 .export-panel .hint { margin: 6px 0 0; font-size: 12px; }
 .pending-export, .subtitle-export, .text-export, .notebook-export { display: grid; gap: 10px; border-top: 1px solid var(--line); margin-top: 18px; padding-top: 18px; }
 .subtitle-export select { margin-left: 8px; }
+.subtitle-translation-choice { display: flex; align-items: center; gap: 8px; min-height: 44px; }
+#subtitle-bilingual { width: 44px; height: 44px; flex: 0 0 44px; margin: 6px; }
+#export-subtitles, #export-notebook { min-height: 44px; }
 .import-workspace { max-width: 1050px; margin: 42px auto 0; }
 .welcome-mark { width: 54px; height: 54px; border: 1px solid var(--edge, #ead8ce); border-radius: 18px; background: var(--surface-selected, #fff0e8); text-align: center; line-height: 50px; font-size: 35px; color: var(--accent); }
 .import-workspace > .eyebrow { margin: 24px 0 8px; }

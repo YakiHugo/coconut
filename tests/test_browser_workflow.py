@@ -64,7 +64,8 @@ class BrowserWorkflowTests(unittest.TestCase):
                          'large-library-browser.mjs', 'inline-excerpts-browser.mjs',
                          'chapter-markers-browser.mjs', 'subtitle-encoding-browser.mjs',
                          'pasted-subtitles-browser.mjs', 'source-corrections-browser.mjs',
-                         'transcript-media-association-browser.mjs'):
+                         'transcript-media-association-browser.mjs',
+                         'displayed-translation-exports-browser.mjs'):
             self.assertTrue((ROOT / 'tests' / filename).is_file())
             self.assertEqual([step['run'] for step in suites].count('node tests/' + filename), 1)
 
@@ -94,9 +95,11 @@ class BrowserWorkflowTests(unittest.TestCase):
                                  setup == fixture == 'success' and not cancelled)
 
     def test_follow_scroll_diagnostics_are_explicitly_retained(self):
-        upload = SMOKE.split('      - name: Upload authored UI review images only', 1)[1].split('      - name:', 1)[0]
+        upload = SMOKE.split('      - name: Upload authored UI review evidence only', 1)[1].split('      - name:', 1)[0]
         paths = re.findall(r'^            \$\{\{ runner.temp \}\}/coconut-authored-ui/(.+)$', upload, re.M)
-        self.assertEqual(paths, ['*.png', 'passages-geometry.json', 'autosave-geometry.json',
+        self.assertEqual(paths, ['*.png', 'displayed-exports-*.srt', 'displayed-exports-*.vtt',
+                                 'displayed-exports-*.notes.md', 'displayed-exports-*.json',
+                                 'passages-geometry.json', 'autosave-geometry.json',
                                  'playback-follow-geometry.json', 'playback-follow-scroll.json',
                                  'compact-library-geometry.json', 'search-return-checks.json',
                                  'inline-excerpts-checks.json', 'chapter-markers-checks.json',
@@ -113,7 +116,7 @@ class BrowserWorkflowTests(unittest.TestCase):
                      if step.get('run') == 'node scripts/probe_public_captions.mjs')
         self.assertEqual(probe['if'],
                          "github.event_name == 'pull_request' && github.head_ref == 'dot/primary-journey'")
-        for name in ('Upload authored UI review images only', 'Remove temporary media and exports'):
+        for name in ('Upload authored UI review evidence only', 'Remove temporary media and exports'):
             step = next(step for step in STEPS if step.get('name') == name)
             self.assertEqual(step['if'], 'always()')
 

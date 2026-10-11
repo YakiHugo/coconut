@@ -8,9 +8,9 @@
 <meta name="theme-color" content="#faf9f7">
 <link rel="icon" type="image/png" href="coconut-mark.png">
 <script src="appearance.js?v=86ea922669"></script>
-<link rel="stylesheet" href="style.css?v=d82c4b875d">
+<link rel="stylesheet" href="style.css?v=d196939555">
 <script src="summary.js?v=580ffdad1e" defer></script>
-<script src="core.js?v=78de00264a" defer>
+<script src="core.js?v=47de1151f8" defer>
 </script>
 <script src="passages.js?v=998756df3c" defer></script>
 <script src="quotation.js?v=dd1ac21240" defer></script>
@@ -18,7 +18,7 @@
 <script src="library-store.js?v=e76ded9456" defer></script>
 <script src="indexeddb-document-adapter.js?v=65c0c5a814" defer></script>
 <script src="storage-provider.js?v=1cb898e984" defer></script>
-<script src="app.js?v=6612298460" type="text/coconut-pending" data-reader-script>
+<script src="app.js?v=32c5e0da3b" type="text/coconut-pending" data-reader-script>
 </script>
 <script src="language.js?v=59136fdc72" type="text/coconut-pending" data-reader-script></script>
 <script src="translation-review.js?v=ef64ceb824" type="text/coconut-pending" data-reader-script></script>
@@ -86,7 +86,7 @@
 <div>
 <div id="save-status-home"><section class="save-pipeline" aria-label="保存状态"><p id="save-status" class="save-warning" role="status" aria-live="polite"></p><div class="save-actions"><button id="retry-save" type="button" hidden>重试保存</button><button id="export-unsaved-documents" type="button" hidden>导出未保存文档备份</button></div></section></div>
 <button id="show-jobs" hidden>处理任务 <span id="job-count">0</span></button>
-<details id="export-menu" class="export-menu" hidden><summary>导出</summary><div class="export-panel"><h2>带走你的阅读成果</h2><button id="export">导出文字稿与笔记</button><p class="hint">完整 JSON 备份，可重新导入恢复；超过50 MiB 时先确认读取</p><div id="pending-export" class="pending-export" hidden><button id="export-pending-documents" type="button">导出未保存文档备份</button><p class="hint">本页全部待保存文档的完整备份；下载不代表已保存。</p></div><div class="subtitle-export"><label>字幕格式<select id="subtitle-format"><option value="srt">SRT</option><option value="vtt">VTT</option></select></label><label><input type="checkbox" id="subtitle-bilingual">附加当前显示语言的有效译文</label><button id="export-subtitles">导出整篇字幕</button><span class="hint">使用修正后原文及原时间戳，不含笔记</span></div>
+<details id="export-menu" class="export-menu" hidden><summary>导出</summary><div class="export-panel"><h2>带走你的阅读成果</h2><button id="export">导出文字稿与笔记</button><p class="hint">完整 JSON 备份，可重新导入恢复；超过50 MiB 时先确认读取</p><div id="pending-export" class="pending-export" hidden><button id="export-pending-documents" type="button">导出未保存文档备份</button><p class="hint">本页全部待保存文档的完整备份；下载不代表已保存。</p></div><div class="subtitle-export"><label>字幕格式<select id="subtitle-format"><option value="srt">SRT</option><option value="vtt">VTT</option></select></label><label class="subtitle-translation-choice"><input type="checkbox" id="subtitle-bilingual"><span id="subtitle-bilingual-label">当前未显示译文</span></label><button id="export-subtitles">导出整篇字幕</button><span class="hint">使用修正后原文及原时间戳，不含笔记</span></div>
 <div class="text-export"><button id="export-text" type="button">导出整篇文字（TXT）</button><label><input id="text-bilingual" type="checkbox" aria-describedby="text-export-language">附加当前显示语言的有效译文</label><span id="text-export-language" class="hint"></span><span class="hint">全文按阅读段落导出，不受搜索或分页影响；保留修正后原文与说话人，不含笔记。TXT 用于阅读，完整恢复请另存 JSON。</span></div>
 <div class="notebook-export"><button id="export-notebook" disabled>导出阅读笔记（0 段）</button><span class="hint">Markdown · 本篇全部摘录、笔记与手动章节，可用于整理和回顾</span></div></div></details>
 </div>
