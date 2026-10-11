@@ -1,6 +1,6 @@
 # Copy a selected quotation with attribution
 
-The paragraph reader's **引用原文** action creates a local, transient quotation preview. Select continuous original text in one paragraph, including across its cue boundaries, then open the action. Without a selection, use the readonly original-text field and Shift + left/right arrow keys, then **预览所选引用**. A separate explicit copy button writes the complete quotation and attribution to the clipboard. No clipboard reads occur.
+The paragraph reader's **引用原文** action creates a local, transient quotation preview. Select continuous original text in one paragraph, including across its cue boundaries, then open the action. Without a selection, use the readonly original-text field and Shift + left/right arrow keys, then **预览所选引用**. A valid selection opens directly into the quotation preview with copy and return actions. **重新选择原文** reveals the picker and retires the previous copy candidate; previewing the new selection hides the picker again. The primary action area remains available on narrow screens. A separate explicit copy button writes the complete quotation and attribution to the clipboard. No clipboard reads occur.
 
 ## Accuracy and boundaries
 
@@ -27,3 +27,5 @@ Focused Node/HappyDOM tests cover exact text, Unicode, source links, overlapping
 This is quotation reuse, not persistent exact-text annotation. That separate feature requires versioned snapshots plus notebook and backup/restore work; this change deliberately adds no storage field.
 
 Readonly selection compatibility: Chromium may focus readonly text controls without moving their native selection on arrow keys ([Chromium issue 40903304](https://issues.chromium.org/issues/40903304), comments 7 and 12, and its linked follow-up 382291453). The official issue identifies this as form-control selection behavior; the CI failure is consistent with it, not a local browser reproduction. The original-text picker handles only unmodified Left/Right, Shift+Left/Right and Ctrl/Meta+Home/End, moving selection over grapheme boundaries without editing text. Other shortcuts retain browser behavior. Native CI still drives real keyboard events and checks the exact selected source before preview.
+
+Progressive quotation UI: ready quotations hide the full-source picker, and reselection/preview transitions explicitly restore focus and the dialog scroll position. A clipboard completion owns its exact preview revision, so an older success/failure cannot alter a newer selection within the same dialog. CI checks preview plus copy/return visibility without scrolling at 320px, keyboard reselection, modal focus, and the unchanged source/backup invariants.

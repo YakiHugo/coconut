@@ -71,23 +71,34 @@
   function snapshot(cue){return JSON.stringify([cue.id,cue.text,cue.start,cue.end,cue.speaker,cue.original_text]);}
   function guard(owner){if(current(owner))return true;$('quotation-status').textContent='原文或篇目已变化，请关闭后重新选择。预览仍可手动复制。';$('quotation-copy').disabled=true;return false;}
   function newlineHint(owner){return owner.quote?.text.includes('\r\n')?' 手动复制采用预览中的换行格式。':'';}
-  function preview(owner,quote){if(!guard(owner))return;owner.quote=quote;$('quotation-preview').value=attribution(owner.doc,quote,core).replace(/\r\n?/g,'\n');$('quotation-result').hidden=false;$('quotation-copy').disabled=busy;$('quotation-status').textContent='请核对完整引用与出处。'+newlineHint(owner);$('quotation-preview').focus();}
+  function selectionView(owner,message='选择同一段中的连续原文，再预览引用。'){
+   owner.serial=++serial;owner.quote=null;$('quotation-preview').value='';$('quotation-result').hidden=true;
+   $('quotation-selector').hidden=false;$('quotation-copy').hidden=true;$('quotation-copy').disabled=true;$('quotation-reselect').hidden=true;
+   $('quotation-status').textContent=message;
+  }
+  function preview(owner,quote){
+   if(!guard(owner))return;owner.serial=++serial;owner.quote=quote;
+   $('quotation-preview').value=attribution(owner.doc,quote,core).replace(/\r\n?/g,'\n');
+   $('quotation-selector').hidden=true;$('quotation-result').hidden=false;$('quotation-copy').hidden=false;$('quotation-copy').disabled=busy;$('quotation-reselect').hidden=false;
+   $('quotation-status').textContent='时间按文字稿片段定位。'+newlineHint(owner);
+   $('quotation-preview').focus({preventScroll:true});$('quotation-preview').scrollTop=0;dialog.scrollTop=0;
+  }
   function capture(binding){try{return {quote:domSelection(binding.paragraph,binding.model,root.getSelection())};}catch(error){return {error:error.message};}}
   function open(binding,captured){
    if(!isCurrent(binding.doc)||!binding.paragraph.isConnected)return;
    const owner={...binding,serial:++serial,quote:null};session=owner;
-   $('quotation-source').value=owner.model.text.replace(/\r\n?/g,'\n');$('quotation-source').setSelectionRange(0,0);$('quotation-preview').value='';$('quotation-result').hidden=true;$('quotation-copy').disabled=true;
-   $('quotation-status').textContent=captured.error||'在下方只读原文中选择文字，可使用 Shift + 左右方向键，再预览引用。';
+   $('quotation-source').value=owner.model.text.replace(/\r\n?/g,'\n');$('quotation-source').setSelectionRange(0,0);selectionView(owner,captured.error);
    dialog.showModal();
    if(!guard(owner))return;
-   if(captured.quote)preview(owner,captured.quote);else $('quotation-source').focus();
+   if(captured.quote)preview(owner,captured.quote);else{$('quotation-source').focus({preventScroll:true});dialog.scrollTop=0;}
   }
   function close(){const owner=session;session=null;pointer=null;serial++;if(dialog.open)dialog.close();if(owner?.button.isConnected)owner.button.focus({preventScroll:true});else $('main-content')?.focus({preventScroll:true});}
   $('quotation-close').onclick=close;
+  $('quotation-reselect').onclick=()=>{const owner=session;if(!guard(owner))return;selectionView(owner);$('quotation-source').focus({preventScroll:true});dialog.scrollTop=0;};
   dialog.addEventListener('cancel',event=>{event.preventDefault();close();});
   dialog.addEventListener('close',()=>{if(session&&!dialog.open)close();});
   $('quotation-source').addEventListener('keydown',event=>{
-   if(event.defaultPrevented||event.isComposing||event.altKey)return;
+   if(event.defaultPrevented||event.isComposing||event.altKey||$('quotation-selector').hidden)return;
    const horizontal=['ArrowLeft','ArrowRight'].includes(event.key)&&!event.ctrlKey&&!event.metaKey;
    const edge=['Home','End'].includes(event.key)&&(event.ctrlKey||event.metaKey);
    if(!horizontal&&!edge)return;
@@ -98,13 +109,13 @@
    const next=moveSelection(owner.selectionOffsets,field.selectionStart,field.selectionEnd,field.selectionDirection,event.key,event.shiftKey);
    field.setSelectionRange(next.start,next.end,next.direction);
   });
-  $('quotation-preview-selection').onclick=()=>{const owner=session;if(!guard(owner))return;try{preview(owner,slice(owner.model,inputOffset(owner.model.text,$('quotation-source').selectionStart),inputOffset(owner.model.text,$('quotation-source').selectionEnd)));}catch(error){owner.quote=null;$('quotation-result').hidden=true;$('quotation-copy').disabled=true;$('quotation-status').textContent=error.message;}};
+  $('quotation-preview-selection').onclick=()=>{const owner=session;if($('quotation-selector').hidden||!guard(owner))return;try{preview(owner,slice(owner.model,inputOffset(owner.model.text,$('quotation-source').selectionStart),inputOffset(owner.model.text,$('quotation-source').selectionEnd)));}catch(error){selectionView(owner,error.message);$('quotation-source').focus({preventScroll:true});}};
   $('quotation-copy').onclick=async()=>{
    const owner=session;if(busy||!guard(owner)||!owner.quote)return;
-   const payload=attribution(owner.doc,owner.quote,core);busy=true;$('quotation-copy').disabled=true;
-   try{if(!root.navigator.clipboard?.writeText)throw Error('unavailable');await root.navigator.clipboard.writeText(payload);if(session===owner&&owner.serial===serial&&guard(owner))$('quotation-status').textContent='已复制完整引用与出处。';}
-   catch{if(session===owner&&owner.serial===serial){$('quotation-status').textContent='未能自动复制。完整引用已保留，请在预览框中全选后手动复制。'+newlineHint(owner);$('quotation-preview').focus();$('quotation-preview').select();}}
-   finally{busy=false;if(session===owner&&current(owner))$('quotation-copy').disabled=false;else if(session?.quote&&current(session))$('quotation-copy').disabled=false;}
+   const payload=attribution(owner.doc,owner.quote,core),copySerial=owner.serial;busy=true;$('quotation-copy').disabled=true;
+   try{if(!root.navigator.clipboard?.writeText)throw Error('unavailable');await root.navigator.clipboard.writeText(payload);if(session===owner&&owner.serial===copySerial&&copySerial===serial&&guard(owner))$('quotation-status').textContent='已复制完整引用与出处。';}
+   catch{if(session===owner&&owner.serial===copySerial&&copySerial===serial){$('quotation-status').textContent='未能自动复制。完整引用已保留，请在预览框中全选后手动复制。'+newlineHint(owner);$('quotation-preview').focus();$('quotation-preview').select();}}
+   finally{busy=false;if(session?.quote&&current(session))$('quotation-copy').disabled=false;}
   };
   return {bind(button,paragraph,doc,cues){
    const binding={button,paragraph,doc,references:[...cues],snapshots:cues.map(snapshot),metadata:metadata(doc),model:compose(cues.map(cue=>({...cue})),separator)};

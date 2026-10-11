@@ -79,6 +79,16 @@ async function modalGeometry(label) {
     return rect.left >= 0 && rect.right <= innerWidth && node.scrollWidth <= node.clientWidth && document.documentElement.scrollWidth <= innerWidth;
   }));
 }
+async function readyQuotationLayout(label) {
+  await expect(page.locator('#quotation-selector')).toBeHidden();
+  await expect(page.locator('#quotation-reselect')).toBeVisible();
+  check(label + '_preview_and_primary_actions_are_in_first_view', await page.locator('#quotation-dialog').evaluate(dialog => {
+    const preview=dialog.querySelector('#quotation-preview').getBoundingClientRect();
+    const actions=['quotation-copy','quotation-close'].map(id=>document.getElementById(id).getBoundingClientRect());
+    return dialog.scrollTop===0&&preview.top>=0&&preview.bottom<=innerHeight&&actions.every(rect=>rect.top>=preview.bottom&&rect.bottom<=innerHeight&&rect.left>=0&&rect.right<=innerWidth);
+  }));
+  await expect(page.locator('#quotation-preview')).toBeFocused();
+}
 async function assertPreview(label, selected, fixture) {
   const preview = await page.locator('#quotation-preview').inputValue();
   const expected = selected + '\n\n—— ' + fixture.title +
@@ -186,11 +196,19 @@ try {
     }));
     await modalGeometry(label + '_native');
     const preview = await assertPreview(label + '_native', expectedSelected, fixture);
+    await readyQuotationLayout(label + '_native');
     check(label + '_opening_and_preview_do_not_touch_clipboard', (await clipboardAudit()).writes.length === 0);
     await capture(label + '-native-preview');
     await page.locator('#quotation-copy').click();
     await expect.poll(async () => (await clipboardAudit()).writes.length).toBe(1);
     check(label + '_explicit_copy_writes_the_complete_visible_preview', (await clipboardAudit()).writes[0] === preview);
+    await page.locator('#quotation-reselect').click();
+    await expect(page.locator('#quotation-source')).toBeFocused();
+    await noReadyPreview(label + '_explicit_reselect');
+    check(label + '_explicit_reselect_is_keyboard_usable', await keyboardSelectSource(4,expectedSelected.length)===expectedSelected);
+    await previewKeyboardSelection();
+    check(label + '_reselection_keeps_exact_quote', await page.locator('#quotation-preview').inputValue()===preview);
+    await readyQuotationLayout(label + '_reselected');
     await closeQuotation(action);
 
     // A cleared current selection must never reuse the previous quote.
@@ -246,7 +264,7 @@ try {
     check(label + '_fresh_selection_recovers_after_rejections', await page.locator('#quotation-preview').inputValue() === preview);
     if (label === 'mobile') {
       await page.setViewportSize({width: 320, height: 700});
-      await modalGeometry(label + '_320px'); await capture(label + '-320px');
+      await modalGeometry(label + '_320px'); await readyQuotationLayout(label + '_320px'); await capture(label + '-320px');
     }
     await closeQuotation(action);
     check(label + '_complete_document_is_unchanged', JSON.stringify(await saved()) === JSON.stringify(before));
@@ -279,6 +297,9 @@ try {
     check(label + '_after_newline_maps_back_to_exact_source_offsets', await page.locator('#quotation-preview').inputValue() === 'after' + suffix);
     check(label + '_newline_preview_never_writes_clipboard', (await clipboardAudit()).writes.length === 2);
 
+    await page.locator('#quotation-reselect').click();
+    await expect(page.locator('#quotation-source')).toBeFocused();
+    await noReadyPreview(label + '_crlf_reselect');
     check(label + '_keyboard_selects_across_normalized_newline', await keyboardSelectSource(0, 12) === 'before\nafter');
     await previewKeyboardSelection();
     const normalizedPreview = 'before\nafter' + suffix, originalPayload = 'before\r\nafter' + suffix;
