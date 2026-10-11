@@ -1,3 +1,7 @@
+import fs from 'node:fs';
+import {webcrypto} from 'node:crypto';
+import {Window} from 'happy-dom';
+import {installSelectedBackupWriteProbe} from './helpers/selected-backup-write-probe.mjs';
 /** Selected backup is identity-owned, session-only and uses the existing restore format. */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -98,7 +102,7 @@ test('export includes current in-memory edits while leaving save status, focus, 
   $('export-selected-library').onclick();assert.equal(blobs.length,1);const payload=JSON.parse(await blobs[0].text());
   assert.equal(payload.documents[0].notes.cue,'Latest unsaved note');assert.equal(w.localStorage.getItem(KEY),disk);assert.equal($('save-status').getAttribute('data-state'),status);
   assert.equal(w.document.activeElement,textarea);assert.equal(textarea.selectionStart,3);assert.equal(textarea.selectionEnd,8);assert.equal($('source-media').firstChild,media);assert.equal(pauses,0);
-  assert.match($('notice').textContent,/不代表书架已保存/);assert.match($('notice').textContent,/未提交的编辑草稿/);
+  assert.match($('selected-backup-details').textContent,/不代表已保存到书架/);assert.match($('selected-backup-details').textContent,/未提交的编辑草稿/);assert.match($('notice').textContent,/已发起所选 1 份备份下载/);
   pipeline.writes[0].fail();await flush;
  }finally{await w.happyDOM.close();}
 });
@@ -145,5 +149,57 @@ for(const failure of ['serialization','object-url','anchor-click'])test(`${failu
   w.JSON.stringify=stringify;w.URL.createObjectURL=originalURL;w.HTMLAnchorElement.prototype.click=originalClick;
   $('export-selected-library').click();assert.equal(urls.length,failedBlobs+1);const payload=JSON.parse(await urls.at(-1).text());
   assert.deepEqual(payload.documents.map(doc=>doc.key),['shelf-0','shelf-2']);assert.equal(payload.active,'shelf-0');assert.equal(w.localStorage.getItem(KEY),before);
+ }finally{await w.happyDOM.close();}
+});
+
+
+// Unlike libraryHarness, this path uses the frozen production adapter without
+// the generic save-pipeline test wrapper. It reproduces the native CI boundary.
+function nativeAdapterHarness({installProbe=false}={}) {
+ const w=new Window({url:'https://coconut.example/'}),root=new URL('../',import.meta.url);
+ w.document.body.innerHTML=fs.readFileSync(new URL('reader/index.html',root),'utf8').split('<body>')[1].split('</body>')[0];
+ Object.defineProperty(w,'crypto',{value:webcrypto});w.localStorage.setItem(KEY,JSON.stringify({documents:largeLibraryFixture(3),active:'shelf-0'}));
+ w.fetch=async()=>{throw new Error('Unexpected network request');};w.HTMLElement.prototype.scrollIntoView=function(){};
+ for(const name of ['summary','core','passages','passage-playback','library-store'])w.eval(fs.readFileSync(new URL('reader/'+name+'.js',root),'utf8'));
+ if(installProbe)w.eval('('+installSelectedBackupWriteProbe.toString()+')(window);');
+ w.eval(['app','language','podcasts'].map(name=>fs.readFileSync(new URL('reader/'+name+'.js',root),'utf8')).join('\n')+'\nwindow.nativeBackup={adapter:libraryAdapter,store:libraryStore};');
+ return {w,$:id=>w.document.getElementById(id)};
+}
+
+test('native frozen legacy adapter rejects late writer replacement: the old browser hook never held the removal',async()=>{
+ const {w,$}=nativeAdapterHarness();try{
+  $('library-options').open=true;$('library-selection-mode').click();select($,'shelf-1');select($,'shelf-2');
+  assert.equal(Object.isFrozen(w.nativeBackup.adapter),true);const original=w.nativeBackup.adapter.write;
+  // page.evaluate executes this assignment without strict mode, so it silently
+  // leaves the real frozen writer intact instead of installing the requested hold.
+  w.eval('window.badWriteProbe={writes:[]};window.nativeBackup.adapter.write=function(){badWriteProbe.writes.push(1);return new Promise(()=>{});};');
+  assert.equal(w.nativeBackup.adapter.write,original);
+  $('library').querySelector('[data-document-key="shelf-1"] .library-remove').click();await $('confirm-removal').onclick();
+  assert.equal(w.badWriteProbe.writes.length,0);assert.equal($('save-status').dataset.state,'saved');
+  assert.deepEqual(JSON.parse(w.localStorage.getItem(KEY)).documents.map(doc=>doc.key),['shelf-0','shelf-2']);
+  assert.match($('library-selection-status').textContent,/已选 1 份/);assert.equal($('export-selected-library').disabled,false);
+ }finally{await w.happyDOM.close();}
+});
+
+test('browser loading-time hook holds a frozen real adapter and release commits the original write exactly once',async()=>{
+ const {w,$}=nativeAdapterHarness({installProbe:true});try{
+  const proof=w.selectedBackupWriteProof,adapter=w.nativeBackup.adapter;
+  assert.equal(proof.created,1);assert.equal(proof.originalFrozen,true);assert.equal(proof.wrapperFrozen,true);assert.equal(Object.isFrozen(adapter),true);assert.equal(adapter.write,proof.write);
+  $('library-options').open=true;$('library-selection-mode').click();select($,'shelf-1');select($,'shelf-2');
+  const before=w.localStorage.getItem(KEY);proof.hold=true;
+  $('library').querySelector('[data-document-key="shelf-1"] .library-remove').click();const removing=$('confirm-removal').onclick();await settle();
+  assert.equal(proof.writes.length,1);assert.equal(proof.captures,1);assert.equal(proof.releases,0);
+  assert.equal(w.localStorage.getItem(KEY),before);assert.equal($('save-status').dataset.state,'pending');assert.equal($('export-selected-library').disabled,true);assert.match($('library-selection-status').textContent,/已选 2 份.*正在移除或恢复/);
+  proof.hold=false;proof.writes[0].commit();await removing;
+  assert.equal(proof.releases,1);assert.equal($('save-status').dataset.state,'saved');assert.equal($('export-selected-library').disabled,false);assert.match($('library-selection-status').textContent,/已选 1 份.*已取消 1 份/);
+  assert.deepEqual(JSON.parse(w.localStorage.getItem(KEY)).documents.map(doc=>doc.key),['shelf-0','shelf-2']);assert.throws(()=>proof.writes[0].commit(),/already released/);
+ }finally{await w.happyDOM.close();}
+});
+
+test('held browser writer preserves the real adapter cancellation signal and leaves disk untouched',async()=>{
+ const {w}=nativeAdapterHarness({installProbe:true});try{
+  const before=w.localStorage.getItem(KEY),proof=w.selectedBackupWriteProof,controller=new w.AbortController();proof.hold=true;
+  const pending=w.nativeBackup.adapter.write('{"documents":[]}',{signal:controller.signal});controller.abort();proof.writes[0].commit();
+  const receipt=await pending;assert.equal(receipt.ok,false);assert.equal(receipt.status,'cancelled');assert.equal(w.localStorage.getItem(KEY),before);assert.equal(proof.releases,1);
  }finally{await w.happyDOM.close();}
 });

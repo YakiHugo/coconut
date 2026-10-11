@@ -1,3 +1,4 @@
+import {installSelectedBackupWriteProbe} from './helpers/selected-backup-write-probe.mjs';
 import {openLibraryTools} from './helpers/library-tools-browser.mjs';
 /** GitHub browser-CI-only proof: authored files, real downloads/pickers and
  * native storage quota. No AI, remote media, traces or private artifacts. */
@@ -24,9 +25,13 @@ try{
  });
  await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));const origin='http://127.0.0.1:'+server.address().port;
  browser=await chromium.launch({headless:true,...(process.env.COCONUT_CHROMIUM_EXECUTABLE?{executablePath:process.env.COCONUT_CHROMIUM_EXECUTABLE}:{})});
- async function newPage(){
+ async function newPage({holdableWriter=false}={}){
   const context=await browser.newContext({acceptDownloads:true,serviceWorkers:'block'});
   await context.route('**/*',async route=>{const url=new URL(route.request().url());if(url.origin===origin||['blob:','data:'].includes(url.protocol))await route.continue();else{external++;await route.abort();}});
+  if(holdableWriter)await context.route('**/library-store.js*',async route=>{
+   const response=await route.fetch(),body=await response.text();
+   await route.fulfill({response,body:body+'\n;('+installSelectedBackupWriteProbe.toString()+')(window);'});
+  });
   const page=await context.newPage();page.setDefaultTimeout(30000);page.on('pageerror',()=>errors++);
   await page.addInitScript(()=>{const read=File.prototype.text;window.backupProbe={reads:0,started:0,finished:0,dialogCloses:0};File.prototype.text=function(){window.backupProbe.reads++;return read.call(this);};});
   await page.goto(origin);await page.locator('#sample').waitFor();
@@ -50,7 +55,7 @@ try{
   const file=path.join(directory,name);await item.saveAs(file);assert.equal(await item.failure(),null);return file;
  }
 
- stage='selected rich-document actual download';page=await newPage();
+ stage='selected rich-document actual download';page=await newPage({holdableWriter:true});
  const localMedia={version:1,kind:'audio',name:'Authored selected recording.wav',size:1024,last_modified:7,type:'audio/wav',fingerprint:'a'.repeat(64)};
  const rich=await page.evaluate(input=>{
   const doc={...Coconut.validate(input),key:input.key},cue=doc.segments[0];
@@ -110,24 +115,24 @@ try{
  assert.deepEqual(JSON.parse(await disk(page)),conflict);check('selected_conflicting_repeat_restore_deduplicates_the_retained_backup_version',true);await page.context().close();
 
  stage='selected pending removal blocks partial backup';page=sourcePage;
- // Hold the existing writer, then release through its real adapter. This proves
- // the UI gate during a real structural action without manufacturing a download.
- await page.evaluate(()=>{
-  const write=libraryAdapter.write;
-  window.selectedBackupWriteProof={hold:true,writes:[]};
-  libraryAdapter.write=function(...args){
-   if(!selectedBackupWriteProof.hold)return write.apply(this,args);
-   return new Promise(resolve=>selectedBackupWriteProof.writes.push({commit:()=>resolve(write.apply(this,args))}));
-  };
- });
+ // Verify that the loading-time factory wrapper reached the actual writer;
+ // assigning write on the production frozen adapter cannot install this hook.
+ check('held_writer_is_installed_before_frozen_adapter_creation',await page.evaluate(()=>{
+  const proof=selectedBackupWriteProof;
+  return proof.created===1&&proof.originalFrozen&&proof.wrapperFrozen&&Object.isFrozen(libraryAdapter)&&libraryAdapter.write===proof.write&&proof.captures>0&&proof.writes.length===0;
+ }));
+ await page.evaluate(()=>{selectedBackupWriteProof.hold=true;});
+ stage='selected pending removal awaits held write';
  await page.locator('.library-entry[data-document-key="selected-rich"] .library-remove').click();await page.locator('#confirm-removal').click();
  await page.waitForFunction(()=>selectedBackupWriteProof.writes.length===1);await openLibraryTools(page);
  check('pending_selected_removal_disables_export_without_silently_dropping_selection',await page.locator('#export-selected-library').isDisabled()&&/已选\s*2\s*份/.test(await page.locator('#library-selection-status').textContent())&&/正在移除或恢复/.test(await page.locator('#library-selection-status').textContent()));
  // Read committed disk directly: flushing here would wait for the held writer.
  assert.deepEqual(JSON.parse(await page.evaluate(key=>localStorage.getItem(key),KEY)),originalSelection);
+ stage='selected pending removal releases held write';
  await page.evaluate(()=>{selectedBackupWriteProof.hold=false;selectedBackupWriteProof.writes[0].commit();});
  await page.waitForFunction(()=>document.getElementById('save-status').dataset.state==='saved'&&!document.getElementById('export-selected-library').disabled);
  await openLibraryTools(page);
+ check('held_writer_releases_through_original_adapter_once',await page.evaluate(()=>selectedBackupWriteProof.releases===1));
  check('completed_removal_prunes_selection_with_visible_count',/已选\s*1\s*份/.test(await page.locator('#library-selection-status').textContent())&&/已取消/.test(await page.locator('#library-selection-status').textContent()));
  const afterRemoval=JSON.parse(await fs.readFile(await download(page,'export-selected-library','selected-after-removal.json'),'utf8'));
  assert.deepEqual(afterRemoval.documents,[audioBackup]);check('after_removal_selected_download_contains_only_remaining_selected_document',afterRemoval.active===audio.key);
@@ -186,7 +191,7 @@ try{
 }catch(error){
  // Authored fixture metadata only: enough to distinguish missing change,
  // retired approval, read/render work and a failed persistence boundary in CI.
- const probe=await page?.evaluate(()=>({...window.backupProbe,dialogOpen:document.getElementById('large-backup-dialog')?.open,file:document.getElementById('file')?.files[0]?.name||null,libraryFile:document.getElementById('library-file')?.files[0]?.name||null})).catch(()=>null);
+ const probe=await page?.evaluate(()=>({...window.backupProbe,dialogOpen:document.getElementById('large-backup-dialog')?.open,file:document.getElementById('file')?.files[0]?.name||null,libraryFile:document.getElementById('library-file')?.files[0]?.name||null,saveState:document.getElementById('save-status')?.dataset.state,selectionStatus:document.getElementById('library-selection-status')?.textContent,selectedExportDisabled:document.getElementById('export-selected-library')?.disabled,pendingStructuralKeys:[...pendingStructuralDocuments.keys()],writer:window.selectedBackupWriteProof?{created:selectedBackupWriteProof.created,originalFrozen:selectedBackupWriteProof.originalFrozen,wrapperFrozen:selectedBackupWriteProof.wrapperFrozen,installed:libraryAdapter.write===selectedBackupWriteProof.write,hold:selectedBackupWriteProof.hold,held:selectedBackupWriteProof.writes.length,captures:selectedBackupWriteProof.captures,releases:selectedBackupWriteProof.releases}:null})).catch(()=>null);
  console.error(JSON.stringify({suite:'complete-backup-roundtrip',status:'failed',stage,checks,probe,error:error.message}));process.exitCode=1;
 }
 finally{await browser?.close();if(server)await new Promise(resolve=>server.close(resolve));if(directory)await fs.rm(directory,{recursive:true,force:true});}

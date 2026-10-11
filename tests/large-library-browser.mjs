@@ -89,6 +89,36 @@ try{
   check(label,new RegExp('已选\\s*'+total+'\\s*份').test(status)&&new RegExp('其中\\s*'+outside+'\\s*份不在当前页').test(status));
   check(label+'_bounded_cards',await selectionPage.locator('.library-entry').count()<=40);
  }
+ async function lastSelectedKeyboardGeometry(label){
+  // Let native focus scrolling settle. Never scroll the checkbox in this proof,
+  // dismiss feedback, or wait for the success toast to expire before measuring.
+  await selectionPage.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));
+  const geometry=await choice('shelf-149').evaluate(node=>{
+   const label=node.closest('label'),rect=node.getBoundingClientRect(),labelRect=label.getBoundingClientRect(),style=getComputedStyle(node);
+   const ring=(parseFloat(style.outlineWidth)||0)+Math.max(0,parseFloat(style.outlineOffset)||0);
+   const target={left:Math.min(labelRect.left,rect.left-ring),right:Math.max(labelRect.right,rect.right+ring),top:Math.min(labelRect.top,rect.top-ring),bottom:Math.max(labelRect.bottom,rect.bottom+ring)};
+   const midX=(labelRect.left+labelRect.right)/2,midY=(labelRect.top+labelRect.bottom)/2;
+   const hitPoints=[[midX,midY],[labelRect.left+1,midY],[labelRect.right-1,midY],[midX,labelRect.top+1],[midX,labelRect.bottom-1]].map(([x,y])=>{
+    const hit=document.elementFromPoint(x,y);return {x,y,hit:hit===label||label.contains(hit)};
+   });
+   const toast=document.getElementById('notice-shell'),notice=document.getElementById('notice'),toastRect=toast.getBoundingClientRect(),toastStyle=getComputedStyle(toast);
+   const activeToast=notice.dataset.kind==='success'&&!notice.hidden&&toast.classList.contains('is-success')&&toastStyle.display!=='none'&&toastStyle.visibility!=='hidden'&&toastRect.width>0&&toastRect.height>0;
+   const scrollViewport=document.getElementById('library-list').getBoundingClientRect();
+   return {focused:document.activeElement===node,focusVisible:node.matches(':focus-visible'),checked:node.checked,rect:rect.toJSON(),labelRect:labelRect.toJSON(),ring,outlineStyle:style.outlineStyle,target,hitPoints,activeToast,toast:toastRect.toJSON(),notice:notice.textContent,scrollViewport:scrollViewport.toJSON(),viewport:{width:innerWidth,height:innerHeight}};
+  });
+  console.log(JSON.stringify({suite:'selected-library-keyboard-geometry',label,...geometry}));
+  const {target,toast,scrollViewport,viewport}=geometry;
+  const clear=geometry.focused&&geometry.focusVisible&&geometry.outlineStyle!=='none'&&geometry.ring>0&&geometry.labelRect.height>=44&&geometry.activeToast&&
+   target.left>=0&&target.right<=viewport.width&&target.top>=0&&target.bottom<=viewport.height&&
+   target.left>=scrollViewport.left&&target.right<=scrollViewport.right&&target.top>=scrollViewport.top&&target.bottom<=scrollViewport.bottom&&
+   (toast.right<=target.left||toast.left>=target.right||toast.top>=target.bottom||toast.bottom<=target.top)&&geometry.hitPoints.every(point=>point.hit);
+  // Failure artifacts are explicitly diagnostic, never a successful card proof.
+  if(!clear&&process.env.COCONUT_UI_SCREENSHOTS){
+   await fs.mkdir(process.env.COCONUT_UI_SCREENSHOTS,{recursive:true});
+   await selectionPage.screenshot({path:path.join(process.env.COCONUT_UI_SCREENSHOTS,'selected-library-backup-390-'+label+'-geometry-failure.png'),fullPage:false,animations:'disabled'});
+  }
+  check(label+'_last_checkbox_full_label_focus_ring_and_five_hit_points_clear_live_toast',clear);
+ }
  async function selectedDownload(){
   await shelf(selectionPage,true);
   const [download]=await Promise.all([selectionPage.waitForEvent('download'),selectionPage.locator('#export-selected-library').click()]);
@@ -150,7 +180,25 @@ try{
   await fs.mkdir(process.env.COCONUT_UI_SCREENSHOTS,{recursive:true});
   await selectionPage.locator('#library-options').scrollIntoViewIfNeeded();
   await selectionPage.screenshot({path:path.join(process.env.COCONUT_UI_SCREENSHOTS,'selected-library-backup-390-controls.png'),fullPage:false,animations:'disabled'});
-  await choice('shelf-149').scrollIntoViewIfNeeded();
+ }
+ stage='390px last selected checkbox native keyboard and live feedback';
+ const mobileDownload=await selectedDownload();assert.deepEqual(mobileDownload.backup,fallback.backup);
+ // Start at the last card's ordinary open action. Actual Tab and Shift+Tab own
+ // arrival at its checkbox; no test-side checkbox focus or scroll hides overlap.
+ const lastEntry=selectionPage.locator('.library-entry[data-document-key="shelf-149"]');
+ await lastEntry.locator('.library-open').focus();await selectionPage.keyboard.press('Tab');
+ await lastSelectedKeyboardGeometry('forward-tab');
+ await selectionPage.keyboard.press('Space');
+ check('mobile_space_unchecks_last_document_without_losing_keyboard_focus',!await choice('shelf-149').isChecked()&&await choice('shelf-149').evaluate(node=>node===document.activeElement));
+ await selectionStatus(10,8,'mobile_keyboard_deselect_updates_total_and_off_page_counts');
+ await selectionPage.keyboard.press('Space');
+ check('mobile_space_reselects_last_document_without_losing_keyboard_focus',await choice('shelf-149').isChecked()&&await choice('shelf-149').evaluate(node=>node===document.activeElement));
+ await selectionStatus(11,8,'mobile_keyboard_reselect_restores_total_and_off_page_counts');
+ await selectionPage.keyboard.press('Tab');
+ check('mobile_tab_after_last_checkbox_reaches_its_remove_action',await lastEntry.locator('.library-remove').evaluate(node=>node===document.activeElement));
+ await selectionPage.keyboard.press('Shift+Tab');await lastSelectedKeyboardGeometry('reverse-tab');
+ if(process.env.COCONUT_UI_SCREENSHOTS){
+  // Geometry above is established before capturing; the live toast is untouched.
   await selectionPage.screenshot({path:path.join(process.env.COCONUT_UI_SCREENSHOTS,'selected-library-backup-390-card.png'),fullPage:false,animations:'disabled'});
  }
  await selectionPage.locator('#clear-library-selection').click();await selectionStatus(0,0,'clear_selection_resets_total_and_hidden_counts');

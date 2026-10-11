@@ -2408,7 +2408,7 @@ $('export-selected-library').onclick=()=>{
   const backup=libraryBackupSelection.backup(state.documents,state.active,pendingStructuralDocuments);
   const blob=new Blob([JSON.stringify(backup,null,2)],{type:'application/json'});
   url=URL.createObjectURL(blob);link=el('a');link.href=url;link.download='coconut-selected-library.json';link.hidden=true;document.body.append(link);link.click();
-  notice('已发起所选 '+backup.documents.length+' 份文档的 JSON 备份下载，请确认文件已保存；包含本页已生效的文字、笔记、译文与 AI 记录及依据，不包含媒体文件或未提交的编辑草稿。可用「恢复书架备份」恢复；这不代表书架已保存。'+backupRecoveryHint(blob),'success');
+  notice('已发起所选 '+backup.documents.length+' 份备份下载，请确认文件已保存。'+backupRecoveryHint(blob),'success');
  } catch(error){notice(error.message||'所选文档备份失败，内容仍在本页，请重试后再关闭。');}
  finally {link?.remove();if(url)setTimeout(()=>URL.revokeObjectURL(url),60000);syncLibraryBackupSelection();}
 };
