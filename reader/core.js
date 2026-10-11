@@ -1276,23 +1276,53 @@
 		const text = voices.size > 1 ? spoken.map(run=>(run.speaker ? "["+run.speaker+"] " : "")+run.text.trim()).join("\n") : runs.map(run=>run.text).join("").trim();
 		return {text,speaker};
 	}
-	function parse(text, filename) {
+	function* subtitleBlocks(text) {
+		const normalized = text.replace(/^\uFEFF/, "").replace(/\r\n?/g, "\n");
+		let offset = 0, startLine = 1;
+		// Keep the existing block boundaries while retaining original 1-based
+		// line numbers. BOM removal and CRLF normalization do not remove lines.
+		for (const separator of normalized.matchAll(/\n\s*\n/g)) {
+			const lines = normalized.slice(offset, separator.index).split("\n");
+			yield {lines, startLine};
+			startLine += lines.length - 1;
+			for (const char of separator[0]) if (char === "\n") startLine++;
+			offset = separator.index + separator[0].length;
+		}
+		yield {lines:normalized.slice(offset).split("\n"), startLine};
+	}
+	function subtitleDiagnostic(lines, startLine, index, category) {
+		const first = lines.findIndex(line=>line.trim());
+		let last = lines.length - 1;
+		while (last > first && !lines[last].trim()) last--;
+		// These are display-only excerpts, never document metadata or cue text.
+		const bounded = (value, limit) => value.length <= limit ? value : value.slice(0, limit-1).replace(/[\uD800-\uDBFF]$/, "") + "…";
+		return {
+			category, startLine:startLine+first, endLine:startLine+last,
+			...(index === first+1 ? {cueId:bounded(lines[first].trim(), 120)} : {}),
+			preview:bounded(lines.slice(first, last+1).join("\n").trim(), 240),
+		};
+	}
+	function parseWithDiagnostics(text, filename) {
 		if (filename.toLowerCase().endsWith(".json")){
    const data=JSON.parse(text);
    if(data?.format==='coconut-library')throw new Error('这是整书架备份，请使用「恢复书架备份」');
-			return validate(data);
+			return {document:validate(data), diagnostics:[]};
   }
 		const isVtt = filename.toLowerCase().endsWith(".vtt") || /^(?:\uFEFF)?WEBVTT(?:[ \t]|\r?\n|$)/.test(text);
-		const blocks = text
-			.replace(/^\uFEFF/, "")
-			.replace(/\r\n?/g, "\n")
-			.split(/\n\s*\n/);
-		const segments = [];
-		for (const block of blocks) {
-			const lines = block.split("\n");
+		const segments = [], diagnostics = [];
+		// Only two clock-shaped timestamps with an arrow-like/blank separator,
+		// in the timing position (optionally after one cue ID), identify a skipped
+		// malformed cue. Unknown prose and numbering gaps are not evidence of loss.
+		const timeLike = /^(?:\d{2,}:)?\d{2}:\d{2}[.,]\d{3}[\t \-=<>–—→]+(?:\d{2,}:)?\d{2}:\d{2}[.,]\d{3}(?:[\t ]|$)/;
+		for (const {lines, startLine} of subtitleBlocks(text)) {
 			if (isVtt && /^(?:WEBVTT|NOTE|STYLE|REGION)(?:[ \t]|$)/.test(lines[0].trim())) continue;
 			const index = lines.findIndex((line) => line.includes("-->"));
-			if (index < 0) continue;
+			if (index < 0) {
+				const first = lines.findIndex(line=>line.trim());
+				const timingIndex = first < 0 ? -1 : [first, first+1].find(i=>timeLike.test(lines[i]?.trim() || "")) ?? -1;
+				if (timingIndex >= 0) diagnostics.push(subtitleDiagnostic(lines, startLine, timingIndex, "malformed_timing"));
+				continue;
+			}
 			const match = lines[index].match(/^(\S+)\s+-->\s+(\S+)/);
 			if (!match) throw new Error("无法识别字幕时间");
 			const payload = lines.slice(index + 1).join("\n");
@@ -1305,14 +1335,19 @@
 					text: body,
 					speaker,
 				});
+			else if (timeLike.test(lines[index].trim())) diagnostics.push(subtitleDiagnostic(lines, startLine, index, "empty_cue"));
 		}
-		return validate({
+		const document = validate({
 			title: filename.replace(/\.(srt|vtt)$/i, ""),
 			source_url: "",
 			segments,
 		});
+		return {document, diagnostics};
 	}
-	const api = { librarySavedHits, librarySavedHitCurrent, exactExcerptNote, exactExcerptNotesWith, exactExcerptRemoval, exactExcerptSnapshot, exactExcerptText, exactExcerptParts, exactExcerptSource, exactExcerptCount, exactExcerptDuplicate, exactExcerptFreshness, exactExcerptFreshnessBatch, exactExcerptState, exactExcerptStateBatch, createReadingRecency, createLibrarySearch, createLibraryNotebookSearch, libraryCaptureSteps, libraryCaptureCurrent, libraryCaptures, libraryNotebookMarkdown, mediaTiming, mediaTimingOffset, mediaTimingRange, localMediaSource, searchDocument, invalidateSearch, manualReviewSnapshot, manualReviewCurrent, saveManualTranslation, translationReviewQueue, hasNoteContent, segmentNoteCount, BACKUP_REVIEW_BYTES, SUBTITLE_IMPORT_BYTES, vttPayload, libraryHits, librarySnippet, hasProjectAnnotations, projectAnnotationCount, attachProjectTranscript, libraryMatches, documentDuration, sortedLibrary, AUDIO_NOTE_BUDGET, audioNoteCharacters, isAudioProject, audioProjectIdentity, podcastMediaIdentity, SUMMARY_QUESTION, summaryReadiness, podcastURL, podcastSource, cleanGlossary, relevantGlossary, translationQualityMessage, retainAnswers, summaryFreshness, latestSummary, summaryMarkdown, aiReadingMarkdown, parseReadingTime, createPlaybackIndex, segmentAtTime, transcriptText, subtitleExport, mergeLibraryBackup, time, source, media, validate, parse, matchesSegment, notebookSegments, notebookMarkdown, translationCurrent, sameCueSnapshot, subscriptionPlan, cleanContexts, answerFreshness };
+	function parse(text, filename) {
+		return parseWithDiagnostics(text, filename).document;
+	}
+	const api = { librarySavedHits, librarySavedHitCurrent, exactExcerptNote, exactExcerptNotesWith, exactExcerptRemoval, exactExcerptSnapshot, exactExcerptText, exactExcerptParts, exactExcerptSource, exactExcerptCount, exactExcerptDuplicate, exactExcerptFreshness, exactExcerptFreshnessBatch, exactExcerptState, exactExcerptStateBatch, createReadingRecency, createLibrarySearch, createLibraryNotebookSearch, libraryCaptureSteps, libraryCaptureCurrent, libraryCaptures, libraryNotebookMarkdown, mediaTiming, mediaTimingOffset, mediaTimingRange, localMediaSource, searchDocument, invalidateSearch, manualReviewSnapshot, manualReviewCurrent, saveManualTranslation, translationReviewQueue, hasNoteContent, segmentNoteCount, BACKUP_REVIEW_BYTES, SUBTITLE_IMPORT_BYTES, vttPayload, libraryHits, librarySnippet, hasProjectAnnotations, projectAnnotationCount, attachProjectTranscript, libraryMatches, documentDuration, sortedLibrary, AUDIO_NOTE_BUDGET, audioNoteCharacters, isAudioProject, audioProjectIdentity, podcastMediaIdentity, SUMMARY_QUESTION, summaryReadiness, podcastURL, podcastSource, cleanGlossary, relevantGlossary, translationQualityMessage, retainAnswers, summaryFreshness, latestSummary, summaryMarkdown, aiReadingMarkdown, parseReadingTime, createPlaybackIndex, segmentAtTime, transcriptText, subtitleExport, mergeLibraryBackup, time, source, media, validate, parse, parseWithDiagnostics, matchesSegment, notebookSegments, notebookMarkdown, translationCurrent, sameCueSnapshot, subscriptionPlan, cleanContexts, answerFreshness };
 	if (typeof module !== "undefined" && module.exports) module.exports = api;
 	else root.Coconut = api;
 })(typeof window !== "undefined" ? window : globalThis);

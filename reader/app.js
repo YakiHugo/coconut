@@ -557,7 +557,7 @@ async function add(doc, canCommit = null, reuseAudioSource = false, lifecycleRev
  onActivate?.({identity:inserted,selectionRevision,navigationRevision:localImportRevision});
 	render();
  resumeOpenedDocument(inserted,null);
-	return {...await receipt,mediaRevision,selectionRevision};
+	return {...await receipt,duplicate,mediaRevision,selectionRevision};
 }
 function showWorkspace(next) {
  if(next!==workspace)cancelLocalImports();
@@ -1804,6 +1804,7 @@ async function selectTranscriptFiles(files,fromPicker=false){
  if(files.length>1)return importTranscriptFiles(files);
  const revision = cancelLocalImports("file"), lifecycleRevision=documentLifecycleRevision;
  transcriptImportBatch=null;$("transcript-import-results").hidden=true;
+ let warningBatch=null;
  const startingDocument = state.active, startingWorkspace = workspace;
  const ownsRequest = () => revision === localImportRevision;
  const canCommit = () => contentIngressAllowed() && ownsRequest() && state.active === startingDocument && workspace === startingWorkspace;
@@ -1813,18 +1814,65 @@ async function selectTranscriptFiles(files,fromPicker=false){
   if(!canCommit())return;
 		const text = await f.text();
   if(!canCommit())return;
-		const parsed=Coconut.parse(text,f.name);
+		const {document:parsed,diagnostics}=Coconut.parseWithDiagnostics(text,f.name);
+  if(diagnostics.length){warningBatch=createTranscriptImportBatch([f]);setTranscriptImportDiagnostics(warningBatch.items[0],diagnostics);warningBatch.items[0].status='saving';renderTranscriptImportBatch(warningBatch);}
   // Exported JSON carries a stable key which validate intentionally omits.
   // Retain it only as async ownership evidence, never as an imported new key.
   let sourceKey;try{const raw=JSON.parse(text);if(typeof raw?.key==='string'&&raw.key.length<=200)sourceKey=raw.key;}catch{}
   const saved = await add(parsed,canCommit,false,lifecycleRevision,sourceKey);
-		if (saved.ok && ownsRequest() && active()===saved.identity) notice("已导入并保存在本机浏览器。没有向服务器上传文件。", "success");
+		if(warningBatch)finishTranscriptImportReceipt(warningBatch.items[0],saved);
+  if(ownsRequest()&&active()===saved.identity){
+   if(diagnostics.length)notice((saved.ok?"已保存可识别的字幕。":"字幕仅在本页，尚未保存。")+transcriptImportWarningNotice(diagnostics));
+   else if(saved.ok)notice("已导入并保存在本机浏览器。没有向服务器上传文件。", "success");
+  }
 	} catch (e) {
-		if(canCommit())notice("导入失败：" + localFileError(e));
+		if(warningBatch){const item=warningBatch.items[0];item.status=canCommit()?'failed':'cancelled';if(item.status==='failed')item.error=localFileError(e);}
+  if(canCommit())notice("导入失败：" + localFileError(e));
 	} finally {
+  if(warningBatch){warningBatch.finished=true;renderTranscriptImportBatch(warningBatch);}
 		if(ownsRequest())$("file").value = "";
 	}
 };
+// Parse completeness belongs to the import attempt, never to the document or
+// its content hash. Save receipts update only persistence state.
+function transcriptImportWarningNotice(diagnostics){
+ return '部分字幕未导入：跳过 '+diagnostics.length+' 个字幕块。可在「添加内容」的导入结果查看原文件行号。';
+}
+function setTranscriptImportDiagnostics(item,diagnostics){
+ item.diagnostics=diagnostics;
+ item.row.dataset.parseState=diagnostics.length?'partial':'complete';
+ if(!diagnostics.length)return;
+ const details=el('details','transcript-import-warning'),summary=el('summary','', '部分字幕未导入 · 跳过 '+diagnostics.length+' 个字幕块');
+ const list=el('ul'),more=el('button','','显示更多行号');more.type='button';
+ let rendered=0;
+ const append=()=>{
+  const end=Math.min(rendered+50,diagnostics.length);
+  for(;rendered<end;rendered++){
+   const diagnostic=diagnostics[rendered],range=diagnostic.startLine===diagnostic.endLine?String(diagnostic.startLine):diagnostic.startLine+'–'+diagnostic.endLine;
+   const reason=diagnostic.category==='empty_cue'?'没有可导入的文字':'时间行无法识别';
+   list.append(el('li','','第 '+range+' 行'+(diagnostic.cueId?' · 字幕 '+diagnostic.cueId:'')+' · '+reason+(diagnostic.preview?'：'+diagnostic.preview:'')));
+  }
+  more.hidden=rendered===diagnostics.length;
+ };
+ details.ontoggle=()=>{if(details.open&&!rendered)append();};more.onclick=append;
+ details.append(summary,list,more);item.row.append(details);
+}
+function createTranscriptImportBatch(files){
+ const batch={items:[],cancelled:false,finished:false};transcriptImportBatch=batch;
+ $('transcript-import-list').replaceChildren();$('transcript-import-results').hidden=false;
+ for(const file of files){
+  const row=el('li','transcript-import-item'),result=el('span','transcript-import-outcome'),open=el('button','','阅读');open.type='button';
+  const item={status:'queued',row,result,open,identity:null,diagnostics:[]};open.hidden=true;open.onclick=()=>openTranscriptImportResult(item);
+  open.setAttribute('aria-label','阅读 '+file.name);row.append(el('span','transcript-import-name',file.name),result,open);
+  batch.items.push(item);$('transcript-import-list').append(row);
+ }
+ $('stop-transcript-import').onclick=()=>{if(transcriptImportBatch===batch)cancelLocalImports();};
+ return batch;
+}
+function finishTranscriptImportReceipt(item,receipt){
+ item.identity=receipt.identity;item.duplicate=receipt.duplicate;
+ item.status=receipt.ok?(receipt.duplicate?'duplicate':'saved'):'unsaved';
+}
 // A batch owns its files, not the reader. Each file awaits its actual save
 // receipt before the next read, retaining successful identities after failure
 // or cancellation without accumulating file contents or imposing a batch cap.
@@ -1850,6 +1898,8 @@ function renderTranscriptImportBatch(batch){
  const pending=(counts.review||0)+(counts.reading||0)+(counts.saving||0),done=batch.items.length-(counts.queued||0)-pending;
  const parts=[batch.finished?(batch.cancelled?'已停止导入':'导入完成'):batch.cancelled?'已停止后续文件，等待当前文件确认':'正在导入',done+' / '+batch.items.length+' 个文件'];
  for(const [status,label] of [['saved','已保存'],['duplicate','已有'],['failed','失败'],['skipped','跳过'],['unsaved','未保存'],['cancelled','未导入']])if(counts[status])parts.push(label+' '+counts[status]);
+ const warnings=batch.items.reduce((count,item)=>count+(item.diagnostics?.length||0),0);
+ if(warnings)parts.push('部分字幕未导入 '+warnings+' 块');
  $('transcript-import-progress').textContent=parts.join(' · ');
  $('stop-transcript-import').hidden=batch.finished||batch.cancelled;
 }
@@ -1876,16 +1926,8 @@ async function importTranscriptFiles(files){
  const revision=cancelLocalImports('file'),lifecycleRevision=documentLifecycleRevision;
  const startingDocument=state.active,startingWorkspace=workspace,selectionRevision=activeSelectionRevision;
  const ownsRequest=()=>revision===localImportRevision;
- const batch={items:[],cancelled:false,finished:false};transcriptImportBatch=batch;
+ const batch=createTranscriptImportBatch(files);
  const canCommit=()=>!batch.cancelled&&ownsRequest()&&contentIngressAllowed()&&state.active===startingDocument&&workspace===startingWorkspace&&activeSelectionRevision===selectionRevision;
- $('transcript-import-list').replaceChildren();$('transcript-import-results').hidden=false;
- for(const file of files){
-  const row=el('li','transcript-import-item'),result=el('span','transcript-import-outcome'),open=el('button','','阅读');open.type='button';
-  const item={status:'queued',row,result,open,identity:null};open.hidden=true;open.onclick=()=>openTranscriptImportResult(item);
-  open.setAttribute('aria-label','阅读 '+file.name);row.append(el('span','transcript-import-name',file.name),result,open);
-  batch.items.push(item);$('transcript-import-list').append(row);
- }
- $('stop-transcript-import').onclick=()=>{if(transcriptImportBatch===batch)cancelLocalImports();};
  renderTranscriptImportBatch(batch);
  try{
   for(const [index,file] of files.entries()){
@@ -1897,12 +1939,12 @@ async function importTranscriptFiles(files){
     if(!canCommit()){item.status='cancelled';break;}
     item.status='reading';renderTranscriptImportBatch(batch);
     const text=await file.text();if(!canCommit()){item.status='cancelled';break;}
-    const parsed=Coconut.parse(text,file.name);
+    const {document:parsed,diagnostics}=Coconut.parseWithDiagnostics(text,file.name);
+    setTranscriptImportDiagnostics(item,diagnostics);
     let sourceKey;try{const raw=JSON.parse(text);if(typeof raw?.key==='string'&&raw.key.length<=200)sourceKey=raw.key;}catch{}
     item.status='saving';renderTranscriptImportBatch(batch);
     const receipt=await add(parsed,canCommit,false,lifecycleRevision,sourceKey,{activate:false});
-    item.identity=receipt.identity;item.duplicate=receipt.duplicate;
-    item.status=receipt.ok?(receipt.duplicate?'duplicate':'saved'):'unsaved';
+    finishTranscriptImportReceipt(item,receipt);
     if(!receipt.ok){stopTranscriptImportBatch();break;}
    }catch(error){item.status=canCommit()?'failed':'cancelled';if(item.status==='failed')item.error=localFileError(error);}
    renderTranscriptImportBatch(batch);
@@ -3376,6 +3418,7 @@ $('project-transcript-file').onchange=async()=>{
  const input=$('project-transcript-file'),file=input.files[0],target=projectTranscriptTarget;projectTranscriptTarget=null;
  if(!file)return;
  const revision=cancelLocalImports('project-transcript-file');
+ let warningBatch=null;
  const ownsRequest=()=>revision===localImportRevision;
  const canCommit=()=>ownsRequest()&&state.active===target?.key&&workspace==='read'&&state.documents.find(doc=>doc.key===target.key)===target.document;
  try{
@@ -3385,11 +3428,16 @@ $('project-transcript-file').onchange=async()=>{
   if(!canCommit())return;
   const value=await file.text();
   if(!canCommit())return;
-  const text=Coconut.parse(value,file.name);
+  const {document:text,diagnostics}=Coconut.parseWithDiagnostics(value,file.name);
+  if(diagnostics.length){warningBatch=createTranscriptImportBatch([file]);setTranscriptImportDiagnostics(warningBatch.items[0],diagnostics);warningBatch.items[0].status='saving';renderTranscriptImportBatch(warningBatch);}
   const persisted=await attachTranscriptToProject(text,target);
-  if(ownsRequest()&&active()===persisted.identity&&contentIngressAllowed(persisted.identity))notice(persisted.ok?'文字稿已附加到当前项目，原有笔记、时间书签与媒体保留。未调用识别、翻译或摘要模型。':'文字稿已在本页附加，但未能保存，请立即导出 JSON 备份。');
- }catch(error){if(ownsRequest())notice('补充文字稿失败：'+localFileError(error));}
- finally{if(ownsRequest())input.value='';}
+  if(warningBatch)finishTranscriptImportReceipt(warningBatch.items[0],persisted);
+  if(ownsRequest()&&active()===persisted.identity&&contentIngressAllowed(persisted.identity))notice((persisted.ok?'文字稿已附加到当前项目，原有笔记、时间书签与媒体保留。未调用识别、翻译或摘要模型。':'文字稿已在本页附加，但未能保存，请立即导出 JSON 备份。')+(diagnostics.length?transcriptImportWarningNotice(diagnostics):''));
+ }catch(error){
+  if(warningBatch){const item=warningBatch.items[0];item.status=canCommit()?'failed':'cancelled';if(item.status==='failed')item.error=localFileError(error);}
+  if(ownsRequest())notice('补充文字稿失败：'+localFileError(error));
+ }
+ finally{if(warningBatch){warningBatch.finished=true;renderTranscriptImportBatch(warningBatch);}if(ownsRequest())input.value='';}
 };
 
 async function attachTranscriptToProject(text,target,{canCommit=null,activate=false,publisher=false}={}){

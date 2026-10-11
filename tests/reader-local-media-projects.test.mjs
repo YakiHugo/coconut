@@ -180,3 +180,18 @@ test('reselection retains its exact local project across navigation without chan
  [...w.document.querySelectorAll('.library-entry')].find(row=>row.dataset.documentKey===original.key).querySelector('.library-open').click();assert.equal($('source-media').querySelector('audio').getAttribute('src'),'blob:local-2');
  }finally{await env.w.happyDOM.close();}
 });
+
+test('partial project transcript keeps source, annotations, stable identity and persistent import warning through save retry',async()=>{
+ const env=setup();let pending;try{
+  const {w,$}=env;await pick(env,file(w));await addNote(env,'Keep project note');await bookmark(env,'12','Keep bookmark');
+  const before=w.localTest.active(),key=before.key,source={...before.local_media_source},marks=JSON.stringify(before.timestamp_bookmarks),media=w.localTest.media().get(key);
+  env.pipeline.hold();$('attach-project-transcript').click();
+  const text='1\n00:00:00,000 --> 00:00:01,000\nOpening\n\n2\n00:00:01,000 -> 00:00:02,000\nLost\n\n3\n00:00:02,000 --> 00:00:03,000\nClosing';
+  Object.defineProperty($('project-transcript-file'),'files',{configurable:true,value:[{name:'partial.srt',size:text.length,text:async()=>text}]});pending=$('project-transcript-file').onchange();await until(()=>env.pipeline.writes.length===1);
+  const row=$('transcript-import-list').firstElementChild,details=row.querySelector('details');assert.equal(row.dataset.status,'saving');details.open=true;details.ontoggle();assert.match(details.textContent,/第 5–7 行/);
+  env.pipeline.writes[0].fail();await pending;assert.equal(row.dataset.status,'unsaved');assert.match($('notice').textContent,/未能保存.*部分字幕未导入/);
+  env.pipeline.hold(false);await $('retry-save').onclick();assert.equal(row.dataset.status,'saved');assert.equal(row.querySelector('details'),details);
+  const attached=w.localTest.active();assert.equal(attached.key,key);assert.deepEqual(JSON.parse(JSON.stringify(attached.local_media_source)),source);assert.equal(attached.project_note,'Keep project note');assert.equal(JSON.stringify(attached.timestamp_bookmarks),marks);assert.equal(w.localTest.media().get(key),media);assert.equal(attached.segments.length,2);assert.equal(attached.diagnostics,undefined);assert.equal(env.calls.length,0);
+  $('add-content').click();assert.equal($('transcript-import-results').hidden,false);assert.match(details.textContent,/跳过 1/);
+ }finally{env.pipeline.hold(false);for(const write of env.pipeline.writes)write.commit();await pending;await env.w.happyDOM.close();}
+});

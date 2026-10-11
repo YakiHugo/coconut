@@ -338,3 +338,62 @@ test('failed checkpoint cleanup releases writes admitted after the failure', {ti
   assert.deepEqual(f.statuses(),['saved','saved']);assert.equal(f.stored().documents.length,2);
  }finally{releaseSaves(f);gate.resolve('{}');await pending;await f.w.happyDOM.close();}
 });
+
+const partialSubtitle='1\n00:00:00,000 --> 00:00:01,000\nOpening\n\n2\n00:00:01,000 -> 00:00:02,000\nCritical <img src=x onerror=alert(1)> sentence\n\n3\n00:00:02,000 --> 00:00:03,000\nClosing';
+const partialFile=(title='Partial')=>file(title,{name:title+'.srt',text:partialSubtitle});
+const warning=row=>row.querySelector('.transcript-import-warning');
+function expandWarning(f,row){const details=warning(row);details.open=true;details.ontoggle();return details;}
+test('normal partial normal batch keeps parse diagnostics orthogonal to saved receipts and untrusted previews',async()=>{
+ const f=setup();try{
+  await f.choose([file('Before'),partialFile(),file('After')]);
+  assert.deepEqual(f.statuses(),['saved','saved','saved']);assert.deepEqual(f.rows().map(row=>row.dataset.parseState),['complete','partial','complete']);
+  const details=expandWarning(f,f.rows()[1]);assert.match(details.textContent,/跳过 1 个字幕块/);assert.match(details.textContent,/第 5–7 行/);assert.match(details.textContent,/Critical <img/);assert.equal(details.querySelector('img'),null);
+  assert.match(f.$('transcript-import-progress').textContent,/部分字幕未导入 1 块/);
+  const saved=f.stored().documents.find(doc=>doc.title==='Partial');assert.equal(saved.segments.length,2);assert.equal(saved.diagnostics,undefined);assert.equal(saved.segments[1].text,'Closing');
+  f.rows()[1].querySelector('button').click();assert.equal(f.$('title').textContent,'Partial');f.$('add-content').click();assert.equal(warning(f.rows()[1]),details);assert.equal(details.open,true);
+ }finally{await f.w.happyDOM.close();}
+});
+for(const ingress of ['choose','drop'])test(ingress+' single partial result survives completion and ordinary single imports retain old experience',async()=>{
+ const f=setup();try{
+  await f[ingress]([partialFile()]);assert.deepEqual(f.statuses(),['saved']);assert.equal(f.w.document.body.dataset.workspace,'read');assert.match(f.$('notice').textContent,/部分字幕未导入.*添加内容/);
+  f.$('add-content').click();assert.equal(f.$('transcript-import-results').hidden,false);assert.match(expandWarning(f,f.rows()[0]).textContent,/第 5–7 行/);
+  await f[ingress]([file('Normal')]);assert.equal(f.$('transcript-import-results').hidden,true);assert.match(f.$('notice').textContent,/已导入并保存在本机/);
+ }finally{await f.w.happyDOM.close();}
+});
+for(const multiple of [false,true])test('partial '+(multiple?'batch':'single')+' warning survives pending, save failure and explicit retry',async()=>{
+ const f=setup({held:true});let pending;try{
+  pending=f.choose(multiple?[partialFile(),file('Never')]:[partialFile()]);await until(()=>f.saves.writes.length===1);
+  assert.equal(f.rows()[0].dataset.status,'saving');const details=expandWarning(f,f.rows()[0]);assert.match(details.textContent,/第 5–7 行/);assert.doesNotMatch(f.rows()[0].querySelector('.transcript-import-outcome').textContent,/已保存/);
+  f.saves.writes[0].fail();await pending;assert.equal(f.rows()[0].dataset.status,'unsaved');assert.equal(warning(f.rows()[0]),details);assert.equal(f.stored().documents.length,0);
+  f.saves.hold(false);await f.$('retry-save').onclick();assert.equal(f.rows()[0].dataset.status,'saved');assert.equal(warning(f.rows()[0]),details);assert.equal(f.stored().documents[0].segments.length,2);
+  if(multiple)assert.deepEqual(f.statuses(),['saved','cancelled']);
+ }finally{releaseSaves(f);await pending;await f.w.happyDOM.close();}
+});
+test('duplicate partial import retains warning and does not duplicate or replace saved identity',async()=>{
+ const f=setup();try{
+  await f.choose([partialFile()]);const identity=f.w.multiTest.active;f.$('add-content').click();await f.choose([partialFile()]);assert.deepEqual(f.statuses(),['duplicate']);assert.equal(f.w.multiTest.active,identity);f.$('add-content').click();await f.choose([partialFile(),file('Next')]);
+  assert.deepEqual(f.statuses(),['duplicate','saved']);assert.equal(f.w.multiTest.documents[0],identity);assert.match(expandWarning(f,f.rows()[0]).textContent,/第 5–7 行/);assert.equal(f.stored().documents.length,2);
+ }finally{await f.w.happyDOM.close();}
+});
+test('cancel and newer navigation cannot erase a pending partial warning or steal the note editor',async()=>{
+ const f=setup();let pending;try{
+  await f.choose([file('Existing')]);f.$('add-content').click();f.saves.hold();pending=f.choose([partialFile(),file('Never')]);await until(()=>f.saves.writes.length===1);
+  const details=expandWarning(f,f.rows()[0]);f.$('stop-transcript-import').click();assert.equal(warning(f.rows()[0]),details);
+  f.$('back-reading').click();f.$('mode-transcript').click();f.w.document.querySelector('.note-button').click();f.$('note').value='Keep focus and edit';f.$('note').oninput();f.$('note').focus();
+  f.saves.hold(false);f.saves.writes[0].commit();await pending;await f.w.flushContentForTest();
+  assert.equal(f.$('title').textContent,'Existing');assert.equal(f.w.document.activeElement,f.$('note'));assert.equal(f.$('note').value,'Keep focus and edit');assert.deepEqual(f.statuses(),['saved','cancelled']);assert.equal(warning(f.rows()[0]),details);assert.match(details.textContent,/第 5–7 行/);
+ }finally{releaseSaves(f);await pending;await f.w.happyDOM.close();}
+});
+test('late partial receipt cannot replace a newer import result or notice',async()=>{
+ const f=setup({digestDelay:80});let pending;try{
+  pending=f.choose([partialFile()]);await until(()=>f.rows()[0]?.dataset.status==='saving');const retired=f.w.multiTest.batch;
+  await f.choose([file('New first'),file('New last')]);await pending;
+  assert.deepEqual(f.statuses(),['saved','saved']);assert.equal(f.w.multiTest.batch.items.some(item=>item.diagnostics.length),false);assert.equal(retired.items[0].status,'cancelled');assert.match(warning(retired.items[0].row).textContent,/跳过 1/);assert.deepEqual(f.stored().documents.map(doc=>doc.title),['New first','New last']);
+ }finally{await pending;await f.w.happyDOM.close();}
+});
+test('many warning line details expand in bounded batches without truncating access to later diagnostics',async()=>{
+ const f=setup();try{
+  const text='1\n00:00:00,000 --> 00:00:01,000\nKeep\n\n'+Array.from({length:103},(_,i)=>`${i+2}\n00:00:01,000 -> 00:00:02,000\nLost ${i}`).join('\n\n');
+  await f.choose([file('Many',{name:'Many.srt',text})]);const details=expandWarning(f,f.rows()[0]);assert.equal(details.querySelectorAll('li').length,50);details.querySelector('button').click();assert.equal(details.querySelectorAll('li').length,100);details.querySelector('button').click();assert.equal(details.querySelectorAll('li').length,103);assert.equal(details.querySelector('button').hidden,true);
+ }finally{await f.w.happyDOM.close();}
+});
