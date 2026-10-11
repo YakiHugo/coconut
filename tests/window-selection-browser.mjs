@@ -85,8 +85,10 @@ async function cleanReload(page, doc) {
  await expectSelection(page, doc);
 }
 async function openNote(page) {
- // This reading-only entry does not change the saved translation preference.
- await page.locator('#summary-open-transcript').click();
+ // Read-first documents are already open. A saved-summary entry still uses
+ // the reading-only action, which preserves the saved translation preference.
+ if(await page.locator('#summary-workspace').isVisible())await page.locator('#summary-open-transcript').click();
+ await page.locator('#transcript-layout').waitFor({state:'visible'});
  await page.locator('.note-button').first().click();
 }
 async function downloadJSON(page, wholeLibrary = false) {

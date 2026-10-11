@@ -628,10 +628,10 @@ body[data-media-docked="true"] main { padding-bottom: 112px; }
 
 /* Source-first long reading. Cue spans remain addressable without caption-card chrome. */
 .media-disclosure { margin: 12px 0 0; border-color: transparent; background: transparent; padding: 4px 0; color: var(--accent); font-size: 12px; text-align: left; }
-body[data-reading-mode="passages"] .reader-kicker { display: none; }
-body[data-reading-mode="passages"] .intro { padding-top: 18px; }
+body[data-header-compact="true"] .reader-kicker { display: none; }
+body[data-header-compact="true"] .intro { padding-top: 18px; }
 body[data-reading-mode="passages"] .intro h1 { font-size: clamp(24px, 2.5vw, 32px); margin-bottom: 5px; }
-body[data-reading-mode="passages"] .reading-modes { margin-top: 12px; }
+body[data-header-compact="true"] .reading-modes { margin-top: 12px; }
 body[data-reading-mode="passages"] .reader-options { display: none; }
 .passage-workspace { padding-top: 16px; }
 .passage-browse { border-bottom: 1px solid var(--line); padding-bottom: 8px; }
@@ -688,7 +688,7 @@ html[data-reading-layout="large"] .passage-original, html[data-reading-layout="l
  .passage-playback-controls button { min-height: 44px; padding: 5px 8px; }
  .passage-pagination { flex-wrap: wrap; justify-content: center; }
  .passage-pagination .hint { order: -1; flex-basis: 100%; text-align: center; }
- body[data-reading-mode="passages"] .intro { padding-top: 12px; }
+ body[data-header-compact="true"] .intro { padding-top: 12px; }
  body[data-reading-mode="passages"] #provenance { font-size: 10px; line-height: 1.55; }
  body[data-reading-mode="passages"] #subtitle { font-size: 11px; }
 }
@@ -711,11 +711,11 @@ html[data-reading-layout="spacious"] .passage { padding-top: 34px; padding-botto
    All three top-level actions remain visible with 44px targets; expanded library
    content keeps its own full-width row. Only confirmed success is subdued. */
 @media (max-width:650px) {
- body[data-reading-mode="passages"] aside { grid-template-columns: minmax(0,1fr) auto auto; gap: 8px 10px; padding-top: 12px; padding-bottom: 8px; }
- body[data-reading-mode="passages"] aside .brand { grid-column: 1; grid-row: 1; font-size: 23px; }
- body[data-reading-mode="passages"] #toggle-library { grid-column: 2; grid-row: 1; min-width: 44px; min-height: 44px; padding: 6px; }
- body[data-reading-mode="passages"] #add-content { grid-column: 3; grid-row: 1; min-height: 44px; }
- body[data-reading-mode="passages"] #library-list { grid-column: 1 / -1; grid-row: 2; }
+ body[data-header-compact="true"] aside { grid-template-columns: minmax(0,1fr) auto auto; gap: 8px 10px; padding-top: 12px; padding-bottom: 8px; }
+ body[data-header-compact="true"] aside .brand { grid-column: 1; grid-row: 1; font-size: 23px; }
+ body[data-header-compact="true"] #toggle-library { grid-column: 2; grid-row: 1; min-width: 44px; min-height: 44px; padding: 6px; }
+ body[data-header-compact="true"] #add-content { grid-column: 3; grid-row: 1; min-height: 44px; }
+ body[data-header-compact="true"] #library-list { grid-column: 1 / -1; grid-row: 2; }
  body[data-reading-mode="passages"] #notice[data-kind="success"] { margin: 8px 0; padding: 0; border-radius: 0; background: transparent; color: var(--muted); font-size: 12px; line-height: 1.6; }
 }
 
@@ -724,11 +724,11 @@ html[data-reading-layout="spacious"] .passage { padding-top: 34px; padding-botto
 #notice-shell.is-success { display: flex; align-items: center; gap: 12px; position: fixed; z-index: 16; right: 24px; bottom: 20px; max-width: min(480px,calc(100vw - 40px)); padding: 8px 10px 8px 16px; background: var(--surface-selected, #fffaf1); border: 1px solid var(--edge-warm, #e6d9c6); border-radius: 12px; box-shadow: 0 6px 24px #28252018; }
 #notice-shell.is-success #notice { margin: 0; padding: 0; background: transparent; color: var(--tone-muted, #655844); font-size: 12px; line-height: 1.6; }
 #dismiss-notice { flex-shrink: 0; min-height: 44px; min-width: 44px; padding: 6px; font-size: 11px; background: transparent; border-color: transparent; }
-body[data-reading-mode="passages"][data-workspace="read"] > .shell > main > header { min-height: 74px; padding: 12px 0; align-items: flex-start; gap: 16px; }
+body[data-header-compact="true"][data-workspace="read"] > .shell > main > header { min-height: 74px; padding: 12px 0; align-items: flex-start; gap: 16px; }
 #reader-title-slot { min-width: 0; flex: 1; }
 #reader-title-slot #title { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; margin: 0; color: var(--ink); font-size: 25px; line-height: 1.35; letter-spacing: -.55px; }
-body[data-reading-mode="passages"][data-workspace="read"] .intro { padding-top: 0; }
-body[data-reading-mode="passages"] #reader-meta-home:empty, body[data-reading-mode="passages"] #reader-title-home:empty { display: none; }
+body[data-header-compact="true"][data-workspace="read"] .intro { padding-top: 0; }
+body[data-header-compact="true"] #reader-meta-home:empty, body[data-header-compact="true"] #reader-title-home:empty { display: none; }
 .reading-utility { position: relative; }
 .reading-utility.is-compact { display: flex; align-items: center; flex-wrap: wrap; column-gap: 14px; min-height: 44px; }
 /* Match the compact toolbar instead of adding a full-size button row on mobile.
@@ -750,10 +750,10 @@ body[data-reading-mode="passages"] #reader-meta-home:empty, body[data-reading-mo
 .reading-utility.is-compact .media-disclosure { margin: 0; min-height: 44px; padding: 4px 0; font-size: 12px; }
 .reading-utility.is-compact .passage-toolbar { margin-left: auto; gap: 14px; padding: 0; }
 .reading-utility.is-compact .passage-toolbar button { min-height: 44px; min-width: 44px; font-size: 12px; }
-.reading-utility.is-compact .episode-media { position: absolute; z-index: 10; top: calc(100% + 6px); left: 0; right: 0; margin: 0; max-height: min(70dvh,580px); overflow-y: auto; border: 1px solid var(--edge, #ded3c7); background: var(--surface, #fffcf8); box-shadow: 0 12px 40px #30251b20; }
+.reading-utility.is-passage .episode-media { position: absolute; z-index: 10; top: calc(100% + 6px); left: 0; right: 0; margin: 0; max-height: min(70dvh,580px); overflow-y: auto; border: 1px solid var(--edge, #ded3c7); background: var(--surface, #fffcf8); box-shadow: 0 12px 40px #30251b20; }
 #close-reader-media { margin-left: auto; flex-shrink: 0; min-height: 44px; padding: 6px 9px; font-size: 12px; }
-body[data-reading-mode="passages"] .reading-modes { margin-top: 0; min-height: 44px; gap: 22px; }
-body[data-reading-mode="passages"] .reading-modes button { padding-top: 9px; padding-bottom: 9px; min-height: 44px; }
+body[data-header-compact="true"] .reading-modes { margin-top: 0; min-height: 44px; gap: 22px; }
+body[data-header-compact="true"] .reading-modes button { padding-top: 9px; padding-bottom: 9px; min-height: 44px; }
 body[data-reading-mode="passages"] .passage-workspace { padding-top: 0; }
 body[data-reading-mode="passages"] .passage-browse { position: relative; display: grid; grid-template-columns: auto minmax(0,1fr) auto; align-items: center; column-gap: 12px; min-height: 44px; padding: 0; border-bottom: 0; }
 body[data-reading-mode="passages"] .passage-browse-heading { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
@@ -763,12 +763,12 @@ body[data-reading-mode="passages"] #passage-time-label { grid-column: 1; grid-ro
 body[data-reading-mode="passages"] #passage-total-time { grid-column: 3; grid-row: 1; font-size: 11px; font-variant-numeric: tabular-nums; color: var(--muted); }
 body[data-reading-mode="passages"] .passage:first-child { padding-top: 8px; }
 @media (max-width:650px) {
- body[data-reading-mode="passages"][data-workspace="read"] > .shell > main > header { min-height: 64px; padding: 10px 0; gap: 10px; }
+ body[data-header-compact="true"][data-workspace="read"] > .shell > main > header { min-height: 64px; padding: 10px 0; gap: 10px; }
  #reader-title-slot #title { font-size: 20px; line-height: 1.4; letter-spacing: -.25px; }
- body[data-reading-mode="passages"] .reading-utility.is-compact { column-gap: 10px; }
+ body[data-header-compact="true"] .reading-utility.is-compact { column-gap: 10px; }
  .reading-utility.is-compact .passage-toolbar { gap: 10px; }
  .reading-utility.is-compact #keyboard-help-open, .reading-utility.is-compact .passage-toolbar button, .reading-utility.is-compact .media-disclosure, .reading-info > summary { font-size: 11px; }
- body[data-reading-mode="passages"] .reading-modes { gap: 20px; }
+ body[data-header-compact="true"] .reading-modes { gap: 20px; }
  /* Anchor the panel to the full utility row, not the offset settings trigger. */
  .reading-utility.is-compact .reading-info { position: static; }
  .reading-utility.is-compact .reading-info-panel { width: min(460px,100%); }
@@ -781,8 +781,8 @@ body[data-reading-mode="passages"] .passage:first-child { padding-top: 8px; }
 /* At the narrowest phone widths the utility controls wrap onto two rows.
    Trim only surrounding chrome, preserving the two-line title and 44px targets. */
 @media (max-width:360px) {
- body[data-reading-mode="passages"] aside { padding-bottom: 4px; }
- body[data-reading-mode="passages"][data-workspace="read"] > .shell > main > header { padding: 4px 0; }
+ body[data-header-compact="true"] aside { padding-bottom: 4px; }
+ body[data-header-compact="true"][data-workspace="read"] > .shell > main > header { padding: 4px 0; }
 }
 
 
@@ -1112,3 +1112,16 @@ body[data-media-docked="true"] .reading-feedback:has(#save-warning-home .has-war
 /* Stable width keeps save feedback from moving passage controls or text. */
 .passage-actions .passage-bookmark { min-width: 8em; min-height: 44px; text-align: left; }
 .passage-bookmark[aria-pressed="true"] { color: var(--accent); }
+
+/* Short source-first phone reading uses shared header chrome, not passage tools
+   or the passage-only media overlay. All source controls remain in one panel. */
+body[data-short-reading-compact="true"] .reading-utility .episode-media { flex: 0 0 100%; }
+body[data-short-reading-compact="true"] .transcript-tools-disclosure { margin: 0; padding: 0; border-bottom: 1px solid var(--line); }
+.transcript-tools-disclosure > summary { min-height: 44px; display: flex; align-items: center; font-size: 12px; padding: 6px 0; }
+.transcript-tools-disclosure[open] > summary { color: var(--accent); }
+.transcript-tools-disclosure.is-compact #transcript-reading-tools { padding-bottom: 12px; }
+body[data-short-reading-compact="true"] .reader-options { margin-top: 0; }
+body[data-short-reading-compact="true"] #language-panel { margin-top: 8px; }
+
+.transcript-tools-disclosure { margin: 0; padding: 0; border: 0; }
+.transcript-tools-disclosure.is-compact > summary { overflow-wrap: anywhere; }

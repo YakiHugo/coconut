@@ -107,7 +107,7 @@ function closePassageQuestion({retire=false,restoreFocus=false,detour=false}={})
  if(retire||!detour){passageQuestionReturn=null;$('passage-question-return').hidden=true;}
  if(restoreFocus&&owner?.doc===active()){
   if(owner.originMode==='passages'&&readingMode!=='passages')openPassage(owner.input.scope.passage_ids[0]);
-  if(readingMode!=='passages'){const row=[...$('transcript').querySelectorAll('.segment')].find(node=>node.dataset.segmentId===owner.returnCueId);(row||$('search')).focus({preventScroll:true});return;}
+  if(readingMode!=='passages'){const row=[...$('transcript').querySelectorAll('.segment')].find(node=>node.dataset.segmentId===owner.returnCueId);if(row)row.focus({preventScroll:true});else focusReadingSearch({preventScroll:true});return;}
   const anchor=CoconutPassages.locate(readingPassages(owner.doc),owner.input.scope.passage_ids[0])?.cues[0].id;
   const section=[...$('passage-body').querySelectorAll('.passage')].find(node=>node.dataset.firstCueId===anchor);
   (section?.querySelector('.passage-ask')||$('mode-passages')).focus({preventScroll:true});
@@ -177,7 +177,7 @@ function passageCitation(answer,id){
  goToSegment(id);$('passage-question-return').hidden=false;
 }
 $('return-passage-question').onclick=()=>{const owner=passageQuestionReturn;if(owner?.doc===active())showPassageQuestion(owner);};
-$('dismiss-passage-question-return').onclick=()=>{passageQuestionReturn=null;$('passage-question-return').hidden=true;const row=[...$('transcript').querySelectorAll('.segment')].find(node=>node.dataset.segmentId===selected);(row||$('search')).focus();};
+$('dismiss-passage-question-return').onclick=()=>{passageQuestionReturn=null;$('passage-question-return').hidden=true;const row=[...$('transcript').querySelectorAll('.segment')].find(node=>node.dataset.segmentId===selected);if(row)row.focus();else focusReadingSearch();};
 
 function questionSources(doc){
  if(passageQuestion)return passageQuestion.doc===doc&&passageScopeCurrent()?passageQuestion.input.segments.map(cue=>({...cue})):[];

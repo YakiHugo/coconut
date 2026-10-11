@@ -44,7 +44,8 @@ try{
   }
   await page.setViewportSize({width:1280,height:720});
  }
- await page.locator('.podcast-episode button').first().click();await page.locator('#summary-workspace').waitFor({state:'visible'});
+ await page.locator('.podcast-episode button').first().click();await page.locator('#transcript-layout').waitFor({state:'visible'});
+ check('short_publisher_source_opens_for_reading',await page.locator('#mode-transcript').getAttribute('aria-pressed')==='true');
  check('no_fabricated_summary',await page.locator('#summary-state').textContent()==='未生成');check('no_automatic_media_download',calls.join(',')==='discover,import');
  stage='open_transcript_source_media';await page.locator('#mode-transcript').click();
  check('source_media_stays_collapsed_until_requested',await page.locator('#transcript-layout').isVisible()&&await page.locator('#episode-media').isHidden()&&await page.locator('#toggle-reader-media').isVisible());

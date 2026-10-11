@@ -25,7 +25,7 @@ try{
  });
  const page=await context.newPage();const errors=[];page.on('pageerror',error=>errors.push(error.message));
  await page.goto(origin);await page.evaluate(({KEY,documents})=>localStorage.setItem(KEY,JSON.stringify({documents,active:'a'})),{KEY,documents:[fixture('a'),fixture('b')]});await page.reload();
- stage='debounced pending edits';await page.locator('#summary-open-transcript').click();await page.locator('.note-button').first().click();
+ stage='debounced pending edits';await page.locator('#mode-transcript').click();await page.locator('.note-button').first().click();
  const disk=await page.evaluate(key=>localStorage.getItem(key),KEY);
  await page.evaluate(()=>{saveProof.hold=true;saveProof.captures=0;});await page.locator('#note').fill('First pending');await page.locator('#note').fill('Second pending');await page.locator('#note').fill('Newest pending');
  assert.equal(await page.locator('#save-status').getAttribute('data-state'),'pending');assert.equal(await page.locator('#note').inputValue(),'Newest pending');
@@ -33,7 +33,7 @@ try{
  const guarded=await page.evaluate(()=>{const event=new Event('beforeunload',{cancelable:true});window.dispatchEvent(event);return event.defaultPrevented;});assert.equal(guarded,true);
  await page.evaluate(()=>saveProof.writes[0].commit());await page.waitForFunction(()=>document.getElementById('save-status').dataset.state==='saved');
  await page.reload();assert.equal(await page.evaluate(key=>JSON.parse(localStorage.getItem(key)).documents[0].notes.one,KEY),'Newest pending');
- stage='actual quota failure, complete rescue and retry';await page.locator('#summary-open-transcript').click();await page.locator('.note-button').first().click();
+ stage='actual quota failure, complete rescue and retry';await page.locator('#mode-transcript').click();await page.locator('.note-button').first().click();
  await page.evaluate(()=>{const original=Storage.prototype.setItem;window.restoreSaveStorage=()=>Storage.prototype.setItem=original;Storage.prototype.setItem=function(key,value){if(this===localStorage&&key==='coconut-reader-v1')throw new DOMException('Authored quota','QuotaExceededError');return original.call(this,key,value);};});
  await page.locator('#note').fill('Recover this complete document');await page.waitForFunction(()=>document.getElementById('save-status').dataset.state==='failed');
  assert.match(await page.locator('#save-status').textContent(),/空间不足/);assert.equal(await page.locator('#retry-save').isVisible(),true);
@@ -50,7 +50,7 @@ try{
  await page.evaluate(()=>{saveProof.hold=true;});await page.locator('#undo-removal').click();
  assert.equal(await page.locator('.library-entry[data-document-key="a"] .library-open').isDisabled(),true);
  if(!await page.locator('#library').isVisible())await page.locator('#toggle-library').click();
- await page.locator('.library-entry[data-document-key="b"] .library-open').click();await page.locator('#summary-open-transcript').click();await page.locator('.note-button').first().click();await page.locator('#note').fill('B remains editable while undo waits');
+ await page.locator('.library-entry[data-document-key="b"] .library-open').click();await page.locator('#mode-transcript').click();await page.locator('.note-button').first().click();await page.locator('#note').fill('B remains editable while undo waits');
  await page.evaluate(()=>saveProof.writes[0].fail());await page.waitForFunction(()=>!document.querySelector('.library-entry[data-document-key="a"]'));
  assert.equal(await page.locator('#note').inputValue(),'B remains editable while undo waits');assert.equal(await page.locator('#removal-recovery').isVisible(),true);
  await page.evaluate(()=>{saveProof.hold=false;for(const write of saveProof.writes.slice(1))write.commit();return saveProof.store.retry();});

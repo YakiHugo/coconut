@@ -8,7 +8,7 @@
 <meta name="theme-color" content="#faf9f7">
 <link rel="icon" type="image/png" href="coconut-mark.png">
 <script src="appearance.js?v=86ea922669"></script>
-<link rel="stylesheet" href="style.css?v=ee45024117">
+<link rel="stylesheet" href="style.css?v=f3b44a0b37">
 <script src="summary.js?v=580ffdad1e" defer></script>
 <script src="core.js?v=a3599346ac" defer>
 </script>
@@ -18,9 +18,9 @@
 <script src="library-store.js?v=e76ded9456" defer></script>
 <script src="indexeddb-document-adapter.js?v=65c0c5a814" defer></script>
 <script src="storage-provider.js?v=1cb898e984" defer></script>
-<script src="app.js?v=ef55599422" type="text/coconut-pending" data-reader-script>
+<script src="app.js?v=11051ba952" type="text/coconut-pending" data-reader-script>
 </script>
-<script src="language.js?v=c8e5b0d999" type="text/coconut-pending" data-reader-script></script>
+<script src="language.js?v=492470a705" type="text/coconut-pending" data-reader-script></script>
 <script src="translation-review.js?v=ef64ceb824" type="text/coconut-pending" data-reader-script></script>
 <script src="podcasts.js?v=d3db57978f" type="text/coconut-pending" data-reader-script></script>
 <script src="jobs.js?v=cad9018e85" type="text/coconut-pending" data-reader-script>
@@ -234,6 +234,7 @@ cd coconut
 <label>查找时间书签<input id="audio-bookmark-search" type="search" placeholder="笔记关键词或 12:34"></label><p id="audio-bookmark-results" class="hint" role="status"></p>
 <p id="audio-project-status" class="hint" role="status"></p><div id="audio-bookmarks" aria-label="已保存的时间书签"></div>
 </section>
+<details id="transcript-tools-disclosure" class="transcript-tools-disclosure" open><summary id="transcript-tools-label" hidden>搜索与筛选</summary>
 <div id="transcript-reading-tools">
 <div class="transcript-navigation"><label for="reading-jump">浏览全文</label><select id="reading-jump" aria-label="按片段位置浏览全文"></select><span id="reading-page-status" class="hint"></span></div>
 <div id="bilingual-readiness" class="bilingual-readiness" hidden><p id="bilingual-status" class="hint" role="status"></p><button id="prepare-bilingual" type="button">翻译选项</button></div>
@@ -244,7 +245,7 @@ cd coconut
 <p id="search-help" class="hint">支持连贯阅读中的跨片段短语与各语言有效译文；结果与 AI 筛选按命中的原片段计数。书架全文查找包含原文与笔记，不包含译文。</p>
 <label id="speaker-filter-control" hidden>说话人标签<select id="speaker-filter"><option value="all">全部说话人</option></select></label>
 <div class="reading-controls"><div role="group" aria-label="阅读视图"><button id="filter-all" aria-pressed="true">全文</button><button id="filter-excerpts" aria-pressed="false">整段摘录 <span id="excerpt-count">0</span></button><button id="filter-notes" aria-pressed="false" title="本篇全部非空片段笔记；不含项目笔记和时间书签，不受搜索筛选影响">片段笔记 <span id="note-count">0</span></button></div><button id="resume" hidden></button></div><p id="search-status" class="hint" role="status"></p><div id="search-navigation" hidden><button id="previous-match" type="button">上一匹配段</button><span id="match-position" class="hint" role="status"></span><button id="next-match" type="button">下一匹配段</button></div><button id="clear-search" hidden>清除筛选，返回全文</button>
-</div>
+</div></details>
 </div>
 </section>
 <div id="reader-options" class="reader-options">

@@ -1,3 +1,4 @@
+import {openTranscriptTools} from './helpers/reading-tools-browser.mjs';
 /** CI-only Chromium acceptance. Authored transcript/history, browser-local storage
  * and real downloads only. No provider, CLI, account, media or external requests. */
 import assert from 'node:assert/strict';
@@ -92,7 +93,7 @@ try{
  }
  assert.deepEqual((await active(page)).ai_answers,savedHistory);check('viewing_evidence_never_changes_saved_history',true);
  stage='complete_downloads';
- await page.locator('#ai-history-oldest').click();await page.locator('#search').fill('no authored source matches this filter');
+ await page.locator('#ai-history-oldest').click();await openTranscriptTools(page);await page.locator('#search').fill('no authored source matches this filter');
  const markdownFile=await download(page,'#export-ai-reading','history.ai-reading.md'),markdown=await fs.readFile(markdownFile,'utf8');
  check('real_markdown_download_keeps_all_245_records_independent_of_page_and_filter',(markdown.match(/^## 回答 /gm)||[]).length===245&&markdown.includes('Authored answer 1\n')&&markdown.includes('Authored answer 245'));
  check('real_markdown_keeps_removed_historical_source',markdown.includes('Historical source that no longer exists')&&markdown.includes('原片段已移除'));

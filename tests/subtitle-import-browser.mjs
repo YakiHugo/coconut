@@ -1,3 +1,4 @@
+import {openTranscriptTools} from './helpers/reading-tools-browser.mjs';
 /** CI-only Chromium proof: ordinary SRT/VTT chooser, reading, notes and downloads.
  * Only original authored fixtures, static assets and browser-local data are used. */
 import assert from 'node:assert/strict';
@@ -38,7 +39,9 @@ try{
   if(!await page.locator('#export-menu').evaluate(node=>node.open))await page.locator('#export-menu > summary').click();
   const [item]=await Promise.all([page.waitForEvent('download'),page.locator(selector).click()]);
   const stream=await item.createReadStream(),chunks=[];for await(const chunk of stream)chunks.push(chunk);
-  assert.equal(await item.failure(),null);return {name:item.suggestedFilename(),buffer:Buffer.concat(chunks)};
+  assert.equal(await item.failure(),null);
+  if(await page.locator('#export-menu').evaluate(node=>node.open))await page.locator('#export-menu > summary').click();
+  return {name:item.suggestedFilename(),buffer:Buffer.concat(chunks)};
  }
  for(const fixture of subtitleFixtures){
   const label=fixture.format,width=label==='srt'?1360:390,page=await newPage(width);
@@ -52,7 +55,7 @@ try{
   check(label+'_reading_fits_viewport',await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
   if(label==='vtt') {
    check('vtt_native_import_preserves_voice', (await active(page)).segments[0].speaker==='Narrator');
-   await page.locator('#speaker-filter').selectOption(JSON.stringify('Narrator'));
+   await openTranscriptTools(page);await page.locator('#speaker-filter').selectOption(JSON.stringify('Narrator'));
    check('vtt_voice_filter_selects_only_named_cue',await page.locator('.segment').count()===1&&(await page.locator('.words').textContent())===expectedCues[0].text);
    await page.locator('#speaker-filter').selectOption('all');
   }
@@ -76,7 +79,7 @@ try{
   check(label+'_actual_json_download_restores_notes_in_clean_browser',await restored.locator('.saved-note').textContent()===note);
   stage=label+'_subtitle_download_reimport';
   // Export the entire document despite a visible one-cue search result.
-  await page.locator('#search').fill('Corrected authored question');check(label+'_filtered_reading_has_one_cue',await page.locator('.segment').count()===1);
+  await openTranscriptTools(page);await page.locator('#search').fill('Corrected authored question');check(label+'_filtered_reading_has_one_cue',await page.locator('.segment').count()===1);
   if(!await page.locator('#export-menu').evaluate(node=>node.open))await page.locator('#export-menu > summary').click();
   await page.locator('#subtitle-format').selectOption(label);await page.locator('#subtitle-bilingual').uncheck();
   const subtitle=await download(page,'#export-subtitles'),text=subtitle.buffer.toString('utf8');

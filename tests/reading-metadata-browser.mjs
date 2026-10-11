@@ -1,3 +1,4 @@
+import {openTranscriptTools} from './helpers/reading-tools-browser.mjs';
 /** CI-only Chromium proof with authored fixtures, native input and real downloads.
  * No external source, AI request, browser installation or local execution needed. */
 import assert from 'node:assert/strict';
@@ -60,7 +61,7 @@ try {
   check(label + '_json_preserves_raw_unicode_and_timing', true);
   const markdown = await download(page, '#export-notebook');
   check(label + '_markdown_matches_counts', markdown.includes('2 个片段') && (markdown.match(/我的笔记：/g) || []).length === 1 && !markdown.includes(blankNote));
-  await page.locator('#mode-transcript').click(); await page.locator('#filter-notes').click();
+  await page.locator('#mode-transcript').click(); await openTranscriptTools(page); await page.locator('#filter-notes').click();
   assert.equal(await page.locator('#transcript .segment').count(), 1);
   await page.locator('.note-button').click(); stage = label + '_typing';
   const typedBlank = blankNote.replace(/\r\n/g, '\n');

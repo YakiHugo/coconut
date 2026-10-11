@@ -1134,7 +1134,9 @@ test('Chinese reading canvas keeps essential content visible and secondary tools
   await $('sample').onclick();
   assert.equal($('export-menu').hidden,false);
   for(const id of ['export-menu','reading-settings','language-panel','local-setup'])assert.equal($(id).open,false);
-  for(const id of ['title','provenance','search','filter-all','transcript'])assert.equal($(id).closest('details'),null,id+' must remain on the main canvas');
+  for(const id of ['title','provenance','transcript'])assert.equal($(id).closest('details'),null,id+' must remain on the main canvas');
+  for(const id of ['search','filter-all'])assert.equal($(id).closest('details').id,'transcript-tools-disclosure');
+  assert.equal($('transcript-tools-disclosure').open,true,'the demo keeps its existing visible tools behavior');assert.equal($('transcript-tools-label').hidden,true);
   for(const id of ['document-details','source','reading-layout','reading-time'])assert.equal($(id).closest('details').id,'reading-settings');
   for(const id of ['export','export-notebook','export-subtitles','subtitle-format','subtitle-bilingual'])assert.equal($(id).closest('details').id,'export-menu');
   assert.match($('search-status').textContent,/没有对应音视频/);
@@ -1217,11 +1219,11 @@ test('successful export clicks keep the disclosure and keyboard focus available'
  }finally{await w.happyDOM.close();}
 });
 
-test('summary is the first reading mode and never relabels saved questions as summaries',async()=>{
+test('short sources open for reading and never relabel saved questions as summaries',async()=>{
  const w=setup();try{
   await importDocument(w,{title:'Podcast',segments:[{id:'one',start:0,end:10,text:'Original statement'}],ai_answers:[{question:'A question',answer:'A question answer',citations:['one']}]});
   const $=id=>w.document.getElementById(id);
-  assert.equal($('summary-workspace').hidden,false);assert.equal($('transcript-layout').hidden,true);
+  assert.equal($('summary-workspace').hidden,true);assert.equal($('transcript-layout').hidden,false);
   assert.equal($('summary-state').textContent,'未生成');assert.equal($('summary-body').textContent,'');
   $('summary-open-transcript').click();assert.equal($('transcript-layout').hidden,false);assert.equal($('summary-workspace').hidden,true);
   $('mode-summary').click();assert.equal($('summary-workspace').hidden,false);
@@ -1286,7 +1288,7 @@ test('reselecting a playing document pauses hidden media and playlist inputs are
   await $('sample').onclick();$('attach-reader-media').click();
   Object.defineProperty($('reader-media-file'),'files',{configurable:true,value:[{name:'episode.mp3',type:'audio/mpeg',size:10,slice:()=>({text:async()=> 'ID3 audio'})}]});await $('reader-media-file').onchange();
   const player=w.document.querySelector('audio');let pauses=0;player.pause=()=>pauses++;player.play=async()=>{};Object.defineProperty(player,'duration',{value:68,configurable:true});w.document.querySelector('.repeat-button').click();assert.equal($('stop-repeat').hidden,false);
-  $('library').querySelector('button').click();assert.equal($('summary-workspace').hidden,false);assert.ok(pauses>0);assert.equal($('stop-repeat').hidden,true);
+  $('library').querySelector('button').click();assert.equal($('summary-workspace').hidden,true);assert.equal($('transcript-layout').hidden,false);assert.ok(pauses>0);assert.equal($('stop-repeat').hidden,true);
   $('attach-reader-media').click();Object.defineProperty($('reader-media-file'),'files',{configurable:true,value:[{name:'disguised.mp3',type:'audio/mpeg',size:10,slice:()=>({text:async()=> '#EXTM3U\nhttps://example.org/remote.ts'})}]});await $('reader-media-file').onchange();
   assert.equal(objects,1);assert.match($('notice').textContent,/播放列表/);assert.equal(w.document.querySelector('audio'),player);
  }finally{await w.happyDOM.close();}
