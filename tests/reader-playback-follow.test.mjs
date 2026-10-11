@@ -27,6 +27,8 @@ async function add($,doc){
 const fixture={title:'长标题的原声阅读 · 这是自己的测试资料',language:'en',source_media:{job_id:'a'.repeat(32),kind:'audio'},segments:Array.from({length:151},(_,i)=>({id:'cue-'+i,start:i*4,end:i*4+4,text:'Original authored cue '+i}))};
 async function media(env){
  const {w,$}=env;await add($,fixture);w.dispatchEvent(new w.Event('coconut-worker-ready'));$('mode-transcript').click();
+ // Explicit mode navigation can scroll to its retained cue; measure only later playback work.
+ env.scrolls.length=0;
  const player=$('source-media').querySelector('audio');let duration=700,paused=true,error=null,played=0,pauses=0,headerBottom=-20;
  Object.defineProperties(player,{duration:{configurable:true,get:()=>duration},paused:{configurable:true,get:()=>paused},error:{configurable:true,get:()=>error}});
  player.play=async()=>{played++;paused=false;player.dispatchEvent(new w.Event('play'));};
