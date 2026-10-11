@@ -1178,3 +1178,8 @@ body[data-short-reading-compact="true"] #language-panel { margin-top: 8px; }
 .chapter-entry button,#chapter-return button { min-height:44px;margin:.25rem; }
 .chapter-target { outline:2px solid var(--accent);outline-offset:3px;scroll-margin-block:20px; }
 #chapter-cue-preview { white-space:pre-wrap;overflow-wrap:anywhere; }
+
+#quotation-pair{border-top:1px solid var(--edge);padding-top:.75rem;margin-top:.75rem}
+.quotation-pair-check{display:flex;align-items:flex-start;gap:8px;min-height:44px;margin:.5rem 0;line-height:1.5}
+.quotation-pair-check input{flex:none;width:20px;height:20px;margin:3px 0}
+#quotation-pair-status{font-size:12px}
