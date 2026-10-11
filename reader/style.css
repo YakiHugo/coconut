@@ -1082,4 +1082,12 @@ body[data-media-docked="true"] .reading-feedback:has(#save-warning-home .has-war
 #transcript-drop-status:empty { display: none; }
 #transcript-drop-status { color: var(--tone-error, #9a3e28); overflow-wrap: anywhere; }
 
-.quotation-dialog{width:min(42rem,calc(100vw - 2rem));max-height:calc(100dvh - 2rem);overflow:auto}.quotation-dialog textarea{display:block;box-sizing:border-box;width:100%;margin:.5rem 0 1rem;white-space:pre-wrap}.quotation-dialog button{min-height:44px;min-width:44px;margin:.25rem .5rem .25rem 0}
+.quotation-dialog{box-sizing:border-box;width:min(42rem,calc(100vw - 2rem));max-height:calc(100dvh - 2rem);padding:20px;overflow:auto}
+.quotation-dialog h2{margin-bottom:.75rem}
+.quotation-dialog textarea{display:block;box-sizing:border-box;width:100%;height:clamp(8rem,32dvh,16rem);max-height:40dvh;min-height:6rem;margin:.5rem 0;white-space:pre-wrap}
+.quotation-dialog button{min-height:44px;min-width:44px;margin:0}
+.quotation-actions{position:sticky;bottom:-20px;display:flex;flex-wrap:wrap;gap:8px;padding:8px 0;background:var(--surface,#fff)}
+.quotation-actions>button{flex:1 1 auto}
+#quotation-reselect{flex-basis:100%;font-size:13px;background:transparent}
+#quotation-status{margin:.5rem 0;font-size:12px}
+@media(max-width:480px){.quotation-dialog{padding:16px}.quotation-actions{bottom:-16px}}

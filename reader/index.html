@@ -8,12 +8,12 @@
 <meta name="theme-color" content="#faf9f7">
 <link rel="icon" type="image/png" href="coconut-mark.png">
 <script src="appearance.js?v=86ea922669"></script>
-<link rel="stylesheet" href="style.css?v=0233a76eae">
+<link rel="stylesheet" href="style.css?v=f8949e9722">
 <script src="summary.js?v=580ffdad1e" defer></script>
 <script src="core.js?v=44add0e7aa" defer>
 </script>
 <script src="passages.js?v=0dca7d6c63" defer></script>
-<script src="quotation.js?v=f9d79bb4df" defer></script>
+<script src="quotation.js?v=eb13389e90" defer></script>
 <script src="passage-playback.js?v=162dbb3695" defer></script>
 <script src="library-store.js?v=e76ded9456" defer></script>
 <script src="indexeddb-document-adapter.js?v=65c0c5a814" defer></script>
@@ -425,12 +425,10 @@ cd coconut
 </dialog>
 <dialog id="quotation-dialog" class="quotation-dialog" aria-labelledby="quotation-heading">
 <h2 id="quotation-heading">引用原文</h2>
-<p class="hint">选择同一段中的连续原文。只复制你选中的文字与出处，不保存摘录，也不发送给 AI。时间按文字稿片段定位。</p>
-<label for="quotation-source">只读原文：可用 Shift + 左右方向键选择文字</label><textarea id="quotation-source" readonly rows="6"></textarea>
-<button id="quotation-preview-selection" type="button">预览所选引用</button>
+<div id="quotation-result" hidden><label for="quotation-preview">引用与出处</label><textarea id="quotation-preview" readonly rows="6" aria-describedby="quotation-status"></textarea></div>
+<div id="quotation-selector"><label for="quotation-source">选择原文 · 可用 Shift + 左右方向键</label><textarea id="quotation-source" readonly rows="6"></textarea><button id="quotation-preview-selection" type="button">预览所选引用</button></div>
 <p id="quotation-status" role="status"></p>
-<div id="quotation-result" hidden><label for="quotation-preview">完整引用与出处（可全选后手动复制）</label><textarea id="quotation-preview" readonly rows="9"></textarea><button id="quotation-copy" type="button">复制带出处的引用</button></div>
-<button id="quotation-close" type="button">返回阅读</button>
+<div class="quotation-actions"><button id="quotation-copy" type="button" hidden disabled>复制引用与出处</button><button id="quotation-close" type="button">返回阅读</button><button id="quotation-reselect" type="button" aria-controls="quotation-selector" hidden>重新选择原文</button></div>
 </dialog>
 </body>
 </html>
