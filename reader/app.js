@@ -482,7 +482,7 @@ async function add(doc, canCommit = null, reuseAudioSource = false, lifecycleRev
   return {...await receipt,duplicate};
  }
 	selectActiveDocument(key);
- passageReturn=null;passageDocumentKey=key;passageAnchor=active()?.segments[0]?.id||null;mediaExpandedKey=null;
+ passageReturn=null;passageDocumentKey=null;mediaExpandedKey=null;
  setReadingMode(prefersPassageReading(active())?"passages":"summary");
  searchFocusedId=null;
 	$("search").value = "";
@@ -493,6 +493,7 @@ async function add(doc, canCommit = null, reuseAudioSource = false, lifecycleRev
 	const inserted=active(),mediaRevision=mediaSelectionRevision(key),selectionRevision=activeSelectionRevision,receipt=commitDocument(inserted);
  onActivate?.({identity:inserted,selectionRevision,navigationRevision:localImportRevision});
 	render();
+ resumeOpenedDocument(inserted,null);
 	return {...await receipt,mediaRevision,selectionRevision};
 }
 function showWorkspace(next) {
@@ -602,6 +603,15 @@ function goToSegment(id,contextDetour=false,preservePassageReturn=false) {
  // the requested evidence is readable instead of animating past the AI tools.
  row?.scrollIntoView?.({block: alignment, behavior: contextDetour ? "auto" : "smooth"});
 	row?.focus({preventScroll: true});
+}
+// Explicit opens share one resume policy. Run synchronously with activation,
+// never after a save receipt that may outlive newer navigation. This only moves
+// the reading view: it neither changes the saved position nor starts playback.
+function resumeOpenedDocument(doc,fallbackFocus='title'){
+ if(active()!==doc)return;
+ const bookmark=doc.segments.find(cue=>cue.id===doc.readingPosition);
+ if(bookmark){if(prefersPassageReading(doc))openPassage(bookmark.id);else goToSegment(bookmark.id);}
+ else if(fallbackFocus){$('title').scrollIntoView?.({block:'start'});$(fallbackFocus).focus({preventScroll:true});}
 }
 // Ordinary library navigation, active removal, and active undo share ownership teardown.
 function resetReaderForDocumentNavigation(){
@@ -852,10 +862,8 @@ function createLibraryCard(d){
   resetReaderForDocumentNavigation();selectActiveDocument(d.key);
   setReadingMode(prefersPassageReading(d)?'passages':'summary');
   $('toggle-library').setAttribute('aria-expanded','false');showWorkspace('read');render();
-  const bookmark=d.segments.find(s=>s.id===d.readingPosition);
   if(hit)openLibraryHit(hit);
-  else if(bookmark){if(prefersPassageReading(d))openPassage(bookmark.id);else goToSegment(bookmark.id);}
-  else{$('title').scrollIntoView?.({block:'start'});$('title').focus({preventScroll:true});}
+  else resumeOpenedDocument(d);
  };
  open.onclick=()=>openDocument();
  const remove=el('button','library-remove','移除…');remove.type='button';remove.onclick=()=>requestLibraryRemoval(d);
@@ -1577,9 +1585,7 @@ function openTranscriptImportResult(item){
  markDocumentOpened(doc);resetReaderForDocumentNavigation();selectActiveDocument(doc.key);
  setReadingMode(prefersPassageReading(doc)?'passages':'summary');
  $('toggle-library').setAttribute('aria-expanded','false');showWorkspace('read');render();
- const bookmark=doc.segments.find(cue=>cue.id===doc.readingPosition);
- if(bookmark){if(prefersPassageReading(doc))openPassage(bookmark.id);else goToSegment(bookmark.id);}
- else{$('title').scrollIntoView?.({block:'start'});$('reader-workspace').focus({preventScroll:true});}
+ resumeOpenedDocument(doc,'reader-workspace');
 }
 async function importTranscriptFiles(files){
  const revision=cancelLocalImports('file'),lifecycleRevision=documentLifecycleRevision;

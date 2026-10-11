@@ -261,3 +261,57 @@ test('uninspectable dropped entries reject safely before any file reads',async()
   assert.equal(reads,0);assert.match(f.$('transcript-drop-status').textContent,/未导入任何文件.*无法检查/);assert.equal(f.stored().documents.length,0);
  }finally{await f.w.happyDOM.close();}
 });
+
+function resumedTranscript({bookmark=900,cues=1000}={}){
+ const segments=Array.from({length:cues},(_,index)=>({id:'resume-'+index,start:index*2,end:index*2+1,text:'Authored saved reading sentence '+index+'.'}));
+ return {title:'Saved reading',language:'en',segments,notes:{},...(bookmark===null?{}:{readingPosition:'resume-'+bookmark})};
+}
+function assertResume(f,id){
+ const cue=f.$('passage-body').querySelector(`[data-cue-id="${id}"]`);
+ assert.ok(cue,'saved cue is mounted in the passage window');
+ assert.equal(f.w.document.activeElement,cue.closest('.passage'),'saved passage receives focus');
+ assert.equal(f.w.document.body.dataset.readingMode,'passages');
+ assert.equal(f.w.multiTest.active.readingPosition,id,'opening does not rewrite the saved cue');
+}
+for(const entry of ['picker','drop','batch'])test(`${entry} saved JSON opens its late reading cue just like the library card without playback`,async()=>{
+ const f=setup();let plays=0;f.w.HTMLMediaElement.prototype.play=function(){plays++;return Promise.resolve();};
+ try{
+  const saved=resumedTranscript(),input=file('Saved reading',{text:JSON.stringify(saved)});
+  if(entry==='batch'){
+   await f.choose([input,file('Other')]);assert.equal(f.w.document.body.dataset.workspace,'add');
+   f.rows()[0].querySelector('button').click();
+  }else await f[entry==='drop'?'drop':'choose']([input]);
+  assertResume(f,'resume-900');
+  const first=f.$('passage-body').firstElementChild.dataset.firstCueId;
+  const last=f.$('passage-body').lastElementChild.dataset.firstCueId;
+  [...f.$('library').querySelectorAll('.library-open')].find(button=>button.querySelector('.library-title').textContent==='Saved reading').click();
+  assertResume(f,'resume-900');
+  assert.equal(f.$('passage-body').firstElementChild.dataset.firstCueId,first);
+  assert.equal(f.$('passage-body').lastElementChild.dataset.firstCueId,last);
+  assert.equal(plays,0);assert.equal(f.stored().documents.find(d=>d.title==='Saved reading').readingPosition,'resume-900');
+ }finally{await f.w.happyDOM.close();}
+});
+test('single JSON import resumes short transcripts in the cue view and preserves unbookmarked drafts',async()=>{
+ const f=setup();try{
+  await f.choose([file('Short',{text:JSON.stringify(resumedTranscript({bookmark:2,cues:4}))})]);
+  assert.equal(f.w.document.body.dataset.readingMode,'transcript');
+  assert.equal(f.w.document.activeElement.dataset.segmentId,'resume-2');
+  for(const bookmark of [null,900]){
+   await f.choose([file('Draft',{text:JSON.stringify({...resumedTranscript({bookmark,cues:4}),title:'Draft '+bookmark})})]);
+   assert.equal(f.w.document.body.dataset.readingMode,'summary','missing/invalid reading positions retain the draft landing');
+   assert.equal(f.w.multiTest.active.readingPosition,undefined);
+  }
+ }finally{await f.w.happyDOM.close();}
+});
+test('single import resumes before its receipt and a late receipt cannot reclaim newer reading or focus',async()=>{
+ const f=setup();let pending;try{
+  await f.choose([file('Existing')]);f.saves.hold();
+  pending=f.choose([file('Saved reading',{text:JSON.stringify(resumedTranscript())})]);
+  await until(()=>f.saves.writes.length===1);assertResume(f,'resume-900');
+  [...f.$('library').querySelectorAll('.library-open')].find(button=>button.querySelector('.library-title').textContent==='Existing').click();
+  f.$('mode-transcript').click();f.w.document.querySelector('.note-button').click();f.$('note').focus();
+  f.saves.hold(false);f.saves.writes[0].commit();await pending;
+  assert.equal(f.$('title').textContent,'Existing');assert.equal(f.w.document.activeElement,f.$('note'));
+  assert.equal(f.w.document.body.dataset.readingMode,'transcript');
+ }finally{f.saves.hold(false);for(const write of f.saves.writes)write.commit();await pending;await f.w.happyDOM.close();}
+});

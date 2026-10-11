@@ -48,6 +48,27 @@ async function importFixture(page, fixture, name = 'authored-fragmented-reading.
   await page.waitForFunction(title => document.querySelector('#title').textContent === title && !document.querySelector('#passage-workspace').hidden, fixture.title);
   await settled(page);
 }
+// Bookmarked imports intentionally resume. Check that landing before choosing
+// the first source through the existing overview, for the layout/listen tests.
+async function resumeThenChooseFirst(page, fixture, label) {
+  const resumed = await page.evaluate(id => {
+    const cue = [...document.querySelectorAll('.passage-original .passage-cue')].find(node => node.dataset.cueId === id);
+    const passage = cue?.closest('.passage'), rect = passage?.getBoundingClientRect();
+    return {id, focused: !!passage?.contains(document.activeElement), top: rect?.top, bottom: rect?.bottom, viewport: innerHeight};
+  }, fixture.readingPosition);
+  geometry.push({label: label + '-import-resume', ...resumed});
+  check(label + '_import_resumes_saved_passage_and_focus', resumed.focused && resumed.top >= -1 && resumed.top < resumed.viewport && resumed.bottom > 0 && (await stored(page)).readingPosition === fixture.readingPosition);
+  await capture(page, label + '-import-resume');
+  await page.locator('#mode-summary').click();
+  await page.locator('.overview-segment').first().click(); await settled(page);
+  check(label + '_explicit_first_source_navigation_preserves_saved_bookmark', await page.locator('.passage').first().evaluate(node => node.contains(document.activeElement)) && (await stored(page)).readingPosition === fixture.readingPosition);
+  // Overview navigation aligns the passage, intentionally leaving the header
+  // above it. Return to document start with the user's keyboard before testing
+  // header controls; never repair the scroll position from page.evaluate.
+  check(label + '_document_start_key_targets_focused_reading_passage', await page.evaluate(() => document.activeElement?.matches('.passage') && !document.activeElement.isContentEditable));
+  await page.keyboard.press('Control+Home'); await page.waitForFunction(() => scrollY === 0); await settled(page);
+  check(label + '_keyboard_document_start_reveals_header_without_changing_bookmark', await page.evaluate(() => scrollY === 0) && (await stored(page)).readingPosition === fixture.readingPosition);
+}
 async function stored(page) {
 
  await page.evaluate(()=>libraryStore.flush());
@@ -172,8 +193,18 @@ try {
   const fixture = passageReadingFixture();
   for (const [label, viewport] of [['desktop', {width: 1360, height: 1000}], ['mobile', {width: 390, height: 844}]]) {
     stage = label + '_import';
+    // Keep the original first-import layout promise on a genuinely new text,
+    // independently of the bookmarked resume and explicit-navigation journey.
+    const firstImportPage = await freshPage(viewport);
+    const unbookmarked = {...fixture, title: fixture.title + ' · first import'}; delete unbookmarked.readingPosition;
+    await importFixture(firstImportPage, unbookmarked, 'authored-first-import.json');
+    const firstImport = await passageGeometry(firstImportPage, label + '-unbookmarked-import');
+    completeFirstViewport(label + '_unbookmarked_import', firstImport, unbookmarked);
+    await capture(firstImportPage, label + '-unbookmarked-import');
+    await firstImportPage.context().close();
     const page = await freshPage(viewport);
     await importFixture(page, fixture);
+    await resumeThenChooseFirst(page, fixture, label);
     check(label + '_long_fragmented_document_defaults_to_continuous_reading', await page.locator('#mode-passages').getAttribute('aria-pressed') === 'true' && await page.locator('#passage-body .passage').count() <= 8);
     const imported = await passageGeometry(page, label + '-import');
     await capture(page, '01-' + label + '-first-expression');
@@ -237,6 +268,7 @@ try {
     stage = label + '_long_title_reader';
     const page = await freshPage(viewport), longDocument = {...fixture, title: longTitle};
     await importFixture(page, longDocument, 'authored-long-title-reading.json');
+    await resumeThenChooseFirst(page, longDocument, label + '_long_title');
     const initial = await passageGeometry(page, label + '-long-title-first-viewport');
     await capture(page, '07-' + label + '-long-title-first-viewport');
     completeFirstViewport(label + '_long_title', initial, longDocument);
@@ -285,6 +317,7 @@ try {
 
     const sourcePage = await freshPage(viewport), sourceDocument = {...longDocument, translation_view: '', segments: longDocument.segments.map(({translations, ...cue}) => cue)};
     await importFixture(sourcePage, sourceDocument, 'authored-long-title-source-only.json');
+    await resumeThenChooseFirst(sourcePage, sourceDocument, label + '_source_only');
     const sourceView = await passageGeometry(sourcePage, label + '-long-title-source-only');
     await capture(sourcePage, '09-' + label + '-source-only-reading');
     check(label + '_source_only_long_document_starts_above_350_without_fake_translation', sourceView.sourceFontSize >= 17 && sourceView.source.top >= 0 && sourceView.source.top <= FIRST_SOURCE_MAX_Y && sourceView.source.bottom <= viewport.height && sourceView.sourceIds.slice(0, 4).join(',') === 'split-0,split-1,split-2,split-3' && sourceView.translation === null && await sourcePage.locator('#passage-toggle-translation').isHidden() && (await stored(sourcePage)).segments.length === 1771);
@@ -302,7 +335,11 @@ try {
     await importFixture(blockedPage, longDocument, 'authored-unsaved-reading.json');
     await expect(blockedPage.locator('#save-status')).toHaveAttribute('data-state', 'failed');
     await expect(blockedPage.locator('#save-status')).toContainText('空间不足');
+    const failedReading = await blockedPage.evaluate(id => ({scroll:scrollY, focus:document.activeElement?.outerHTML, resumed:!!document.querySelector(`[data-cue-id="${id}"]`)?.closest('.passage')?.contains(document.activeElement)}), longDocument.readingPosition);
+    check(label + '_failed_import_keeps_its_resumed_passage_focus', failedReading.resumed);
     await assertUnhiddenWarning(blockedPage, label + '-unsaved-work-warning', '#save-status');
+    await controlsGeometry(blockedPage, label + '-unsaved-recovery-actions', ['#retry-save', '#export-unsaved-documents']);
+    check(label + '_recovery_feedback_does_not_scroll_or_steal_reading_focus', await blockedPage.evaluate(before => scrollY === before.scroll && document.activeElement?.outerHTML === before.focus, failedReading));
     check(label + '_unsaved_work_never_claims_import_success', await blockedPage.locator('#notice').getAttribute('data-kind') !== 'success' && await blockedPage.locator('#passage-workspace').isVisible());
     check(label + '_failed_import_has_no_durable_document', await blockedPage.evaluate(async () => (await readPersistedLibrary()).documents.length === 0));
     const rescue = blockedPage.locator('#export-unsaved-documents');
@@ -331,6 +368,32 @@ try {
     await blockedPage.context().close();
   }
 
+  stage = 'compact_unsaved_recovery_with_note_and_dock';
+  for(const recoveryViewport of [{width:320,height:480},{width:390,height:600}]){
+  const recoveryPage = await freshPage(recoveryViewport);
+  await importFixture(recoveryPage, fixture);
+  await attachAudio(recoveryPage, audioPath);await recoveryPage.locator('#close-reader-media').click();
+  await recoveryPage.locator('.passage').first().locator('.passage-details').click();
+  await recoveryPage.locator('.segment').first().locator('.note-button').click();
+  await recoveryPage.evaluate(() => window.failContentWrites());
+  await recoveryPage.locator('#note').fill('Authored unsaved compact note');
+  await expect(recoveryPage.locator('#save-status')).toHaveAttribute('data-state','failed');
+  check('compact_failed_note_keeps_editing_focus',await recoveryPage.locator('#note').evaluate(node=>node===document.activeElement));
+  await assertUnhiddenWarning(recoveryPage,'compact-unsaved-note-warning','#save-status');
+  // A small viewport may scroll the recovery panel internally, never the reader.
+  const recoveryScroll=await recoveryPage.evaluate(()=>scrollY);
+  for(const selector of ['#retry-save','#export-unsaved-documents']){
+    await recoveryPage.locator(selector).focus();
+    await controlsGeometry(recoveryPage,'compact-recovery-'+selector.slice(1),[selector,'#close-note']);
+    check('compact_recovery_focus_keeps_document_scroll_'+selector.slice(1),await recoveryPage.evaluate(before=>scrollY===before,recoveryScroll));
+  }
+  await recoveryPage.locator('#close-note').click();
+  await controlsGeometry(recoveryPage,'compact-recovery-after-note-close',['#retry-save','#export-unsaved-documents']);
+  await expect(recoveryPage.locator('#media-dock')).toBeVisible();
+  await controlsGeometry(recoveryPage,'compact-recovery-and-media-dock',['#retry-save','#export-unsaved-documents','#dock-play','#dock-return']);
+  await recoveryPage.context().close();
+  }
+
   stage = 'temporal_skim_with_saved_summary';
   const page = await freshPage({width: 1360, height: 1000});
   const irregular = irregularPassageFixture();
@@ -355,6 +418,7 @@ try {
   stage = 'compact_success_feedback_note';
   const compactPage = await freshPage({width: 390, height: 480}, {controlledClock: true});
   await importFixture(compactPage, fixture);
+  await resumeThenChooseFirst(compactPage, fixture, 'compact_feedback');
   await attachAudio(compactPage, audioPath);
   await compactPage.locator('#close-reader-media').click();
   await compactPage.locator('#dismiss-notice').click();
@@ -413,6 +477,7 @@ try {
 
   stage = 'bounded_audio_preview';
   await importFixture(page, fixture);
+  await resumeThenChooseFirst(page, fixture, 'bounded_audio');
   await attachAudio(page, audioPath);
   await page.locator('#close-reader-media').click();
   check('decoded_local_media_has_no_initial_autoplay', await page.locator('audio').evaluate(player => player.paused && player.currentTime === 0));
