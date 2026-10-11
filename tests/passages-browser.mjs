@@ -48,6 +48,21 @@ async function importFixture(page, fixture, name = 'authored-fragmented-reading.
   await page.waitForFunction(title => document.querySelector('#title').textContent === title && !document.querySelector('#passage-workspace').hidden, fixture.title);
   await settled(page);
 }
+// Bookmarked imports intentionally resume. Check that landing before choosing
+// the first source through the existing overview, for the layout/listen tests.
+async function resumeThenChooseFirst(page, fixture, label) {
+  const resumed = await page.evaluate(id => {
+    const cue = [...document.querySelectorAll('.passage-original .passage-cue')].find(node => node.dataset.cueId === id);
+    const passage = cue?.closest('.passage'), rect = passage?.getBoundingClientRect();
+    return {id, focused: !!passage?.contains(document.activeElement), top: rect?.top, bottom: rect?.bottom, viewport: innerHeight};
+  }, fixture.readingPosition);
+  geometry.push({label: label + '-import-resume', ...resumed});
+  check(label + '_import_resumes_saved_passage_and_focus', resumed.focused && resumed.top >= -1 && resumed.top < resumed.viewport && resumed.bottom > 0 && (await stored(page)).readingPosition === fixture.readingPosition);
+  await capture(page, label + '-import-resume');
+  await page.locator('#mode-summary').click();
+  await page.locator('.overview-segment').first().click(); await settled(page);
+  check(label + '_explicit_first_source_navigation_preserves_saved_bookmark', await page.locator('.passage').first().evaluate(node => node.contains(document.activeElement)) && (await stored(page)).readingPosition === fixture.readingPosition);
+}
 async function stored(page) {
 
  await page.evaluate(()=>libraryStore.flush());
@@ -172,8 +187,18 @@ try {
   const fixture = passageReadingFixture();
   for (const [label, viewport] of [['desktop', {width: 1360, height: 1000}], ['mobile', {width: 390, height: 844}]]) {
     stage = label + '_import';
+    // Keep the original first-import layout promise on a genuinely new text,
+    // independently of the bookmarked resume and explicit-navigation journey.
+    const firstImportPage = await freshPage(viewport);
+    const unbookmarked = {...fixture, title: fixture.title + ' · first import'}; delete unbookmarked.readingPosition;
+    await importFixture(firstImportPage, unbookmarked, 'authored-first-import.json');
+    const firstImport = await passageGeometry(firstImportPage, label + '-unbookmarked-import');
+    completeFirstViewport(label + '_unbookmarked_import', firstImport, unbookmarked);
+    await capture(firstImportPage, label + '-unbookmarked-import');
+    await firstImportPage.context().close();
     const page = await freshPage(viewport);
     await importFixture(page, fixture);
+    await resumeThenChooseFirst(page, fixture, label);
     check(label + '_long_fragmented_document_defaults_to_continuous_reading', await page.locator('#mode-passages').getAttribute('aria-pressed') === 'true' && await page.locator('#passage-body .passage').count() <= 8);
     const imported = await passageGeometry(page, label + '-import');
     await capture(page, '01-' + label + '-first-expression');
@@ -237,6 +262,7 @@ try {
     stage = label + '_long_title_reader';
     const page = await freshPage(viewport), longDocument = {...fixture, title: longTitle};
     await importFixture(page, longDocument, 'authored-long-title-reading.json');
+    await resumeThenChooseFirst(page, longDocument, label + '_long_title');
     const initial = await passageGeometry(page, label + '-long-title-first-viewport');
     await capture(page, '07-' + label + '-long-title-first-viewport');
     completeFirstViewport(label + '_long_title', initial, longDocument);
@@ -285,6 +311,7 @@ try {
 
     const sourcePage = await freshPage(viewport), sourceDocument = {...longDocument, translation_view: '', segments: longDocument.segments.map(({translations, ...cue}) => cue)};
     await importFixture(sourcePage, sourceDocument, 'authored-long-title-source-only.json');
+    await resumeThenChooseFirst(sourcePage, sourceDocument, label + '_source_only');
     const sourceView = await passageGeometry(sourcePage, label + '-long-title-source-only');
     await capture(sourcePage, '09-' + label + '-source-only-reading');
     check(label + '_source_only_long_document_starts_above_350_without_fake_translation', sourceView.sourceFontSize >= 17 && sourceView.source.top >= 0 && sourceView.source.top <= FIRST_SOURCE_MAX_Y && sourceView.source.bottom <= viewport.height && sourceView.sourceIds.slice(0, 4).join(',') === 'split-0,split-1,split-2,split-3' && sourceView.translation === null && await sourcePage.locator('#passage-toggle-translation').isHidden() && (await stored(sourcePage)).segments.length === 1771);
@@ -355,6 +382,7 @@ try {
   stage = 'compact_success_feedback_note';
   const compactPage = await freshPage({width: 390, height: 480}, {controlledClock: true});
   await importFixture(compactPage, fixture);
+  await resumeThenChooseFirst(compactPage, fixture, 'compact_feedback');
   await attachAudio(compactPage, audioPath);
   await compactPage.locator('#close-reader-media').click();
   await compactPage.locator('#dismiss-notice').click();
@@ -413,6 +441,7 @@ try {
 
   stage = 'bounded_audio_preview';
   await importFixture(page, fixture);
+  await resumeThenChooseFirst(page, fixture, 'bounded_audio');
   await attachAudio(page, audioPath);
   await page.locator('#close-reader-media').click();
   check('decoded_local_media_has_no_initial_autoplay', await page.locator('audio').evaluate(player => player.paused && player.currentTime === 0));
