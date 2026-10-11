@@ -8,9 +8,9 @@
 <meta name="theme-color" content="#faf9f7">
 <link rel="icon" type="image/png" href="coconut-mark.png">
 <script src="appearance.js?v=86ea922669"></script>
-<link rel="stylesheet" href="style.css?v=89f72001ff">
+<link rel="stylesheet" href="style.css?v=c067be2b9f">
 <script src="summary.js?v=580ffdad1e" defer></script>
-<script src="core.js?v=495730e5f1" defer>
+<script src="core.js?v=c7eb2af1ab" defer>
 </script>
 <script src="passages.js?v=d02200c5a9" defer></script>
 <script src="quotation.js?v=9b8ed4d5ca" defer></script>
@@ -18,7 +18,7 @@
 <script src="library-store.js?v=e76ded9456" defer></script>
 <script src="indexeddb-document-adapter.js?v=65c0c5a814" defer></script>
 <script src="storage-provider.js?v=1cb898e984" defer></script>
-<script src="app.js?v=d244e48078" type="text/coconut-pending" data-reader-script>
+<script src="app.js?v=999098eb82" type="text/coconut-pending" data-reader-script>
 </script>
 <script src="language.js?v=492470a705" type="text/coconut-pending" data-reader-script></script>
 <script src="translation-review.js?v=ef64ceb824" type="text/coconut-pending" data-reader-script></script>
@@ -368,6 +368,18 @@ cd coconut
 <p id="source-error" role="alert">
 </p>
 </form>
+</dialog>
+<dialog id="speaker-dialog" aria-labelledby="speaker-heading" aria-describedby="speaker-help">
+<h2 id="speaker-heading">修正说话人标签</h2>
+<p id="speaker-help">只修改已有的说话人标签，不识别人，也不修改正文中的 [姓名]。</p>
+<p>原标签：<strong id="speaker-original"></strong></p>
+<label for="speaker-action">操作</label><select id="speaker-action"><option value="rename">改名</option><option value="restore">恢复初始标签</option></select>
+<label for="speaker-name">新标签</label><input id="speaker-name" maxlength="1000" autocomplete="off">
+<label for="speaker-scope">范围</label><select id="speaker-scope"><option value="cue">仅这一段</option><option value="speaker">整篇相同标签</option></select>
+<p>整篇范围包含所有相同标签的片段，不受搜索、筛选或分页影响。</p>
+<p id="speaker-merge" role="status"></p><p id="speaker-count"></p><div id="speaker-preview"></div>
+<p id="speaker-error" role="alert"></p>
+<div class="dialog-actions"><button id="cancel-speaker" type="button">取消</button><button id="save-speaker" type="button" class="primary">应用修正</button></div>
 </dialog>
 <dialog id="edit-dialog" aria-labelledby="edit-heading">
 <form method="dialog">
