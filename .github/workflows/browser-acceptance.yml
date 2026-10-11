@@ -125,6 +125,11 @@ jobs:
         env:
           COCONUT_UI_SCREENSHOTS: ${{ runner.temp }}/coconut-authored-ui
         run: node tests/search-return-browser.mjs
+      - name: Verify inline quotation recall and personal notes preserve the reading place
+        if: ${{ !cancelled() && steps.browser_setup.outcome == 'success' }}
+        env:
+          COCONUT_UI_SCREENSHOTS: ${{ runner.temp }}/coconut-authored-ui
+        run: node tests/inline-excerpts-browser.mjs
       - name: Verify cross-library notebook, exact-source return and selected-document export
         if: ${{ !cancelled() && steps.browser_setup.outcome == 'success' }}
         run: node tests/library-notebook-browser.mjs
@@ -251,6 +256,7 @@ jobs:
             ${{ runner.temp }}/coconut-authored-ui/playback-follow-scroll.json
             ${{ runner.temp }}/coconut-authored-ui/compact-library-geometry.json
             ${{ runner.temp }}/coconut-authored-ui/search-return-checks.json
+            ${{ runner.temp }}/coconut-authored-ui/inline-excerpts-checks.json
             ${{ runner.temp }}/coconut-authored-ui/compact-library-failure.png
           if-no-files-found: ignore
           retention-days: 7

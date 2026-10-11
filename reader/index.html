@@ -8,7 +8,7 @@
 <meta name="theme-color" content="#faf9f7">
 <link rel="icon" type="image/png" href="coconut-mark.png">
 <script src="appearance.js?v=86ea922669"></script>
-<link rel="stylesheet" href="style.css?v=ac52955c64">
+<link rel="stylesheet" href="style.css?v=7d67c1428a">
 <script src="summary.js?v=580ffdad1e" defer></script>
 <script src="core.js?v=8b8bc4b86a" defer>
 </script>
@@ -18,7 +18,7 @@
 <script src="library-store.js?v=e76ded9456" defer></script>
 <script src="indexeddb-document-adapter.js?v=65c0c5a814" defer></script>
 <script src="storage-provider.js?v=1cb898e984" defer></script>
-<script src="app.js?v=275d96238d" type="text/coconut-pending" data-reader-script>
+<script src="app.js?v=f8ed42bfbe" type="text/coconut-pending" data-reader-script>
 </script>
 <script src="language.js?v=492470a705" type="text/coconut-pending" data-reader-script></script>
 <script src="translation-review.js?v=ef64ceb824" type="text/coconut-pending" data-reader-script></script>
@@ -464,6 +464,14 @@ cd coconut
 <p id="notebook-export-scope" class="hint"></p><button id="notebook-export" type="button">导出所选篇目的全部记录</button><button id="notebook-clear-selection" type="button">清空选择</button>
 <p class="hint">勾选篇目后导出该篇全部记录，不受搜索和分页影响。完整恢复请使用书架 JSON 备份。</p>
 <button id="notebook-close" type="button">关闭笔记本</button>
+</dialog>
+<dialog id="reading-excerpts-dialog" class="library-notebook reading-excerpts-dialog" aria-labelledby="reading-excerpts-heading">
+<div class="reading-excerpts-heading-row"><h2 id="reading-excerpts-heading" tabindex="-1" autofocus>本段的摘录</h2><button id="reading-excerpts-dismiss" type="button" aria-label="关闭摘录，返回阅读">关闭</button></div>
+<p class="hint">所选文字的历史快照。个人笔记独立保存；阅读原文的位置保持不变。</p>
+<p id="reading-excerpts-save-status" role="status" aria-live="polite"></p>
+<ol id="reading-excerpts-list"></ol>
+<nav aria-label="本段摘录分页"><button id="reading-excerpts-previous" type="button">上一页摘录</button><span id="reading-excerpts-position" class="hint"></span><button id="reading-excerpts-next" type="button">下一页摘录</button></nav>
+<button id="reading-excerpts-close" type="button">返回阅读</button>
 </dialog>
 <dialog id="exact-note-dialog" class="quotation-dialog exact-note-dialog" aria-labelledby="exact-note-heading">
 <h2 id="exact-note-heading">摘录的个人笔记</h2>

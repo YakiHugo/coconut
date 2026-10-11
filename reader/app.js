@@ -380,7 +380,7 @@ libraryStore.subscribe((snapshot,event)=>{
  renderSaveStatus(libraryStore.status());
  if($('library-notebook').open)collectionStatus();
  if($('chapter-dialog').open)chapterSaveStatus();
- renderPassageReadingPosition();
+ renderPassageReadingPosition();refreshReadingExcerptSaveState();
  if(event?.type==='commit'){
   renderSummaryPersistence();
   window.dispatchEvent(new CustomEvent('coconut-persistence-change',{detail:event.result}));
@@ -1240,6 +1240,158 @@ function bilingualExcerptDisplay(record){
  const labels={'user-authored':'用户自写','human-reviewed':'已有人工核对','machine':'机器生成，需核对'};
  return '选取时译文（'+paired.language+'）：\n'+paired.text+'\n初始来源：'+paired.providers.join('、')+' · '+paired.reviewStates.map(value=>labels[value]||value).join('、')+'\n译文生成时间：未记录。配对确认时间：'+paired.confirmedAt+'\n用户确认两段对应，不等于重新核对整份翻译；后续来源变化不会改写快照。'+(paired.qualityWarnings.length?'\n选取时质量提示：'+Coconut.translationQualityMessage({quality_warnings:paired.qualityWarnings}):'');
 }
+// Reading recall is derived from immutable captures. It never marks source words,
+// changes cue annotations, or persists a second anchor. Each render batches source
+// checks once; save receipts only update mounted controls and status text.
+const readingExcerptOwners=new WeakMap();
+let readingExcerptControls=[],readingExcerptDialog=null;
+const READING_EXCERPT_PAGE_SIZE=8;
+function readingExcerptIndex(doc){
+ const records=doc.exact_excerpts||[],byCue=new Map(),cues=new Map();
+ if(!records.length)return {doc,byCue,cues,states:new Map()};
+ for(const cue of doc.segments)cues.set(cue.id,cue);
+ const states=Coconut.exactExcerptStateBatch(records,doc);
+ let owners=readingExcerptOwners.get(doc);if(!owners){owners=new WeakMap();readingExcerptOwners.set(doc,owners);}
+ for(const record of records){
+  let owner=owners.get(record);
+  if(!owner){owner={cues:record.snapshot.cues.map(cue=>cues.get(cue.id)),replaced:false};owners.set(record,owner);}
+  owner.replaced=record.snapshot.cues.some((cue,index)=>cues.get(cue.id)!==owner.cues[index]);
+  const state=states.get(record.id);
+  if(owner.replaced&&state.freshness==='current')state.freshness='stale';
+  if(owner.replaced)state.replaced=true;
+  // Missing/reordered context has no reliable current location. Keep it in the
+  // notebook, rather than guessing from remaining words or matching times.
+  if(!state.cueId)continue;
+  for(const part of Coconut.exactExcerptParts(record)){
+   if(!byCue.has(part.cue.id))byCue.set(part.cue.id,[]);
+   byCue.get(part.cue.id).push(record);
+  }
+ }
+ return {doc,byCue,cues,states};
+}
+function readingExcerptRecords(entry,index){
+ const found=new Set();for(const cue of entry.cues)for(const record of index.byCue.get(cue.id)||[])found.add(record);
+ return [...found];
+}
+function readingExcerptHistory(state){
+ return state?.freshness==='missing'?'原片段已移除；以下保留选取时快照。':state?.replaced?'历史关联：原片段已替换；以下保留选取时快照。':state?.freshness==='current'?'选取时快照 · 来源仍一致':'历史关联：原文、出处或译文已变化；以下保留选取时快照。';
+}
+function readingExcerptPersistence(doc){
+ const status=libraryStore.status(doc.key);
+ return status?.identity===doc&&status.status==='saved'?'已保存到本机':status?.status==='pending'?'正在保存；请暂留本页':'尚未保存到本机；可从笔记编辑中重试或导出备份';
+}
+function updateReadingExcerptControl(entry,index){
+ entry.records=readingExcerptRecords(entry,index);entry.states=index.states;
+ const count=entry.records.length,historical=entry.records.some(record=>index.states.get(record.id)?.freshness!=='current');
+ entry.button.hidden=!count;entry.button.textContent='摘录 '+count;
+ entry.button.dataset.history=String(historical);
+ entry.button.setAttribute('aria-label','查看本'+(entry.mode==='passages'?'段':'片段')+'的 '+count+' 条精确摘录与个人笔记'+(historical?'，含历史关联':''));
+ entry.button.title=(historical?'含历史关联；打开查看选取时快照。':'查看这段原文中选取的精确摘录。')+' '+readingExcerptPersistence(entry.doc);
+}
+function readingExcerptControl(doc,cues,mode,index){
+ const button=el('button','reading-excerpt-open');button.type='button';button.setAttribute('aria-haspopup','dialog');
+ const entry={doc,cues,mode,button,selection:activeSelectionRevision};readingExcerptControls.push(entry);updateReadingExcerptControl(entry,index);
+ button.onclick=()=>{
+  if(!button.isConnected||active()!==doc||activeSelectionRevision!==entry.selection||!state.documents.includes(doc))return;
+  const current=readingExcerptIndex(doc);
+  if(cues.some(cue=>current.cues.get(cue.id)!==cue))return;
+  updateReadingExcerptControl(entry,current);if(!entry.records.length)return;
+  readingExcerptDialog={entry,doc,selection:entry.selection,mode:readingMode,records:entry.records.slice(),page:0,rows:[]};
+  renderReadingExcerptList(current);$('reading-excerpts-dialog').showModal();$('reading-excerpts-heading').focus({preventScroll:true});
+ };
+ return button;
+}
+function readingExcerptDialogOwned(current=active()){const view=readingExcerptDialog;return !!view&&current===view.doc&&activeSelectionRevision===view.selection&&state.documents.includes(view.doc);}
+function refreshReadingExcerptSaveState(){
+ const current=active(),persistence=current?readingExcerptPersistence(current):'';
+ readingExcerptControls=readingExcerptControls.filter(entry=>entry.button.isConnected);
+ for(const entry of readingExcerptControls)if(current===entry.doc)entry.button.title=(entry.button.dataset.history==='true'?'含历史关联；打开查看选取时快照。':'查看这段原文中选取的精确摘录。')+' '+persistence;
+ const view=readingExcerptDialog;if(!view)return;
+ const ownedView=readingExcerptDialogOwned(current),liveRecords=ownedView?new Set(view.doc.exact_excerpts||[]):null;
+ $('reading-excerpts-previous').disabled=!ownedView||view.page===0;
+ $('reading-excerpts-next').disabled=!ownedView||(view.page+1)*READING_EXCERPT_PAGE_SIZE>=view.records.length;
+ $('reading-excerpts-save-status').textContent=ownedView?persistence:'篇目已更换或移除；这里保留刚才的快照，请关闭后重新选择。';
+ for(const row of view.rows){
+  const owned=ownedView&&liveRecords.has(row.record);
+  row.edit.disabled=!owned;row.state.textContent=owned?readingExcerptHistory(row.source):'这条摘录已更换或移除；显示的是刚才的快照。';
+  const note=owned?Coconut.exactExcerptNote(view.doc,row.record.id):row.noteText;
+  if(owned)row.noteText=note;
+  row.note.textContent=Coconut.hasNoteContent(note)?'我的笔记：'+readingExcerptPreview(note):'还没有个人笔记';
+  row.edit.textContent=Coconut.hasNoteContent(note)?'编辑我的笔记':'添加我的笔记';
+ }
+}
+function refreshReadingExcerpts(doc){
+ if(active()!==doc)return;
+ const index=readingExcerptIndex(doc);
+ for(const entry of readingExcerptControls)if(entry.button.isConnected&&entry.doc===doc)updateReadingExcerptControl(entry,index);
+ const view=readingExcerptDialog;
+ if(view?.doc===doc)for(const row of view.rows)row.source=index.states.get(row.record.id)||row.source;
+ refreshReadingExcerptSaveState();
+}
+function readingExcerptPreview(text,limit=320){let end=Math.min(text.length,limit);if(end<text.length&&/[\uD800-\uDBFF]/.test(text[end-1]))end--;return text.slice(0,end)+(end<text.length?'…':'');}
+function appendReadingExcerptText(host,label,text){
+ host.append(el('p','hint',label));const content=el('p','reading-excerpt-content'),more=el('button','reading-excerpt-more','继续展开');more.type='button';let end=0;
+ const extend=()=>{end=Math.min(text.length,end+4000);if(end<text.length&&/[\uD800-\uDBFF]/.test(text[end-1]))end--;content.textContent=text.slice(0,end);more.hidden=end>=text.length;};
+ more.onclick=()=>{extend();if(more.hidden)content.focus({preventScroll:true});};content.tabIndex=-1;extend();host.append(content,more);
+}
+function renderReadingExcerptList(index=readingExcerptIndex(readingExcerptDialog.doc)){
+ const view=readingExcerptDialog;if(!view)return;
+ const start=view.page*READING_EXCERPT_PAGE_SIZE,records=view.records.slice(start,start+READING_EXCERPT_PAGE_SIZE);
+ $('reading-excerpts-heading').textContent='本'+(view.entry.mode==='passages'?'段':'片段')+'的摘录';
+ $('reading-excerpts-position').textContent=(start+1)+'–'+(start+records.length)+' / '+view.records.length+' 条';
+ $('reading-excerpts-previous').disabled=view.page===0;$('reading-excerpts-next').disabled=start+records.length>=view.records.length;
+ const host=$('reading-excerpts-list');host.replaceChildren();view.rows=[];
+ for(const record of records){
+  const row=el('li','reading-excerpt-item');row.dataset.excerptId=record.id;
+  const source=el('p','hint reading-excerpt-history'),note=el('p','reading-excerpt-note'),edit=el('button','reading-excerpt-edit');edit.type='button';
+  const parts=Coconut.exactExcerptParts(record);
+  row.append(el('p','hint',Coconut.time(parts[0].cue.start)+' · '+(record.version===2?'双语摘录':'所选原文')),source,el('p','reading-excerpt-preview',readingExcerptPreview(record.text)));
+  if(record.version===2)row.append(el('p','reading-excerpt-translation',readingExcerptPreview(record.translation.text)));
+  const details=el('details','reading-excerpt-details');details.append(el('summary','','查看完整摘录与来源'));let loaded=false;
+  details.addEventListener('toggle',()=>{
+   if(!details.open||loaded)return;loaded=true;
+   appendReadingExcerptText(details,'选取时原文',record.text);
+   if(record.version===2)appendReadingExcerptText(details,'选取时译文与配对信息',bilingualExcerptDisplay(record));
+   const origin=Coconut.exactExcerptSource(record);details.append(el('p','hint','摘录时篇目：'+origin.title+'\n摘录时间：'+record.created_at+'\n'+(origin.source_url||'无原站链接')));
+  });
+  edit.onclick=()=>{if(readingExcerptDialog!==view||!readingExcerptDialogOwned()||!view.doc.exact_excerpts?.includes(record))return;openExactNote(view.doc,record,edit);};
+  row.append(details,note,edit);host.append(row);view.rows.push({record,state:source,source:index.states.get(record.id),note,noteText:Coconut.exactExcerptNote(view.doc,record.id),edit});
+ }
+ refreshReadingExcerptSaveState();
+}
+function closeReadingExcerpts(){
+ const view=readingExcerptDialog,owned=readingExcerptDialogOwned();readingExcerptDialog=null;$('reading-excerpts-dialog').close();
+ if(!view||!owned)return;
+ if(view.mode===readingMode&&view.entry.button.isConnected&&!view.entry.button.hidden){view.entry.button.focus({preventScroll:true});return;}
+ const cue=view.entry.cues.find(cue=>view.doc.segments.includes(cue)),node=cue&&chapterCueNode(cue.id,readingMode);
+ if(node){node.tabIndex=-1;node.focus({preventScroll:true});}else $('mode-'+readingMode)?.focus({preventScroll:true});
+}
+$('reading-excerpts-close').onclick=closeReadingExcerpts;
+$('reading-excerpts-dismiss').onclick=closeReadingExcerpts;
+$('reading-excerpts-dialog').addEventListener('cancel',event=>{event.preventDefault();closeReadingExcerpts();});
+$('reading-excerpts-dialog').addEventListener('close',()=>{if(!$('reading-excerpts-dialog').open)readingExcerptDialog=null;});
+for(const [id,direction] of [['reading-excerpts-previous',-1],['reading-excerpts-next',1]])$(id).onclick=()=>{
+ const view=readingExcerptDialog;if(!view||!readingExcerptDialogOwned())return;
+ view.page=Math.max(0,Math.min(Math.ceil(view.records.length/READING_EXCERPT_PAGE_SIZE)-1,view.page+direction));renderReadingExcerptList();$('reading-excerpts-heading').focus({preventScroll:true});$('reading-excerpts-dialog').scrollTop=0;
+};
+
+// Native dialogs make the page inert but may hand the last Tab to browser
+// chrome. Only the two actual boundaries are ours; interior traversal remains
+// native, including readonly evidence and expanded details.
+for(const id of ['reading-excerpts-dialog','exact-note-dialog'])$(id).addEventListener('keydown',event=>{
+ const dialog=$(id);
+ if(!dialog.open||event.key!=='Tab'||event.defaultPrevented||event.isComposing||event.keyCode===229||event.altKey||event.ctrlKey||event.metaKey||event.target.closest?.('dialog')!==dialog)return;
+ const controls=[...dialog.querySelectorAll('button,input,select,textarea,a[href],summary,[tabindex]')].filter(node=>{
+  if(node.tabIndex<0||node.matches(':disabled')||node.closest('[hidden],[inert]'))return false;
+  for(let parent=node;parent&&parent!==dialog;parent=parent.parentElement){
+   const style=getComputedStyle(parent);if(style.display==='none'||style.visibility==='hidden'||style.visibility==='collapse')return false;
+   if(parent.tagName==='DETAILS'&&!parent.open){const summary=parent.querySelector('summary');if(!summary?.contains(node))return false;}
+  }
+  return true;
+ });
+ const first=controls[0],last=controls.at(-1),focused=document.activeElement;
+ if(first&&((event.shiftKey&&(focused===first||focused===dialog.querySelector('[autofocus]')))||(!event.shiftKey&&focused===last))){event.preventDefault();(event.shiftKey?last:first).focus();}
+});
 function exactExcerptSaveState(doc,record){
  const status=libraryStore.status(doc.key);
  return state.documents.includes(doc)&&doc.exact_excerpts?.includes(record)&&status?.identity===doc&&status.status==='saved'?'saved':'unsaved';
@@ -1253,7 +1405,7 @@ async function saveExactExcerpt(doc,record){
  const owned=existing||record,pending=exactExcerptWrites.get(doc)||new Map();
  if(pending.has(owned))return pending.get(owned);
  const receipt=commitDocument(doc);pending.set(owned,receipt);exactExcerptWrites.set(doc,pending);
- renderLibrary();renderNotebookAction(doc);
+ renderLibrary();renderNotebookAction(doc);refreshReadingExcerpts(doc);
  try{return await receipt;}finally{pending.delete(owned);if(!pending.size)exactExcerptWrites.delete(doc);}
 }
 // The editor owns a document and immutable quotation, never a search-result row.
@@ -1275,7 +1427,13 @@ function openExactNote(doc,record,opener){
 }
 function closeExactNote(){
  const editor=exactNoteEditor;exactNoteEditor=null;$('exact-note-dialog').close();
- if(editor?.opener?.isConnected)editor.opener.focus({preventScroll:true});
+ refreshReadingExcerptSaveState();
+ if(editor?.opener?.closest?.('#reading-excerpts-dialog')){
+  if(readingExcerptDialogOwned()&&$('reading-excerpts-dialog').open){
+   if(editor.opener.isConnected&&!editor.opener.disabled)editor.opener.focus({preventScroll:true});
+   else $('reading-excerpts-heading').focus({preventScroll:true});
+  }
+ }else if(editor?.opener?.isConnected&&!editor.opener.disabled)editor.opener.focus({preventScroll:true});
  else if($('library-notebook').open)$('notebook-search').focus({preventScroll:true});
  syncUnsavedUnloadGuard();
 }
@@ -1671,7 +1829,7 @@ function renderLibraryNotebook(){
     for(const field of ['exact_excerpts','exact_excerpt_notes']){if(removal[field]===undefined)delete doc[field];else doc[field]=removal[field];}
     queueDocument(doc);
     // Focus moves only for this explicit removal, never for a later save receipt.
-    $('notebook-search').focus({preventScroll:true});renderLibrary();if(active()===doc)renderNotebookAction(doc);renderLibraryNotebook();
+    $('notebook-search').focus({preventScroll:true});renderLibrary();if(active()===doc){renderNotebookAction(doc);refreshReadingExcerpts(doc);}renderLibraryNotebook();
    };row.append(remove);
   }
   host.append(row);
@@ -1850,6 +2008,9 @@ function render({keepNoteEditor=false,reuseLibraryMetadata=false}={}) {
  const cueFocus=focusedCueAction?{key:focusedCueAction.dataset.cueKey,selector:document.activeElement.tagName==='SUMMARY'?'summary':'.'+document.activeElement.className}:null;
  const openCueActions=new Set([...document.querySelectorAll(".cue-more[open]")].map(node=>node.dataset.cueKey));
 	const doc = active();
+ readingExcerptControls=[];const excerptIndex=doc&&!Coconut.isAudioProject(doc)?readingExcerptIndex(doc):null;
+ if(readingExcerptDialog&&readingExcerptDialog.doc===doc)for(const row of readingExcerptDialog.rows)row.source=excerptIndex?.states.get(row.record.id)||row.source;
+ refreshReadingExcerptSaveState();
  renderReadingContext();renderChapterReturn();
 	renderLibrary(null,{reuseMetadata:reuseLibraryMetadata});
 	showWorkspace(doc ? workspace : "add");
@@ -2089,6 +2250,7 @@ function render({keepNoteEditor=false,reuseLibraryMetadata=false}={}) {
    actions.append(button);if(contextButton)actions.append(contextButton);actions.append(more);body.append(actions);
   }
 		if (Coconut.hasNoteContent(doc.notes[s.id])) body.append(highlightedText("p", "saved-note", doc.notes[s.id], query));
+  body.append(readingExcerptControl(doc,[s],'transcript',excerptIndex));
 		row.append(meta, body);
 		$("transcript").append(row);
 	}
@@ -2111,7 +2273,7 @@ function render({keepNoteEditor=false,reuseLibraryMetadata=false}={}) {
 		$("transcript").append(navigation);
 	}
  renderSummary();
- renderPassages(doc);
+ renderPassages(doc,excerptIndex);
  applyReadingMode();
  pauseBoundedForCompactNote();
  if(cueFocus){
@@ -3289,7 +3451,8 @@ function renderPassageReadingPosition(){
   button.title=contains?'本段包含阅读位置；点击将位置改为本段开头。保存状态见页面提示。':'将阅读位置设为本段开头';
  }
 }
-function renderPassages(doc){
+function renderPassages(doc,excerptIndex=readingExcerptIndex(doc)){
+ readingExcerptControls=readingExcerptControls.filter(entry=>entry.mode!=='passages'&&entry.button.isConnected);
  const passages=readingPassages(doc),host=$('passage-body');host.dataset.documentKey=doc.key;
  if(!passages.length){host.replaceChildren();return;}
  if(passageDocumentKey!==doc.key){passageDocumentKey=doc.key;passageAnchor=doc.readingPosition||passages[0].cues[0].id;passagePageStart=0;passageReturn=null;passageTranslations=true;}
@@ -3336,7 +3499,7 @@ function renderPassages(doc){
    queueDocument(doc);
    renderPassageReadingPosition();
   };
-  actions.append(bookmark);
+  actions.append(bookmark,readingExcerptControl(doc,passage.cues,'passages',excerptIndex));
   if(window.CoconutQuotation){
    quotationController??=CoconutQuotation.create({isCurrent:owner=>active()===owner&&state.documents.includes(owner)&&contentIngressAllowed(owner),saveExcerpt:saveExactExcerpt,excerptState:exactExcerptSaveState,onDraftChange:syncUnsavedUnloadGuard});
    const quote=el('button','passage-quote','引用原文');quote.type='button';quote.setAttribute('aria-label','引用 '+Coconut.time(passage.start)+' 的原文');
@@ -3400,7 +3563,7 @@ document.addEventListener('keyup',event=>{if(event.key==='Tab')passageActionTab=
 document.addEventListener('pointerdown',()=>{passageActionTab=false;libraryFocusRevealRevision++;},true);
 document.addEventListener('focusin',event=>{
  const target=event.target,keyboard=passageActionTab;passageActionTab=false;
- if(!keyboard||!target.matches?.('.passage-actions button, .passage-actions a, .library-select')||!target.matches(':focus-visible'))return;
+ if(!keyboard||!target.matches?.('.passage-actions button, .passage-actions a, .segment .reading-excerpt-open, .library-select')||!target.matches(':focus-visible'))return;
  if(target.classList.contains('library-select')){
   const card=libraryCards.get(target.closest('.library-entry')?.dataset.documentKey),revision=libraryFocusRevealRevision;
   requestAnimationFrame(()=>revealLibrarySelectionFocus(target,card,revision));return;
