@@ -1,6 +1,7 @@
 /** Extends synthetic completed-job browser acceptance with authored recovery API
  * responses and its already-prepared tone/video fixture. No model or download. */
 import assert from 'node:assert/strict';
+import {isDeepStrictEqual} from 'node:util';
 import {waitForPersistedLibrary,expect} from './browser-storage.mjs';
 import {authoredAudioFixture} from './authored-audio-fixture.mjs';
 import {openCueActions} from '../cue-actions-browser.mjs';
@@ -36,13 +37,27 @@ export async function verifyJobRecovery(browser,origin,preparedMedia,onCheck=()=
   const first=page.locator('[data-segment-id="first"]');await openCueActions(first);await first.locator('.note-button').click();await page.locator('#note').fill('Retain this authored job note');await page.locator('#close-note').click();
   const second=page.locator('[data-segment-id="second"]');await openCueActions(second);await second.locator('.edit-button').click();await page.locator('#edit-segment').fill('Reader-corrected authored second passage.');await page.locator('#save-edit').click();
   const before=(await saved()).documents[0];check('initial_job_is_bound',before.local_job_binding?.id===id);
-  await retry();await open();check('unsuccessful_playback_retry_preserves_one_annotated_book',(await saved()).documents.length===1);
+  await retry();await open();const failedRetryLibrary=await saved(),failedRetry=failedRetryLibrary.documents[0];
+  check('unsuccessful_retry_retains_one_document',failedRetryLibrary.documents.length===1);
+  check('unsuccessful_retry_reuses_original_key',failedRetry.key===before.key);
+  check('unsuccessful_retry_preserves_all_note_fields',isDeepStrictEqual(failedRetry.notes,before.notes));
+  check('unsuccessful_retry_preserves_all_segment_fields',isDeepStrictEqual(failedRetry.segments,before.segments));
   await retry();await page.reload();await open();const after=(await saved()).documents[0];
-  check('recovery_reuses_key_and_all_reader_edits',(await saved()).documents.length===1&&after.key===before.key&&JSON.stringify(after.notes)===JSON.stringify(before.notes)&&JSON.stringify(after.segments)===JSON.stringify(before.segments));
+  // Reload validates saved cues and may reorder object properties. Compare the
+  // complete structures: all fields/values and array order still have to match.
+  check('recovery_retains_one_document',(await saved()).documents.length===1);
+  check('recovery_reuses_original_key',after.key===before.key);
+  check('recovery_preserves_all_note_fields',isDeepStrictEqual(after.notes,before.notes));
+  check('recovery_preserves_all_segment_fields',isDeepStrictEqual(after.segments,before.segments));
   check('recovered_media_is_bound_and_warning_cleared',after.source_media?.job_id===id&&!after.provenance.playback_warning);
   await page.waitForFunction(()=>document.querySelector('#source-media audio,#source-media video')?.readyState>=1);
   check('recovered_native_player_is_paused',await page.locator('#source-media audio,#source-media video').evaluate(player=>player.paused&&player.currentTime===0));
-  await page.reload();const reopened=(await saved()).documents[0];check('reload_preserves_recovered_key_notes_and_corrections',(await saved()).documents.length===1&&reopened.key===before.key&&JSON.stringify(reopened.notes)===JSON.stringify(before.notes)&&JSON.stringify(reopened.segments)===JSON.stringify(before.segments)&&reopened.source_media?.job_id===id);
+  await page.reload();const reopened=(await saved()).documents[0];
+  check('reload_retains_one_document',(await saved()).documents.length===1);
+  check('reload_preserves_recovered_key',reopened.key===before.key);
+  check('reload_preserves_all_note_fields',isDeepStrictEqual(reopened.notes,before.notes));
+  check('reload_preserves_all_segment_fields',isDeepStrictEqual(reopened.segments,before.segments));
+  check('reload_preserves_recovered_media',reopened.source_media?.job_id===id);
 
   // Delayed recovery while returning to the same book: no full reader render.
   await page.evaluate(async()=>{const doc=active();delete doc.source_media;doc.provenance.playback_warning='Authored unavailable playback';await commitDocument(doc);render();});
