@@ -347,13 +347,35 @@ try {
     // Exercise historical evidence through actual reader controls, not storage mutation.
     const excerptDocument = exactLibrary.documents.find(doc => doc.title === newlines.title);
     const originalExcerpt = excerptDocument.exact_excerpts.find(record => record.text === exactText);
-    const excerptRow = id => page.locator('#notebook-captures .notebook-capture').filter({hasText: id});
+    const excerptRow = id => page.locator('#notebook-captures .notebook-capture[data-document-key="' + excerptDocument.key + '"][data-capture-id="' + id + '"]');
     const retainedRow = excerptRow(originalExcerpt.id);
+    // Display coverage includes ordinary notes and whole-cue excerpts, not just exact records.
+    for(const [kind,cueIndex] of [['note',2],['whole-cue',4]]){
+      const row=page.locator('#notebook-captures .notebook-capture[data-document-key="' + excerptDocument.key + '"][data-capture-type="cue"][data-capture-id="' + newlines.segments[cueIndex].id + '"]');
+      await expect(row.locator('.notebook-preview')).toBeVisible();await row.scrollIntoViewIfNeeded();await capture(label + '-notebook-' + kind + '-collapsed');
+      await row.locator('.notebook-details > summary').click();
+      await expect(row.locator('.notebook-preview')).toBeHidden();await expect(row.locator('.notebook-quote')).toHaveText(newlines.segments[cueIndex].text);
+      check(label + '_notebook_' + kind + '_has_one_quote_and_optional_diagnostics', await row.locator('.notebook-quote').count() === 1 && !await row.locator('.notebook-technical').evaluate(node=>node.open) && !(await row.innerText()).includes(excerptDocument.key));
+      check(label + '_notebook_' + kind + '_fits_without_oversized_checkbox', await row.evaluate(node => node.scrollWidth <= node.clientWidth && node.querySelector('input[type=checkbox]').getBoundingClientRect().width <= 24 && document.getElementById('library-notebook').scrollWidth <= document.getElementById('library-notebook').clientWidth));
+      await row.scrollIntoViewIfNeeded();await capture(label + '-notebook-' + kind + '-expanded');
+      await row.locator('.notebook-details > summary').click();await expect(row.locator('.notebook-preview')).toBeVisible();
+    }
     await expect(retainedRow).toHaveCount(1);
-    await retainedRow.locator('details > summary').click();
-    await expect(retainedRow.locator('.notebook-content').last()).toContainText('摘录时上下文');
+    await retainedRow.scrollIntoViewIfNeeded();await capture(label + '-notebook-exact-collapsed');
+    await retainedRow.locator('.notebook-details > summary').click();
+    await expect(retainedRow.locator('.notebook-preview')).toBeHidden();await expect(retainedRow.locator('.notebook-quote')).toHaveText(exactText);
+    await expect(retainedRow.locator('.notebook-metadata')).toContainText(newlines.title);
+    const historicalMetadata = await retainedRow.locator('.notebook-metadata').textContent();
+    check(label + '_history_initial_attribution_is_capture_time_source', historicalMetadata.includes(newlines.title) && historicalMetadata.includes('https://youtu.be/authored-newlines?t=0'));
+    check(label + '_notebook_exact_has_single_quote_and_optional_history_diagnostics', await retainedRow.locator('.notebook-quote').count() === 1 && !await retainedRow.locator('.notebook-history').evaluate(node=>node.open) && !await retainedRow.locator('.notebook-technical').evaluate(node=>node.open) && !(await retainedRow.innerText()).includes(originalExcerpt.id));
+    const exactSummary=retainedRow.locator('.notebook-details > summary');await exactSummary.focus();await page.keyboard.press('Enter');
+    await expect(retainedRow.locator('.notebook-preview')).toBeVisible();await expect(exactSummary).toBeFocused();
+    await page.keyboard.press('Enter');await expect(retainedRow.locator('.notebook-preview')).toBeHidden();await expect(exactSummary).toBeFocused();
+    check(label + '_exact_disclosure_reopen_preserves_identity_and_single_metadata', await retainedRow.locator('.notebook-metadata').count() === 1 && await retainedRow.getAttribute('data-capture-id') === originalExcerpt.id);
+    await retainedRow.scrollIntoViewIfNeeded();await capture(label + '-notebook-exact-expanded');
+    await retainedRow.locator('.notebook-history > summary').click();
+    await expect(retainedRow.locator('.notebook-history .notebook-content')).toContainText('摘录时上下文');
     const historicalContent = await retainedRow.locator('.notebook-content').allTextContents();
-    check(label + '_history_initial_attribution_is_capture_time_source', historicalContent.some(text => text.includes(newlines.title) && text.includes('https://youtu.be/authored-newlines?t=0')));
     await retainedRow.locator('.notebook-open').click();
     await expect(page.locator('#library-notebook')).toBeHidden();
 
@@ -385,13 +407,16 @@ try {
     check(label + '_source_correction_is_durable_and_preserves_original', currentCue.text === correctedText && currentCue.original_text === 'before\r\nafter');
     check(label + '_source_correction_keeps_exact_snapshot_and_independent_annotations', JSON.stringify(correctedDocument.exact_excerpts) === JSON.stringify(beforeDocument.exact_excerpts) && JSON.stringify(correctedDocument.notes) === JSON.stringify(beforeDocument.notes) && JSON.stringify(correctedDocument.segments.map(cue => [cue.id, cue.saved_excerpt])) === JSON.stringify(beforeDocument.segments.map(cue => [cue.id, cue.saved_excerpt])));
     await openLibraryTools(page);await page.locator('#open-library-notebook').click();
-    await retainedRow.locator('details > summary').click();
+    await retainedRow.locator('.notebook-details > summary').click();
     await expect(retainedRow).toContainText('原文或出处已变化；保留摘录时快照');
-    await expect(retainedRow.locator('.notebook-content').last()).toContainText('摘录时上下文');
+    await expect(retainedRow.locator('.notebook-metadata')).toHaveText(historicalMetadata);
+    await retainedRow.locator('.notebook-history > summary').click();
+    await expect(retainedRow.locator('.notebook-history .notebook-content')).toContainText('摘录时上下文');
     check(label + '_historical_text_attribution_and_context_remain_exact_after_correction', JSON.stringify(await retainedRow.locator('.notebook-content').allTextContents()) === JSON.stringify(historicalContent));
     await expect(retainedRow.locator('.notebook-open')).toHaveText('查看当前对应原文');
     await expect(retainedRow.locator('.notebook-open')).toBeEnabled();
-    await capture(label + '-historical-correction');
+    await retainedRow.locator('.notebook-history > summary').click();
+    await retainedRow.scrollIntoViewIfNeeded();await capture(label + '-historical-correction');
     await retainedRow.locator('.notebook-open').click();
     await expect(page.locator('#library-notebook')).toBeHidden();
     await expect(page.locator('#transcript .segment[data-segment-id="' + cueId + '"] .words')).toHaveText(correctedText);
@@ -408,7 +433,7 @@ try {
     check(label + '_reload_preserves_correction_notes_whole_cue_and_other_excerpt', JSON.stringify(await saved()) === JSON.stringify(expectedAfterRemoval));
     await openLibraryTools(page);await page.locator('#open-library-notebook').click();
     await expect(retainedRow).toHaveCount(0);await expect(excerptRow(otherExcerpt.id)).toHaveCount(1);
-    await excerptRow(otherExcerpt.id).locator('details > summary').click();
+    await excerptRow(otherExcerpt.id).locator('.notebook-details > summary').click();
     await expect(excerptRow(otherExcerpt.id)).toContainText('原文或出处已变化；保留摘录时快照');
     await capture(label + '-historical-removal-reload');
     await context.close(); page = null;

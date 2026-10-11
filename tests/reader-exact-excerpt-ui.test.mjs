@@ -40,7 +40,7 @@ test('notebook preserves captured corrected text, source and context after sourc
  const doc=fixture();doc.segments[0].original_text='Before correction';const env=setup(doc),{w,$}=env;try{
   preview(env);$('quotation-save').click();await ready();$('quotation-close').click();const live=w.libraryProbe.documents[0];
   live.title='Renamed source';live.segments=[];w.libraryProbe.render();$('open-library-notebook').click();await ready();
-  const row=$('notebook-captures').querySelector('.notebook-capture');assert.ok(row);const details=row.querySelector('details');details.open=true;details.dispatchEvent(new w.Event('toggle'));assert.match(row.textContent,/所选文字摘录 · 历史快照/);assert.match(row.textContent,/Authored source/);assert.match(row.textContent,/Before correction/);assert.match(row.textContent,/Repeated repeated 🌴 words 中文/);assert.equal(row.querySelector('.notebook-open').disabled,true);
+  const row=$('notebook-captures').querySelector('.notebook-capture');assert.ok(row);const details=row.querySelector('details');details.open=true;details.dispatchEvent(new w.Event('toggle'));const history=details.querySelector('.notebook-history');history.open=true;history.dispatchEvent(new w.Event('toggle'));assert.match(row.textContent,/所选文字摘录 · 历史快照/);assert.match(row.textContent,/Authored source/);assert.match(row.textContent,/Before correction/);assert.match(row.textContent,/Repeated repeated 🌴 words 中文/);assert.equal(row.querySelector('.notebook-open').disabled,true);
   $('notebook-search').value='repeated';$('notebook-search').dispatchEvent(new w.Event('input'));await ready();assert.equal($('notebook-captures').children.length,1);
   assert.match(w.Coconut.notebookMarkdown(live),/repeated 🌴 words/);assert.equal($('export-notebook').disabled,false);
   $('notebook-captures').querySelector('.notebook-remove').click();await ready();assert.equal(live.exact_excerpts,undefined);assert.equal(w.document.activeElement,$('notebook-search'));
@@ -68,7 +68,7 @@ test('notebook batches freshness per document and mounts captured context only i
   const live=w.libraryProbe.documents[0];live.exact_excerpts=Array.from({length:30},(_,i)=>w.Coconut.exactExcerptSnapshot(live,live.segments,[],10+i*2,12+i*2,{id:'e'+i,createdAt:'2026-10-11T00:00:00.000Z'}));
   let batches=0;const batch=w.Coconut.exactExcerptStateBatch;w.Coconut.exactExcerptStateBatch=(...args)=>{batches++;return batch(...args);};
   $('open-library-notebook').click();await ready();assert.equal(batches,1);assert.equal($('notebook-captures').children.length,30);assert.ok($('notebook-captures').textContent.length<20000);
-  const details=$('notebook-captures').querySelector('details');details.open=true;details.dispatchEvent(new w.Event('toggle'));const more=details.querySelector('.notebook-more-context'),context=more.previousElementSibling;
+  const details=$('notebook-captures').querySelector('details');details.open=true;details.dispatchEvent(new w.Event('toggle'));const history=details.querySelector('.notebook-history');assert.equal(history.querySelector('.notebook-content'),null);history.open=true;history.dispatchEvent(new w.Event('toggle'));const more=details.querySelector('.notebook-more-context'),context=more.previousElementSibling;
   assert.ok(context.textContent.length<8100);assert.equal(more.hidden,false);assert.equal(/[\uD800-\uDBFF]$/.test(context.textContent),false);
   const focus=$('notebook-search');focus.focus();more.click();assert.ok(context.textContent.length<16100);assert.equal(w.document.activeElement,focus);
   more.focus();while(more.getAttribute('aria-disabled')!=='true')more.click();assert.equal(context.textContent,'摘录时上下文：\n'+live.segments[0].text);assert.equal(w.document.activeElement,more);assert.equal(more.hidden,false);focus.focus();assert.equal(more.hidden,true);
@@ -125,5 +125,33 @@ for(const change of ['missing','reordered','inserted'])test('exact notebook refu
   preview(env);await $('quotation-save').onclick();$('quotation-close').click();const live=w.libraryProbe.documents[0];
   if(change==='missing')live.segments.pop();else if(change==='reordered')live.segments.reverse();else live.segments.splice(1,0,{id:'new',text:'Inserted source',start:1,end:2});
   w.libraryProbe.render();$('open-library-notebook').click();await ready();const row=$('notebook-captures').querySelector('.notebook-capture');assert.equal(row.querySelector('.notebook-open').disabled,true);assert.match(row.textContent,/repeated 🌴 words/);
+ }finally{await w.happyDOM.close();}
+});
+
+test('notebook note, whole-cue and exact records show one full quote with optional diagnostics and preserve disclosure focus',async()=>{
+ const doc=fixture();doc.notes={a:'A separate personal observation'};doc.segments[1].saved_excerpt=true;const env=setup(doc),{w,$}=env;try{
+  preview(env);await $('quotation-save').onclick();$('quotation-close').click();const live=w.libraryProbe.documents[0],before=JSON.stringify(live),record=live.exact_excerpts[0];
+  live.title='Current shelf title';const changed=JSON.stringify(live);$('open-library-notebook').click();await ready();
+  const rows=[...$('notebook-captures').children];assert.equal(rows.length,3);
+  for(const row of rows){
+   assert.equal(row.dataset.documentKey,live.key);assert.ok(row.dataset.captureId);assert.ok(row.dataset.captureType);assert.equal(row.querySelectorAll('.notebook-preview').length,1);
+   const details=row.querySelector('.notebook-details'),summary=details.firstElementChild,preview=row.querySelector('.notebook-preview'),technical=row.querySelector('.notebook-technical');
+   assert.equal(details.open,false);assert.equal(technical.open,false);assert.match(technical.textContent,new RegExp(row.dataset.captureId));
+   summary.focus();details.open=true;details.dispatchEvent(new w.Event('toggle'));assert.equal(w.document.activeElement,summary);assert.equal(preview.hidden,true);assert.equal(details.querySelectorAll('.notebook-quote').length,1);
+   if(row.dataset.captureType==='exact-excerpt'){
+    assert.equal(details.querySelector('.notebook-quote').textContent,record.text);assert.match(details.querySelector('.notebook-metadata').textContent,/Authored source/);assert.doesNotMatch(details.querySelector('.notebook-metadata').textContent,/Current shelf title/);
+    const history=details.querySelector('.notebook-history');assert.equal(history.open,false);assert.equal(history.querySelector('.notebook-content'),null);
+    history.firstElementChild.focus();details.open=false;details.dispatchEvent(new w.Event('toggle'));assert.equal(w.document.activeElement,summary);
+   }else{details.open=false;details.dispatchEvent(new w.Event('toggle'));}
+   assert.equal(preview.hidden,false);details.open=true;details.dispatchEvent(new w.Event('toggle'));assert.equal(details.querySelectorAll('.notebook-quote').length,1);assert.equal(details.querySelectorAll('.notebook-technical').length,1);
+  }
+  assert.notEqual(changed,before);assert.equal(JSON.stringify(live),changed);
+ }finally{await w.happyDOM.close();}
+});
+
+test('compact notebook preview never truncates stored, expanded or exported source text',async()=>{
+ const doc=fixture();doc.segments=[{id:'long',start:0,end:5,text:'x'.repeat(359)+'🌴 untouched ending'}];doc.notes={};doc.segments[0].saved_excerpt=true;const env=setup(doc),{w,$}=env;try{
+  const live=w.libraryProbe.documents[0],before=JSON.stringify(live);$('open-library-notebook').click();await ready();const row=$('notebook-captures').firstElementChild,preview=row.querySelector('.notebook-preview');
+  assert.equal(preview.textContent,'x'.repeat(359)+'…');const details=row.querySelector('.notebook-details');details.open=true;details.dispatchEvent(new w.Event('toggle'));assert.equal(row.querySelector('.notebook-quote').textContent,doc.segments[0].text);assert.ok(w.Coconut.notebookMarkdown(live).includes('🌴 untouched ending'));assert.equal(JSON.stringify(live),before);
  }finally{await w.happyDOM.close();}
 });

@@ -89,3 +89,21 @@ status ownership. Native browser persistence/reload checks are authored in the
 CI-only quotation acceptance script; local focused DOM checks are not native
 browser evidence. Complete restoration needs JSON and a reader supporting the
 new field; see [backup recovery](backup-recovery.md#exact-text-excerpt-snapshots).
+
+## Notebook presentation
+
+Collapsed records show a short, three-line preview. Expanding a record hides that
+preview and shows one complete source quotation, with a separate personal note
+when present. Preview clipping never changes saved text or exported content.
+Exact excerpts label the saved title, source time range, source attribution and
+capture time separately; the current shelf title identifies the owning document
+without replacing historical attribution. Full historical context and correction
+records remain available in their own initially closed disclosure, with bounded
+progressive expansion for long snapshots. Document and record identifiers remain
+available under optional **技术信息**, rather than taking space in the reading view.
+
+Stable data attributes support automation without relying on visible UUIDs.
+Disclosure changes preserve keyboard focus, and notebook selection, paging,
+source navigation, removal and complete export semantics remain unchanged.
+Native CI screenshots cover ordinary notes, whole-cue excerpts and exact excerpts
+in collapsed and expanded layouts. Local DOM coverage is not a browser result.
