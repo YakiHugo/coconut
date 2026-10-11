@@ -6,7 +6,7 @@ import {Window} from 'happy-dom';
 import {installSavePipeline} from './helpers/save-pipeline.mjs';
 const root=new URL('../',import.meta.url);
 
-test('sample stays busy through the saved-summary intermediate state and unlocks only after bilingual render and scroll',async()=>{
+test('sample stays busy through the saved-source intermediate state without late view changes and unlocks only after its receipt',async()=>{
  const w=new Window({url:'https://coconut.example/'});
  w.document.body.innerHTML=fs.readFileSync(new URL('reader/index.html',root),'utf8').split('<body>')[1].split('</body>')[0];
  Object.defineProperty(w,'crypto',{value:webcrypto});
@@ -28,12 +28,12 @@ test('sample stays busy through the saved-summary intermediate state and unlocks
    const reachedWrite=new Promise(resolve=>{signalWrite=resolve;});
    const before=scrolls,pending=$('sample').onclick();
    assert.equal($('sample').disabled,true);
-   await reachedWrite;
+   await reachedWrite;await Promise.resolve();
    assert.equal($('sample').disabled,true);
    assert.equal($('demo-guide').hidden,false,'guide alone does not prove readiness');
-   assert.equal($('transcript-layout').hidden,true,'source is hidden while add awaits its save');
-   assert.equal($('summary-workspace').hidden,false);
-   assert.equal(scrolls,before,'final title scroll has not happened');
+   assert.equal($('transcript-layout').hidden,false,'read-first source may show before its save receipt');
+   assert.equal($('summary-workspace').hidden,true);
+   assert.equal(scrolls,before+1,'entry scroll happens before the delayed save receipt');
    assert.ok(w.document.querySelector('.words'),'DOM presence does not prove visible source');
    signalWrite=null;pipeline.hold(false);pipeline.writes.at(-1).commit();await pending;
    assert.equal($('sample').disabled,false);
@@ -41,7 +41,7 @@ test('sample stays busy through the saved-summary intermediate state and unlocks
    assert.equal($('summary-workspace').hidden,true);
    assert.equal($('mode-bilingual').getAttribute('aria-pressed'),'true');
    assert.equal(w.document.querySelectorAll('.translation').length,3);
-   assert.equal(scrolls,before+1,'button unlock follows final title scroll');
+   assert.equal(scrolls,before+1,'receipt completion must not scroll the reader again');
   }
  }finally{await w.happyDOM.close();}
 });

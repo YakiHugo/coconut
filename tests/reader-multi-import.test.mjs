@@ -309,7 +309,7 @@ test('single JSON import resumes short transcripts in the cue view and preserves
   assert.equal(f.w.document.activeElement.dataset.segmentId,'resume-2');
   for(const bookmark of [null,900]){
    await f.choose([file('Draft',{text:JSON.stringify({...resumedTranscript({bookmark,cues:4}),title:'Draft '+bookmark})})]);
-   assert.equal(f.w.document.body.dataset.readingMode,'summary','missing/invalid reading positions retain the draft landing');
+   assert.equal(f.w.document.body.dataset.readingMode,'transcript','source-only drafts without a valid reading position open for reading');
    assert.equal(f.w.multiTest.active.readingPosition,undefined);
   }
  }finally{await f.w.happyDOM.close();}

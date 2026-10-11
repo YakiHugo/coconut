@@ -155,6 +155,14 @@ let passageDocumentKey=null,passageAnchor=null,passagePageStart=0,passageReturn=
 let passageTranslations=true,mediaExpandedKey=null,passagePlayback=null;
 let noticeTimer=null,readingSettingsPriorOpen=null,headerDocumentKey=null,mediaCollapsedKey=null;
 function prefersPassageReading(doc){return !Coconut.isAudioProject(doc)&&doc?.provenance?.kind!=='authored_demo'&&doc?.segments.length>=12;}
+// Choose only on document entry. Ordinary renders and explicit view switches
+// retain the reader's current choice; saved language selection is independent.
+function defaultReadingMode(doc){
+ if(!doc||Coconut.isAudioProject(doc))return 'summary';
+ if(prefersPassageReading(doc))return 'passages';
+ if(doc.provenance?.kind==='authored_demo')return 'transcript';
+ return Coconut.latestSummary(doc)||doc.summary_job?'summary':'transcript';
+}
 const browserMedia = new Map();
 const mediaSelectionRevisions = new Map();
 function mediaSelectionRevision(key){return mediaSelectionRevisions.get(key)||0;}
@@ -523,7 +531,7 @@ async function add(doc, canCommit = null, reuseAudioSource = false, lifecycleRev
  }
 	selectActiveDocument(key);
  passageReturn=null;passageDocumentKey=null;mediaExpandedKey=null;
- setReadingMode(prefersPassageReading(active())?"passages":"summary");
+ setReadingMode(defaultReadingMode(active()));
  searchFocusedId=null;
 	$("search").value = "";
 	selected = null;
@@ -741,13 +749,13 @@ $('confirm-removal').onclick=async()=>{
  audioBookmarkDrafts.delete(doc.key);
  if($('audio-project').dataset.documentKey===doc.key){delete $('audio-project').dataset.documentKey;$('audio-bookmark-form').reset();$('audio-bookmarks').replaceChildren();}
  state.documents.splice(index,1);
- if(wasActive){selectActiveDocument(state.documents[Math.min(index,state.documents.length-1)]?.key||null,{persist:false});$('source-media').replaceChildren();$('source-media').hidden=true;listeningSession=null;renderListeningResume();setReadingMode(prefersPassageReading(active())?'passages':'summary');workspace=active()?'read':'add';}
+ if(wasActive){selectActiveDocument(state.documents[Math.min(index,state.documents.length-1)]?.key||null,{persist:false});$('source-media').replaceChildren();$('source-media').hidden=true;listeningSession=null;renderListeningResume();setReadingMode(defaultReadingMode(active()));workspace=active()?'read':'add';}
  operation.selectionRevision=activeSelectionRevision;
  const ticket=libraryStore.queueDocument(doc.key,doc,'remove',{rollback(){
   if(pendingStructuralDocuments.get(doc.key)!==operation||state.documents.some(item=>item.key===doc.key))return false;
   state.documents.splice(Math.min(index,state.documents.length),0,doc);
   finishStructuralOperation(operation);restoreRemovedDrafts(bundle);
-  if(wasActive&&activeSelectionRevision===operation.selectionRevision&&document.activeElement===operation.focusAtStart){resetReaderForDocumentNavigation();selectActiveDocument(doc.key,{persist:false});workspace='read';setReadingMode(prefersPassageReading(doc)?'passages':'summary');render();}else renderLibrary();
+  if(wasActive&&activeSelectionRevision===operation.selectionRevision&&document.activeElement===operation.focusAtStart){resetReaderForDocumentNavigation();selectActiveDocument(doc.key,{persist:false});workspace='read';setReadingMode(defaultReadingMode(doc));render();}else renderLibrary();
   renderRemovalRecovery();return true;
  }});
  removalTarget=null;if(removalDialogOrigin?.doc===doc)removalDialogOrigin.confirmed=true;
@@ -785,7 +793,7 @@ $('undo-removal').onclick=async()=>{
  finishStructuralOperation(operation);restoreRemovedDrafts(recovery);if(removedDocument===recovery)removedDocument=null;
  const ownsFocus=document.activeElement===operation.focusAtStart||document.activeElement===document.body;
  const canNavigate=activeSelectionRevision===operation.selectionRevision&&ownsFocus;
- if(canNavigate&&(recovery.wasActive||!active())){resetReaderForDocumentNavigation();selectActiveDocument(doc.key);workspace='read';setReadingMode(prefersPassageReading(doc)?'passages':'summary');render();}else if(active()===doc)render();else renderLibrary();
+ if(canNavigate&&(recovery.wasActive||!active())){resetReaderForDocumentNavigation();selectActiveDocument(doc.key);workspace='read';setReadingMode(defaultReadingMode(doc));render();}else if(active()===doc)render();else renderLibrary();
  renderRemovalRecovery();
  if(active()===doc&&Coconut.hasProjectAnnotations(doc))$('audio-project-status').textContent='项目已恢复；未提交的书签草稿仅在本页，请保存或取消。';
  if(canNavigate&&active()===doc&&doc.readingPosition){if(prefersPassageReading(doc))openPassage(doc.readingPosition);else goToSegment(doc.readingPosition);}
@@ -900,7 +908,7 @@ function createLibraryCard(d){
   markDocumentOpened(d);
   if(!hit&&libraryMobile.matches&&$('toggle-library').getAttribute('aria-expanded')==='true'&&d.key===active()?.key&&libraryBrowseOrigin?.reading&&libraryBrowseOrigin.doc===d&&libraryBrowseOrigin.selectionRevision===activeSelectionRevision){returnFromLibrary();renderLibrary();return;}
   resetReaderForDocumentNavigation();selectActiveDocument(d.key);
-  setReadingMode(prefersPassageReading(d)?'passages':'summary');
+  setReadingMode(defaultReadingMode(d));
   $('toggle-library').setAttribute('aria-expanded','false');showWorkspace('read');render();
   if(hit)openLibraryHit(hit);
   else resumeOpenedDocument(d);
@@ -1714,7 +1722,7 @@ function openTranscriptImportResult(item){
   item.result.textContent='这份内容已移除或正在恢复，请在书架确认';item.open.hidden=true;return;
  }
  markDocumentOpened(doc);resetReaderForDocumentNavigation();selectActiveDocument(doc.key);
- setReadingMode(prefersPassageReading(doc)?'passages':'summary');
+ setReadingMode(defaultReadingMode(doc));
  $('toggle-library').setAttribute('aria-expanded','false');showWorkspace('read');render();
  resumeOpenedDocument(doc,'reader-workspace');
 }
@@ -2083,16 +2091,17 @@ $("sample").onclick = async () => {
   '时间戳是一条回去的路，不是结论。重要的细节，先回到原声核对，再把它变成自己的理解。'
  ];
  demo.segments.forEach((segment,index)=>{segment.translations={zh:{text:translations[index],source_text:segment.text,source_language:'en',document_language:'en',provider:'Coconut 自写示例译文'}};});
- const result=await add(Coconut.validate(demo)),doc=result.identity;
- // A delayed receipt cannot redirect or modify the user's newer selection.
- if(active()!==doc||!contentIngressAllowed(doc))return;
- if(doc.translation_view!=='zh'){doc.translation_view='zh';queueDocument(doc);}demoToolsExpanded=false;
- setReadingMode('transcript');render();
- $('title').scrollIntoView?.({block:'start'});
+ await add(Coconut.validate(demo),null,false,documentLifecycleRevision,undefined,{onActivate:({identity:doc,selectionRevision})=>{
+  // The explicit demo launch starts bilingual before its first visible render.
+  // A later save receipt must not undo a reader's newer view/language or scroll.
+  if(doc.translation_view!=='zh'){doc.translation_view='zh';queueDocument(doc);}demoToolsExpanded=false;
+  setReadingMode('transcript');
+  queueMicrotask(()=>{if(active()===doc&&activeSelectionRevision===selectionRevision&&workspace==='read')$('title').scrollIntoView?.({block:'start'});});
+ }});
  } catch(error){notice('示例打开失败：'+error.message);}
  finally{$('sample').disabled=false;}
 };
-if(prefersPassageReading(active()))readingMode='passages';
+readingMode=defaultReadingMode(active());
 render();
 
 $("save-edit").onclick = (event) => {
@@ -2179,7 +2188,11 @@ $("library-file").onchange = async () => {
  if(added.some(doc=>pendingStructuralDocuments.has(doc.key)))throw new Error('文档正在移除或恢复，请稍候重试');
   // An empty restore stays in Add without looking like new navigation on render.
   clearReadingContext();
+  const previousDocument=active();
   state = restored; selectActiveDocument(restored.active); selected=null; pageStart=0; notesOnly=false; excerptsOnly=false; speakerFilter=null; $("search").value=""; workspace=active()?"read":"add";
+  // Only a newly activated document gets an entry default. An additive/empty
+  // restore of the current document preserves its explicit reading choice.
+  if(active()!==previousDocument)setReadingMode(defaultReadingMode(active()));
   const receipt=commitDocuments(added);render();
   const persisted=await receipt;
   if(persisted.ok && ownsRequest() && state.active===restored.active && workspace===(restored.active?"read":"add"))notice("已恢复 " + added.length + " 份文字稿；相同内容已跳过，不同版本分别保留，原书架未删除。");

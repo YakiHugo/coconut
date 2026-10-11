@@ -69,6 +69,11 @@ jobs:
         env:
           COCONUT_UI_SCREENSHOTS: ${{ runner.temp }}/coconut-authored-ui
         run: node tests/web-browser-acceptance.mjs
+      - name: Verify read-first short sources, saved summaries and returning demo readers
+        if: ${{ !cancelled() && steps.browser_setup.outcome == 'success' }}
+        env:
+          COCONUT_UI_SCREENSHOTS: ${{ runner.temp }}/coconut-authored-ui
+        run: node tests/read-first-browser.mjs
       - name: Verify persistent reading appearance, dark contrast, keyboard and narrow mobile reading
         if: ${{ !cancelled() && steps.browser_setup.outcome == 'success' }}
         env:
