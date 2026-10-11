@@ -1,4 +1,4 @@
-import {installSavePipeline} from './helpers/save-pipeline.mjs';
+import {installSavePipeline,settle} from './helpers/save-pipeline.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -12,10 +12,10 @@ function setup(saved){
  Object.defineProperty(w,'crypto',{value:webcrypto});if(saved)w.localStorage.setItem(key,saved);
  const calls=[];w.fetch=async(...args)=>{calls.push(args);throw new Error('Unexpected request');};
  for(const name of ['summary','core','passages','passage-playback'])w.eval(fs.readFileSync(new URL('reader/'+name+'.js',root),'utf8'));
- installSavePipeline(w);
+ const pipeline=installSavePipeline(w);
  w.eval(['app','language','podcasts'].map(name=>fs.readFileSync(new URL('reader/'+name+'.js',root),'utf8')).join('\n'));
  const $=id=>w.document.getElementById(id);w.HTMLElement.prototype.scrollIntoView=function(){w.lastScrolled=this;};
- return {w,$,calls,close:async()=>{w.dispatchEvent(new w.Event('pagehide'));await w.happyDOM.close();}};
+ return {w,$,calls,pipeline,close:async()=>{w.dispatchEvent(new w.Event('pagehide'));await w.happyDOM.close();}};
 }
 async function load(env,fixture=passageReadingFixture()){
  const text=JSON.stringify(fixture);Object.defineProperty(env.$('file'),'files',{configurable:true,value:[{name:'authored.json',size:Buffer.byteLength(text),text:async()=>text}]});await env.$('file').onchange();return fixture;
@@ -241,5 +241,35 @@ test('a success notice can expire during compact note editing without clearing t
   assert.equal($('passage-playback-controls').dataset.state,'paused');assert.equal($('notes-panel').hidden,false);
   $('close-note').click();assert.equal($('notice').hidden,true);assert.equal($('notice-shell').parentElement,$('notice-home'));
   assert.equal($('passage-playback-controls').hidden,false);assert.equal($('passage-return-playback').hidden,false);assert.equal(player.paused,true);
+ }finally{await env.close();}
+});
+
+
+test('passage reading marker saves explicitly across pages without replacing focus, media, or mode',async()=>{
+ const env=setup();try{await load(env);const {$,w}=env;
+  const marked=$('passage-body').querySelector('.passage-bookmark[aria-pressed="true"]');
+  assert.equal(marked.closest('.passage').dataset.firstCueId,'split-18');assert.equal(marked.textContent,'阅读位置在本段');
+  $('passage-toggle-translation').click();$('passage-next').click();$('passage-previous').click();
+  $('passage-search').click();$('search').value='question';$('search').oninput();$('clear-search').click();$('mode-passages').click();
+  assert.equal(saved(env).readingPosition,'split-19');
+  const player=await media(env);player.currentTime=43;await player.play();
+  $('passage-next').click();const section=passages(env)[2],button=section.querySelector('.passage-bookmark'),id=section.dataset.firstCueId;
+  let scrolls=0;w.scrollBy=()=>scrolls++;w.scrollTo=()=>scrolls++;button.focus();button.click();
+  assert.equal(w.document.activeElement,button);assert.equal(button.isConnected,true);assert.equal($('source-media').querySelector('audio'),player);
+  assert.equal(player.currentTime,43);assert.equal(player.paused,false);assert.equal(scrolls,0);assert.equal($('passage-workspace').hidden,false);
+  await w.flushContentForTest();assert.equal(saved(env).readingPosition,id);assert.equal(button.textContent,'阅读位置在本段');
+  const persisted=w.localStorage.getItem(key);const reopened=setup(persisted);try{reopened.$('library').querySelector('.library-open').click();assert.ok(reopened.$('passage-body').querySelector('.passage-cue[data-cue-id="'+id+'"]'));assert.equal(saved(reopened).readingPosition,id);}finally{await reopened.close();}
+  const originalKey=saved(env).key,stale=button;await load(env,{...irregularPassageFixture(),title:'Other marker document'});const before=saved(env).readingPosition;stale.click();assert.equal(saved(env).readingPosition,before);
+  $('library').querySelector('[data-document-key="'+originalKey+'"] .library-open').click();assert.ok($('passage-body').querySelector('.passage-cue[data-cue-id="'+id+'"]'));assert.equal(saved(env).readingPosition,id);
+ }finally{await env.close();}
+});
+
+test('passage marker failure stays visibly unsaved and existing retry persists it without moving focus',async()=>{
+ const env=setup();try{await load(env);const {$,w,pipeline}=env;pipeline.hold();
+  const button=passages(env)[0].querySelector('.passage-bookmark');button.focus();button.click();
+  assert.equal(button.textContent,'位置待保存');const flushed=w.flushContentForTest();await settle();pipeline.writes[0].fail('quota');await flushed;await settle();
+  assert.equal(button.textContent,'位置未保存');assert.equal($('save-status').dataset.state,'failed');assert.equal(saved(env).readingPosition,'split-19');assert.equal($('retry-save').hidden,false);
+  assert.equal(w.document.activeElement,button);pipeline.hold(false);await $('retry-save').onclick();
+  assert.equal(saved(env).readingPosition,'split-0');assert.equal(button.textContent,'阅读位置在本段');assert.equal(w.document.activeElement,button);
  }finally{await env.close();}
 });

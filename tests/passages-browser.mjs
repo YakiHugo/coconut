@@ -191,6 +191,37 @@ try {
     return page;
   }
   const fixture = passageReadingFixture();
+  // Explicit passage markers exercise the production IndexedDB save path in CI.
+  // This isolated journey keeps the existing geometry and per-cue proof intact.
+  for(const [label,viewport] of [['desktop',{width:1360,height:1000}],['mobile',{width:390,height:844}]]){
+    const page=await freshPage(viewport);await importFixture(page,fixture);
+    const interior=page.locator('.passage-bookmark[aria-pressed="true"]');
+    check(label+'_passage_marker_recognizes_interior_cue',await interior.count()===1 && await interior.locator('..').locator('..').getAttribute('data-first-cue-id')==='split-18' && (await stored(page)).readingPosition==='split-19');
+    await page.locator('#passage-next').click();await page.locator('#passage-previous').click();
+    await page.locator('#passage-toggle-translation').click();await page.locator('#passage-toggle-translation').click();
+    await attachAudio(page,audioPath);await page.locator('#close-reader-media').click();
+    await page.locator('.passage-listen').first().click();
+    await page.waitForFunction(()=>document.querySelector('#passage-playback-controls').dataset.state==='playing');
+    check(label+'_passage_navigation_and_preview_never_rewrite_marker',(await stored(page)).readingPosition==='split-19');
+    const marker=page.locator('.passage-bookmark').first();await marker.scrollIntoViewIfNeeded();await marker.focus();
+    const before=await marker.evaluate(node=>{window.__markerAudio=document.querySelector('audio');return {scrollY,top:node.getBoundingClientRect().top,id:node.closest('.passage').dataset.firstCueId};});
+    await marker.press('Enter');await expect.poll(async()=>(await stored(page)).readingPosition).toBe(before.id);
+    const after=await marker.evaluate(node=>({scrollY,top:node.getBoundingClientRect().top,focused:document.activeElement===node,media:document.querySelector('audio')===window.__markerAudio,mode:!document.querySelector('#passage-workspace').hidden}));
+    check(label+'_passage_marker_preserves_viewport_focus_mode_and_media',Math.abs(after.scrollY-before.scrollY)<=1&&Math.abs(after.top-before.top)<=1&&after.focused&&after.media&&after.mode);
+    await expect(marker).toHaveText('阅读位置在本段');
+    await controlsGeometry(page,label+'-passage-reading-marker',['.passage-bookmark']);await capture(page,label+'-reading-marker');
+    await page.locator('#passage-return-playback').click();
+    await page.locator('#passage-next').click();const next=page.locator('.passage-bookmark').first(),nextId=await next.locator('..').locator('..').getAttribute('data-first-cue-id');
+    await page.evaluate(()=>failContentWrites());await next.click();
+    await expect(next).toHaveText('位置未保存');await expect(page.locator('#save-status')).toHaveAttribute('data-state','failed');
+    check(label+'_passage_marker_failure_preserves_durable_position',(await stored(page)).readingPosition===before.id);
+    await page.evaluate(()=>restoreContentWrites());await page.locator('#retry-save').click();
+    await expect.poll(async()=>(await stored(page)).readingPosition).toBe(nextId);await expect(next).toHaveText('阅读位置在本段');
+    await page.reload();await page.locator('#passage-workspace').waitFor({state:'visible'});
+    check(label+'_passage_marker_reloads_exact_committed_page',await page.locator('.passage-original .passage-cue[data-cue-id="'+nextId+'"]').count()===1&&(await stored(page)).readingPosition===nextId);
+    await page.context().close();
+  }
+
   for (const [label, viewport] of [['desktop', {width: 1360, height: 1000}], ['mobile', {width: 390, height: 844}]]) {
     stage = label + '_import';
     // Keep the original first-import layout promise on a genuinely new text,
