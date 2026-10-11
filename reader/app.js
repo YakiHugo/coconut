@@ -2491,6 +2491,24 @@ $("return-excerpt").onclick = () => goToSegment(selected,false,!!passageReturn);
 document.addEventListener("keydown", event => {
 	if (event.key === "Escape" && selected && !$("export-menu").open && !document.querySelector("dialog[open]")) $("close-note").click();
 });
+// Chromium may leave an already-visible control's border at the scrollport
+// edge after reverse Tab; CSS scroll-margin does not include its focus ring.
+// Let native focus/Tab finish, then correct only this dialog's own scroll.
+$('paste-subtitle-dialog').addEventListener('focusin',event=>{
+ const dialog=$('paste-subtitle-dialog'),target=event.target;
+ if(target.closest?.('dialog')!==dialog||!target.matches('button,input,select,textarea,summary'))return;
+ requestAnimationFrame(()=>{
+  if(!dialog.open||document.activeElement!==target||target.closest('dialog')!==dialog)return;
+  const focusStyle=getComputedStyle(target),ring=(parseFloat(focusStyle.outlineWidth)||0)+Math.max(0,parseFloat(focusStyle.outlineOffset)||0);
+  if(!ring||focusStyle.outlineStyle==='none')return;
+  const rect=target.getBoundingClientRect(),box=dialog.getBoundingClientRect(),style=getComputedStyle(dialog);
+  if(!rect.width||!rect.height)return;
+  const top=Math.max(0,box.top+dialog.clientTop)+Math.max(ring+2,parseFloat(style.scrollPaddingTop)||0);
+  const bottom=Math.min(innerHeight,box.top+dialog.clientTop+dialog.clientHeight)-Math.max(ring+2,parseFloat(style.scrollPaddingBottom)||0);
+  if(rect.top<top)dialog.scrollTop+=Math.floor(rect.top-top);
+  else if(rect.bottom>bottom)dialog.scrollTop+=Math.ceil(rect.bottom-bottom);
+ });
+});
 function pastedSubtitleHasDraft(){return !!($('paste-subtitle-text').value||$('paste-subtitle-title').value);}
 function invalidatePastedSubtitlePreview(message='内容已改变，请重新预览字幕。'){
  pasteSubtitleRevision++;pasteSubtitlePreview=null;pasteSubtitleAttempt=null;pasteSubtitleReceipt=null;

@@ -446,3 +446,127 @@ test('held pasted retry cannot reclaim a selection changed independently of the 
   assert.equal(e.active().key,'b');assert.equal(e.$('title').textContent,title);assert.equal(e.$('paste-subtitle-dialog').open,true);assertDraft(e,srt,'Pasted source');assert.equal(e.w.document.activeElement,focused);assert.equal(e.$('notice').textContent,notice);assert.equal(e.unload(),true);
  }finally{await e.close();}
 });
+
+// Happy DOM has no native layout or Tab traversal. These explicit geometry
+// doubles exercise the production focusin handler after a controlled RAF;
+// the full ring, hit testing, and native keyboard journey remain browser CI.
+function pastedFocusLayout(e,{top=18.640625,height=160,dialogTop=16,dialogHeight=812,viewportHeight=844,paddingTop=12,paddingBottom=12,outlineWidth=3,outlineOffset=3,outlineStyle='solid'}={}){
+ const dialog=e.$('paste-subtitle-dialog'),target=e.$('paste-subtitle-text'),frames=new Map(),writes=[],scrollCalls=[],intoViewCalls=[];
+ const initialScroll=100;let scrollTop=initialScroll,frameId=0;
+ Object.defineProperty(dialog,'scrollTop',{configurable:true,get:()=>scrollTop,set:value=>{writes.push(value);scrollTop=Math.max(0,value);}});
+ Object.defineProperty(dialog,'clientTop',{configurable:true,value:1});
+ Object.defineProperty(dialog,'clientHeight',{configurable:true,value:dialogHeight-2});
+ Object.defineProperty(e.w,'innerWidth',{configurable:true,value:390});
+ Object.defineProperty(e.w,'innerHeight',{configurable:true,value:viewportHeight});
+ dialog.getBoundingClientRect=()=>new e.w.DOMRect(16,dialogTop,358,dialogHeight);
+ dialog.style.scrollPaddingTop=paddingTop+'px';dialog.style.scrollPaddingBottom=paddingBottom+'px';
+ const rectangles=new Map();
+ const place=(node,y,h=44)=>rectangles.set(node,{top:y+scrollTop,height:h});
+ for(const node of dialog.querySelectorAll('button,input,select,textarea,summary')){
+  node.style.outlineWidth=outlineWidth+'px';node.style.outlineOffset=outlineOffset+'px';node.style.outlineStyle=outlineStyle;
+  place(node,200);
+  node.getBoundingClientRect=()=>{const rect=rectangles.get(node);return new e.w.DOMRect(35,rect.top-scrollTop,320,rect.height);};
+ }
+ place(target,top,height);
+ e.w.requestAnimationFrame=callback=>{frames.set(++frameId,callback);return frameId;};
+ e.w.cancelAnimationFrame=id=>frames.delete(id);
+ e.w.scrollTo=(...args)=>scrollCalls.push(args);
+ e.w.HTMLElement.prototype.scrollIntoView=function(...args){intoViewCalls.push({node:this,args});};
+ e.w.document.body.scrollTop=77;e.w.document.documentElement.scrollTop=91;
+ const takeFrame=()=>{const pending=[...frames.values()];frames.clear();return()=>{for(const callback of pending)callback(0);};};
+ const flush=()=>takeFrame()();
+ const assertLocal=()=>{
+  assert.deepEqual(scrollCalls,[],'focus correction must not scroll the window');
+  assert.deepEqual(intoViewCalls,[],'focus correction must not invoke scrollIntoView');
+  assert.equal(e.w.document.body.scrollTop,77);assert.equal(e.w.document.documentElement.scrollTop,91);
+ };
+ return {dialog,target,writes,place,takeFrame,flush,assertLocal,pending:()=>frames.size,
+  clip:()=>({top:Math.max(0,dialogTop+1),bottom:Math.min(viewportHeight,dialogTop+dialogHeight-1)})};
+}
+
+for(const fixture of [
+ {name:'exact 390px reverse-Tab failure',top:18.640625,height:160,expectedScroll:89},
+ {name:'fractional bottom-edge focus ring',top:665.359375,height:160,expectedScroll:111},
+ {name:'viewport-clipped dialog top',top:4.640625,height:160,dialogTop:-20,dialogHeight:884,expectedScroll:92},
+ {name:'viewport-clipped dialog bottom',top:681.359375,height:160,dialogTop:-20,dialogHeight:884,expectedScroll:110},
+])test('pasted focusin corrects '+fixture.name+' using only its dialog scroll after RAF',async()=>{
+ const e=setup();try{
+  const g=pastedFocusLayout(e,fixture);let focused=false;
+  g.dialog.addEventListener('focusin',event=>{if(event.target===g.target)focused=true;});
+  e.open();assert.equal(focused,true,'the production listener receives a real DOM focus event');assert.equal(e.w.document.activeElement,g.target);
+  assert.ok(g.pending()>0);assert.deepEqual(g.writes,[],'native focus gets the frame before any correction');
+  const before=g.target.getBoundingClientRect(),clip=g.clip(),ring=6;
+  assert.ok(before.top-ring<clip.top||before.bottom+ring>clip.bottom,'fixture reproduces a clipped full focus ring');
+  g.flush();assert.deepEqual(g.writes,[fixture.expectedScroll],'fractional correction rounds outwards, without over-scrolling');
+  const after=g.target.getBoundingClientRect();
+  assert.ok(after.top>=clip.top+12);assert.ok(after.bottom<=clip.bottom-12);
+  assert.ok(after.top-ring>=clip.top);assert.ok(after.bottom+ring<=clip.bottom);
+  assert.equal(after.width,320);assert.equal(after.height,160);assert.equal(e.w.document.activeElement,g.target);g.assertLocal();
+ }finally{await e.close();}
+});
+
+test('pasted focusin leaves an already-safe complete target exactly where it is',async()=>{
+ const e=setup();try{
+  const g=pastedFocusLayout(e,{top:29,height:786});e.open();g.flush();
+  assert.deepEqual(g.writes,[]);assert.equal(g.dialog.scrollTop,100);
+  assert.equal(g.target.getBoundingClientRect().top,29);assert.equal(g.target.getBoundingClientRect().bottom,815);g.assertLocal();
+ }finally{await e.close();}
+});
+
+test('pasted focusin reads the actual post-native-focus geometry in its RAF',async()=>{
+ const e=setup();try{
+  const g=pastedFocusLayout(e,{top:200});e.open();assert.ok(g.pending()>0);
+  // A browser may scroll during native focus after the event handler returns.
+  // Move the supplied layout before RAF, rather than freezing an event-time box.
+  g.place(g.target,18.640625,160);g.flush();
+  assert.deepEqual(g.writes,[89]);assert.equal(g.target.getBoundingClientRect().top,29.640625);g.assertLocal();
+ }finally{await e.close();}
+});
+
+for(const fixture of [
+ {name:'a wider outline plus positive offset',top:28,paddingTop:4,paddingBottom:4,outlineWidth:5,outlineOffset:9,expectedScroll:95,expectedTop:33},
+ {name:'negative outline offsets without reducing the width',top:20,paddingTop:0,paddingBottom:0,outlineWidth:3,outlineOffset:-3,expectedScroll:98,expectedTop:22},
+ {name:'no visible outline',outlineStyle:'none',expectedScroll:100,expectedTop:18.640625},
+ {name:'zero outline width and offset',outlineWidth:0,outlineOffset:0,expectedScroll:100,expectedTop:18.640625},
+])test('pasted focusin respects '+fixture.name,async()=>{
+ const e=setup();try{
+  const g=pastedFocusLayout(e,fixture);e.open();g.flush();
+  assert.deepEqual(g.writes,fixture.expectedScroll===100?[]:[fixture.expectedScroll]);
+  assert.equal(g.dialog.scrollTop,fixture.expectedScroll);assert.equal(g.target.getBoundingClientRect().top,fixture.expectedTop);g.assertLocal();
+ }finally{await e.close();}
+});
+
+for(const action of ['newer focus','closed dialog','target moved to another dialog'])test('late pasted focusin RAF cannot scroll after '+action,async()=>{
+ const e=setup();try{
+  const g=pastedFocusLayout(e);e.open();assert.ok(g.pending()>0);const lateFrame=g.takeFrame();
+  if(action==='newer focus')e.$('paste-subtitle-title').focus();
+  if(action==='closed dialog'){e.$('close-paste-subtitle').click();assert.equal(g.dialog.open,false);}
+  if(action==='target moved to another dialog'){
+   const other=e.w.document.createElement('dialog');e.w.document.body.append(other);other.append(g.target);other.showModal();g.target.focus();
+   assert.equal(e.w.document.activeElement,g.target,'the target still owns focus, but no longer belongs to the paste dialog');
+   assert.equal(g.dialog.open,true);assert.equal(g.target.closest('dialog'),other);
+  }
+  const focused=e.w.document.activeElement;lateFrame();
+  assert.deepEqual(g.writes,[]);assert.equal(g.dialog.scrollTop,100);assert.equal(e.w.document.activeElement,focused);g.assertLocal();
+  if(action==='newer focus'){g.flush();assert.deepEqual(g.writes,[],'the newer safe target needs no correction either');}
+ }finally{await e.close();}
+});
+
+test('pasted focus scrolling preserves native interior Tab and traps only current modal boundaries',async()=>{
+ const e=setup();try{
+  const g=pastedFocusLayout(e,{top:200});e.open();g.flush();
+  const tab=(id,shiftKey=false)=>{const node=e.$(id);node.focus();const event=new e.w.KeyboardEvent('keydown',{key:'Tab',shiftKey,bubbles:true,cancelable:true});node.dispatchEvent(event);return event;};
+  // Happy DOM does not traverse on an unhandled Tab. Assert the application
+  // leaves those events untouched; native traversal itself is a browser gate.
+  for(const id of ['paste-subtitle-title','paste-subtitle-format','paste-subtitle-text','preview-paste-subtitle'])for(const shift of [false,true]){
+   assert.equal(tab(id,shift).defaultPrevented,false,id+' interior Tab stays native');assert.equal(e.w.document.activeElement,e.$(id));
+  }
+  assert.equal(tab('close-paste-subtitle',true).defaultPrevented,true);assert.equal(e.w.document.activeElement,e.$('clear-paste-subtitle'));
+  assert.equal(tab('clear-paste-subtitle').defaultPrevented,true);assert.equal(e.w.document.activeElement,e.$('close-paste-subtitle'));
+  e.change('paste-subtitle-text',srt);e.preview();assert.equal(e.$('confirm-paste-subtitle').disabled,false);
+  assert.equal(tab('clear-paste-subtitle').defaultPrevented,false,'a now-enabled confirm becomes the last boundary');
+  assert.equal(tab('close-paste-subtitle',true).defaultPrevented,true);assert.equal(e.w.document.activeElement,e.$('confirm-paste-subtitle'));
+  assert.equal(tab('confirm-paste-subtitle').defaultPrevented,true);assert.equal(e.w.document.activeElement,e.$('close-paste-subtitle'));
+  g.flush();g.assertLocal();
+ }finally{await e.close();}
+});
