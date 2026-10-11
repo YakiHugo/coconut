@@ -1,6 +1,7 @@
 "use strict";
 let quotationController;
 let exactNoteEditor=null;
+let speakerEditor=null;
 const $ = (id) => document.getElementById(id);
 const KEY = "coconut-reader-v1";
 const ACTIVE_KEY = "coconut-reader-active-v1";
@@ -594,7 +595,7 @@ function renderReadingContext() {
  if(origin&&readingMode==='passages'){if(bar.nextElementSibling!==$('passage-workspace'))$('passage-workspace').before(bar);}
  else if(readingContextHome.nextSibling!==bar)readingContextHome.after(bar);
  $('reading-context').hidden=!origin||workspace!=='read'||readingMode==='summary';
- if(origin)$('reading-context-label').textContent=origin.label+' · 第 '+(origin.index+1)+' / '+origin.count+' 个结果';
+ if(origin)$('reading-context-label').textContent=origin.label+' · '+(!origin.count?'原筛选已无匹配结果':(origin.resultMissing?'原片段已离开结果 · 返回第 ':'第 ')+(origin.index+1)+' / '+origin.count+' 个结果');
 }
 function captureReadingContext(id) {
  const doc=active(),query=$('search').value;
@@ -1619,7 +1620,15 @@ function render({keepNoteEditor=false,reuseLibraryMetadata=false}={}) {
 			const a = el("a", "", Coconut.time(s.start)); a.href=href; a.target="_blank"; a.rel="noopener noreferrer"; a.title="打开原视频的时间链接；是否自动定位取决于平台"; meta.append(a);
 		} else meta.textContent=Coconut.time(s.start);
 		const body = el("div");
-		if (s.speaker) body.append(highlightedText("p", "speaker", s.speaker, query));
+		let speakerCorrection=null;
+  if(s.speaker){
+   speakerCorrection=el('button','speaker-correction-button','修正说话人标签');
+   speakerCorrection.type='button';speakerCorrection.setAttribute('aria-label','修正说话人标签：'+s.speaker);
+   speakerCorrection.title='修正说话人标签';speakerCorrection.onclick=()=>openSpeakerCorrection(doc,s,row);
+   // Keep the reading label at its original line height. The 44px editing
+   // action belongs after the source, alongside the other cue actions.
+   body.append(highlightedText('p','speaker',s.speaker,query));
+  }
 		body.className="segment-content";
   const parallel=el("div","parallel-text");
   parallel.append(highlightedText("p", "words", s.text, query, searchMatches?.byCue.get(s.id)?.text||[]));
@@ -1648,6 +1657,7 @@ function render({keepNoteEditor=false,reuseLibraryMetadata=false}={}) {
 			$("edit-dialog").showModal();
 		};
 		body.append(edit);
+  if(speakerCorrection&&!compact)body.append(speakerCorrection);
   let reviewTranslation=null;
   if(translated||doc.translation_view){
    reviewTranslation=el('button','review-translation-button',!translated?'自己写译文':translated.provider==='user'?'核对／修正自己写的译文':translated.manual_review?'核对／修正人工译文':'核对／修正译文');
@@ -1710,6 +1720,7 @@ function render({keepNoteEditor=false,reuseLibraryMetadata=false}={}) {
    const repeat=meta.querySelector('.repeat-button');
    summary.setAttribute('aria-label',summary.dataset.cueTime+' · '+summary.textContent+'：修正、摘录、阅读位置'+(repeat?'与循环回听':''));
    more.append(summary,edit,excerptButton,bookmarkButton);
+   if(speakerCorrection)more.append(speakerCorrection);
    if(reviewTranslation)more.append(reviewTranslation);
    if(repeat)more.append(repeat);
    more.open=openCueActions.has(more.dataset.cueKey);
@@ -2343,6 +2354,90 @@ $("sample").onclick = async () => {
 };
 readingMode=defaultReadingMode(active());
 render();
+
+// A preview is bound to the exact document and target cues by core. Never
+// rebuild it on submit: doing so would silently accept a stale dialog.
+function openSpeakerCorrection(doc,cue,row){
+ if(active()!==doc||!contentIngressAllowed(doc))return;
+ const matches=doc.segments.filter(s=>matchesReadingSegment(s,doc,$('search').value.trim().toLocaleLowerCase()));
+ speakerEditor={doc,selectionRevision:activeSelectionRevision,cueId:cue.id,from:cue.speaker,index:matches.findIndex(s=>s.id===cue.id),viewportTop:row.getBoundingClientRect().top,preview:null};
+ $('speaker-original').textContent=cue.speaker;$('speaker-name').maxLength=Coconut.SPEAKER_CORRECTION_LABEL_LIMIT;$('speaker-name').value=cue.speaker;speakerEditor.displayName=$('speaker-name').value;
+ $('speaker-action').value='rename';$('speaker-scope').value='cue';
+ $('speaker-scope').options[1].textContent='整篇相同标签，共 '+doc.segments.filter(s=>s.speaker===cue.speaker).length+' 段';
+ refreshSpeakerPreview();$('speaker-dialog').showModal();$('speaker-name').focus();$('speaker-name').select();
+}
+function speakerCorrectionDraft(){
+ return !!speakerEditor&&$('speaker-dialog').open&&($('speaker-name').value!==speakerEditor.displayName||$('speaker-action').value==='restore'&&speakerEditor.preview?.changedCount>0);
+}
+function refreshSpeakerPreview(){
+ const editor=speakerEditor;if(!editor)return;
+ $('speaker-error').textContent='';$('speaker-preview').replaceChildren();$('speaker-merge').textContent='';editor.preview=null;
+ $('speaker-name').disabled=$('speaker-action').value==='restore';
+ try{
+  if(active()!==editor.doc||activeSelectionRevision!==editor.selectionRevision||!state.documents.includes(editor.doc)||!contentIngressAllowed(editor.doc))throw Error('文字稿已变化，请取消后重新打开。');
+  const preview=Coconut.createSpeakerCorrectionPreview(editor.doc,{cueId:editor.cueId,scope:$('speaker-scope').value,action:$('speaker-action').value,speaker:$('speaker-name').value===editor.displayName?editor.from:$('speaker-name').value});editor.preview=preview;
+  $('speaker-count').textContent='范围内 '+preview.total+' 段，将修改 '+preview.changedCount+' 段'+(preview.truncated?'；以下预览前 '+preview.preview.length+' 段':'')+'。';
+  if(preview.action==='restore')$('speaker-merge').textContent=preview.mixed?'将按各段记录恢复，可能拆回不同标签；没有初始记录的片段保持不变。':'按各段记录恢复初始标签；没有初始记录的片段保持不变。';
+  else if(preview.toSpeaker!==preview.fromSpeaker&&editor.doc.segments.some(cue=>cue.speaker===preview.toSpeaker))$('speaker-merge').textContent='“'+preview.toSpeaker+'”已存在，修正后将归入同一标签组。';
+  for(const cue of preview.preview){const item=el('p','speaker-preview-cue');item.append(el('strong','',Coconut.time(cue.start)+' · '+cue.fromSpeaker+' → '+cue.toSpeaker),el('span','',cue.text));$('speaker-preview').append(item);}
+  $('save-speaker').disabled=false;
+ }catch(error){$('speaker-count').textContent='';$('speaker-error').textContent=error.message;$('save-speaker').disabled=true;}
+}
+function closeSpeakerCorrection(){
+ const editor=speakerEditor;speakerEditor=null;$('speaker-dialog').close();
+ if(editor&&active()===editor.doc){const row=[...$('transcript').querySelectorAll('.segment')].find(node=>node.dataset.segmentId===editor.cueId);(row?.querySelector('.speaker-correction-button')||row||$('search')).focus({preventScroll:true});}
+}
+// Native text inputs remove CR/LF on assignment. Untouched source labels must
+// retain their exact imported value across scope changes, edits reverted to the
+// initial display value, and no-op submission. Compare display values without trim.
+$('speaker-name').addEventListener('input',refreshSpeakerPreview);
+for(const id of ['speaker-scope','speaker-action'])$(id).addEventListener('change',refreshSpeakerPreview);
+$('cancel-speaker').onclick=closeSpeakerCorrection;
+$('speaker-dialog').addEventListener('cancel',event=>{event.preventDefault();closeSpeakerCorrection();});
+// Own the two Tab boundaries explicitly: native dialog traversal can hand the
+// final Tab to browser chrome instead of wrapping to the first reader control.
+$('speaker-dialog').addEventListener('keydown',event=>{
+ const dialog=$('speaker-dialog');
+ if(!dialog.open||!speakerEditor||event.key!=='Tab'||event.defaultPrevented||event.isComposing||event.keyCode===229||event.altKey||event.ctrlKey||event.metaKey||event.target.closest?.('dialog')!==dialog)return;
+ const controls=[...dialog.querySelectorAll('a[href],button,input,select,textarea,summary,[tabindex],[contenteditable="true"]')].filter(node=>{
+  if(node.tabIndex<0||node.matches(':disabled')||node.closest('[hidden],[inert]'))return false;
+  for(let current=node;current&&current!==dialog;current=current.parentElement){const style=getComputedStyle(current);if(style.display==='none'||style.visibility==='hidden'||style.visibility==='collapse')return false;}
+  return true;
+ });
+ const first=controls[0],last=controls.at(-1),focused=document.activeElement;
+ if(first&&((event.shiftKey&&focused===first)||(!event.shiftKey&&focused===last))){event.preventDefault();(event.shiftKey?last:first).focus();}
+});
+
+$('save-speaker').onclick=()=>{
+ const editor=speakerEditor;if(!editor?.preview)return;
+ try{
+  const doc=editor.doc;
+  if(active()!==doc||activeSelectionRevision!==editor.selectionRevision||!state.documents.includes(doc)||!contentIngressAllowed(doc))throw Error('文字稿已变化，请取消后重新打开。');
+  const result=Coconut.applySpeakerCorrectionPreview(doc,editor.preview);
+  if(!result.changed){closeSpeakerCorrection();return;}
+  const next=doc.segments.find(cue=>cue.id===editor.cueId).speaker;
+  // Keep an existing old group for a single-cue change. If the whole old group
+  // disappears (including a mixed restore), follow the initiating cue's label.
+  const follow=value=>value===editor.from&&!doc.segments.some(cue=>cue.speaker===value)?next:value;
+  speakerFilter=follow(speakerFilter);
+  if(readingContext?.document===doc){
+   const origin=readingContext;origin.speakerFilter=follow(origin.speakerFilter);
+   const matches=doc.segments.filter(cue=>(origin.speakerFilter===null||(cue.speaker||'')===origin.speakerFilter)&&Coconut.matchesSegment(cue,doc,origin.query.trim().toLocaleLowerCase(),origin.notesOnly,origin.excerptsOnly));
+   origin.count=matches.length;const index=matches.findIndex(cue=>cue.id===origin.id);origin.resultMissing=index<0;origin.index=index>=0?index:Math.max(0,Math.min(origin.index,matches.length-1));
+   origin.label=[origin.query.trim()?'搜索“'+origin.query.trim()+'”':'',origin.excerptsOnly?'摘录':'',origin.notesOnly?'笔记':'',origin.speakerFilter!==null?'说话人：'+(origin.speakerFilter||'未标注'):''].filter(Boolean).join(' · ');
+  }
+  const matches=doc.segments.filter(cue=>matchesReadingSegment(cue,doc,$('search').value.trim().toLocaleLowerCase()));
+  const exact=matches.findIndex(cue=>cue.id===editor.cueId),index=exact>=0?exact:Math.min(editor.index,matches.length-1),target=matches[index];
+  pageStart=index>=0?Math.floor(index/PAGE_SIZE)*PAGE_SIZE:0;
+  if(searchFocusedId===editor.cueId)searchFocusedId=target?.id||null;
+  passageAnchor=editor.cueId;
+  queueDocument(doc);speakerEditor=null;$('speaker-dialog').close();render();
+  const row=[...$('transcript').querySelectorAll('.segment')].find(node=>node.dataset.segmentId===target?.id);
+  const button=row?.querySelector('.speaker-correction-button');const details=button?.closest('details');if(details)details.open=true;
+  focusCueAction(button||row||$('search'),exact>=0?editor.viewportTop:null);
+  if(exact<0)notice(target?'原片段已不在筛选结果中，已返回相邻结果。':'原筛选已没有匹配片段；可调整筛选继续阅读。');
+ }catch(error){$('speaker-error').textContent=error.message;$('save-speaker').disabled=true;}
+};
 
 $("save-edit").onclick = (event) => {
 	event.preventDefault();
@@ -3561,7 +3656,7 @@ async function attachTranscriptToProject(text,target,{canCommit=null,activate=fa
 function hasPendingOrFailedContent(){return libraryStore.status().unsaved>0;}
 function hasUnsavedReaderChanges(){return hasPendingOrFailedContent()||hasUnsubmittedReaderDrafts();}
 function hasUnsubmittedReaderDrafts() {
- if(exactNoteDraft())return true;
+ if(exactNoteDraft()||speakerCorrectionDraft())return true;
  if(removedDocument||pendingLibraryOperation||[...deferredContentInputs.values()].some(draft=>state.documents.includes(draft.doc))||hasLanguageDrafts()||window.CoconutTranslationReview?.hasDraft())return true;
  const current=active();
  if(current&&selected&&!$('notes-panel').hidden&&current.segments.some(segment=>segment.id===selected)&&$('note').value!==(current.notes[selected]||''))return true;

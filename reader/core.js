@@ -780,6 +780,70 @@
  function exactExcerptFreshnessBatch(records,doc){return new Map([...exactExcerptStateBatch(records,doc)].map(([id,state])=>[id,state.freshness]));}
  function exactExcerptFreshness(record,doc){return exactExcerptState(record,doc).freshness;}
 
+ // Correction plans are local capabilities: no serialized plan can authorize a
+ // write, and even an equal-looking replacement document requires a new preview.
+ // New labels match the existing passage-answer snapshot speaker bound.
+ const SPEAKER_CORRECTION_LABEL_LIMIT=1000;
+ const speakerCorrectionPlans=new WeakMap(),speakerCorrectionVersions=new WeakMap();
+ function speakerCorrectionTargets(doc,cueId,scope){
+  if(!doc||!Array.isArray(doc.segments)||!['cue','speaker'].includes(scope))throw new Error('说话人修正范围无效');
+  const selected=doc.segments.find(cue=>cue.id===cueId);
+  if(!selected||typeof selected.speaker!=='string'||!selected.speaker.trim())throw new Error('此片段没有可修正的结构化说话人标签');
+  return {selected,targets:doc.segments.flatMap((cue,position)=>
+   (scope==='cue'?cue.id===cueId:cue.speaker===selected.speaker)?[{cue,position}]:[])};
+ }
+ function speakerCorrectionOrigin(cue){
+  if(Object.hasOwn(cue,'original_speaker')){
+   if(typeof cue.original_speaker!=='string'||!cue.original_speaker.trim())throw new Error('原始说话人标签无效');
+   return cue.original_speaker;
+  }
+  return cue.speaker;
+ }
+ function createSpeakerCorrectionPreview(doc,{cueId,scope='cue',action='rename',speaker}={}){
+  if(!['rename','restore'].includes(action))throw new Error('说话人修正操作无效');
+  if(action==='rename'&&(typeof speaker!=='string'||!speaker.trim()))throw new Error('说话人标签不能为空');
+  const {selected,targets}=speakerCorrectionTargets(doc,cueId,scope);
+  const next=action==='rename'?(speaker===selected.speaker?speaker:speaker.trim()):null;
+  if(action==='rename'&&next!==selected.speaker&&next.length>SPEAKER_CORRECTION_LABEL_LIMIT)throw new Error('新的说话人标签最多 1,000 字符，请缩短后重新预览');
+  const changes=targets.map(({cue,position})=>{
+   const original=speakerCorrectionOrigin(cue),toSpeaker=action==='restore'?original:next;
+   // Retain only displayed fields and restoration provenance by value. Large
+   // translations/history are unrelated, and strings need no serialized copy.
+   return {id:cue.id,position,start:cue.start,end:cue.end,text:cue.text,fromSpeaker:cue.speaker,
+    hasOriginalSpeaker:Object.hasOwn(cue,'original_speaker'),originalSpeaker:cue.original_speaker,
+    toSpeaker,changed:cue.speaker!==toSpeaker};
+  });
+  const preview=Object.freeze({cueId,scope,action,fromSpeaker:selected.speaker,toSpeaker:next,mixed:new Set(changes.map(change=>change.toSpeaker)).size>1,total:targets.length,
+   changedCount:changes.filter(change=>change.changed).length,
+   preview:Object.freeze(targets.slice(0,8).map(({cue},i)=>Object.freeze({id:cue.id,start:cue.start,end:cue.end,
+    text:cue.text.length>240?cue.text.slice(0,239).replace(/[\uD800-\uDBFF]$/,'')+'…':cue.text,
+    fromSpeaker:cue.speaker,toSpeaker:changes[i].toSpeaker}))),truncated:targets.length>8});
+  speakerCorrectionPlans.set(preview,{doc,version:speakerCorrectionVersions.get(doc)||0,changes});
+  return preview;
+ }
+ function applySpeakerCorrectionPreview(doc,preview){
+  const plan=speakerCorrectionPlans.get(preview),conflict=()=>{throw new Error('说话人标签或片段已变化，请重新预览后再保存');};
+  if(!plan||plan.doc!==doc||plan.version!==(speakerCorrectionVersions.get(doc)||0))return conflict();
+  let current;try{current=speakerCorrectionTargets(doc,preview.cueId,preview.scope);}catch{return conflict();}
+  if(current.selected.speaker!==preview.fromSpeaker||current.targets.length!==plan.changes.length||
+   current.targets.some(({cue,position},i)=>{
+    const saved=plan.changes[i];
+    return position!==saved.position||cue.id!==saved.id||cue.start!==saved.start||cue.end!==saved.end||
+     cue.text!==saved.text||cue.speaker!==saved.fromSpeaker||Object.hasOwn(cue,'original_speaker')!==saved.hasOriginalSpeaker||
+     cue.original_speaker!==saved.originalSpeaker;
+   }))return conflict();
+  // Build everything before the single synchronous document assignment. Unrelated
+  // cues and nested records retain identity; only speaker/provenance may change.
+  const changed=plan.changes.filter(change=>change.changed),byPosition=new Map(changed.map(change=>[change.position,change]));
+  const segments=changed.length?doc.segments.map((cue,position)=>{
+   const change=byPosition.get(position);
+   return change?{...cue,speaker:change.toSpeaker,...(!Object.hasOwn(cue,'original_speaker')?{original_speaker:cue.speaker}:{})}:cue;
+  }):null;
+  speakerCorrectionPlans.delete(preview);
+  if(segments){doc.segments=segments;speakerCorrectionVersions.set(doc,plan.version+1);invalidateSearch(doc);}
+  return {changed:changed.length>0,changedCount:changed.length,cueIds:changed.map(change=>change.id)};
+ }
+
 	function validate(data) {
   if(isAudioProject(data))return validateAudioProject(data);
 		if (
@@ -802,6 +866,7 @@
 				s.start < prior
 			)
 				throw new Error("第 " + (i + 1) + " 段内容或时间戳无效");
+			if(Object.hasOwn(s,'original_speaker'))speakerCorrectionOrigin(s);
 			prior = s.start;
 			const id = typeof s.id === "string" ? s.id : "segment-" + (i + 1);
 			if (ids.has(id)) throw new Error("片段标识重复");
@@ -816,6 +881,7 @@
 					? { original_text: s.original_text }
 					: {}),
 				speaker: typeof s.speaker === "string" ? s.speaker : null,
+                ...(Object.hasOwn(s,'original_speaker')?{original_speaker:s.original_speaker}:{}),
 				translations: cleanTranslations(s.translations),
 			};
 		});
@@ -1379,7 +1445,7 @@
 	function parse(text, filename) {
 		return parseWithDiagnostics(text, filename).document;
 	}
-	const api = { createLibraryBackupSelection, librarySavedHits, librarySavedHitCurrent, exactExcerptNote, exactExcerptNotesWith, exactExcerptRemoval, exactExcerptSnapshot, exactExcerptText, exactExcerptParts, exactExcerptSource, exactExcerptCount, exactExcerptDuplicate, exactExcerptFreshness, exactExcerptFreshnessBatch, exactExcerptState, exactExcerptStateBatch, createReadingRecency, createLibrarySearch, createLibraryNotebookSearch, libraryCaptureSteps, libraryCaptureCurrent, libraryCaptures, libraryNotebookMarkdown, mediaTiming, mediaTimingOffset, mediaTimingRange, localMediaSource, searchDocument, invalidateSearch, manualReviewSnapshot, manualReviewCurrent, saveManualTranslation, translationReviewQueue, hasNoteContent, segmentNoteCount, BACKUP_REVIEW_BYTES, SUBTITLE_IMPORT_BYTES, vttPayload, libraryHits, librarySnippet, hasProjectAnnotations, projectAnnotationCount, attachProjectTranscript, libraryMatches, documentDuration, sortedLibrary, AUDIO_NOTE_BUDGET, audioNoteCharacters, isAudioProject, audioProjectIdentity, podcastMediaIdentity, SUMMARY_QUESTION, summaryReadiness, podcastURL, podcastSource, cleanGlossary, relevantGlossary, translationQualityMessage, retainAnswers, summaryFreshness, latestSummary, summaryMarkdown, aiReadingMarkdown, parseReadingTime, createPlaybackIndex, segmentAtTime, transcriptText, subtitleExport, mergeLibraryBackup, time, source, media, validate, parse, parseWithDiagnostics, matchesSegment, notebookSegments, notebookMarkdown, translationCurrent, sameCueSnapshot, subscriptionPlan, cleanContexts, answerFreshness };
+	const api = { SPEAKER_CORRECTION_LABEL_LIMIT, createSpeakerCorrectionPreview, applySpeakerCorrectionPreview, createLibraryBackupSelection, librarySavedHits, librarySavedHitCurrent, exactExcerptNote, exactExcerptNotesWith, exactExcerptRemoval, exactExcerptSnapshot, exactExcerptText, exactExcerptParts, exactExcerptSource, exactExcerptCount, exactExcerptDuplicate, exactExcerptFreshness, exactExcerptFreshnessBatch, exactExcerptState, exactExcerptStateBatch, createReadingRecency, createLibrarySearch, createLibraryNotebookSearch, libraryCaptureSteps, libraryCaptureCurrent, libraryCaptures, libraryNotebookMarkdown, mediaTiming, mediaTimingOffset, mediaTimingRange, localMediaSource, searchDocument, invalidateSearch, manualReviewSnapshot, manualReviewCurrent, saveManualTranslation, translationReviewQueue, hasNoteContent, segmentNoteCount, BACKUP_REVIEW_BYTES, SUBTITLE_IMPORT_BYTES, vttPayload, libraryHits, librarySnippet, hasProjectAnnotations, projectAnnotationCount, attachProjectTranscript, libraryMatches, documentDuration, sortedLibrary, AUDIO_NOTE_BUDGET, audioNoteCharacters, isAudioProject, audioProjectIdentity, podcastMediaIdentity, SUMMARY_QUESTION, summaryReadiness, podcastURL, podcastSource, cleanGlossary, relevantGlossary, translationQualityMessage, retainAnswers, summaryFreshness, latestSummary, summaryMarkdown, aiReadingMarkdown, parseReadingTime, createPlaybackIndex, segmentAtTime, transcriptText, subtitleExport, mergeLibraryBackup, time, source, media, validate, parse, parseWithDiagnostics, matchesSegment, notebookSegments, notebookMarkdown, translationCurrent, sameCueSnapshot, subscriptionPlan, cleanContexts, answerFreshness };
 	if (typeof module !== "undefined" && module.exports) module.exports = api;
 	else root.Coconut = api;
 })(typeof window !== "undefined" ? window : globalThis);

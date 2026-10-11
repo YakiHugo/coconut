@@ -71,3 +71,27 @@ test('importing a different short source clears the old filter before composing 
   assert.equal($('search').value,'');assert.equal($('transcript-tools-disclosure').open,false);assert.equal($('transcript-tools-label').textContent,'搜索与筛选');assert.equal($('transcript').querySelectorAll('.segment').length,2);
  }finally{await w.happyDOM.close();}
 });
+
+
+for(const width of [320,390])for(const bilingual of [false,true])test(`${width} ${bilingual?'bilingual':'source'} speaker labels retain reading density with a reachable edit action after the full text`,async()=>{
+ const doc=readFirstFixture(3,{demo:bilingual});delete doc.provenance;
+ for(const cue of doc.segments)cue.speaker='Mina';
+ const {w,$}=libraryHarness([doc],{probe:true,configureCore:w=>w.happyDOM.setWindowSize({width,height:900})});try{
+  const row=$('transcript').querySelector('.segment'),label=row.querySelector('.speaker'),text=row.querySelector('.parallel-text'),action=row.querySelector('.speaker-correction-button');
+  assert.equal(row.classList.contains('short-cue'),false);assert.equal(label.tagName,'P');assert.equal(label.textContent,'Mina');assert.equal(label.nextElementSibling,text);
+  assert.equal(row.querySelectorAll('.speaker-correction-button').length,1);assert.equal(action.textContent,'修正说话人标签');assert.equal(action.hidden,false);assert.equal(action.closest('details'),null);
+  assert.ok(text.compareDocumentPosition(action)&w.Node.DOCUMENT_POSITION_FOLLOWING);assert.equal(row.querySelector('.words').textContent,doc.segments[0].text);
+  if(bilingual)assert.equal(row.querySelector('.translation').textContent,doc.segments[0].translations.zh.text);
+  action.click();assert.equal($('speaker-dialog').open,true);assert.equal($('speaker-name').value,'Mina');$('cancel-speaker').click();
+  assert.equal(w.libraryProbe.documents[0].segments[0].speaker,'Mina');assert.equal(row.querySelector('.words').textContent,doc.segments[0].text);
+ }finally{await w.happyDOM.close();}
+});
+
+test('short caption speaker labels stay plain while their correction action remains in the existing More disclosure',async()=>{
+ const doc=readFirstFixture(3);for(const cue of doc.segments){cue.end=cue.start+1;cue.text='Short authored source';cue.speaker='Mina';}
+ const {w,$}=libraryHarness([doc],{configureCore:w=>w.happyDOM.setWindowSize({width:320,height:900})});try{
+  const row=$('transcript').querySelector('.segment');assert.equal(row.classList.contains('short-cue'),true);assert.equal(row.querySelector('.speaker').tagName,'P');assert.equal(row.querySelectorAll('.speaker-correction-button').length,1);
+  assert.equal(row.querySelector('.speaker-correction-button').closest('details'),row.querySelector('.cue-more'));
+  row.querySelector('.cue-more').open=true;row.querySelector('.speaker-correction-button').click();assert.equal($('speaker-dialog').open,true);
+ }finally{await w.happyDOM.close();}
+});

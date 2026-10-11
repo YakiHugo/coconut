@@ -330,3 +330,13 @@ test('personal exact-note drafts and failed submissions participate in native cl
   $('exact-note-cancel').click();assert.equal(w.coconutPrepareClose('inspect').safe,false);assert.equal(w.closeTest.status().unsaved,1);
  }finally{await w.happyDOM.close();}
 });
+
+test('unsubmitted speaker label correction blocks native close until explicit cancellation',async()=>{
+ const {w,$,request}=setup();try{
+  const payload=JSON.stringify({title:'Authored speaker draft',segments:[{id:'speaker-cue',start:0,end:2,text:'Authored source.',speaker:'Speaker 1'}],notes:{}});
+  Object.defineProperty($('file'),'files',{configurable:true,value:[{name:'speaker.json',size:payload.length,text:async()=>payload}]});await $('file').onchange();Object.defineProperty($('file'),'files',{configurable:true,value:[]});$('mode-transcript').click();await w.closeTest.flush();
+  w.document.querySelector('.speaker-correction-button').click();assert.equal(w.coconutPrepareClose('inspect').safe,true,JSON.stringify(w.coconutPrepareClose('inspect')));
+  $('speaker-name').value='Host';$('speaker-name').dispatchEvent(new w.Event('input',{bubbles:true}));assert.equal(w.coconutPrepareClose('inspect').safe,false);assert.equal(await w.coconutPrepareClose('safe',request()),false);assert.notEqual(w.document.body.inert,true);
+  $('cancel-speaker').click();assert.equal(w.coconutPrepareClose('inspect').safe,true);
+ }finally{await w.happyDOM.close();}
+});

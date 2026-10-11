@@ -1147,4 +1147,18 @@ body[data-short-reading-compact="true"] #language-panel { margin-top: 8px; }
 #library-selection-controls button, #library-selection-mode { white-space:normal; overflow-wrap:anywhere; }
 #library-selection-status { margin:6px 0; }
 
+/* Speaker correction remains a secondary action, with a bounded scrollable
+   dialog so its preview and errors never push controls outside a small screen. */
+#speaker-dialog { box-sizing: border-box; max-height: calc(100dvh - 24px); overflow-y: auto; }
+#speaker-dialog select { max-width: 100%; margin-bottom: 16px; }
+#speaker-dialog input { box-sizing: border-box; }
+#speaker-original, #speaker-merge { overflow-wrap: anywhere; }
+#speaker-preview { max-height: 28dvh; overflow-y: auto; }
+.speaker-preview-cue { overflow-wrap: anywhere; }
+.speaker-preview-cue strong, .speaker-preview-cue span { display: block; }
+#speaker-error { color: var(--danger, #a32922); overflow-wrap: anywhere; }
+#speaker-dialog .dialog-actions { position: sticky; bottom: -28px; background: var(--surface, #fff); padding: 12px 0; flex-wrap: wrap; }
+#speaker-dialog button { min-height: 44px; }
+@media(max-width: 600px) { #speaker-dialog { padding: 18px; } #speaker-dialog .dialog-actions { bottom: -18px; } }
+
 #library-list { padding-bottom:calc(6px + var(--library-keyboard-space, 0px)); }

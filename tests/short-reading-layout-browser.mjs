@@ -15,8 +15,14 @@ async function firstWords(page,selector,label){
   const range=document.createRange();range.selectNodeContents(node);
   const rects=[...range.getClientRects()].filter(r=>r.width>0&&r.height>0);
   const readable=rects.filter(r=>r.top>=0&&r.bottom<=innerHeight&&r.left>=0&&r.right<=innerWidth&&node.contains(document.elementFromPoint(r.left+r.width/2,r.top+r.height/2)));
-  return {top:node.getBoundingClientRect().top,height:node.getBoundingClientRect().height,lines:rects.length,readableLines:readable.length,readableHeight:readable.reduce((sum,r)=>sum+r.height,0),scrollY,viewport:innerHeight};
+  const row=node.closest('.segment'),speaker=row?.querySelector('.speaker'),action=row?.querySelector('.speaker-correction-button');
+  const box=element=>element?{tag:element.tagName,top:element.getBoundingClientRect().top,height:element.getBoundingClientRect().height,marginTop:getComputedStyle(element).marginTop,minHeight:getComputedStyle(element).minHeight}:null;
+  return {top:node.getBoundingClientRect().top,height:node.getBoundingClientRect().height,lines:rects.length,readableLines:readable.length,readableHeight:readable.reduce((sum,r)=>sum+r.height,0),scrollY,viewport:innerHeight,speaker:box(speaker),speakerAction:box(action)};
  });geometry.push({label,...proof});
+ if(!(proof.top<520&&proof.lines>=2&&proof.height>0&&proof.readableLines>=2&&proof.readableHeight>=28&&proof.scrollY<=1)){
+  console.error(JSON.stringify({suite:'short-reading-layout',status:'failed-first-viewport',label,...proof}));
+  await capture(page,label+'-geometry-failure');
+ }
  assert.ok(proof.top<520,`${label}: source must start in the upper reading area`);
  assert.ok(proof.lines>=2&&proof.height>0&&proof.readableLines>=2&&proof.readableHeight>=28,`${label}: at least two actual text lines must be fully visible and unobscured`);
  assert.ok(proof.scrollY<=1,`${label}: initial import evidence must remain at the natural top-of-page landing`);
@@ -42,6 +48,12 @@ try{
   // No extra scrolling, resizing, dismissing feedback or changing layout before
   // this first-use proof: measure the actual import landing with its toast.
   await firstWords(page,'.segment .words',label+'-first-original');if(bilingual)await firstWords(page,'.segment .translation',label+'-first-translation');await capture(page,label+'-first-import');
+  const speakerPlacement=await page.locator('.segment').first().evaluate(row=>{
+   const speaker=row.querySelector('.speaker'),action=row.querySelector('.speaker-correction-button'),source=row.querySelector('.parallel-text');
+   return {label:speaker.tagName,afterSource:!!(source.compareDocumentPosition(action)&Node.DOCUMENT_POSITION_FOLLOWING),targetHeight:action.getBoundingClientRect().height,hidden:action.hidden,actionText:action.textContent};
+  });
+  const {targetHeight,...placement}=speakerPlacement;assert.ok(targetHeight>=44,'speaker correction retains its mobile touch target');
+  assert.deepEqual(placement,{label:'P',afterSource:true,hidden:false,actionText:'修正说话人标签'});
   assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),true);
   await expect(page.locator('.passage-toolbar')).toBeHidden();await expect(page.locator('#transcript-tools-disclosure')).not.toHaveAttribute('open','');
   await page.locator('#reading-info > summary').click();await expect(page.locator('#reading-info-title')).toHaveText(doc.title);await expect(page.locator('#subtitle')).toBeVisible();await expect(page.locator('#document-details')).toBeVisible();
