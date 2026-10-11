@@ -176,6 +176,14 @@ try {
  await capture(page,'05-source-overview');
  await page.locator('#overview-segments button').last().click();
  check('source_map_opens_last_original_passage',await page.locator('.passage-original .passage-cue[data-cue-id="map-220"]').count()===1);
+ // Mode tabs retain the current source page instead of the other layout's old page.
+ await page.locator('#mode-transcript').click();
+ check('mode_switch_retains_last_source_page',await page.locator('.segment[data-segment-id="map-220"]').count()===1);
+ await page.locator('#mode-bilingual').click();
+ check('bilingual_switch_retains_source_page',await page.locator('.segment[data-segment-id="map-220"]').count()===1);
+ await page.locator('#mode-passages').click();
+ check('mode_switch_returns_to_current_source_page',await page.locator('.passage-original .passage-cue[data-cue-id="map-200"]').count()===1);
+ await page.locator('#mode-summary').click();await page.locator('#overview-segments button').last().click();
  await page.locator('.passage').filter({has:page.locator('.passage-original .passage-cue[data-cue-id="map-220"]')}).locator('.passage-details').click();
  await page.locator('#reading-jump').selectOption('map-220');
  check('source_passage_details_keep_exact_last_cue',await page.locator('.segment[data-segment-id="map-220"]').evaluate(n=>n===document.activeElement));

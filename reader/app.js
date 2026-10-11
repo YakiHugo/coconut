@@ -2735,6 +2735,34 @@ function renderSummary() {
  $('browse-ai-history').hidden=!(doc.ai_answers||[]).length;
  $('browse-ai-history').textContent='浏览全部 AI 历史（'+(doc.ai_answers||[]).length+' 则）';
 }
+// View switches follow the source currently being read, not the other view's
+// previously mounted page. Geometry is read before hiding or rebuilding it.
+function visibleReadingCue(){
+ const passages=readingMode==='passages';
+ if(!passages&&readingMode!=='transcript')return null;
+ const nodes=[...document.querySelectorAll(passages?'#passage-body .passage-original .passage-cue':'#transcript .segment')];
+ const id=node=>passages?node?.dataset.cueId:node?.dataset.segmentId;
+ const height=window.visualViewport?.height||window.innerHeight;
+ const visible=nodes.find(node=>{const rect=node.getBoundingClientRect();return rect.bottom>0&&rect.top<height;});
+ if(visible)return id(visible);
+ // A header can be in view while all source is below it. Keep the current
+ // passage anchor when it still belongs to the mounted page, otherwise its start.
+ return passages&&nodes.some(node=>id(node)===passageAnchor)?passageAnchor:id(nodes[0]);
+}
+function switchTranscriptView(bilingual){
+ const doc=active();if(!doc||bilingual&&(!contentIngressAllowed(doc)||Coconut.isAudioProject(doc)))return;
+ const anchor=selected||readingContext?.document===doc&&readingContext.id||searchFocusedId||visibleReadingCue();
+ if(contentIngressAllowed(doc)){
+  const target=bilingual?doc.translation_view||$('translation-target').value||'zh':'';
+  if((doc.translation_view||'')!==target){doc.translation_view=target;queueDocument(doc);}
+ }
+ const filtered=doc.segments.filter(cue=>matchesReadingSegment(cue,doc,$('search').value.trim().toLocaleLowerCase()));
+ const index=filtered.findIndex(cue=>cue.id===anchor);
+ if(index>=0)pageStart=Math.floor(index/PAGE_SIZE)*PAGE_SIZE;
+ setReadingMode('transcript');render();
+ const row=[...$('transcript').querySelectorAll('.segment')].find(node=>node.dataset.segmentId===anchor);
+ if(row){row.scrollIntoView?.({block:'start',behavior:'auto'});row.focus({preventScroll:true});}
+}
 $('mode-passages').onclick=()=>{
  const doc=active();if(!doc)return;
  if(readingMode==='passages'){openPassage(passageAnchor||doc.readingPosition||doc.segments[0]?.id);return;}
@@ -2750,11 +2778,11 @@ $('mode-passages').onclick=()=>{
  // The outer result snapshot owns filters; passages and their note detours read
  // full source context. Neither this anchor nor returning changes the bookmark.
  if(readingContext?.document===doc){$('search').value='';notesOnly=false;excerptsOnly=false;speakerFilter=null;searchFocusedId=null;}
- openPassage(cueId||passageAnchor||doc.readingPosition||doc.segments[0]?.id);
+ openPassage(cueId||visibleReadingCue()||passageAnchor||doc.readingPosition||doc.segments[0]?.id);
 };
 $('mode-summary').onclick=()=>setReadingMode('summary');
-$('mode-transcript').onclick=()=>{const doc=active();if(contentIngressAllowed(doc)&&doc?.translation_view){doc.translation_view='';queueDocument(doc);}setReadingMode('transcript');render();};
-$('mode-bilingual').onclick=()=>{const doc=active();if(!doc||!contentIngressAllowed(doc)||Coconut.isAudioProject(doc))return;const target=doc.translation_view||$('translation-target').value||'zh';if(doc.translation_view!==target){doc.translation_view=target;queueDocument(doc);}setReadingMode('transcript');render();};
+$('mode-transcript').onclick=()=>switchTranscriptView(false);
+$('mode-bilingual').onclick=()=>switchTranscriptView(true);
 $('prepare-bilingual').onclick=()=>{closeSummaryRequest(false);$('ai-task').value='translation';$('ai-task').dispatchEvent(new Event('change'));$('language-panel').open=true;$('ai-task').scrollIntoView?.({block:'center',behavior:'smooth'});$('translation-target').focus();};
 $('summary-open-transcript').onclick=()=>{setReadingMode('transcript');$('search').focus();};
 $('prepare-summary').onclick=()=>{
