@@ -1317,7 +1317,15 @@ function jumpReadingChapter(doc,item){
   openPassage(entry.cue.id,false);
   // A chapter can start halfway through a composed passage. Locate its real
   // source span, not the passage heading or first cue.
-  const node=chapterCueNode(entry.cue.id,'passages');if(node){node.tabIndex=-1;node.classList.add('chapter-target');node.scrollIntoView?.({block:'start',behavior:'auto'});node.focus({preventScroll:true});}
+  const node=chapterCueNode(entry.cue.id,'passages');if(node){
+   node.tabIndex=-1;node.classList.add('chapter-target');renderChapterReturn();
+   // The return bar wraps on narrow screens. Reserve its actual sticky height
+   // before native scrolling so the exact source span and its ring stay visible.
+   const bar=$('chapter-return'),style=getComputedStyle(node),barStyle=getComputedStyle(bar);
+   const ring=(parseFloat(style.outlineWidth)||0)+Math.max(0,parseFloat(style.outlineOffset)||0);
+   node.style.scrollMarginTop=Math.max(20,bar.getBoundingClientRect().height+Math.max(0,parseFloat(barStyle.top)||0)+ring+2)+'px';
+   node.scrollIntoView?.({block:'start',behavior:'auto'});node.focus({preventScroll:true});
+  }
  }else{goToSegment(entry.cue.id,true);chapterCueNode(entry.cue.id,'transcript')?.classList.add('chapter-target');}
  chapterDirectoryCue=entry.cue.id;chapterLanding={doc,cue:entry.cue,mode:readingMode};renderChapterReturn();
 }

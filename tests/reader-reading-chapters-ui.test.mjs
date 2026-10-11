@@ -97,3 +97,18 @@ test('untouched imported title survives input normalization and a replaced cue o
   const cue=cueRows(w)[0],id=cue.dataset.segmentId;cue.querySelector('.chapter-create').click();w.libraryProbe.render();$('chapter-cancel').click();assert.equal(w.document.activeElement.classList.contains('chapter-create'),true);assert.equal(w.document.activeElement.closest('.segment').dataset.segmentId,id);
  }finally{await w.happyDOM.close();}
 });
+test('exact passage chapter landing reserves the wrapped sticky return bar and focus ring only on navigation',async()=>{
+ const source=splitCueFixture(40);source.key='sticky-chapter';source.reading_chapters=[{id:'inside',title:'Inside',cue_id:source.segments[3].id,time:source.segments[3].start,note:''}];
+ const {w,$,pipeline}=libraryHarness([source],{probe:true});try{
+  $('mode-passages').click();await pipeline.store.flush();const before=w.localStorage.getItem('coconut-reader-v1'),bar=$('chapter-return');
+  bar.style.top='6px';let height=122;bar.getBoundingClientRect=()=>({height});let scrolls=[];
+  const nativeStyle=w.getComputedStyle.bind(w);w.getComputedStyle=node=>{const style=nativeStyle(node);if(node.classList?.contains('chapter-target'))return {outlineWidth:'2px',outlineOffset:'3px'};return style;};
+  w.HTMLElement.prototype.scrollIntoView=function(options){if(this.classList.contains('chapter-target'))scrolls.push({node:this,margin:this.style.scrollMarginTop,barHidden:bar.hidden,options});};
+  open($);chapterRows($)[0].querySelector('.chapter-open').click();assert.equal(scrolls.length,1);assert.equal(scrolls[0].margin,'135px');assert.equal(scrolls[0].barHidden,false);assert.equal(scrolls[0].options.block,'start');assert.equal(w.document.activeElement,scrolls[0].node);
+  // The CI failure placed the first glyph at 19.9375px with a 20px margin.
+  // This DOM replay verifies the computed correction, not browser geometry.
+  assert.ok(19.9375+(135-20)-5>=6+122+1);
+  await pipeline.store.flush();w.dispatchEvent(new w.Event('resize'));await settle();assert.equal(scrolls.length,1);assert.equal(w.localStorage.getItem('coconut-reader-v1'),before);
+  height=48;open($);chapterRows($)[0].querySelector('.chapter-open').click();assert.equal(scrolls.length,2);assert.equal(scrolls[1].margin,'61px');assert.equal(w.libraryProbe.documents[0].readingPosition,source.readingPosition);
+ }finally{await w.happyDOM.close();}
+});
