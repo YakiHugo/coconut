@@ -335,7 +335,11 @@ try {
     await importFixture(blockedPage, longDocument, 'authored-unsaved-reading.json');
     await expect(blockedPage.locator('#save-status')).toHaveAttribute('data-state', 'failed');
     await expect(blockedPage.locator('#save-status')).toContainText('空间不足');
+    const failedReading = await blockedPage.evaluate(id => ({scroll:scrollY, focus:document.activeElement?.outerHTML, resumed:!!document.querySelector(`[data-cue-id="${id}"]`)?.closest('.passage')?.contains(document.activeElement)}), longDocument.readingPosition);
+    check(label + '_failed_import_keeps_its_resumed_passage_focus', failedReading.resumed);
     await assertUnhiddenWarning(blockedPage, label + '-unsaved-work-warning', '#save-status');
+    await controlsGeometry(blockedPage, label + '-unsaved-recovery-actions', ['#retry-save', '#export-unsaved-documents']);
+    check(label + '_recovery_feedback_does_not_scroll_or_steal_reading_focus', await blockedPage.evaluate(before => scrollY === before.scroll && document.activeElement?.outerHTML === before.focus, failedReading));
     check(label + '_unsaved_work_never_claims_import_success', await blockedPage.locator('#notice').getAttribute('data-kind') !== 'success' && await blockedPage.locator('#passage-workspace').isVisible());
     check(label + '_failed_import_has_no_durable_document', await blockedPage.evaluate(async () => (await readPersistedLibrary()).documents.length === 0));
     const rescue = blockedPage.locator('#export-unsaved-documents');
@@ -362,6 +366,32 @@ try {
     assert.deepEqual(await stored(blockedPage), recovered);
     check(label + '_retry_survives_reload_without_losing_reading', await blockedPage.locator('#title').textContent() === longTitle);
     await blockedPage.context().close();
+  }
+
+  stage = 'compact_unsaved_recovery_with_note_and_dock';
+  for(const recoveryViewport of [{width:320,height:480},{width:390,height:600}]){
+  const recoveryPage = await freshPage(recoveryViewport);
+  await importFixture(recoveryPage, fixture);
+  await attachAudio(recoveryPage, audioPath);await recoveryPage.locator('#close-reader-media').click();
+  await recoveryPage.locator('.passage').first().locator('.passage-details').click();
+  await recoveryPage.locator('.segment').first().locator('.note-button').click();
+  await recoveryPage.evaluate(() => window.failContentWrites());
+  await recoveryPage.locator('#note').fill('Authored unsaved compact note');
+  await expect(recoveryPage.locator('#save-status')).toHaveAttribute('data-state','failed');
+  check('compact_failed_note_keeps_editing_focus',await recoveryPage.locator('#note').evaluate(node=>node===document.activeElement));
+  await assertUnhiddenWarning(recoveryPage,'compact-unsaved-note-warning','#save-status');
+  // A small viewport may scroll the recovery panel internally, never the reader.
+  const recoveryScroll=await recoveryPage.evaluate(()=>scrollY);
+  for(const selector of ['#retry-save','#export-unsaved-documents']){
+    await recoveryPage.locator(selector).focus();
+    await controlsGeometry(recoveryPage,'compact-recovery-'+selector.slice(1),[selector,'#close-note']);
+    check('compact_recovery_focus_keeps_document_scroll_'+selector.slice(1),await recoveryPage.evaluate(before=>scrollY===before,recoveryScroll));
+  }
+  await recoveryPage.locator('#close-note').click();
+  await controlsGeometry(recoveryPage,'compact-recovery-after-note-close',['#retry-save','#export-unsaved-documents']);
+  await expect(recoveryPage.locator('#media-dock')).toBeVisible();
+  await controlsGeometry(recoveryPage,'compact-recovery-and-media-dock',['#retry-save','#export-unsaved-documents','#dock-play','#dock-return']);
+  await recoveryPage.context().close();
   }
 
   stage = 'temporal_skim_with_saved_summary';
