@@ -13,11 +13,12 @@ import {largeLibraryFixture} from './helpers/large-library-fixture.mjs';
 import {openLibrarySearch,closeLibrarySearch,openLibraryTools} from './helpers/library-tools-browser.mjs';
 import {openCueActions} from './cue-actions-browser.mjs';
 import {openTranscriptTools} from './helpers/reading-tools-browser.mjs';
+import {evaluateNativeIME} from './helpers/native-ime-proof.mjs';
 import {startBridge} from '../desktop/server.mjs';
 
 if(process.env.GITHUB_ACTIONS!=='true')throw new Error('Run wide library search in GitHub Actions only; use node --check in the workspace.');
-const checks=[],geometry=[],screenshots=[],errors=[];
-let browser,server,page,stage='setup',external=0,mutations=0,failure=null;
+const checks=[],geometry=[],screenshots=[],errors=[],ime=[];
+let browser,server,page,browserVersion=null,stage='setup',external=0,mutations=0,failure=null;
 const check=(name,value)=>{assert.ok(value,name);checks.push(name);};
 const settle=()=>page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))));
 const entry=key=>page.locator('.library-entry[data-document-key="'+key+'"]');
@@ -91,6 +92,54 @@ async function search(query,scope='translations',count=40){
 }
 async function jump(number){await page.locator('#library-page-number').fill(String(number));await page.locator('#library-page-number').press('Enter');await page.waitForFunction(number=>document.getElementById('library-page-number').value===String(number)&&document.activeElement?.classList.contains('library-open'),number);}
 async function ownership(){return page.evaluate(()=>({key:state.active,selected:sessionStorage.getItem('coconut-reader-active-v1'),mode:document.body.dataset.readingMode,documents:JSON.stringify(state.documents),draft:document.getElementById('translation-glossary').value}));}
+async function installIMEAudit(targetPage,selector){
+ await targetPage.evaluate(selector=>{
+  const original=document.querySelector(selector),types=['compositionstart','compositionupdate','compositionend','beforeinput','input'];
+  window.__wideIMEOriginal=original;window.__wideIMESelector=selector;window.__wideIME=[];window.__wideIMEManual=[];window.__wideIMEComposing=false;window.__wideIMEPhase='installed';
+  for(const type of types)original.addEventListener(type,event=>{
+   if(type==='compositionstart')__wideIMEComposing=true;
+   if(type==='compositionend')__wideIMEComposing=false;
+   __wideIME.push({type:event.type,data:event.data??null,trusted:event.isTrusted,same:event.target===original,inputType:event.inputType??null,isComposing:event.isComposing??null,phase:__wideIMEPhase,value:original.value,selectionStart:original.selectionStart,selectionEnd:original.selectionEnd,focused:document.activeElement===original,activeElement:document.activeElement?.id||document.activeElement?.tagName,currentNodeSame:document.querySelector(selector)===original,connected:original.isConnected});
+  });
+  // Observe manual dispatches without fabricating or changing any event. CDP
+  // uses the browser input pipeline and must not call this JavaScript method.
+  const dispatch=EventTarget.prototype.dispatchEvent;
+  EventTarget.prototype.dispatchEvent=function(event){if(types.includes(event?.type))__wideIMEManual.push({type:event.type,target:this.id||this.nodeName||null,phase:__wideIMEPhase});return dispatch.call(this,event);};
+ },selector);
+}
+async function imeSnapshot(targetPage,width,role,phase){
+ const snapshot=await targetPage.evaluate(({role,phase})=>{
+  window.__wideIMEPhase=phase;
+  const original=window.__wideIMEOriginal,current=document.querySelector(window.__wideIMESelector||'#library-search'),focused=document.activeElement;
+  const events=window.__wideIME||[];
+  return {events,manualDispatches:window.__wideIMEManual||[],value:original?.value??null,selectionStart:original?.selectionStart??null,selectionEnd:original?.selectionEnd??null,same:!!original&&original===current&&original.isConnected,focused:!!original&&original===focused,composing:role==='application'?(typeof librarySearchComposing==='boolean'?librarySearchComposing:null):window.__wideIMEComposing,activeElement:{id:focused?.id,tagName:focused?.tagName,modal:focused?.closest('dialog')?.id},originalConnected:original?.isConnected??false,dialogOpen:document.getElementById('library-search-dialog')?.open??null,originalSingleton:role==='application'?current===window.__wideNodes?.['library-search']:current===original,components:{start:events.some(e=>e.type==='compositionstart'),update:events.some(e=>e.type==='compositionupdate'),end:events.some(e=>e.type==='compositionend'),allTrusted:events.every(e=>e.trusted),allSame:events.every(e=>e.same)}};
+ },{role,phase});
+ ime.push({width,role,phase,snapshot});console.log(JSON.stringify({suite:'wide-library-search-ime-phase',browserVersion,width,role,phase,snapshot}));return snapshot;
+}
+async function nativeIMESequence(targetPage,width,role){
+ const cdp=await targetPage.context().newCDPSession(targetPage);
+ try{
+  const protocolVersion=await cdp.send('Browser.getVersion');ime.push({width,role,protocolVersion});
+  // Discard ordinary fill/click preparation events, never native IME events.
+  await targetPage.evaluate(()=>{__wideIME=[];__wideIMEManual=[];__wideIMEComposing=false;});
+  await imeSnapshot(targetPage,width,role,'before-imeSetComposition');
+  await targetPage.evaluate(()=>{__wideIMEPhase='imeSetComposition';});
+  await cdp.send('Input.imeSetComposition',{text:'路标',selectionStart:2,selectionEnd:2});
+  await imeSnapshot(targetPage,width,role,'after-imeSetComposition');
+  await targetPage.evaluate(()=>{__wideIMEPhase='insertText';});
+  await cdp.send('Input.insertText',{text:'路标'});
+  return await imeSnapshot(targetPage,width,role,'after-insertText');
+ }catch(error){await imeSnapshot(targetPage,width,role,'cdp-failure').catch(snapshotError=>ime.push({width,role,phase:'cdp-failure',snapshotError:snapshotError.message}));throw error;}
+ finally{await cdp.detach();}
+}
+async function nativeIMEBaseline(context,width){
+ const baselinePage=await context.newPage();
+ try{
+  await baselinePage.setContent('<!doctype html><html lang="en"><title>Authored native search input baseline</title><label>Native IME baseline <input id="native-ime-baseline" type="search"></label></html>');
+  await installIMEAudit(baselinePage,'#native-ime-baseline');await baselinePage.locator('#native-ime-baseline').click();
+  return await nativeIMESequence(baselinePage,width,'baseline');
+ }finally{await baselinePage.close();}
+}
 async function media(label,mounted=true){
  const audit=await page.evaluate(()=>({...window.__wideMedia,time:window.__widePlayer.currentTime,paused:window.__widePlayer.paused,mounted:document.querySelector('#source-media audio')===window.__widePlayer}));
  check(label+'_no_seek_or_play_and_nonzero_clock_unchanged',audit.plays===0&&audit.seeks.length===0&&audit.time===6&&audit.paused&&audit.mounted===mounted);
@@ -119,6 +168,7 @@ async function installActivationClock(){
 try{
  server=await startBridge({port:0});const origin='http://127.0.0.1:'+server.address().port;
  browser=await chromium.launch({headless:true,...(process.env.COCONUT_CHROMIUM_EXECUTABLE?{executablePath:process.env.COCONUT_CHROMIUM_EXECUTABLE}:{})});
+ browserVersion=browser.version();
  for(const width of [1360,390]){
   stage=width+' import and native media baseline';
   const context=await browser.newContext({viewport:{width,height:width===390?844:1000},acceptDownloads:true,serviceWorkers:'block'});
@@ -155,7 +205,8 @@ try{
   await page.locator('#translation-glossary').fill('widebeacon = 未提交的自写术语');await page.locator('#language-panel > summary').click();
   await page.evaluate(()=>libraryStore.flush());
   const initial=await ownership(),persisted=await page.evaluate(()=>readPersistedLibrary());
-  await page.evaluate(()=>{window.__wideNodes=Object.fromEntries(['library-search','library-scope','library-search-scope','library','library-page-status','library-pagination','library-empty'].map(id=>[id,document.getElementById(id)]));window.__wideIME=[];for(const type of ['compositionstart','compositionupdate','compositionend'])document.getElementById('library-search').addEventListener(type,event=>__wideIME.push({type:event.type,data:event.data,trusted:event.isTrusted,same:event.target===__wideNodes['library-search']}));});
+  await page.evaluate(()=>{window.__wideNodes=Object.fromEntries(['library-search','library-scope','library-search-scope','library','library-page-status','library-pagination','library-empty'].map(id=>[id,document.getElementById(id)]));});
+  await installIMEAudit(page,'#library-search');
 
   stage=width+' native keyboard and wide geometry';
   await page.locator('#open-library-search').focus();await page.keyboard.press('Enter');
@@ -171,18 +222,23 @@ try{
   sameValue(await ownership(),initial,width+'_search_and_cancel_leave_reader_documents_language_and_drafts_unchanged');
   sameValue(await page.evaluate(()=>readPersistedLibrary()),persisted,width+'_search_and_cancel_leave_real_indexeddb_unchanged');await media(width+'-cancel');
 
+  stage=width+' isolated native search input IME baseline';
+  const baselineIME=await nativeIMEBaseline(context,width);
   stage=width+' original input native IME and repeat closing';
   await openLibraryTools(page);await page.locator('#library-search').click();
   await page.locator('#library-search').fill('');
-  const cdp=await context.newCDPSession(page);
-  await cdp.send('Input.imeSetComposition',{text:'路标',selectionStart:2,selectionEnd:2});
-  await cdp.send('Input.insertText',{text:'路标'});
+  const actualIME=await nativeIMESequence(page,width,'application');
   await expect(page.locator('#library-search')).toHaveValue('路标');
-  check(width+'_trusted_ime_events_keep_the_original_input',await page.evaluate(()=>__wideIME.some(e=>e.type==='compositionstart')&&__wideIME.some(e=>e.type==='compositionend')&&__wideIME.every(e=>e.trusted&&e.same)&&document.getElementById('library-search')===__wideNodes['library-search']));
+  // Preserve trusted input/start/update, a real end, and original ownership.
+  // compositionend trust must exactly match this same browser's plain input;
+  // no arbitrary false flag, missing event or synthetic dispatch is accepted.
+  const imeProof=evaluateNativeIME({baseline:baselineIME,actual:actualIME,text:'路标'});
+  ime.push({width,role:'comparison',proof:imeProof});console.log(JSON.stringify({suite:'wide-library-search-ime-comparison',browserVersion,width,proof:imeProof}));
+  for(const [name,value]of Object.entries(imeProof))check(width+'_native_ime_'+name,value===true);
+  check(width+'_trusted_ime_events_keep_the_original_input',Object.values(imeProof).every(value=>value===true)&&actualIME.originalSingleton);
   await closeLibrarySearch(page);await settle();
   check(width+'_ime_close_does_not_automatically_reopen',!await page.locator('#library-search-dialog').evaluate(node=>node.open));
   for(let i=0;i<3;i++){await openLibrarySearch(page);await page.keyboard.press('Escape');await settle();check(width+'_repeat_native_escape_'+i,!await page.locator('#library-search-dialog').evaluate(node=>node.open)&&await page.locator('#library-search').inputValue()==='路标');}
-  await cdp.detach();
   check(width+'_unsubmitted_glossary_survives_ime_and_repeated_cancel',await page.locator('#translation-glossary').inputValue()==='widebeacon = 未提交的自写术语');
   if(await page.locator('#toggle-library').isVisible()&&await page.locator('#toggle-library').getAttribute('aria-expanded')==='true')await page.locator('#toggle-library').click();
   await page.locator('#language-panel > summary').click();await page.locator('#cancel-translation-glossary').click();await page.locator('#language-panel > summary').click();
@@ -201,7 +257,10 @@ try{
   check(width+'_actual_success_backup_contains_all_81_documents',JSON.parse(await fs.readFile(await backup.path(),'utf8')).documents.length===81);
 
   stage=width+' page three exact fifth language hit and reading return';
-  await search('widebeacon');await jump(3);
+  // The live-toast journey deliberately left the same query on page three.
+  // Unchanged queries preserve that page; the default 40-card wait is for page one.
+  await expect(page.locator('#library-page-number')).toHaveValue('3');
+  await search('widebeacon','translations',1);await jump(3);
   check(width+'_40_document_paging_reaches_document_81',await page.locator('.library-entry').count()===1&&await page.locator('.library-entry').getAttribute('data-document-key')==='shelf-80'&&/81/.test(await page.locator('#library-page-status').textContent()));
   for(let i=1;i<5;i++){await walk(group('shelf-80').locator('.library-translation-next'),width+'-next-'+i);await keyboardGeometry(group('shelf-80').locator('.library-translation-next'),width+'-next-'+i);await page.keyboard.press('Enter');await expect(hit('shelf-80')).toHaveAttribute('data-hit-id','shelf-80-cue-'+(i+1));}
   await keyboardGeometry(hit('shelf-80'),width+'-fifth-hit');await capture(width+'-page-three-fifth-match');
@@ -287,8 +346,8 @@ try{
  }
  check('no_external_requests_mutating_http_or_uncaught_errors',external===0&&mutations===0&&errors.length===0);
  console.log(JSON.stringify({suite:'wide-library-search',status:'passed',checks,screenshots}));
-}catch(error){failure={stage,error:{name:error.name,message:error.message,stack:error.stack}};if(page&&!page.isClosed())await capture('failure').catch(()=>{});console.error(JSON.stringify({suite:'wide-library-search',status:'failed',...failure,checks}));throw error;}
+}catch(error){failure={stage,error:{name:error.name,message:error.message,stack:error.stack}};if(page&&!page.isClosed()){await imeSnapshot(page,page.viewportSize()?.width,'application','suite-failure').catch(snapshotError=>ime.push({phase:'suite-failure',snapshotError:snapshotError.message}));await capture('failure').catch(()=>{});}console.error(JSON.stringify({suite:'wide-library-search',status:'failed',...failure,browserVersion,ime,checks}));throw error;}
 finally{
- if(process.env.COCONUT_UI_SCREENSHOTS){await fs.mkdir(process.env.COCONUT_UI_SCREENSHOTS,{recursive:true});await fs.writeFile(path.join(process.env.COCONUT_UI_SCREENSHOTS,'wide-library-search-checks.json'),JSON.stringify({suite:'wide-library-search',status:failure?'failed':'passed',failure,checks,geometry,screenshots,errors,external,mutations},null,2));}
+ if(process.env.COCONUT_UI_SCREENSHOTS){await fs.mkdir(process.env.COCONUT_UI_SCREENSHOTS,{recursive:true});await fs.writeFile(path.join(process.env.COCONUT_UI_SCREENSHOTS,'wide-library-search-checks.json'),JSON.stringify({suite:'wide-library-search',status:failure?'failed':'passed',failure,browserVersion,ime,checks,geometry,screenshots,errors,external,mutations},null,2));}
  await browser?.close();await new Promise(resolve=>server?server.close(resolve):resolve());
 }

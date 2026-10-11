@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import {libraryHarness} from './helpers/large-library-harness.mjs';
 import {settle} from './helpers/save-pipeline.mjs';
+import {evaluateNativeIME} from './helpers/native-ime-proof.mjs';
 const fixture=(count=1,cues=8)=>Array.from({length:count},(_,n)=>({key:'wide-'+n,title:'Wide authored document '+n,language:'en',translation_view:'de',readingPosition:'cue-2',segments:Array.from({length:cues},(_,i)=>({id:'cue-'+i,text:'Authored source '+i,start:i*2,end:i*2+2,translations:{fr:{text:'needle français '+i,source_text:'Authored source '+i,source_language:'en',document_language:'en',provider:'Authored fixture'},zh:{text:'needle 中文 '+i,source_text:'Authored source '+i,source_language:'en',document_language:'en',provider:'Authored fixture'}}})),notes:{}}));
 function setup(docs=fixture()){let media,listener;const h=libraryHarness(docs,{probe:true,configureCore(w){const match=w.matchMedia.bind(w);media={matches:false,addEventListener(type,fn){listener=fn;}};w.matchMedia=query=>query==='(max-width: 650px)'?media:match(query);}});return {...h,resize(mobile){media.matches=mobile;listener();}};}
 const query=($,value='needle',scope='translations')=>{$('open-library-search').click();$('library-scope').value=scope;$('library-search').value=value;$('library-search').oninput();};
@@ -29,6 +30,17 @@ test('pointer caret and already composing input move only when their current inp
   cancel(w,$);assert.equal($('library-search-dialog').open,false);assert.equal(w.document.activeElement,input);
   input.dispatchEvent(new w.Event('compositionstart'));input.value='输入中的词';input.oninput();cancel(w,$);assert.equal($('library-search-dialog').open,false);
   input.dispatchEvent(new w.Event('compositionend'));assert.equal($('library-search-dialog').open,true);assert.equal(input.value,'输入中的词');
+ }finally{await w.happyDOM.close();}
+});
+
+test('cancelled input focus stays cancelled across resize until a new pointer activation',async()=>{
+ const {w,$,resize}=setup();try{
+  const input=$('library-search');input.focus();assert.equal($('library-search-dialog').open,true);
+  cancel(w,$);assert.equal(w.document.activeElement,input);assert.equal($('library-search-dialog').open,false);
+  for(const mobile of [true,false]){resize(mobile);input.focus();assert.equal(w.document.activeElement,input);assert.equal($('library-search-dialog').open,false,'refocusing the same restored input is not a new user activation');}
+  input.dispatchEvent(new w.PointerEvent('pointerdown',{bubbles:true}));input.dispatchEvent(new w.PointerEvent('pointerup',{bubbles:true}));
+  assert.equal($('library-search-dialog').open,true,'a new real input pointer operation opens the workspace');assert.equal(w.document.activeElement,input);
+  resize(true);assert.equal($('library-search-dialog').open,true);assert.equal(w.document.activeElement,input);assert.equal($('library-search-query').contains(input),true);
  }finally{await w.happyDOM.close();}
 });
 
@@ -108,4 +120,33 @@ test('generic result paging and recovery keyboard controls reveal the complete s
 test('an existing success notice joins normal modal flow instead of retaining the background fixed overlay',async()=>{
  const {w,$}=setup();try{const style=w.document.createElement('style');style.textContent=fs.readFileSync(new URL('../reader/style.css',import.meta.url),'utf8');w.document.head.append(style);w.URL.createObjectURL=()=> 'blob:authored';w.URL.revokeObjectURL=()=>{};w.HTMLAnchorElement.prototype.click=function(){};$('export-library').click();assert.equal($('notice').dataset.kind,'success');$('open-library-search').click();assert.equal($('library-search-feedback').contains($('notice-shell')),true);assert.equal(w.getComputedStyle($('notice-shell')).position,'static');
  }finally{await w.happyDOM.close();}
+});
+
+
+test('native IME proof compares exact browser end flags without accepting untrusted entry or synthetic events',()=>{
+ const text='路标';
+ const baseline={events:[
+  {type:'compositionstart',data:'',trusted:true,same:true},
+  {type:'compositionupdate',data:text,trusted:true,same:true},
+  {type:'beforeinput',data:text,trusted:true,same:true,inputType:'insertCompositionText',isComposing:true},
+  {type:'input',data:text,trusted:true,same:true,inputType:'insertCompositionText',isComposing:true},
+  {type:'compositionend',data:text,trusted:false,same:true}
+ ].map((event,index)=>({...event,focused:true,currentNodeSame:true,connected:true,value:index<2?'':text,selectionStart:index<2?0:2,selectionEnd:index<2?0:2})),value:text,selectionStart:2,selectionEnd:2,same:true,focused:true,composing:false,manualDispatches:[]};
+ const clone=()=>structuredClone(baseline),valid=actual=>Object.values(evaluateNativeIME({baseline,actual,text})).every(Boolean);
+ assert.equal(valid(clone()),true,'an identical engine-owned end flag is accepted only with the complete native trace');
+ const trustedEnd=clone();trustedEnd.events.at(-1).trusted=true;assert.equal(Object.values(evaluateNativeIME({baseline:trustedEnd,actual:structuredClone(trustedEnd),text})).every(Boolean),true,'an engine that trusts the end event must retain that flag too');
+ for(const index of [0,1,2,3]){const actual=clone();actual.events[index].trusted=false;assert.equal(valid(actual),false,'entry/update/input trust is mandatory');}
+ const badTraces=[
+  a=>a.events.pop(),a=>{a.events[4].trusted=true;},a=>{a.events[4].data='other';},
+  a=>{[a.events[1],a.events[4]]=[a.events[4],a.events[1]];},a=>a.events.push({...a.events[4]}),
+  a=>{a.events[2].inputType='insertText';},a=>{a.events[2].isComposing=false;},
+  a=>{a.events[3].same=false;},a=>{a.events[3].focused=false;},a=>{a.events[3].currentNodeSame=false;},a=>{a.events[3].connected=false;},
+  a=>{a.events[3].selectionStart=0;},a=>{a.events[3].value='other';},a=>{a.same=false;},a=>{a.focused=false;},
+  a=>{a.value='different';},a=>{a.selectionStart=0;},a=>{a.composing=true;},
+  a=>a.manualDispatches.push({type:'compositionend'})
+ ];
+ for(const mutate of badTraces){const actual=clone();mutate(actual);assert.equal(valid(actual),false,'a partial, different or synthetic trace cannot pass');}
+ const untrusted=clone();untrusted.events[0].trusted=false;
+ assert.equal(Object.values(evaluateNativeIME({baseline:untrusted,actual:untrusted,text})).every(Boolean),false,'a matching but untrusted plain input cannot authorize a weaker proof');
+ const empty={...clone(),events:[]};assert.equal(Object.values(evaluateNativeIME({baseline:empty,actual:empty,text})).every(Boolean),false,'empty sequences cannot pass by equality');
 });

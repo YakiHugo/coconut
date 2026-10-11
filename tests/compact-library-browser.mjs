@@ -68,7 +68,11 @@ try{
  stage='target-owned Escape';await open();await page.locator('#library-search').focus();await page.evaluate(()=>document.getElementById('library-search').addEventListener('keydown',event=>event.preventDefault(),{once:true}));await page.keyboard.press('Escape');
  check('focused_control_can_prevent_Escape',await page.locator('#library-search-dialog').evaluate(n=>n.open));await page.keyboard.press('Escape');
  stage='desktop focused search enters mobile from closed toggle';await responsiveSnapshot('distinct-before-desktop');await page.setViewportSize({width:1360,height:1000});await waitForArrangement(false);await responsiveSnapshot('distinct-desktop-arranged');
- await page.locator('#library-search').focus();const desktopFocus=await responsiveSnapshot('distinct-desktop-focused');check('distinct_transition_establishes_visible_desktop_search_focus',desktopFocus.searchFocused&&desktopFocus.searchVisible&&!desktopFocus.mobile&&desktopFocus.toolsHidden);
+ // Native cancel returned focus to this same input. Calling focus() again does
+ // not emit another focus event; a real pointer entry must reopen before resize.
+ await page.locator('#library-search').click();await page.waitForFunction(()=>document.getElementById('library-search-dialog').open);
+ const desktopFocus=await responsiveSnapshot('distinct-desktop-focused');check('distinct_transition_establishes_visible_desktop_search_focus',desktopFocus.searchFocused&&desktopFocus.searchVisible&&!desktopFocus.mobile&&desktopFocus.toolsHidden);
+ check('distinct_pointer_reopens_already_focused_input_before_resize',desktopFocus.dialogOpen);
  await page.setViewportSize({width:320,height:568});await responsiveSnapshot('distinct-mobile-requested');await waitForArrangement(true);
  await page.waitForFunction(()=>document.getElementById('library-search-dialog').open);
  await responsiveSnapshot('distinct-mobile-arranged');
