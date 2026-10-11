@@ -361,16 +361,21 @@ const libraryLoad=window.CoconutStorageBootstrap?.result?.loaded||libraryAdapter
 // Direct embedding without the asynchronous bootstrap uses the legacy adapter.
 if(!window.CoconutStorageBootstrap){$('storage-startup').hidden=true;document.querySelector('.shell').inert=false;}
 state={documents:libraryLoad.documents,active:libraryLoad.active};
+const loadedCollectionIdentities=new WeakSet(libraryLoad.ok?state.documents.filter(Coconut.isReadingCollection):[]);
 if(libraryLoad.ok)for(const doc of state.documents)recordPersistenceCheckpoint(doc,persistenceCheckpoint(doc));
 else notice('上次保存的数据无法读取，已停止写入以保留原数据。本次内容可继续阅读，请导出备份后再关闭页面。');
 const libraryStore=CoconutLibraryStore.create({adapter:libraryAdapter,getDocuments:()=>state.documents,checkpoint:persistenceCheckpoint});
+let notebookContentRevision=0;
 let libraryContentRevision=0,notebookRefreshQueued=false,libraryRenderedRevision=-1;
 libraryStore.subscribe((snapshot,event)=>{
  const changed=libraryContentRevision!==snapshot.generation;libraryContentRevision=snapshot.generation;
+ const collectionOnly=event?.type==='queued'&&event.keys.length>0&&event.keys.every(key=>Coconut.isReadingCollection(state.documents.find(doc=>doc.key===key)));
+ if(changed&&!collectionOnly)notebookContentRevision++;
  if(changed&&!notebookRefreshQueued){notebookRefreshQueued=true;queueMicrotask(()=>{notebookRefreshQueued=false;if($('library-notebook').open)renderLibraryNotebook();if(libraryRenderedRevision!==libraryContentRevision)renderLibrary(null,{reuseMetadata:true});});}
  if(event?.result?.ok)for(const captured of event.result.checkpoints)recordPersistenceCheckpoint(captured.identity,captured.checkpoint);
  if(event?.type==='release')resumeDeferredContentInputs();
  renderSaveStatus(libraryStore.status());
+ if($('library-notebook').open)collectionStatus();
  renderPassageReadingPosition();
  if(event?.type==='commit'){
   renderSummaryPersistence();
@@ -455,7 +460,7 @@ window.addEventListener('coconut-document-removed',event=>readingRecency.record(
 let activeSelectionRevision=0;
 function selectActiveDocument(key,{persist=true}={}) {
  activeSelectionRevision++;
- const available=doc=>!pendingStructuralDocuments.has(doc.key);
+ const available=doc=>!Coconut.isReadingCollection(doc)&&!pendingStructuralDocuments.has(doc.key);
  state.active=state.documents.some(doc=>doc.key===key&&available(doc))?key:state.documents.find(available)?.key||null;
  if(persist)rememberActiveDocument();
 }
@@ -464,7 +469,7 @@ try { windowActive=sessionStorage.getItem(ACTIVE_KEY); } catch {}
 try { lastActive=localStorage.getItem(LAST_ACTIVE_KEY); } catch {}
 selectActiveDocument([windowActive,lastActive,state.active].find(key=>state.documents.some(doc=>doc.key===key)));
 function active() {
-	return state.documents.find((d) => d.key === state.active);
+	return state.documents.find((d) => d.key === state.active&&!Coconut.isReadingCollection(d));
 }
 function el(tag, className, text) {
 	const n = document.createElement(tag);
@@ -473,6 +478,7 @@ function el(tag, className, text) {
 	return n;
 }
 async function add(doc, canCommit = null, reuseAudioSource = false, lifecycleRevision = documentLifecycleRevision, sourceKey = doc.key, {target = null, separate = false, activate = true, canActivate = null, onActivate = null, jobId = null} = {}) {
+ if(Coconut.isReadingCollection(doc))throw new Error("成果集不能作为文字稿打开，请使用‘恢复书架备份’导入成果集 JSON 备份。");
  if(!contentIngressAllowed())throw new Error("导入已取消，书架未改变");
  const jobBinding=jobId?await jobSourceBinding(doc,jobId):null;
  // This local-only association is deliberately absent from Coconut.validate:
@@ -710,6 +716,7 @@ function renderRemovalRecovery() {
  $('removal-recovery').hidden=!removedDocument;
  $('removal-recovery-title').textContent=removedDocument?'已移除：'+removedDocument.doc.title:'';
  $('removal-recovery-short-title').textContent=removedDocument?removedDocument.doc.title:'';
+ $('removal-recovery-description').textContent=Coconut.isReadingCollection(removedDocument?.doc)?'整库备份不含已移除的成果集。请单独导出移除备份，用支持成果集的版本通过“恢复书架备份”恢复；不含来源文档或媒体。':'整库备份不含这份内容。可单独导出完整文字稿与笔记；恢复后需重新选择媒体。';
  if(!removedDocument){$('removal-recovery-details').open=false;$('removal-recovery-error').hidden=true;$('removal-export-error').hidden=true;}
  if(unloadGuardReady)syncUnsavedUnloadGuard();
 }
@@ -809,7 +816,7 @@ $('undo-removal').onclick=async()=>{
  finishStructuralOperation(operation);restoreRemovedDrafts(recovery);if(removedDocument===recovery)removedDocument=null;
  const ownsFocus=document.activeElement===operation.focusAtStart||document.activeElement===document.body;
  const canNavigate=activeSelectionRevision===operation.selectionRevision&&ownsFocus;
- if(canNavigate&&(recovery.wasActive||!active())){resetReaderForDocumentNavigation();selectActiveDocument(doc.key);workspace='read';setReadingMode(defaultReadingMode(doc));render();}else if(active()===doc)render();else renderLibrary();
+ if(canNavigate&&!Coconut.isReadingCollection(doc)&&(recovery.wasActive||!active())){resetReaderForDocumentNavigation();selectActiveDocument(doc.key);workspace='read';setReadingMode(defaultReadingMode(doc));render();}else if(active()===doc)render();else renderLibrary();
  renderRemovalRecovery();
  if(active()===doc&&Coconut.hasProjectAnnotations(doc))$('audio-project-status').textContent='项目已恢复；未提交的书签草稿仅在本页，请保存或取消。';
  if(canNavigate&&active()===doc&&doc.readingPosition){if(prefersPassageReading(doc))openPassage(doc.readingPosition);else goToSegment(doc.readingPosition);}
@@ -819,11 +826,12 @@ $('undo-removal').onclick=async()=>{
 $('export-removed-document').onclick=()=>{
  if(!removedDocument)return;let url,link;
  try{
-  const blob=new Blob([JSON.stringify(removedDocument.doc,null,2)],{type:'application/json'});
+  const collection=Coconut.isReadingCollection(removedDocument.doc),backup=collection?{format:'coconut-library',version:1,documents:[removedDocument.doc],active:null}:removedDocument.doc;
+  const blob=new Blob([JSON.stringify(backup,null,2)],{type:'application/json'});
   url=URL.createObjectURL(blob);link=el('a');link.href=url;link.download='coconut-removed-document.json';link.hidden=true;document.body.append(link);link.click();
   $('removal-export-error').hidden=true;
   if($('remove-document-error').dataset.kind==='export'){$('remove-document-error').textContent='';delete $('remove-document-error').dataset.kind;}
-  notice('已发起移除备份下载，请打开文件确认已保存。可用“添加文件”恢复；下载不会自动结束撤销。'+backupRecoveryHint(blob));
+  notice('已发起移除备份下载，请打开文件确认已保存。'+(collection?'请用支持成果集的版本，通过“恢复书架备份”恢复；':'可用“添加文件”恢复；')+'下载不会自动结束撤销。'+backupRecoveryHint(blob));
  }catch{
   const message='移除备份下载失败，完整内容仍在本页，请重试或撤销移除。';
   $('removal-recovery-details').open=true;$('removal-export-error').textContent=message;$('removal-export-error').hidden=false;
@@ -853,7 +861,7 @@ $('finish-removal-dialog').addEventListener('close',()=>{
 });
 $('confirm-finish-removal').onclick=()=>{
  if(pendingLibraryOperation||!finishRemovalDialogOrigin||removedDocument!==finishRemovalDialogOrigin.recovery)return;
- finishRemovalDialogOrigin.confirmed=true;removedDocument=null;$('finish-removal-dialog').close();renderRemovalRecovery();notice('已结束本页撤销。如果另有 JSON 备份，以后可用“添加文件”恢复。');
+ const collection=Coconut.isReadingCollection(removedDocument.doc);finishRemovalDialogOrigin.confirmed=true;removedDocument=null;$('finish-removal-dialog').close();renderRemovalRecovery();notice(collection?'已结束本页撤销。如有成果集 JSON 备份，请用支持成果集的版本，通过“恢复书架备份”恢复。':'已结束本页撤销。如果另有 JSON 备份，以后可用“添加文件”恢复。');
 };
 
 // Shelf paging bounds DOM work only. Filtering, sorting, storage, and backup
@@ -899,7 +907,7 @@ function returnFromLibrary(){
 }
 function toggleLibraryBrowsing(){
  if($('toggle-library').getAttribute('aria-expanded')==='true'){returnFromLibrary();return;}
- libraryBrowseOrigin={key:active()?.key,doc:active(),selectionRevision:activeSelectionRevision,reading:!$('reader-workspace').hidden,node:libraryReaderFocus?.key===active()?.key?libraryReaderFocus.node:null,scrollY:window.scrollY};
+ libraryBrowseOrigin={key:active()?.key,doc:active(),selectionRevision:activeSelectionRevision,reading:!$('reader-workspace').hidden,node:libraryReaderFocus&&libraryReaderFocus.key===active()?.key?libraryReaderFocus.node:null,scrollY:window.scrollY};
  $('toggle-library').setAttribute('aria-expanded','true');
  if(libraryMobile.matches)$('toggle-library').closest('aside').scrollIntoView?.({block:'start',behavior:'instant'});
 }
@@ -955,6 +963,7 @@ function createLibraryCard(d){
  const title=el('span','library-title'),metadata=el('small');open.append(title,metadata);
  const openDocument=(hit=null)=>{
   if(pendingStructuralDocuments.has(d.key)||!state.documents.includes(d))return;
+  if(Coconut.isReadingCollection(d)){openCollection(d);return;}
   markDocumentOpened(d);
   if(!hit&&libraryMobile.matches&&$('toggle-library').getAttribute('aria-expanded')==='true'&&d.key===active()?.key&&libraryBrowseOrigin?.reading&&libraryBrowseOrigin.doc===d&&libraryBrowseOrigin.selectionRevision===activeSelectionRevision){returnFromLibrary();renderLibrary();return;}
   resetReaderForDocumentNavigation();selectActiveDocument(d.key);
@@ -1001,13 +1010,14 @@ function renderLibrary(revealKey=null,{reuseMetadata=false}={}) {
   // Never advertise a partial count or leave old-query hits actionable.
   if(host.contains(document.activeElement))$('library-search').focus({preventScroll:true});
   host.hidden=true;$('library-empty').hidden=true;$('library-pagination').hidden=true;$('library-show-active').hidden=true;
-  $('library-total').textContent=String(state.documents.length);
+  $('library-total').textContent=String(state.documents.filter(doc=>!Coconut.isReadingCollection(doc)).length);
   $('library-page-status').textContent='正在查找… 已检查 '+selection.scanned+' / '+selection.documents.length+' 份';
   syncLibraryBackupSelection([]);
   return;
  }
  host.hidden=false;
  if(libraryPendingReveal){revealKey=libraryPendingReveal.key;libraryPendingReveal=null;}
+ const ordinaryCount=state.documents.filter(doc=>!Coconut.isReadingCollection(doc)).length;
  const docs=$('library-sort').value==='opened'?Coconut.sortedLibrary(selection.docs,'opened',readingRecency.time):selection.docs;
  const activeIndex=docs.findIndex(d=>d.key===state.active);
  if(viewChanged)libraryPage=0;
@@ -1019,11 +1029,11 @@ function renderLibrary(revealKey=null,{reuseMetadata=false}={}) {
  libraryPage=Math.max(0,Math.min(libraryPage,pageCount-1));
  libraryViewSignature=signature;libraryActiveKey=state.active;
  const start=libraryPage*LIBRARY_PAGE_SIZE,visible=docs.slice(start,start+LIBRARY_PAGE_SIZE);
- $('library-total').textContent=String(state.documents.length);
+ $('library-total').textContent=String(state.documents.filter(doc=>!Coconut.isReadingCollection(doc)).length);
  $('library-empty').hidden=docs.length>0;
- $('library-empty').textContent=state.documents.length?'没有匹配的内容，可调整书架筛选或查找范围':'还没有内容。添加一份，或体验示例。';
+ $('library-empty').textContent=ordinaryCount?'没有匹配的内容，可调整书架筛选或查找范围':'还没有内容。添加一份，或体验示例。';
  const range=docs.length?(start+1)+'–'+(start+visible.length):'0';
- const status='显示 '+range+' / '+docs.length+' 份'+(docs.length!==state.documents.length?' · 书架共 '+state.documents.length+' 份':'');
+ const status='显示 '+range+' / '+docs.length+' 份'+(docs.length!==ordinaryCount?' · 书架共 '+ordinaryCount+' 份':'');
  if($('library-page-status').textContent!==status)$('library-page-status').textContent=status;
  $('library-pagination').hidden=pageCount<=1;
  $('library-previous').disabled=libraryPage===0;$('library-next').disabled=libraryPage+1>=pageCount;
@@ -1036,7 +1046,7 @@ function renderLibrary(revealKey=null,{reuseMetadata=false}={}) {
  for(const d of visible){
   const previous=libraryCards.get(d.key),card=previous?.doc===d?previous:createLibraryCard(d);
   const {bookmark,duration,noteCount}=libraryDocumentMetadata(d),audioOnly=Coconut.isAudioProject(d);
-  const metadata=audioOnly?['原声项目','未导入文字稿',duration?Coconut.time(duration):'时长待确认']:[Coconut.time(duration),noteCount+' 则片段笔记'];
+  const metadata=Coconut.isReadingCollection(d)?['精选成果集',d.items.length+' 条记录']:audioOnly?['原声项目','未导入文字稿',duration?Coconut.time(duration):'时长待确认']:[Coconut.time(duration),noteCount+' 则片段笔记'];
   if(Coconut.hasProjectAnnotations(d))metadata.push((Coconut.hasNoteContent(d.project_note)?1:0)+' 则项目笔记',d.timestamp_bookmarks.length+' 个时间书签');
   if(bookmark)metadata.push('读到 '+Coconut.time(bookmark.start));
   if(card.title.textContent!==d.title)card.title.textContent=d.title;
@@ -1196,10 +1206,105 @@ $('exact-note-export').onclick=()=>{
 };
 $('exact-note-backup').onclick=()=>{$('export-unsaved-documents').onclick();$('exact-note-status').textContent=$('notice').textContent;};
 
+// A collection is a saved work product, never the active transcript.
+let collectionDocument=null,collectionPage=0;
+const COLLECTION_PAGE_SIZE=20;
+function collectionCurrent(){return collectionDocument&&state.documents.includes(collectionDocument)&&Coconut.isReadingCollection(collectionDocument)?collectionDocument:null;}
+function collectionTitleDraft(){return $('collection-title').value!==(collectionDocument?.title||'');}
+function collectionIdentity(item){return JSON.stringify([item.origin.documentKey,item.origin.type,item.origin.id]);}
+function collectionStatus(){
+ const doc=collectionCurrent(),status=doc?libraryStore.status(doc.key):null;
+ const saved=!!doc&&(status?.identity===doc?status.status==='saved':!status&&loadedCollectionIdentities.has(doc));
+ $('collection-status').dataset.state=saved?'saved':status?.identity===doc?status.status:'idle';
+ $('collection-retry').hidden=!doc||saved||status?.status==='pending';
+ if(doc)$('collection-status').textContent=pendingStructuralDocuments.has(doc.key)?'成果集正在处理，请稍候。':saved?'成果集已保存到本机浏览器。':status?.status==='pending'?'正在保存成果集…':'成果集尚未保存，请重试或导出当前快照保留。';
+ for(const id of ['collection-backup','collection-delete'])$(id).disabled=!doc||pendingStructuralDocuments.has(doc.key);
+ for(const id of ['collection-preview-button','collection-export'])$(id).disabled=!doc||!doc.items.length;
+ for(const row of $('notebook-captures').children){
+  const button=row.querySelector('.collection-add');if(!button)continue;
+  button.hidden=!$('collection-tools').open||!doc;
+  const source=state.documents.find(d=>d.key===row.dataset.documentKey);
+  const added=doc?.items.some(item=>item.origin.documentKey===source?.key&&item.origin.type===row.dataset.captureType&&String(item.origin.id)===row.dataset.captureId);
+  button.disabled=!doc||!contentIngressAllowed(doc)||!contentIngressAllowed(source);button.setAttribute('aria-disabled',String(!!added||button.disabled));button.textContent=added?'已加入成果集':'加入成果集';
+ }
+ for(const row of $('collection-items').children){const item=doc?.items.find(item=>item.id===row.dataset.itemId);if(item)row.querySelector('.collection-history').textContent=collectionHistory(item);}
+}
+function collectionHistory(item){
+ const status=Coconut.readingCollectionItemState(item,state.documents).status;
+ return '选取时快照 · '+({historical:'历史记录，未重新核对来源',current:'来源仍一致',changed:'来源已更新；保留选取时内容',missing:'本书架无此来源；保留选取时内容',ambiguous:'来源无法唯一确认；保留选取时内容'}[status]||'来源待核对')+(item.snapshot.exact_excerpt?' · 精确摘录选取时'+({current:'来源一致',stale:'来源已变化',missing:'原片段已移除'}[item.snapshot.history_status]||'状态待核对'):'');
+}
+function renderCollection({resetTitle=false,focusId=null,focusClass=null}={}){
+ $('collection-preview').hidden=true;
+ const doc=collectionCurrent(),select=$('collection-select');
+ const blank=el('option','','新建成果集');blank.value='';select.replaceChildren(blank);
+ for(const item of state.documents.filter(Coconut.isReadingCollection)){const option=el('option','',item.title);option.value=item.key;select.append(option);}
+ select.value=doc?.key||'';
+ if(resetTitle)$('collection-title').value=doc?.title||'';
+ $('collection-save-title').textContent=doc?'保存名称':'创建成果集';
+ const items=doc?.items||[];collectionPage=Math.max(0,Math.min(collectionPage,Math.ceil(items.length/COLLECTION_PAGE_SIZE)-1));
+ $('collection-count').textContent=doc?`已精选 ${items.length} 条；仅导出这些记录，顺序如下。`: '先命名创建成果集，再从下方跨篇逐条加入。';
+ const host=$('collection-items');host.replaceChildren();
+ for(const item of items.slice(collectionPage*COLLECTION_PAGE_SIZE,(collectionPage+1)*COLLECTION_PAGE_SIZE)){
+  const row=el('li','collection-item');row.dataset.itemId=item.id;
+  const s=item.snapshot;row.append(el('strong','',s.title),el('p','hint',(s.start===null?'无时间位置':Coconut.time(s.start))+' · '+(s.source_url||s.source_label||'无外部链接')),el('p','collection-history hint',collectionHistory(item)));
+  const detail=el('details');detail.append(el('summary','','查看所选记录'),el('p','',s.text||''));if(s.note)detail.append(el('p','','我的笔记：\n'+s.note));row.append(detail);
+  for(const [kind,label,delta] of [['up','上移',-1],['down','下移',1],['remove','移出成果集',0]]){
+   const button=el('button','collection-'+kind,label);button.type='button';button.setAttribute('aria-label',label+'：'+s.title);const index=items.indexOf(item);button.disabled=kind==='up'?index===0:kind==='down'?index===items.length-1:false;
+   button.onclick=()=>{if(!contentIngressAllowed(doc)||collectionCurrent()!==doc||!doc.items.includes(item))return;
+    const index=doc.items.indexOf(item),next=[...doc.items];if(delta&&(index+delta<0||index+delta>=next.length))return;if(delta){[next[index],next[index+delta]]=[next[index+delta],next[index]];}else next.splice(index,1);
+    doc.items=next;queueDocument(doc);$('collection-preview').hidden=true;
+    if(delta)collectionPage=Math.floor((index+delta)/COLLECTION_PAGE_SIZE);
+    renderCollection({focusId:delta?item.id:next[Math.min(index,next.length-1)]?.id,focusClass:delta?'.collection-'+kind:'.collection-remove'});
+    if(!next.length)$('collection-title').focus({preventScroll:true});
+   };row.append(button);
+  }host.append(row);
+ }
+ $('collection-previous').disabled=collectionPage===0;$('collection-next').disabled=(collectionPage+1)*COLLECTION_PAGE_SIZE>=items.length;
+ collectionStatus();
+ if(focusId){const row=[...host.children].find(row=>row.dataset.itemId===focusId),button=row?.querySelector(focusClass);(button&&!button.disabled?button:row?.querySelector('summary')||$('collection-title')).focus({preventScroll:true});}
+}
+function openCollection(doc){
+ if(!$('library-notebook').open)openLibraryNotebook();collectionDocument=doc;collectionPage=0;$('collection-tools').open=true;renderCollection({resetTitle:true});$('collection-select').focus({preventScroll:true});
+}
+$('collection-tools').addEventListener('toggle',()=>{if($('collection-tools').open)renderCollection();collectionStatus();});
+$('collection-select').onchange=()=>{
+ if(collectionTitleDraft()){$('collection-select').value=collectionCurrent()?.key||'';$('collection-status').textContent='名称尚未提交，请先保存名称或取消名称修改。';return;}
+ collectionDocument=state.documents.find(doc=>doc.key===$('collection-select').value&&Coconut.isReadingCollection(doc))||null;collectionPage=0;$('collection-preview').hidden=true;renderCollection({resetTitle:true});
+};
+$('collection-reset-title').onclick=()=>{$('collection-title').value=collectionCurrent()?.title||'';collectionStatus();};
+$('collection-save-title').onclick=()=>{
+ const title=$('collection-title').value.trim();if(!title){$('collection-status').textContent='请填写成果集名称。';$('collection-title').focus();return;}
+ let doc=collectionCurrent();if(!contentIngressAllowed(doc)){$('collection-status').textContent='当前无法保存，请先处理书架保存问题。';return;}
+ try{if(doc)doc.title=Coconut.createReadingCollection({...doc,title}).title;else{doc=Coconut.createReadingCollection({key:'collection-'+crypto.randomUUID(),title,items:[]});state.documents.push(doc);collectionDocument=doc;}queueDocument(doc);renderCollection({resetTitle:true});renderLibrary();}
+ catch(error){$('collection-status').textContent='成果集未创建：'+error.message;}
+};
+$('collection-retry').onclick=async()=>{if(libraryStore.status().blocked){$('collection-status').textContent='书架存在保存冲突，请保留备份并处理保存提示。';return;}await libraryStore.retry();collectionStatus();};
+for(const [id,delta] of [['collection-previous',-1],['collection-next',1]])$(id).onclick=()=>{collectionPage+=delta;renderCollection();$('collection-items').querySelector('summary')?.focus();};
+$('collection-preview-button').onclick=()=>{const doc=collectionCurrent();if(!doc)return;$('collection-preview').textContent=Coconut.readingCollectionMarkdown(doc,state.documents);$('collection-preview').hidden=false;$('collection-preview').focus();};
+$('collection-delete').onclick=()=>{const doc=collectionCurrent();if(!doc)return;if(collectionTitleDraft()){$('collection-status').textContent='请先保存名称或取消名称修改，再移除成果集。';return;}$('library-notebook').close();requestLibraryRemoval(doc);};
+$('collection-backup').onclick=()=>{
+ let url,link;try{const doc=collectionCurrent();if(!doc||pendingStructuralDocuments.has(doc.key))return;const backup={format:'coconut-library',version:1,documents:[doc],active:null},blob=new Blob([JSON.stringify(backup,null,2)],{type:'application/json'});url=URL.createObjectURL(blob);link=el('a');link.href=url;link.download='coconut-collection.json';link.hidden=true;$('library-notebook').append(link);link.click();$('collection-status').textContent='已发起此成果集备份下载，请确认文件已保存。只包含所选快照，不含来源文档；需支持成果集的版本恢复。'+backupRecoveryHint(blob);}
+ catch{$('collection-status').textContent='成果集备份失败，快照仍在，请重试。';}finally{link?.remove();if(url)setTimeout(()=>URL.revokeObjectURL(url),60000);}
+};
+$('collection-export').onclick=()=>{
+ let url,link;try{const doc=collectionCurrent();if(!doc)return;url=URL.createObjectURL(new Blob([Coconut.readingCollectionMarkdown(doc,state.documents)],{type:'text/markdown;charset=utf-8'}));link=el('a');link.href=url;link.download='coconut-collection.md';link.hidden=true;$('library-notebook').append(link);link.click();$('collection-status').textContent='已发起成果集 Markdown 下载，请确认文件已保存。下载不改变保存状态；完整恢复需支持成果集的版本；旧版不能打开含成果集的书架或备份。';}
+ catch{$('collection-status').textContent='成果集下载失败，所选记录仍在，请重试。';}finally{link?.remove();if(url)setTimeout(()=>URL.revokeObjectURL(url),60000);}
+};
+function addCollectionCapture(capture,selection){
+ const doc=collectionCurrent(),source=state.documents.find(item=>item.key===capture.documentKey);
+ if(!doc||!contentIngressAllowed(doc)||!contentIngressAllowed(source)||!notebookSearch.isCurrent(selection)||!Coconut.libraryCaptureCurrent(capture,state.documents)){$('collection-status').textContent='记录来源已变化或正在保存处理，请重新选择。';return;}
+ try{
+  const item=Coconut.collectionItemFromCapture(capture,state.documents,{id:crypto.randomUUID(),createdAt:new Date().toISOString()});
+  if(doc.items.some(existing=>collectionIdentity(existing)===collectionIdentity(item)))return;
+  const validated=Coconut.createReadingCollection({...doc,items:[...doc.items,item]});
+  doc.items=validated.items;queueDocument(doc);$('collection-preview').hidden=true;renderCollection();
+ }catch(error){$('collection-status').textContent='未加入成果集：'+error.message;}
+}
+
 const notebookSelection=new Set();
 let notebookPage=0,notebookReturn=null,notebookOpener=null,notebookRestore=null,notebookPainted=null;
 let notebookSavedReveal=null,notebookSavedOrigin=null;
-const notebookSearch=Coconut.createLibraryNotebookSearch({getDocuments:()=>state.documents,getRevision:()=>libraryContentRevision,
+const notebookSearch=Coconut.createLibraryNotebookSearch({getDocuments:()=>state.documents,getRevision:()=>notebookContentRevision,
  onChange:()=>{if($('library-notebook').open)renderLibraryNotebook();else notebookSearch.cancel();}});
 const NOTEBOOK_PAGE_SIZE=30;
 function pruneNotebookSelection(){
@@ -1241,6 +1346,7 @@ function renderLibraryNotebook(){
  for(const capture of pageCaptures){
   const doc=state.documents.find(doc=>doc.key===capture.documentKey),row=el('li','notebook-capture');row.dataset.captureKey=capture.key;row.dataset.captureId=capture.id;row.dataset.captureType=capture.type;row.dataset.documentKey=doc.key;
   const label=el('label'),check=el('input');check.type='checkbox';check.checked=notebookSelection.has(doc.key);check.setAttribute('aria-label','选择篇目 '+doc.title);check.onchange=()=>{check.checked?notebookSelection.add(doc.key):notebookSelection.delete(doc.key);syncNotebookSelection();};label.append(check,document.createTextNode(doc.title));row.append(label);
+  const collect=el('button','collection-add','加入成果集');collect.type='button';collect.hidden=true;collect.onclick=()=>addCollectionCapture(capture,selection);row.append(collect);
   row.append(el('p','hint',(capture.type==='cue'?(capture.excerpt?'整段摘录':'片段')+(Coconut.hasNoteContent(capture.note)?' · 笔记':''):capture.type==='exact-excerpt'?'所选文字摘录 · 历史快照':capture.type==='project-note'?'项目笔记':'时间书签')+(capture.time===null?'':' · '+Coconut.time(capture.time))));
   const details=el('details','notebook-details'),summary=el('summary','','查看完整记录与来源');details.append(summary);
   const visibleNote=capture.type==='exact-excerpt'&&!Coconut.hasNoteContent(capture.note)?'':capture.note;
@@ -1336,6 +1442,7 @@ function renderLibraryNotebook(){
  }
 }
 function syncNotebookSelection(){
+ collectionStatus();
  for(const row of $('notebook-captures').children){const key=JSON.parse(row.dataset.captureKey)[0];row.querySelector('input').checked=notebookSelection.has(key);}
  $('notebook-export-scope').textContent='已选 '+notebookSelection.size+' 篇；导出所选篇目的全部记录（包括当前搜索未显示的记录）。';
  $('notebook-export').disabled=notebookSelection.size===0;
@@ -1343,6 +1450,7 @@ function syncNotebookSelection(){
 function openLibraryNotebook(returning=false){
  notebookSavedReveal=null;notebookSavedOrigin=null;notebookOpener=document.activeElement;notebookRestore=null;
  $('library-notebook').showModal();$('notebook-search').focus({preventScroll:true});
+ if(collectionDocument&&!collectionCurrent()){collectionDocument=null;renderCollection({resetTitle:true});}else renderCollection();
  notebookRestore=returning&&notebookReturn?{...notebookReturn,focusOwned:true}:null;renderLibraryNotebook();
 }
 $('open-library-notebook').onclick=()=>openLibraryNotebook();
@@ -2490,7 +2598,7 @@ $("export-library").onclick = () => {
   const blob = new Blob([JSON.stringify(backup, null, 2)], {type:"application/json"});
   url = URL.createObjectURL(blob);
   link = el("a"); link.href=url; link.download="coconut-library.json"; link.hidden=true; document.body.append(link); link.click();
-  notice("已发起整个书架的完整 JSON 备份下载，请确认文件已保存；包含文字、笔记、译文与 AI 记录及依据，不包含媒体文件。"+backupRecoveryHint(blob), "success");
+  notice("已发起整个书架的完整 JSON 备份下载，请确认文件已保存；包含文字、笔记、译文与 AI 记录及依据，不包含媒体文件。"+(state.documents.some(Coconut.isReadingCollection)?"含精选成果集；需支持成果集的版本，旧版不能打开此书架或备份。":"")+backupRecoveryHint(blob), "success");
  } catch { notice("书架备份失败，内容仍在本页，请重试后再关闭。"); }
  finally { link?.remove(); if(url)setTimeout(()=>URL.revokeObjectURL(url),60000); }
 };
@@ -3656,7 +3764,7 @@ async function attachTranscriptToProject(text,target,{canCommit=null,activate=fa
 function hasPendingOrFailedContent(){return libraryStore.status().unsaved>0;}
 function hasUnsavedReaderChanges(){return hasPendingOrFailedContent()||hasUnsubmittedReaderDrafts();}
 function hasUnsubmittedReaderDrafts() {
- if(exactNoteDraft()||speakerCorrectionDraft())return true;
+ if(exactNoteDraft()||speakerCorrectionDraft()||collectionTitleDraft())return true;
  if(removedDocument||pendingLibraryOperation||[...deferredContentInputs.values()].some(draft=>state.documents.includes(draft.doc))||hasLanguageDrafts()||window.CoconutTranslationReview?.hasDraft())return true;
  const current=active();
  if(current&&selected&&!$('notes-panel').hidden&&current.segments.some(segment=>segment.id===selected)&&$('note').value!==(current.notes[selected]||''))return true;

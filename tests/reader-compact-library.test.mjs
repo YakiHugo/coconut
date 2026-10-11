@@ -144,3 +144,20 @@ test('new desktop reader focus clears ownership even when a focused shelf node w
   setViewport(true);deliverChange();assert.equal($('toggle-library').getAttribute('aria-expanded'),'false');assert.equal(w.document.activeElement,$('title'));
  }finally{await w.happyDOM.close();}
 });
+
+for(const collectionOnly of [false,true])test(`first mobile shelf opening without a captured reader focus works for ${collectionOnly?'a collection-only library':'an empty library'}`,async()=>{
+ const collection={key:'collection-only',schema_version:1,project_kind:'reading_collection',collection_version:1,title:'Only collection',segments:[],notes:{},items:[]};
+ const {w,$}=libraryHarness(collectionOnly?[collection]:[],{configureCore(w){
+  const original=w.matchMedia.bind(w);w.matchMedia=query=>query==='(max-width: 650px)'?{matches:true,addEventListener(){}}:original(query);
+ }});
+ try{
+  assert.equal($('reader-workspace').hidden,true);assert.equal($('toggle-library').getAttribute('aria-expanded'),'false');
+  // Native button activation does not first focus a control in main-content.
+  // Call its real handler directly so an event-listener exception fails here.
+  assert.doesNotThrow(()=>$('toggle-library').onclick());assert.equal($('toggle-library').getAttribute('aria-expanded'),'true');
+  $('library-tools').open=true;$('open-library-notebook').click();assert.equal($('library-notebook').open,true);
+  if(collectionOnly){$('collection-tools').open=true;$('collection-tools').dispatchEvent(new w.Event('toggle'));$('collection-select').value=collection.key;$('collection-select').onchange();assert.equal($('collection-title').value,collection.title);assert.equal($('collection-status').dataset.state,'saved');}
+  $('notebook-close').click();$('toggle-library').onclick();assert.equal($('toggle-library').getAttribute('aria-expanded'),'false');assert.equal(w.document.activeElement,$('main-content'));
+  $('toggle-library').onclick();assert.equal($('toggle-library').getAttribute('aria-expanded'),'true');assert.equal($('reader-workspace').hidden,true);
+ }finally{await w.happyDOM.close();}
+});

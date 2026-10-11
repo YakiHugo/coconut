@@ -376,6 +376,7 @@
  }
  const SUMMARY_QUESTION=Summaries.QUESTION;
  function summaryReadiness(doc) {
+  if(isReadingCollection(doc))return {ready:false,reason:"成果集不是原文，不能作为整篇摘要来源。"};
   try {const plan=Summaries.plan(doc);return {ready:true,reason:'',characters:plan.characters,plan};}
   catch(error){return {ready:false,reason:'整篇摘要暂不可用：'+error.message+'。可直接读原文，或筛选较小范围提问；局部回答不会保存为整篇摘要。'};}
  }
@@ -421,6 +422,7 @@
  // Transcript length is the latest cue end, including gaps and overlaps;
  // audio-only projects use known media length. Neither route mutates cues.
  function documentDuration(doc) {
+  if(isReadingCollection(doc))return 0;
   return isAudioProject(doc)?doc.media_duration||0:doc.segments.reduce((end,segment)=>Math.max(end,segment.end),0);
  }
  function libraryMatches(doc, query, kind='all', scope='title') {
@@ -443,6 +445,7 @@
   return {before:(left?'…':'')+chars.slice(left,start).join(''),match:chars.slice(start,Math.min(end,start+120)).join('')+(end-start>120?'…':''),after:chars.slice(end,right).join('')+(right<chars.length?'…':'')};
  }
  function libraryHits(doc,query,scope='title',limit=3) {
+  if(isReadingCollection(doc))return [];
   if(!query.trim()||scope==='title')return [];
   const hits=[],cap=Math.max(0,Math.min(10,Math.floor(limit)||0));
   const add=(kind,id,text,time)=>{if(hits.length>=cap||(kind!=='text'&&!hasNoteContent(text)))return;const snippet=librarySnippet(text,query);if(snippet)hits.push({kind,id,time,snippet});};
@@ -535,7 +538,7 @@
  }
  const libraryTitleOrder=new Intl.Collator('zh-Hans',{numeric:true,sensitivity:'base'});
  function sortedLibrary(documents, order,openedAt=()=>0,getDuration=documentDuration) {
-  const result=documents.slice();
+  const result=documents.filter(doc=>!isReadingCollection(doc));
   if(order==='opened')result.sort((a,b)=>openedAt(b.key)-openedAt(a.key));
   if(order==='title')result.sort((a,b)=>libraryTitleOrder.compare(a.title,b.title));
   if(order==='duration'){const durations=new Map(result.map(doc=>[doc,getDuration(doc)]));result.sort((a,b)=>durations.get(a)-durations.get(b));}
@@ -548,7 +551,7 @@
   now=()=>root.performance.now(),batchSize=32,budgetMs=4,workSize=32,onChange=()=>{}}) {
   let generation=0,current=null;
   const sameDocuments=job=>{
-   const live=getDocuments();
+   const live=getDocuments().filter(doc=>!isReadingCollection(doc));
    return live.length===job.documents.length&&live.every((doc,i)=>doc===job.documents[i]&&doc.segments===job.shapes[i][0]&&doc.segments.length===job.shapes[i][1]&&doc.language===job.shapes[i][2]&&doc.translation_contexts===job.shapes[i][3]&&doc.translation_glossary===job.shapes[i][4]&&doc.exact_excerpts===job.shapes[i][5]&&doc.exact_excerpts?.length===job.shapes[i][6]&&doc.exact_excerpt_notes===job.shapes[i][7]);
   };
   const valid=job=>current===job&&job.generation===generation&&job.revision===getRevision()&&job.sourceRevision===searchRevision&&sameDocuments(job);
@@ -562,7 +565,7 @@
     return current;
    }
    retire(current);
-   const documents=getDocuments().slice();
+   const documents=getDocuments().filter(doc=>!isReadingCollection(doc));
    const job={generation:++generation,signature,revision:getRevision(),sourceRevision:searchRevision,documents,
     shapes:documents.map(doc=>[doc.segments,doc.segments.length,doc.language,doc.translation_contexts,doc.translation_glossary,doc.exact_excerpts,doc.exact_excerpts?.length,doc.exact_excerpt_notes]),pending:false,scanned:0,docs:[],matches:[],savedHits:new Map(),buildingSaved:new Map()};
    current=job;
@@ -614,6 +617,7 @@
  function invalidateSearch(doc){searchIndexes.delete(doc);searchRevision++;}
  function drainSearch(iterator){let step;do{step=iterator.next();}while(!step.done);return step.value;}
  function* libraryMatchSteps(doc,query,kind,scope){
+  if(isReadingCollection(doc))return false;
   const audio=isAudioProject(doc),needle=query.trim().toLocaleLowerCase();
   const matches=value=>typeof value==='string'&&value.toLocaleLowerCase().includes(needle);
   if(kind==='audio'&&!audio||kind==='transcript'&&audio)return false;
@@ -844,7 +848,71 @@
   return {changed:changed.length>0,changedCount:changed.length,cueIds:changed.map(change=>change.id)};
  }
 
+ // Collections are library entries, never synthetic transcripts or AI source.
+ function isReadingCollection(doc){return doc?.project_kind==='reading_collection';}
+ function readingCollectionError(){throw new Error('成果集版本、条目或来源快照无效；未丢弃原始数据，请保留 JSON 备份。');}
+ function collectionString(value,max=10000000){return typeof value==='string'&&value.length<=max;}
+ function collectionId(value){return collectionString(value,200)&&value.length>0;}
+ function readingCollectionItemKey(item){return JSON.stringify([item.origin.documentKey,item.origin.type,item.origin.id]);}
+ function normalizeCollectionItem(item){
+  if(!exactFields(item,['id','created_at','origin','snapshot'])||!collectionId(item.id)||typeof item.created_at!=='string'||!/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/.test(item.created_at)||!Number.isFinite(Date.parse(item.created_at))||new Date(item.created_at).toISOString()!==item.created_at)readingCollectionError();
+  const o=item.origin,s=item.snapshot;
+  if(!exactFields(o,['documentKey','type','id'])||!collectionId(o.documentKey)||!['cue','exact-excerpt','project-note','bookmark'].includes(o.type)||!collectionString(o.id,200)||(o.type!=='project-note'&&!o.id))readingCollectionError();
+  if(!exactFields(s,['title','text','note','start','end','source_url','source_kind','source_label','speaker','history_status','source','original_text','exact_excerpt'])||!['title','text','note','source_url','source_label'].every(k=>collectionString(s[k]))||!['transcript','audio','authored_demo'].includes(s.source_kind)||!['current','stale','missing'].includes(s.history_status)||!(s.speaker===null||collectionString(s.speaker))||!(s.start===null&&s.end===null||Number.isFinite(s.start)&&s.start>=0&&Number.isFinite(s.end)&&s.end>=s.start)||(Object.hasOwn(s,'original_text')&&!collectionString(s.original_text)))readingCollectionError();
+  const source=exactSource(s.source);if(!exactEqual(source,s.source)||s.title!==source.title||s.source_url!==(podcastURL(source.source_url)||''))readingCollectionError();
+  let record;
+  if(o.type==='exact-excerpt'){
+   record=validateExactExcerpt(s.exact_excerpt);const parts=exactExcerptParts(record);
+   if(record.id!==o.id||record.text!==s.text||!exactEqual(record.snapshot.source,source)||s.start!==parts[0].cue.start||s.end!==Math.max(...parts.map(p=>p.cue.end)))readingCollectionError();
+  }else if(s.exact_excerpt!==undefined||o.type==='project-note'&&(s.text!==''||s.start!==null)||o.type==='bookmark'&&(s.text!==''||s.start===null||s.start!==s.end)||o.type==='cue'&&s.start===null)readingCollectionError();
+  return exactFreeze(JSON.parse(JSON.stringify({id:item.id,created_at:item.created_at,origin:{documentKey:o.documentKey,type:o.type,id:o.id},snapshot:{...s,source,...(record?{exact_excerpt:record}:{})}})));
+ }
+ function normalizeReadingCollection(data){
+  if(!exactFields(data,['key','schema_version','project_kind','collection_version','title','segments','notes','items'])||data.schema_version!==1||data.collection_version!==1||!isReadingCollection(data)||!collectionString(data.title,500)||!data.title.trim()||!Array.isArray(data.segments)||data.segments.length||!exactFields(data.notes,[])||!Array.isArray(data.items)||data.items.length>1000)readingCollectionError();
+  const ids=new Set(),origins=new Set(),items=data.items.map(value=>{
+   const item=normalizeCollectionItem(value),origin=readingCollectionItemKey(item);
+   if(ids.has(item.id)||origins.has(origin))readingCollectionError();ids.add(item.id);origins.add(origin);return item;
+  });
+  return {schema_version:1,project_kind:'reading_collection',collection_version:1,title:data.title,segments:[],notes:{},items};
+ }
+ function createReadingCollection({key,title,items=[]}){
+  if(!collectionId(key))readingCollectionError();return {...normalizeReadingCollection({schema_version:1,project_kind:'reading_collection',collection_version:1,title,segments:[],notes:{},items}),key};
+ }
+ function collectionItemFromCapture(capture,documents,{id,createdAt}={}){
+  if(!libraryCaptureCurrent(capture,documents))throw new Error('原记录已更改，请从更新后的笔记本重新选择。');
+  const owner=captureOwners.get(capture),doc=owner.doc;if(isReadingCollection(doc))readingCollectionError();
+  const exact=capture.type==='exact-excerpt'?owner.source:null,source=exact?exactExcerptSource(exact):exactSource(doc);
+  const parts=exact?exactExcerptParts(exact):null,start=parts?parts[0].cue.start:capture.time,end=parts?Math.max(...parts.map(p=>p.cue.end)):capture.type==='cue'?owner.source.end:start;
+  const snapshot={title:source.title,text:capture.text,note:capture.note,start,end,source_url:podcastURL(source.source_url)||'',source_kind:source.provenance?.kind==='authored_demo'?'authored_demo':isAudioProject(doc)?'audio':'transcript',source_label:source.local_media_source?.name||source.title,speaker:parts?parts[0].cue.speaker:capture.type==='cue'?owner.source.speaker??null:null,history_status:exact?exactExcerptFreshness(exact,doc):'current',source,
+   ...(capture.type==='cue'&&owner.source.original_text!==undefined?{original_text:owner.source.original_text}:{}),...(exact?{exact_excerpt:exact}:{})};
+  return normalizeCollectionItem({id,created_at:createdAt,origin:{documentKey:doc.key,type:capture.type,id:capture.id},snapshot});
+ }
+ // A key is useful provenance, not proof of object identity after restore.
+ // First version deliberately offers no current-source jump/rebinding.
+ function readingCollectionItemState(item,documents){
+  const matches=documents.filter(doc=>!isReadingCollection(doc)&&doc.key===item.origin.documentKey);
+  return {status:matches.length?'historical':'missing',doc:null,cueId:null};
+ }
+ function readingCollectionMarkdown(collection,documents=[]){
+  const checked=normalizeReadingCollection(collection),line=value=>markdownText(value).replace(/[\r\n]+/g,' '),quote=value=>markdownText(value).replace(/\r\n?/g,'\n').split('\n').map(part=>'> '+part).join('\n');
+  const lines=['# '+line(checked.title),'','Coconut 精选成果集 · '+checked.items.length+' 条所选记录','','仅包含下面所选记录，顺序由你整理；不是整篇笔记或完整书架备份。','每条均为选取时快照，不自动追随原稿或个人笔记的后续变化；不保证当前原位置仍存在。','Markdown 用于阅读与整理；恢复成果集需支持成果集的新版本和 JSON 备份，旧版不能打开含成果集的书架或备份。',''];
+  for(const [index,item] of checked.items.entries()){
+   const s=item.snapshot,o=item.origin,state=readingCollectionItemState(item,documents);
+   lines.push('## '+(index+1)+'. '+line(s.title),'','记录类型：'+({'cue':'整段摘录／片段笔记','exact-excerpt':'精确摘录','project-note':'项目个人笔记','bookmark':'时间书签'}[o.type]),'选取时间：'+line(item.created_at),'文档标识：'+line(o.documentKey)+' · 来源记录：'+line(o.id)+' · 成果条目：'+line(item.id),'来源状态：选取时快照'+(state.status==='missing'?'；本书架未找到该来源标识，不自动重新关联。':'；不自动关联当前原文。'),s.start===null?'时间：未记录。':'文字稿／书签时间：'+time(s.start)+'–'+time(s.end)+'（'+s.start+'–'+s.end+' 秒；不是逐字时间）','');
+   if(s.source_kind==='authored_demo')lines.push('自写演示内容，无对应音视频。','');
+   else if(s.source_url){const url=(source(s.source_url,s.start||0)||s.source_url).replace(/[()]/g,c=>c==='('?'%28':'%29');lines.push('[选取时原始来源]('+url+')'+(!source(s.source_url,s.start||0)?'（按记录时间手动定位）':''),'');}
+   else lines.push('选取时来源：'+line(s.source_label)+'（无原站链接；未附带媒体文件或本地路径）','');
+   if(s.speaker!==null)lines.push('选取时说话人标签：'+line(s.speaker),'');
+   if(s.text)lines.push('选取时原话：','',quote(s.text),'');
+   if(s.exact_excerpt)lines.push('精确摘录历史状态：'+({current:'选取时来源仍一致',stale:'选取时来源已变化',missing:'选取时原片段已移除'}[s.history_status])+'。完整历史上下文保留在 JSON 中。','');
+   if(Object.hasOwn(s,'original_text'))lines.push('修正前文字稿：','',quote(s.original_text),'');
+   if(hasNoteContent(s.note))lines.push('选取时我的笔记（非原话）：','',quote(s.note),'');
+  }
+  return lines.join('\n');
+ }
+
 	function validate(data) {
+  if(isReadingCollection(data))return normalizeReadingCollection(data);
   if(isAudioProject(data))return validateAudioProject(data);
 		if (
 			!data ||
@@ -1035,6 +1103,7 @@
  }
  // Reading export uses the same display-only paragraphs as the reader, not subtitle syntax.
  function transcriptText(doc, target='') {
+  if(isReadingCollection(doc))throw new Error('成果集不是文字稿，请导出成果集 Markdown。');
   if(isAudioProject(doc)||!doc.segments.length)throw new Error('尚未导入文字稿，不能导出整篇文字');
   const passages=typeof module!=='undefined'&&module.exports?require('./passages.js'):root.CoconutPassages;
   const origin=doc.provenance?.kind==='authored_demo'?'自写演示内容（无对应音视频）':
@@ -1061,6 +1130,7 @@
   return {text:lines.join('\n')+'\n\n'+blocks.join('\n\n')+'\n',...counts};
  }
  function subtitleExport(doc, format="srt", bilingual=false) {
+  if(isReadingCollection(doc))throw new Error("成果集不是字幕，请导出成果集 Markdown。");
   if(isAudioProject(doc)||!doc.segments.length)throw new Error('尚未导入文字稿，不能导出字幕');
   if (!["srt","vtt"].includes(format)) throw new Error("不支持的字幕格式");
   const stamp = ms => {
@@ -1130,7 +1200,8 @@
    while (used.has(key)) { const tail = "-restored-" + suffix++; key = doc.key.slice(0,200-tail.length) + tail; }
    documents.push({...doc, key}); used.add(key); fingerprints.set(fingerprint,key); mapping.set(doc.key,key);
   }
-  return {documents, active:mapping.get(backup.active) || current.active || documents[0]?.key || null};
+  const preferred=mapping.get(backup.active)||current.active;
+  return {documents,active:documents.some(doc=>doc.key===preferred&&!isReadingCollection(doc))?preferred:documents.find(doc=>!isReadingCollection(doc))?.key||null};
  }
 	function notebookSegments(doc) {
 		return doc.segments.filter(s => s.saved_excerpt === true || hasNoteContent(doc.notes?.[s.id]));
@@ -1143,6 +1214,7 @@
  function* libraryCaptureSteps(documents, query = '', kind = 'all') {
   const needle=query.trim().toLocaleLowerCase();let work=0;
   for(const doc of documents){
+   if(isReadingCollection(doc))continue;
    const capture=(type,id,text,note,timestamp,excerpt,source)=>{
     if(kind!=='all'&&!(kind==='excerpt'&&excerpt)&&!(kind==='note'&&hasNoteContent(note)))return null;
     if(needle&&![doc.title,text,note,id,...(type==='exact-excerpt'?[source.snapshot.source.title,source.snapshot.source.source_url]:[]),timestamp===null?'':time(timestamp)].some(value=>String(value||'').toLocaleLowerCase().includes(needle)))return null;
@@ -1189,7 +1261,7 @@
    doc.translation_view,doc.translation_contexts,doc.translation_glossary,doc.language,doc.exact_excerpts,doc.exact_excerpts?.length,doc.exact_excerpt_notes];
   const valid=job=>{
    if(current!==job||job.generation!==generation||job.revision!==getRevision()||job.sourceRevision!==searchRevision)return false;
-   const documents=getDocuments();return documents.length===job.documents.length&&documents.every((doc,i)=>{
+   const documents=getDocuments().filter(doc=>!isReadingCollection(doc));return documents.length===job.documents.length&&documents.every((doc,i)=>{
     const saved=job.shapes[i];return doc===job.documents[i]&&doc.segments===saved[0]&&doc.segments.length===saved[1]&&doc.notes===saved[2]&&doc.title===saved[3]&&
      doc.project_note===saved[4]&&doc.timestamp_bookmarks===saved[5]&&doc.timestamp_bookmarks?.length===saved[6]&&doc.translation_view===saved[7]&&
      doc.translation_contexts===saved[8]&&doc.translation_glossary===saved[9]&&doc.language===saved[10]&&doc.exact_excerpts===saved[11]&&doc.exact_excerpts?.length===saved[12]&&doc.exact_excerpt_notes===saved[13];
@@ -1198,7 +1270,7 @@
   const retire=job=>{job?.operation?.return();if(job){job.operation=null;job.building=[];job.buildingIndexes.clear();}};
   function request(query='',kind='all'){
    const signature=JSON.stringify([query,kind]);if(current?.signature===signature&&valid(current))return current;
-   retire(current);const documents=getDocuments().slice();
+   retire(current);const documents=getDocuments().filter(doc=>!isReadingCollection(doc));
    const job={generation:++generation,signature,revision:getRevision(),sourceRevision:searchRevision,documents,shapes:documents.map(shape),
     pending:false,captures:[],indexes:new Map(),building:[],buildingIndexes:new Map(),operation:libraryCaptureSteps(documents,query,kind)};
    current=job;let work=documents.length;
@@ -1249,6 +1321,7 @@
   return lines.join('\n');
  }
 	function notebookMarkdown(doc) {
+  if(isReadingCollection(doc))return readingCollectionMarkdown(doc);
   if(isAudioProject(doc))return audioNotebookMarkdown(doc);
 		const kept = notebookSegments(doc);
 		const text = value => markdownText(value).replace(/\r\n?/g, "\n");
@@ -1445,7 +1518,7 @@
 	function parse(text, filename) {
 		return parseWithDiagnostics(text, filename).document;
 	}
-	const api = { SPEAKER_CORRECTION_LABEL_LIMIT, createSpeakerCorrectionPreview, applySpeakerCorrectionPreview, createLibraryBackupSelection, librarySavedHits, librarySavedHitCurrent, exactExcerptNote, exactExcerptNotesWith, exactExcerptRemoval, exactExcerptSnapshot, exactExcerptText, exactExcerptParts, exactExcerptSource, exactExcerptCount, exactExcerptDuplicate, exactExcerptFreshness, exactExcerptFreshnessBatch, exactExcerptState, exactExcerptStateBatch, createReadingRecency, createLibrarySearch, createLibraryNotebookSearch, libraryCaptureSteps, libraryCaptureCurrent, libraryCaptures, libraryNotebookMarkdown, mediaTiming, mediaTimingOffset, mediaTimingRange, localMediaSource, searchDocument, invalidateSearch, manualReviewSnapshot, manualReviewCurrent, saveManualTranslation, translationReviewQueue, hasNoteContent, segmentNoteCount, BACKUP_REVIEW_BYTES, SUBTITLE_IMPORT_BYTES, vttPayload, libraryHits, librarySnippet, hasProjectAnnotations, projectAnnotationCount, attachProjectTranscript, libraryMatches, documentDuration, sortedLibrary, AUDIO_NOTE_BUDGET, audioNoteCharacters, isAudioProject, audioProjectIdentity, podcastMediaIdentity, SUMMARY_QUESTION, summaryReadiness, podcastURL, podcastSource, cleanGlossary, relevantGlossary, translationQualityMessage, retainAnswers, summaryFreshness, latestSummary, summaryMarkdown, aiReadingMarkdown, parseReadingTime, createPlaybackIndex, segmentAtTime, transcriptText, subtitleExport, mergeLibraryBackup, time, source, media, validate, parse, parseWithDiagnostics, matchesSegment, notebookSegments, notebookMarkdown, translationCurrent, sameCueSnapshot, subscriptionPlan, cleanContexts, answerFreshness };
+	const api = { isReadingCollection, normalizeReadingCollection, createReadingCollection, collectionItemFromCapture, readingCollectionItemKey, readingCollectionItemState, readingCollectionMarkdown, SPEAKER_CORRECTION_LABEL_LIMIT, createSpeakerCorrectionPreview, applySpeakerCorrectionPreview, createLibraryBackupSelection, librarySavedHits, librarySavedHitCurrent, exactExcerptNote, exactExcerptNotesWith, exactExcerptRemoval, exactExcerptSnapshot, exactExcerptText, exactExcerptParts, exactExcerptSource, exactExcerptCount, exactExcerptDuplicate, exactExcerptFreshness, exactExcerptFreshnessBatch, exactExcerptState, exactExcerptStateBatch, createReadingRecency, createLibrarySearch, createLibraryNotebookSearch, libraryCaptureSteps, libraryCaptureCurrent, libraryCaptures, libraryNotebookMarkdown, mediaTiming, mediaTimingOffset, mediaTimingRange, localMediaSource, searchDocument, invalidateSearch, manualReviewSnapshot, manualReviewCurrent, saveManualTranslation, translationReviewQueue, hasNoteContent, segmentNoteCount, BACKUP_REVIEW_BYTES, SUBTITLE_IMPORT_BYTES, vttPayload, libraryHits, librarySnippet, hasProjectAnnotations, projectAnnotationCount, attachProjectTranscript, libraryMatches, documentDuration, sortedLibrary, AUDIO_NOTE_BUDGET, audioNoteCharacters, isAudioProject, audioProjectIdentity, podcastMediaIdentity, SUMMARY_QUESTION, summaryReadiness, podcastURL, podcastSource, cleanGlossary, relevantGlossary, translationQualityMessage, retainAnswers, summaryFreshness, latestSummary, summaryMarkdown, aiReadingMarkdown, parseReadingTime, createPlaybackIndex, segmentAtTime, transcriptText, subtitleExport, mergeLibraryBackup, time, source, media, validate, parse, parseWithDiagnostics, matchesSegment, notebookSegments, notebookMarkdown, translationCurrent, sameCueSnapshot, subscriptionPlan, cleanContexts, answerFreshness };
 	if (typeof module !== "undefined" && module.exports) module.exports = api;
 	else root.Coconut = api;
 })(typeof window !== "undefined" ? window : globalThis);

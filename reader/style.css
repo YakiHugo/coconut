@@ -1162,3 +1162,12 @@ body[data-short-reading-compact="true"] #language-panel { margin-top: 8px; }
 @media(max-width: 600px) { #speaker-dialog { padding: 18px; } #speaker-dialog .dialog-actions { bottom: -18px; } }
 
 #library-list { padding-bottom:calc(6px + var(--library-keyboard-space, 0px)); }
+
+/* Collection organization stays inside the opt-in notebook. */
+#collection-tools { margin:1rem 0; padding:1rem 0; border-block:1px solid var(--line); }
+#collection-title,#collection-select { width:100%; box-sizing:border-box; }
+#collection-items { padding-left:1.5rem; }
+.collection-item { padding:.75rem 0; border-bottom:1px solid var(--line); overflow-wrap:anywhere; }
+.collection-item button,.collection-add { min-height:44px; margin:.25rem .25rem .25rem 0; }
+.collection-item p { white-space:pre-wrap; }
+#collection-preview { white-space:pre-wrap; overflow-wrap:anywhere; max-height:50dvh; overflow:auto; font:inherit; padding:.75rem; border:1px solid var(--line); }
