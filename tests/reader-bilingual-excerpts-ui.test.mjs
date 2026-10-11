@@ -15,7 +15,7 @@ test('independent original and translation ranges save immutable v2 with explici
  }finally{await w.happyDOM.close();}
 });
 test('missing translations divide selectable runs and do not concatenate gaps',async()=>{
- const source=fixture();delete source.segments[1].translations;const {w,$}=setup(source);try{start(w,$);assert.equal($('quotation-pair-run').options.length,2);assert.equal($('quotation-pair-source').value,'第一段译文');$('quotation-pair-run').value='1';$('quotation-pair-run').onchange();assert.equal($('quotation-pair-source').value,'第三段译文');assert.equal($('quotation-pair-confirm').checked,false);assert.equal($('quotation-save').disabled,true);$('quotation-pair-language').value='ja';$('quotation-pair-language').onchange();assert.match($('quotation-pair-status').textContent,/没有可用/);assert.equal($('quotation-pair-preview').disabled,true);
+ const source=fixture();delete source.segments[1].translations;const {w,$}=setup(source);try{start(w,$);assert.equal($('quotation-pair-run').options.length,2);assert.equal($('quotation-pair-source').value,'第一段译文');$('quotation-pair-edit').click();$('quotation-pair-run').value='1';$('quotation-pair-run').onchange();assert.equal($('quotation-pair-source').value,'第三段译文');assert.equal($('quotation-pair-confirm').checked,false);assert.equal($('quotation-save').disabled,true);$('quotation-pair-language').value='ja';$('quotation-pair-language').onchange();assert.match($('quotation-pair-status').textContent,/没有可用/);assert.equal($('quotation-pair-preview').disabled,true);
  }finally{await w.happyDOM.close();}
 });
 test('closing preserves paired draft and cancelling consent never discards either range',async()=>{
@@ -30,11 +30,11 @@ test('failed save preserves paired record and retry never duplicates history',as
  }finally{await w.happyDOM.close();}
 });
 test('keyboard selection respects graphemes and modal boundaries; Escape keeps draft',async()=>{
- const source=fixture();source.segments[0].translations.zh.text='译 e\u0301 🌴 文';const {w,$}=setup(source);try{start(w,$);const field=$('quotation-pair-source');field.setSelectionRange(2,2);field.dispatchEvent(new w.KeyboardEvent('keydown',{key:'ArrowRight',shiftKey:true,bubbles:true,cancelable:true}));assert.equal(field.selectionEnd,4);field.setSelectionRange(3,4);$('quotation-pair-preview').click();confirm($);await $('quotation-save').onclick();assert.equal(w.libraryProbe.documents[0].exact_excerpts,undefined);assert.match($('quotation-save-status').textContent,/完整译文字符/);$('quotation-reselect').focus();const tab=new w.KeyboardEvent('keydown',{key:'Tab',bubbles:true,cancelable:true});$('quotation-reselect').dispatchEvent(tab);assert.equal(tab.defaultPrevented,true);assert.equal(w.document.activeElement,$('quotation-preview'));$('quotation-dialog').dispatchEvent(new w.Event('cancel',{cancelable:true}));assert.equal($('quotation-dialog').open,false);assert.equal(dirty(w),true);
+ const source=fixture();source.segments[0].translations.zh.text='译 e\u0301 🌴 文';const {w,$}=setup(source);try{start(w,$);$('quotation-pair-edit').click();const field=$('quotation-pair-source');field.setSelectionRange(2,2);field.dispatchEvent(new w.KeyboardEvent('keydown',{key:'ArrowRight',shiftKey:true,bubbles:true,cancelable:true}));assert.equal(field.selectionEnd,4);field.setSelectionRange(3,4);$('quotation-pair-preview').click();confirm($);await $('quotation-save').onclick();assert.equal(w.libraryProbe.documents[0].exact_excerpts,undefined);assert.match($('quotation-save-status').textContent,/完整译文字符/);$('quotation-close').focus();const tab=new w.KeyboardEvent('keydown',{key:'Tab',bubbles:true,cancelable:true});$('quotation-close').dispatchEvent(tab);assert.equal(tab.defaultPrevented,true);assert.equal(w.document.activeElement,$('quotation-original-text'));$('quotation-dialog').dispatchEvent(new w.Event('cancel',{cancelable:true}));assert.equal($('quotation-dialog').open,false);assert.equal(dirty(w),true);
  }finally{await w.happyDOM.close();}
 });
 test('late receipt cannot mark a newer translation selection saved',async()=>{
- const {w,$,pipeline}=setup();try{start(w,$);confirm($);pipeline.hold();const pending=$('quotation-save').onclick();await settle();const first=w.libraryProbe.documents[0].exact_excerpts[0];$('quotation-pair-source').setSelectionRange(0,2);$('quotation-pair-preview').click();confirm($);assert.equal(dirty(w),true);pipeline.writes[0].commit();await pending;assert.notEqual($('quotation-save').textContent,'已保存摘录');assert.equal($('quotation-save').disabled,false);assert.equal(dirty(w),true);pipeline.hold(false);await $('quotation-save').onclick();assert.equal(w.libraryProbe.documents[0].exact_excerpts.length,2);assert.equal(w.libraryProbe.documents[0].exact_excerpts[0],first);assert.equal(w.libraryProbe.documents[0].exact_excerpts[1].translation.text,'第一');
+ const {w,$,pipeline}=setup();try{start(w,$);confirm($);pipeline.hold();const pending=$('quotation-save').onclick();await settle();const first=w.libraryProbe.documents[0].exact_excerpts[0];$('quotation-pair-edit').click();$('quotation-pair-source').setSelectionRange(0,2);$('quotation-pair-preview').click();confirm($);assert.equal(dirty(w),true);pipeline.writes[0].commit();await pending;assert.notEqual($('quotation-save').textContent,'已保存摘录');assert.equal($('quotation-save').disabled,false);assert.equal(dirty(w),true);pipeline.hold(false);await $('quotation-save').onclick();assert.equal(w.libraryProbe.documents[0].exact_excerpts.length,2);assert.equal(w.libraryProbe.documents[0].exact_excerpts[0],first);assert.equal(w.libraryProbe.documents[0].exact_excerpts[1].translation.text,'第一');
  }finally{await w.happyDOM.close();}
 });
 test('notebook and collection show saved bilingual text after live translation disappears',async()=>{
@@ -48,7 +48,7 @@ test('Tab minimally reveals full label above sticky actions, while Space, run ch
  }finally{await w.happyDOM.close();}
 });
 test('selected cue alone determines provenance and clipboard failure preserves full bilingual payload',async()=>{
- const source=fixture();source.segments[1].translations.zh.provider='user';const {w,$}=setup(source);try{start(w,$);$('quotation-pair-source').setSelectionRange(0,2);$('quotation-pair-preview').click();assert.match($('quotation-pair-origin').textContent,/机器生成/);assert.doesNotMatch($('quotation-pair-origin').textContent,/用户自写/);confirm($);Object.defineProperty(w.navigator,'clipboard',{value:{writeText:async()=>{throw Error('denied');}},configurable:true});await $('quotation-copy').onclick();assert.match($('quotation-preview').value,/First/);assert.match($('quotation-preview').value,/所选译文（zh/);assert.match($('quotation-preview').value,/第一/);assert.equal(w.document.activeElement,$('quotation-preview'));assert.match($('quotation-status').textContent,/手动复制/);
+ const source=fixture();source.segments[1].translations.zh.provider='user';const {w,$}=setup(source);try{start(w,$);$('quotation-pair-edit').click();$('quotation-pair-source').setSelectionRange(0,2);$('quotation-pair-preview').click();assert.match($('quotation-pair-origin').textContent,/机器生成/);assert.doesNotMatch($('quotation-pair-origin').textContent,/用户自写/);confirm($);Object.defineProperty(w.navigator,'clipboard',{value:{writeText:async()=>{throw Error('denied');}},configurable:true});await $('quotation-copy').onclick();assert.match($('quotation-preview').value,/First/);assert.match($('quotation-preview').value,/所选译文（zh/);assert.match($('quotation-preview').value,/第一/);assert.equal(w.document.activeElement,$('quotation-preview'));assert.match($('quotation-status').textContent,/手动复制/);
  }finally{await w.happyDOM.close();}
 });
 test('source removal cannot discard an unsubmitted paired selection',async()=>{
@@ -76,4 +76,83 @@ test('one large historical translation enters shelf and notebook scheduling, can
   $('notebook-search').value='late-needle';$('notebook-search').oninput();$('notebook-search').focus();$('notebook-search').setSelectionRange(2,5);drain();assert.equal($('notebook-captures').children.length,1);assert.equal($('notebook-captures').firstElementChild.dataset.captureId,'giant-pair');assert.match($('notebook-captures').textContent,/late-needle/);assert.equal(w.document.activeElement,$('notebook-search'));assert.equal($('notebook-search').selectionStart,2);assert.equal($('notebook-search').selectionEnd,5);
 
  }finally{await w.happyDOM.close();}
+});
+
+
+test('confirmation view puts exact plain source beside the selected translation and retains complete collapsed evidence',async()=>{
+ const {w,$}=setup();try{start(w,$);
+  assert.equal($('quotation-original-text').value,'First');assert.equal($('quotation-original-text').readOnly,true);
+  assert.equal($('quotation-pair-text').readOnly,true);assert.equal($('quotation-pair-source').readOnly,true);
+  assert.equal($('quotation-pair-text').closest('#quotation-result'),$('quotation-result'));
+  assert.equal($('quotation-pair-selection').hidden,true);assert.equal($('quotation-pair-confirmations').hidden,false);
+  assert.equal($('quotation-citation').open,false);assert.equal($('quotation-citation').hidden,false);
+  assert.match($('quotation-preview').value,/First\n\n—— Language course/);assert.match($('quotation-preview').value,/未关联原站链接/);
+  assert.match($('quotation-preview').value,/尚未确认对应/);assert.match($('quotation-pair-origin-summary').textContent,/机器生成，需核对/);
+  assert.match($('quotation-pair-origin').textContent,/test-provider/);assert.match($('quotation-pair-origin').textContent,/生成时间未记录/);
+  assert.equal(w.document.activeElement,$('quotation-pair-text'));assert.equal($('quotation-dialog').scrollTop,0);
+  const previous=$('quotation-pair-text').value;$('quotation-pair-source').setSelectionRange(0,2);$('quotation-pair-preview').click();assert.equal($('quotation-pair-text').value,previous,'hidden selector cannot replace confirmed display');
+ }finally{await w.happyDOM.close();}
+});
+test('editing and returning preserves both selected ranges and approvals; a committed new selection needs new correspondence',async()=>{
+ const {w,$}=setup();try{start(w,$);confirm($);const previous=$('quotation-pair-text').value,payload=$('quotation-preview').value;
+  $('quotation-pair-edit').click();assert.equal($('quotation-pair-selection').hidden,false);assert.equal($('quotation-save').disabled,true);assert.equal($('quotation-pair-confirmations').hidden,true);assert.equal(w.document.activeElement,$('quotation-pair-source'));
+  $('quotation-pair-source').setSelectionRange(0,2);$('quotation-pair-return').click();assert.equal($('quotation-pair-text').value,previous);assert.equal($('quotation-preview').value,payload);assert.equal($('quotation-pair-confirm').checked,true);assert.equal($('quotation-save').disabled,false);
+  $('quotation-pair-edit').click();$('quotation-pair-source').setSelectionRange(0,2);$('quotation-pair-preview').click();assert.equal($('quotation-pair-text').value,'第一');assert.equal($('quotation-original-text').value,'First');assert.equal($('quotation-pair-confirm').checked,false);assert.equal($('quotation-save').disabled,true);assert.equal(dirty(w),true);
+ }finally{await w.happyDOM.close();}
+});
+test('Escape retains an in-progress translation reselection, and reopening does not reset the existing pair',async()=>{
+ const {w,$}=setup();try{start(w,$);confirm($);const selected=$('quotation-pair-text').value;$('quotation-pair-edit').click();$('quotation-pair-source').setSelectionRange(2,7);$('quotation-dialog').dispatchEvent(new w.Event('cancel',{cancelable:true}));w.document.querySelector('.passage-quote').click();
+  assert.equal($('quotation-pair-selection').hidden,false);assert.equal(w.document.activeElement,$('quotation-pair-source'));assert.equal($('quotation-pair-source').selectionStart,2);assert.equal($('quotation-pair-source').selectionEnd,7);assert.equal($('quotation-pair-text').value,selected);
+  $('quotation-pair-return').click();assert.equal($('quotation-pair-confirm').checked,true);await $('quotation-save').onclick();assert.equal(w.libraryProbe.documents[0].exact_excerpts[0].translation.text,selected);
+ }finally{await w.happyDOM.close();}
+});
+test('changing translation language or range retires the old comparison and cannot return stale correspondence',async()=>{
+ const source=fixture();delete source.segments[1].translations;const {w,$}=setup(source);try{start(w,$);confirm($);$('quotation-pair-edit').click();$('quotation-pair-run').value='1';$('quotation-pair-run').onchange();
+  assert.equal($('quotation-pair-return').hidden,true);assert.equal($('quotation-pair-result').hidden,true);assert.equal($('quotation-pair-confirm').checked,false);$('quotation-pair-return').click();assert.equal($('quotation-pair-selection').hidden,false);assert.equal($('quotation-save').disabled,true);
+  $('quotation-pair-source').setSelectionRange(0,2);$('quotation-pair-preview').click();assert.equal($('quotation-pair-text').value,'第三');$('quotation-pair-edit').click();$('quotation-pair-language').value='ja';$('quotation-pair-language').onchange();assert.equal($('quotation-pair-return').hidden,true);assert.equal($('quotation-pair-evidence').hidden,true);assert.equal($('quotation-save').disabled,true);
+ }finally{await w.happyDOM.close();}
+});
+test('clipboard failure opens the complete evidence field and native selection remains writable only to the clipboard',async()=>{
+ const {w,$}=setup();try{start(w,$);confirm($);Object.defineProperty(w.navigator,'clipboard',{value:{writeText:async()=>{throw Error('denied');}},configurable:true});await $('quotation-copy').onclick();
+  assert.equal($('quotation-citation').open,true);assert.equal(w.document.activeElement,$('quotation-preview'));assert.equal($('quotation-preview').selectionStart,0);assert.equal($('quotation-preview').selectionEnd,$('quotation-preview').value.length);assert.match($('quotation-preview').value,/用户确认对应，非翻译质量认证/);
+  $('quotation-citation').open=false;$('quotation-citation').dispatchEvent(new w.Event('toggle'));assert.equal(w.document.activeElement,$('quotation-citation').firstElementChild);
+ }finally{await w.happyDOM.close();}
+});
+test('closed evidence fields are excluded from modal tab boundaries, but summaries and expanded readonly text remain keyboard reachable',async()=>{
+ const {w,$}=setup();try{start(w,$);const key=(node,shift=false)=>{node.focus();const event=new w.KeyboardEvent('keydown',{key:'Tab',shiftKey:shift,bubbles:true,cancelable:true});node.dispatchEvent(event);return event;};
+  assert.equal(key($('quotation-original-text'),true).defaultPrevented,true);assert.equal(w.document.activeElement,$('quotation-close'));
+  assert.equal(key($('quotation-close')).defaultPrevented,true);assert.equal(w.document.activeElement,$('quotation-original-text'));
+  const summary=$('quotation-citation').firstElementChild;assert.equal(key(summary).defaultPrevented,false);$('quotation-citation').open=true;assert.equal(key($('quotation-preview')).defaultPrevented,false);
+ }finally{await w.happyDOM.close();}
+});
+test('discarding only the translation returns the compact original and a successful save keeps compatibility acknowledgement session-local',async()=>{
+ const {w,$}=setup();try{start(w,$);confirm($);await $('quotation-save').onclick();$('quotation-close').click();start(w,$);assert.equal($('quotation-pair-compatibility').checked,true);assert.equal($('quotation-pair-confirm').checked,false);
+  $('quotation-pair-discard').click();assert.equal($('quotation-original-text').value,'First');assert.equal($('quotation-pair-result').hidden,true);assert.equal($('quotation-pair-confirmations').hidden,true);assert.equal($('quotation-reselect').hidden,false);assert.equal($('quotation-dialog').classList.contains('is-pairing'),false);assert.doesNotMatch($('quotation-preview').value,/所选译文/);
+ }finally{await w.happyDOM.close();}
+});
+
+test('reselecting an already saved pair is a protected draft until returning, and an old persistence event cannot mark the edit saved',async()=>{
+ const {w,$}=setup();try{start(w,$);confirm($);await $('quotation-save').onclick();const record=w.libraryProbe.documents[0].exact_excerpts[0];assert.equal(dirty(w),false);
+  $('quotation-pair-edit').click();$('quotation-pair-source').setSelectionRange(2,6);assert.equal(dirty(w),true);w.dispatchEvent(new w.Event('coconut-persistence-change'));assert.equal($('quotation-save').textContent,'保存双语摘录');assert.equal($('quotation-save').disabled,true);
+  $('quotation-close').click();w.document.querySelector('.passage-quote').click();assert.equal($('quotation-pair-selection').hidden,false);assert.equal($('quotation-pair-source').selectionStart,2);assert.equal($('quotation-pair-source').selectionEnd,6);
+  $('quotation-pair-return').click();assert.equal(dirty(w),false);assert.equal($('quotation-save').textContent,'已保存摘录');assert.equal($('quotation-save').disabled,true);assert.equal(w.libraryProbe.documents[0].exact_excerpts.length,1);assert.equal(w.libraryProbe.documents[0].exact_excerpts[0],record);
+  $('quotation-pair-edit').click();assert.equal($('quotation-pair-source').selectionStart,1);assert.equal($('quotation-pair-source').selectionEnd,$('quotation-pair-source').value.length-1,'a new edit begins at the displayed snapshot, not the abandoned tentative cursor');
+ }finally{await w.happyDOM.close();}
+});
+
+test('copy receipts from an earlier visible dialog cannot overwrite status, disclosure or focus after closing or reopening a retained draft',async()=>{
+ for(const result of ['resolve','reject'])for(const reopen of [false,true]){const {w,$}=setup();try{start(w,$);const selected=$('quotation-pair-text').value;let finish;
+  Object.defineProperty(w.navigator,'clipboard',{configurable:true,value:{writeText:()=>new Promise((resolve,reject)=>{finish=()=>result==='resolve'?resolve():reject(Error('late failure'));})}});
+  const pending=$('quotation-copy').onclick();$('quotation-close').click();if(reopen)w.document.querySelector('.passage-quote').click();const focused=w.document.activeElement,status=$('quotation-status').textContent;
+  finish();await pending;assert.equal($('quotation-dialog').open,reopen);assert.equal(w.document.activeElement,focused,result+' / '+reopen);assert.equal($('quotation-status').textContent,status);assert.equal($('quotation-citation').open,false);assert.equal($('quotation-pair-text').value,selected);assert.equal(dirty(w),true);
+  if(!reopen)w.document.querySelector('.passage-quote').click();assert.equal($('quotation-pair-text').value,selected);assert.equal($('quotation-copy').disabled,false);
+ }finally{await w.happyDOM.close();}}
+});
+
+test('invalid replacement previews leave the previous pair, provenance and confirmation available to return to',async()=>{
+ for(const saved of [false,true])for(const invalid of ['empty','whitespace','split-surrogate']){const source=fixture();source.segments[0].translations.zh.text='字 🌴 词';const {w,$}=setup(source);try{start(w,$);confirm($);if(saved)await $('quotation-save').onclick();const selected=$('quotation-pair-text').value,payload=$('quotation-preview').value,origin=$('quotation-pair-origin').textContent;
+  $('quotation-pair-edit').click();const field=$('quotation-pair-source');if(invalid==='empty')field.setSelectionRange(2,2);else if(invalid==='whitespace')field.setSelectionRange(1,2);else field.setSelectionRange(field.value.indexOf('🌴')+1,field.value.indexOf('🌴')+2);$('quotation-pair-preview').click();
+  assert.equal($('quotation-pair-selection').hidden,false);assert.equal($('quotation-pair-return').hidden,false);assert.equal($('quotation-pair-text').value,selected);assert.equal($('quotation-pair-origin').textContent,origin);assert.equal($('quotation-pair-confirm').checked,true);assert.equal($('quotation-save').disabled,true);assert.match($('quotation-pair-status').textContent,/请选择|请只选择/);assert.equal(dirty(w),true);
+  $('quotation-pair-return').click();assert.equal($('quotation-preview').value,payload);assert.equal($('quotation-pair-text').value,selected);assert.equal($('quotation-pair-confirm').checked,true);assert.equal($('quotation-save').disabled,saved);assert.equal(dirty(w),!saved);
+ }finally{await w.happyDOM.close();}}
 });
