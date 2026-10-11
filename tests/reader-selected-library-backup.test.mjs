@@ -224,19 +224,19 @@ function shelfFocusGeometry({atEnd=true}={}) {
 test('real Tab and Shift+Tab reveal the complete checkbox label above live feedback using only minimal bounded shelf scrolling',async()=>{
  const {w,$,pipeline,target,label,host,scrolls,windowScrolls,flush,tab}=shelfFocusGeometry();try{
   const disk=w.localStorage.getItem(KEY);tab();assert.equal(scrolls.length,0);flush();
-  assert.equal(scrolls.length,1);assert.equal(scrolls[0].top,298.234375);assert.equal(label.getBoundingClientRect().bottom,768);assert.equal(w.document.activeElement,target);
-  assert.equal(parseFloat(host.style.getPropertyValue('--library-keyboard-space')),17.234375);assert.equal(windowScrolls.length,0);assert.equal(w.localStorage.getItem(KEY),disk);
+  assert.equal(scrolls.length,1);assert.equal(scrolls[0].top,300);assert.equal(label.getBoundingClientRect().bottom,766.234375);assert.equal(w.document.activeElement,target);
+  assert.equal(parseFloat(host.style.getPropertyValue('--library-keyboard-space')),19);assert.equal(windowScrolls.length,0);assert.equal(w.localStorage.getItem(KEY),disk);
   // Space changes selection, not the scroll owner; save/resize refreshes are passive.
-  w.document.dispatchEvent(new w.KeyboardEvent('keydown',{key:' ',code:'Space',bubbles:true}));target.click();w.libraryProbe.renderLibrary();w.dispatchEvent(new w.Event('resize'));flush();assert.equal(scrolls.length,1);assert.equal(host.scrollTop,298.234375);
-  const doc=w.libraryProbe.documents[1];doc.notes[doc.segments[0].id]='Legitimate note save';pipeline.store.queueDocument(doc.key,doc);await pipeline.store.flush();await settle();flush();assert.equal(scrolls.length,1);assert.equal(host.scrollTop,298.234375);assert.equal(windowScrolls.length,0);
-  tab(true);flush();assert.equal(scrolls.length,1);assert.equal(parseFloat(host.style.getPropertyValue('--library-keyboard-space')),17.234375);
+  w.document.dispatchEvent(new w.KeyboardEvent('keydown',{key:' ',code:'Space',bubbles:true}));target.click();w.libraryProbe.renderLibrary();w.dispatchEvent(new w.Event('resize'));flush();assert.equal(scrolls.length,1);assert.equal(host.scrollTop,300);
+  const doc=w.libraryProbe.documents[1];doc.notes[doc.segments[0].id]='Legitimate note save';pipeline.store.queueDocument(doc.key,doc);await pipeline.store.flush();await settle();flush();assert.equal(scrolls.length,1);assert.equal(host.scrollTop,300);assert.equal(windowScrolls.length,0);
+  tab(true);flush();assert.equal(scrolls.length,1);assert.equal(parseFloat(host.style.getPropertyValue('--library-keyboard-space')),19);
   $('library-selection-mode').click();assert.equal(host.style.getPropertyValue('--library-keyboard-space'),'');
  }finally{await w.happyDOM.close();}
 });
 
 test('existing shelf scroll range is used without adding trailing space and hidden or horizontally unrelated overlays do not move focus',async()=>{
  const {w,$,target,host,scrolls,flush,tab}=shelfFocusGeometry({atEnd:false});try{
-  tab(true);flush();assert.equal(scrolls[0].top,298.234375);assert.equal(host.style.getPropertyValue('--library-keyboard-space'),'');
+  tab(true);flush();assert.equal(scrolls[0].top,300);assert.equal(host.style.getPropertyValue('--library-keyboard-space'),'');
   host.scrollTop=281;$('reading-feedback').style.visibility='hidden';tab();flush();assert.equal(scrolls.length,1);
   $('reading-feedback').style.visibility='visible';$('reading-feedback').getBoundingClientRect=()=>({left:400,right:500,top:770,bottom:832,width:100,height:62});tab();flush();assert.equal(scrolls.length,1);
   assert.equal(w.document.activeElement,target);
@@ -272,9 +272,9 @@ test('browser organizing controls target the direct summary despite nested backu
 
 test('shelf focus correction includes an outline larger than its label and the entire visible dock stack',async()=>{
  const {w,$,target,host,scrolls,flush,tab}=shelfFocusGeometry();try{
-  target.style.outlineWidth='14px';tab();flush();assert.equal(scrolls[0].top,303.234375);
+  target.style.outlineWidth='14px';tab();flush();assert.equal(scrolls[0].top,305);
   host.scrollTop=281;target.style.outlineWidth='3px';$('media-dock').hidden=false;$('media-dock').style.display='flex';
   $('media-dock').getBoundingClientRect=()=>({left:12,right:378,top:730,bottom:844,width:366,height:114});tab(true);flush();
-  assert.equal(scrolls[1].top,338.234375);assert.equal(parseFloat(host.style.getPropertyValue('--library-keyboard-space')),57.234375);
+  assert.equal(scrolls[1].top,340);assert.equal(parseFloat(host.style.getPropertyValue('--library-keyboard-space')),59);
  }finally{await w.happyDOM.close();}
 });
