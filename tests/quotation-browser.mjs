@@ -349,6 +349,30 @@ try {
     const originalExcerpt = excerptDocument.exact_excerpts.find(record => record.text === exactText);
     const excerptRow = id => page.locator('#notebook-captures .notebook-capture[data-document-key="' + excerptDocument.key + '"][data-capture-id="' + id + '"]');
     const retainedRow = excerptRow(originalExcerpt.id);
+    // Personal notes are edited in a stable dialog outside refreshed search rows.
+    await retainedRow.locator('.notebook-details > summary').click();
+    await retainedRow.locator('.notebook-edit-exact-note').click();
+    await expect(page.locator('#exact-note-quote')).toHaveValue(exactText);
+    await expect(page.locator('#exact-note-text')).toBeFocused();
+    const personalNote='Authored personal observation about this exact quotation.';
+    await page.locator('#exact-note-text').fill(personalNote);
+    await page.keyboard.press('Escape');await expect(page.locator('#exact-note-dialog')).toBeVisible();
+    await expect(page.locator('#exact-note-status')).toContainText('尚未提交');
+    await capture(label + '-personal-note-draft');
+    await page.locator('#exact-note-save').click();
+    await expect(page.locator('#exact-note-status')).toContainText('已保存到本机');
+    await expect(page.locator('#exact-note-save')).toBeFocused();
+    check(label + '_personal_note_saved_separately_without_mutating_quote',await page.evaluate(({key,id,note,record})=>{const doc=state.documents.find(doc=>doc.key===key);return doc.exact_excerpt_notes[id]===note&&JSON.stringify(doc.exact_excerpts.find(item=>item.id===id))===JSON.stringify(record);},{key:excerptDocument.key,id:originalExcerpt.id,note:personalNote,record:originalExcerpt}));
+    check(label + '_personal_note_dialog_fits_viewport',await page.locator('#exact-note-dialog').evaluate(node=>node.scrollWidth<=node.clientWidth&&node.getBoundingClientRect().left>=0&&node.getBoundingClientRect().right<=innerWidth));
+    await capture(label + '-personal-note-saved');
+    await page.locator('#exact-note-text').fill('Cancelled authored draft');await page.locator('#exact-note-cancel').click();
+    await expect(page.locator('#exact-note-dialog')).toBeHidden();await expect(page.locator('#notebook-search')).toBeFocused();
+    await page.locator('#notebook-close').click();await page.reload();await page.waitForFunction(()=>window.CoconutStorageBootstrap?.phase==='ready');
+    await openLibraryTools(page);await page.locator('#open-library-notebook').click();await retainedRow.locator('.notebook-details > summary').click();
+    await expect(retainedRow.locator('.notebook-note')).toContainText(personalNote);await retainedRow.locator('.notebook-edit-exact-note').click();
+    await expect(page.locator('#exact-note-text')).toHaveValue(personalNote);await page.locator('#exact-note-cancel').click();await expect(retainedRow.locator('.notebook-edit-exact-note')).toBeFocused();
+    check(label + '_personal_note_reload_cancel_and_return_focus',true);
+    await retainedRow.locator('.notebook-details > summary').click();
     // Display coverage includes ordinary notes and whole-cue excerpts, not just exact records.
     for(const [kind,cueIndex] of [['note',2],['whole-cue',4]]){
       const row=page.locator('#notebook-captures .notebook-capture[data-document-key="' + excerptDocument.key + '"][data-capture-type="cue"][data-capture-id="' + newlines.segments[cueIndex].id + '"]');
@@ -425,6 +449,7 @@ try {
     await page.locator('#return-library-notebook').click();await expect(retainedRow).toHaveCount(1);
     const beforeRemoval = await saved(), expectedAfterRemoval = structuredClone(beforeRemoval);
     expectedAfterRemoval.documents.find(doc => doc.key === excerptDocument.key).exact_excerpts = beforeDocument.exact_excerpts.filter(record => record.id !== originalExcerpt.id);
+    delete expectedAfterRemoval.documents.find(doc => doc.key === excerptDocument.key).exact_excerpt_notes;
     await retainedRow.locator('.notebook-remove').click();
     await expect(retainedRow).toHaveCount(0);await expect(excerptRow(otherExcerpt.id)).toHaveCount(1);
     check(label + '_removal_changes_only_the_chosen_exact_record_on_disk', JSON.stringify(await saved()) === JSON.stringify(expectedAfterRemoval));
@@ -436,6 +461,37 @@ try {
     await excerptRow(otherExcerpt.id).locator('.notebook-details > summary').click();
     await expect(excerptRow(otherExcerpt.id)).toContainText('原文或出处已变化；保留摘录时快照');
     await capture(label + '-historical-removal-reload');
+    // Import authored mixed line endings; native textarea normalization must
+    // not turn opening/closing or an unchanged save into a content edit.
+    await page.locator('#notebook-close').click();
+    const rawPersonalNote='  authored CRLF\r\nsecond line\rthird line  ';
+    const rawNoteFixture=await page.evaluate(({source,note})=>{
+      const doc=Coconut.validate({...source,key:'raw-note-import',title:'Authored raw note import',source_url:'https://youtu.be/authored-raw-note'});
+      const record=Coconut.exactExcerptSnapshot(doc,[doc.segments[0]],[],0,6,{id:'raw-note',createdAt:'2026-10-11T00:00:00.000Z'});
+      doc.exact_excerpts=[record];doc.exact_excerpt_notes={'raw-note':note};return doc;
+    },{source:newlines,note:rawPersonalNote});
+    await page.locator('#file').setInputFiles({name:'authored-personal-note-crlf.json',mimeType:'application/json',buffer:Buffer.from(JSON.stringify(rawNoteFixture))});
+    await page.waitForFunction(()=>document.querySelector('#title').textContent==='Authored raw note import');
+    await openLibraryTools(page);await page.locator('#open-library-notebook').click();
+    const rawRow=page.locator('.notebook-capture[data-capture-id="raw-note"]');
+    const openRawNote=async()=>{if(!await rawRow.locator('.notebook-details').evaluate(node=>node.open))await rawRow.locator('.notebook-details > summary').click();await rawRow.locator('.notebook-edit-exact-note').click();};
+    await openRawNote();await expect(page.locator('#exact-note-text')).toHaveValue(rawPersonalNote.replace(/\r\n?/g,'\n'));
+    const rawDownloadPromise=page.waitForEvent('download');await page.locator('#exact-note-export').click();const rawDownload=await rawDownloadPromise;
+    check(label+'_untouched_note_rescue_preserves_raw_line_endings',(await fs.readFile(await rawDownload.path(),'utf8')).endsWith(rawPersonalNote));
+    await page.keyboard.press('Escape');await expect(page.locator('#exact-note-dialog')).toBeHidden();
+    await openRawNote();await page.locator('#exact-note-save').click();await expect(page.locator('#exact-note-status')).toContainText('已保存到本机');
+    check(label+'_untouched_mixed_newline_note_is_saved_byte_exact',(await saved()).documents.find(doc=>doc.title==='Authored raw note import').exact_excerpt_notes['raw-note']===rawPersonalNote);
+    const editedPersonalNote=rawPersonalNote.replace(/\r\n?/g,'\n')+'\nActual authored edit';
+    await page.locator('#exact-note-text').fill(editedPersonalNote);await page.locator('#exact-note-save').click();await expect(page.locator('#exact-note-status')).toContainText('已保存到本机');
+    check(label+'_real_note_edit_uses_native_displayed_text',(await saved()).documents.find(doc=>doc.title==='Authored raw note import').exact_excerpt_notes['raw-note']===editedPersonalNote);
+    if(label==='mobile')await page.setViewportSize({width:390,height:560});
+    for(const id of ['exact-note-save','exact-note-cancel','exact-note-close','exact-note-export','exact-note-backup']){
+      await page.locator('#'+id).scrollIntoViewIfNeeded();await page.locator('#'+id).focus();
+      check(label+'_'+id+'_vertically_visible_and_reachable',await page.locator('#'+id).evaluate(node=>{const r=node.getBoundingClientRect(),x=r.left+r.width/2,y=r.top+r.height/2,hit=document.elementFromPoint(x,y);return r.top>=0&&r.bottom<=innerHeight&&node===document.activeElement&&(hit===node||node.contains(hit));}));
+    }
+    await capture(label+'-personal-note-short-viewport-actions');
+    const narrowDownloadPromise=page.waitForEvent('download');await page.locator('#exact-note-export').click();const narrowDownload=await narrowDownloadPromise;check(label+'_short_viewport_rescue_action_works',(await fs.readFile(await narrowDownload.path(),'utf8')).endsWith(editedPersonalNote));
+    await page.locator('#exact-note-cancel').click();await expect(page.locator('#exact-note-dialog')).toBeHidden();
     await context.close(); page = null;
   }
   check('no_external_requests_or_server_mutations', external === 0 && mutations === 0);

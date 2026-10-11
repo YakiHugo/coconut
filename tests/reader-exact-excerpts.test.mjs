@@ -171,3 +171,87 @@ test('location never guesses through missing, reordered or inserted source cues'
  assert.deepEqual(C.exactExcerptState(record,doc),{freshness:'current',cueId:'one'});
  doc.segments.splice(1,2,{id:'replacement',text:record.text,start:1,end:8});assert.deepEqual(C.exactExcerptState(record,doc),{freshness:'missing',cueId:null});
 });
+
+test('personal excerpt sidecars preserve legacy fingerprints and strictly validate every entry',()=>{
+ const doc=withExcerpt(),legacyJSON=JSON.stringify(C.validate(doc));
+ assert.equal(JSON.stringify(C.validate({...doc,exact_excerpt_notes:{}})),legacyJSON);
+ const text='  我的想法\r\n<script> & **bold**\n👩‍👩‍👧‍👦\t';
+ for(const note of ['', ' \t\n\u2003',text,'x'.repeat(100001)]){
+  const restored=C.validate({...doc,exact_excerpt_notes:{'excerpt-one':note}});
+  assert.equal(Object.getPrototypeOf(restored.exact_excerpt_notes),null);
+  assert.equal(restored.exact_excerpt_notes['excerpt-one'],note);
+  assert.equal(C.validate(clone(restored)).exact_excerpt_notes['excerpt-one'],note);
+ }
+ for(const value of [null,[],0,false,'text',{'excerpt-one':null},{'excerpt-one':42},{orphan:''},{orphan:'thought'}]){
+  const input={...doc,exact_excerpt_notes:value},before=JSON.stringify(input);
+  assert.throws(()=>C.validate(input));assert.equal(JSON.stringify(input),before);
+  assert.throws(()=>C.mergeLibraryBackup({documents:[doc],active:'doc'},{format:'coconut-library',version:1,documents:[input]}));
+ }
+ const project={project_kind:'audio_only',title:'Project',segments:[],podcast_source:{feed_url:'https://example.org/feed',episode_id:'episode',media_url:'https://example.org/audio.mp3',media_kind:'audio'}};
+ for(const value of [{},null,{'excerpt-one':''}])assert.throws(()=>C.validate({...project,exact_excerpt_notes:value}));
+});
+
+test('personal-note helpers are copy-on-write, safe for special IDs, and preserve frozen evidence identity',()=>{
+ for(const id of ['__proto__','constructor','toString']){
+  const doc=document(),record=save(doc,9,26,id);doc.exact_excerpts=[record];const snapshot=JSON.stringify(record);
+  const map=C.exactExcerptNotesWith(doc,id,'private');assert.equal(Object.getPrototypeOf(map),null);assert.equal(map[id],'private');assert.equal(doc.exact_excerpt_notes,undefined);
+  doc.exact_excerpt_notes=map;const next=C.exactExcerptNotesWith(doc,id,'');assert.notEqual(next,map);assert.equal(map[id],'private');assert.equal(Object.hasOwn(next,id),true);assert.equal(next[id],'');
+  assert.equal(C.validate({...doc,exact_excerpt_notes:next}).exact_excerpt_notes[id],'');
+  assert.equal(doc.exact_excerpts[0],record);assert.equal(JSON.stringify(record),snapshot);assert.equal(Object.isFrozen(record.snapshot),true);
+  assert.equal(C.exactExcerptDuplicate(doc,save(doc,9,26,'duplicate')),record);assert.equal(C.exactExcerptNote(doc,id),'private');
+  assert.deepEqual(C.exactExcerptState(record,doc),{freshness:'current',cueId:'one'});
+  assert.throws(()=>C.exactExcerptNotesWith(doc,'absent',''));assert.throws(()=>C.exactExcerptNotesWith(doc,id,null));assert.throws(()=>C.exactExcerptRemoval(doc,'absent'));
+ }
+ assert.equal(C.exactExcerptNote(document(),'__proto__'),'');
+});
+
+test('removing one exact excerpt prepares a coherent atomic patch without mutating live collections',()=>{
+ const doc=withExcerpt(),first=doc.exact_excerpts[0],other=save(doc,0,4,'other');doc.exact_excerpts.push(other);doc.notes.one='whole cue note';doc.segments[0].saved_excerpt=true;
+ doc.exact_excerpt_notes=C.exactExcerptNotesWith(doc,first.id,'first');doc.exact_excerpt_notes=C.exactExcerptNotesWith(doc,other.id,'second');
+ const oldMap=doc.exact_excerpt_notes,oldRecords=doc.exact_excerpts,patch=C.exactExcerptRemoval(doc,first.id);
+ assert.equal(doc.exact_excerpt_notes,oldMap);assert.equal(doc.exact_excerpts,oldRecords);assert.equal(oldMap[first.id],'first');assert.deepEqual(patch.exact_excerpts,[other]);assert.equal(patch.exact_excerpts[0],other);assert.equal(Object.hasOwn(patch.exact_excerpt_notes,first.id),false);assert.equal(patch.exact_excerpt_notes.other,'second');
+ Object.assign(doc,patch);assert.doesNotThrow(()=>C.validate(doc));assert.equal(doc.notes.one,'whole cue note');assert.equal(doc.segments[0].saved_excerpt,true);
+ const final=C.exactExcerptRemoval(doc,other.id);assert.deepEqual(final,{exact_excerpts:undefined,exact_excerpt_notes:undefined});Object.assign(doc,final);assert.doesNotThrow(()=>C.validate(doc));
+});
+
+test('exact notes share one capture across filters, retire old captures, and stay out of source search',()=>{
+ const doc=withExcerpt(),record=doc.exact_excerpts[0],old=C.libraryCaptures([doc])[0];doc.exact_excerpt_notes=C.exactExcerptNotesWith(doc,record.id,'UniquePrivateThought');
+ assert.equal(C.libraryCaptureCurrent(old,[doc]),false);
+ for(const kind of ['all','note','excerpt']){const results=C.libraryCaptures([doc],'UniquePrivateThought',kind);assert.equal(results.length,1);assert.equal(results[0].key,old.key);assert.equal(results[0].note,'UniquePrivateThought');assert.equal(C.libraryCaptureCurrent(results[0],[doc]),true);}
+ for(const scope of ['title','notes','text'])assert.equal(C.libraryMatches(doc,'UniquePrivateThought','all',scope),false);
+ assert.equal(C.searchDocument(doc,'UniquePrivateThought','text').byCue.size,0);
+ const current=C.libraryCaptures([doc])[0];doc.exact_excerpt_notes=C.exactExcerptNotesWith(doc,record.id,' \n\t');assert.equal(C.libraryCaptureCurrent(current,[doc]),false);assert.equal(C.libraryCaptures([doc],'','note').length,0);assert.equal(C.libraryCaptures([doc],'','excerpt').length,1);
+ doc.segments=[];assert.equal(C.exactExcerptFreshness(record,doc),'missing');assert.equal(C.libraryCaptures([doc]).length,1);
+});
+
+test('cooperative note searches retire completed and in-progress work on copy-on-write sidecar replacement',()=>{
+ const doc=withExcerpt(),tasks=[];doc.exact_excerpts=Array.from({length:4200},(_,i)=>({...doc.exact_excerpts[0],id:'e'+i}));
+ const search=C.createLibraryNotebookSearch({getDocuments:()=>[doc],schedule:fn=>tasks.push(fn),now:()=>0,workSize:1});
+ const pending=search.request('thought','note');assert.equal(pending.pending,true);tasks.shift()();
+ doc.exact_excerpt_notes=C.exactExcerptNotesWith(doc,'e4199','thought');assert.equal(search.isCurrent(pending),false);while(tasks.length)tasks.shift()();assert.equal(pending.operation,null);
+ const completed=search.request('thought','note');while(tasks.length)tasks.shift()();assert.equal(completed.captures.length,1);assert.equal(search.isCurrent(completed),true);
+ doc.exact_excerpt_notes=C.exactExcerptNotesWith(doc,'e4199','changed');assert.equal(search.isCurrent(completed),false);search.cancel();
+});
+
+test('personal notes export separately escaped and restore without entering source or AI text',()=>{
+ const doc=withExcerpt(),record=doc.exact_excerpts[0],sentinel='UniquePrivateThought <script>\n# heading **bold**';doc.exact_excerpt_notes=C.exactExcerptNotesWith(doc,record.id,sentinel);
+ const markdown=C.notebookMarkdown(doc);assert.match(markdown,/我的笔记：\n\n> UniquePrivateThought &lt;script&gt;\n> \\# heading \\\*\\\*bold/);assert.equal(markdown.indexOf(record.text)<markdown.indexOf('我的笔记：'),true);
+ assert.match(C.libraryNotebookMarkdown([doc],['doc']),/UniquePrivateThought/);assert.doesNotMatch(C.libraryNotebookMarkdown([doc],[]),/UniquePrivateThought/);
+ for(const output of [C.transcriptText(doc),C.subtitleExport(doc,'srt'),C.subtitleExport(doc,'vtt'),C.aiReadingMarkdown(doc)])assert.doesNotMatch(typeof output==='string'?output:output.text,/UniquePrivateThought/);
+ const restored=C.validate(clone(doc));assert.equal(restored.exact_excerpt_notes[record.id],sentinel);
+ const merged=C.mergeLibraryBackup({documents:[withExcerpt()],active:'doc'},{format:'coconut-library',version:1,documents:[doc]});assert.equal(merged.documents.length,2);assert.ok(merged.documents.some(item=>C.exactExcerptNote(item,record.id)===sentinel));
+ const project=C.validate({project_kind:'audio_only',title:'Project',segments:[],podcast_source:{feed_url:'https://example.org/feed',episode_id:'episode',media_url:'https://example.org/audio.mp3',media_kind:'audio'}});assert.equal(C.attachProjectTranscript(project,doc).exact_excerpt_notes[record.id],sentinel);
+});
+
+test('IDB and legacy persistence retain personal notes through save, reload, conflict and removal',async()=>{
+ globalThis.crypto??=webcrypto;
+ const initial=withExcerpt();initial.exact_excerpt_notes=C.exactExcerptNotesWith(initial,'excerpt-one','initial');
+ const f=await persistenceFixture(initial),other=await provider.initialize(f.options),left=f.result.loaded.documents,right=other.loaded.documents;
+ const first=legacy.create({adapter:f.result.adapter,getDocuments:()=>left}),second=legacy.create({adapter:other.adapter,getDocuments:()=>right});
+ left[0].exact_excerpt_notes=C.exactExcerptNotesWith(left[0],'excerpt-one','left\r\n');first.queueDocument('doc',left[0]);assert.equal((await first.flush()).ok,true);
+ right[0].exact_excerpt_notes=C.exactExcerptNotesWith(right[0],'excerpt-one','right');second.queueDocument('doc',right[0]);assert.equal((await second.flush()).ok,false);assert.equal(second.status('doc').status,'conflict');assert.equal(C.exactExcerptNote(right[0],'excerpt-one'),'right');
+ const fresh=await provider.initialize(f.options);assert.equal(C.exactExcerptNote(fresh.loaded.documents[0],'excerpt-one'),'left\r\n');
+ Object.assign(left[0],C.exactExcerptRemoval(left[0],'excerpt-one'));first.queueDocument('doc',left[0]);assert.equal((await first.flush()).ok,true);const removed=await provider.initialize(f.options);assert.equal(removed.loaded.documents[0].exact_excerpt_notes,undefined);assert.equal(removed.loaded.documents[0].exact_excerpts,undefined);
+ const values=new Map([[legacy.KEY,JSON.stringify({documents:[initial]})]]),adapter=legacy.createLegacyAdapter({getStorage:()=>({getItem:key=>values.get(key)??null,setItem:(key,value)=>values.set(key,value)}),validate:C.validate});const loaded=adapter.load();loaded.documents[0].exact_excerpt_notes=C.exactExcerptNotesWith(loaded.documents[0],'excerpt-one','');assert.equal(adapter.write(adapter.prepare(loaded.documents)).ok,true);assert.equal(adapter.load().documents[0].exact_excerpt_notes['excerpt-one'],'');
+ for(const result of [f.result,other,fresh,removed])result.adapter.close();
+});

@@ -155,3 +155,79 @@ test('compact notebook preview never truncates stored, expanded or exported sour
   assert.equal(preview.textContent,'x'.repeat(359)+'…');const details=row.querySelector('.notebook-details');details.open=true;details.dispatchEvent(new w.Event('toggle'));assert.equal(row.querySelector('.notebook-quote').textContent,doc.segments[0].text);assert.ok(w.Coconut.notebookMarkdown(live).includes('🌴 untouched ending'));assert.equal(JSON.stringify(live),before);
  }finally{await w.happyDOM.close();}
 });
+
+async function openPersonalNote(env){
+ const {w,$}=env;preview(env);await $('quotation-save').onclick();$('quotation-close').click();$('open-library-notebook').click();await ready();
+ const details=$('notebook-captures').querySelector('.notebook-details');details.open=true;details.dispatchEvent(new w.Event('toggle'));details.querySelector('.notebook-edit-exact-note').click();return w.libraryProbe.documents[0];
+}
+function typePersonalNote(env,text){env.$('exact-note-text').value=text;env.$('exact-note-text').dispatchEvent(new env.w.Event('input',{bubbles:true}));}
+function unloadPrevented(w){const event=new w.Event('beforeunload',{cancelable:true});w.dispatchEvent(event);return event.defaultPrevented;}
+test('personal exact note is a guarded draft; cancel, Escape and save preserve quotation and unrelated edits',async()=>{
+ const env=setup(),{w,$}=env;try{
+  const doc=await openPersonalNote(env),historical=JSON.stringify(doc.exact_excerpts),record=doc.exact_excerpts[0];
+  typePersonalNote(env,'My independent note');assert.equal(doc.exact_excerpt_notes,undefined);assert.equal(unloadPrevented(w),true);
+  const escape=new w.Event('cancel',{cancelable:true});$('exact-note-dialog').dispatchEvent(escape);assert.equal(escape.defaultPrevented,true);assert.equal($('exact-note-dialog').open,true);assert.match($('exact-note-status').textContent,/尚未提交/);
+  doc.title='An unrelated title edit';await $('exact-note-save').onclick();await ready();assert.equal(doc.exact_excerpt_notes[record.id],'My independent note');assert.equal(JSON.stringify(doc.exact_excerpts),historical);assert.equal(doc.title,'An unrelated title edit');assert.match($('exact-note-status').textContent,/已保存到本机/);assert.equal(unloadPrevented(w),false);
+  assert.equal(w.document.activeElement,$('exact-note-text'));typePersonalNote(env,'discard me');$('exact-note-cancel').click();assert.equal(doc.exact_excerpt_notes[record.id],'My independent note');assert.equal($('exact-note-dialog').open,false);assert.equal(unloadPrevented(w),false);
+  const persisted=JSON.parse(w.localStorage.getItem('coconut-reader-v1'));assert.equal(persisted.documents[0].exact_excerpt_notes[record.id],'My independent note');
+ }finally{await w.happyDOM.close();}
+});
+test('personal note ownership and compare-and-swap refuse replacement and same-note changes without discarding draft',async()=>{
+ for(const change of ['note','record','document']){
+  const env=setup(),{w,$}=env;try{
+   const doc=await openPersonalNote(env),record=doc.exact_excerpts[0];typePersonalNote(env,'my draft');
+   if(change==='note')doc.exact_excerpt_notes={[record.id]:'new external note'};
+   if(change==='record')doc.exact_excerpts=[{...record}];
+   if(change==='document')w.libraryProbe.documents.splice(0,1,{...doc});
+   await $('exact-note-save').onclick();assert.equal($('exact-note-text').value,'my draft');assert.match($('exact-note-status').textContent,change==='note'?/未覆盖/:/更换或移除/);assert.equal(unloadPrevented(w),true);assert.notEqual(doc.exact_excerpt_notes?.[record.id],'my draft');
+   $('exact-note-cancel').click();assert.equal(unloadPrevented(w),false);
+  }finally{await w.happyDOM.close();}
+ }
+});
+test('failed personal note saves stay live, preserve newer drafts through late receipts and retry in the modal',async()=>{
+ const env=setup(),{w,$,pipeline}=env;try{
+  const doc=await openPersonalNote(env),record=doc.exact_excerpts[0];pipeline.hold();typePersonalNote(env,'submitted');$('exact-note-save').click();await settle();assert.equal(doc.exact_excerpt_notes[record.id],'submitted');pipeline.writes[0].fail();await ready();assert.match($('exact-note-status').textContent,/保存未成功/);assert.equal($('exact-note-dialog').open,true);assert.equal(unloadPrevented(w),true);
+  $('exact-note-save').click();await settle();typePersonalNote(env,'new draft');const status=$('exact-note-status').textContent,focus=w.document.activeElement;pipeline.writes[1].commit();await ready();assert.equal($('exact-note-status').textContent,status);assert.equal(w.document.activeElement,focus);assert.equal($('exact-note-text').value,'new draft');assert.equal(unloadPrevented(w),true);
+  $('exact-note-cancel').click();assert.equal(doc.exact_excerpt_notes[record.id],'submitted');assert.equal(unloadPrevented(w),false);
+ }finally{await w.happyDOM.close();}
+});
+test('empty personal note persists and exact removal cleans only its own sidecar in one update',async()=>{
+ const env=setup(),{w,$}=env;try{
+  const doc=await openPersonalNote(env),record=doc.exact_excerpts[0];await $('exact-note-save').onclick();assert.equal(Object.hasOwn(doc.exact_excerpt_notes,record.id),true);assert.equal(doc.exact_excerpt_notes[record.id],'');
+  doc.notes.a='whole-cue note';doc.segments[0].saved_excerpt=true;const second=w.Coconut.exactExcerptSnapshot(doc,doc.segments, [' '],0,4,{id:'other',createdAt:'2026-10-11T00:00:00.000Z'});doc.exact_excerpts.push(second);doc.exact_excerpt_notes.other='keep';await $('exact-note-save').onclick();$('exact-note-close').click();await ready();
+  $('notebook-captures').querySelector('.notebook-remove').click();await ready();assert.equal(doc.exact_excerpts[0],second);assert.equal(doc.exact_excerpt_notes.other,'keep');assert.equal(Object.hasOwn(doc.exact_excerpt_notes,record.id),false);assert.equal(doc.notes.a,'whole-cue note');assert.equal(doc.segments[0].saved_excerpt,true);
+ }finally{await w.happyDOM.close();}
+});
+
+test('notebook search refresh cannot destroy draft and late receipt cannot change reopened editor or focus',async()=>{
+ const env=setup(),{w,$,pipeline}=env;try{
+  const doc=await openPersonalNote(env),record=doc.exact_excerpts[0];typePersonalNote(env,'search-stable draft');$('exact-note-text').setSelectionRange(2,8,'backward');
+  $('notebook-search').value='absent';$('notebook-search').dispatchEvent(new w.Event('input'));await ready();assert.equal($('notebook-captures').children.length,0);assert.equal($('exact-note-text').value,'search-stable draft');assert.equal(w.document.activeElement,$('exact-note-text'));assert.equal($('exact-note-text').selectionStart,2);assert.equal($('exact-note-text').selectionEnd,8);assert.equal($('exact-note-text').selectionDirection,'backward');
+  pipeline.hold();$('exact-note-save').click();await settle();$('exact-note-cancel').click();assert.equal(doc.exact_excerpt_notes[record.id],'search-stable draft');assert.equal(unloadPrevented(w),true);
+  $('notebook-search').value='';$('notebook-search').dispatchEvent(new w.Event('input'));await ready();const details=$('notebook-captures').querySelector('.notebook-details');details.open=true;details.dispatchEvent(new w.Event('toggle'));details.querySelector('.notebook-edit-exact-note').click();typePersonalNote(env,'new dialog draft');const status=$('exact-note-status').textContent,focus=w.document.activeElement;
+  pipeline.writes[0].fail();await ready();assert.equal($('exact-note-status').textContent,status);assert.equal(w.document.activeElement,focus);assert.equal($('exact-note-text').value,'new dialog draft');
+ }finally{await w.happyDOM.close();}
+});
+test('in-modal rescue exports visible draft without submitting or clearing its unload guard',async()=>{
+ const env=setup(),{w,$}=env;try{
+  const doc=await openPersonalNote(env);typePersonalNote(env,'Rescue this draft');let blob,download;
+  w.URL.createObjectURL=value=>{blob=value;return 'blob:authored-note';};w.URL.revokeObjectURL=()=>{};w.HTMLAnchorElement.prototype.click=function(){download=this.download;assert.equal(this.closest('dialog')?.id,'exact-note-dialog');};
+  $('exact-note-export').click();assert.equal(download,'coconut-excerpt-note.txt');assert.match(await blob.text(),/Rescue this draft/);assert.equal(doc.exact_excerpt_notes,undefined);assert.equal(unloadPrevented(w),true);assert.match($('exact-note-status').textContent,/不会改变保存状态/);
+ }finally{await w.happyDOM.close();}
+});
+
+test('native textarea newline normalization does not dirty or rewrite an untouched imported note',async()=>{
+ const env=setup(),{w,$}=env;try{
+  const input=$('exact-note-text'),descriptor=Object.getOwnPropertyDescriptor(w.HTMLTextAreaElement.prototype,'value');
+  Object.defineProperty(input,'value',{configurable:true,get(){return descriptor.get.call(this).replace(/\r\n?/g,'\n');},set(value){descriptor.set.call(this,value);}});
+  const doc=await openPersonalNote(env),record=doc.exact_excerpts[0];$('exact-note-cancel').click();doc.exact_excerpt_notes={[record.id]:'  alpha\r\nbeta\r  '};
+  $('notebook-captures').querySelector('.notebook-edit-exact-note').click();assert.equal(input.value,'  alpha\nbeta\n  ');assert.equal(unloadPrevented(w),false);$('exact-note-close').click();assert.equal($('exact-note-dialog').open,false);
+  $('notebook-captures').querySelector('.notebook-edit-exact-note').click();await $('exact-note-save').onclick();assert.equal(doc.exact_excerpt_notes[record.id],'  alpha\r\nbeta\r  ');assert.equal(unloadPrevented(w),false);
+  typePersonalNote(env,input.value+'edited');await $('exact-note-save').onclick();assert.equal(doc.exact_excerpt_notes[record.id],'  alpha\nbeta\n  edited');assert.equal(unloadPrevented(w),false);
+ }finally{await w.happyDOM.close();}
+});
+test('whitespace-only exact note remains stored but does not replace the quote preview or show a blank note',async()=>{
+ const env=setup(),{w,$}=env;try{
+  const doc=await openPersonalNote(env),record=doc.exact_excerpts[0];typePersonalNote(env,'  \n\t ');await $('exact-note-save').onclick();$('exact-note-close').click();await ready();const row=$('notebook-captures').querySelector('.notebook-capture');assert.equal(row.querySelector('.notebook-preview').textContent,record.text);assert.equal(row.querySelector('.notebook-note'),null);assert.equal(doc.exact_excerpt_notes[record.id],'  \n\t ');
+ }finally{await w.happyDOM.close();}
+});

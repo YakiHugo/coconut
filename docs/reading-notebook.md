@@ -107,3 +107,38 @@ Disclosure changes preserve keyboard focus, and notebook selection, paging,
 source navigation, removal and complete export semantics remain unchanged.
 Native CI screenshots cover ordinary notes, whole-cue excerpts and exact excerpts
 in collapsed and expanded layouts. Local DOM coverage is not a browser result.
+
+## Personal notes on saved quotations
+
+An exact quotation can carry a separate personal thought without changing its
+saved wording, source attribution, capture time, or historical context. Editing
+the thought does not change whether its source is current, stale, or missing.
+Saving the same quotation again reuses the record and keeps its note.
+
+Personal thoughts participate in library-notebook search and the note filter.
+The quotation remains a single capture under both note and excerpt filters.
+Empty or whitespace-only notes are preserved in JSON but do not appear as
+nonempty notes. Ordinary library title/source search, live-transcript search,
+reader note-only filtering and AI evidence scopes remain unchanged.
+
+### Implementation contract
+
+`exactExcerptNote(doc, id)` is a tolerant own-property string accessor returning
+an empty string for an absent note; it does not establish live record ownership.
+Editing UI must separately retain the exact document and record objects.
+`exactExcerptNotesWith(doc, id, text)` verifies the target exists, validates the
+existing sidecar and returns a fresh null-prototype map. It preserves the string
+exactly, including an empty string. Assign that map to the existing document's
+`exact_excerpt_notes` property, then use the ordinary durable save pipeline.
+Never mutate an already-published sidecar map in place.
+
+`exactExcerptRemoval(doc, id)` returns only the two-field patch
+`{exact_excerpts, exact_excerpt_notes}`. An undefined value means the field can be
+deleted. Apply both fields synchronously to the original live document before
+queuing one save. The helper never mutates the input collections or recreates
+surviving frozen records. This keeps note cleanup atomic and unrelated
+whole-cue notes, bookmarks and quotations intact.
+
+Cooperative notebook search observes sidecar identity; activating a prior
+capture also compares its note string. A changed thought retires that result
+without making the historical source stale or guessing a replacement location.
