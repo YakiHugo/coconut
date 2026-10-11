@@ -83,3 +83,29 @@ for(const action of ['time','save','delete','cancel','outside-up','outside-down'
  await w.flushContentForTest();assert.equal(saved(w).timestamp_bookmarks.some(b=>b.id==='b'),action!=='delete');if(action==='save')assert.equal(saved(w).timestamp_bookmarks.find(b=>b.id==='b').time,180);
  }finally{await w.happyDOM.close();}
 });
+
+test('native focusout listener reconciles after cancel without property-handler support',async()=>{
+ // Chromium supports the bubbling event but not the onfocusout IDL property.
+ // Happy DOM implements it and even dispatches arbitrary on* expandos. Mask
+ // that shortcut with an inert property so only native listeners can run.
+ let prototype,descriptor;
+ const {w,$}=libraryHarness([audio()],{configureCore(window){
+  prototype=window.HTMLElement.prototype;
+  while(prototype&&!Object.hasOwn(prototype,'onfocusout'))prototype=Object.getPrototypeOf(prototype);
+  if(prototype){descriptor=Object.getOwnPropertyDescriptor(prototype,'onfocusout');Object.defineProperty(prototype,'onfocusout',{configurable:true,get:()=>null,set:()=>{}});}
+  const probe=window.document.createElement('section');let propertyCalled=false,eventCalled=false;
+  probe.onfocusout=()=>{propertyCalled=true;};probe.addEventListener('focusout',()=>{eventCalled=true;});probe.dispatchEvent(new window.FocusEvent('focusout'));
+  assert.equal(propertyCalled,false);assert.equal(eventCalled,true);
+ }});
+ try{
+ filter($,'audio-bookmark-search','needle');const row=$('audio-bookmarks').firstElementChild,note=row.querySelector('textarea'),edit=row.querySelector('.edit-bookmark-time');
+ note.focus();note.value='Other thought';note.oninput();
+ edit.dispatchEvent(new w.PointerEvent('pointerdown',{bubbles:true,button:0}));note.blur();await settle();assert.equal(row.isConnected,true);
+ edit.dispatchEvent(new w.PointerEvent('pointerup',{bubbles:true}));edit.click();await new Promise(resolve=>w.setTimeout(resolve,5));
+ const cancel=row.querySelector('button[type=button]');cancel.dispatchEvent(new w.PointerEvent('pointerdown',{bubbles:true,button:0}));cancel.focus();cancel.dispatchEvent(new w.PointerEvent('pointerup',{bubbles:true}));cancel.click();
+ await new Promise(resolve=>w.setTimeout(resolve,5));assert.equal(w.document.activeElement,edit);
+ // All pointer ownership has ended. The later focusout must still be handled.
+ $('audio-bookmark-time').focus();await settle();assert.equal(row.isConnected,false);assert.equal(w.document.activeElement,$('audio-bookmark-time'));assert.match($('audio-bookmark-results').textContent,/找到 1 \/ 2/);
+ await w.flushContentForTest();assert.equal(saved(w).timestamp_bookmarks[0].note,'Other thought');
+ }finally{if(descriptor)Object.defineProperty(prototype,'onfocusout',descriptor);await w.happyDOM.close();}
+});

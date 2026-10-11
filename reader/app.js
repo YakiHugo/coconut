@@ -1798,10 +1798,11 @@ function renderAudioProject(doc) {
    window.addEventListener('blur',()=>releasePointer(),{signal:pendingPointer.signal,once:true});
   };
   row.addEventListener('click',finishPointer);
-  row.onfocusout=event=>{
+  // focusout bubbles, but Chromium has no onfocusout handler property.
+  row.addEventListener('focusout',event=>{
    if(event.relatedTarget&&!row.contains(event.relatedTarget))releasePointer(event.relatedTarget);
    queueMicrotask(()=>reconcileBookmarkSearch(event.relatedTarget));
-  };
+  });
   const applyBookmarkNote=value=>{if(!contentIngressAllowed(doc)||!doc.timestamp_bookmarks.includes(item))return;if(!allowAudioNoteChange(doc,item.note,value,10000)){if(input.isConnected)input.value=item.note;return;}item.note=value;queueDocument(doc);if(active()===doc){renderLibrary();renderNotebookAction(doc);reconcileBookmarkSearch();}};
   input.oninput=()=>{if(active()!==doc||!doc.timestamp_bookmarks.includes(item))return;if(deferContentInput(doc,input,item.note,applyBookmarkNote))return;applyBookmarkNote(input.value);};
   const remove=el('button','','删除书签');remove.onclick=()=>{

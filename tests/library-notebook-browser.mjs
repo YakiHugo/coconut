@@ -73,6 +73,14 @@ try{
  assert.match(await audioPage.locator('#audio-bookmark-results').textContent(),/找到 0 \/ 1/);
  assert.ok(await audioPage.locator('#audio-bookmark-search').evaluate(node=>node===document.activeElement));
  await audioPage.locator('#audio-bookmark-search').fill('needle');
+ await audioPage.evaluate(()=>{
+  const describe=node=>node?{tag:node.tagName,id:node.id||'',inBookmark:!!node.closest?.('#audio-bookmarks section')}:null;
+  window.bookmarkFocusProof={handlerPropertySupported:'onfocusout' in document.createElement('section'),events:[]};
+  for(const type of ['pointerdown','pointerup','pointercancel','click','focusin','focusout'])document.addEventListener(type,event=>{
+   bookmarkFocusProof.events.push({type,target:describe(event.target),related:describe(event.relatedTarget),active:describe(document.activeElement),rows:document.querySelectorAll('#audio-bookmarks section').length});
+   if(bookmarkFocusProof.events.length>40)bookmarkFocusProof.events.shift();
+  },true);
+ });
  const note=audioPage.locator('#audio-bookmarks textarea');await note.focus();
  await note.evaluate(node=>{window.bookmarkEditorProof=node;node.setSelectionRange(0,node.value.length);});
  await audioPage.keyboard.type('Other thought');
@@ -82,7 +90,11 @@ try{
  await audioPage.locator('.edit-bookmark-time').click();assert.ok(await audioPage.locator('#audio-bookmarks form input').isVisible());
  await audioPage.getByRole('button',{name:'取消修正',exact:true}).click();
  await audioPage.locator('#audio-bookmark-time').click();
- await audioPage.waitForFunction(()=>document.querySelectorAll('#audio-bookmarks section').length===0);
+ try{await audioPage.waitForFunction(()=>document.querySelectorAll('#audio-bookmarks section').length===0);}
+ catch(error){
+  console.error(JSON.stringify({suite:'bookmark-focus-reconciliation',errors,proof:await audioPage.evaluate(()=>({...bookmarkFocusProof,rows:document.querySelectorAll('#audio-bookmarks section').length,activeId:document.activeElement?.id||'',activeTag:document.activeElement?.tagName||''}))}));
+  throw error;
+ }
  assert.match(await audioPage.locator('#audio-bookmark-results').textContent(),/找到 0 \/ 1/);
  assert.ok(await audioPage.locator('#audio-bookmark-time').evaluate(node=>node===document.activeElement));
  await waitForPersistedLibrary(audioPage,async()=>{const bookmark=(await readPersistedLibrary()).documents[0]?.timestamp_bookmarks[0];return bookmark?.note==='Other thought'&&bookmark?.time===180;});
