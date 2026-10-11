@@ -8,9 +8,9 @@
 <meta name="theme-color" content="#faf9f7">
 <link rel="icon" type="image/png" href="coconut-mark.png">
 <script src="appearance.js?v=86ea922669"></script>
-<link rel="stylesheet" href="style.css?v=4661c8bd32">
+<link rel="stylesheet" href="style.css?v=a0ad0bf442">
 <script src="summary.js?v=580ffdad1e" defer></script>
-<script src="core.js?v=c7eb2af1ab" defer>
+<script src="core.js?v=109f02a2af" defer>
 </script>
 <script src="passages.js?v=d02200c5a9" defer></script>
 <script src="quotation.js?v=9b8ed4d5ca" defer></script>
@@ -18,7 +18,7 @@
 <script src="library-store.js?v=e76ded9456" defer></script>
 <script src="indexeddb-document-adapter.js?v=65c0c5a814" defer></script>
 <script src="storage-provider.js?v=1cb898e984" defer></script>
-<script src="app.js?v=263a612281" type="text/coconut-pending" data-reader-script>
+<script src="app.js?v=710450ffb6" type="text/coconut-pending" data-reader-script>
 </script>
 <script src="language.js?v=492470a705" type="text/coconut-pending" data-reader-script></script>
 <script src="translation-review.js?v=ef64ceb824" type="text/coconut-pending" data-reader-script></script>
@@ -60,7 +60,7 @@
 <p id="removal-recovery-limit" class="hint">仅保留上一份；刷新、关闭或离开本页后无法撤销。</p>
 <p id="removal-recovery-error" role="alert" hidden></p>
 <details id="removal-recovery-details"><summary>备份与详情</summary><div class="removal-recovery-actions">
-<strong id="removal-recovery-title"></strong><p class="hint">整库备份不含这份内容。可单独导出完整文字稿与笔记；恢复后需重新选择媒体。</p>
+<strong id="removal-recovery-title"></strong><p id="removal-recovery-description" class="hint">整库备份不含这份内容。可单独导出完整文字稿与笔记；恢复后需重新选择媒体。</p>
 <p id="removal-export-error" role="alert" hidden></p>
 <button id="export-removed-document" type="button">导出移除备份</button><button id="finish-removal" type="button">结束本页撤销…</button>
 </div></details>
@@ -429,6 +429,21 @@ cd coconut
 <dialog id="library-notebook" class="library-notebook" aria-labelledby="library-notebook-title">
 <h2 id="library-notebook-title">我的笔记与摘录</h2>
 <p class="hint">书架中的摘录与笔记。片段的摘录和笔记合并显示；项目笔记与时间书签是你的记录，不是原文。浏览不会切换当前阅读或播放。</p>
+<details id="collection-tools"><summary>整理成果集 · 逐条精选</summary>
+<p class="hint">保存选取时快照，原资料编辑不会自动改变成果集。完整恢复请用书架 JSON 备份；需支持成果集的版本；旧版不能打开含成果集的书架或备份。</p>
+<label for="collection-select">已有成果集</label><select id="collection-select"><option value="">新建成果集</option></select>
+<label for="collection-title">成果集名称</label><input id="collection-title" maxlength="200" placeholder="例如：课程回顾">
+<button id="collection-save-title" type="button">创建成果集</button>
+<button id="collection-reset-title" type="button">取消名称修改</button>
+<p id="collection-status" role="status" aria-live="polite"></p><button id="collection-retry" type="button" hidden>重试保存成果集</button>
+<p id="collection-count" class="hint"></p>
+<ol id="collection-items"></ol>
+<nav aria-label="成果集分页"><button id="collection-previous" type="button">上一页条目</button><button id="collection-next" type="button">下一页条目</button></nav>
+<button id="collection-preview-button" type="button" disabled>预览成果集</button><button id="collection-export" type="button" disabled>导出成果集 Markdown</button>
+<button id="collection-backup" type="button" disabled>备份此成果集 JSON</button><button id="collection-delete" type="button" disabled>移除此成果集…</button>
+<p class="hint">此成果集 JSON 只含精选快照，不含来源文档；完整书架备份包含全部文稿与成果集。</p>
+<pre id="collection-preview" tabindex="0" hidden aria-label="成果集 Markdown 预览"></pre>
+</details>
 <label>查找记录<input id="notebook-search" type="search" placeholder="标题、原文、笔记或时间"></label>
 <label>内容<select id="notebook-kind"><option value="all">全部记录</option><option value="excerpt">摘录</option><option value="note">有笔记</option></select></label>
 <p id="notebook-status" role="status"></p><ol id="notebook-captures"></ol>
