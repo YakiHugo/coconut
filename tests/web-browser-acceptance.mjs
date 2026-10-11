@@ -102,7 +102,15 @@ try {
  await page.locator('#mode-bilingual').click();await page.locator('#toggle-demo-tools').click();
  check('demo_tools_return_to_visible_search',await page.locator('#search').isVisible()&&await page.locator('#search').evaluate(n=>n===document.activeElement));
  demoPage=null;await page.setViewportSize({width:1360,height:1000});stage='import';
+ // CI-only real-browser coverage: a single saved JSON must resume immediately,
+ // before any library-card reopen, without starting attached/source playback.
+ const resumeFixture={title:'Authored imported reading resume',readingPosition:'resume-900',segments:Array.from({length:1000},(_,i)=>({id:'resume-'+i,start:i*2,end:i*2+1,text:'Authored resume sentence '+i+'.'}))};
+ await page.locator('#file').setInputFiles({name:'saved-reading.json',mimeType:'application/json',buffer:Buffer.from(JSON.stringify(resumeFixture))});
+ await page.locator('#passage-body .passage-cue[data-cue-id="resume-900"]').waitFor({state:'visible'});
+ check('single_saved_json_resumes_late_passage',await page.locator('#passage-body .passage-cue[data-cue-id="resume-900"]').evaluate(cue=>cue.closest('.passage')===document.activeElement));
+ check('single_saved_json_resume_does_not_autoplay',await page.evaluate(()=>[...document.querySelectorAll('audio,video')].every(player=>player.paused)));
  await page.locator('#file').setInputFiles(fixturePath);
+ await page.waitForFunction(title=>document.getElementById('title').textContent===title,fixture.title);
  await page.locator('#reader-workspace').waitFor({state:'visible'});
  check('summary_is_default',await page.locator('#summary-workspace').isVisible()&&await page.locator('#transcript-layout').isHidden());
  check('saved_summary_visible',(await page.locator('#summary-body').textContent()).includes('自写的浏览器验证'));
