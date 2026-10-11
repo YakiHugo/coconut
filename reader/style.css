@@ -1129,3 +1129,10 @@ body[data-short-reading-compact="true"] #language-panel { margin-top: 8px; }
 .exact-note-dialog #exact-note-quote{height:clamp(6rem,20dvh,10rem)}
 .exact-note-dialog #exact-note-text{height:clamp(8rem,25dvh,14rem)}
 .notebook-edit-exact-note{min-height:44px;margin:.5rem 0}
+
+/* Saved quotations are historical evidence, separate from current-source hits. */
+.library-saved-hits{grid-column:1/-1;border-top:1px solid var(--line);padding-top:.4rem;display:grid;gap:.3rem;min-width:0}
+.library-saved-hits>.hint{margin:.2rem 0}
+.library-saved-hit{display:grid;gap:.2rem;text-align:left;white-space:normal;overflow-wrap:anywhere;min-width:0;width:100%}
+.library-saved-hit small{opacity:.75}
+.library-saved-more{text-align:left;white-space:normal;overflow-wrap:anywhere}

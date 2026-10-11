@@ -8,17 +8,17 @@
 <meta name="theme-color" content="#faf9f7">
 <link rel="icon" type="image/png" href="coconut-mark.png">
 <script src="appearance.js?v=86ea922669"></script>
-<link rel="stylesheet" href="style.css?v=cd7e1379d3">
+<link rel="stylesheet" href="style.css?v=8117da6232">
 <script src="summary.js?v=580ffdad1e" defer></script>
-<script src="core.js?v=6dcd64c38e" defer>
+<script src="core.js?v=a7fbf0adb1" defer>
 </script>
-<script src="passages.js?v=0dca7d6c63" defer></script>
+<script src="passages.js?v=d02200c5a9" defer></script>
 <script src="quotation.js?v=9b8ed4d5ca" defer></script>
 <script src="passage-playback.js?v=162dbb3695" defer></script>
 <script src="library-store.js?v=e76ded9456" defer></script>
 <script src="indexeddb-document-adapter.js?v=65c0c5a814" defer></script>
 <script src="storage-provider.js?v=1cb898e984" defer></script>
-<script src="app.js?v=642dd1d17b" type="text/coconut-pending" data-reader-script>
+<script src="app.js?v=beb784d375" type="text/coconut-pending" data-reader-script>
 </script>
 <script src="language.js?v=492470a705" type="text/coconut-pending" data-reader-script></script>
 <script src="translation-review.js?v=ef64ceb824" type="text/coconut-pending" data-reader-script></script>
@@ -44,7 +44,7 @@
 <input type="file" id="file" accept=".json,.srt,.vtt" multiple hidden>
 <details class="library-backup"><summary>书架备份</summary><div class="disclosure-content"><button id="export-library">备份整个书架</button><button id="export-pending-library" type="button" hidden>导出未保存文档备份</button><button id="restore-library">恢复书架备份</button><button id="export-original-storage" hidden>导出升级前原始数据</button><p id="storage-backend-hint" class="hint" hidden></p><input id="library-file" type="file" accept=".json" hidden></div></details>
 <p class="eyebrow">你的书架</p>
-<details id="library-options" class="library-options"><summary>整理书架</summary><p class="hint library-manage-hint">展开时，每篇下方可移除内容。</p><label>排序<select id="library-sort"><option value="added">按添加顺序</option><option value="opened">最近打开</option><option value="title">按标题</option><option value="duration">按时长（短到长）</option></select></label><label>内容<select id="library-kind"><option value="all">全部</option><option value="transcript">有文字稿</option><option value="audio">原声项目</option><option value="annotated">有笔记或摘录</option></select></label><label>查找范围<select id="library-scope"><option value="title">标题</option><option value="notes">标题与笔记</option><option value="text">标题、原文与笔记</option></select></label></details>
+<details id="library-options" class="library-options"><summary>整理书架</summary><p class="hint library-manage-hint">展开时，每篇下方可移除内容。</p><label>排序<select id="library-sort"><option value="added">按添加顺序</option><option value="opened">最近打开</option><option value="title">按标题</option><option value="duration">按时长（短到长）</option></select></label><label>内容<select id="library-kind"><option value="all">全部</option><option value="transcript">有文字稿</option><option value="audio">原声项目</option><option value="annotated">有笔记或摘录</option></select></label><label>查找范围<select id="library-scope"><option value="title">标题</option><option value="notes">标题与笔记（含摘录笔记）</option><option value="text">标题、原文、笔记与已存摘录</option></select></label></details>
 <p id="library-page-status" class="hint" role="status" aria-live="polite" aria-atomic="true"></p>
 <div id="library-pagination" class="library-pagination" role="group" aria-label="书架分页" hidden>
 <div class="library-page-actions"><button id="library-previous" type="button" aria-controls="library">上一页</button><button id="library-next" type="button" aria-controls="library">下一页</button></div>

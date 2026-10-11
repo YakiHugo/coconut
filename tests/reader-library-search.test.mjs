@@ -108,3 +108,89 @@ test('library options use a native disclosure and mobile library reopening prese
   assert.equal($('library').querySelectorAll('.library-hit').length,1);
  }finally{await w.happyDOM.close();}
 });
+
+// Saved evidence has a separate navigation contract from a current cue hit.
+import {libraryHarness} from './helpers/large-library-harness.mjs';
+import {settle} from './helpers/save-pipeline.mjs';
+function savedHarness(){
+ const doc={key:'saved-owner',title:'Historical owner',language:'en',segments:Array.from({length:40},(_,i)=>({id:'cue-'+i,start:i,end:i+1,text:'Historical needle quotation '+i})),notes:Object.fromEntries(Array.from({length:40},(_,i)=>['cue-'+i,'needle current note '+i]))};
+ const other={key:'other',title:'Keep reading here',language:'en',segments:[{id:'other-cue',start:0,end:1,text:'Other reading'}],notes:{}};
+ const env=libraryHarness([other,doc],{probe:true,configureCore:w=>w.eval(fs.readFileSync(new URL('reader/quotation.js',root),'utf8'))});
+ const live=env.w.libraryProbe.documents.find(d=>d.key===doc.key);
+ live.exact_excerpts=Array.from({length:5},(_,i)=>env.w.Coconut.exactExcerptSnapshot(live,[live.segments[i]],[],0,live.segments[i].text.length,{id:'saved-'+i,createdAt:'2026-10-11T00:00:00.000Z'}));
+ live.exact_excerpt_notes={'saved-0':'needle personal <img> thought'};
+ live.segments[0].text='Corrected away';env.w.Coconut.invalidateSearch(live);env.w.libraryProbe.renderLibrary();
+ return {...env,doc:live};
+}
+const shelfSearch=($,q,scope='text')=>{$('library-scope').value=scope;$('library-search').value=q;$('library-search').oninput();};
+const readySaved=async()=>{await settle();await new Promise(resolve=>setTimeout(resolve,0));};
+
+test('saved previews remain separate; keyboard target resolves beyond notebook page one without source navigation',async()=>{
+ const {w,$,doc}=savedHarness();try{
+  $('open-library-notebook').click();$('notebook-kind').value='note';$('notebook-search').value='old filter';$('notebook-search').oninput();$('notebook-close').click();
+  shelfSearch($,'needle');
+  assert.equal($('library').querySelectorAll('.library-hit').length,3);assert.equal($('library').querySelectorAll('.library-saved-hit').length,3);
+  assert.match($('library').querySelector('.library-saved-more').textContent,/5/);
+  const hit=$('library').querySelector('.library-saved-hit'),before=doc.readingPosition,title=$('title').textContent;
+  assert.match(hit.textContent,/历史快照/);assert.equal(hit.querySelectorAll('.library-hit-preview').length,2);assert.equal(hit.querySelector('img'),null);
+  hit.focus();hit.click();await readySaved();
+  assert.equal($('notebook-kind').value,'all');assert.equal($('notebook-search').value,'needle');assert.match($('notebook-status').textContent,/31–45/);
+  const target=$('notebook-captures').querySelector('[data-capture-id="saved-0"]');assert.ok(target.querySelector('.notebook-details').open);assert.equal(w.document.activeElement,target.querySelector('.notebook-details > summary'));
+  assert.equal($('title').textContent,title);assert.equal(doc.readingPosition,before);assert.equal(w.document.querySelector('audio'),null);
+  $('notebook-close').click();await readySaved();assert.equal(w.document.activeElement,hit);
+  $('library').querySelector('.library-saved-more').click();assert.equal($('notebook-search').value,'needle');assert.equal($('notebook-kind').value,'all');
+ }finally{await w.happyDOM.close();}
+});
+
+test('saved results survive missing source, reject replaced/deleted owners and stale detached actions',async()=>{
+ const {w,$,doc}=savedHarness();try{
+  delete doc.notes['cue-0'];doc.segments.shift();w.Coconut.invalidateSearch(doc);shelfSearch($,'Historical needle quotation 0');
+  const hit=$('library').querySelector('.library-saved-hit');hit.click();await readySaved();
+  assert.equal($('notebook-captures').querySelector('.notebook-open').disabled,true);assert.match($('notebook-captures').textContent,/原位置已删除/);$('notebook-close').click();
+  const old=$('library').querySelector('.library-saved-hit');doc.exact_excerpts=doc.exact_excerpts.filter(r=>r.id!=='saved-0');old.click();assert.equal($('library-notebook').open,false);assert.match($('notice').textContent,/已变动/);
+  shelfSearch($,'needle');const detached=$('library').querySelector('.library-saved-hit');shelfSearch($,'nothing');detached.click();assert.equal($('library-notebook').open,false);
+  shelfSearch($,'needle');const replacementHit=$('library').querySelector('.library-saved-hit');w.libraryProbe.documents.splice(1,1,{...doc});replacementHit.click();assert.equal($('library-notebook').open,false);
+ }finally{await w.happyDOM.close();}
+});
+
+test('saving and removing personal notes refreshes visible shelf results without disturbing the note editor',async()=>{
+ const {w,$}=savedHarness();try{
+  shelfSearch($,'personal','notes');assert.match($('library-search').placeholder,/摘录笔记/);
+  $('library').querySelector('.library-saved-hit').click();await readySaved();$('notebook-captures').querySelector('.notebook-edit-exact-note').click();
+  const input=$('exact-note-text');input.value='replacement thought';input.oninput();input.setSelectionRange(4,4);await $('exact-note-save').onclick();await readySaved();
+  assert.equal($('library').querySelectorAll('.library-saved-hit').length,0);assert.equal($('exact-note-dialog').open,true);assert.equal(w.document.activeElement,input);assert.equal(input.selectionStart,4);assert.equal(input.value,'replacement thought');
+  $('exact-note-close').click();$('notebook-close').click();await readySaved();assert.equal(w.document.activeElement,$('library-search'));
+  shelfSearch($,'replacement','notes');$('library').querySelector('.library-saved-hit').click();await readySaved();$('notebook-captures').querySelector('.notebook-edit-exact-note').click();input.value='';input.oninput();await $('exact-note-save').onclick();await readySaved();assert.equal($('library').querySelectorAll('.library-saved-hit').length,0);assert.equal(w.document.activeElement,input);
+ }finally{await w.happyDOM.close();}
+});
+
+test('closing or replacing a pending historical reveal cannot later steal focus',async()=>{
+ const {w,$,doc}=savedHarness();try{
+  // Notebook admission is large even though a title lookup was cheap.
+  doc.exact_excerpts.push(...Array.from({length:4100},(_,i)=>({...doc.exact_excerpts[1],id:'bulk-'+i})));
+  shelfSearch($,'personal','notes');
+  for(let i=0;i<100&&$('library').hidden;i++)await new Promise(resolve=>setTimeout(resolve,5));
+  const hit=$('library').querySelector('.library-saved-hit');assert.ok(hit);hit.click();assert.equal($('notebook-captures').getAttribute('aria-busy'),'true');
+  $('notebook-close').click();$('library-search').focus();await readySaved();assert.equal(w.document.activeElement,$('library-search'));assert.equal($('library-notebook').open,false);
+  hit.click();$('notebook-search').value='new unmatched query';$('notebook-search').oninput();
+  for(let i=0;i<100&&$('notebook-captures').getAttribute('aria-busy')==='true';i++)await new Promise(resolve=>setTimeout(resolve,5));
+  assert.equal(w.document.activeElement,$('notebook-search'));assert.equal($('notebook-captures').children.length,0);
+ }finally{await w.happyDOM.close();}
+});
+
+test('saved reveal relinquishes focus permanently and stale pending targets report a refresh',async()=>{
+ const {w,$,doc}=savedHarness();try{
+  doc.exact_excerpts.push(...Array.from({length:4100},(_,i)=>({...doc.exact_excerpts[1],id:'more-'+i})));
+  shelfSearch($,'personal','notes');
+  for(let i=0;i<100&&$('library').hidden;i++)await new Promise(resolve=>setTimeout(resolve,5));
+  $('library').querySelector('.library-saved-hit').click();$('notebook-kind').focus();$('notebook-search').focus();
+  for(let i=0;i<100&&$('notebook-captures').getAttribute('aria-busy')==='true';i++)await new Promise(resolve=>setTimeout(resolve,5));
+  assert.equal(w.document.activeElement,$('notebook-search'));assert.ok($('notebook-captures').querySelector('.notebook-details').open);$('notebook-close').click();
+  // Force a new notebook job and change the owner while its target is resolving.
+  doc.exact_excerpts=[...doc.exact_excerpts];w.libraryProbe.renderLibrary();
+  for(let i=0;i<100&&$('library').hidden;i++)await new Promise(resolve=>setTimeout(resolve,5));
+  $('library').querySelector('.library-saved-hit').click();doc.exact_excerpt_notes={...doc.exact_excerpt_notes,'saved-0':'different note'};
+  for(let i=0;i<100&&!/已变动/.test($('notebook-status').textContent);i++)await new Promise(resolve=>setTimeout(resolve,5));
+  assert.match($('notebook-status').textContent,/已变动/);assert.equal(w.document.activeElement,$('notebook-search'));assert.equal($('notebook-captures').querySelector('[open]'),null);
+ }finally{await w.happyDOM.close();}
+});

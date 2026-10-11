@@ -7,7 +7,7 @@ import {createServer} from 'node:http';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
-import {chromium} from './helpers/browser-storage.mjs';
+import {chromium,waitForPersistedLibrary} from './helpers/browser-storage.mjs';
 import {splitCueFixture} from './helpers/split-cue-fixture.mjs';
 const root = fileURLToPath(new URL('../', import.meta.url));
 let server, browser, stage = 'setup';
@@ -23,6 +23,30 @@ async function visibleCue(page, id) {
     window.__librarySearchAuditPosition = {id, top: r.top, stable};
     return stable >= 4 && r.top < innerHeight && r.bottom > 0;
   }, id);
+}
+// Read the actual reader ownership and both live/durable markers. Search and
+// historical notebook navigation must not silently change any of them.
+const readerOwnership=page=>page.evaluate(async()=>{
+  const positions=docs=>docs.map(doc=>({key:doc.key,present:Object.hasOwn(doc,'readingPosition'),readingPosition:doc.readingPosition??null})).sort((a,b)=>a.key.localeCompare(b.key));
+  return {activeKey:state.active,selectedKey:sessionStorage.getItem('coconut-reader-active-v1'),live:positions(state.documents),persisted:positions((await readPersistedLibrary()).documents)};
+});
+const settleKeyboard=page=>page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))));
+async function keyboardSavedGeometry(page,target,label){
+  await settleKeyboard(page);
+  const geometry=await target.evaluate(node=>{
+    const rect=node.getBoundingClientRect(),style=getComputedStyle(node),ring=(parseFloat(style.outlineWidth)||0)+(parseFloat(style.outlineOffset)||0);
+    const midX=(rect.left+rect.right)/2,midY=(rect.top+rect.bottom)/2;
+    const hitPoints=[[midX,midY],[rect.left+1,midY],[rect.right-1,midY],[midX,rect.top+1],[midX,rect.bottom-1]].map(([x,y])=>{const hit=document.elementFromPoint(x,y);return {x,y,hit:hit===node||node.contains(hit)};});
+    const overlays=['reading-feedback','notice-shell','passage-playback-controls','media-dock'].map(id=>{const overlay=document.getElementById(id),r=overlay.getBoundingClientRect();return {id,rect:r.toJSON(),visible:!overlay.hidden&&getComputedStyle(overlay).display!=='none'&&r.width>0&&r.height>0};});
+    return {rect:rect.toJSON(),ring,outlineStyle:style.outlineStyle,focusVisible:node.matches(':focus-visible'),focused:document.activeElement===node,viewport:{width:innerWidth,height:innerHeight},hitPoints,overlays,notice:document.getElementById('notice').textContent};
+  });
+  console.log(JSON.stringify({suite:'library-saved-keyboard-geometry',label,...geometry}));
+  const r=geometry.rect,ring=geometry.ring;
+  const clear=geometry.focused&&geometry.focusVisible&&geometry.outlineStyle!=='none'&&ring>0&&r.height>=40&&geometry.hitPoints.every(point=>point.hit)&&r.left-ring>=0&&r.right+ring<=geometry.viewport.width&&r.top-ring>=0&&r.bottom+ring<=geometry.viewport.height&&geometry.overlays.every(overlay=>!overlay.visible||overlay.rect.right<=r.left-ring||overlay.rect.left>=r.right+ring||overlay.rect.top>=r.bottom+ring||overlay.rect.bottom<=r.top-ring);
+  // Failed geometry still leaves a diagnostic image; it is never called a
+  // successful card screenshot. No test-side scrolling or toast dismissal.
+  if(!clear&&process.env.COCONUT_UI_SCREENSHOTS){await fs.mkdir(process.env.COCONUT_UI_SCREENSHOTS,{recursive:true});await page.screenshot({path:path.join(process.env.COCONUT_UI_SCREENSHOTS,'library-saved-'+label+'-geometry-failure.png'),animations:'disabled'});}
+  check(label+'_saved_hit_full_focus_ring_and_five_hit_points_clear_overlays',clear);
 }
 try {
   server = createServer(async (req, res) => {
@@ -83,6 +107,74 @@ try {
   check('mobile_return_preserves_query_and_scope',await page.locator('#library-search').inputValue()==='Needle project'&&await page.locator('#library-scope').inputValue()==='notes');
   await page.locator('#library-search').fill('no matching content');
   check('mobile_empty_results_are_truthful',await page.locator('.library-hit').count()===0&&await page.locator('#library-empty').isVisible());
+  stage='saved historical quotation setup';
+  await page.setViewportSize({width:1360,height:1000});
+  const historical=await page.evaluate(()=>{
+    const doc={title:'Historical saved quotation owner',language:'en',segments:Array.from({length:40},(_,i)=>({id:'history-cue-'+i,start:i,end:i+1,text:'Historical savedneedle quotation '+i})),notes:Object.fromEntries(Array.from({length:40},(_,i)=>['history-cue-'+i,'savedneedle current note '+i]))};
+    doc.exact_excerpts=Array.from({length:5},(_,i)=>Coconut.exactExcerptSnapshot(doc,[doc.segments[i]],[],0,doc.segments[i].text.length,{id:'history-'+i,createdAt:'2026-10-11T00:00:00.000Z'}));
+    doc.exact_excerpt_notes={'history-0':'savedneedle private-history <img> thought'};doc.readingPosition='history-cue-39';
+    doc.segments[0].text='Corrected source no longer contains the saved quotation';doc.segments.splice(1,1);delete doc.notes['history-cue-1'];return doc;
+  });
+  await load(historical);const keep=splitCueFixture(3);keep.title='Keep this reader active';keep.readingPosition='split-1';await load(keep);
+  await waitForPersistedLibrary(page,async()=>{const docs=(await readPersistedLibrary()).documents;return docs.some(doc=>doc.title==='Keep this reader active'&&doc.readingPosition==='split-1')&&docs.some(doc=>doc.title==='Historical saved quotation owner'&&doc.readingPosition==='history-cue-39');});
+  await page.locator('#open-library-notebook').click();await page.locator('#notebook-kind').selectOption('note');await page.locator('#notebook-search').fill('old hidden query');await page.locator('#notebook-close').click();
+  await openLibrary(true);await page.locator('#library-scope').selectOption('text');await page.locator('#library-search').fill('savedneedle');
+  await page.locator('.library-saved-hit').first().waitFor();
+  check('saved_and_current_previews_have_independent_three_item_caps',await page.locator('.library-hit').count()===3&&await page.locator('.library-saved-hit').count()===3&&/5/.test(await page.locator('.library-saved-more').textContent()));
+  const saved=page.locator('.library-saved-hit[data-hit-id="history-0"]'),desktopOwnership=await readerOwnership(page);await saved.focus();await page.keyboard.press('Enter');
+  const historicalRow=page.locator('.notebook-capture[data-capture-id="history-0"]');
+  await page.waitForFunction(()=>document.activeElement?.closest('.notebook-capture')?.dataset.captureId==='history-0');
+  check('keyboard_saved_hit_resolves_second_page_and_expands_correct_capture',/^31–/.test(await page.locator('#notebook-status').textContent())&&await historicalRow.locator('.notebook-details').evaluate(el=>el.open)&&await historicalRow.locator('.notebook-details > summary').evaluate(el=>el===document.activeElement));
+  check('historical_open_preserves_reader_and_never_starts_media',await page.locator('#title').textContent()==='Keep this reader active'&&await page.locator('audio,video').count()===0&&await page.locator('#notebook-kind').inputValue()==='all');
+  assert.deepEqual(await readerOwnership(page),desktopOwnership,'historical open preserves actual active key and every live/durable reading position');
+  check('historical_open_preserves_complete_reader_ownership',true);
+  check('corrected_snapshot_is_explicit_historical_evidence',/原文或出处已变化/.test(await historicalRow.textContent())&&await historicalRow.locator('.notebook-quote').textContent()==='Historical savedneedle quotation 0');
+  await page.keyboard.press('Escape');await saved.waitFor();
+  await page.waitForFunction(()=>document.activeElement?.dataset.hitId==='history-0');
+  check('escape_restores_originating_saved_hit',await saved.evaluate(el=>el===document.activeElement));
+  await page.locator('.library-saved-more').click();check('saved_continuation_keeps_complete_query_and_all_record_kinds',await page.locator('#notebook-search').inputValue()==='savedneedle'&&await page.locator('#notebook-kind').inputValue()==='all'&&/44/.test(await page.locator('#notebook-status').textContent()));await page.locator('#notebook-close').click();
+
+  const screenshot=async name=>{if(process.env.COCONUT_UI_SCREENSHOTS){await fs.mkdir(process.env.COCONUT_UI_SCREENSHOTS,{recursive:true});await page.screenshot({path:path.join(process.env.COCONUT_UI_SCREENSHOTS,'library-saved-'+name+'.png'),animations:'disabled'});}};
+  await page.setViewportSize({width:390,height:844});await openLibrary(true);await page.locator('#library-search').fill('Historical savedneedle quotation 1');
+  const missing=page.locator('.library-saved-hit[data-hit-id="history-1"]');await missing.waitFor();
+  // fill() leaves the genuine search input focused. Traverse the real tab order,
+  // including shelf controls/current hits; never focus or scroll the target here.
+  check('narrow_saved_keyboard_starts_at_search',await page.locator('#library-search').evaluate(node=>document.activeElement===node));
+  const tabPath=[];
+  for(let i=0;i<60&&!await missing.evaluate(node=>document.activeElement===node);i++){
+    await page.keyboard.press('Tab');await settleKeyboard(page);
+    tabPath.push(await page.evaluate(()=>({id:document.activeElement.id,classes:document.activeElement.className,hitId:document.activeElement.dataset.hitId||null})));
+  }
+  console.log(JSON.stringify({suite:'library-saved-keyboard-path',tabPath}));
+  check('narrow_saved_hit_reached_by_real_tab_order',await missing.evaluate(node=>document.activeElement===node));
+  check('narrow_saved_keyboard_keeps_live_import_notice',await page.locator('#notice').isVisible()&&Boolean(await page.locator('#notice').textContent()));
+  await keyboardSavedGeometry(page,missing,'390-forward-tab');
+  // Exercise the reverse transition too, without changing scroll directly.
+  await page.keyboard.press('Shift+Tab');check('narrow_saved_reverse_leaves_target',!await missing.evaluate(node=>document.activeElement===node));await page.keyboard.press('Tab');
+  await keyboardSavedGeometry(page,missing,'390-return-tab');
+  check('narrow_saved_shelf_fits_viewport',await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));await screenshot('390-shelf-missing-source');
+  const narrowOwnership=await readerOwnership(page);
+  await page.keyboard.press('Enter');const missingRow=page.locator('.notebook-capture[data-capture-id="history-1"]');
+  await missingRow.waitFor();check('deleted_cue_still_opens_exact_saved_evidence',await missingRow.locator('.notebook-open').isDisabled()&&/原位置已删除/.test(await missingRow.textContent()));
+  assert.deepEqual(await readerOwnership(page),narrowOwnership,'missing-source historical open preserves actual active key and all live/durable reading positions');
+  check('missing_source_open_preserves_complete_reader_ownership',true);
+  check('narrow_saved_details_fit_dialog',await page.locator('#library-notebook').evaluate(el=>el.scrollWidth<=el.clientWidth+1));await screenshot('390-expanded-missing-source');
+  await page.keyboard.press('Escape');await page.waitForFunction(()=>!document.querySelector('#library-notebook').open);
+  await keyboardSavedGeometry(page,missing,'390-escape-origin');await screenshot('390-escape-origin');
+  assert.deepEqual(await readerOwnership(page),narrowOwnership,'Escape preserves actual active key and all live/durable reading positions');
+  check('escape_preserves_complete_reader_ownership',true);
+
+  await openLibrary(true);await page.locator('#library-scope').selectOption('notes');await page.locator('#library-search').fill('private-history');await page.locator('.library-saved-hit').click();
+  await page.locator('.notebook-edit-exact-note').click();await page.locator('#exact-note-text').fill('replacement-history personal thought');await page.locator('#exact-note-save').click();
+  await page.waitForFunction(()=>document.querySelector('#exact-note-status').textContent==='已保存到本机'&&document.querySelectorAll('.library-saved-hit').length===0);
+  check('note_save_refreshes_shelf_while_editor_stays_open',await page.locator('#exact-note-dialog').evaluate(el=>el.open)&&await page.locator('#exact-note-text').inputValue()==='replacement-history personal thought');
+  await page.locator('#exact-note-close').click();await page.locator('#notebook-close').click();await page.locator('#library-search').fill('replacement-history');await page.locator('.library-saved-hit').waitFor();
+  await page.reload();await page.waitForFunction(()=>document.querySelector('#title').textContent==='Keep this reader active');await openLibrary(true);await page.locator('#library-scope').selectOption('notes');await page.locator('#library-search').fill('replacement-history');await page.locator('.library-saved-hit').waitFor();
+  check('saved_note_search_survives_reload',await page.locator('.library-saved-hit').count()===1&&await page.locator('.library-saved-hit mark').textContent()==='replacement-history');
+  await page.locator('.library-saved-hit').focus();await page.keyboard.press('Enter');await page.locator('.notebook-edit-exact-note').click();await page.locator('#exact-note-text').fill('');await page.locator('#exact-note-save').click();
+  await page.waitForFunction(()=>document.querySelector('#exact-note-status').textContent==='已保存到本机'&&document.querySelectorAll('.library-saved-hit').length===0);
+  check('removing_personal_note_removes_only_note_search_hit',await page.locator('#exact-note-dialog').evaluate(el=>el.open));await page.locator('#exact-note-close').click();await page.locator('#notebook-close').click();
+  await openLibrary(true);await page.locator('#library-scope').selectOption('text');await page.locator('#library-search').fill('Historical savedneedle quotation 0');await page.locator('.library-saved-hit').waitFor();check('quotation_remains_searchable_after_note_removal',await page.locator('.library-saved-hit').count()===1);
   check('no_network_side_effects_or_script_errors',external===0&&mutations===0&&errors===0);
   console.log(JSON.stringify({checks},null,2));
 } catch(error){console.error('Library search acceptance failed at '+stage);throw error;}

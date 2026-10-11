@@ -252,6 +252,21 @@
   if(offset<expansion.end)return end?expansion.endSource:expansion.source;
   return offset+expansion.endSource-expansion.end;
  }
+ // Independent saved fields use the same normalization, KMP and source-offset
+ // machinery, but need only the first occurrence. Never join historical fields.
+ function* searchSnippetSteps(text,query,preview=true){
+  const needle=query.trim().toLocaleLowerCase();if(!needle||typeof text!=='string')return null;
+  // Contextual casing (e.g. Greek final sigma) requires whole-string folding.
+  // This allocation/lowercasing remains atomic; matching and mapping resume.
+  const folded=text.toLocaleLowerCase(),table=yield* prefixTableSteps(needle);
+  for(const offset of eachMatchSteps(folded,needle,table)){
+   if(offset===null){yield;continue;}
+   if(!preview)return true;
+   const expansions=folded.length===text.length?[]:yield* foldExpansionsSteps(text);
+   return rangeSnippet(text,sourceOffset(expansions,offset,false),sourceOffset(expansions,offset+needle.length,true));
+  }
+  return null;
+ }
  function rangeSnippet(text,start,end){
   // Preview slices inspect at most 446 UTF-16 units and retain at most
   // 220 source code points plus ellipses, even for million-character cues.
@@ -261,7 +276,7 @@
   return {before:(start>before.length?'…':'')+before,match:match+(end-start>match.length?'…':''),after:after+(end+after.length<text.length?'…':'')};
  }
 
- const api=Object.freeze({LIMITS,build,locate,atTime,separator,continuous,searchIndex,searchIndexSteps,rangeSnippet});
+ const api=Object.freeze({LIMITS,build,locate,atTime,separator,continuous,searchIndex,searchIndexSteps,searchSnippetSteps,rangeSnippet});
  if(typeof module!=='undefined'&&module.exports)module.exports=api;
  else root.CoconutPassages=api;
 })(typeof window!=='undefined'?window:globalThis);

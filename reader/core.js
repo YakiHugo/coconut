@@ -424,17 +424,7 @@
   return isAudioProject(doc)?doc.media_duration||0:doc.segments.reduce((end,segment)=>Math.max(end,segment.end),0);
  }
  function libraryMatches(doc, query, kind='all', scope='title') {
-  const audio=isAudioProject(doc);
-  // Ordinary title browsing must not scan every saved cue for unused filters.
-  const annotated=kind==='annotated'&&Boolean(projectAnnotationCount(doc)||exactExcerptCount(doc)||doc.segments.some(s=>s.saved_excerpt)||doc.segments.some(segment=>hasNoteContent(doc.notes?.[segment.id])));
-  if(kind==='audio'&&!audio||kind==='transcript'&&audio||kind==='annotated'&&!annotated)return false;
-  const needle=query.trim().toLocaleLowerCase(),matches=value=>typeof value==='string'&&value.toLocaleLowerCase().includes(needle);
-  if(matches(doc.title))return true;
-  if(scope==='notes'||scope==='text'){
-   const matchesNote=value=>hasNoteContent(value)&&matches(value);
-   if(matchesNote(doc.project_note)||doc.segments.some(segment=>matchesNote(doc.notes?.[segment.id]))||(doc.timestamp_bookmarks||[]).some(item=>matchesNote(item.note)))return true;
-  }
-  return scope==='text'&&searchDocument(doc,needle,'text').byCue.size>0;
+  return drainSearch(librarySelectionSteps(doc,query,kind,scope)).match;
  }
  // Return small, source-backed previews, never HTML or a synthetic summary.
  function librarySnippet(value, query) {
@@ -466,6 +456,47 @@
    if(hits.length>=cap)break;
   }
   return hits;
+ }
+ // Saved quotations have historical record ownership, never cue navigation IDs.
+ // Keep their bounded preview group separate from current-source libraryHits.
+ const savedHitOwners=new WeakMap();
+ function librarySavedHits(doc,query,scope='title',limit=3){return drainSearch(librarySavedHitSteps(doc,query,scope,limit));}
+ function* librarySavedHitSteps(doc,query,scope,limit=3){
+  const result={hits:[],total:0},needle=query.trim().toLocaleLowerCase();
+  if(!needle||scope!=='notes'&&scope!=='text')return result;
+  const cap=Math.max(0,Math.min(3,Math.floor(limit)||0));
+  const passages=typeof module!=="undefined"&&module.exports?require('./passages.js'):root.CoconutPassages;
+  let work=0;
+  for(const record of doc.exact_excerpts||[]){
+   const note=exactExcerptNote(doc,record.id),preview=result.hits.length<cap;
+   const quoteSnippet=scope==='text'?yield* passages.searchSnippetSteps(record.text,needle,preview):null;
+   const noteSnippet=hasNoteContent(note)?yield* passages.searchSnippetSteps(note,needle,preview):null;
+   if(quoteSnippet||noteSnippet){
+    result.total++;
+    if(preview){
+     const captureKey=JSON.stringify([doc.key,'exact-excerpt',record.id]);
+     const hit={kind:'exact-excerpt',key:captureKey,captureKey,documentKey:doc.key,id:record.id,text:record.text,note,
+      matchFields:quoteSnippet&&noteSnippet?'both':quoteSnippet?'quote':'note',quoteSnippet,noteSnippet};
+     savedHitOwners.set(hit,{doc,record,records:doc.exact_excerpts,notes:doc.exact_excerpt_notes});result.hits.push(hit);
+    }
+   }
+   if(++work%128===0)yield;
+  }
+  return result;
+ }
+ function librarySavedHitCurrent(hit,documents){
+  const owner=savedHitOwners.get(hit);if(!owner||!documents.includes(owner.doc))return false;
+  const {doc,record}=owner;
+  return doc.key===hit.documentKey&&doc.exact_excerpts===owner.records&&doc.exact_excerpt_notes===owner.notes&&
+   doc.exact_excerpts.includes(record)&&record.id===hit.id&&record.text===hit.text&&exactExcerptNote(doc,record.id)===hit.note;
+ }
+ function* librarySelectionSteps(doc,query,kind,scope){
+  const match=yield* libraryMatchSteps(doc,query,kind,scope);
+  const audio=isAudioProject(doc);
+  // A rejected kind must not be admitted just because a saved field matches.
+  if(kind==='audio'&&!audio||kind==='transcript'&&audio||kind==='annotated'&&!exactExcerptCount(doc)&&!match)return {match,saved:{hits:[],total:0}};
+  const saved=yield* librarySavedHitSteps(doc,query,scope);
+  return {match:match||saved.total>0,saved};
  }
  // A bounded, best-effort view preference. Never serialize document content.
  // Read before each write so ordinary alternating windows retain each other's
@@ -518,23 +549,31 @@
   let generation=0,current=null;
   const sameDocuments=job=>{
    const live=getDocuments();
-   return live.length===job.documents.length&&live.every((doc,i)=>doc===job.documents[i]&&doc.segments===job.shapes[i][0]&&doc.segments.length===job.shapes[i][1]&&doc.language===job.shapes[i][2]&&doc.translation_contexts===job.shapes[i][3]&&doc.translation_glossary===job.shapes[i][4]&&doc.exact_excerpts===job.shapes[i][5]&&doc.exact_excerpts?.length===job.shapes[i][6]);
+   return live.length===job.documents.length&&live.every((doc,i)=>doc===job.documents[i]&&doc.segments===job.shapes[i][0]&&doc.segments.length===job.shapes[i][1]&&doc.language===job.shapes[i][2]&&doc.translation_contexts===job.shapes[i][3]&&doc.translation_glossary===job.shapes[i][4]&&doc.exact_excerpts===job.shapes[i][5]&&doc.exact_excerpts?.length===job.shapes[i][6]&&doc.exact_excerpt_notes===job.shapes[i][7]);
   };
   const valid=job=>current===job&&job.generation===generation&&job.revision===getRevision()&&job.sourceRevision===searchRevision&&sameDocuments(job);
-  function retire(job){if(job?.operation){job.operation.return();job.operation=null;}}
+  function retire(job){if(job?.operation){job.operation.return();job.operation=null;}if(job){job.buildingSaved?.clear();job.matches=[];}}
   function request(query,kind='all',scope='title',order='recent') {
    const signature=JSON.stringify([query,kind,scope,order]);
    if(current?.signature===signature&&valid(current))return current;
    retire(current);
    const documents=getDocuments().slice();
    const job={generation:++generation,signature,revision:getRevision(),sourceRevision:searchRevision,documents,
-    shapes:documents.map(doc=>[doc.segments,doc.segments.length,doc.language,doc.translation_contexts,doc.translation_glossary,doc.exact_excerpts,doc.exact_excerpts?.length]),pending:false,scanned:0,docs:[],matches:[]};
+    shapes:documents.map(doc=>[doc.segments,doc.segments.length,doc.language,doc.translation_contexts,doc.translation_glossary,doc.exact_excerpts,doc.exact_excerpts?.length,doc.exact_excerpt_notes]),pending:false,scanned:0,docs:[],matches:[],savedHits:new Map(),buildingSaved:new Map()};
    current=job;
    let cues=0;
    const expensive=kind==='annotated'||Boolean(query.trim()&&scope!=='title');
-   if(expensive)for(const doc of documents){cues+=doc.segments.length;if(cues>4000)break;}
-   job.pending=expensive&&(documents.length>160||cues>4000);
-   function finish(){job.docs=sortedLibrary(job.matches,order);job.matches=[];job.pending=false;}
+   let characters=0;
+   if(expensive)for(const doc of documents){
+    cues+=doc.segments.length+(doc.exact_excerpts?.length||0);if(cues>4000)break;
+    // Lengths are cheap; a single giant saved field must enter the scheduler.
+    if(query.trim()&&scope!=='title')for(const record of doc.exact_excerpts||[]){
+     characters+=(scope==='text'?record.text.length:0)+exactExcerptNote(doc,record.id).length;if(characters>65536)break;
+    }
+    if(characters>65536)break;
+   }
+   job.pending=expensive&&(documents.length>160||cues>4000||characters>65536);
+   function finish(){job.docs=sortedLibrary(job.matches,order);job.savedHits=job.buildingSaved;job.buildingSaved=new Map();job.matches=[];job.pending=false;}
    function step(){
     if(!valid(job)){
      // Content may change without a shelf render (e.g. a background import).
@@ -544,10 +583,10 @@
     const started=now();let count=0,work=0;
     while(job.scanned<documents.length){
      const doc=documents[job.scanned];
-     job.operation??=libraryMatchSteps(doc,query,kind,scope);
+     job.operation??=librarySelectionSteps(doc,query,kind,scope);
      const result=job.operation.next();
      if(result.done){
-      if(result.value)job.matches.push(doc);
+      if(result.value.match){job.matches.push(doc);job.buildingSaved.set(doc,result.value.saved);}
       job.operation=null;job.scanned++;count++;
      }
      if(++work>=workSize||count>=batchSize||now()-started>=budgetMs)break;
@@ -557,10 +596,10 @@
     if(job.pending&&current===job)schedule(step);
    }
    if(job.pending)schedule(step);
-   else{job.matches=documents.filter(doc=>libraryMatches(doc,query,kind,scope));job.scanned=documents.length;finish();}
+   else{for(const doc of documents){const result=drainSearch(librarySelectionSteps(doc,query,kind,scope));if(result.match){job.matches.push(doc);job.buildingSaved.set(doc,result.saved);}}job.scanned=documents.length;finish();}
    return job;
   }
-  return {request,cancel(){retire(current);generation++;current=null;}};
+  return {request,isCurrent:job=>Boolean(job)&&valid(job),cancel(){retire(current);generation++;current=null;}};
  }
  // A document-identity cache, not persistent state. Ordinary note/bookmark/view
  // saves do not rebuild source text. Mutators must invalidate before readers or
@@ -1273,7 +1312,7 @@
 			segments,
 		});
 	}
-	const api = { exactExcerptNote, exactExcerptNotesWith, exactExcerptRemoval, exactExcerptSnapshot, exactExcerptText, exactExcerptParts, exactExcerptSource, exactExcerptCount, exactExcerptDuplicate, exactExcerptFreshness, exactExcerptFreshnessBatch, exactExcerptState, exactExcerptStateBatch, createReadingRecency, createLibrarySearch, createLibraryNotebookSearch, libraryCaptureSteps, libraryCaptureCurrent, libraryCaptures, libraryNotebookMarkdown, mediaTiming, mediaTimingOffset, mediaTimingRange, localMediaSource, searchDocument, invalidateSearch, manualReviewSnapshot, manualReviewCurrent, saveManualTranslation, translationReviewQueue, hasNoteContent, segmentNoteCount, BACKUP_REVIEW_BYTES, SUBTITLE_IMPORT_BYTES, vttPayload, libraryHits, librarySnippet, hasProjectAnnotations, projectAnnotationCount, attachProjectTranscript, libraryMatches, documentDuration, sortedLibrary, AUDIO_NOTE_BUDGET, audioNoteCharacters, isAudioProject, audioProjectIdentity, podcastMediaIdentity, SUMMARY_QUESTION, summaryReadiness, podcastURL, podcastSource, cleanGlossary, relevantGlossary, translationQualityMessage, retainAnswers, summaryFreshness, latestSummary, summaryMarkdown, aiReadingMarkdown, parseReadingTime, createPlaybackIndex, segmentAtTime, transcriptText, subtitleExport, mergeLibraryBackup, time, source, media, validate, parse, matchesSegment, notebookSegments, notebookMarkdown, translationCurrent, sameCueSnapshot, subscriptionPlan, cleanContexts, answerFreshness };
+	const api = { librarySavedHits, librarySavedHitCurrent, exactExcerptNote, exactExcerptNotesWith, exactExcerptRemoval, exactExcerptSnapshot, exactExcerptText, exactExcerptParts, exactExcerptSource, exactExcerptCount, exactExcerptDuplicate, exactExcerptFreshness, exactExcerptFreshnessBatch, exactExcerptState, exactExcerptStateBatch, createReadingRecency, createLibrarySearch, createLibraryNotebookSearch, libraryCaptureSteps, libraryCaptureCurrent, libraryCaptures, libraryNotebookMarkdown, mediaTiming, mediaTimingOffset, mediaTimingRange, localMediaSource, searchDocument, invalidateSearch, manualReviewSnapshot, manualReviewCurrent, saveManualTranslation, translationReviewQueue, hasNoteContent, segmentNoteCount, BACKUP_REVIEW_BYTES, SUBTITLE_IMPORT_BYTES, vttPayload, libraryHits, librarySnippet, hasProjectAnnotations, projectAnnotationCount, attachProjectTranscript, libraryMatches, documentDuration, sortedLibrary, AUDIO_NOTE_BUDGET, audioNoteCharacters, isAudioProject, audioProjectIdentity, podcastMediaIdentity, SUMMARY_QUESTION, summaryReadiness, podcastURL, podcastSource, cleanGlossary, relevantGlossary, translationQualityMessage, retainAnswers, summaryFreshness, latestSummary, summaryMarkdown, aiReadingMarkdown, parseReadingTime, createPlaybackIndex, segmentAtTime, transcriptText, subtitleExport, mergeLibraryBackup, time, source, media, validate, parse, matchesSegment, notebookSegments, notebookMarkdown, translationCurrent, sameCueSnapshot, subscriptionPlan, cleanContexts, answerFreshness };
 	if (typeof module !== "undefined" && module.exports) module.exports = api;
 	else root.Coconut = api;
 })(typeof window !== "undefined" ? window : globalThis);

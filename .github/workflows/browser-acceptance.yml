@@ -123,6 +123,8 @@ jobs:
         run: node tests/large-library-browser.mjs
       - name: Verify cross-document search previews and keyboard destinations with authored fixtures
         if: ${{ !cancelled() && steps.browser_setup.outcome == 'success' }}
+        env:
+          COCONUT_UI_SCREENSHOTS: ${{ runner.temp }}/coconut-authored-ui
         run: node tests/library-search-browser.mjs
       - name: Verify 1,771-cue bilingual reading and recovery with authored fixtures
         if: ${{ !cancelled() && steps.browser_setup.outcome == 'success' }}
