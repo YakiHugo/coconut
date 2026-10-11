@@ -19,8 +19,8 @@ test('release is main-only and publishes only after exact checks and asset diges
  const s=await setup(t);await assert.rejects(()=>publishDesktopRelease({...s,context:{...context,eventName:'pull_request'},core,version:'0.2.0'}),/main push/);assert.equal(s.calls.length,0);
  await publishDesktopRelease({...s,context,core,version:'0.2.0'});assert.equal(s.calls[0][0],'create');assert.equal(s.calls[0][1].draft,true);assert.deepEqual(s.calls.filter(c=>c[0]==='upload').map(c=>c[1]),['Coconut-0.2.0-arm64-unsigned.zip','Coconut-0.2.0-x64-unsigned.zip','SHA256SUMS.txt']);assert.equal(s.calls.at(-1)[0],'publish');
  const body=s.calls[0][1].body;
- for(const phrase of ["Changes since 0.7.5", "manual speaker-label correction", "named reading collections", "manual exact-cue chapters", "selected-only Markdown", "existing version 1 library envelope", "current speaker labels", "segment normalization drops nested original_speaker", "Version 0.7.4 JSON import/restore additionally discard exact_excerpt_notes", "Same-document stale writes fail visibly", "independent documents can still autosave", "global unsaved warning and close guard", "export each unsaved document before refreshing", "immutable legacy snapshot", "new edits live in IndexedDB", "Downgrading to v0.6.0 cannot read those new edits", "Do not clear browser storage", "not ordinary importable library backups", "Publication is gated on exact-commit"])assert.ok(body.includes(phrase),'Missing release scope or limitation: '+phrase);
- assert.match(body,/do not require model calls/);assert.match(body,/without Developer ID or notarization/);assert.match(body,/Do not bypass an OS security warning/);
+ for(const phrase of ["Changes since 0.7.6", "Bilingual exact excerpts", "Return from search", "Recall saved excerpts", "manual chapter titles", "choose an encoding", "Version 0.7.6 rejects exact_excerpts v2", "including those inside reading collections", "fail closed for the entire library", "actual 0.7.6 modules", "not downgrade compatibility", "Do not clear storage", "complete library JSON backup", "JSON transcripts remain UTF-8", "universal font coverage", "U+20000", "New edits remain in IndexedDB", "v0.6.0 cannot read them", "all unsaved documents", "clear unsaved warnings", "Publication is gated on exact-commit"])assert.ok(body.includes(phrase),'Missing release scope or limitation: '+phrase);
+ assert.match(body,/do not require model calls/);assert.match(body,/no Developer ID or notarization/);assert.match(body,/Do not bypass an OS security warning/);
  assert.ok(body.includes(`https://github.com/${repo.owner}/${repo.repo}/blob/${sha}/docs/release-notes.md`));assert.match(body,/No real-account inference quality is claimed/);
 });
 test('failed checks, moved main and foreign versions never publish',async t=>{
@@ -49,29 +49,32 @@ test('desktop version, lock metadata and checked-in release notes agree',async()
  const notes=await readFile(new URL('../docs/release-notes.md',import.meta.url),'utf8');
  assert.match(configuration.version,/^\d+\.\d+\.\d+$/);assert.equal(lock.version,configuration.version);assert.equal(lock.packages[''].version,configuration.version);
  assert.deepEqual(lock.packages[''].devDependencies,configuration.devDependencies);assert.ok(notes.includes('# Coconut '+configuration.version+' · macOS 开发版'));
- for(const phrase of ['IndexedDB','localStorage','v0.6.0','无法读取新版新增或修改的内容','其他独立文档仍可自动保存','全局未保存警告与关闭保护','导出未保存文档备份','本窗口所有待保存内容','未提交表单草稿需另行保留','不要为了重试而清空存储','以上阅读、查找、查看历史和复制操作不调用模型','不能直接当作普通书架备份导入'])assert.ok(notes.includes(phrase),'Missing release-note boundary: '+phrase);
+ for(const phrase of ['IndexedDB','localStorage','v0.6.0','无法读取新版新增或修改的内容','其他独立文档仍可自动保存','全局未保存警告与关闭保护','导出未保存文档备份','本窗口所有待保存内容','未提交表单草稿需另行保留','不要为了重试而清空存储','这些操作不调用模型','不能直接当作普通书架备份导入'])assert.ok(notes.includes(phrase),'Missing release-note boundary: '+phrase);
  assert.ok(notes.includes('尚未在用户自己的 Mac'));
  assert.match(notes,/真实 Codex \/ Claude Code/);assert.match(notes,/Developer ID/);assert.match(notes,/公证/);
 });
 
 
 test('prior release notes remain byte-identical historical records',async()=>{
- for(const [version,digest] of [['0.7.0','2ec4424bcef49240abcdd009e1fe7d80ad2b4e19d9ae6d803193e101a86d995b'],['0.7.1','c2605dbe061b84462c64f720b620e6db57a7cbb558bc67adf015e3a2bd896ea4'],['0.7.2','22a0d76936b6bc0e0cc7b82eddad1a0fd72037fcc7c2199a2c2d355d8d63b506'],['0.7.3','ee9fcb6f9db134b2bc0cf0f451ee9cd1afe6ad4e9bb2422fcac0882bb0ac0445'],['0.7.4','4baf322d872ddadd1fa2aec95fbb691f5f5653864acc248ce866032757136a3d'],['0.7.5','8c16bfa15b60452be90e2386342fff7b44302ae33435d6cfea13bc545f71b29c']]){
+ for(const [version,digest] of [['0.7.0','2ec4424bcef49240abcdd009e1fe7d80ad2b4e19d9ae6d803193e101a86d995b'],['0.7.1','c2605dbe061b84462c64f720b620e6db57a7cbb558bc67adf015e3a2bd896ea4'],['0.7.2','22a0d76936b6bc0e0cc7b82eddad1a0fd72037fcc7c2199a2c2d355d8d63b506'],['0.7.3','ee9fcb6f9db134b2bc0cf0f451ee9cd1afe6ad4e9bb2422fcac0882bb0ac0445'],['0.7.4','4baf322d872ddadd1fa2aec95fbb691f5f5653864acc248ce866032757136a3d'],['0.7.5','8c16bfa15b60452be90e2386342fff7b44302ae33435d6cfea13bc545f71b29c'],['0.7.6','fd460ec5aef6f45469447617e6089b9c07278a70c1626a52ef0911a3e65ab930']]){
   const bytes=await readFile(new URL('../docs/release-notes-'+version+'.md',import.meta.url));
   assert.equal(createHash('sha256').update(bytes).digest('hex'),digest);
  }
 });
 
 
-test('0.7.6 notes retain three-feature scope and layered downgrade boundaries',async()=>{
+test('0.7.7 notes retain reading scope, explicit encoding choices and v2 refusal boundaries',async()=>{
  const notes=await readFile(new URL('../docs/release-notes.md',import.meta.url),'utf8');
- const backup=await readFile(new URL('../docs/backup-recovery.md',import.meta.url),'utf8');
+ const compatibility=await readFile(new URL('../docs/bilingual-excerpts.md',import.meta.url),'utf8');
  const readme=await readFile(new URL('../README.md',import.meta.url),'utf8');
  const publisher=await readFile(new URL('../scripts/publish_desktop_release.mjs',import.meta.url),'utf8');
- assert.ok(readme.includes('目标版本为 `0.7.6`'));
- for(const phrase of ['手动修正说话人','跨篇精选成果集','手动章节目录','不自动识别人','选取时快照','不自动播放','不覆盖“读到这里”','reading_collection','拒绝打开整个书架','不要为了让旧版打开而清数据','没有集合条目时','original_speaker','reading_chapters','但保留当前 speaker','exact_excerpt_notes','不构成发布或验证完成凭证'])assert.ok(notes.includes(phrase),phrase);
- for(const phrase of ['fail closed for the entire same-profile library','retaining current `speaker`','drops nested original-speaker','Restore Library Backup'])assert.ok(backup.includes(phrase),phrase);
- for(const phrase of ['Changes since 0.7.5','same-profile legacy/IndexedDB startup can fail closed','segment normalization drops nested original_speaker','No database or backup-version migration'])assert.ok(publisher.includes(phrase),phrase);
- assert.ok(notes.includes('已交付的 v0.7.5'));
+ assert.ok(readme.includes('目标版本为 `0.7.7`'));
+ assert.ok(readme.includes('https://github.com/YakiHugo/coconut/releases'));
+ for(const phrase of ['升级前','完整书架 JSON','0.7.6','整个书架','不要清数据绕过'])assert.ok(readme.includes(phrase),phrase);
+ for(const phrase of ['双语精确摘录','搜索后继续阅读','段旁回看摘录','章节融入正文','字幕编码恢复','不是自动逐字对齐','不覆盖手动“读到这里”','不自动编章','UTF-8','BOM','GB18030 / GBK','Big5','Windows-1252','不猜编码','跳过当前文件','exact_excerpts v2','包括成果集中的双语摘录','legacy／IndexedDB','拒绝打开整个书架','实际 0.7.6 模块','保留原数据','支持版本可重新打开完整记录','这不代表降级兼容','不要为了让旧版打开而清数据','原始 JSON','不代表所有字体都能显示','U+20000','不构成发布或验证完成凭证'])assert.ok(notes.includes(phrase),phrase);
+ for(const phrase of ['0.7.6','拒绝 v2','嵌入成果集','拒绝整个书架','保留原数据'])assert.ok(compatibility.includes(phrase),phrase);
+ for(const phrase of ['Changes since 0.7.6','same-profile legacy/IndexedDB startup can fail closed','This is not downgrade compatibility','No database or library-backup protocol migration'])assert.ok(publisher.includes(phrase),phrase);
+ assert.ok(notes.includes('已交付的 v0.7.6'));
+ assert.ok(notes.includes('release-notes-0.7.6.md'));
  assert.ok(notes.includes('本文不表示构建、验收或发布已完成'));
 });
