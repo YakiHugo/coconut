@@ -909,6 +909,40 @@ document.addEventListener('keydown',event=>{
 });
 const LIBRARY_PAGE_SIZE=40;
 let libraryPage=0,libraryViewSignature=null,libraryActiveKey=null,libraryCards=new Map();
+const libraryBackupSelection=Coconut.createLibraryBackupSelection();
+let librarySelectionMode=false,librarySelectionDropped=0;
+function syncLibraryBackupSelection(visible=null) {
+ const status=libraryBackupSelection.reconcile(state.documents,pendingStructuralDocuments);
+ librarySelectionDropped+=status.removed;
+ const shown=visible??($('library').hidden?[]:[...libraryCards.values()].map(card=>card.doc));
+ const outside=status.count-libraryBackupSelection.visibleCount(shown);
+ $('library-selection-controls').hidden=!librarySelectionMode;
+ const modeLabel=librarySelectionMode?'取消选择':'选择备份';
+ if($('library-selection-mode').textContent!==modeLabel)$('library-selection-mode').textContent=modeLabel;
+ $('library-selection-mode').setAttribute('aria-pressed',String(librarySelectionMode));
+ const message='已选 '+status.count+' 份 · 其中 '+outside+' 份不在当前页'+
+  (status.blocked?'。选中文档正在移除或恢复，请处理完成后再备份。':'')+
+  (librarySelectionDropped?'。已取消 '+librarySelectionDropped+' 份已移除或替换文档的选择。':'');
+ if($('library-selection-status').textContent!==message)$('library-selection-status').textContent=message;
+ const exportLabel='备份所选 '+status.count+' 份';
+ if($('export-selected-library').textContent!==exportLabel)$('export-selected-library').textContent=exportLabel;
+ $('export-selected-library').disabled=!status.count||status.blocked;
+ $('clear-library-selection').disabled=!status.count;
+ const current=librarySelectionMode?new Set(state.documents):null;
+ for(const card of libraryCards.values()){
+  card.selectLabel.hidden=!librarySelectionMode;
+  card.select.checked=libraryBackupSelection.has(card.doc);
+  card.select.disabled=pendingStructuralDocuments.has(card.doc.key)||!!current&&!current.has(card.doc);
+  const label='选择备份 '+card.doc.title;if(card.select.getAttribute('aria-label')!==label)card.select.setAttribute('aria-label',label);
+ }
+}
+$('library-selection-mode').onclick=()=>{
+ librarySelectionMode=!librarySelectionMode;
+ if(!librarySelectionMode){libraryBackupSelection.clear();librarySelectionDropped=0;$('library-list').style.removeProperty('--library-keyboard-space');}
+ syncLibraryBackupSelection();
+};
+$('clear-library-selection').onclick=()=>{libraryBackupSelection.clear();librarySelectionDropped=0;syncLibraryBackupSelection();};
+
 function libraryPageFocus(){
  if(libraryMobile.matches)$('library-tools').open=false;
  $('toggle-library').setAttribute('aria-expanded','true');
@@ -930,8 +964,11 @@ function createLibraryCard(d){
  };
  open.onclick=()=>openDocument();
  const remove=el('button','library-remove','移除…');remove.type='button';remove.onclick=()=>requestLibraryRemoval(d);
- entry.append(open,remove);
- return {doc:d,entry,open,title,metadata,remove,openDocument,hitSignature:null,hits:null,savedHits:null,savedSelection:null};
+ const selectLabel=el('label','library-select-label'),select=el('input','library-select');select.type='checkbox';selectLabel.hidden=true;
+ selectLabel.append(select,document.createTextNode('备份此文档'));
+ select.onchange=()=>{libraryBackupSelection.toggle(d,select.checked,state.documents,pendingStructuralDocuments);syncLibraryBackupSelection();};
+ entry.append(open,selectLabel,remove);
+ return {doc:d,entry,open,title,metadata,remove,select,selectLabel,openDocument,hitSignature:null,hits:null,savedHits:null,savedSelection:null};
 }
 // Only known content refreshes reuse these derived values. An ordinary render
 // remains the conservative path for callers that changed source objects in place.
@@ -965,6 +1002,7 @@ function renderLibrary(revealKey=null,{reuseMetadata=false}={}) {
   host.hidden=true;$('library-empty').hidden=true;$('library-pagination').hidden=true;$('library-show-active').hidden=true;
   $('library-total').textContent=String(state.documents.length);
   $('library-page-status').textContent='正在查找… 已检查 '+selection.scanned+' / '+selection.documents.length+' 份';
+  syncLibraryBackupSelection([]);
   return;
  }
  host.hidden=false;
@@ -1052,11 +1090,12 @@ function renderLibrary(revealKey=null,{reuseMetadata=false}={}) {
  for(const {entry} of nextCards.values()){if(host.children[index]!==entry)host.insertBefore(entry,host.children[index]||null);index++;}
  while(host.children.length>index)host.lastElementChild.remove();
  libraryCards=nextCards;
+ syncLibraryBackupSelection(visible);
  // A refreshed preview or reordered card keeps the exact action when it still
  // exists. Never steal focus from an editor, dialog, or async operation.
  if(focusKey&&(!focused.isConnected||document.activeElement===document.body)){
   const card=libraryCards.get(focusKey);
-  const target=hitKind?[...(card?.hits?.children||[]),...(card?.savedHits?.querySelectorAll('button')||[])].find(node=>node.dataset.hitKind===hitKind&&node.dataset.hitId===hitId):focused.classList.contains('library-remove')?card?.remove:card?.open;
+  const target=hitKind?[...(card?.hits?.children||[]),...(card?.savedHits?.querySelectorAll('button')||[])].find(node=>node.dataset.hitKind===hitKind&&node.dataset.hitId===hitId):focused.classList.contains('library-remove')?card?.remove:focused.classList.contains('library-select')?card?.select:card?.open;
   if(target&&!target.disabled&&!target.hidden)target.focus({preventScroll:true});
   else if(card&&!card.open.disabled)card.open.focus({preventScroll:true});
   else $('library-search').focus({preventScroll:true});
@@ -2360,6 +2399,19 @@ $("export-library").onclick = () => {
  } catch { notice("书架备份失败，内容仍在本页，请重试后再关闭。"); }
  finally { link?.remove(); if(url)setTimeout(()=>URL.revokeObjectURL(url),60000); }
 };
+$('export-selected-library').onclick=()=>{
+ let url,link;
+ try {
+  const selection=libraryBackupSelection.reconcile(state.documents,pendingStructuralDocuments);
+  librarySelectionDropped+=selection.removed;
+  if(selection.removed)throw new Error('部分选中文档已移除或替换，请核对选择数量后重新备份。');
+  const backup=libraryBackupSelection.backup(state.documents,state.active,pendingStructuralDocuments);
+  const blob=new Blob([JSON.stringify(backup,null,2)],{type:'application/json'});
+  url=URL.createObjectURL(blob);link=el('a');link.href=url;link.download='coconut-selected-library.json';link.hidden=true;document.body.append(link);link.click();
+  notice('已发起所选 '+backup.documents.length+' 份备份下载，请确认文件已保存。'+backupRecoveryHint(blob),'success');
+ } catch(error){notice(error.message||'所选文档备份失败，内容仍在本页，请重试后再关闭。');}
+ finally {link?.remove();if(url)setTimeout(()=>URL.revokeObjectURL(url),60000);syncLibraryBackupSelection();}
+};
 $("restore-library").onclick = () => $("library-file").click();
 $("library-file").onchange = async () => {
  const file = $("library-file").files[0]; if(!file)return;
@@ -2851,13 +2903,46 @@ function renderPassages(doc){
 // Fixed playback/feedback panels are outside the browser's native focus viewport.
 // Only a real Tab move may reveal a passage action; receipts and layout changes
 // never scroll. Defer once so native focus scrolling has settled first.
-let passageActionTab=false;
-document.addEventListener('keydown',event=>{passageActionTab=event.key==='Tab';},true);
+// Shelf checkbox focus owns its exact card identity. Move only the shelf's
+// bounded scrollport, after a real Tab, never from save receipts or checkbox edits.
+function revealLibrarySelectionFocus(target,card,revision) {
+ const host=$('library-list');
+ if(revision!==libraryFocusRevealRevision||!librarySelectionMode||document.activeElement!==target||!target.isConnected||!target.matches(':focus-visible')||target.disabled||libraryCards.get(card?.doc.key)!==card||card?.select!==target||!state.documents.includes(card.doc)||pendingStructuralDocuments.has(card.doc.key))return;
+ const label=card.selectLabel,rect=target.getBoundingClientRect(),labelRect=label.getBoundingClientRect(),area=host.getBoundingClientRect(),style=getComputedStyle(target);
+ if(!rect.width||!rect.height||!area.width||!area.height||label.hidden)return;
+ const ring=(parseFloat(style.outlineWidth)||0)+Math.max(0,parseFloat(style.outlineOffset)||0);
+ const bounds={left:Math.min(labelRect.left,rect.left-ring),right:Math.max(labelRect.right,rect.right+ring),top:Math.min(labelRect.top,rect.top-ring),bottom:Math.max(labelRect.bottom,rect.bottom+ring)};
+ let slots=[[Math.max(0,area.top+host.clientTop),Math.min(window.innerHeight,area.top+host.clientTop+host.clientHeight)]];
+ for(const overlay of [$('reading-feedback'),$('media-dock')]){
+  const css=getComputedStyle(overlay);if(overlay.hidden||css.display==='none'||css.visibility==='hidden')continue;
+  const occupied=overlay.getBoundingClientRect();
+  if(!occupied.width||!occupied.height||occupied.left>=bounds.right||occupied.right<=bounds.left)continue;
+  const top=occupied.top-2,bottom=occupied.bottom+2;
+  slots=slots.flatMap(([start,end])=>bottom<=start||top>=end?[[start,end]]:[[start,Math.min(end,top)],[Math.max(start,bottom),end]].filter(([a,b])=>b>a));
+ }
+ const height=bounds.bottom-bounds.top;
+ const moves=slots.filter(([start,end])=>end-start>=height).map(([start,end])=>bounds.top<start?bounds.top-start:bounds.bottom>end?bounds.bottom-end:0).sort((a,b)=>Math.abs(a)-Math.abs(b));
+ if(!moves.length||!moves[0])return;
+ const delta=moves[0],destination=Math.max(0,host.scrollTop+delta),maximum=Math.max(0,host.scrollHeight-host.clientHeight);
+ // A last card may already be at the native scroll limit. Add only the missing
+ // trailing room on this keyboard path, retaining it until selection is cancelled.
+ if(destination>maximum){
+  const extra=parseFloat(host.style.getPropertyValue('--library-keyboard-space'))||0;
+  host.style.setProperty('--library-keyboard-space',(extra+destination-maximum)+'px');
+ }
+ host.scrollTo({top:destination,left:host.scrollLeft,behavior:'instant'});
+}
+let passageActionTab=false,libraryFocusRevealRevision=0;
+document.addEventListener('keydown',event=>{passageActionTab=event.key==='Tab';libraryFocusRevealRevision++;},true);
 document.addEventListener('keyup',event=>{if(event.key==='Tab')passageActionTab=false;},true);
-document.addEventListener('pointerdown',()=>{passageActionTab=false;},true);
+document.addEventListener('pointerdown',()=>{passageActionTab=false;libraryFocusRevealRevision++;},true);
 document.addEventListener('focusin',event=>{
  const target=event.target,keyboard=passageActionTab;passageActionTab=false;
- if(!keyboard||!target.matches?.('.passage-actions button, .passage-actions a')||!target.matches(':focus-visible'))return;
+ if(!keyboard||!target.matches?.('.passage-actions button, .passage-actions a, .library-select')||!target.matches(':focus-visible'))return;
+ if(target.classList.contains('library-select')){
+  const card=libraryCards.get(target.closest('.library-entry')?.dataset.documentKey),revision=libraryFocusRevealRevision;
+  requestAnimationFrame(()=>revealLibrarySelectionFocus(target,card,revision));return;
+ }
  const doc=active(),selection=activeSelectionRevision;
  requestAnimationFrame(()=>{
   if(document.activeElement!==target||!target.isConnected||active()!==doc||activeSelectionRevision!==selection||!target.matches(':focus-visible'))return;

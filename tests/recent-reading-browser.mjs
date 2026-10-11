@@ -10,7 +10,7 @@ const documents=['a','b','c'].map(key=>({key,title:'Authored '+key,language:'en'
 let browser,server,external=0;const errors=[],checks=[];
 const order=page=>page.locator('#library .library-entry').evaluateAll(nodes=>nodes.map(n=>n.dataset.documentKey));
 async function open(page,key){await openLibraryTools(page);await page.locator(`[data-document-key="${key}"] .library-open`).click();await expect(page.locator('#title')).toHaveText('Authored '+key);}
-async function sort(page){await openLibraryTools(page);const options=page.locator('#library-options');if(!await options.evaluate(n=>n.open))await options.locator('summary').click();await page.locator('#library-sort').selectOption('opened');}
+async function sort(page){await openLibraryTools(page);const options=page.locator('#library-options');if(!await options.evaluate(n=>n.open))await options.locator(':scope > summary').click();await page.locator('#library-sort').selectOption('opened');}
 try{
  server=createServer(async(req,res)=>{
   const name=new URL(req.url,'http://localhost').pathname.slice(1)||'index.html';
