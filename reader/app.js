@@ -2,6 +2,8 @@
 let quotationController;
 let exactNoteEditor=null;
 let speakerEditor=null;
+let sourceCorrectionEditor=null,sourceCorrectionUndo=null;
+const sourceCorrectionSaves=new WeakMap();
 const $ = (id) => document.getElementById(id);
 const KEY = "coconut-reader-v1";
 const ACTIVE_KEY = "coconut-reader-active-v1";
@@ -459,6 +461,7 @@ libraryStore.subscribe((snapshot,event)=>{
  renderSaveStatus(libraryStore.status());
  if($('library-notebook').open)collectionStatus();
  if($('chapter-dialog').open)chapterSaveStatus();
+ sourceCorrectionSaveStatus();
  renderPassageReadingPosition();refreshReadingExcerptSaveState();
  if(event?.type==='commit'){
   renderSummaryPersistence();
@@ -543,6 +546,7 @@ window.addEventListener('coconut-document-removed',event=>readingRecency.record(
 let activeSelectionRevision=0;
 function selectActiveDocument(key,{persist=true}={}) {
  endReadingSearch();
+ closeSourceCorrection(false);
  activeSelectionRevision++;
  const available=doc=>!Coconut.isReadingCollection(doc)&&!pendingStructuralDocuments.has(doc.key);
  state.active=state.documents.some(doc=>doc.key===key&&available(doc))?key:state.documents.find(available)?.key||null;
@@ -1642,6 +1646,7 @@ function renderChapterReturn(){
  if(chapterReturn?.doc!==active())chapterReturn=null;
  const bar=$('chapter-return');bar.hidden=!chapterReturn||workspace!=='read'||readingMode==='summary';
  if(!bar.hidden){const target=readingMode==='passages'?$('passage-workspace'):$('transcript-layout');if(bar.nextElementSibling!==target)target.before(bar);}
+ $('open-source-correction').hidden=!active()?.segments.length;
  $('open-chapters').hidden=!chapterEligible(active());$('open-chapters').textContent='章节目录'+(active()?.reading_chapters?.length?'（'+active().reading_chapters.length+'）':'');
 }
 function chapterPosition(){const doc=chapterDirectoryDoc;return doc?.segments.findIndex(cue=>cue.id===chapterDirectoryCue)??-1;}
@@ -2494,8 +2499,8 @@ document.addEventListener("keydown", event => {
 // Chromium may leave an already-visible control's border at the scrollport
 // edge after reverse Tab; CSS scroll-margin does not include its focus ring.
 // Let native focus/Tab finish, then correct only this dialog's own scroll.
-$('paste-subtitle-dialog').addEventListener('focusin',event=>{
- const dialog=$('paste-subtitle-dialog'),target=event.target;
+for(const id of ['paste-subtitle-dialog','source-correction-dialog'])$(id).addEventListener('focusin',event=>{
+ const dialog=$(id),target=event.target;
  if(target.closest?.('dialog')!==dialog||!target.matches('button,input,select,textarea,summary'))return;
  requestAnimationFrame(()=>{
   if(!dialog.open||document.activeElement!==target||target.closest('dialog')!==dialog)return;
@@ -3155,6 +3160,127 @@ $("sample").onclick = async () => {
 };
 readingMode=defaultReadingMode(active());
 render();
+
+// Whole-source correction uses explicit, single-use previews. Persistence is a
+// separate operation: retries can only save the current document, never replay.
+const SOURCE_CORRECTION_PAGE_SIZE=20;
+function sourceCorrectionOwned(editor=sourceCorrectionEditor){return !!editor&&active()===editor.doc&&activeSelectionRevision===editor.selection&&state.documents.includes(editor.doc)&&$('source-correction-dialog').open;}
+function sourceCorrectionSignature(){return JSON.stringify([$('source-find').value,$('source-replace').value]);}
+function sourceCorrectionDraft(){return sourceCorrectionOwned()&&sourceCorrectionSignature()!==sourceCorrectionEditor.savedDraft&&!!($('source-find').value||$('source-replace').value);}
+function closeSourceCorrection(restoreFocus=true){
+ const editor=sourceCorrectionEditor;sourceCorrectionEditor=null;if($('source-correction-dialog').open)$('source-correction-dialog').close();
+ if(restoreFocus&&editor&&active()===editor.doc&&activeSelectionRevision===editor.selection){$('reading-settings').open=true;$('open-source-correction').scrollIntoView?.({block:'center',behavior:'instant'});$('open-source-correction').focus({preventScroll:true});}
+}
+function sourceCorrectionSaveStatus(){
+ const editor=sourceCorrectionEditor;if(!sourceCorrectionOwned(editor))return;
+ const saved=libraryStore.status(editor.doc.key),own=saved?.identity===editor.doc,operation=sourceCorrectionSaves.get(editor.doc);
+ const pending=own&&saved.status==='pending',failed=own&&saved.status!=='saved'&&saved.status!=='pending';
+ $('source-correction-status').textContent=operation?(own&&saved.status==='saved'?operation+'已保存到本机。':pending?operation+'已在本页生效，正在保存。':operation+'仍在本页，尚未保存到本机。请重试或导出完整 JSON 救援；不要关闭页面。'):'';
+ const focused=document.activeElement,retry=$('source-correction-retry'),backup=$('source-correction-export');
+ retry.hidden=!failed&&focused!==retry;retry.disabled=libraryStore.status().blocked&&focused!==retry;
+ retry.setAttribute('aria-disabled',String(pending||libraryStore.status().blocked||!failed));
+ backup.hidden=(!operation||own&&saved.status==='saved')&&focused!==backup;
+}
+function sourceCorrectionSelectionStatus(){
+ const editor=sourceCorrectionEditor;if(!editor)return;
+ const preview=editor.preview,selected=editor.selected.size;
+ $('source-correction-count').textContent=preview?preview.total+' 处 / '+preview.cueCount+' 个原片段；已选 '+selected+' 处（含其他页）。'+(!preview.changes?'查找与替换相同，不会修改。':!preview.total?'没有匹配的原文。':''):'修改查找或替换后，须重新预览。';
+ $('apply-source-correction').textContent='应用所选 '+selected+' 处';$('apply-source-correction').disabled=!sourceCorrectionOwned(editor)||!preview?.changes||!selected;
+ $('undo-source-correction').hidden=sourceCorrectionUndo?.doc!==editor.doc;
+ $('source-correction-undo-help').textContent=sourceCorrectionUndo?'本页仅保留最近一批撤销。应用新批次将替换「'+sourceCorrectionUndo.doc.title+'」的上一批撤销记录；关闭后仍可在本页返回撤销，刷新页面后不保留。':'本页只保留最近一批撤销；刷新页面后不保留。';
+}
+function renderSourceCorrectionHits(){
+ const editor=sourceCorrectionEditor,host=$('source-correction-results');host.replaceChildren();if(!editor)return;
+ const preview=editor.preview,start=editor.page*SOURCE_CORRECTION_PAGE_SIZE,total=preview?.total||0;
+ for(const hit of preview?.hits.slice(start,start+SOURCE_CORRECTION_PAGE_SIZE)||[]){
+  const row=el('section','source-correction-hit');row.dataset.segmentId=hit.id;row.dataset.hitIndex=String(hit.index);
+  const label=el('label'),check=el('input');check.type='checkbox';check.value=String(hit.index);check.checked=editor.selected.has(hit.index);check.setAttribute('aria-label','选择第 '+(hit.index+1)+' 处，原片段 '+(hit.position+1)+'，'+Coconut.time(hit.start));
+  check.onchange=()=>{if(!sourceCorrectionOwned(editor)||editor.preview!==preview)return;check.checked?editor.selected.add(hit.index):editor.selected.delete(hit.index);sourceCorrectionSelectionStatus();};
+  label.append(check,el('span','',Coconut.time(hit.start)+'–'+Coconut.time(hit.end)+' · 原片段 '+(hit.position+1)+' · 第 '+(hit.index+1)+' 处'));
+  const before=el('p','source-correction-context'),after=el('p','source-correction-context');before.append('原文：'+hit.before,el('mark','',hit.match),hit.after);after.append('改为：'+hit.before,el('strong','',hit.replacement||'〔删除此处〕'),hit.after);row.append(label,before,after);host.append(row);
+ }
+ $('source-correction-page').textContent=total?'第 '+(editor.page+1)+' / '+Math.ceil(total/SOURCE_CORRECTION_PAGE_SIZE)+' 页':'';
+ $('source-correction-prev').disabled=!preview||editor.page===0;$('source-correction-next').disabled=!preview||start+SOURCE_CORRECTION_PAGE_SIZE>=total;
+ $('select-source-page').disabled=$('clear-source-page').disabled=!total;
+ sourceCorrectionSelectionStatus();sourceCorrectionSaveStatus();
+}
+function invalidateSourceCorrectionPreview(){
+ const editor=sourceCorrectionEditor;if(!editor)return;editor.preview=null;editor.selected.clear();editor.page=0;$('source-correction-error').textContent='';renderSourceCorrectionHits();
+}
+$('open-source-correction').onclick=()=>{
+ const doc=active();if(!doc?.segments.length||!contentIngressAllowed(doc))return;
+ sourceCorrectionEditor={doc,selection:activeSelectionRevision,preview:null,selected:new Set(),page:0,savedDraft:JSON.stringify(['',''])};
+ $('source-correction-title').textContent=doc.title;$('source-find').value='';$('source-replace').value='';$('source-correction-error').textContent='';
+ $('source-correction-dialog').showModal();renderSourceCorrectionHits();$('source-find').focus();
+};
+for(const id of ['source-find','source-replace'])$(id).addEventListener('input',invalidateSourceCorrectionPreview);
+$('preview-source-correction').onclick=()=>{
+ const editor=sourceCorrectionEditor;if(!sourceCorrectionOwned(editor)||!contentIngressAllowed(editor.doc))return;
+ invalidateSourceCorrectionPreview();
+ try{editor.preview=Coconut.createSourceCorrectionPreview(editor.doc,{find:$('source-find').value,replacement:$('source-replace').value});editor.selected=new Set(editor.preview.hits.map(hit=>hit.index));renderSourceCorrectionHits();}
+ catch(error){$('source-correction-error').textContent=error.message;}
+};
+for(const [id,direction] of [['source-correction-prev',-1],['source-correction-next',1]])$(id).onclick=()=>{
+ const editor=sourceCorrectionEditor;if(!sourceCorrectionOwned(editor)||!editor.preview||$(id).disabled)return;editor.page+=direction;renderSourceCorrectionHits();
+ // A last-page transition may disable the initiating control. Keep keyboard
+ // traversal inside the new result page instead of dropping focus to the body.
+ if($(id).disabled)($('source-correction-results').querySelector('input')||$('preview-source-correction')).focus();
+};
+for(const [id,select] of [['select-source-page',true],['clear-source-page',false]])$(id).onclick=()=>{
+ const editor=sourceCorrectionEditor;if(!sourceCorrectionOwned(editor)||!editor.preview)return;
+ for(const hit of editor.preview.hits.slice(editor.page*SOURCE_CORRECTION_PAGE_SIZE,(editor.page+1)*SOURCE_CORRECTION_PAGE_SIZE))select?editor.selected.add(hit.index):editor.selected.delete(hit.index);
+ for(const check of $('source-correction-results').querySelectorAll('input'))check.checked=editor.selected.has(Number(check.value));sourceCorrectionSelectionStatus();
+};
+// Transfer excerpt UI ownership only along this known text-correction operation.
+// A genuinely replaced same-ID cue is still rejected by the existing guard.
+function transferSourceCorrectionExcerptOwners(doc,before){
+ const owners=readingExcerptOwners.get(doc);if(!owners)return;
+ const replacements=new Map(before.flatMap((cue,index)=>cue!==doc.segments[index]&&cue.id===doc.segments[index]?.id?[[cue,doc.segments[index]]]:[]));
+ for(const record of doc.exact_excerpts||[]){const owner=owners.get(record);if(owner)owner.cues=owner.cues.map(cue=>replacements.get(cue)||cue);}
+}
+function saveSourceCorrection(doc,message){
+ sourceCorrectionSaves.set(doc,message);
+ const receipt=commitDocument(doc);sourceCorrectionSaveStatus();
+ // This callback never navigates, rerenders the reader, or takes focus. The
+ // pipeline's generation checks distinguish a newer edit/undo from this write.
+ void receipt.then(()=>sourceCorrectionSaveStatus());
+}
+function sourceCorrectionChanged(editor,before,message){
+ const focused=document.activeElement;
+ transferSourceCorrectionExcerptOwners(editor.doc,before);
+ window.dispatchEvent(new CustomEvent('coconut-source-corrected',{detail:{key:editor.doc.key,identity:editor.doc}}));
+ editor.savedDraft=sourceCorrectionSignature();invalidateSourceCorrectionPreview();
+ saveSourceCorrection(editor.doc,message);render();
+ if(focused===$('apply-source-correction'))$('undo-source-correction').focus();
+ else if(focused===$('undo-source-correction'))$('preview-source-correction').focus();
+}
+$('apply-source-correction').onclick=()=>{
+ const editor=sourceCorrectionEditor;if(!sourceCorrectionOwned(editor)||!editor.preview||!contentIngressAllowed(editor.doc))return;
+ try{
+  const before=editor.doc.segments,result=Coconut.applySourceCorrectionPreview(editor.doc,editor.preview,[...editor.selected]);
+  if(!result.changed){invalidateSourceCorrectionPreview();return;}
+  sourceCorrectionUndo={doc:editor.doc,token:result.undo};sourceCorrectionChanged(editor,before,'已修正 '+result.occurrenceCount+' 处、'+result.changedCount+' 个原片段；');
+ }catch(error){$('source-correction-error').textContent=error.message;editor.preview=null;$('apply-source-correction').disabled=true;}
+};
+$('undo-source-correction').onclick=()=>{
+ const editor=sourceCorrectionEditor,undo=sourceCorrectionUndo;if(!sourceCorrectionOwned(editor)||undo?.doc!==editor.doc||!contentIngressAllowed(editor.doc))return;
+ try{const before=editor.doc.segments;Coconut.undoSourceCorrection(editor.doc,undo.token);sourceCorrectionUndo=null;sourceCorrectionChanged(editor,before,'最近一批原文修正已撤销；');}
+ catch(error){$('source-correction-error').textContent=error.message;}
+};
+$('source-correction-retry').onclick=async()=>{
+ const editor=sourceCorrectionEditor;if(!sourceCorrectionOwned(editor)||libraryStore.status().blocked||libraryStore.status().status==='pending'||!libraryStore.status().unsaved)return;
+ await libraryStore.retry();if(sourceCorrectionOwned(editor))sourceCorrectionSaveStatus();
+};
+$('source-correction-dialog').addEventListener('focusout',()=>queueMicrotask(sourceCorrectionSaveStatus));
+$('source-correction-export').onclick=()=>{if(sourceCorrectionOwned())exportReaderDocument(sourceCorrectionEditor.doc);};
+$('close-source-correction').onclick=()=>closeSourceCorrection();
+$('source-correction-dialog').addEventListener('cancel',event=>{event.preventDefault();closeSourceCorrection();});
+$('source-correction-dialog').addEventListener('close',()=>{if(!$('source-correction-dialog').open)sourceCorrectionEditor=null;});
+$('source-correction-dialog').addEventListener('keydown',event=>{
+ const dialog=$('source-correction-dialog');if(!sourceCorrectionOwned()||event.key!=='Tab'||event.defaultPrevented||event.isComposing||event.keyCode===229||event.altKey||event.ctrlKey||event.metaKey)return;
+ const controls=[...dialog.querySelectorAll('button,input,[tabindex]')].filter(node=>node.tabIndex>=0&&!node.disabled&&!node.closest('[hidden],[inert]'));
+ const first=controls[0],last=controls.at(-1);if(first&&(event.shiftKey&&document.activeElement===first||!event.shiftKey&&document.activeElement===last)){event.preventDefault();(event.shiftKey?last:first).focus();}
+});
 
 // A preview is bound to the exact document and target cues by core. Never
 // rebuild it on submit: doing so would silently accept a stale dialog.
@@ -4536,7 +4662,7 @@ async function attachTranscriptToProject(text,target,{canCommit=null,activate=fa
 function hasPendingOrFailedContent(){return libraryStore.status().unsaved>0;}
 function hasUnsavedReaderChanges(){return hasPendingOrFailedContent()||hasUnsubmittedReaderDrafts();}
 function hasUnsubmittedReaderDrafts() {
- if(pastedSubtitleHasDraft()||quotationController?.hasDraft()||exactNoteDraft()||speakerCorrectionDraft()||collectionTitleDraft()||chapterDraft())return true;
+ if(pastedSubtitleHasDraft()||quotationController?.hasDraft()||exactNoteDraft()||sourceCorrectionDraft()||speakerCorrectionDraft()||collectionTitleDraft()||chapterDraft())return true;
  if(removedDocument||pendingLibraryOperation||[...deferredContentInputs.values()].some(draft=>state.documents.includes(draft.doc))||hasLanguageDrafts()||window.CoconutTranslationReview?.hasDraft())return true;
  const current=active();
  if(current&&selected&&!$('notes-panel').hidden&&current.segments.some(segment=>segment.id===selected)&&$('note').value!==(current.notes[selected]||''))return true;

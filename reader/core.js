@@ -1061,6 +1061,72 @@
   return {changed:changed.length>0,changedCount:changed.length,cueIds:changed.map(change=>change.id)};
  }
 
+ // Local, single-use previews and one undo capability per live document. These
+ // are intentionally absent from JSON: historical records remain immutable.
+ const sourceCorrectionPlans=new WeakMap(),sourceCorrectionUndos=new WeakMap(),sourceCorrectionVersions=new WeakMap();
+ let latestSourceCorrection=null;
+ function sourceCorrectionCue(cue,position){return {id:cue.id,position,start:cue.start,end:cue.end,text:cue.text,
+  hasOriginal:Object.hasOwn(cue,'original_text'),original:cue.original_text};}
+ function sourceCorrectionSame(cue,saved,position){return !!cue&&position===saved.position&&cue.id===saved.id&&cue.start===saved.start&&cue.end===saved.end&&cue.text===saved.text&&Object.hasOwn(cue,'original_text')===saved.hasOriginal&&cue.original_text===saved.original;}
+ function createSourceCorrectionPreview(doc,{find,replacement}={}){
+  if(!doc||!Array.isArray(doc.segments)||typeof find!=='string'||!find.length)throw Error('查找原文不能为空');
+  if(typeof replacement!=='string')throw Error('替换文字无效');
+  const source=doc.segments.map(sourceCorrectionCue),hits=[];let cueCount=0;
+  for(const cue of source){
+   let offset=0,matched=false;
+   while((offset=cue.text.indexOf(find,offset))!==-1){
+    matched=true;
+    // Only short local context is repeated per hit, never translations/history
+    // or whole cue strings. The complete source is retained once in the plan.
+    let from=Math.max(0,offset-65),to=Math.min(cue.text.length,offset+find.length+65);
+    if(from&&/[\uDC00-\uDFFF]/.test(cue.text[from]))from--;
+    if(to<cue.text.length&&/[\uD800-\uDBFF]/.test(cue.text[to-1]))to++;
+    hits.push(Object.freeze({index:hits.length,id:cue.id,position:cue.position,start:cue.start,end:cue.end,offset,
+     before:(from?'…':'')+cue.text.slice(from,offset),match:find,after:cue.text.slice(offset+find.length,to)+(to<cue.text.length?'…':''),replacement}));
+    offset+=find.length;
+   }
+   if(matched)cueCount++;
+  }
+  const preview=Object.freeze({find,replacement,total:hits.length,cueCount,changes:find!==replacement,hits:Object.freeze(hits)});
+  sourceCorrectionPlans.set(preview,{doc,source,version:sourceCorrectionVersions.get(doc)||0});return preview;
+ }
+ function applySourceCorrectionPreview(doc,preview,selectedIndices){
+  const plan=sourceCorrectionPlans.get(preview),conflict=()=>{throw Error('整篇原文或片段顺序已变化，请重新预览后再应用');};
+  if(!plan||plan.doc!==doc||plan.version!==(sourceCorrectionVersions.get(doc)||0)||doc.segments.length!==plan.source.length||plan.source.some((cue,i)=>!sourceCorrectionSame(doc.segments[i],cue,i)))return conflict();
+  const selected=selectedIndices===undefined?preview.hits.map(hit=>hit.index):selectedIndices;
+  if(!Array.isArray(selected)||selected.some(index=>!Number.isInteger(index)||index<0||index>=preview.hits.length)||new Set(selected).size!==selected.length)throw Error('所选位置无效，请重新预览');
+  const byPosition=new Map();
+  if(preview.changes)for(const index of [...selected].sort((a,b)=>a-b)){const hit=preview.hits[index];if(!byPosition.has(hit.position))byPosition.set(hit.position,[]);byPosition.get(hit.position).push(hit);}
+  const changes=[];
+  for(const [position,hits] of byPosition){
+   const saved=plan.source[position];let text='',offset=0;
+   for(const hit of hits){text+=saved.text.slice(offset,hit.offset)+preview.replacement;offset=hit.offset+preview.find.length;}
+   text+=saved.text.slice(offset);
+   if(!text.trim())throw Error('修正后第 '+(position+1)+' 个原片段会成为空白；请保留文字或取消该处选择');
+   if(text!==saved.text)changes.push({before:saved,after:{...saved,text,hasOriginal:true,original:saved.hasOriginal?saved.original:saved.text},occurrences:hits.length});
+  }
+  const map=new Map(changes.map(change=>[change.before.position,change]));
+  const segments=changes.length?doc.segments.map((cue,position)=>{const change=map.get(position);return change?{...cue,text:change.after.text,...(!change.before.hasOriginal?{original_text:change.before.text}:{})}:cue;}):null;
+  sourceCorrectionPlans.delete(preview);
+  let undo=null;
+  if(segments){
+   undo=Object.freeze({changedCount:changes.length,occurrenceCount:changes.reduce((sum,change)=>sum+change.occurrences,0)});
+   if(latestSourceCorrection)sourceCorrectionUndos.delete(latestSourceCorrection);
+   sourceCorrectionUndos.set(undo,{doc,changes});latestSourceCorrection=undo;
+   doc.segments=segments;sourceCorrectionVersions.set(doc,plan.version+1);invalidateSearch(doc);
+  }
+  return {changed:!!segments,changedCount:changes.length,occurrenceCount:undo?.occurrenceCount||0,cueIds:changes.map(change=>change.before.id),undo};
+ }
+ function undoSourceCorrection(doc,undo){
+  const plan=sourceCorrectionUndos.get(undo);
+  if(!plan||plan.doc!==doc||latestSourceCorrection!==undo||plan.changes.some(change=>!sourceCorrectionSame(doc.segments[change.after.position],change.after,change.after.position)))throw Error('本批相关原文已被后续修改或移动，不能覆盖；请逐段核对。本批撤销未应用。');
+  const changes=new Map(plan.changes.map(change=>[change.before.position,change]));
+  const segments=doc.segments.map((cue,position)=>{const change=changes.get(position);if(!change)return cue;const restored={...cue,text:change.before.text};if(change.before.hasOriginal)restored.original_text=change.before.original;else delete restored.original_text;return restored;});
+  doc.segments=segments;latestSourceCorrection=null;sourceCorrectionUndos.delete(undo);
+  sourceCorrectionVersions.set(doc,(sourceCorrectionVersions.get(doc)||0)+1);invalidateSearch(doc);
+  return {changed:true,changedCount:plan.changes.length,cueIds:plan.changes.map(change=>change.before.id)};
+ }
+
  // Collections are library entries, never synthetic transcripts or AI source.
  function isReadingCollection(doc){return doc?.project_kind==='reading_collection';}
  function readingCollectionError(){throw new Error('成果集版本、条目或来源快照无效；未丢弃原始数据，请保留 JSON 备份。');}
@@ -1794,7 +1860,7 @@
 	function parse(text, filename) {
 		return parseWithDiagnostics(text, filename).document;
 	}
-	const api = { parsePastedSubtitles, subtitleEncodings, decodeSubtitleBytes, translationSelectionInfo, translationSelectionModels, pairedExactExcerptSnapshot, exactExcerptTranslation, exactExcerptTranslationParts, normalizeReadingChapters, readingChapters, createReadingChapter, updateReadingChapter, readingChaptersWith, isReadingCollection, normalizeReadingCollection, createReadingCollection, collectionItemFromCapture, readingCollectionItemKey, readingCollectionItemState, readingCollectionMarkdown, SPEAKER_CORRECTION_LABEL_LIMIT, createSpeakerCorrectionPreview, applySpeakerCorrectionPreview, createLibraryBackupSelection, librarySavedHits, librarySavedHitCurrent, exactExcerptNote, exactExcerptNotesWith, exactExcerptRemoval, exactExcerptSnapshot, exactExcerptText, exactExcerptParts, exactExcerptSource, exactExcerptCount, exactExcerptDuplicate, exactExcerptFreshness, exactExcerptFreshnessBatch, exactExcerptState, exactExcerptStateBatch, createReadingRecency, createLibrarySearch, createLibraryNotebookSearch, libraryCaptureSteps, libraryCaptureCurrent, libraryCaptures, libraryNotebookMarkdown, mediaTiming, mediaTimingOffset, mediaTimingRange, localMediaSource, searchDocument, invalidateSearch, manualReviewSnapshot, manualReviewCurrent, saveManualTranslation, translationReviewQueue, hasNoteContent, segmentNoteCount, BACKUP_REVIEW_BYTES, SUBTITLE_IMPORT_BYTES, vttPayload, libraryHits, librarySnippet, hasProjectAnnotations, projectAnnotationCount, attachProjectTranscript, libraryMatches, documentDuration, sortedLibrary, AUDIO_NOTE_BUDGET, audioNoteCharacters, isAudioProject, audioProjectIdentity, podcastMediaIdentity, SUMMARY_QUESTION, summaryReadiness, podcastURL, podcastSource, cleanGlossary, relevantGlossary, translationQualityMessage, retainAnswers, summaryFreshness, latestSummary, summaryMarkdown, aiReadingMarkdown, parseReadingTime, createPlaybackIndex, segmentAtTime, transcriptText, subtitleExport, mergeLibraryBackup, time, source, media, validate, parse, parseWithDiagnostics, matchesSegment, notebookSegments, notebookMarkdown, translationCurrent, sameCueSnapshot, subscriptionPlan, cleanContexts, answerFreshness };
+	const api = { createSourceCorrectionPreview, applySourceCorrectionPreview, undoSourceCorrection, parsePastedSubtitles, subtitleEncodings, decodeSubtitleBytes, translationSelectionInfo, translationSelectionModels, pairedExactExcerptSnapshot, exactExcerptTranslation, exactExcerptTranslationParts, normalizeReadingChapters, readingChapters, createReadingChapter, updateReadingChapter, readingChaptersWith, isReadingCollection, normalizeReadingCollection, createReadingCollection, collectionItemFromCapture, readingCollectionItemKey, readingCollectionItemState, readingCollectionMarkdown, SPEAKER_CORRECTION_LABEL_LIMIT, createSpeakerCorrectionPreview, applySpeakerCorrectionPreview, createLibraryBackupSelection, librarySavedHits, librarySavedHitCurrent, exactExcerptNote, exactExcerptNotesWith, exactExcerptRemoval, exactExcerptSnapshot, exactExcerptText, exactExcerptParts, exactExcerptSource, exactExcerptCount, exactExcerptDuplicate, exactExcerptFreshness, exactExcerptFreshnessBatch, exactExcerptState, exactExcerptStateBatch, createReadingRecency, createLibrarySearch, createLibraryNotebookSearch, libraryCaptureSteps, libraryCaptureCurrent, libraryCaptures, libraryNotebookMarkdown, mediaTiming, mediaTimingOffset, mediaTimingRange, localMediaSource, searchDocument, invalidateSearch, manualReviewSnapshot, manualReviewCurrent, saveManualTranslation, translationReviewQueue, hasNoteContent, segmentNoteCount, BACKUP_REVIEW_BYTES, SUBTITLE_IMPORT_BYTES, vttPayload, libraryHits, librarySnippet, hasProjectAnnotations, projectAnnotationCount, attachProjectTranscript, libraryMatches, documentDuration, sortedLibrary, AUDIO_NOTE_BUDGET, audioNoteCharacters, isAudioProject, audioProjectIdentity, podcastMediaIdentity, SUMMARY_QUESTION, summaryReadiness, podcastURL, podcastSource, cleanGlossary, relevantGlossary, translationQualityMessage, retainAnswers, summaryFreshness, latestSummary, summaryMarkdown, aiReadingMarkdown, parseReadingTime, createPlaybackIndex, segmentAtTime, transcriptText, subtitleExport, mergeLibraryBackup, time, source, media, validate, parse, parseWithDiagnostics, matchesSegment, notebookSegments, notebookMarkdown, translationCurrent, sameCueSnapshot, subscriptionPlan, cleanContexts, answerFreshness };
 	if (typeof module !== "undefined" && module.exports) module.exports = api;
 	else root.Coconut = api;
 })(typeof window !== "undefined" ? window : globalThis);

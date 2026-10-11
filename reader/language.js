@@ -18,11 +18,10 @@ const glossarySubmissions=new Map();
 // A stopped plan may keep its already-sent result; a retired owner may never
 // write or change a newer task, even after removal rollback or native release.
 function languageOwnerLive(owner){return !!owner&&!owner.retired&&contentIngressAllowed(owner.doc);}
-function retireLanguageOwners(key=null){
+function retireLanguageOwners(key=null,message='原文字稿已移除或更换，旧请求已停止；迟到结果不会覆盖恢复后的文档。'){
  const matches=owner=>owner&&(key===null||owner.key===key);
  const matched=matches(summaryScope)||matches(questionScope)||matches(offlineTranslationScope)||matches(subscriptionScope);
  if(key!==null){
-  const message='原文字稿已移除或更换，旧请求已停止；迟到结果不会覆盖恢复后的文档。';
   if(matches(summaryScope)||matches(questionScope)||matches(subscriptionScope))aiProgress(key,message);
   if(matches(offlineTranslationScope))translationProgress(key,message);
  }
@@ -490,6 +489,13 @@ $('translate-document').onclick=async()=>{
  finally{if(offlineTranslationScope===owner){translating=false;offlineTranslationScope=null;offlineTranslationKey=null;$('ai-consent').checked=false;$('stop-translation').hidden=true;renderLanguage();}}
 };
 window.addEventListener('pagehide',()=>{stopLanguageBatches();closePassageQuestion({retire:true});});
+// Retire owners irreversibly, including an apply→undo cycle with identical text.
+// Already-sent requests cannot be unsent; their late responses are discarded.
+window.addEventListener('coconut-source-corrected',event=>{
+ const {key,identity}=event.detail||{};if(!identity||!state.documents.includes(identity))return;
+ retireLanguageOwners(key,'原文已批量修正或撤销，旧请求已停止；已发送的请求无法撤回，迟到结果不会写入。重新发送前请核对并确认。');
+ if(active()===identity)$('ai-consent').checked=false;
+});
 window.addEventListener('coconut-document-retiring',event=>{
  const {key,bundle}=event.detail||{};if(!bundle)return;
  retireLanguageOwners(key);

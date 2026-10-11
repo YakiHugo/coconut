@@ -431,7 +431,7 @@ body[data-workspace="add"] #count { font-size: 12px; }
 .episode-media .local-media-entry p { flex: 1; min-width: 220px; line-height: 1.6; }
 #source-media { box-shadow: 0 8px 24px #18191912; }
 .reading-modes { border-bottom: 1px solid var(--edge, #dedad4); padding: 0; gap: 22px; margin-top: 22px; }
-.reading-modes button { position: relative; border: 0; border-radius: 0; padding: 12px 2px 15px; font-size: 13px; color: var(--muted); }
+.reading-modes button { position: relative; min-width: 44px; border: 0; border-radius: 0; padding: 12px 2px 15px; font-size: 13px; color: var(--muted); }
 .reading-modes button[aria-pressed="true"] { color: var(--ink); background: transparent; }
 .reading-modes button[aria-pressed="true"]::after { content: ""; position: absolute; height: 3px; background: var(--accent); bottom: -1px; left: 0; right: 0; border-radius: 3px 3px 0 0; }
 .source-overview { margin-bottom: 30px; border-bottom: 1px solid var(--line); padding-bottom: 30px; }
@@ -1275,3 +1275,20 @@ body[data-short-reading-compact="true"] #language-panel { margin-top: 8px; }
 #paste-subtitle-preview li { margin-block: 10px; }
 #paste-subtitle-dialog .dialog-actions { flex-wrap: wrap; gap: 10px; }
 @media(max-width: 600px) { #paste-subtitle-dialog { padding: 18px; } }
+
+/* One scrolling surface keeps whole-source review keyboard controls visible. */
+#source-correction-dialog { box-sizing:border-box; width:min(700px,calc(100vw - 24px)); max-width:700px; max-height:calc(100dvh - 24px); overflow:auto; padding:22px; scroll-padding:12px; }
+#source-correction-dialog :is(button,input) { box-sizing:border-box; min-height:44px; min-width:44px; max-width:100%; scroll-margin:12px; }
+#source-correction-dialog button { white-space:normal; overflow-wrap:anywhere; }
+#source-correction-dialog input { width:100%; }
+#source-correction-dialog p,#source-correction-dialog label { overflow-wrap:anywhere; }
+.source-correction-hit { border-block-start:1px solid var(--line); margin-top:14px; padding:12px 8px; }
+.source-correction-hit label { display:flex; align-items:center; gap:10px; }
+#source-correction-dialog input[type=checkbox] { width:44px; height:44px; flex:0 0 44px; margin:4px 0; }
+.source-correction-context { white-space:pre-wrap; }
+.source-correction-context mark { background:var(--accent-soft,#fce6bd); color:inherit; }
+.source-correction-selection,.source-correction-pagination,.source-correction-recovery { display:flex; flex-wrap:wrap; align-items:center; gap:10px; margin-block:12px; }
+#source-correction-error { color:var(--danger,#a32922); }
+@media(max-width:600px) { #source-correction-dialog { padding:18px; } }
+
+#open-source-correction { min-height:44px; min-width:44px; }
