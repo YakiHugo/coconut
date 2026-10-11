@@ -2123,6 +2123,30 @@ $("library-file").onchange = async () => {
  finally { if(ownsRequest())$("library-file").value=""; }
 };
 
+function textExportLanguage(doc=active()){
+ if(!doc||Coconut.isAudioProject(doc)||readingMode==='summary')return '';
+ return readingMode==='passages'?(passageTranslations?passageTargetLanguage(doc):''):doc.translation_view||'';
+}
+function renderTextExportAction(){
+ const doc=active(),unavailable=!doc||Coconut.isAudioProject(doc)||!doc.segments.length,target=textExportLanguage(doc);
+ $('export-text').disabled=unavailable;
+ $('text-bilingual').disabled=unavailable||!target;
+ if($('text-bilingual').disabled)$('text-bilingual').checked=false;
+ $('text-export-language').textContent=unavailable?'补充文字稿后可导出。':target?'当前显示语言：'+target+'；缺失与过期译文会标注，不会导出过期内容。':'当前未显示译文；切换双语或展开连贯阅读的译文后可附加。';
+}
+$('export-text').onclick=()=>{
+ const doc=active();if(!doc)return;
+ let url,link;
+ try{
+  const target=$('text-bilingual').checked?textExportLanguage(doc):'';
+  const result=Coconut.transcriptText(doc,target);
+  url=URL.createObjectURL(new Blob([result.text],{type:'text/plain;charset=utf-8'}));
+  link=el('a');link.href=url;link.download=doc.title.replace(/[\\/:*?"<>|\x00-\x1f\x7f]/g,'_')+'.txt';link.hidden=true;document.body.append(link);link.click();
+  notice('已发起整篇文字下载（'+doc.segments.length+' 段）'+(target?'，有效译文 '+result.translated+' 段，缺失 '+result.missing+' 段，过期 '+result.stale+' 段':'')+'。请确认文件已保存。','success');
+ }catch{notice('整篇文字导出失败，内容仍在本页，请重试。');}
+ finally{link?.remove();if(url)setTimeout(()=>URL.revokeObjectURL(url),60000);}
+};
+
 $("export-subtitles").onclick = () => {
  const doc=active(); if(!doc)return;
  let url,link;
@@ -2588,7 +2612,7 @@ $('passage-time-range').oninput=()=>{$('passage-time-label').textContent=Coconut
 $('passage-time-range').onchange=()=>{const passage=CoconutPassages.atTime(readingPassages(),Number($('passage-time-range').value));if(passage)openPassage(passage.cues[0].id);};
 $('passage-previous').onclick=()=>movePassagePage(-1);$('passage-next').onclick=()=>movePassagePage(1);
 $('return-to-passages').onclick=returnToPassages;
-$('passage-toggle-translation').onclick=()=>{passageTranslations=!passageTranslations;renderPassages(active());};
+$('passage-toggle-translation').onclick=()=>{passageTranslations=!passageTranslations;renderPassages(active());renderTextExportAction();};
 $('passage-search').onclick=()=>{passageReturn=null;setReadingMode('transcript');$('search').focus();};
 
 // Character shortcuts are opt-out, scoped to reading text, and never become
@@ -2736,6 +2760,7 @@ function composeReadingHeader(){
 }
 
 function applyReadingMode() {
+ renderTextExportAction();
  const audioOnly=Coconut.isAudioProject(active());
  updateReaderMediaVisibility(active());
  const summary=readingMode==='summary'&&!audioOnly;

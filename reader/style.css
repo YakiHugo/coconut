@@ -80,7 +80,7 @@ header button { font-size: 12px; }
 .export-panel h2 { margin: 0 0 16px; }
 .export-panel button { width: 100%; font-size: 13px; }
 .export-panel .hint { margin: 6px 0 0; font-size: 12px; }
-.pending-export, .subtitle-export, .notebook-export { display: grid; gap: 10px; border-top: 1px solid var(--line); margin-top: 18px; padding-top: 18px; }
+.pending-export, .subtitle-export, .text-export, .notebook-export { display: grid; gap: 10px; border-top: 1px solid var(--line); margin-top: 18px; padding-top: 18px; }
 .subtitle-export select { margin-left: 8px; }
 .import-workspace { max-width: 1050px; margin: 42px auto 0; }
 .welcome-mark { width: 54px; height: 54px; border: 1px solid var(--edge, #ead8ce); border-radius: 18px; background: var(--surface-selected, #fff0e8); text-align: center; line-height: 50px; font-size: 35px; color: var(--accent); }

@@ -896,6 +896,33 @@
   if(!Number.isFinite(seconds) || seconds<0 || !doc.segments.length || seconds>doc.segments.reduce((end,s)=>Math.max(end,s.end),0))return null;
   return doc.segments.findLast(s=>s.start<=seconds && s.end>=seconds) || doc.segments.find(s=>s.start>=seconds) || null;
  }
+ // Reading export uses the same display-only paragraphs as the reader, not subtitle syntax.
+ function transcriptText(doc, target='') {
+  if(isAudioProject(doc)||!doc.segments.length)throw new Error('尚未导入文字稿，不能导出整篇文字');
+  const passages=typeof module!=='undefined'&&module.exports?require('./passages.js'):root.CoconutPassages;
+  const origin=doc.provenance?.kind==='authored_demo'?'自写演示内容（无对应音视频）':
+   podcastURL(doc.source_url)||podcastOrigin(doc)||(doc.podcast_source?.kind==='direct_media'?podcastURL(doc.podcast_source.media_url):'')||(doc.local_media_source?'本地媒体：'+doc.local_media_source.name:doc.source_media?'本地原始媒体（无原站链接）':'未关联来源');
+  const lines=[doc.title,'来源：'+origin],counts={translated:0,missing:0,stale:0},blocks=[];
+  const join=values=>values.reduce((text,value,index)=>text+(index?passages.separator(values[index-1],value):'')+value,'');
+  for(const passage of passages.build(doc.segments)){
+   const block=[];
+   if(passage.speaker!==null&&passage.speaker!=='')block.push('说话人：'+passage.speaker);
+   block.push((target?'原文：\n':'')+join(passage.cues.map(cue=>cue.text)));
+   if(target){
+    const parts=[];let run=[];
+    const flush=()=>{if(run.length){parts.push(join(run));run=[];}};
+    for(const cue of passage.cues){
+     const item=cue.translations?.[target];
+     if(item&&translationCurrent(cue,doc,item)){run.push(item.text);counts.translated++;}
+     else{flush();counts[item?'stale':'missing']++;parts.push(item?'[译文已过期，未导出]':'[暂无译文]');}
+    }
+    flush();block.push('译文（'+target+'）：\n'+parts.join('\n'));
+   }
+   blocks.push(block.join('\n'));
+  }
+  if(target)lines.push('译文（'+target+'）：有效 '+counts.translated+' 段 · 缺失 '+counts.missing+' 段 · 过期 '+counts.stale+' 段');
+  return {text:lines.join('\n')+'\n\n'+blocks.join('\n\n')+'\n',...counts};
+ }
  function subtitleExport(doc, format="srt", bilingual=false) {
   if(isAudioProject(doc)||!doc.segments.length)throw new Error('尚未导入文字稿，不能导出字幕');
   if (!["srt","vtt"].includes(format)) throw new Error("不支持的字幕格式");
@@ -1218,7 +1245,7 @@
 			segments,
 		});
 	}
-	const api = { exactExcerptSnapshot, exactExcerptText, exactExcerptParts, exactExcerptSource, exactExcerptCount, exactExcerptDuplicate, exactExcerptFreshness, exactExcerptFreshnessBatch, exactExcerptState, exactExcerptStateBatch, createReadingRecency, createLibrarySearch, createLibraryNotebookSearch, libraryCaptureSteps, libraryCaptureCurrent, libraryCaptures, libraryNotebookMarkdown, mediaTiming, mediaTimingOffset, mediaTimingRange, localMediaSource, searchDocument, invalidateSearch, manualReviewSnapshot, manualReviewCurrent, saveManualTranslation, translationReviewQueue, hasNoteContent, segmentNoteCount, BACKUP_REVIEW_BYTES, SUBTITLE_IMPORT_BYTES, vttPayload, libraryHits, librarySnippet, hasProjectAnnotations, projectAnnotationCount, attachProjectTranscript, libraryMatches, documentDuration, sortedLibrary, AUDIO_NOTE_BUDGET, audioNoteCharacters, isAudioProject, audioProjectIdentity, podcastMediaIdentity, SUMMARY_QUESTION, summaryReadiness, podcastURL, podcastSource, cleanGlossary, relevantGlossary, translationQualityMessage, retainAnswers, summaryFreshness, latestSummary, summaryMarkdown, aiReadingMarkdown, parseReadingTime, createPlaybackIndex, segmentAtTime, subtitleExport, mergeLibraryBackup, time, source, media, validate, parse, matchesSegment, notebookSegments, notebookMarkdown, translationCurrent, sameCueSnapshot, subscriptionPlan, cleanContexts, answerFreshness };
+	const api = { exactExcerptSnapshot, exactExcerptText, exactExcerptParts, exactExcerptSource, exactExcerptCount, exactExcerptDuplicate, exactExcerptFreshness, exactExcerptFreshnessBatch, exactExcerptState, exactExcerptStateBatch, createReadingRecency, createLibrarySearch, createLibraryNotebookSearch, libraryCaptureSteps, libraryCaptureCurrent, libraryCaptures, libraryNotebookMarkdown, mediaTiming, mediaTimingOffset, mediaTimingRange, localMediaSource, searchDocument, invalidateSearch, manualReviewSnapshot, manualReviewCurrent, saveManualTranslation, translationReviewQueue, hasNoteContent, segmentNoteCount, BACKUP_REVIEW_BYTES, SUBTITLE_IMPORT_BYTES, vttPayload, libraryHits, librarySnippet, hasProjectAnnotations, projectAnnotationCount, attachProjectTranscript, libraryMatches, documentDuration, sortedLibrary, AUDIO_NOTE_BUDGET, audioNoteCharacters, isAudioProject, audioProjectIdentity, podcastMediaIdentity, SUMMARY_QUESTION, summaryReadiness, podcastURL, podcastSource, cleanGlossary, relevantGlossary, translationQualityMessage, retainAnswers, summaryFreshness, latestSummary, summaryMarkdown, aiReadingMarkdown, parseReadingTime, createPlaybackIndex, segmentAtTime, transcriptText, subtitleExport, mergeLibraryBackup, time, source, media, validate, parse, matchesSegment, notebookSegments, notebookMarkdown, translationCurrent, sameCueSnapshot, subscriptionPlan, cleanContexts, answerFreshness };
 	if (typeof module !== "undefined" && module.exports) module.exports = api;
 	else root.Coconut = api;
 })(typeof window !== "undefined" ? window : globalThis);

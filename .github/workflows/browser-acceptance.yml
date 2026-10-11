@@ -79,6 +79,11 @@ jobs:
         env:
           COCONUT_UI_SCREENSHOTS: ${{ runner.temp }}/coconut-authored-ui
         run: node tests/passages-browser.mjs
+      - name: Verify actual whole-transcript TXT downloads and current bilingual gaps
+        if: ${{ !cancelled() && steps.browser_setup.outcome == 'success' }}
+        env:
+          COCONUT_UI_SCREENSHOTS: ${{ runner.temp }}/coconut-authored-ui
+        run: node tests/text-export-browser.mjs
       - name: Verify human translation review, draft protection and actual JSON VTT Markdown exports
         if: ${{ !cancelled() && steps.browser_setup.outcome == 'success' }}
         run: node tests/translation-review-browser.mjs
