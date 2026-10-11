@@ -18,14 +18,14 @@
 <script src="library-store.js?v=e76ded9456" defer></script>
 <script src="indexeddb-document-adapter.js?v=65c0c5a814" defer></script>
 <script src="storage-provider.js?v=1cb898e984" defer></script>
-<script src="app.js?v=4f98272cda" type="text/coconut-pending" data-reader-script>
+<script src="app.js?v=d6689f0e5e" type="text/coconut-pending" data-reader-script>
 </script>
 <script src="language.js?v=c8e5b0d999" type="text/coconut-pending" data-reader-script></script>
 <script src="translation-review.js?v=ef64ceb824" type="text/coconut-pending" data-reader-script></script>
 <script src="podcasts.js?v=d3db57978f" type="text/coconut-pending" data-reader-script></script>
 <script src="jobs.js?v=59aca9de28" type="text/coconut-pending" data-reader-script>
 </script>
-<script src="updates.js?v=9b22a469a8" type="text/coconut-pending" data-reader-script></script>
+<script src="updates.js?v=52e9d1e937" type="text/coconut-pending" data-reader-script></script>
 <script src="storage-bootstrap.js?v=bf60514d5d" defer></script>
 </head>
 <body>
@@ -332,9 +332,9 @@ cd coconut
 <dialog id="keyboard-help" aria-labelledby="keyboard-help-heading" aria-describedby="keyboard-help-boundary">
 <div class="keyboard-help-heading"><h2 id="keyboard-help-heading">阅读快捷键</h2><button id="keyboard-help-close" type="button" autofocus aria-label="关闭快捷键帮助">关闭</button></div>
 <p id="keyboard-help-boundary" class="hint">在阅读正文中使用。输入文字、操作按钮或播放器时不触发；可用 Tab 进入正文。媒体键只控制已经关联的原声。</p>
-<dl class="keyboard-keys"><div><dt><kbd>/</kbd></dt><dd>搜索原文；搜索框中 Enter 下一匹配，Shift + Enter 上一匹配</dd></div><div><dt><kbd>J</kbd> / <kbd>L</kbd></dt><dd>后退 / 前进 10 秒，结束段落试听或循环</dd></div><div><dt><kbd>K</kbd></dt><dd>暂停 / 继续；正在试听的段落仍到段尾停下</dd></div><div><dt><kbd>G</kbd></dt><dd>定位正在播放的原文，不开始播放</dd></div><div><dt><kbd>?</kbd></dt><dd>打开此帮助；Escape 关闭并返回原焦点</dd></div></dl>
+<dl class="keyboard-keys"><div><dt><kbd>Ctrl / ⌘ + F</kbd></dt><dd>查找当前文字稿；不受单字符快捷键开关影响</dd></div><div><dt><kbd>/</kbd></dt><dd>搜索原文；搜索框中 Enter 下一匹配，Shift + Enter 上一匹配</dd></div><div><dt><kbd>J</kbd> / <kbd>L</kbd></dt><dd>后退 / 前进 10 秒，结束段落试听或循环</dd></div><div><dt><kbd>K</kbd></dt><dd>暂停 / 继续；正在试听的段落仍到段尾停下</dd></div><div><dt><kbd>G</kbd></dt><dd>定位正在播放的原文，不开始播放</dd></div><div><dt><kbd>?</kbd></dt><dd>打开此帮助；Escape 关闭并返回原焦点</dd></div></dl>
 <label class="keyboard-preference"><input id="keyboard-shortcuts-enabled" type="checkbox" checked>启用阅读单字符快捷键</label>
-<p class="hint">关闭后恢复浏览器默认键位（如 Firefox 的 / 快速查找）；仍可点击「快捷键」重新启用。Ctrl / ⌘ 等组合键保持原样。</p>
+<p class="hint">关闭后恢复浏览器默认键位（如 Firefox 的 / 快速查找）；仍可点击「快捷键」重新启用。Ctrl / ⌘ + F 仍可查找当前文字稿；编辑文字、弹窗和纯音频项目保留原行为。</p>
 <p id="keyboard-preference-status" class="hint" role="status"></p>
 </dialog>
 <dialog id="passage-question-dialog" class="passage-question-dialog" aria-labelledby="passage-question-heading">

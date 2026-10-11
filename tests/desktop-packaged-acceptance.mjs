@@ -198,6 +198,19 @@ try{
  check('packaged_backup_is_named_full_library',menuFacts[2].label.includes('整个书架'));
  await importFile(page,fixturePath,true);
  check('all_authored_segments_imported',(await stored(page)).segments.length===3);
+ const findFacts=await application.evaluate(({Menu})=>{const menu=Menu.getApplicationMenu(),item=menu.getMenuItemById('find-transcript'),edit=menu.getMenuItemById('coconut-edit-menu');return {enabled:item?.enabled,accelerator:item?.accelerator,inEdit:edit?.submenu.items.includes(item)};});
+ check('packaged_native_find_is_in_edit_menu',findFacts.enabled&&findFacts.inEdit&&findFacts.accelerator==='CmdOrCtrl+F');
+ await page.locator('#passage-body').focus();await nativeFileCommand('find-transcript');
+ check('packaged_find_menu_focuses_transcript_search',await page.locator('#search').evaluate(node=>document.activeElement===node));
+ await page.locator('#search').fill('authored');await page.keyboard.press('Enter');
+ check('packaged_find_enter_focuses_matching_cue',await row(page,'last').evaluate(node=>document.activeElement===node));
+ await page.keyboard.press('Meta+f');
+ check('packaged_find_accelerator_refocuses_query',await page.locator('#search').evaluate(node=>document.activeElement===node&&node.value==='authored'&&node.selectionStart===0&&node.selectionEnd===8));
+ await page.locator('#mode-passages').click();
+ check('packaged_find_returns_to_reading_without_saved_mark',await page.locator('#passage-workspace').isVisible()&&!(await stored(page)).readingPosition);
+ await page.locator('#mode-transcript').click();await page.locator('#search').fill('');
+ await page.locator('#mode-summary').click();
+
  check('local_subtitles_do_not_claim_manual_verification',(await stored(page)).provenance.caption_method==='unknown'&&(await stored(page)).provenance.review_status==='unreviewed'&&(await page.locator('#provenance').textContent()).includes('导入的字幕'));
  check('summary_stays_uncreated',await page.locator('#summary-state').textContent()==='未生成');
  await page.locator('#prepare-summary').click();
@@ -263,6 +276,8 @@ try{
  await page.locator('#use-playback-time').click();await page.locator('#audio-bookmark-note').fill('Check this authored audio moment');await page.locator('#audio-bookmark-form button[type=submit]').click();
  const audioExpected=await stored(page);
  check('packaged_audio_note_and_timestamp_saved',audioExpected.project_note==='Native project note survives app restart'&&audioExpected.timestamp_bookmarks.length===1&&audioExpected.timestamp_bookmarks[0].time===4.25&&audioExpected.timestamp_bookmarks[0].note==='Check this authored audio moment');
+ await page.locator('#reader-workspace').focus();await nativeFileCommand('find-transcript');
+ check('native_find_does_not_open_transcript_for_audio_only',await page.locator('#audio-project').isVisible()&&await page.locator('#transcript-layout').isHidden());
  check('packaged_audio_has_no_inferred_content_or_blob',audioExpected.segments.length===0&&audioExpected.ai_answers.length===0&&!JSON.stringify(audioExpected).includes('blob:'));
  await page.locator('#source-media audio').evaluate(media=>{media.currentTime=0;});await page.locator('#audio-bookmarks button').first().click();
  await page.waitForFunction(()=>{const media=document.querySelector('#source-media audio');return !media.seeking&&Math.abs(media.currentTime-4.25)<0.01&&media.paused;});
@@ -302,6 +317,8 @@ try{
  }
  await page.locator('#reading-settings > summary').click();await page.locator('#document-details').click();
  await page.locator('#document-title').fill('Authored uncommitted native title');
+ await nativeFileCommand('find-transcript');
+ check('native_find_preserves_modal_title_draft',await page.locator('#document-title').evaluate(node=>document.activeElement===node&&node.value==='Authored uncommitted native title'));
  await nativeFileCommand('import-transcript');
  await page.locator('#details-dialog [data-file-menu-hint]').waitFor({state:'visible'});
  check('native_file_menu_respects_modal',await page.locator('#details-dialog').isVisible());

@@ -1,11 +1,12 @@
-/** Bounded native File commands. No paths, credentials or new renderer privileges. */
+/** Bounded native File and Find commands. No paths, credentials or new renderer privileges. */
 export function createFileMenu({window,origin,blocked=()=>false,now=Date.now}) {
  let generation=0,ready=false;
  const live=()=>!window.isDestroyed()&&!window.webContents.isDestroyed();
  const trusted=()=>live()&&[origin+'/',origin+'/index.html'].includes(window.webContents.getURL());
  const commands=[['import-transcript','导入文字稿…','CmdOrCtrl+O'],
   ['open-local-media','打开本地音频或视频…','CmdOrCtrl+Shift+O'],
-  ['backup-library','导出整个书架的完整备份…','CmdOrCtrl+Shift+S']];
+  ['backup-library','导出整个书架的完整备份…','CmdOrCtrl+Shift+S'],
+  ['find-transcript','查找当前文字稿…','CmdOrCtrl+F']];
  const items=commands.map(([id,label,accelerator])=>({id,label,accelerator,enabled:false,click:async()=>{
   if(!ready||!trusted()||blocked()||window.webContents.isLoadingMainFrame())return false;
   const issuedAt=now();
@@ -32,7 +33,7 @@ export function createFileMenu({window,origin,blocked=()=>false,now=Date.now}) {
    if(loaded&&current===generation&&trusted()&&!window.webContents.isLoadingMainFrame())enable(true);
   }catch{} // Failed bootstrap keeps the commands disabled; recovery UI stays available.
  });
- return {id:'coconut-file-menu',label:'文件',submenu:items,
+ return {id:'coconut-file-menu',label:'文件',submenu:items.slice(0,3),findItem:items[3],
   // Main binds the real menu after buildFromTemplate, before loading any page.
   bind:menu=>{installed=menu;enable(ready);}};
 }

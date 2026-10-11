@@ -1,5 +1,5 @@
 /** Packaged macOS entry point. The renderer never receives Node, shell or credential access. */
-import { app, BrowserWindow, dialog, shell, ipcMain, Menu } from 'electron';
+import { app, BrowserWindow, dialog, shell, ipcMain, Menu, MenuItem } from 'electron';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { readFile } from 'node:fs/promises';
@@ -132,8 +132,13 @@ else {
       if(action==='install')return installUpdate();
       throw new Error('不支持的更新操作');
     });
-    const {bind:bindFileMenu,...fileMenu}=createFileMenu({window,origin,blocked:()=>quitting||lifecycle.busy()});
-    Menu.setApplicationMenu(Menu.buildFromTemplate([{label:'Coconut',submenu:[{role:'about'},{label:'检查更新…',click:()=>{void updater.check({manual:true});void window.webContents.executeJavaScript('document.getElementById("app-updates").open=true');}},{type:'separator'},{role:'quit'}]},fileMenu,{role:'editMenu'},{role:'windowMenu'}]));
+    const {bind:bindFileMenu,findItem,...fileMenu}=createFileMenu({window,origin,blocked:()=>quitting||lifecycle.busy()});
+    const applicationMenu=Menu.buildFromTemplate([{label:'Coconut',submenu:[{role:'about'},{label:'检查更新…',click:()=>{void updater.check({manual:true});void window.webContents.executeJavaScript('document.getElementById("app-updates").open=true');}},{type:'separator'},{role:'quit'}]},fileMenu,{id:'coconut-edit-menu',role:'editMenu'},{role:'windowMenu'}]);
+    // Preserve Electron's platform-specific editing roles, then append our one
+    // scoped Find command to the actual native Edit menu.
+    const editMenu=applicationMenu.getMenuItemById('coconut-edit-menu').submenu;
+    editMenu.append(new MenuItem({type:'separator'}));editMenu.append(new MenuItem(findItem));
+    Menu.setApplicationMenu(applicationMenu);
     bindFileMenu(Menu.getApplicationMenu());
     window.webContents.session.setPermissionRequestHandler((_contents,_permission,callback)=>callback(false));
     window.webContents.session.setPermissionCheckHandler(()=>false);

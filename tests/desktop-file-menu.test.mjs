@@ -12,7 +12,7 @@ function native(){
  window.isDestroyed=()=>destroyed;contents.isDestroyed=()=>destroyed;contents.getURL=()=>url;contents.isLoadingMainFrame=()=>loading;
  const calls=[],pending=[];contents.executeJavaScript=(code,gesture)=>{calls.push({code,gesture});return gesture?Promise.resolve(true):new Promise(resolve=>pending.push(resolve));};
  const menu=createFileMenu({window,origin:'http://127.0.0.1:47831',blocked:()=>blocked,now:()=>1234});
- const actual=new Map(menu.submenu.map(item=>[item.id,{enabled:item.enabled}]));menu.bind({getMenuItemById:id=>actual.get(id)});
+ const actual=new Map([...menu.submenu,menu.findItem].map(item=>[item.id,{enabled:item.enabled}]));menu.bind({getMenuItemById:id=>actual.get(id)});
  return {menu,actual,calls,pending,contents,window,set(values){if('destroyed'in values)destroyed=values.destroyed;if('loading'in values)loading=values.loading;if('url'in values)url=values.url;if('blocked'in values)blocked=values.blocked;}};
 }
 test('native File items are disabled until bootstrap and dispatch only explicit bounded commands with a gesture',async()=>{
@@ -76,4 +76,14 @@ test('ordinary Web reader has no native command hook or intercepted open shortcu
 });
 test('package allowlist includes the native dispatcher',()=>{
  assert.match(fs.readFileSync(new URL('desktop/package.mjs',root),'utf8'),/'file-menu\.mjs'/);
+});
+
+
+test('native Find is a bounded Edit-menu item with bootstrap and lifecycle ownership',async()=>{
+ const n=native(),find=n.menu.findItem;assert.equal(find.id,'find-transcript');assert.equal(find.accelerator,'CmdOrCtrl+F');assert.equal(await find.click(),false);
+ n.contents.emit('did-finish-load');n.pending.shift()(true);await turn();assert.equal(n.actual.get(find.id).enabled,true);assert.equal(await find.click(),true);
+ assert.match(n.calls.at(-1).code,/coconutFileCommand\("find-transcript"/);assert.equal(n.calls.at(-1).gesture,true);
+ for(const state of [{blocked:true},{loading:true},{url:'https://other.example/'}]){n.set(state);assert.equal(await find.click(),false);n.set({blocked:false,loading:false,url:'http://127.0.0.1:47831/'});}
+ n.contents.emit('render-process-gone');assert.equal(n.actual.get(find.id).enabled,false);assert.equal(await find.click(),false);
+ const main=fs.readFileSync(new URL('desktop/main.mjs',root),'utf8');assert.match(main,/id:'coconut-edit-menu',role:'editMenu'/);assert.match(main,/editMenu\.append\(new MenuItem\(findItem\)\)/);
 });

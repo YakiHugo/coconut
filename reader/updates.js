@@ -3,15 +3,16 @@
  const api=window.coconutUpdates;if(!api)return;
  const panel=document.getElementById('app-updates'),status=document.getElementById('update-status');panel.hidden=false;
  const button=id=>document.getElementById(id);
- // Only the native menu calls this bounded adapter. Web shortcuts stay native
- // to the browser, and all import/save work stays in the existing UI handlers.
+ // Only the native menu calls this bounded adapter. Find and import/save work stay in the existing UI handlers;
+ // unsupported reader contexts never execute a menu action.
  let fileMenuClosed=false;
  window.addEventListener('pagehide',()=>{fileMenuClosed=true;},{once:true});
  window.coconutFileCommand=(command,request)=>{
-  const targets={'import-transcript':'import','open-local-media':'open-local-media','backup-library':'export-library'};
+  const targets={'import-transcript':'import','open-local-media':'open-local-media','backup-library':'export-library','find-transcript':null};
   if(!Object.hasOwn(targets,command)||fileMenuClosed||!request||!Number.isFinite(request.issuedAt)||
      request.issuedAt<performance.timeOrigin||!Number.isFinite(request.expiresAt)||request.expiresAt<=Date.now())return false;
   if(window.CoconutStorageBootstrap?.phase!=='ready'||readerClosing||document.body.inert||document.querySelector('.shell')?.inert)return false;
+  if(command==='find-transcript')return openTranscriptFind();
   const modal=document.querySelector('dialog[open]');
   if(modal){
    let hint=modal.querySelector('[data-file-menu-hint]');

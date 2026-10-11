@@ -13,6 +13,18 @@ character shortcuts and an opt-out setting, saved only in this browser:
 | `G` | Locate its current source cue without starting playback |
 | `?` | Open shortcut help |
 
+**Ctrl+F / Cmd+F** opens the same complete-transcript search and selects its
+existing query. It works from the reading canvas and its non-editing controls,
+including passages and summary, even when character shortcuts are disabled.
+The packaged desktop exposes this command in the actual native Edit menu,
+using the existing trusted-origin, bootstrap-ready, short-lived command bridge.
+It grants no new renderer privilege and never invokes the browser's OS-level Find.
+Editing inputs (except the transcript search itself), editable ancestors, native
+media, sidebar/Add focus, audio-only projects, modals, composition and lifecycle
+locks are left alone. Web defaults are prevented only when Find actually opens.
+Search retains existing filters, next/previous behavior, passage return and saved
+reading marks; it never starts media or model work.
+
 Within the search field, Enter / Shift+Enter invoke the existing next / previous
 match actions and focus the matching cue, including across pages. Empty searches
 do not consume Enter. These non-character actions remain available when character
@@ -28,7 +40,7 @@ readers can leave control focus and use shortcuts without a mouse.
   keyboard events without consuming them.
 - Composition sessions, `isComposing`, legacy IME key code 229, repeated keydown,
   prevented events, Ctrl / Meta / Alt / AltGraph and unrelated shifted keys are
-  ignored. Space, arrows and system combinations are unchanged.
+  ignored. Space, arrows and unrelated system combinations are unchanged.
 - Help uses native dialog focus containment and Escape dismissal. It restores
   the prior connected focus target, or its visible opener if that target was
   replaced. No input is auto-focused, including on mobile. Help does not pause,
@@ -51,6 +63,12 @@ Browser conflict reference: [Firefox Find and Quick Find](https://support.mozill
 Event handling reference: [KeyboardEvent](https://developer.mozilla.org/en-US/docs/Web/API/KeyboardEvent).
 
 ### Verification boundary
+
+`tests/reader-find.test.mjs` evaluates all shipped behavior scripts in declared
+order and covers standard Find, its native adapter and unsupported contexts.
+`tests/desktop-file-menu.test.mjs` verifies bounded native dispatch readiness and
+main-process wiring; `tests/desktop-packaged-acceptance.mjs` checks the real native
+Edit menu and Cmd+F on CI. These runtime proofs remain CI-only.
 
 `tests/reader-keyboard.test.mjs` covers the shortcut dispatch, all guarded contexts,
 search/page transitions, notes/bookmarks, one-player ownership, bounded preview,
