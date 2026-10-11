@@ -66,7 +66,13 @@ export async function verifyJobRecovery(browser,origin,preparedMedia,onCheck=()=
   await page.evaluate(()=>{window.jobRecoveryBefore={row:document.querySelector('.segment'),note:document.querySelector('#note'),focus:document.activeElement,mode:readingMode,workspace:document.body.dataset.workspace,scrollY,hidden:document.querySelector('#episode-media').hidden};});
   release();await page.waitForFunction(()=>!document.querySelector('[data-job-action="open"]').disabled);
   check('late_media_mount_preserves_draft_focus_mode_and_scroll',await page.evaluate(()=>{const b=window.jobRecoveryBefore,p=document.querySelector('#source-media audio,#source-media video');return !!p&&p.paused&&p.currentTime===0&&document.querySelector('.segment')===b.row&&document.querySelector('#note')===b.note&&document.activeElement===b.focus&&b.note.value==='Draft during delayed recovery'&&readingMode===b.mode&&document.body.dataset.workspace===b.workspace&&scrollY===b.scrollY&&document.querySelector('#episode-media').hidden===b.hidden;}));
-  if(await page.locator('#episode-media').isHidden()){await page.locator('#close-note').click();await page.locator('#toggle-reader-media').click();}
+  if(await page.locator('#episode-media').isHidden()){
+   await page.locator('#close-note').click();
+   // Closing the note renders the current book and can reveal recovered media.
+   // Decide whether to expand from the current panel, not the pre-render state.
+   if(await page.locator('#episode-media').isHidden())await page.locator('#toggle-reader-media').click();
+  }
+  check('ready_media_panel_control_is_expanded',await page.locator('#episode-media').evaluate(panel=>!panel.hidden)&&await page.locator('#toggle-reader-media').getAttribute('aria-expanded')==='true');
   check('ready_media_is_actionable',await page.locator('#source-media audio,#source-media video').isVisible());
 
   // A deliberate browser-local attachment remains the playback owner.
