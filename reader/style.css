@@ -1108,3 +1108,7 @@ body[data-media-docked="true"] .reading-feedback:has(#save-warning-home .has-war
 .notebook-details>.notebook-note{border-left:2px solid var(--line);padding-left:.75rem}
 
 @media(max-width:480px){.library-notebook{padding:16px}.notebook-capture label{min-height:44px}}
+
+/* Stable width keeps save feedback from moving passage controls or text. */
+.passage-actions .passage-bookmark { min-width: 8em; min-height: 44px; text-align: left; }
+.passage-bookmark[aria-pressed="true"] { color: var(--accent); }

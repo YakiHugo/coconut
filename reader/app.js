@@ -347,6 +347,7 @@ libraryStore.subscribe((snapshot,event)=>{
  if(event?.result?.ok)for(const captured of event.result.checkpoints)recordPersistenceCheckpoint(captured.identity,captured.checkpoint);
  if(event?.type==='release')resumeDeferredContentInputs();
  renderSaveStatus(libraryStore.status());
+ renderPassageReadingPosition();
  if(event?.type==='commit'){
   renderSummaryPersistence();
   window.dispatchEvent(new CustomEvent('coconut-persistence-change',{detail:event.result}));
@@ -2547,8 +2548,21 @@ function appendPassageCue(paragraph,cue,text,previousText){
  const span=el('span','passage-cue',text);span.dataset.cueId=cue.id;paragraph.append(span);
  return text;
 }
+// Update only controls: a save receipt must not rebuild reading text, move focus,
+// change the passage page, or disturb a playing/previewing media element.
+function renderPassageReadingPosition(){
+ const doc=active(),host=$('passage-body');if(!doc||host.dataset.documentKey!==doc.key)return;
+ const status=libraryStore.status(doc.key)?.status||'saved';
+ for(const button of host.querySelectorAll('.passage-bookmark')){
+  const contains=[...button.closest('.passage').querySelectorAll('.passage-original .passage-cue')].some(cue=>cue.dataset.cueId===doc.readingPosition);
+  button.setAttribute('aria-pressed',String(contains));
+  button.dataset.state=contains?status:'unmarked';
+  button.textContent=!contains?'读到这里':status==='saved'?'阅读位置在本段':status==='pending'?'位置待保存':'位置未保存';
+  button.title=contains?'本段包含阅读位置；点击将位置改为本段开头。保存状态见页面提示。':'将阅读位置设为本段开头';
+ }
+}
 function renderPassages(doc){
- const passages=readingPassages(doc),host=$('passage-body');
+ const passages=readingPassages(doc),host=$('passage-body');host.dataset.documentKey=doc.key;
  if(!passages.length){host.replaceChildren();return;}
  if(passageDocumentKey!==doc.key){passageDocumentKey=doc.key;passageAnchor=doc.readingPosition||passages[0].cues[0].id;passagePageStart=0;passageReturn=null;passageTranslations=true;}
  const anchored=CoconutPassages.locate(passages,passageAnchor)||passages[0];
@@ -2586,6 +2600,15 @@ function renderPassages(doc){
   section.append(columns);
   if(target&&passageTranslations)for(const cue of passage.cues){const item=cue.translations?.[target];if(item&&Coconut.translationCurrent(cue,doc,item)){const warning=Coconut.translationQualityMessage(item);if(warning)section.append(el('p','passage-translation-warning',Coconut.time(cue.start)+' · 译文待核对：'+warning));}}
   const actions=el('div','passage-actions');
+  const bookmark=el('button','passage-bookmark','读到这里'),selection=activeSelectionRevision;bookmark.type='button';
+  bookmark.setAttribute('aria-label','读到这里：将阅读位置设为本段开头 '+Coconut.time(passage.start));
+  bookmark.onclick=()=>{
+   if(!bookmark.isConnected||active()!==doc||activeSelectionRevision!==selection||!contentIngressAllowed(doc))return;
+   doc.readingPosition=passage.cues[0].id;
+   queueDocument(doc);
+   renderPassageReadingPosition();
+  };
+  actions.append(bookmark);
   if(window.CoconutQuotation){
    quotationController??=CoconutQuotation.create({isCurrent:owner=>active()===owner&&state.documents.includes(owner)&&contentIngressAllowed(owner),saveExcerpt:saveExactExcerpt,excerptState:exactExcerptSaveState});
    const quote=el('button','passage-quote','引用原文');quote.type='button';quote.setAttribute('aria-label','引用 '+Coconut.time(passage.start)+' 的原文');
@@ -2608,8 +2631,38 @@ function renderPassages(doc){
   }
   host.append(section);
  }
+ renderPassageReadingPosition();
  renderPassagePlayback(passagePlayback?.getState());
 }
+// Fixed playback/feedback panels are outside the browser's native focus viewport.
+// Only a real Tab move may reveal a passage action; receipts and layout changes
+// never scroll. Defer once so native focus scrolling has settled first.
+let passageActionTab=false;
+document.addEventListener('keydown',event=>{passageActionTab=event.key==='Tab';},true);
+document.addEventListener('keyup',event=>{if(event.key==='Tab')passageActionTab=false;},true);
+document.addEventListener('pointerdown',()=>{passageActionTab=false;},true);
+document.addEventListener('focusin',event=>{
+ const target=event.target,keyboard=passageActionTab;passageActionTab=false;
+ if(!keyboard||!target.matches?.('.passage-actions button, .passage-actions a')||!target.matches(':focus-visible'))return;
+ const doc=active(),selection=activeSelectionRevision;
+ requestAnimationFrame(()=>{
+  if(document.activeElement!==target||!target.isConnected||active()!==doc||activeSelectionRevision!==selection||!target.matches(':focus-visible'))return;
+  const rect=target.getBoundingClientRect(),style=getComputedStyle(target);
+  if(!rect.width||!rect.height)return;
+  const ring=(parseFloat(style.outlineWidth)||0)+(parseFloat(style.outlineOffset)||0)+2;
+  const bounds={left:rect.left-ring,right:rect.right+ring,top:rect.top-ring,bottom:rect.bottom+ring};
+  let ceiling=Infinity,occluded=false;
+  for(const overlay of [$('reading-feedback'),$('media-dock')]){
+   if(overlay.hidden||getComputedStyle(overlay).display==='none')continue;
+   const area=overlay.getBoundingClientRect();
+   if(area.width&&area.height&&area.bottom>0&&area.top<window.innerHeight&&area.left<bounds.right&&area.right>bounds.left){
+    ceiling=Math.min(ceiling,area.top);
+    if(area.top<bounds.bottom&&area.bottom>bounds.top)occluded=true;
+   }
+  }
+  if(occluded&&bounds.bottom>ceiling)window.scrollBy({top:bounds.bottom-ceiling,left:0,behavior:'instant'});
+ });
+});
 function openPassage(cueId,scroll=true){
  const doc=active(),passages=readingPassages(doc),passage=CoconutPassages.locate(passages,cueId)||passages[0];if(!passage)return;
  $('reading-info').open=false;mediaExpandedKey=null;
