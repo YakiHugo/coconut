@@ -112,11 +112,13 @@ metadata, and capture time. Restoring does not reattach by similar wording or
 replace missing source cues. Stale and missing-source records remain historical
 evidence available in the notebook and Markdown export.
 
-Use a reader that supports exact excerpts to open, edit, re-save or restore these
-libraries and backups. Older readers do not retain this field: opening and then
-editing/re-saving the same library can discard it, as can JSON import or library
-restore; re-exporting from those versions cannot preserve it. Retain an untouched
-original JSON backup when moving between versions. This is an optional document-
+Use a reader that supports exact excerpts to view, manage or restore these
+libraries and backups. Older readers' ordinary library load/save paths may retain
+unknown top-level fields, but their JSON document import and library restore
+rebuild validated documents and discard `exact_excerpts`. Use a compatible reader
+to restore these backups, and retain an untouched original JSON when moving
+between versions. Preservation by ordinary load/save does not imply full downgrade
+compatibility. This is an optional document-
 field addition, not an IndexedDB schema/database or backup-protocol migration. Existing
 backups without the field retain their behavior. Unsupported or malformed exact
 records reject validation rather than being silently dropped; keep the original
