@@ -219,6 +219,20 @@ try {
   await capture('01-desktop-help');
   await escapeHelp('reading_surface_help', noMediaHelpState);
 
+  stage = 'standard_find_in_current_transcript';
+  await page.locator('#passage-body').focus();
+  await page.keyboard.press('Control+f');
+  check('ctrl_find_opens_existing_transcript_search', await focusIs('#search') && await page.locator('#transcript-layout').isVisible());
+  await page.locator('#search').fill('keyboard-marker');
+  await page.keyboard.press('Enter'); await expectFocusedCue(searchIds[0]);
+  await page.keyboard.press('Meta+f');
+  check('meta_find_refocuses_and_selects_existing_query', await page.locator('#search').evaluate(node => document.activeElement === node && node.selectionStart === 0 && node.selectionEnd === node.value.length && node.value === 'keyboard-marker'));
+  await page.keyboard.press('Shift+Enter'); await expectFocusedCue(searchIds[2]);
+  await page.locator('#mode-passages').click();
+  check('find_result_returns_to_complete_reading_context', await page.locator('#passage-workspace').isVisible() && await page.evaluate(() => !!document.activeElement.querySelector('[data-cue-id="split-205"]')));
+  check('find_does_not_move_saved_reading_position', (await stored()).readingPosition === fixture.readingPosition);
+  await page.locator('#mode-transcript').click();await page.locator('#search').fill('');await page.locator('#mode-passages').click();
+
   stage = 'real_search_to_source_to_playback';
   await attachAudio(audioPath);
   await seek(100.4);
@@ -541,7 +555,12 @@ try {
   await page.locator('#keyboard-shortcuts-enabled').uncheck();
   await page.locator('#keyboard-help-close').click();
   await ignoredKeys('disabled_shortcuts_with_associated_media', '#transcript');
-  await page.locator('#search').focus(); await page.keyboard.type('keyboard-marker');
+  const beforeFindWithMedia = await interactionState();
+  await page.keyboard.press('Control+f');
+  check('standard_find_works_with_character_shortcuts_off', await focusIs('#search'));
+  const afterFindWithMedia = await interactionState();
+  check('standard_find_keeps_same_player_clock_and_pause', beforeFindWithMedia.players === afterFindWithMedia.players && beforeFindWithMedia.time === afterFindWithMedia.time && beforeFindWithMedia.paused === afterFindWithMedia.paused && beforeFindWithMedia.source === afterFindWithMedia.source);
+  await page.keyboard.type('keyboard-marker');
   await page.keyboard.press('Enter'); await expectFocusedCue(searchIds[0]);
   check('search_enter_remains_available_with_character_shortcuts_disabled', true);
   const finalDoc = await stored();

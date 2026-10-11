@@ -2539,7 +2539,7 @@ function updateReadingKeyHints(){
  }
  // These shortcuts belong only to the focused search input, and remain usable
  // when character shortcuts are turned off.
- $('search').setAttribute('aria-keyshortcuts',readingKeysEnabled?'/ Enter Shift+Enter':'Enter Shift+Enter');
+ $('search').setAttribute('aria-keyshortcuts',readingKeysEnabled?'/ Control+F Meta+F Enter Shift+Enter':'Control+F Meta+F Enter Shift+Enter');
 }
 function hasReadingModal(){
  return !!document.querySelector('dialog[open]')||[...document.querySelectorAll('[aria-modal="true"]')].some(node=>!node.closest('[hidden],[aria-hidden="true"]'));
@@ -2549,17 +2549,29 @@ function readingKeyIgnored(event){
   event.defaultPrevented||event.repeat||event.isComposing||readingKeyComposition||event.keyCode===229||
   event.ctrlKey||event.metaKey||event.altKey||event.getModifierState?.('AltGraph')||workspace!=='read'||$('reader-workspace').hidden||!active()||hasReadingModal();
 }
-function readingTextTarget(node){
+function readingTextTarget(node,find=false){
  if(document.designMode==='on'||document.body.isContentEditable||document.body.hasAttribute('contenteditable')&&document.body.getAttribute('contenteditable')!=='false')return false;
  if(!node||node===document||node===document.body||node===document.documentElement)return true;
- if(!$('reader-workspace').contains(node))return false;
+ if(!$('reader-workspace').contains(node)||find&&node.shadowRoot?.activeElement)return false;
  // Native controls, ARIA widgets, editable ancestors and shadow hosts retain
  // their own keyboard behavior. Empty contenteditable is editable too.
- if(node.closest?.('input,textarea,select,button,a,summary,audio,video,iframe,object,embed,[role],[inert]'))return false;
+ const controls=find?'textarea,select,audio,video,iframe,object,embed,[inert],[role]:not([role="group"])':'input,textarea,select,button,a,summary,audio,video,iframe,object,embed,[role],[inert]';
+ if(node.closest?.(controls)||find&&node.closest?.('input')&&node!==$('search'))return false;
  for(let current=node;current&&current!==document.body;current=current.parentElement){
   if(current.isContentEditable||(current.hasAttribute?.('contenteditable')&&current.getAttribute('contenteditable')!=='false'))return false;
  }
  return true;
+}
+function openReadingSearch(){
+ $('passage-search').onclick();
+ if(active()?.provenance?.kind==='authored_demo'&&!demoToolsExpanded)$('toggle-demo-tools').onclick();
+ $('search').focus();
+}
+// Shared by the renderer shortcut and the bounded native Edit menu command.
+// Find is separate from opt-out character keys and never acquires media.
+function openTranscriptFind(){
+ if(readingKeyIgnored({})||Coconut.isAudioProject(active())||!active().segments.length||!readingTextTarget(document.activeElement,true))return false;
+ openReadingSearch();$('search').select();return true;
 }
 function openKeyboardHelp(){
  if(workspace!=='read'||!active()||hasReadingModal())return;
@@ -2589,6 +2601,10 @@ document.addEventListener('compositionstart',()=>{readingKeyComposition=true;});
 document.addEventListener('compositionend',()=>{readingKeyComposition=false;});
 window.addEventListener('blur',()=>{readingKeyComposition=false;});
 document.addEventListener('keydown',event=>{
+ if(event.key.toLowerCase()==='f'&&(event.ctrlKey!==event.metaKey)&&(event.ctrlKey||event.metaKey)&&!event.altKey&&!event.shiftKey&&!event.getModifierState?.('AltGraph')){
+  if(!event.defaultPrevented&&!event.repeat&&!event.isComposing&&event.keyCode!==229&&readingTextTarget(event.target,true)&&readingTextTarget(event.composedPath?.()[0]||event.target,true)&&openTranscriptFind())event.preventDefault();
+  return;
+ }
  if(readingKeyIgnored(event))return;
  if(event.target===$('search')&&event.key==='Enter'){
   if(!$('search').value.trim()||$('search').closest('[hidden]'))return;
@@ -2598,11 +2614,7 @@ document.addEventListener('keydown',event=>{
  const key=event.key.toLowerCase();if(event.shiftKey&&key!=='?')return;
  let action=null;
  if(key==='?')action=openKeyboardHelp;
- else if(key==='/'&&!Coconut.isAudioProject(active()))action=()=>{
-  $('passage-search').onclick();
-  if(active()?.provenance?.kind==='authored_demo'&&!demoToolsExpanded)$('toggle-demo-tools').onclick();
-  $('search').focus();
- };
+ else if(key==='/'&&!Coconut.isAudioProject(active()))action=openReadingSearch;
  else{
   const player=$('source-media').querySelector('audio,video');
   if(!player||player.error||!Number.isFinite(player.duration)||player.duration<=0)return;
