@@ -14,11 +14,12 @@ import {openLibrarySearch,closeLibrarySearch,openLibraryTools} from './helpers/l
 import {openCueActions} from './cue-actions-browser.mjs';
 import {openTranscriptTools} from './helpers/reading-tools-browser.mjs';
 import {evaluateNativeIME} from './helpers/native-ime-proof.mjs';
+import {evaluateLibraryReturnScroll,evaluateLibraryReturnIdentity} from './helpers/library-return-scroll-proof.mjs';
 import {startBridge} from '../desktop/server.mjs';
 
 if(process.env.GITHUB_ACTIONS!=='true')throw new Error('Run wide library search in GitHub Actions only; use node --check in the workspace.');
-const checks=[],geometry=[],screenshots=[],errors=[],ime=[];
-let browser,server,page,browserVersion=null,stage='setup',external=0,mutations=0,failure=null;
+const checks=[],geometry=[],screenshots=[],errors=[],ime=[],returns=[];
+let browser,server,page,browserVersion=null,returnExpectation=null,stage='setup',external=0,mutations=0,failure=null;
 const check=(name,value)=>{assert.ok(value,name);checks.push(name);};
 const settle=()=>page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))));
 const entry=key=>page.locator('.library-entry[data-document-key="'+key+'"]');
@@ -92,6 +93,32 @@ async function search(query,scope='translations',count=40){
 }
 async function jump(number){await page.locator('#library-page-number').fill(String(number));await page.locator('#library-page-number').press('Enter');await page.waitForFunction(number=>document.getElementById('library-page-number').value===String(number)&&document.activeElement?.classList.contains('library-open'),number);}
 async function ownership(){return page.evaluate(()=>({key:state.active,selected:sessionStorage.getItem('coconut-reader-active-v1'),mode:document.body.dataset.readingMode,documents:JSON.stringify(state.documents),draft:document.getElementById('translation-glossary').value}));}
+async function returnSnapshot(label,{save=false}={}){
+ // One read captures every return condition together, including the browser's
+ // attainable scroll range. It never changes focus, scroll or the result tree.
+ const snapshot=await page.evaluate(({expected,save})=>{
+  const port=document.getElementById('library-search-results'),dialog=document.getElementById('library-search-dialog');
+  const entry=expected&&document.querySelector('.library-entry[data-document-key="'+expected.key+'"]');
+  const group=entry?.querySelector('.library-translation-group[data-language="'+expected.language+'"]'),target=group?.querySelector('.library-translation-hit');
+  const activeButton=document.getElementById('library-show-active'),focused=document.activeElement,rect=node=>node?.getBoundingClientRect().toJSON()??null;
+  const targetRect=rect(target),portRect=rect(port),style=target&&getComputedStyle(target);
+  const current=port.scrollTop,max=Math.max(0,port.scrollHeight-port.clientHeight);
+  const saved=save?current:expected?.savedScroll??null,hitIndex=group?.querySelector('.library-translation-status')?.textContent??null;
+  return {width:innerWidth,query:document.getElementById('library-search').value,scope:document.getElementById('library-scope').value,page:document.getElementById('library-page-number').value,pageStatus:document.getElementById('library-page-status').textContent,activeKey:state.active,dialogOpen:dialog.open,native:dialog.matches(':modal'),documentKey:entry?.dataset.documentKey??null,language:target?.dataset.language??null,hitId:target?.dataset.hitId??null,hitIndex,focused:!!target&&focused===target,connected:target?.isConnected??false,modalOpen:dialog.open&&dialog.matches(':modal'),scrollTop:current,maxScrollTop:max,scrollHeight:port.scrollHeight,clientHeight:port.clientHeight,targetTop:targetRect?.top??null,targetPortOffset:targetRect?targetRect.top-portRect.top:null,scroll:{saved,current,max,scrollHeight:port.scrollHeight,clientHeight:port.clientHeight,clientTop:port.clientTop,expectedClamp:saved===null?null:Math.min(saved,max)},portRect,target:{key:entry?.dataset.documentKey??null,language:target?.dataset.language??null,hitId:target?.dataset.hitId??null,hitIndex,rect:targetRect,offsetTop:target?.offsetTop??null,contentTop:targetRect?targetRect.top-portRect.top-port.clientTop+current:null,focused:!!target&&focused===target,connected:target?.isConnected??false,focusVisible:target?.matches(':focus-visible')??false,ring:style?(parseFloat(style.outlineWidth)||0)+Math.max(0,parseFloat(style.outlineOffset)||0):null},focus:{id:focused?.id,tagName:focused?.tagName,classes:focused?.className,hitId:focused?.dataset.hitId,language:focused?.dataset.language,modal:focused?.closest('dialog')?.id},activeButton:{hidden:activeButton.hidden,rect:rect(activeButton)},feedbackRect:rect(document.getElementById('library-search-feedback')),components:expected?{query:document.getElementById('library-search').value===expected.query,scope:document.getElementById('library-scope').value===expected.scope,page:document.getElementById('library-page-number').value===expected.page,key:entry?.dataset.documentKey===expected.key,hit:target?.dataset.hitId===expected.hitId,language:target?.dataset.language===expected.language,hitIndex:hitIndex===expected.hitIndex,focus:!!target&&focused===target,connected:target?.isConnected===true,nativeModal:dialog.open&&dialog.matches(':modal')}:null,rawScrollMatches:saved===null?null:Math.abs(current-saved)<=1};
+ },{expected:returnExpectation,save});
+ if(save)returnExpectation={...returnExpectation,savedScroll:snapshot.scrollTop};
+ returns.push({label,expected:returnExpectation,snapshot});console.log(JSON.stringify({suite:'wide-library-search-return',label,expected:returnExpectation,snapshot}));return snapshot;
+}
+function returnProof(label,before,after,{allowClamping=false}={}){
+ const scroll=evaluateLibraryReturnScroll({before,after}),identity=evaluateLibraryReturnIdentity({before,after});
+ const scrollPolicy=allowClamping?'native-clamp-with-stable-anchor':'raw-retention',rawScrollMatches=Math.abs(after.scrollTop-before.scrollTop)<=1;
+ returns.push({label,expected:returnExpectation,components:after.components,identity,scrollPolicy,rawScrollMatches,scroll});console.log(JSON.stringify({suite:'wide-library-search-return-proof',label,expected:returnExpectation,components:after.components,identity,scrollPolicy,rawScrollMatches,scroll}));
+ for(const [name,value]of Object.entries(after.components))check(label+'_expected_'+name,value===true);
+ for(const [name,value]of Object.entries(identity))check(label+'_retained_'+name,value===true);
+ check(label+'_valid_scroll_metrics',scroll.validMetrics);
+ if(!allowClamping)check(label+'_raw_scroll_retained_without_clamp_exception',rawScrollMatches);
+ return Object.values(after.components).every(value=>value===true)&&Object.values(identity).every(value=>value===true)&&(allowClamping?scroll.pass:rawScrollMatches);
+}
 async function installIMEAudit(targetPage,selector){
  await targetPage.evaluate(selector=>{
   const original=document.querySelector(selector),types=['compositionstart','compositionupdate','compositionend','beforeinput','input'];
@@ -170,6 +197,7 @@ try{
  browser=await chromium.launch({headless:true,...(process.env.COCONUT_CHROMIUM_EXECUTABLE?{executablePath:process.env.COCONUT_CHROMIUM_EXECUTABLE}:{})});
  browserVersion=browser.version();
  for(const width of [1360,390]){
+  returnExpectation=null;
   stage=width+' import and native media baseline';
   const context=await browser.newContext({viewport:{width,height:width===390?844:1000},acceptDownloads:true,serviceWorkers:'block'});
   await context.route('**/*',async route=>{const request=route.request(),url=new URL(request.url());if(!['GET','HEAD'].includes(request.method())){mutations++;await route.abort();}else if(url.origin===origin||['blob:','data:'].includes(url.protocol))await route.continue();else{external++;await route.abort();}});
@@ -264,18 +292,22 @@ try{
   check(width+'_40_document_paging_reaches_document_81',await page.locator('.library-entry').count()===1&&await page.locator('.library-entry').getAttribute('data-document-key')==='shelf-80'&&/81/.test(await page.locator('#library-page-status').textContent()));
   for(let i=1;i<5;i++){await walk(group('shelf-80').locator('.library-translation-next'),width+'-next-'+i);await keyboardGeometry(group('shelf-80').locator('.library-translation-next'),width+'-next-'+i);await page.keyboard.press('Enter');await expect(hit('shelf-80')).toHaveAttribute('data-hit-id','shelf-80-cue-'+(i+1));}
   await keyboardGeometry(hit('shelf-80'),width+'-fifth-hit');await capture(width+'-page-three-fifth-match');
-  const returnScroll=await page.locator('#library-search-results').evaluate(node=>node.scrollTop);
+  returnExpectation={key:'shelf-80',language:'zh',hitId:'shelf-80-cue-5',hitIndex:'第 5 / 5 处',query:'widebeacon',scope:'translations',page:'3',savedScroll:null};
+  const beforeReturn=await returnSnapshot(width+'-before-hit-selection',{save:true});
   await page.keyboard.press('Enter');await page.waitForFunction(()=>state.active==='shelf-80'&&active().translation_view==='zh'&&document.activeElement?.dataset.segmentId==='shelf-80-cue-5');
   check(width+'_selection_closes_native_dialog_at_real_source',!await page.locator('#library-search-dialog').evaluate(node=>node.open)&&await page.locator('.segment[data-segment-id="shelf-80-cue-5"] .translation mark').textContent()==='widebeacon');
-  await walkReader(page.locator('#return-library-search'),width+'-return-entry');await page.keyboard.press('Enter');await settle();
-  check(width+'_return_restores_query_scope_page_fifth_hit_scroll_and_actual_focus',await page.locator('#library-search').inputValue()==='widebeacon'&&await page.locator('#library-scope').inputValue()==='translations'&&await page.locator('#library-page-number').inputValue()==='3'&&await hit('shelf-80').getAttribute('data-hit-id')==='shelf-80-cue-5'&&await hit('shelf-80').evaluate(node=>node===document.activeElement)&&Math.abs(await page.locator('#library-search-results').evaluate(node=>node.scrollTop)-returnScroll)<=1);
+  await walkReader(page.locator('#return-library-search'),width+'-return-entry');await returnSnapshot(width+'-before-return-entry');await page.keyboard.press('Enter');await settle();
+  const afterReturn=await returnSnapshot(width+'-after-return-entry');
+  check(width+'_return_restores_query_scope_page_fifth_hit_scroll_and_actual_focus',returnProof(width+'-exact-hit-return',beforeReturn,afterReturn,{allowClamping:true}));
   await keyboardGeometry(hit('shelf-80'),width+'-returned-hit');await media(width+'-cross-document',false);
 
   stage=width+' newer cancelled page beats previous successful hit';
   await jump(2);await walk(hit('shelf-40'),width+'-newer-page-owner');await keyboardGeometry(hit('shelf-40'),width+'-newer-page-owner');
-  const newerScroll=await page.locator('#library-search-results').evaluate(node=>node.scrollTop);
+  returnExpectation={key:'shelf-40',language:'zh',hitId:'shelf-40-cue-1',hitIndex:'第 1 / 5 处',query:'widebeacon',scope:'translations',page:'2',savedScroll:null};
+  const beforeCancel=await returnSnapshot(width+'-before-page-two-cancel',{save:true});
   await page.keyboard.press('Escape');await openLibrarySearch(page);await settle();
-  check(width+'_cancelled_page_two_and_new_owner_override_old_page_three_return',await page.locator('#library-page-number').inputValue()==='2'&&await hit('shelf-40').evaluate(node=>node===document.activeElement)&&Math.abs(await page.locator('#library-search-results').evaluate(node=>node.scrollTop)-newerScroll)<=1);
+  const afterCancel=await returnSnapshot(width+'-after-page-two-reopen');
+  check(width+'_cancelled_page_two_and_new_owner_override_old_page_three_return',returnProof(width+'-cancelled-page-two-return',beforeCancel,afterCancel));
 
   await walk(page.locator('#library-page-number'),width+'-page-number-owner','Shift+Tab');await page.keyboard.press('Escape');await openLibrarySearch(page);await settle();
   check(width+'_cancel_and_reopen_retains_noncard_page_input_owner',await page.locator('#library-page-number').evaluate(node=>node===document.activeElement)&&await page.locator('#library-page-number').inputValue()==='2');
@@ -346,8 +378,8 @@ try{
  }
  check('no_external_requests_mutating_http_or_uncaught_errors',external===0&&mutations===0&&errors.length===0);
  console.log(JSON.stringify({suite:'wide-library-search',status:'passed',checks,screenshots}));
-}catch(error){failure={stage,error:{name:error.name,message:error.message,stack:error.stack}};if(page&&!page.isClosed()){await imeSnapshot(page,page.viewportSize()?.width,'application','suite-failure').catch(snapshotError=>ime.push({phase:'suite-failure',snapshotError:snapshotError.message}));await capture('failure').catch(()=>{});}console.error(JSON.stringify({suite:'wide-library-search',status:'failed',...failure,browserVersion,ime,checks}));throw error;}
+}catch(error){failure={stage,error:{name:error.name,message:error.message,stack:error.stack}};if(page&&!page.isClosed()){await returnSnapshot('suite-failure').catch(snapshotError=>returns.push({label:'suite-failure',snapshotError:snapshotError.message}));await imeSnapshot(page,page.viewportSize()?.width,'application','suite-failure').catch(snapshotError=>ime.push({phase:'suite-failure',snapshotError:snapshotError.message}));await capture('failure').catch(()=>{});}console.error(JSON.stringify({suite:'wide-library-search',status:'failed',...failure,browserVersion,ime,returns,checks}));throw error;}
 finally{
- if(process.env.COCONUT_UI_SCREENSHOTS){await fs.mkdir(process.env.COCONUT_UI_SCREENSHOTS,{recursive:true});await fs.writeFile(path.join(process.env.COCONUT_UI_SCREENSHOTS,'wide-library-search-checks.json'),JSON.stringify({suite:'wide-library-search',status:failure?'failed':'passed',failure,browserVersion,ime,checks,geometry,screenshots,errors,external,mutations},null,2));}
+ if(process.env.COCONUT_UI_SCREENSHOTS){await fs.mkdir(process.env.COCONUT_UI_SCREENSHOTS,{recursive:true});await fs.writeFile(path.join(process.env.COCONUT_UI_SCREENSHOTS,'wide-library-search-checks.json'),JSON.stringify({suite:'wide-library-search',status:failure?'failed':'passed',failure,browserVersion,ime,returns,checks,geometry,screenshots,errors,external,mutations},null,2));}
  await browser?.close();await new Promise(resolve=>server?server.close(resolve):resolve());
 }

@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import {libraryHarness} from './helpers/large-library-harness.mjs';
 import {settle} from './helpers/save-pipeline.mjs';
 import {evaluateNativeIME} from './helpers/native-ime-proof.mjs';
+import {evaluateLibraryReturnScroll,evaluateLibraryReturnIdentity} from './helpers/library-return-scroll-proof.mjs';
 const fixture=(count=1,cues=8)=>Array.from({length:count},(_,n)=>({key:'wide-'+n,title:'Wide authored document '+n,language:'en',translation_view:'de',readingPosition:'cue-2',segments:Array.from({length:cues},(_,i)=>({id:'cue-'+i,text:'Authored source '+i,start:i*2,end:i*2+2,translations:{fr:{text:'needle français '+i,source_text:'Authored source '+i,source_language:'en',document_language:'en',provider:'Authored fixture'},zh:{text:'needle 中文 '+i,source_text:'Authored source '+i,source_language:'en',document_language:'en',provider:'Authored fixture'}}})),notes:{}}));
 function setup(docs=fixture()){let media,listener;const h=libraryHarness(docs,{probe:true,configureCore(w){const match=w.matchMedia.bind(w);media={matches:false,addEventListener(type,fn){listener=fn;}};w.matchMedia=query=>query==='(max-width: 650px)'?media:match(query);}});return {...h,resize(mobile){media.matches=mobile;listener();}};}
 const query=($,value='needle',scope='translations')=>{$('open-library-search').click();$('library-scope').value=scope;$('library-search').value=value;$('library-search').oninput();};
@@ -184,4 +185,27 @@ test('native IME proof compares exact browser end flags without accepting untrus
  const untrusted=clone();untrusted.events[0].trusted=false;
  assert.equal(Object.values(evaluateNativeIME({baseline:untrusted,actual:untrusted,text})).every(Boolean),false,'a matching but untrusted plain input cannot authorize a weaker proof');
  const empty={...clone(),events:[]};assert.equal(Object.values(evaluateNativeIME({baseline:empty,actual:empty,text})).every(Boolean),false,'empty sequences cannot pass by equality');
+});
+
+
+test('native return proof permits only a real range clamp with the same visible anchor and exact owner',()=>{
+ const before={scrollTop:56,maxScrollTop:56,scrollHeight:570,clientHeight:514,targetTop:547,targetPortOffset:259,query:'widebeacon',scope:'translations',page:'3',documentKey:'shelf-80',language:'zh',hitId:'shelf-80-cue-5',hitIndex:'第 5 / 5 处',focused:true,connected:true,modalOpen:true};
+ const bounded={...before,scrollTop:0,maxScrollTop:0,scrollHeight:514};
+ const valid=after=>evaluateLibraryReturnScroll({before,after}).pass&&Object.values(evaluateLibraryReturnIdentity({before,after})).every(Boolean);
+ assert.equal(valid(bounded),true);assert.equal(evaluateLibraryReturnScroll({before,after:bounded}).clamped,true);
+ assert.equal(valid({...before}),true);assert.equal(evaluateLibraryReturnScroll({before,after:before}).clamped,false);
+ assert.equal(valid({...before,scrollTop:55}),true,'the old one-pixel reachable tolerance remains');
+ assert.equal(valid({...before,scrollTop:54}),false,'reachable saved offsets cannot drift');
+ assert.equal(valid({...bounded,targetTop:548,targetPortOffset:260}),true,'the clamped anchor keeps the same one-pixel tolerance');
+ for(const patch of [{targetTop:549},{targetPortOffset:261},{scrollTop:2},{maxScrollTop:4,scrollHeight:518,scrollTop:0},{scrollHeight:513},{clientHeight:-1},{clientHeight:0,scrollHeight:0},{maxScrollTop:NaN},{targetTop:Infinity},{scrollTop:-1}])assert.equal(valid({...bounded,...patch}),false,'neither out-of-range scroll nor an altered anchor is a valid clamp');
+ for(const field of ['query','scope','page','documentKey','language','hitId','hitIndex'])assert.equal(valid({...bounded,[field]:'other'}),false,'range clamping cannot change '+field);
+ for(const field of ['focused','connected','modalOpen'])assert.equal(valid({...bounded,[field]:false}),false,'range clamping cannot lose '+field);
+ for(const field of ['scope','page','documentKey','language','hitId','hitIndex'])for(const invalid of ['', ' ', null, undefined]){
+  const missingBefore={...before,[field]:invalid},missingAfter={...bounded,[field]:invalid};
+  assert.equal(Object.values(evaluateLibraryReturnIdentity({before:missingBefore,after:missingAfter})).every(Boolean),false,'matching missing '+field+' cannot prove the same owner');
+ }
+ for(const field of ['scrollTop','maxScrollTop','scrollHeight','clientHeight','targetTop','targetPortOffset'])for(const invalid of [NaN,Infinity,-1,null])assert.equal(evaluateLibraryReturnScroll({before:{...before,[field]:invalid},after:bounded}).pass,false,'invalid saved '+field+' cannot authorize clamping');
+ assert.equal(evaluateLibraryReturnScroll({before:{...before,scrollTop:57},after:bounded}).pass,false,'an impossible saved offset is not an allowed exception');
+ assert.equal(evaluateLibraryReturnScroll({before:{...before,scrollTop:0,maxScrollTop:0,scrollHeight:514},after:bounded}).clamped,false,'an equal boundary must not enter the clamp branch');
+ assert.equal(evaluateLibraryReturnScroll({before:{...before,scrollTop:20},after:{...before,scrollTop:19,maxScrollTop:19,scrollHeight:533,targetTop:549}}).pass,false,'even a one-pixel true clamp still requires the visible anchor');
 });
