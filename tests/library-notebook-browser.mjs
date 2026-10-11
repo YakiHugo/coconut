@@ -57,6 +57,38 @@ try{
  assert.equal(await page.locator('.notebook-capture').first().getAttribute('data-capture-key'),movedKey);
  assert.ok(await page.locator('.notebook-open').first().evaluate(node=>node===document.activeElement));
  assert.ok(await page.locator('.notebook-open').first().evaluate(node=>{const rect=node.getBoundingClientRect(),dialog=document.getElementById('library-notebook').getBoundingClientRect();return rect.top>=dialog.top&&rect.bottom<=dialog.bottom;}));
+ // Authored bookmark edits reconcile both search views without replacing a live editor.
+ const audioPage=await newPage({width:1280,height:900});
+ const audioDoc={key:'authored-audio',title:'Authored recording',project_kind:'audio_only',local_media_source:{version:1,kind:'audio',name:'authored.wav',size:64,last_modified:7,type:'audio/wav',fingerprint:'a'.repeat(64)},segments:[],timestamp_bookmarks:[{id:'needle',time:90,note:'Find needle'}]};
+ await audioPage.locator('#file').setInputFiles({name:'authored-audio.json',mimeType:'application/json',buffer:Buffer.from(JSON.stringify(audioDoc))});
+ await audioPage.locator('#audio-project').waitFor({state:'visible'});
+ if(!await audioPage.locator('#library-search').isVisible())await audioPage.locator('#toggle-library').click();
+ await openLibraryTools(audioPage);await audioPage.locator('#library-options').evaluate(node=>node.open=true);
+ await audioPage.locator('#library-scope').selectOption('notes');await audioPage.locator('#library-search').fill('needle');
+ assert.match(await audioPage.locator('.library-hit').textContent(),/01:30/);
+ await audioPage.locator('#audio-bookmark-search').fill('01:30');
+ await audioPage.locator('.edit-bookmark-time').click();await audioPage.locator('#audio-bookmarks form input').fill('180');
+ await audioPage.getByRole('button',{name:'保存时间',exact:true}).click();
+ assert.match(await audioPage.locator('.library-hit').textContent(),/03:00/);
+ assert.match(await audioPage.locator('#audio-bookmark-results').textContent(),/找到 0 \/ 1/);
+ assert.ok(await audioPage.locator('#audio-bookmark-search').evaluate(node=>node===document.activeElement));
+ await audioPage.locator('#audio-bookmark-search').fill('needle');
+ const note=audioPage.locator('#audio-bookmarks textarea');await note.focus();
+ await note.evaluate(node=>{window.bookmarkEditorProof=node;node.setSelectionRange(0,node.value.length);});
+ await audioPage.keyboard.type('Other thought');
+ assert.ok(await note.evaluate(node=>node===window.bookmarkEditorProof&&node===document.activeElement&&node.selectionStart===13&&node.value==='Other thought'));
+ // Exercise a non-focusing button activation with the real pointer/click sequence.
+ await audioPage.locator('.edit-bookmark-time').evaluate(button=>button.addEventListener('mousedown',event=>{event.preventDefault();document.querySelector('#audio-bookmarks textarea').blur();},{once:true}));
+ await audioPage.locator('.edit-bookmark-time').click();assert.ok(await audioPage.locator('#audio-bookmarks form input').isVisible());
+ await audioPage.getByRole('button',{name:'取消修正',exact:true}).click();
+ await audioPage.locator('#audio-bookmark-time').click();
+ await audioPage.waitForFunction(()=>document.querySelectorAll('#audio-bookmarks section').length===0);
+ assert.match(await audioPage.locator('#audio-bookmark-results').textContent(),/找到 0 \/ 1/);
+ assert.ok(await audioPage.locator('#audio-bookmark-time').evaluate(node=>node===document.activeElement));
+ await waitForPersistedLibrary(audioPage,async()=>{const bookmark=(await readPersistedLibrary()).documents[0]?.timestamp_bookmarks[0];return bookmark?.note==='Other thought'&&bookmark?.time===180;});
+ await audioPage.reload();await audioPage.locator('#audio-project').waitFor({state:'visible'});
+ assert.equal(await audioPage.locator('#audio-bookmarks textarea').inputValue(),'Other thought');
+ assert.match(await audioPage.locator('#audio-bookmarks section > button').first().textContent(),/03:00/);
  // A separate clean context exercises the cooperative path with authored data.
  // 6,148 captures exceed the production work threshold without a timing mock or
  // oversized fixture. The final 68 matches span every document and its last cue.
@@ -135,5 +167,5 @@ try{
  assert.equal(observation.input,'');assert.equal(await large.locator('#title').textContent(),readerTitle);
  await large.locator('#notebook-close').click();
  assert.equal(external,0);assert.equal(mutations,0);assert.deepEqual(errors,[]);
- console.log('Library notebook: bounded mobile browsing, qualified source, keyboard return, actual full-document export, visible annotation search hits, reordered bookmark return, Escape/reopen, cooperative open, real typing replacement, complete paged counts and stable late matches passed.');
+ console.log('Library notebook: bounded mobile browsing, qualified source, keyboard return, actual full-document export, visible annotation search hits, reordered bookmark return, live bookmark search edits and durable timestamp refresh, Escape/reopen, cooperative open, real typing replacement, complete paged counts and stable late matches passed.');
 }finally{await browser?.close();await new Promise(resolve=>server?server.close(resolve):resolve());}
