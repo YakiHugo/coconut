@@ -232,6 +232,11 @@ jobs:
         env:
           COCONUT_UI_SCREENSHOTS: ${{ runner.temp }}/coconut-authored-ui
         run: node tests/speaker-correction-browser.mjs
+      - name: Verify whole-source literal corrections, cross-page selection, keyboard access, undo and durable recovery
+        if: ${{ !cancelled() && steps.browser_setup.outcome == 'success' }}
+        env:
+          COCONUT_UI_SCREENSHOTS: ${{ runner.temp }}/coconut-authored-ui
+        run: node tests/source-corrections-browser.mjs
       - name: Verify consistent reading metadata, live note filters and exports with authored fixtures
         if: ${{ !cancelled() && steps.browser_setup.outcome == 'success' }}
         run: node tests/reading-metadata-browser.mjs
@@ -280,6 +285,7 @@ jobs:
             ${{ runner.temp }}/coconut-authored-ui/chapter-markers-checks.json
             ${{ runner.temp }}/coconut-authored-ui/subtitle-encoding-checks.json
             ${{ runner.temp }}/coconut-authored-ui/pasted-subtitles-checks.json
+            ${{ runner.temp }}/coconut-authored-ui/source-corrections-checks.json
             ${{ runner.temp }}/coconut-authored-ui/transcript-media-association-checks.json
             ${{ runner.temp }}/coconut-authored-ui/web-browser-acceptance-checks.json
             ${{ runner.temp }}/coconut-authored-ui/compact-library-failure.png

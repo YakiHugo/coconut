@@ -8,9 +8,9 @@
 <meta name="theme-color" content="#faf9f7">
 <link rel="icon" type="image/png" href="coconut-mark.png">
 <script src="appearance.js?v=86ea922669"></script>
-<link rel="stylesheet" href="style.css?v=81b90691fe">
+<link rel="stylesheet" href="style.css?v=775b670a50">
 <script src="summary.js?v=580ffdad1e" defer></script>
-<script src="core.js?v=cf6004e3b2" defer>
+<script src="core.js?v=7e3aa2fdb1" defer>
 </script>
 <script src="passages.js?v=d02200c5a9" defer></script>
 <script src="quotation.js?v=dd1ac21240" defer></script>
@@ -18,9 +18,9 @@
 <script src="library-store.js?v=e76ded9456" defer></script>
 <script src="indexeddb-document-adapter.js?v=65c0c5a814" defer></script>
 <script src="storage-provider.js?v=1cb898e984" defer></script>
-<script src="app.js?v=896ac1c2a0" type="text/coconut-pending" data-reader-script>
+<script src="app.js?v=fb01a4b17e" type="text/coconut-pending" data-reader-script>
 </script>
-<script src="language.js?v=492470a705" type="text/coconut-pending" data-reader-script></script>
+<script src="language.js?v=59136fdc72" type="text/coconut-pending" data-reader-script></script>
 <script src="translation-review.js?v=ef64ceb824" type="text/coconut-pending" data-reader-script></script>
 <script src="podcasts.js?v=d3db57978f" type="text/coconut-pending" data-reader-script></script>
 <script src="jobs.js?v=cad9018e85" type="text/coconut-pending" data-reader-script>
@@ -252,6 +252,7 @@ cd coconut
 <div id="reader-options" class="reader-options">
 <details id="reading-settings" class="reading-settings"><summary>阅读设置</summary><div class="disclosure-content"><div class="settings-actions"><button id="document-details">标题与语言</button><button id="open-chapters" type="button">章节目录</button>
 <button id="source">原始来源链接</button>
+<button id="open-source-correction" type="button">批量修正原文</button>
 <button id="review-translations" type="button">译文核对</button>
 </div>
 <section class="reading-appearance" aria-label="阅读外观">
@@ -395,6 +396,20 @@ cd coconut
 <p id="source-error" role="alert">
 </p>
 </form>
+</dialog>
+<dialog id="source-correction-dialog" aria-labelledby="source-correction-heading" aria-describedby="source-correction-help">
+<h2 id="source-correction-heading">批量修正原文</h2><p id="source-correction-title"></p>
+<p id="source-correction-help">整篇原文，不受搜索、说话人筛选或分页影响。区分大小写、按字面查找，不跨原片段；译文、笔记、说话人和历史快照不改写。原文变化会使依赖它的译文、摘要和摘录标为历史内容。</p>
+<label for="source-find">查找原文</label><input id="source-find" autocomplete="off">
+<label for="source-replace">替换为（可留空删除命中词）</label><input id="source-replace" autocomplete="off">
+<button id="preview-source-correction" type="button">预览整篇匹配</button>
+<p id="source-correction-count" role="status"></p>
+<div class="source-correction-selection"><button id="select-source-page" type="button">选择本页</button><button id="clear-source-page" type="button">取消本页选择</button></div>
+<div id="source-correction-results"></div>
+<div class="source-correction-pagination"><button id="source-correction-prev" type="button">上一页</button><span id="source-correction-page"></span><button id="source-correction-next" type="button">下一页</button></div>
+<p id="source-correction-undo-help"></p><p id="source-correction-error" role="alert"></p><p id="source-correction-status" role="status"></p>
+<div class="source-correction-recovery"><button id="source-correction-retry" type="button" hidden>重试保存</button><button id="source-correction-export" type="button" hidden>导出完整 JSON 救援</button></div>
+<div class="dialog-actions"><button id="undo-source-correction" type="button" hidden>撤销最近一批</button><button id="apply-source-correction" type="button" class="primary" disabled>应用所选 0 处</button><button id="close-source-correction" type="button">关闭</button></div>
 </dialog>
 <dialog id="speaker-dialog" aria-labelledby="speaker-heading" aria-describedby="speaker-help">
 <h2 id="speaker-heading">修正说话人标签</h2>

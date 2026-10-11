@@ -213,3 +213,16 @@ test('missing translation quota failure does not advance and explicit retry pers
   h.failAt(0);const receipt=await h.w.pipeline.store.retry();assert.equal(receipt.ok,true);assert.equal(h.disk().segments[0].translations.ja.text,'Retained on quota failure');assert.equal(h.requests.length,0);
  }finally{await h.w.happyDOM.close();}
 });
+
+for(const mode of ['question','summary','subscription','offline'])test(`${mode} late authored response stays retired after bulk source apply and immediate undo`,async()=>{
+ const h=setup(source(3));let run,release;try{
+  await ready(h,['subscription','offline'].includes(mode)?'translation':mode);
+  const fetch=h.w.fetch,captured=[];h.w.fetch=async(url,options)=>{captured.push(url);await new Promise(resolve=>release=resolve);return fetch(url,options);};
+  run=h.$(mode==='subscription'?'subscription-translate':mode==='offline'?'translate-document':'ask-ai').onclick();await until(()=>captured.length===1);
+  const doc=h.w.pipeline.doc(),before=doc.segments.map(c=>c.text),answers=JSON.stringify(doc.ai_answers||[]),translations=JSON.stringify(doc.segments.map(c=>c.translations));
+  h.$('open-source-correction').click();input(h,'source-find','Authored');input(h,'source-replace','Corrected');h.$('preview-source-correction').click();h.$('apply-source-correction').click();h.$('undo-source-correction').click();
+  assert.deepEqual(doc.segments.map(c=>c.text),before);assert.equal(h.$('ai-consent').checked,false);assert.equal(doc.segments.some(c=>Object.hasOwn(c,'original_text')),false);
+  h.$('source-find').focus();release();await run;await h.w.pipeline.store.flush();
+  assert.equal(captured.length,1);assert.equal(JSON.stringify(doc.ai_answers||[]),answers);assert.equal(JSON.stringify(doc.segments.map(c=>c.translations)),translations);assert.equal(h.w.document.activeElement,h.$('source-find'));assert.equal(h.$('source-correction-dialog').open,true);
+ }finally{release?.();await run;await h.w.happyDOM.close();}
+});
