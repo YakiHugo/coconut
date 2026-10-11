@@ -886,6 +886,25 @@ body[data-media-docked="true"] .reading-feedback { bottom: 94px; }
 .save-actions {display:flex;flex-wrap:wrap;gap:8px;}
 .save-actions:has(button:not([hidden])) {margin-top:8px;}
 .save-actions button {min-height:44px;}
+/* Recovery follows the reading viewport without scrolling or stealing focus.
+   It shares the playback stack and dock offset rather than covering its controls. */
+#reading-feedback #save-warning-home {order:-1;}
+.reading-feedback:has(#save-warning-home .has-warning) {max-height:calc(100dvh - 40px);overflow-y:auto;}
+body[data-media-docked="true"] .reading-feedback:has(#save-warning-home .has-warning) {max-height:calc(100dvh - 114px);}
+#reading-feedback #save-warning-home:empty {display:none;}
+#reading-feedback .save-pipeline.has-warning {margin:0;}
+#reading-feedback:has(#save-warning-home .has-warning) #notice-shell.is-success {display:none;}
+@media (max-width:1100px) {
+ body:has(#notes-panel:not([hidden])) .reading-feedback:has(#save-warning-home .has-warning) {max-height:calc(50dvh - 16px);}
+ body:has(#save-warning-home .has-warning) #notes-panel:not([hidden]) {top:50dvh;max-height:calc(50dvh - 24px);}
+ body[data-media-docked="true"]:has(#save-warning-home .has-warning) #notes-panel:not([hidden]) {max-height:calc(50dvh - 108px);}
+}
+@media (max-width:1100px) and (max-height:520px) {
+ /* Compact editing may hide auxiliary feedback, never unsaved-work recovery. */
+ body:has(#notes-panel:not([hidden])) .reading-feedback:has(#save-warning-home .has-warning) {display:flex;}
+ body:has(#notes-panel:not([hidden])) .reading-feedback:has(#save-warning-home .has-warning) #passage-playback-controls {display:none;}
+}
+
 
 /* Cross-cue previews preserve the exact visible phrase without unbounded cards. */
 .phrase-match{white-space:pre-wrap;font-size:.85rem;line-height:1.65;color:var(--muted);overflow-wrap:anywhere;margin:.35rem 0 .65rem}
