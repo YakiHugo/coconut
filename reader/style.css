@@ -1005,7 +1005,7 @@ body[data-media-docked="true"] .reading-feedback:has(#save-warning-home .has-war
 .transcript-import-item { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 12px; padding: 10px 0; border-top: 1px solid var(--line, #dce2d5); }
 .transcript-import-name { overflow-wrap: anywhere; }
 .transcript-import-outcome { grid-column: 1; font-size: 13px; color: var(--muted, #62705b); overflow-wrap: anywhere; }
-.transcript-import-item button { grid-column: 2; grid-row: 1 / 3; align-self: center; }
+.transcript-import-item > button { grid-column: 2; grid-row: 1 / 3; align-self: center; }
 .transcript-import-item[data-status="failed"] .transcript-import-outcome, .transcript-import-item[data-status="unsaved"] .transcript-import-outcome { color: var(--tone-error, #9a3e28); }
 
 /* Shelf pages bound mounted cards, without clipping titles or hiding saved data. */
@@ -1136,3 +1136,7 @@ body[data-short-reading-compact="true"] #language-panel { margin-top: 8px; }
 .library-saved-hit{display:grid;gap:.2rem;text-align:left;white-space:normal;overflow-wrap:anywhere;min-width:0;width:100%}
 .library-saved-hit small{opacity:.75}
 .library-saved-more{text-align:left;white-space:normal;overflow-wrap:anywhere}
+
+.transcript-import-warning { grid-column: 1 / -1; font-size: 13px; overflow-wrap: anywhere; }
+.transcript-import-warning summary { cursor: pointer; color: var(--tone-error, #9a3e28); }
+.transcript-import-warning ul { padding-left: 20px; white-space: pre-wrap; }
