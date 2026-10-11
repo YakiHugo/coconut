@@ -275,6 +275,7 @@ jobs:
             ${{ runner.temp }}/coconut-authored-ui/chapter-markers-checks.json
             ${{ runner.temp }}/coconut-authored-ui/subtitle-encoding-checks.json
             ${{ runner.temp }}/coconut-authored-ui/transcript-media-association-checks.json
+            ${{ runner.temp }}/coconut-authored-ui/web-browser-acceptance-checks.json
             ${{ runner.temp }}/coconut-authored-ui/compact-library-failure.png
           if-no-files-found: ignore
           retention-days: 7

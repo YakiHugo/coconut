@@ -73,6 +73,25 @@ async function visibleFocus(page, selector, label) {
     data.display !== 'none' && data.visibility === 'visible' && r.width > 0 && r.height > 0 &&
     r.left >= 0 && r.right <= v.width + 1 && r.top >= -1 && r.bottom <= v.height + 1);
 }
+async function closeMediaAndRead(page, selector, label) {
+  // Passage settings are an existing overlay, not a second reading layer.
+  // Dismiss it through its visible control before activating a mode beneath it.
+  await page.locator('#close-reader-media').click();
+  await expect(page.locator('#episode-media')).toBeHidden();
+  await visibleFocus(page, '#toggle-reader-media', label + '_settings_close');
+  const control = page.locator(selector); await control.scrollIntoViewIfNeeded();
+  const data = await control.evaluate(node => {
+    const r = node.getBoundingClientRect(), x = (r.left + r.right) / 2, y = (r.top + r.bottom) / 2;
+    return {id: node.id, rect: r.toJSON(), viewport: {width: innerWidth, height: innerHeight},
+      hits: [[x,y],[r.left+1,y],[r.right-1,y],[x,r.top+1],[x,r.bottom-1]].map(([x,y]) => {
+        const hit = document.elementFromPoint(x,y); return {x,y,clear: hit === node || node.contains(hit), hit: hit?.id || hit?.tagName};
+      })};
+  });
+  geometry.push({label, ...data}); const {rect: r, viewport: v} = data;
+  check(label + '_mode_has_five_clear_hit_points_after_natural_dismissal', r.width >= 44 && r.height >= 44 &&
+    r.left >= 0 && r.right <= v.width + 1 && r.top >= 0 && r.bottom <= v.height + 1 && data.hits.every(hit => hit.clear));
+  await control.click();
+}
 async function captureAbsentMedia(page, label, filename = null) {
   for (const width of [390, 1280]) {
     await page.setViewportSize({width, height: 844}); await showMedia(page);
@@ -179,11 +198,13 @@ try {
   assert.deepEqual(associated.segments, imported.segments);
   check('first_binding_preserves_exact_preexisting_source_URL_in_IndexedDB', associated.source_url === rawSourceURL);
   stage = 'native note, calibration and historical exact excerpt';
-  await page.locator('#mode-transcript').click(); const firstCue = page.locator('.segment').first(); await openCueActions(firstCue);
+  await closeMediaAndRead(page, '#mode-transcript', 'first_binding_return_to_transcript');
+  const firstCue = page.locator('.segment').first(); await openCueActions(firstCue);
   await firstCue.locator('.note-button').click(); await page.locator('#note').fill('Authored transcript-first note survives every association choice.'); await page.locator('#close-note').click();
   await showMedia(page); await page.locator('#source-media audio').evaluate(player => {player.pause(); player.currentTime = 2;}); await page.locator('#media-timing-align').click();
   await expect(page.locator('#media-timing-offset')).toHaveValue('2'); await page.locator('#media-timing-save').click(); await expect(page.locator('#media-timing-status')).toContainText('已保存偏移 2');
-  await page.locator('#mode-passages').click(); await page.locator('.passage-quote').first().click(); await page.locator('#quotation-source').focus();
+  await closeMediaAndRead(page, '#mode-passages', 'calibration_return_to_passages');
+  await page.locator('.passage-quote').first().click(); await page.locator('#quotation-source').focus();
   await page.keyboard.press('Control+Home'); for (let index = 0; index < 18; index++) await page.keyboard.press('Shift+ArrowRight');
   await page.locator('#quotation-preview-selection').click(); await page.locator('#quotation-save').click();
   await expect.poll(async () => (await active(page)).exact_excerpts?.length).toBe(1); await page.locator('#quotation-close').click();

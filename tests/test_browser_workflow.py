@@ -100,6 +100,7 @@ class BrowserWorkflowTests(unittest.TestCase):
                                  'compact-library-geometry.json', 'search-return-checks.json',
                                  'inline-excerpts-checks.json', 'chapter-markers-checks.json',
                                  'subtitle-encoding-checks.json', 'transcript-media-association-checks.json',
+                                 'web-browser-acceptance-checks.json',
                                  'compact-library-failure.png'])
         self.assertIn('if: always()', upload)
 

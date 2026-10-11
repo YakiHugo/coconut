@@ -79,11 +79,14 @@ test('transcript local source roundtrips only metadata and never accepts a compe
 
 test('transcript-first association persists the existing key and metadata, then reload requires matching-file reselection',async()=>{
  const env=setup();let fresh;try{
-  const doc=await importJSON(env,transcript()),before=evidence(doc);assert.equal(env.$('replace-reader-media').hidden,true);assert.equal(env.$('unlink-reader-media').hidden,true);
+  const doc=await importJSON(env,transcript()),before=evidence(doc),historical=JSON.stringify(doc.exact_excerpts);assert.equal(env.$('replace-reader-media').hidden,true);assert.equal(env.$('unlink-reader-media').hidden,true);
+  assert.equal(C.exactExcerptFreshness(clone(doc.exact_excerpts[0]),clone(doc)),'current');assert.equal(doc.exact_excerpts[0].snapshot.source.local_media_source,undefined);
   await pick(env,file(env.w));assert.equal(env.w.associationTest.active(),doc);assert.equal(evidence(doc),before);assert.equal(doc.local_media_source.version,1);assert.equal(doc.local_media_source.name,'Original.wav');
+  assert.equal(JSON.stringify(doc.exact_excerpts),historical);assert.equal(C.exactExcerptFreshness(clone(doc.exact_excerpts[0]),clone(doc)),'stale');
   assert.equal(env.w.associationTest.docs().length,1);assert.equal(doc.project_kind,undefined);assert.equal(env.$('replace-reader-media').hidden,false);assert.equal(env.$('unlink-reader-media').hidden,false);
   const saved=env.w.localStorage.getItem(KEY),decoded=JSON.parse(saved).documents[0];assert.equal(decoded.key,doc.key);assert.deepEqual(decoded.local_media_source,clone(doc.local_media_source));assert.doesNotMatch(saved,/blob:|RIFF authored local audio|base64/);assert.equal(env.calls.length,0);
   fresh=setup(snapshot(env.w));assert.equal(fresh.w.associationTest.active().key,doc.key);assert.equal(fresh.$('source-media').querySelector('audio'),null);assert.match(fresh.$('reader-media-status').textContent,/重新选择.*Original.wav/);
+  const reloaded=fresh.w.associationTest.active();assert.equal(JSON.stringify(reloaded.exact_excerpts),historical);assert.equal(C.exactExcerptFreshness(clone(reloaded.exact_excerpts[0]),clone(reloaded)),'stale');
   const changedBytes=new Uint8Array(await file(fresh.w).arrayBuffer());changedBytes[10]^=1;const mismatched=file(fresh.w,'Original.wav',changedBytes);assert.equal(mismatched.size,file(fresh.w).size);
   await pick(fresh,mismatched);assert.equal(fresh.created.length,0);assert.equal(evidence(fresh.w.associationTest.active()),before);assert.match(fresh.$('notice').textContent,/文件信息或部分内容与原文件不同/);
   await pick(fresh,file(fresh.w));assert.ok(fresh.$('source-media').querySelector('audio'));assert.equal(fresh.w.associationTest.active().key,doc.key);assert.equal(fresh.w.associationTest.docs().length,1);assert.equal(fresh.calls.length,0);
