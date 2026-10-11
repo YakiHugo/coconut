@@ -1,0 +1,71 @@
+{
+  "runtime": "v24.19.0",
+  "kind": "Single-run authored CPU observations, not browser latency or a hard scheduling guarantee",
+  "rows": [
+    {
+      "name": "2M quotation, late match",
+      "characters": 2000012,
+      "records": 1,
+      "matchedRecords": 1,
+      "previewCount": 1,
+      "inputMs": 0.2533559999999966,
+      "totalMs": 19.504567000000037,
+      "maxSliceMs": 4.146708000000018,
+      "slices": 31,
+      "reusedMs": 0.007309999999989714,
+      "atomicLowercaseMs": 1.3355230000000233
+    },
+    {
+      "name": "2M note, late match",
+      "characters": 2000012,
+      "records": 1,
+      "matchedRecords": 1,
+      "previewCount": 1,
+      "inputMs": 0.033265999999997575,
+      "totalMs": 14.848963999999938,
+      "maxSliceMs": 2.2047259999999937,
+      "slices": 31,
+      "reusedMs": 0.005278000000004113,
+      "atomicLowercaseMs": 2.2071069999999793
+    },
+    {
+      "name": "2M note with Unicode expansion",
+      "characters": 2000013,
+      "records": 1,
+      "matchedRecords": 1,
+      "previewCount": 1,
+      "inputMs": 0.035379000000006045,
+      "totalMs": 66.47190499999996,
+      "maxSliceMs": 5.775772000000018,
+      "slices": 62,
+      "reusedMs": 0.006866000000002259,
+      "atomicLowercaseMs": 8.608079000000004
+    },
+    {
+      "name": "2M whitespace-only note",
+      "characters": 2000000,
+      "records": 1,
+      "matchedRecords": 0,
+      "previewCount": 0,
+      "inputMs": 0.03975800000000618,
+      "totalMs": 2.6242349999999988,
+      "maxSliceMs": 2.5844769999999926,
+      "slices": 1,
+      "reusedMs": 0.009908999999993284,
+      "atomicLowercaseMs": 2.442064999999957
+    },
+    {
+      "name": "5,000 historical records, no live cues",
+      "characters": 12,
+      "records": 5000,
+      "matchedRecords": 5000,
+      "previewCount": 3,
+      "inputMs": 0.04764499999998861,
+      "totalMs": 3.9935840000000553,
+      "maxSliceMs": 3.101865000000032,
+      "slices": 2,
+      "reusedMs": 0.009265000000027612,
+      "atomicLowercaseMs": 0.0015599999999835745
+    }
+  ]
+}

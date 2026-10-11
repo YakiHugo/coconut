@@ -366,7 +366,7 @@ const libraryStore=CoconutLibraryStore.create({adapter:libraryAdapter,getDocumen
 let libraryContentRevision=0,notebookRefreshQueued=false;
 libraryStore.subscribe((snapshot,event)=>{
  const changed=libraryContentRevision!==snapshot.generation;libraryContentRevision=snapshot.generation;
- if(changed&&!notebookRefreshQueued){notebookRefreshQueued=true;queueMicrotask(()=>{notebookRefreshQueued=false;if($('library-notebook').open)renderLibraryNotebook();});}
+ if(changed&&!notebookRefreshQueued){notebookRefreshQueued=true;queueMicrotask(()=>{notebookRefreshQueued=false;if($('library-notebook').open)renderLibraryNotebook();renderLibrary();});}
  if(event?.result?.ok)for(const captured of event.result.checkpoints)recordPersistenceCheckpoint(captured.identity,captured.checkpoint);
  if(event?.type==='release')resumeDeferredContentInputs();
  renderSaveStatus(libraryStore.status());
@@ -931,12 +931,13 @@ function createLibraryCard(d){
  open.onclick=()=>openDocument();
  const remove=el('button','library-remove','移除…');remove.type='button';remove.onclick=()=>requestLibraryRemoval(d);
  entry.append(open,remove);
- return {doc:d,entry,open,title,metadata,remove,openDocument,hitSignature:null,hits:null};
+ return {doc:d,entry,open,title,metadata,remove,openDocument,hitSignature:null,hits:null,savedHits:null,savedSelection:null};
 }
 const librarySearch=Coconut.createLibrarySearch({getDocuments:()=>state.documents,getRevision:()=>libraryContentRevision,onChange:()=>renderLibrary()});
 let libraryPendingReveal=null;
 function renderLibrary(revealKey=null) {
  const host=$('library'),query=$('library-search').value.trim().toLocaleLowerCase(),scope=$('library-scope').value;
+ $('library-search').placeholder=scope==='title'?'按标题查找':scope==='notes'?'查找标题与笔记（含摘录笔记）':'查找标题、原文、笔记与已存摘录';
  const signature=JSON.stringify([query,$('library-sort').value,$('library-kind').value,scope]);
  const viewChanged=libraryViewSignature!==null&&signature!==libraryViewSignature;
  const selection=librarySearch.request(query,$('library-kind').value,scope,$('library-sort').value);
@@ -1007,7 +1008,29 @@ function renderLibrary(revealKey=null) {
     card.entry.append(list);card.hits=list;
    }
   }
-  for(const hit of card.hits?.children||[])hit.disabled=pendingStructuralDocuments.has(d.key);
+  // Historical previews belong to this completed search, not a render-time scan.
+  if(card.savedSelection!==selection){
+   card.savedHits?.remove();card.savedHits=null;card.savedSelection=selection;
+   const saved=selection.savedHits?.get(d);
+   if(saved?.hits.length){
+    const list=el('div','library-saved-hits');list.setAttribute('aria-label','匹配的已存摘录（历史快照）');
+    list.append(el('p','hint','已存摘录 · 历史快照'));
+    for(const hit of saved.hits){
+     const button=el('button','library-saved-hit');button.type='button';button.dataset.hitKind=hit.kind;button.dataset.hitId=hit.id;button.dataset.captureKey=hit.captureKey;
+     button.append(el('small','',hit.matchFields==='quote'?'已存摘录 · 历史快照':'摘录笔记 · 历史快照'));
+     for(const [label,snippet] of [['摘录：',hit.quoteSnippet],['我的笔记：',hit.noteSnippet]])if(snippet){
+      const preview=el('span','library-hit-preview');preview.append(document.createTextNode(label+snippet.before),el('mark','',snippet.match),document.createTextNode(snippet.after));button.append(preview);
+     }
+     button.onclick=()=>openSavedLibraryHit(hit,d,selection,button);list.append(button);
+    }
+    if(saved.total>saved.hits.length){
+     const more=el('button','library-saved-more',`查看匹配的已存摘录（共 ${saved.total} 条）`);more.type='button';
+     more.onclick=()=>openSavedLibraryHit(saved.hits[0],d,selection,more);list.append(more);
+    }
+    card.entry.append(list);card.savedHits=list;
+   }
+  }
+  for(const hit of [...(card.hits?.children||[]),...(card.savedHits?.querySelectorAll('button')||[])])hit.disabled=pendingStructuralDocuments.has(d.key);
   nextCards.set(d.key,card);
  }
  // Avoid moving unchanged nodes: moving a focused button can reset focus in a
@@ -1020,7 +1043,7 @@ function renderLibrary(revealKey=null) {
  // exists. Never steal focus from an editor, dialog, or async operation.
  if(focusKey&&(!focused.isConnected||document.activeElement===document.body)){
   const card=libraryCards.get(focusKey);
-  const target=hitKind?[...(card?.hits?.children||[])].find(node=>node.dataset.hitKind===hitKind&&node.dataset.hitId===hitId):focused.classList.contains('library-remove')?card?.remove:card?.open;
+  const target=hitKind?[...(card?.hits?.children||[]),...(card?.savedHits?.querySelectorAll('button')||[])].find(node=>node.dataset.hitKind===hitKind&&node.dataset.hitId===hitId):focused.classList.contains('library-remove')?card?.remove:card?.open;
   if(target&&!target.disabled&&!target.hidden)target.focus({preventScroll:true});
   else if(card&&!card.open.disabled)card.open.focus({preventScroll:true});
   else $('library-search').focus({preventScroll:true});
@@ -1122,6 +1145,7 @@ $('exact-note-backup').onclick=()=>{$('export-unsaved-documents').onclick();$('e
 
 const notebookSelection=new Set();
 let notebookPage=0,notebookReturn=null,notebookOpener=null,notebookRestore=null,notebookPainted=null;
+let notebookSavedReveal=null,notebookSavedOrigin=null;
 const notebookSearch=Coconut.createLibraryNotebookSearch({getDocuments:()=>state.documents,getRevision:()=>libraryContentRevision,
  onChange:()=>{if($('library-notebook').open)renderLibraryNotebook();else notebookSearch.cancel();}});
 const NOTEBOOK_PAGE_SIZE=30;
@@ -1135,10 +1159,18 @@ function renderLibraryNotebook(){
   notebookPainted=null;host.replaceChildren();$('notebook-status').textContent='正在查找笔记与摘录…';
   $('notebook-previous').disabled=true;$('notebook-next').disabled=true;syncNotebookSelection();return;
  }
- const captures=selection.captures,returnIndex=notebookRestore?selection.indexes.get(notebookRestore.key)??-1:-1;
+ let savedReveal=notebookSavedReveal;
+ if(savedReveal&&(!librarySearch.isCurrent(savedReveal.selection)||!Coconut.librarySavedHitCurrent(savedReveal.hit,state.documents)||pendingStructuralDocuments.has(savedReveal.doc.key))){
+  notebookSavedReveal=null;savedReveal=null;
+  $('notebook-status').textContent='这条已存摘录已变动，请从更新后的书架重新选择。';renderLibrary();return;
+ }
+ const captures=selection.captures,savedIndex=savedReveal?selection.indexes.get(savedReveal.hit.captureKey)??-1:-1;
+ if(savedReveal&&savedIndex<0){notebookSavedReveal=null;$('notebook-status').textContent='这条已存摘录已变动，请从更新后的书架重新选择。';renderLibrary();return;}
+ const returnIndex=notebookRestore?selection.indexes.get(notebookRestore.key)??-1:-1;
+ if(savedIndex>=0)notebookPage=Math.floor(savedIndex/NOTEBOOK_PAGE_SIZE);
  if(returnIndex>=0)notebookPage=Math.floor(returnIndex/NOTEBOOK_PAGE_SIZE);
  notebookPage=Math.min(notebookPage,Math.max(0,Math.ceil(captures.length/NOTEBOOK_PAGE_SIZE)-1));
- if(notebookPainted?.selection===selection&&notebookPainted.page===notebookPage&&!notebookRestore){syncNotebookSelection();return;}
+ if(notebookPainted?.selection===selection&&notebookPainted.page===notebookPage&&!notebookRestore&&!savedReveal){syncNotebookSelection();return;}
  notebookPainted={selection,page:notebookPage};
  const start=notebookPage*NOTEBOOK_PAGE_SIZE;host.replaceChildren();
  $('notebook-status').textContent=captures.length?`${start+1}–${Math.min(start+NOTEBOOK_PAGE_SIZE,captures.length)} / ${captures.length} 条记录`:'没有匹配的记录。阅读时摘录原话或记下笔记后，会在这里出现。';
@@ -1214,6 +1246,7 @@ function renderLibraryNotebook(){
    if(!$('library-notebook').open)return;
    const sourceCurrent=Coconut.libraryCaptureCurrent(capture,state.documents),exactLocation=exact?Coconut.exactExcerptState(exact,doc).cueId:null;
    if(!notebookSearch.isCurrent(selection)||pendingStructuralDocuments.has(doc.key)||!sourceCurrent||(exact&&!exactLocation)){notebookSearch.cancel();renderLibraryNotebook();$('notebook-status').textContent='这条记录的来源已变动，请从更新后的笔记本重新选择。';$('notebook-search').focus();return;}
+   notebookSavedReveal=null;notebookSavedOrigin=null;
    notebookReturn={key:capture.key,page:notebookPage,scroll:$('library-notebook').scrollTop};notebookSearch.cancel();$('library-notebook').close();
    markDocumentOpened(doc);resetReaderForDocumentNavigation();selectActiveDocument(doc.key);setReadingMode('transcript');showWorkspace('read');render();
    openLibraryHit(exact?{kind:'text',id:exactLocation}:{kind:capture.type==='cue'?(Coconut.hasNoteContent(capture.note)?'note':'text'):capture.type,id:capture.id});
@@ -1233,6 +1266,12 @@ function renderLibraryNotebook(){
   host.append(row);
  }
  syncNotebookSelection();
+ if(savedReveal){
+  notebookSavedReveal=null;
+  const row=[...host.children].find(row=>row.dataset.captureKey===savedReveal.hit.captureKey),details=row?.querySelector('.notebook-details');
+  if(details){details.open=true;details.dispatchEvent(new Event('toggle'));}
+  if(savedReveal.focusOwned&&document.activeElement===$('notebook-search')){details?.querySelector('summary')?.focus({preventScroll:true});row?.scrollIntoView?.({block:'nearest',behavior:'auto'});}
+ }
  if(notebookRestore){
   const restore=notebookRestore;notebookRestore=null;
   const row=[...host.children].find(row=>row.dataset.captureKey===restore.key);
@@ -1249,7 +1288,7 @@ function syncNotebookSelection(){
  $('notebook-export').disabled=notebookSelection.size===0;
 }
 function openLibraryNotebook(returning=false){
- notebookOpener=document.activeElement;notebookRestore=null;
+ notebookSavedReveal=null;notebookSavedOrigin=null;notebookOpener=document.activeElement;notebookRestore=null;
  $('library-notebook').showModal();$('notebook-search').focus({preventScroll:true});
  notebookRestore=returning&&notebookReturn?{...notebookReturn,focusOwned:true}:null;renderLibraryNotebook();
 }
@@ -1257,11 +1296,29 @@ $('open-library-notebook').onclick=()=>openLibraryNotebook();
 $('return-library-notebook').onclick=()=>openLibraryNotebook(true);
 // Leaving the initial return focus relinquishes its intent permanently; coming
 // back to the search box later is a new user choice, not permission to jump.
-$('notebook-search').addEventListener('focusout',()=>{if(notebookRestore)notebookRestore.focusOwned=false;});
-$('library-notebook').addEventListener('close',()=>{if(!$('library-notebook').open){notebookSearch.cancel();notebookRestore=null;}});
-$('notebook-close').onclick=()=>{$('library-notebook').close();notebookSearch.cancel();notebookRestore=null;notebookOpener?.focus?.();};
-for(const id of ['notebook-search','notebook-kind'])$(id)[id==='notebook-search'?'oninput':'onchange']=()=>{notebookRestore=null;notebookPage=0;renderLibraryNotebook();};
-for(const [id,delta] of [['notebook-previous',-1],['notebook-next',1]])$(id).onclick=()=>{notebookPage+=delta;renderLibraryNotebook();$('notebook-captures').querySelector('.notebook-open')?.focus();};
+function openSavedLibraryHit(hit,doc,selection,opener){
+ if(!opener.isConnected||!librarySearch.isCurrent(selection)||pendingStructuralDocuments.has(doc.key)||!state.documents.includes(doc)||(hit&&!Coconut.librarySavedHitCurrent(hit,state.documents))){
+  renderLibrary();notice('这条已存摘录已变动，请从更新后的书架重新选择。');return;
+ }
+ notebookSavedReveal=null;notebookRestore=null;notebookReturn=null;notebookOpener=opener;
+ notebookSavedOrigin={node:opener,doc,hitId:hit?.id};
+ $('notebook-search').value=$('library-search').value.trim();$('notebook-kind').value='all';notebookPage=0;
+ $('library-notebook').showModal();$('notebook-search').focus({preventScroll:true});
+ if(hit)notebookSavedReveal={hit,doc,selection,focusOwned:true};
+ renderLibraryNotebook();
+}
+function restoreSavedLibraryFocus(){
+ const origin=notebookSavedOrigin;notebookSavedOrigin=null;if(!origin)return false;
+ const card=libraryCards.get(origin.doc.key),same=card?.doc===origin.doc;
+ const replacement=same&&origin.hitId?[...(card.savedHits?.querySelectorAll('.library-saved-hit')||[])].find(node=>node.dataset.hitId===origin.hitId):null;
+ const target=origin.node.isConnected&&!origin.node.disabled?origin.node:replacement|| (same?card.open:null);
+ (target&&!target.disabled&&!$('library').hidden?target:$('library-search')).focus({preventScroll:true});return true;
+}
+$('notebook-search').addEventListener('focusout',()=>{if(notebookRestore)notebookRestore.focusOwned=false;if(notebookSavedReveal)notebookSavedReveal.focusOwned=false;});
+$('library-notebook').addEventListener('close',()=>{if(!$('library-notebook').open){notebookSearch.cancel();notebookRestore=null;notebookSavedReveal=null;restoreSavedLibraryFocus();}});
+$('notebook-close').onclick=()=>{notebookSearch.cancel();notebookRestore=null;notebookSavedReveal=null;$('library-notebook').close();if(!restoreSavedLibraryFocus())notebookOpener?.focus?.();};
+for(const id of ['notebook-search','notebook-kind'])$(id)[id==='notebook-search'?'oninput':'onchange']=()=>{notebookSavedReveal=null;notebookRestore=null;notebookPage=0;renderLibraryNotebook();};
+for(const [id,delta] of [['notebook-previous',-1],['notebook-next',1]])$(id).onclick=()=>{notebookSavedReveal=null;notebookRestore=null;notebookPage+=delta;renderLibraryNotebook();$('notebook-captures').querySelector('.notebook-open')?.focus();};
 $('notebook-clear-selection').onclick=()=>{notebookSelection.clear();syncNotebookSelection();};
 $('notebook-export').onclick=()=>{
  let url,link;

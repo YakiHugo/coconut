@@ -218,7 +218,8 @@ test('exact notes share one capture across filters, retire old captures, and sta
  const doc=withExcerpt(),record=doc.exact_excerpts[0],old=C.libraryCaptures([doc])[0];doc.exact_excerpt_notes=C.exactExcerptNotesWith(doc,record.id,'UniquePrivateThought');
  assert.equal(C.libraryCaptureCurrent(old,[doc]),false);
  for(const kind of ['all','note','excerpt']){const results=C.libraryCaptures([doc],'UniquePrivateThought',kind);assert.equal(results.length,1);assert.equal(results[0].key,old.key);assert.equal(results[0].note,'UniquePrivateThought');assert.equal(C.libraryCaptureCurrent(results[0],[doc]),true);}
- for(const scope of ['title','notes','text'])assert.equal(C.libraryMatches(doc,'UniquePrivateThought','all',scope),false);
+ assert.equal(C.libraryMatches(doc,'UniquePrivateThought','all','title'),false);
+ for(const scope of ['notes','text'])assert.equal(C.libraryMatches(doc,'UniquePrivateThought','all',scope),true);
  assert.equal(C.searchDocument(doc,'UniquePrivateThought','text').byCue.size,0);
  const current=C.libraryCaptures([doc])[0];doc.exact_excerpt_notes=C.exactExcerptNotesWith(doc,record.id,' \n\t');assert.equal(C.libraryCaptureCurrent(current,[doc]),false);assert.equal(C.libraryCaptures([doc],'','note').length,0);assert.equal(C.libraryCaptures([doc],'','excerpt').length,1);
  doc.segments=[];assert.equal(C.exactExcerptFreshness(record,doc),'missing');assert.equal(C.libraryCaptures([doc]).length,1);

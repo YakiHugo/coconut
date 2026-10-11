@@ -118,8 +118,11 @@ Saving the same quotation again reuses the record and keeps its note.
 Personal thoughts participate in library-notebook search and the note filter.
 The quotation remains a single capture under both note and excerpt filters.
 Empty or whitespace-only notes are preserved in JSON but do not appear as
-nonempty notes. Ordinary library title/source search, live-transcript search,
-reader note-only filtering and AI evidence scopes remain unchanged.
+nonempty notes. Shelf title search remains unchanged. Shelf notes scope includes
+these personal thoughts; full-text scope also includes the selected historical
+quotation. Live-transcript search, reader note-only filtering and AI evidence
+scopes remain unchanged. Saved shelf previews are a separate bounded group,
+with complete record retrieval continuing through the notebook.
 
 ### Implementation contract
 
@@ -142,3 +145,21 @@ whole-cue notes, bookmarks and quotations intact.
 Cooperative notebook search observes sidecar identity; activating a prior
 capture also compares its note string. A changed thought retires that result
 without making the historical source stale or guessing a replacement location.
+
+
+### Historical shelf result ownership
+
+Shelf saved-quotation hits carry a typed exact-record capture key, not a cue ID.
+The current shelf title identifies the owner; the record keeps its captured
+attribution. Search covers only selected saved wording and nonempty personal
+notes, never captured surrounding context or prior corrections. Distinct
+quotation identities remain distinct even when their wording is identical.
+
+The shelf prepares at most three saved previews per matching document and a
+complete total before publishing its selection. Current-source previews retain
+their own three slots. A matching quote and personal note appear as one record
+with separate snippets. Empty/whitespace-only notes retain their raw stored
+strings but cannot produce a note match or snippet. Source correction/deletion
+does not remove a saved quotation; deleting the quotation or its owning document
+does. See `cooperative-library-search.md` for the identity/freshness API and
+measured scheduling limits.
