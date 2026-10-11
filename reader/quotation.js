@@ -68,37 +68,51 @@
   return shift?{start:Math.min(anchor,next),end:Math.max(anchor,next),direction:next<anchor?'backward':'forward'}:{start:next,end:next,direction:'none'};
  }
  function create({isCurrent,saveExcerpt,excerptState,onDraftChange=()=>{},core=root.Coconut,separator=root.CoconutPassages.separator}){
-  const $=id=>root.document.getElementById(id),dialog=$('quotation-dialog');let session=null,pointer=null,serial=0,busy=false,compatibilityAcknowledged=false,focusSerial=0;
+  const $=id=>root.document.getElementById(id),dialog=$('quotation-dialog');let session=null,pointer=null,serial=0,busy=false,compatibilityAcknowledged=false,focusSerial=0,visibilitySerial=0;
   function quotePayload(owner){return attribution(owner.doc,owner.quote,core)+(owner.pair?.quote?'\n\n所选译文（'+owner.pair.run.language+'；'+($('quotation-pair-confirm').checked?'用户确认对应，非翻译质量认证':'尚未确认对应')+'）：\n'+owner.pair.quote.text+'\n初始来源：'+owner.pair.info.providers.join('、')+'；译文生成时间未记录。':'');}
-  function hasDraft(){return !!session?.pair&&!session.doc.exact_excerpts?.includes(session.record);}
+  function hasDraft(){return !!session?.pair&&(session.pair.editing||!session.doc.exact_excerpts?.includes(session.record));}
   function draftChanged(){onDraftChange();}
-  function resetPair(owner){owner.pair=null;$('quotation-pair-editor').hidden=true;$('quotation-pair-start').hidden=false;$('quotation-pair-confirm').checked=false;$('quotation-pair-compatibility').checked=compatibilityAcknowledged;draftChanged();}
-  function pairReady(owner){return !owner.pair||!!owner.pair.quote&&$('quotation-pair-confirm').checked&&$('quotation-pair-compatibility').checked;}
-  function updatePairSave(){const owner=session;if(!owner)return;if(owner.quote)$('quotation-preview').value=quotePayload(owner).replace(/\r\n?/g,'\n');$('quotation-save').disabled=!pairReady(owner)||!!owner.saving;$('quotation-save').textContent=owner.pair?'保存双语摘录':'保存所选摘录';draftChanged();}
+  function sizeSelections(){for(const id of ['quotation-original-text','quotation-pair-text']){const field=$(id);if(field.closest('[hidden]'))continue;field.style.height='auto';field.style.height=Math.max(44,field.scrollHeight+2)+'px';}}
+  function showPairSelection(owner,editing){
+   if(!owner?.pair)return;owner.pair.editing=editing;
+   $('quotation-pair-selection').hidden=!editing;$('quotation-pair-return').hidden=!owner.pair.quote;
+   $('quotation-pair-result').hidden=editing||!owner.pair.quote;$('quotation-pair-confirmations').hidden=editing||!owner.pair.quote;
+   $('quotation-pair-evidence').hidden=editing||!owner.pair.quote;sizeSelections();updatePairSave();
+  }
+  function resetPair(owner){owner.pair=null;dialog.classList.remove('is-pairing');$('quotation-pair-editor').hidden=true;$('quotation-pair-start').hidden=false;$('quotation-pair-result').hidden=true;$('quotation-pair-evidence').hidden=true;$('quotation-pair-confirmations').hidden=true;$('quotation-pair-confirm').checked=false;$('quotation-pair-compatibility').checked=compatibilityAcknowledged;draftChanged();}
+  function pairReady(owner){return !owner.pair||!owner.pair.editing&&!!owner.pair.quote&&$('quotation-pair-confirm').checked&&$('quotation-pair-compatibility').checked;}
+  function updatePairSave(){const owner=session;if(!owner)return;if(owner.quote)$('quotation-preview').value=quotePayload(owner).replace(/\r\n?/g,'\n');const saved=!owner.pair?.editing&&owner.record&&owner.doc.exact_excerpts?.includes(owner.record)&&excerptState?.(owner.doc,owner.record)==='saved';$('quotation-save').disabled=!pairReady(owner)||!!owner.saving||!!saved;$('quotation-save').textContent=saved?'已保存摘录':owner.pair?'保存双语摘录':'保存所选摘录';draftChanged();}
   function pairRun(){
    const owner=session,pair=owner?.pair;if(!pair)return;owner.serial=++serial;pair.run=pair.runs[Number($('quotation-pair-run').value)]||null;pair.quote=null;owner.record=null;
    $('quotation-pair-confirm').checked=false;$('quotation-pair-result').hidden=true;$('quotation-pair-source').value=(pair.run?.text||'').replace(/\r\n?/g,'\n');$('quotation-pair-source').setSelectionRange(0,0);$('quotation-pair-preview').disabled=!pair.run;
-   $('quotation-pair-status').textContent=pair.run?'请选择这一连续范围中对应的译文。缺译或依据过期处已分开，不会跨越拼接。':'这一段落没有可用的当前译文；请先返回阅读，核对或自己写译文。';updatePairSave();
+   $('quotation-pair-status').textContent=pair.run?'请选择这一连续范围中对应的译文。缺译或依据过期处已分开，不会跨越拼接。':'这一段落没有可用的当前译文；请先返回阅读，核对或自己写译文。';showPairSelection(owner,true);
   }
   function pairLanguage(){
    const owner=session;if(!owner?.pair||!guard(owner))return;
    try{owner.pair.runs=core.translationSelectionModels(owner.doc,owner.references,$('quotation-pair-language').value);const select=$('quotation-pair-run');select.replaceChildren();owner.pair.runs.forEach((run,i)=>{const option=root.document.createElement('option');option.value=String(i);option.textContent=stamp(run.start)+'–'+stamp(run.end)+' · '+run.cues.length+' 个片段';select.append(option);});$('quotation-pair-run-field').hidden=owner.pair.runs.length<2;pairRun();}
    catch(error){$('quotation-pair-status').textContent=error.message;$('quotation-save').disabled=true;}
   }
-  function reopenDraft(){if(!hasDraft())return false;if(!dialog.open)dialog.showModal();$('quotation-status').textContent='保留了未提交的双语配对，请先保存或明确放弃。';$('quotation-pair-source').focus({preventScroll:true});guard(session);return true;}
-  $('quotation-pair-start').onclick=()=>{const owner=session;if(!owner?.quote||!guard(owner))return;owner.record=null;owner.pair={runs:[],run:null,quote:null};$('quotation-pair-editor').hidden=false;$('quotation-pair-start').hidden=true;$('quotation-pair-language').value=owner.doc.translation_view||'zh';$('quotation-pair-compatibility').checked=compatibilityAcknowledged;pairLanguage();$('quotation-pair-source').focus();};
+  function reopenDraft(){if(!hasDraft())return false;if(!dialog.open)dialog.showModal();$('quotation-status').textContent='保留了未提交的双语配对，请先保存或明确放弃。';(session.pair.quote&&!session.pair.editing?$('quotation-pair-text'):$('quotation-pair-source')).focus({preventScroll:true});sizeSelections();guard(session);return true;}
+  $('quotation-pair-start').onclick=()=>{const owner=session;if(!owner?.quote||!guard(owner))return;owner.record=null;owner.pair={runs:[],run:null,quote:null,editing:true};dialog.classList.add('is-pairing');$('quotation-reselect').hidden=true;$('quotation-citation').open=false;$('quotation-pair-editor').hidden=false;$('quotation-pair-start').hidden=true;$('quotation-pair-language').value=owner.doc.translation_view||'zh';$('quotation-pair-compatibility').checked=compatibilityAcknowledged;pairLanguage();$('quotation-pair-source').focus();};
+  $('quotation-pair-edit').onclick=()=>{const owner=session;if(!owner?.pair?.quote||!guard(owner))return;owner.serial=++serial;showPairSelection(owner,true);const pair=owner.pair;$('quotation-pair-source').setSelectionRange(pair.run.text.slice(0,pair.quote.from).replace(/\r\n?/g,'\n').length,pair.run.text.slice(0,pair.quote.to).replace(/\r\n?/g,'\n').length);$('quotation-pair-status').textContent='调整选区后预览；返回已选对照可保留原来的选区与确认。';$('quotation-pair-source').focus();};
+  $('quotation-pair-return').onclick=()=>{const owner=session;if(!owner?.pair?.quote||!guard(owner))return;owner.serial=++serial;showPairSelection(owner,false);$('quotation-pair-status').textContent='已返回先前选定的原文与译文。';$('quotation-pair-text').focus({preventScroll:true});dialog.scrollTop=0;};
+  root.addEventListener('resize',()=>{if(dialog.open)sizeSelections();});
   $('quotation-pair-language').onchange=pairLanguage;$('quotation-pair-run').onchange=pairRun;
   for(const id of ['quotation-pair-confirm','quotation-pair-compatibility'])$(id).onchange=()=>{if(session){session.serial=++serial;session.record=null;}updatePairSave();};
   $('quotation-pair-discard').onclick=()=>{const owner=session;if(!owner)return;resetPair(owner);owner.record=null;preview(owner,owner.quote);};
   $('quotation-pair-preview').onclick=()=>{
-   const owner=session,pair=owner?.pair;if(!pair?.run||!guard(owner))return;owner.serial=++serial;pair.quote=null;owner.record=null;$('quotation-pair-confirm').checked=false;$('quotation-pair-result').hidden=true;updatePairSave();
+   const owner=session,pair=owner?.pair;if(!pair?.run||!pair.editing||!guard(owner))return;owner.serial=++serial;
    try{
     const field=$('quotation-pair-source'),from=inputOffset(pair.run.text,field.selectionStart),to=inputOffset(pair.run.text,field.selectionEnd);
     let offset=0;const spans=pair.run.cues.map((cue,i)=>{if(i)offset+=pair.run.separators[i-1].length;const span={cue,from:offset,to:offset+cue.text.length};offset=span.to;return span;});
-    slice({text:pair.run.text,spans},from,to);pair.info=core.translationSelectionInfo(pair.run,from,to);pair.quote={from,to,text:pair.run.text.slice(from,to)};
+    slice({text:pair.run.text,spans},from,to);const info=core.translationSelectionInfo(pair.run,from,to),quote={from,to,text:pair.run.text.slice(from,to)};
+    // An invalid replacement must leave the previous pair available to return to.
+    pair.info=info;pair.quote=quote;owner.record=null;$('quotation-pair-confirm').checked=false;
     $('quotation-pair-text').value=pair.quote.text.replace(/\r\n?/g,'\n');$('quotation-pair-result').hidden=false;
     $('quotation-pair-origin').textContent='译文语言：'+pair.run.language+' · 初始来源：'+pair.info.providers.join('、')+' · '+pair.info.reviewStates.map(value=>({'user-authored':'用户自写','human-reviewed':'已有人工核对','machine':'机器生成，需核对'}[value])).join('、')+' · 译文生成时间未记录。'+(pair.info.qualityWarnings.length?'含质量提示，请核对。':'');
-    $('quotation-pair-status').textContent='请对照上方原文与这里的译文，明确确认对应；不会自动标记译文已人工核对。';updatePairSave();$('quotation-pair-text').focus();
+    $('quotation-pair-origin-summary').textContent=pair.info.reviewStates.map(value=>({'user-authored':'用户自写','human-reviewed':'已有人工核对','machine':'机器生成，需核对'}[value])).join('、')+' · 译文来源'+(pair.info.qualityWarnings.length?' · 有质量提示':'');
+    if(pair.info.qualityWarnings.length)$('quotation-pair-origin').textContent+='\n'+core.translationQualityMessage({quality_warnings:pair.info.qualityWarnings});
+    $('quotation-pair-status').textContent='请对照原文与译文，确认两段对应。';showPairSelection(owner,false);$('quotation-pair-text').focus({preventScroll:true});dialog.scrollTop=0;
    }catch(error){$('quotation-pair-status').textContent=error.message;}
   };
   function current(owner){return owner&&session===owner&&isCurrent(owner.doc)&&owner.paragraph.isConnected&&owner.paragraph.textContent===owner.model.text&&
@@ -108,17 +122,17 @@
   function guard(owner){if(current(owner))return true;$('quotation-status').textContent='原文或篇目已变化，请关闭后重新选择。预览仍可手动复制。';$('quotation-copy').disabled=true;$('quotation-save').disabled=true;return false;}
   function newlineHint(owner){return owner.quote?.text.includes('\r\n')?' 手动复制采用预览中的换行格式。':'';}
   function selectionView(owner,message='选择同一段中的连续原文，再预览引用。'){
-   resetPair(owner);$('quotation-pair').hidden=true;owner.serial=++serial;owner.quote=null;owner.record=null;$('quotation-preview').value='';$('quotation-result').hidden=true;
+   resetPair(owner);$('quotation-pair').hidden=true;owner.serial=++serial;owner.quote=null;owner.record=null;$('quotation-preview').value='';$('quotation-original-text').value='';$('quotation-result').hidden=true;$('quotation-citation').hidden=true;$('quotation-citation').open=false;
    $('quotation-selector').hidden=false;$('quotation-copy').hidden=true;$('quotation-copy').disabled=true;$('quotation-reselect').hidden=true;
    $('quotation-save').hidden=true;$('quotation-save-status').textContent='';$('quotation-status').textContent=message;
   }
   function preview(owner,quote){
    if(!guard(owner))return;owner.serial=++serial;owner.quote=quote;owner.record=null;$('quotation-pair').hidden=false;
-   $('quotation-preview').value=attribution(owner.doc,quote,core).replace(/\r\n?/g,'\n');
+   $('quotation-preview').value=attribution(owner.doc,quote,core).replace(/\r\n?/g,'\n');$('quotation-original-text').value=quote.text.replace(/\r\n?/g,'\n');$('quotation-citation').hidden=false;$('quotation-citation').open=false;
    $('quotation-selector').hidden=true;$('quotation-result').hidden=false;$('quotation-copy').hidden=false;$('quotation-copy').disabled=busy;$('quotation-reselect').hidden=false;
-   $('quotation-status').textContent='时间按文字稿片段定位。'+newlineHint(owner);
-   $('quotation-save').hidden=!saveExcerpt;$('quotation-save').disabled=false;$('quotation-save').textContent='保存所选摘录';$('quotation-save-status').textContent='精确保存所选文字、上下文与此刻的出处。整段摘录另行保留。';
-   $('quotation-preview').focus({preventScroll:true});$('quotation-preview').scrollTop=0;dialog.scrollTop=0;
+   $('quotation-status').textContent=newlineHint(owner).trim();
+   $('quotation-save').hidden=!saveExcerpt;$('quotation-save').disabled=false;$('quotation-save').textContent='保存所选摘录';$('quotation-save-status').textContent='保存到本机，保留所选文字、上下文与出处。';
+   sizeSelections();$('quotation-original-text').focus({preventScroll:true});$('quotation-original-text').scrollTop=0;dialog.scrollTop=0;
   }
   function capture(binding){try{return {quote:domSelection(binding.paragraph,binding.model,root.getSelection())};}catch(error){return {error:error.message};}}
   function open(binding,captured){
@@ -129,7 +143,7 @@
    if(!guard(owner))return;
    if(captured.quote)preview(owner,captured.quote);else{$('quotation-source').focus({preventScroll:true});dialog.scrollTop=0;}
   }
-  function close(){const owner=session;if(!hasDraft()){session=null;serial++;}pointer=null;if(dialog.open)dialog.close();if(owner?.button.isConnected)owner.button.focus({preventScroll:true});else $('main-content')?.focus({preventScroll:true});}
+  function close(){visibilitySerial++;focusSerial++;const owner=session;if(!hasDraft()){session=null;serial++;}pointer=null;if(dialog.open)dialog.close();if(owner?.button.isConnected)owner.button.focus({preventScroll:true});else $('main-content')?.focus({preventScroll:true});}
   $('quotation-close').onclick=close;
   $('quotation-reselect').onclick=()=>{const owner=session;if(hasDraft()){$('quotation-status').textContent='请先保存或放弃配对，再重新选择原文。';return;}if(!guard(owner))return;selectionView(owner);$('quotation-source').focus({preventScroll:true});dialog.scrollTop=0;};
   dialog.addEventListener('cancel',event=>{event.preventDefault();close();});
@@ -165,14 +179,14 @@
    finally{if(owner.saving===operation){owner.saving=null;if(session===owner&&owner.serial!==operation)updatePairSave();}}
   };
   root.addEventListener('coconut-persistence-change',()=>{
-   const owner=session;if(!owner?.record||owner.saving===owner.serial||!dialog.open||!excerptState)return;
+   const owner=session;if(!owner?.record||owner.pair?.editing||owner.saving===owner.serial||!dialog.open||!excerptState)return;
    if(excerptState(owner.doc,owner.record)==='saved'){$('quotation-save-status').textContent='所选摘录已保存到本机。';$('quotation-save').textContent='已保存摘录';$('quotation-save').disabled=true;}
   });
   dialog.addEventListener('pointerdown',()=>{focusSerial++;});
   dialog.addEventListener('keydown',event=>{
    const ticket=++focusSerial;
    if(event.key!=='Tab'||event.defaultPrevented||event.isComposing||event.keyCode===229||event.altKey||event.ctrlKey||event.metaKey||event.target.closest?.('dialog')!==dialog)return;
-   const controls=[...dialog.querySelectorAll('button,input,select,textarea,[tabindex]')].filter(node=>{if(node.matches(':disabled')||node.tabIndex<0||node.closest('[hidden],[inert]'))return false;for(let parent=node;parent&&parent!==dialog;parent=parent.parentElement){const style=root.getComputedStyle(parent);if(style.display==='none'||style.visibility==='hidden'||style.visibility==='collapse')return false;}return true;});
+   const controls=[...dialog.querySelectorAll('button,input,select,textarea,summary,[tabindex]')].filter(node=>{if(node.matches(':disabled')||node.tagName!=='SUMMARY'&&node.tabIndex<0||node.closest('[hidden],[inert]'))return false;for(let disclosure=node.parentElement?.closest('details:not([open])');disclosure;disclosure=disclosure.parentElement?.closest('details:not([open])'))if(!disclosure.querySelector(':scope > summary')?.contains(node))return false;for(let parent=node;parent&&parent!==dialog;parent=parent.parentElement){const style=root.getComputedStyle(parent);if(style.display==='none'||style.visibility==='hidden'||style.visibility==='collapse')return false;}return true;});
    const first=controls[0],last=controls.at(-1);if(first&&(event.shiftKey&&root.document.activeElement===first||!event.shiftKey&&root.document.activeElement===last)){event.preventDefault();(event.shiftKey?last:first).focus();}
    // Native tab scrolling does not account for the dialog's sticky actions.
    const owner=session,revision=owner?.serial;root.requestAnimationFrame(()=>{
@@ -183,11 +197,12 @@
     if(end-start>ceiling-top){if(start<top||start>ceiling)dialog.scrollTop+=start-top;}else if(start<top)dialog.scrollTop+=start-top;else if(end>ceiling)dialog.scrollTop+=end-ceiling;
    });
   });
+  for(const id of ['quotation-citation','quotation-pair-evidence'])$(id).addEventListener('toggle',()=>{const detail=$(id);if(!detail.open&&detail.contains(root.document.activeElement)&&root.document.activeElement!==detail.firstElementChild)detail.firstElementChild.focus({preventScroll:true});});
   $('quotation-copy').onclick=async()=>{
    const owner=session;if(busy||!guard(owner)||!owner.quote)return;
-   const payload=quotePayload(owner),copySerial=owner.serial;busy=true;$('quotation-copy').disabled=true;
-   try{if(!root.navigator.clipboard?.writeText)throw Error('unavailable');await root.navigator.clipboard.writeText(payload);if(session===owner&&owner.serial===copySerial&&copySerial===serial&&guard(owner))$('quotation-status').textContent='已复制完整引用与出处。';}
-   catch{if(session===owner&&owner.serial===copySerial&&copySerial===serial){$('quotation-status').textContent='未能自动复制。完整引用已保留，请在预览框中全选后手动复制。'+newlineHint(owner);$('quotation-preview').focus();$('quotation-preview').select();}}
+   const payload=quotePayload(owner),copySerial=owner.serial,copyVisibility=visibilitySerial;busy=true;$('quotation-copy').disabled=true;
+   try{if(!root.navigator.clipboard?.writeText)throw Error('unavailable');await root.navigator.clipboard.writeText(payload);if(dialog.open&&copyVisibility===visibilitySerial&&session===owner&&owner.serial===copySerial&&copySerial===serial&&guard(owner))$('quotation-status').textContent='已复制完整引用与出处。';}
+   catch{if(dialog.open&&copyVisibility===visibilitySerial&&session===owner&&owner.serial===copySerial&&copySerial===serial){$('quotation-status').textContent='未能自动复制。完整引用已保留，请在预览框中全选后手动复制。'+newlineHint(owner);$('quotation-citation').open=true;$('quotation-preview').focus();$('quotation-preview').select();}}
    finally{busy=false;if(session?.quote&&current(session))$('quotation-copy').disabled=false;}
   };
   return {hasDraft,reopenDraft,ownsDraft:doc=>hasDraft()&&session.doc===doc,bind(button,paragraph,doc,cues){

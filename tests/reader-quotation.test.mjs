@@ -161,10 +161,10 @@ test('real key-handler path maps normalized CRLF offsets and does not own previe
 test('valid quotation leads with preview, explicit reselection retires old quote and returns accessible focus',async()=>{
  const {w,$}=setup();try{
   const p=paragraph(w),before=JSON.stringify(w.libraryProbe.documents[0]);select(w,p.firstChild.firstChild,0,p.firstChild.firstChild,4);action(w).click();
-  assert.equal($('quotation-selector').hidden,true);assert.equal($('quotation-result').hidden,false);assert.equal($('quotation-copy').hidden,false);assert.equal($('quotation-reselect').hidden,false);assert.equal(w.document.activeElement,$('quotation-preview'));assert.equal($('quotation-dialog').scrollTop,0);
+  assert.equal($('quotation-selector').hidden,true);assert.equal($('quotation-result').hidden,false);assert.equal($('quotation-copy').hidden,false);assert.equal($('quotation-reselect').hidden,false);assert.equal(w.document.activeElement,$('quotation-original-text'));assert.equal($('quotation-dialog').scrollTop,0);
   const previous=$('quotation-preview').value;$('quotation-source').setSelectionRange(9,17);$('quotation-preview-selection').click();assert.equal($('quotation-preview').value,previous,'hidden picker does not replace preview');
   $('quotation-dialog').scrollTop=100;$('quotation-reselect').click();assert.equal($('quotation-selector').hidden,false);assert.equal($('quotation-result').hidden,true);assert.equal($('quotation-copy').disabled,true);assert.equal($('quotation-preview').value,'');assert.equal(w.document.activeElement,$('quotation-source'));assert.equal($('quotation-dialog').scrollTop,0);
-  $('quotation-source').setSelectionRange(9,17);$('quotation-preview-selection').click();assert.ok($('quotation-preview').value.startsWith('repeated\n\n'));assert.equal($('quotation-selector').hidden,true);assert.equal(w.document.activeElement,$('quotation-preview'));assert.equal(JSON.stringify(w.libraryProbe.documents[0]),before);
+  $('quotation-source').setSelectionRange(9,17);$('quotation-preview-selection').click();assert.ok($('quotation-preview').value.startsWith('repeated\n\n'));assert.equal($('quotation-selector').hidden,true);assert.equal(w.document.activeElement,$('quotation-original-text'));assert.equal(JSON.stringify(w.libraryProbe.documents[0]),before);
   $('quotation-close').click();assert.equal(w.document.activeElement,action(w));
  }finally{await w.happyDOM.close();}
 });
@@ -173,7 +173,7 @@ test('late copy result cannot replace reselection state or focus a newer quote i
  const {w,$}=setup();try{
   let fail;Object.defineProperty(w.navigator,'clipboard',{value:{writeText:()=>new Promise((resolve,reject)=>{fail=reject;})}});
   action(w).click();$('quotation-source').setSelectionRange(0,4);$('quotation-preview-selection').click();$('quotation-copy').click();$('quotation-reselect').click();
-  $('quotation-source').setSelectionRange(9,17);$('quotation-preview-selection').click();const preview=$('quotation-preview').value,status=$('quotation-status').textContent;fail(Error('late denied'));await tick();assert.equal($('quotation-preview').value,preview);assert.equal($('quotation-status').textContent,status);assert.equal(w.document.activeElement,$('quotation-preview'));assert.equal($('quotation-copy').disabled,false);
+  $('quotation-source').setSelectionRange(9,17);$('quotation-preview-selection').click();const preview=$('quotation-preview').value,status=$('quotation-status').textContent;fail(Error('late denied'));await tick();assert.equal($('quotation-preview').value,preview);assert.equal($('quotation-status').textContent,status);assert.equal(w.document.activeElement,$('quotation-original-text'));assert.equal($('quotation-copy').disabled,false);
  }finally{await w.happyDOM.close();}
 });
 

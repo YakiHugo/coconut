@@ -85,11 +85,12 @@ async function readyQuotationLayout(label) {
   await expect(page.locator('#quotation-selector')).toBeHidden();
   await expect(page.locator('#quotation-reselect')).toBeVisible();
   check(label + '_preview_and_primary_actions_are_in_first_view', await page.locator('#quotation-dialog').evaluate(dialog => {
-    const preview=dialog.querySelector('#quotation-preview').getBoundingClientRect();
+    const preview=dialog.querySelector('#quotation-original-text').getBoundingClientRect();
     const actions=['quotation-save','quotation-copy','quotation-close'].map(id=>document.getElementById(id).getBoundingClientRect());
     return dialog.scrollTop===0&&preview.top>=0&&preview.bottom<=innerHeight&&actions.every(rect=>rect.top>=preview.bottom&&rect.bottom<=innerHeight&&rect.left>=0&&rect.right<=innerWidth);
   }));
-  await expect(page.locator('#quotation-preview')).toBeFocused();
+  await expect(page.locator('#quotation-original-text')).toBeFocused();
+  check(label + '_keeps_complete_citation_available_in_collapsed_disclosure', !await page.locator('#quotation-citation').evaluate(node=>node.open) && await page.locator('#quotation-citation > summary').isVisible());
 }
 async function assertPreview(label, selected, fixture) {
   const preview = await page.locator('#quotation-preview').inputValue();
