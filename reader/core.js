@@ -98,6 +98,60 @@
  function segmentNoteCount(doc){return doc.segments.reduce((count,segment)=>count+Number(hasNoteContent(doc.notes?.[segment.id])),0);}
  // A timestamp bookmark is useful even without a note, and counts as one item.
  function projectAnnotationCount(doc){return Number(hasNoteContent(doc.project_note))+(doc.timestamp_bookmarks?.length||0);}
+ // Manual chapters are live cue navigation, not media bookmarks or historical excerpts.
+ function normalizeReadingChapters(data){
+  if(data.reading_chapters===undefined)return undefined;
+  const values=data.reading_chapters,ids=new Set(),anchors=new Set();
+  if(!Array.isArray(values)||values.length>2000)throw new Error('每篇最多保存2,000个章节');
+  let budget=0;
+  return values.map(item=>{
+   if(!exactFields(item,['id','title','cue_id','time','note'])||typeof item.id!=='string'||!item.id.length||item.id.length>200||
+    ids.has(item.id)||typeof item.title!=='string'||!hasNoteContent(item.title)||item.title.length>200||
+    typeof item.cue_id!=='string'||anchors.has(item.cue_id)||!Number.isFinite(item.time)||item.time<0||
+    (item.note!==undefined&&(typeof item.note!=='string'||item.note.length>10000)))throw new Error('章节内容、标识或原文位置无效；同一片段只能设置一个章节');
+   budget+=item.title.length+(item.note?.length||0);if(budget>1000000)throw new Error('章节标题与备注总量不能超过1,000,000字符');
+   ids.add(item.id);anchors.add(item.cue_id);
+   return {id:item.id,title:item.title,cue_id:item.cue_id,time:item.time,note:item.note??''};
+  });
+ }
+ function chapterDocument(doc){
+  if(!doc||isReadingCollection(doc)||isAudioProject(doc)||!doc.segments?.length)throw new Error('请在有原文的文字稿中设置章节');
+ }
+ function readingChapters(doc){
+  if(!doc||isReadingCollection(doc)||isAudioProject(doc)||!doc.reading_chapters?.length)return [];
+  const positions=new Map(doc.segments.map((cue,index)=>[cue.id,{cue,index}]));
+  return (doc.reading_chapters||[]).map(item=>{
+   const found=positions.get(item.cue_id);
+   return {item,cue:found?.cue||null,index:found?.index??-1,status:found?'current':'missing'};
+  }).sort((a,b)=>(a.index<0?Infinity:a.index)-(b.index<0?Infinity:b.index));
+ }
+ function createReadingChapter(doc,{id,title,cueId,note=''}){
+  chapterDocument(doc);
+  const cue=doc.segments.find(item=>item.id===cueId);
+  if(!cue)throw new Error('章节原文位置不存在');
+  if((doc.reading_chapters||[]).some(item=>item.id===id))throw new Error('章节标识已存在');
+  const item={id,title,cue_id:cue.id,time:cue.start,note};
+  return normalizeReadingChapters({reading_chapters:[...(doc.reading_chapters||[]),item]}).at(-1);
+ }
+ function updateReadingChapter(doc,id,changes){
+  chapterDocument(doc);
+  const original=(doc.reading_chapters||[]).find(item=>item.id===id);
+  if(!original)throw new Error('章节已不存在');
+  if(!exactFields(changes,['title','note','cueId']))throw new Error('章节更新无效');
+  const item={...original};
+  if(Object.hasOwn(changes,'title'))item.title=changes.title;
+  if(Object.hasOwn(changes,'note'))item.note=changes.note;
+  if(Object.hasOwn(changes,'cueId')){
+   const cue=doc.segments.find(cue=>cue.id===changes.cueId);if(!cue)throw new Error('新的章节原文位置不存在');
+   item.cue_id=cue.id;item.time=cue.start;
+  }
+  return normalizeReadingChapters({reading_chapters:doc.reading_chapters.map(old=>old===original?item:old)}).find(entry=>entry.id===id);
+ }
+ function readingChaptersWith(doc,item){
+  chapterDocument(doc);
+  const old=(doc.reading_chapters||[]).find(old=>old.id===item?.id);
+  return normalizeReadingChapters({reading_chapters:old?doc.reading_chapters.map(entry=>entry===old?item:entry):[...(doc.reading_chapters||[]),item]});
+ }
  function projectAnnotations(data){
   if(data.project_note!==undefined&&(typeof data.project_note!=='string'||data.project_note.length>100000))throw new Error('项目笔记不能超过100,000字符');
   const bookmarks=data.timestamp_bookmarks??[],ids=new Set();
@@ -126,6 +180,7 @@
   return validate(result);
  }
  function validateAudioProject(data) {
+  if(data.reading_chapters!==undefined)throw new Error('原声项目尚无文字稿，不能保存章节');
   if(data.exact_excerpts!==undefined||data.exact_excerpt_notes!==undefined)exactError();
   const origin=podcastSource(data.podcast_source),local=localMediaSource(data.local_media_source);
   if(data.local_media_source!==undefined&&!local)throw new Error('本地文件信息无效，请重新选择原音视频；项目备份未改变');
@@ -977,9 +1032,11 @@
 		const localSource=localMediaSource(data.local_media_source);
   if(data.local_media_source!==undefined&&(!localSource||data.podcast_source!==undefined||data.source_media!==undefined))throw new Error('本地文件来源无效或混入其他媒体来源');
   const sourceMedia = mediaSource(data.source_media);
+  const chapters=normalizeReadingChapters(data);
   const excerpts=exactExcerpts(data),excerptNotes=exactExcerptNotes(data,excerpts);
 		return {
 			notes,
+   ...(chapters!==undefined?{reading_chapters:chapters}:{}),
    ...(excerpts?.length?{exact_excerpts:excerpts}:{}),
    ...(excerptNotes?{exact_excerpt_notes:excerptNotes}:{}),
    ...(mediaTiming(data.media_timing)?{media_timing:mediaTiming(data.media_timing)}:{}),
@@ -1301,7 +1358,7 @@
  }
  function libraryNotebookMarkdown(documents, selectedKeys) {
   const selected=new Set(selectedKeys),docs=documents.filter(doc=>selected.has(doc.key));
-  return ['# 我的笔记与摘录','','包含所选 '+docs.length+' 篇的全部摘录、非空笔记与时间书签，不受笔记本搜索或分页影响。未选篇目不包含在内。Markdown 不是可恢复备份；完整恢复请另存 JSON，媒体不包含在内。','',...docs.map(doc=>'文档标识：'+markdownText(doc.key)+(doc.local_media_source?'\n本地媒体：'+markdownText(doc.local_media_source.name):'')+'\n\n'+notebookMarkdown(doc))].join('\n\n');
+  return ['# 我的笔记与摘录','','包含所选 '+docs.length+' 篇的全部摘录、非空笔记、手动章节与时间书签，不受笔记本搜索或分页影响。未选篇目不包含在内。Markdown 不是可恢复备份；完整恢复请另存 JSON，媒体不包含在内。','',...docs.map(doc=>'文档标识：'+markdownText(doc.key)+(doc.local_media_source?'\n本地媒体：'+markdownText(doc.local_media_source.name):'')+'\n\n'+notebookMarkdown(doc))].join('\n\n');
  }
 	function markdownText(value) {
 		return String(value).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
@@ -1329,7 +1386,7 @@
 		const quote = value => text(value).split("\n").map(line => "> " + line).join("\n");
 		const sourceLink = seconds => source(doc.source_url, seconds).replace(/[()]/g, char => char === "(" ? "%28" : "%29");
 		const lines = ["# " + singleLine(doc.title), "", "Coconut 阅读笔记 · " + kept.length + " 个片段" + (exactExcerptCount(doc)?" · "+exactExcerptCount(doc)+" 条精确摘录":""), "",
-			"以下包含本篇全部摘录和非空笔记，不受当前搜索筛选影响。文字稿可能有识别错误，请回听核对。", "",
+			"以下包含本篇全部摘录、非空笔记与手动章节，不受当前搜索筛选影响。文字稿可能有识别错误，请回听核对。", "",
 			"Markdown 用于阅读与整理；完整恢复请另存 Coconut JSON 备份。此文件不包含媒体。", ""];
 		const origin = sourceLink(0) || podcastOrigin(doc);
 		if (origin) lines.push("[原始来源](" + origin + ")", "");
@@ -1353,6 +1410,16 @@
 			if (hasNoteContent(doc.notes?.[segment.id])) lines.push("我的笔记：", "", quote(doc.notes[segment.id]), "");
 		}
   if(exactExcerptCount(doc)){const freshness=exactExcerptFreshnessBatch(doc.exact_excerpts,doc);for(const record of doc.exact_excerpts)lines.push(exactExcerptMarkdown(record,freshness.get(record.id),exactExcerptNote(doc,record.id)),'');}
+  const chapters=readingChapters(doc);
+  if(chapters.length){
+   lines.push('## 手动章节目录','','用户设置的阅读路标，不是原文或自动摘要。','');
+   for(const {item,cue,status} of chapters){
+    lines.push('### '+singleLine(item.title),'',
+     '章节 ID：'+singleLine(item.id)+' · cue：'+singleLine(item.cue_id),
+     '建立／重定位时：'+time(item.time)+(status==='missing'?' · 原位置不可用；未猜测替代位置。':' · 当前文字稿时间：'+time(cue.start)),'');
+    if(hasNoteContent(item.note))lines.push('章节备注：','',quote(item.note),'');
+   }
+  }
   if(hasProjectAnnotations(doc)&&projectAnnotationCount(doc)){
    lines.push('## 项目笔记与时间书签','','以下是用户自己的记录，不是原文或经过验证的引用。','');
    if(hasNoteContent(doc.project_note))lines.push('### 项目笔记','',quote(doc.project_note),'');
@@ -1518,7 +1585,7 @@
 	function parse(text, filename) {
 		return parseWithDiagnostics(text, filename).document;
 	}
-	const api = { isReadingCollection, normalizeReadingCollection, createReadingCollection, collectionItemFromCapture, readingCollectionItemKey, readingCollectionItemState, readingCollectionMarkdown, SPEAKER_CORRECTION_LABEL_LIMIT, createSpeakerCorrectionPreview, applySpeakerCorrectionPreview, createLibraryBackupSelection, librarySavedHits, librarySavedHitCurrent, exactExcerptNote, exactExcerptNotesWith, exactExcerptRemoval, exactExcerptSnapshot, exactExcerptText, exactExcerptParts, exactExcerptSource, exactExcerptCount, exactExcerptDuplicate, exactExcerptFreshness, exactExcerptFreshnessBatch, exactExcerptState, exactExcerptStateBatch, createReadingRecency, createLibrarySearch, createLibraryNotebookSearch, libraryCaptureSteps, libraryCaptureCurrent, libraryCaptures, libraryNotebookMarkdown, mediaTiming, mediaTimingOffset, mediaTimingRange, localMediaSource, searchDocument, invalidateSearch, manualReviewSnapshot, manualReviewCurrent, saveManualTranslation, translationReviewQueue, hasNoteContent, segmentNoteCount, BACKUP_REVIEW_BYTES, SUBTITLE_IMPORT_BYTES, vttPayload, libraryHits, librarySnippet, hasProjectAnnotations, projectAnnotationCount, attachProjectTranscript, libraryMatches, documentDuration, sortedLibrary, AUDIO_NOTE_BUDGET, audioNoteCharacters, isAudioProject, audioProjectIdentity, podcastMediaIdentity, SUMMARY_QUESTION, summaryReadiness, podcastURL, podcastSource, cleanGlossary, relevantGlossary, translationQualityMessage, retainAnswers, summaryFreshness, latestSummary, summaryMarkdown, aiReadingMarkdown, parseReadingTime, createPlaybackIndex, segmentAtTime, transcriptText, subtitleExport, mergeLibraryBackup, time, source, media, validate, parse, parseWithDiagnostics, matchesSegment, notebookSegments, notebookMarkdown, translationCurrent, sameCueSnapshot, subscriptionPlan, cleanContexts, answerFreshness };
+	const api = { normalizeReadingChapters, readingChapters, createReadingChapter, updateReadingChapter, readingChaptersWith, isReadingCollection, normalizeReadingCollection, createReadingCollection, collectionItemFromCapture, readingCollectionItemKey, readingCollectionItemState, readingCollectionMarkdown, SPEAKER_CORRECTION_LABEL_LIMIT, createSpeakerCorrectionPreview, applySpeakerCorrectionPreview, createLibraryBackupSelection, librarySavedHits, librarySavedHitCurrent, exactExcerptNote, exactExcerptNotesWith, exactExcerptRemoval, exactExcerptSnapshot, exactExcerptText, exactExcerptParts, exactExcerptSource, exactExcerptCount, exactExcerptDuplicate, exactExcerptFreshness, exactExcerptFreshnessBatch, exactExcerptState, exactExcerptStateBatch, createReadingRecency, createLibrarySearch, createLibraryNotebookSearch, libraryCaptureSteps, libraryCaptureCurrent, libraryCaptures, libraryNotebookMarkdown, mediaTiming, mediaTimingOffset, mediaTimingRange, localMediaSource, searchDocument, invalidateSearch, manualReviewSnapshot, manualReviewCurrent, saveManualTranslation, translationReviewQueue, hasNoteContent, segmentNoteCount, BACKUP_REVIEW_BYTES, SUBTITLE_IMPORT_BYTES, vttPayload, libraryHits, librarySnippet, hasProjectAnnotations, projectAnnotationCount, attachProjectTranscript, libraryMatches, documentDuration, sortedLibrary, AUDIO_NOTE_BUDGET, audioNoteCharacters, isAudioProject, audioProjectIdentity, podcastMediaIdentity, SUMMARY_QUESTION, summaryReadiness, podcastURL, podcastSource, cleanGlossary, relevantGlossary, translationQualityMessage, retainAnswers, summaryFreshness, latestSummary, summaryMarkdown, aiReadingMarkdown, parseReadingTime, createPlaybackIndex, segmentAtTime, transcriptText, subtitleExport, mergeLibraryBackup, time, source, media, validate, parse, parseWithDiagnostics, matchesSegment, notebookSegments, notebookMarkdown, translationCurrent, sameCueSnapshot, subscriptionPlan, cleanContexts, answerFreshness };
 	if (typeof module !== "undefined" && module.exports) module.exports = api;
 	else root.Coconut = api;
 })(typeof window !== "undefined" ? window : globalThis);

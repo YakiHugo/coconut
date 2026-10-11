@@ -1171,3 +1171,10 @@ body[data-short-reading-compact="true"] #language-panel { margin-top: 8px; }
 .collection-item button,.collection-add { min-height:44px; margin:.25rem .25rem .25rem 0; }
 .collection-item p { white-space:pre-wrap; }
 #collection-preview { white-space:pre-wrap; overflow-wrap:anywhere; max-height:50dvh; overflow:auto; font:inherit; padding:.75rem; border:1px solid var(--line); }
+
+#chapter-title,#chapter-cue-number { width:100%;box-sizing:border-box; }
+#chapter-list { padding-left:1.5rem; }
+.chapter-entry { padding:.75rem 0;border-bottom:1px solid var(--line);overflow-wrap:anywhere; }
+.chapter-entry button,#chapter-return button { min-height:44px;margin:.25rem; }
+.chapter-target { outline:2px solid var(--accent);outline-offset:3px;scroll-margin-block:20px; }
+#chapter-cue-preview { white-space:pre-wrap;overflow-wrap:anywhere; }
