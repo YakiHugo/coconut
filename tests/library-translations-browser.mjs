@@ -10,7 +10,7 @@ import path from 'node:path';
 import C from '../reader/core.js';
 import {chromium, expect, waitForPersistedLibrary} from './helpers/browser-storage.mjs';
 import {authoredAudioFixture} from './helpers/authored-audio-fixture.mjs';
-import {openLibraryTools} from './helpers/library-tools-browser.mjs';
+import {openLibrarySearch} from './helpers/library-tools-browser.mjs';
 
 if (process.env.GITHUB_ACTIONS !== 'true') throw new Error('Run library translation browser acceptance in GitHub Actions only; use node --check locally.');
 
@@ -69,11 +69,7 @@ async function capture(page, name) {
   await page.screenshot({path: path.join(process.env.COCONUT_UI_SCREENSHOTS, filename), animations: 'disabled', fullPage: false}); screenshots.push(filename);
 }
 async function openShelf(page, options = false) {
-  if (!await page.locator('#library-search').isVisible()) await page.locator('#toggle-library').click();
-  if (options) {
-    await openLibraryTools(page);
-    if (!await page.locator('#library-scope').isVisible()) await page.locator('#library-options > summary').click();
-  }
+  await openLibrarySearch(page);
   await expect(page.locator('#library-search')).toBeVisible();
 }
 async function search(page, text, scope, keys) {
@@ -134,7 +130,7 @@ async function keyboardGeometry(page, target, label) {
     const overlays = ['reading-feedback','notice-shell','passage-playback-controls','media-dock'].flatMap(id => {
       const overlay = document.getElementById(id); if (!overlay) return [];
       const box = overlay.getBoundingClientRect(), s = getComputedStyle(overlay);
-      return [{id, rect: box.toJSON(), visible: !overlay.hidden && s.display !== 'none' && s.visibility !== 'hidden' && box.width > 0 && box.height > 0}];
+      return [{id, rect: box.toJSON(), sameTopLayer: overlay.closest('dialog[open]') === node.closest('dialog[open]'), visible: !overlay.hidden && s.display !== 'none' && s.visibility !== 'hidden' && box.width > 0 && box.height > 0}];
     });
     return {rect: r.toJSON(), ring, outlineStyle: style.outlineStyle, outlineColor: style.outlineColor,
       focused: node === document.activeElement, focusVisible: node.matches(':focus-visible'), width: innerWidth, height: innerHeight,
@@ -145,7 +141,7 @@ async function keyboardGeometry(page, target, label) {
   const clear = m.focused && m.focusVisible && m.outlineStyle !== 'none' && m.outlineColor !== 'rgba(0, 0, 0, 0)' && ring > 0 &&
     r.width >= 44 && r.height >= 44 && r.left-ring >= 0 && r.top-ring >= 0 && r.right+ring <= m.width && r.bottom+ring <= m.height &&
     m.points.every(p => p.clear) && m.clips.every(c => (!c.clipX || r.left-ring >= c.left && r.right+ring <= c.right) && (!c.clipY || r.top-ring >= c.top && r.bottom+ring <= c.bottom)) &&
-    m.overlays.every(o => !o.visible || o.rect.right <= r.left-ring || o.rect.left >= r.right+ring || o.rect.top >= r.bottom+ring || o.rect.bottom <= r.top-ring);
+    m.overlays.every(o => !o.visible || !o.sameTopLayer || o.rect.right <= r.left-ring || o.rect.left >= r.right+ring || o.rect.top >= r.bottom+ring || o.rect.bottom <= r.top-ring);
   if (!clear) await capture(page, label + '-geometry-failure');
   check(label + '_44px_full_focus_ring_five_points_and_overlays_clear', clear);
 }
@@ -169,9 +165,9 @@ async function paginationLayout(page, region, label) {
   });
   pagination.push({label, ...data}); console.log(JSON.stringify({suite: 'library-translations-pagination-layout', label, ...data}));
   const {status, controls, previous, next, textRects, viewport, clips, textClear} = data;
-  check(label + '_count_has_its_own_full_width_single_line_above_two_44px_controls',
+  check(label + '_count_is_complete_single_line_between_two_44px_controls',
     textRects.length === 1 && textClear && clips.every(c => (!c.clipX || status.left >= c.left && status.right <= c.right) && (!c.clipY || status.top >= c.top && status.bottom <= c.bottom)) && textRects[0].left >= status.left && textRects[0].right <= status.right &&
-    status.left === controls.left && status.right === controls.right && status.bottom <= previous.top && status.bottom <= next.top &&
+    status.left >= controls.left && status.right <= controls.right && previous.right <= status.left && status.right <= next.left &&
     previous.top === next.top && previous.right <= next.left && previous.width >= 44 && previous.height >= 44 && next.width >= 44 && next.height >= 44 &&
     status.top >= 0 && status.bottom <= viewport.height && status.left >= 0 && status.right <= viewport.width && /第 \d+ \/ 5 个匹配片段/.test(data.accessibleCount));
 }
@@ -295,7 +291,7 @@ try {
     await page.keyboard.press('Enter');
     await visibleBilingualCue(page,mainKey,'cue-124','zh',fixture.main.segments[124].text,fixture.main.segments[124].translations.zh.text,label + '-cross-document');
     check(label + '_late_cue_opens_real_neighbors_with_bounded_dom',await page.locator('.segment[data-segment-id="cue-123"]').count() === 1 && await page.locator('.segment[data-segment-id="cue-125"]').count() === 1 && await page.locator('#transcript .segment').count() <= 100);
-    check(label + '_shelf_closes_at_destination',await page.locator('#toggle-library').getAttribute('aria-expanded') === 'false');
+    check(label + '_shelf_closes_at_destination',!await page.locator('#library-search-dialog').evaluate(node => node.open) && await page.locator('#toggle-library').getAttribute('aria-expanded') === 'false');
     await unchangedMedia(page,label + '-cross-document',false);
     assert.deepEqual(await positionsSnapshot(page),markers,label + ' cross-document navigation preserves every live and durable reading marker');
     check(label + '_cross_document_keeps_all_explicit_reading_positions',true);

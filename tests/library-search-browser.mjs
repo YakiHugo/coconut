@@ -1,4 +1,4 @@
-import {openLibraryTools} from './helpers/library-tools-browser.mjs';
+import {openLibrarySearch,closeLibrarySearch,openLibraryTools} from './helpers/library-tools-browser.mjs';
 /** Real Chromium acceptance of authored cross-document search and keyboard navigation.
  * No model, media, third-party text, or external network calls are used.
  * Run in CI or an explicitly permitted browser environment. */
@@ -37,12 +37,14 @@ async function keyboardSavedGeometry(page,target,label){
     const rect=node.getBoundingClientRect(),style=getComputedStyle(node),ring=(parseFloat(style.outlineWidth)||0)+(parseFloat(style.outlineOffset)||0);
     const midX=(rect.left+rect.right)/2,midY=(rect.top+rect.bottom)/2;
     const hitPoints=[[midX,midY],[rect.left+1,midY],[rect.right-1,midY],[midX,rect.top+1],[midX,rect.bottom-1]].map(([x,y])=>{const hit=document.elementFromPoint(x,y);return {x,y,hit:hit===node||node.contains(hit)};});
-    const overlays=['reading-feedback','notice-shell','passage-playback-controls','media-dock'].map(id=>{const overlay=document.getElementById(id),r=overlay.getBoundingClientRect();return {id,rect:r.toJSON(),visible:!overlay.hidden&&getComputedStyle(overlay).display!=='none'&&r.width>0&&r.height>0};});
-    return {rect:rect.toJSON(),ring,outlineStyle:style.outlineStyle,focusVisible:node.matches(':focus-visible'),focused:document.activeElement===node,viewport:{width:innerWidth,height:innerHeight},hitPoints,overlays,notice:document.getElementById('notice').textContent};
+    const clips=[];
+    for(let ancestor=node.parentElement;ancestor&&ancestor!==document.body;ancestor=ancestor.parentElement){const style=getComputedStyle(ancestor),box=ancestor.getBoundingClientRect(),x=/auto|scroll|hidden|clip/.test(style.overflowX),y=/auto|scroll|hidden|clip/.test(style.overflowY);if(x||y)clips.push({id:ancestor.id,x,y,left:box.left+ancestor.clientLeft,right:box.left+ancestor.clientLeft+ancestor.clientWidth,top:box.top+ancestor.clientTop,bottom:box.top+ancestor.clientTop+ancestor.clientHeight});}
+    const overlays=['reading-feedback','notice-shell','passage-playback-controls','media-dock'].map(id=>{const overlay=document.getElementById(id),r=overlay.getBoundingClientRect();return {id,rect:r.toJSON(),sameTopLayer:overlay.closest('dialog[open]')===node.closest('dialog[open]'),visible:!overlay.hidden&&getComputedStyle(overlay).display!=='none'&&r.width>0&&r.height>0};});
+    return {rect:rect.toJSON(),ring,outlineStyle:style.outlineStyle,focusVisible:node.matches(':focus-visible'),focused:document.activeElement===node,viewport:{width:innerWidth,height:innerHeight},hitPoints,clips,overlays,notice:document.getElementById('notice').textContent};
   });
   console.log(JSON.stringify({suite:'library-saved-keyboard-geometry',label,...geometry}));
   const r=geometry.rect,ring=geometry.ring;
-  const clear=geometry.focused&&geometry.focusVisible&&geometry.outlineStyle!=='none'&&ring>0&&r.height>=40&&geometry.hitPoints.every(point=>point.hit)&&r.left-ring>=0&&r.right+ring<=geometry.viewport.width&&r.top-ring>=0&&r.bottom+ring<=geometry.viewport.height&&geometry.overlays.every(overlay=>!overlay.visible||overlay.rect.right<=r.left-ring||overlay.rect.left>=r.right+ring||overlay.rect.top>=r.bottom+ring||overlay.rect.bottom<=r.top-ring);
+  const clear=geometry.focused&&geometry.focusVisible&&geometry.outlineStyle!=='none'&&ring>0&&r.width>=44&&r.height>=44&&geometry.hitPoints.every(point=>point.hit)&&geometry.clips.every(clip=>(!clip.x||r.left-ring>=clip.left&&r.right+ring<=clip.right)&&(!clip.y||r.top-ring>=clip.top&&r.bottom+ring<=clip.bottom))&&r.left-ring>=0&&r.right+ring<=geometry.viewport.width&&r.top-ring>=0&&r.bottom+ring<=geometry.viewport.height&&geometry.overlays.every(overlay=>!overlay.visible||!overlay.sameTopLayer||overlay.rect.right<=r.left-ring||overlay.rect.left>=r.right+ring||overlay.rect.top>=r.bottom+ring||overlay.rect.bottom<=r.top-ring);
   // Failed geometry still leaves a diagnostic image; it is never called a
   // successful card screenshot. No test-side scrolling or toast dismissal.
   if(!clear&&process.env.COCONUT_UI_SCREENSHOTS){await fs.mkdir(process.env.COCONUT_UI_SCREENSHOTS,{recursive:true});await page.screenshot({path:path.join(process.env.COCONUT_UI_SCREENSHOTS,'library-saved-'+label+'-geometry-failure.png'),animations:'disabled'});}
@@ -76,16 +78,11 @@ try {
   }
   const first=await context(),page=await first.newPage();page.setDefaultTimeout(15000);page.on('pageerror',()=>errors++);
   await page.goto(origin);
-  async function openLibrary(options=false){
-    if(!await page.locator('#library-search').isVisible())await page.locator('#toggle-library').click();
-    await page.locator('#library-search').waitFor({state:'visible'});
-    if(options)await openLibraryTools(page);
-    if(options&&!await page.locator('#library-scope').isVisible())await page.locator('.library-options > summary').click();
-    if(options)await page.locator('#library-scope').waitFor({state:'visible'});
-  }
+  async function openLibrary(options=false){await openLibrarySearch(page);}
+
 
   const source=splitCueFixture();source.notes['split-1751']='Private <img src=x> needle';
-  async function load(doc){await page.locator('#file').setInputFiles({name:'authored.json',mimeType:'application/json',buffer:Buffer.from(JSON.stringify(doc))});await page.waitForFunction(title=>document.querySelector('#title').textContent===title,doc.title);}
+  async function load(doc){await closeLibrarySearch(page);await page.locator('#file').setInputFiles({name:'authored.json',mimeType:'application/json',buffer:Buffer.from(JSON.stringify(doc))});await page.waitForFunction(title=>document.querySelector('#title').textContent===title,doc.title);}
   await load(source);const other=splitCueFixture(5);other.title='Another document';await load(other);
   await openLibrary(true);await page.locator('#library-scope').selectOption('text');await page.locator('#library-search').fill('crossing-marker');
   const hit=page.locator('.library-hit');await hit.waitFor();await hit.focus();await page.keyboard.press('Enter');await visibleCue(page,'split-1750');
@@ -117,7 +114,7 @@ try {
   });
   await load(historical);const keep=splitCueFixture(3);keep.title='Keep this reader active';keep.readingPosition='split-1';await load(keep);
   await waitForPersistedLibrary(page,async()=>{const docs=(await readPersistedLibrary()).documents;return docs.some(doc=>doc.title==='Keep this reader active'&&doc.readingPosition==='split-1')&&docs.some(doc=>doc.title==='Historical saved quotation owner'&&doc.readingPosition==='history-cue-39');});
-  await page.locator('#open-library-notebook').click();await page.locator('#notebook-kind').selectOption('note');await page.locator('#notebook-search').fill('old hidden query');await page.locator('#notebook-close').click();
+  await openLibraryTools(page);await page.locator('#open-library-notebook').click();await page.locator('#notebook-kind').selectOption('note');await page.locator('#notebook-search').fill('old hidden query');await page.locator('#notebook-close').click();
   await openLibrary(true);await page.locator('#library-scope').selectOption('text');await page.locator('#library-search').fill('savedneedle');
   await page.locator('.library-saved-hit').first().waitFor();
   check('saved_and_current_previews_have_independent_three_item_caps',await page.locator('.library-hit').count()===3&&await page.locator('.library-saved-hit').count()===3&&/5/.test(await page.locator('.library-saved-more').textContent()));

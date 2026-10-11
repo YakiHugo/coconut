@@ -1,4 +1,4 @@
-import {openLibraryTools} from './helpers/library-tools-browser.mjs';
+import {openLibraryTools,openLibrarySearch} from './helpers/library-tools-browser.mjs';
 /** CI-only native browser journey. Authored fixtures, no model/media/external requests. */
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
@@ -17,8 +17,9 @@ try{
   const page=await context.newPage();page.setDefaultTimeout(20000);page.on('pageerror',e=>errors.push(e.message));await page.goto(origin);return page;
  }
  const page=await newPage();
- async function shelf(p=page,options=false){if(!await p.locator('#library-search').isVisible())await p.locator('#toggle-library').click();if(options)await openLibraryTools(p);if(options&&!await p.locator('#library-sort').isVisible())await p.locator('#library-options > summary').click();}
- async function jump(number,p=page){await shelf(p);await openLibraryTools(p);await p.locator('#library-page-number').fill(String(number));await p.locator('#library-page-number').press('Enter');await p.waitForFunction(()=>document.activeElement?.classList.contains('library-open'));}
+ async function shelf(p=page,options=false){await openLibraryTools(p);if(options&&!await p.locator('#library-options').evaluate(node=>node.open))await p.locator('#library-options > summary').click();}
+ async function searchShelf(p=page){await openLibrarySearch(p,{filters:true});}
+ async function jump(number,p=page){if(!await p.locator('#library-search-dialog').evaluate(node=>node.open))await shelf(p);await p.locator('#library-page-number').fill(String(number));await p.locator('#library-page-number').press('Enter');await p.waitForFunction(()=>document.activeElement?.classList.contains('library-open'));}
  async function stored(p=page){await p.evaluate(()=>libraryStore.flush());return p.evaluate(()=>readPersistedLibrary());}
  async function restore(p,buffer,count=1001){await p.locator('#library-file').setInputFiles({name:'authored-large-shelf.json',mimeType:'application/json',buffer});await p.waitForFunction(()=>document.getElementById('library-file').value==='');await waitForPersistedLibrary(p,async count=>(await readPersistedLibrary()).documents.length===count,count,{timeout:20000});}
  const docs=largeLibraryFixture();docs[1].title='ZZZ last by title, added second';docs[0].segments[7].end=10000;for(const doc of docs)doc.segments.at(-1).text='Shared authored pagination needle';
@@ -30,7 +31,7 @@ try{
  await jump(26);check('keyboard_page_jump_focuses_final_card',await page.locator('.library-open').evaluate(n=>n===document.activeElement&&n.closest('.library-entry').dataset.documentKey==='shelf-1000'));
  check('full_last_title_without_truncation',await page.locator('.library-title').textContent()===last.title&&await page.locator('.library-title').evaluate(n=>getComputedStyle(n).textOverflow!=='ellipsis'));
  await page.keyboard.press('Enter');check('final_document_opens',await page.locator('#title').textContent()===last.title);
- stage='cooperative cancellation and honest pending state';await shelf(page,true);
+ stage='cooperative cancellation and honest pending state';await searchShelf(page);
  const pendingProof=await page.evaluate(()=>{
   const input=document.getElementById('library-search'),scope=document.getElementById('library-scope'),host=document.getElementById('library');
   scope.value='text';input.focus();input.value='pagination needle';input.oninput();
@@ -43,16 +44,16 @@ try{
  await page.waitForFunction(()=>document.getElementById('library-page-status').textContent.includes('/ 1001'));
  await page.evaluate(()=>new Promise(resolve=>setTimeout(resolve,0)));
  check('cancelled_search_never_replaces_clear_results',await page.locator('.library-entry').count()===40);
- stage='complete search, sorting and precise late hit';await shelf(page,true);await page.locator('#library-scope').selectOption('text');await page.locator('#library-search').fill('pagination needle');
+ stage='complete search, sorting and precise late hit';await searchShelf(page);await page.locator('#library-scope').selectOption('text');await page.locator('#library-search').fill('pagination needle');
  await page.waitForFunction(()=>document.getElementById('library').getAttribute('aria-busy')==='false');
  check('search_covers_all_documents',/1001/.test(await page.locator('#library-page-status').textContent())&&await page.locator('.library-entry').count()===40);
  await jump(26);await page.locator('.library-hit').focus();await page.keyboard.press('Enter');
  await page.waitForFunction(()=>document.activeElement?.dataset.segmentId==='shelf-1000-cue-220');
  check('late_search_hit_focuses_real_cue',await page.locator('.segment').count()<=100&&await page.locator('#title').textContent()===last.title);
  check('hit_preserves_shelf_query',await page.locator('#library-search').inputValue()==='pagination needle'&&await page.locator('#library-page-number').inputValue()==='26');
- await shelf(page,true);await page.locator('#library-scope').selectOption('notes');await page.locator('#library-search').fill('Last private needle');await page.waitForFunction(()=>document.getElementById('library').getAttribute('aria-busy')==='false');await page.locator('.library-hit').focus();await page.keyboard.press('Enter');
+ await searchShelf(page);await page.locator('#library-scope').selectOption('notes');await page.locator('#library-search').fill('Last private needle');await page.waitForFunction(()=>document.getElementById('library').getAttribute('aria-busy')==='false');await page.locator('.library-hit').focus();await page.keyboard.press('Enter');
  check('off_page_note_hit_focuses_exact_editor',await page.locator('#note').evaluate(n=>n===document.activeElement&&n.value==='Last private needle'));
- await page.locator('#close-note').click();await shelf(page,true);await page.locator('#library-search').fill('');await page.locator('#library-kind').selectOption('annotated');
+ await page.locator('#close-note').click();await searchShelf(page);await page.locator('#library-search').fill('');await page.locator('#library-kind').selectOption('annotated');
  await page.waitForFunction(()=>document.getElementById('library').getAttribute('aria-busy')==='false');
  check('annotation_filter_reaches_final_document',await page.locator('.library-entry').count()===1&&await page.locator('.library-entry').getAttribute('data-document-key')==='shelf-1000');
  await page.locator('#library-kind').selectOption('all');await page.locator('#library-sort').selectOption('title');await jump(26);
@@ -60,6 +61,9 @@ try{
  await page.locator('#library-sort').selectOption('duration');await jump(26);check('complete_duration_sort_changes_final_page',await page.locator('.library-entry').getAttribute('data-document-key')==='shelf-0');
  stage='mobile paging removal and exact undo focus';await page.setViewportSize({width:390,height:844});await shelf(page,true);await page.locator('#library-sort').selectOption('added');await jump(26);
  check('mobile_paging_fits',await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
+ // Paging deliberately returns focus to the card and closes mobile tools.
+ // Reopen their real disclosure before measuring the pagination controls.
+ await openLibraryTools(page);
  for(const id of ['library-previous','library-next','library-page-number'])check(id+'_44px_target',await page.locator('#'+id).evaluate(n=>n.getBoundingClientRect().height>=44));
  const original=(await stored()).documents.at(-1);await page.locator('.library-remove').click();await page.locator('#cancel-removal').click();await page.waitForFunction(()=>document.activeElement?.classList.contains('library-remove'));
  check('cancel_restores_final_page_exact_action',await page.locator('.library-remove').evaluate(n=>n===document.activeElement));
@@ -71,7 +75,7 @@ try{
  assert.deepEqual((await stored()).documents.at(-1),original);check('undo_preserves_complete_last_document',true);
  stage='real complete backup and clean-context restore';await shelf();await openLibraryTools(page);await page.locator('.library-backup > summary').click();const pending=page.waitForEvent('download');await page.locator('#export-library').click();const download=await pending,bytes=await fs.readFile(await download.path()),backup=JSON.parse(bytes);
  check('actual_download_contains_every_document',backup.documents.length===1001);assert.deepEqual(backup.documents.at(-1),original);
- const clean=await newPage();await restore(clean,bytes);await shelf(clean,true);await clean.locator('#library-search').fill(last.title);
+ const clean=await newPage();await restore(clean,bytes);await searchShelf(clean);await clean.locator('#library-search').fill(last.title);
  check('clean_restore_finds_last_complete_title',await clean.locator('.library-title').textContent()===last.title&&(await stored(clean)).documents.length===1001);
 
  // Separate authored context: the complete-library proof above keeps its 1001
@@ -138,7 +142,7 @@ try{
  await jump(3,selectionPage);for(const key of ['shelf-80','shelf-81','shelf-82'])await choice(key).check();await selectionStatus(9,6,'third_page_keeps_off_page_selection');
  await jump(4,selectionPage);for(const key of ['shelf-120','shelf-121','shelf-149'])await choice(key).check();await selectionStatus(12,9,'fourth_page_keeps_all_twelve_selections');
  check('150_document_final_page_stays_bounded',await selectionPage.locator('.library-entry').count()===30);
- await shelf(selectionPage,true);await selectionPage.locator('#library-search').fill(selectionDocs[149].title);
+ await searchShelf(selectionPage);await selectionPage.locator('#library-search').fill(selectionDocs[149].title);
  check('title_query_keeps_selected_checkbox',await choice('shelf-149').isChecked());await selectionStatus(12,11,'query_reports_hidden_selections');
  await selectionPage.locator('#library-search').fill('No authored document has this title');
  check('empty_results_do_not_disable_selected_backup',await selectionPage.locator('.library-entry').count()===0&&!await selectionPage.locator('#export-selected-library').isDisabled());
@@ -147,7 +151,7 @@ try{
  assert.equal(selected.backup.format,'coconut-library');assert.equal(selected.backup.version,1);assert.equal(selected.backup.active,'shelf-0');assert.equal(selected.backup.documents.length,12);
  assert.deepEqual(selected.backup.documents,selectionBefore.documents.filter(doc=>selectedKeys.includes(doc.key)));
  check('actual_selected_download_contains_only_complete_selected_objects_and_selected_active',true);
- await selectionPage.locator('#library-search').fill('');await selectionPage.locator('#library-sort').selectOption('title');
+ await searchShelf(selectionPage);await selectionPage.locator('#library-search').fill('');await selectionPage.locator('#library-sort').selectOption('title');
  check('sort_reorders_shelf_without_losing_selection',await selectionPage.locator('.library-entry').first().getAttribute('data-document-key')==='shelf-149'&&await choice('shelf-149').isChecked()&&await choice('shelf-0').isChecked());
  await selectionStatus(12,8,'sort_reports_selected_documents_outside_page');
  await selectionPage.locator('#library-kind').selectOption('annotated');
@@ -159,7 +163,7 @@ try{
  check('note_query_preserves_checkbox_selection',await choice('shelf-149').isChecked());
  await selectionStatus(12,11,'note_query_reports_off_page_selections');
  await selectionPage.locator('#library-search').fill('');await selectionPage.locator('#library-kind').selectOption('all');await selectionPage.locator('#library-scope').selectOption('title');
- await choice('shelf-0').uncheck();const fallback=await selectedDownload();
+ await shelf(selectionPage,true);await choice('shelf-0').uncheck();const fallback=await selectedDownload();
  assert.deepEqual(fallback.backup.documents,selectionBefore.documents.filter(doc=>selectedKeys.includes(doc.key)&&doc.key!=='shelf-0'));
  check('unselected_active_falls_back_to_first_selected_shelf_order',fallback.backup.active==='shelf-1'&&fallback.backup.documents.length===11);
 

@@ -84,7 +84,7 @@ test('search-hit opens record once and mobile current-document return immediatel
   const events=JSON.parse(storage.getItem(KEY)).events;assert.deepEqual(events.map(e=>e[0]),['b']);
   h.$('library-search').value='';h.$('library-search').oninput();
   const remote=Coconut.createReadingRecency({getStorage:()=>storage});remote.record('c');h.w.dispatchEvent(new h.w.StorageEvent('storage',{key:KEY}));assert.deepEqual(h.order(),['c','b','a']);
-  h.$('title').focus();h.$('toggle-library').click();h.open('b');assert.deepEqual(h.order(),['b','c','a']);assert.equal(h.w.document.activeElement,h.$('title'));
+  h.$('close-library-search').click();h.$('title').focus();h.$('toggle-library').click();h.open('b');assert.deepEqual(h.order(),['b','c','a']);assert.equal(h.w.document.activeElement,h.$('title'));
  }finally{await h.w.happyDOM.close();}
 });
 test('completely unavailable preference storage keeps bounded recency in memory',()=>{

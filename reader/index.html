@@ -8,7 +8,7 @@
 <meta name="theme-color" content="#faf9f7">
 <link rel="icon" type="image/png" href="coconut-mark.png">
 <script src="appearance.js?v=86ea922669"></script>
-<link rel="stylesheet" href="style.css?v=d196939555">
+<link rel="stylesheet" href="style.css?v=51432228a3">
 <script src="summary.js?v=580ffdad1e" defer></script>
 <script src="core.js?v=47de1151f8" defer>
 </script>
@@ -18,7 +18,7 @@
 <script src="library-store.js?v=e76ded9456" defer></script>
 <script src="indexeddb-document-adapter.js?v=65c0c5a814" defer></script>
 <script src="storage-provider.js?v=1cb898e984" defer></script>
-<script src="app.js?v=32c5e0da3b" type="text/coconut-pending" data-reader-script>
+<script src="app.js?v=ddbf47b814" type="text/coconut-pending" data-reader-script>
 </script>
 <script src="language.js?v=59136fdc72" type="text/coconut-pending" data-reader-script></script>
 <script src="translation-review.js?v=ef64ceb824" type="text/coconut-pending" data-reader-script></script>
@@ -36,15 +36,17 @@
 <a class="brand" href="#" aria-label="Coconut 首页"><img class="brand-mark" src="coconut-mark.png" width="36" height="36" alt=""> <span>coconut<span class="brand-caption">留住值得重读的声音</span></span>
 </a>
 <button id="add-content" class="primary">＋ 添加内容</button>
+<button id="open-library-search" type="button" aria-haspopup="dialog" aria-controls="library-search-dialog">查找书架</button>
 <button id="toggle-library" aria-expanded="false" aria-controls="library-list"><span class="library-open-label">书架</span><span class="library-close-label">← 收起书架</span> <span id="library-total">0</span></button>
 <div id="library-list">
 <button id="open-library-notebook" type="button">我的笔记与摘录</button>
 <label class="library-search">查找书架<input id="library-search" type="search" placeholder="按标题查找"></label>
+<div id="library-search-scope"><label>查找范围<select id="library-scope" aria-describedby="library-scope-hint"><option value="title">标题</option><option value="notes">标题与笔记（含摘录笔记）</option><option value="text">标题、原文、笔记与已存摘录</option><option value="translations">译文</option></select></label><p id="library-scope-hint" class="hint" hidden>全部语言，仅当前有效的已存译文；每种语言可翻页查看匹配片段。</p></div>
 <details id="library-tools" hidden><summary>书架工具与分页</summary><div id="library-tools-content"></div></details>
 <input type="file" id="file" accept=".json,.srt,.vtt" multiple hidden>
 <details class="library-backup"><summary>书架备份</summary><div class="disclosure-content"><button id="export-library">备份整个书架</button><button id="export-pending-library" type="button" hidden>导出未保存文档备份</button><button id="restore-library">恢复书架备份</button><button id="export-original-storage" hidden>导出升级前原始数据</button><p id="storage-backend-hint" class="hint" hidden></p><input id="library-file" type="file" accept=".json" hidden></div></details>
 <p class="eyebrow">你的书架</p>
-<details id="library-options" class="library-options"><summary>整理书架</summary><p class="hint library-manage-hint">展开时，每篇下方可移除内容。</p><button id="library-selection-mode" type="button" aria-pressed="false" aria-controls="library-selection-controls">选择备份</button><div id="library-selection-controls" hidden><p id="library-selection-status" class="hint" role="status" aria-live="polite"></p><button id="export-selected-library" type="button" aria-describedby="library-selection-status" disabled>备份所选 0 份</button><button id="clear-library-selection" type="button" disabled>清空选择</button><p class="hint">所选文档可恢复备份，不含媒体和未提交草稿。</p><details id="selected-backup-details"><summary>备份包含什么？</summary><p class="hint">包含完整文字、笔记、摘录、译文与 AI 记录及依据。可用「恢复书架备份」恢复。包含本页已生效的修改，不代表已保存到书架；未提交的编辑草稿请先保存。</p></details></div><label>排序<select id="library-sort"><option value="added">按添加顺序</option><option value="opened">最近打开</option><option value="title">按标题</option><option value="duration">按时长（短到长）</option></select></label><label>内容<select id="library-kind"><option value="all">全部</option><option value="transcript">有文字稿</option><option value="audio">原声项目</option><option value="annotated">有笔记或摘录</option></select></label><label>查找范围<select id="library-scope" aria-describedby="library-scope-hint"><option value="title">标题</option><option value="notes">标题与笔记（含摘录笔记）</option><option value="text">标题、原文、笔记与已存摘录</option><option value="translations">译文</option></select></label><p id="library-scope-hint" class="hint" hidden>全部语言，仅当前有效的已存译文；每种语言可翻页查看匹配片段。</p></details>
+<details id="library-options" class="library-options"><summary>整理书架</summary><p class="hint library-manage-hint">展开时，每篇下方可移除内容。</p><button id="library-selection-mode" type="button" aria-pressed="false" aria-controls="library-selection-controls">选择备份</button><div id="library-selection-controls" hidden><p id="library-selection-status" class="hint" role="status" aria-live="polite"></p><button id="export-selected-library" type="button" aria-describedby="library-selection-status" disabled>备份所选 0 份</button><button id="clear-library-selection" type="button" disabled>清空选择</button><p class="hint">所选文档可恢复备份，不含媒体和未提交草稿。</p><details id="selected-backup-details"><summary>备份包含什么？</summary><p class="hint">包含完整文字、笔记、摘录、译文与 AI 记录及依据。可用「恢复书架备份」恢复。包含本页已生效的修改，不代表已保存到书架；未提交的编辑草稿请先保存。</p></details></div><label>排序<select id="library-sort"><option value="added">按添加顺序</option><option value="opened">最近打开</option><option value="title">按标题</option><option value="duration">按时长（短到长）</option></select></label><label>内容<select id="library-kind"><option value="all">全部</option><option value="transcript">有文字稿</option><option value="audio">原声项目</option><option value="annotated">有笔记或摘录</option></select></label></details>
 <p id="library-page-status" class="hint" role="status" aria-live="polite" aria-atomic="true"></p>
 <div id="library-pagination" class="library-pagination" role="group" aria-label="书架分页" hidden>
 <div class="library-page-actions"><button id="library-previous" type="button" aria-controls="library">上一页</button><button id="library-next" type="button" aria-controls="library">下一页</button></div>
@@ -303,6 +305,7 @@ cd coconut
 </section>
 </div></details>
 </div>
+<button id="return-library-search" type="button" hidden>← 返回书架结果</button>
 <button id="return-library-notebook" type="button" hidden>← 返回刚才的笔记本</button>
 <nav id="chapter-return" class="reading-context" aria-label="返回章节跳转前的阅读" hidden><span id="chapter-return-label">章节导航 · 已回到全文</span><button id="return-from-chapter" type="button">← 返回跳转前的阅读</button><button id="stay-at-chapter" type="button">留在此处</button></nav>
 <nav id="reading-context" class="reading-context" aria-label="原文上下文" hidden><span id="reading-context-label"></span><div><button id="return-reading-results" type="button">← 返回结果</button><button id="dismiss-reading-context" type="button">留在全文</button></div></nav>
@@ -478,6 +481,15 @@ cd coconut
 <h2 id="chapter-editor-heading">新建章节</h2><label for="chapter-title">章节标题</label><input id="chapter-title" maxlength="200">
 <label for="chapter-cue-number">起点片段序号（完整文字稿）</label><input id="chapter-cue-number" type="number" min="1" step="1"><p id="chapter-cue-preview" class="hint"></p>
 <p id="chapter-editor-status" role="status"></p><button id="chapter-save" type="button">保存章节</button><button id="chapter-cancel" type="button">取消修改</button><button id="chapter-editor-close" type="button">关闭并保留草稿</button>
+</dialog>
+<dialog id="library-search-dialog" aria-labelledby="library-search-title">
+<header class="library-search-heading"><div><p class="eyebrow">你的书架</p><h2 id="library-search-title">查找与重读</h2></div><button id="close-library-search" type="button">关闭</button></header>
+<div id="library-search-query"></div>
+<div id="library-search-results" tabindex="-1" aria-label="书架搜索结果">
+<details id="library-search-filters"><summary>筛选与排序</summary><div id="library-search-filter-controls"></div></details>
+<div id="library-search-result-content"></div>
+</div>
+<div id="library-search-feedback" aria-live="polite"></div>
 </dialog>
 <dialog id="library-notebook" class="library-notebook" aria-labelledby="library-notebook-title">
 <h2 id="library-notebook-title">我的笔记与摘录</h2>

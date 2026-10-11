@@ -284,6 +284,13 @@ test('combined mobile current-document return preserves note focus while indepen
   $('toggle-library').click();assert.equal($('toggle-library').getAttribute('aria-expanded'),'true');
   const search=$('library-search');search.focus();assert.equal(w.document.activeElement?.id,'library-search','search focus acquired before receipt');f.engine.control.held.shift().complete();assert.equal((await flushing).ok,false);
   assert.equal(w.document.activeElement?.id,search.id,'durable independent receipt does not steal shelf focus');
+  assert.equal($('library-search-dialog').open,true,'focusing the shelf input opens the search workspace');
+  assert.ok($('note')===note);assert.equal(note.value,'  Mobile B exact\n note  ');assert.equal(note.selectionStart,3);assert.equal(note.selectionEnd,8);
+  // Return to the ordinary shelf before exercising its current-document shortcut.
+  $('close-library-search').click();assert.equal($('library-search-dialog').open,false);
+  assert.equal(w.document.activeElement,search,'cancel restores the entry without reopening search');
+  assert.equal($('toggle-library').getAttribute('aria-expanded'),'true');
+  assert.ok($('note')===note,'cancel keeps the exact note editor');assert.equal(note.value,'  Mobile B exact\n note  ');assert.equal(note.selectionStart,3);assert.equal(note.selectionEnd,8);
   $('library').querySelector('[data-document-key="b"] .library-open').click();
   assert.equal($('toggle-library').getAttribute('aria-expanded'),'false');assert.equal(w.document.activeElement?.id,note.id,'current document returns focus to note');assert.ok($('note')===note,'note identity preserved');
   assert.equal(note.value,'  Mobile B exact\n note  ');assert.equal(note.selectionStart,3);assert.equal(note.selectionEnd,8);
