@@ -157,3 +157,15 @@ test('recall and nested note dialogs own only real Tab boundaries and skip colla
   $('exact-note-text').focus();assert.equal(key($('exact-note-text')).defaultPrevented,false);
  }finally{await w.happyDOM.close();}
 });
+
+for(const width of [1360,390])for(const compact of [false,true])test(`inline target CSS wins the full cascade at ${width}px for ${compact?'compact':'regular'} cues`,async()=>{
+ const doc=fixture();if(compact)for(const cue of doc.segments)cue.end=cue.start+1.8;
+ const {w,$}=setup(doc);try{
+  w.happyDOM.setWindowSize({width,height:1000});const style=w.document.createElement('style');style.textContent=fs.readFileSync(new URL('reader/style.css',root),'utf8');w.document.head.append(style);
+  for(const mode of ['transcript','bilingual','passages']){
+   $('mode-'+mode).click();const entry=w.document.querySelector((mode==='passages'?'#passage-body':'#transcript')+' .reading-excerpt-open:not([hidden])');assert.ok(entry);
+   if(mode!=='passages')assert.equal(entry.closest('.segment').classList.contains('short-cue'),compact);
+   for(const disabled of [false,true]){entry.disabled=disabled;const computed=w.getComputedStyle(entry);assert.equal(computed.minHeight,'44px',mode+' '+(disabled?'disabled':'enabled')+' target height');assert.equal(computed.minWidth,'44px',mode+' target width');}
+  }
+ }finally{await w.happyDOM.close();}
+});

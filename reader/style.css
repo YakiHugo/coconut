@@ -1210,7 +1210,7 @@ body[data-short-reading-compact="true"] #language-panel { margin-top: 8px; }
 
 /* Exact captures live beside source text, preserving native text selection. */
 .reading-excerpt-open { min-width: 44px; min-height: 44px; color: var(--accent); background: transparent; font-size: 12px; }
-.passage-actions .reading-excerpt-open { min-height: 44px; color: var(--accent); }
+.passage-actions .reading-excerpt-open, .segment .reading-excerpt-open { min-height: 44px; color: var(--accent); }
 .reading-excerpt-open[data-history="true"] { text-decoration: underline dotted; text-underline-offset: 4px; }
 #reading-excerpts-list { list-style: none; padding: 0; }
 .reading-excerpt-item { padding: 14px 0; border-top: 1px solid var(--line); overflow-wrap: anywhere; }
