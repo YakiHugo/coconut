@@ -164,3 +164,31 @@ excludes media files, credentials and unsubmitted editor drafts. A selected subs
 is not a complete library backup; use whole-library export before upgrading.
 Selection is session-only and is not restored on reload. Requesting a download
 does not prove that it saved to disk or clear an unsaved-data warning.
+
+### Version 0.7.6: collections, speaker provenance and manual chapters
+
+Before upgrading, export a complete library JSON backup and verify that it reached
+disk. Keep that original. Do not clear browser storage to make an older reader
+open a library.
+
+A reading collection is an explicit `reading_collection` library entry, using
+the existing version 1 backup envelope and document store. Version 0.7.5 rejects
+collection-only and mixed collection backups. Its legacy and IndexedDB startup
+can fail closed for the entire same-profile library when a collection is present.
+The verified refusal does not erase the library; a supporting reader can reopen
+it. This is not bidirectional compatibility. Restore with a supporting version.
+
+Version 0.7.5 validation, JSON import and library restore discard
+`original_speaker` and `reading_chapters`, while retaining current `speaker`
+labels, valid `exact_excerpts` and `exact_excerpt_notes`. In a library without
+collections, ordinary older-provider load/save can preserve unknown top-level
+chapter data, but normalizes each segment and drops nested original-speaker
+provenance. A retained current label is not the recoverable initial label.
+The earlier 0.7.4 personal-note limitations above still apply.
+
+Chapters are live exact-cue navigation, not historical quotes. Missing cue anchors
+remain explicit, and replacement transcripts do not silently inherit chapters.
+Collections retain selected immutable snapshots even after a source is removed.
+Their rescue/backup downloads use the ordinary library envelope and are restored
+with Restore Library Backup. Markdown, TXT and subtitle exports are not recovery
+formats. No database or backup-version migration is introduced by these fields.
