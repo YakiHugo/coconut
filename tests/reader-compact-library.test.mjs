@@ -1,4 +1,5 @@
 import {compactShelfResultReady} from './helpers/compact-library-proof.mjs';
+import {libraryToolsLayoutReady,openLibraryTools} from './helpers/library-tools-browser.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {libraryHarness} from './helpers/large-library-harness.mjs';
@@ -27,6 +28,60 @@ test('mobile tools keep original nodes, edits, open state and focus through repe
   }
   $('library-sort').onchange();$('library-page-number').value='13';$('library-page-form').onsubmit({preventDefault(){}});
   assert.equal($('library').children.length,20);assert.equal($('library').firstElementChild.dataset.documentKey,'shelf-480');
+ }finally{await w.happyDOM.close();}
+});
+
+test('browser tools readiness requires every real tool to reach the current responsive home',async()=>{
+ const {w,$,setViewport,deliverChange}=setup(false);try{
+  const ready=()=>libraryToolsLayoutReady(null,w.document);
+  assert.equal(ready(),true);setViewport(true);assert.equal(ready(),false);
+  deliverChange();assert.equal(ready(),true);assert.equal($('library-tools').open,false);
+  for(const node of [$('open-library-notebook'),w.document.querySelector('.library-backup'),$('library-options'),$('library-pagination')]){
+   $('library-list').append(node);assert.equal(ready(),false);
+   deliverChange();assert.equal(ready(),true);
+  }
+  setViewport(false);assert.equal(ready(),false);deliverChange();assert.equal(ready(),true);
+  // Coalesced viewport changes must be judged against the current breakpoint.
+  setViewport(true);setViewport(false);assert.equal(ready(),true);
+ }finally{await w.happyDOM.close();}
+});
+
+test('browser helper waits for delayed responsive ownership before a normal mobile disclosure click',async()=>{
+ const {w,$,setViewport,deliverChange}=setup(false);try{
+  $('library-options').open=true;$('library').querySelector('.library-open').focus();setViewport(true);
+  let resumeLayout,enteredWait;const actions=[],waiting=new Promise(resolve=>{enteredWait=resolve;});
+  // This CPU adapter models only native hidden/details ancestry and the narrow
+  // shelf toggle. It is not a substitute for browser layout or hit-target proof.
+  function visible(node){
+   if(node.id==='toggle-library')return w.matchMedia('(max-width: 650px)').matches;
+   if(node.closest('#library-list')&&w.matchMedia('(max-width: 650px)').matches&&$('toggle-library').getAttribute('aria-expanded')!=='true')return false;
+   for(let parent=node;parent;parent=parent.parentElement){
+    if(parent.hidden)return false;
+    if(parent!==node&&parent.localName==='details'&&!parent.open&&!parent.querySelector(':scope > summary')?.contains(node))return false;
+   }
+   return true;
+  }
+  function locator(selector,root=w.document){
+   const node=root.querySelector(selector);assert.ok(node,selector);
+   return {
+    async isVisible(){return visible(node);},async getAttribute(name){return node.getAttribute(name);},async evaluate(fn){return fn(node);},
+    locator(selector){return locator(selector,node);},
+    async click(){assert.equal(visible(node),true,'ordinary click requires a visible entry');actions.push(node.id||node.parentElement.id+' > '+node.localName);node.click();}
+   };
+  }
+  const opening=openLibraryTools({locator,async waitForFunction(predicate){
+   assert.equal(predicate(null,w.document),false,'the media condition changed before the app moved its tools');
+   await new Promise(resolve=>{resumeLayout=resolve;enteredWait();});
+   assert.equal(predicate(null,w.document),true,'wait completes only after the app owns the correct DOM');
+  }});
+  // The legacy helper completes too early. The fixed helper remains pending
+  // until the existing app callback runs; no timer, style, or disclosure is forced.
+  await Promise.race([opening,waiting]);assert.deepEqual(actions,[]);
+  deliverChange();assert.equal($('library-tools').open,false);resumeLayout?.();await opening;
+  assert.deepEqual(actions,['library-tools > summary']);
+  assert.equal(visible($('library-tools').querySelector(':scope > summary')),true);assert.equal($('library-options').open,true);
+  // Happy DOM has no summary default toggle. The real-browser journey must
+  // still open it with this ordinary click before using the unchanged controls.
  }finally{await w.happyDOM.close();}
 });
 test('mobile close, Escape and current-document activation preserve live reader focus without navigation',async()=>{

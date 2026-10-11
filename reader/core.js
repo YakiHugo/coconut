@@ -1458,7 +1458,7 @@
   if(target)lines.push('译文（'+target+'）：有效 '+counts.translated+' 段 · 缺失 '+counts.missing+' 段 · 过期 '+counts.stale+' 段');
   return {text:lines.join('\n')+'\n\n'+blocks.join('\n\n')+'\n',...counts};
  }
- function subtitleExport(doc, format="srt", bilingual=false) {
+ function subtitleExport(doc, format="srt", bilingual=false, targetLanguage=doc.translation_view) {
   if(isReadingCollection(doc))throw new Error("成果集不是字幕，请导出成果集 Markdown。");
   if(isAudioProject(doc)||!doc.segments.length)throw new Error('尚未导入文字稿，不能导出字幕');
   if (!["srt","vtt"].includes(format)) throw new Error("不支持的字幕格式");
@@ -1471,7 +1471,7 @@
   let translated = 0;
   const cues = doc.segments.map((segment,index)=>{
    const lines = [text(segment.text) || " "];
-   const translation = segment.translations?.[doc.translation_view];
+   const translation = segment.translations?.[targetLanguage];
    if (bilingual && translation && translationCurrent(segment,doc,translation)) { lines.push(text(translation.text)); translated++; }
    const start = Math.round(segment.start*1000);
    const end = Math.max(start + 1, Math.round(segment.end*1000));
@@ -1654,7 +1654,7 @@
   if(hasNoteContent(note))lines.push('我的笔记：','',quote(note),'');
   return lines.join('\n');
  }
-	function notebookMarkdown(doc) {
+	function notebookMarkdown(doc, targetLanguage=doc.translation_view) {
   if(isReadingCollection(doc))return readingCollectionMarkdown(doc);
   if(isAudioProject(doc))return audioNotebookMarkdown(doc);
 		const kept = notebookSegments(doc);
@@ -1678,9 +1678,9 @@
 			const corrected = segment.original_text !== undefined && segment.original_text !== segment.text;
 			lines.push(corrected ? "原文（已修正）：" : "原文：", "", quote(segment.text), "");
 			if (corrected) lines.push("修正前文字稿：", "", quote(segment.original_text), "");
-			const translated = segment.translations?.[doc.translation_view];
+			const translated = segment.translations?.[targetLanguage];
 			if (translated) {
-				if (translationCurrent(segment, doc, translated)) lines.push("译文（" + singleLine(doc.translation_view) + "；初始来源：" + singleLine(translated.provider) + (translated.provider==='user' ? "；用户自己写的译文）：" : translated.manual_review ? "；用户人工核对／修正）：" : "；机器生成，需核对）："), "", quote(translated.text), "");
+				if (translationCurrent(segment, doc, translated)) lines.push("译文（" + singleLine(targetLanguage) + "；初始来源：" + singleLine(translated.provider) + (translated.provider==='user' ? "；用户自己写的译文）：" : translated.manual_review ? "；用户人工核对／修正）：" : "；机器生成，需核对）："), "", quote(translated.text), "");
 				else lines.push("此片段译文已过期，未导出。", "");
                 if(translationCurrent(segment,doc,translated)&&translationQualityMessage(translated))lines.push("译文待核对："+translationQualityMessage(translated), "");
 			}
