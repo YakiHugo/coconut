@@ -14,11 +14,12 @@ import {execFileSync} from 'node:child_process';
 import {isDeepStrictEqual} from 'node:util';
 import {_electron as electron,expect} from '@playwright/test';
 import {installStorageAssertions,readerReady} from './helpers/browser-storage.mjs';
+import {installNativeMenuObservation,observePageFileChoosers} from './helpers/native-menu-observer.mjs';
 
 const root=fileURLToPath(new URL('../',import.meta.url));
 const origin='http://127.0.0.1:47831';
-const checks=[];
-let temporary,application,diagnosticPage,importDiagnostic,stage='configuration',pageErrors=0,forbiddenRequests=0;
+const checks=[],nativeCommandReceipts=[];
+let temporary,application,diagnosticPage,importDiagnostic,nativeDiagnostic,chooserObservation,stage='configuration',pageErrors=0,forbiddenRequests=0;
 process.umask(0o077);
 delete process.env.DEBUG;
 delete process.env.PWDEBUG;
@@ -38,7 +39,7 @@ async function retainFailure(error){
  if(!directory)return;
  await fs.mkdir(directory,{recursive:true});
  const report={suite:'packaged-macos-product',stage,category:error.name,...sanitizedFailure(error),checks,
-  import:importDiagnostic,pageErrors,forbiddenRequests};
+  import:importDiagnostic,native:nativeDiagnostic,chooserEvents:chooserObservation?.count()??0,pageErrors,forbiddenRequests};
  if(diagnosticPage&&!diagnosticPage.isClosed()){
   try{report.state=await diagnosticPage.evaluate(()=>{
    const visible=id=>{const node=document.getElementById(id);if(!node)return false;const rect=node.getBoundingClientRect();return rect.width>0&&rect.height>0&&getComputedStyle(node).visibility!=='hidden';};
@@ -46,7 +47,8 @@ async function retainFailure(error){
     addVisible:visible('add-workspace'),readerVisible:visible('reader-workspace'),
     importVisible:visible('import'),fileCount:document.getElementById('file')?.files?.length??null,
     fileValueEmpty:document.getElementById('file')?.value==='',openDialogs:document.querySelectorAll('dialog[open]').length,
-    segmentCount:document.querySelectorAll('.segment').length,saveState:document.getElementById('save-status')?.dataset.state||null};
+    segmentCount:document.querySelectorAll('.segment').length,saveState:document.getElementById('save-status')?.dataset.state||null,
+    native:window.__coconutNativeMenuObservation?{last:window.__coconutNativeMenuObservation.last,inputClicks:window.__coconutNativeMenuObservation.inputClicks,lastInput:window.__coconutNativeMenuObservation.lastInput}:null};
   });}catch{report.stateUnavailable=true;}
   try{await diagnosticPage.screenshot({path:path.join(directory,'native-import-failure.png'),fullPage:false,timeout:5000});report.screenshot=true;}catch{report.screenshot=false;}
  }
@@ -83,9 +85,10 @@ async function launch(executable,profile,version,label){
   if(['blob:','data:'].includes(url.protocol)||(url.origin===origin&&['GET','HEAD'].includes(request.method())&&url.pathname!=='/api/language-tools'))await route.continue();
   else{forbiddenRequests++;await route.abort();}
  });
- const page=await application.firstWindow();diagnosticPage=page;page.setDefaultTimeout(15000);page.on('pageerror',()=>pageErrors++);
+ const page=await application.firstWindow();diagnosticPage=page;chooserObservation=observePageFileChoosers(page);page.setDefaultTimeout(15000);page.on('pageerror',()=>pageErrors++);
  await page.waitForURL(origin+'/');await installStorageAssertions(page);await readerReady(page);
- await page.waitForFunction(()=>typeof window.coconutPrepareClose==='function'&&typeof window.coconutPrepareUpdate==='function');
+ await page.waitForFunction(()=>typeof window.coconutPrepareClose==='function'&&typeof window.coconutPrepareUpdate==='function'&&typeof window.coconutFileCommand==='function');
+ await page.evaluate(installNativeMenuObservation);
  check(label+'_default_indexeddb_backend',await page.evaluate(()=>window.CoconutStorageBootstrap.result.backend==='indexeddb'));
  await page.locator('#import').waitFor({state:'attached'});
  await page.waitForFunction(()=>document.getElementById('worker-status').textContent.includes('轻量本地服务已连接'));
@@ -98,7 +101,7 @@ async function launch(executable,profile,version,label){
 
 async function close(){
  if(!application)return;
- stage='quit_packaged_app';await application.close();application=null;
+ stage='quit_packaged_app';try{await application.close();}finally{chooserObservation?.dispose();}application=null;
  // A closed app must not leave a background bridge serving the old bookshelf.
  let stillRunning=true;const deadline=Date.now()+5000;
  while(stillRunning&&Date.now()<deadline){
@@ -115,20 +118,37 @@ return page.evaluate(async()=>{
  return shelf?.documents.find(doc=>doc.key===sessionStorage.getItem('coconut-reader-active-v1'))||null;
 });}
 async function nativeFileCommand(id){
- return application.evaluate(({Menu,BrowserWindow},id)=>{
-  const item=Menu.getApplicationMenu().getMenuItemById(id);
-  assertNativeItem(item);
-  function assertNativeItem(value){if(!value?.enabled)throw new Error('Native file item unavailable: '+id);}
-  return item.click(item,BrowserWindow.getAllWindows()[0],{});
+ const page=diagnosticPage;
+ assert.ok(page&&!page.isClosed(),'Native command requires its live packaged page');
+ const before=await page.evaluate(()=>window.__coconutNativeMenuObservation.sequence);
+ nativeDiagnostic={command:id,menuInvoked:false,rendererReceived:false};
+ const dispatch=await application.evaluate(({Menu,BrowserWindow},id)=>{
+  const item=Menu.getApplicationMenu().getMenuItemById(id),windows=BrowserWindow.getAllWindows(),window=windows[0];
+  if(!item?.enabled)throw new Error('Native file item unavailable: '+id);
+  const facts={enabled:item.enabled,windowCount:windows.length,windowDestroyed:window.isDestroyed(),loading:window.webContents.isLoadingMainFrame(),trustedURL:['http://127.0.0.1:47831/','http://127.0.0.1:47831/index.html'].includes(window.webContents.getURL())};
+  const result=item.click(item,window,{});return {...facts,wrapperReturnType:typeof result};
  },id);
+ // Electron MenuItem.click discards the async template callback's return value.
+ // Its completion is not an acknowledgement from coconutFileCommand.
+ nativeDiagnostic.menuInvoked=true;nativeDiagnostic.dispatch=dispatch;
+ await page.waitForFunction(({id,before})=>{
+  const last=window.__coconutNativeMenuObservation?.last;
+  return last?.sequence>before&&last.command===id&&last.completed;
+ },{id,before});
+ const observed=await page.evaluate(()=>{const state=window.__coconutNativeMenuObservation;return {receipt:state.last,inputClicks:state.inputClicks,lastInput:state.lastInput};});
+ const {receipt}=observed;nativeDiagnostic.rendererReceived=true;Object.assign(nativeDiagnostic,observed);
+ nativeCommandReceipts.push(nativeDiagnostic);
+ assert.notEqual(receipt.threw,true,'Native renderer command must not throw');
+ assert.equal(receipt.resultType,'boolean','Native renderer command returns its real acceptance result');
+ return receipt.result;
 }
 async function importFile(page,filename,native=false){
- importDiagnostic={native,chooserReceived:false,commandResolved:false};
+ importDiagnostic={native,chooserReceived:false,commandResolved:false,commandAccepted:null};
  stage='file_import_open_add';await page.locator('#add-content').click();
  stage='file_import_request_chooser';
  const [chooser]=await Promise.all([
   page.waitForEvent('filechooser').then(value=>{importDiagnostic.chooserReceived=true;return value;}),
-  (native?nativeFileCommand('import-transcript'):page.locator('#import').click()).then(value=>{importDiagnostic.commandResolved=true;return value;})
+  (native?nativeFileCommand('import-transcript'):page.locator('#import').click()).then(value=>{importDiagnostic.commandResolved=true;if(native){importDiagnostic.commandAccepted=value;assert.equal(value,true,'Native transcript import must be accepted by the renderer');}return value;})
  ]);
  stage='file_import_set_files';await chooser.setFiles(filename);
  stage='file_import_wait_reader';await page.locator('#reader-workspace').waitFor({state:'visible'});
@@ -355,13 +375,13 @@ try{
  check('no_unexpected_external_status_or_mutating_requests',forbiddenRequests===0);
  check('no_uncaught_renderer_errors',pageErrors===0);
  await close();
- console.log(JSON.stringify({suite:'packaged-macos-product',status:'passed',architecture:process.arch,checks,
+ console.log(JSON.stringify({suite:'packaged-macos-product',status:'passed',architecture:process.arch,checks,nativeCommands:nativeCommandReceipts,
   gatekeeper_install_verified:false,real_inference_verified:false}));
 }catch(error){
- console.error(JSON.stringify({suite:'packaged-macos-product',status:'failed',stage,category:error.name,...sanitizedFailure(error),import:importDiagnostic,checks}));process.exitCode=1;
+ console.error(JSON.stringify({suite:'packaged-macos-product',status:'failed',stage,category:error.name,...sanitizedFailure(error),import:importDiagnostic,native:nativeDiagnostic,checks}));process.exitCode=1;
  try{await retainFailure(error);}catch{console.error('Authored native diagnostic capture unavailable');}
 }finally{
  // A failed assertion may leave the authored dirty fixture open. Cleanup may
  // discard only that isolated test profile so it cannot wait on a native dialog.
- try{if(application){await application.evaluate(({dialog})=>{dialog.showMessageBox=async()=>({response:1});}).catch(()=>{});await application.close();}}finally{if(temporary)await fs.rm(temporary,{recursive:true,force:true});}
+ try{if(application){await application.evaluate(({dialog})=>{dialog.showMessageBox=async()=>({response:1});}).catch(()=>{});await application.close();}}finally{chooserObservation?.dispose();if(temporary)await fs.rm(temporary,{recursive:true,force:true});}
 }
