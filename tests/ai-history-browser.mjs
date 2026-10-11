@@ -14,6 +14,8 @@ const fixture={title:'完整 AI 历史 · 自写验收',language:'en',segments,n
  question:`Authored question ${i+1}`,answer:`Authored answer ${i+1}${i===244?' · '+'unbroken-authored-text'.repeat(30):''}`,provider:'authored-fixture',purpose:i===1||i===24?'summary':'question',citations:['cue-'+i%3],input_snapshot:{version:1,segments:segments.map(({id,text})=>({id,text}))}
 }))};
 fixture.ai_answers[0].citations=['removed-cue'];fixture.ai_answers[0].input_snapshot.segments.push({id:'removed-cue',text:'Historical source that no longer exists in this transcript.'});
+fixture.ai_answers[243].input_snapshot.segments=Array.from({length:83},(_,i)=>({id:'historical-'+i,text:i===0?'Authored oversized historical cue. '.repeat(3000):`Uncited historical context ${i}.`}));
+fixture.ai_answers[1].input_snapshot.segments[0].text='Original summary source before correction.';
 async function capture(page,name){
  if(!process.env.COCONUT_UI_SCREENSHOTS)return;
  await fs.mkdir(process.env.COCONUT_UI_SCREENSHOTS,{recursive:true});
@@ -52,6 +54,7 @@ try{
  }
  const page=await newPage();stage='native_import';
  await choose(page,{name:'authored-history.json',mimeType:'application/json',buffer:Buffer.from(JSON.stringify(fixture))});
+ const savedHistory=(await active(page)).ai_answers;
  check('all_245_records_persist_without_truncation',(await active(page)).ai_answers.length===245);
  check('latest_explicit_summary_survives_later_questions',await page.locator('#summary-body').textContent()==='Authored answer 25');
  await page.locator('#browse-ai-history').click();
@@ -62,16 +65,32 @@ try{
   check(label+'_total_and_page_count_visible',(await page.locator('#ai-history-status').textContent()).includes('共 245 则 · 第 1 / 25 页'));
   await page.locator('#ai-history-heading').evaluate(node=>node.scrollIntoView({block:'start',behavior:'instant'}));
   check(label+'_history_fits_width',await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));await capture(page,'ai-history-'+label+'-latest');
+  const evidence=page.locator('.ai-answer[data-answer-number="244"] .ai-answer-evidence');
+  check(label+'_retained_evidence_is_lazy',await evidence.locator('.ai-evidence-text').count()===0);
+  await evidence.locator('summary').focus();await page.keyboard.press('Enter');
+  await evidence.locator('.ai-evidence-text').first().waitFor();
+  check(label+'_retained_evidence_bounds_rows_and_text',await evidence.locator('.ai-evidence-text').count()<=8&&await evidence.evaluate(node=>[...node.querySelectorAll('.ai-evidence-text')].reduce((n,p)=>n+p.textContent.length,0)<=64000));
+  await evidence.getByRole('button',{name:'最后一页',exact:true}).click();
+  check(label+'_uncited_final_context_is_reachable',(await evidence.textContent()).includes('Uncited historical context 82.')&&await evidence.locator('.ai-evidence-status').evaluate(node=>node===document.activeElement));
+  check(label+'_historical_evidence_does_not_invent_timing',!(await evidence.textContent()).includes(' 秒'));
+  check(label+'_expanded_evidence_fits_width',await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));await capture(page,'ai-history-'+label+'-evidence');
+  await evidence.locator('summary').click();await page.waitForFunction(()=>document.querySelector('[data-answer-number="244"] .ai-answer-evidence .ai-evidence-text')===null);
   await page.locator('#ai-history-oldest').focus();await page.keyboard.press('Enter');
   check(label+'_oldest_keyboard_action_preserves_visible_focus',await page.locator('#ai-history-heading').evaluate(node=>node===document.activeElement));
   check(label+'_oldest_page_is_bounded_and_at_the_end',await page.locator('.ai-answer').count()===5&&await page.locator('.ai-answer').last().getAttribute('data-answer-number')==='1'&&await page.locator('#ai-history-older').isDisabled());
   const missing=page.locator('.ai-answer[data-answer-number="1"]');
   check(label+'_removed_citation_is_text_and_has_no_jump',(await missing.textContent()).includes('原片段已不存在：removed-cue')&&await missing.locator('button,a').count()===0);
   check(label+'_removed_source_still_marks_answer_stale',(await missing.textContent()).includes('依据可能过期'));
+  const retained=missing.locator('.ai-answer-evidence');await retained.locator('summary').click();
+  await retained.locator('.ai-evidence-text').first().waitFor();
+  check(label+'_removed_original_is_readable_in_app',(await retained.textContent()).includes('Historical source that no longer exists in this transcript.'));
+  const summaryEvidence=page.locator('[data-answer-number="2"] .ai-answer-evidence');await summaryEvidence.locator('summary').click();await summaryEvidence.locator('.ai-evidence-text').first().waitFor();
+  check(label+'_old_summary_retains_original_in_app',(await summaryEvidence.textContent()).includes('Original summary source before correction.'));
   await missing.scrollIntoViewIfNeeded();check(label+'_old_history_fits_width',await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));await capture(page,'ai-history-'+label+'-oldest');
   await page.locator('#ai-history-latest').focus();await page.keyboard.press('Enter');
   check(label+'_latest_keyboard_action_restores_first_page_and_focus',await page.locator('#ai-history-heading').evaluate(node=>node===document.activeElement)&&await page.locator('.ai-answer').first().getAttribute('data-answer-number')==='245'&&await page.locator('#ai-history-newer').isDisabled());
  }
+ assert.deepEqual((await active(page)).ai_answers,savedHistory);check('viewing_evidence_never_changes_saved_history',true);
  stage='complete_downloads';
  await page.locator('#ai-history-oldest').click();await page.locator('#search').fill('no authored source matches this filter');
  const markdownFile=await download(page,'#export-ai-reading','history.ai-reading.md'),markdown=await fs.readFile(markdownFile,'utf8');

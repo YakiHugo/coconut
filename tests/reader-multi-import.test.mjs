@@ -10,11 +10,22 @@ const root=new URL('../',import.meta.url),KEY='coconut-reader-v1';
 const doc=title=>({title,language:'en',segments:[{id:'cue',start:0,end:3,text:'Authored source '+title}],notes:{cue:'Keep '+title}});
 const file=(title,{name=title+'.json',text=JSON.stringify(doc(title)),size=100}={})=>({name,size,text:typeof text==='function'?text:async()=>text});
 const deferred=()=>{let resolve;const promise=new Promise(done=>resolve=done);return {promise,resolve};};
-async function until(predicate){for(let i=0;i<300;i++){if(predicate())return;await new Promise(resolve=>setImmediate(resolve));}assert.fail('Expected the authored async checkpoint');}
-function setup({held=false,raw=null,storageResult=null}={}){
+async function until(predicate,timeoutMs=5000){
+ const deadline=performance.now()+timeoutMs;
+ while(!predicate()){
+  assert.ok(performance.now()<deadline,'Expected the authored async checkpoint');
+  await new Promise(resolve=>setTimeout(resolve,1));
+ }
+}
+function releaseSaves(f){
+ // Stop holding future writes before draining current ones: a failed wait may
+ // precede async fingerprint admission, or releasing one receipt may queue more.
+ f.saves.hold(false);for(const write of f.saves.writes)write.commit();
+}
+function setup({held=false,raw=null,storageResult=null,digestDelay=0}={}){
  const w=new Window({url:'https://coconut.example/'});
  w.document.body.innerHTML=fs.readFileSync(new URL('reader/index.html',root),'utf8').split('<body>')[1].split('</body>')[0];
- Object.defineProperty(w,'crypto',{value:{subtle:{digest:(...args)=>webcrypto.subtle.digest(...args)}}});
+ Object.defineProperty(w,'crypto',{value:{subtle:{digest:async(...args)=>{if(digestDelay)await new Promise(resolve=>setTimeout(resolve,digestDelay));return webcrypto.subtle.digest(...args);}}}});
  w.fetch=()=>{throw new Error('Transcript file imports must not send network requests');};if(raw)w.localStorage.setItem(KEY,raw);
  if(storageResult)w.CoconutStorageBootstrap={phase:'ready',result:storageResult};
  const saves=installSavePipeline(w,{held});
@@ -76,15 +87,15 @@ test('each next read waits for durable receipt and stopping cannot erase an in-f
   await until(()=>f.saves.writes.length===1);assert.equal(secondRead,0);assert.equal(f.stored().documents.length,0);assert.deepEqual(f.statuses(),['saving','queued']);
   f.$('stop-transcript-import').click();assert.match(f.$('transcript-import-progress').textContent,/等待当前文件确认/);assert.equal(f.rows()[0].querySelector('button').hidden,true);
   f.saves.writes[0].commit();await pending;assert.equal(secondRead,0);assert.deepEqual(f.statuses(),['saved','cancelled']);assert.equal(f.stored().documents[0].title,'First');
- }finally{for(const write of f.saves.writes)write.commit();await pending;await f.w.happyDOM.close();}
+ }finally{releaseSaves(f);await pending;await f.w.happyDOM.close();}
 });
-test('quota failure preserves earlier receipts, keeps the unsaved identity and stops reads until explicit retry',async()=>{
- const f=setup({held:true});let pending,thirdRead=0;try{
+for(const digestDelay of [0,100])test('quota failure preserves earlier receipts, keeps the unsaved identity and stops reads until explicit retry'+(digestDelay?' with a 100ms fingerprint delay':''),async()=>{
+ const f=setup({held:true,digestDelay});let pending,thirdRead=0;try{
   pending=f.choose([file('First'),file('Second'),file('Third',{text:async()=>{thirdRead++;return JSON.stringify(doc('Third'));}})]);
   await until(()=>f.saves.writes.length===1);f.saves.writes[0].commit();await until(()=>f.saves.writes.length===2);f.saves.writes[1].fail();await pending;
   assert.deepEqual(f.statuses(),['saved','unsaved','cancelled']);assert.equal(thirdRead,0);assert.equal(f.stored().documents.length,1);assert.equal(f.w.multiTest.documents.length,2);assert.equal(f.$('export-unsaved-documents').hidden,false);
   f.saves.hold(false);await f.$('retry-save').onclick();assert.equal(f.stored().documents.length,2);assert.deepEqual(f.statuses(),['saved','saved','cancelled']);
- }finally{for(const write of f.saves.writes)write.commit();await pending;await f.w.happyDOM.close();}
+ }finally{releaseSaves(f);await pending;await f.w.happyDOM.close();}
 });
 test('newer navigation during a pending write survives its receipt and prevents the remaining files',async()=>{
  const f=setup();let pending;try{
@@ -92,7 +103,7 @@ test('newer navigation during a pending write survives its receipt and prevents 
   f.$('back-reading').click();f.$('mode-transcript').click();f.w.document.querySelector('.note-button').click();f.$('note').value='A newer note';f.$('note').oninput();f.$('note').focus();
   f.saves.hold(false);f.saves.writes[0].commit();await pending;await f.w.flushContentForTest();
   assert.equal(f.$('title').textContent,'Existing');assert.equal(f.$('note').value,'A newer note');assert.equal(f.w.document.activeElement,f.$('note'));assert.deepEqual(f.statuses(),['saved','cancelled']);assert.equal(f.stored().documents.length,2);
- }finally{f.saves.hold(false);for(const write of f.saves.writes)write.commit();await pending;await f.w.happyDOM.close();}
+ }finally{releaseSaves(f);await pending;await f.w.happyDOM.close();}
 });
 test('a newer file selection retires an old batch without clearing or overwriting its pending selection',async()=>{
  const f=setup(),old=deferred(),newer=deferred();let first,second;try{
@@ -210,14 +221,14 @@ test('drop uses the same durable receipt and stop ownership without reading late
   pending=f.drop([file('First'),file('Never',{text:async()=>{reads++;return '{}';}})]);await until(()=>f.saves.writes.length===1);
   assert.deepEqual(f.statuses(),['saving','queued']);assert.equal(f.stored().documents.length,0);f.$('stop-transcript-import').click();
   f.saves.writes[0].commit();await pending;assert.deepEqual(f.statuses(),['saved','cancelled']);assert.equal(reads,0);
- }finally{for(const write of f.saves.writes)write.commit();await pending;await f.w.happyDOM.close();}
+ }finally{releaseSaves(f);await pending;await f.w.happyDOM.close();}
 });
 test('drop save failure stops remaining files and explicit retry updates its existing receipt',async()=>{
  const f=setup({held:true});let pending,reads=0;try{
   pending=f.drop([file('Pending'),file('Never',{text:async()=>{reads++;return '{}';}})]);await until(()=>f.saves.writes.length===1);f.saves.writes[0].fail();await pending;
   assert.deepEqual(f.statuses(),['unsaved','cancelled']);assert.equal(reads,0);assert.equal(f.stored().documents.length,0);
   f.saves.hold(false);await f.$('retry-save').onclick();assert.deepEqual(f.statuses(),['saved','cancelled']);assert.equal(f.stored().documents.length,1);
- }finally{for(const write of f.saves.writes)write.commit();await pending;await f.w.happyDOM.close();}
+ }finally{releaseSaves(f);await pending;await f.w.happyDOM.close();}
 });
 test('drop admission obeys lifecycle locks before reads or cancelling an existing import',async()=>{
  const f=setup(),gate=deferred();let pending,reads=0;try{
@@ -313,5 +324,17 @@ test('single import resumes before its receipt and a late receipt cannot reclaim
   f.saves.hold(false);f.saves.writes[0].commit();await pending;
   assert.equal(f.$('title').textContent,'Existing');assert.equal(f.w.document.activeElement,f.$('note'));
   assert.equal(f.w.document.body.dataset.readingMode,'transcript');
- }finally{f.saves.hold(false);for(const write of f.saves.writes)write.commit();await pending;await f.w.happyDOM.close();}
+ }finally{releaseSaves(f);await pending;await f.w.happyDOM.close();}
+});
+
+
+test('failed checkpoint cleanup releases writes admitted after the failure', {timeout:5000}, async()=>{
+ const f=setup({held:true}),gate=deferred();let pending;
+ try{
+  pending=f.choose([file('Delayed',{text:()=>gate.promise}),file('Later')]);
+  await assert.rejects(until(()=>f.saves.writes.length===1,20),/Expected the authored async checkpoint/);
+  assert.equal(f.saves.writes.length,0,'failure occurs before any save admission');
+  releaseSaves(f);gate.resolve(JSON.stringify(doc('Delayed')));await pending;
+  assert.deepEqual(f.statuses(),['saved','saved']);assert.equal(f.stored().documents.length,2);
+ }finally{releaseSaves(f);gate.resolve('{}');await pending;await f.w.happyDOM.close();}
 });

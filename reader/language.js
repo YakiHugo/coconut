@@ -316,18 +316,57 @@ function renderAIHistory(doc){
    const segment=segments.get(id);
    if(!segment){
     const historical=answer.input_snapshot?.segments.some(cue=>cue.id===id);
-    section.append(el('p','hint','原片段已不存在：'+id+'。'+(historical?'可在导出记录中核对当时发送的原文。':'原记录未提供该片段的历史原文。')));continue;
+    section.append(el('p','hint','原片段已不存在：'+id+'。'+(historical?'可展开下方历史原文核对。':'原记录未提供该片段的历史原文。')));continue;
    }
    const button=el('button','',Coconut.time(segment.start)+' · 原文');button.onclick=()=>passageCitation(answer,id);section.append(button);
   }
-  if(answer.input_snapshot?.scope?.kind==='passage'){
-   const input=answer.input_snapshot,scope=input.scope,evidence=el('details','ai-answer-evidence');evidence.append(el('summary','',`问这一段 · ${input.segments.length} 个原片段 · 查看当时的原文与来源`));
-   evidence.append(el('p','hint',scope.source_title+' · '+(scope.source_url||'未提供来源地址')+' · '+scope.provider+' · 回答语言 '+scope.answer_language+(scope.expanded?' · 含明确加入的相邻上下文':' · 仅所选段落')));
-   for(const [index,cue] of input.segments.entries()){const timing=scope.cues[index];evidence.append(el('p','hint',cue.id+' · '+timing.start+'–'+timing.end+' 秒'+(timing.speaker?' · '+timing.speaker:'')),el('p','',cue.text));}section.append(evidence);
-  }
+  if(freshness!=='unknown'&&answer.input_snapshot)section.append(aiAnswerEvidence(answer.input_snapshot));
   if(!answer.citations.length)section.append(el('p','hint','回答未提供片段引用，请回听核对。'));
   host.append(section);
  }
+}
+// Historical evidence is read-only. Allocate text nodes only when opened, and
+// bound both row count and text size, even for a single unusually large cue.
+function aiAnswerEvidence(input){
+ const ROWS=8,CHARS=8000,scope=input.scope;
+ const details=el('details','ai-answer-evidence');
+ details.append(el('summary','',`${scope?'问这一段 · ':''}${input.segments.length} 个原片段 · 查看当时的原文与来源`));
+ const body=el('div','ai-evidence-body');details.append(body);
+ let parts=null,page=0;
+ function draw(){
+  body.replaceChildren();
+  if(scope)body.append(el('p','hint',scope.source_title+' · '+(scope.source_url||'未提供来源地址')+' · '+scope.provider+' · 回答语言 '+scope.answer_language+(scope.expanded?' · 含明确加入的相邻上下文':' · 仅所选段落')));
+  else body.append(el('p','hint','当时发送的原文，含未引用的上下文。此记录未保存原文时间与来源信息。'));
+  const pages=Math.ceil(parts.length/ROWS),status=el('p','hint ai-evidence-status',`历史原文 · 第 ${page+1} / ${pages} 页`);
+  status.tabIndex=-1;body.append(status);
+  for(let i=page*ROWS;i<Math.min(parts.length,(page+1)*ROWS);i++){
+   const {index,start,end}=parts[i],cue=input.segments[index],timing=scope?.cues[index];
+   const row=el('div','ai-evidence-cue');row.dataset.cueId=cue.id;
+   row.append(el('p','hint',cue.id+(timing?' · '+timing.start+'–'+timing.end+' 秒'+(timing.speaker?' · '+timing.speaker:''):'')+(cue.text.length>CHARS?` · 文字 ${start+1}–${end} / ${cue.text.length}`:'')),el('p','ai-evidence-text',cue.text.slice(start,end)));
+   body.append(row);
+  }
+  if(pages>1){
+   const controls=el('div','ai-history-pages');
+   for(const [label,next] of [['第一页',0],['上一页',page-1],['下一页',page+1],['最后一页',pages-1]]){
+    const button=el('button','',label);button.type='button';button.disabled=next<0||next>=pages||next===page;
+    button.onclick=()=>{page=next;draw();body.querySelector('.ai-evidence-status').focus();};controls.append(button);
+   }
+   body.append(controls);
+  }
+ }
+ details.addEventListener('toggle',()=>{
+  if(!details.open){body.replaceChildren();return;}
+  if(!parts){
+   parts=[];
+   input.segments.forEach((cue,index)=>{
+    // Avoid cutting a surrogate pair between pages; do not drop any text.
+    let start=0;
+    do{let end=Math.min(cue.text.length,start+CHARS);if(end<cue.text.length&&/[\uD800-\uDBFF]/.test(cue.text[end-1]))end--;parts.push({index,start,end});start=end;}while(start<cue.text.length);
+   });
+  }
+  draw();
+ });
+ return details;
 }
 // Receipt notifications update persistence labels in place. They never rebuild
 // answer rows or touch an input, current history page, selection or focus.

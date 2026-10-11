@@ -2,6 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import vm from 'node:vm';
 import {webcrypto} from 'node:crypto';
 import {createRequire} from 'node:module';
 import {Window} from 'happy-dom';
@@ -13,14 +14,15 @@ function fixture(count=245,title='Authored AI history'){
   question:`Question ${i+1}`,answer:`Historical answer ${i+1}`,provider:'authored-fixture',purpose:i===1||i===24?'summary':'question',citations:['cue-'+(i%3)],input_snapshot:{version:1,segments:segments.map(({id,text})=>({id,text}))}
  }))};
 }
-function setup(stored){
+function setup(stored,full=false){
  const w=new Window({url:'http://127.0.0.1:8080/'});
  w.document.body.innerHTML=fs.readFileSync(new URL('reader/index.html',root),'utf8').split('<body>')[1].split('</body>')[0];
  Object.defineProperty(w,'crypto',{value:webcrypto});if(stored)w.localStorage.setItem(KEY,stored);
  const requests=[];w.fetch=async(url,options)=>{
+  if(full&&url==='api/health')return {ok:true,json:async()=>({})};
   requests.push({url,options});throw new Error('Browsing/import/export must not make a request');
  };
- w.eval(['summary','core','passages','passage-playback','library-store','app','language'].map(name=>fs.readFileSync(new URL('reader/'+name+'.js',root),'utf8')).join('\n'));
+ w.eval(['summary','core','passages','passage-playback','library-store','app','language',...(full?['translation-review','podcasts','jobs','updates']:[])].map(name=>fs.readFileSync(new URL('reader/'+name+'.js',root),'utf8')).join('\n'));
  return {w,$:id=>w.document.getElementById(id),requests};
 }
 async function importDocument(w,doc,inputId='file'){
@@ -231,4 +233,79 @@ for(const id of ['file','library-file'])test(`${id}: reviewed backup import reta
   storage.unblock();$('document-details').click();$('document-title').value='Persisted full reviewed history';await $('save-details').onclick(new w.Event('click'));
   assert.equal(storedDocument(w).ai_answers.length,1205);assert.match($('ai-history-storage').textContent,/1205 则均已保存/);assert.equal(requests.length,0);
  }finally{$('cancel-large-backup').onclick?.();await pending;storage?.unblock();await w.happyDOM.close();}
+});
+
+async function openEvidence(w,details){details.open=true;details.dispatchEvent(new w.Event('toggle'));}
+for(const purpose of ['question','summary'])test(`${purpose}: full-app retained source opens lazily, including removed and uncited text, without borrowing current provenance`,async()=>{
+ const {w,$,requests}=setup(undefined,true);try{
+  const source=fixture(1);source.source_url='https://current.example.org/changed';source.ai_answers[0].purpose=purpose;
+  source.ai_answers[0].input_snapshot.segments=[{id:'cue-0',text:'Before correction <img src="https://tracker.test">'},{id:'removed',text:'Removed historical text.'},{id:'uncited',text:'Uncited historical context.'}];
+  await importDocument(w,source);$('browse-ai-history').click();const disk=w.localStorage.getItem(KEY),answer=$('ai-answers').firstElementChild,details=answer.querySelector('.ai-answer-evidence');
+  assert.ok(details);assert.equal(details.querySelectorAll('.ai-evidence-text').length,0);assert.match(answer.textContent,/依据可能过期/);
+  await openEvidence(w,details);assert.equal(details.querySelectorAll('.ai-evidence-text').length,3);
+  assert.match(details.textContent,/Before correction/);assert.match(details.textContent,/Removed historical text/);assert.match(details.textContent,/Uncited historical context/);
+  assert.doesNotMatch(details.textContent,/current\.example|Authored AI history|0–4 秒/);assert.equal(details.querySelector('img,a'),null);
+  details.open=false;details.dispatchEvent(new w.Event('toggle'));assert.equal(details.querySelectorAll('.ai-evidence-text').length,0);
+  await openEvidence(w,details);assert.equal(details.querySelectorAll('.ai-evidence-text').length,3);
+  assert.equal(w.localStorage.getItem(KEY),disk);assert.equal(requests.length,0);
+ }finally{await w.happyDOM.close();}
+});
+
+test('large retained snapshots page every character with bounded nodes, keyboard focus, and no persistence changes',async()=>{
+ const {w,$,requests}=setup();try{
+  const source=fixture(1),large='x'.repeat(7999)+'😀'+'y'.repeat(80000);
+  const cues=Array.from({length:83},(_,i)=>({id:'old-'+i,text:i===0?large:`Historical context ${i}.`}));source.ai_answers[0].input_snapshot.segments=cues;
+  await importDocument(w,source);$('browse-ai-history').click();const disk=w.localStorage.getItem(KEY),details=$('ai-answers').querySelector('.ai-answer-evidence');
+  assert.equal(details.querySelectorAll('.ai-evidence-cue').length,0);await openEvidence(w,details);
+  const collected=new Map();let pages=0;
+  while(true){
+   const rows=[...details.querySelectorAll('.ai-evidence-cue')];assert.ok(rows.length<=8);assert.ok(rows.reduce((n,row)=>n+row.querySelector('.ai-evidence-text').textContent.length,0)<=64000);
+   for(const row of rows){const text=row.querySelector('.ai-evidence-text').textContent;assert.ok(!/^[\uDC00-\uDFFF]|[\uD800-\uDBFF]$/.test(text));collected.set(row.dataset.cueId,(collected.get(row.dataset.cueId)||'')+text);}
+   pages++;const next=[...details.querySelectorAll('button')].find(b=>b.textContent==='下一页');if(next.disabled)break;next.click();assert.equal(w.document.activeElement,details.querySelector('.ai-evidence-status'));
+  }
+  assert.ok(pages>10);assert.deepEqual([...collected],cues.map(cue=>[cue.id,cue.text]));
+  [...details.querySelectorAll('button')].find(b=>b.textContent==='第一页').click();assert.match(details.querySelector('.ai-evidence-status').textContent,/第 1 \/ /);
+  [...details.querySelectorAll('button')].find(b=>b.textContent==='最后一页').click();assert.match(details.textContent,/Historical context 82/);
+  details.open=false;details.dispatchEvent(new w.Event('toggle'));await openEvidence(w,details);assert.match(details.textContent,/Historical context 82/);
+  assert.equal(w.localStorage.getItem(KEY),disk);assert.equal(requests.length,0);
+ }finally{await w.happyDOM.close();}
+});
+
+test('unknown or invalid old evidence never gains a fabricated retained-source viewer',async()=>{
+ const {w,$,requests}=setup();try{
+  const source=fixture(2);delete source.ai_answers[0].input_snapshot;source.ai_answers[1].input_snapshot={version:2,segments:[{id:'x',text:'Unsupported'}]};
+  await importDocument(w,source);$('browse-ai-history').click();assert.equal($('ai-answers').querySelectorAll('.ai-answer-evidence').length,0);assert.equal(($('ai-answers').textContent.match(/无法确认依据/g)||[]).length,2);assert.equal(requests.length,0);
+ }finally{await w.happyDOM.close();}
+});
+
+test('passage evidence preserves recorded timing, source and speaker across pages instead of current metadata',async()=>{
+ const {w,$,requests}=setup();try{
+  const source=fixture(1),segments=Array.from({length:9},(_,i)=>({id:'old-'+i,text:`Original passage ${i}.`}));
+  source.ai_answers[0].input_snapshot={version:1,segments,scope:{kind:'passage',passage_ids:segments.map(s=>s.id),expanded:false,source_title:'Recorded title',source_url:'https://recorded.example.org/episode',source_language:'en',provider:'authored-fixture',answer_language:'zh',cues:segments.map((s,i)=>({id:s.id,start:i*2,end:i*2+2,speaker:'Recorded speaker'}))}};
+  await importDocument(w,source);$('browse-ai-history').click();const disk=w.localStorage.getItem(KEY),details=$('ai-answers').querySelector('.ai-answer-evidence');await openEvidence(w,details);
+  assert.match(details.textContent,/Recorded title/);assert.match(details.textContent,/https:\/\/recorded.example.org\/episode/);assert.match(details.textContent,/0–2 秒 · Recorded speaker/);assert.equal(details.querySelectorAll('.ai-evidence-cue').length,8);
+  [...details.querySelectorAll('button')].find(b=>b.textContent==='下一页').click();assert.match(details.textContent,/16–18 秒 · Recorded speaker/);assert.match(details.textContent,/Original passage 8/);assert.equal(details.querySelectorAll('.ai-evidence-cue').length,1);
+  assert.equal(w.localStorage.getItem(KEY),disk);assert.equal(requests.length,0);
+ }finally{await w.happyDOM.close();}
+});
+
+test('production bootstrap admits the full reader before historical source browsing',async()=>{
+ const w=new Window({url:'http://127.0.0.1:8080/'}),$=id=>w.document.getElementById(id),admitted=[],requests=[],context=vm.createContext(w);
+ const run=source=>vm.runInContext(source,context);
+ try{
+  const html=fs.readFileSync(new URL('reader/index.html',root),'utf8');w.document.body.innerHTML=html.split('<body>')[1].split('</body>')[0];Object.defineProperty(w,'crypto',{value:webcrypto});
+  w.fetch=async url=>{if(url==='api/health')return {ok:true,json:async()=>({})};requests.push(url);throw new Error('Unexpected request');};
+  w.document.head.innerHTML=[...html.matchAll(/<script\b[^>]*data-reader-script[^>]*>[\s\S]*?<\/script>/g)].map(match=>match[0]).join('');
+  // Let the actual bootstrap admit each production classic script separately.
+  // Only script transport is replaced with local bytes; storage provider uses its
+  // real no-IndexedDB legacy path in this DOM environment.
+  w.document.head.append=script=>{const name=new URL(script.src).pathname.slice(1);admitted.push(name);try{run(fs.readFileSync(new URL('reader/'+name,root),'utf8'));queueMicrotask(()=>script.onload());}catch(error){script.onerror(error);}};
+  for(const name of ['appearance','summary','core','passages','quotation','passage-playback','library-store','indexeddb-document-adapter','storage-provider','storage-bootstrap'])run(fs.readFileSync(new URL('reader/'+name+'.js',root),'utf8'));
+  for(let i=0;i<100&&w.CoconutStorageBootstrap.phase==='loading';i++)await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(w.CoconutStorageBootstrap.phase,'ready');assert.deepEqual(admitted,['app.js','language.js','translation-review.js','podcasts.js','jobs.js','updates.js']);
+  const source=fixture(2);for(const answer of source.ai_answers)answer.input_snapshot.segments[0].text='Historical source before correction.';
+  await importDocument(w,source);$('browse-ai-history').click();assert.equal($('language-panel').hidden,false);
+  const disk=w.localStorage.getItem(KEY);for(const details of $('ai-answers').querySelectorAll('.ai-answer-evidence')){await openEvidence(w,details);assert.match(details.textContent,/Historical source before correction/);}
+  assert.equal($('ai-answers').querySelectorAll('.ai-answer-evidence').length,2);assert.equal(w.localStorage.getItem(KEY),disk);assert.equal(requests.length,0);
+ }finally{await w.happyDOM.close();}
 });
