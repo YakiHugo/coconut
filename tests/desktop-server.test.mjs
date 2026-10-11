@@ -27,7 +27,7 @@ test('startup, assets and health are passive; declared capabilities match runtim
     if(src.startsWith('library-store.js'))assert.match(Buffer.from(payload).toString('utf8'),/CoconutLibraryStore/);
   }
   assert.equal((await fetch(origin+'/summary.js')).status,200);
-  for(const name of ['passages.js','passage-playback.js','translation-review.js'])assert.equal((await fetch(origin+'/'+name)).status,200);
+  for(const name of ['passages.js','passage-playback.js','quotation.js','translation-review.js'])assert.equal((await fetch(origin+'/'+name)).status,200);
   assert.equal((await fetch(origin+'/updates.js')).status,200);
   const mark=await fetch(origin+'/coconut-mark.png');assert.equal(mark.status,200);assert.equal(mark.headers.get('content-type'),'image/png');
   assert.deepEqual(new Uint8Array(await mark.arrayBuffer()).slice(0,8),new Uint8Array([137,80,78,71,13,10,26,10]));

@@ -28,10 +28,13 @@ class ServerTests(unittest.TestCase):
             with urlopen(self.base+'/') as response:
                 scripts=re.findall(r'<(?:script|link|img)\b[^>]*\b(?:src|href)="([^"]+)"',response.read().decode())
             self.assertTrue(any(src.startswith('library-store.js') for src in scripts))
+            self.assertTrue(any(src.startswith('quotation.js') for src in scripts))
             for src in scripts:
                 with self.subTest(script=src),urlopen(self.base+'/'+src) as response:
                     self.assertEqual(response.status,200)
                     payload=response.read()
+                    if src.startswith('quotation.js'):
+                        self.assertIn(b'CoconutQuotation',payload)
                     if src.startswith('library-store.js'):
                         self.assertIn(b'CoconutLibraryStore',payload)
                     if src=='coconut-mark.png':

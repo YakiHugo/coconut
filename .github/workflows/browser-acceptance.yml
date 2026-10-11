@@ -87,6 +87,11 @@ jobs:
         env:
           COCONUT_UI_SCREENSHOTS: ${{ runner.temp }}/coconut-authored-ui
         run: node tests/passage-question-browser.mjs
+      - name: Verify verbatim paragraph quotations, native selection, keyboard fallback and clipboard failure
+        if: ${{ !cancelled() && steps.browser_setup.outcome == 'success' }}
+        env:
+          COCONUT_UI_SCREENSHOTS: ${{ runner.temp }}/coconut-authored-ui
+        run: node tests/quotation-browser.mjs
       - name: Verify cross-cue phrase matches, exact source scope and mobile context with authored fixtures
         if: ${{ !cancelled() && steps.browser_setup.outcome == 'success' }}
         run: node tests/phrase-search-browser.mjs
