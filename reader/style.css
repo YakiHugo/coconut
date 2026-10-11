@@ -1257,3 +1257,21 @@ body[data-short-reading-compact="true"] #language-panel { margin-top: 8px; }
 #subtitle-encoding-preview:focus-visible { outline: 3px solid var(--accent); outline-offset: 3px; }
 
 #subtitle-encoding-dialog :is(select, pre, button) { scroll-margin: 12px; }
+
+/* Pasted drafts stay within the viewport, including their keyboard focus ring. */
+#paste-subtitles { min-height: 44px; min-width: 44px; }
+#paste-subtitle-dialog { width: min(660px, calc(100vw - 32px)); max-width: 660px; max-height: calc(100dvh - 32px); overflow: auto; box-sizing: border-box; scroll-padding: 12px; }
+.paste-subtitle-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.paste-subtitle-heading h2 { margin: 0; }
+#paste-subtitle-dialog :is(input, select, textarea) { display: block; width: 100%; box-sizing: border-box; margin: 6px 0 12px; }
+#paste-subtitle-dialog :is(button, input, select, summary) { min-height: 44px; }
+#paste-subtitle-dialog summary { display: flex; align-items: center; cursor: pointer; }
+#paste-subtitle-dialog :is(button, input, select, textarea, summary) { scroll-margin: 12px; min-width: 44px; }
+#paste-subtitle-dialog :is(button, input, select, textarea, summary):focus-visible { outline: 3px solid var(--accent); outline-offset: 3px; }
+#paste-subtitle-text { height: 160px; min-height: 100px; max-height: 24dvh; resize: vertical; font: inherit; }
+#paste-subtitle-dialog :is(p, li, pre) { overflow-wrap: anywhere; white-space: pre-wrap; }
+#paste-subtitle-dialog pre { font-size: 12px; }
+#paste-subtitle-preview { padding-inline-start: 22px; }
+#paste-subtitle-preview li { margin-block: 10px; }
+#paste-subtitle-dialog .dialog-actions { flex-wrap: wrap; gap: 10px; }
+@media(max-width: 600px) { #paste-subtitle-dialog { padding: 18px; } }

@@ -8,9 +8,9 @@
 <meta name="theme-color" content="#faf9f7">
 <link rel="icon" type="image/png" href="coconut-mark.png">
 <script src="appearance.js?v=86ea922669"></script>
-<link rel="stylesheet" href="style.css?v=cbc3bcae1a">
+<link rel="stylesheet" href="style.css?v=81b90691fe">
 <script src="summary.js?v=580ffdad1e" defer></script>
-<script src="core.js?v=7c5006bb31" defer>
+<script src="core.js?v=cf6004e3b2" defer>
 </script>
 <script src="passages.js?v=d02200c5a9" defer></script>
 <script src="quotation.js?v=dd1ac21240" defer></script>
@@ -18,7 +18,7 @@
 <script src="library-store.js?v=e76ded9456" defer></script>
 <script src="indexeddb-document-adapter.js?v=65c0c5a814" defer></script>
 <script src="storage-provider.js?v=1cb898e984" defer></script>
-<script src="app.js?v=5c7a3625e9" type="text/coconut-pending" data-reader-script>
+<script src="app.js?v=483a5ba8c1" type="text/coconut-pending" data-reader-script>
 </script>
 <script src="language.js?v=492470a705" type="text/coconut-pending" data-reader-script></script>
 <script src="translation-review.js?v=ef64ceb824" type="text/coconut-pending" data-reader-script></script>
@@ -140,7 +140,7 @@
 <p class="hint">优先读取发布者提供的文字稿。只访问公开来源，不使用登录、会员或私有订阅链接；没有文字稿时会明确提示，不自动转录或扣费。</p>
 <button id="cancel-podcast" type="button" hidden>取消读取</button><p id="podcast-status" class="hint" role="status"></p><div id="podcast-results"></div>
 </section>
-<div class="file-entry"><div class="add-actions"><button id="open-local-media" type="button">打开本地音视频</button><input id="local-media-file" type="file" accept="audio/*,video/*,.mp3,.m4a,.wav,.ogg,.flac,.aac,.opus,.mp4,.webm,.mov,.m4v" hidden><div id="transcript-drop-target" class="transcript-drop-target" role="group" aria-label="导入本地文字稿" aria-describedby="transcript-drop-help"><button id="import" type="button">＋ 导入文字稿</button><span id="transcript-drop-help" class="hint">或拖放文件到这里 · JSON、SRT、VTT · 可多选</span></div></div><p class="hint">没有文字稿也能先听、记笔记和时间书签；文件不上传，不运行识别或 AI。有字幕时可补充到同一项目。JSON 超过50 MiB 先确认读取；SRT / VTT 限15 MiB。</p></div>
+<div class="file-entry"><div class="add-actions"><button id="open-local-media" type="button">打开本地音视频</button><input id="local-media-file" type="file" accept="audio/*,video/*,.mp3,.m4a,.wav,.ogg,.flac,.aac,.opus,.mp4,.webm,.mov,.m4v" hidden><div id="transcript-drop-target" class="transcript-drop-target" role="group" aria-label="导入本地文字稿" aria-describedby="transcript-drop-help"><button id="import" type="button">＋ 导入文字稿</button><button id="paste-subtitles" type="button">粘贴字幕</button><span id="transcript-drop-help" class="hint">或拖放文件到这里 · JSON、SRT、VTT · 可多选</span></div></div><p class="hint">没有文字稿也能先听、记笔记和时间书签；文件不上传，不运行识别或 AI。有字幕时可补充到同一项目。JSON 超过50 MiB 先确认读取；SRT / VTT 限15 MiB。</p></div>
 <p id="transcript-drop-status" class="hint" role="status" aria-live="polite"></p>
 <section id="transcript-import-results" class="transcript-import-results" aria-label="文字稿导入结果" hidden>
 <div class="transcript-import-heading"><p id="transcript-import-progress" role="status" aria-live="polite"></p><button id="stop-transcript-import" type="button">停止后续文件</button></div>
@@ -328,6 +328,22 @@ cd coconut
 <div class="dock-copy"><strong id="dock-title"></strong><span class="dock-clock"><span id="dock-current">00:00</span><span id="dock-total"></span><span id="dock-rate"></span></span></div>
 <button id="dock-follow" type="button" aria-pressed="false" disabled>跟随原声</button><button id="dock-locate" type="button">定位原文</button><button id="dock-return" type="button" aria-label="回到原声播放器">播放器 ↑</button>
 </section>
+<dialog id="paste-subtitle-dialog" aria-labelledby="paste-subtitle-heading" aria-describedby="paste-subtitle-help">
+<div class="paste-subtitle-heading"><h2 id="paste-subtitle-heading">粘贴已有字幕</h2><button id="close-paste-subtitle" type="button">关闭</button></div>
+<p id="paste-subtitle-help" class="hint">粘贴已有的 SRT / VTT 定时字幕，无需另存文件，不上传或调用 AI。草稿仅留在当前页；关闭弹窗可继续编辑，刷新或离页不会保留。普通文字不会自动补时间。</p>
+<label for="paste-subtitle-title">标题（可选）</label><input id="paste-subtitle-title" maxlength="200" placeholder="粘贴字幕" autocomplete="off">
+<label for="paste-subtitle-format">字幕格式</label><select id="paste-subtitle-format"><option value="auto">自动识别 SRT / VTT</option><option value="srt">SRT</option><option value="vtt">VTT</option></select>
+<details id="paste-subtitle-example"><summary>查看格式示例</summary><p class="hint">SRT 需要每段完整的开始、结束时间与文字；VTT 可用 WEBVTT 文件头和点号毫秒。</p><pre>1
+00:00:00,000 --&gt; 00:00:02,000
+这里是第一段字幕。</pre></details>
+<label for="paste-subtitle-text">字幕原文（按 UTF-8 计算，限15 MiB）</label><textarea id="paste-subtitle-text" rows="6" spellcheck="false" placeholder="在这里粘贴带起止时间的字幕"></textarea>
+<div class="dialog-actions"><button id="preview-paste-subtitle" type="button">预览字幕</button><button id="clear-paste-subtitle" type="button">清空草稿</button></div>
+<p id="paste-subtitle-status" role="status" aria-live="polite">粘贴后预览，确认片段和时间，再开始阅读。</p>
+<ul id="paste-subtitle-preview" aria-label="前三段字幕预览"></ul><div id="paste-subtitle-diagnostics"></div>
+<p id="paste-subtitle-recovery-help" class="hint" hidden>已解析的全文仍在本页，尚未保存到本机。请重试或导出完整 JSON 救援，确认下载成功后再关闭页面。原始粘贴草稿仍在上方。</p>
+<div class="dialog-actions"><button id="retry-paste-subtitle" type="button" hidden>重试保存</button><button id="read-paste-subtitle" type="button" hidden>在本页阅读</button><button id="export-paste-subtitle" type="button" hidden>导出完整 JSON 救援</button><button id="confirm-paste-subtitle" class="primary" type="button" disabled>开始阅读</button></div>
+<p class="hint">保存开始后关闭不会撤回已提交的写入，结果仍可在书架查看。重复的相同标题与字幕会打开已有稿件，保留笔记。</p>
+</dialog>
 <dialog id="subtitle-encoding-dialog" aria-labelledby="subtitle-encoding-heading" aria-describedby="subtitle-encoding-file subtitle-encoding-reason">
 <h2 id="subtitle-encoding-heading">选择字幕编码重新读取</h2>
 <p id="subtitle-encoding-file"></p><p id="subtitle-encoding-reason"></p>
