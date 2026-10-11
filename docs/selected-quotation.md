@@ -1,6 +1,6 @@
 # Copy a selected quotation with attribution
 
-The paragraph reader's **引用原文** action creates a local, transient quotation preview. Select continuous original text in one paragraph, including across its cue boundaries, then open the action. Without a selection, use the readonly original-text field and Shift + arrow keys, then **预览所选引用**. A separate explicit copy button writes the complete quotation and attribution to the clipboard. No clipboard reads occur.
+The paragraph reader's **引用原文** action creates a local, transient quotation preview. Select continuous original text in one paragraph, including across its cue boundaries, then open the action. Without a selection, use the readonly original-text field and Shift + left/right arrow keys, then **预览所选引用**. A separate explicit copy button writes the complete quotation and attribution to the clipboard. No clipboard reads occur.
 
 ## Accuracy and boundaries
 
@@ -25,3 +25,5 @@ Focused Node/HappyDOM tests cover exact text, Unicode, source links, overlapping
 `tests/quotation-browser.mjs` runs only in CI. It exercises native Range selection followed by real pointer clicks, readonly keyboard selection, modal focus, both viewport sizes, audited clipboard success/failure, and full stored-document equality. Its clipboard methods are fixture-controlled: no host clipboard is read. A syntax check or DOM test is not a successful Chromium run. No browser or Electron execution is part of local verification in the restricted task environment.
 
 This is quotation reuse, not persistent exact-text annotation. That separate feature requires versioned snapshots plus notebook and backup/restore work; this change deliberately adds no storage field.
+
+Readonly selection compatibility: Chromium may focus readonly text controls without moving their native selection on arrow keys ([Chromium issue 40903304](https://issues.chromium.org/issues/40903304), comments 7 and 12, and its linked follow-up 382291453). The official issue identifies this as form-control selection behavior; the CI failure is consistent with it, not a local browser reproduction. The original-text picker handles only unmodified Left/Right, Shift+Left/Right and Ctrl/Meta+Home/End, moving selection over grapheme boundaries without editing text. Other shortcuts retain browser behavior. Native CI still drives real keyboard events and checks the exact selected source before preview.

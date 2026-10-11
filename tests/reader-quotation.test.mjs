@@ -125,3 +125,35 @@ test('quotation action keeps a labeled 44px minimum target independent of mobile
   for(const control of w.document.querySelectorAll('#quotation-dialog button')){const size=w.getComputedStyle(control);assert.equal(size.minHeight,'44px',control.id);assert.equal(size.minWidth,'44px',control.id);}
  }finally{await w.happyDOM.close();}
 });
+
+test('readonly keyboard selection crosses cues exactly without editing text or intercepting other shortcuts',async()=>{
+ const {w,$}=setup();try{
+  w.getSelection().removeAllRanges();action(w).click();const field=$('quotation-source'),original=field.value,before=JSON.stringify(w.libraryProbe.documents[0]);
+  const key=(key,options={})=>{const event=new w.KeyboardEvent('keydown',{key,bubbles:true,cancelable:true,...options});field.dispatchEvent(event);return event;};
+  assert.equal(key('Home',{ctrlKey:true}).defaultPrevented,true);
+  for(let i=0;i<9;i++)key('ArrowRight');
+  const expected='repeated 🌴 words';for(const item of Q.selectionOffsets(expected).slice(1))key('ArrowRight',{shiftKey:true});
+  assert.equal(field.value.slice(field.selectionStart,field.selectionEnd),expected);$('quotation-preview-selection').click();assert.ok($('quotation-preview').value.startsWith(expected+'\n\n'));
+  assert.equal(field.readOnly,true);assert.equal(field.value,original);assert.equal(JSON.stringify(w.libraryProbe.documents[0]),before);
+  assert.equal(key('a',{ctrlKey:true}).defaultPrevented,false);assert.equal(key('ArrowDown',{shiftKey:true}).defaultPrevented,false);assert.equal(key('ArrowLeft',{altKey:true}).defaultPrevented,false);assert.equal(key('ArrowRight',{isComposing:true}).defaultPrevented,false);
+ }finally{await w.happyDOM.close();}
+});
+
+test('selection movement respects graphemes, reverse selection, collapse, and document endpoints',()=>{
+ const offsets=Q.selectionOffsets('A🌴e\u0301Z');assert.deepEqual(offsets,[0,1,3,5,6]);
+ assert.deepEqual(Q.moveSelection(offsets,1,1,'none','ArrowRight',true),{start:1,end:3,direction:'forward'});
+ assert.deepEqual(Q.moveSelection(offsets,1,3,'forward','ArrowLeft',false),{start:1,end:1,direction:'none'});
+ assert.deepEqual(Q.moveSelection(offsets,3,3,'none','ArrowLeft',true),{start:1,end:3,direction:'backward'});
+ assert.deepEqual(Q.moveSelection(offsets,1,3,'backward','ArrowRight',true),{start:3,end:3,direction:'forward'});
+ assert.deepEqual(Q.moveSelection(offsets,1,3,'backward','Home',true),{start:0,end:3,direction:'backward'});
+ assert.deepEqual(Q.moveSelection(offsets,0,0,'none','End',false),{start:6,end:6,direction:'none'});
+});
+
+test('real key-handler path maps normalized CRLF offsets and does not own preview keys',async()=>{
+ const doc=fixture();doc.segments=[{id:'newline',start:0,end:1,text:'before\r\nafter'}];const {w,$}=setup(doc);try{
+  action(w).click();const field=$('quotation-source'),key=(key,options={})=>field.dispatchEvent(new w.KeyboardEvent('keydown',{key,bubbles:true,cancelable:true,...options}));
+  key('Home',{ctrlKey:true});for(let i=0;i<7;i++)key('ArrowRight');for(let i=0;i<5;i++)key('ArrowRight',{shiftKey:true});$('quotation-preview-selection').click();assert.ok($('quotation-preview').value.startsWith('after\n\n'));
+  key('Home',{metaKey:true});for(let i=0;i<12;i++)key('ArrowRight',{shiftKey:true});$('quotation-preview-selection').click();let payload;Object.defineProperty(w.navigator,'clipboard',{value:{writeText:async text=>payload=text}});$('quotation-copy').click();await tick();assert.ok(payload.startsWith('before\r\nafter\n\n'));
+  const event=new w.KeyboardEvent('keydown',{key:'ArrowRight',shiftKey:true,bubbles:true,cancelable:true});$('quotation-preview').dispatchEvent(event);assert.equal(event.defaultPrevented,false);
+ }finally{await w.happyDOM.close();}
+});

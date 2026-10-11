@@ -46,6 +46,23 @@
   const corrected=quote.parts.some(({cue})=>cue.original_text!==undefined&&cue.original_text!==cue.text);
   return quote.text+'\n\n—— '+label(doc.title)+' · '+stamp(quote.start)+'–'+stamp(quote.end)+(corrected?' · 已修正文字稿':'')+'\n'+location;
  }
+ // Chromium can focus readonly textareas while leaving native arrow selection
+ // inert. Own only the documented horizontal selection and document-edge keys;
+ // the control stays readonly and all quotation/source guards remain in force.
+ function selectionOffsets(text){
+  if(typeof Intl.Segmenter==='function')return [0,...Array.from(new Intl.Segmenter(undefined,{granularity:'grapheme'}).segment(text),part=>part.index+part.segment.length)];
+  return null; // Do not approximate grapheme boundaries on older engines.
+ }
+ function moveSelection(offsets,start,end,direction,key,shift){
+  const backward=direction==='backward',anchor=backward?end:start,focus=backward?start:end;
+  let next;
+  if(key==='Home')next=0;
+  else if(key==='End')next=offsets.at(-1);
+  else if(!shift&&start!==end)next=key==='ArrowLeft'?start:end;
+  else if(key==='ArrowLeft')next=offsets.findLast(value=>value<focus)??0;
+  else next=offsets.find(value=>value>focus)??offsets.at(-1);
+  return shift?{start:Math.min(anchor,next),end:Math.max(anchor,next),direction:next<anchor?'backward':'forward'}:{start:next,end:next,direction:'none'};
+ }
  function create({isCurrent,core=root.Coconut,separator=root.CoconutPassages.separator}){
   const $=id=>root.document.getElementById(id),dialog=$('quotation-dialog');let session=null,pointer=null,serial=0,busy=false;
   function current(owner){return owner&&session===owner&&isCurrent(owner.doc)&&owner.paragraph.isConnected&&owner.paragraph.textContent===owner.model.text&&
@@ -60,7 +77,7 @@
    if(!isCurrent(binding.doc)||!binding.paragraph.isConnected)return;
    const owner={...binding,serial:++serial,quote:null};session=owner;
    $('quotation-source').value=owner.model.text.replace(/\r\n?/g,'\n');$('quotation-source').setSelectionRange(0,0);$('quotation-preview').value='';$('quotation-result').hidden=true;$('quotation-copy').disabled=true;
-   $('quotation-status').textContent=captured.error||'在下方只读原文中选择文字，可使用 Shift + 方向键，再预览引用。';
+   $('quotation-status').textContent=captured.error||'在下方只读原文中选择文字，可使用 Shift + 左右方向键，再预览引用。';
    dialog.showModal();
    if(!guard(owner))return;
    if(captured.quote)preview(owner,captured.quote);else $('quotation-source').focus();
@@ -69,6 +86,18 @@
   $('quotation-close').onclick=close;
   dialog.addEventListener('cancel',event=>{event.preventDefault();close();});
   dialog.addEventListener('close',()=>{if(session&&!dialog.open)close();});
+  $('quotation-source').addEventListener('keydown',event=>{
+   if(event.defaultPrevented||event.isComposing||event.altKey)return;
+   const horizontal=['ArrowLeft','ArrowRight'].includes(event.key)&&!event.ctrlKey&&!event.metaKey;
+   const edge=['Home','End'].includes(event.key)&&(event.ctrlKey||event.metaKey);
+   if(!horizontal&&!edge)return;
+   const owner=session,field=$('quotation-source');if(!owner||!current(owner))return;
+   owner.selectionOffsets??=selectionOffsets(field.value);
+   if(!owner.selectionOffsets){$('quotation-status').textContent='此浏览器暂不支持按字选择，请用鼠标选择原文。';return;}
+   event.preventDefault();
+   const next=moveSelection(owner.selectionOffsets,field.selectionStart,field.selectionEnd,field.selectionDirection,event.key,event.shiftKey);
+   field.setSelectionRange(next.start,next.end,next.direction);
+  });
   $('quotation-preview-selection').onclick=()=>{const owner=session;if(!guard(owner))return;try{preview(owner,slice(owner.model,inputOffset(owner.model.text,$('quotation-source').selectionStart),inputOffset(owner.model.text,$('quotation-source').selectionEnd)));}catch(error){owner.quote=null;$('quotation-result').hidden=true;$('quotation-copy').disabled=true;$('quotation-status').textContent=error.message;}};
   $('quotation-copy').onclick=async()=>{
    const owner=session;if(busy||!guard(owner)||!owner.quote)return;
@@ -85,5 +114,5 @@
    button.onclick=event=>{const selection=root.getSelection(),live=selection&&selection.rangeCount&&!selection.isCollapsed;const captured=!live&&event.detail>0&&pointer?.button===button?pointer:capture(binding);pointer=null;open(binding,captured);};
   }};
  }
- const api={compose,slice,domSelection,inputOffset,stamp,attribution,create};if(typeof module!=='undefined'&&module.exports)module.exports=api;else root.CoconutQuotation=api;
+ const api={compose,slice,domSelection,inputOffset,stamp,attribution,selectionOffsets,moveSelection,create};if(typeof module!=='undefined'&&module.exports)module.exports=api;else root.CoconutQuotation=api;
 })(typeof window!=='undefined'?window:globalThis);

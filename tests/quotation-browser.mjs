@@ -90,11 +90,16 @@ async function assertPreview(label, selected, fixture) {
   return preview;
 }
 async function keyboardSelectSource(from, length) {
-  const source = page.locator('#quotation-source');
-  await source.focus(); await page.keyboard.press('Control+Home');
+  const source = page.locator('#quotation-source'), phases=[];
+  const observe=async phase=>{const value=await source.evaluate(node=>({start:node.selectionStart,end:node.selectionEnd,direction:node.selectionDirection,activeElement:document.activeElement?.id,text:node.value.slice(node.selectionStart,node.selectionEnd)}));phases.push({phase,...value});return value;};
+  await source.focus(); await observe('focused');
+  await page.keyboard.press('Control+Home'); await observe('home');
   for (let i = 0; i < from; i++) await page.keyboard.press('ArrowRight');
+  await observe('moved-to-start');
   for (let i = 0; i < length; i++) await page.keyboard.press('Shift+ArrowRight');
-  return source.evaluate(node => node.value.slice(node.selectionStart, node.selectionEnd));
+  const result=await observe('extended-selection');
+  console.log(JSON.stringify({keyboardSelection:{requestedFrom:from,requestedLength:length,phases}}));
+  return result.text;
 }
 async function previewKeyboardSelection() {
   await page.locator('#quotation-preview-selection').focus(); await page.keyboard.press('Enter');
