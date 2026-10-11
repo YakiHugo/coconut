@@ -39,7 +39,9 @@ try{
   if(!await page.locator('#export-menu').evaluate(node=>node.open))await page.locator('#export-menu > summary').click();
   const [item]=await Promise.all([page.waitForEvent('download'),page.locator(selector).click()]);
   const stream=await item.createReadStream(),chunks=[];for await(const chunk of stream)chunks.push(chunk);
-  assert.equal(await item.failure(),null);return {name:item.suggestedFilename(),buffer:Buffer.concat(chunks)};
+  assert.equal(await item.failure(),null);
+  if(await page.locator('#export-menu').evaluate(node=>node.open))await page.locator('#export-menu > summary').click();
+  return {name:item.suggestedFilename(),buffer:Buffer.concat(chunks)};
  }
  for(const fixture of subtitleFixtures){
   const label=fixture.format,width=label==='srt'?1360:390,page=await newPage(width);

@@ -1,3 +1,4 @@
+import {openTranscriptTools} from './helpers/reading-tools-browser.mjs';
 import {openLibraryTools} from './helpers/library-tools-browser.mjs';
 /** Real-browser acceptance, intended for CI or an explicitly approved browser
  * environment. Authored files and injected answers only; no model, CLI, media,
@@ -22,6 +23,7 @@ async function importDocument(page, fixture) {
   await page.waitForFunction(title => document.querySelector('#title').textContent === title, fixture.title);
   if (await page.locator('#passage-search').isVisible()) await page.locator('#passage-search').click();
   else await page.locator('#mode-bilingual').click();
+  await openTranscriptTools(page);
   await page.locator('#search').waitFor({state: 'visible'});
 }
 async function enter(page, query) {await page.locator('#search').fill(query);}
