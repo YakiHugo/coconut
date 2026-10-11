@@ -1488,6 +1488,69 @@ let chapterDirectoryDoc=null,chapterDirectoryCue=null,chapterDirectoryPage=0,cha
 const CHAPTER_PAGE_SIZE=20;
 function chapterEligible(doc){return !!doc&&!Coconut.isReadingCollection(doc)&&!Coconut.isAudioProject(doc)&&doc.segments.length>0;}
 function chapterCueNode(id,mode=readingMode){return [...document.querySelectorAll(mode==='passages'?'#passage-body .passage-original .passage-cue':'#transcript .segment')].find(node=>(mode==='passages'?node.dataset.cueId:node.dataset.segmentId)===id);}
+// Display-only chapter orientation. One full-source index serves both mounted
+// views; passage composition, original DOM children and AI/quotation scope stay
+// untouched. Equal timestamps and empty cue IDs retain source-order identity.
+function readingChapterIndex(doc){
+ const entries=Coconut.readingChapters(doc).filter(entry=>entry.status==='current');
+ const starts=new Map(entries.map((entry,index)=>[entry.cue.id,{...entry,number:index+1}]));
+ const positions=new Map();if(entries.length)doc.segments.forEach((cue,index)=>positions.set(cue.id,index));
+ return {starts,at(id){
+  const position=positions.get(id);if(position===undefined)return null;
+  let low=0,high=entries.length;while(low<high){const middle=(low+high)>>>1;if(entries[middle].index<=position)low=middle+1;else high=middle;}
+  return low?starts.get(entries[low-1].cue.id):null;
+ }};
+}
+function readingChapterLabel(entry,kind,id){
+ const label=el('div','reading-chapter-label');label.dataset.chapterId=entry.item.id;label.dataset.chapterKind=kind;
+ label.append(el('span','reading-chapter-kind',kind==='start'?'章节起点':'所在章节'));
+ if(kind==='start'){
+  label.id=id;label.append(el('span','reading-chapter-number',String(entry.number)));
+ }
+ label.append(el('strong','reading-chapter-title',entry.item.title));
+ if(kind==='start')label.append(el('span','reading-chapter-location',Coconut.time(entry.cue.start)+' · 片段 '+(entry.index+1)));
+ return label;
+}
+function clearReadingChapterCue(node){
+ delete node.dataset.readingChapterMarker;
+ const prior=node.dataset.readingChapterDescription;if(!prior)return;
+ const descriptions=(node.getAttribute('aria-describedby')||'').split(/\s+/u).filter(id=>id&&id!==prior);
+ if(descriptions.length)node.setAttribute('aria-describedby',descriptions.join(' '));else node.removeAttribute('aria-describedby');
+ delete node.dataset.readingChapterDescription;
+}
+function renderReadingChapterMarkers(doc=active()){
+ if(!doc||active()!==doc)return;
+ const index=readingChapterIndex(doc);
+ // Called only for a source render or an explicit chapter edit, never a save
+ // receipt. Updating labels preserves cue/player objects, selections and focus.
+ for(const host of [$('transcript'),$('passage-body')]){
+  host.querySelectorAll('.reading-chapter-labels').forEach(node=>node.remove());
+  host.querySelectorAll('[data-reading-chapter-description]').forEach(clearReadingChapterCue);
+ }
+ let previous=null,serial=0;
+ for(const row of $('transcript').querySelectorAll('.segment')){
+  const entry=index.at(row.dataset.segmentId),start=index.starts.get(row.dataset.segmentId);
+  if(entry&&(start||entry!==previous)){
+   const labels=el('div','reading-chapter-labels');labels.append(readingChapterLabel(entry,start?'start':'context','reading-chapter-transcript-'+(++serial)));
+   row.querySelector('.segment-content').prepend(labels);
+  }
+  previous=entry;
+ }
+ let first=true;
+ for(const section of $('passage-body').querySelectorAll('.passage')){
+  const original=section.querySelector('.passage-original'),cues=[...original.querySelectorAll('.passage-cue')],labels=el('div','reading-chapter-labels');
+  const initial=cues[0],context=initial&&index.at(initial.dataset.cueId);
+  if(first&&context&&!index.starts.has(initial.dataset.cueId))labels.append(readingChapterLabel(context,'context'));
+  first=false;
+  for(const node of cues){
+   const entry=index.starts.get(node.dataset.cueId);if(!entry)continue;
+   const id='reading-chapter-passage-'+(++serial);labels.append(readingChapterLabel(entry,'start',id));
+   node.dataset.readingChapterMarker=String(entry.number);node.dataset.readingChapterDescription=id;
+   node.setAttribute('aria-describedby',[(node.getAttribute('aria-describedby')||''),id].filter(Boolean).join(' '));
+  }
+  if(labels.childElementCount)section.querySelector('.passage-columns').before(labels);
+ }
+}
 function chapterDraft(){return !!chapterEditor&&($('chapter-title').value!==chapterEditor.initialTitle||$('chapter-cue-number').value!==chapterEditor.initialNumber);}
 function chapterSaveStatus(){
  const doc=chapterDirectoryDoc;if(!doc)return;const status=libraryStore.status(doc.key),live=state.documents.includes(doc);
@@ -1521,7 +1584,7 @@ function renderChapterDirectory(focusId=null){
    button.onclick=()=>{if(!state.documents.includes(doc)||!doc.reading_chapters?.includes(item))return;
     if(kind==='open'){jumpReadingChapter(doc,item);return;}
     if(!contentIngressAllowed(doc))return;
-    if(kind==='remove'){if(chapterEditor?.item===item&&chapterDraft()){$('chapter-save-status').textContent='此章节有未提交草稿，请先保存或取消修改。';return;}doc.reading_chapters=doc.reading_chapters.filter(chapter=>chapter!==item);queueDocument(doc);renderNotebookAction(doc);renderChapterReturn();renderChapterDirectory();$('chapter-add').focus({preventScroll:true});return;}
+    if(kind==='remove'){if(chapterEditor?.item===item&&chapterDraft()){$('chapter-save-status').textContent='此章节有未提交草稿，请先保存或取消修改。';return;}doc.reading_chapters=doc.reading_chapters.filter(chapter=>chapter!==item);queueDocument(doc);renderNotebookAction(doc);renderChapterReturn();renderReadingChapterMarkers(doc);renderChapterDirectory();$('chapter-add').focus({preventScroll:true});return;}
     openChapterEditor(doc,kind,cue,item,button);
    };row.append(button);
   }host.append(row);
@@ -1566,7 +1629,7 @@ $('chapter-save').onclick=()=>{
  try{
   if(mode!=='rename'&&(!target||doc.segments[Number($('chapter-cue-number').value)-1]!==target))throw Error('起点片段已变化，请重新选择序号并核对原文。');
   const updated=mode==='create'?Coconut.createReadingChapter(doc,{id:crypto.randomUUID(),title:$('chapter-title').value,cueId:target.id}):Coconut.updateReadingChapter(doc,item.id,mode==='rename'?{title:$('chapter-title').value===editor.initialTitle?editor.rawTitle:$('chapter-title').value}:{cueId:target.id});
-  doc.reading_chapters=Coconut.readingChaptersWith(doc,updated);queueDocument(doc);renderNotebookAction(doc);renderChapterReturn();chapterEditor=null;$('chapter-editor').close();
+  doc.reading_chapters=Coconut.readingChaptersWith(doc,updated);queueDocument(doc);renderNotebookAction(doc);renderChapterReturn();renderReadingChapterMarkers(doc);chapterEditor=null;$('chapter-editor').close();
   if($('chapter-dialog').open){renderChapterDirectory(updated.id);}else restoreChapterEditorFocus(editor);
  }catch(error){$('chapter-editor-status').textContent='章节未保存：'+error.message;}
 };
@@ -3522,6 +3585,7 @@ function renderPassages(doc,excerptIndex=readingExcerptIndex(doc)){
   }
   host.append(section);
  }
+ renderReadingChapterMarkers(doc);
  renderPassageReadingPosition();
  renderPassagePlayback(passagePlayback?.getState());
 }

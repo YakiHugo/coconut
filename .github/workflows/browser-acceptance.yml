@@ -94,6 +94,11 @@ jobs:
         env:
           COCONUT_UI_SCREENSHOTS: ${{ runner.temp }}/coconut-authored-ui
         run: node tests/reading-chapters-browser.mjs
+      - name: Verify manual chapter reading markers, native selection, clipboard and accessible titles
+        if: ${{ !cancelled() && steps.browser_setup.outcome == 'success' }}
+        env:
+          COCONUT_UI_SCREENSHOTS: ${{ runner.temp }}/coconut-authored-ui
+        run: node tests/chapter-markers-browser.mjs
       - name: Verify independent bilingual excerpt selections, immutable snapshots and actual recovery
         if: ${{ !cancelled() && steps.browser_setup.outcome == 'success' }}
         env:
@@ -257,6 +262,7 @@ jobs:
             ${{ runner.temp }}/coconut-authored-ui/compact-library-geometry.json
             ${{ runner.temp }}/coconut-authored-ui/search-return-checks.json
             ${{ runner.temp }}/coconut-authored-ui/inline-excerpts-checks.json
+            ${{ runner.temp }}/coconut-authored-ui/chapter-markers-checks.json
             ${{ runner.temp }}/coconut-authored-ui/compact-library-failure.png
           if-no-files-found: ignore
           retention-days: 7
