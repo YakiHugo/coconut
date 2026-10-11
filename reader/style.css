@@ -1089,5 +1089,8 @@ body[data-media-docked="true"] .reading-feedback:has(#save-warning-home .has-war
 .quotation-actions{position:sticky;bottom:-20px;display:flex;flex-wrap:wrap;gap:8px;padding:8px 0;background:var(--surface,#fff)}
 .quotation-actions>button{flex:1 1 auto}
 #quotation-reselect{flex-basis:100%;font-size:13px;background:transparent}
-#quotation-status{margin:.5rem 0;font-size:12px}
+#quotation-status,#quotation-save-status{margin:.5rem 0;font-size:12px}
 @media(max-width:480px){.quotation-dialog{padding:16px}.quotation-actions{bottom:-16px}}
+
+#quotation-save-status:empty{display:none}
+.notebook-remove{margin-left:.5rem}

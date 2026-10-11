@@ -62,3 +62,30 @@ close/quit protection. Native close coordination needs a separate lifecycle chan
 so canceled quit cannot leave the window open after its local services shut down.
 The existing Electron CI update test verifies the Web listener stays absent with
 both a changed title draft and a failed note save, while update safety still blocks.
+
+## Exact-text excerpts alongside whole-cue annotations
+
+The paragraph quotation preview now has an explicit **保存所选摘录** action.
+It saves only the selected text as an immutable historical record, including its
+exact composition/range, captured context, corrections and source attribution.
+**整段摘录** remains the independent `saved_excerpt` cue annotation and reader
+filter; exact records do not silently enter the current transcript's search,
+filtered reading or AI scope.
+
+The library notebook includes both record types, clearly labeled. Its existing
+cooperative query cancellation, paging and selected-document Markdown export
+also apply to exact records. Exact-only documents count as annotated. Details
+retain captured text/title/context even when the current source changes or is
+removed. Current-source navigation uses only surviving, same-order contiguous captured
+cue IDs. Text or title corrections keep a clearly labeled route to the current
+corresponding source and a historical-change warning. Missing, reordered or
+interrupted cue sequences remain unavailable; no fuzzy reattachment is attempted. Removing an exact record leaves
+whole-cue annotations, notes, text and other exact records untouched.
+
+Repeated saves of the same captured snapshot and range share one record. The
+quotation action shows saving, saved or unsaved/retry based on its own document
+receipt. Closing or selecting newer text retires that operation's focus and
+status ownership. Native browser persistence/reload checks are authored in the
+CI-only quotation acceptance script; local focused DOM checks are not native
+browser evidence. Complete restoration needs JSON and a reader supporting the
+new field; see [backup recovery](backup-recovery.md#exact-text-excerpt-snapshots).

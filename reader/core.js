@@ -126,6 +126,7 @@
   return validate(result);
  }
  function validateAudioProject(data) {
+  if(data.exact_excerpts!==undefined)exactError();
   const origin=podcastSource(data.podcast_source),local=localMediaSource(data.local_media_source);
   if(data.local_media_source!==undefined&&!local)throw new Error('本地文件信息无效，请重新选择原音视频；项目备份未改变');
   if(!Array.isArray(data.segments)||data.segments.length||(!origin?.media_url&&!local)||origin&&local)throw new Error('原声项目必须保留一个公开媒体或本地文件来源，且不能把简介或笔记当作文字稿');
@@ -425,7 +426,7 @@
  function libraryMatches(doc, query, kind='all', scope='title') {
   const audio=isAudioProject(doc);
   // Ordinary title browsing must not scan every saved cue for unused filters.
-  const annotated=kind==='annotated'&&Boolean(projectAnnotationCount(doc)||doc.segments.some(s=>s.saved_excerpt)||doc.segments.some(segment=>hasNoteContent(doc.notes?.[segment.id])));
+  const annotated=kind==='annotated'&&Boolean(projectAnnotationCount(doc)||exactExcerptCount(doc)||doc.segments.some(s=>s.saved_excerpt)||doc.segments.some(segment=>hasNoteContent(doc.notes?.[segment.id])));
   if(kind==='audio'&&!audio||kind==='transcript'&&audio||kind==='annotated'&&!annotated)return false;
   const needle=query.trim().toLocaleLowerCase(),matches=value=>typeof value==='string'&&value.toLocaleLowerCase().includes(needle);
   if(matches(doc.title))return true;
@@ -517,7 +518,7 @@
   let generation=0,current=null;
   const sameDocuments=job=>{
    const live=getDocuments();
-   return live.length===job.documents.length&&live.every((doc,i)=>doc===job.documents[i]&&doc.segments===job.shapes[i][0]&&doc.segments.length===job.shapes[i][1]&&doc.language===job.shapes[i][2]&&doc.translation_contexts===job.shapes[i][3]&&doc.translation_glossary===job.shapes[i][4]);
+   return live.length===job.documents.length&&live.every((doc,i)=>doc===job.documents[i]&&doc.segments===job.shapes[i][0]&&doc.segments.length===job.shapes[i][1]&&doc.language===job.shapes[i][2]&&doc.translation_contexts===job.shapes[i][3]&&doc.translation_glossary===job.shapes[i][4]&&doc.exact_excerpts===job.shapes[i][5]&&doc.exact_excerpts?.length===job.shapes[i][6]);
   };
   const valid=job=>current===job&&job.generation===generation&&job.revision===getRevision()&&job.sourceRevision===searchRevision&&sameDocuments(job);
   function retire(job){if(job?.operation){job.operation.return();job.operation=null;}}
@@ -527,7 +528,7 @@
    retire(current);
    const documents=getDocuments().slice();
    const job={generation:++generation,signature,revision:getRevision(),sourceRevision:searchRevision,documents,
-    shapes:documents.map(doc=>[doc.segments,doc.segments.length,doc.language,doc.translation_contexts,doc.translation_glossary]),pending:false,scanned:0,docs:[],matches:[]};
+    shapes:documents.map(doc=>[doc.segments,doc.segments.length,doc.language,doc.translation_contexts,doc.translation_glossary,doc.exact_excerpts,doc.exact_excerpts?.length]),pending:false,scanned:0,docs:[],matches:[]};
    current=job;
    let cues=0;
    const expensive=kind==='annotated'||Boolean(query.trim()&&scope!=='title');
@@ -573,7 +574,7 @@
   const matches=value=>typeof value==='string'&&value.toLocaleLowerCase().includes(needle);
   if(kind==='audio'&&!audio||kind==='transcript'&&audio)return false;
   if(kind==='annotated'){
-   let annotated=Boolean(projectAnnotationCount(doc));
+   let annotated=Boolean(projectAnnotationCount(doc)||exactExcerptCount(doc));
    for(let i=0;!annotated&&i<doc.segments.length;i++){
     const cue=doc.segments[i];annotated=Boolean(cue.saved_excerpt||hasNoteContent(doc.notes?.[cue.id]));
     if((i+1)%128===0)yield;
@@ -620,6 +621,94 @@
   // original, speaker, note, or different translation-language fields together.
   return searchDocument(doc,needle).byCue.has(segment.id)||[segment.speaker||'',hasNote?note:''].some(text=>text.toLocaleLowerCase().includes(needle));
  }
+
+ // Exact excerpts are immutable historical evidence, separate from live whole-cue bookmarks.
+ // Stored offsets are UTF-16; capture additionally enforces current grapheme boundaries.
+ const validatedExactExcerpts=new WeakSet();
+ const exactSourceFields=['title','language','source_url','provenance','podcast_source','local_media_source','source_media'];
+ function exactEqual(a,b){
+  if(a===b)return true;
+  if(!a||!b||typeof a!=='object'||typeof b!=='object'||Array.isArray(a)!==Array.isArray(b))return false;
+  const keys=Object.keys(a);return keys.length===Object.keys(b).length&&keys.every(key=>Object.hasOwn(b,key)&&exactEqual(a[key],b[key]));
+ }
+ function exactFields(value,fields){return value&&typeof value==='object'&&!Array.isArray(value)&&Object.keys(value).every(key=>fields.includes(key));}
+ function exactFreeze(value){if(value&&typeof value==='object'){for(const item of Object.values(value))exactFreeze(item);Object.freeze(value);}return value;}
+ function exactError(){throw new Error('精确摘录的版本、原文快照或选择范围无效；原始数据未被丢弃，请保留 JSON 备份。');}
+ function exactSource(doc){
+  const checked=validate({...Object.fromEntries(exactSourceFields.filter(key=>Object.hasOwn(doc,key)).map(key=>[key,doc[key]])),segments:[{id:'source-check',text:'',start:0,end:0}]});
+  return Object.fromEntries(exactSourceFields.filter(key=>Object.hasOwn(checked,key)).map(key=>[key,checked[key]]));
+ }
+ function exactCue(cue){return {id:cue.id,text:cue.text,start:cue.start,end:cue.end,speaker:cue.speaker??null,...(cue.original_text!==undefined?{original_text:cue.original_text}:{})};}
+ function exactComposition(snapshot){return snapshot.cues.map((cue,index)=>(index?snapshot.separators[index-1]:'')+cue.text).join('');}
+ function exactBoundary(text,offset){return Number.isSafeInteger(offset)&&offset>=0&&offset<=text.length&&!(offset>0&&offset<text.length&&
+  (/[\uD800-\uDBFF]/.test(text[offset-1])&&/[\uDC00-\uDFFF]/.test(text[offset])||text[offset-1]==='\r'&&text[offset]==='\n'));}
+ function exactExcerptParts(record){
+  const {snapshot}=record,parts=[];let offset=0;
+  for(const [index,cue] of snapshot.cues.entries()){
+   if(index)offset+=snapshot.separators[index-1].length;
+   const from=Math.max(0,snapshot.from-offset),to=Math.min(cue.text.length,snapshot.to-offset);
+   if(from<to)parts.push({cue,from,to});offset+=cue.text.length;
+  }
+  return parts;
+ }
+ function validateExactExcerpt(record){
+  if(!exactFields(record,['id','version','created_at','text','snapshot'])||record.version!==1||typeof record.id!=='string'||!record.id.length||record.id.length>200||
+   typeof record.created_at!=='string'||!/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/.test(record.created_at)||!Number.isFinite(Date.parse(record.created_at))||new Date(record.created_at).toISOString()!==record.created_at||typeof record.text!=='string')exactError();
+  const snapshot=record.snapshot;
+  if(!exactFields(snapshot,['source','cues','separators','from','to'])||!Array.isArray(snapshot.cues)||!snapshot.cues.length||snapshot.cues.length>100000||
+   !Array.isArray(snapshot.separators)||snapshot.separators.length!==snapshot.cues.length-1||!snapshot.separators.every(value=>value===''||value===' ')||
+   !exactFields(snapshot.source,exactSourceFields)||!['title','language','source_url'].every(key=>typeof snapshot.source[key]==='string'))exactError();
+  const ids=new Set();let prior=-1;
+  const cues=snapshot.cues.map(cue=>{
+   if(!exactFields(cue,['id','text','start','end','speaker','original_text'])||typeof cue.id!=='string'||ids.has(cue.id)||typeof cue.text!=='string'||
+    !Number.isFinite(cue.start)||cue.start<0||cue.start<prior||!Number.isFinite(cue.end)||cue.end<cue.start||
+    !(cue.speaker===null||typeof cue.speaker==='string')||(Object.hasOwn(cue,'original_text')&&typeof cue.original_text!=='string'))exactError();
+   ids.add(cue.id);prior=cue.start;return exactCue(cue);
+  });
+  const source=exactSource(snapshot.source);if(!exactEqual(source,snapshot.source))exactError();
+  const normalized={id:record.id,version:1,created_at:record.created_at,text:record.text,snapshot:{source,cues,separators:[...snapshot.separators],from:snapshot.from,to:snapshot.to}};
+  const text=exactComposition(normalized.snapshot);
+  if(!exactBoundary(text,snapshot.from)||!exactBoundary(text,snapshot.to)||snapshot.to<=snapshot.from||text.slice(snapshot.from,snapshot.to)!==record.text||
+   !hasNoteContent(record.text)||/\r(?!\n)/.test(record.text)||!exactExcerptParts(normalized).length)exactError();
+  exactFreeze(normalized);validatedExactExcerpts.add(normalized);return normalized;
+ }
+ function exactExcerpts(data){
+  if(data.exact_excerpts===undefined)return undefined;
+  if(!Array.isArray(data.exact_excerpts))exactError();
+  const ids=new Set();return data.exact_excerpts.map(item=>{const record=validateExactExcerpt(item);if(ids.has(record.id))exactError();ids.add(record.id);return record;});
+ }
+ function exactExcerptSnapshot(doc,cues,separators,from,to,{id,createdAt}={}){
+  if(isAudioProject(doc)||!Array.isArray(cues)||!cues.length)exactError();
+  const first=doc.segments.indexOf(cues[0]);if(first<0||cues.some((cue,index)=>doc.segments[first+index]!==cue))exactError();
+  const passages=typeof module!=='undefined'&&module.exports?require('./passages.js'):root.CoconutPassages;
+  if(!Array.isArray(separators)||separators.length!==cues.length-1||separators.some((value,index)=>value!==passages.separator(cues[index].text,cues[index+1].text)))exactError();
+  const snapshot={source:exactSource(doc),cues:cues.map(exactCue),separators:[...separators],from,to};
+  const text=exactComposition(snapshot);
+  if(typeof Intl.Segmenter!=='function')throw new Error('此浏览器暂不支持按完整字符保存精确摘录；仍可复制引用。');
+  const boundaries=new Set([0,...Array.from(new Intl.Segmenter(undefined,{granularity:'grapheme'}).segment(text),part=>part.index+part.segment.length)]);
+  if(!boundaries.has(from)||!boundaries.has(to))throw new Error('请选择完整字符，不要截断组合文字或表情。');
+  return validateExactExcerpt({id,version:1,created_at:createdAt,text:text.slice(from,to),snapshot});
+ }
+ function exactExcerptText(record){return record.text;}
+ function exactExcerptSource(record){return record.snapshot.source;}
+ function exactExcerptCount(doc){return doc.exact_excerpts?.length||0;}
+ function exactExcerptDuplicate(doc,record){return (doc.exact_excerpts||[]).find(item=>exactEqual(item.snapshot,record.snapshot))||null;}
+ // Batch only within a synchronous render/export pass; never retain a freshness cache across edits.
+ function exactExcerptStateBatch(records,doc){
+  const byId=new Map(doc.segments.map((cue,index)=>[cue.id,index])),source=exactSource(doc),states=new Map();
+  for(const record of records){
+   const saved=record.snapshot.cues,first=byId.get(saved[0].id),missing=saved.some(cue=>!byId.has(cue.id));
+   const contiguous=!missing&&saved.every((cue,index)=>byId.get(cue.id)===first+index);
+   const freshness=missing?'missing':!contiguous||saved.some((cue,index)=>!exactEqual(cue,exactCue(doc.segments[first+index]||{})))||!exactEqual(record.snapshot.source,source)?'stale':'current';
+   // A known current location is separate from unchanged historical evidence.
+   // Never guess a replacement by time or attach to reordered/noncontiguous cues.
+   states.set(record.id,{freshness,cueId:contiguous?exactExcerptParts(record)[0].cue.id:null});
+  }
+  return states;
+ }
+ function exactExcerptState(record,doc){return exactExcerptStateBatch([record],doc).get(record.id);}
+ function exactExcerptFreshnessBatch(records,doc){return new Map([...exactExcerptStateBatch(records,doc)].map(([id,state])=>[id,state.freshness]));}
+ function exactExcerptFreshness(record,doc){return exactExcerptState(record,doc).freshness;}
 
 	function validate(data) {
   if(isAudioProject(data))return validateAudioProject(data);
@@ -684,8 +773,10 @@
 		const localSource=localMediaSource(data.local_media_source);
   if(data.local_media_source!==undefined&&(!localSource||data.podcast_source!==undefined||data.source_media!==undefined))throw new Error('本地文件来源无效或混入其他媒体来源');
   const sourceMedia = mediaSource(data.source_media);
+  const excerpts=exactExcerpts(data);
 		return {
 			notes,
+   ...(excerpts?.length?{exact_excerpts:excerpts}:{}),
    ...(mediaTiming(data.media_timing)?{media_timing:mediaTiming(data.media_timing)}:{}),
    ...((data.project_note!==undefined||data.timestamp_bookmarks!==undefined)?projectAnnotations(data):{}),
    ...(data.project_language_override===true&&hasProjectAnnotations(data)?{project_language_override:true}:{}),
@@ -863,14 +954,18 @@
   for(const doc of documents){
    const capture=(type,id,text,note,timestamp,excerpt,source)=>{
     if(kind!=='all'&&!(kind==='excerpt'&&excerpt)&&!(kind==='note'&&hasNoteContent(note)))return null;
-    if(needle&&![doc.title,text,note,id,timestamp===null?'':time(timestamp)].some(value=>String(value||'').toLocaleLowerCase().includes(needle)))return null;
+    if(needle&&![doc.title,text,note,id,...(type==='exact-excerpt'?[source.snapshot.source.title,source.snapshot.source.source_url]:[]),timestamp===null?'':time(timestamp)].some(value=>String(value||'').toLocaleLowerCase().includes(needle)))return null;
     const result={key:JSON.stringify([doc.key,type,id]),documentKey:doc.key,type,id,text,note,time:timestamp,excerpt};
-    captureOwners.set(result,{doc,source});return result;
+    captureOwners.set(result,{doc,source,...(type==='exact-excerpt'?{snapshot:validatedExactExcerpts.has(source)?null:JSON.stringify(source)}:{})});return result;
    };
    for(const cue of doc.segments){
     if(cue.saved_excerpt===true||hasNoteContent(doc.notes?.[cue.id])){
      const result=capture('cue',cue.id,cue.text,doc.notes?.[cue.id]||'',cue.start,cue.saved_excerpt===true,cue);if(result)yield result;
     }
+    if(++work%128===0)yield null;
+   }
+   for(const record of doc.exact_excerpts||[]){
+    const result=capture('exact-excerpt',record.id,record.text,'',exactExcerptParts(record)[0].cue.start,true,record);if(result)yield result;
     if(++work%128===0)yield null;
    }
    if(hasProjectAnnotations(doc)){
@@ -890,6 +985,7 @@
  function libraryCaptureCurrent(capture,documents){
   const owner=captureOwners.get(capture);if(!owner||!documents.includes(owner.doc))return false;
   const {doc,source}=owner;
+  if(capture.type==='exact-excerpt')return doc.exact_excerpts?.includes(source)&&source.id===capture.id&&(owner.snapshot===null||JSON.stringify(source)===owner.snapshot);
   if(capture.type==='cue')return doc.segments.includes(source)&&source.id===capture.id&&source.text===capture.text&&source.start===capture.time&&
    (source.saved_excerpt===true)===capture.excerpt&&(doc.notes?.[source.id]||'')===capture.note;
   if(capture.type==='bookmark')return hasProjectAnnotations(doc)&&doc.timestamp_bookmarks.includes(source)&&source.id===capture.id&&source.time===capture.time&&(source.note||'')===capture.note;
@@ -899,13 +995,13 @@
   now=()=>root.performance.now(),budgetMs=4,workSize=32,onChange=()=>{}}){
   let generation=0,current=null;
   const shape=doc=>[doc.segments,doc.segments.length,doc.notes,doc.title,doc.project_note,doc.timestamp_bookmarks,doc.timestamp_bookmarks?.length,
-   doc.translation_view,doc.translation_contexts,doc.translation_glossary,doc.language];
+   doc.translation_view,doc.translation_contexts,doc.translation_glossary,doc.language,doc.exact_excerpts,doc.exact_excerpts?.length];
   const valid=job=>{
    if(current!==job||job.generation!==generation||job.revision!==getRevision()||job.sourceRevision!==searchRevision)return false;
    const documents=getDocuments();return documents.length===job.documents.length&&documents.every((doc,i)=>{
     const saved=job.shapes[i];return doc===job.documents[i]&&doc.segments===saved[0]&&doc.segments.length===saved[1]&&doc.notes===saved[2]&&doc.title===saved[3]&&
      doc.project_note===saved[4]&&doc.timestamp_bookmarks===saved[5]&&doc.timestamp_bookmarks?.length===saved[6]&&doc.translation_view===saved[7]&&
-     doc.translation_contexts===saved[8]&&doc.translation_glossary===saved[9]&&doc.language===saved[10];
+     doc.translation_contexts===saved[8]&&doc.translation_glossary===saved[9]&&doc.language===saved[10]&&doc.exact_excerpts===saved[11]&&doc.exact_excerpts?.length===saved[12];
    });
   };
   const retire=job=>{job?.operation?.return();if(job){job.operation=null;job.building=[];job.buildingIndexes.clear();}};
@@ -915,7 +1011,7 @@
    const job={generation:++generation,signature,revision:getRevision(),sourceRevision:searchRevision,documents,shapes:documents.map(shape),
     pending:false,captures:[],indexes:new Map(),building:[],buildingIndexes:new Map(),operation:libraryCaptureSteps(documents,query,kind)};
    current=job;let work=documents.length;
-   for(const doc of documents){work+=doc.segments.length+(doc.timestamp_bookmarks?.length||0);if(work>4000)break;}
+   for(const doc of documents){work+=doc.segments.length+(doc.timestamp_bookmarks?.length||0)+exactExcerptCount(doc);if(work>4000)break;}
    job.pending=work>4000||documents.length>160;
    let yieldedCapture=false;
    const advance=()=>{
@@ -948,6 +1044,18 @@
 		return String(value).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
 			.replace(/[\\`*_{}\[\]()#+.!|~$-]/g, "\\$&");
 	}
+ function exactExcerptMarkdown(record,freshness) {
+  const sourceDoc=exactExcerptSource(record),parts=exactExcerptParts(record),line=value=>markdownText(value).replace(/[\r\n]+/g,' '),quote=value=>markdownText(value).replace(/\r\n?/g,'\n').split('\n').map(part=>'> '+part).join('\n');
+  const start=parts[0].cue.start,end=Math.max(...parts.map(part=>part.cue.end)),demo=sourceDoc.provenance?.kind==='authored_demo';
+  const url=demo?'':source(sourceDoc.source_url,start)||podcastOrigin(sourceDoc);
+  const status={current:'摘录时来源上下文仍与当前稿一致',stale:'来源上下文已变化；以下保留摘录时原文',missing:'原引用片段已移除；以下保留摘录时原文'}[freshness];
+  const lines=['## 精确摘录 · '+time(start)+'–'+time(end),'','摘录 ID：'+line(record.id),'','摘录时间：'+line(record.created_at),'','摘录时篇目：'+line(sourceDoc.title),'','依据状态：'+status,'','时间按文字稿片段定位，并非逐字时间：'+start+'–'+end+' 秒。','',quote(record.text),''];
+  if(demo)lines.push('自写演示内容（无对应音视频）','');
+  else if(url)lines.push('摘录时来源：'+line(url)+(sourceDoc.podcast_source?'（按时间手动定位）':''),'');
+  else lines.push(sourceDoc.local_media_source||sourceDoc.source_media?'摘录时来源：本地原始媒体（无原站链接，请按文字稿时间定位）':'摘录时未关联可用原站链接或媒体。','');
+  if(parts.some(({cue})=>cue.original_text!==undefined&&cue.original_text!==cue.text))lines.push('摘录时已修正。完整历史上下文保留在摘录详情与 JSON 备份中。','');
+  return lines.join('\n');
+ }
 	function notebookMarkdown(doc) {
   if(isAudioProject(doc))return audioNotebookMarkdown(doc);
 		const kept = notebookSegments(doc);
@@ -955,7 +1063,7 @@
 		const singleLine = value => text(value).replace(/\n/g, " ");
 		const quote = value => text(value).split("\n").map(line => "> " + line).join("\n");
 		const sourceLink = seconds => source(doc.source_url, seconds).replace(/[()]/g, char => char === "(" ? "%28" : "%29");
-		const lines = ["# " + singleLine(doc.title), "", "Coconut 阅读笔记 · " + kept.length + " 个片段", "",
+		const lines = ["# " + singleLine(doc.title), "", "Coconut 阅读笔记 · " + kept.length + " 个片段" + (exactExcerptCount(doc)?" · "+exactExcerptCount(doc)+" 条精确摘录":""), "",
 			"以下包含本篇全部摘录和非空笔记，不受当前搜索筛选影响。文字稿可能有识别错误，请回听核对。", "",
 			"Markdown 用于阅读与整理；完整恢复请另存 Coconut JSON 备份。此文件不包含媒体。", ""];
 		const origin = sourceLink(0) || podcastOrigin(doc);
@@ -979,6 +1087,7 @@
 			}
 			if (hasNoteContent(doc.notes?.[segment.id])) lines.push("我的笔记：", "", quote(doc.notes[segment.id]), "");
 		}
+  if(exactExcerptCount(doc)){const freshness=exactExcerptFreshnessBatch(doc.exact_excerpts,doc);for(const record of doc.exact_excerpts)lines.push(exactExcerptMarkdown(record,freshness.get(record.id)),'');}
   if(hasProjectAnnotations(doc)&&projectAnnotationCount(doc)){
    lines.push('## 项目笔记与时间书签','','以下是用户自己的记录，不是原文或经过验证的引用。','');
    if(hasNoteContent(doc.project_note))lines.push('### 项目笔记','',quote(doc.project_note),'');
@@ -1109,7 +1218,7 @@
 			segments,
 		});
 	}
-	const api = { createReadingRecency, createLibrarySearch, createLibraryNotebookSearch, libraryCaptureSteps, libraryCaptureCurrent, libraryCaptures, libraryNotebookMarkdown, mediaTiming, mediaTimingOffset, mediaTimingRange, localMediaSource, searchDocument, invalidateSearch, manualReviewSnapshot, manualReviewCurrent, saveManualTranslation, translationReviewQueue, hasNoteContent, segmentNoteCount, BACKUP_REVIEW_BYTES, SUBTITLE_IMPORT_BYTES, vttPayload, libraryHits, librarySnippet, hasProjectAnnotations, projectAnnotationCount, attachProjectTranscript, libraryMatches, documentDuration, sortedLibrary, AUDIO_NOTE_BUDGET, audioNoteCharacters, isAudioProject, audioProjectIdentity, podcastMediaIdentity, SUMMARY_QUESTION, summaryReadiness, podcastURL, podcastSource, cleanGlossary, relevantGlossary, translationQualityMessage, retainAnswers, summaryFreshness, latestSummary, summaryMarkdown, aiReadingMarkdown, parseReadingTime, createPlaybackIndex, segmentAtTime, subtitleExport, mergeLibraryBackup, time, source, media, validate, parse, matchesSegment, notebookSegments, notebookMarkdown, translationCurrent, sameCueSnapshot, subscriptionPlan, cleanContexts, answerFreshness };
+	const api = { exactExcerptSnapshot, exactExcerptText, exactExcerptParts, exactExcerptSource, exactExcerptCount, exactExcerptDuplicate, exactExcerptFreshness, exactExcerptFreshnessBatch, exactExcerptState, exactExcerptStateBatch, createReadingRecency, createLibrarySearch, createLibraryNotebookSearch, libraryCaptureSteps, libraryCaptureCurrent, libraryCaptures, libraryNotebookMarkdown, mediaTiming, mediaTimingOffset, mediaTimingRange, localMediaSource, searchDocument, invalidateSearch, manualReviewSnapshot, manualReviewCurrent, saveManualTranslation, translationReviewQueue, hasNoteContent, segmentNoteCount, BACKUP_REVIEW_BYTES, SUBTITLE_IMPORT_BYTES, vttPayload, libraryHits, librarySnippet, hasProjectAnnotations, projectAnnotationCount, attachProjectTranscript, libraryMatches, documentDuration, sortedLibrary, AUDIO_NOTE_BUDGET, audioNoteCharacters, isAudioProject, audioProjectIdentity, podcastMediaIdentity, SUMMARY_QUESTION, summaryReadiness, podcastURL, podcastSource, cleanGlossary, relevantGlossary, translationQualityMessage, retainAnswers, summaryFreshness, latestSummary, summaryMarkdown, aiReadingMarkdown, parseReadingTime, createPlaybackIndex, segmentAtTime, subtitleExport, mergeLibraryBackup, time, source, media, validate, parse, matchesSegment, notebookSegments, notebookMarkdown, translationCurrent, sameCueSnapshot, subscriptionPlan, cleanContexts, answerFreshness };
 	if (typeof module !== "undefined" && module.exports) module.exports = api;
 	else root.Coconut = api;
 })(typeof window !== "undefined" ? window : globalThis);

@@ -9,6 +9,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {chromium, expect} from './helpers/browser-storage.mjs';
+import {openLibraryTools} from './helpers/library-tools-browser.mjs';
 import {passageReadingFixture} from './helpers/passage-reading-fixture.mjs';
 
 if (!process.env.CI) throw new Error('Quotation browser acceptance is CI-only; use the authored Node/HappyDOM suite locally.');
@@ -84,7 +85,7 @@ async function readyQuotationLayout(label) {
   await expect(page.locator('#quotation-reselect')).toBeVisible();
   check(label + '_preview_and_primary_actions_are_in_first_view', await page.locator('#quotation-dialog').evaluate(dialog => {
     const preview=dialog.querySelector('#quotation-preview').getBoundingClientRect();
-    const actions=['quotation-copy','quotation-close'].map(id=>document.getElementById(id).getBoundingClientRect());
+    const actions=['quotation-save','quotation-copy','quotation-close'].map(id=>document.getElementById(id).getBoundingClientRect());
     return dialog.scrollTop===0&&preview.top>=0&&preview.bottom<=innerHeight&&actions.every(rect=>rect.top>=preview.bottom&&rect.bottom<=innerHeight&&rect.left>=0&&rect.right<=innerWidth);
   }));
   await expect(page.locator('#quotation-preview')).toBeFocused();
@@ -319,6 +320,28 @@ try {
     check(label + '_both_complete_documents_remain_unchanged_after_crlf_flows', JSON.stringify(await saved()) === JSON.stringify(newlineBefore));
     const newlineAudit = await clipboardAudit();
     check(label + '_crlf_flow_never_reads_or_implicitly_writes_clipboard', newlineAudit.reads === 0 && newlineAudit.legacyWrites === 0 && newlineAudit.writes.length === 4);
+    // Exact persistence is a separate, explicit user action after the copy-only invariants.
+    await clearSelection(); await newlineAction.click();
+    await page.locator('#quotation-source').evaluate(node => node.setSelectionRange(0,6));
+    await page.locator('#quotation-preview-selection').click();
+    const exactText = (await page.locator('#quotation-preview').inputValue()).split('\n\n—— ')[0];
+    await page.locator('#quotation-save').click();
+    await expect(page.locator('#quotation-save-status')).toContainText('已保存到本机');
+    const exactLibrary = await saved();
+    check(label + '_explicit_save_retains_exact_snapshot', exactLibrary.documents.some(doc => doc.exact_excerpts?.some(record => record.text === exactText && record.snapshot && record.created_at)));
+    await closeQuotation(newlineAction);
+    await clearSelection(); await newlineAction.click();
+    await page.locator('#quotation-source').evaluate(node => node.setSelectionRange(0,6));
+    await page.locator('#quotation-preview-selection').click(); await page.locator('#quotation-save').click();
+    await expect(page.locator('#quotation-save-status')).toContainText('已保存到本机');
+    check(label + '_same_snapshot_range_deduplicates', JSON.stringify(await saved()) === JSON.stringify(exactLibrary));
+    await closeQuotation(newlineAction);
+    await page.reload(); await expect(page.locator('#title')).toBeVisible();
+    await openLibraryTools(page);
+    await page.locator('#open-library-notebook').click();
+    await expect(page.locator('#notebook-captures')).toContainText('所选文字摘录');
+    await expect(page.locator('#notebook-captures')).toContainText(exactText);
+    check(label + '_exact_excerpt_survives_reload_and_notebook', true);
     await context.close(); page = null;
   }
   check('no_external_requests_or_server_mutations', external === 0 && mutations === 0);
