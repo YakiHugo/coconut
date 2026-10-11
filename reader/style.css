@@ -1225,3 +1225,20 @@ body[data-short-reading-compact="true"] #language-panel { margin-top: 8px; }
 .reading-excerpts-heading-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .reading-excerpts-heading-row h2 { margin: 0; }
 #reading-excerpts-dismiss { min-width: 44px; flex: none; }
+
+/* Manual titles are orientation outside the verbatim source. Only true cue
+   starts receive a quiet visual number, excluded from selection and speech;
+   aria-describedby points to the real title without naming the whole passage. */
+.reading-chapter-labels { display: grid; gap: 5px; margin: 0 0 12px; min-width: 0; }
+.reading-chapter-label { display: flex; flex-wrap: wrap; align-items: baseline; gap: 3px 8px; color: var(--ink); font-size: 13px; line-height: 1.6; min-width: 0; }
+.reading-chapter-title { overflow-wrap: anywhere; white-space: pre-wrap; font-weight: 600; min-width: 0; }
+.reading-chapter-kind, .reading-chapter-location { color: var(--muted); font-size: 11px; }
+.reading-chapter-number { color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+.reading-chapter-number::before { content: "["; }
+.reading-chapter-number::after { content: "]"; }
+.passage-original .passage-cue[data-reading-chapter-marker]::before {
+ content: "[" attr(data-reading-chapter-marker) "]" / "";
+ display: inline; color: var(--muted); font: 600 .6em/1.2 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+ vertical-align: .35em; margin-inline-end: .3em; user-select: none; -webkit-user-select: none;
+}
+.segment .reading-chapter-labels { margin-bottom: 6px; }

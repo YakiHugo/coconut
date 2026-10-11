@@ -61,7 +61,8 @@ class BrowserWorkflowTests(unittest.TestCase):
         # The newly integrated product suites must each be present exactly once;
         # future direct authored suites are also covered by the guard check above.
         for filename in ('reading-appearance-browser.mjs', 'multi-import-browser.mjs',
-                         'large-library-browser.mjs', 'inline-excerpts-browser.mjs'):
+                         'large-library-browser.mjs', 'inline-excerpts-browser.mjs',
+                         'chapter-markers-browser.mjs'):
             self.assertTrue((ROOT / 'tests' / filename).is_file())
             self.assertEqual([step['run'] for step in suites].count('node tests/' + filename), 1)
 
@@ -96,7 +97,8 @@ class BrowserWorkflowTests(unittest.TestCase):
         self.assertEqual(paths, ['*.png', 'passages-geometry.json', 'autosave-geometry.json',
                                  'playback-follow-geometry.json', 'playback-follow-scroll.json',
                                  'compact-library-geometry.json', 'search-return-checks.json',
-                                 'inline-excerpts-checks.json', 'compact-library-failure.png'])
+                                 'inline-excerpts-checks.json', 'chapter-markers-checks.json',
+                                 'compact-library-failure.png'])
         self.assertIn('if: always()', upload)
 
     def test_no_failure_masks_and_existing_probe_and_cleanup_guards_are_preserved(self):
