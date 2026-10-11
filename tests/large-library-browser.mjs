@@ -103,8 +103,9 @@ try{
    });
    const toast=document.getElementById('notice-shell'),notice=document.getElementById('notice'),toastRect=toast.getBoundingClientRect(),toastStyle=getComputedStyle(toast);
    const activeToast=notice.dataset.kind==='success'&&!notice.hidden&&toast.classList.contains('is-success')&&toastStyle.display!=='none'&&toastStyle.visibility!=='hidden'&&toastRect.width>0&&toastRect.height>0;
-   const scrollViewport=document.getElementById('library-list').getBoundingClientRect();
-   return {focused:document.activeElement===node,focusVisible:node.matches(':focus-visible'),checked:node.checked,rect:rect.toJSON(),labelRect:labelRect.toJSON(),ring,outlineStyle:style.outlineStyle,target,hitPoints,activeToast,toast:toastRect.toJSON(),notice:notice.textContent,scrollViewport:scrollViewport.toJSON(),viewport:{width:innerWidth,height:innerHeight}};
+   const scrollport=document.getElementById('library-list'),scrollViewport=scrollport.getBoundingClientRect();
+   const shelfScroll={top:scrollport.scrollTop,height:scrollport.scrollHeight,clientHeight:scrollport.clientHeight,keyboardSpace:scrollport.style.getPropertyValue('--library-keyboard-space')};
+   return {focused:document.activeElement===node,focusVisible:node.matches(':focus-visible'),checked:node.checked,rect:rect.toJSON(),labelRect:labelRect.toJSON(),ring,outlineStyle:style.outlineStyle,target,hitPoints,activeToast,toast:toastRect.toJSON(),notice:notice.textContent,scrollViewport:scrollViewport.toJSON(),shelfScroll,viewport:{width:innerWidth,height:innerHeight}};
   });
   console.log(JSON.stringify({suite:'selected-library-keyboard-geometry',label,...geometry}));
   const {target,toast,scrollViewport,viewport}=geometry;
@@ -188,12 +189,15 @@ try{
  const lastEntry=selectionPage.locator('.library-entry[data-document-key="shelf-149"]');
  await lastEntry.locator('.library-open').focus();await selectionPage.keyboard.press('Tab');
  await lastSelectedKeyboardGeometry('forward-tab');
+ const shelfScrollBeforeSpace=await selectionPage.locator('#library-list').evaluate(node=>node.scrollTop);
  await selectionPage.keyboard.press('Space');
  check('mobile_space_unchecks_last_document_without_losing_keyboard_focus',!await choice('shelf-149').isChecked()&&await choice('shelf-149').evaluate(node=>node===document.activeElement));
  await selectionStatus(10,8,'mobile_keyboard_deselect_updates_total_and_off_page_counts');
+ check('mobile_space_deselect_does_not_scroll_shelf',await selectionPage.locator('#library-list').evaluate(node=>node.scrollTop)===shelfScrollBeforeSpace);
  await selectionPage.keyboard.press('Space');
  check('mobile_space_reselects_last_document_without_losing_keyboard_focus',await choice('shelf-149').isChecked()&&await choice('shelf-149').evaluate(node=>node===document.activeElement));
  await selectionStatus(11,8,'mobile_keyboard_reselect_restores_total_and_off_page_counts');
+ check('mobile_space_reselect_does_not_scroll_shelf',await selectionPage.locator('#library-list').evaluate(node=>node.scrollTop)===shelfScrollBeforeSpace);
  await selectionPage.keyboard.press('Tab');
  check('mobile_tab_after_last_checkbox_reaches_its_remove_action',await lastEntry.locator('.library-remove').evaluate(node=>node===document.activeElement));
  await selectionPage.keyboard.press('Shift+Tab');await lastSelectedKeyboardGeometry('reverse-tab');

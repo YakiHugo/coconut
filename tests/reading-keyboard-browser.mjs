@@ -75,7 +75,7 @@ async function ignoredKeys(label, selector, keys = shortcuts) {
 async function openRemoval(title) {
   await openLibraryTools(page);
   const options = page.locator('#library-options, details.library-options');
-  if (!await options.evaluate(node => node.open)) await options.locator('summary').click();
+  if (!await options.evaluate(node => node.open)) await options.locator(':scope > summary').click();
   await page.getByRole('button', {name: '从书架移除 ' + title, exact: true}).click();
 }
 async function ignoredNativeDialog(label, selector) {

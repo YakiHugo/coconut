@@ -203,3 +203,78 @@ test('held browser writer preserves the real adapter cancellation signal and lea
   const receipt=await pending;assert.equal(receipt.ok,false);assert.equal(receipt.status,'cancelled');assert.equal(w.localStorage.getItem(KEY),before);assert.equal(proof.releases,1);
  }finally{await w.happyDOM.close();}
 });
+
+function shelfFocusGeometry({atEnd=true}={}) {
+ const env=libraryHarness(largeLibraryFixture(3),{probe:true}),{w,$}=env,frames=[],scrolls=[],windowScrolls=[];
+ w.happyDOM.setViewport({width:390,height:844});w.requestAnimationFrame=fn=>{frames.push(fn);return frames.length;};w.scrollBy=value=>windowScrolls.push(value);
+ $('library-selection-mode').click();const target=$('library').querySelector('[data-document-key="shelf-1"] .library-select'),label=target.closest('label'),host=$('library-list');
+ const initialTop=281;host.scrollTop=initialTop;target.style.outline='3px solid red';target.style.outlineOffset='3px';
+ Object.defineProperty(host,'clientHeight',{configurable:true,get:()=>719});Object.defineProperty(host,'clientTop',{configurable:true,get:()=>0});
+ Object.defineProperty(host,'scrollHeight',{configurable:true,get:()=>(atEnd?1000:1100)+(parseFloat(host.style.getPropertyValue('--library-keyboard-space'))||0)});
+ host.getBoundingClientRect=()=>({left:14,right:376,top:116,bottom:835,width:362,height:719});
+ const rect=(top,bottom,left,right)=>({left,right,top:top-(host.scrollTop-initialTop),bottom:bottom-(host.scrollTop-initialTop),width:right-left,height:bottom-top});
+ target.getBoundingClientRect=()=>rect(753.234375,773.234375,28,48);label.getBoundingClientRect=()=>rect(741.234375,785.234375,20,370);
+ $('reading-feedback').getBoundingClientRect=()=>({left:12,right:378,top:770,bottom:832,width:366,height:62});$('media-dock').hidden=true;
+ host.scrollTo=options=>{scrolls.push(options);host.scrollTop=Math.min(host.scrollHeight-host.clientHeight,Math.max(0,options.top));};
+ const flush=()=>frames.splice(0).forEach(fn=>fn());
+ const tab=(shiftKey=false)=>{$('title').focus();w.document.dispatchEvent(new w.KeyboardEvent('keydown',{key:'Tab',shiftKey,bubbles:true}));target.focus();};
+ return {...env,target,label,host,frames,scrolls,windowScrolls,flush,tab};
+}
+
+test('real Tab and Shift+Tab reveal the complete checkbox label above live feedback using only minimal bounded shelf scrolling',async()=>{
+ const {w,$,pipeline,target,label,host,scrolls,windowScrolls,flush,tab}=shelfFocusGeometry();try{
+  const disk=w.localStorage.getItem(KEY);tab();assert.equal(scrolls.length,0);flush();
+  assert.equal(scrolls.length,1);assert.equal(scrolls[0].top,298.234375);assert.equal(label.getBoundingClientRect().bottom,768);assert.equal(w.document.activeElement,target);
+  assert.equal(parseFloat(host.style.getPropertyValue('--library-keyboard-space')),17.234375);assert.equal(windowScrolls.length,0);assert.equal(w.localStorage.getItem(KEY),disk);
+  // Space changes selection, not the scroll owner; save/resize refreshes are passive.
+  w.document.dispatchEvent(new w.KeyboardEvent('keydown',{key:' ',code:'Space',bubbles:true}));target.click();w.libraryProbe.renderLibrary();w.dispatchEvent(new w.Event('resize'));flush();assert.equal(scrolls.length,1);assert.equal(host.scrollTop,298.234375);
+  const doc=w.libraryProbe.documents[1];doc.notes[doc.segments[0].id]='Legitimate note save';pipeline.store.queueDocument(doc.key,doc);await pipeline.store.flush();await settle();flush();assert.equal(scrolls.length,1);assert.equal(host.scrollTop,298.234375);assert.equal(windowScrolls.length,0);
+  tab(true);flush();assert.equal(scrolls.length,1);assert.equal(parseFloat(host.style.getPropertyValue('--library-keyboard-space')),17.234375);
+  $('library-selection-mode').click();assert.equal(host.style.getPropertyValue('--library-keyboard-space'),'');
+ }finally{await w.happyDOM.close();}
+});
+
+test('existing shelf scroll range is used without adding trailing space and hidden or horizontally unrelated overlays do not move focus',async()=>{
+ const {w,$,target,host,scrolls,flush,tab}=shelfFocusGeometry({atEnd:false});try{
+  tab(true);flush();assert.equal(scrolls[0].top,298.234375);assert.equal(host.style.getPropertyValue('--library-keyboard-space'),'');
+  host.scrollTop=281;$('reading-feedback').style.visibility='hidden';tab();flush();assert.equal(scrolls.length,1);
+  $('reading-feedback').style.visibility='visible';$('reading-feedback').getBoundingClientRect=()=>({left:400,right:500,top:770,bottom:832,width:100,height:62});tab();flush();assert.equal(scrolls.length,1);
+  assert.equal(w.document.activeElement,target);
+ }finally{await w.happyDOM.close();}
+});
+
+for(const interruption of ['pointer','space','focus','replace','remove','cancel'])test(`deferred shelf focus reveal respects ${interruption} before its animation frame`,async()=>{
+ const {w,$,target,host,scrolls,windowScrolls,flush,tab}=shelfFocusGeometry();try{
+  tab();
+  if(interruption==='pointer')w.document.dispatchEvent(new w.Event('pointerdown',{bubbles:true}));
+  if(interruption==='space')w.document.dispatchEvent(new w.KeyboardEvent('keydown',{key:' ',bubbles:true}));
+  if(interruption==='focus')$('library-search').focus();
+  if(interruption==='replace')w.libraryProbe.documents[1]={...w.libraryProbe.documents[1]};
+  if(interruption==='remove')target.closest('.library-entry').remove();
+  if(interruption==='cancel')$('library-selection-mode').click();
+  flush();assert.equal(scrolls.length,0);assert.equal(windowScrolls.length,0);assert.equal(host.style.getPropertyValue('--library-keyboard-space'),'');
+ }finally{await w.happyDOM.close();}
+});
+
+test('programmatic shelf checkbox focus never triggers keyboard correction',async()=>{
+ const {w,target,scrolls,flush}=shelfFocusGeometry();try{target.focus();flush();assert.equal(scrolls.length,0);}finally{await w.happyDOM.close();}
+});
+
+
+test('browser organizing controls target the direct summary despite nested backup details',async()=>{
+ const {w,$}=libraryHarness(largeLibraryFixture(1));try{
+  assert.equal($('library-options').querySelectorAll('summary').length,2);assert.equal($('library-options').querySelectorAll(':scope > summary').length,1);
+  for(const name of ['reading-keyboard-browser.mjs','recent-reading-browser.mjs']){
+   const source=fs.readFileSync(new URL(name,import.meta.url),'utf8');assert.ok(source.includes("options.locator(':scope > summary')"));assert.equal(source.includes("options.locator('summary')"),false);
+  }
+ }finally{await w.happyDOM.close();}
+});
+
+test('shelf focus correction includes an outline larger than its label and the entire visible dock stack',async()=>{
+ const {w,$,target,host,scrolls,flush,tab}=shelfFocusGeometry();try{
+  target.style.outlineWidth='14px';tab();flush();assert.equal(scrolls[0].top,303.234375);
+  host.scrollTop=281;target.style.outlineWidth='3px';$('media-dock').hidden=false;$('media-dock').style.display='flex';
+  $('media-dock').getBoundingClientRect=()=>({left:12,right:378,top:730,bottom:844,width:366,height:114});tab(true);flush();
+  assert.equal(scrolls[1].top,338.234375);assert.equal(parseFloat(host.style.getPropertyValue('--library-keyboard-space')),57.234375);
+ }finally{await w.happyDOM.close();}
+});

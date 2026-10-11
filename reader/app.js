@@ -938,7 +938,7 @@ function syncLibraryBackupSelection(visible=null) {
 }
 $('library-selection-mode').onclick=()=>{
  librarySelectionMode=!librarySelectionMode;
- if(!librarySelectionMode){libraryBackupSelection.clear();librarySelectionDropped=0;}
+ if(!librarySelectionMode){libraryBackupSelection.clear();librarySelectionDropped=0;$('library-list').style.removeProperty('--library-keyboard-space');}
  syncLibraryBackupSelection();
 };
 $('clear-library-selection').onclick=()=>{libraryBackupSelection.clear();librarySelectionDropped=0;syncLibraryBackupSelection();};
@@ -2903,13 +2903,46 @@ function renderPassages(doc){
 // Fixed playback/feedback panels are outside the browser's native focus viewport.
 // Only a real Tab move may reveal a passage action; receipts and layout changes
 // never scroll. Defer once so native focus scrolling has settled first.
-let passageActionTab=false;
-document.addEventListener('keydown',event=>{passageActionTab=event.key==='Tab';},true);
+// Shelf checkbox focus owns its exact card identity. Move only the shelf's
+// bounded scrollport, after a real Tab, never from save receipts or checkbox edits.
+function revealLibrarySelectionFocus(target,card,revision) {
+ const host=$('library-list');
+ if(revision!==libraryFocusRevealRevision||!librarySelectionMode||document.activeElement!==target||!target.isConnected||!target.matches(':focus-visible')||target.disabled||libraryCards.get(card?.doc.key)!==card||card?.select!==target||!state.documents.includes(card.doc)||pendingStructuralDocuments.has(card.doc.key))return;
+ const label=card.selectLabel,rect=target.getBoundingClientRect(),labelRect=label.getBoundingClientRect(),area=host.getBoundingClientRect(),style=getComputedStyle(target);
+ if(!rect.width||!rect.height||!area.width||!area.height||label.hidden)return;
+ const ring=(parseFloat(style.outlineWidth)||0)+Math.max(0,parseFloat(style.outlineOffset)||0);
+ const bounds={left:Math.min(labelRect.left,rect.left-ring),right:Math.max(labelRect.right,rect.right+ring),top:Math.min(labelRect.top,rect.top-ring),bottom:Math.max(labelRect.bottom,rect.bottom+ring)};
+ let slots=[[Math.max(0,area.top+host.clientTop),Math.min(window.innerHeight,area.top+host.clientTop+host.clientHeight)]];
+ for(const overlay of [$('reading-feedback'),$('media-dock')]){
+  const css=getComputedStyle(overlay);if(overlay.hidden||css.display==='none'||css.visibility==='hidden')continue;
+  const occupied=overlay.getBoundingClientRect();
+  if(!occupied.width||!occupied.height||occupied.left>=bounds.right||occupied.right<=bounds.left)continue;
+  const top=occupied.top-2,bottom=occupied.bottom+2;
+  slots=slots.flatMap(([start,end])=>bottom<=start||top>=end?[[start,end]]:[[start,Math.min(end,top)],[Math.max(start,bottom),end]].filter(([a,b])=>b>a));
+ }
+ const height=bounds.bottom-bounds.top;
+ const moves=slots.filter(([start,end])=>end-start>=height).map(([start,end])=>bounds.top<start?bounds.top-start:bounds.bottom>end?bounds.bottom-end:0).sort((a,b)=>Math.abs(a)-Math.abs(b));
+ if(!moves.length||!moves[0])return;
+ const delta=moves[0],destination=Math.max(0,host.scrollTop+delta),maximum=Math.max(0,host.scrollHeight-host.clientHeight);
+ // A last card may already be at the native scroll limit. Add only the missing
+ // trailing room on this keyboard path, retaining it until selection is cancelled.
+ if(destination>maximum){
+  const extra=parseFloat(host.style.getPropertyValue('--library-keyboard-space'))||0;
+  host.style.setProperty('--library-keyboard-space',(extra+destination-maximum)+'px');
+ }
+ host.scrollTo({top:destination,left:host.scrollLeft,behavior:'instant'});
+}
+let passageActionTab=false,libraryFocusRevealRevision=0;
+document.addEventListener('keydown',event=>{passageActionTab=event.key==='Tab';libraryFocusRevealRevision++;},true);
 document.addEventListener('keyup',event=>{if(event.key==='Tab')passageActionTab=false;},true);
-document.addEventListener('pointerdown',()=>{passageActionTab=false;},true);
+document.addEventListener('pointerdown',()=>{passageActionTab=false;libraryFocusRevealRevision++;},true);
 document.addEventListener('focusin',event=>{
  const target=event.target,keyboard=passageActionTab;passageActionTab=false;
- if(!keyboard||!target.matches?.('.passage-actions button, .passage-actions a')||!target.matches(':focus-visible'))return;
+ if(!keyboard||!target.matches?.('.passage-actions button, .passage-actions a, .library-select')||!target.matches(':focus-visible'))return;
+ if(target.classList.contains('library-select')){
+  const card=libraryCards.get(target.closest('.library-entry')?.dataset.documentKey),revision=libraryFocusRevealRevision;
+  requestAnimationFrame(()=>revealLibrarySelectionFocus(target,card,revision));return;
+ }
  const doc=active(),selection=activeSelectionRevision;
  requestAnimationFrame(()=>{
   if(document.activeElement!==target||!target.isConnected||active()!==doc||activeSelectionRevision!==selection||!target.matches(':focus-visible'))return;

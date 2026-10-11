@@ -1146,3 +1146,5 @@ body[data-short-reading-compact="true"] #language-panel { margin-top: 8px; }
 #library-selection-controls { display:grid; gap:6px; min-width:0; }
 #library-selection-controls button, #library-selection-mode { white-space:normal; overflow-wrap:anywhere; }
 #library-selection-status { margin:6px 0; }
+
+#library-list { padding-bottom:calc(6px + var(--library-keyboard-space, 0px)); }
