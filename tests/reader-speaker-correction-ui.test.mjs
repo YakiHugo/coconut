@@ -97,3 +97,27 @@ for(const label of ['A\nB','A\rB','A\r\nB','L'.repeat(1200)])test(`raw speaker l
   open(env,'a');input(env,'New name');assert.match($('speaker-count').textContent,/将修改 1 段/);$('save-speaker').click();await w.flushContentForTest();await ready();assert.equal(w.libraryProbe.documents[0].segments[0].original_speaker,label);
  }finally{await w.happyDOM.close();}
 });
+
+test('speaker modal wraps only real Tab boundaries, including disabled/hidden controls and focusable errors',async()=>{
+ const env=setup(),{w,$,pipeline}=env;try{
+  open(env);const doc=w.libraryProbe.documents[0],before=JSON.stringify(doc),dialog=$('speaker-dialog');
+  const tab=(node,options={})=>{node.focus();const event=new w.KeyboardEvent('keydown',{key:'Tab',bubbles:true,cancelable:true,...options});node.dispatchEvent(event);return event;};
+  assert.equal(tab($('save-speaker')).defaultPrevented,true);assert.equal(w.document.activeElement,$('speaker-action'));
+  assert.equal(tab($('speaker-action'),{shiftKey:true}).defaultPrevented,true);assert.equal(w.document.activeElement,$('save-speaker'));
+  assert.equal(tab($('speaker-name')).defaultPrevented,false);assert.equal(w.document.activeElement,$('speaker-name'));
+  input(env,' ');assert.equal($('save-speaker').disabled,true);
+  assert.equal(tab($('cancel-speaker')).defaultPrevented,true);assert.equal(w.document.activeElement,$('speaker-action'));
+  assert.equal(tab($('speaker-action'),{shiftKey:true}).defaultPrevented,true);assert.equal(w.document.activeElement,$('cancel-speaker'));
+  $('speaker-action').tabIndex=-1;$('speaker-name').hidden=true;
+  assert.equal(tab($('cancel-speaker')).defaultPrevented,true);assert.equal(w.document.activeElement,$('speaker-scope'));
+  const error=$('speaker-error');error.tabIndex=0;dialog.append(error);error.textContent='Authored save recovery error';
+  assert.equal(tab($('cancel-speaker')).defaultPrevented,false);
+  assert.equal(tab(error).defaultPrevented,true);assert.equal(w.document.activeElement,$('speaker-scope'));
+  assert.equal(tab($('speaker-scope'),{shiftKey:true}).defaultPrevented,true);assert.equal(w.document.activeElement,error);
+  error.hidden=true;assert.equal(tab($('cancel-speaker')).defaultPrevented,true);
+  error.hidden=false;error.style.display='none';assert.equal(tab($('cancel-speaker')).defaultPrevented,true);
+  for(const options of [{ctrlKey:true},{altKey:true},{metaKey:true},{isComposing:true}])assert.equal(tab($('cancel-speaker'),options).defaultPrevented,false);
+  const prevented=new w.KeyboardEvent('keydown',{key:'Tab',bubbles:true,cancelable:true});prevented.preventDefault();$('cancel-speaker').focus();$('cancel-speaker').dispatchEvent(prevented);assert.equal(w.document.activeElement,$('cancel-speaker'));
+  $('cancel-speaker').click();assert.equal(dialog.open,false);assert.equal(tab($('search')).defaultPrevented,false);assert.equal(JSON.stringify(doc),before);assert.equal(pipeline.prepares,0);
+ }finally{await w.happyDOM.close();}
+});

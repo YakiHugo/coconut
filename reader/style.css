@@ -1149,7 +1149,6 @@ body[data-short-reading-compact="true"] #language-panel { margin-top: 8px; }
 
 /* Speaker correction remains a secondary action, with a bounded scrollable
    dialog so its preview and errors never push controls outside a small screen. */
-.speaker.speaker-correction-button { display: block; max-width: 100%; border: 0; background: transparent; padding: 0; text-align: left; text-decoration: underline dotted; text-underline-offset: 3px; overflow-wrap: anywhere; }
 #speaker-dialog { box-sizing: border-box; max-height: calc(100dvh - 24px); overflow-y: auto; }
 #speaker-dialog select { max-width: 100%; margin-bottom: 16px; }
 #speaker-dialog input { box-sizing: border-box; }

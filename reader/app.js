@@ -1622,10 +1622,12 @@ function render({keepNoteEditor=false,reuseLibraryMetadata=false}={}) {
 		const body = el("div");
 		let speakerCorrection=null;
   if(s.speaker){
-   speakerCorrection=compact?el('button','speaker-correction-button','修正说话人标签'):highlightedText('button','speaker speaker-correction-button',s.speaker,query);
+   speakerCorrection=el('button','speaker-correction-button','修正说话人标签');
    speakerCorrection.type='button';speakerCorrection.setAttribute('aria-label','修正说话人标签：'+s.speaker);
    speakerCorrection.title='修正说话人标签';speakerCorrection.onclick=()=>openSpeakerCorrection(doc,s,row);
-   body.append(compact?highlightedText('p','speaker',s.speaker,query):speakerCorrection);
+   // Keep the reading label at its original line height. The 44px editing
+   // action belongs after the source, alongside the other cue actions.
+   body.append(highlightedText('p','speaker',s.speaker,query));
   }
 		body.className="segment-content";
   const parallel=el("div","parallel-text");
@@ -1655,6 +1657,7 @@ function render({keepNoteEditor=false,reuseLibraryMetadata=false}={}) {
 			$("edit-dialog").showModal();
 		};
 		body.append(edit);
+  if(speakerCorrection&&!compact)body.append(speakerCorrection);
   let reviewTranslation=null;
   if(translated||doc.translation_view){
    reviewTranslation=el('button','review-translation-button',!translated?'自己写译文':translated.provider==='user'?'核对／修正自己写的译文':translated.manual_review?'核对／修正人工译文':'核对／修正译文');
@@ -2391,6 +2394,20 @@ $('speaker-name').addEventListener('input',refreshSpeakerPreview);
 for(const id of ['speaker-scope','speaker-action'])$(id).addEventListener('change',refreshSpeakerPreview);
 $('cancel-speaker').onclick=closeSpeakerCorrection;
 $('speaker-dialog').addEventListener('cancel',event=>{event.preventDefault();closeSpeakerCorrection();});
+// Own the two Tab boundaries explicitly: native dialog traversal can hand the
+// final Tab to browser chrome instead of wrapping to the first reader control.
+$('speaker-dialog').addEventListener('keydown',event=>{
+ const dialog=$('speaker-dialog');
+ if(!dialog.open||!speakerEditor||event.key!=='Tab'||event.defaultPrevented||event.isComposing||event.keyCode===229||event.altKey||event.ctrlKey||event.metaKey||event.target.closest?.('dialog')!==dialog)return;
+ const controls=[...dialog.querySelectorAll('a[href],button,input,select,textarea,summary,[tabindex],[contenteditable="true"]')].filter(node=>{
+  if(node.tabIndex<0||node.matches(':disabled')||node.closest('[hidden],[inert]'))return false;
+  for(let current=node;current&&current!==dialog;current=current.parentElement){const style=getComputedStyle(current);if(style.display==='none'||style.visibility==='hidden'||style.visibility==='collapse')return false;}
+  return true;
+ });
+ const first=controls[0],last=controls.at(-1),focused=document.activeElement;
+ if(first&&((event.shiftKey&&focused===first)||(!event.shiftKey&&focused===last))){event.preventDefault();(event.shiftKey?last:first).focus();}
+});
+
 $('save-speaker').onclick=()=>{
  const editor=speakerEditor;if(!editor?.preview)return;
  try{

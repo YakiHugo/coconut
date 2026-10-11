@@ -140,6 +140,20 @@ async function geometry(label) {
     await page.keyboard.press('Tab');
     check(label + '_tab_stays_in_modal_' + i, await page.evaluate(() => document.getElementById('speaker-dialog').contains(document.activeElement)));
   }
+  await page.locator('#speaker-action').focus();
+  for (let i = 0; i < 8; i++) {
+    await page.keyboard.press('Shift+Tab');
+    check(label + '_reverse_tab_stays_in_modal_' + i, await page.evaluate(() => document.getElementById('speaker-dialog').contains(document.activeElement)));
+  }
+  // Invalid input disables Apply; the last enabled action must still wrap.
+  const unchangedName = await page.locator('#speaker-name').inputValue();
+  await page.locator('#speaker-name').fill('   ');
+  await expect(page.locator('#save-speaker')).toBeDisabled();
+  await page.locator('#cancel-speaker').focus(); await page.keyboard.press('Tab');
+  await expect(page.locator('#speaker-action')).toBeFocused();
+  await page.keyboard.press('Shift+Tab'); await expect(page.locator('#cancel-speaker')).toBeFocused();
+  check(label + '_disabled_apply_preserves_both_tab_boundaries', true);
+  await page.locator('#speaker-name').fill(unchangedName);
 }
 
 try {
@@ -315,7 +329,9 @@ try {
   check('no_external_requests_mutations_models_or_page_errors', external === 0 && mutations === 0 && errors.length === 0);
   console.log(JSON.stringify({suite: 'speaker-correction', status: 'passed', checks}));
 } catch (error) {
-  console.error(JSON.stringify({suite: 'speaker-correction', status: 'failed', stage, checks, errors, error: error.message}));
+  let focus;
+  try {focus = await page.evaluate(() => {const active=document.activeElement,dialog=document.getElementById('speaker-dialog');return {activeTag:active?.tagName,activeId:active?.id,activeClass:active?.className,documentHasFocus:document.hasFocus(),dialogOpen:dialog?.open,dialogModal:dialog?.matches(':modal'),inside:dialog?.contains(active),controls:[...dialog.querySelectorAll('input,select,button,[tabindex]')].map(node=>({id:node.id,disabled:node.disabled,tabIndex:node.tabIndex,hidden:node.hidden}))};});} catch {}
+  console.error(JSON.stringify({suite: 'speaker-correction', status: 'failed', stage, checks, errors, focus, error: error.message}));
   try {await capture('failure');} catch {}
   process.exitCode = 1;
 } finally {await browser?.close(); if (server) await new Promise(resolve => server.close(resolve));}
