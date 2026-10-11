@@ -1289,7 +1289,7 @@ function renderLibrary(revealKey=null,{reuseMetadata=false}={}) {
       const hit=group.hits[position];button.dataset.hitId=hit.id;card.translationPositions.set(group.language,hit.id);
       label.textContent='译文 · '+translationLabel(hit.language)+' · '+Coconut.time(hit.time)+(hit.cueCount>1?' · 跨 '+hit.cueCount+' 段':'');
       preview.replaceChildren(document.createTextNode(hit.snippet.before),el('mark','',hit.snippet.match),document.createTextNode(hit.snippet.after));source.textContent='原文：'+hit.source;
-      status.textContent=(position+1)+' / '+group.hits.length+' 个匹配片段';previous.disabled=position===0;next.disabled=position===group.hits.length-1;
+      status.textContent='第 '+(position+1)+' / '+group.hits.length+' 处';status.setAttribute('aria-label',translationLabel(group.language)+'译文：第 '+(position+1)+' / '+group.hits.length+' 个匹配片段');previous.disabled=position===0;next.disabled=position===group.hits.length-1;
      };
      const move=delta=>{libraryTranslationActivation++;if(!current()){notice('译文搜索结果已变动，请重新查找。');if(state.documents.includes(d))Coconut.invalidateSearch(d);renderLibrary();return;}position=Math.max(0,Math.min(group.hits.length-1,position+delta));refresh();button.focus();const revision=libraryFocusRevealRevision;requestAnimationFrame(()=>revealLibrarySelectionFocus(button,card,revision));};
      previous.onclick=()=>move(-1);next.onclick=()=>move(1);
@@ -3997,9 +3997,15 @@ function revealLibrarySelectionFocus(target,card,revision) {
   slots=slots.flatMap(([start,end])=>bottom<=start||top>=end?[[start,end]]:[[start,Math.min(end,top)],[Math.max(start,bottom),end]].filter(([a,b])=>b>a));
  }
  const height=bounds.bottom-bounds.top;
- const moves=slots.filter(([start,end])=>end-start>=height).map(([start,end])=>bounds.top<start?bounds.top-start:bounds.bottom>end?bounds.bottom-end:0).sort((a,b)=>Math.abs(a)-Math.abs(b));
- if(!moves.length||!moves[0])return;
- const delta=moves[0],destination=Math.max(0,host.scrollTop+delta),maximum=Math.max(0,host.scrollHeight-host.clientHeight);
+ const moves=slots.filter(([start,end])=>end-start>=height).map(([start,end])=>({start,end,delta:bounds.top<start?bounds.top-start:bounds.bottom>end?bounds.bottom-end:0})).sort((a,b)=>Math.abs(a.delta)-Math.abs(b.delta));
+ if(!moves.length||!moves[0].delta)return;
+ // Native offsets can quantize fractional CSS coordinates. Prefer a one-pixel
+ // inset, but never push the opposite ring edge out of a nearly full slot.
+ const {delta,start,end}=moves[0],requested=host.scrollTop+delta;
+ const lower=host.scrollTop+bounds.bottom-end,upper=host.scrollTop+bounds.top-start;
+ const first=Math.max(0,Math.ceil(lower)),last=Math.floor(upper),inset=delta>0?Math.ceil(requested)+1:Math.floor(requested)-1;
+ const destination=first<=last?Math.max(first,Math.min(last,inset)):Math.max(0,Math.min(upper,Math.max(lower,requested)));
+ const maximum=Math.max(0,host.scrollHeight-host.clientHeight);
  // A last card may already be at the native scroll limit. Add only the missing
  // trailing room on this keyboard path, retaining it until selection is cancelled.
  if(destination>maximum){

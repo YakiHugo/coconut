@@ -103,3 +103,32 @@ test('paging a long pending activation cannot navigate to the previously display
  const doc=makeDoc(600);for(let i=0;i<600;i++)translate(doc,i,'fr','a');const h=libraryHarness([doc],{probe:true}),{w,$}=h;
  try{searchShelf($,Array(501).fill('a').join(' '));const region=group(w,'fr'),button=region.querySelector('.library-translation-hit');button.focus();button.click();region.querySelector('.library-translation-next').click();assert.equal(button.dataset.hitId,'cue-1');await new Promise(r=>setTimeout(r,20));assert.equal(w.libraryProbe.documents[0].translation_view,'de');assert.equal(w.document.activeElement,button);assert.equal(w.libraryProbe.documents[0].readingPosition,'cue-2');}finally{await w.happyDOM.close();}
 });
+
+for(const direction of ['down','up','end','down-tight','up-tight'])test(`translation keyboard ring survives native scroll quantization at a fractional ${direction} clip edge`,async()=>{
+ const doc=makeDoc();translate(doc,1,'de','needle Schild');const h=libraryHarness([doc],{probe:true}),{w,$}=h,frames=[],scrolls=[],globalScrolls=[];
+ w.happyDOM.setViewport({width:1360,height:1000});w.requestAnimationFrame=fn=>{frames.push(fn);return frames.length;};w.scrollBy=options=>globalScrolls.push(options);w.scrollTo=options=>globalScrolls.push(options);
+ try{
+  searchShelf($,'needle');const button=group(w,'de').querySelector('.library-translation-hit'),host=$('library-list'),initialTop=100;
+  host.scrollTop=initialTop;button.style.outline='2px solid black';button.style.outlineOffset='2px';
+  Object.defineProperty(host,'clientHeight',{configurable:true,get:()=>729});Object.defineProperty(host,'clientTop',{configurable:true,get:()=>0});
+  Object.defineProperty(host,'scrollHeight',{configurable:true,get:()=>Math.round((direction==='end'?829:1500)+(parseFloat(host.style.getPropertyValue('--library-keyboard-space'))||0))});
+  host.getBoundingClientRect=()=>({left:14,right:209,top:181.59375,bottom:910.59375,width:195,height:729});
+  // Exact bottom edge from failed real Chromium desktop-de geometry. The
+  // reverse case mirrors its 1/32px overlap; the native mock quantizes offsets.
+  const top=direction.startsWith('up')?185.5625:direction==='down-tight'?186.875:779.28125,bottom=direction==='up-tight'?905.3125:direction==='up'?312.90625:906.625;
+  button.getBoundingClientRect=()=>({left:25,right:198,top:top-(host.scrollTop-initialTop),bottom:bottom-(host.scrollTop-initialTop),width:173,height:bottom-top});
+  $('reading-feedback').hidden=true;$('media-dock').hidden=true;
+  host.scrollTo=options=>{scrolls.push(options);host.scrollTop=Math.round(Math.min(host.scrollHeight-host.clientHeight,Math.max(0,options.top)));};
+  const before=JSON.stringify(w.libraryProbe.documents);$('title').focus();w.document.dispatchEvent(new w.KeyboardEvent('keydown',{key:'Tab',shiftKey:direction.startsWith('up'),bubbles:true}));button.focus();frames.splice(0).forEach(fn=>fn());
+  const rect=button.getBoundingClientRect(),area=host.getBoundingClientRect();
+  assert.ok(rect.top-4>=area.top&&rect.bottom+4<=area.bottom,'entire ring is inside the actual clip with zero tolerance');
+  assert.equal(scrolls.length,1);assert.equal(Number.isInteger(scrolls[0].top),true);assert.equal(globalScrolls.length,0);assert.equal(w.document.activeElement,button);assert.equal(JSON.stringify(w.libraryProbe.documents),before);
+  if(direction==='end')assert.equal(parseFloat(host.style.getPropertyValue('--library-keyboard-space')),2);
+ }finally{await w.happyDOM.close();}
+});
+
+
+test('compact translation counts preserve complete accessible language and position on every page',async()=>{
+ const doc=makeDoc();translate(doc,1,'zh','needle 中文');translate(doc,5,'zh','needle 后文');const h=libraryHarness([doc]),{w,$}=h;
+ try{searchShelf($,'needle');const region=group(w,'zh'),status=region.querySelector('.library-translation-status');assert.equal(status.textContent,'第 1 / 2 处');assert.equal(status.getAttribute('aria-label'),'中文译文：第 1 / 2 个匹配片段');region.querySelector('.library-translation-next').click();assert.equal(status.textContent,'第 2 / 2 处');assert.equal(status.getAttribute('aria-label'),'中文译文：第 2 / 2 个匹配片段');assert.match($('search-help').textContent,/跨篇译文请用书架的「译文」范围/);assert.doesNotMatch($('search-help').textContent,/不包含译文/);}finally{await w.happyDOM.close();}
+});

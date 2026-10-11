@@ -8,7 +8,7 @@
 <meta name="theme-color" content="#faf9f7">
 <link rel="icon" type="image/png" href="coconut-mark.png">
 <script src="appearance.js?v=86ea922669"></script>
-<link rel="stylesheet" href="style.css?v=8829f41577">
+<link rel="stylesheet" href="style.css?v=d82c4b875d">
 <script src="summary.js?v=580ffdad1e" defer></script>
 <script src="core.js?v=78de00264a" defer>
 </script>
@@ -18,7 +18,7 @@
 <script src="library-store.js?v=e76ded9456" defer></script>
 <script src="indexeddb-document-adapter.js?v=65c0c5a814" defer></script>
 <script src="storage-provider.js?v=1cb898e984" defer></script>
-<script src="app.js?v=d95e2d0920" type="text/coconut-pending" data-reader-script>
+<script src="app.js?v=6612298460" type="text/coconut-pending" data-reader-script>
 </script>
 <script src="language.js?v=59136fdc72" type="text/coconut-pending" data-reader-script></script>
 <script src="translation-review.js?v=ef64ceb824" type="text/coconut-pending" data-reader-script></script>
@@ -242,7 +242,7 @@ cd coconut
 <label class="search">⌕ <input id="search" type="search" placeholder="搜索原话、已存译文、说话人或笔记" aria-label="搜索文字稿" aria-describedby="search-help">
 </label>
 </div>
-<p id="search-help" class="hint">支持连贯阅读中的跨片段短语与各语言有效译文；结果与 AI 筛选按命中的原片段计数。书架全文查找包含原文与笔记，不包含译文。</p>
+<p id="search-help" class="hint">支持连贯阅读中的跨片段短语与各语言有效译文；结果与 AI 筛选按命中的原片段计数。跨篇译文请用书架的「译文」范围，可查找全部语言当前有效的已存译文。</p>
 <label id="speaker-filter-control" hidden>说话人标签<select id="speaker-filter"><option value="all">全部说话人</option></select></label>
 <div class="reading-controls"><div role="group" aria-label="阅读视图"><button id="filter-all" aria-pressed="true">全文</button><button id="filter-excerpts" aria-pressed="false">整段摘录 <span id="excerpt-count">0</span></button><button id="filter-notes" aria-pressed="false" title="本篇全部非空片段笔记；不含项目笔记和时间书签，不受搜索筛选影响">片段笔记 <span id="note-count">0</span></button></div><button id="resume" hidden></button></div><p id="search-status" class="hint" role="status"></p><div id="search-navigation" hidden><button id="previous-match" type="button">上一匹配段</button><span id="match-position" class="hint" role="status"></span><button id="next-match" type="button">下一匹配段</button></div><button id="clear-search" hidden>清除筛选，留在当前位置</button>
 <div id="reading-search-session" class="reading-search-session" hidden><p id="reading-search-status" class="hint" role="status"></p><div><button id="return-before-search" type="button">返回搜索前的阅读</button><button id="continue-search-reading" type="button">从当前结果继续读</button></div><p class="hint">搜索框中按 Esc 返回。</p></div>

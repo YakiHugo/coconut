@@ -16,7 +16,7 @@ if (process.env.GITHUB_ACTIONS !== 'true') throw new Error('Run library translat
 
 const languages = {en: '英文', zh: '中文', ja: '日文', ko: '韩文', fr: '法文', de: '德文', es: '西班牙文'};
 const query = 'waymark', positions = [108, 112, 116, 120, 124];
-const checks = [], errors = [], geometry = [], screenshots = [];
+const checks = [], errors = [], geometry = [], pagination = [], screenshots = [];
 let server, browser, page, stage = 'setup', external = 0, mutations = 0;
 function check(name, value) {assert.ok(value, name); checks.push(name);}
 const settle = page => page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(() => requestAnimationFrame(resolve)))));
@@ -149,6 +149,32 @@ async function keyboardGeometry(page, target, label) {
   if (!clear) await capture(page, label + '-geometry-failure');
   check(label + '_44px_full_focus_ring_five_points_and_overlays_clear', clear);
 }
+async function paginationLayout(page, region, label) {
+  const data = await region.evaluate(node => {
+    const controls = node.querySelector('.library-translation-pagination'), status = node.querySelector('.library-translation-status');
+    const previous = node.querySelector('.library-translation-previous'), next = node.querySelector('.library-translation-next');
+    const range = document.createRange(); range.selectNodeContents(status);
+    const clips = [];
+    for (let ancestor = status.parentElement; ancestor && ancestor !== document.body; ancestor = ancestor.parentElement) {
+      const style = getComputedStyle(ancestor), rect = ancestor.getBoundingClientRect();
+      const clipX = /auto|scroll|hidden|clip/.test(style.overflowX), clipY = /auto|scroll|hidden|clip/.test(style.overflowY);
+      if (clipX || clipY) clips.push({id: ancestor.id, clipX, clipY, left: rect.left+ancestor.clientLeft, top: rect.top+ancestor.clientTop,
+        right: rect.left+ancestor.clientLeft+ancestor.clientWidth, bottom: rect.top+ancestor.clientTop+ancestor.clientHeight});
+    }
+    const textRects = [...range.getClientRects()].map(r => r.toJSON());
+    const textClear = textRects.every(r => {const found = document.elementFromPoint((r.left+r.right)/2,(r.top+r.bottom)/2); return found === status || status.contains(found);});
+    return {controls: controls.getBoundingClientRect().toJSON(), status: status.getBoundingClientRect().toJSON(), clips, textClear,
+      textRects, text: status.textContent, accessibleCount: status.getAttribute('aria-label'),
+      previous: previous.getBoundingClientRect().toJSON(), next: next.getBoundingClientRect().toJSON(), viewport: {width: innerWidth, height: innerHeight}};
+  });
+  pagination.push({label, ...data}); console.log(JSON.stringify({suite: 'library-translations-pagination-layout', label, ...data}));
+  const {status, controls, previous, next, textRects, viewport, clips, textClear} = data;
+  check(label + '_count_has_its_own_full_width_single_line_above_two_44px_controls',
+    textRects.length === 1 && textClear && clips.every(c => (!c.clipX || status.left >= c.left && status.right <= c.right) && (!c.clipY || status.top >= c.top && status.bottom <= c.bottom)) && textRects[0].left >= status.left && textRects[0].right <= status.right &&
+    status.left === controls.left && status.right === controls.right && status.bottom <= previous.top && status.bottom <= next.top &&
+    previous.top === next.top && previous.right <= next.left && previous.width >= 44 && previous.height >= 44 && next.width >= 44 && next.height >= 44 &&
+    status.top >= 0 && status.bottom <= viewport.height && status.left >= 0 && status.right <= viewport.width && /第 \d+ \/ 5 个匹配片段/.test(data.accessibleCount));
+}
 async function visibleBilingualCue(page, key, id, language, source, translation, label, shelfQuery = query) {
   await page.waitForFunction(({key,id,source,translation}) => {
     const row = [...document.querySelectorAll('#transcript .segment')].find(node => node.dataset.segmentId === id);
@@ -243,13 +269,15 @@ try {
     const zh = group(page,mainKey,'zh'), zhHit = hit(page,mainKey,'zh');
     // Return within the shelf rather than wrapping past every reader control.
     await walkTo(page,zhHit,label + '-zh-pagination-start','Shift+Tab');
-    await expect(zh.locator('.library-translation-status')).toHaveText('1 / 5 个匹配片段');
+    await expect(zh.locator('.library-translation-status')).toHaveText('第 1 / 5 处');
     check(label + '_first_chinese_match_has_disabled_previous',await zh.locator('.library-translation-previous').isDisabled());
     for (let i = 1; i < positions.length; i++) {
       await walkTo(page,zh.locator('.library-translation-next'),label + '-next-' + i);
       await keyboardGeometry(page,zh.locator('.library-translation-next'),label + '-next-' + i);
+      await paginationLayout(page,zh,label + '-pagination-' + i);
+      if (i === 1) await capture(page,label + '-pagination-count-row');
       await page.keyboard.press('Enter'); await expect(zhHit).toHaveAttribute('data-hit-id','cue-' + positions[i]);
-      await expect(zh.locator('.library-translation-status')).toHaveText((i+1) + ' / 5 个匹配片段');
+      await expect(zh.locator('.library-translation-status')).toHaveText('第 ' + (i+1) + ' / 5 处');
       await keyboardGeometry(page,zhHit,label + '-page-' + (i+1));
       check(label + '_group_page_' + (i+1) + '_does_not_open_or_change_reader', (await ownership(page)).key === companionKey);
       if (i === 2) check(label + '_translation_snippet_is_literal_not_html', (await zhHit.textContent()).includes('<img src=x>') && await zhHit.locator('img').count() === 0);
@@ -350,10 +378,10 @@ try {
     await context.close(); page = null;
   }
   check('no_external_requests_mutating_http_or_uncaught_browser_errors',external === 0 && mutations === 0 && errors.length === 0);
-  console.log(JSON.stringify({suite:'library-translations-browser',status:'passed',checks,geometry,screenshots,external,mutations,errors}));
+  console.log(JSON.stringify({suite:'library-translations-browser',status:'passed',checks,geometry,pagination,screenshots,external,mutations,errors}));
 } catch (error) {
   if (page && !page.isClosed()) await capture(page,'failure').catch(() => {});
-  console.error(JSON.stringify({suite:'library-translations-browser',status:'failed',stage,error:{name:error.name,message:error.message,stack:error.stack},checks,geometry,screenshots,external,mutations,errors})); process.exitCode = 1;
+  console.error(JSON.stringify({suite:'library-translations-browser',status:'failed',stage,error:{name:error.name,message:error.message,stack:error.stack},checks,geometry,pagination,screenshots,external,mutations,errors})); process.exitCode = 1;
 } finally {
   await browser?.close(); if (server) await new Promise(resolve => server.close(resolve));
 }
