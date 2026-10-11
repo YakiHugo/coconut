@@ -1184,6 +1184,13 @@ $('library-search').addEventListener('keydown',event=>{if(event.key!=='Tab'&&eve
 $('library-search').addEventListener('compositionstart',()=>{librarySearchComposing=true;librarySearchCompositionSession=libraryWorkspaceSession;});
 $('library-search').addEventListener('compositionend',()=>{const current=librarySearchCompositionSession===libraryWorkspaceSession;librarySearchComposing=false;librarySearchCompositionSession=null;if(current&&document.activeElement===$('library-search'))openLibraryWorkspace();renderLibrary();});
 $('library-scope').addEventListener('focus',()=>openLibraryWorkspace());
+// A nonempty native search field otherwise consumes Escape by clearing itself.
+// Bubble after the target's handlers, and do not let this same cancellation reach
+// background note/media/shelf handlers after the dialog has closed.
+$('library-search-dialog').addEventListener('keydown',event=>{
+ if(event.key!=='Escape'||event.target!==$('library-search')||!$('library-search-dialog').open||event.defaultPrevented||event.isComposing||event.keyCode===229||librarySearchComposing||readingKeyComposition)return;
+ event.preventDefault();event.stopPropagation();closeLibraryWorkspace();
+});
 $('library-search-dialog').addEventListener('cancel',event=>{event.preventDefault();if(!librarySearchComposing&&!readingKeyComposition)closeLibraryWorkspace();});
 // The explicit path owns all application closes. This fallback handles a native
 // close initiated by the host while ignoring the delayed event from our path.

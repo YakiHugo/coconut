@@ -44,6 +44,41 @@ test('cancelled input focus stays cancelled across resize until a new pointer ac
  }finally{await w.happyDOM.close();}
 });
 
+for(const mobile of [false,true])test(`one search-input Escape suppresses native clearing and preserves query/page/background on ${mobile?'mobile':'desktop'}`,async()=>{
+ const {w,$,resize}=setup(fixture(45));try{
+  resize(mobile);
+  $('mode-transcript').click();w.document.querySelector('.note-button').click();const note=$('note');note.value='  exact unsent note  ';note.selectionStart=2;note.selectionEnd=7;
+  const player=w.document.createElement('audio');let pauses=0,plays=0;player.pause=()=>pauses++;player.play=()=>{plays++;return Promise.resolve();};player.currentTime=6;$('source-media').append(player);
+  const before=JSON.stringify(w.libraryProbe.documents),reader=$('transcript').innerHTML;
+  if(mobile)$('toggle-library').click();
+  $('open-library-search').focus();query($);await ready($);$('library-next').click();const input=$('library-search');input.focus();input.setSelectionRange(1,4);$('library-search-results').scrollTop=123;
+  let backgroundEscapes=0;w.document.addEventListener('keydown',event=>{if(event.key==='Escape')backgroundEscapes++;});
+  const escape=new w.KeyboardEvent('keydown',{key:'Escape',bubbles:true,cancelable:true});input.dispatchEvent(escape);
+  // Model the Chromium search-field default only if the application allows it.
+  if(!escape.defaultPrevented){input.value='';input.dispatchEvent(new w.Event('input',{bubbles:true}));}
+  assert.equal(escape.defaultPrevented,true,'the one key cannot perform the native search clear');assert.equal(backgroundEscapes,0,'handled cancellation cannot leak to newly exposed background controls');
+  assert.equal($('library-search-dialog').open,false);assert.equal(input.value,'needle');assert.equal($('library-scope').value,'translations');assert.equal($('library-page-number').value,'2');
+  assert.equal(w.document.activeElement,$('open-library-search'));if(mobile)assert.equal($('toggle-library').getAttribute('aria-expanded'),'true','the same Escape does not also dismiss the underlying shelf');assert.equal($('notes-panel').hidden,false);assert.equal($('note'),note);assert.equal(note.value,'  exact unsent note  ');assert.equal(note.selectionStart,2);assert.equal(note.selectionEnd,7);
+  assert.equal($('transcript').innerHTML,reader);assert.equal(JSON.stringify(w.libraryProbe.documents),before);assert.equal(player.currentTime,6);assert.equal(pauses,0);assert.equal(plays,0);
+  $('open-library-search').click();assert.equal($('library-search-dialog').open,true);assert.equal(w.document.activeElement,input);assert.equal(input.value,'needle');assert.equal(input.selectionStart,1);assert.equal(input.selectionEnd,4);assert.equal($('library-page-number').value,'2');assert.equal($('library-search-results').scrollTop,123);
+ }finally{await w.happyDOM.close();}
+});
+
+test('search-input Escape respects target veto and every composition owner, leaving other native controls alone',async()=>{
+ const {w,$}=setup();try{
+  query($);const input=$('library-search'),dialog=$('library-search-dialog');
+  const press=(target=input,init={})=>{const event=new w.KeyboardEvent('keydown',{key:'Escape',bubbles:true,cancelable:true,...init});target.dispatchEvent(event);return event;};
+  input.addEventListener('keydown',event=>event.preventDefault(),{once:true});assert.equal(press().defaultPrevented,true);assert.equal(dialog.open,true);assert.equal(input.value,'needle');
+  for(const init of [{isComposing:true},{keyCode:229}]){assert.equal(press(input,init).defaultPrevented,false);assert.equal(dialog.open,true);assert.equal(input.value,'needle');}
+  input.dispatchEvent(new w.Event('compositionstart'));assert.equal(press().defaultPrevented,false);assert.equal(dialog.open,true);input.dispatchEvent(new w.Event('compositionend'));
+  w.document.dispatchEvent(new w.Event('compositionstart'));assert.equal(press().defaultPrevented,false);assert.equal(dialog.open,true);w.document.dispatchEvent(new w.Event('compositionend'));
+  $('library-scope').focus();assert.equal(press($('library-scope')).defaultPrevented,false);assert.equal(dialog.open,true,'select retains its native Escape/cancel route');
+  cancel(w,$);assert.equal(dialog.open,false);assert.equal(press().defaultPrevented,false,'the modal handler does not claim a closed workspace');
+  $('open-library-search').click();input.focus();assert.equal(press().defaultPrevented,true);assert.equal(dialog.open,false);assert.equal(input.value,'needle');
+  $('open-library-search').click();input.value='';input.focus();assert.equal(press().defaultPrevented,true);assert.equal(dialog.open,false);assert.equal(input.value,'');
+ }finally{await w.happyDOM.close();}
+});
+
 test('650 breakpoint changes preserve modal result owner, page, scroll, focus, query caret and tool identities',async()=>{
  const {w,$,resize}=setup(fixture(45));try{query($);await ready($);$('library-next').click();const host=$('library'),pager=$('library-pagination'),field=$('library-search');field.focus();field.setSelectionRange(1,4);$('library-search-results').scrollTop=181;
   for(const width of [true,false,true,false]){resize(width);assert.equal($('library-search-dialog').open,true);assert.equal($('library'),host);assert.equal($('library-pagination'),pager);assert.equal($('library-search-dialog').contains(pager),true);assert.equal(w.document.activeElement,field);assert.equal(field.selectionStart,1);assert.equal(field.selectionEnd,4);assert.equal($('library-search-results').scrollTop,181);assert.match($('library-page-status').textContent,/41–45/);}
