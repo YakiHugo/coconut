@@ -59,3 +59,40 @@ If a correction removes the original match, returning uses the existing adjacent
 result or empty-results behavior. DOM regressions cover both nested returns and
 retirement; the authored phrase-search browser journey checks keyboard navigation,
 viewport restoration, the single return landmark and a durable note in CI.
+
+
+## Return to the reading that preceded Find
+
+Opening **搜索原文**, Ctrl/Meta+F, Slash, or focusing the transcript search
+input starts one page-local search journey from the visible source cue. The
+passage-to-search transition keeps that cue's page instead of opening the first
+hundred cues. Repeated Find and query changes keep the first origin.
+
+The search controls offer two distinct outcomes:
+
+- **返回搜索前的阅读** (or Escape while the search input owns focus) restores the
+  prior passage/transcript layout, filters and exact surviving source cue. If
+  its source text, timing, speaker or index changed, it navigates to the current
+  cue without applying an old pixel offset. If the cue object was removed or
+  replaced, it does not guess from a same-ID replacement or neighboring time.
+- **从当前结果继续读** opens continuous reading at the selected/current visible
+  source result and ends that search journey. It is unavailable with no result.
+- **清除筛选，留在当前位置** clears filters at the current source result; clearing
+  the input itself keeps the current page while retaining other filters. The
+  search origin remains available until an explicit outcome or newer navigation.
+
+The existing **返回结果** context route remains the inner journey. A reader can
+open a match's surrounding passage, write a note, return to results, then return
+to the place from which they originally searched. Results are recomputed against
+current content. The origin is not a saved session, AI scope, bookmark, or backup
+field. Current source edits, notes, translation choices and explicit **读到这里**
+changes are never rolled back. Opening another document (including a same-key
+replacement), an add workspace or summary ends the journey. Background save
+receipts and ordinary rerenders never invoke its focus or scrolling actions.
+
+`tests/reader-search-return.test.mjs` covers these transitions in Happy DOM,
+including 50,000 cues, missing or replaced anchors, filter changes and delayed
+save receipts. `tests/search-return-browser.mjs` is the separate authored-data
+Chromium acceptance in the existing GitHub workflow. Local DOM success and
+syntax checking do not establish native browser success, media accuracy or model
+quality.

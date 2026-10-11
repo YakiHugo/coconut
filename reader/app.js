@@ -59,6 +59,9 @@ function matchesReadingSegment(segment,doc,query){return (speakerFilter===null||
 let searchFocusedId=null;
 // A temporary detour, never a persisted reading position or an AI selection.
 let readingContext=null;
+// Find is a temporary journey within one live document. Keep source identity,
+// not a second saved reading position or a document snapshot to restore later.
+let readingSearchSession=null,restoringReadingSearchFocus=false;
 const readingContextHome=document.createComment('reading context home');
 $('reading-context').before(readingContextHome);
 let workspace = "read";
@@ -460,6 +463,7 @@ window.addEventListener('storage',event=>{
 window.addEventListener('coconut-document-removed',event=>readingRecency.record(event.detail.key,true));
 let activeSelectionRevision=0;
 function selectActiveDocument(key,{persist=true}={}) {
+ endReadingSearch();
  activeSelectionRevision++;
  const available=doc=>!Coconut.isReadingCollection(doc)&&!pendingStructuralDocuments.has(doc.key);
  state.active=state.documents.some(doc=>doc.key===key&&available(doc))?key:state.documents.find(available)?.key||null;
@@ -569,7 +573,7 @@ async function add(doc, canCommit = null, reuseAudioSource = false, lifecycleRev
 }
 function showWorkspace(next) {
  if(next!==workspace)cancelLocalImports();
- if(next!=="read"){clearReadingContext();passageReturn=null;passagePlayback?.cancel();}
+ if(next!=="read"){endReadingSearch();clearReadingContext();passageReturn=null;passagePlayback?.cancel();}
  if(next!==workspace)window.dispatchEvent(new CustomEvent("coconut-workspace-change",{detail:{workspace:next}}));
  if(next!=="read"&&typeof closeSummaryRequest==="function")closeSummaryRequest(false);
  if(next!=="add")$("podcast-results")?.querySelectorAll("audio,video").forEach(player=>player.pause());
@@ -590,11 +594,117 @@ function showWorkspace(next) {
 	if (returning) window.scrollTo(0, readingScroll);
  refreshPlaybackDock();
 }
-function clearReadingContext() {
+function clearReadingContext(retireSearchRoute=false) {
+ if(retireSearchRoute&&readingSearchSession?.readingContext===readingContext)readingSearchSession.readingContext=null;
  readingContext=null;
  $('reading-context').hidden=true;
  document.querySelectorAll('.context-target').forEach(row=>row.classList.remove('context-target'));
 }
+function endReadingSearch(){readingSearchSession=null;$('reading-search-session').hidden=true;}
+function ownedReadingSearch(){
+ const origin=readingSearchSession;
+ if(origin&&(origin.doc!==active()||origin.selection!==activeSelectionRevision||!state.documents.includes(origin.doc)))endReadingSearch();
+ return readingSearchSession;
+}
+function readingSearchCueSnapshot(cue){return JSON.stringify([cue.id,cue.text,cue.start,cue.end,cue.speaker??null]);}
+function readingSearchAnchor(origin){
+ if(!origin)return {valid:false};
+ const index=origin.doc.segments.indexOf(origin.cue),valid=index>=0&&origin.cue.id===origin.id;
+ const filterAvailable=origin.mode!=='transcript'||origin.speakerFilter===null||origin.doc.segments.some(cue=>(cue.speaker||'')===origin.speakerFilter);
+ return {valid,filterAvailable,unchanged:valid&&index===origin.index&&readingSearchCueSnapshot(origin.cue)===origin.source};
+}
+function beginReadingSearch(){
+ if(restoringReadingSearchFocus)return;
+ if(ownedReadingSearch())return;
+ const doc=active();if(workspace!=='read'||!doc||Coconut.isAudioProject(doc)||!['transcript','passages'].includes(readingMode))return;
+ const id=visibleReadingCue(),cue=doc.segments.find(cue=>cue.id===id);if(!cue)return;
+ const node=chapterCueNode(id,readingMode);
+ readingSearchSession={doc,selection:activeSelectionRevision,cue,id,index:doc.segments.indexOf(cue),source:readingSearchCueSnapshot(cue),mode:readingMode,
+  query:$('search').value,notesOnly,excerptsOnly,speakerFilter,pageStart,readingContext,passageReturn,chapterReturn,
+  contextCue:doc.segments.find(cue=>cue.id===readingContext?.id),passageCue:doc.segments.find(cue=>cue.id===passageReturn?.cueId),chapterCue:doc.segments.find(cue=>cue.id===chapterReturn?.cueId),viewportTop:node?.getBoundingClientRect().top};
+ renderReadingSearch();
+}
+function readingSearchTarget(){
+ const doc=active();if(!doc)return null;
+ const query=$('search').value.trim().toLocaleLowerCase();
+ const visibleCandidate=id=>{
+  if(id===null||id===undefined)return null;const node=chapterCueNode(id,readingMode);if(!node)return null;
+  const rect=node.getBoundingClientRect();
+  // A mounted row with no layout can still own an explicit match. Once layout
+  // exists, an old result cannot overrule a newer page or reading scrolled away.
+  const unmeasured=!rect.height&&!rect.width&&rect.top===0&&rect.bottom===0;
+  return (unmeasured||rect.bottom>0&&rect.top<(window.visualViewport?.height||window.innerHeight))?id:null;
+ };
+ for(const id of [visibleCandidate(selected),visibleCandidate(searchFocusedId),visibleCandidate(readingContext?.document===doc?readingContext.id:null),visibleReadingCue()]){
+  if(id===null||id===undefined)continue;
+  const cue=doc.segments.find(cue=>cue.id===id);
+  if(cue&&matchesReadingSegment(cue,doc,query))return cue;
+ }
+ return null;
+}
+function renderReadingSearch(){
+ const origin=ownedReadingSearch(),host=$('reading-search-session');host.hidden=!origin||workspace!=='read'||readingMode!=='transcript';
+ if(!origin)return;
+ const anchor=readingSearchAnchor(origin);
+ $('return-before-search').disabled=!anchor.valid||!anchor.filterAvailable;
+ $('continue-search-reading').disabled=!readingSearchTarget();
+ $('continue-search-reading').textContent=$('search').value.trim()||notesOnly||excerptsOnly||speakerFilter!==null?'从当前结果继续读':'从当前位置继续读';
+ $('reading-search-status').textContent=!anchor.valid?'搜索前的原位置已不可用；可从当前结果继续阅读。':!anchor.filterAvailable?'搜索前的说话人筛选已无对应标签；可从当前结果继续阅读。':'搜索前读到 '+Coconut.time(origin.cue.start)+(anchor.unchanged?'':' · 原片段已变化，返回时定位当前原文');
+}
+function clearReadingFiltersAt(cue){
+ const doc=active();clearReadingContext();passageReturn=null;chapterReturn=null;
+ $('search').value='';notesOnly=false;excerptsOnly=false;speakerFilter=null;searchFocusedId=null;selected=null;$('ai-consent').checked=false;
+ const index=doc?.segments.indexOf(cue)??-1;
+ if(index>=0)pageStart=Math.floor(index/PAGE_SIZE)*PAGE_SIZE;
+ render();
+ const node=index>=0?chapterCueNode(cue.id,'transcript'):null;
+ if(node){node.scrollIntoView?.({block:'center',behavior:'auto'});node.focus({preventScroll:true});}
+ else focusReadingSearchAfterNavigation();
+}
+function focusReadingSearchAfterNavigation(options){
+ restoringReadingSearchFocus=true;try{focusReadingSearch(options);}finally{restoringReadingSearchFocus=false;}
+}
+function returnBeforeSearch(){
+ const origin=ownedReadingSearch(),anchor=readingSearchAnchor(origin);if(!anchor.valid||!anchor.filterAvailable)return;
+ endReadingSearch();clearReadingContext();passageReturn=null;chapterReturn=null;selected=null;searchFocusedId=null;$('ai-consent').checked=false;
+ // Only view state is restored. Current text, notes, translations, and the
+ // explicit reading bookmark belong to the live document throughout this trip.
+ $('search').value=origin.query;notesOnly=origin.notesOnly;excerptsOnly=origin.excerptsOnly;speakerFilter=origin.speakerFilter;
+ const routeCueCurrent=(cue,id)=>!!cue&&cue.id===id&&origin.doc.segments.includes(cue);
+ readingContext=origin.readingContext?.document===origin.doc&&routeCueCurrent(origin.contextCue,origin.readingContext.id)?origin.readingContext:null;
+ passageReturn=origin.passageReturn?.key===origin.doc.key&&routeCueCurrent(origin.passageCue,origin.passageReturn.cueId)?origin.passageReturn:null;
+ chapterReturn=origin.chapterReturn?.doc===origin.doc&&routeCueCurrent(origin.chapterCue,origin.chapterReturn.cueId)?origin.chapterReturn:null;
+ readingMode=origin.mode;
+ let available=true;
+ if(origin.mode==='passages'){passageDocumentKey=origin.doc.key;passageAnchor=origin.id;}
+ else{
+  const matches=origin.doc.segments.filter(cue=>matchesReadingSegment(cue,origin.doc,origin.query.trim().toLocaleLowerCase()));
+  const index=matches.indexOf(origin.cue);available=index>=0;
+  pageStart=available?(index>=origin.pageStart&&index<origin.pageStart+PAGE_SIZE?origin.pageStart:Math.floor(index/PAGE_SIZE)*PAGE_SIZE):origin.pageStart;
+ }
+ render();
+ const node=available?chapterCueNode(origin.id,origin.mode):null;
+ if(node){
+  node.tabIndex=-1;
+  if(anchor.unchanged&&Number.isFinite(origin.viewportTop))window.scrollBy(0,node.getBoundingClientRect().top-origin.viewportTop);
+  else node.scrollIntoView?.({block:'center',behavior:'auto'});
+  node.focus({preventScroll:true});
+ }else{focusReadingSearchAfterNavigation({preventScroll:true});notice('原片段已离开搜索前的筛选；已恢复筛选，请选择当前结果。');}
+ if(!anchor.unchanged)notice('搜索前的原片段已变化，已定位当前原文。');
+}
+$('search').addEventListener('focus',beginReadingSearch);
+$('search').addEventListener('keydown',event=>{
+ const anchor=readingSearchAnchor(ownedReadingSearch());
+ if(event.key!=='Escape'||readingKeyIgnored(event)||!anchor.valid||!anchor.filterAvailable)return;
+ event.preventDefault();event.stopPropagation();returnBeforeSearch();
+});
+$('return-before-search').onclick=returnBeforeSearch;
+$('continue-search-reading').onclick=()=>{
+ if(!ownedReadingSearch())return;const cue=readingSearchTarget();if(!cue)return;
+ endReadingSearch();clearReadingContext();chapterReturn=null;$('search').value='';notesOnly=false;excerptsOnly=false;speakerFilter=null;searchFocusedId=null;selected=null;$('ai-consent').checked=false;
+ openPassage(cue.id,false);
+ const node=chapterCueNode(cue.id,'passages');if(node){node.tabIndex=-1;node.classList.add('search-return-target');node.scrollIntoView?.({block:node.getBoundingClientRect().height>(window.visualViewport?.height||window.innerHeight)?'start':'center',behavior:'auto'});node.focus({preventScroll:true});}
+};
 function renderReadingContext() {
  if(readingContext?.document!==active())readingContext=null;
  const origin=readingContext,bar=$('reading-context');
@@ -619,7 +729,8 @@ function openReadingContext(id) {
  if(captureReadingContext(id))goToSegment(id,true);
 }
 function returnReadingResults() {
- const origin=readingContext,doc=active();clearReadingContext();
+ if(readingSearchSession?.readingContext===readingContext)endReadingSearch();
+ const origin=readingContext,doc=active();clearReadingContext(true);
  if(!origin||doc!==origin.document)return;
  passageReturn=null;
  $('search').value=origin.query;notesOnly=origin.notesOnly;excerptsOnly=origin.excerptsOnly;speakerFilter=origin.speakerFilter;
@@ -645,7 +756,7 @@ function returnReadingResults() {
 }
 $('return-reading-results').onclick=returnReadingResults;
 $('dismiss-reading-context').onclick=()=>{
- const id=readingContext?.id;clearReadingContext();
+ const id=readingContext?.id;endReadingSearch();clearReadingContext();
  if(readingMode==='passages'){
   const cue=[...$('passage-body').querySelectorAll('.passage-cue')].find(node=>node.dataset.cueId===id);
   (cue?.closest('.passage')||$('passage-body').querySelector('.passage')||$('mode-passages')).focus({preventScroll:true});
@@ -1336,6 +1447,7 @@ function jumpReadingChapter(doc,item){
  chapterDirectoryCue=entry.cue.id;chapterLanding={doc,cue:entry.cue,mode:readingMode};renderChapterReturn();
 }
 $('return-from-chapter').onclick=()=>{
+ if(readingSearchSession?.chapterReturn===chapterReturn)endReadingSearch();
  const origin=chapterReturn,doc=active();chapterReturn=null;chapterLanding=null;document.querySelectorAll('.chapter-target').forEach(node=>node.classList.remove('chapter-target'));
  if(!origin||origin.doc!==doc){renderChapterReturn();return;}
  $('ai-consent').checked=false;$('search').value=origin.query;notesOnly=origin.notesOnly;excerptsOnly=origin.excerptsOnly;speakerFilter=origin.speakerFilter;pageStart=origin.pageStart;passageAnchor=origin.passageAnchor;passageReturn=origin.passageReturn;readingContext=origin.readingContext;readingMode=origin.mode;selected=origin.selected;searchFocusedId=origin.searchFocusedId;
@@ -1343,7 +1455,7 @@ $('return-from-chapter').onclick=()=>{
  render();
  const node=chapterCueNode(origin.cueId,origin.mode);if(node){if(origin.mode==='passages')node.tabIndex=-1;if(Number.isFinite(origin.viewportTop))window.scrollBy(0,node.getBoundingClientRect().top-origin.viewportTop);node.focus({preventScroll:true});}else{window.scrollTo?.({top:origin.scrollY,behavior:'auto'});if(origin.mode==='passages')$('passage-body').focus({preventScroll:true});else focusReadingSearch();notice('原片段已不在当前视图；已恢复跳转前的阅读方式与筛选。');}
 };
-$('stay-at-chapter').onclick=()=>{chapterReturn=null;renderChapterReturn();const node=chapterCueNode(chapterDirectoryCue);node?.focus({preventScroll:true});};
+$('stay-at-chapter').onclick=()=>{if(readingSearchSession?.chapterReturn===chapterReturn)endReadingSearch();chapterReturn=null;renderChapterReturn();const node=chapterCueNode(chapterDirectoryCue);node?.focus({preventScroll:true});};
 
 // A collection is a saved work product, never the active transcript.
 let collectionDocument=null,collectionPage=0;
@@ -2054,11 +2166,14 @@ $("library-scope").onchange=renderLibrary;
 try{const order=localStorage.getItem('coconut-library-sort-v1');if(['added','opened','title','duration'].includes(order))$('library-sort').value=order;}catch{}
 $('library-sort').onchange=()=>{renderLibrary();try{localStorage.setItem('coconut-library-sort-v1',$('library-sort').value);}catch{notice('本次排序已应用，但浏览器未保存偏好。');}};
 
-$('speaker-filter').onchange=()=>{clearReadingContext();speakerFilter=$('speaker-filter').value==='all'?null:JSON.parse($('speaker-filter').value);pageStart=0;searchFocusedId=null;render();};
-$("filter-all").onclick = () => { clearReadingContext(); notesOnly = false; excerptsOnly = false; speakerFilter=null; pageStart = 0; render(); };
-$("filter-excerpts").onclick = () => { clearReadingContext(); excerptsOnly = true; notesOnly = false; pageStart = 0; render(); };
-$("filter-notes").onclick = () => { clearReadingContext(); notesOnly = true; excerptsOnly = false; pageStart = 0; render(); };
-$("clear-search").onclick = () => { clearReadingContext(); $("search").value = ""; notesOnly = false; excerptsOnly = false; speakerFilter=null; pageStart = 0; render(); focusReadingSearch(); };
+$('speaker-filter').onchange=()=>{clearReadingContext(true);speakerFilter=$('speaker-filter').value==='all'?null:JSON.parse($('speaker-filter').value);pageStart=0;searchFocusedId=null;render();};
+$("filter-all").onclick = () => { clearReadingContext(true); notesOnly = false; excerptsOnly = false; speakerFilter=null; pageStart = 0; render(); };
+$("filter-excerpts").onclick = () => { clearReadingContext(true); excerptsOnly = true; notesOnly = false; pageStart = 0; render(); };
+$("filter-notes").onclick = () => { clearReadingContext(true); notesOnly = true; excerptsOnly = false; pageStart = 0; render(); };
+$("clear-search").onclick = () => {
+ const origin=ownedReadingSearch(),cue=readingSearchTarget()||(readingSearchAnchor(origin).valid?origin.cue:null);
+ clearReadingFiltersAt(cue);
+};
 $("close-note").onclick = () => {
 	const id = selected;
 	selected = null;
@@ -2270,9 +2385,11 @@ async function importTranscriptFiles(files){
  }
 }
 $("search").oninput = () => {
+ const continuing=!$('search').value.trim()?readingSearchTarget():null;
  clearReadingContext();
  searchFocusedId=null;
-	pageStart = 0;
+ const index=continuing?active().segments.filter(cue=>matchesReadingSegment(cue,active(),'')).indexOf(continuing):-1;
+	pageStart = index>=0?Math.floor(index/PAGE_SIZE)*PAGE_SIZE:0;
 	render();
 };
 $("note").oninput = () => {
@@ -3323,6 +3440,7 @@ function openPassageDetails(cueId,section){
 }
 function returnToPassages(){
  const origin=passageReturn,doc=active();if(!origin||origin.key!==doc?.key)return;
+ if(readingSearchSession?.passageReturn===origin)endReadingSearch();
  passageAnchor=origin.cueId;passageReturn=null;setReadingMode('passages');render();
  const passage=CoconutPassages.locate(readingPassages(doc),origin.cueId);
  const section=[...$('passage-body').querySelectorAll('.passage')].find(row=>row.dataset.firstCueId===passage?.cues[0].id);
@@ -3373,7 +3491,11 @@ $('passage-time-range').onchange=()=>{const passage=CoconutPassages.atTime(readi
 $('passage-previous').onclick=()=>movePassagePage(-1);$('passage-next').onclick=()=>movePassagePage(1);
 $('return-to-passages').onclick=returnToPassages;
 $('passage-toggle-translation').onclick=()=>{passageTranslations=!passageTranslations;renderPassages(active());renderTextExportAction();};
-$('passage-search').onclick=()=>{passageReturn=null;setReadingMode('transcript');focusReadingSearch();};
+$('passage-search').onclick=()=>{
+ beginReadingSearch();const doc=active(),anchor=visibleReadingCue();passageReturn=null;
+ if(readingMode==='passages'&&doc){const matches=doc.segments.filter(cue=>matchesReadingSegment(cue,doc,$('search').value.trim().toLocaleLowerCase())),index=matches.findIndex(cue=>cue.id===anchor);if(index>=0)pageStart=Math.floor(index/PAGE_SIZE)*PAGE_SIZE;}
+ setReadingMode('transcript');render();focusReadingSearch();
+};
 
 // Character shortcuts are opt-out, scoped to reading text, and never become
 // another playback owner. Invoke the existing controls without synthesizing a
@@ -3567,7 +3689,7 @@ function applyReadingMode() {
  $('mode-bilingual').setAttribute('aria-pressed',String(bilingual));
  $('transcript-layout').classList.toggle('is-bilingual',bilingual);
  $('mode-bilingual').disabled=audioOnly;
- renderReadingContext();
+ renderReadingContext();renderReadingSearch();
  $('bilingual-readiness').hidden=!bilingual||active()?.provenance?.kind==='authored_demo';
  composeReadingHeader();
  if(bilingual){const doc=active(),target=doc.translation_view,count=doc.segments.filter(s=>Coconut.translationCurrent(s,doc,s.translations?.[target])).length;
@@ -3577,7 +3699,7 @@ function setReadingMode(mode) {
  const previousMode=readingMode;
  readingMode=['transcript','passages'].includes(mode)?mode:'summary';
  if(readingMode==='passages'){if(readingContext?.document!==active())clearReadingContext();selected=null;$('notes-panel').hidden=true;if(typeof stopLanguageBatches==='function')stopLanguageBatches();$('language-panel').open=false;}
- if(readingMode==='summary')passageReturn=null;
+ if(readingMode==='summary'){passageReturn=null;endReadingSearch();}
  if(readingMode==='summary'){
   clearReadingContext();
   selected=null;$('notes-panel').hidden=true;

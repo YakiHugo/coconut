@@ -16,7 +16,7 @@ for(const width of [320,390])for(const bilingual of [false,true])test(`${width} 
   w.document.querySelector('.segment').focus();w.document.dispatchEvent(new w.KeyboardEvent('keydown',{key:'/',bubbles:true}));assert.equal($('transcript-tools-disclosure').open,true);assert.equal(w.document.activeElement,$('search'));
   $('search').value='observation 2';$('search').oninput();assert.match($('transcript-tools-label').textContent,/observation 2/);assert.equal($('transcript').querySelectorAll('.segment').length,1);
   $('transcript-tools-disclosure').open=false;assert.match($('transcript-tools-label').textContent,/筛选中/);
-  $('clear-search').click();assert.equal($('transcript-tools-disclosure').open,true);assert.equal(w.document.activeElement,$('search'));assert.equal($('transcript').querySelectorAll('.segment').length,3);
+  $('clear-search').click();assert.equal($('transcript-tools-disclosure').open,true);assert.equal(w.document.activeElement.dataset.segmentId,'read-1');assert.equal($('transcript').querySelectorAll('.segment').length,3);
   $('filter-notes').click();assert.match($('transcript-tools-label').textContent,/仅笔记/);$('filter-all').click();
   $('mode-summary').click();assert.equal($('transcript-tools-label').hidden,true);$('summary-open-transcript').click();assert.equal($('transcript-tools-disclosure').open,true);assert.equal(w.document.activeElement,$('search'));
  }finally{await w.happyDOM.close();}
