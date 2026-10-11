@@ -1242,3 +1242,15 @@ body[data-short-reading-compact="true"] #language-panel { margin-top: 8px; }
  vertical-align: .35em; margin-inline-end: .3em; user-select: none; -webkit-user-select: none;
 }
 .segment .reading-chapter-labels { margin-bottom: 6px; }
+
+/* Encoding recovery stays readable and keyboard-scrollable on narrow screens. */
+#subtitle-encoding-dialog { width: min(620px, calc(100vw - 32px)); max-height: calc(100dvh - 32px); overflow: auto; box-sizing: border-box; scroll-padding: 12px; }
+#subtitle-encoding-dialog p { overflow-wrap: anywhere; }
+#subtitle-encoding { width: 100%; min-height: 44px; }
+#subtitle-encoding-preview { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 32dvh; overflow: auto; padding: 12px; border: 1px solid var(--line); border-radius: 8px; font: inherit; text-align: start; }
+#subtitle-encoding-dialog button { min-height: 44px; }
+@media(max-width: 600px) { #subtitle-encoding-dialog { padding: 18px; } }
+
+#subtitle-encoding-preview:focus-visible { outline: 3px solid var(--accent); outline-offset: 3px; }
+
+#subtitle-encoding-dialog :is(select, pre, button) { scroll-margin: 12px; }

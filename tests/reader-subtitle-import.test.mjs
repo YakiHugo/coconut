@@ -15,7 +15,7 @@ function setup(){
  installSavePipeline(w);
  w.eval(['summary','core','passages','passage-playback','app','language','podcasts'].map(name=>fs.readFileSync(new URL('reader/'+name+'.js',root),'utf8')).join('\n'));
  const $=id=>w.document.getElementById(id),stored=()=>JSON.parse(w.localStorage.getItem(KEY));
- const choose=async(name,text)=>{Object.defineProperty($('file'),'files',{configurable:true,value:[{name,size:Buffer.byteLength(text),text:async()=>text}]});await $('file').onchange();};
+ const choose=async(name,text)=>{Object.defineProperty($('file'),'files',{configurable:true,value:[{name,size:Buffer.byteLength(text),text:async()=>text,arrayBuffer:async()=>new TextEncoder().encode(text).buffer}]});await $('file').onchange();};
  return {w,$,stored,choose};
 }
 for(const fixture of subtitleFixtures)test(`${fixture.format} file handler preserves authored cues, notes, exports and failed-import state`,async()=>{

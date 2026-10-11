@@ -1,6 +1,33 @@
 (function (root) {
 	"use strict";
  const BACKUP_REVIEW_BYTES=50*1024*1024, SUBTITLE_IMPORT_BYTES=15*1024*1024;
+ // Only BOMs identify an encoding automatically. Legacy encodings require
+ // an explicit choice; fatal decoding never silently replaces source bytes.
+ const SUBTITLE_ENCODINGS=Object.freeze([
+  {id:'utf-8',label:'UTF-8'},
+  {id:'utf-16le',label:'UTF-16 LE'},
+  {id:'utf-16be',label:'UTF-16 BE'},
+  {id:'gb18030',label:'GB18030 / GBK（简体中文）'},
+  {id:'big5',label:'Big5（繁体中文）'},
+  {id:'windows-1252',label:'Windows-1252（西欧文字）'},
+ ]);
+ function subtitleEncodings(){
+  return SUBTITLE_ENCODINGS.map(option=>{
+   let available=true;try{new TextDecoder(option.id,{fatal:true});}catch{available=false;}
+   return {...option,available};
+  });
+ }
+ function decodeSubtitleBytes(bytes,selected=null){
+  if(!(bytes instanceof Uint8Array))bytes=new Uint8Array(bytes);
+  const bom=bytes[0]===0xef&&bytes[1]===0xbb&&bytes[2]===0xbf?'utf-8':bytes[0]===0xff&&bytes[1]===0xfe?'utf-16le':bytes[0]===0xfe&&bytes[1]===0xff?'utf-16be':null;
+  const encoding=selected||bom||'utf-8';
+  if(!SUBTITLE_ENCODINGS.some(option=>option.id===encoding))return {ok:false,encoding,error:'不支持这个字幕编码，请选择列表中的编码。'};
+  if(bom&&selected&&bom!==selected)return {ok:false,encoding,error:'所选编码与文件的 '+bom.toUpperCase()+' BOM 标记不符，请按标记读取或取消检查原文件。'};
+  let decoder;try{decoder=new TextDecoder(encoding,{fatal:true});}catch{return {ok:false,encoding,error:'当前浏览器不支持 '+encoding.toUpperCase()+' 解码，请换用支持此编码的浏览器，或先将原文件转换为 UTF-8。'};}
+  let text;try{text=decoder.decode(bytes);}catch{return {ok:false,encoding,error:encoding.toUpperCase()+' 无法完整解码原始字节，未导入。请选择原文件编码并核对预览；损坏或截断的文件需先修复。'};}
+  if(text.includes('\0'))return {ok:false,encoding,error:'解码后包含异常空字符（NUL），可能是未标记的 UTF-16 或损坏文件。请选择正确编码；未导入或替换原文。'};
+  return {ok:true,encoding,text};
+ }
  const Summaries=typeof module!=="undefined"&&module.exports?require("./summary.js"):root.CoconutSummary;
  // Calibration is a local playback mapping; source cue timestamps are immutable.
  function mediaTiming(value) {
@@ -1722,7 +1749,7 @@
 	function parse(text, filename) {
 		return parseWithDiagnostics(text, filename).document;
 	}
-	const api = { translationSelectionInfo, translationSelectionModels, pairedExactExcerptSnapshot, exactExcerptTranslation, exactExcerptTranslationParts, normalizeReadingChapters, readingChapters, createReadingChapter, updateReadingChapter, readingChaptersWith, isReadingCollection, normalizeReadingCollection, createReadingCollection, collectionItemFromCapture, readingCollectionItemKey, readingCollectionItemState, readingCollectionMarkdown, SPEAKER_CORRECTION_LABEL_LIMIT, createSpeakerCorrectionPreview, applySpeakerCorrectionPreview, createLibraryBackupSelection, librarySavedHits, librarySavedHitCurrent, exactExcerptNote, exactExcerptNotesWith, exactExcerptRemoval, exactExcerptSnapshot, exactExcerptText, exactExcerptParts, exactExcerptSource, exactExcerptCount, exactExcerptDuplicate, exactExcerptFreshness, exactExcerptFreshnessBatch, exactExcerptState, exactExcerptStateBatch, createReadingRecency, createLibrarySearch, createLibraryNotebookSearch, libraryCaptureSteps, libraryCaptureCurrent, libraryCaptures, libraryNotebookMarkdown, mediaTiming, mediaTimingOffset, mediaTimingRange, localMediaSource, searchDocument, invalidateSearch, manualReviewSnapshot, manualReviewCurrent, saveManualTranslation, translationReviewQueue, hasNoteContent, segmentNoteCount, BACKUP_REVIEW_BYTES, SUBTITLE_IMPORT_BYTES, vttPayload, libraryHits, librarySnippet, hasProjectAnnotations, projectAnnotationCount, attachProjectTranscript, libraryMatches, documentDuration, sortedLibrary, AUDIO_NOTE_BUDGET, audioNoteCharacters, isAudioProject, audioProjectIdentity, podcastMediaIdentity, SUMMARY_QUESTION, summaryReadiness, podcastURL, podcastSource, cleanGlossary, relevantGlossary, translationQualityMessage, retainAnswers, summaryFreshness, latestSummary, summaryMarkdown, aiReadingMarkdown, parseReadingTime, createPlaybackIndex, segmentAtTime, transcriptText, subtitleExport, mergeLibraryBackup, time, source, media, validate, parse, parseWithDiagnostics, matchesSegment, notebookSegments, notebookMarkdown, translationCurrent, sameCueSnapshot, subscriptionPlan, cleanContexts, answerFreshness };
+	const api = { subtitleEncodings, decodeSubtitleBytes, translationSelectionInfo, translationSelectionModels, pairedExactExcerptSnapshot, exactExcerptTranslation, exactExcerptTranslationParts, normalizeReadingChapters, readingChapters, createReadingChapter, updateReadingChapter, readingChaptersWith, isReadingCollection, normalizeReadingCollection, createReadingCollection, collectionItemFromCapture, readingCollectionItemKey, readingCollectionItemState, readingCollectionMarkdown, SPEAKER_CORRECTION_LABEL_LIMIT, createSpeakerCorrectionPreview, applySpeakerCorrectionPreview, createLibraryBackupSelection, librarySavedHits, librarySavedHitCurrent, exactExcerptNote, exactExcerptNotesWith, exactExcerptRemoval, exactExcerptSnapshot, exactExcerptText, exactExcerptParts, exactExcerptSource, exactExcerptCount, exactExcerptDuplicate, exactExcerptFreshness, exactExcerptFreshnessBatch, exactExcerptState, exactExcerptStateBatch, createReadingRecency, createLibrarySearch, createLibraryNotebookSearch, libraryCaptureSteps, libraryCaptureCurrent, libraryCaptures, libraryNotebookMarkdown, mediaTiming, mediaTimingOffset, mediaTimingRange, localMediaSource, searchDocument, invalidateSearch, manualReviewSnapshot, manualReviewCurrent, saveManualTranslation, translationReviewQueue, hasNoteContent, segmentNoteCount, BACKUP_REVIEW_BYTES, SUBTITLE_IMPORT_BYTES, vttPayload, libraryHits, librarySnippet, hasProjectAnnotations, projectAnnotationCount, attachProjectTranscript, libraryMatches, documentDuration, sortedLibrary, AUDIO_NOTE_BUDGET, audioNoteCharacters, isAudioProject, audioProjectIdentity, podcastMediaIdentity, SUMMARY_QUESTION, summaryReadiness, podcastURL, podcastSource, cleanGlossary, relevantGlossary, translationQualityMessage, retainAnswers, summaryFreshness, latestSummary, summaryMarkdown, aiReadingMarkdown, parseReadingTime, createPlaybackIndex, segmentAtTime, transcriptText, subtitleExport, mergeLibraryBackup, time, source, media, validate, parse, parseWithDiagnostics, matchesSegment, notebookSegments, notebookMarkdown, translationCurrent, sameCueSnapshot, subscriptionPlan, cleanContexts, answerFreshness };
 	if (typeof module !== "undefined" && module.exports) module.exports = api;
 	else root.Coconut = api;
 })(typeof window !== "undefined" ? window : globalThis);

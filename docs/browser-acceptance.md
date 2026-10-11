@@ -63,3 +63,8 @@ rm -rf -- "$work"
 
 这是安装包运行与数据恢复验收，不能替代签名、公证、Gatekeeper 安装、用户 Mac 性能或另一架构的运行验收。
 未签名开发包仍有安装门槛；不会要求用户绕过操作系统安全提示。
+
+
+## Local subtitle byte encodings
+
+`tests/subtitle-encoding-browser.mjs` is an Actions-only Chromium journey using authored real UTF-8, UTF-16 LE/BE BOM, GB18030, Big5, Windows-1252 and unmarked UTF-16 file bytes. It covers the native chooser for single and multiple files and same-project attachment, explicit encoding preview/reselection, native Escape, skip/stop receipts, malformed UTF-16, late byte-read ownership, IndexedDB quota rescue/retry, actual JSON download into a clean browser, and reload. The recovery dialog is checked and captured at 390px and desktop widths. No workspace browser run is claimed by DOM tests; CI output identifies the exact checked revision.
