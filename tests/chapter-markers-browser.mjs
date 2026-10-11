@@ -31,7 +31,24 @@ async function reveal(selector){
  for(const id of owners){assert.ok(id,'Native disclosure needs an ID');if(!await page.locator('#'+id).evaluate(node=>node.open))await page.locator('#'+id+' > summary').click();}
  await expect(page.locator(selector)).toBeVisible();return owners;
 }
-async function closeDisclosures(owners){for(const id of [...owners].reverse())if(await page.locator('#'+id).evaluate(node=>node.open))await page.locator('#'+id+' > summary').click();await frames();}
+async function closeAppearanceSettings(owners){
+ // In continuous reading, the product deliberately keeps the inner settings
+ // open and hides its summary. Close the visible information panel instead.
+ // An unrecognized nesting/visibility change must fail rather than be skipped.
+ assert.deepEqual(owners,['reading-info','reading-settings']);
+ await expect(page.locator('#reading-info-settings > #reading-settings')).toHaveCount(1);
+ await expect(page.locator('#reading-settings')).toHaveJSProperty('open',true);
+ await expect(page.locator('#reading-settings > summary')).toBeHidden();
+ const values=await Promise.all(['#reading-layout','#reading-theme','#reading-measure'].map(selector=>page.locator(selector).inputValue()));
+ await expect(page.locator('#close-reading-info')).toBeVisible();
+ await page.locator('#close-reading-info').click();
+ await expect(page.locator('#reading-info')).toHaveJSProperty('open',false);
+ await expect(page.locator('#reading-settings')).toHaveJSProperty('open',true);
+ for(const [index,selector] of ['#reading-layout','#reading-theme','#reading-measure'].entries()){
+  await expect(page.locator(selector)).toBeHidden();await expect(page.locator(selector)).toHaveValue(values[index]);
+ }
+ await frames();
+}
 async function directoryOpen(){if(await page.locator('#chapter-dialog').evaluate(node=>node.open))return;await reveal('#open-chapters');await activate('#open-chapters');await expect(page.locator('#chapter-dialog')).toBeVisible();}
 async function directoryClose(){if(await page.locator('#chapter-dialog').evaluate(node=>node.open))await activate('#chapter-close');}
 async function firstPage(){await directoryClose();await activate('#mode-passages');while(await page.locator('#passage-previous').isEnabled())await activate('#passage-previous');await frames();}
@@ -183,7 +200,7 @@ try{
   await directoryClose();await position('#passage-body .passage-original');await page.locator('#passage-body').evaluate(node=>node.focus({preventScroll:true}));await frames();const beforeReceipt=await receiptSnapshot();
   await page.evaluate(()=>{window.__chapterReceiptLabels=[...document.querySelectorAll('.reading-chapter-labels')];window.__chapterAudit.scrolls=[];});await page.evaluate(()=>window.__releaseChapterWrites());current=await saved();await frames();const afterReceipt=await receiptSnapshot();const receipt=await page.evaluate(()=>({calls:window.__chapterAudit.scrolls,labels:window.__chapterReceiptLabels.every(node=>node.isConnected)}));geometry.push({label:label+'-real-indexeddb-save-receipt',before:beforeReceipt,after:afterReceipt,...receipt});assert.equal(current.reading_chapters.find(item=>item.id==='first').title,renamed);assert.deepEqual(afterReceipt,beforeReceipt);check(label+'_real_save_receipt_never_scrolls_refocuses_or_rebuilds_labels',receipt.calls.length===0&&receipt.labels);await identity(label+'_rename_committed');await labelsMatch(label+'_renamed',current);
 
-  stage=label+' appearance and long title wrapping';const owners=await reveal('#reading-layout');const beforeSize=await page.locator('#passage-body .passage-original').first().evaluate(node=>parseFloat(getComputedStyle(node).fontSize));await page.locator('#reading-layout').selectOption('large');await page.locator('#reading-theme').selectOption('dark');await closeDisclosures(owners);await page.waitForFunction(themeTransitionsSettled,['.reading-chapter-label','.passage-original']);await position('#passage-body .passage');await originalParagraph(label+'_large_dark',fixture);await identity(label+'_appearance');
+  stage=label+' appearance and long title wrapping';const owners=await reveal('#reading-layout');const beforeSize=await page.locator('#passage-body .passage-original').first().evaluate(node=>parseFloat(getComputedStyle(node).fontSize));await page.locator('#reading-layout').selectOption('large');await page.locator('#reading-theme').selectOption('dark');await closeAppearanceSettings(owners);await page.waitForFunction(themeTransitionsSettled,['.reading-chapter-label','.passage-original']);await position('#passage-body .passage');await originalParagraph(label+'_large_dark',fixture);await identity(label+'_appearance');
   const afterSize=await page.locator('#passage-body .passage-original').first().evaluate(node=>parseFloat(getComputedStyle(node).fontSize));check(label+'_large_type_and_dark_theme_are_real_product_settings',afterSize>beforeSize&&await page.locator('html').getAttribute('data-reader-theme')==='dark');await labelsMatch(label+'_large_dark',current);
   const long=page.locator('#passage-body .reading-chapter-label[data-chapter-id="second"] .reading-chapter-title');assert.equal(await long.textContent(),CHAPTER_MARKER_LONG_TITLE);await position('#passage-body .reading-chapter-label[data-chapter-id="second"]');
   const titleGeometry=await long.evaluate(node=>{const range=document.createRange();range.selectNodeContents(node);const style=getComputedStyle(node);return {text:node.textContent,rect:node.getBoundingClientRect().toJSON(),lines:[...range.getClientRects()].map(r=>r.toJSON()),whiteSpace:style.whiteSpace,overflow:style.textOverflow,viewport:innerWidth,documentWidth:document.documentElement.scrollWidth};});geometry.push({label:label+'-complete-long-title',...titleGeometry});check(label+'_complete_long_title_wraps_inside_viewport',titleGeometry.documentWidth<=titleGeometry.viewport&&titleGeometry.rect.left>=0&&titleGeometry.rect.right<=titleGeometry.viewport&&titleGeometry.overflow!=='ellipsis'&&(label!=='mobile'||titleGeometry.lines.length>1));await capture(label+'-long-title-large-dark');

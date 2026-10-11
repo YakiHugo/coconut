@@ -132,3 +132,21 @@ test('titles render literally, retain imported linebreaks and wrap across themes
   for(const theme of ['light','dark'])for(const layout of ['standard','large','spacious']){w.document.documentElement.dataset.readerTheme=theme;w.document.documentElement.dataset.readingLayout=layout;assert.equal(titles(passages(w)[0])[0],doc.reading_chapters[0].title);assert.equal(w.document.documentElement.dataset.readingLayout,layout);}
  }finally{await w.happyDOM.close();}
 });
+
+test('browser appearance cleanup uses the visible information close action and keeps inner settings and values intact',async()=>{
+ const {w,$}=setup();try{
+  const style=w.document.createElement('style');style.textContent=fs.readFileSync(new URL('reader/style.css',root),'utf8');w.document.head.append(style);
+  $('reading-info').open=true;$('reading-layout').value='large';$('reading-theme').value='dark';$('reading-measure').value='narrow';
+  assert.equal($('reading-settings').parentElement.id,'reading-info-settings');assert.equal($('reading-settings').open,true);assert.equal(w.getComputedStyle($('reading-settings').querySelector('summary')).display,'none');
+  const visible=node=>{if(!node)return false;for(let parent=node;parent;parent=parent.parentElement){if(parent.hidden||w.getComputedStyle(parent).display==='none')return false;if(parent.tagName==='DETAILS'&&!parent.open&&!parent.querySelector(':scope > summary')?.contains(node))return false;}return true;};
+  const clicks=[],page={locator(selector){return {selector,nodes:()=>[...w.document.querySelectorAll(selector)],inputValue:async()=>w.document.querySelector(selector)?.value,evaluate:async callback=>callback(w.document.querySelector(selector)),click:async()=>{const node=w.document.querySelector(selector);assert.ok(visible(node),'Cannot click hidden UI: '+selector);clicks.push(selector);node.click();}};}};
+  const expect=locator=>({toHaveCount:async count=>assert.equal(locator.nodes().length,count),toHaveJSProperty:async(name,value)=>assert.equal(locator.nodes()[0]?.[name],value),toBeHidden:async()=>assert.equal(visible(locator.nodes()[0]),false),toBeVisible:async()=>assert.equal(visible(locator.nodes()[0]),true),toHaveValue:async value=>assert.equal(await locator.inputValue(),value)});
+  // Execute the actual browser helper against the existing product DOM/CSS and
+  // close handler. This replays its hidden-summary mistake, not native geometry.
+  const source=fs.readFileSync(new URL('tests/chapter-markers-browser.mjs',root),'utf8'),match=source.match(/async function (closeAppearanceSettings|closeDisclosures)\(owners\)\{[\s\S]*?\}\nasync function directoryOpen/);assert.ok(match);
+  const helper=Function('page','expect','frames','assert',match[0].replace(/\nasync function directoryOpen$/,'')+';return '+match[1])(page,expect,async()=>{},assert);
+  await helper(['reading-info','reading-settings']);assert.deepEqual(clicks,['#close-reading-info']);assert.equal($('reading-info').open,false);assert.equal($('reading-settings').open,true);assert.equal(w.document.activeElement,$('reading-info').querySelector('summary'));
+  assert.deepEqual(['reading-layout','reading-theme','reading-measure'].map(id=>$(id).value),['large','dark','narrow']);
+  $('reading-info').open=true;$('close-reading-info').hidden=true;await assert.rejects(()=>helper(['reading-info','reading-settings']));assert.equal($('reading-info').open,true);assert.deepEqual(clicks,['#close-reading-info'],'unexpected hidden close action fails without bypass');
+ }finally{await w.happyDOM.close();}
+});
