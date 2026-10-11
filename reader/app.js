@@ -880,6 +880,7 @@ function resumeOpenedDocument(doc,fallbackFocus='title'){
 }
 // Ordinary library navigation, active removal, and active undo share ownership teardown.
 function resetReaderForDocumentNavigation(){
+ libraryTranslationActivation++;libraryTranslationReveal=null;
  if(typeof closePassageQuestion==='function')closePassageQuestion();
  // Flush while the old player owns its own key. Preview clocks never become
  // the main position, and a same-URL destination still gets new ownership.
@@ -1189,12 +1190,13 @@ function libraryDocumentMetadata(doc){
  libraryMetadata.set(doc,metadata);return metadata;
 }
 const librarySearch=Coconut.createLibrarySearch({getDocuments:()=>state.documents,getRevision:()=>libraryContentRevision,getDuration:doc=>libraryDocumentMetadata(doc).duration,onChange:()=>renderLibrary(null,{reuseMetadata:true})});
-let libraryPendingReveal=null;
+let libraryPendingReveal=null,libraryTranslationReveal=null,libraryTranslationActivation=0;
 function renderLibrary(revealKey=null,{reuseMetadata=false}={}) {
  if(!reuseMetadata)libraryMetadata=new WeakMap();
  libraryRenderedRevision=libraryContentRevision;
  const host=$('library'),query=$('library-search').value.trim().toLocaleLowerCase(),scope=$('library-scope').value;
- $('library-search').placeholder=scope==='title'?'按标题查找':scope==='notes'?'查找标题与笔记（含摘录笔记）':'查找标题、原文、笔记与已存摘录';
+ $('library-scope-hint').hidden=scope!=='translations';
+ $('library-search').placeholder=scope==='translations'?'查找已存译文（全部语言）':scope==='title'?'按标题查找':scope==='notes'?'查找标题与笔记（含摘录笔记）':'查找标题、原文、笔记与已存摘录';
  const signature=JSON.stringify([query,$('library-sort').value,$('library-kind').value,scope]);
  const viewChanged=libraryViewSignature!==null&&signature!==libraryViewSignature;
  const selection=librarySearch.request(query,$('library-kind').value,scope,$('library-sort').value,!reuseMetadata);
@@ -1238,7 +1240,7 @@ function renderLibrary(revealKey=null,{reuseMetadata=false}={}) {
  if(document.activeElement!==$('library-page-number'))$('library-page-number').value=String(libraryPage+1);
  $('library-show-active').hidden=activeIndex<0||Math.floor(activeIndex/LIBRARY_PAGE_SIZE)===libraryPage;
  const focused=document.activeElement,focusedEntry=focused?.closest('.library-entry');
- const focusKey=focusedEntry?.dataset.documentKey,hitKind=focused?.dataset.hitKind,hitId=focused?.dataset.hitId;
+ const focusKey=focusedEntry?.dataset.documentKey,hitKind=focused?.dataset.hitKind,hitId=focused?.dataset.hitId,hitLanguage=focused?.dataset.language;
  const nextCards=new Map();
  for(const d of visible){
   const previous=libraryCards.get(d.key),card=previous?.doc===d?previous:createLibraryCard(d);
@@ -1267,6 +1269,49 @@ function renderLibrary(revealKey=null,{reuseMetadata=false}={}) {
     card.entry.append(list);card.hits=list;
    }
   }
+  if(card.translationSelection!==selection){
+   card.translationHits?.remove();card.translationHits=null;card.translationSelection=selection;
+   const groups=selection.translationHits.get(d)||[];
+   if(card.translationSignature!==selection.signature)card.translationPositions=new Map();
+   card.translationSignature=selection.signature;
+   if(groups.length){
+    const list=el('div','library-translation-hits');list.setAttribute('aria-label','当前有效译文 · 全部匹配语言');
+    for(const group of groups){
+     let position=group.positions.get(card.translationPositions.get(group.language))??0;
+     const region=el('div','library-translation-group');region.dataset.language=group.language;
+     const button=el('button','library-hit library-translation-hit');button.type='button';button.dataset.hitKind='translation';button.dataset.language=group.language;
+     const label=el('small'),preview=el('span','library-hit-preview'),source=el('span','library-hit-source');button.append(label,preview,source);
+     const controls=el('div','library-translation-pagination'),status=el('span','library-translation-status'),previous=el('button','library-translation-previous','上一处'),next=el('button','library-translation-next','下一处');
+     status.setAttribute('role','status');previous.type=next.type='button';
+     previous.setAttribute('aria-label',translationLabel(group.language)+'译文上一处');next.setAttribute('aria-label',translationLabel(group.language)+'译文下一处');
+     const current=()=>button.isConnected&&librarySearch.isCurrent(selection)&&!pendingStructuralDocuments.has(d.key)&&Coconut.libraryTranslationHitCurrent(group.hits[position],state.documents);
+     const refresh=()=>{
+      const hit=group.hits[position];button.dataset.hitId=hit.id;card.translationPositions.set(group.language,hit.id);
+      label.textContent='译文 · '+translationLabel(hit.language)+' · '+Coconut.time(hit.time)+(hit.cueCount>1?' · 跨 '+hit.cueCount+' 段':'');
+      preview.replaceChildren(document.createTextNode(hit.snippet.before),el('mark','',hit.snippet.match),document.createTextNode(hit.snippet.after));source.textContent='原文：'+hit.source;
+      status.textContent=(position+1)+' / '+group.hits.length+' 个匹配片段';previous.disabled=position===0;next.disabled=position===group.hits.length-1;
+     };
+     const move=delta=>{libraryTranslationActivation++;if(!current()){notice('译文搜索结果已变动，请重新查找。');if(state.documents.includes(d))Coconut.invalidateSearch(d);renderLibrary();return;}position=Math.max(0,Math.min(group.hits.length-1,position+delta));refresh();button.focus();const revision=libraryFocusRevealRevision;requestAnimationFrame(()=>revealLibrarySelectionFocus(button,card,revision));};
+     previous.onclick=()=>move(-1);next.onclick=()=>move(1);
+     button.onclick=()=>{
+      const hit=group.hits[position],generation=++libraryTranslationActivation,origin=active(),revision=activeSelectionRevision,focus=document.activeElement,mode=readingMode,space=workspace;
+      if(!current()){notice('译文搜索结果已变动，请重新查找。');if(state.documents.includes(d))Coconut.invalidateSearch(d);renderLibrary();return;}
+      if(!contentIngressAllowed(d)){notice('当前保存状态暂不允许切换译文，请先处理保存提示。');return;}
+      const operation=Coconut.libraryTranslationHitCurrentSteps(hit,state.documents);
+      const step=()=>{
+       if(generation!==libraryTranslationActivation||group.hits[position]!==hit||active()!==origin||revision!==activeSelectionRevision||document.activeElement!==focus||readingMode!==mode||workspace!==space||!button.isConnected||!librarySearch.isCurrent(selection)){operation.return();return;}
+       if(!current()){operation.return();notice('译文搜索结果已变动，请重新查找。');if(state.documents.includes(d))Coconut.invalidateSearch(d);renderLibrary();return;}
+       const result=operation.next();
+       if(!result.done){setTimeout(step,0);return;}
+       if(!result.value){notice('译文搜索结果已变动，请重新查找。');Coconut.invalidateSearch(d);renderLibrary();return;}
+       if(contentIngressAllowed(d))card.openDocument(hit);
+      };step();
+     };
+     controls.append(previous,status,next);controls.hidden=group.hits.length<=1;region.append(button,controls);list.append(region);refresh();
+    }
+    card.entry.append(list);card.translationHits=list;
+   }
+  }
   // Historical previews belong to this completed search, not a render-time scan.
   if(card.savedSelection!==selection){
    card.savedHits?.remove();card.savedHits=null;card.savedSelection=selection;
@@ -1289,7 +1334,7 @@ function renderLibrary(revealKey=null,{reuseMetadata=false}={}) {
     card.entry.append(list);card.savedHits=list;
    }
   }
-  for(const hit of [...(card.hits?.children||[]),...(card.savedHits?.querySelectorAll('button')||[])])hit.disabled=pendingStructuralDocuments.has(d.key);
+  for(const hit of [...(card.hits?.children||[]),...(card.savedHits?.querySelectorAll('button')||[]),...(card.translationHits?.querySelectorAll('.library-translation-hit')||[])])hit.disabled=pendingStructuralDocuments.has(d.key);
   nextCards.set(d.key,card);
  }
  // Avoid moving unchanged nodes: moving a focused button can reset focus in a
@@ -1303,7 +1348,7 @@ function renderLibrary(revealKey=null,{reuseMetadata=false}={}) {
  // exists. Never steal focus from an editor, dialog, or async operation.
  if(focusKey&&(!focused.isConnected||document.activeElement===document.body)){
   const card=libraryCards.get(focusKey);
-  const target=hitKind?[...(card?.hits?.children||[]),...(card?.savedHits?.querySelectorAll('button')||[])].find(node=>node.dataset.hitKind===hitKind&&node.dataset.hitId===hitId):focused.classList.contains('library-remove')?card?.remove:focused.classList.contains('library-select')?card?.select:card?.open;
+  const target=hitKind?[...(card?.hits?.children||[]),...(card?.savedHits?.querySelectorAll('button')||[]),...(card?.translationHits?.querySelectorAll('.library-translation-hit')||[])].find(node=>node.dataset.hitKind===hitKind&&node.dataset.hitId===hitId&&node.dataset.language===hitLanguage):focused.classList.contains('library-remove')?card?.remove:focused.classList.contains('library-select')?card?.select:card?.open;
   if(target&&!target.disabled&&!target.hidden)target.focus({preventScroll:true});
   else if(card&&!card.open.disabled)card.open.focus({preventScroll:true});
   else $('library-search').focus({preventScroll:true});
@@ -2049,8 +2094,13 @@ $('notebook-export').onclick=()=>{
  }catch{notice('笔记本下载失败，请重试或使用书架备份。');}finally{link?.remove();if(url)setTimeout(()=>URL.revokeObjectURL(url),1000);}
 };
 function openLibraryHit(hit) {
- if(hit.kind==='text'||hit.kind==='note'){
+ if(hit.kind==='text'||hit.kind==='note'||hit.kind==='translation'){
+  if(hit.kind==='translation'){const doc=active();if(!contentIngressAllowed(doc))return;doc.translation_view=hit.language;queueDocument(doc);libraryTranslationReveal={doc,hit};}
   goToSegment(hit.id,true);
+  if(hit.kind==='translation'){
+   const row=[...$('transcript').querySelectorAll('.segment')].find(row=>row.dataset.segmentId===hit.id);
+   row?.querySelector('.translation mark')?.scrollIntoView?.({block:'center',behavior:'auto'});
+  }
   if(hit.kind==='note'){
    const row=[...$('transcript').querySelectorAll('.segment')].find(row=>row.dataset.segmentId===hit.id);
    row?.querySelector('.note-button')?.click();
@@ -2221,6 +2271,7 @@ function render({keepNoteEditor=false,reuseLibraryMetadata=false}={}) {
 	const query = $("search").value.trim().toLocaleLowerCase();
 	const filtered = doc.segments.filter(s=>matchesReadingSegment(s,doc,query));
  const searchMatches=query?Coconut.searchDocument(doc,query):null;
+ const translationReveal=!query&&libraryTranslationReveal?.doc===doc&&doc.translation_view===libraryTranslationReveal.hit.language&&Coconut.libraryTranslationHitCurrent(libraryTranslationReveal.hit,state.documents)?libraryTranslationReveal.hit:null;
 	// Clamp after removing the last matching note/excerpt on a later page.
 	pageStart = Math.min(pageStart, Math.max(0, Math.floor((filtered.length - 1) / PAGE_SIZE) * PAGE_SIZE));
 	const visible = filtered.slice(pageStart, pageStart + PAGE_SIZE);
@@ -2302,7 +2353,7 @@ function render({keepNoteEditor=false,reuseLibraryMetadata=false}={}) {
 		body.className="segment-content";
   const parallel=el("div","parallel-text");
   parallel.append(highlightedText("p", "words", s.text, query, searchMatches?.byCue.get(s.id)?.text||[]));
-        if(translated) parallel.append(highlightedText("p", "translation"+(!Coconut.translationCurrent(s,doc,translated)?" stale":""), Coconut.translationCurrent(s,doc,translated) ? translated.text : "原文或上下文已变化，或旧译文缺少上下文记录，可核对／修正此译文或重新生成", query, searchMatches?.byCue.get(s.id)?.translations[doc.translation_view]||[]));
+        if(translated) parallel.append(highlightedText("p", "translation"+(!Coconut.translationCurrent(s,doc,translated)?" stale":""), Coconut.translationCurrent(s,doc,translated) ? translated.text : "原文或上下文已变化，或旧译文缺少上下文记录，可核对／修正此译文或重新生成", query||(translationReveal?.id===s.id?'translation match':''), translationReveal?.id===s.id?[translationReveal.firstRange]:searchMatches?.byCue.get(s.id)?.translations[doc.translation_view]||[]));
   const textHit=searchMatches?.byCue.get(s.id)?.phrases.text;
   if(textHit?.cueCount>1)body.append(phrasePreview(textHit));
   for(const [language,ranges] of Object.entries(searchMatches?.byCue.get(s.id)?.translations||{})){
@@ -3927,12 +3978,13 @@ function renderPassages(doc,excerptIndex=readingExcerptIndex(doc)){
 // Fixed playback/feedback panels are outside the browser's native focus viewport.
 // Only a real Tab move may reveal a passage action; receipts and layout changes
 // never scroll. Defer once so native focus scrolling has settled first.
-// Shelf checkbox focus owns its exact card identity. Move only the shelf's
-// bounded scrollport, after a real Tab, never from save receipts or checkbox edits.
+// Shelf selection and translation controls own their exact card identity.
+// Move only the shelf scrollport after keyboard focus or explicit hit paging,
+// never from save receipts or unrelated background renders.
 function revealLibrarySelectionFocus(target,card,revision) {
- const host=$('library-list');
- if(revision!==libraryFocusRevealRevision||!librarySelectionMode||document.activeElement!==target||!target.isConnected||!target.matches(':focus-visible')||target.disabled||libraryCards.get(card?.doc.key)!==card||card?.select!==target||!state.documents.includes(card.doc)||pendingStructuralDocuments.has(card.doc.key))return;
- const label=card.selectLabel,rect=target.getBoundingClientRect(),labelRect=label.getBoundingClientRect(),area=host.getBoundingClientRect(),style=getComputedStyle(target);
+ const host=$('library-list'),translation=target.matches('.library-translation-hit, .library-translation-pagination button');
+ if(revision!==libraryFocusRevealRevision||(!translation&&!librarySelectionMode)||document.activeElement!==target||!target.isConnected||!target.matches(':focus-visible')||target.disabled||libraryCards.get(card?.doc.key)!==card||(translation?!card?.translationHits?.contains(target):card?.select!==target)||!state.documents.includes(card.doc)||pendingStructuralDocuments.has(card.doc.key))return;
+ const label=translation?target:card.selectLabel,rect=target.getBoundingClientRect(),labelRect=label.getBoundingClientRect(),area=host.getBoundingClientRect(),style=getComputedStyle(target);
  if(!rect.width||!rect.height||!area.width||!area.height||label.hidden)return;
  const ring=(parseFloat(style.outlineWidth)||0)+Math.max(0,parseFloat(style.outlineOffset)||0);
  const bounds={left:Math.min(labelRect.left,rect.left-ring),right:Math.max(labelRect.right,rect.right+ring),top:Math.min(labelRect.top,rect.top-ring),bottom:Math.max(labelRect.bottom,rect.bottom+ring)};
@@ -3962,8 +4014,8 @@ document.addEventListener('keyup',event=>{if(event.key==='Tab')passageActionTab=
 document.addEventListener('pointerdown',()=>{passageActionTab=false;libraryFocusRevealRevision++;},true);
 document.addEventListener('focusin',event=>{
  const target=event.target,keyboard=passageActionTab;passageActionTab=false;
- if(!keyboard||!target.matches?.('.passage-actions button, .passage-actions a, .segment .reading-excerpt-open, .library-select')||!target.matches(':focus-visible'))return;
- if(target.classList.contains('library-select')){
+ if(!keyboard||!target.matches?.('.passage-actions button, .passage-actions a, .segment .reading-excerpt-open, .library-select, .library-translation-hit, .library-translation-pagination button')||!target.matches(':focus-visible'))return;
+ if(target.matches('.library-select, .library-translation-hit, .library-translation-pagination button')){
   const card=libraryCards.get(target.closest('.library-entry')?.dataset.documentKey),revision=libraryFocusRevealRevision;
   requestAnimationFrame(()=>revealLibrarySelectionFocus(target,card,revision));return;
  }

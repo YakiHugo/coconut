@@ -18,11 +18,11 @@ Next/previous result navigation, source-order pagination, real timestamps and th
 
 The same cue-membership predicate feeds visible results, AI count/plan controls and filtered source selection. Only contributing cues that pass the existing metadata filters become filtered sources. Search introduces no requests, auto-translation, model use or new consent. Existing request plans, approved context rules, immutable in-flight selections and consent-withdrawal behavior are unchanged. Matched translations/notes are not substituted for the original text in question requests.
 
-Bookcase “title, original and notes” search also finds cross-cue original phrases with bounded previews and exact source destinations. It deliberately retains its existing original/notes scope; saved translations are searched inside the document. Project notes, bookmarks and individual notes remain separate fields.
+Bookcase “title, original and notes” search also finds cross-cue original phrases with bounded previews and exact source destinations. It deliberately retains its existing original/notes scope. The separate bookcase “译文” scope searches every currently valid saved language; see [library translation search](library-translations-search.md). Project notes, bookmarks and individual notes remain separate fields.
 
 ## Index lifecycle and cost
 
-`CoconutPassages.searchIndex` validates and indexes complete source-backed runs once, retaining verbatim joined text, folded text and cue-offset spans. `Coconut.searchDocument(doc, query)` caches that index by document identity and retains only the latest reading and original-only query result. Display-language, note, bookmark and excerpt changes do not rebuild source streams.
+`CoconutPassages.searchIndex` validates and indexes complete source-backed runs once, retaining verbatim joined text, folded text and cue-offset spans. `Coconut.searchDocument(doc, query)` caches that index by document identity and retains only the latest reading, original-only and translation-only query result. Display-language, note, bookmark and excerpt changes do not rebuild source streams.
 
 `Coconut.invalidateSearch(doc)` must be called after an in-place change to source text/timing/order/speaker, translations, translation contexts or glossary evidence, before any render or scoped AI membership check. Actual application hooks are:
 

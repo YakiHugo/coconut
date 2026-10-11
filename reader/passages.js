@@ -145,7 +145,7 @@
   * paragraph/page caps do not break a phrase; actual source gaps always do.
   * Offsets point into verbatim UTF-16 cue text; separator characters own no cue.
   * The caller owns invalidation when source or translation evidence changes.
-  * Only the last reading and original-only query results are retained. No sliding windows or per-cue joins.
+  * Only the last reading, original-only and translation-only query results are retained. No sliding windows or per-cue joins.
   * Steps yield after bounded cue/span/character work; callers may stop by closing
   * the iterator. Only a completed build/query publishes a result. Whole-run
   * join/lowercasing and individual cue access remain atomic; this is not a hard
@@ -173,7 +173,7 @@
   yield* add('text',cue=>cue.text);for(const [language,getText] of translations)yield* add('translation',getText,language);
   const results=new Map();
   const index={stats:Object.freeze({runs:runs.length,characters,spans:spanCount}),search(query,scope='all'){return drain(index.searchSteps(query,scope));},*searchSteps(query,scope='all'){
-   scope=scope==='text'?'text':'all';const cached=results.get(scope);
+   scope=['text','translations'].includes(scope)?scope:'all';const cached=results.get(scope);
    if(query===cached?.input)return cached.result;
    const needle=query.trim().toLocaleLowerCase();
    if(needle===cached?.query){cached.input=query;return cached.result;}
@@ -181,7 +181,7 @@
    const entryFor=span=>{let entry=byCue.get(span.cue.id);if(!entry){entry={text:[],translations:Object.create(null),phrases:Object.create(null)};byCue.set(span.cue.id,entry);}return entry;};
    let processedRuns=0;
    if(needle)for(const run of runs){
-    if(scope==='text'&&run.field!=='text')continue;
+    if(scope==='text'&&run.field!=='text'||scope==='translations'&&run.field!=='translation')continue;
     let firstSpan=0,lastSpan=0,nextPhraseSpan=0,highlightSpan=0,unionStart=-1,unionEnd=-1;
     const fieldKey=run.field+(run.language?':'+run.language:'');
     function* flushHighlight(){
@@ -210,7 +210,7 @@
      const assignFrom=Math.max(nextPhraseSpan,firstSpan);
      if(needsPreview||count>1&&assignFrom<lastSpan){
       const first=firstSpan,last=lastSpan;let ids;
-      const hit={field:run.field,language:run.language,id:run.spans[first].cue.id,lastId:run.spans[last-1].cue.id,cueCount:count,
+      const hit={field:run.field,language:run.language,id:run.spans[first].cue.id,lastId:run.spans[last-1].cue.id,cueCount:count,firstRange:{start:Math.max(0,start-run.spans[first].start),end:Math.min(run.spans[first].end,end)-run.spans[first].start},
        get ids(){return ids??=run.spans.slice(first,last).map(span=>span.cue.id);},snippet:rangeSnippet(run.text,start,end)};
       if(needsPreview)previews.set(key,hit);
       if(count>1){for(let position=assignFrom;position<last;position++){entryFor(run.spans[position]).phrases[fieldKey]=hit;if((position+1)%128===0)yield;}nextPhraseSpan=last;}

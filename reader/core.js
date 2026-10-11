@@ -528,7 +528,7 @@
  }
  function libraryHits(doc,query,scope='title',limit=3) {
   if(isReadingCollection(doc))return [];
-  if(!query.trim()||scope==='title')return [];
+  if(!query.trim()||scope==='title'||scope==='translations')return [];
   const hits=[],cap=Math.max(0,Math.min(10,Math.floor(limit)||0));
   const add=(kind,id,text,time)=>{if(hits.length>=cap||(kind!=='text'&&!hasNoteContent(text)))return;const snippet=librarySnippet(text,query);if(snippet)hits.push({kind,id,time,snippet});};
   add('project-note',null,doc.project_note);
@@ -580,9 +580,44 @@
   const match=yield* libraryMatchSteps(doc,query,kind,scope);
   const audio=isAudioProject(doc);
   // A rejected kind must not be admitted just because a saved field matches.
-  if(kind==='audio'&&!audio||kind==='transcript'&&audio||kind==='annotated'&&!exactExcerptCount(doc)&&!match)return {match,saved:{hits:[],total:0}};
+  if(kind==='audio'&&!audio||kind==='transcript'&&audio||kind==='annotated'&&!exactExcerptCount(doc)&&!match)return {match,saved:{hits:[],total:0},translations:[]};
   const saved=yield* librarySavedHitSteps(doc,query,scope);
-  return {match:match||saved.total>0,saved};
+  const translations=scope==='translations'&&query.trim()?yield* libraryTranslationHitSteps(doc,query):[];
+  return {match:match||saved.total>0,saved,translations};
+ }
+ // Live translation hits belong to a completed source snapshot. Languages are
+ // independent fields, and each starting cue appears once per language. Keep
+ // every preview for paging, but construct the groups cooperatively, never at
+ // render time. These transient references do not change the storage schema.
+ const libraryTranslationOwners=new WeakMap();
+ function* libraryTranslationHitSteps(doc,query){
+  const result=yield* searchDocumentSteps(doc,query,'translations'),groups=new Map(),evidence=searchIndexes.get(doc).translationEvidence;let work=0;
+  for(const preview of result.previews.values()){
+   const language=preview.language,contributions=evidence.get(language),first=contributions.get(preview.id),last=contributions.get(preview.lastId),{cue,index,item}=first;
+   let group=groups.get(language);if(!group){group={language,hits:[],positions:new Map()};groups.set(language,group);}
+   // Bound the source context by UTF-16 units without splitting a surrogate.
+   let end=Math.min(120,first.sourceText.length);if(end<first.sourceText.length&&/[\uD800-\uDBFF]/.test(first.sourceText[end-1]))end--;
+   const hit={kind:'translation',id:cue.id,language,time:first.start,snippet:preview.snippet,cueCount:preview.cueCount,
+    source:first.sourceText.slice(0,end)+(end<first.sourceText.length?'…':''),lastId:preview.lastId,firstRange:preview.firstRange};
+   libraryTranslationOwners.set(hit,{doc,key:doc.key,language:doc.language,cue,index,item,first,last,contributions,segments:doc.segments,revision:searchRevision});group.positions.set(hit.id,group.hits.length);group.hits.push(hit);
+   if(++work%128===0)yield;
+  }
+  return [...groups.values()];
+ }
+ function libraryTranslationHitCurrent(hit,documents){
+  const owner=libraryTranslationOwners.get(hit);if(!owner||owner.revision!==searchRevision||!documents.includes(owner.doc))return false;
+  const {doc,cue,index,item,first}=owner;
+  return doc.key===owner.key&&doc.language===owner.language&&doc.segments===owner.segments&&doc.segments[index]===cue&&cue.id===hit.id&&cue.text===first.sourceText&&item.text===first.text&&cue.translations?.[hit.language]===item&&translationCurrent(cue,doc,item);
+ }
+ function* libraryTranslationHitCurrentSteps(hit,documents){
+  if(!libraryTranslationHitCurrent(hit,documents))return false;
+  const owner=libraryTranslationOwners.get(hit),{doc,contributions,first,last}=owner;
+  for(let index=first.index;index<=last.index;index++){
+   const cue=doc.segments[index],saved=contributions.get(cue?.id),item=cue?.translations?.[hit.language];
+   if(!saved||saved.index!==index||saved.cue!==cue||saved.item!==item||saved.text!==item.text||saved.sourceText!==cue.text||saved.start!==cue.start||saved.end!==cue.end||saved.speaker!==(cue.speaker??null)||!translationCurrent(cue,doc,item))return false;
+   if((index-first.index+1)%128===0)yield;
+  }
+  return libraryTranslationHitCurrent(hit,documents);
  }
  // A bounded, best-effort view preference. Never serialize document content.
  // Read before each write so ordinary alternating windows retain each other's
@@ -638,7 +673,7 @@
    return live.length===job.documents.length&&live.every((doc,i)=>doc===job.documents[i]&&doc.segments===job.shapes[i][0]&&doc.segments.length===job.shapes[i][1]&&doc.language===job.shapes[i][2]&&doc.translation_contexts===job.shapes[i][3]&&doc.translation_glossary===job.shapes[i][4]&&doc.exact_excerpts===job.shapes[i][5]&&doc.exact_excerpts?.length===job.shapes[i][6]&&doc.exact_excerpt_notes===job.shapes[i][7]);
   };
   const valid=job=>current===job&&job.generation===generation&&job.revision===getRevision()&&job.sourceRevision===searchRevision&&sameDocuments(job);
-  function retire(job){if(job?.operation){job.operation.return();job.operation=null;}if(job){job.buildingSaved?.clear();job.matches=[];}}
+  function retire(job){if(job?.operation){job.operation.return();job.operation=null;}if(job){job.buildingSaved?.clear();job.buildingTranslations?.clear();job.matches=[];}}
   function request(query,kind='all',scope='title',order='recent',refreshOrder=false) {
    const signature=JSON.stringify([query,kind,scope,order]);
    if(current?.signature===signature&&valid(current)){
@@ -650,13 +685,18 @@
    retire(current);
    const documents=getDocuments().filter(doc=>!isReadingCollection(doc));
    const job={generation:++generation,signature,revision:getRevision(),sourceRevision:searchRevision,documents,
-    shapes:documents.map(doc=>[doc.segments,doc.segments.length,doc.language,doc.translation_contexts,doc.translation_glossary,doc.exact_excerpts,doc.exact_excerpts?.length,doc.exact_excerpt_notes]),pending:false,scanned:0,docs:[],matches:[],savedHits:new Map(),buildingSaved:new Map()};
+    shapes:documents.map(doc=>[doc.segments,doc.segments.length,doc.language,doc.translation_contexts,doc.translation_glossary,doc.exact_excerpts,doc.exact_excerpts?.length,doc.exact_excerpt_notes]),pending:false,scanned:0,docs:[],matches:[],savedHits:new Map(),buildingSaved:new Map(),translationHits:new Map(),buildingTranslations:new Map()};
    current=job;
    let cues=0;
    const expensive=kind==='annotated'||Boolean(query.trim()&&scope!=='title');
    let characters=0;
    if(expensive)for(const doc of documents){
     cues+=doc.segments.length+(doc.exact_excerpts?.length||0);if(cues>4000)break;
+    if(query.trim()&&(scope==='text'||scope==='translations'))for(const cue of doc.segments){
+     characters+=cue.text.length;for(const item of Object.values(cue.translations||{})){characters+=item.text.length;cues++;}
+     if(characters>65536||cues>4000)break;
+    }
+    if(characters>65536||cues>4000)break;
     // Lengths are cheap; a single giant saved field must enter the scheduler.
     if(query.trim()&&scope!=='title')for(const record of doc.exact_excerpts||[]){
      characters+=(scope==='text'?record.text.length+(record.version===2?record.translation.text.length:0):0)+exactExcerptNote(doc,record.id).length;if(characters>65536)break;
@@ -664,7 +704,7 @@
     if(characters>65536)break;
    }
    job.pending=expensive&&(documents.length>160||cues>4000||characters>65536);
-   function finish(){job.docs=sortedLibrary(job.matches,order,undefined,getDuration);job.savedHits=job.buildingSaved;job.buildingSaved=new Map();job.matches=[];job.pending=false;}
+   function finish(){job.docs=sortedLibrary(job.matches,order,undefined,getDuration);job.savedHits=job.buildingSaved;job.buildingSaved=new Map();job.translationHits=job.buildingTranslations;job.buildingTranslations=new Map();job.matches=[];job.pending=false;}
    function step(){
     if(!valid(job)){
      // Content may change without a shelf render (e.g. a background import).
@@ -677,7 +717,7 @@
      job.operation??=librarySelectionSteps(doc,query,kind,scope);
      const result=job.operation.next();
      if(result.done){
-      if(result.value.match){job.matches.push(doc);job.buildingSaved.set(doc,result.value.saved);}
+      if(result.value.match){job.matches.push(doc);job.buildingSaved.set(doc,result.value.saved);job.buildingTranslations.set(doc,result.value.translations);}
       job.operation=null;job.scanned++;count++;
      }
      if(++work>=workSize||count>=batchSize||now()-started>=budgetMs)break;
@@ -687,7 +727,7 @@
     if(job.pending&&current===job)schedule(step);
    }
    if(job.pending)schedule(step);
-   else{for(const doc of documents){const result=drainSearch(librarySelectionSteps(doc,query,kind,scope));if(result.match){job.matches.push(doc);job.buildingSaved.set(doc,result.saved);}}job.scanned=documents.length;finish();}
+   else{for(const doc of documents){const result=drainSearch(librarySelectionSteps(doc,query,kind,scope));if(result.match){job.matches.push(doc);job.buildingSaved.set(doc,result.saved);job.buildingTranslations.set(doc,result.translations);}}job.scanned=documents.length;finish();}
    return job;
   }
   return {request,isCurrent:job=>Boolean(job)&&valid(job),cancel(){retire(current);generation++;current=null;}};
@@ -712,7 +752,7 @@
    }
    if(!annotated)return false;
   }
-  let match=matches(doc.title);
+  let match=!needle||scope!=='translations'&&matches(doc.title);
   if(!match&&(scope==='notes'||scope==='text')){
    const matchesNote=value=>hasNoteContent(value)&&matches(value);
    match=matchesNote(doc.project_note);
@@ -724,7 +764,7 @@
    }
   }
   // Also warm title/note-hit previews here, before the completed shelf paints.
-  if(scope==='text'&&needle){const result=yield* searchDocumentSteps(doc,query,'text');match=match||result.byCue.size>0;}
+  if((scope==='text'||scope==='translations')&&needle){const result=yield* searchDocumentSteps(doc,query,scope);match=match||result.byCue.size>0;}
   return match;
  }
  function searchDocument(doc,query,scope='all') {return drainSearch(searchDocumentSteps(doc,query,scope));}
@@ -732,15 +772,19 @@
   let cache=searchIndexes.get(doc);
   if(!cache||cache.segments!==doc.segments||cache.length!==doc.segments.length||cache.language!==(doc.language||'')||cache.contexts!==doc.translation_contexts||cache.glossary!==doc.translation_glossary){
    const passages=typeof module!=="undefined"&&module.exports?require('./passages.js'):root.CoconutPassages;
-   const languages=new Set();
+   const languages=new Set(),positions=new Map();
    for(let i=0;i<doc.segments.length;i++){
-    for(const language of Object.keys(doc.segments[i].translations||{}))languages.add(language);
+    positions.set(doc.segments[i],i);for(const language of Object.keys(doc.segments[i].translations||{}))languages.add(language);
     if((i+1)%128===0)yield;
    }
-   const translations=new Map([...languages].map(language=>[language,cue=>{const item=cue.translations?.[language];return translationCurrent(cue,doc,item)?item.text:null;}]));
-   cache={segments:doc.segments,length:doc.segments.length,language:doc.language||'',contexts:doc.translation_contexts,glossary:doc.translation_glossary,index:yield* passages.searchIndexSteps(doc.segments,translations)};searchIndexes.set(doc,cache);
+   const translationEvidence=new Map([...languages].map(language=>[language,new Map()]));
+   const translations=new Map([...languages].map(language=>[language,cue=>{
+    const item=cue.translations?.[language];if(!translationCurrent(cue,doc,item))return null;
+    translationEvidence.get(language).set(cue.id,{cue,index:positions.get(cue),item,text:item.text,sourceText:cue.text,start:cue.start,end:cue.end,speaker:cue.speaker??null});return item.text;
+   }]));
+   cache={segments:doc.segments,length:doc.segments.length,language:doc.language||'',contexts:doc.translation_contexts,glossary:doc.translation_glossary,translationEvidence,index:yield* passages.searchIndexSteps(doc.segments,translations)};searchIndexes.set(doc,cache);
   }
-  return yield* cache.index.searchSteps(query,scope==='text'?'text':'all');
+  return yield* cache.index.searchSteps(query,scope);
  }
  let lastSearchQuery='',lastSearchNeedle='';
  function searchNeedle(query){if(query!==lastSearchQuery){lastSearchQuery=query;lastSearchNeedle=query.trim().toLocaleLowerCase();}return lastSearchNeedle;}
@@ -1860,7 +1904,7 @@
 	function parse(text, filename) {
 		return parseWithDiagnostics(text, filename).document;
 	}
-	const api = { createSourceCorrectionPreview, applySourceCorrectionPreview, undoSourceCorrection, parsePastedSubtitles, subtitleEncodings, decodeSubtitleBytes, translationSelectionInfo, translationSelectionModels, pairedExactExcerptSnapshot, exactExcerptTranslation, exactExcerptTranslationParts, normalizeReadingChapters, readingChapters, createReadingChapter, updateReadingChapter, readingChaptersWith, isReadingCollection, normalizeReadingCollection, createReadingCollection, collectionItemFromCapture, readingCollectionItemKey, readingCollectionItemState, readingCollectionMarkdown, SPEAKER_CORRECTION_LABEL_LIMIT, createSpeakerCorrectionPreview, applySpeakerCorrectionPreview, createLibraryBackupSelection, librarySavedHits, librarySavedHitCurrent, exactExcerptNote, exactExcerptNotesWith, exactExcerptRemoval, exactExcerptSnapshot, exactExcerptText, exactExcerptParts, exactExcerptSource, exactExcerptCount, exactExcerptDuplicate, exactExcerptFreshness, exactExcerptFreshnessBatch, exactExcerptState, exactExcerptStateBatch, createReadingRecency, createLibrarySearch, createLibraryNotebookSearch, libraryCaptureSteps, libraryCaptureCurrent, libraryCaptures, libraryNotebookMarkdown, mediaTiming, mediaTimingOffset, mediaTimingRange, localMediaSource, searchDocument, invalidateSearch, manualReviewSnapshot, manualReviewCurrent, saveManualTranslation, translationReviewQueue, hasNoteContent, segmentNoteCount, BACKUP_REVIEW_BYTES, SUBTITLE_IMPORT_BYTES, vttPayload, libraryHits, librarySnippet, hasProjectAnnotations, projectAnnotationCount, attachProjectTranscript, libraryMatches, documentDuration, sortedLibrary, AUDIO_NOTE_BUDGET, audioNoteCharacters, isAudioProject, audioProjectIdentity, podcastMediaIdentity, SUMMARY_QUESTION, summaryReadiness, podcastURL, podcastSource, cleanGlossary, relevantGlossary, translationQualityMessage, retainAnswers, summaryFreshness, latestSummary, summaryMarkdown, aiReadingMarkdown, parseReadingTime, createPlaybackIndex, segmentAtTime, transcriptText, subtitleExport, mergeLibraryBackup, time, source, media, validate, parse, parseWithDiagnostics, matchesSegment, notebookSegments, notebookMarkdown, translationCurrent, sameCueSnapshot, subscriptionPlan, cleanContexts, answerFreshness };
+	const api = { createSourceCorrectionPreview, applySourceCorrectionPreview, undoSourceCorrection, parsePastedSubtitles, subtitleEncodings, decodeSubtitleBytes, translationSelectionInfo, translationSelectionModels, pairedExactExcerptSnapshot, exactExcerptTranslation, exactExcerptTranslationParts, normalizeReadingChapters, readingChapters, createReadingChapter, updateReadingChapter, readingChaptersWith, isReadingCollection, normalizeReadingCollection, createReadingCollection, collectionItemFromCapture, readingCollectionItemKey, readingCollectionItemState, readingCollectionMarkdown, SPEAKER_CORRECTION_LABEL_LIMIT, createSpeakerCorrectionPreview, applySpeakerCorrectionPreview, createLibraryBackupSelection, librarySavedHits, librarySavedHitCurrent, libraryTranslationHitCurrent, libraryTranslationHitCurrentSteps, exactExcerptNote, exactExcerptNotesWith, exactExcerptRemoval, exactExcerptSnapshot, exactExcerptText, exactExcerptParts, exactExcerptSource, exactExcerptCount, exactExcerptDuplicate, exactExcerptFreshness, exactExcerptFreshnessBatch, exactExcerptState, exactExcerptStateBatch, createReadingRecency, createLibrarySearch, createLibraryNotebookSearch, libraryCaptureSteps, libraryCaptureCurrent, libraryCaptures, libraryNotebookMarkdown, mediaTiming, mediaTimingOffset, mediaTimingRange, localMediaSource, searchDocument, invalidateSearch, manualReviewSnapshot, manualReviewCurrent, saveManualTranslation, translationReviewQueue, hasNoteContent, segmentNoteCount, BACKUP_REVIEW_BYTES, SUBTITLE_IMPORT_BYTES, vttPayload, libraryHits, librarySnippet, hasProjectAnnotations, projectAnnotationCount, attachProjectTranscript, libraryMatches, documentDuration, sortedLibrary, AUDIO_NOTE_BUDGET, audioNoteCharacters, isAudioProject, audioProjectIdentity, podcastMediaIdentity, SUMMARY_QUESTION, summaryReadiness, podcastURL, podcastSource, cleanGlossary, relevantGlossary, translationQualityMessage, retainAnswers, summaryFreshness, latestSummary, summaryMarkdown, aiReadingMarkdown, parseReadingTime, createPlaybackIndex, segmentAtTime, transcriptText, subtitleExport, mergeLibraryBackup, time, source, media, validate, parse, parseWithDiagnostics, matchesSegment, notebookSegments, notebookMarkdown, translationCurrent, sameCueSnapshot, subscriptionPlan, cleanContexts, answerFreshness };
 	if (typeof module !== "undefined" && module.exports) module.exports = api;
 	else root.Coconut = api;
 })(typeof window !== "undefined" ? window : globalThis);
