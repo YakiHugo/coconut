@@ -112,7 +112,11 @@ test('combined autosave receipts and cooperative shelf completion cannot drive f
  const env=setup();try{const m=await media(env),{$,w,tick,scrolls,pipeline,shelfTasks}=env;
  await w.flushContentForTest();await settle();w.followTest.seedShelf();
  $('library-scope').value='text';$('library-search').value='needle';$('library-search').oninput();
- assert.ok(shelfTasks.length);await m.player.play();enable(env);
+ assert.ok(shelfTasks.length);assert.equal($('library-search-dialog').open,true);
+ // The native modal makes background follow controls inert; return before resuming.
+ $('close-library-search').click();assert.equal($('library-search-dialog').open,false);
+ assert.ok(shelfTasks.length,'closing search does not settle the cooperative work under test');
+ await m.player.play();enable(env);assert.equal($('dock-follow').dataset.state,'following');
  const focused=w.document.activeElement,count=scrolls.length,first=w.document.querySelector('.segment');
  // A changed clock without a media event must not be consumed by background work.
  m.player.currentTime=500;pipeline.hold();w.followTest.doc().project_note='Saved background annotation';w.followTest.queue();

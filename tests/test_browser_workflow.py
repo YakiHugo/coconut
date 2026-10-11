@@ -65,7 +65,8 @@ class BrowserWorkflowTests(unittest.TestCase):
                          'chapter-markers-browser.mjs', 'subtitle-encoding-browser.mjs',
                          'pasted-subtitles-browser.mjs', 'source-corrections-browser.mjs',
                          'transcript-media-association-browser.mjs',
-                         'displayed-translation-exports-browser.mjs'):
+                         'displayed-translation-exports-browser.mjs',
+                         'wide-library-search-browser.mjs'):
             self.assertTrue((ROOT / 'tests' / filename).is_file())
             self.assertEqual([step['run'] for step in suites].count('node tests/' + filename), 1)
 
@@ -101,7 +102,8 @@ class BrowserWorkflowTests(unittest.TestCase):
                                  'displayed-exports-*.notes.md', 'displayed-exports-*.json',
                                  'passages-geometry.json', 'autosave-geometry.json',
                                  'playback-follow-geometry.json', 'playback-follow-scroll.json',
-                                 'compact-library-geometry.json', 'search-return-checks.json',
+                                 'compact-library-geometry.json', 'wide-library-search-checks.json',
+                                 'search-return-checks.json',
                                  'inline-excerpts-checks.json', 'chapter-markers-checks.json',
                                  'subtitle-encoding-checks.json', 'pasted-subtitles-checks.json',
                                  'source-corrections-checks.json',

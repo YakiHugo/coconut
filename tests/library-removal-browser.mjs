@@ -1,4 +1,4 @@
-import {openLibraryTools} from './helpers/library-tools-browser.mjs';
+import {openLibraryTools,openLibrarySearch,closeLibrarySearch} from './helpers/library-tools-browser.mjs';
 /** Real Chromium acceptance for authored local data; run in browser CI only. */
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
@@ -40,7 +40,8 @@ try{
  await page.waitForFunction(()=>!document.querySelector('.library-remove').hidden);
  check('organize_keyboard_reveals_removal',await page.locator('.library-remove').first().isVisible());
  check('organizing_does_not_squeeze_titles',await page.locator('.library-entry').evaluateAll(nodes=>nodes.every(node=>Math.abs(node.getBoundingClientRect().width-node.querySelector('.library-open').getBoundingClientRect().width)<1)));
- for(const [selector,label] of [['#add-content','desktop_add'],['#library-search','desktop_search'],['#library-options > summary','desktop_organize'],['#library-sort','desktop_sort'],['#library-kind','desktop_kind'],['#library-scope','desktop_scope'],['.library-entry:first-child .library-open','desktop_open'],['.library-entry:first-child .library-remove','desktop_remove']])await target(selector,label);
+ for(const [selector,label] of [['#add-content','desktop_add'],['#library-search','desktop_search'],['#library-options > summary','desktop_organize'],['#library-sort','desktop_sort'],['#library-kind','desktop_kind'],['.library-entry:first-child .library-open','desktop_open'],['.library-entry:first-child .library-remove','desktop_remove']])await target(selector,label);
+ await openLibrarySearch(page);await target('#library-scope','desktop_scope');await closeLibrarySearch(page);
  await page.setViewportSize({width:320,height:568});await openShelf();await openLibraryTools(page);
  check('small_mobile_long_titles_fit',await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
  for(const [selector,label] of [['#toggle-library','small_mobile_shelf'],['#library-options > summary','small_mobile_organize'],['.library-entry:first-child .library-open','small_mobile_open'],['.library-entry:first-child .library-remove','small_mobile_remove']])await target(selector,label);

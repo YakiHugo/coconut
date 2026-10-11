@@ -1,5 +1,5 @@
 import {openTranscriptTools} from './helpers/reading-tools-browser.mjs';
-import {openLibraryTools} from './helpers/library-tools-browser.mjs';
+import {openLibrarySearch} from './helpers/library-tools-browser.mjs';
 /** Real-browser acceptance, intended for CI or an explicitly approved browser
  * environment. Authored files and injected answers only; no model, CLI, media,
  * provider, external request or account is used. This file may be syntax-checked
@@ -32,11 +32,7 @@ async function screenshot(page, label) {
   await fs.mkdir(process.env.COCONUT_UI_SCREENSHOTS, {recursive: true});
   await page.screenshot({path: path.join(process.env.COCONUT_UI_SCREENSHOTS, 'phrase-search-' + label + '.png'), fullPage: false, animations: 'disabled'});
 }
-async function openLibrary(page, options = false) {
-  if (!await page.locator('#library-search').isVisible()) await page.locator('#toggle-library').click();
-  if(options)await openLibraryTools(page);
-  if (options && !await page.locator('#library-scope').isVisible()) await page.locator('.library-options > summary').click();
-}
+async function openLibrary(page, options = false) {await openLibrarySearch(page);}
 async function showLanguageTools(page) {
   if (!await page.locator('#language-panel').evaluate(node => node.open)) await page.locator('#language-panel > summary').click();
 }

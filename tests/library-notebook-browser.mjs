@@ -1,4 +1,4 @@
-import {openLibraryTools} from './helpers/library-tools-browser.mjs';
+import {openLibraryTools,openLibrarySearch,closeLibrarySearch} from './helpers/library-tools-browser.mjs';
 /** CI-only: authored captures, cooperative typing, downloads and narrow-screen source return. */
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
@@ -33,11 +33,10 @@ try{
  await page.keyboard.press('Escape');assert.equal(await page.locator('#library-notebook').evaluate(n=>n.open),false);
  if(!await page.locator('#open-library-notebook').isVisible())await page.locator('#toggle-library').click();await openLibraryTools(page);await page.locator('#open-library-notebook').click();await page.locator('#notebook-close').click();
  // Transcript-bearing project annotation search hits must reveal their editors.
- if(!await page.locator('#library-search').isVisible())await page.locator('#toggle-library').click();
- await openLibraryTools(page);await page.locator('#library-options').evaluate(node=>node.open=true);
+ await openLibrarySearch(page);
  await page.locator('#library-scope').selectOption('notes');await page.locator('#library-search').fill('Notebook needle');
  for(const kind of ['project-note','bookmark']){
-  if(!await page.locator('.library-hit[data-hit-kind="'+kind+'"]').isVisible())await page.locator('#toggle-library').click();
+  await openLibrarySearch(page);
   await page.locator('.library-hit[data-hit-kind="'+kind+'"]').click();
   const target=kind==='project-note'?page.locator('#project-note'):page.locator('#audio-bookmarks [data-bookmark-id="bookmark-64"] textarea');
   assert.ok(await target.isVisible());assert.ok(await target.evaluate(node=>node===document.activeElement));
@@ -62,16 +61,15 @@ try{
  const audioDoc={key:'authored-audio',title:'Authored recording',project_kind:'audio_only',local_media_source:{version:1,kind:'audio',name:'authored.wav',size:64,last_modified:7,type:'audio/wav',fingerprint:'a'.repeat(64)},segments:[],timestamp_bookmarks:[{id:'needle',time:90,note:'Find needle'}]};
  await audioPage.locator('#file').setInputFiles({name:'authored-audio.json',mimeType:'application/json',buffer:Buffer.from(JSON.stringify(audioDoc))});
  await audioPage.locator('#audio-project').waitFor({state:'visible'});
- if(!await audioPage.locator('#library-search').isVisible())await audioPage.locator('#toggle-library').click();
- await openLibraryTools(audioPage);await audioPage.locator('#library-options').evaluate(node=>node.open=true);
+ await openLibrarySearch(audioPage);
  await audioPage.locator('#library-scope').selectOption('notes');await audioPage.locator('#library-search').fill('needle');
  assert.match(await audioPage.locator('.library-hit').textContent(),/01:30/);
- await audioPage.locator('#audio-bookmark-search').fill('01:30');
+ await closeLibrarySearch(audioPage);await audioPage.locator('#audio-bookmark-search').fill('01:30');
  await audioPage.locator('.edit-bookmark-time').click();await audioPage.locator('#audio-bookmarks form input').fill('180');
  await audioPage.getByRole('button',{name:'保存时间',exact:true}).click();
- assert.match(await audioPage.locator('.library-hit').textContent(),/03:00/);
  assert.match(await audioPage.locator('#audio-bookmark-results').textContent(),/找到 0 \/ 1/);
  assert.ok(await audioPage.locator('#audio-bookmark-search').evaluate(node=>node===document.activeElement));
+ await openLibrarySearch(audioPage);assert.match(await audioPage.locator('.library-hit').textContent(),/03:00/);await closeLibrarySearch(audioPage);
  await audioPage.locator('#audio-bookmark-search').fill('needle');
  await audioPage.evaluate(()=>{
   const describe=node=>node?{tag:node.tagName,id:node.id||'',inBookmark:!!node.closest?.('#audio-bookmarks section')}:null;

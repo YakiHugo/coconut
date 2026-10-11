@@ -108,7 +108,7 @@ for(const direction of ['down','up','end','down-tight','up-tight'])test(`transla
  const doc=makeDoc();translate(doc,1,'de','needle Schild');const h=libraryHarness([doc],{probe:true}),{w,$}=h,frames=[],scrolls=[],globalScrolls=[];
  w.happyDOM.setViewport({width:1360,height:1000});w.requestAnimationFrame=fn=>{frames.push(fn);return frames.length;};w.scrollBy=options=>globalScrolls.push(options);w.scrollTo=options=>globalScrolls.push(options);
  try{
-  searchShelf($,'needle');const button=group(w,'de').querySelector('.library-translation-hit'),host=$('library-list'),initialTop=100;
+  searchShelf($,'needle');const button=group(w,'de').querySelector('.library-translation-hit'),host=$('library-search-results'),initialTop=100;
   host.scrollTop=initialTop;button.style.outline='2px solid black';button.style.outlineOffset='2px';
   Object.defineProperty(host,'clientHeight',{configurable:true,get:()=>729});Object.defineProperty(host,'clientTop',{configurable:true,get:()=>0});
   Object.defineProperty(host,'scrollHeight',{configurable:true,get:()=>Math.round((direction==='end'?829:1500)+(parseFloat(host.style.getPropertyValue('--library-keyboard-space'))||0))});

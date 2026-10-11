@@ -5,7 +5,7 @@ import path from 'node:path';
 import {chromium,waitForPersistedLibrary} from './helpers/browser-storage.mjs';
 import {authoredAudioFixture} from './helpers/authored-audio-fixture.mjs';
 import {largeLibraryFixture} from './helpers/large-library-fixture.mjs';
-import {openLibraryTools} from './helpers/library-tools-browser.mjs';
+import {openLibraryTools,closeLibrarySearch} from './helpers/library-tools-browser.mjs';
 import {compactShelfResultReady} from './helpers/compact-library-proof.mjs';
 import {startBridge} from '../desktop/server.mjs';
 let browser,server,page,stage='setup';const checks=[],geometry={},errors=[],responsive=[];let external=0,mutations=0;
@@ -13,7 +13,7 @@ const check=(name,value)=>{assert.ok(value,name);checks.push(name);};
 async function responsiveSnapshot(label){
  const state=await page.evaluate(()=>{
   const byId=id=>document.getElementById(id),focused=document.activeElement,search=byId('library-search'),rect=search?.getBoundingClientRect();
-  return {width:innerWidth,height:innerHeight,mobile:matchMedia('(max-width: 650px)').matches,toolsHidden:byId('library-tools')?.hidden,toolsOpen:byId('library-tools')?.open,expanded:byId('toggle-library')?.getAttribute('aria-expanded'),focused:focused?.id||focused?.tagName,searchFocused:focused===search,searchVisible:!!rect&&rect.width>0&&rect.height>0,searchRect:rect?{top:rect.top,bottom:rect.bottom,width:rect.width,height:rect.height}:null,query:search?.value,busy:byId('library')?.getAttribute('aria-busy'),pageStatus:byId('library-page-status')?.textContent};
+  return {width:innerWidth,height:innerHeight,mobile:matchMedia('(max-width: 650px)').matches,toolsHidden:byId('library-tools')?.hidden,toolsOpen:byId('library-tools')?.open,dialogOpen:byId('library-search-dialog')?.open,expanded:byId('toggle-library')?.getAttribute('aria-expanded'),focused:focused?.id||focused?.tagName,searchFocused:focused===search,searchVisible:!!rect&&rect.width>0&&rect.height>0,searchRect:rect?{top:rect.top,bottom:rect.bottom,width:rect.width,height:rect.height}:null,query:search?.value,busy:byId('library')?.getAttribute('aria-busy'),pageStatus:byId('library-page-status')?.textContent};
  });
  responsive.push({label,...state});return state;
 }
@@ -60,20 +60,24 @@ try{
  };
  stage='initial small-mobile full card';await page.locator('#title').focus();await open();await initialGeometry('initial');await screenshot('320-initial-500-full-card');
  check('tools_start_collapsed_and_page_count_honest',!await page.locator('#library-tools').evaluate(n=>n.open)&&/1–40.*500/.test(await page.locator('#library-page-status').textContent()));
- await page.locator('#library-search').focus();await page.keyboard.press('Escape');check('escape_returns_to_reader_title',await page.locator('#title').evaluate(n=>n===document.activeElement)&&await page.locator('#toggle-library').getAttribute('aria-expanded')==='false');
+ await page.locator('#library-search').focus();await page.keyboard.press('Escape');check('native_escape_closes_search_before_returning_from_sidebar',!await page.locator('#library-search-dialog').evaluate(n=>n.open)&&await page.locator('#library-search').evaluate(n=>n===document.activeElement));await page.keyboard.press('Escape');check('escape_returns_to_reader_title',await page.locator('#title').evaluate(n=>n===document.activeElement)&&await page.locator('#toggle-library').getAttribute('aria-expanded')==='false');
  await open();await page.locator('.library-open').first().click();check('current_document_returns_to_same_reader_anchor',await page.locator('#title').evaluate(n=>n===document.activeElement));
  check('current_document_preserves_real_media_identity_time_and_pause',await page.evaluate(()=>window.__compactPlayer===document.querySelector('#source-media audio')&&window.__compactPlayer.paused&&Math.abs(window.__compactPlayer.currentTime-6)<.1));
  stage='active document opens reading from Add';await page.locator('#add-content').click();await open();await page.locator('.library-open').first().click();
  check('active_document_from_add_opens_reader',await page.locator('#reader-workspace').isVisible()&&await page.locator('#title').evaluate(n=>n===document.activeElement));
  stage='target-owned Escape';await open();await page.locator('#library-search').focus();await page.evaluate(()=>document.getElementById('library-search').addEventListener('keydown',event=>event.preventDefault(),{once:true}));await page.keyboard.press('Escape');
- check('focused_control_can_prevent_Escape',await page.locator('#toggle-library').getAttribute('aria-expanded')==='true');await page.keyboard.press('Escape');
+ check('focused_control_can_prevent_Escape',await page.locator('#library-search-dialog').evaluate(n=>n.open));await page.keyboard.press('Escape');
  stage='desktop focused search enters mobile from closed toggle';await responsiveSnapshot('distinct-before-desktop');await page.setViewportSize({width:1360,height:1000});await waitForArrangement(false);await responsiveSnapshot('distinct-desktop-arranged');
- await page.locator('#library-search').focus();const desktopFocus=await responsiveSnapshot('distinct-desktop-focused');check('distinct_transition_establishes_visible_desktop_search_focus',desktopFocus.searchFocused&&desktopFocus.searchVisible&&!desktopFocus.mobile&&desktopFocus.toolsHidden);
+ // Native cancel returned focus to this same input. Calling focus() again does
+ // not emit another focus event; a real pointer entry must reopen before resize.
+ await page.locator('#library-search').click();await page.waitForFunction(()=>document.getElementById('library-search-dialog').open);
+ const desktopFocus=await responsiveSnapshot('distinct-desktop-focused');check('distinct_transition_establishes_visible_desktop_search_focus',desktopFocus.searchFocused&&desktopFocus.searchVisible&&!desktopFocus.mobile&&desktopFocus.toolsHidden);
+ check('distinct_pointer_reopens_already_focused_input_before_resize',desktopFocus.dialogOpen);
  await page.setViewportSize({width:320,height:568});await responsiveSnapshot('distinct-mobile-requested');await waitForArrangement(true);
- await page.waitForFunction(()=>document.getElementById('toggle-library').getAttribute('aria-expanded')==='true');
+ await page.waitForFunction(()=>document.getElementById('library-search-dialog').open);
  await responsiveSnapshot('distinct-mobile-arranged');
  check('resize_keeps_default_closed_desktop_search_visible',await page.locator('#library-search').isVisible()&&await page.locator('#library-search').evaluate(n=>n===document.activeElement));await page.keyboard.press('Escape');
- stage='query and last page';await open();await page.locator('#library-search').fill('最后一篇');await waitForShelfResult('最后一篇','shelf-499',1);await initialGeometry('query');check('search_reaches_document_500',await page.locator('.library-entry').getAttribute('data-document-key')==='shelf-499');await screenshot('320-query-document-500');
+ stage='query and last page';await open();await page.locator('#library-search').fill('最后一篇');await waitForShelfResult('最后一篇','shelf-499',1);await closeLibrarySearch(page);await initialGeometry('query');check('search_reaches_document_500',await page.locator('.library-entry').getAttribute('data-document-key')==='shelf-499');await screenshot('320-query-document-500');
  await page.locator('#library-search').fill('');await waitForShelfResult('','shelf-0',40);await openLibraryTools(page);
  for(const selector of ['#library-tools > summary','#library-page-number','#library-next','.library-backup > summary','#library-options > summary'])check(selector+'_44px',await page.locator(selector).evaluate(n=>n.getBoundingClientRect().height>=44));
  await page.locator('#library-page-number').fill('13');await page.locator('#library-page-number').press('Enter');
@@ -87,12 +91,12 @@ try{
   await page.setViewportSize({width:320,height:568});await page.waitForFunction(()=>!document.getElementById('library-tools').hidden);
   check('mobile_resize_preserves_open_state_focus_and_sort_'+i,await page.evaluate(()=>document.getElementById('library-tools').open&&document.querySelector('.library-backup').open&&document.getElementById('library-options').open&&document.activeElement===document.getElementById('library-sort')&&document.getElementById('library-sort').value==='title'));
  }
- await page.locator('#library-tools > summary').focus();await page.setViewportSize({width:1360,height:1000});await page.waitForFunction(()=>document.activeElement===document.getElementById('library-search'));
- check('desktop_resize_moves_mobile_only_summary_focus_to_search',await page.locator('#library-search').isVisible());await page.setViewportSize({width:320,height:568});await page.waitForFunction(()=>!document.getElementById('library-tools').hidden);
+ await page.locator('#library-tools > summary').focus();await page.setViewportSize({width:1360,height:1000});await page.waitForFunction(()=>document.activeElement===document.getElementById('open-library-search'));
+ check('desktop_resize_moves_mobile_only_summary_focus_to_visible_search_opener',await page.locator('#open-library-search').isVisible()&&!await page.locator('#library-search-dialog').evaluate(n=>n.open));await page.setViewportSize({width:320,height:568});await page.waitForFunction(()=>!document.getElementById('library-tools').hidden);
  stage='mobile close focus survives reverse desktop breakpoint';await page.locator('#toggle-library').focus();await responsiveSnapshot('reverse-close-mobile-focused');await page.setViewportSize({width:1360,height:1000});await waitForArrangement(false);
- await page.waitForFunction(()=>document.activeElement===document.getElementById('library-search'));await responsiveSnapshot('reverse-close-desktop-arranged');
- check('desktop_resize_moves_mobile_close_focus_to_visible_search',await page.locator('#library-search').isVisible());await page.setViewportSize({width:320,height:568});await waitForArrangement(true);
- stage='backup still downloads all documents';const pending=page.waitForEvent('download');await page.locator('#export-library').click();const download=await pending,backup=JSON.parse(await fs.readFile(await download.path(),'utf8'));check('complete_backup_of_500',backup.documents.length===500&&backup.documents.at(-1).title===docs.at(-1).title);
+ await page.waitForFunction(()=>document.activeElement===document.getElementById('open-library-search'));await responsiveSnapshot('reverse-close-desktop-arranged');
+ check('desktop_resize_moves_mobile_close_focus_to_visible_search_opener',await page.locator('#open-library-search').isVisible()&&!await page.locator('#library-search-dialog').evaluate(n=>n.open));await page.setViewportSize({width:320,height:568});await waitForArrangement(true);
+ stage='backup still downloads all documents';await openLibraryTools(page);const pending=page.waitForEvent('download');await page.locator('#export-library').click();const download=await pending,backup=JSON.parse(await fs.readFile(await download.path(),'utf8'));check('complete_backup_of_500',backup.documents.length===500&&backup.documents.at(-1).title===docs.at(-1).title);
  await page.locator('#library-tools > summary').click();await page.locator('#library-search').fill('最后一篇');await waitForShelfResult('最后一篇','shelf-499',1);await page.locator('.library-open').click();check('different_document_closes_pane_at_reader_target',await page.locator('#toggle-library').getAttribute('aria-expanded')==='false'&&await page.locator('#title').evaluate(n=>n===document.activeElement&&n.textContent.includes('最后一篇')));
  check('reader_media_remain_mounted_without_autoplay',await page.evaluate(()=>window.__compactReader===document.getElementById('reader-workspace')&&window.__compactMedia===document.getElementById('source-media')&&window.__compactPlays===0));
  // Preserve the rapid-crossing case separately. No intermediate arrangement
@@ -101,13 +105,13 @@ try{
  // Focus and capture scalars in the same browser call. An extra protocol turn
  // or explicit layout read here could deliver MQL events and hide coalescing.
  const rapidFocus=await page.locator('#library-search').evaluate(node=>{
-  node.focus();return {label:'rapid-desktop-focused',width:innerWidth,height:innerHeight,mobile:matchMedia('(max-width: 650px)').matches,toolsHidden:document.getElementById('library-tools').hidden,expanded:document.getElementById('toggle-library').getAttribute('aria-expanded'),focused:document.activeElement?.id||document.activeElement?.tagName,searchFocused:document.activeElement===node};
+  node.focus();return {label:'rapid-desktop-focused',width:innerWidth,height:innerHeight,mobile:matchMedia('(max-width: 650px)').matches,toolsHidden:document.getElementById('library-tools').hidden,dialogOpen:document.getElementById('library-search-dialog').open,expanded:document.getElementById('toggle-library').getAttribute('aria-expanded'),focused:document.activeElement?.id||document.activeElement?.tagName,searchFocused:document.activeElement===node};
  });
  await page.setViewportSize({width:320,height:568});
  responsive.push(rapidFocus);check('rapid_crossing_establishes_actual_desktop_search_focus',rapidFocus.searchFocused&&!rapidFocus.mobile&&rapidFocus.width===1360);await responsiveSnapshot('rapid-mobile-requested');
  // Let rendering deliver resize/MQL events, without substituting a time delay.
  await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));
- const rapidEnd=await responsiveSnapshot('rapid-mobile-rendered');check('rapid_crossing_retains_visible_search_focus',rapidEnd.mobile&&rapidEnd.searchFocused&&rapidEnd.searchVisible&&rapidEnd.expanded==='true');
+ const rapidEnd=await responsiveSnapshot('rapid-mobile-rendered');check('rapid_crossing_retains_visible_search_focus',rapidEnd.mobile&&rapidEnd.searchFocused&&rapidEnd.searchVisible&&rapidEnd.dialogOpen);
  check('no_external_mutations_or_page_errors',external===0&&mutations===0&&errors.length===0);
  await saveProof();
  console.log(JSON.stringify({checks,geometry},null,2));

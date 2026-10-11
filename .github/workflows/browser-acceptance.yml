@@ -173,6 +173,11 @@ jobs:
         env:
           COCONUT_UI_SCREENSHOTS: ${{ runner.temp }}/coconut-authored-ui
         run: node tests/library-translations-browser.mjs
+      - name: Verify native wide library search, exact return, IME, resize, top-layer focus and save recovery
+        if: ${{ !cancelled() && steps.browser_setup.outcome == 'success' }}
+        env:
+          COCONUT_UI_SCREENSHOTS: ${{ runner.temp }}/coconut-authored-ui
+        run: node tests/wide-library-search-browser.mjs
       - name: Verify 1,771-cue bilingual reading and recovery with authored fixtures
         if: ${{ !cancelled() && steps.browser_setup.outcome == 'success' }}
         env:
@@ -294,6 +299,7 @@ jobs:
             ${{ runner.temp }}/coconut-authored-ui/playback-follow-geometry.json
             ${{ runner.temp }}/coconut-authored-ui/playback-follow-scroll.json
             ${{ runner.temp }}/coconut-authored-ui/compact-library-geometry.json
+            ${{ runner.temp }}/coconut-authored-ui/wide-library-search-checks.json
             ${{ runner.temp }}/coconut-authored-ui/search-return-checks.json
             ${{ runner.temp }}/coconut-authored-ui/inline-excerpts-checks.json
             ${{ runner.temp }}/coconut-authored-ui/chapter-markers-checks.json

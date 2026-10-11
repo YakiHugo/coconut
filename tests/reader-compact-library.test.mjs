@@ -56,7 +56,7 @@ test('browser helper waits for delayed responsive ownership before a normal mobi
    if(node.id==='toggle-library')return w.matchMedia('(max-width: 650px)').matches;
    if(node.closest('#library-list')&&w.matchMedia('(max-width: 650px)').matches&&$('toggle-library').getAttribute('aria-expanded')!=='true')return false;
    for(let parent=node;parent;parent=parent.parentElement){
-    if(parent.hidden)return false;
+    if(parent.hidden||parent.localName==='dialog'&&!parent.open)return false;
     if(parent!==node&&parent.localName==='details'&&!parent.open&&!parent.querySelector(':scope > summary')?.contains(node))return false;
    }
    return true;
@@ -65,6 +65,7 @@ test('browser helper waits for delayed responsive ownership before a normal mobi
    const node=root.querySelector(selector);assert.ok(node,selector);
    return {
     async isVisible(){return visible(node);},async getAttribute(name){return node.getAttribute(name);},async evaluate(fn){return fn(node);},
+    async waitFor({state}){assert.equal(visible(node),state!=='hidden','native dialog ownership settles before waiting for the shelf');},
     locator(selector){return locator(selector,node);},
     async click(){assert.equal(visible(node),true,'ordinary click requires a visible entry');actions.push(node.id||node.parentElement.id+' > '+node.localName);node.click();}
    };
@@ -84,10 +85,24 @@ test('browser helper waits for delayed responsive ownership before a normal mobi
   // still open it with this ordinary click before using the unchanged controls.
  }finally{await w.happyDOM.close();}
 });
+test('management helper closes the native search before evaluating responsive tool ownership',async()=>{
+ const {w,$}=setup(false);try{
+  $('open-library-search').click();assert.equal($('library-search-dialog').open,true);assert.equal(libraryToolsLayoutReady(null,w.document),false);
+  const actions=[];
+  function locator(selector,root=w.document){const node=root.querySelector(selector);assert.ok(node);return {
+   async evaluate(fn){return fn(node);},async waitFor({state}){assert.equal(state,'hidden');assert.equal(node.open,false);actions.push('dialog-hidden');},
+   async isVisible(){return node.id==='toggle-library'?false:!node.hidden;},async getAttribute(name){return node.getAttribute(name);},locator(child){return locator(child,node);},
+   async click(){assert.equal(node,$('close-library-search'));actions.push('close-search');node.click();}
+  };}
+  await openLibraryTools({locator,async waitForFunction(predicate){assert.equal($('library-search-dialog').open,false);assert.equal(predicate(null,w.document),true);actions.push('layout-ready');}});
+  assert.deepEqual(actions,['close-search','dialog-hidden','layout-ready']);assert.equal($('library-list').contains($('library-pagination')),true);
+ }finally{await w.happyDOM.close();}
+});
+
 test('mobile close, Escape and current-document activation preserve live reader focus without navigation',async()=>{
  const {w,$}=setup();try{
   const title=$('title'),card=$('library').querySelector('.library-open');title.focus();$('toggle-library').click();
-  $('library-search').focus();$('library-search').dispatchEvent(new w.KeyboardEvent('keydown',{key:'Escape',bubbles:true,cancelable:true}));
+  card.focus();card.dispatchEvent(new w.KeyboardEvent('keydown',{key:'Escape',bubbles:true,cancelable:true}));
   assert.equal($('toggle-library').getAttribute('aria-expanded'),'false');assert.equal(w.document.activeElement,title);
   $('toggle-library').click();card.click();assert.equal(w.document.activeElement,title);assert.equal($('title'),title);
   $('toggle-library').click();$('toggle-library').click();assert.equal(w.document.activeElement,title);
@@ -95,17 +110,17 @@ test('mobile close, Escape and current-document activation preserve live reader 
 });
 test('Escape respects IME, prevented events and dialogs; stale reader origins cannot steal new focus',async()=>{
  const {w,$}=setup();try{
-  $('title').focus();$('toggle-library').click();$('library-search').focus();
-  for(const options of [{isComposing:true},{}]){const event=new w.KeyboardEvent('keydown',{key:'Escape',bubbles:true,cancelable:true,...options});if(!options.isComposing)event.preventDefault();$('library-search').dispatchEvent(event);assert.equal($('toggle-library').getAttribute('aria-expanded'),'true');}
-  $('library-notebook').setAttribute('open','');$('library-search').dispatchEvent(new w.KeyboardEvent('keydown',{key:'Escape',bubbles:true}));assert.equal($('toggle-library').getAttribute('aria-expanded'),'true');$('library-notebook').removeAttribute('open');
+  $('title').focus();$('toggle-library').click();$('library').querySelector('.library-open').focus();
+  for(const options of [{isComposing:true},{}]){const event=new w.KeyboardEvent('keydown',{key:'Escape',bubbles:true,cancelable:true,...options});if(!options.isComposing)event.preventDefault();$('library').querySelector('.library-open').dispatchEvent(event);assert.equal($('toggle-library').getAttribute('aria-expanded'),'true');}
+  $('library-notebook').setAttribute('open','');$('library').querySelector('.library-open').dispatchEvent(new w.KeyboardEvent('keydown',{key:'Escape',bubbles:true}));assert.equal($('toggle-library').getAttribute('aria-expanded'),'true');$('library-notebook').removeAttribute('open');
   const old=$('title');old.focus();$('toggle-library').click();$('toggle-library').click();
-  old.remove();$('library-search').focus();$('toggle-library').click();assert.notEqual(w.document.activeElement,old);
+  old.remove();$('library').querySelector('.library-open').focus();$('toggle-library').click();assert.notEqual(w.document.activeElement,old);
  }finally{await w.happyDOM.close();}
 });
 
-test('desktop focused tools, search and card stay visible when entering mobile from a collapsed toggle',async()=>{
+test('desktop focused tools and card stay visible when entering mobile from a collapsed toggle',async()=>{
  const {w,$,resize}=setup(false);try{
-  for(const control of [$('library-search'),$('library').querySelector('.library-open'),$('library-sort')]){
+  for(const control of [$('library').querySelector('.library-open'),$('library-sort')]){
    resize(false);$('toggle-library').setAttribute('aria-expanded','false');$('library-options').open=true;control.focus();resize(true);
    assert.equal($('toggle-library').getAttribute('aria-expanded'),'true');assert.equal(w.document.activeElement,control);
    if(control===$('library-sort'))assert.equal($('library-tools').open,true);
@@ -123,9 +138,9 @@ test('selecting the active document from Add opens reading rather than returning
 });
 test('a focused control owns prevented Escape before the library handler runs',async()=>{
  const {w,$}=setup();try{
-  $('toggle-library').click();$('library-search').focus();let called=false;
-  $('library-search').addEventListener('keydown',event=>{called=true;event.preventDefault();});
-  $('library-search').dispatchEvent(new w.KeyboardEvent('keydown',{key:'Escape',bubbles:true,cancelable:true}));
+  $('toggle-library').click();$('library').querySelector('.library-open').focus();let called=false;
+  $('library').querySelector('.library-open').addEventListener('keydown',event=>{called=true;event.preventDefault();});
+  $('library').querySelector('.library-open').dispatchEvent(new w.KeyboardEvent('keydown',{key:'Escape',bubbles:true,cancelable:true}));
   assert.equal(called,true);assert.equal($('toggle-library').getAttribute('aria-expanded'),'true');
  }finally{await w.happyDOM.close();}
 });
@@ -136,11 +151,11 @@ test('closing a programmatically opened empty shelf does not require a captured 
  }finally{await w.happyDOM.close();}
 });
 
-test('desktop transition moves focus from mobile-only close and tools summary to visible search',async()=>{
+test('desktop transition moves focus from mobile-only controls to visible search entry without opening it',async()=>{
  const {w,$,resize}=setup();try{
   for(const control of [$('toggle-library'),$('library-tools').querySelector('summary')]){
    resize(true);$('toggle-library').setAttribute('aria-expanded','true');control.focus();resize(false);
-   assert.equal($('library-tools').hidden,true);assert.equal(w.document.activeElement,$('library-search'));
+   assert.equal($('library-tools').hidden,true);assert.equal(w.document.activeElement,$('open-library-search'));assert.equal($('library-search-dialog').open,false);
   }
  }finally{await w.happyDOM.close();}
 });
@@ -160,21 +175,21 @@ test('browser proof waits for this query to finish and render the exact expected
  cards=[{dataset:{documentKey:expected.key}}];assert.equal(compactShelfResultReady(expected,root),true);
 });
 
-test('desktop shelf focus owns narrow visibility before delayed MQL delivery without changing caret',async()=>{
+test('wide search keeps visibility before delayed MQL delivery without changing caret',async()=>{
  const {w,$,setViewport,deliverChange}=setup(false);try{
   const search=$('library-search');assert.equal($('toggle-library').getAttribute('aria-expanded'),'false');
   search.value='authored query';search.focus();search.setSelectionRange(2,7,'forward');
-  assert.equal($('toggle-library').getAttribute('aria-expanded'),'true');
+  assert.equal($('library-search-dialog').open,true);
   setViewport(true); // CSS may apply now; the change callback has not run.
-  assert.equal($('toggle-library').getAttribute('aria-expanded'),'true');assert.equal(w.document.activeElement,search);
+  assert.equal($('library-search-dialog').open,true);assert.equal(w.document.activeElement,search);
   assert.equal(search.selectionStart,2);assert.equal(search.selectionEnd,7);
   deliverChange();assert.equal(w.document.activeElement,search);assert.equal(search.selectionStart,2);assert.equal(search.selectionEnd,7);
  }finally{await w.happyDOM.close();}
 });
 test('desktop reader navigation and explicit blur clear shelf ownership before narrowing',async()=>{
  const {w,$,setViewport,deliverChange}=setup(false);try{
-  for(const leave of [()=> $('title').focus(),()=> $('library-search').blur(),()=> $('add-content').click()]){
-   setViewport(false);deliverChange();$('library-search').focus();assert.equal($('toggle-library').getAttribute('aria-expanded'),'true');
+  for(const leave of [()=> $('title').focus(),()=> $('library').querySelector('.library-open').blur(),()=> $('add-content').click()]){
+   setViewport(false);deliverChange();$('library').querySelector('.library-open').focus();assert.equal($('toggle-library').getAttribute('aria-expanded'),'true');
    leave();const intended=w.document.activeElement;assert.equal($('toggle-library').getAttribute('aria-expanded'),'false');
    setViewport(true);deliverChange();assert.equal($('toggle-library').getAttribute('aria-expanded'),'false');assert.equal(w.document.activeElement,intended);
   }
@@ -183,16 +198,16 @@ test('desktop reader navigation and explicit blur clear shelf ownership before n
 test('rapid mobile desktop-focus mobile crossing does not require an MQL event to retain ownership',async()=>{
  const {w,$,setViewport,deliverChange}=setup();try{
   setViewport(false); // No callback: the browser may coalesce this transition.
-  $('library-search').focus();assert.equal($('toggle-library').getAttribute('aria-expanded'),'true');
-  setViewport(true);assert.equal($('toggle-library').getAttribute('aria-expanded'),'true');assert.equal(w.document.activeElement,$('library-search'));
-  $('toggle-library').click();assert.equal($('toggle-library').getAttribute('aria-expanded'),'false');const intended=w.document.activeElement;
-  deliverChange();assert.equal($('toggle-library').getAttribute('aria-expanded'),'false');assert.equal(w.document.activeElement,intended);
+  $('library-search').focus();assert.equal($('library-search-dialog').open,true);
+  setViewport(true);assert.equal($('library-search-dialog').open,true);assert.equal(w.document.activeElement,$('library-search'));
+  $('close-library-search').click();assert.equal($('library-search-dialog').open,false);const intended=w.document.activeElement;
+  deliverChange();assert.equal($('library-search-dialog').open,false);assert.equal(w.document.activeElement,intended);
  }finally{await w.happyDOM.close();}
 });
 
 test('new desktop reader focus clears ownership even when a focused shelf node was removed',async()=>{
  const {w,$,setViewport,deliverChange}=setup(false);try{
-  const search=$('library-search');search.focus();search.remove();
+  const search=$('library').querySelector('.library-open');search.focus();search.remove();
   // A browser need not dispatch focusout for a removed focused element.
   $('toggle-library').setAttribute('aria-expanded','true');$('title').focus();
   assert.equal($('toggle-library').getAttribute('aria-expanded'),'false');
