@@ -909,6 +909,40 @@ document.addEventListener('keydown',event=>{
 });
 const LIBRARY_PAGE_SIZE=40;
 let libraryPage=0,libraryViewSignature=null,libraryActiveKey=null,libraryCards=new Map();
+const libraryBackupSelection=Coconut.createLibraryBackupSelection();
+let librarySelectionMode=false,librarySelectionDropped=0;
+function syncLibraryBackupSelection(visible=null) {
+ const status=libraryBackupSelection.reconcile(state.documents,pendingStructuralDocuments);
+ librarySelectionDropped+=status.removed;
+ const shown=visible??($('library').hidden?[]:[...libraryCards.values()].map(card=>card.doc));
+ const outside=status.count-libraryBackupSelection.visibleCount(shown);
+ $('library-selection-controls').hidden=!librarySelectionMode;
+ const modeLabel=librarySelectionMode?'取消选择':'选择备份';
+ if($('library-selection-mode').textContent!==modeLabel)$('library-selection-mode').textContent=modeLabel;
+ $('library-selection-mode').setAttribute('aria-pressed',String(librarySelectionMode));
+ const message='已选 '+status.count+' 份 · 其中 '+outside+' 份不在当前页'+
+  (status.blocked?'。选中文档正在移除或恢复，请处理完成后再备份。':'')+
+  (librarySelectionDropped?'。已取消 '+librarySelectionDropped+' 份已移除或替换文档的选择。':'');
+ if($('library-selection-status').textContent!==message)$('library-selection-status').textContent=message;
+ const exportLabel='备份所选 '+status.count+' 份';
+ if($('export-selected-library').textContent!==exportLabel)$('export-selected-library').textContent=exportLabel;
+ $('export-selected-library').disabled=!status.count||status.blocked;
+ $('clear-library-selection').disabled=!status.count;
+ const current=librarySelectionMode?new Set(state.documents):null;
+ for(const card of libraryCards.values()){
+  card.selectLabel.hidden=!librarySelectionMode;
+  card.select.checked=libraryBackupSelection.has(card.doc);
+  card.select.disabled=pendingStructuralDocuments.has(card.doc.key)||!!current&&!current.has(card.doc);
+  const label='选择备份 '+card.doc.title;if(card.select.getAttribute('aria-label')!==label)card.select.setAttribute('aria-label',label);
+ }
+}
+$('library-selection-mode').onclick=()=>{
+ librarySelectionMode=!librarySelectionMode;
+ if(!librarySelectionMode){libraryBackupSelection.clear();librarySelectionDropped=0;}
+ syncLibraryBackupSelection();
+};
+$('clear-library-selection').onclick=()=>{libraryBackupSelection.clear();librarySelectionDropped=0;syncLibraryBackupSelection();};
+
 function libraryPageFocus(){
  if(libraryMobile.matches)$('library-tools').open=false;
  $('toggle-library').setAttribute('aria-expanded','true');
@@ -930,8 +964,11 @@ function createLibraryCard(d){
  };
  open.onclick=()=>openDocument();
  const remove=el('button','library-remove','移除…');remove.type='button';remove.onclick=()=>requestLibraryRemoval(d);
- entry.append(open,remove);
- return {doc:d,entry,open,title,metadata,remove,openDocument,hitSignature:null,hits:null,savedHits:null,savedSelection:null};
+ const selectLabel=el('label','library-select-label'),select=el('input','library-select');select.type='checkbox';selectLabel.hidden=true;
+ selectLabel.append(select,document.createTextNode('备份此文档'));
+ select.onchange=()=>{libraryBackupSelection.toggle(d,select.checked,state.documents,pendingStructuralDocuments);syncLibraryBackupSelection();};
+ entry.append(open,selectLabel,remove);
+ return {doc:d,entry,open,title,metadata,remove,select,selectLabel,openDocument,hitSignature:null,hits:null,savedHits:null,savedSelection:null};
 }
 // Only known content refreshes reuse these derived values. An ordinary render
 // remains the conservative path for callers that changed source objects in place.
@@ -965,6 +1002,7 @@ function renderLibrary(revealKey=null,{reuseMetadata=false}={}) {
   host.hidden=true;$('library-empty').hidden=true;$('library-pagination').hidden=true;$('library-show-active').hidden=true;
   $('library-total').textContent=String(state.documents.length);
   $('library-page-status').textContent='正在查找… 已检查 '+selection.scanned+' / '+selection.documents.length+' 份';
+  syncLibraryBackupSelection([]);
   return;
  }
  host.hidden=false;
@@ -1052,11 +1090,12 @@ function renderLibrary(revealKey=null,{reuseMetadata=false}={}) {
  for(const {entry} of nextCards.values()){if(host.children[index]!==entry)host.insertBefore(entry,host.children[index]||null);index++;}
  while(host.children.length>index)host.lastElementChild.remove();
  libraryCards=nextCards;
+ syncLibraryBackupSelection(visible);
  // A refreshed preview or reordered card keeps the exact action when it still
  // exists. Never steal focus from an editor, dialog, or async operation.
  if(focusKey&&(!focused.isConnected||document.activeElement===document.body)){
   const card=libraryCards.get(focusKey);
-  const target=hitKind?[...(card?.hits?.children||[]),...(card?.savedHits?.querySelectorAll('button')||[])].find(node=>node.dataset.hitKind===hitKind&&node.dataset.hitId===hitId):focused.classList.contains('library-remove')?card?.remove:card?.open;
+  const target=hitKind?[...(card?.hits?.children||[]),...(card?.savedHits?.querySelectorAll('button')||[])].find(node=>node.dataset.hitKind===hitKind&&node.dataset.hitId===hitId):focused.classList.contains('library-remove')?card?.remove:focused.classList.contains('library-select')?card?.select:card?.open;
   if(target&&!target.disabled&&!target.hidden)target.focus({preventScroll:true});
   else if(card&&!card.open.disabled)card.open.focus({preventScroll:true});
   else $('library-search').focus({preventScroll:true});
@@ -2359,6 +2398,19 @@ $("export-library").onclick = () => {
   notice("已发起整个书架的完整 JSON 备份下载，请确认文件已保存；包含文字、笔记、译文与 AI 记录及依据，不包含媒体文件。"+backupRecoveryHint(blob), "success");
  } catch { notice("书架备份失败，内容仍在本页，请重试后再关闭。"); }
  finally { link?.remove(); if(url)setTimeout(()=>URL.revokeObjectURL(url),60000); }
+};
+$('export-selected-library').onclick=()=>{
+ let url,link;
+ try {
+  const selection=libraryBackupSelection.reconcile(state.documents,pendingStructuralDocuments);
+  librarySelectionDropped+=selection.removed;
+  if(selection.removed)throw new Error('部分选中文档已移除或替换，请核对选择数量后重新备份。');
+  const backup=libraryBackupSelection.backup(state.documents,state.active,pendingStructuralDocuments);
+  const blob=new Blob([JSON.stringify(backup,null,2)],{type:'application/json'});
+  url=URL.createObjectURL(blob);link=el('a');link.href=url;link.download='coconut-selected-library.json';link.hidden=true;document.body.append(link);link.click();
+  notice('已发起所选 '+backup.documents.length+' 份文档的 JSON 备份下载，请确认文件已保存；包含本页已生效的文字、笔记、译文与 AI 记录及依据，不包含媒体文件或未提交的编辑草稿。可用「恢复书架备份」恢复；这不代表书架已保存。'+backupRecoveryHint(blob),'success');
+ } catch(error){notice(error.message||'所选文档备份失败，内容仍在本页，请重试后再关闭。');}
+ finally {link?.remove();if(url)setTimeout(()=>URL.revokeObjectURL(url),60000);syncLibraryBackupSelection();}
 };
 $("restore-library").onclick = () => $("library-file").click();
 $("library-file").onchange = async () => {

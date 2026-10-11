@@ -1016,6 +1016,33 @@
   });
   return {text:(format === "vtt" ? "WEBVTT\n\n" : "") + cues.join("\n\n") + "\n", translated};
  }
+ // Selection is session-only and owns object identities, never reusable keys.
+ function createLibraryBackupSelection() {
+  const selected=new Set();
+  function reconcile(documents,pending=new Map()) {
+   if(!selected.size)return {removed:0,count:0,blocked:false};
+   const current=new Set(documents);let removed=0;
+   for(const doc of selected)if(!current.has(doc)&&!pending.has(doc.key)){selected.delete(doc);removed++;}
+   return {removed,count:selected.size,blocked:[...selected].some(doc=>pending.has(doc.key))};
+  }
+  return {
+   has:doc=>selected.has(doc),clear:()=>selected.clear(),
+   toggle(doc,checked,documents,pending=new Map()) {
+    if(!documents.includes(doc)||pending.has(doc.key))return false;
+    if(checked)selected.add(doc);else selected.delete(doc);return true;
+   },
+   reconcile,
+   visibleCount:documents=>documents.reduce((count,doc)=>count+Number(selected.has(doc)),0),
+   backup(documents,active,pending=new Map()) {
+    const status=reconcile(documents,pending);
+    if(status.blocked)throw new Error('选中文档正在移除或恢复，请处理完成后再备份。');
+    if(status.removed)throw new Error('部分选中文档已移除或替换，请核对选择数量后重新备份。');
+    const chosen=documents.filter(doc=>selected.has(doc));
+    if(!chosen.length)throw new Error('请先选择要备份的文档。');
+    return {format:'coconut-library',version:1,documents:chosen,active:chosen.some(doc=>doc.key===active)?active:chosen[0].key};
+   }
+  };
+ }
  function mergeLibraryBackup(current, backup) {
   if (!backup || backup.format !== "coconut-library" || backup.version !== 1 || !Array.isArray(backup.documents))
    throw new Error("不是支持的 Coconut 书架备份");
@@ -1352,7 +1379,7 @@
 	function parse(text, filename) {
 		return parseWithDiagnostics(text, filename).document;
 	}
-	const api = { librarySavedHits, librarySavedHitCurrent, exactExcerptNote, exactExcerptNotesWith, exactExcerptRemoval, exactExcerptSnapshot, exactExcerptText, exactExcerptParts, exactExcerptSource, exactExcerptCount, exactExcerptDuplicate, exactExcerptFreshness, exactExcerptFreshnessBatch, exactExcerptState, exactExcerptStateBatch, createReadingRecency, createLibrarySearch, createLibraryNotebookSearch, libraryCaptureSteps, libraryCaptureCurrent, libraryCaptures, libraryNotebookMarkdown, mediaTiming, mediaTimingOffset, mediaTimingRange, localMediaSource, searchDocument, invalidateSearch, manualReviewSnapshot, manualReviewCurrent, saveManualTranslation, translationReviewQueue, hasNoteContent, segmentNoteCount, BACKUP_REVIEW_BYTES, SUBTITLE_IMPORT_BYTES, vttPayload, libraryHits, librarySnippet, hasProjectAnnotations, projectAnnotationCount, attachProjectTranscript, libraryMatches, documentDuration, sortedLibrary, AUDIO_NOTE_BUDGET, audioNoteCharacters, isAudioProject, audioProjectIdentity, podcastMediaIdentity, SUMMARY_QUESTION, summaryReadiness, podcastURL, podcastSource, cleanGlossary, relevantGlossary, translationQualityMessage, retainAnswers, summaryFreshness, latestSummary, summaryMarkdown, aiReadingMarkdown, parseReadingTime, createPlaybackIndex, segmentAtTime, transcriptText, subtitleExport, mergeLibraryBackup, time, source, media, validate, parse, parseWithDiagnostics, matchesSegment, notebookSegments, notebookMarkdown, translationCurrent, sameCueSnapshot, subscriptionPlan, cleanContexts, answerFreshness };
+	const api = { createLibraryBackupSelection, librarySavedHits, librarySavedHitCurrent, exactExcerptNote, exactExcerptNotesWith, exactExcerptRemoval, exactExcerptSnapshot, exactExcerptText, exactExcerptParts, exactExcerptSource, exactExcerptCount, exactExcerptDuplicate, exactExcerptFreshness, exactExcerptFreshnessBatch, exactExcerptState, exactExcerptStateBatch, createReadingRecency, createLibrarySearch, createLibraryNotebookSearch, libraryCaptureSteps, libraryCaptureCurrent, libraryCaptures, libraryNotebookMarkdown, mediaTiming, mediaTimingOffset, mediaTimingRange, localMediaSource, searchDocument, invalidateSearch, manualReviewSnapshot, manualReviewCurrent, saveManualTranslation, translationReviewQueue, hasNoteContent, segmentNoteCount, BACKUP_REVIEW_BYTES, SUBTITLE_IMPORT_BYTES, vttPayload, libraryHits, librarySnippet, hasProjectAnnotations, projectAnnotationCount, attachProjectTranscript, libraryMatches, documentDuration, sortedLibrary, AUDIO_NOTE_BUDGET, audioNoteCharacters, isAudioProject, audioProjectIdentity, podcastMediaIdentity, SUMMARY_QUESTION, summaryReadiness, podcastURL, podcastSource, cleanGlossary, relevantGlossary, translationQualityMessage, retainAnswers, summaryFreshness, latestSummary, summaryMarkdown, aiReadingMarkdown, parseReadingTime, createPlaybackIndex, segmentAtTime, transcriptText, subtitleExport, mergeLibraryBackup, time, source, media, validate, parse, parseWithDiagnostics, matchesSegment, notebookSegments, notebookMarkdown, translationCurrent, sameCueSnapshot, subscriptionPlan, cleanContexts, answerFreshness };
 	if (typeof module !== "undefined" && module.exports) module.exports = api;
 	else root.Coconut = api;
 })(typeof window !== "undefined" ? window : globalThis);
