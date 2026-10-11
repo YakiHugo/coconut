@@ -62,6 +62,12 @@ async function resumeThenChooseFirst(page, fixture, label) {
   await page.locator('#mode-summary').click();
   await page.locator('.overview-segment').first().click(); await settled(page);
   check(label + '_explicit_first_source_navigation_preserves_saved_bookmark', await page.locator('.passage').first().evaluate(node => node.contains(document.activeElement)) && (await stored(page)).readingPosition === fixture.readingPosition);
+  // Overview navigation aligns the passage, intentionally leaving the header
+  // above it. Return to document start with the user's keyboard before testing
+  // header controls; never repair the scroll position from page.evaluate.
+  check(label + '_document_start_key_targets_focused_reading_passage', await page.evaluate(() => document.activeElement?.matches('.passage') && !document.activeElement.isContentEditable));
+  await page.keyboard.press('Control+Home'); await page.waitForFunction(() => scrollY === 0); await settled(page);
+  check(label + '_keyboard_document_start_reveals_header_without_changing_bookmark', await page.evaluate(() => scrollY === 0) && (await stored(page)).readingPosition === fixture.readingPosition);
 }
 async function stored(page) {
 
