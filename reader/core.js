@@ -1749,10 +1749,52 @@
 		});
 		return {document, diagnostics};
 	}
+ // Pasted text is already Unicode. Admission is deliberately narrower than
+ // the existing file parser: require real, complete SRT/VTT timing lines and
+ // never manufacture times for prose. Parsing and diagnostics remain shared.
+ function parsePastedSubtitles(text,{title='',format='auto'}={}){
+  if(typeof text!=='string'||!text.trim())throw new Error('请粘贴带完整起止时间的 SRT / VTT 字幕。普通文字或只有起点的记录不能导入。');
+  if(!['auto','srt','vtt'].includes(format))throw new Error('请选择自动识别、SRT 或 VTT。');
+  // UTF-16 length is a cheap lower bound on UTF-8 bytes for well-formed text.
+  // Do this only on explicit Preview, never on every input event.
+  if(text.length>SUBTITLE_IMPORT_BYTES)throw new Error('字幕超过15 MiB，请先拆分 SRT / VTT。');
+  const bytes=new TextEncoder().encode(text).byteLength;
+  if(bytes>SUBTITLE_IMPORT_BYTES)throw new Error('字幕超过15 MiB（按 UTF-8 计算），请先拆分 SRT / VTT。');
+  if(text.includes('\0'))throw new Error('字幕包含 NUL 字符，请重新复制可读的 SRT / VTT 原文。');
+  const srtClock='\\d{2,}:[0-5]\\d:[0-5]\\d,\\d{3}',vttClock='(?:\\d{2,}:)?[0-5]\\d:[0-5]\\d\\.\\d{3}';
+  const srtTime=new RegExp('^'+srtClock+'[\\t ]+-->[\\t ]+'+srtClock+'[\\t ]*$');
+  const vttTime=new RegExp('^'+vttClock+'[\\t ]+-->[\\t ]+'+vttClock+'(?:[\\t ]+.*)?$');
+  const header=/^(?:\uFEFF)?WEBVTT(?:[ \t]|\r?\n|$)/.test(text);
+  if(format==='auto')format=header?'vtt':(()=>{for(const {lines} of subtitleBlocks(text)){const timing=lines.find(line=>line.includes('-->'));if(timing)return vttTime.test(timing)?'vtt':'srt';}return 'srt';})();
+  if(header&&format!=='vtt')throw new Error('检测到 WEBVTT 文件头，请选择自动识别或 VTT。');
+  let complete=0;
+  for(const {lines,startLine} of subtitleBlocks(text)){
+   if(format==='vtt'&&/^(?:WEBVTT|NOTE|STYLE|REGION)(?:[ \t]|$)/.test(lines[0].trim()))continue;
+   const index=lines.findIndex(line=>line.includes('-->'));
+   const first=lines.findIndex(line=>line.trim());
+   if(index<0){
+    // A complete but damaged separator belongs to the shared diagnostics.
+    // A lone start time cannot silently disappear beside another valid cue.
+    const clock=/^\d+:\d{2}(?::\d{2})?(?:[.,]\d+)?(?:[\t ]|$)/;
+    const pair=/^(?:\d{2,}:)?\d{2}:\d{2}[.,]\d{3}[\t \-=<>–—→]+(?:\d{2,}:)?\d{2}:\d{2}[.,]\d{3}(?:[\t ]|$)/;
+    const timing=[first,first+1].find(i=>i>=0&&clock.test(lines[i]?.trim()||''));
+    if(timing!==undefined&&!pair.test(lines[timing].trim()))throw new Error('第 '+(startLine+timing)+' 行缺少完整的起止时间。请补全原字幕；不会猜测结束时间。');
+    continue;
+   }
+   if(index!==first&&index!==first+1||format==='srt'&&index===first+1&&!/^\d+$/.test(lines[first].trim())||!(format==='vtt'?vttTime:srtTime).test(lines[index]))
+    throw new Error('第 '+(startLine+index)+' 行需要完整的 '+format.toUpperCase()+' 起止时间（例如 '+(format==='vtt'?'00:00.000 --> 00:02.000':'00:00:00,000 --> 00:00:02,000')+'）。不会为普通文字猜测时间。');
+   complete++;
+  }
+  if(!complete)throw new Error('没有找到完整的 SRT / VTT 起止时间；普通文字或只有起点的记录不能导入。');
+  title=typeof title==='string'?title.trim():'';
+  if(title.length>200)throw new Error('标题最多200字，请缩短后预览。');
+  const result=parseWithDiagnostics(text,(title||'粘贴字幕')+'.'+format);
+  return {...result,format,bytes};
+ }
 	function parse(text, filename) {
 		return parseWithDiagnostics(text, filename).document;
 	}
-	const api = { subtitleEncodings, decodeSubtitleBytes, translationSelectionInfo, translationSelectionModels, pairedExactExcerptSnapshot, exactExcerptTranslation, exactExcerptTranslationParts, normalizeReadingChapters, readingChapters, createReadingChapter, updateReadingChapter, readingChaptersWith, isReadingCollection, normalizeReadingCollection, createReadingCollection, collectionItemFromCapture, readingCollectionItemKey, readingCollectionItemState, readingCollectionMarkdown, SPEAKER_CORRECTION_LABEL_LIMIT, createSpeakerCorrectionPreview, applySpeakerCorrectionPreview, createLibraryBackupSelection, librarySavedHits, librarySavedHitCurrent, exactExcerptNote, exactExcerptNotesWith, exactExcerptRemoval, exactExcerptSnapshot, exactExcerptText, exactExcerptParts, exactExcerptSource, exactExcerptCount, exactExcerptDuplicate, exactExcerptFreshness, exactExcerptFreshnessBatch, exactExcerptState, exactExcerptStateBatch, createReadingRecency, createLibrarySearch, createLibraryNotebookSearch, libraryCaptureSteps, libraryCaptureCurrent, libraryCaptures, libraryNotebookMarkdown, mediaTiming, mediaTimingOffset, mediaTimingRange, localMediaSource, searchDocument, invalidateSearch, manualReviewSnapshot, manualReviewCurrent, saveManualTranslation, translationReviewQueue, hasNoteContent, segmentNoteCount, BACKUP_REVIEW_BYTES, SUBTITLE_IMPORT_BYTES, vttPayload, libraryHits, librarySnippet, hasProjectAnnotations, projectAnnotationCount, attachProjectTranscript, libraryMatches, documentDuration, sortedLibrary, AUDIO_NOTE_BUDGET, audioNoteCharacters, isAudioProject, audioProjectIdentity, podcastMediaIdentity, SUMMARY_QUESTION, summaryReadiness, podcastURL, podcastSource, cleanGlossary, relevantGlossary, translationQualityMessage, retainAnswers, summaryFreshness, latestSummary, summaryMarkdown, aiReadingMarkdown, parseReadingTime, createPlaybackIndex, segmentAtTime, transcriptText, subtitleExport, mergeLibraryBackup, time, source, media, validate, parse, parseWithDiagnostics, matchesSegment, notebookSegments, notebookMarkdown, translationCurrent, sameCueSnapshot, subscriptionPlan, cleanContexts, answerFreshness };
+	const api = { parsePastedSubtitles, subtitleEncodings, decodeSubtitleBytes, translationSelectionInfo, translationSelectionModels, pairedExactExcerptSnapshot, exactExcerptTranslation, exactExcerptTranslationParts, normalizeReadingChapters, readingChapters, createReadingChapter, updateReadingChapter, readingChaptersWith, isReadingCollection, normalizeReadingCollection, createReadingCollection, collectionItemFromCapture, readingCollectionItemKey, readingCollectionItemState, readingCollectionMarkdown, SPEAKER_CORRECTION_LABEL_LIMIT, createSpeakerCorrectionPreview, applySpeakerCorrectionPreview, createLibraryBackupSelection, librarySavedHits, librarySavedHitCurrent, exactExcerptNote, exactExcerptNotesWith, exactExcerptRemoval, exactExcerptSnapshot, exactExcerptText, exactExcerptParts, exactExcerptSource, exactExcerptCount, exactExcerptDuplicate, exactExcerptFreshness, exactExcerptFreshnessBatch, exactExcerptState, exactExcerptStateBatch, createReadingRecency, createLibrarySearch, createLibraryNotebookSearch, libraryCaptureSteps, libraryCaptureCurrent, libraryCaptures, libraryNotebookMarkdown, mediaTiming, mediaTimingOffset, mediaTimingRange, localMediaSource, searchDocument, invalidateSearch, manualReviewSnapshot, manualReviewCurrent, saveManualTranslation, translationReviewQueue, hasNoteContent, segmentNoteCount, BACKUP_REVIEW_BYTES, SUBTITLE_IMPORT_BYTES, vttPayload, libraryHits, librarySnippet, hasProjectAnnotations, projectAnnotationCount, attachProjectTranscript, libraryMatches, documentDuration, sortedLibrary, AUDIO_NOTE_BUDGET, audioNoteCharacters, isAudioProject, audioProjectIdentity, podcastMediaIdentity, SUMMARY_QUESTION, summaryReadiness, podcastURL, podcastSource, cleanGlossary, relevantGlossary, translationQualityMessage, retainAnswers, summaryFreshness, latestSummary, summaryMarkdown, aiReadingMarkdown, parseReadingTime, createPlaybackIndex, segmentAtTime, transcriptText, subtitleExport, mergeLibraryBackup, time, source, media, validate, parse, parseWithDiagnostics, matchesSegment, notebookSegments, notebookMarkdown, translationCurrent, sameCueSnapshot, subscriptionPlan, cleanContexts, answerFreshness };
 	if (typeof module !== "undefined" && module.exports) module.exports = api;
 	else root.Coconut = api;
 })(typeof window !== "undefined" ? window : globalThis);

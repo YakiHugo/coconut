@@ -75,6 +75,7 @@ let localMediaPickerTarget=null,pendingLocalMediaChoice=null;
 function projectSourceSnapshot(doc){return JSON.stringify(doc.podcast_source||doc.local_media_source);}
 let pendingBackupReview = null;
 let pendingSubtitleEncoding = null;
+let pasteSubtitleRevision=0,pasteSubtitlePreview=null,pasteSubtitleAttempt=null,pasteSubtitleReceipt=null;
 let transcriptImportBatch = null;
 let transcriptDragDepth = 0;
 function cancelLocalImports(keepInput = null) {
@@ -86,6 +87,7 @@ function cancelLocalImports(keepInput = null) {
  if(keepInput!=="reader-media-file"&&pendingMediaDocument?.durable)pendingMediaDocument=null;
  pendingBackupReview?.(false);
  pendingSubtitleEncoding?.(null);
+ retirePastedSubtitleImport();
  if(keepInput!=="project-transcript-file")projectTranscriptTarget=null;
  // Retire all import paths while preserving a newly selected input's file.
  for(const id of ["file", "library-file", "project-transcript-file", "local-media-file"])if(id!==keepInput)$(id).value = "";
@@ -1455,7 +1457,7 @@ for(const [id,direction] of [['reading-excerpts-previous',-1],['reading-excerpts
 // Native dialogs make the page inert but may hand the last Tab to browser
 // chrome. Only the two actual boundaries are ours; interior traversal remains
 // native, including readonly evidence and expanded details.
-for(const id of ['reading-excerpts-dialog','exact-note-dialog','subtitle-encoding-dialog','local-media-project-dialog'])$(id).addEventListener('keydown',event=>{
+for(const id of ['reading-excerpts-dialog','exact-note-dialog','subtitle-encoding-dialog','local-media-project-dialog','paste-subtitle-dialog'])$(id).addEventListener('keydown',event=>{
  const dialog=$(id);
  if(!dialog.open||event.key!=='Tab'||event.defaultPrevented||event.isComposing||event.keyCode===229||event.altKey||event.ctrlKey||event.metaKey||event.target.closest?.('dialog')!==dialog)return;
  const controls=[...dialog.querySelectorAll('button,input,select,textarea,a[href],summary,[tabindex]')].filter(node=>{
@@ -2489,6 +2491,132 @@ $("return-excerpt").onclick = () => goToSegment(selected,false,!!passageReturn);
 document.addEventListener("keydown", event => {
 	if (event.key === "Escape" && selected && !$("export-menu").open && !document.querySelector("dialog[open]")) $("close-note").click();
 });
+// Chromium may leave an already-visible control's border at the scrollport
+// edge after reverse Tab; CSS scroll-margin does not include its focus ring.
+// Let native focus/Tab finish, then correct only this dialog's own scroll.
+$('paste-subtitle-dialog').addEventListener('focusin',event=>{
+ const dialog=$('paste-subtitle-dialog'),target=event.target;
+ if(target.closest?.('dialog')!==dialog||!target.matches('button,input,select,textarea,summary'))return;
+ requestAnimationFrame(()=>{
+  if(!dialog.open||document.activeElement!==target||target.closest('dialog')!==dialog)return;
+  const focusStyle=getComputedStyle(target),ring=(parseFloat(focusStyle.outlineWidth)||0)+Math.max(0,parseFloat(focusStyle.outlineOffset)||0);
+  if(!ring||focusStyle.outlineStyle==='none')return;
+  const rect=target.getBoundingClientRect(),box=dialog.getBoundingClientRect(),style=getComputedStyle(dialog);
+  if(!rect.width||!rect.height)return;
+  const top=Math.max(0,box.top+dialog.clientTop)+Math.max(ring+2,parseFloat(style.scrollPaddingTop)||0);
+  const bottom=Math.min(innerHeight,box.top+dialog.clientTop+dialog.clientHeight)-Math.max(ring+2,parseFloat(style.scrollPaddingBottom)||0);
+  if(rect.top<top)dialog.scrollTop+=Math.floor(rect.top-top);
+  else if(rect.bottom>bottom)dialog.scrollTop+=Math.ceil(rect.bottom-bottom);
+ });
+});
+function pastedSubtitleHasDraft(){return !!($('paste-subtitle-text').value||$('paste-subtitle-title').value);}
+function invalidatePastedSubtitlePreview(message='内容已改变，请重新预览字幕。'){
+ pasteSubtitleRevision++;pasteSubtitlePreview=null;pasteSubtitleAttempt=null;pasteSubtitleReceipt=null;
+ $('paste-subtitle-preview').replaceChildren();$('paste-subtitle-diagnostics').replaceChildren();
+ $('confirm-paste-subtitle').disabled=true;$('paste-subtitle-status').textContent=message;
+ renderPastedSubtitleRecovery();if(unloadGuardReady)syncUnsavedUnloadGuard();
+}
+function retirePastedSubtitleImport(){
+ pasteSubtitleAttempt=null;pasteSubtitlePreview=null;
+ $('confirm-paste-subtitle').disabled=true;
+ $('paste-subtitle-preview').replaceChildren();$('paste-subtitle-diagnostics').replaceChildren();
+ if($('paste-subtitle-dialog').open)$('paste-subtitle-dialog').close();
+}
+function pastedSubtitleReceiptCurrent(){
+ const receipt=pasteSubtitleReceipt;
+ return receipt?.revision===pasteSubtitleRevision&&state.documents.includes(receipt.identity)&&!pendingStructuralDocuments.has(receipt.identity.key)?receipt:null;
+}
+function renderPastedSubtitleRecovery(){
+ const receipt=pastedSubtitleReceiptCurrent(),saved=receipt&&libraryStore.status(receipt.identity.key),complete=saved?.identity===receipt?.identity&&saved?.status==='saved';
+ for(const id of ['retry-paste-subtitle','read-paste-subtitle','export-paste-subtitle','paste-subtitle-recovery-help'])$(id).hidden=!receipt;
+ $('retry-paste-subtitle').hidden=!receipt||complete;
+ $('retry-paste-subtitle').disabled=!!pasteSubtitleAttempt||libraryStore.status().blocked||libraryStore.status().status==='pending';
+ $('read-paste-subtitle').textContent=complete?'阅读已保存内容':'在本页阅读';
+ $('paste-subtitle-recovery-help').textContent=complete?'已解析的全文已保存到本机。原始粘贴草稿仍在上方，可继续修改后重新预览。':'已解析的全文仍在本页，尚未保存到本机。请重试或导出完整 JSON 救援，确认下载成功后再关闭页面。原始粘贴草稿仍在上方。';
+}
+$('paste-subtitles').onclick=()=>{
+ if(!contentIngressAllowed()){notice('暂时无法导入，请先处理当前保存或恢复操作。');return;}
+ cancelLocalImports('paste-subtitle');
+ $('paste-subtitle-status').textContent=pastedSubtitleHasDraft()?'本页草稿已保留，请预览确认后开始阅读。':'粘贴后预览，确认片段和时间，再开始阅读。';
+ renderPastedSubtitleRecovery();$('paste-subtitle-dialog').showModal();$('paste-subtitle-text').focus();
+};
+for(const id of ['paste-subtitle-title','paste-subtitle-text'])$(id).addEventListener('input',()=>invalidatePastedSubtitlePreview());
+$('paste-subtitle-format').addEventListener('change',()=>invalidatePastedSubtitlePreview());
+$('clear-paste-subtitle').onclick=()=>{
+ $('paste-subtitle-title').value='';$('paste-subtitle-text').value='';$('paste-subtitle-format').value='auto';
+ invalidatePastedSubtitlePreview('草稿已清空；已提交的文稿仍保留在书架。');$('paste-subtitle-text').focus();
+};
+function dismissPastedSubtitle(event){
+ if(event?.type==='close'&&$('paste-subtitle-dialog').open)return;
+ event?.preventDefault();cancelLocalImports();
+ if(workspace==='add')$('paste-subtitles').focus({preventScroll:true});
+}
+$('close-paste-subtitle').onclick=dismissPastedSubtitle;
+$('paste-subtitle-dialog').addEventListener('cancel',dismissPastedSubtitle);
+$('paste-subtitle-dialog').addEventListener('close',event=>{
+ // close events may be queued by an older dialog instance or navigation.
+ if($('paste-subtitle-dialog').open)return;
+ pasteSubtitleAttempt=null;pasteSubtitlePreview=null;$('confirm-paste-subtitle').disabled=true;
+});
+function pastedSubtitleTime(seconds){return Coconut.time(seconds)+'.'+String(Math.round(seconds*1000)%1000).padStart(3,'0');}
+$('preview-paste-subtitle').onclick=()=>{
+ if(!$('paste-subtitle-dialog').open||pasteSubtitleAttempt)return;
+ pasteSubtitlePreview=null;$('confirm-paste-subtitle').disabled=true;
+ $('paste-subtitle-preview').replaceChildren();$('paste-subtitle-diagnostics').replaceChildren();
+ try{
+  const parsed=Coconut.parsePastedSubtitles($('paste-subtitle-text').value,{title:$('paste-subtitle-title').value,format:$('paste-subtitle-format').value});
+  const cues=parsed.document.segments,start=cues[0].start,end=cues.reduce((value,cue)=>Math.max(value,cue.end),0);
+  pasteSubtitlePreview={...parsed,revision:pasteSubtitleRevision};
+  $('paste-subtitle-status').textContent='识别为 '+parsed.format.toUpperCase()+' · '+cues.length+' 段 · '+pastedSubtitleTime(start)+'–'+pastedSubtitleTime(end)+' · '+backupSize(parsed.bytes)+'。'+(parsed.diagnostics.length?'部分字幕未导入：跳过 '+parsed.diagnostics.length+' 个字幕块，请检查下方行号。':'可识别字幕已解析，请核对原文。')+' 下方显示前 '+Math.min(3,cues.length)+' 段；确认后开始阅读。';
+  for(const cue of cues.slice(0,3)){
+   const item=el('li'),when=el('strong','',pastedSubtitleTime(cue.start)+'–'+pastedSubtitleTime(cue.end)+(cue.speaker?' · '+cue.speaker:''));
+   item.append(when,el('p','',cue.text.length>1000?cue.text.slice(0,999).replace(/[\uD800-\uDBFF]$/,'')+'…（本段预览截短，导入保留全文）':cue.text));$('paste-subtitle-preview').append(item);
+  }
+  setTranscriptImportDiagnostics({row:$('paste-subtitle-diagnostics')},parsed.diagnostics);
+  $('confirm-paste-subtitle').disabled=false;
+ }catch(error){$('paste-subtitle-status').textContent='无法预览：'+localFileError(error);}
+};
+function finishPastedSubtitleReading(receipt,{clear=false}={}){
+ if(!state.documents.includes(receipt.identity)||pendingStructuralDocuments.has(receipt.identity.key))return;
+ if(clear){$('paste-subtitle-title').value='';$('paste-subtitle-text').value='';$('paste-subtitle-format').value='auto';invalidatePastedSubtitlePreview('字幕已保存。');}
+ retirePastedSubtitleImport();openTranscriptImportResult(receipt);$('title').focus({preventScroll:true});
+ if(receipt.ok)notice(receipt.duplicate?'书架已有这份字幕，已打开原稿并保留笔记。':'字幕已保存在本机，可以开始阅读。','success');
+ else notice('字幕仍仅在本页，尚未保存。关闭前请重试或导出完整 JSON 备份。');
+ if(unloadGuardReady)syncUnsavedUnloadGuard();
+}
+$('confirm-paste-subtitle').onclick=async()=>{
+ const preview=pasteSubtitlePreview;
+ if(!$('paste-subtitle-dialog').open||pasteSubtitleAttempt||!preview||preview.revision!==pasteSubtitleRevision||!contentIngressAllowed())return;
+ const owner={revision:pasteSubtitleRevision,importRevision:localImportRevision,selection:activeSelectionRevision,document:state.active,workspace};pasteSubtitleAttempt=owner;
+ const owned=()=>pasteSubtitleAttempt===owner&&owner.revision===pasteSubtitleRevision&&owner.importRevision===localImportRevision&&owner.selection===activeSelectionRevision&&owner.document===state.active&&owner.workspace===workspace&&$('paste-subtitle-dialog').open;
+ const batch=createTranscriptImportBatch([{name:preview.document.title+'.'+preview.format}]),item=batch.items[0];
+ setTranscriptImportDiagnostics(item,preview.diagnostics);item.status='saving';renderTranscriptImportBatch(batch);
+ $('confirm-paste-subtitle').disabled=true;$('paste-subtitle-status').textContent='正在保存字幕；保存回执确认后进入阅读。';renderPastedSubtitleRecovery();
+ try{
+  const receipt=await add(preview.document,()=>owned()&&contentIngressAllowed(),false,documentLifecycleRevision,undefined,{activate:false});
+  finishTranscriptImportReceipt(item,receipt);batch.finished=true;
+  if(!owned())return;
+  pasteSubtitleAttempt=null;
+  if(receipt.ok){finishPastedSubtitleReading(receipt,{clear:true});return;}
+  pasteSubtitleReceipt={...receipt,revision:pasteSubtitleRevision};
+  $('paste-subtitle-status').textContent='字幕已解析，但保存未成功。草稿和完整文稿仍在本页，请重试或导出救援备份。';
+  renderPastedSubtitleRecovery();
+ }catch(error){
+  item.status=owned()?'failed':'cancelled';if(owned()){item.error=localFileError(error);pasteSubtitleAttempt=null;$('paste-subtitle-status').textContent='导入失败：'+item.error+'。草稿仍在本页，请重新预览后重试。';pasteSubtitlePreview=null;}
+ }finally{if(pasteSubtitleAttempt===owner){pasteSubtitleAttempt=null;if($('paste-subtitle-dialog').open)$('paste-subtitle-status').textContent='当前阅读已变化，未自动切换。草稿仍在本页，请重新预览或查看书架。';}batch.finished=true;renderTranscriptImportBatch(batch);if(unloadGuardReady)syncUnsavedUnloadGuard();}
+};
+$('retry-paste-subtitle').onclick=async()=>{
+ const receipt=pastedSubtitleReceiptCurrent();if(!receipt||pasteSubtitleAttempt||libraryStore.status().blocked||libraryStore.status().status==='pending')return;
+ const owner={revision:pasteSubtitleRevision,importRevision:localImportRevision,selection:activeSelectionRevision,document:state.active,workspace};pasteSubtitleAttempt=owner;renderPastedSubtitleRecovery();
+ await libraryStore.retry(receipt.identity.key);
+ if(pasteSubtitleAttempt!==owner||owner.revision!==pasteSubtitleRevision||owner.importRevision!==localImportRevision||owner.selection!==activeSelectionRevision||owner.document!==state.active||owner.workspace!==workspace||!$('paste-subtitle-dialog').open){if(pasteSubtitleAttempt===owner){pasteSubtitleAttempt=null;renderPastedSubtitleRecovery();if($('paste-subtitle-dialog').open){const saved=libraryStore.status(receipt.identity.key);$('paste-subtitle-status').textContent=saved?.identity===receipt.identity&&saved.status==='saved'?'字幕已保存；当前阅读未切换，草稿仍在本页。可阅读已保存内容或重新预览。':'保存未成功；当前阅读未切换，草稿仍在本页，请重试或导出救援。';}}return;}
+ pasteSubtitleAttempt=null;const saved=libraryStore.status(receipt.identity.key);
+ if(saved?.identity===receipt.identity&&saved.status==='saved')finishPastedSubtitleReading({...receipt,ok:true},{clear:true});
+ else {$('paste-subtitle-status').textContent='保存仍未成功，请保留本页草稿并导出完整 JSON 救援。';renderPastedSubtitleRecovery();}
+};
+$('read-paste-subtitle').onclick=()=>{const receipt=pastedSubtitleReceiptCurrent();if(receipt){const saved=libraryStore.status(receipt.identity.key),ok=saved?.identity===receipt.identity&&saved.status==='saved';finishPastedSubtitleReading({...receipt,ok},{clear:ok});}};
+$('export-paste-subtitle').onclick=()=>{const receipt=pastedSubtitleReceiptCurrent();if(receipt){exportReaderDocument(receipt.identity);$('paste-subtitle-status').textContent=$('notice').textContent;}};
+window.addEventListener('coconut-persistence-change',()=>{if($('paste-subtitle-dialog').open)renderPastedSubtitleRecovery();});
 $("import").onclick = () => $("file").click();
 $("file").onchange = () => selectTranscriptFiles(Array.from($("file").files),true);
 function resetTranscriptDropTarget(){
@@ -2944,8 +3072,8 @@ $("export-notebook").onclick = () => {
 		if (url) setTimeout(() => URL.revokeObjectURL(url), 60000);
 	}
 };
-$("export").onclick = () => {
-	const d = active();
+$("export").onclick = () => exportReaderDocument(active());
+function exportReaderDocument(d) {
 	if (!d) {
 		notice("书架还是空的，先导入一份内容吧");
 		return;
@@ -4408,7 +4536,7 @@ async function attachTranscriptToProject(text,target,{canCommit=null,activate=fa
 function hasPendingOrFailedContent(){return libraryStore.status().unsaved>0;}
 function hasUnsavedReaderChanges(){return hasPendingOrFailedContent()||hasUnsubmittedReaderDrafts();}
 function hasUnsubmittedReaderDrafts() {
- if(quotationController?.hasDraft()||exactNoteDraft()||speakerCorrectionDraft()||collectionTitleDraft()||chapterDraft())return true;
+ if(pastedSubtitleHasDraft()||quotationController?.hasDraft()||exactNoteDraft()||speakerCorrectionDraft()||collectionTitleDraft()||chapterDraft())return true;
  if(removedDocument||pendingLibraryOperation||[...deferredContentInputs.values()].some(draft=>state.documents.includes(draft.doc))||hasLanguageDrafts()||window.CoconutTranslationReview?.hasDraft())return true;
  const current=active();
  if(current&&selected&&!$('notes-panel').hidden&&current.segments.some(segment=>segment.id===selected)&&$('note').value!==(current.notes[selected]||''))return true;
