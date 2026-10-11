@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
 import {libraryHarness} from './helpers/large-library-harness.mjs';
 import {settle} from './helpers/save-pipeline.mjs';
 const fixture=()=>({key:'source',title:'Local source corrections',language:'en',segments:Array.from({length:240},(_,i)=>({id:'cue-'+i,start:i*2,end:i*2+2,text:'Name '+i+' Name',speaker:i%2?'B':'A',...(i===1?{original_text:'ASR baseline'}:{})})),notes:{}});
@@ -90,5 +91,30 @@ for(const control of ['source-correction-retry','source-correction-export'])test
   if(control==='source-correction-retry')$(control).click();else void pipeline.store.retry();
   await ready();assert.equal($(control).hidden,false);assert.equal($(control).disabled,false);assert.equal(w.document.activeElement,$(control));pipeline.writes[1].commit();await ready();assert.equal($(control).hidden,false);assert.equal($(control).disabled,false);assert.equal(w.document.activeElement,$(control));
   $('source-find').focus();await ready();assert.equal($(control).hidden,true);
+ }finally{await w.happyDOM.close();}
+});
+
+test('continuous-reading correction returns to settings, whose visible close restores access to transcript mode',async()=>{
+ const env=setup(),{w,$,pipeline}=env;try{
+  const doc=w.libraryProbe.documents[0],before=JSON.stringify(doc);
+  assert.equal(w.document.body.dataset.readingMode,'passages');assert.equal($('reading-info-settings').contains($('reading-settings')),true);
+  $('reading-info').open=true;preview(env);$('close-source-correction').click();
+  assert.equal($('source-correction-dialog').open,false);assert.equal($('reading-info').open,true);assert.equal(w.document.activeElement,$('open-source-correction'));
+  $('close-reading-info').click();assert.equal($('reading-info').open,false);assert.equal(w.document.activeElement,$('reading-info').querySelector('summary'));
+  $('mode-transcript').click();assert.equal($('mode-transcript').getAttribute('aria-pressed'),'true');assert.equal(w.document.body.dataset.readingMode,'transcript');
+  assert.equal(JSON.stringify(doc),before);assert.equal(pipeline.prepares,0);
+ }finally{await w.happyDOM.close();}
+});
+
+for(const width of [390,1360])test(`${width} reading-mode pointer targets retain their explicit minimum across correction return modes`,async()=>{
+ const env=setup(),{w,$}=env;try{
+  w.happyDOM.setWindowSize({width,height:844});
+  const style=w.document.createElement('style');style.textContent=fs.readFileSync(new URL('../reader/style.css',import.meta.url),'utf8');w.document.head.append(style);
+  for(const mode of ['passages','transcript']){
+   $('mode-'+mode).click();
+   for(const button of w.document.querySelectorAll('.reading-modes button'))assert.equal(w.getComputedStyle(button).minWidth,width===390?'52px':'44px',button.id+' in '+mode);
+  }
+  // Computed CSS bounds are not a claim about real layout or hit-testing. The
+  // Actions journey keeps its native clicks and 44px / five-point checks.
  }finally{await w.happyDOM.close();}
 });

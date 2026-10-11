@@ -144,6 +144,19 @@ async function download(selector = '#export') {
   const file = {name: item.suggestedFilename(), mimeType: 'application/json', buffer: await fs.readFile(await item.path())};
   if (selector === '#export') await page.locator('#export-menu > summary').click(); return file;
 }
+async function clickVisibleReaderControl(selector, label) {
+  const control = page.locator(selector); await expect(control).toBeVisible(); await control.scrollIntoViewIfNeeded();
+  const data = await control.evaluate(node => {
+    const r = node.getBoundingClientRect(), x = (r.left + r.right) / 2, y = (r.top + r.bottom) / 2;
+    return {id: node.id, rect: r.toJSON(), viewport: {width: innerWidth, height: innerHeight},
+      hits: [[x, y], [r.left + 1, y], [r.right - 1, y], [x, r.top + 1], [x, r.bottom - 1]].map(([x, y]) => {
+        const hit = document.elementFromPoint(x, y); return {x, y, clear: hit === node || node.contains(hit), hit: hit?.id || hit?.tagName};
+      })};
+  });
+  geometry.push({label, ...data}); const {rect: r, viewport: v} = data;
+  check(label + '_44px_visible_five_clear_pointer_hits', r.width >= 44 && r.height >= 44 && r.left >= 0 && r.right <= v.width && r.top >= 0 && r.bottom <= v.height && data.hits.every(hit => hit.clear));
+  await control.click();
+}
 async function capture(label) {
   if (!process.env.COCONUT_UI_SCREENSHOTS) return;
   await fs.mkdir(process.env.COCONUT_UI_SCREENSHOTS, {recursive: true});
@@ -396,7 +409,20 @@ try {
     await undo(firstBatch); await expect(page.locator('#undo-source-correction')).toBeHidden();
     check('new_batch_replaces_previous_undo_and_only_latest_batch_reverts_' + width, (await activeSaved()).segments[238].text === 'Keep REPLACED content.');
     await preview('CUE', 'cue'); await apply(secondBatch); await close('button');
-    await page.locator('#mode-transcript').click(); await openTranscriptTools(page); await page.locator('#search').fill('cue starts here.');
+    // Reload entered continuous reading. Opening correction used its information
+    // panel; closing the child modal correctly returns to that still-open panel.
+    // Dismiss it through the same visible button a reader uses before reaching
+    // the mode tabs behind it. A missing/hidden control remains a hard failure.
+    await expect(page.locator('#reading-info-settings > #reading-settings')).toHaveCount(1);
+    await expect(page.locator('#reading-info')).toHaveJSProperty('open', true);
+    await expect(page.locator('#close-reading-info')).toBeVisible();
+    await clickVisibleReaderControl('#close-reading-info', 'close_information_before_transcript_' + width);
+    await expect(page.locator('#reading-info')).toHaveJSProperty('open', false);
+    await expect(page.locator('#reading-info > summary')).toBeFocused();
+    await clickVisibleReaderControl('#mode-transcript', 'transcript_after_information_close_' + width);
+    await expect(page.locator('#mode-transcript')).toHaveAttribute('aria-pressed', 'true');
+    check('visible_settings_close_allows_normal_transcript_mode_click_' + width, true);
+    await capture('settings-closed-transcript-' + width); await openTranscriptTools(page); await page.locator('#search').fill('cue starts here.');
     const row = page.locator('.segment[data-segment-id="source-236"]'); await openCueActions(row); await row.locator('.edit-button').click();
     const later = clone(secondBatch); later.segments[236].text = 'A later authored single-cue edit.';
     await page.locator('#edit-segment').fill(later.segments[236].text); await page.locator('#save-edit').click(); await saved(later);

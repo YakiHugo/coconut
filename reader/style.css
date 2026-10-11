@@ -431,7 +431,7 @@ body[data-workspace="add"] #count { font-size: 12px; }
 .episode-media .local-media-entry p { flex: 1; min-width: 220px; line-height: 1.6; }
 #source-media { box-shadow: 0 8px 24px #18191912; }
 .reading-modes { border-bottom: 1px solid var(--edge, #dedad4); padding: 0; gap: 22px; margin-top: 22px; }
-.reading-modes button { position: relative; border: 0; border-radius: 0; padding: 12px 2px 15px; font-size: 13px; color: var(--muted); }
+.reading-modes button { position: relative; min-width: 44px; border: 0; border-radius: 0; padding: 12px 2px 15px; font-size: 13px; color: var(--muted); }
 .reading-modes button[aria-pressed="true"] { color: var(--ink); background: transparent; }
 .reading-modes button[aria-pressed="true"]::after { content: ""; position: absolute; height: 3px; background: var(--accent); bottom: -1px; left: 0; right: 0; border-radius: 3px 3px 0 0; }
 .source-overview { margin-bottom: 30px; border-bottom: 1px solid var(--line); padding-bottom: 30px; }
