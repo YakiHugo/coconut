@@ -119,9 +119,12 @@ try {
  await page.locator('#prepare-summary').click();check('summary_review_is_inline',await page.locator('#summary-request').isVisible()&&await page.locator('#language-panel').isHidden());await capture(page,'03-summary-review');await page.locator('#close-summary-request').click();
  await page.locator('#summary-citations button').click();
  check('citation_opens_original',await page.locator('#transcript-layout').isVisible()&&await page.locator('.segment[data-segment-id="second"]').evaluate(n=>n===document.activeElement));
- async function attach(filename,kind){
+ async function attach(filename,kind,{replace=false}={}){
+  stage=(replace?'replace_':'attach_')+kind+'_media';
   if(!await page.locator('#attach-reader-media').isVisible())await page.locator('#toggle-reader-media').click();
-  const [chooser]=await Promise.all([page.waitForEvent('filechooser'),page.locator('#attach-reader-media').click()]);await chooser.setFiles(filename);
+  const [chooser]=await Promise.all([page.waitForEvent('filechooser'),page.locator(replace?'#replace-reader-media':'#attach-reader-media').click()]);await chooser.setFiles(filename);
+  if(replace){stage='confirm_'+kind+'_media_replacement';await page.locator('#local-media-project-dialog').waitFor({state:'visible'});await page.locator('#local-media-current-project').click();}
+  await page.waitForFunction(()=>document.getElementById('reader-media-file').value==='');
   await page.waitForFunction(kind=>{const p=document.querySelector('#source-media '+kind);return p&&!p.error&&p.readyState>=2&&p.duration>0;},kind);
   check(kind+'_uses_browser_file',(await page.locator('#source-media '+kind).getAttribute('src')).startsWith('blob:'));
   await page.locator('.segment[data-segment-id="second"] .time > button').first().click();
@@ -135,7 +138,7 @@ try {
  await page.locator('#mode-summary').click();
  check('summary_keeps_visible_media_playing',await page.locator('video').isVisible()&&await page.locator('video').evaluate(v=>!v.paused));
  await page.locator('video').evaluate(v=>v.pause());
- await page.locator('#mode-transcript').click();await attach(audio,'audio');
+ await page.locator('#mode-transcript').click();await attach(audio,'audio',{replace:true});
  check('audio_replaces_video',await page.locator('video').count()===0);
  const row=page.locator('.segment[data-segment-id="second"]');
  await row.locator('.note-button').click();await page.locator('#note').fill('Synthetic note survives mode changes');await page.locator('#close-note').click();
@@ -242,9 +245,14 @@ try {
  check('explicit_context_dismiss_stays_in_full_source',await page.locator('#search').inputValue()===''&&await page.locator('#reading-context').isHidden()&&await target.evaluate(n=>n===document.activeElement));
  check('first_use_and_source_map_have_no_external_requests',mutations===0&&external===0&&pageErrors===0);
  console.log(JSON.stringify({suite:'static-web-podcast',status:'passed',checks}));
-} catch {
+} catch (error) {
  if(demoPage)try{await captureDemoFailure(demoPage);}catch{console.log(JSON.stringify({suite:'static-web-podcast',stage,demoFailureDiagnostics:'unavailable'}));}
- console.log(JSON.stringify({suite:'static-web-podcast',status:'failed',stage,checks}));process.exitCode=1;
+ const failure={suite:'static-web-podcast',status:'failed',stage,checks,error:{message:error?.message||String(error),stack:error?.stack}};
+ console.log(JSON.stringify(failure));process.exitCode=1;
+ if(process.env.COCONUT_UI_SCREENSHOTS){
+  try{await fs.mkdir(process.env.COCONUT_UI_SCREENSHOTS,{recursive:true});await fs.writeFile(path.join(process.env.COCONUT_UI_SCREENSHOTS,'web-browser-acceptance-checks.json'),JSON.stringify(failure,null,2));}
+  catch(diagnosticError){console.log(JSON.stringify({suite:'static-web-podcast',stage,failureArtifactError:diagnosticError.message}));}
+ }
 } finally {
  await browser?.close();await new Promise(resolve=>server?.listening?server.close(resolve):resolve());
  if(directory)await fs.rm(directory,{recursive:true,force:true});

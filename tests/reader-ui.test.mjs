@@ -1250,24 +1250,26 @@ test('static Web attaches audio and video without a worker, upload or persisted 
   w.URL.createObjectURL=()=>`blob:https://coconut.example/local-${calls++}`;w.URL.revokeObjectURL=url=>revoked.push(url);
   await $('sample').onclick();$('mode-transcript').click();
   $('attach-reader-media').click();
-  Object.defineProperty($('reader-media-file'),'files',{configurable:true,value:[{name:'episode.mp3',type:'audio/mpeg',size:10,slice:()=>({text:async()=> 'ID3 audio'})}]});
+  Object.defineProperty($('reader-media-file'),'files',{configurable:true,value:[new w.File(['ID3 audio'],'episode.mp3',{type:'audio/mpeg',lastModified:7})]});
   await $('reader-media-file').onchange();
   const audio=w.document.querySelector('#source-media audio');assert.ok(audio);assert.match(audio.src,/^blob:/);
   assert.equal(calls,1,'only local object URL creation, no fetch');
-  assert.doesNotMatch(w.localStorage.getItem('coconut-reader-v1'),/blob:|episode.mp3/);
-  $('attach-reader-media').click();Object.defineProperty($('reader-media-file'),'files',{configurable:true,value:[{name:'episode.mp4',type:'video/mp4',size:10,slice:()=>({text:async()=> 'ftyp video'})}]});await $('reader-media-file').onchange();
+  assert.doesNotMatch(w.localStorage.getItem('coconut-reader-v1'),/blob:|ID3 audio/);assert.equal(JSON.parse(w.localStorage.getItem('coconut-reader-v1')).documents[0].local_media_source.name,'episode.mp3');
+  $('replace-reader-media').click();Object.defineProperty($('reader-media-file'),'files',{configurable:true,value:[new w.File(['ftyp video'],'episode.mp4',{type:'video/mp4',lastModified:7})]});const replacement=$('reader-media-file').onchange();
+  for(let n=0;n<100&&!$('local-media-project-dialog').open;n++)await new Promise(resolve=>setTimeout(resolve,1));assert.equal($('local-media-project-dialog').open,true);$('local-media-current-project').click();await replacement;
   assert.ok(w.document.querySelector('#source-media video'));assert.equal(revoked.length,1);
   $('detach-reader-media').click();assert.equal(w.document.querySelector('#source-media video'),null);assert.equal(revoked.length,2);
  }finally{await w.happyDOM.close();}
 });
 
-test('media selection belongs to the document that opened the picker, with cancellation safe',async()=>{
+test('transcript media selection retires on navigation and a fresh selection remains cancellation safe',async()=>{
  const w=setup();try{
   const $=id=>w.document.getElementById(id);w.URL.createObjectURL=()=> 'blob:https://coconut.example/selected';w.URL.revokeObjectURL=()=>{};
   await $('sample').onclick();$('attach-reader-media').click();
   await importDocument(w,{title:'Another',segments:[{start:0,end:1,text:'Other'}]});
-  Object.defineProperty($('reader-media-file'),'files',{configurable:true,value:[{name:'episode.wav',type:'audio/wav',size:10,slice:()=>({text:async()=> 'RIFF WAVE'})}]});await $('reader-media-file').onchange();
-  assert.equal(w.document.querySelector('audio'),null);$('library').querySelector('button').click();assert.ok(w.document.querySelector('audio'));
+  Object.defineProperty($('reader-media-file'),'files',{configurable:true,value:[new w.File(['RIFF WAVE'],'episode.wav',{type:'audio/wav',lastModified:7})]});await $('reader-media-file').onchange();
+  assert.equal(w.document.querySelector('audio'),null);$('library').querySelector('button').click();assert.equal(w.document.querySelector('audio'),null);
+  $('attach-reader-media').click();Object.defineProperty($('reader-media-file'),'files',{configurable:true,value:[new w.File(['RIFF WAVE'],'episode.wav',{type:'audio/wav',lastModified:7})]});await $('reader-media-file').onchange();assert.ok(w.document.querySelector('audio'));
   const audio=w.document.querySelector('audio');$('attach-reader-media').click();Object.defineProperty($('reader-media-file'),'files',{configurable:true,value:[]});await $('reader-media-file').onchange();assert.equal(w.document.querySelector('audio'),audio);
  }finally{await w.happyDOM.close();}
 });
@@ -1286,7 +1288,7 @@ test('reselecting a playing document pauses hidden media and playlist inputs are
  const w=setup();try{
   const $=id=>w.document.getElementById(id);let objects=0;w.URL.createObjectURL=()=> 'blob:https://coconut.example/'+(++objects);w.URL.revokeObjectURL=()=>{};
   await $('sample').onclick();$('attach-reader-media').click();
-  Object.defineProperty($('reader-media-file'),'files',{configurable:true,value:[{name:'episode.mp3',type:'audio/mpeg',size:10,slice:()=>({text:async()=> 'ID3 audio'})}]});await $('reader-media-file').onchange();
+  Object.defineProperty($('reader-media-file'),'files',{configurable:true,value:[new w.File(['ID3 audio'],'episode.mp3',{type:'audio/mpeg',lastModified:7})]});await $('reader-media-file').onchange();
   const player=w.document.querySelector('audio');let pauses=0;player.pause=()=>pauses++;player.play=async()=>{};Object.defineProperty(player,'duration',{value:68,configurable:true});w.document.querySelector('.repeat-button').click();assert.equal($('stop-repeat').hidden,false);
   $('library').querySelector('button').click();assert.equal($('summary-workspace').hidden,true);assert.equal($('transcript-layout').hidden,false);assert.ok(pauses>0);assert.equal($('stop-repeat').hidden,true);
   $('attach-reader-media').click();Object.defineProperty($('reader-media-file'),'files',{configurable:true,value:[{name:'disguised.mp3',type:'audio/mpeg',size:10,slice:()=>({text:async()=> '#EXTM3U\nhttps://example.org/remote.ts'})}]});await $('reader-media-file').onchange();
@@ -1608,7 +1610,7 @@ test('summary and bilingual tabs preserve the visible player and never generate 
  const w=setup();try{const $=id=>w.document.getElementById(id);await importDocument(w,{title:'No translations yet',language:'en',segments:[{id:'one',start:0,end:10,text:'A source sentence.'}]});let pauses=0,calls=0;w.fetch=async()=>{calls++;throw new Error('No calls expected');};
   w.URL.createObjectURL=()=> 'blob:https://coconut.example/tab-test';w.URL.revokeObjectURL=()=>{};
   $('toggle-reader-media').click();$('attach-reader-media').click();
-  Object.defineProperty($('reader-media-file'),'files',{configurable:true,value:[{name:'episode.mp3',type:'audio/mpeg',size:10,slice:()=>({text:async()=> 'ID3 audio'})}]});
+  Object.defineProperty($('reader-media-file'),'files',{configurable:true,value:[new w.File(['ID3 audio'],'episode.mp3',{type:'audio/mpeg',lastModified:7})]});
   await $('reader-media-file').onchange();
   const player=$('source-media').querySelector('audio');assert.ok(player);player.pause=()=>pauses++;
   $('mode-summary').click();assert.equal(pauses,0);assert.equal($('source-media').closest('#transcript-controls'),null);assert.equal($('episode-media').hidden,false);

@@ -7,6 +7,8 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import os from 'node:os';
+import {createHash} from 'node:crypto';
 import {createRequire} from 'node:module';
 import {chromium, expect, waitForPersistedLibrary} from './helpers/browser-storage.mjs';
 import {authoredAudioFixture} from './helpers/authored-audio-fixture.mjs';
@@ -16,20 +18,31 @@ if (!process.env.CI) throw new Error('Inline excerpt browser acceptance is CI-on
 
 const require = createRequire(import.meta.url), C = require('../reader/core.js'), P = require('../reader/passages.js');
 const checks = [], errors = [], geometry = [], screenshots = [];
-let server, browser, diagnosticPage, stage = 'setup', external = 0, mutations = 0, providers = 0;
+let server, browser, directory, diagnosticPage, stage = 'setup', external = 0, mutations = 0, providers = 0;
 const check = (name, passed) => {assert.ok(passed, name); checks.push(name);};
 const cueSelector = id => '#transcript .segment[data-segment-id="' + id + '"]';
 const passageSelector = id => '#passage-body .passage[data-first-cue-id="' + id + '"]';
 const itemSelector = id => '#reading-excerpts-list .reading-excerpt-item[data-excerpt-id="' + id + '"]';
 const createdAt = '2026-10-11T01:00:00.000Z';
 
-function fixture(label) {
+// Independent expected fixture for the existing fingerprintMedia/localMediaMetadata
+// v1 contract: metadata plus three bounded samples, never a whole-file proof.
+function fixtureMediaSource(name, bytes, lastModified) {
+  const sha256 = value => createHash('sha256').update(value).digest('hex');
+  const sampleSize = 64 * 1024;
+  const offsets = [...new Set([0, Math.max(0, Math.floor((bytes.length - sampleSize) / 2)), Math.max(0, bytes.length - sampleSize)])];
+  const samples = offsets.map(offset => sha256(bytes.subarray(offset, offset + sampleSize)));
+  const identity = 'file-candidate-v1:' + JSON.stringify([name, bytes.length, lastModified, 'audio/wav', offsets, samples]);
+  return {version: 1, kind: 'audio', name, size: bytes.length, last_modified: lastModified, type: 'audio/wav', fingerprint: sha256(identity)};
+}
+
+function fixture(label, localMediaSource) {
   const fragments = ['We kept each exact observation in the notebook,',
     'then compared the old words with a translation,', 'while unrelated sentences stayed untouched,',
     'and personal notes belonged to each saved choice,', 'so opening a small reminder beside the text,',
     'could return us to the same reading place.'];
   const doc = {...C.validate({schema_version: 1, title: 'Inline recall · authored fixture · ' + label,
-    language: 'en', translation_view: 'zh', readingPosition: 'cue-3',
+    language: 'en', translation_view: 'zh', readingPosition: 'cue-3', local_media_source: localMediaSource,
     notes: {'cue-3': 'An existing whole-cue note must stay independent.'},
     segments: Array.from({length: 36}, (_, index) => {
       const text = fragments[index % fragments.length];
@@ -193,6 +206,12 @@ async function installAudit(page) {
 }
 
 try {
+  directory = await fs.mkdtemp(path.join(os.tmpdir(), 'coconut-inline-excerpts-'));
+  const audioName = 'authored-inline-tone.wav', audioPath = path.join(directory, audioName), audioBytes = authoredAudioFixture(90);
+  const modified = new Date(createdAt);
+  await fs.writeFile(audioPath, audioBytes); await fs.utimes(audioPath, modified, modified);
+  const audioStat = await fs.stat(audioPath); assert.equal(audioStat.mtimeMs, modified.getTime());
+  const localMediaSource = fixtureMediaSource(audioName, audioBytes, audioStat.mtimeMs);
   server = await startBridge({port: 0, providers: {
     status: async () => ({ready: false, reason: 'Authored inline recall fixture; no CLI or model'}), exclusive: async action => action(),
     structured: async () => {providers++; throw new Error('Unexpected model invocation');},
@@ -217,18 +236,20 @@ try {
     const page = await context.newPage(); diagnosticPage = page; page.setDefaultTimeout(20000);
     page.on('pageerror', error => errors.push({label, message: error.message, stack: error.stack}));
     await page.goto(origin); await page.waitForLoadState('networkidle'); await installAudit(page);
-    const authored = fixture(label), key = authored.key, pair = authored.exact_excerpts[0];
+    const authored = fixture(label, localMediaSource), key = authored.key, pair = authored.exact_excerpts[0];
     await page.locator('#library-file').setInputFiles({name: 'authored-inline-excerpts.json', mimeType: 'application/json',
       buffer: Buffer.from(JSON.stringify({format: 'coconut-library', version: 1, documents: [authored], active: key}))});
     await page.waitForFunction(title => document.getElementById('title').textContent === title && document.getElementById('library-file').value === '', authored.title);
     await saved(page, key);
     if (!await page.locator('#attach-reader-media').isVisible()) await page.locator('#toggle-reader-media').click();
     const [chooser] = await Promise.all([page.waitForEvent('filechooser'), page.locator('#attach-reader-media').click()]);
-    await chooser.setFiles({name: 'authored-inline-tone.wav', mimeType: 'audio/wav', buffer: authoredAudioFixture(90)});
+    await chooser.setFiles(audioPath);
     await page.waitForFunction(() => {const player = document.querySelector('#source-media audio'); return player && !player.error && player.readyState >= 2;});
     await page.locator('#close-reader-media').click();
     await activate(page, '#mode-passages');
     const baseline = await saved(page, key), passage = passageSelector('cue-0'), passageOpen = passage + ' .reading-excerpt-open';
+    assert.deepEqual(baseline.local_media_source, localMediaSource);
+    check(label + '_native_reselected_file_matches_preexisting_snapshot_source', true);
     check(label + '_uses_real_indexeddb', await page.evaluate(() => CoconutStorageBootstrap.result.backend === 'indexeddb'));
     await expect(page.locator(passageOpen)).toHaveText('摘录 10');
     await expect(page.locator(passageSelector('cue-6') + ' .reading-excerpt-open')).toBeHidden();
@@ -456,4 +477,5 @@ try {
 } finally {
   await browser?.close();
   await new Promise(resolve => server?.listening ? server.shutdown(resolve) : resolve());
+  if (directory) await fs.rm(directory, {recursive: true, force: true});
 }

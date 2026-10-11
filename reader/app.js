@@ -83,6 +83,7 @@ function cancelLocalImports(keepInput = null) {
  stopTranscriptImportBatch();
  pendingLocalMediaChoice?.(null);
  if(keepInput!=="local-media-file")localMediaPickerTarget=null;
+ if(keepInput!=="reader-media-file"&&pendingMediaDocument?.durable)pendingMediaDocument=null;
  pendingBackupReview?.(false);
  pendingSubtitleEncoding?.(null);
  if(keepInput!=="project-transcript-file")projectTranscriptTarget=null;
@@ -259,7 +260,9 @@ const browserMedia = new Map();
 const mediaSelectionRevisions = new Map();
 function mediaSelectionRevision(key){return mediaSelectionRevisions.get(key)||0;}
 function changeMediaSelection(key,notify=true){const revision=mediaSelectionRevision(key)+1;mediaSelectionRevisions.set(key,revision);if(notify)window.dispatchEvent(new CustomEvent('coconut-media-selection-change',{detail:{key}}));return revision;}
-let pendingMediaDocument = null;
+let pendingMediaDocument = null,readerMediaRequestRevision=0;
+function canAssociateLocalMedia(doc){return Boolean(doc&&!Coconut.isAudioProject(doc)&&!Coconut.isReadingCollection(doc)&&doc.segments?.length&&!doc.podcast_source&&!doc.source_media&&!doc.local_job_binding);}
+function localMediaBindingSnapshot(doc){return JSON.stringify([doc.local_media_source,doc.podcast_source,doc.source_media,doc.local_job_binding]);}
 const PLAYBACK_RATES=[0.75,1,1.25,1.5,1.75,2];
 let playbackRate=1;
 let repeating=null;
@@ -373,6 +376,7 @@ function bindListening(player,doc,attachment){
   s.raw=localStorage.getItem(s.key);
   if(s.raw){const r=JSON.parse(s.raw);if(r?.version!==1||typeof r.identity!=='string'||!Number.isFinite(r.time)||!Number.isFinite(r.duration)||r.time<0||r.duration<=0)throw new Error('invalid');s.record=r;}
  }catch{s.blocked=true;listeningStatus('已保存的收听进度无法读取，原记录未覆盖。');}
+ if(attachment?.ignoreListeningRecord){s.record=null;s.blocked=true;listeningStatus('旧收听续点未能清除，本次不恢复或保存收听进度。');}
  if(!identity)listeningStatus('无法核验此文件内容，本次不保存收听进度。');
  const current=()=>listeningSession===s;
  player.addEventListener('play',()=>{
@@ -1451,7 +1455,7 @@ for(const [id,direction] of [['reading-excerpts-previous',-1],['reading-excerpts
 // Native dialogs make the page inert but may hand the last Tab to browser
 // chrome. Only the two actual boundaries are ours; interior traversal remains
 // native, including readonly evidence and expanded details.
-for(const id of ['reading-excerpts-dialog','exact-note-dialog','subtitle-encoding-dialog'])$(id).addEventListener('keydown',event=>{
+for(const id of ['reading-excerpts-dialog','exact-note-dialog','subtitle-encoding-dialog','local-media-project-dialog'])$(id).addEventListener('keydown',event=>{
  const dialog=$(id);
  if(!dialog.open||event.key!=='Tab'||event.defaultPrevented||event.isComposing||event.keyCode===229||event.altKey||event.ctrlKey||event.metaKey||event.target.closest?.('dialog')!==dialog)return;
  const controls=[...dialog.querySelectorAll('button,input,select,textarea,a[href],summary,[tabindex]')].filter(node=>{
@@ -2073,8 +2077,10 @@ function renderSourceMedia(doc){
  const mediaPath = attachment?.url || (mediaWorkerReady && Coconut.media ? Coconut.media(doc.source_media) : "");
  const mediaKind = attachment?.kind || doc.source_media?.kind;
  $("detach-reader-media").hidden = !attachment;
+ const linkedTranscript=canAssociateLocalMedia(doc)&&Boolean(doc.local_media_source);
+ $("replace-reader-media").hidden=$("unlink-reader-media").hidden=!linkedTranscript;
  $('attach-reader-media').textContent=doc.local_media_source?'重新选择原音视频':'选择对应的音频或视频';
- $("reader-media-status").textContent = attachment ? attachment.name + " · 仅在此页面读取，不上传；刷新后需重新选择" : doc.local_media_source?'请重新选择「'+doc.local_media_source.name+'」继续回听。笔记、时间书签和项目已保留；未保存媒体文件，未自动播放。':"在浏览器中打开文件，不上传。请选与文字稿对应的原文件；刷新页面后需重新选择。";
+ $("reader-media-status").textContent = attachment ? attachment.name + " · 文件只在此页面读取，不上传；刷新后需重新选择"+(doc.local_media_source?"。关联仅按文件信息与部分内容核对，未完整核验。":"") : doc.local_media_source?'请重新选择「'+doc.local_media_source.name+'」继续回听。文件关联信息随项目保存；未保存媒体文件，未自动播放。笔记与时间书签仍保留。':"在浏览器中打开文件，不上传。请选与文字稿对应的原文件；刷新页面后需重新选择。";
 	const mediaHost = $("source-media");
  if(repeating && (repeating.key!==doc.key || repeating.path!==mediaPath))stopRepeating();
 	const currentPlayer = mediaHost.querySelector("audio,video");
@@ -2117,7 +2123,7 @@ function renderSourceMedia(doc){
 		player.style.maxHeight = "360px";
 		player.onerror = () => {
    if(mediaHost.querySelector('audio,video')!==player||active()?.key!==doc.key)return;
-   if(attachment){$('reader-media-status').textContent='浏览器无法解码「'+attachment.name+'」。请重新选择可播放的原文件；笔记、书签与文字稿仍保留。转换后的文件请从「打开本地音视频」另建项目。';notice($('reader-media-status').textContent);}
+   if(attachment){$('reader-media-status').textContent='浏览器无法解码「'+attachment.name+'」。请重新选择可播放的原文件；笔记、书签与文字稿仍保留。'+(canAssociateLocalMedia(doc)&&doc.local_media_source?'转换后的文件可用“更换关联文件”明确换绑。':'转换后的文件请从「打开本地音视频」另建项目。');notice($('reader-media-status').textContent);}
    else notice('原始媒体暂时无法播放。请确认此文字稿对应的本地任务仍在这台电脑上。');
   };
 		mediaHost.replaceChildren(player);
@@ -4203,20 +4209,56 @@ async function localMediaMetadata(file,media){
  if(!source)throw new Error('文件名或文件信息无效，请重新选择实际音视频文件');
  return source;
 }
-function chooseLocalMediaProject(matches,canCommit){
+// One chooser serves candidate reopening and explicit association changes.
+// v1 is a bounded candidate, never proof that every byte is the same.
+function chooseLocalMediaProject(matches,canCommit,{allowNew=false,current=null,action='attach',fileName=''}={}){
+ pendingLocalMediaChoice?.(null);
  return new Promise(resolve=>{
   const dialog=$('local-media-project-dialog'),host=$('local-media-project-options');host.replaceChildren();let settled=false;
-  const finish=doc=>{if(settled)return;settled=true;pendingLocalMediaChoice=null;dialog.removeEventListener('close',cancel);dialog.removeEventListener('cancel',cancel);if(dialog.open)dialog.close();resolve(canCommit()?doc:null);};
+  const finish=choice=>{if(settled)return;settled=true;pendingLocalMediaChoice=null;dialog.removeEventListener('close',cancel);dialog.removeEventListener('cancel',cancel);if(dialog.open)dialog.close();resolve(canCommit()?choice:null);};
   const cancel=event=>{if(event?.type==='close'&&dialog.open)return;event?.preventDefault();finish(null);};
   pendingLocalMediaChoice=finish;
+  $('local-media-project-heading').textContent=action==='unlink'?'解除这篇文字稿的文件关联':current?'选择文件关联方式':'选择这个文件对应的项目';
+  $('local-media-project-hint').textContent=action==='unlink'?'只解除「'+current.local_media_source.name+'」与本篇的关联，并清除旧文件校准、时长与收听续点。文字稿、笔记、时间书签和历史摘录保留；不会删除原文件。':
+   (current?'本次文件：「'+fileName+'」。':'')+'文件信息与部分内容只是候选匹配，未完整核验内容。请选择是否使用本次文件，文字稿与笔记不会合并。'+(action==='replace'?'更换本篇关联会清除旧校准、时长与收听续点；文字、笔记、时间书签和历史摘录保留。':'已有偏移不会自动清除；打开后请核对，可恢复零偏移并保存。');
+  const currentButton=$('local-media-current-project');currentButton.hidden=!current;
+  currentButton.textContent=action==='unlink'?'解除关联，保留文字稿与笔记':action==='replace'?'更换本篇关联并清除旧校准':'关联到当前文字稿，保留本篇笔记';
+  currentButton.onclick=()=>finish({action:'current',document:current});
   for(const doc of matches){
+   const snapshot=localMediaBindingSnapshot(doc);
    const button=el('button','',doc.title);button.type='button';button.dataset.documentKey=doc.key;
-   button.append(el('small','',Coconut.isAudioProject(doc)?'原声项目 · '+Coconut.projectAnnotationCount(doc)+' 项笔记与书签':doc.segments.length+' 段文字稿 · '+Coconut.projectAnnotationCount(doc)+' 项笔记与书签'));
-   if(Coconut.hasNoteContent(doc.project_note))button.append(el('small','',doc.project_note.slice(0,100)));
-   button.onclick=()=>finish(doc);host.append(button);
+   button.append(el('small','',Coconut.isAudioProject(doc)?'打开已有原声项目并使用本次文件': '打开已有文字稿并使用本次文件'));
+   const count=Coconut.projectAnnotationCount(doc)+Coconut.segmentNoteCount(doc);
+   button.append(el('small','',(Coconut.isAudioProject(doc)?'原声项目':doc.segments.length+' 段文字稿')+' · '+count+' 项笔记与书签'));
+   if(doc.media_timing)button.append(el('small','', '当前回听偏移 '+doc.media_timing.offset+' 秒；使用本次文件后请核对，可重置。'));
+   const preview=Coconut.hasNoteContent(doc.project_note)?doc.project_note:doc.segments.map(cue=>doc.notes?.[cue.id]).find(Coconut.hasNoteContent)||doc.timestamp_bookmarks?.find(item=>Coconut.hasNoteContent(item.note))?.note;
+   if(preview)button.append(el('small','',preview.slice(0,100)));
+   button.onclick=()=>{
+    if(!canCommit())return finish(null);
+    if(!contentIngressAllowed(doc)||localMediaBindingSnapshot(doc)!==snapshot){finish(null);notice('候选项目的来源已经改变，请重新选择文件。未更改任何关联。');return;}
+    finish({action:'existing',document:doc,source:snapshot});
+   };host.append(button);
   }
+  $('new-local-media-project').hidden=!allowNew;$('new-local-media-project').onclick=()=>finish({action:'new'});
+  $('cancel-local-media-project').textContent=action==='unlink'?'取消解除':'取消打开';
   $('cancel-local-media-project').onclick=cancel;dialog.addEventListener('close',cancel);dialog.addEventListener('cancel',cancel);dialog.showModal();$('cancel-local-media-project').focus();
  });
+}
+async function openLocalMediaDocument(file,media,source,existing,expectedSource=null){
+ if(existing&&(existing.local_media_source?.fingerprint!==source.fingerprint||expectedSource!==null&&localMediaBindingSnapshot(existing)!==expectedSource))throw new Error('候选项目的来源已经改变，请重新选择文件');
+ if(existing&&!contentIngressAllowed(existing))throw new Error('这个项目正在移除或恢复，请稍候再打开');
+ const doc=existing||{...Coconut.validate({project_kind:'audio_only',title:file.name,local_media_source:source,segments:[]}),key:'local-'+crypto.randomUUID()};
+ const nextURL=URL.createObjectURL(file);
+ resetReaderForDocumentNavigation();
+ if(!existing)state.documents.push(doc);
+ const key=doc.key,previous=browserMedia.get(key);changeMediaSelection(key);
+ browserMedia.set(key,{url:nextURL,...media,name:file.name,origin:'local'});
+ if(previous)URL.revokeObjectURL(previous.url);
+ selectActiveDocument(key);workspace='read';setReadingMode(Coconut.isAudioProject(doc)?'transcript':prefersPassageReading(doc)?'passages':'transcript');mediaExpandedKey=key;mediaCollapsedKey=null;render();
+ // Navigation owns this scroll now, never a later save receipt.
+ $('title').scrollIntoView?.({block:'start'});$('title').focus({preventScroll:true});
+ const selection=activeSelectionRevision,receipt=existing?{ok:true,identity:doc}:await commitDocument(doc);
+ if(active()===doc&&workspace==='read'&&activeSelectionRevision===selection&&browserMedia.get(key)?.url===nextURL&&contentIngressAllowed(doc))notice(receipt.ok?(existing?'已打开原有项目，笔记和文字稿保留。':'本地原声项目已保存，可直接回听、写笔记和时间书签。')+'文件未上传，未运行识别或 AI；请自行点击播放。':'项目已在本页打开，但尚未保存。请先导出 JSON 备份；媒体文件需另行保留。',receipt.ok?'success':'');
 }
 $('local-media-file').addEventListener('cancel',()=>{localMediaPickerTarget=null;});
 $('open-local-media').onclick=()=>{
@@ -4226,7 +4268,8 @@ $('open-local-media').onclick=()=>{
 $('local-media-file').onchange=async()=>{
  const input=$('local-media-file'),file=input.files[0],target=localMediaPickerTarget;localMediaPickerTarget=null;
  if(!file)return;
- const revision=cancelLocalImports('local-media-file');let nextURL,installed=false;
+ if(!target){input.value='';return;}
+ const revision=cancelLocalImports('local-media-file');
  const canCommit=()=>!!target&&revision===localImportRevision&&target.selection===activeSelectionRevision&&target.workspace===workspace&&contentIngressAllowed();
  try{
   if(!target||target.revision!==revision-1)throw new Error('文件选择已取消，请重新打开本地音视频');
@@ -4235,49 +4278,83 @@ $('local-media-file').onchange=async()=>{
   const candidate=Coconut.validate({project_kind:'audio_only',title:file.name,local_media_source:source,segments:[]});
   if(await wasRemovedSince(candidate,target.lifecycle)||!canCommit())return;
   const matches=state.documents.filter(doc=>doc.local_media_source?.fingerprint===source.fingerprint);
-  const existing=matches.length>1?await chooseLocalMediaProject(matches,canCommit):matches[0];
-  if(!canCommit()||matches.length>1&&!existing)return;
-  if(existing&&!contentIngressAllowed(existing))throw new Error('这个项目正在移除或恢复，请稍候再打开');
-  const doc=existing||{...candidate,key:'local-'+crypto.randomUUID()};
-  nextURL=URL.createObjectURL(file);if(!canCommit()){URL.revokeObjectURL(nextURL);nextURL=null;return;}
-  resetReaderForDocumentNavigation();
-  if(!existing)state.documents.push(doc);
-  const key=doc.key,previous=browserMedia.get(key);changeMediaSelection(key);
-  browserMedia.set(key,{url:nextURL,...media,name:file.name,origin:'local'});installed=true;
-  if(previous)URL.revokeObjectURL(previous.url);
-  selectActiveDocument(key);workspace='read';setReadingMode(Coconut.isAudioProject(doc)?'transcript':prefersPassageReading(doc)?'passages':'transcript');mediaExpandedKey=Coconut.isAudioProject(doc)?key:null;mediaCollapsedKey=null;render();
-  // The newly opened project owns this scroll now, never a later save receipt.
-  $('title').scrollIntoView?.({block:'start'});
-  const receipt=existing?{ok:true,identity:doc}:await commitDocument(doc);
-  if(active()===doc&&browserMedia.get(key)?.url===nextURL&&contentIngressAllowed(doc))notice(receipt.ok?(existing?'已打开原有项目，笔记和文字稿保留。':'本地原声项目已保存，可直接回听、写笔记和时间书签。')+'文件未上传，未运行识别或 AI；请自行点击播放。':'项目已在本页打开，但尚未保存。请先导出 JSON 备份；媒体文件需另行保留。',receipt.ok?'success':'');
- }catch(error){if(nextURL&&!installed)URL.revokeObjectURL(nextURL);if(revision===localImportRevision)notice('打开本地音视频失败：'+error.message);}
+  const needsChoice=matches.length>1||matches.some(doc=>!Coconut.isAudioProject(doc));
+  const choice=needsChoice?await chooseLocalMediaProject(matches,canCommit,{allowNew:true}):matches[0]?{action:'existing',document:matches[0]}:{action:'new'};
+  if(!canCommit()||!choice)return;
+  await openLocalMediaDocument(file,media,source,choice.document,choice.source);
+ }catch(error){if(revision===localImportRevision)notice('打开本地音视频失败：'+error.message);}
  finally{if(revision===localImportRevision)input.value='';}
 };
+function beginReaderMediaSelection(action='attach'){
+ const doc=active();if(!doc||!contentIngressAllowed(doc)||action==='replace'&&(!canAssociateLocalMedia(doc)||!doc.local_media_source))return;
+ const durable=canAssociateLocalMedia(doc);
+ if(durable)cancelLocalImports('reader-media-file');else pendingLocalMediaChoice?.(null);
+ pendingMediaDocument={key:doc.key,document:doc,source:localMediaBindingSnapshot(doc),durable,action,selection:activeSelectionRevision,workspace,ingress:localImportRevision,request:++readerMediaRequestRevision,revision:changeMediaSelection(doc.key)};
+ $('reader-media-file').click();
+}
 $('reader-media-file').addEventListener('cancel',()=>{pendingMediaDocument=null;});
-$('attach-reader-media').onclick=()=>{const doc=active();pendingMediaDocument=doc?{key:doc.key,document:doc,source:projectSourceSnapshot(doc)}:null;if(pendingMediaDocument)$('reader-media-file').click();};
+$('attach-reader-media').onclick=()=>beginReaderMediaSelection();
+$('replace-reader-media').onclick=()=>beginReaderMediaSelection('replace');
+// Only explicit reassociation/unlink clears file-owned clocks. Cue timestamps,
+// bookmarks and immutable excerpt source snapshots always retain their meaning.
+function clearLocalMediaClocks(doc){
+ if(active()===doc){passagePlayback?.cancel();stopRepeating();$('source-media').querySelector('audio,video')?.pause();if(listeningSession?.key==='coconut-listening-v1:'+doc.key)listeningSession=null;}
+ delete doc.media_timing;delete doc.media_duration;
+ try{localStorage.removeItem('coconut-listening-v1:'+doc.key);return true;}catch{return false;}
+}
 $('reader-media-file').onchange=async()=>{
  const input=$('reader-media-file'),file=input.files[0],target=pendingMediaDocument;pendingMediaDocument=null;
  if(!file)return;
- const key=target?.key,revision=changeMediaSelection(key);let nextURL;
- const canCommit=()=>target&&contentIngressAllowed(target.document)&&state.documents.find(doc=>doc.key===key)===target.document&&projectSourceSnapshot(target.document)===target.source&&mediaSelectionRevision(key)===revision;
+ if(!target){input.value='';return;}
+ const key=target?.key,revision=target?.revision;let nextURL,installed=false;
+ const ownsDocument=()=>target&&contentIngressAllowed(target.document)&&state.documents.find(doc=>doc.key===key)===target.document&&mediaSelectionRevision(key)===revision;
+ const ownsView=()=>!target?.durable||active()===target.document&&workspace===target.workspace&&activeSelectionRevision===target.selection&&localImportRevision===target.ingress;
+ const canCommit=()=>ownsDocument()&&ownsView()&&localMediaBindingSnapshot(target.document)===target.source;
  try{
   if(!target||!canCommit())throw new Error('原文字稿已关闭，请重新选择');
-  const {kind,identity}=await inspectLocalMedia(file);if(!canCommit())return;
-  if(target.document.local_media_source){
-   const source=await localMediaMetadata(file,{kind,identity});if(!canCommit())return;
-   if(source.fingerprint!==target.document.local_media_source.fingerprint)throw new Error('文件信息或部分内容与原文件不同。请重新选择「'+target.document.local_media_source.name+'」；若要打开另一份文件，请从「添加内容」打开本地音视频。现有笔记与书签未改变');
+  const media=await inspectLocalMedia(file);if(!canCommit())return;
+  let source;
+  if(target.document.local_media_source||target.durable){
+   source=await localMediaMetadata(file,media);if(!canCommit())return;
+   if(target.document.local_media_source&&target.action!=='replace'&&source.fingerprint!==target.document.local_media_source.fingerprint)throw new Error('文件信息或部分内容与原文件不同。请重新选择「'+target.document.local_media_source.name+'」'+(target.durable?'，或用“更换关联文件”明确换绑。':'；若要打开另一份文件，请从「添加内容」打开本地音视频。')+'现有笔记与书签未改变');
   }
-  nextURL=URL.createObjectURL(file);const previous=browserMedia.get(key);
-  if(key===active()?.key){stopRepeating();$('source-media').querySelector('audio,video')?.pause();}
-  browserMedia.set(key,{url:nextURL,kind,name:file.name,identity,origin:'local'});if(previous)URL.revokeObjectURL(previous.url);
-  if(key===active()?.key){render();notice('媒体只在本次页面读取，未上传。请核对内容和文字稿对应；刷新后重新选择文件即可继续回听。', "success");}
- }catch(error){if(nextURL)URL.revokeObjectURL(nextURL);if(!target||active()===target.document)notice('打开媒体失败：'+error.message);}
- finally{input.value='';}
+  const associating=target.durable&&(!target.document.local_media_source||target.action==='replace');
+  if(associating){
+   const matches=state.documents.filter(doc=>doc!==target.document&&doc.local_media_source?.fingerprint===source.fingerprint);
+   if(matches.length||target.action==='replace'){
+    const choice=await chooseLocalMediaProject(matches,canCommit,{current:target.document,action:target.action,fileName:file.name});
+    if(!choice||!canCommit())return;
+    if(choice.action==='existing'){await openLocalMediaDocument(file,media,source,choice.document,choice.source);return;}
+   }
+  }
+  nextURL=URL.createObjectURL(file);if(!canCommit()){URL.revokeObjectURL(nextURL);nextURL=null;return;}
+  const doc=target.document,previous=browserMedia.get(key);let clocksCleared=true;
+  if(target.action==='replace')clocksCleared=clearLocalMediaClocks(doc);
+  else if(key===active()?.key){flushListening(true);stopRepeating();$('source-media').querySelector('audio,video')?.pause();}
+  if(associating)doc.local_media_source=source;
+  browserMedia.set(key,{url:nextURL,...media,name:file.name,origin:'local',...(!clocksCleared?{ignoreListeningRecord:true}:{})});installed=true;if(previous)URL.revokeObjectURL(previous.url);
+  if(key===active()?.key){mediaExpandedKey=key;mediaCollapsedKey=null;render();}
+  const receipt=associating?await commitDocument(doc):{ok:true};
+  if(ownsDocument()&&ownsView()&&active()===doc&&browserMedia.get(key)?.url===nextURL)notice(associating?(receipt.ok?'文件关联已保存，文字稿与笔记保留；刷新后需重新选择文件。':'文件关联仅在本页应用，尚未保存。请重试保存或导出 JSON 备份；媒体文件需另行保留。')+'未上传文件；文件信息与部分内容并非完整核验，请自行核对并播放。'+(clocksCleared?'':'旧收听续点未能清除，请勿直接恢复旧位置。'):'媒体只在本次页面读取，未上传。'+(doc.local_media_source?'文件信息与部分内容匹配并非完整核验，请核对声音；':'请自行核对声音与文字稿对应；')+'未自动播放。',receipt.ok?'success':'');
+ }catch(error){if(nextURL&&!installed)URL.revokeObjectURL(nextURL);if(!target||ownsDocument()&&ownsView()&&active()===target.document)notice('打开媒体失败：'+error.message);}
+ finally{if(!target||target.request===readerMediaRequestRevision)input.value='';}
 };
 $('detach-reader-media').onclick=()=>{
  const key=active()?.key,attachment=browserMedia.get(key);if(!attachment)return;
- changeMediaSelection(key);
- stopRepeating();$('source-media').querySelector('audio,video')?.pause();browserMedia.delete(key);URL.revokeObjectURL(attachment.url);render();
+ changeMediaSelection(key);pendingLocalMediaChoice?.(null);
+ flushListening(true);stopRepeating();$('source-media').querySelector('audio,video')?.pause();browserMedia.delete(key);URL.revokeObjectURL(attachment.url);render();
+};
+$('unlink-reader-media').onclick=async()=>{
+ const doc=active();if(!canAssociateLocalMedia(doc)||!doc.local_media_source||!contentIngressAllowed(doc))return;
+ cancelLocalImports();pendingMediaDocument=null;readerMediaRequestRevision++;
+ const source=localMediaBindingSnapshot(doc),selection=activeSelectionRevision,ingress=localImportRevision,revision=changeMediaSelection(doc.key);
+ const owns=()=>active()===doc&&workspace==='read'&&activeSelectionRevision===selection&&localImportRevision===ingress&&mediaSelectionRevision(doc.key)===revision&&contentIngressAllowed(doc);
+ const canCommit=()=>owns()&&localMediaBindingSnapshot(doc)===source;
+ const choice=await chooseLocalMediaProject([],canCommit,{current:doc,action:'unlink'});if(!choice||!canCommit())return;
+ const clocksCleared=clearLocalMediaClocks(doc),attachment=browserMedia.get(doc.key);
+ delete doc.local_media_source;browserMedia.delete(doc.key);if(attachment)URL.revokeObjectURL(attachment.url);
+ mediaExpandedKey=doc.key;mediaCollapsedKey=null;render();$('attach-reader-media').focus();const receipt=await commitDocument(doc);
+ if(owns())notice((receipt.ok?'已解除文件关联并保存，文字稿、笔记和历史摘录保留。':'解除关联仅在本页应用，尚未保存；请重试保存或导出 JSON 备份。')+(clocksCleared?'':'旧收听续点未能清除，请勿直接恢复旧位置。'),receipt.ok?'success':'');
 };
 
 $('attach-project-transcript').onclick=()=>{const doc=active();if(Coconut.isAudioProject(doc)){projectTranscriptTarget={key:doc.key,document:doc,source:projectSourceSnapshot(doc)};$('project-transcript-file').click();}};

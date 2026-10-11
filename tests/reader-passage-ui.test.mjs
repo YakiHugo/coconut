@@ -26,7 +26,7 @@ const cue= (env,id)=>env.w.document.querySelector('.segment[data-segment-id="'+i
 async function media(env){
  const {$,w}=env;if($('episode-media').hidden)$('toggle-reader-media').click();$('attach-reader-media').click();
  w.URL.createObjectURL=()=> 'blob:authored';w.URL.revokeObjectURL=()=>{};
- const file={name:'authored.wav',type:'audio/wav',size:128,slice:()=>({text:async()=> 'RIFF authored fixture'})};
+ const file=new w.File(['RIFF authored fixture'],'authored.wav',{type:'audio/wav',lastModified:7});
  Object.defineProperty($('reader-media-file'),'files',{configurable:true,value:[file]});await $('reader-media-file').onchange();
  const player=$('source-media').querySelector('audio');
  Object.defineProperty(player,'duration',{configurable:true,value:180});Object.defineProperty(player,'paused',{configurable:true,writable:true,value:true});

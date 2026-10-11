@@ -8,9 +8,9 @@
 <meta name="theme-color" content="#faf9f7">
 <link rel="icon" type="image/png" href="coconut-mark.png">
 <script src="appearance.js?v=86ea922669"></script>
-<link rel="stylesheet" href="style.css?v=3d1a552ff2">
+<link rel="stylesheet" href="style.css?v=cbc3bcae1a">
 <script src="summary.js?v=580ffdad1e" defer></script>
-<script src="core.js?v=d3d26c66b2" defer>
+<script src="core.js?v=7c5006bb31" defer>
 </script>
 <script src="passages.js?v=d02200c5a9" defer></script>
 <script src="quotation.js?v=dd1ac21240" defer></script>
@@ -18,7 +18,7 @@
 <script src="library-store.js?v=e76ded9456" defer></script>
 <script src="indexeddb-document-adapter.js?v=65c0c5a814" defer></script>
 <script src="storage-provider.js?v=1cb898e984" defer></script>
-<script src="app.js?v=85a040d7d5" type="text/coconut-pending" data-reader-script>
+<script src="app.js?v=5c7a3625e9" type="text/coconut-pending" data-reader-script>
 </script>
 <script src="language.js?v=492470a705" type="text/coconut-pending" data-reader-script></script>
 <script src="translation-review.js?v=ef64ceb824" type="text/coconut-pending" data-reader-script></script>
@@ -187,7 +187,7 @@ cd coconut
 <details id="reading-info" class="reading-info" hidden><summary>信息与设置</summary><div class="reading-info-panel"><div class="reading-info-heading"><h2 id="reading-info-title"></h2><button id="close-reading-info" type="button" aria-label="关闭信息与设置">关闭</button></div><div id="reading-info-meta"></div><p id="reading-info-position" class="hint"></p><div id="reading-info-help"></div><div id="reading-info-settings"></div></div></details>
 <button id="toggle-reader-media" class="media-disclosure" type="button" aria-expanded="false" aria-controls="episode-media">关联原声 · 回听这一篇</button>
 <section id="episode-media" class="episode-media" aria-label="本集声音与回源"><div class="episode-media-heading"><span class="eyebrow">原声与来源</span><span class="hint">阅读时随时回听</span><button id="close-reader-media" type="button" aria-label="关闭原声设置" hidden>关闭</button></div><div id="podcast-playback" class="podcast-playback" hidden><button id="download-podcast-media" type="button">下载并回听本集原声</button><button id="cancel-podcast-media" type="button" hidden>取消下载</button><p id="podcast-media-status" class="hint">只在点击后下载（最多 200 MiB），媒体仅保留在本次页面，刷新后需重新获取。</p></div>
-<div class="local-media-entry"><button id="attach-reader-media" type="button">选择对应的音频或视频</button><button id="detach-reader-media" type="button" hidden>移除本次媒体</button><input id="reader-media-file" type="file" accept="audio/*,video/*,.mp3,.m4a,.wav,.ogg,.flac,.mp4,.webm,.mov" hidden><p id="reader-media-status" class="hint">在浏览器中打开文件，不上传。请选与文字稿对应的原文件；刷新页面后需重新选择。</p></div>
+<div class="local-media-entry"><button id="attach-reader-media" type="button">选择对应的音频或视频</button><button id="detach-reader-media" type="button" hidden>移除本次媒体</button><button id="replace-reader-media" type="button" hidden>更换关联文件</button><button id="unlink-reader-media" type="button" hidden>解除文件关联</button><input id="reader-media-file" type="file" accept="audio/*,video/*,.mp3,.m4a,.wav,.ogg,.flac,.mp4,.webm,.mov" hidden><p id="reader-media-status" class="hint">在浏览器中打开文件，不上传。请选与文字稿对应的原文件；刷新页面后需重新选择。</p></div>
 <fieldset id="media-timing" class="media-timing" hidden><legend>字幕与原声对齐</legend>
 <p class="hint">媒体时间 = 字幕时间 + 偏移秒数。正数表示原声较晚；只调整此文件的回听，不改字幕、导出或原站链接。</p>
 <div class="media-timing-fields"><label>偏移（秒）<input id="media-timing-offset" type="number" min="-3600" max="3600" step="0.1" value="0"></label><label>校准片段编号<input id="media-timing-cue" type="number" min="1" step="1" value="1"></label></div><p id="media-timing-example" class="hint"></p>
@@ -434,8 +434,8 @@ cd coconut
 <p id="translation-edit-error" role="alert"></p><div class="dialog-actions"><button id="translation-edit-cancel" type="button">取消，返回</button><button id="save-translation-edit" type="button" class="primary">保存人工修正</button><button id="save-next-missing-translation" type="button">保存，写下一条缺失译文</button></div>
 </dialog>
 <dialog id="local-media-project-dialog" aria-labelledby="local-media-project-heading">
-<h2 id="local-media-project-heading">选择这个文件对应的项目</h2><p class="hint">书架里有多份同文件记录。请选择要继续的一份；不同版本的笔记与文字稿不会合并。文件信息与部分内容只是候选匹配，请核对声音。</p>
-<div id="local-media-project-options" class="local-media-project-options"></div><button id="cancel-local-media-project" type="button">取消打开</button>
+<h2 id="local-media-project-heading">选择这个文件对应的项目</h2><p id="local-media-project-hint" class="hint">文件信息与部分内容只是候选匹配，未完整核验内容。请核对声音；不同项目的文字稿与笔记不会合并。</p>
+<button id="local-media-current-project" type="button" hidden></button><div id="local-media-project-options" class="local-media-project-options"></div><div class="dialog-actions"><button id="new-local-media-project" type="button" hidden>新建原声项目</button><button id="cancel-local-media-project" type="button">取消打开</button></div>
 </dialog>
 <dialog id="chapter-dialog" class="library-notebook" aria-labelledby="chapter-heading">
 <h2 id="chapter-heading">手动章节目录</h2><p class="hint">按完整文字稿的片段顺序排列。章节跳转只定位原文，不播放，也不改变“读到这里”。旧版本导入备份可能丢失章节，请用支持章节的版本恢复。未提交标题草稿仅在本页，备份不包含草稿。</p>
