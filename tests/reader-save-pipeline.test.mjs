@@ -205,3 +205,22 @@ for(const focusedId of ['retry-save','export-unsaved-documents'])test('focused '
   f.$('note').focus();await settle();assert.equal(action.hidden,true);assert.equal(panel.parentElement,f.$('save-status-home'));assert.equal(f.w.document.activeElement,f.$('note'));
  }finally{await f.w.happyDOM.close();}
 });
+
+for(const newerNavigation of [false,true])test('failed save recovery stays in the viewport stack without moving '+(newerNavigation?'newer reading':'note focus'),async()=>{
+ const f=setup({held:true});let flushing;try{
+  const style=f.w.document.createElement('style');style.textContent=fs.readFileSync(new URL('reader/style.css',root),'utf8');f.w.document.head.append(style);
+  f.note('Keep this unsaved note');flushing=f.saves.store.flush();
+  if(newerNavigation){f.w.document.querySelectorAll('.library-open')[1].click();f.$('mode-transcript').click();f.w.document.querySelector('.segment').focus({preventScroll:true});}
+  else{f.w.happyDOM.setWindowSize({width:320,height:480});f.$('note').focus();}
+  const focused=f.w.document.activeElement,title=f.$('title').textContent;let scrolls=0;
+  f.w.scrollTo=()=>scrolls++;f.w.HTMLElement.prototype.scrollIntoView=()=>scrolls++;
+  f.saves.writes[0].fail();await flushing;
+  const panel=f.$('save-status').closest('.save-pipeline'),feedback=f.$('reading-feedback');
+  assert.equal(panel.parentElement,f.$('save-warning-home'));assert.ok(f.$('save-warning-home').parentElement===feedback,'recovery host belongs to the fixed viewport stack');
+  assert.equal(f.w.getComputedStyle(feedback).position,'fixed');assert.equal(f.w.getComputedStyle(feedback).display,'flex');
+  assert.equal(f.w.document.activeElement,focused);assert.equal(f.$('title').textContent,title);assert.equal(scrolls,0);
+  assert.equal(f.$('save-status').dataset.state,'failed');assert.match(f.$('save-status').textContent,/空间不足/);
+  for(const id of ['retry-save','export-unsaved-documents']){assert.equal(f.$(id).hidden,false);assert.equal(f.w.getComputedStyle(f.$(id)).minHeight,'44px');}
+  feedback.append(f.$('notice-shell'));f.$('notice-shell').classList.add('is-success');assert.equal(f.w.getComputedStyle(f.$('notice-shell')).display,'none','transient success cannot cover recovery');
+ }finally{f.saves.hold(false);for(const write of f.saves.writes)write.commit();await flushing;await f.w.happyDOM.close();}
+});
