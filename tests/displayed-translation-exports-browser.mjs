@@ -80,8 +80,18 @@ try{
   await switchMode('#passage-toggle-translation');await menu();check(width+'_reexpansion_does_not_recheck',!await page.locator('#subtitle-bilingual').isChecked());await page.locator('#subtitle-bilingual').check();
   await switchMode('#mode-summary');await originalExports(width,'summary',doc);
   stage=width+'_explicit_french';await switchMode('#mode-bilingual');
-  if(!await page.locator('#language-panel').evaluate(node=>node.open))await page.locator('#language-panel > summary').click();
+  // Follow the actual bilingual-reader entry: opening only the outer panel
+  // leaves the task in question mode and its nested translation settings hidden.
+  await expect(page.locator('#prepare-bilingual')).toBeVisible();await page.locator('#prepare-bilingual').click();
+  await expect(page.locator('#ai-task')).toHaveValue('translation');
+  await expect(page.locator('#translation-options > summary')).toBeVisible();
+  if(!await page.locator('#translation-options').evaluate(node=>node.open))await page.locator('#translation-options > summary').click();
+  await expect(page.locator('#translation-view')).toBeVisible();await expect(page.locator('#translation-view')).toBeEnabled();
   await page.locator('#translation-view').selectOption('fr');await expect(page.locator('#transcript .translation').first()).toContainText('Traduction française 0');
+  check(width+'_explicit_language_selected_through_visible_translation_settings',await page.locator('#translation-view').inputValue()==='fr');
+  // Return through the same disclosures before paging/searching in either viewport.
+  await page.locator('#translation-options > summary').click();await page.locator('#language-panel > summary').click();
+  await expect(page.locator('#translation-view')).not.toBeVisible();
   await waitForPersistedLibrary(page,async()=> (await readPersistedLibrary()).documents[0].translation_view==='fr');
   await page.locator('#next-page').click();await page.locator('#search').fill('Authored source 111');await expect(page.locator('#transcript .segment')).toHaveCount(1);
   await menu();check(width+'_explicit_language_clears_stale_choice',!await page.locator('#subtitle-bilingual').isChecked()&&(await page.locator('#subtitle-bilingual-label').textContent()).includes('法文（fr）'));await page.locator('#subtitle-bilingual').check();

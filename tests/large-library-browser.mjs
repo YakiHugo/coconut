@@ -217,5 +217,37 @@ try{
  await selectionPage.context().close();
  check('no_external_requests_mutations_or_browser_errors',external===0&&mutations===0&&errors.length===0);
  console.log(JSON.stringify({checks},null,2));
-}catch(error){console.error('Large library browser acceptance failed at '+stage);throw error;}
+}catch(error){
+ console.error('Large library browser acceptance failed at '+stage);
+ if(process.env.COCONUT_UI_SCREENSHOTS){
+  const directory=process.env.COCONUT_UI_SCREENSHOTS,stem='large-library-failure-'+stage.replace(/[^a-z0-9]+/gi,'-').toLowerCase();
+  // Every context here contains authored fixtures only. Capture before closing,
+  // without opening disclosures or changing the failed page's layout or focus.
+  try{
+   await fs.mkdir(directory,{recursive:true});
+   const pages=browser?.contexts().flatMap(context=>context.pages())||[],layouts=[];
+   for(const [index,page] of pages.entries()){
+    if(page.isClosed())continue;
+    const name=stem+'-page-'+(index+1);
+    try{
+     const layout=await page.evaluate(()=>({
+      viewport:{width:innerWidth,height:innerHeight},mobile:matchMedia('(max-width: 650px)').matches,
+      shelfExpanded:document.getElementById('toggle-library')?.getAttribute('aria-expanded'),focused:document.activeElement?.id||document.activeElement?.className,
+      controls:['library-tools','library-tools-content','open-library-notebook','.library-backup','library-options','library-pagination'].map(id=>{
+       const node=id[0]==='.'?document.querySelector(id):document.getElementById(id);
+       return {id,present:!!node,parent:node?.parentElement?.id,hidden:node?.hidden,open:node?.open};
+      })
+     }));
+     layouts.push({name,...layout});
+     await page.screenshot({path:path.join(directory,name+'.png'),fullPage:false,animations:'disabled',timeout:5000});
+    }catch(diagnosticError){layouts.push({name,diagnosticError:diagnosticError.message});}
+   }
+   const diagnostic={stage,error:error.message,checks,layouts};
+   // The workflow uploads PNGs; keep the layout evidence in its job log too.
+   console.error(JSON.stringify({suite:'large-library-failure',...diagnostic},null,2));
+   await fs.writeFile(path.join(directory,stem+'.json'),JSON.stringify(diagnostic,null,2));
+  }catch(diagnosticError){console.error('Large library failure artifacts unavailable: '+diagnosticError.message);}
+ }
+ throw error;
+}
 finally{await browser?.close();await new Promise(resolve=>server?server.close(resolve):resolve());}
