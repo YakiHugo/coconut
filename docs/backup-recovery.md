@@ -192,3 +192,20 @@ Collections retain selected immutable snapshots even after a source is removed.
 Their rescue/backup downloads use the ordinary library envelope and are restored
 with Restore Library Backup. Markdown, TXT and subtitle exports are not recovery
 formats. No database or backup-version migration is introduced by these fields.
+
+### Paired bilingual exact excerpts after 0.7.6
+
+Supporting readers accept mixed v1 source-only and v2 paired records in
+`exact_excerpts`. Version 2 freezes independently selected source/translation
+ranges and direct translation evidence. Explicit correspondence confirmation is
+not human translation review. Personal notes remain in `exact_excerpt_notes`.
+JSON and collection backups retain both sides; Markdown is for selected reading
+results, not complete translation-history reconstruction or restoration.
+
+Version 0.7.6 rejects v2, including records nested inside collections. Its
+same-profile legacy/IndexedDB startup can refuse the entire library when a v2
+record is present. Actual old-provider probes verify fail-closed preservation and
+successful supporting-reader reopen, not downgrade compatibility. Keep an
+untouched whole-library JSON backup and use a v2-supporting reader. Do not clear
+storage to make an older reader open the library. There is no database or
+library-envelope migration.

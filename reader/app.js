@@ -727,6 +727,7 @@ function showRemovalRecoveryError(message) {
  $('removal-recovery-details').open=true;
 }
 function requestLibraryRemoval(doc) {
+ if(quotationController?.ownsDraft(doc)){quotationController.reopenDraft();return;}
  if(chapterEditor?.doc===doc&&chapterDraft()){if(!$('chapter-editor').open)$('chapter-editor').showModal();$('chapter-editor-status').textContent='本篇有未提交章节草稿，请先保存或取消修改，再移除本篇。';$('chapter-title').focus();return;}
  if(!contentIngressAllowed(doc)||pendingLibraryOperation)return;
  removalTarget=doc;removalDialogOrigin={doc,node:document.activeElement,recovery:removedDocument,confirmed:false};
@@ -1081,8 +1082,8 @@ function renderLibrary(revealKey=null,{reuseMetadata=false}={}) {
     list.append(el('p','hint','已存摘录 · 历史快照'));
     for(const hit of saved.hits){
      const button=el('button','library-saved-hit');button.type='button';button.dataset.hitKind=hit.kind;button.dataset.hitId=hit.id;button.dataset.captureKey=hit.captureKey;
-     button.append(el('small','',hit.matchFields==='quote'?'已存摘录 · 历史快照':'摘录笔记 · 历史快照'));
-     for(const [label,snippet] of [['摘录：',hit.quoteSnippet],['我的笔记：',hit.noteSnippet]])if(snippet){
+     button.append(el('small','',hit.matchFields==='translation'?'摘录时译文 · 历史快照':hit.matchFields==='quote'?'已存摘录 · 历史快照':'摘录与笔记 · 历史快照'));
+     for(const [label,snippet] of [['摘录：',hit.quoteSnippet],['摘录时译文：',hit.translationSnippet],['我的笔记：',hit.noteSnippet]])if(snippet){
       const preview=el('span','library-hit-preview');preview.append(document.createTextNode(label+snippet.before),el('mark','',snippet.match),document.createTextNode(snippet.after));button.append(preview);
      }
      button.onclick=()=>openSavedLibraryHit(hit,d,selection,button);list.append(button);
@@ -1123,6 +1124,11 @@ $('library-page-form').onsubmit=event=>{
 };
 $('library-show-active').onclick=()=>{renderLibrary(state.active);const card=libraryCards.get(state.active);$('toggle-library').setAttribute('aria-expanded','true');card?.open.focus();};
 // This modal deliberately leaves the reader, selection and media untouched.
+function bilingualExcerptDisplay(record){
+ const paired=Coconut.exactExcerptTranslation?.(record);if(!paired)return '';
+ const labels={'user-authored':'用户自写','human-reviewed':'已有人工核对','machine':'机器生成，需核对'};
+ return '选取时译文（'+paired.language+'）：\n'+paired.text+'\n初始来源：'+paired.providers.join('、')+' · '+paired.reviewStates.map(value=>labels[value]||value).join('、')+'\n译文生成时间：未记录。配对确认时间：'+paired.confirmedAt+'\n用户确认两段对应，不等于重新核对整份翻译；后续来源变化不会改写快照。'+(paired.qualityWarnings.length?'\n选取时质量提示：'+Coconut.translationQualityMessage({quality_warnings:paired.qualityWarnings}):'');
+}
 function exactExcerptSaveState(doc,record){
  const status=libraryStore.status(doc.key);
  return state.documents.includes(doc)&&doc.exact_excerpts?.includes(record)&&status?.identity===doc&&status.status==='saved'?'saved':'unsaved';
@@ -1149,7 +1155,7 @@ function exactNoteText(editor){const displayed=$('exact-note-text').value;return
 function openExactNote(doc,record,opener){
  if(!contentIngressAllowed(doc)||!doc.exact_excerpts?.includes(record))return;
  exactNoteEditor={doc,record,opener,base:exactNoteBaseline(doc,record.id),serial:0,pending:false};
- $('exact-note-quote').value=record.text;$('exact-note-text').value=exactNoteEditor.base.text;
+ $('exact-note-quote').value=record.text+(bilingualExcerptDisplay(record)?'\n\n'+bilingualExcerptDisplay(record):'');$('exact-note-text').value=exactNoteEditor.base.text;
  // Native textarea values normalize CRLF/CR. Keep raw storage separate from
  // the displayed baseline so opening or saving an unchanged note is lossless.
  exactNoteEditor.displayBase=$('exact-note-text').value;
@@ -1200,7 +1206,7 @@ $('exact-note-export').onclick=()=>{
  const editor=exactNoteEditor;if(!editor)return;let url,link;
  try{
   // Rescue includes the visible draft, even when submission is blocked or stale.
-  const text='所选文字摘录：\n'+editor.record.text+'\n\n我的笔记（当前编辑内容）：\n'+exactNoteText(editor);
+  const text='所选文字摘录：\n'+editor.record.text+(bilingualExcerptDisplay(editor.record)?'\n\n'+bilingualExcerptDisplay(editor.record):'')+'\n\n我的笔记（当前编辑内容）：\n'+exactNoteText(editor);
   url=URL.createObjectURL(new Blob([text],{type:'text/plain;charset=utf-8'}));link=el('a');link.href=url;link.download='coconut-excerpt-note.txt';link.hidden=true;$('exact-note-dialog').append(link);link.click();
   $('exact-note-status').textContent='已发起当前笔记下载，请打开文件确认。下载不会改变保存状态。';
  }catch{$('exact-note-status').textContent='笔记导出失败，文字仍在这里，可复制保留。';}
@@ -1380,7 +1386,7 @@ function renderCollection({resetTitle=false,focusId=null,focusClass=null}={}){
  for(const item of items.slice(collectionPage*COLLECTION_PAGE_SIZE,(collectionPage+1)*COLLECTION_PAGE_SIZE)){
   const row=el('li','collection-item');row.dataset.itemId=item.id;
   const s=item.snapshot;row.append(el('strong','',s.title),el('p','hint',(s.start===null?'无时间位置':Coconut.time(s.start))+' · '+(s.source_url||s.source_label||'无外部链接')),el('p','collection-history hint',collectionHistory(item)));
-  const detail=el('details');detail.append(el('summary','','查看所选记录'),el('p','',s.text||''));if(s.note)detail.append(el('p','','我的笔记：\n'+s.note));row.append(detail);
+  const detail=el('details');detail.append(el('summary','','查看所选记录'),el('p','',s.text||''));if(s.exact_excerpt){const bilingual=bilingualExcerptDisplay(s.exact_excerpt);if(bilingual)detail.append(el('p','collection-paired-translation',bilingual));}if(s.note)detail.append(el('p','','我的笔记：\n'+s.note));row.append(detail);
   for(const [kind,label,delta] of [['up','上移',-1],['down','下移',1],['remove','移出成果集',0]]){
    const button=el('button','collection-'+kind,label);button.type='button';button.setAttribute('aria-label',label+'：'+s.title);const index=items.indexOf(item);button.disabled=kind==='up'?index===0:kind==='down'?index===items.length-1:false;
    button.onclick=()=>{if(!contentIngressAllowed(doc)||collectionCurrent()!==doc||!doc.items.includes(item))return;
@@ -1500,6 +1506,7 @@ function renderLibraryNotebook(){
   const exactState=exact?exactGroups.get(doc.key).states.get(exact.id):null,freshness=exactState?.freshness;
   if(exact&&freshness!=='current')row.append(el('p','hint',freshness==='missing'?'原位置已删除；保留摘录时快照':'原文或出处已变化；保留摘录时快照'));
   if(exact){
+   const bilingual=bilingualExcerptDisplay(exact);if(bilingual){details.append(el('p','notebook-content notebook-paired-translation',bilingual));row.append(el('p','hint','双语摘录 · 独立选区与用户配对确认'));}
    const edit=el('button','notebook-edit-exact-note',Coconut.hasNoteContent(Coconut.exactExcerptNote(doc,exact.id))?'编辑我的笔记':'添加我的笔记');edit.type='button';edit.onclick=()=>openExactNote(doc,exact,edit);details.append(edit);
    let populated=false;
    details.addEventListener('toggle',()=>{
@@ -3214,7 +3221,7 @@ function renderPassages(doc){
   };
   actions.append(bookmark);
   if(window.CoconutQuotation){
-   quotationController??=CoconutQuotation.create({isCurrent:owner=>active()===owner&&state.documents.includes(owner)&&contentIngressAllowed(owner),saveExcerpt:saveExactExcerpt,excerptState:exactExcerptSaveState});
+   quotationController??=CoconutQuotation.create({isCurrent:owner=>active()===owner&&state.documents.includes(owner)&&contentIngressAllowed(owner),saveExcerpt:saveExactExcerpt,excerptState:exactExcerptSaveState,onDraftChange:syncUnsavedUnloadGuard});
    const quote=el('button','passage-quote','引用原文');quote.type='button';quote.setAttribute('aria-label','引用 '+Coconut.time(passage.start)+' 的原文');
    quotationController.bind(quote,original,doc,passage.cues);actions.append(quote);
   }
@@ -3899,7 +3906,7 @@ async function attachTranscriptToProject(text,target,{canCommit=null,activate=fa
 function hasPendingOrFailedContent(){return libraryStore.status().unsaved>0;}
 function hasUnsavedReaderChanges(){return hasPendingOrFailedContent()||hasUnsubmittedReaderDrafts();}
 function hasUnsubmittedReaderDrafts() {
- if(exactNoteDraft()||speakerCorrectionDraft()||collectionTitleDraft()||chapterDraft())return true;
+ if(quotationController?.hasDraft()||exactNoteDraft()||speakerCorrectionDraft()||collectionTitleDraft()||chapterDraft())return true;
  if(removedDocument||pendingLibraryOperation||[...deferredContentInputs.values()].some(draft=>state.documents.includes(draft.doc))||hasLanguageDrafts()||window.CoconutTranslationReview?.hasDraft())return true;
  const current=active();
  if(current&&selected&&!$('notes-panel').hidden&&current.segments.some(segment=>segment.id===selected)&&$('note').value!==(current.notes[selected]||''))return true;
