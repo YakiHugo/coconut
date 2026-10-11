@@ -95,7 +95,7 @@ class BrowserWorkflowTests(unittest.TestCase):
         paths = re.findall(r'^            \$\{\{ runner.temp \}\}/coconut-authored-ui/(.+)$', upload, re.M)
         self.assertEqual(paths, ['*.png', 'passages-geometry.json', 'autosave-geometry.json',
                                  'playback-follow-geometry.json', 'playback-follow-scroll.json',
-                                 'compact-library-geometry.json', 'compact-library-failure.png'])
+                                 'compact-library-geometry.json', 'search-return-checks.json', 'compact-library-failure.png'])
         self.assertIn('if: always()', upload)
 
     def test_no_failure_masks_and_existing_probe_and_cleanup_guards_are_preserved(self):
