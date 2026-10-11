@@ -273,3 +273,32 @@ test('passage marker failure stays visibly unsaved and existing retry persists i
   assert.equal(saved(env).readingPosition,'split-0');assert.equal(button.textContent,'阅读位置在本段');assert.equal(w.document.activeElement,button);
  }finally{await env.close();}
 });
+
+test('keyboard passage actions clear the measured feedback stack once, including their full focus ring',async()=>{
+ const env=setup();try{await load(env);const {$,w}=env,frames=[],scrolls=[];w.happyDOM.setViewport({width:390,height:844});
+  w.requestAnimationFrame=fn=>{frames.push(fn);return frames.length;};w.scrollBy=options=>scrolls.push(options);
+  $('reading-feedback').getBoundingClientRect=()=>({left:12,right:378,top:588,bottom:750,width:366,height:162});
+  $('media-dock').hidden=false;$('media-dock').getBoundingClientRect=()=>({left:12,right:378,top:769,bottom:831,width:366,height:62});
+  const focus=button=>{button.style.outlineWidth='3px';button.style.outlineOffset='3px';button.getBoundingClientRect=()=>({left:20,right:108,top:552,bottom:596,width:88,height:44});w.document.dispatchEvent(new w.KeyboardEvent('keydown',{key:'Tab',bubbles:true}));button.focus();};
+  const button=passages(env)[0].querySelector('.passage-bookmark');focus(button);assert.equal(scrolls.length,0);frames.splice(0).forEach(fn=>fn());
+  assert.deepEqual(JSON.parse(JSON.stringify(scrolls)),[{top:16,left:0,behavior:'instant'}]);assert.equal(w.document.activeElement,button);
+  button.click();await w.flushContentForTest();frames.splice(0).forEach(fn=>fn());assert.equal(scrolls.length,1);
+  // The same accessibility correction applies to the other passage actions.
+  const ask=passages(env)[0].querySelector('.passage-ask');focus(ask);frames.splice(0).forEach(fn=>fn());assert.equal(scrolls.length,2);
+  // Pointer focus never adds a reading jump.
+  w.document.dispatchEvent(new w.Event('pointerdown',{bubbles:true}));button.focus();frames.splice(0).forEach(fn=>fn());assert.equal(scrolls.length,2);
+  // A queued keyboard callback cannot act on a newer focus owner.
+  focus(ask);$('toggle-reader-media').focus();frames.splice(0).forEach(fn=>fn());assert.equal(scrolls.length,2);
+  // A dock collision must clear the feedback above it, not land underneath it.
+  button.getBoundingClientRect=()=>({left:20,right:108,top:780,bottom:824,width:88,height:44});
+  w.document.dispatchEvent(new w.KeyboardEvent('keydown',{key:'Tab',bubbles:true}));button.focus();frames.splice(0).forEach(fn=>fn());assert.equal(scrolls.at(-1).top,244);
+ }finally{await env.close();}
+});
+
+test('keyboard passage focus does not scroll when fixed feedback does not intersect its target or focus ring',async()=>{
+ const env=setup();try{await load(env);const {$,w}=env,frames=[],scrolls=[];w.requestAnimationFrame=fn=>{frames.push(fn);return frames.length;};w.scrollBy=value=>scrolls.push(value);
+  const button=passages(env)[0].querySelector('.passage-bookmark');button.style.outlineWidth='3px';button.style.outlineOffset='3px';button.getBoundingClientRect=()=>({left:20,right:108,top:100,bottom:144,width:88,height:44});
+  $('reading-feedback').getBoundingClientRect=()=>({left:12,right:378,top:588,bottom:750,width:366,height:162});
+  w.document.dispatchEvent(new w.KeyboardEvent('keydown',{key:'Tab',bubbles:true}));button.focus();frames.splice(0).forEach(fn=>fn());assert.deepEqual(scrolls,[]);
+ }finally{await env.close();}
+});

@@ -2634,6 +2634,35 @@ function renderPassages(doc){
  renderPassageReadingPosition();
  renderPassagePlayback(passagePlayback?.getState());
 }
+// Fixed playback/feedback panels are outside the browser's native focus viewport.
+// Only a real Tab move may reveal a passage action; receipts and layout changes
+// never scroll. Defer once so native focus scrolling has settled first.
+let passageActionTab=false;
+document.addEventListener('keydown',event=>{passageActionTab=event.key==='Tab';},true);
+document.addEventListener('keyup',event=>{if(event.key==='Tab')passageActionTab=false;},true);
+document.addEventListener('pointerdown',()=>{passageActionTab=false;},true);
+document.addEventListener('focusin',event=>{
+ const target=event.target,keyboard=passageActionTab;passageActionTab=false;
+ if(!keyboard||!target.matches?.('.passage-actions button, .passage-actions a')||!target.matches(':focus-visible'))return;
+ const doc=active(),selection=activeSelectionRevision;
+ requestAnimationFrame(()=>{
+  if(document.activeElement!==target||!target.isConnected||active()!==doc||activeSelectionRevision!==selection||!target.matches(':focus-visible'))return;
+  const rect=target.getBoundingClientRect(),style=getComputedStyle(target);
+  if(!rect.width||!rect.height)return;
+  const ring=(parseFloat(style.outlineWidth)||0)+(parseFloat(style.outlineOffset)||0)+2;
+  const bounds={left:rect.left-ring,right:rect.right+ring,top:rect.top-ring,bottom:rect.bottom+ring};
+  let ceiling=Infinity,occluded=false;
+  for(const overlay of [$('reading-feedback'),$('media-dock')]){
+   if(overlay.hidden||getComputedStyle(overlay).display==='none')continue;
+   const area=overlay.getBoundingClientRect();
+   if(area.width&&area.height&&area.bottom>0&&area.top<window.innerHeight&&area.left<bounds.right&&area.right>bounds.left){
+    ceiling=Math.min(ceiling,area.top);
+    if(area.top<bounds.bottom&&area.bottom>bounds.top)occluded=true;
+   }
+  }
+  if(occluded&&bounds.bottom>ceiling)window.scrollBy({top:bounds.bottom-ceiling,left:0,behavior:'instant'});
+ });
+});
 function openPassage(cueId,scroll=true){
  const doc=active(),passages=readingPassages(doc),passage=CoconutPassages.locate(passages,cueId)||passages[0];if(!passage)return;
  $('reading-info').open=false;mediaExpandedKey=null;

@@ -203,11 +203,25 @@ try {
     await page.locator('.passage-listen').first().click();
     await page.waitForFunction(()=>document.querySelector('#passage-playback-controls').dataset.state==='playing');
     check(label+'_passage_navigation_and_preview_never_rewrite_marker',(await stored(page)).readingPosition==='split-19');
-    const marker=page.locator('.passage-bookmark').first();await marker.scrollIntoViewIfNeeded();await marker.focus();
-    const before=await marker.evaluate(node=>{window.__markerAudio=document.querySelector('audio');return {scrollY,top:node.getBoundingClientRect().top,id:node.closest('.passage').dataset.firstCueId};});
+    const marker=page.locator('.passage-bookmark').first();
+    // Real backward keyboard navigation from the just-clicked listen action.
+    // Product focus handling, never a test-only scroll, must reveal the full target.
+    for(let i=0;i<8&&!await marker.evaluate(node=>document.activeElement===node);i++){await page.keyboard.press('Shift+Tab');await settled(page);}
+    const focusGeometry=await marker.evaluate(node=>{
+      const rect=node.getBoundingClientRect(),style=getComputedStyle(node),ring=parseFloat(style.outlineWidth)+parseFloat(style.outlineOffset);
+      // Sample the center and edge midpoints inside the rounded hitbox.
+      // Full outline-rectangle clearance is independently required below.
+      const midX=(rect.left+rect.right)/2,midY=(rect.top+rect.bottom)/2;
+      const hitPoints=[[midX,midY],[rect.left+1,midY],[rect.right-1,midY],[midX,rect.top+1],[midX,rect.bottom-1]].map(([x,y])=>{const hit=document.elementFromPoint(x,y);return {x,y,hit:hit===node||node.contains(hit)};});
+      const overlays=['reading-feedback','notice-shell','passage-playback-controls','media-dock'].map(id=>{const overlay=document.getElementById(id),r=overlay.getBoundingClientRect();return {id,rect:r.toJSON(),visible:!overlay.hidden&&getComputedStyle(overlay).display!=='none'&&r.width>0&&r.height>0};});
+      return {rect:rect.toJSON(),ring,viewport:{width:innerWidth,height:innerHeight},focused:document.activeElement===node,hitPoints,overlays};
+    });
+    geometry.push({label:label+'-marker-keyboard-focus',...focusGeometry});console.log(JSON.stringify({suite:'passage-marker-keyboard-focus',label,...focusGeometry}));
+    check(label+'_keyboard_marker_target_and_focus_ring_are_uncovered',focusGeometry.focused&&focusGeometry.rect.height>=44&&focusGeometry.hitPoints.every(point=>point.hit)&&focusGeometry.rect.left-focusGeometry.ring>=0&&focusGeometry.rect.right+focusGeometry.ring<=focusGeometry.viewport.width&&focusGeometry.rect.top-focusGeometry.ring>=0&&focusGeometry.rect.bottom+focusGeometry.ring<=focusGeometry.viewport.height&&focusGeometry.overlays.every(overlay=>!overlay.visible||overlay.rect.right<=focusGeometry.rect.left-focusGeometry.ring||overlay.rect.left>=focusGeometry.rect.right+focusGeometry.ring||overlay.rect.top>=focusGeometry.rect.bottom+focusGeometry.ring||overlay.rect.bottom<=focusGeometry.rect.top-focusGeometry.ring));
+    const before=await marker.evaluate(node=>{window.__markerAudio=document.querySelector('audio');return {scrollY,top:node.getBoundingClientRect().top,id:node.closest('.passage').dataset.firstCueId,paused:window.__markerAudio.paused,time:window.__markerAudio.currentTime};});
     await marker.press('Enter');await expect.poll(async()=>(await stored(page)).readingPosition).toBe(before.id);
-    const after=await marker.evaluate(node=>({scrollY,top:node.getBoundingClientRect().top,focused:document.activeElement===node,media:document.querySelector('audio')===window.__markerAudio,mode:!document.querySelector('#passage-workspace').hidden}));
-    check(label+'_passage_marker_preserves_viewport_focus_mode_and_media',Math.abs(after.scrollY-before.scrollY)<=1&&Math.abs(after.top-before.top)<=1&&after.focused&&after.media&&after.mode);
+    const after=await marker.evaluate(node=>({scrollY,top:node.getBoundingClientRect().top,focused:document.activeElement===node,media:document.querySelector('audio')===window.__markerAudio,paused:window.__markerAudio.paused,time:window.__markerAudio.currentTime,mode:!document.querySelector('#passage-workspace').hidden}));
+    check(label+'_passage_marker_preserves_viewport_focus_mode_and_media',Math.abs(after.scrollY-before.scrollY)<=1&&Math.abs(after.top-before.top)<=1&&after.focused&&after.media&&after.mode&&after.paused===before.paused&&after.time>=before.time-.05);
     await expect(marker).toHaveText('阅读位置在本段');
     await controlsGeometry(page,label+'-passage-reading-marker',['.passage-bookmark']);await capture(page,label+'-reading-marker');
     await page.locator('#passage-return-playback').click();
