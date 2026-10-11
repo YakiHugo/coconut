@@ -8,9 +8,9 @@
 <meta name="theme-color" content="#faf9f7">
 <link rel="icon" type="image/png" href="coconut-mark.png">
 <script src="appearance.js?v=86ea922669"></script>
-<link rel="stylesheet" href="style.css?v=a0ad0bf442">
+<link rel="stylesheet" href="style.css?v=db21bed036">
 <script src="summary.js?v=580ffdad1e" defer></script>
-<script src="core.js?v=109f02a2af" defer>
+<script src="core.js?v=ed77312b32" defer>
 </script>
 <script src="passages.js?v=d02200c5a9" defer></script>
 <script src="quotation.js?v=9b8ed4d5ca" defer></script>
@@ -18,7 +18,7 @@
 <script src="library-store.js?v=e76ded9456" defer></script>
 <script src="indexeddb-document-adapter.js?v=65c0c5a814" defer></script>
 <script src="storage-provider.js?v=1cb898e984" defer></script>
-<script src="app.js?v=e997dcb997" type="text/coconut-pending" data-reader-script>
+<script src="app.js?v=a09a536d12" type="text/coconut-pending" data-reader-script>
 </script>
 <script src="language.js?v=492470a705" type="text/coconut-pending" data-reader-script></script>
 <script src="translation-review.js?v=ef64ceb824" type="text/coconut-pending" data-reader-script></script>
@@ -88,7 +88,7 @@
 <button id="show-jobs" hidden>处理任务 <span id="job-count">0</span></button>
 <details id="export-menu" class="export-menu" hidden><summary>导出</summary><div class="export-panel"><h2>带走你的阅读成果</h2><button id="export">导出文字稿与笔记</button><p class="hint">完整 JSON 备份，可重新导入恢复；超过50 MiB 时先确认读取</p><div id="pending-export" class="pending-export" hidden><button id="export-pending-documents" type="button">导出未保存文档备份</button><p class="hint">本页全部待保存文档的完整备份；下载不代表已保存。</p></div><div class="subtitle-export"><label>字幕格式<select id="subtitle-format"><option value="srt">SRT</option><option value="vtt">VTT</option></select></label><label><input type="checkbox" id="subtitle-bilingual">附加当前显示语言的有效译文</label><button id="export-subtitles">导出整篇字幕</button><span class="hint">使用修正后原文及原时间戳，不含笔记</span></div>
 <div class="text-export"><button id="export-text" type="button">导出整篇文字（TXT）</button><label><input id="text-bilingual" type="checkbox" aria-describedby="text-export-language">附加当前显示语言的有效译文</label><span id="text-export-language" class="hint"></span><span class="hint">全文按阅读段落导出，不受搜索或分页影响；保留修正后原文与说话人，不含笔记。TXT 用于阅读，完整恢复请另存 JSON。</span></div>
-<div class="notebook-export"><button id="export-notebook" disabled>导出阅读笔记（0 段）</button><span class="hint">Markdown · 本篇全部摘录与笔记，可用于整理和回顾</span></div></div></details>
+<div class="notebook-export"><button id="export-notebook" disabled>导出阅读笔记（0 段）</button><span class="hint">Markdown · 本篇全部摘录、笔记与手动章节，可用于整理和回顾</span></div></div></details>
 </div>
 </header>
 <div id="notice-home"><div id="notice-shell"><div id="notice" role="status" hidden></div><button id="dismiss-notice" type="button" aria-label="关闭成功提示" hidden>关闭</button></div></div>
@@ -249,7 +249,7 @@ cd coconut
 </div>
 </section>
 <div id="reader-options" class="reader-options">
-<details id="reading-settings" class="reading-settings"><summary>阅读设置</summary><div class="disclosure-content"><div class="settings-actions"><button id="document-details">标题与语言</button>
+<details id="reading-settings" class="reading-settings"><summary>阅读设置</summary><div class="disclosure-content"><div class="settings-actions"><button id="document-details">标题与语言</button><button id="open-chapters" type="button">章节目录</button>
 <button id="source">原始来源链接</button>
 <button id="review-translations" type="button">译文核对</button>
 </div>
@@ -302,6 +302,7 @@ cd coconut
 </div></details>
 </div>
 <button id="return-library-notebook" type="button" hidden>← 返回刚才的笔记本</button>
+<nav id="chapter-return" class="reading-context" aria-label="返回章节跳转前的阅读" hidden><span id="chapter-return-label">章节导航 · 已回到全文</span><button id="return-from-chapter" type="button">← 返回跳转前的阅读</button><button id="stay-at-chapter" type="button">留在此处</button></nav>
 <nav id="reading-context" class="reading-context" aria-label="原文上下文" hidden><span id="reading-context-label"></span><div><button id="return-reading-results" type="button">← 返回结果</button><button id="dismiss-reading-context" type="button">留在全文</button></div></nav>
 <div id="transcript-layout" class="reading-layout" hidden>
 <article id="transcript" tabindex="0" aria-label="文字稿">
@@ -425,6 +426,17 @@ cd coconut
 <dialog id="local-media-project-dialog" aria-labelledby="local-media-project-heading">
 <h2 id="local-media-project-heading">选择这个文件对应的项目</h2><p class="hint">书架里有多份同文件记录。请选择要继续的一份；不同版本的笔记与文字稿不会合并。文件信息与部分内容只是候选匹配，请核对声音。</p>
 <div id="local-media-project-options" class="local-media-project-options"></div><button id="cancel-local-media-project" type="button">取消打开</button>
+</dialog>
+<dialog id="chapter-dialog" class="library-notebook" aria-labelledby="chapter-heading">
+<h2 id="chapter-heading">手动章节目录</h2><p class="hint">按完整文字稿的片段顺序排列。章节跳转只定位原文，不播放，也不改变“读到这里”。旧版本导入备份可能丢失章节，请用支持章节的版本恢复。未提交标题草稿仅在本页，备份不包含草稿。</p>
+<p id="chapter-current" role="status"></p><nav aria-label="章节导航"><button id="chapter-previous" type="button">上一章</button><button id="chapter-next" type="button">下一章</button></nav>
+<button id="chapter-add" type="button">以当前阅读片段新建章节</button><p id="chapter-save-status" role="status"></p><button id="chapter-retry" type="button" hidden>重试保存</button><button id="chapter-backup" type="button">备份本篇与章节 JSON</button>
+<ol id="chapter-list"></ol><nav aria-label="章节目录分页"><button id="chapter-list-previous" type="button">上一页目录</button><button id="chapter-list-next" type="button">下一页目录</button></nav><button id="chapter-close" type="button">关闭目录</button>
+</dialog>
+<dialog id="chapter-editor" class="library-notebook" aria-labelledby="chapter-editor-heading">
+<h2 id="chapter-editor-heading">新建章节</h2><label for="chapter-title">章节标题</label><input id="chapter-title" maxlength="200">
+<label for="chapter-cue-number">起点片段序号（完整文字稿）</label><input id="chapter-cue-number" type="number" min="1" step="1"><p id="chapter-cue-preview" class="hint"></p>
+<p id="chapter-editor-status" role="status"></p><button id="chapter-save" type="button">保存章节</button><button id="chapter-cancel" type="button">取消修改</button><button id="chapter-editor-close" type="button">关闭并保留草稿</button>
 </dialog>
 <dialog id="library-notebook" class="library-notebook" aria-labelledby="library-notebook-title">
 <h2 id="library-notebook-title">我的笔记与摘录</h2>

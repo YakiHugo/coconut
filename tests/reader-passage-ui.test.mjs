@@ -302,3 +302,12 @@ test('keyboard passage focus does not scroll when fixed feedback does not inters
   w.document.dispatchEvent(new w.KeyboardEvent('keydown',{key:'Tab',bubbles:true}));button.focus();frames.splice(0).forEach(fn=>fn());assert.deepEqual(scrolls,[]);
  }finally{await env.close();}
 });
+
+test('native media close permits chapter cue editing without replacing, playing or seeking the attached player',async()=>{
+ const env=setup();try{const fixture=await load(env);const {$,w}=env,player=await media(env);player.currentTime=0;let plays=0;player.play=async()=>{plays++;};await env.pipeline.store.flush();const before=saved(env);
+  assert.equal($('episode-media').hidden,false);assert.equal($('close-reader-media').hidden,false);
+  $('close-reader-media').click();assert.equal($('episode-media').hidden,true);assert.equal($('toggle-reader-media').getAttribute('aria-expanded'),'false');assert.equal(w.document.activeElement,$('toggle-reader-media'));assert.equal($('source-media').querySelector('audio'),player);assert.equal(player.paused,true);assert.equal(player.currentTime,0);assert.deepEqual(saved(env),before);
+  $('mode-transcript').click();const row=[...$('transcript').querySelectorAll('.segment')][0];row.querySelector('.chapter-create').click();assert.equal($('chapter-editor').open,true);$('chapter-title').value='Authored chapter after media setup';$('chapter-save').click();await env.pipeline.store.flush();
+  assert.equal(saved(env).reading_chapters.length,1);assert.equal(saved(env).reading_chapters[0].cue_id,row.dataset.segmentId);assert.equal($('source-media').querySelector('audio'),player);assert.equal(player.currentTime,0);assert.equal(player.paused,true);assert.equal(plays,0);assert.equal(saved(env).readingPosition,fixture.readingPosition);assert.deepEqual(saved(env).segments,before.segments);assert.deepEqual(saved(env).notes,before.notes);
+ }finally{await env.close();}
+});

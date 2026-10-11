@@ -376,6 +376,7 @@ libraryStore.subscribe((snapshot,event)=>{
  if(event?.type==='release')resumeDeferredContentInputs();
  renderSaveStatus(libraryStore.status());
  if($('library-notebook').open)collectionStatus();
+ if($('chapter-dialog').open)chapterSaveStatus();
  renderPassageReadingPosition();
  if(event?.type==='commit'){
   renderSummaryPersistence();
@@ -726,6 +727,7 @@ function showRemovalRecoveryError(message) {
  $('removal-recovery-details').open=true;
 }
 function requestLibraryRemoval(doc) {
+ if(chapterEditor?.doc===doc&&chapterDraft()){if(!$('chapter-editor').open)$('chapter-editor').showModal();$('chapter-editor-status').textContent='本篇有未提交章节草稿，请先保存或取消修改，再移除本篇。';$('chapter-title').focus();return;}
  if(!contentIngressAllowed(doc)||pendingLibraryOperation)return;
  removalTarget=doc;removalDialogOrigin={doc,node:document.activeElement,recovery:removedDocument,confirmed:false};
  $('remove-document-title').textContent=doc.title;
@@ -1206,6 +1208,137 @@ $('exact-note-export').onclick=()=>{
 };
 $('exact-note-backup').onclick=()=>{$('export-unsaved-documents').onclick();$('exact-note-status').textContent=$('notice').textContent;};
 
+// Chapters are authored landmarks. Navigation stays transient and never starts media.
+let chapterDirectoryDoc=null,chapterDirectoryCue=null,chapterDirectoryPage=0,chapterOpener=null,chapterEditor=null,chapterReturn=null,chapterLanding=null,chapterDirectoryPrecise=false;
+const CHAPTER_PAGE_SIZE=20;
+function chapterEligible(doc){return !!doc&&!Coconut.isReadingCollection(doc)&&!Coconut.isAudioProject(doc)&&doc.segments.length>0;}
+function chapterCueNode(id,mode=readingMode){return [...document.querySelectorAll(mode==='passages'?'#passage-body .passage-original .passage-cue':'#transcript .segment')].find(node=>(mode==='passages'?node.dataset.cueId:node.dataset.segmentId)===id);}
+function chapterDraft(){return !!chapterEditor&&($('chapter-title').value!==chapterEditor.initialTitle||$('chapter-cue-number').value!==chapterEditor.initialNumber);}
+function chapterSaveStatus(){
+ const doc=chapterDirectoryDoc;if(!doc)return;const status=libraryStore.status(doc.key),live=state.documents.includes(doc);
+ $('chapter-save-status').dataset.state=!live?'missing':status?.identity===doc?status.status:'saved';
+ $('chapter-save-status').textContent=!live?'本篇已不在书架，不能继续修改。':status?.identity===doc&&status.status!=='saved'?(status.status==='pending'?'章节正在保存…':'章节尚未保存，请重试或备份本篇。'):'本篇与章节已保存到本机浏览器。';
+ $('chapter-retry').hidden=!live||!status||status.status==='saved'||status.status==='pending';
+ $('chapter-backup').disabled=!live;
+}
+function renderChapterReturn(){
+ if(chapterReturn?.doc!==active())chapterReturn=null;
+ const bar=$('chapter-return');bar.hidden=!chapterReturn||workspace!=='read'||readingMode==='summary';
+ if(!bar.hidden){const target=readingMode==='passages'?$('passage-workspace'):$('transcript-layout');if(bar.nextElementSibling!==target)target.before(bar);}
+ $('open-chapters').hidden=!chapterEligible(active());$('open-chapters').textContent='章节目录'+(active()?.reading_chapters?.length?'（'+active().reading_chapters.length+'）':'');
+}
+function chapterPosition(){const doc=chapterDirectoryDoc;return doc?.segments.findIndex(cue=>cue.id===chapterDirectoryCue)??-1;}
+function renderChapterDirectory(focusId=null){
+ const doc=chapterDirectoryDoc,live=doc&&state.documents.includes(doc);const entries=live?Coconut.readingChapters(doc):[],valid=entries.filter(entry=>entry.status==='current'),position=chapterPosition();
+ const current=valid.findLast(entry=>entry.index<=position),prior=current?valid[valid.indexOf(current)-1]:null,next=current?valid[valid.indexOf(current)+1]:valid[0];
+ $('chapter-current').textContent=current?(chapterDirectoryPrecise?'最近定位章节：':'可见片段所在章节：')+current.item.title+(chapterDirectoryPrecise?'（上下章以此为基准）':''):valid.length?'当前片段位于第一章之前。':'还没有有效章节。';
+ $('chapter-previous').disabled=!prior;$('chapter-next').disabled=!next;
+ $('chapter-previous').onclick=()=>{if(prior)jumpReadingChapter(doc,prior.item);};$('chapter-next').onclick=()=>{if(next)jumpReadingChapter(doc,next.item);};
+ $('chapter-add').disabled=!live||!chapterEligible(doc)||!contentIngressAllowed(doc);
+ if(focusId!==null){const index=entries.findIndex(entry=>entry.item.id===focusId);if(index>=0)chapterDirectoryPage=Math.floor(index/CHAPTER_PAGE_SIZE);}
+ chapterDirectoryPage=Math.max(0,Math.min(chapterDirectoryPage,Math.ceil(entries.length/CHAPTER_PAGE_SIZE)-1));
+ const host=$('chapter-list');host.replaceChildren();
+ for(const entry of entries.slice(chapterDirectoryPage*CHAPTER_PAGE_SIZE,(chapterDirectoryPage+1)*CHAPTER_PAGE_SIZE)){
+  const {item,cue,status}=entry,row=el('li','chapter-entry');row.dataset.chapterId=item.id;
+  row.append(el('strong','',item.title),el('p','hint',status==='current'?'片段 '+(entry.index+1)+' · '+Coconut.time(cue.start):'原起点片段已不存在；请显式重定位。'));
+  for(const [kind,label] of [['open','阅读此章'],['rename','改名'],['relocate','重定位起点'],['remove','删除章节']]){
+   const button=el('button','chapter-'+kind,label);button.type='button';button.setAttribute('aria-label',label+'：'+item.title);button.disabled=kind==='open'?status!=='current':!contentIngressAllowed(doc);
+   button.onclick=()=>{if(!state.documents.includes(doc)||!doc.reading_chapters?.includes(item))return;
+    if(kind==='open'){jumpReadingChapter(doc,item);return;}
+    if(!contentIngressAllowed(doc))return;
+    if(kind==='remove'){if(chapterEditor?.item===item&&chapterDraft()){$('chapter-save-status').textContent='此章节有未提交草稿，请先保存或取消修改。';return;}doc.reading_chapters=doc.reading_chapters.filter(chapter=>chapter!==item);queueDocument(doc);renderNotebookAction(doc);renderChapterReturn();renderChapterDirectory();$('chapter-add').focus({preventScroll:true});return;}
+    openChapterEditor(doc,kind,cue,item,button);
+   };row.append(button);
+  }host.append(row);
+ }
+ $('chapter-list-previous').disabled=chapterDirectoryPage===0;$('chapter-list-next').disabled=(chapterDirectoryPage+1)*CHAPTER_PAGE_SIZE>=entries.length;
+ chapterSaveStatus();
+ if(focusId!==null)[...host.children].find(row=>row.dataset.chapterId===focusId)?.querySelector('.chapter-rename')?.focus({preventScroll:true});
+}
+function openChapterDirectory(){
+ const doc=active();if(!chapterEligible(doc))return;chapterDirectoryDoc=doc;const landed=chapterLanding,landedNode=landed&&chapterCueNode(landed.cue.id,landed.mode);chapterDirectoryPrecise=!!landed&&landed.doc===doc&&landed.mode===readingMode&&doc.segments.includes(landed.cue)&&landedNode?.classList.contains('chapter-target');chapterDirectoryCue=chapterDirectoryPrecise?landed.cue.id:visibleReadingCue();chapterOpener=document.activeElement;chapterDirectoryPage=0;
+ $('chapter-dialog').showModal();renderChapterDirectory();$('chapter-add').focus({preventScroll:true});
+}
+$('open-chapters').onclick=openChapterDirectory;
+$('chapter-close').onclick=()=>{$('chapter-dialog').close();chapterOpener?.isConnected&&chapterOpener.focus({preventScroll:true});};
+for(const [id,delta] of [['chapter-list-previous',-1],['chapter-list-next',1]])$(id).onclick=()=>{chapterDirectoryPage+=delta;renderChapterDirectory();$('chapter-list').querySelector('button')?.focus();};
+$('chapter-add').onclick=()=>{const doc=chapterDirectoryDoc,cue=doc?.segments.find(cue=>cue.id===chapterDirectoryCue)||doc?.segments[0];if(cue)openChapterEditor(doc,'create',cue,null,$('chapter-add'));};
+function chapterEditorPreview(){
+ if(!chapterEditor)return;const {doc,mode}=chapterEditor,index=Number($('chapter-cue-number').value)-1,cue=Number.isInteger(index)?doc.segments[index]:null;
+ chapterEditor.target=cue||null;
+ $('chapter-cue-preview').textContent=cue?'片段 '+(index+1)+' · '+Coconut.time(cue.start)+'\n'+sourcePreview(cue,240):mode==='rename'?'原起点不存在；改名不会自动重新定位。':'请填写有效的完整稿片段序号。';
+}
+function openChapterEditor(doc,mode,cue,item=null,opener=document.activeElement){
+ if(!chapterEligible(doc)||!contentIngressAllowed(doc))return;
+ if(chapterDraft()){$('chapter-editor').showModal();$('chapter-editor-status').textContent='已有未提交的章节草稿，请先保存或取消修改。';$('chapter-title').focus();return;}
+ const number=cue?String(doc.segments.indexOf(cue)+1):'';
+ chapterEditor={doc,item,mode,opener,rawTitle:item?.title||'',initialTitle:item?.title||'',initialNumber:number,target:cue};
+ $('chapter-editor-heading').textContent=(mode==='create'?'新建章节':mode==='rename'?'修改章节标题':'显式重定位章节起点')+' · '+doc.title;
+ $('chapter-title').value=chapterEditor.initialTitle;chapterEditor.initialTitle=$('chapter-title').value;$('chapter-title').readOnly=mode==='relocate';
+ $('chapter-cue-number').value=number;$('chapter-cue-number').max=String(doc.segments.length);$('chapter-cue-number').readOnly=mode==='rename';
+ $('chapter-editor-status').textContent='';chapterEditorPreview();$('chapter-editor').showModal();$(mode==='relocate'?'chapter-cue-number':'chapter-title').focus();
+}
+$('chapter-cue-number').oninput=chapterEditorPreview;
+function restoreChapterEditorFocus(editor){const opener=editor?.opener;if(opener?.isConnected){opener.focus({preventScroll:true});return;}if($('chapter-dialog').open){$('chapter-add').focus({preventScroll:true});return;}if(editor?.doc===active()){const node=chapterCueNode(editor.target?.id,'transcript');if(node){focusCueAction(node.querySelector('.chapter-create')||node);return;}}$('main-content').focus({preventScroll:true});}
+function closeChapterEditor(){const editor=chapterEditor;$('chapter-editor').close();restoreChapterEditorFocus(editor);}
+$('chapter-editor-close').onclick=closeChapterEditor;
+$('chapter-editor').addEventListener('cancel',event=>{event.preventDefault();closeChapterEditor();});
+$('chapter-dialog').addEventListener('cancel',event=>{event.preventDefault();$('chapter-close').onclick();});
+$('chapter-cancel').onclick=()=>{const editor=chapterEditor;chapterEditor=null;$('chapter-editor').close();restoreChapterEditorFocus(editor);};
+$('chapter-save').onclick=()=>{
+ const editor=chapterEditor;if(!editor)return;const {doc,item,mode,target}=editor;
+ if(!contentIngressAllowed(doc)||!state.documents.includes(doc)||item&&!doc.reading_chapters?.includes(item)){$('chapter-editor-status').textContent='本篇或章节已变化，请取消后重新打开。';return;}
+ try{
+  if(mode!=='rename'&&(!target||doc.segments[Number($('chapter-cue-number').value)-1]!==target))throw Error('起点片段已变化，请重新选择序号并核对原文。');
+  const updated=mode==='create'?Coconut.createReadingChapter(doc,{id:crypto.randomUUID(),title:$('chapter-title').value,cueId:target.id}):Coconut.updateReadingChapter(doc,item.id,mode==='rename'?{title:$('chapter-title').value===editor.initialTitle?editor.rawTitle:$('chapter-title').value}:{cueId:target.id});
+  doc.reading_chapters=Coconut.readingChaptersWith(doc,updated);queueDocument(doc);renderNotebookAction(doc);renderChapterReturn();chapterEditor=null;$('chapter-editor').close();
+  if($('chapter-dialog').open){renderChapterDirectory(updated.id);}else restoreChapterEditorFocus(editor);
+ }catch(error){$('chapter-editor-status').textContent='章节未保存：'+error.message;}
+};
+for(const id of ['chapter-dialog','chapter-editor'])$(id).addEventListener('keydown',event=>{
+ const dialog=$(id);if(!dialog.open||event.key!=='Tab'||event.defaultPrevented||event.isComposing||event.keyCode===229||event.altKey||event.ctrlKey||event.metaKey||event.target.closest?.('dialog')!==dialog)return;
+ const controls=[...dialog.querySelectorAll('button,input,select,textarea,a[href],summary,[tabindex]')].filter(node=>{
+  if(node.tabIndex<0||node.matches(':disabled')||node.closest('[hidden],[inert]'))return false;
+  for(let parent=node;parent&&parent!==dialog;parent=parent.parentElement){const style=getComputedStyle(parent);if(style.display==='none'||style.visibility==='hidden'||style.visibility==='collapse')return false;}return true;
+ });
+ const first=controls[0],last=controls.at(-1);if(first&&((event.shiftKey&&document.activeElement===first)||(!event.shiftKey&&document.activeElement===last))){event.preventDefault();(event.shiftKey?last:first).focus();}
+});
+$('chapter-retry').onclick=async()=>{await libraryStore.retry();chapterSaveStatus();};
+$('chapter-backup').onclick=()=>{
+ let url,link;try{const doc=chapterDirectoryDoc;if(!state.documents.includes(doc))return;const blob=new Blob([JSON.stringify({format:'coconut-library',version:1,documents:[doc],active:doc.key},null,2)],{type:'application/json'});url=URL.createObjectURL(blob);link=el('a');link.href=url;link.download='coconut-chapters.json';link.hidden=true;$('chapter-dialog').append(link);link.click();$('chapter-save-status').textContent='已发起本篇与章节备份下载，请确认文件已保存。不含未提交草稿，下载不改变保存状态；旧版本导入可能丢失章节，请用支持章节的版本恢复。'+backupRecoveryHint(blob);}
+ catch{$('chapter-save-status').textContent='章节备份失败，内容仍在本页，请重试。';}finally{link?.remove();if(url)setTimeout(()=>URL.revokeObjectURL(url),60000);}
+};
+function jumpReadingChapter(doc,item){
+ if(active()!==doc||!state.documents.includes(doc)||pendingStructuralDocuments.has(doc.key)||!doc.reading_chapters?.includes(item))return;
+ const entry=Coconut.readingChapters(doc).find(entry=>entry.item===item);if(entry?.status!=='current')return;
+ if(!chapterReturn||chapterReturn.doc!==doc){const cueId=chapterDirectoryCue??visibleReadingCue(),node=chapterCueNode(cueId);chapterReturn={doc,mode:readingMode,query:$('search').value,notesOnly,excerptsOnly,speakerFilter,pageStart,passageAnchor,passageReturn,readingContext,selected,searchFocusedId,cueId,viewportTop:node?.getBoundingClientRect().top,scrollY:window.scrollY};}
+ $('chapter-dialog').close();$('reading-info').open=false;$('ai-consent').checked=false;clearReadingContext();$('search').value='';notesOnly=false;excerptsOnly=false;speakerFilter=null;selected=null;
+ if(readingMode==='passages'){
+  openPassage(entry.cue.id,false);
+  // A chapter can start halfway through a composed passage. Locate its real
+  // source span, not the passage heading or first cue.
+  const node=chapterCueNode(entry.cue.id,'passages');if(node){
+   node.tabIndex=-1;node.classList.add('chapter-target');renderChapterReturn();
+   // The return bar wraps on narrow screens. Reserve its actual sticky height
+   // before native scrolling so the exact source span and its ring stay visible.
+   const bar=$('chapter-return'),style=getComputedStyle(node),barStyle=getComputedStyle(bar);
+   const ring=(parseFloat(style.outlineWidth)||0)+Math.max(0,parseFloat(style.outlineOffset)||0);
+   node.style.scrollMarginTop=Math.max(20,bar.getBoundingClientRect().height+Math.max(0,parseFloat(barStyle.top)||0)+ring+2)+'px';
+   node.scrollIntoView?.({block:'start',behavior:'auto'});node.focus({preventScroll:true});
+  }
+ }else{goToSegment(entry.cue.id,true);chapterCueNode(entry.cue.id,'transcript')?.classList.add('chapter-target');}
+ chapterDirectoryCue=entry.cue.id;chapterLanding={doc,cue:entry.cue,mode:readingMode};renderChapterReturn();
+}
+$('return-from-chapter').onclick=()=>{
+ const origin=chapterReturn,doc=active();chapterReturn=null;chapterLanding=null;document.querySelectorAll('.chapter-target').forEach(node=>node.classList.remove('chapter-target'));
+ if(!origin||origin.doc!==doc){renderChapterReturn();return;}
+ $('ai-consent').checked=false;$('search').value=origin.query;notesOnly=origin.notesOnly;excerptsOnly=origin.excerptsOnly;speakerFilter=origin.speakerFilter;pageStart=origin.pageStart;passageAnchor=origin.passageAnchor;passageReturn=origin.passageReturn;readingContext=origin.readingContext;readingMode=origin.mode;selected=origin.selected;searchFocusedId=origin.searchFocusedId;
+ if(origin.mode==='transcript'){const matches=doc.segments.filter(cue=>matchesReadingSegment(cue,doc,origin.query.trim().toLocaleLowerCase()));const index=matches.findIndex(cue=>cue.id===origin.cueId);pageStart=index>=0&&(index<pageStart||index>=pageStart+PAGE_SIZE)?Math.floor(index/PAGE_SIZE)*PAGE_SIZE:Math.min(pageStart,Math.max(0,Math.floor((matches.length-1)/PAGE_SIZE)*PAGE_SIZE));}
+ render();
+ const node=chapterCueNode(origin.cueId,origin.mode);if(node){if(origin.mode==='passages')node.tabIndex=-1;if(Number.isFinite(origin.viewportTop))window.scrollBy(0,node.getBoundingClientRect().top-origin.viewportTop);node.focus({preventScroll:true});}else{window.scrollTo?.({top:origin.scrollY,behavior:'auto'});if(origin.mode==='passages')$('passage-body').focus({preventScroll:true});else focusReadingSearch();notice('原片段已不在当前视图；已恢复跳转前的阅读方式与筛选。');}
+};
+$('stay-at-chapter').onclick=()=>{chapterReturn=null;renderChapterReturn();const node=chapterCueNode(chapterDirectoryCue);node?.focus({preventScroll:true});};
+
 // A collection is a saved work product, never the active transcript.
 let collectionDocument=null,collectionPage=0;
 const COLLECTION_PAGE_SIZE=20;
@@ -1598,7 +1731,7 @@ function render({keepNoteEditor=false,reuseLibraryMetadata=false}={}) {
  const cueFocus=focusedCueAction?{key:focusedCueAction.dataset.cueKey,selector:document.activeElement.tagName==='SUMMARY'?'summary':'.'+document.activeElement.className}:null;
  const openCueActions=new Set([...document.querySelectorAll(".cue-more[open]")].map(node=>node.dataset.cueKey));
 	const doc = active();
- renderReadingContext();
+ renderReadingContext();renderChapterReturn();
 	renderLibrary(null,{reuseMetadata:reuseLibraryMetadata});
 	showWorkspace(doc ? workspace : "add");
 	if (!doc) {
@@ -1820,6 +1953,8 @@ function render({keepNoteEditor=false,reuseLibraryMetadata=false}={}) {
 		};
 		body.append(bookmarkButton);
   if(reviewTranslation)body.append(reviewTranslation);
+  const chapter=el('button','chapter-create','设为章节起点');chapter.type='button';chapter.onclick=()=>openChapterEditor(doc,'create',s,null,chapter);
+  if(!compact)body.append(chapter);
   if(compact){
    const actions=el('div','cue-actions');
    const more=el('details','cue-more');more.dataset.cueKey=JSON.stringify([doc.key,s.id]);
@@ -1827,7 +1962,7 @@ function render({keepNoteEditor=false,reuseLibraryMetadata=false}={}) {
    summary.dataset.cueTime=Coconut.time(s.start);
    const repeat=meta.querySelector('.repeat-button');
    summary.setAttribute('aria-label',summary.dataset.cueTime+' · '+summary.textContent+'：修正、摘录、阅读位置'+(repeat?'与循环回听':''));
-   more.append(summary,edit,excerptButton,bookmarkButton);
+   more.append(summary,edit,excerptButton,bookmarkButton,chapter);
    if(speakerCorrection)more.append(speakerCorrection);
    if(reviewTranslation)more.append(reviewTranslation);
    if(repeat)more.append(repeat);
@@ -2200,9 +2335,9 @@ $("save-source").onclick = (e) => {
 	render();
 };
 function renderNotebookAction(doc) {
-	const count = Coconut.projectAnnotationCount(doc)+Coconut.notebookSegments(doc).length+Coconut.exactExcerptCount(doc);
+	const count = Coconut.projectAnnotationCount(doc)+Coconut.notebookSegments(doc).length+Coconut.exactExcerptCount(doc)+(doc.reading_chapters?.length||0);
 	$("export-notebook").disabled = count === 0;
-	$("export-notebook").textContent = Coconut.isAudioProject(doc)?"导出原声项目笔记（"+count+" 项）":"导出阅读笔记（" + count + (Coconut.hasProjectAnnotations(doc)||Coconut.exactExcerptCount(doc)?" 项）":" 段）");
+	$("export-notebook").textContent = Coconut.isAudioProject(doc)?"导出原声项目笔记（"+count+" 项）":"导出阅读笔记（" + count + (Coconut.hasProjectAnnotations(doc)||Coconut.exactExcerptCount(doc)||doc.reading_chapters?.length?" 项）":" 段）");
 }
 // Drafts belong to a document, not to the currently rendered form. Keep them
 // in memory across navigation/search; only a successful save writes to storage.
@@ -2360,7 +2495,7 @@ $('audio-bookmark-form').onsubmit=async event=>{
 };
 $("export-notebook").onclick = () => {
 	const doc = active();
-	if (!doc || (!Coconut.projectAnnotationCount(doc)&&!Coconut.notebookSegments(doc).length&&!Coconut.exactExcerptCount(doc))) {
+	if (!doc || (!Coconut.projectAnnotationCount(doc)&&!Coconut.notebookSegments(doc).length&&!Coconut.exactExcerptCount(doc)&&!doc.reading_chapters?.length)) {
 		notice("先摘录一段原话，或写一则笔记，再导出阅读笔记。");
 		return;
 	}
@@ -3764,7 +3899,7 @@ async function attachTranscriptToProject(text,target,{canCommit=null,activate=fa
 function hasPendingOrFailedContent(){return libraryStore.status().unsaved>0;}
 function hasUnsavedReaderChanges(){return hasPendingOrFailedContent()||hasUnsubmittedReaderDrafts();}
 function hasUnsubmittedReaderDrafts() {
- if(exactNoteDraft()||speakerCorrectionDraft()||collectionTitleDraft())return true;
+ if(exactNoteDraft()||speakerCorrectionDraft()||collectionTitleDraft()||chapterDraft())return true;
  if(removedDocument||pendingLibraryOperation||[...deferredContentInputs.values()].some(draft=>state.documents.includes(draft.doc))||hasLanguageDrafts()||window.CoconutTranslationReview?.hasDraft())return true;
  const current=active();
  if(current&&selected&&!$('notes-panel').hidden&&current.segments.some(segment=>segment.id===selected)&&$('note').value!==(current.notes[selected]||''))return true;
