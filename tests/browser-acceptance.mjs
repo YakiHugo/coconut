@@ -1,4 +1,5 @@
 import {openCueActions} from './cue-actions-browser.mjs';
+import {verifyJobRecovery} from './helpers/job-recovery-browser.mjs';
 /**
  * Real Chromium acceptance against a prepared, completed local job.
  * Run after scripts/prepare_browser_acceptance.py; Chromium is installed by CI.
@@ -320,6 +321,7 @@ try {
   const {chromium, waitForPersistedLibrary: pollStored} = await import('./helpers/browser-storage.mjs');
   waitForPersistedLibrary = pollStored;
   browser = await chromium.launch({headless: true, ...(process.env.COCONUT_CHROMIUM_EXECUTABLE ? {executablePath:process.env.COCONUT_CHROMIUM_EXECUTABLE} : {})});
+  if(mode==='synthetic'){stage='authored_job_playback_recovery';for(const name of await verifyJobRecovery(browser,origin,source.source_media,check))report.checks[name]=true;}
   const newContext = async () => {
     const context = await browser.newContext({acceptDownloads: true, viewport: {width: 1440, height: 1000}, serviceWorkers: 'block'});
     // Prevent accidental navigation, model calls, or data transmission. Requests

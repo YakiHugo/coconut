@@ -16,7 +16,21 @@ let documentLifecycleRevision = 0;
 const removedDocumentRevisions = new Map();
 // Tombstones retain small identities/digests, never another document-sized trash copy.
 const removedDocumentAliases = [];
-function documentSourceIdentity(doc){return Coconut.audioProjectIdentity(doc)||(doc.source_media?JSON.stringify(doc.source_media):'');}
+function localJobIdentity(doc){
+ const binding=doc?.local_job_binding;
+ return binding&&typeof binding.id==='string'&&typeof binding.fingerprint==='string'&&/^[a-f0-9]{32}$/.test(binding.id)&&/^[a-f0-9]{64}$/.test(binding.fingerprint)?'job:'+binding.id+':'+binding.fingerprint:'';
+}
+function documentSourceIdentity(doc){return localJobIdentity(doc)||Coconut.audioProjectIdentity(doc)||(doc.source_media?JSON.stringify(doc.source_media):'');}
+async function jobSourceBinding(doc,id){
+ if(typeof id!=='string'||!/^[a-f0-9]{32}$/.test(id))return null;
+ // Only optional playback metadata changes when an import job resumes its
+ // completed transcript. Keep every other source field in the exact identity.
+ const source=Coconut.validate(doc);delete source.source_media;
+ if(source.provenance){source.provenance={...source.provenance};delete source.provenance.playback_warning;if(!Object.keys(source.provenance).length)delete source.provenance;}
+ const digest=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(JSON.stringify(source)));
+ return {id,fingerprint:Array.from(new Uint8Array(digest),byte=>byte.toString(16).padStart(2,'0')).join('')};
+}
+
 async function libraryDocumentSignature(doc){
  const digest=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(JSON.stringify(Coconut.validate(doc))));
  return Array.from(new Uint8Array(digest),byte=>byte.toString(16).padStart(2,'0')).join('');
@@ -433,9 +447,13 @@ function el(tag, className, text) {
 	if (text !== undefined) n.textContent = text;
 	return n;
 }
-async function add(doc, canCommit = null, reuseAudioSource = false, lifecycleRevision = documentLifecycleRevision, sourceKey = doc.key, {target = null, separate = false, activate = true, canActivate = null, onActivate = null} = {}) {
+async function add(doc, canCommit = null, reuseAudioSource = false, lifecycleRevision = documentLifecycleRevision, sourceKey = doc.key, {target = null, separate = false, activate = true, canActivate = null, onActivate = null, jobId = null} = {}) {
  if(!contentIngressAllowed())throw new Error("导入已取消，书架未改变");
-	const bytes = new TextEncoder().encode(JSON.stringify(doc));
+ const jobBinding=jobId?await jobSourceBinding(doc,jobId):null;
+ // This local-only association is deliberately absent from Coconut.validate:
+ // ordinary document/library imports must never acquire task ownership.
+ if(jobBinding)doc={...doc,local_job_binding:jobBinding};
+	const bytes = new TextEncoder().encode(JSON.stringify(jobBinding?Coconut.validate(doc):doc));
 	const digest = await crypto.subtle.digest("SHA-256", bytes);
 	let key = Array.from(new Uint8Array(digest))
 		.map((x) => x.toString(16).padStart(2, "0"))
@@ -455,7 +473,16 @@ async function add(doc, canCommit = null, reuseAudioSource = false, lifecycleRev
  }
  const matches=identity?state.documents.filter(d=>Coconut.audioProjectIdentity(d)===identity):[];
  if(identity&&!target&&matches.length>1)throw new Error('本集有多个书架版本，请明确选择目标项目或单独导入');
- const existing=target?state.documents.find(d=>d.key===target.key):matches[0];
+ const jobMatches=jobBinding?state.documents.filter(d=>localJobIdentity(d)===localJobIdentity(doc)):[];
+ if(jobMatches.length>1)throw new Error('本任务有多个本地阅读条目，请先保留所需版本，未自动更新');
+ const existing=jobMatches[0]||(target?state.documents.find(d=>d.key===target.key):matches[0]);
+ // Never infer ownership from a historical import hash after the user edited
+ // that unbound entry. Only a complete unchanged copy may acquire a binding.
+ // Identical text from distinct tasks must also retain distinct task bindings.
+ if(jobBinding&&!existing){
+  const candidate=state.documents.find(d=>d.key===key);
+  if(candidate&&(localJobIdentity(candidate)||JSON.stringify(Coconut.validate(candidate))!==JSON.stringify(Coconut.validate(doc))))key=crypto.randomUUID();
+ }
  if(target&&(existing!==target.document||JSON.stringify(existing?.podcast_source)!==target.source||Coconut.audioProjectIdentity(existing)!==identity))throw new Error('目标项目已经更新，请重新选择');
  if(!contentIngressAllowed()||pendingStructuralDocuments.has(existing?.key||key))throw new Error('这份文档正在移除或恢复，请稍候再导入');
  if(existing)key=existing.key;
@@ -474,11 +501,23 @@ async function add(doc, canCommit = null, reuseAudioSource = false, lifecycleRev
  }
  const duplicate=state.documents.some(d=>d.key===key);
 	if (!duplicate)state.documents.push({ ...doc, key, notes: doc.notes || {} });
+ if(jobBinding){
+  const bound=state.documents.find(d=>d.key===key);bound.local_job_binding=jobBinding;
+  const media=doc.source_media;
+  if(media?.job_id===jobBinding.id){
+   bound.source_media={...media};
+   if(bound.provenance){bound.provenance={...bound.provenance};delete bound.provenance.playback_warning;}
+  }else if(!bound.source_media&&doc.provenance?.playback_warning){
+   // A delayed unsuccessful recovery must not downgrade a recovered source.
+   bound.provenance={...bound.provenance,playback_warning:doc.provenance.playback_warning};
+  }
+ }
  // A requested import can finish saving without taking over newer navigation.
  // Evaluate ownership here, after every asynchronous admission check.
  if(!activate || canActivate && !canActivate()){
   const inserted=state.documents.find(d=>d.key===key),receipt=commitDocument(inserted);
   renderLibrary();
+  if(jobBinding)refreshRecoveredJobMedia(inserted);
   return {...await receipt,duplicate};
  }
 	selectActiveDocument(key);
@@ -1165,33 +1204,9 @@ function focusCueAction(target, viewportTop=null) {
  if(row&&viewportTop!==null)window.scrollBy(0,row.getBoundingClientRect().top-viewportTop);
  target?.focus({preventScroll:true});
 }
-function render({keepNoteEditor=false}={}) {
- $('reader-workspace').inert=!!active()&&pendingStructuralDocuments.has(active().key);
- // All supported source changes render. Invalidate conservatively even when
- // the same array was edited in place; regular media events reuse the index.
- playbackIndex=null;
- const focusedCueAction=document.activeElement?.closest('.cue-more');
- const cueFocus=focusedCueAction?{key:focusedCueAction.dataset.cueKey,selector:document.activeElement.tagName==='SUMMARY'?'summary':'.'+document.activeElement.className}:null;
- const openCueActions=new Set([...document.querySelectorAll(".cue-more[open]")].map(node=>node.dataset.cueKey));
-	const doc = active();
- renderReadingContext();
-	renderLibrary();
-	showWorkspace(doc ? workspace : "add");
-	if (!doc) {
-		$("transcript").replaceChildren();
-		$("empty").hidden = false;
-		$("notes-panel").hidden = true;
-		return;
-	}
-	$("empty").hidden = true;
- const audioOnly=Coconut.isAudioProject(doc),duration=Coconut.documentDuration(doc);
- $('audio-project').hidden=!Coconut.hasProjectAnnotations(doc);
- if(!audioOnly&&Coconut.hasProjectAnnotations(doc))renderAudioProject(doc);
- $('transcript-reading-tools').hidden=audioOnly;
- $('reading-modes').hidden=audioOnly;
- $('time-navigation').hidden=audioOnly;
- $('export-subtitles').disabled=audioOnly;
- $('export').textContent=audioOnly?'导出原声项目与笔记':'导出文字稿与笔记';
+// Keep source-player setup independent from transcript/editor rendering.
+function renderSourceMedia(doc){
+ const audioOnly=Coconut.isAudioProject(doc);
 	const attachment = browserMedia.get(doc.key);
  const mediaPath = attachment?.url || (mediaWorkerReady && Coconut.media ? Coconut.media(doc.source_media) : "");
  const mediaKind = attachment?.kind || doc.source_media?.kind;
@@ -1248,6 +1263,44 @@ function render({keepNoteEditor=false}={}) {
 	}
 	$("locate-playback").hidden = !mediaPath||audioOnly;
  updatePlaybackControls();
+ return {mediaPath,mediaHost};
+}
+function refreshRecoveredJobMedia(doc){
+ if(active()!==doc||workspace!=='read'||!doc.source_media||!mediaWorkerReady||browserMedia.has(doc.key)||$('source-media').querySelector('audio,video'))return;
+ // A late result may make the current book playable, but never expand panels,
+ // replace a selected local file, rerender a draft, seek, or start playback.
+ const {mediaPath}=renderSourceMedia(doc);
+ if(mediaPath&&$('episode-media').hidden)$('toggle-reader-media').textContent='本地原声已就绪 · 打开回听';
+ passagePlayback?.sync();refreshPlaybackDock();
+}
+function render({keepNoteEditor=false}={}) {
+ $('reader-workspace').inert=!!active()&&pendingStructuralDocuments.has(active().key);
+ // All supported source changes render. Invalidate conservatively even when
+ // the same array was edited in place; regular media events reuse the index.
+ playbackIndex=null;
+ const focusedCueAction=document.activeElement?.closest('.cue-more');
+ const cueFocus=focusedCueAction?{key:focusedCueAction.dataset.cueKey,selector:document.activeElement.tagName==='SUMMARY'?'summary':'.'+document.activeElement.className}:null;
+ const openCueActions=new Set([...document.querySelectorAll(".cue-more[open]")].map(node=>node.dataset.cueKey));
+	const doc = active();
+ renderReadingContext();
+	renderLibrary();
+	showWorkspace(doc ? workspace : "add");
+	if (!doc) {
+		$("transcript").replaceChildren();
+		$("empty").hidden = false;
+		$("notes-panel").hidden = true;
+		return;
+	}
+	$("empty").hidden = true;
+ const audioOnly=Coconut.isAudioProject(doc),duration=Coconut.documentDuration(doc);
+ $('audio-project').hidden=!Coconut.hasProjectAnnotations(doc);
+ if(!audioOnly&&Coconut.hasProjectAnnotations(doc))renderAudioProject(doc);
+ $('transcript-reading-tools').hidden=audioOnly;
+ $('reading-modes').hidden=audioOnly;
+ $('time-navigation').hidden=audioOnly;
+ $('export-subtitles').disabled=audioOnly;
+ $('export').textContent=audioOnly?'导出原声项目与笔记':'导出文字稿与笔记';
+ const {mediaPath,mediaHost}=renderSourceMedia(doc);
 	$("title").textContent = doc.title;
  const isDemo=doc.provenance?.kind==='authored_demo';
  document.body.dataset.demo=String(isDemo);

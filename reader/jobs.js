@@ -115,7 +115,7 @@ function renderJobs(jobs) {
     const revision=documentLifecycleRevision,request=++jobOpenSequence,selection=activeSelectionRevision,navigation=localImportRevision,startingWorkspace=workspace;
     const canActivate=()=>request===jobOpenSequence&&selection===activeSelectionRevision&&navigation===localImportRevision&&workspace===startingWorkspace;
     const doc = Coconut.validate(await jobApi("jobs/" + job.id + "/result"));
-    const receipt=await add(doc,null,false,revision,doc.key,{canActivate});
+    const receipt=await add(doc,null,false,revision,doc.key,{canActivate,jobId:job.id});
     if(request===jobOpenSequence&&navigation===localImportRevision&&receipt.selectionRevision===activeSelectionRevision&&workspace==='read'&&active()===receipt.identity&&contentIngressAllowed(receipt.identity)){if(!receipt.ok)notice("文字稿已在本页打开，尚未保存，请导出备份。");$("title").scrollIntoView({ behavior: "smooth" });}
    }, job.id, "open"));
    if (["queued", "running"].includes(job.status)) replacement.append(jobButton("取消", () => jobApi("jobs/" + job.id + "/cancel", jsonPost()), job.id, "cancel"));
