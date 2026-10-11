@@ -10,6 +10,7 @@ import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {chromium, expect} from './helpers/browser-storage.mjs';
 import {openLibraryTools} from './helpers/library-tools-browser.mjs';
+import {openCueActions} from './cue-actions-browser.mjs';
 import {passageReadingFixture} from './helpers/passage-reading-fixture.mjs';
 
 if (!process.env.CI) throw new Error('Quotation browser acceptance is CI-only; use the authored Node/HappyDOM suite locally.');
@@ -342,6 +343,74 @@ try {
     await expect(page.locator('#notebook-captures')).toContainText('所选文字摘录');
     await expect(page.locator('#notebook-captures')).toContainText(exactText);
     check(label + '_exact_excerpt_survives_reload_and_notebook', true);
+
+    // Exercise historical evidence through actual reader controls, not storage mutation.
+    const excerptDocument = exactLibrary.documents.find(doc => doc.title === newlines.title);
+    const originalExcerpt = excerptDocument.exact_excerpts.find(record => record.text === exactText);
+    const excerptRow = id => page.locator('#notebook-captures .notebook-capture').filter({hasText: id});
+    const retainedRow = excerptRow(originalExcerpt.id);
+    await expect(retainedRow).toHaveCount(1);
+    await retainedRow.locator('details > summary').click();
+    await expect(retainedRow.locator('.notebook-content').last()).toContainText('摘录时上下文');
+    const historicalContent = await retainedRow.locator('.notebook-content').allTextContents();
+    check(label + '_history_initial_attribution_is_capture_time_source', historicalContent.some(text => text.includes(newlines.title) && text.includes('https://youtu.be/authored-newlines?t=0')));
+    await retainedRow.locator('.notebook-open').click();
+    await expect(page.locator('#library-notebook')).toBeHidden();
+
+    // A second explicitly saved range must survive removing the first later.
+    await page.locator('#mode-passages').click();
+    await clearSelection(); await newlineAction.click();
+    check(label + '_second_excerpt_uses_actual_source_picker', await keyboardSelectSource(7,5) === 'after');
+    await previewKeyboardSelection(); await page.locator('#quotation-save').click();
+    await expect(page.locator('#quotation-save-status')).toContainText('已保存到本机');
+    await closeQuotation(newlineAction);
+    const beforeCorrection = await saved();
+    const beforeDocument = beforeCorrection.documents.find(doc => doc.key === excerptDocument.key);
+    const otherExcerpt = beforeDocument.exact_excerpts.find(record => record.id !== originalExcerpt.id);
+    check(label + '_independent_annotations_and_second_excerpt_exist', beforeDocument.exact_excerpts.length === 2 && otherExcerpt.text === 'after' && Object.keys(beforeDocument.notes).length > 0 && beforeDocument.segments.some(cue => cue.saved_excerpt === true));
+
+    stage = label + '_historical_excerpt_after_source_correction';
+    await page.locator('#mode-transcript').click();
+    const cueId = newlines.segments[0].id;
+    const correctedCue = page.locator('#transcript .segment').filter({has: page.locator('.words', {hasText: /^before\s+after$/})});
+    await expect(correctedCue).toHaveCount(1);
+    await openCueActions(correctedCue);await correctedCue.locator('.edit-button').click();
+    await expect(page.locator('#edit-dialog')).toBeVisible();
+    const correctedText = 'Authored corrected source for retained quotation history ' + label + '.';
+    await page.locator('#edit-segment').fill(correctedText);await page.locator('#save-edit').click();
+    await expect(page.locator('#edit-dialog')).toBeHidden();
+    const afterCorrection = await saved();
+    const correctedDocument = afterCorrection.documents.find(doc => doc.key === excerptDocument.key);
+    const currentCue = correctedDocument.segments.find(cue => cue.id === cueId);
+    check(label + '_source_correction_is_durable_and_preserves_original', currentCue.text === correctedText && currentCue.original_text === 'before\r\nafter');
+    check(label + '_source_correction_keeps_exact_snapshot_and_independent_annotations', JSON.stringify(correctedDocument.exact_excerpts) === JSON.stringify(beforeDocument.exact_excerpts) && JSON.stringify(correctedDocument.notes) === JSON.stringify(beforeDocument.notes) && JSON.stringify(correctedDocument.segments.map(cue => [cue.id, cue.saved_excerpt])) === JSON.stringify(beforeDocument.segments.map(cue => [cue.id, cue.saved_excerpt])));
+    await openLibraryTools(page);await page.locator('#open-library-notebook').click();
+    await retainedRow.locator('details > summary').click();
+    await expect(retainedRow).toContainText('原文或出处已变化；保留摘录时快照');
+    await expect(retainedRow.locator('.notebook-content').last()).toContainText('摘录时上下文');
+    check(label + '_historical_text_attribution_and_context_remain_exact_after_correction', JSON.stringify(await retainedRow.locator('.notebook-content').allTextContents()) === JSON.stringify(historicalContent));
+    await expect(retainedRow.locator('.notebook-open')).toHaveText('查看当前对应原文');
+    await expect(retainedRow.locator('.notebook-open')).toBeEnabled();
+    await capture(label + '-historical-correction');
+    await retainedRow.locator('.notebook-open').click();
+    await expect(page.locator('#library-notebook')).toBeHidden();
+    await expect(page.locator('#transcript .segment[data-segment-id="' + cueId + '"] .words')).toHaveText(correctedText);
+    check(label + '_historical_record_navigates_to_current_corresponding_cue', await page.evaluate(id => document.activeElement.closest('.segment')?.dataset.segmentId === id, cueId));
+
+    await page.locator('#return-library-notebook').click();await expect(retainedRow).toHaveCount(1);
+    const beforeRemoval = await saved(), expectedAfterRemoval = structuredClone(beforeRemoval);
+    expectedAfterRemoval.documents.find(doc => doc.key === excerptDocument.key).exact_excerpts = beforeDocument.exact_excerpts.filter(record => record.id !== originalExcerpt.id);
+    await retainedRow.locator('.notebook-remove').click();
+    await expect(retainedRow).toHaveCount(0);await expect(excerptRow(otherExcerpt.id)).toHaveCount(1);
+    check(label + '_removal_changes_only_the_chosen_exact_record_on_disk', JSON.stringify(await saved()) === JSON.stringify(expectedAfterRemoval));
+    await page.locator('#notebook-close').click();await page.reload();
+    await page.waitForFunction(() => window.CoconutStorageBootstrap?.phase === 'ready');
+    check(label + '_reload_preserves_correction_notes_whole_cue_and_other_excerpt', JSON.stringify(await saved()) === JSON.stringify(expectedAfterRemoval));
+    await openLibraryTools(page);await page.locator('#open-library-notebook').click();
+    await expect(retainedRow).toHaveCount(0);await expect(excerptRow(otherExcerpt.id)).toHaveCount(1);
+    await excerptRow(otherExcerpt.id).locator('details > summary').click();
+    await expect(excerptRow(otherExcerpt.id)).toContainText('原文或出处已变化；保留摘录时快照');
+    await capture(label + '-historical-removal-reload');
     await context.close(); page = null;
   }
   check('no_external_requests_or_server_mutations', external === 0 && mutations === 0);
