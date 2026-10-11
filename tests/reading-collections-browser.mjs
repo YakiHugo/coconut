@@ -9,6 +9,8 @@ import {largeLibraryFixture} from './helpers/large-library-fixture.mjs';
 import {startBridge} from '../desktop/server.mjs';
 
 const checks=[],errors=[];
+let diagnosticPage,contextCount=0;
+const pageContexts=new WeakMap();
 let browser,server,page,collectionKey,stage='setup',external=0,mutations=0;
 const check=(name,value)=>{assert.ok(value,name);checks.push(name);};
 // Compare authored content using explicit Markdown escaping, while download
@@ -26,6 +28,8 @@ async function savedCount(count,p=page){
  if(await p.locator('#collection-select').inputValue()===collectionKey)await p.waitForFunction(()=>document.getElementById('collection-status').dataset.state==='saved');
 }
 async function openNotebook(p=page){
+ diagnosticPage=p;
+ if(await p.locator('#library-notebook').evaluate(node=>node.open))return;
  await openLibraryTools(p);await p.locator('#open-library-notebook').click();
  await p.locator('#library-notebook').waitFor({state:'visible'});
 }
@@ -73,7 +77,7 @@ try{
  async function newPage(viewport={width:1280,height:900}){
   const context=await browser.newContext({viewport,acceptDownloads:true,serviceWorkers:'block'});
   await context.route('**/*',async route=>{const request=route.request(),url=new URL(request.url());if(!['GET','HEAD'].includes(request.method())){mutations++;await route.abort();}else if(url.origin===origin||['blob:','data:'].includes(url.protocol))await route.continue();else{external++;await route.abort();}});
-  const p=await context.newPage();p.setDefaultTimeout(20000);p.on('pageerror',error=>errors.push(error.message));await p.goto(origin);return p;
+  const p=await context.newPage();pageContexts.set(p,'context-'+(++contextCount));p.setDefaultTimeout(20000);p.on('pageerror',error=>errors.push({message:error.message,stack:error.stack,url:p.url(),context:pageContexts.get(p)}));diagnosticPage=p;await p.goto(origin);return p;
  }
  page=await newPage();
  const docs=largeLibraryFixture(2,{cues:65});
@@ -237,8 +241,9 @@ try{
  check('no_external_requests_mutations_or_page_errors',external===0&&mutations===0&&errors.length===0);
  console.log(JSON.stringify({suite:'reading-collections',status:'passed',checks}));
 }catch(error){
- const probe=await page?.evaluate(()=>({collectionState:document.getElementById('collection-status')?.dataset.state,collectionStatus:document.getElementById('collection-status')?.textContent,collectionCount:document.getElementById('collection-count')?.textContent,collectionRows:document.querySelectorAll('.collection-item').length,notebookRows:document.querySelectorAll('.notebook-capture').length,notebookOpen:document.getElementById('library-notebook')?.open,activeId:document.activeElement?.id||'',activeClass:document.activeElement?.className||''})).catch(()=>null);
- console.error(JSON.stringify({suite:'reading-collections',status:'failed',stage,checks,probe,errors,error:error.message}));
- if(page&&!page.isClosed())await capture(page,'failure').catch(()=>{});
+ const failurePage=diagnosticPage&&!diagnosticPage.isClosed()?diagnosticPage:page;
+ const probe=await failurePage?.evaluate(()=>({collectionState:document.getElementById('collection-status')?.dataset.state,collectionStatus:document.getElementById('collection-status')?.textContent,collectionCount:document.getElementById('collection-count')?.textContent,collectionRows:document.querySelectorAll('.collection-item').length,notebookRows:document.querySelectorAll('.notebook-capture').length,notebookOpen:document.getElementById('library-notebook')?.open,shelfExpanded:document.getElementById('toggle-library')?.getAttribute('aria-expanded'),notebookButtonRect:document.getElementById('open-library-notebook')?.getBoundingClientRect().toJSON(),activeId:document.activeElement?.id||'',activeClass:document.activeElement?.className||''})).catch(()=>null);
+ console.error(JSON.stringify({suite:'reading-collections',status:'failed',stage,context:pageContexts.get(failurePage),checks,probe,errors,error:error.message}));
+ if(failurePage&&!failurePage.isClosed())await capture(failurePage,'failure').catch(()=>{});
  process.exitCode=1;
 }finally{await browser?.close();await new Promise(resolve=>server?server.close(resolve):resolve());}

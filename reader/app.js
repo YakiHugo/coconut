@@ -907,7 +907,7 @@ function returnFromLibrary(){
 }
 function toggleLibraryBrowsing(){
  if($('toggle-library').getAttribute('aria-expanded')==='true'){returnFromLibrary();return;}
- libraryBrowseOrigin={key:active()?.key,doc:active(),selectionRevision:activeSelectionRevision,reading:!$('reader-workspace').hidden,node:libraryReaderFocus?.key===active()?.key?libraryReaderFocus.node:null,scrollY:window.scrollY};
+ libraryBrowseOrigin={key:active()?.key,doc:active(),selectionRevision:activeSelectionRevision,reading:!$('reader-workspace').hidden,node:libraryReaderFocus&&libraryReaderFocus.key===active()?.key?libraryReaderFocus.node:null,scrollY:window.scrollY};
  $('toggle-library').setAttribute('aria-expanded','true');
  if(libraryMobile.matches)$('toggle-library').closest('aside').scrollIntoView?.({block:'start',behavior:'instant'});
 }
