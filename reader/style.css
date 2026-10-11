@@ -1025,11 +1025,12 @@ body[data-media-docked="true"] .reading-feedback:has(#save-warning-home .has-war
 .media-timing-fields input { width: 9rem; }
 
 /* An opt-in notebook, keeping the existing reading surface quiet. */
-.library-notebook{width:min(720px,calc(100vw - 32px));max-height:85dvh;overflow:auto;box-sizing:border-box}
+.library-notebook{width:min(720px,calc(100vw - 32px));max-width:720px;max-height:85dvh;padding:20px;overflow:auto;box-sizing:border-box}
 .library-notebook input[type=search]{width:100%;box-sizing:border-box}
 #notebook-captures{padding-left:1.5rem}
 .notebook-capture{padding:1rem 0;border-bottom:1px solid var(--line);overflow-wrap:anywhere}
-.notebook-capture label{display:flex;align-items:baseline;gap:.5rem}
+.notebook-capture label{display:flex;align-items:baseline;gap:.5rem;min-height:32px}
+.notebook-capture label input[type=checkbox]{width:auto;flex:none;margin:0}
 .notebook-preview{display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;white-space:pre-wrap}
 .notebook-content{white-space:pre-wrap;overflow-wrap:anywhere}
 .library-notebook nav{display:flex;gap:.5rem;margin:1rem 0}
@@ -1094,3 +1095,16 @@ body[data-media-docked="true"] .reading-feedback:has(#save-warning-home .has-war
 
 #quotation-save-status:empty{display:none}
 .notebook-remove{margin-left:.5rem}
+
+/* Notebook records: one reading surface, with provenance and diagnostics secondary. */
+.notebook-details[open]>.notebook-quote{margin-top:.75rem}
+.notebook-capture:has(>.notebook-details[open])>.notebook-preview{display:none}
+.notebook-metadata{display:grid;grid-template-columns:max-content minmax(0,1fr);gap:.35rem .75rem;font-size:12px;line-height:1.6;margin:1rem 0}
+.notebook-metadata dt{color:var(--tone-muted,#6a625c);font-weight:500}
+.notebook-metadata dd{margin:0;white-space:pre-wrap;overflow-wrap:anywhere}
+.notebook-history{margin:.75rem 0}
+.notebook-technical{margin:.75rem 0;font-size:12px;color:var(--tone-muted,#6a625c)}
+.notebook-technical p{white-space:pre-wrap}
+.notebook-details>.notebook-note{border-left:2px solid var(--line);padding-left:.75rem}
+
+@media(max-width:480px){.library-notebook{padding:16px}.notebook-capture label{min-height:44px}}

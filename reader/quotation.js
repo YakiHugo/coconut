@@ -37,14 +37,18 @@
   if(normalized!==offset)throw Error(invalid);return index;
  }
  function stamp(seconds){const ms=Math.round(seconds*1000),hours=Math.floor(ms/3600000),minutes=Math.floor(ms/60000)%60,s=Math.floor(ms/1000)%60;return [hours,minutes,s].map(n=>String(n).padStart(2,'0')).join(':')+'.'+String(ms%1000).padStart(3,'0');}
- function attribution(doc,quote,core){
+ function attributionDetails(doc,quote,core){
   const label=value=>String(value??'').replace(/\r/g,'\\r').replace(/\n/g,'\\n');
   const demo=doc.provenance?.kind==='authored_demo';
   const timed=demo?'':core.source(doc.source_url,quote.start);
   const origin=demo?'':doc.podcast_source?(core.podcastURL(doc.source_url)||core.podcastURL(doc.podcast_source.feed_url)):'';
   const location=demo?'自写演示内容（无对应音视频）':timed?'来源：'+timed:origin?'来源：'+origin+'（按时间手动定位）':doc.local_media_source||doc.source_media?'本地原始媒体（无原站链接，请按文字稿时间定位）':'未关联原站链接或媒体（仅文字稿时间定位）';
   const corrected=quote.parts.some(({cue})=>cue.original_text!==undefined&&cue.original_text!==cue.text);
-  return quote.text+'\n\n—— '+label(doc.title)+' · '+stamp(quote.start)+'–'+stamp(quote.end)+(corrected?' · 已修正文字稿':'')+'\n'+location;
+  return {title:label(doc.title),range:stamp(quote.start)+'–'+stamp(quote.end),corrected,location};
+ }
+ function attribution(doc,quote,core){
+  const details=attributionDetails(doc,quote,core);
+  return quote.text+'\n\n—— '+details.title+' · '+details.range+(details.corrected?' · 已修正文字稿':'')+'\n'+details.location;
  }
  // Chromium can focus readonly textareas while leaving native arrow selection
  // inert. Own only the documented horizontal selection and document-edge keys;
@@ -146,5 +150,5 @@
    button.onclick=event=>{const selection=root.getSelection(),live=selection&&selection.rangeCount&&!selection.isCollapsed;const captured=!live&&event.detail>0&&pointer?.button===button?pointer:capture(binding);pointer=null;open(binding,captured);};
   }};
  }
- const api={compose,slice,domSelection,inputOffset,stamp,attribution,selectionOffsets,moveSelection,create};if(typeof module!=='undefined'&&module.exports)module.exports=api;else root.CoconutQuotation=api;
+ const api={compose,slice,domSelection,inputOffset,stamp,attribution,attributionDetails,selectionOffsets,moveSelection,create};if(typeof module!=='undefined'&&module.exports)module.exports=api;else root.CoconutQuotation=api;
 })(typeof window!=='undefined'?window:globalThis);
