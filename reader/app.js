@@ -1751,7 +1751,8 @@ function renderAudioProject(doc) {
  const host=$('audio-bookmarks');host.replaceChildren();
  if(!doc.timestamp_bookmarks.length)host.append(el('p','hint','还没有时间书签。播放时可以填入当前时间，也可以手动记录。'));
  const query=$('audio-bookmark-search').value.trim().toLocaleLowerCase();
- const bookmarks=doc.timestamp_bookmarks.filter(item=>!query||[item.note,Coconut.time(item.time),String(item.time)].some(value=>value.toLocaleLowerCase().includes(query)));
+ const matchesBookmark=item=>!query||[item.note,Coconut.time(item.time),String(item.time)].some(value=>value.toLocaleLowerCase().includes(query));
+ const bookmarks=doc.timestamp_bookmarks.filter(matchesBookmark);
  $('audio-bookmark-results').textContent=query?'找到 '+bookmarks.length+' / '+doc.timestamp_bookmarks.length+' 个时间书签':'共 '+bookmarks.length+' 个时间书签';
  if(query&&!bookmarks.length)host.append(el('p','hint','没有匹配的书签，请清除或更换关键词。'));
  for(const item of bookmarks){
@@ -1767,7 +1768,42 @@ function renderAudioProject(doc) {
    catch{$('audio-project-status').textContent='媒体暂时无法定位，书签仍然保留。';}
   };
   const input=el('textarea');input.rows=2;input.value=item.note;input.setAttribute('aria-label',Coconut.time(item.time)+' 的书签笔记');
-  const applyBookmarkNote=value=>{if(!contentIngressAllowed(doc)||!doc.timestamp_bookmarks.includes(item))return;if(!allowAudioNoteChange(doc,item.note,value,10000)){if(input.isConnected)input.value=item.note;return;}item.note=value;queueDocument(doc);if(active()===doc){renderLibrary();renderNotebookAction(doc);}};
+  // Keep the editor and caret stable while typing, and keep row actions usable
+  // when focus moves from the note to its time editor or delete button.
+  let pendingPointer=null;
+  const reconcileBookmarkSearch=nextFocus=>{
+   if(active()!==doc||!row.isConnected||pendingPointer||row.contains(document.activeElement)||row.contains(nextFocus)||matchesBookmark(item))return;
+   captureAudioBookmarkDrafts();row.remove();
+   const count=doc.timestamp_bookmarks.filter(matchesBookmark).length;
+   $('audio-bookmark-results').textContent='找到 '+count+' / '+doc.timestamp_bookmarks.length+' 个时间书签';
+   if(!count)host.append(el('p','hint','没有匹配的书签，请清除或更换关键词。'));
+   if(!nextFocus?.isConnected&&(!document.activeElement||document.activeElement===document.body))$('audio-bookmark-search').focus();
+  };
+  const releasePointer=(nextFocus=null)=>{
+   if(!pendingPointer)return;
+   pendingPointer.abort();pendingPointer=null;queueMicrotask(()=>reconcileBookmarkSearch(nextFocus));
+  };
+  const finishPointer=()=>{
+   const owner=pendingPointer;setTimeout(()=>{if(pendingPointer===owner)releasePointer();},0);
+  };
+  row.onpointerdown=event=>{
+   if(event.button!==0)return;
+   pendingPointer?.abort();pendingPointer=new AbortController();
+   const options={capture:true,signal:pendingPointer.signal};
+   // Some browsers blur the note without focusing a clicked button. Hold the
+   // row through click; pointer-up without a click must release it as well.
+   document.addEventListener('pointerup',finishPointer,{...options,once:true});
+   document.addEventListener('pointercancel',()=>releasePointer(),{...options,once:true});
+   document.addEventListener('pointerdown',next=>{if(!row.contains(next.target))releasePointer();},options);
+   window.addEventListener('blur',()=>releasePointer(),{signal:pendingPointer.signal,once:true});
+  };
+  row.addEventListener('click',finishPointer);
+  // focusout bubbles, but Chromium has no onfocusout handler property.
+  row.addEventListener('focusout',event=>{
+   if(event.relatedTarget&&!row.contains(event.relatedTarget))releasePointer(event.relatedTarget);
+   queueMicrotask(()=>reconcileBookmarkSearch(event.relatedTarget));
+  });
+  const applyBookmarkNote=value=>{if(!contentIngressAllowed(doc)||!doc.timestamp_bookmarks.includes(item))return;if(!allowAudioNoteChange(doc,item.note,value,10000)){if(input.isConnected)input.value=item.note;return;}item.note=value;queueDocument(doc);if(active()===doc){renderLibrary();renderNotebookAction(doc);reconcileBookmarkSearch();}};
   input.oninput=()=>{if(active()!==doc||!doc.timestamp_bookmarks.includes(item))return;if(deferContentInput(doc,input,item.note,applyBookmarkNote))return;applyBookmarkNote(input.value);};
   const remove=el('button','','删除书签');remove.onclick=()=>{
    if(!ownsBookmark())return;
@@ -1782,7 +1818,7 @@ function renderAudioProject(doc) {
    event.preventDefault();if(!ownsBookmark())return;
    const next=Coconut.parseReadingTime(timeInput.value);
    if(next===null||next>604800){error.textContent='请输入最长7天的有效时间，原书签未改变。';return;}
-   item.time=next;form.hidden=true;doc.timestamp_bookmarks.sort((a,b)=>a.time-b.time);const receipt=commitDocument(doc);renderAudioProject(doc);renderNotebookAction(doc);
+   item.time=next;form.hidden=true;doc.timestamp_bookmarks.sort((a,b)=>a.time-b.time);const receipt=commitDocument(doc);renderAudioProject(doc);renderLibrary();renderNotebookAction(doc);
    ([...host.children].find(element=>element.dataset.bookmarkId===item.id)?.querySelector('.edit-bookmark-time')||$('audio-bookmark-search')).focus();
    const persisted=await receipt;
    if(ownsBookmark()&&item.time===next&&libraryStore.status(doc.key)?.generation===persisted.generation)$('audio-project-status').textContent=persisted.ok?'书签时间已更新，笔记保留。':'书签时间仅在本页，请立即导出 JSON 备份。';
