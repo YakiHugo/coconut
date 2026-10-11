@@ -146,7 +146,21 @@ and library recovery retain notes, while transcript/subtitle exports and AI
 reading text exclude them. Notebook Markdown includes nonempty notes separately
 under “我的笔记”; it remains a reading export rather than a restorable backup.
 
-Older readers' validation, import and restoration may omit this new field. Some
-raw document save paths may preserve unknown fields, so preservation cannot be
-assumed either way. Keep an untouched JSON backup and restore with a supporting
-reader when moving between versions.
+Version 0.7.4's validation projection, JSON document import and library restore
+discard `exact_excerpt_notes`, while retaining valid `exact_excerpts`. Its ordinary
+IndexedDB and legacy library load/save paths can retain unknown fields, but cannot
+view or manage these personal notes. Readers predating exact-excerpt support also
+discard `exact_excerpts` on JSON import/restore, as described above. Ordinary
+preservation does not imply full downgrade compatibility. Keep an untouched JSON
+backup and restore with a supporting reader when moving between versions.
+
+### Selected library backups
+
+Selected-document export uses the existing `coconut-library` version 1 envelope
+and the ordinary additive library restore. It includes the selected documents'
+accepted source text, corrections, annotations, translations and saved AI history
+with evidence, including accepted changes still awaiting local persistence. It
+excludes media files, credentials and unsubmitted editor drafts. A selected subset
+is not a complete library backup; use whole-library export before upgrading.
+Selection is session-only and is not restored on reload. Requesting a download
+does not prove that it saved to disk or clear an unsaved-data warning.
