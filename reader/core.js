@@ -534,17 +534,17 @@
   return {key,refresh,record,time:id=>{const item=events.get(id);return item&&!item[2]?item[1]:0;}};
  }
  const libraryTitleOrder=new Intl.Collator('zh-Hans',{numeric:true,sensitivity:'base'});
- function sortedLibrary(documents, order,openedAt=()=>0) {
+ function sortedLibrary(documents, order,openedAt=()=>0,getDuration=documentDuration) {
   const result=documents.slice();
   if(order==='opened')result.sort((a,b)=>openedAt(b.key)-openedAt(a.key));
   if(order==='title')result.sort((a,b)=>libraryTitleOrder.compare(a.title,b.title));
-  if(order==='duration'){const durations=new Map(result.map(doc=>[doc,documentDuration(doc)]));result.sort((a,b)=>durations.get(a)-durations.get(b));}
+  if(order==='duration'){const durations=new Map(result.map(doc=>[doc,getDuration(doc)]));result.sort((a,b)=>durations.get(a)-durations.get(b));}
   return result;
  }
  // Cooperative shelf selection resumes the shared phrase engine within long
  // documents; incomplete indexes and query results are never published.
  // A single completed snapshot is reused for page changes and reader refreshes.
- function createLibrarySearch({getDocuments,getRevision=()=>0,schedule=run=>root.setTimeout(run,0),
+ function createLibrarySearch({getDocuments,getRevision=()=>0,getDuration=documentDuration,schedule=run=>root.setTimeout(run,0),
   now=()=>root.performance.now(),batchSize=32,budgetMs=4,workSize=32,onChange=()=>{}}) {
   let generation=0,current=null;
   const sameDocuments=job=>{
@@ -553,9 +553,14 @@
   };
   const valid=job=>current===job&&job.generation===generation&&job.revision===getRevision()&&job.sourceRevision===searchRevision&&sameDocuments(job);
   function retire(job){if(job?.operation){job.operation.return();job.operation=null;}if(job){job.buildingSaved?.clear();job.matches=[];}}
-  function request(query,kind='all',scope='title',order='recent') {
+  function request(query,kind='all',scope='title',order='recent',refreshOrder=false) {
    const signature=JSON.stringify([query,kind,scope,order]);
-   if(current?.signature===signature&&valid(current))return current;
+   if(current?.signature===signature&&valid(current)){
+    // A conservative caller may have changed ordering metadata in place. Keep
+    // completed matches and in-flight cooperative work; only refresh the sort.
+    if(refreshOrder&&!current.pending){const matches=new Set(current.docs);current.docs=sortedLibrary(current.documents.filter(doc=>matches.has(doc)),order,undefined,getDuration);}
+    return current;
+   }
    retire(current);
    const documents=getDocuments().slice();
    const job={generation:++generation,signature,revision:getRevision(),sourceRevision:searchRevision,documents,
@@ -573,7 +578,7 @@
     if(characters>65536)break;
    }
    job.pending=expensive&&(documents.length>160||cues>4000||characters>65536);
-   function finish(){job.docs=sortedLibrary(job.matches,order);job.savedHits=job.buildingSaved;job.buildingSaved=new Map();job.matches=[];job.pending=false;}
+   function finish(){job.docs=sortedLibrary(job.matches,order,undefined,getDuration);job.savedHits=job.buildingSaved;job.buildingSaved=new Map();job.matches=[];job.pending=false;}
    function step(){
     if(!valid(job)){
      // Content may change without a shelf render (e.g. a background import).

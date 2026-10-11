@@ -363,10 +363,10 @@ state={documents:libraryLoad.documents,active:libraryLoad.active};
 if(libraryLoad.ok)for(const doc of state.documents)recordPersistenceCheckpoint(doc,persistenceCheckpoint(doc));
 else notice('上次保存的数据无法读取，已停止写入以保留原数据。本次内容可继续阅读，请导出备份后再关闭页面。');
 const libraryStore=CoconutLibraryStore.create({adapter:libraryAdapter,getDocuments:()=>state.documents,checkpoint:persistenceCheckpoint});
-let libraryContentRevision=0,notebookRefreshQueued=false;
+let libraryContentRevision=0,notebookRefreshQueued=false,libraryRenderedRevision=-1;
 libraryStore.subscribe((snapshot,event)=>{
  const changed=libraryContentRevision!==snapshot.generation;libraryContentRevision=snapshot.generation;
- if(changed&&!notebookRefreshQueued){notebookRefreshQueued=true;queueMicrotask(()=>{notebookRefreshQueued=false;if($('library-notebook').open)renderLibraryNotebook();renderLibrary();});}
+ if(changed&&!notebookRefreshQueued){notebookRefreshQueued=true;queueMicrotask(()=>{notebookRefreshQueued=false;if($('library-notebook').open)renderLibraryNotebook();if(libraryRenderedRevision!==libraryContentRevision)renderLibrary(null,{reuseMetadata:true});});}
  if(event?.result?.ok)for(const captured of event.result.checkpoints)recordPersistenceCheckpoint(captured.identity,captured.checkpoint);
  if(event?.type==='release')resumeDeferredContentInputs();
  renderSaveStatus(libraryStore.status());
@@ -933,14 +933,27 @@ function createLibraryCard(d){
  entry.append(open,remove);
  return {doc:d,entry,open,title,metadata,remove,openDocument,hitSignature:null,hits:null,savedHits:null,savedSelection:null};
 }
-const librarySearch=Coconut.createLibrarySearch({getDocuments:()=>state.documents,getRevision:()=>libraryContentRevision,onChange:()=>renderLibrary()});
+// Only known content refreshes reuse these derived values. An ordinary render
+// remains the conservative path for callers that changed source objects in place.
+let libraryMetadata=new WeakMap();
+function libraryDocumentMetadata(doc){
+ const receipt=libraryStore.status(doc.key),generation=receipt?.identity===doc?receipt.generation:null;
+ const previous=libraryMetadata.get(doc);
+ if(previous&&previous.generation===generation&&previous.segments===doc.segments&&previous.length===doc.segments.length&&previous.notes===doc.notes&&previous.readingPosition===doc.readingPosition&&previous.mediaDuration===doc.media_duration&&previous.kind===doc.project_kind)return previous;
+ const metadata={generation,segments:doc.segments,length:doc.segments.length,notes:doc.notes,readingPosition:doc.readingPosition,mediaDuration:doc.media_duration,kind:doc.project_kind,
+  bookmark:doc.readingPosition?doc.segments.find(segment=>segment.id===doc.readingPosition):undefined,duration:Coconut.documentDuration(doc),noteCount:Coconut.segmentNoteCount(doc)};
+ libraryMetadata.set(doc,metadata);return metadata;
+}
+const librarySearch=Coconut.createLibrarySearch({getDocuments:()=>state.documents,getRevision:()=>libraryContentRevision,getDuration:doc=>libraryDocumentMetadata(doc).duration,onChange:()=>renderLibrary(null,{reuseMetadata:true})});
 let libraryPendingReveal=null;
-function renderLibrary(revealKey=null) {
+function renderLibrary(revealKey=null,{reuseMetadata=false}={}) {
+ if(!reuseMetadata)libraryMetadata=new WeakMap();
+ libraryRenderedRevision=libraryContentRevision;
  const host=$('library'),query=$('library-search').value.trim().toLocaleLowerCase(),scope=$('library-scope').value;
  $('library-search').placeholder=scope==='title'?'按标题查找':scope==='notes'?'查找标题与笔记（含摘录笔记）':'查找标题、原文、笔记与已存摘录';
  const signature=JSON.stringify([query,$('library-sort').value,$('library-kind').value,scope]);
  const viewChanged=libraryViewSignature!==null&&signature!==libraryViewSignature;
- const selection=librarySearch.request(query,$('library-kind').value,scope,$('library-sort').value);
+ const selection=librarySearch.request(query,$('library-kind').value,scope,$('library-sort').value,!reuseMetadata);
  if(typeof revealKey==='string')libraryPendingReveal={signature,key:revealKey};
  if(libraryPendingReveal?.signature!==signature)libraryPendingReveal=null;
  host.setAttribute('aria-busy',String(selection.pending));
@@ -983,8 +996,8 @@ function renderLibrary(revealKey=null) {
  const nextCards=new Map();
  for(const d of visible){
   const previous=libraryCards.get(d.key),card=previous?.doc===d?previous:createLibraryCard(d);
-  const bookmark=d.segments.find(s=>s.id===d.readingPosition),audioOnly=Coconut.isAudioProject(d),duration=Coconut.documentDuration(d);
-  const metadata=audioOnly?['原声项目','未导入文字稿',duration?Coconut.time(duration):'时长待确认']:[Coconut.time(duration),Coconut.segmentNoteCount(d)+' 则片段笔记'];
+  const {bookmark,duration,noteCount}=libraryDocumentMetadata(d),audioOnly=Coconut.isAudioProject(d);
+  const metadata=audioOnly?['原声项目','未导入文字稿',duration?Coconut.time(duration):'时长待确认']:[Coconut.time(duration),noteCount+' 则片段笔记'];
   if(Coconut.hasProjectAnnotations(d))metadata.push((Coconut.hasNoteContent(d.project_note)?1:0)+' 则项目笔记',d.timestamp_bookmarks.length+' 个时间书签');
   if(bookmark)metadata.push('读到 '+Coconut.time(bookmark.start));
   if(card.title.textContent!==d.title)card.title.textContent=d.title;
@@ -1428,7 +1441,7 @@ function refreshRecoveredJobMedia(doc){
  if(mediaPath&&$('episode-media').hidden)$('toggle-reader-media').textContent='本地原声已就绪 · 打开回听';
  passagePlayback?.sync();refreshPlaybackDock();
 }
-function render({keepNoteEditor=false}={}) {
+function render({keepNoteEditor=false,reuseLibraryMetadata=false}={}) {
  $('reader-workspace').inert=!!active()&&pendingStructuralDocuments.has(active().key);
  // All supported source changes render. Invalidate conservatively even when
  // the same array was edited in place; regular media events reuse the index.
@@ -1438,7 +1451,7 @@ function render({keepNoteEditor=false}={}) {
  const openCueActions=new Set([...document.querySelectorAll(".cue-more[open]")].map(node=>node.dataset.cueKey));
 	const doc = active();
  renderReadingContext();
-	renderLibrary();
+	renderLibrary(null,{reuseMetadata:reuseLibraryMetadata});
 	showWorkspace(doc ? workspace : "add");
 	if (!doc) {
 		$("transcript").replaceChildren();
@@ -1978,10 +1991,10 @@ function applyCueNote(d,id,value){
   // Reconcile membership while typing, but keep the mounted editor/caret even
   // if its cue no longer matches. Never replace pointer targets on blur.
   if(segment&&matched!==matchesReadingSegment(segment,d,query)){
-   render({keepNoteEditor:true});return;
+   render({keepNoteEditor:true,reuseLibraryMetadata:true});return;
   }
 		$("note-count").textContent = String(Coconut.segmentNoteCount(d));
-		renderLibrary();
+		renderLibrary(null,{reuseMetadata:true});
 		renderNotebookAction(d);
 		// Keep pointer targets mounted while focus leaves the note editor.
 		// Re-rendering on blur swallows the subsequent click on another row.
