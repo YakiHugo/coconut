@@ -20,7 +20,7 @@ function setup(){
    return new Promise(resolve=>writes.pending.push({value,signal:context.signal,settle:()=>resolve(adapter.write(value,context)),fail:()=>resolve({ok:false,status:'failed',error:{code:'quota'}})}));
   }};
  };
- w.eval(['app','language','podcasts'].map(file=>fs.readFileSync(new URL(`reader/${file}.js`,root),'utf8')).join('\n')+'\nlet sourceSubmitting=false,sourceCaptionRequest=null;\n'+fs.readFileSync(new URL('reader/updates.js',root),'utf8')+'\nlet closeTestFlushes=0,closeTestScope;const originalCloseTestFlush=flushListening;flushListening=(...args)=>{closeTestFlushes++;return originalCloseTestFlush(...args);};\nwindow.closeTest={flushes:()=>closeTestFlushes,start(){asking=true;summaryScope=closeTestScope={stop:false};},revision:()=>localImportRevision,stopped:()=>closeTestScope.stop,answer(question){if(!contentIngressAllowed(active()))return Promise.resolve({ok:false});active().ai_answers=[{question,answer:"Authored answer",citations:["demo-1"],provider:"fixture"}];return commitDocument(active());},flush:()=>libraryStore.flush(),status:()=>libraryStore.status(),closing:()=>readerClosing,requests(){sourceCaptionRequest=new AbortController();podcastRequest=new AbortController();podcastMediaRequest=new AbortController();projectCaptionRequest={controller:new AbortController()};return [sourceCaptionRequest,podcastRequest,podcastMediaRequest,projectCaptionRequest.controller];}};');
+ w.eval(['app','language','podcasts'].map(file=>fs.readFileSync(new URL(`reader/${file}.js`,root),'utf8')).join('\n')+'\nlet sourceSubmitting=false,sourceCaptionRequest=null;\n'+fs.readFileSync(new URL('reader/updates.js',root),'utf8')+'\nlet closeTestFlushes=0,closeTestScope;const originalCloseTestFlush=flushListening;flushListening=(...args)=>{closeTestFlushes++;return originalCloseTestFlush(...args);};\nwindow.closeTest={personalNote(){const doc=active(),cue=doc.segments[0],record=Coconut.exactExcerptSnapshot(doc,[cue],[],0,Math.min(4,cue.text.length),{id:"native-note",createdAt:"2026-10-11T00:00:00.000Z"});doc.exact_excerpts=[record];openExactNote(doc,record,null);},flushes:()=>closeTestFlushes,start(){asking=true;summaryScope=closeTestScope={stop:false};},revision:()=>localImportRevision,stopped:()=>closeTestScope.stop,answer(question){if(!contentIngressAllowed(active()))return Promise.resolve({ok:false});active().ai_answers=[{question,answer:"Authored answer",citations:["demo-1"],provider:"fixture"}];return commitDocument(active());},flush:()=>libraryStore.flush(),status:()=>libraryStore.status(),closing:()=>readerClosing,requests(){sourceCaptionRequest=new AbortController();podcastRequest=new AbortController();podcastMediaRequest=new AbortController();projectCaptionRequest={controller:new AbortController()};return [sourceCaptionRequest,podcastRequest,podcastMediaRequest,projectCaptionRequest.controller];}};');
  let nextRequestId=0;
  const request=(kind='close')=>({id:++nextRequestId,kind,expiresAt:Date.now()+60000});
  return {w,$:id=>w.document.getElementById(id),request,writes};
@@ -316,5 +316,17 @@ test('local-only file picker blocks update while open and native cancellation le
  const {w,$,request}=setup();try{
   $('open-local-media').click();assert.equal(w.coconutPrepareClose('inspect').safe,false);assert.equal(await w.coconutPrepareUpdate(),false);
   $('local-media-file').dispatchEvent(new w.Event('cancel'));assert.equal(w.coconutPrepareClose('inspect').safe,true);assert.equal(await w.coconutPrepareUpdate(),true);
+ }finally{await w.happyDOM.close();}
+});
+
+
+test('personal exact-note drafts and failed submissions participate in native close without rollback',async()=>{
+ const {w,$,request,writes}=setup();try{
+  await $('sample').onclick();w.closeTest.personalNote();assert.equal(w.coconutPrepareClose('inspect').safe,true);
+  $('exact-note-text').value='A personal draft';$('exact-note-text').dispatchEvent(new w.Event('input',{bubbles:true}));
+  assert.equal(w.coconutPrepareClose('inspect').safe,false);assert.equal(await w.coconutPrepareClose('safe',request()),false);
+  $('exact-note-cancel').click();assert.equal(w.coconutPrepareClose('inspect').safe,true);
+  w.closeTest.personalNote();$('exact-note-text').value='Submitted personal note';writes.held=true;const receipt=$('exact-note-save').onclick();await until(()=>writes.pending.length>0);writes.pending[0].fail();await receipt;
+  $('exact-note-cancel').click();assert.equal(w.coconutPrepareClose('inspect').safe,false);assert.equal(w.closeTest.status().unsaved,1);
  }finally{await w.happyDOM.close();}
 });

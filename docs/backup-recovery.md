@@ -128,3 +128,25 @@ Saving an excerpt is complete only when its document's durable receipt succeeds.
 Failed saves remain in the current page, with retry and unsaved-document export.
 A rescue download request alone does not prove the file reached disk. No source
 media, credential, word-level timing or guessed source association is created.
+
+### Personal notes on exact excerpts
+
+Supporting readers retain optional document-level `exact_excerpt_notes`, an
+object mapping exact-excerpt IDs to personal-note strings. This sidecar is not
+part of the immutable quotation snapshot. JSON restoration preserves every
+string exactly, including empty strings, whitespace and line endings. An omitted
+field or an object with zero keys normalizes to the same legacy document. There
+is no new note-size limit or database/schema/backup-version migration.
+
+Validation rejects malformed containers, non-string values, and IDs absent from
+`exact_excerpts`, including orphaned empty notes. Audio-only projects reject this
+field, even when empty. Unsupported data is not silently discarded. Removing an
+excerpt removes its own sidecar entry in the same document save. Complete JSON
+and library recovery retain notes, while transcript/subtitle exports and AI
+reading text exclude them. Notebook Markdown includes nonempty notes separately
+under “我的笔记”; it remains a reading export rather than a restorable backup.
+
+Older readers' validation, import and restoration may omit this new field. Some
+raw document save paths may preserve unknown fields, so preservation cannot be
+assumed either way. Keep an untouched JSON backup and restore with a supporting
+reader when moving between versions.

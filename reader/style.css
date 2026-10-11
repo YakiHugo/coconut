@@ -1125,3 +1125,7 @@ body[data-short-reading-compact="true"] #language-panel { margin-top: 8px; }
 
 .transcript-tools-disclosure { margin: 0; padding: 0; border: 0; }
 .transcript-tools-disclosure.is-compact > summary { overflow-wrap: anywhere; }
+
+.exact-note-dialog #exact-note-quote{height:clamp(6rem,20dvh,10rem)}
+.exact-note-dialog #exact-note-text{height:clamp(8rem,25dvh,14rem)}
+.notebook-edit-exact-note{min-height:44px;margin:.5rem 0}

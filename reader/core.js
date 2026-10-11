@@ -126,7 +126,7 @@
   return validate(result);
  }
  function validateAudioProject(data) {
-  if(data.exact_excerpts!==undefined)exactError();
+  if(data.exact_excerpts!==undefined||data.exact_excerpt_notes!==undefined)exactError();
   const origin=podcastSource(data.podcast_source),local=localMediaSource(data.local_media_source);
   if(data.local_media_source!==undefined&&!local)throw new Error('本地文件信息无效，请重新选择原音视频；项目备份未改变');
   if(!Array.isArray(data.segments)||data.segments.length||(!origin?.media_url&&!local)||origin&&local)throw new Error('原声项目必须保留一个公开媒体或本地文件来源，且不能把简介或笔记当作文字稿');
@@ -677,6 +677,32 @@
   if(!Array.isArray(data.exact_excerpts))exactError();
   const ids=new Set();return data.exact_excerpts.map(item=>{const record=validateExactExcerpt(item);if(ids.has(record.id))exactError();ids.add(record.id);return record;});
  }
+ // Personal thoughts are a copy-on-write sidecar, never historical quotation evidence.
+ function exactExcerptNotes(data,records){
+  if(data.exact_excerpt_notes===undefined)return undefined;
+  const input=data.exact_excerpt_notes;
+  if(!input||typeof input!=='object'||Array.isArray(input))exactError();
+  const ids=new Set((records||[]).map(record=>record.id)),notes=Object.create(null);
+  for(const id of Object.keys(input)){
+   if(!ids.has(id)||typeof input[id]!=='string')exactError();
+   notes[id]=input[id];
+  }
+  return Object.keys(notes).length?notes:undefined;
+ }
+ // Tolerant accessor only; editing callers must separately retain live record ownership.
+ function exactExcerptNote(doc,id){return Object.hasOwn(doc.exact_excerpt_notes||{},id)&&typeof doc.exact_excerpt_notes[id]==='string'?doc.exact_excerpt_notes[id]:'';}
+ function exactExcerptTarget(doc,id){if(isAudioProject(doc)||typeof id!=='string'||!doc.exact_excerpts?.some(record=>record.id===id))exactError();}
+ function exactExcerptNotesWith(doc,id,text){
+  exactExcerptTarget(doc,id);if(typeof text!=='string')exactError();
+  const notes=exactExcerptNotes(doc,doc.exact_excerpts)||Object.create(null);notes[id]=text;return notes;
+ }
+ // Assign/delete both returned fields synchronously on the live document, then queue once.
+ function exactExcerptRemoval(doc,id){
+  exactExcerptTarget(doc,id);
+  const notes=exactExcerptNotes(doc,doc.exact_excerpts),records=doc.exact_excerpts.filter(record=>record.id!==id);
+  if(notes)delete notes[id];
+  return {exact_excerpts:records.length?records:undefined,exact_excerpt_notes:notes&&Object.keys(notes).length?notes:undefined};
+ }
  function exactExcerptSnapshot(doc,cues,separators,from,to,{id,createdAt}={}){
   if(isAudioProject(doc)||!Array.isArray(cues)||!cues.length)exactError();
   const first=doc.segments.indexOf(cues[0]);if(first<0||cues.some((cue,index)=>doc.segments[first+index]!==cue))exactError();
@@ -773,10 +799,11 @@
 		const localSource=localMediaSource(data.local_media_source);
   if(data.local_media_source!==undefined&&(!localSource||data.podcast_source!==undefined||data.source_media!==undefined))throw new Error('本地文件来源无效或混入其他媒体来源');
   const sourceMedia = mediaSource(data.source_media);
-  const excerpts=exactExcerpts(data);
+  const excerpts=exactExcerpts(data),excerptNotes=exactExcerptNotes(data,excerpts);
 		return {
 			notes,
    ...(excerpts?.length?{exact_excerpts:excerpts}:{}),
+   ...(excerptNotes?{exact_excerpt_notes:excerptNotes}:{}),
    ...(mediaTiming(data.media_timing)?{media_timing:mediaTiming(data.media_timing)}:{}),
    ...((data.project_note!==undefined||data.timestamp_bookmarks!==undefined)?projectAnnotations(data):{}),
    ...(data.project_language_override===true&&hasProjectAnnotations(data)?{project_language_override:true}:{}),
@@ -992,7 +1019,7 @@
     if(++work%128===0)yield null;
    }
    for(const record of doc.exact_excerpts||[]){
-    const result=capture('exact-excerpt',record.id,record.text,'',exactExcerptParts(record)[0].cue.start,true,record);if(result)yield result;
+    const result=capture('exact-excerpt',record.id,record.text,exactExcerptNote(doc,record.id),exactExcerptParts(record)[0].cue.start,true,record);if(result)yield result;
     if(++work%128===0)yield null;
    }
    if(hasProjectAnnotations(doc)){
@@ -1012,7 +1039,7 @@
  function libraryCaptureCurrent(capture,documents){
   const owner=captureOwners.get(capture);if(!owner||!documents.includes(owner.doc))return false;
   const {doc,source}=owner;
-  if(capture.type==='exact-excerpt')return doc.exact_excerpts?.includes(source)&&source.id===capture.id&&(owner.snapshot===null||JSON.stringify(source)===owner.snapshot);
+  if(capture.type==='exact-excerpt')return doc.exact_excerpts?.includes(source)&&source.id===capture.id&&exactExcerptNote(doc,source.id)===capture.note&&(owner.snapshot===null||JSON.stringify(source)===owner.snapshot);
   if(capture.type==='cue')return doc.segments.includes(source)&&source.id===capture.id&&source.text===capture.text&&source.start===capture.time&&
    (source.saved_excerpt===true)===capture.excerpt&&(doc.notes?.[source.id]||'')===capture.note;
   if(capture.type==='bookmark')return hasProjectAnnotations(doc)&&doc.timestamp_bookmarks.includes(source)&&source.id===capture.id&&source.time===capture.time&&(source.note||'')===capture.note;
@@ -1022,13 +1049,13 @@
   now=()=>root.performance.now(),budgetMs=4,workSize=32,onChange=()=>{}}){
   let generation=0,current=null;
   const shape=doc=>[doc.segments,doc.segments.length,doc.notes,doc.title,doc.project_note,doc.timestamp_bookmarks,doc.timestamp_bookmarks?.length,
-   doc.translation_view,doc.translation_contexts,doc.translation_glossary,doc.language,doc.exact_excerpts,doc.exact_excerpts?.length];
+   doc.translation_view,doc.translation_contexts,doc.translation_glossary,doc.language,doc.exact_excerpts,doc.exact_excerpts?.length,doc.exact_excerpt_notes];
   const valid=job=>{
    if(current!==job||job.generation!==generation||job.revision!==getRevision()||job.sourceRevision!==searchRevision)return false;
    const documents=getDocuments();return documents.length===job.documents.length&&documents.every((doc,i)=>{
     const saved=job.shapes[i];return doc===job.documents[i]&&doc.segments===saved[0]&&doc.segments.length===saved[1]&&doc.notes===saved[2]&&doc.title===saved[3]&&
      doc.project_note===saved[4]&&doc.timestamp_bookmarks===saved[5]&&doc.timestamp_bookmarks?.length===saved[6]&&doc.translation_view===saved[7]&&
-     doc.translation_contexts===saved[8]&&doc.translation_glossary===saved[9]&&doc.language===saved[10]&&doc.exact_excerpts===saved[11]&&doc.exact_excerpts?.length===saved[12];
+     doc.translation_contexts===saved[8]&&doc.translation_glossary===saved[9]&&doc.language===saved[10]&&doc.exact_excerpts===saved[11]&&doc.exact_excerpts?.length===saved[12]&&doc.exact_excerpt_notes===saved[13];
    });
   };
   const retire=job=>{job?.operation?.return();if(job){job.operation=null;job.building=[];job.buildingIndexes.clear();}};
@@ -1071,7 +1098,7 @@
 		return String(value).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
 			.replace(/[\\`*_{}\[\]()#+.!|~$-]/g, "\\$&");
 	}
- function exactExcerptMarkdown(record,freshness) {
+ function exactExcerptMarkdown(record,freshness,note) {
   const sourceDoc=exactExcerptSource(record),parts=exactExcerptParts(record),line=value=>markdownText(value).replace(/[\r\n]+/g,' '),quote=value=>markdownText(value).replace(/\r\n?/g,'\n').split('\n').map(part=>'> '+part).join('\n');
   const start=parts[0].cue.start,end=Math.max(...parts.map(part=>part.cue.end)),demo=sourceDoc.provenance?.kind==='authored_demo';
   const url=demo?'':source(sourceDoc.source_url,start)||podcastOrigin(sourceDoc);
@@ -1081,6 +1108,7 @@
   else if(url)lines.push('摘录时来源：'+line(url)+(sourceDoc.podcast_source?'（按时间手动定位）':''),'');
   else lines.push(sourceDoc.local_media_source||sourceDoc.source_media?'摘录时来源：本地原始媒体（无原站链接，请按文字稿时间定位）':'摘录时未关联可用原站链接或媒体。','');
   if(parts.some(({cue})=>cue.original_text!==undefined&&cue.original_text!==cue.text))lines.push('摘录时已修正。完整历史上下文保留在摘录详情与 JSON 备份中。','');
+  if(hasNoteContent(note))lines.push('我的笔记：','',quote(note),'');
   return lines.join('\n');
  }
 	function notebookMarkdown(doc) {
@@ -1114,7 +1142,7 @@
 			}
 			if (hasNoteContent(doc.notes?.[segment.id])) lines.push("我的笔记：", "", quote(doc.notes[segment.id]), "");
 		}
-  if(exactExcerptCount(doc)){const freshness=exactExcerptFreshnessBatch(doc.exact_excerpts,doc);for(const record of doc.exact_excerpts)lines.push(exactExcerptMarkdown(record,freshness.get(record.id)),'');}
+  if(exactExcerptCount(doc)){const freshness=exactExcerptFreshnessBatch(doc.exact_excerpts,doc);for(const record of doc.exact_excerpts)lines.push(exactExcerptMarkdown(record,freshness.get(record.id),exactExcerptNote(doc,record.id)),'');}
   if(hasProjectAnnotations(doc)&&projectAnnotationCount(doc)){
    lines.push('## 项目笔记与时间书签','','以下是用户自己的记录，不是原文或经过验证的引用。','');
    if(hasNoteContent(doc.project_note))lines.push('### 项目笔记','',quote(doc.project_note),'');
@@ -1245,7 +1273,7 @@
 			segments,
 		});
 	}
-	const api = { exactExcerptSnapshot, exactExcerptText, exactExcerptParts, exactExcerptSource, exactExcerptCount, exactExcerptDuplicate, exactExcerptFreshness, exactExcerptFreshnessBatch, exactExcerptState, exactExcerptStateBatch, createReadingRecency, createLibrarySearch, createLibraryNotebookSearch, libraryCaptureSteps, libraryCaptureCurrent, libraryCaptures, libraryNotebookMarkdown, mediaTiming, mediaTimingOffset, mediaTimingRange, localMediaSource, searchDocument, invalidateSearch, manualReviewSnapshot, manualReviewCurrent, saveManualTranslation, translationReviewQueue, hasNoteContent, segmentNoteCount, BACKUP_REVIEW_BYTES, SUBTITLE_IMPORT_BYTES, vttPayload, libraryHits, librarySnippet, hasProjectAnnotations, projectAnnotationCount, attachProjectTranscript, libraryMatches, documentDuration, sortedLibrary, AUDIO_NOTE_BUDGET, audioNoteCharacters, isAudioProject, audioProjectIdentity, podcastMediaIdentity, SUMMARY_QUESTION, summaryReadiness, podcastURL, podcastSource, cleanGlossary, relevantGlossary, translationQualityMessage, retainAnswers, summaryFreshness, latestSummary, summaryMarkdown, aiReadingMarkdown, parseReadingTime, createPlaybackIndex, segmentAtTime, transcriptText, subtitleExport, mergeLibraryBackup, time, source, media, validate, parse, matchesSegment, notebookSegments, notebookMarkdown, translationCurrent, sameCueSnapshot, subscriptionPlan, cleanContexts, answerFreshness };
+	const api = { exactExcerptNote, exactExcerptNotesWith, exactExcerptRemoval, exactExcerptSnapshot, exactExcerptText, exactExcerptParts, exactExcerptSource, exactExcerptCount, exactExcerptDuplicate, exactExcerptFreshness, exactExcerptFreshnessBatch, exactExcerptState, exactExcerptStateBatch, createReadingRecency, createLibrarySearch, createLibraryNotebookSearch, libraryCaptureSteps, libraryCaptureCurrent, libraryCaptures, libraryNotebookMarkdown, mediaTiming, mediaTimingOffset, mediaTimingRange, localMediaSource, searchDocument, invalidateSearch, manualReviewSnapshot, manualReviewCurrent, saveManualTranslation, translationReviewQueue, hasNoteContent, segmentNoteCount, BACKUP_REVIEW_BYTES, SUBTITLE_IMPORT_BYTES, vttPayload, libraryHits, librarySnippet, hasProjectAnnotations, projectAnnotationCount, attachProjectTranscript, libraryMatches, documentDuration, sortedLibrary, AUDIO_NOTE_BUDGET, audioNoteCharacters, isAudioProject, audioProjectIdentity, podcastMediaIdentity, SUMMARY_QUESTION, summaryReadiness, podcastURL, podcastSource, cleanGlossary, relevantGlossary, translationQualityMessage, retainAnswers, summaryFreshness, latestSummary, summaryMarkdown, aiReadingMarkdown, parseReadingTime, createPlaybackIndex, segmentAtTime, transcriptText, subtitleExport, mergeLibraryBackup, time, source, media, validate, parse, matchesSegment, notebookSegments, notebookMarkdown, translationCurrent, sameCueSnapshot, subscriptionPlan, cleanContexts, answerFreshness };
 	if (typeof module !== "undefined" && module.exports) module.exports = api;
 	else root.Coconut = api;
 })(typeof window !== "undefined" ? window : globalThis);

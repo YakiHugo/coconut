@@ -8,9 +8,9 @@
 <meta name="theme-color" content="#faf9f7">
 <link rel="icon" type="image/png" href="coconut-mark.png">
 <script src="appearance.js?v=86ea922669"></script>
-<link rel="stylesheet" href="style.css?v=f3b44a0b37">
+<link rel="stylesheet" href="style.css?v=cd7e1379d3">
 <script src="summary.js?v=580ffdad1e" defer></script>
-<script src="core.js?v=a3599346ac" defer>
+<script src="core.js?v=6dcd64c38e" defer>
 </script>
 <script src="passages.js?v=0dca7d6c63" defer></script>
 <script src="quotation.js?v=9b8ed4d5ca" defer></script>
@@ -18,7 +18,7 @@
 <script src="library-store.js?v=e76ded9456" defer></script>
 <script src="indexeddb-document-adapter.js?v=65c0c5a814" defer></script>
 <script src="storage-provider.js?v=1cb898e984" defer></script>
-<script src="app.js?v=11051ba952" type="text/coconut-pending" data-reader-script>
+<script src="app.js?v=642dd1d17b" type="text/coconut-pending" data-reader-script>
 </script>
 <script src="language.js?v=492470a705" type="text/coconut-pending" data-reader-script></script>
 <script src="translation-review.js?v=ef64ceb824" type="text/coconut-pending" data-reader-script></script>
@@ -424,6 +424,13 @@ cd coconut
 <p id="notebook-export-scope" class="hint"></p><button id="notebook-export" type="button">导出所选篇目的全部记录</button><button id="notebook-clear-selection" type="button">清空选择</button>
 <p class="hint">勾选篇目后导出该篇全部记录，不受搜索和分页影响。完整恢复请使用书架 JSON 备份。</p>
 <button id="notebook-close" type="button">关闭笔记本</button>
+</dialog>
+<dialog id="exact-note-dialog" class="quotation-dialog exact-note-dialog" aria-labelledby="exact-note-heading">
+<h2 id="exact-note-heading">摘录的个人笔记</h2>
+<label for="exact-note-quote">已保存的原话</label><textarea id="exact-note-quote" readonly rows="4"></textarea>
+<label for="exact-note-text">我的笔记</label><textarea id="exact-note-text" rows="6" aria-describedby="exact-note-status"></textarea>
+<p id="exact-note-status" role="status" aria-live="polite"></p>
+<div class="quotation-actions"><button id="exact-note-save" type="button">保存笔记</button><button id="exact-note-cancel" type="button">取消编辑</button><button id="exact-note-close" type="button">关闭</button><button id="exact-note-export" type="button">导出当前笔记</button><button id="exact-note-backup" type="button">导出未保存文档备份</button></div>
 </dialog>
 <dialog id="quotation-dialog" class="quotation-dialog" aria-labelledby="quotation-heading">
 <h2 id="quotation-heading">引用原文</h2>

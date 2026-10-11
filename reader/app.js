@@ -1,5 +1,6 @@
 "use strict";
 let quotationController;
+let exactNoteEditor=null;
 const $ = (id) => document.getElementById(id);
 const KEY = "coconut-reader-v1";
 const ACTIVE_KEY = "coconut-reader-active-v1";
@@ -1050,6 +1051,75 @@ async function saveExactExcerpt(doc,record){
  renderLibrary();renderNotebookAction(doc);
  try{return await receipt;}finally{pending.delete(owned);if(!pending.size)exactExcerptWrites.delete(doc);}
 }
+// The editor owns a document and immutable quotation, never a search-result row.
+function exactNoteIdentity(editor){
+ return state.documents.includes(editor.doc)&&editor.doc.exact_excerpts?.includes(editor.record);
+}
+function exactNoteBaseline(doc,id){return {present:Object.hasOwn(doc.exact_excerpt_notes||{},id),text:Coconut.exactExcerptNote(doc,id)};}
+function exactNoteDraft(){return !!exactNoteEditor&&$('exact-note-dialog').open&&$('exact-note-text').value!==exactNoteEditor.displayBase;}
+function exactNoteText(editor){const displayed=$('exact-note-text').value;return displayed===editor.displayBase?editor.base.text:displayed;}
+function openExactNote(doc,record,opener){
+ if(!contentIngressAllowed(doc)||!doc.exact_excerpts?.includes(record))return;
+ exactNoteEditor={doc,record,opener,base:exactNoteBaseline(doc,record.id),serial:0,pending:false};
+ $('exact-note-quote').value=record.text;$('exact-note-text').value=exactNoteEditor.base.text;
+ // Native textarea values normalize CRLF/CR. Keep raw storage separate from
+ // the displayed baseline so opening or saving an unchanged note is lossless.
+ exactNoteEditor.displayBase=$('exact-note-text').value;
+ $('exact-note-status').textContent='';$('exact-note-save').setAttribute('aria-disabled','false');
+ $('exact-note-dialog').showModal();$('exact-note-text').focus({preventScroll:true});
+}
+function closeExactNote(){
+ const editor=exactNoteEditor;exactNoteEditor=null;$('exact-note-dialog').close();
+ if(editor?.opener?.isConnected)editor.opener.focus({preventScroll:true});
+ else if($('library-notebook').open)$('notebook-search').focus({preventScroll:true});
+ syncUnsavedUnloadGuard();
+}
+$('exact-note-cancel').onclick=closeExactNote;
+$('exact-note-close').onclick=()=>{
+ if(exactNoteDraft()){$('exact-note-status').textContent='笔记尚未提交。请保存，或选择「取消编辑」丢弃草稿。';return;}
+ closeExactNote();
+};
+$('exact-note-dialog').addEventListener('cancel',event=>{event.preventDefault();$('exact-note-close').click();});
+$('exact-note-dialog').addEventListener('close',()=>{if(!$('exact-note-dialog').open){exactNoteEditor=null;syncUnsavedUnloadGuard();}});
+$('exact-note-text').oninput=()=>{
+ if(!exactNoteEditor)return;exactNoteEditor.serial++;
+ $('exact-note-status').textContent=exactNoteDraft()?'尚未提交的笔记草稿':'';
+ $('exact-note-save').setAttribute('aria-disabled','false');syncUnsavedUnloadGuard();
+};
+$('exact-note-save').onclick=async()=>{
+ const editor=exactNoteEditor;if(!editor||!$('exact-note-dialog').open)return;
+ if(editor.pending&&!exactNoteDraft())return;
+ const status=$('exact-note-status'),current=exactNoteBaseline(editor.doc,editor.record.id);
+ if(!exactNoteIdentity(editor)){status.textContent='摘录或篇目已更换或移除。草稿仍在这里，可导出后重新选择记录。';return;}
+ if(current.present!==editor.base.present||current.text!==editor.base.text){status.textContent='这条笔记已被其他编辑更改，未覆盖。请导出草稿后关闭并重新打开。';return;}
+ if(!contentIngressAllowed(editor.doc)){status.textContent='目前无法保存。草稿仍在这里，可导出保留。';return;}
+ const displayed=$('exact-note-text').value,text=exactNoteText(editor),serial=++editor.serial;
+ editor.doc.exact_excerpt_notes=Coconut.exactExcerptNotesWith(editor.doc,editor.record.id,text);
+ editor.base=exactNoteBaseline(editor.doc,editor.record.id);editor.displayBase=displayed;editor.pending=true;editor.savingSerial=serial;
+ status.textContent='保存中…';$('exact-note-save').setAttribute('aria-disabled','true');
+ const receipt=commitDocument(editor.doc);renderLibrary();if(active()===editor.doc)renderNotebookAction(editor.doc);
+ syncUnsavedUnloadGuard();
+ const result=await receipt;
+ if(editor.savingSerial===serial)editor.pending=false;
+ if(exactNoteEditor!==editor||!$('exact-note-dialog').open||editor.serial!==serial)return;
+ $('exact-note-save').setAttribute('aria-disabled','false');
+ const settledNote=exactNoteBaseline(editor.doc,editor.record.id);
+ if(!exactNoteIdentity(editor)||!settledNote.present||settledNote.text!==text){status.textContent='摘录或笔记已更改，请保留当前文字并重新选择记录。';return;}
+ status.textContent=result.ok?'已保存到本机':'保存未成功；已提交的笔记仍在本页。可重新保存或导出备份。';
+ syncUnsavedUnloadGuard();
+};
+$('exact-note-export').onclick=()=>{
+ const editor=exactNoteEditor;if(!editor)return;let url,link;
+ try{
+  // Rescue includes the visible draft, even when submission is blocked or stale.
+  const text='所选文字摘录：\n'+editor.record.text+'\n\n我的笔记（当前编辑内容）：\n'+exactNoteText(editor);
+  url=URL.createObjectURL(new Blob([text],{type:'text/plain;charset=utf-8'}));link=el('a');link.href=url;link.download='coconut-excerpt-note.txt';link.hidden=true;$('exact-note-dialog').append(link);link.click();
+  $('exact-note-status').textContent='已发起当前笔记下载，请打开文件确认。下载不会改变保存状态。';
+ }catch{$('exact-note-status').textContent='笔记导出失败，文字仍在这里，可复制保留。';}
+ finally{link?.remove();if(url)setTimeout(()=>URL.revokeObjectURL(url),60000);}
+};
+$('exact-note-backup').onclick=()=>{$('export-unsaved-documents').onclick();$('exact-note-status').textContent=$('notice').textContent;};
+
 const notebookSelection=new Set();
 let notebookPage=0,notebookReturn=null,notebookOpener=null,notebookRestore=null,notebookPainted=null;
 const notebookSearch=Coconut.createLibraryNotebookSearch({getDocuments:()=>state.documents,getRevision:()=>libraryContentRevision,
@@ -1088,12 +1158,13 @@ function renderLibraryNotebook(){
   const label=el('label'),check=el('input');check.type='checkbox';check.checked=notebookSelection.has(doc.key);check.setAttribute('aria-label','选择篇目 '+doc.title);check.onchange=()=>{check.checked?notebookSelection.add(doc.key):notebookSelection.delete(doc.key);syncNotebookSelection();};label.append(check,document.createTextNode(doc.title));row.append(label);
   row.append(el('p','hint',(capture.type==='cue'?(capture.excerpt?'整段摘录':'片段')+(Coconut.hasNoteContent(capture.note)?' · 笔记':''):capture.type==='exact-excerpt'?'所选文字摘录 · 历史快照':capture.type==='project-note'?'项目笔记':'时间书签')+(capture.time===null?'':' · '+Coconut.time(capture.time))));
   const details=el('details','notebook-details'),summary=el('summary','','查看完整记录与来源');details.append(summary);
-  const previewText=capture.note?'我的笔记：'+capture.note:capture.text;
+  const visibleNote=capture.type==='exact-excerpt'&&!Coconut.hasNoteContent(capture.note)?'':capture.note;
+  const previewText=visibleNote?'我的笔记：'+visibleNote:capture.text;
   let previewEnd=Math.min(360,previewText.length);if(previewEnd<previewText.length&&/[\uD800-\uDBFF]/.test(previewText[previewEnd-1])&&/[\uDC00-\uDFFF]/.test(previewText[previewEnd]))previewEnd--;
   const preview=previewText?el('p','notebook-preview',previewText.slice(0,previewEnd)+(previewEnd<previewText.length?'…':'')):null;if(preview)row.append(preview);
   details.addEventListener('toggle',()=>{if(preview)preview.hidden=details.open;if(!details.open&&details.contains(document.activeElement)&&document.activeElement!==summary)summary.focus({preventScroll:true});});
   if(capture.text)details.append(el('p','notebook-content notebook-quote',capture.text));
-  if(capture.note)details.append(el('p','notebook-content notebook-note','我的笔记：\n'+capture.note));
+  if(visibleNote)details.append(el('p','notebook-content notebook-note','我的笔记：\n'+visibleNote));
   const technical=el('details','notebook-technical');technical.append(el('summary','','技术信息'),el('p','hint','文档标识：'+doc.key+'\n记录类型：'+capture.type+'\n记录标识：'+capture.id));
   if(capture.type!=='exact-excerpt')details.append(el('p','hint',doc.local_media_source?'本地媒体：'+doc.local_media_source.name:(doc.source_url||doc.podcast_source?.media_url||'未关联原站链接；可打开原位置核对。')));
   if(capture.type==='cue'){
@@ -1105,6 +1176,7 @@ function renderLibraryNotebook(){
   const exactState=exact?exactGroups.get(doc.key).states.get(exact.id):null,freshness=exactState?.freshness;
   if(exact&&freshness!=='current')row.append(el('p','hint',freshness==='missing'?'原位置已删除；保留摘录时快照':'原文或出处已变化；保留摘录时快照'));
   if(exact){
+   const edit=el('button','notebook-edit-exact-note',Coconut.hasNoteContent(Coconut.exactExcerptNote(doc,exact.id))?'编辑我的笔记':'添加我的笔记');edit.type='button';edit.onclick=()=>openExactNote(doc,exact,edit);details.append(edit);
    let populated=false;
    details.addEventListener('toggle',()=>{
     if(!details.open||populated)return;populated=true;
@@ -1150,8 +1222,10 @@ function renderLibraryNotebook(){
   if(exact){
    const remove=el('button','notebook-remove','移除所选摘录');remove.type='button';
    remove.onclick=()=>{
-    if(!$('library-notebook').open||!contentIngressAllowed(doc)||!Coconut.libraryCaptureCurrent(capture,state.documents)||!notebookSearch.isCurrent(selection))return;
-    doc.exact_excerpts=doc.exact_excerpts.filter(record=>record!==exact);if(!doc.exact_excerpts.length)delete doc.exact_excerpts;queueDocument(doc);
+    if(!$('library-notebook').open||!contentIngressAllowed(doc)||!doc.exact_excerpts?.includes(exact)||!Coconut.libraryCaptureCurrent(capture,state.documents)||!notebookSearch.isCurrent(selection))return;
+    const removal=Coconut.exactExcerptRemoval(doc,exact.id);
+    for(const field of ['exact_excerpts','exact_excerpt_notes']){if(removal[field]===undefined)delete doc[field];else doc[field]=removal[field];}
+    queueDocument(doc);
     // Focus moves only for this explicit removal, never for a later save receipt.
     $('notebook-search').focus({preventScroll:true});renderLibrary();if(active()===doc)renderNotebookAction(doc);renderLibraryNotebook();
    };row.append(remove);
@@ -3284,6 +3358,7 @@ async function attachTranscriptToProject(text,target,{canCommit=null,activate=fa
 function hasPendingOrFailedContent(){return libraryStore.status().unsaved>0;}
 function hasUnsavedReaderChanges(){return hasPendingOrFailedContent()||hasUnsubmittedReaderDrafts();}
 function hasUnsubmittedReaderDrafts() {
+ if(exactNoteDraft())return true;
  if(removedDocument||pendingLibraryOperation||[...deferredContentInputs.values()].some(draft=>state.documents.includes(draft.doc))||hasLanguageDrafts()||window.CoconutTranslationReview?.hasDraft())return true;
  const current=active();
  if(current&&selected&&!$('notes-panel').hidden&&current.segments.some(segment=>segment.id===selected)&&$('note').value!==(current.notes[selected]||''))return true;
