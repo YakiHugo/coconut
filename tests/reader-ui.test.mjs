@@ -1134,7 +1134,9 @@ test('Chinese reading canvas keeps essential content visible and secondary tools
   await $('sample').onclick();
   assert.equal($('export-menu').hidden,false);
   for(const id of ['export-menu','reading-settings','language-panel','local-setup'])assert.equal($(id).open,false);
-  for(const id of ['title','provenance','search','filter-all','transcript'])assert.equal($(id).closest('details'),null,id+' must remain on the main canvas');
+  for(const id of ['title','provenance','transcript'])assert.equal($(id).closest('details'),null,id+' must remain on the main canvas');
+  for(const id of ['search','filter-all'])assert.equal($(id).closest('details').id,'transcript-tools-disclosure');
+  assert.equal($('transcript-tools-disclosure').open,true,'the demo keeps its existing visible tools behavior');assert.equal($('transcript-tools-label').hidden,true);
   for(const id of ['document-details','source','reading-layout','reading-time'])assert.equal($(id).closest('details').id,'reading-settings');
   for(const id of ['export','export-notebook','export-subtitles','subtitle-format','subtitle-bilingual'])assert.equal($(id).closest('details').id,'export-menu');
   assert.match($('search-status').textContent,/没有对应音视频/);

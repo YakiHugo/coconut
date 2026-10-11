@@ -1,3 +1,4 @@
+import {openTranscriptTools} from './helpers/reading-tools-browser.mjs';
 /** Node-only checks for acceptance polling; no browser is launched. */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -120,4 +121,17 @@ test('two-tab conflict proof uses natural autosave and verifies rescue before ac
  assert.match(scenario,/closeState\.contentFailed===true/);assert.match(scenario,/coconutPrepareClose\('safe'/);
  assert.ok(scenario.indexOf('assert.deepEqual(rescued.documents')<scenario.indexOf("other.once('dialog'"));
  assert.ok(scenario.indexOf('await other.reload()')<scenario.indexOf('assert.deepEqual(reloaded.documents'));
+});
+
+
+test('browser reading-tools entry uses the native disclosure only for closed compact tools',async()=>{
+ for(const [visible,opened,expectedClicks] of [[true,false,1],[true,true,0],[false,true,0]]){
+  let open=opened,clicks=0;
+  const page={locator:selector=>{
+   if(selector==='#transcript-tools-label')return {isVisible:async()=>visible,click:async()=>{clicks++;open=true;}};
+   assert.equal(selector,'#transcript-tools-disclosure');return {evaluate:async fn=>fn({open})};
+  }};
+  await openTranscriptTools(page);assert.equal(clicks,expectedClicks);
+  await openTranscriptTools(page);assert.equal(clicks,expectedClicks,'an open disclosure must not be toggled closed');
+ }
 });

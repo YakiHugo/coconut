@@ -1,3 +1,4 @@
+import {openTranscriptTools} from './helpers/reading-tools-browser.mjs';
 /** Authored-only Chromium acceptance, for CI. No model or media requests. */
 import assert from 'node:assert/strict';
 import {createServer} from 'node:http';
@@ -120,7 +121,7 @@ try{
  await page.waitForFunction(text=>document.getElementById('translation-edit-source').textContent===text,manualDoc.segments[1].text);
  check('save_next_missing_keeps_target_and_exact_next_source',await page.locator('#translation-edit-language').inputValue()==='fr'&&await page.locator('#translation-edit-text').inputValue()==='');
  await page.locator('#translation-edit-cancel').click();
- await page.locator('#search').fill('Traduction personnelle');
+ await openTranscriptTools(page);await page.locator('#search').fill('Traduction personnelle');
  check('user_translation_is_searchable_and_bilingual',await page.locator('.segment').count()===1&&(await page.locator('.segment .translation').textContent())===authored);
  await page.locator('#clear-search').click();
  const manualJson=JSON.parse(await download('#export'));check('missing_save_json_is_user_authored_without_fake_machine_history',manualJson.segments[0].translations.fr.provider==='user'&&manualJson.segments[0].translations.fr.text===authored&&!manualJson.segments[0].translations.fr.original_translation&&!manualJson.segments[0].translations.zh);

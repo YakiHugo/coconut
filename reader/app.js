@@ -154,6 +154,20 @@ const PASSAGES_PER_PAGE=8;
 let passageDocumentKey=null,passageAnchor=null,passagePageStart=0,passageReturn=null;
 let passageTranslations=true,mediaExpandedKey=null,passagePlayback=null;
 let noticeTimer=null,readingSettingsPriorOpen=null,headerDocumentKey=null,mediaCollapsedKey=null;
+const compactReadingViewport=window.matchMedia('(max-width:650px)');
+let transcriptToolsDocumentKey=null,headerCompositionMode=null,deferredHeaderComposition=false;
+document.addEventListener('focusout',event=>{
+ if(!deferredHeaderComposition||$('reading-settings').contains(event.relatedTarget))return;
+ queueMicrotask(()=>{if(deferredHeaderComposition&&!$('reading-settings').contains(document.activeElement))composeReadingHeader();});
+});
+compactReadingViewport.addEventListener('change',()=>composeReadingHeader());
+function shortTranscriptCompact(doc=active()){
+ return workspace==='read'&&readingMode==='transcript'&&compactReadingViewport.matches&&doc&&
+  !Coconut.isAudioProject(doc)&&doc.provenance?.kind!=='authored_demo'&&doc.segments.length>0&&doc.segments.length<12;
+}
+function revealTranscriptTools(){$('transcript-tools-disclosure').open=true;}
+function focusReadingSearch(options){revealTranscriptTools();$('search').focus(options);}
+
 function prefersPassageReading(doc){return !Coconut.isAudioProject(doc)&&doc?.provenance?.kind!=='authored_demo'&&doc?.segments.length>=12;}
 // Choose only on document entry. Ordinary renders and explicit view switches
 // retain the reader's current choice; saved language selection is independent.
@@ -531,12 +545,12 @@ async function add(doc, canCommit = null, reuseAudioSource = false, lifecycleRev
  }
 	selectActiveDocument(key);
  passageReturn=null;passageDocumentKey=null;mediaExpandedKey=null;
- setReadingMode(defaultReadingMode(active()));
  searchFocusedId=null;
 	$("search").value = "";
 	selected = null;
 	pageStart = 0;
 	notesOnly = false; excerptsOnly = false; speakerFilter=null;
+ setReadingMode(defaultReadingMode(active()));
 	workspace = "read";
 	const inserted=active(),mediaRevision=mediaSelectionRevision(key),selectionRevision=activeSelectionRevision,receipt=commitDocument(inserted);
  onActivate?.({identity:inserted,selectionRevision,navigationRevision:localImportRevision});
@@ -617,7 +631,7 @@ function returnReadingResults() {
   if(exact>=0&&Number.isFinite(origin.viewportTop))window.scrollBy(0,row.getBoundingClientRect().top-origin.viewportTop);
   else row.scrollIntoView?.({block:'center'});
   (row.querySelector('.context-button')||row).focus({preventScroll:true});
- }else $('search').focus();
+ }else focusReadingSearch();
  if(exact<0)notice(target?'原片段已不在筛选结果中，已返回相邻结果。':'原筛选已没有匹配片段；可调整筛选继续阅读。');
 }
 $('return-reading-results').onclick=returnReadingResults;
@@ -628,7 +642,7 @@ $('dismiss-reading-context').onclick=()=>{
   (cue?.closest('.passage')||$('passage-body').querySelector('.passage')||$('mode-passages')).focus({preventScroll:true});
  }else{
   const row=[...$('transcript').querySelectorAll('.segment')].find(node=>node.dataset.segmentId===id);
-  (row||$('search')).focus({preventScroll:true});
+  if(row)row.focus({preventScroll:true});else focusReadingSearch({preventScroll:true});
  }
 };
 function goToSegment(id,contextDetour=false,preservePassageReturn=false) {
@@ -1205,6 +1219,7 @@ function isLightCueText(text) {
  return text.length<=160&&!/[\r\n\u2028\u2029]/.test(text)&&Array.from(text).reduce((width,char)=>width+(char.codePointAt(0)>255?2:1),0)<=100;
 }
 function focusCueAction(target, viewportTop=null) {
+ if(target&&$('transcript-reading-tools').contains(target))revealTranscriptTools();
  const disclosure=target?.closest(".cue-more");
  if(disclosure&&target.tagName!=='SUMMARY')disclosure.open=true;
  // Replacing the transcript can move the browser's scroll anchor to another
@@ -1582,7 +1597,7 @@ $("add-content").onclick = () => { if(libraryMobile.matches)$("toggle-library").
   demoToolsExpanded=!demoToolsExpanded;
   if(!demoToolsExpanded){$('language-panel').open=false;$('reading-settings').open=false;}
   render();
-  if(demoToolsExpanded)$('search').focus();else $('toggle-demo-tools').focus();
+  if(demoToolsExpanded)focusReadingSearch();else $('toggle-demo-tools').focus();
  };
  $('demo-note').onclick=()=>{const id=active()?.segments[0]?.id;if(!id)return;goToSegment(id);$('transcript').querySelector('.note-button')?.click();};
  $('reading-jump').onchange=()=>{const id=$('reading-jump').value;if(id)goToSegment(id);};
@@ -1599,7 +1614,7 @@ $('speaker-filter').onchange=()=>{clearReadingContext();speakerFilter=$('speaker
 $("filter-all").onclick = () => { clearReadingContext(); notesOnly = false; excerptsOnly = false; speakerFilter=null; pageStart = 0; render(); };
 $("filter-excerpts").onclick = () => { clearReadingContext(); excerptsOnly = true; notesOnly = false; pageStart = 0; render(); };
 $("filter-notes").onclick = () => { clearReadingContext(); notesOnly = true; excerptsOnly = false; pageStart = 0; render(); };
-$("clear-search").onclick = () => { clearReadingContext(); $("search").value = ""; notesOnly = false; excerptsOnly = false; speakerFilter=null; pageStart = 0; render(); $("search").focus(); };
+$("clear-search").onclick = () => { clearReadingContext(); $("search").value = ""; notesOnly = false; excerptsOnly = false; speakerFilter=null; pageStart = 0; render(); focusReadingSearch(); };
 $("close-note").onclick = () => {
 	const id = selected;
 	selected = null;
@@ -2721,7 +2736,7 @@ function locateReadingPlayback(){const cue=playbackSegment();if(cue){if(readingM
 $('toggle-reader-media').onclick=()=>{const doc=active();if(!doc)return;$('reading-info').open=false;$('export-menu').open=false;mediaExpandedKey=$('episode-media').hidden?doc.key:null;mediaCollapsedKey=mediaExpandedKey?null:doc.key;updateReaderMediaVisibility(doc);refreshPlaybackDock();};
 $('close-reader-media').onclick=()=>{mediaExpandedKey=null;mediaCollapsedKey=active()?.key||null;updateReaderMediaVisibility(active());refreshPlaybackDock();$('toggle-reader-media').focus({preventScroll:true});};
 $('close-reading-info').onclick=()=>{$('reading-info').open=false;$('reading-info').querySelector('summary').focus({preventScroll:true});};
-$('reading-info').querySelector('summary').addEventListener('click',()=>{if(!$('reading-info').open){$('export-menu').open=false;mediaExpandedKey=null;updateReaderMediaVisibility(active());refreshPlaybackDock();}});
+$('reading-info').querySelector('summary').addEventListener('click',()=>{if(!$('reading-info').open){$('export-menu').open=false;if(readingMode==='passages'){mediaExpandedKey=null;updateReaderMediaVisibility(active());refreshPlaybackDock();}}});
 $('export-menu').querySelector('summary').addEventListener('click',()=>{if(!$('export-menu').open){$('reading-info').open=false;if(readingMode==='passages'){mediaExpandedKey=null;updateReaderMediaVisibility(active());refreshPlaybackDock();}}});
 document.addEventListener('keydown',event=>{
  if(event.key!=='Escape'||document.querySelector('dialog[open]'))return;
@@ -2742,7 +2757,7 @@ $('passage-time-range').onchange=()=>{const passage=CoconutPassages.atTime(readi
 $('passage-previous').onclick=()=>movePassagePage(-1);$('passage-next').onclick=()=>movePassagePage(1);
 $('return-to-passages').onclick=returnToPassages;
 $('passage-toggle-translation').onclick=()=>{passageTranslations=!passageTranslations;renderPassages(active());renderTextExportAction();};
-$('passage-search').onclick=()=>{passageReturn=null;setReadingMode('transcript');$('search').focus();};
+$('passage-search').onclick=()=>{passageReturn=null;setReadingMode('transcript');focusReadingSearch();};
 
 // Character shortcuts are opt-out, scoped to reading text, and never become
 // another playback owner. Invoke the existing controls without synthesizing a
@@ -2785,7 +2800,7 @@ function readingTextTarget(node,find=false){
 function openReadingSearch(){
  $('passage-search').onclick();
  if(active()?.provenance?.kind==='authored_demo'&&!demoToolsExpanded)$('toggle-demo-tools').onclick();
- $('search').focus();
+ focusReadingSearch();
 }
 // Shared by the renderer shortcut and the bounded native Edit menu command.
 // Find is separate from opt-out character keys and never acquires media.
@@ -2866,26 +2881,52 @@ function updateReaderMediaVisibility(doc=active(),hasMedia=!!$('source-media').q
  $('close-reader-media').hidden=audioOnly||!visible;
 }
 function composeReadingHeader(){
- const doc=active(),compact=workspace==='read'&&readingMode==='passages'&&doc&&!Coconut.isAudioProject(doc);
- $('reader-title-slot').hidden=!compact;$('count').hidden=!!compact;$('reading-info').hidden=!compact;
- $('reading-utility').classList.toggle('is-compact',!!compact);
- const toolbar=document.querySelector('.passage-toolbar');toolbar.hidden=!compact;
- const titleTarget=compact?$('reader-title-slot'):$('reader-title-home');
+ const doc=active(),passageCompact=workspace==='read'&&readingMode==='passages'&&doc&&!Coconut.isAudioProject(doc);
+ const shortCompact=!!shortTranscriptCompact(doc),headerCompact=!!passageCompact||shortCompact;
+ // Breakpoint changes must not reparent an active input or hide its panel.
+ // Defer the whole header transition until focus leaves settings, rather than
+ // trying to repair focus after losing an IME composition or caret selection.
+ const priorCompact=document.body.dataset.headerCompact==='true';
+ if(workspace==='read'&&headerDocumentKey===doc?.key&&headerCompositionMode===readingMode&&
+    headerCompact!==priorCompact&&$('reading-settings').contains(document.activeElement)){
+  deferredHeaderComposition=true;return;
+ }
+ deferredHeaderComposition=false;headerCompositionMode=readingMode;
+ document.body.dataset.headerCompact=String(headerCompact);document.body.dataset.shortReadingCompact=String(shortCompact);
+ $('reader-title-slot').hidden=!headerCompact;$('count').hidden=headerCompact;$('reading-info').hidden=!headerCompact;
+ $('reading-utility').classList.toggle('is-compact',headerCompact);
+ $('reading-utility').classList.toggle('is-passage',!!passageCompact);
+ const toolbar=document.querySelector('.passage-toolbar');toolbar.hidden=!passageCompact;
+ const titleTarget=headerCompact?$('reader-title-slot'):$('reader-title-home');
  if($('title').parentElement!==titleTarget)titleTarget.append($('title'));
- const metaTarget=compact?$('reading-info-meta'):$('reader-meta-home');
+ const metaTarget=headerCompact?$('reading-info-meta'):$('reader-meta-home');
  for(const id of ['subtitle','provenance'])if($(id).parentElement!==metaTarget)metaTarget.append($(id));
  $('reading-info-title').textContent=doc?.title||'';$('title').title=doc?.title||'';
  if(headerDocumentKey!==doc?.key){headerDocumentKey=doc?.key;$('reading-info').open=false;}
  const settings=$('reading-settings');
- if(compact){
+ if(headerCompact){
   if(settings.parentElement!==$('reading-info-settings')){readingSettingsPriorOpen=settings.open;$('reading-info-settings').append(settings);settings.open=true;}
-  if($('passage-browse-help').parentElement!==$('reading-info-help'))$('reading-info-help').append($('passage-browse-help'));
-  $('reading-info-position').textContent=$('passage-position').textContent;
  }else{
   if(settings.parentElement!==$('reader-options')){$('reader-options').insertBefore(settings,$('language-panel'));settings.open=readingSettingsPriorOpen===true;readingSettingsPriorOpen=null;}
-  if($('passage-browse-help').parentElement!==document.querySelector('.passage-browse'))document.querySelector('.passage-browse').append($('passage-browse-help'));
   $('reading-info').open=false;
  }
+ const passageHelpTarget=passageCompact?$('reading-info-help'):document.querySelector('.passage-browse');
+ if($('passage-browse-help').parentElement!==passageHelpTarget)passageHelpTarget.append($('passage-browse-help'));
+ $('reading-info-position').textContent=passageCompact?$('passage-position').textContent:'';
+ // The controls keep one fixed parent across breakpoints. Preserve keyboard,
+ // selection and IME ownership; only disclose them before they receive focus.
+ const tools=$('transcript-reading-tools'),disclosure=$('transcript-tools-disclosure');
+ const ownsFocus=tools.contains(document.activeElement),wasCompact=disclosure.classList.contains('is-compact');
+ const changedDocument=transcriptToolsDocumentKey!==doc?.key;transcriptToolsDocumentKey=doc?.key;
+ const query=$('search').value.trim(),filtered=!!query||notesOnly||excerptsOnly||speakerFilter!==null;
+ disclosure.classList.toggle('is-compact',shortCompact);$('transcript-tools-label').hidden=!shortCompact;
+ if(!shortCompact)disclosure.open=true;
+ else if(!wasCompact||changedDocument)disclosure.open=ownsFocus||filtered;
+ else if(ownsFocus)disclosure.open=true;
+ const filters=[query?'搜索「'+query+'」':'',notesOnly?'仅笔记':'',excerptsOnly?'仅摘录':'',speakerFilter!==null?'说话人：'+speakerFilter:''].filter(Boolean);
+ const label=filters.length?'筛选中 · '+filters.join(' · '):'搜索与筛选';
+ $('transcript-tools-label').textContent=label.length>64?label.slice(0,63)+'…':label;$('transcript-tools-label').title=label;
+
 }
 
 function applyReadingMode() {
@@ -3053,7 +3094,7 @@ $('mode-summary').onclick=()=>setReadingMode('summary');
 $('mode-transcript').onclick=()=>switchTranscriptView(false);
 $('mode-bilingual').onclick=()=>switchTranscriptView(true);
 $('prepare-bilingual').onclick=()=>{closeSummaryRequest(false);$('ai-task').value='translation';$('ai-task').dispatchEvent(new Event('change'));$('language-panel').open=true;$('ai-task').scrollIntoView?.({block:'center',behavior:'smooth'});$('translation-target').focus();};
-$('summary-open-transcript').onclick=()=>{setReadingMode('transcript');$('search').focus();};
+$('summary-open-transcript').onclick=()=>{setReadingMode('transcript');focusReadingSearch();};
 $('prepare-summary').onclick=()=>{
  const readiness=Coconut.summaryReadiness(active());
  if(!readiness.ready){$('ai-consent').checked=false;renderSummary();notice(readiness.reason);return;}
@@ -3079,7 +3120,7 @@ function prepareExcerptQuestion(){
  closeSummaryRequest(false);setReadingMode('transcript');$('language-panel').open=true;
  $('ai-task').value='question';$('ai-filtered').checked=true;$('ai-consent').checked=false;
  $('ai-task').dispatchEvent(new Event('change'));
- $('search').focus();
+ focusReadingSearch();
  notice('先用搜索、摘录或笔记筛选较小范围，再填写问题。回答只依据所选片段，不会保存为整篇摘要。');
 }
 $('summary-select-excerpt').onclick=prepareExcerptQuestion;
