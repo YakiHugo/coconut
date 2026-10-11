@@ -1213,7 +1213,10 @@
             summary_job: Summaries.clean(data.summary_job),
             ai_answers: Array.isArray(data.ai_answers) ? retainAnswers(data.ai_answers).map(cleanAnswer) : [],
 			title: typeof data.title === "string" ? data.title : "未命名文字稿",
-			source_url: localSource?(podcastURL(data.source_url)||''):typeof data.source_url === "string" ? data.source_url : "",
+			// A playback association must not rewrite the transcript's source metadata.
+            // Link opening still validates its protocol separately; audio-only and
+            // podcast inputs keep their own stricter URL contracts.
+            source_url: typeof data.source_url === "string" ? data.source_url : "",
 			segments,
             translation_contexts: cleanContexts(data.translation_contexts, segments),
             translation_glossary: cleanDocumentGlossary(data.translation_glossary),

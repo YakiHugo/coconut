@@ -47,7 +47,7 @@ test('note/bookmark edits retain their cue focus and leave the tools collapsed',
 test('compact header information does not collapse, replace or play attached transcript media',async()=>{
  const {w,$}=setup();try{
   w.URL.createObjectURL=()=> 'blob:authored';w.URL.revokeObjectURL=()=>{};$('attach-reader-media').click();
-  Object.defineProperty($('reader-media-file'),'files',{configurable:true,value:[{name:'authored.wav',type:'audio/wav',size:64,slice:()=>({text:async()=> 'RIFF authored'})}]});await $('reader-media-file').onchange();
+  Object.defineProperty($('reader-media-file'),'files',{configurable:true,value:[new w.File(['RIFF authored'],'authored.wav',{type:'audio/wav',lastModified:7})]});await $('reader-media-file').onchange();
   const player=$('source-media').querySelector('audio');assert.ok(player);assert.equal($('episode-media').hidden,false);let plays=0;player.play=async()=>plays++;
   $('reading-info').querySelector('summary').click();assert.equal($('episode-media').hidden,false);assert.equal($('source-media').querySelector('audio'),player);assert.equal(plays,0);
   $('mode-summary').click();$('mode-transcript').click();assert.equal($('episode-media').hidden,false);assert.equal($('source-media').querySelector('audio'),player);assert.equal(plays,0);

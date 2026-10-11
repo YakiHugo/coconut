@@ -81,9 +81,9 @@ test('a canceled native picker retires its target; a fresh chooser selection att
   w.URL.createObjectURL=()=> 'blob:authored-selection';w.URL.revokeObjectURL=()=>{};
   const file={name:'authored.wav',type:'audio/wav',size:4,lastModified:7,slice:()=>({text:async()=> 'RIFF',arrayBuffer:async()=>new Uint8Array([82,73,70,70]).buffer})};
   const choose=async()=>{Object.defineProperty($('reader-media-file'),'files',{configurable:true,value:[file]});await $('reader-media-file').onchange();};
-  $('attach-reader-media').click();$('reader-media-file').dispatchEvent(new w.Event('cancel'));await choose();
+  const priorNotice=$('notice').textContent;$('attach-reader-media').click();$('reader-media-file').dispatchEvent(new w.Event('cancel'));await choose();
   assert.equal($('source-media').querySelector('audio').getAttribute('src'),originalSource);
-  assert.match($('notice').textContent,/打开媒体失败：原文字稿已关闭，请重新选择/);
+  assert.equal($('notice').textContent,priorNotice,'a canceled picker must not replace current guidance');
   $('attach-reader-media').click();await choose();
   assert.equal($('source-media').querySelector('audio').getAttribute('src'),'blob:authored-selection');
   assert.match($('notice').textContent,/媒体只在本次页面读取/);

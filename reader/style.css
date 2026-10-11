@@ -919,6 +919,9 @@ body[data-media-docked="true"] .reading-feedback:has(#save-warning-home .has-war
 .podcast-project-choice select { width: 100%; min-width: 0; }
 /* Local-only entry shares the existing first-source card and touch budget. */
 .file-entry #open-local-media { min-height: 44px; padding: 10px 12px; font-size: 13px; }
+#local-media-project-dialog { max-height: calc(100dvh - 32px); overflow-y: auto; }
+#local-media-project-dialog button, .local-media-entry button { min-height: 44px; max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
+#local-media-project-hint { overflow-wrap: anywhere; }
 .local-media-project-options { display: grid; gap: 10px; margin: 14px 0; }
 .local-media-project-options button { min-height: 44px; text-align: left; overflow-wrap: anywhere; }
 .local-media-project-options small { display: block; margin-top: 4px; color: var(--muted); }

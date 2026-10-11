@@ -31,15 +31,17 @@ try{
  await page.goto(origin);
  const doc={title:'Authored resume proof',segments:[{id:'one',start:0,end:40,text:'Original synthetic media for resume testing.'}]};
  await page.locator('#file').setInputFiles({name:'resume.json',mimeType:'application/json',buffer:Buffer.from(JSON.stringify(doc))});
- const attach=async label=>{
+ const attach=async(label,{replace=false}={})=>{
   stage=label;
   await page.waitForFunction(()=>document.getElementById('title').textContent==='Authored resume proof');
   const previous=await page.locator('#source-media audio').count()?await page.locator('#source-media audio').getAttribute('src'):null;
   if(!await page.locator('#attach-reader-media').isVisible())await page.locator('#toggle-reader-media').click();
   // Observe the native picker before opening it. Direct setInputFiles after
   // click can race the browser's cancel event, retiring pendingMediaDocument.
-  const [chooser]=await Promise.all([page.waitForEvent('filechooser'),page.locator('#attach-reader-media').click()]);
+  const [chooser]=await Promise.all([page.waitForEvent('filechooser'),page.locator(replace?'#replace-reader-media':'#attach-reader-media').click()]);
   await chooser.setFiles(audio);
+  if(replace){await page.locator('#local-media-project-dialog').waitFor({state:'visible'});await page.locator('#local-media-current-project').click();}
+  await page.waitForFunction(()=>document.getElementById('reader-media-file').value==='');
   await page.waitForFunction(previous=>{
    const p=document.querySelector('#source-media audio');
    return document.getElementById('notice').textContent.startsWith('打开媒体失败：')||
@@ -60,7 +62,13 @@ try{
  stage='reload saved document';await page.reload();await attach('reselect same file after reload');assert.equal(await page.locator('#source-media audio').evaluate(p=>p.currentTime),0);assert.equal(await page.locator('#source-media audio').evaluate(p=>p.paused),true);
  stage='explicit paused resume';await page.locator('#resume-listening').click();assert.ok(await page.locator('#source-media audio').evaluate(p=>p.currentTime>=12&&p.paused));
  // Same filename, size and duration with different sampled bytes must not match.
- const originalStat=await fs.stat(audio);wav[1000]^=127;await fs.writeFile(audio,wav);await fs.utimes(audio,originalStat.atime,originalStat.mtime);await attach('reject changed same-metadata content');
+ const originalStat=await fs.stat(audio);wav[1000]^=127;await fs.writeFile(audio,wav);await fs.utimes(audio,originalStat.atime,originalStat.mtime);
+ stage='changed sampled bytes cannot silently replace durable association';
+ const priorPlayer=await page.locator('#source-media audio').getAttribute('src');
+ const [rejectedPicker]=await Promise.all([page.waitForEvent('filechooser'),page.locator('#attach-reader-media').click()]);await rejectedPicker.setFiles(audio);
+ await page.waitForFunction(()=>document.getElementById('notice').textContent.startsWith('打开媒体失败：'));
+ assert.equal(await page.locator('#source-media audio').getAttribute('src'),priorPlayer);
+ await attach('explicitly replace changed file and clear old listening position',{replace:true});
  await page.waitForFunction(()=>document.querySelector('#resume-listening').hidden);assert.equal(await page.locator('#source-media audio').evaluate(p=>p.currentTime),0);
  assert.equal(external,0);assert.deepEqual(pageErrors,[]);console.log('PASS: explicit paused resume after refresh; changed same-name media rejected; authored WAV only');
 }catch(error){

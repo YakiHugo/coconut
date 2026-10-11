@@ -51,6 +51,11 @@ jobs:
       - name: Verify local-only media projects, annotations, subtitle continuity and explicit reselection
         if: ${{ !cancelled() && steps.browser_setup.outcome == 'success' }}
         run: node tests/local-media-projects-browser.mjs
+      - name: Verify transcript-first durable local association, explicit choices, replacement and clean recovery
+        if: ${{ !cancelled() && steps.browser_setup.outcome == 'success' }}
+        env:
+          COCONUT_UI_ARTIFACT_DIR: ${{ runner.temp }}/coconut-authored-ui
+        run: node tests/transcript-media-association-browser.mjs
       - name: Verify production IndexedDB migration, dirty receipts, capacity, conflicts and recovery
         if: ${{ !cancelled() && steps.browser_setup.outcome == 'success' }}
         run: node tests/indexeddb-library-browser.mjs
@@ -269,6 +274,7 @@ jobs:
             ${{ runner.temp }}/coconut-authored-ui/inline-excerpts-checks.json
             ${{ runner.temp }}/coconut-authored-ui/chapter-markers-checks.json
             ${{ runner.temp }}/coconut-authored-ui/subtitle-encoding-checks.json
+            ${{ runner.temp }}/coconut-authored-ui/transcript-media-association-checks.json
             ${{ runner.temp }}/coconut-authored-ui/compact-library-failure.png
           if-no-files-found: ignore
           retention-days: 7

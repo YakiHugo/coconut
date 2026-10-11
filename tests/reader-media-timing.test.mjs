@@ -68,12 +68,13 @@ test('draft alignment, bounded preview and return preserve physical listening wh
  }finally{await env.w.happyDOM.close();}
 });
 
-test('different file has zero mapping; same-file reselection and JSON reload restore calibration without autoplay',async()=>{
+test('bound file mismatch preserves calibration; explicit replacement resets it and JSON reload restores the original mapping',async()=>{
  const env=setup();let fresh;try{const {w,$}=env;await open(env);draft(env,2);await $('media-timing-save').onclick();const saved=snapshot(w);
- await pick(env,file(w,'Other.wav','RIFF other audio'),{add:false});player(env);assert.equal($('media-timing-offset').value,'0');assert.match($('media-timing-status').textContent,/不同/);
+ await pick(env,file(w,'Other.wav','RIFF other audio'),{add:false});player(env);assert.equal($('media-timing-offset').value,'2');assert.match($('notice').textContent,/更换关联文件/);
  await pick(env,file(w),{add:false});player(env);assert.equal($('media-timing-offset').value,'2');
+ $('replace-reader-media').click();const replacement=pick(env,file(w,'Other.wav','RIFF other audio'),{add:false,click:false});await until(()=>$('local-media-project-dialog').open);$('local-media-current-project').click();await replacement;player(env);assert.equal($('media-timing-offset').value,'0');assert.equal(w.localTest.active().media_timing,undefined);
  fresh=setup(saved);assert.equal(fresh.$('media-timing').hidden,true);await pick(fresh,file(fresh.w),{add:false});const p=player(fresh);assert.equal(fresh.$('media-timing-offset').value,'2');assert.equal(p.paused,true);assert.equal(p.currentTime,0);
- assert.equal(Coconut.validate(JSON.parse(JSON.stringify(w.localTest.active()))).media_timing.offset,2);
+ assert.equal(Coconut.validate(JSON.parse(JSON.stringify(fresh.w.localTest.active()))).media_timing.offset,2);
  }finally{await env.w.happyDOM.close();await fresh?.w.happyDOM.close();}
 });
 
