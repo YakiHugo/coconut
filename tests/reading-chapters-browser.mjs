@@ -119,6 +119,13 @@ try{
  const [chooser]=await Promise.all([page.waitForEvent('filechooser'),page.locator('#attach-reader-media').click()]);await chooser.setFiles(audioPath);
  await page.waitForFunction(()=>{const player=document.querySelector('#source-media audio');return player&&!player.error&&player.readyState>=2&&player.duration>=179;});
  const before=await stored();await idleMediaAndBookmark('attached_authored_audio');
+ stage='close authored media setup using its native control';
+ await page.evaluate(()=>{window.chapterMediaProof.player=document.querySelector('#source-media audio');});
+ await page.locator('#close-reader-media').click();
+ await page.locator('#episode-media').waitFor({state:'hidden'});
+ check('native_media_close_preserves_player_and_returns_focus',await page.evaluate(()=>document.querySelector('#source-media audio')===window.chapterMediaProof.player&&document.activeElement===document.getElementById('toggle-reader-media')&&document.getElementById('toggle-reader-media').getAttribute('aria-expanded')==='false'));
+ assert.deepEqual(await stored(),before);await idleMediaAndBookmark('closed_authored_audio_panel');
+
 
  stage='create out-of-order chapters from exact cue actions';
  const late=await createChapter(220,titles.late,1),middle=await createChapter(150,titles.middle,2),early=await createChapter(10,titles.early,3);
@@ -193,6 +200,6 @@ try{
  check('reloaded_chapter_directory_keeps_saved_names_and_positions',await page.locator('.chapter-entry').count()===2);await idleMediaAndBookmark('reloaded_chapters');
  check('no_external_requests_mutations_or_browser_errors',external===0&&mutations===0&&errors.length===0);console.log(JSON.stringify({suite:'reading-chapters',status:'passed',checks}));
 }catch(error){
- const probe=await diagnosticPage?.evaluate(()=>({chapterDialog:document.getElementById('chapter-dialog')?.open,editor:document.getElementById('chapter-editor')?.open,chapterStatus:document.getElementById('chapter-save-status')?.textContent,editorStatus:document.getElementById('chapter-editor-status')?.textContent,chapterRows:document.querySelectorAll('.chapter-entry').length,activeTag:document.activeElement?.tagName,activeId:document.activeElement?.id,activeClass:document.activeElement?.className,query:document.getElementById('search')?.value,media:window.chapterMediaProof})).catch(()=>null);
+ const probe=await diagnosticPage?.evaluate(()=>({chapterDialog:document.getElementById('chapter-dialog')?.open,editor:document.getElementById('chapter-editor')?.open,chapterStatus:document.getElementById('chapter-save-status')?.textContent,editorStatus:document.getElementById('chapter-editor-status')?.textContent,chapterRows:document.querySelectorAll('.chapter-entry').length,activeTag:document.activeElement?.tagName,activeId:document.activeElement?.id,activeClass:document.activeElement?.className,query:document.getElementById('search')?.value,media:{plays:window.chapterMediaProof?.plays,paused:document.querySelector('#source-media audio')?.paused,time:document.querySelector('#source-media audio')?.currentTime},mediaPanel:{hidden:document.getElementById('episode-media')?.hidden,expanded:document.getElementById('toggle-reader-media')?.getAttribute('aria-expanded'),rect:document.getElementById('episode-media')?.getBoundingClientRect().toJSON(),closeHidden:document.getElementById('close-reader-media')?.hidden},readingInfoOpen:document.getElementById('reading-info')?.open,modeControl:(()=>{const node=document.getElementById('mode-transcript'),rect=node?.getBoundingClientRect(),hit=rect&&document.elementFromPoint(rect.x+rect.width/2,rect.y+rect.height/2);return {rect:rect?.toJSON(),hitTag:hit?.tagName,hitId:hit?.id,hitClass:hit?.className};})()})).catch(()=>null);
  console.error(JSON.stringify({suite:'reading-chapters',status:'failed',stage,checks,probe,errors,error:{message:error.message,stack:error.stack}}));if(diagnosticPage&&!diagnosticPage.isClosed())await capture(diagnosticPage,'failure').catch(()=>{});process.exitCode=1;
 }finally{await browser?.close();await new Promise(resolve=>server?server.close(resolve):resolve());if(directory)await fs.rm(directory,{recursive:true,force:true});}
