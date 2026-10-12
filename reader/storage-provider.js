@@ -60,6 +60,11 @@
       const session = root.crypto.randomUUID();
       const adapter = {
         backend: 'indexeddb',
+        mediaLibraryIdentity: () => primitive.mediaLibraryIdentity(),
+        documentEpoch(key) {
+          const current = tokens.get(key);
+          return backendError || !current || current.deleted ? null : current.epoch;
+        },
         prepareChanges(changes) {
           return primitive.prepare(changes.map(({key, identity, kind, generation}) => {
             const current = tokens.get(key);

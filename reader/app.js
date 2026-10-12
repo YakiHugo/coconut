@@ -86,7 +86,7 @@ function cancelLocalImports(keepInput = null) {
  stopTranscriptImportBatch();
  pendingLocalMediaChoice?.(null);
  if(keepInput!=="local-media-file")localMediaPickerTarget=null;
- if(keepInput!=="reader-media-file"&&pendingMediaDocument?.durable)pendingMediaDocument=null;
+ if(keepInput!=="reader-media-file"&&pendingMediaDocument?.durable)cancelReaderMediaSelection(pendingMediaDocument,{resume:false});
  pendingBackupReview?.(false);
  pendingSubtitleEncoding?.(null);
  retirePastedSubtitleImport();
@@ -221,13 +221,16 @@ let hasLanguageDrafts = () => false;
 const audioBookmarkDrafts = new Map();
 const persistedAIAnswerCounts = new WeakMap();
 const persistedSummaryJobs = new WeakMap();
+const persistedLocalMediaSources = new WeakMap();
 const pendingStructuralDocuments = new Map();
 let pendingLibraryOperation = null;
 const deferredContentInputs = new Map();
 function summaryCheckpointSignature(job){return job?JSON.stringify([job.provider,job.snapshot,job.results]):null;}
 function summaryCheckpointSaved(doc){return !!doc?.summary_job&&persistedSummaryJobs.get(doc)===summaryCheckpointSignature(doc.summary_job);}
-function persistenceCheckpoint(doc){return {answerCount:(doc.ai_answers||[]).length,summarySignature:summaryCheckpointSignature(doc.summary_job)};}
+function persistenceCheckpoint(doc){return {answerCount:(doc.ai_answers||[]).length,summarySignature:summaryCheckpointSignature(doc.summary_job),localMediaSource:doc.local_media_source?JSON.stringify(doc.local_media_source):null};}
 function recordPersistenceCheckpoint(doc,checkpoint){
+ if(persistedLocalMediaSources.has(doc)&&persistedLocalMediaSources.get(doc)!==checkpoint.localMediaSource)retireRememberedMedia(doc);
+ persistedLocalMediaSources.set(doc,checkpoint.localMediaSource);
  persistedAIAnswerCounts.set(doc,checkpoint.answerCount);persistedSummaryJobs.set(doc,checkpoint.summarySignature);
 }
 let mediaWorkerReady = false;
@@ -268,6 +271,191 @@ function changeMediaSelection(key,notify=true){const revision=mediaSelectionRevi
 let pendingMediaDocument = null,readerMediaRequestRevision=0;
 function canAssociateLocalMedia(doc){return Boolean(doc&&!Coconut.isAudioProject(doc)&&!Coconut.isReadingCollection(doc)&&doc.segments?.length&&!doc.podcast_source&&!doc.source_media&&!doc.local_job_binding);}
 function localMediaBindingSnapshot(doc){return JSON.stringify([doc.local_media_source,doc.podcast_source,doc.source_media,doc.local_job_binding]);}
+// Desktop-only references are private to this database lifetime and document
+// epoch. Content JSON continues to contain only the portable source metadata.
+const rememberedMediaStates=new WeakMap();
+const detachedRememberedMedia=new WeakSet();
+const pendingNativeMediaSelections=new WeakMap();
+const pendingRememberedReplacements=new Map();
+let nativeMediaInitialization=null;
+let nativeMediaLibrary=null,nativeMediaReady=false,nativeMediaClosed=false,nativeMediaError=false;
+// Serialize complete mutations, including stale-success cleanup, so a late
+// opt-in cannot forget a newer explicit opt-in for the same owner.
+let nativeMediaMutation=Promise.resolve();
+function mutateRememberedMedia(operation){const next=nativeMediaMutation.then(operation,operation);nativeMediaMutation=next.catch(()=>{});return next;}
+function releaseMediaAttachment(attachment){
+ if(!attachment)return;
+ if(attachment.nativeToken)void window.coconutLocalMedia?.release(attachment.nativeToken).catch(()=>{});
+ else URL.revokeObjectURL(attachment.url);
+}
+function rememberedMediaOwner(doc){
+ const source=doc?.local_media_source,epoch=libraryAdapter.documentEpoch?.(doc?.key);
+ if(!nativeMediaReady||nativeMediaClosed||!source||!epoch||!state.documents.includes(doc)||libraryAdapter.status?.().error||persistedLocalMediaSources.get(doc)!==JSON.stringify(source))return null;
+ return {library:nativeMediaLibrary,key:doc.key,epoch,source:{...source}};
+}
+function rememberedMediaState(doc){
+ const owner=rememberedMediaOwner(doc);if(!owner)return null;
+ let entry=rememberedMediaStates.get(doc);
+ if(!entry||JSON.stringify(entry.owner)!==JSON.stringify(owner)){
+  entry={owner,status:'unchecked',checked:false,suppressed:detachedRememberedMedia.has(doc),revision:0,pending:false};rememberedMediaStates.set(doc,entry);
+ }
+ return entry;
+}
+function rememberedMediaCurrent(doc,entry){return rememberedMediaStates.get(doc)===entry&&JSON.stringify(rememberedMediaOwner(doc))===JSON.stringify(entry.owner);}
+const rememberedMediaMessages={
+ remembered:'已在这台电脑记住原文件；重新打开项目时仅载入，不自动播放。',
+ ready:'已从这台电脑载入原文件，未自动播放。文件信息与部分内容匹配，不是完整内容核验。',
+ missing:'找不到记住的原文件。请连接原磁盘后重试，或重新选择原文件；笔记与书签仍保留。',
+ changed:'记住的原文件信息或内容已改变。请重新选择原文件并核对声音；笔记与书签仍保留。',
+ unavailable:'暂时无法读取或保存原文件引用。请重新选择文件或重试；笔记与书签仍保留。',
+ 'forget-failed':'旧引用未能取消，重启仍可能载入之前记住的原文件。请点“不再记住”重试，或勾选以记住本次选择。',
+ forgotten:'已不再记住原文件。原文件没有删除；已载入的本次媒体不受影响。'
+};
+function renderRememberedMedia(doc=active(),attachment=browserMedia.get(doc?.key)){
+ const host=$('remember-local-media'),entry=doc?rememberedMediaState(doc):null;
+ // Note-save receipts also refresh this panel. Keep settled controls and text
+ // unchanged so a dock interaction cannot churn the off-screen media header.
+ const write=(node,key,value)=>{if(node[key]!==value)node[key]=value;};
+ write(host,'hidden',!window.coconutLocalMedia||!doc?.local_media_source||libraryAdapter.backend!=='indexeddb');
+ if(host.hidden)return;
+ const replacing=pendingRememberedReplacements.get(doc.key),saved=entry&&contentIngressAllowed(doc),remembered=entry&&['remembered','ready','missing','changed'].includes(entry.status);
+ write($('remember-local-media-choice'),'checked',Boolean(remembered));
+ write($('remember-local-media-choice'),'disabled',Boolean(!saved||entry.pending||!!replacing||!attachment?.file||attachment.origin!=='local'));
+ write($('forget-local-media'),'hidden',!entry||!entry.known);
+ write($('forget-local-media'),'disabled',Boolean(!saved||entry.pending));
+ write($('retry-remembered-media'),'hidden',!entry||entry.pending||entry.suppressed||!!attachment||!['missing','unavailable','changed'].includes(entry.status));
+ write($('remember-local-media-status'),'textContent',!nativeMediaReady?(nativeMediaError?'本机原文件引用暂不可用；可重新选择文件继续回听。':'正在准备本机原文件引用…'):!entry?'请先成功保存项目，再记住原文件。':replacing?(replacing.phase==='save-failed'?'请先成功保存这次更换，再选择是否记住当前文件。':'正在保存更换并处理旧原文件引用…'):entry.pending?'正在处理原文件引用…':entry.suppressed&&!attachment&&!['forgotten','unavailable'].includes(entry.status)?'本次已移除媒体。重新选择后可继续回听；不会自动重新载入。':entry.status==='unchecked'&&entry.known?'之前记住的原文件引用仍保留。勾选可改为本次选择，或点“不再记住”取消。':rememberedMediaMessages[entry.status]||'可选：不复制文件，不上传；移动、删除或更改文件后可能需要重新选择。');
+}
+function queueRememberedMedia(doc){
+ const entry=rememberedMediaState(doc);
+ if(!entry||entry.checked||entry.pending||entry.suppressed||detachedRememberedMedia.has(doc)||pendingNativeMediaSelections.has(doc)||pendingRememberedReplacements.has(doc.key)||browserMedia.has(doc.key)||active()!==doc||workspace!=='read'||!contentIngressAllowed(doc))return;
+ entry.checked=true;void restoreRememberedMedia(doc,entry);
+}
+async function restoreRememberedMedia(doc,entry){
+ const revision=++entry.revision,selection=activeSelectionRevision,mediaRevision=mediaSelectionRevision(doc.key),ingress=localImportRevision;
+ const owns=()=>rememberedMediaCurrent(doc,entry)&&entry.revision===revision&&!entry.suppressed&&active()===doc&&workspace==='read'&&activeSelectionRevision===selection&&mediaSelectionRevision(doc.key)===mediaRevision&&localImportRevision===ingress&&contentIngressAllowed(doc)&&!browserMedia.has(doc.key);
+ entry.pending=true;renderRememberedMedia(doc);
+ let result;
+ try{result=await window.coconutLocalMedia.resolve(entry.owner);}catch{result={status:'unavailable'};}
+ if(!owns()){
+  if(result.token)void window.coconutLocalMedia.release(result.token).catch(()=>{});
+  if(entry.revision===revision){entry.pending=false;entry.checked=false;}
+  if(active()===doc){renderRememberedMedia(doc);queueMicrotask(()=>queueRememberedMedia(doc));}
+  return;
+ }
+ entry.pending=false;entry.status=result.status;entry.known=['ready','missing','changed','unavailable'].includes(result.status);
+ if(result.status==='ready'){
+  browserMedia.set(doc.key,{url:result.url,nativeToken:result.token,kind:result.kind,name:result.name,identity:result.identity,origin:'local'});
+  // Update only the player and its controls. Never replace an editor, expand
+  // settings, seek to saved progress, or start playback on native completion.
+  renderSourceMedia(doc);renderMediaTiming();passagePlayback?.sync();refreshPlaybackDock();
+  if($('episode-media').hidden)setReaderMediaLabel('本地原声已就绪 · 打开回听','原声');
+ }else renderRememberedMedia(doc);
+}
+$('remember-local-media-choice').onchange=async()=>{
+ const doc=active(),attachment=browserMedia.get(doc?.key),entry=doc?rememberedMediaState(doc):null;
+ if(!$('remember-local-media-choice').checked){await forgetRememberedMedia(doc,entry);return;}
+ if(!entry||entry.pending||pendingRememberedReplacements.has(doc.key)||!attachment?.file||!contentIngressAllowed(doc)){renderRememberedMedia(doc);return;}
+ const revision=++entry.revision;entry.pending=true;renderRememberedMedia(doc);
+ await mutateRememberedMedia(async()=>{
+  let result;try{result=await window.coconutLocalMedia.remember(entry.owner,attachment.file,attachment.identity);}catch{result={status:'unavailable'};}
+  // Navigation alone preserves the explicit opt-in. A retired source or newer
+  // file selection cannot inherit its receipt or leave a stale durable entry.
+  if(!rememberedMediaCurrent(doc,entry)||entry.revision!==revision||browserMedia.get(doc.key)!==attachment){
+   if(result.status==='remembered')await window.coconutLocalMedia.forget(entry.owner).catch(()=>{});
+   if(entry.revision===revision)entry.pending=false;
+   return;
+  }
+  entry.pending=false;entry.status=result.status;entry.known=result.status==='remembered'||entry.known;entry.checked=true;entry.suppressed=false;
+  if(active()===doc)renderRememberedMedia(doc);
+ });
+};
+async function forgetRememberedMedia(doc,entry){
+ if(!entry||entry.pending||!contentIngressAllowed(doc)){renderRememberedMedia(doc);return;}
+ const revision=++entry.revision;entry.pending=true;entry.suppressed=true;entry.checked=true;renderRememberedMedia(doc);
+ let result;try{result=await mutateRememberedMedia(()=>window.coconutLocalMedia.forget(entry.owner));}catch{result={status:'unavailable'};}
+ if(!rememberedMediaCurrent(doc,entry)||entry.revision!==revision)return;
+ entry.pending=false;entry.status=['forgotten','not-remembered'].includes(result.status)?'forgotten':'unavailable';if(entry.status==='forgotten')entry.known=false;
+ if(active()===doc)renderRememberedMedia(doc);
+}
+$('forget-local-media').onclick=()=>forgetRememberedMedia(active(),rememberedMediaStates.get(active()));
+$('retry-remembered-media').onclick=()=>{const doc=active(),entry=rememberedMediaStates.get(doc);if(entry&&!entry.pending&&contentIngressAllowed(doc))void restoreRememberedMedia(doc,entry);};
+function suppressRememberedMedia(doc,{detached=false}={}){if(detached)detachedRememberedMedia.add(doc);const entry=rememberedMediaState(doc)||rememberedMediaStates.get(doc);if(entry){entry.revision++;entry.pending=false;entry.checked=true;entry.suppressed=true;}}
+function selectedRememberedMedia(doc){
+ detachedRememberedMedia.delete(doc);
+ const entry=rememberedMediaState(doc)||rememberedMediaStates.get(doc);if(!entry)return;
+ entry.revision++;entry.pending=false;entry.suppressed=false;entry.checked=true;
+ // Reselection is explicit but does not silently renew consent for a new path.
+ // Keep a previous reference available to forget, and offer unchecked opt-in.
+ entry.status='unchecked';
+}
+function retireRememberedMedia(doc,{removed=false}={}){
+ if(removed&&pendingRememberedReplacements.get(doc.key)?.document===doc)pendingRememberedReplacements.delete(doc.key);
+ const entry=rememberedMediaStates.get(doc);if(!entry)return;
+ entry.revision++;entry.pending=false;entry.suppressed=true;
+ void mutateRememberedMedia(()=>window.coconutLocalMedia?.forget(entry.owner)).catch(()=>{});rememberedMediaStates.delete(doc);
+}
+// Explicit replacement retires the old reference even when the bounded
+// candidate is identical. Keep this owner through a failed save and its Retry;
+// a new opt-in waits until the successful content receipt and cleanup settle.
+function beginRememberedReplacement(doc){
+ if(!window.coconutLocalMedia||libraryAdapter.backend!=='indexeddb')return null;
+ const previous=pendingRememberedReplacements.get(doc.key),epoch=libraryAdapter.documentEpoch?.(doc.key);
+ if(!epoch)return null;
+ const operation={key:doc.key,document:doc,owner:previous?.owner||{key:doc.key,epoch,source:{...doc.local_media_source}},generation:0,phase:'saving',completion:null};
+ pendingRememberedReplacements.set(doc.key,operation);return operation;
+}
+function finishRememberedReplacement(operation){
+ if(operation.completion)return operation.completion;
+ operation.phase='cleanup';
+ const entry=rememberedMediaStates.get(operation.document),revision=entry?.revision;
+ operation.completion=(async()=>{
+  await nativeMediaInitialization;
+  let result;try{result=nativeMediaLibrary?await mutateRememberedMedia(()=>window.coconutLocalMedia.forget({...operation.owner,library:nativeMediaLibrary})):{status:'unavailable'};}catch{result={status:'unavailable'};}
+  const forgotten=['forgotten','not-remembered'].includes(result.status);
+  if(pendingRememberedReplacements.get(operation.key)===operation){
+   pendingRememberedReplacements.delete(operation.key);
+   if(entry&&rememberedMediaStates.get(operation.document)===entry&&entry.revision===revision){entry.known=!forgotten;entry.status=forgotten?'unchecked':'forget-failed';entry.checked=true;}
+   if(active()?.key===operation.key)renderRememberedMedia();
+  }
+  return forgotten;
+ })();return operation.completion;
+}
+function committedRememberedReplacements(result){
+ if(!result?.ok)return;
+ for(const captured of result.checkpoints){
+  const operation=pendingRememberedReplacements.get(captured.key);
+  // A later full-document receipt also covers a failed replacement's Retry
+  // or an explicit newer source/unlink; never a prior captured generation.
+  if(operation&&captured.identity===operation.document&&captured.generation>=operation.generation)void finishRememberedReplacement(operation);
+ }
+}
+async function initializeRememberedMedia(){
+ if(!window.coconutLocalMedia||libraryAdapter.backend!=='indexeddb'||!libraryLoad.ok||!libraryAdapter.mediaLibraryIdentity)return;
+ try{
+  const result=await libraryAdapter.mediaLibraryIdentity();if(!result.ok||nativeMediaClosed)throw new Error('unavailable');
+  nativeMediaLibrary=result.identity;nativeMediaReady=true;
+  // Keep each saved owner's small state even before its first visit, so
+  // removing a different shelf entry can retire its reference immediately.
+  const owners=state.documents.map(doc=>rememberedMediaState(doc)?.owner).filter(Boolean);
+  nativeMediaReady=false;
+  const receipt=await window.coconutLocalMedia.reconcile(owners);
+  if(receipt.status!=='reconciled'||!Array.isArray(receipt.rememberedKeys)||nativeMediaClosed)throw new Error('unavailable');
+  nativeMediaReady=true;
+  const remembered=new Set(receipt.rememberedKeys);
+  for(const doc of state.documents){
+   const entry=rememberedMediaStates.get(doc);if(!entry||!rememberedMediaCurrent(doc,entry))continue;
+   entry.known=remembered.has(doc.key);entry.suppressed=detachedRememberedMedia.has(doc)||entry.suppressed;
+   // A picker can finish before initialization/resolve. Its new File does not
+   // erase earlier consent: keep that reference visibly revocable while the
+   // unchecked option offers to remember this explicit selection instead.
+   if(entry.known)entry.status=browserMedia.get(doc.key)?.file?'unchecked':'remembered';
+  }
+  if(active()){renderRememberedMedia();queueRememberedMedia(active());}
+ }catch{nativeMediaReady=false;nativeMediaError=true;if(active())renderRememberedMedia();}
+}
+window.addEventListener('pagehide',()=>{nativeMediaClosed=true;for(const attachment of browserMedia.values())if(attachment.nativeToken)releaseMediaAttachment(attachment);});
+
 const PLAYBACK_RATES=[0.75,1,1.25,1.5,1.75,2];
 let playbackRate=1;
 let repeating=null;
@@ -458,7 +646,7 @@ libraryStore.subscribe((snapshot,event)=>{
  const collectionOnly=event?.type==='queued'&&event.keys.length>0&&event.keys.every(key=>Coconut.isReadingCollection(state.documents.find(doc=>doc.key===key)));
  if(changed&&!collectionOnly)notebookContentRevision++;
  if(changed&&!notebookRefreshQueued){notebookRefreshQueued=true;queueMicrotask(()=>{notebookRefreshQueued=false;if($('library-notebook').open)renderLibraryNotebook();if(libraryRenderedRevision!==libraryContentRevision)renderLibrary(null,{reuseMetadata:true});});}
- if(event?.result?.ok)for(const captured of event.result.checkpoints)recordPersistenceCheckpoint(captured.identity,captured.checkpoint);
+ if(event?.result?.ok){for(const captured of event.result.checkpoints)recordPersistenceCheckpoint(captured.identity,captured.checkpoint);committedRememberedReplacements(event.result);}
  if(event?.type==='release')resumeDeferredContentInputs();
  renderSaveStatus(libraryStore.status());
  if($('library-notebook').open)collectionStatus();
@@ -467,10 +655,11 @@ libraryStore.subscribe((snapshot,event)=>{
  renderPassageReadingPosition();refreshReadingExcerptSaveState();
  if(event?.type==='commit'){
   renderSummaryPersistence();
+  if(active()){renderRememberedMedia();queueRememberedMedia(active());}
   window.dispatchEvent(new CustomEvent('coconut-persistence-change',{detail:event.result}));
  }
 });
-libraryAdapter.subscribe?.(()=>renderSaveStatus(libraryStore.status()));
+libraryAdapter.subscribe?.(()=>{renderSaveStatus(libraryStore.status());if(active())renderRememberedMedia();});
 function contentIngressAllowed(doc=null){
  return (!window.CoconutStorageBootstrap||window.CoconutStorageBootstrap.phase==='ready')&&!readerClosing&&!libraryStore.status().blocked&&(!doc||state.documents.includes(doc)&&!pendingStructuralDocuments.has(doc.key));
 }
@@ -616,7 +805,7 @@ async function add(doc, canCommit = null, reuseAudioSource = false, lifecycleRev
    const attachment=browserMedia.get(key);
    if(attachment?.origin==='publisher'){
     if(active()?.key===key){stopRepeating();$('source-media').querySelector('audio,video')?.pause();}
-    browserMedia.delete(key);URL.revokeObjectURL(attachment.url);
+    browserMedia.delete(key);releaseMediaAttachment(attachment);
    }
   }
  }
@@ -988,11 +1177,11 @@ $('confirm-removal').onclick=async()=>{
  void libraryStore.flush();const receipt=await ticket.committed;
  if(!receipt.ok){finishStructuralOperation(operation);renderRemovalRecovery();notice('移除未保存，原文档已留在书架。其他修改仍保留；请检查保存状态并先导出备份。');return;}
  if(pendingStructuralDocuments.get(doc.key)!==operation)return;
- finishStructuralOperation(operation);removedDocument=bundle;
+ finishStructuralOperation(operation);retireRememberedMedia(doc,{removed:true});removedDocument=bundle;
  if(wasActive&&activeSelectionRevision===operation.selectionRevision)rememberActiveDocument();
  $('removal-recovery-details').open=false;$('removal-recovery-error').hidden=true;$('removal-export-error').hidden=true;
  window.dispatchEvent(new CustomEvent('coconut-document-removed',{detail:{key:doc.key,bundle}}));
- const attachment=browserMedia.get(doc.key);if(attachment){browserMedia.delete(doc.key);URL.revokeObjectURL(attachment.url);}
+ const attachment=browserMedia.get(doc.key);if(attachment){browserMedia.delete(doc.key);releaseMediaAttachment(attachment);}
  renderLibrary();renderRemovalRecovery();
  notice('已从保存的书架移除。可在本页撤销或导出这份备份；刷新、关闭或离开页面后不能撤销。','success');
  // Receipt callbacks never pull focus away from a newer document or input.
@@ -2284,13 +2473,14 @@ function focusCueAction(target, viewportTop=null) {
 function renderSourceMedia(doc){
  const audioOnly=Coconut.isAudioProject(doc);
 	const attachment = browserMedia.get(doc.key);
+ renderRememberedMedia(doc,attachment);queueMicrotask(()=>queueRememberedMedia(doc));
  const mediaPath = attachment?.url || (mediaWorkerReady && Coconut.media ? Coconut.media(doc.source_media) : "");
  const mediaKind = attachment?.kind || doc.source_media?.kind;
  $("detach-reader-media").hidden = !attachment;
  const linkedTranscript=canAssociateLocalMedia(doc)&&Boolean(doc.local_media_source);
  $("replace-reader-media").hidden=$("unlink-reader-media").hidden=!linkedTranscript;
  $('attach-reader-media').textContent=doc.local_media_source?'重新选择原音视频':'选择对应的音频或视频';
- $("reader-media-status").textContent = attachment ? attachment.name + " · 文件只在此页面读取，不上传；刷新后需重新选择"+(doc.local_media_source?"。关联仅按文件信息与部分内容核对，未完整核验。":"") : doc.local_media_source?'请重新选择「'+doc.local_media_source.name+'」继续回听。文件关联信息随项目保存；未保存媒体文件，未自动播放。笔记与时间书签仍保留。':"在浏览器中打开文件，不上传。请选与文字稿对应的原文件；刷新页面后需重新选择。";
+ $("reader-media-status").textContent = attachment ? attachment.name + (attachment.nativeToken?" · 已从这台电脑载入原文件，不上传；未自动播放":window.coconutLocalMedia?" · 文件只在本次页面读取，不上传；可选择在这台电脑记住":" · 文件只在此页面读取，不上传；刷新后需重新选择")+(doc.local_media_source?"。关联仅按文件信息与部分内容核对，未完整核验。":"") : doc.local_media_source?'请重新选择「'+doc.local_media_source.name+'」继续回听。文件关联信息随项目保存；未保存媒体文件，未自动播放。笔记与时间书签仍保留。':"在浏览器中打开文件，不上传。请选与文字稿对应的原文件；刷新页面后需重新选择。";
 	const mediaHost = $("source-media");
  if(repeating && (repeating.key!==doc.key || repeating.path!==mediaPath))stopRepeating();
 	const currentPlayer = mediaHost.querySelector("audio,video");
@@ -2333,6 +2523,7 @@ function renderSourceMedia(doc){
 		player.style.maxHeight = "360px";
 		player.onerror = () => {
    if(mediaHost.querySelector('audio,video')!==player||active()?.key!==doc.key)return;
+   if(attachment?.nativeToken){const entry=rememberedMediaStates.get(doc);if(entry){entry.status='unavailable';renderRememberedMedia(doc);}}
    if(attachment){$('reader-media-status').textContent='浏览器无法解码「'+attachment.name+'」。请重新选择可播放的原文件；笔记、书签与文字稿仍保留。'+(canAssociateLocalMedia(doc)&&doc.local_media_source?'转换后的文件可用“更换关联文件”明确换绑。':'转换后的文件请从「打开本地音视频」另建项目。');notice($('reader-media-status').textContent);}
    else notice('原始媒体暂时无法播放。请确认此文字稿对应的本地任务仍在这台电脑上。');
   };
@@ -4945,12 +5136,13 @@ async function openLocalMediaDocument(file,media,source,existing,expectedSource=
  resetReaderForDocumentNavigation();
  if(!existing)state.documents.push(doc);
  const key=doc.key,previous=browserMedia.get(key);changeMediaSelection(key);
- browserMedia.set(key,{url:nextURL,...media,name:file.name,origin:'local'});
- if(previous)URL.revokeObjectURL(previous.url);
+ browserMedia.set(key,{url:nextURL,...media,name:file.name,origin:'local',file});selectedRememberedMedia(doc);
+ if(previous)releaseMediaAttachment(previous);
  selectActiveDocument(key);workspace='read';setReadingMode(Coconut.isAudioProject(doc)?'transcript':prefersPassageReading(doc)?'passages':'transcript');mediaExpandedKey=key;mediaCollapsedKey=null;render();
  // Navigation owns this scroll now, never a later save receipt.
  $('title').scrollIntoView?.({block:'start'});$('title').focus({preventScroll:true});
  const selection=activeSelectionRevision,receipt=existing?{ok:true,identity:doc}:await commitDocument(doc);
+ if(active()===doc)renderRememberedMedia(doc);
  if(active()===doc&&workspace==='read'&&activeSelectionRevision===selection&&browserMedia.get(key)?.url===nextURL&&contentIngressAllowed(doc))notice(receipt.ok?(existing?'已打开原有项目，笔记和文字稿保留。':'本地原声项目已保存，可直接回听、写笔记和时间书签。')+'文件未上传，未运行识别或 AI；请自行点击播放。':'项目已在本页打开，但尚未保存。请先导出 JSON 备份；媒体文件需另行保留。',receipt.ok?'success':'');
 }
 $('local-media-file').addEventListener('cancel',()=>{localMediaPickerTarget=null;});
@@ -4980,12 +5172,29 @@ $('local-media-file').onchange=async()=>{
 };
 function beginReaderMediaSelection(action='attach'){
  const doc=active();if(!doc||!contentIngressAllowed(doc)||action==='replace'&&(!canAssociateLocalMedia(doc)||!doc.local_media_source))return;
- const durable=canAssociateLocalMedia(doc);
+ if(pendingMediaDocument)cancelReaderMediaSelection(pendingMediaDocument,{resume:false});
+ const processing=pendingNativeMediaSelections.get(doc);if(processing)cancelReaderMediaSelection(processing,{resume:false});
+ const durable=canAssociateLocalMedia(doc),reference=rememberedMediaState(doc)||rememberedMediaStates.get(doc);
+ const nativeReference=reference?{entry:reference,suppressed:reference.suppressed,checked:reference.checked,pending:reference.pending}:null;
+ if(reference){reference.revision++;reference.pending=false;reference.checked=true;nativeReference.revision=reference.revision;}
  if(durable)cancelLocalImports('reader-media-file');else pendingLocalMediaChoice?.(null);
- pendingMediaDocument={key:doc.key,document:doc,source:localMediaBindingSnapshot(doc),durable,action,selection:activeSelectionRevision,workspace,ingress:localImportRevision,request:++readerMediaRequestRevision,revision:changeMediaSelection(doc.key)};
+ pendingMediaDocument={key:doc.key,document:doc,source:localMediaBindingSnapshot(doc),durable,action,nativeReference,selection:activeSelectionRevision,workspace,ingress:localImportRevision,request:++readerMediaRequestRevision,revision:changeMediaSelection(doc.key)};
+ pendingNativeMediaSelections.set(doc,pendingMediaDocument);
  $('reader-media-file').click();
 }
-$('reader-media-file').addEventListener('cancel',()=>{pendingMediaDocument=null;});
+function cancelReaderMediaSelection(target=pendingMediaDocument,{resume=true}={}){
+ if(pendingMediaDocument===target)pendingMediaDocument=null;
+ if(!target||pendingNativeMediaSelections.get(target.document)!==target)return;
+ pendingNativeMediaSelections.delete(target.document);
+ if(mediaSelectionRevision(target.key)!==target.revision||localMediaBindingSnapshot(target.document)!==target.source)return;
+ const doc=target.document,entry=rememberedMediaStates.get(doc),previous=target.nativeReference;
+ if(previous&&entry===previous.entry&&entry.revision===previous.revision){
+  entry.revision++;entry.pending=false;entry.suppressed=previous.suppressed;
+  entry.checked=previous.checked&&!previous.pending;
+ }
+ if(resume&&active()===doc){renderRememberedMedia(doc);queueRememberedMedia(doc);}
+}
+$('reader-media-file').addEventListener('cancel',()=>cancelReaderMediaSelection());
 $('attach-reader-media').onclick=()=>beginReaderMediaSelection();
 $('replace-reader-media').onclick=()=>beginReaderMediaSelection('replace');
 // Only explicit reassociation/unlink clears file-owned clocks. Cue timestamps,
@@ -4997,7 +5206,7 @@ function clearLocalMediaClocks(doc){
 }
 $('reader-media-file').onchange=async()=>{
  const input=$('reader-media-file'),file=input.files[0],target=pendingMediaDocument;pendingMediaDocument=null;
- if(!file)return;
+ if(!file){cancelReaderMediaSelection(target);return;}
  if(!target){input.value='';return;}
  const key=target?.key,revision=target?.revision;let nextURL,installed=false;
  const ownsDocument=()=>target&&contentIngressAllowed(target.document)&&state.documents.find(doc=>doc.key===key)===target.document&&mediaSelectionRevision(key)===revision;
@@ -5021,21 +5230,34 @@ $('reader-media-file').onchange=async()=>{
    }
   }
   nextURL=URL.createObjectURL(file);if(!canCommit()){URL.revokeObjectURL(nextURL);nextURL=null;return;}
-  const doc=target.document,previous=browserMedia.get(key);let clocksCleared=true;
+  const doc=target.document,previous=browserMedia.get(key),replacement=target.action==='replace'?beginRememberedReplacement(doc):null;let clocksCleared=true;
   if(target.action==='replace')clocksCleared=clearLocalMediaClocks(doc);
   else if(key===active()?.key){flushListening(true);stopRepeating();$('source-media').querySelector('audio,video')?.pause();}
   if(associating)doc.local_media_source=source;
-  browserMedia.set(key,{url:nextURL,...media,name:file.name,origin:'local',...(!clocksCleared?{ignoreListeningRecord:true}:{})});installed=true;if(previous)URL.revokeObjectURL(previous.url);
+  browserMedia.set(key,{url:nextURL,...media,name:file.name,origin:'local',file,...(!clocksCleared?{ignoreListeningRecord:true}:{})});installed=true;selectedRememberedMedia(doc);if(previous)releaseMediaAttachment(previous);
   if(key===active()?.key){mediaExpandedKey=key;mediaCollapsedKey=null;render();}
-  const receipt=associating?await commitDocument(doc):{ok:true};
-  if(ownsDocument()&&ownsView()&&active()===doc&&browserMedia.get(key)?.url===nextURL)notice(associating?(receipt.ok?'文件关联已保存，文字稿与笔记保留；刷新后需重新选择文件。':'文件关联仅在本页应用，尚未保存。请重试保存或导出 JSON 备份；媒体文件需另行保留。')+'未上传文件；文件信息与部分内容并非完整核验，请自行核对并播放。'+(clocksCleared?'':'旧收听续点未能清除，请勿直接恢复旧位置。'):'媒体只在本次页面读取，未上传。'+(doc.local_media_source?'文件信息与部分内容匹配并非完整核验，请核对声音；':'请自行核对声音与文字稿对应；')+'未自动播放。',receipt.ok?'success':'');
+  const saving=associating?commitDocument(doc):Promise.resolve({ok:true});
+  if(replacement)replacement.generation=libraryStore.status(doc.key)?.generation||0;
+  const receipt=await saving;
+  let referenceRetired=true;
+  if(replacement){
+   if(receipt.ok)referenceRetired=await finishRememberedReplacement(replacement);
+   else if(pendingRememberedReplacements.get(doc.key)===replacement)replacement.phase='save-failed';
+  }
+  if(active()===doc)renderRememberedMedia(doc);
+  if(ownsDocument()&&ownsView()&&active()===doc&&browserMedia.get(key)?.url===nextURL)notice(associating?(receipt.ok?'文件关联已保存，文字稿与笔记保留；刷新后需重新选择文件。':'文件关联仅在本页应用，尚未保存。请重试保存或导出 JSON 备份；媒体文件需另行保留。')+(referenceRetired?'':'旧原文件引用取消失败，重启仍可能载入之前记住的原文件；请点“不再记住”重试。')+'未上传文件；文件信息与部分内容并非完整核验，请自行核对并播放。'+(clocksCleared?'':'旧收听续点未能清除，请勿直接恢复旧位置。'):'媒体只在本次页面读取，未上传。'+(doc.local_media_source?'文件信息与部分内容匹配并非完整核验，请核对声音；':'请自行核对声音与文字稿对应；')+'未自动播放。',receipt.ok?'success':'');
  }catch(error){if(nextURL&&!installed)URL.revokeObjectURL(nextURL);if(!target||ownsDocument()&&ownsView()&&active()===target.document)notice('打开媒体失败：'+error.message);}
- finally{if(!target||target.request===readerMediaRequestRevision)input.value='';}
+ finally{
+  if(target&&pendingNativeMediaSelections.get(target.document)===target){
+   if(installed)pendingNativeMediaSelections.delete(target.document);else cancelReaderMediaSelection(target);
+  }
+  if(!target||target.request===readerMediaRequestRevision)input.value='';
+ }
 };
 $('detach-reader-media').onclick=()=>{
  const key=active()?.key,attachment=browserMedia.get(key);if(!attachment)return;
- changeMediaSelection(key);pendingLocalMediaChoice?.(null);
- flushListening(true);stopRepeating();$('source-media').querySelector('audio,video')?.pause();browserMedia.delete(key);URL.revokeObjectURL(attachment.url);render();
+ changeMediaSelection(key);suppressRememberedMedia(active(),{detached:true});pendingLocalMediaChoice?.(null);
+ flushListening(true);stopRepeating();$('source-media').querySelector('audio,video')?.pause();browserMedia.delete(key);releaseMediaAttachment(attachment);render();
 };
 $('unlink-reader-media').onclick=async()=>{
  const doc=active();if(!canAssociateLocalMedia(doc)||!doc.local_media_source||!contentIngressAllowed(doc))return;
@@ -5045,7 +5267,7 @@ $('unlink-reader-media').onclick=async()=>{
  const canCommit=()=>owns()&&localMediaBindingSnapshot(doc)===source;
  const choice=await chooseLocalMediaProject([],canCommit,{current:doc,action:'unlink'});if(!choice||!canCommit())return;
  const clocksCleared=clearLocalMediaClocks(doc),attachment=browserMedia.get(doc.key);
- delete doc.local_media_source;browserMedia.delete(doc.key);if(attachment)URL.revokeObjectURL(attachment.url);
+ delete doc.local_media_source;browserMedia.delete(doc.key);if(attachment)releaseMediaAttachment(attachment);
  mediaExpandedKey=doc.key;mediaCollapsedKey=null;render();$('attach-reader-media').focus();const receipt=await commitDocument(doc);
  if(owns())notice((receipt.ok?'已解除文件关联并保存，文字稿、笔记和历史摘录保留。':'解除关联仅在本页应用，尚未保存；请重试保存或导出 JSON 备份。')+(clocksCleared?'':'旧收听续点未能清除，请勿直接恢复旧位置。'),receipt.ok?'success':'');
 };
@@ -5088,6 +5310,13 @@ async function attachTranscriptToProject(text,target,{canCommit=null,activate=fa
  const attached={...Coconut.attachProjectTranscript(original,text),key:original.key};
  captureAudioBookmarkDrafts();
  state.documents[index]=attached;
+ // Supplementing this exact project's transcript preserves its existing native
+ // consent; it is not a portable backup import or a new document lifetime.
+ const replacement=pendingRememberedReplacements.get(original.key);if(replacement?.document===original)replacement.document=attached;
+ const reference=rememberedMediaStates.get(original);
+ if(reference&&!reference.pending){rememberedMediaStates.set(attached,{...reference,revision:reference.revision+1});rememberedMediaStates.delete(original);}
+ if(persistedLocalMediaSources.has(original))persistedLocalMediaSources.set(attached,persistedLocalMediaSources.get(original));
+ if(detachedRememberedMedia.has(original))detachedRememberedMedia.add(attached);
  if(activate){selectActiveDocument(attached.key);workspace='read';passageReturn=null;passageDocumentKey=attached.key;passageAnchor=attached.segments[0]?.id||null;mediaExpandedKey=null;}
  selected=null;pageStart=0;notesOnly=false;excerptsOnly=false;speakerFilter=null;searchFocusedId=null;$('search').value='';
  const mediaRevision=mediaSelectionRevision(attached.key),selectionRevision=activeSelectionRevision,receipt=commitDocument(attached);setReadingMode('transcript');render();return {...await receipt,mediaRevision,selectionRevision};
@@ -5166,3 +5395,8 @@ if(!window.coconutUpdates){
  document.addEventListener("close",syncUnsavedUnloadGuard,true);
  syncUnsavedUnloadGuard();
 }
+
+// Bootstrap can still be admitting language scripts; do not race its ingress
+// barrier or offer a reference before the coherent library is ready.
+if(!window.CoconutStorageBootstrap||window.CoconutStorageBootstrap.phase==='ready')nativeMediaInitialization=initializeRememberedMedia();
+else window.addEventListener('coconut-storage-ready',()=>{nativeMediaInitialization=initializeRememberedMedia();},{once:true});

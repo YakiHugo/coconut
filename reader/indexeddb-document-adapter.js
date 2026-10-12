@@ -462,11 +462,29 @@
         }
       });
     }
+    // Private database lifetime for desktop file references. A reset can reuse
+    // document key/epoch 1, so the database itself also needs an opaque identity.
+    // This optional metadata uses the existing store and never enters exports.
+    async function mediaLibraryIdentity() {
+      const initialized = await ready(); if (!initialized.ok) return initialized;
+      if (!writable) return fail('unavailable');
+      const legacy = checkWriteFence(); if (!legacy.ok) return legacy;
+      return transaction(['meta'], 'readwrite', ({tx, get, stop, setResult}) => {
+        get('meta', 'desktop-media-library', value => {
+          if (value !== undefined && (typeof value !== 'string' || !/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(value))) {
+            stop(fail('corruption', 'Desktop media library identity is invalid')); return;
+          }
+          const identity = value || root.crypto.randomUUID();
+          if (!value) tx.objectStore('meta').add(identity, 'desktop-media-library');
+          setResult({ok: true, identity});
+        });
+      });
+    }
     async function loadCatalog() {
       const result = await loadLibrary();
       return result.ok ? {ok: true, catalog: result.catalog, unreadable: []} : result;
     }
-    return Object.freeze({ready, prepare, commit, readDocument, loadCatalog, loadLibrary, readRecovery, checkLegacy,
+    return Object.freeze({ready, prepare, commit, readDocument, loadCatalog, loadLibrary, readRecovery, checkLegacy, mediaLibraryIdentity,
       readTombstone: key => getOne('tombstones', key), readLegacySnapshot: () => getOne('legacySnapshots', 'legacy-v1'),
       close, shutdown, status: () => Object.freeze({state: lifecycle, writable})});
   }

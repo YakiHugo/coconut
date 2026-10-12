@@ -87,3 +87,11 @@ test('native Find is a bounded Edit-menu item with bootstrap and lifecycle owner
  n.contents.emit('render-process-gone');assert.equal(n.actual.get(find.id).enabled,false);assert.equal(await find.click(),false);
  const main=fs.readFileSync(new URL('desktop/main.mjs',root),'utf8');assert.match(main,/id:'coconut-edit-menu',role:'editMenu'/);assert.match(main,/editMenu\.append\(new MenuItem\(findItem\)\)/);
 });
+
+
+test('native menu remains trusted after the real reader skip-link fragment, without admitting query or other paths',async()=>{
+ const n=native();n.contents.emit('did-finish-load');n.pending.shift()(true);await turn();
+ const item=n.menu.submenu[0];
+ for(const url of ['http://127.0.0.1:47831/#main-content','http://127.0.0.1:47831/index.html#main-content']){n.set({url});assert.equal(await item.click(),true);}
+ for(const url of ['http://127.0.0.1:47831/other#main-content','http://127.0.0.1:47831/?next=index.html#main-content']){n.set({url});assert.equal(await item.click(),false);}
+});

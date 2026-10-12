@@ -27,7 +27,7 @@ async function layout(t,kind,{boundary=true}={}) {
   }
   await mkdir(app,{recursive:true});await mkdir(reader,{recursive:true});
   await writeFile(path.join(app,'package.json'),JSON.stringify({type:'module'}));
-  for(const name of ['podcast-sources.mjs','public-http.mjs','podcast-xml.mjs','caption-service.mjs'])await copyFile(path.join(root,'desktop',name),path.join(app,name));
+  for(const name of ['podcast-sources.mjs','public-http.mjs','podcast-xml.mjs','caption-service.mjs','local-media.mjs'])await copyFile(path.join(root,'desktop',name),path.join(app,name));
   const index=await readFile(path.join(root,'reader/index.html'),'utf8');
   const scripts=[...index.matchAll(/<(?:script|link|img)\b[^>]*\b(?:src|href)="([^"]+)"/g)].map(match=>match[1].split('?')[0]);
   for(const name of ['index.html',...new Set(scripts),...(boundary?['package.json']:[])])await copyFile(path.join(root,'reader',name),path.join(reader,name));
@@ -36,12 +36,16 @@ async function layout(t,kind,{boundary=true}={}) {
 async function loadReader({app,reader}) {
   const source=pathToFileURL(path.join(app,'podcast-sources.mjs')).href;
   const caption=pathToFileURL(path.join(app,'caption-service.mjs')).href;
+  const media=pathToFileURL(path.join(app,'local-media.mjs')).href;
   const code=`import assert from 'node:assert/strict';
     import {parsePublisherTranscript} from ${JSON.stringify(source)};
     import {createCaptionService} from ${JSON.stringify(caption)};
+    import {createLocalMediaService} from ${JSON.stringify(media)};
     const cues=parsePublisherTranscript('WEBVTT\\n\\n00:00.000 --> 00:01.000\\n<v Ren&eacute;>Hello</v>','text/vtt');
     assert.equal(cues[0].speaker,'René');
     assert.equal(createCaptionService({readerDirectory:${JSON.stringify(reader)}}).available,false);
+    const mediaService=createLocalMediaService({readerDirectory:${JSON.stringify(reader)},userDataDirectory:${JSON.stringify(path.join(app,'authored-profile'))}});
+    assert.equal((await mediaService.reconcile([])).status,'reconciled');await mediaService.shutdown();
     console.log('reader module scope passed');`;
   return execute(process.execPath,['--input-type=module','-e',code],{timeout:15000,maxBuffer:1024*1024});
 }

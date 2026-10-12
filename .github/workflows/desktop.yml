@@ -105,6 +105,10 @@ jobs:
         env:
           COCONUT_NATIVE_DIAGNOSTICS: ${{ runner.temp }}/coconut-native-diagnostics
         run: node tests/desktop-packaged-acceptance.mjs
+      - name: Verify opt-in original-file restart continuity in the exact native ZIP
+        env:
+          COCONUT_NATIVE_DIAGNOSTICS: ${{ runner.temp }}/coconut-native-diagnostics
+        run: node tests/desktop-local-media-acceptance.mjs
       - name: Retain authored native failure diagnostics only
         if: failure()
         uses: actions/upload-artifact@v4
@@ -113,6 +117,8 @@ jobs:
           path: |
             ${{ runner.temp }}/coconut-native-diagnostics/native-import-failure.json
             ${{ runner.temp }}/coconut-native-diagnostics/native-import-failure.png
+            ${{ runner.temp }}/coconut-native-diagnostics/native-media-failure.json
+            ${{ runner.temp }}/coconut-native-diagnostics/native-media-failure.png
           if-no-files-found: ignore
           retention-days: 7
       - name: Verify exact ZIP helper integrity and native public captions
