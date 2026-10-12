@@ -4308,6 +4308,22 @@ document.addEventListener('focusin',event=>{
   if(occluded&&bounds.bottom>ceiling)window.scrollBy({top:bounds.bottom-ceiling,left:0,behavior:'instant'});
  });
 });
+// Only the utility ring may paint over an adjacent, still-unpinned toolbar.
+// Once reading scrolls under sticky controls, their normal foreground wins.
+const readingUtilityFocusTargets='#keyboard-help-open,#reading-info > summary,#toggle-reader-media,#passage-toggle-translation,#passage-search';
+function syncReadingUtilityFocusLayer(){
+ const utility=$('reading-utility'),toolbar=$('reading-mode-toolbar'),target=document.activeElement;let raised=false;
+ if(workspace==='read'&&!toolbar.hidden&&utility.classList.contains('is-compact')&&target?.matches(readingUtilityFocusTargets)&&target.matches(':focus-visible')){
+  const r=target.getBoundingClientRect(),bar=toolbar.getBoundingClientRect(),style=getComputedStyle(target),ring=(parseFloat(style.outlineWidth)||0)+Math.max(0,parseFloat(style.outlineOffset)||0),top=parseFloat(getComputedStyle(toolbar).top)||0;
+  raised=r.height>0&&bar.height>0&&bar.top>top&&r.bottom<=bar.top&&r.bottom+ring>bar.top;
+ }
+ if(utility.classList.contains('utility-focus-front')!==raised)utility.classList.toggle('utility-focus-front',raised);
+}
+document.addEventListener('focusin',syncReadingUtilityFocusLayer);
+document.addEventListener('focusout',event=>{if($('reading-utility').contains(event.target))$('reading-utility').classList.remove('utility-focus-front');});
+window.addEventListener('scroll',syncReadingUtilityFocusLayer,{passive:true});
+window.addEventListener('resize',syncReadingUtilityFocusLayer);
+window.addEventListener('coconut-render',syncReadingUtilityFocusLayer);
 // A native select can keep focus while a narrower/shorter viewport moves a
 // fixed receipt over its ring. Reveal only that focused control, never dismiss
 // the receipt or schedule a source/follow navigation. New user intent wins.

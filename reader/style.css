@@ -742,6 +742,7 @@ body[data-header-compact="true"][data-workspace="read"] > .shell > main > header
 body[data-header-compact="true"][data-workspace="read"] .intro { padding-top: 0; }
 body[data-header-compact="true"] #reader-meta-home:empty, body[data-header-compact="true"] #reader-title-home:empty { display: none; }
 .reading-utility { position: relative; }
+.reading-utility.utility-focus-front:has(:is(#keyboard-help-open,#reading-info > summary,#toggle-reader-media,#passage-toggle-translation,#passage-search):focus-visible) { z-index:5; }
 .reading-utility.is-compact { display: flex; align-items: center; flex-wrap: wrap; column-gap: 14px; min-height: 44px; }
 /* Match the compact toolbar instead of adding a full-size button row on mobile.
    Keep the complete help label and an unshrinking 44px touch target. */

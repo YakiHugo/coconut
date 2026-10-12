@@ -270,3 +270,11 @@ for(const edge of ['pinned','document-end','no-slot'])test(`picker reveal never 
   g.picker.focus();g.tick();assert.deepEqual(g.scrolls,[]);assert.equal(w.document.activeElement,g.picker);
  }finally{await w.happyDOM.close();}
 });
+
+for(const selector of ['#keyboard-help-open','#reading-info > summary','#toggle-reader-media','#passage-toggle-translation','#passage-search'])test(`only the focused adjacent utility ring can lift above an unpinned toolbar: ${selector}`,async()=>{
+ const env=setup(),{w,$}=env;try{
+  const target=w.document.querySelector(selector),utility=$('reading-utility'),toolbar=$('reading-mode-toolbar'),doc=w.libraryProbe.documents[0],before=JSON.stringify(doc);let top=170,scrolls=0;w.scrollBy=w.scrollTo=()=>{scrolls++;};target.style.outline='3px solid red';target.style.outlineOffset='3px';target.getBoundingClientRect=()=>({top:126,bottom:170,left:20,right:64,width:44,height:44});toolbar.getBoundingClientRect=()=>({top,bottom:top+88,left:20,right:300,width:280,height:88});toolbar.style.top='6px';
+  target.focus();assert.equal(utility.classList.contains('utility-focus-front'),true);top=6;w.dispatchEvent(new w.Event('scroll'));assert.equal(utility.classList.contains('utility-focus-front'),false,'sticky reader controls regain their normal foreground');top=170;w.dispatchEvent(new w.Event('resize'));assert.equal(utility.classList.contains('utility-focus-front'),true);
+  $('close-reading-info').focus();assert.equal(utility.classList.contains('utility-focus-front'),false,'panel controls are not one of the five utility entries');target.focus();assert.equal(utility.classList.contains('utility-focus-front'),true);target.blur();assert.equal(utility.classList.contains('utility-focus-front'),false);assert.equal(scrolls,0);assert.equal(JSON.stringify(doc),before);
+ }finally{await w.happyDOM.close();}
+});
