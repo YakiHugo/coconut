@@ -8,7 +8,7 @@
 <meta name="theme-color" content="#faf9f7">
 <link rel="icon" type="image/png" href="coconut-mark.png">
 <script src="appearance.js?v=86ea922669"></script>
-<link rel="stylesheet" href="style.css?v=8cf2305a61">
+<link rel="stylesheet" href="style.css?v=57b42ce40f">
 <script src="summary.js?v=580ffdad1e" defer></script>
 <script src="core.js?v=47de1151f8" defer>
 </script>
@@ -18,7 +18,7 @@
 <script src="library-store.js?v=e76ded9456" defer></script>
 <script src="indexeddb-document-adapter.js?v=65c0c5a814" defer></script>
 <script src="storage-provider.js?v=1cb898e984" defer></script>
-<script src="app.js?v=1d51c168d6" type="text/coconut-pending" data-reader-script>
+<script src="app.js?v=14a5915b85" type="text/coconut-pending" data-reader-script>
 </script>
 <script src="language.js?v=6357c608b0" type="text/coconut-pending" data-reader-script></script>
 <script src="translation-review.js?v=e8289ebd90" type="text/coconut-pending" data-reader-script></script>
@@ -186,8 +186,8 @@ cd coconut
 <div id="demo-guide" class="demo-guide" hidden><div><strong>内置自写示例</strong><span>原文与译文均为预置 · 无音视频 · 不调用 AI</span></div><div><button id="demo-note" type="button">记下第一个想法 <span aria-hidden="true">↗</span></button><button id="demo-finish" type="button">添加自己的内容</button></div></div>
 <div id="reading-utility" class="reading-utility">
 <button id="keyboard-help-open" type="button" aria-haspopup="dialog" aria-controls="keyboard-help">快捷键 <span aria-hidden="true">?</span></button>
-<details id="reading-info" class="reading-info" hidden><summary>信息与设置</summary><div class="reading-info-panel"><div class="reading-info-heading"><h2 id="reading-info-title"></h2><button id="close-reading-info" type="button" aria-label="关闭信息与设置">关闭</button></div><div id="reading-info-meta"></div><p id="reading-info-position" class="hint"></p><div id="reading-info-help"></div><div id="reading-info-settings"></div></div></details>
-<button id="toggle-reader-media" class="media-disclosure" type="button" aria-expanded="false" aria-controls="episode-media">关联原声 · 回听这一篇</button>
+<details id="reading-info" class="reading-info" hidden><summary aria-label="信息与设置" title="信息与设置"><span class="utility-label-full" aria-hidden="true">信息与设置</span><span class="utility-label-short" aria-hidden="true">设置</span></summary><div class="reading-info-panel"><div class="reading-info-heading"><h2 id="reading-info-title"></h2><button id="close-reading-info" type="button" aria-label="关闭信息与设置">关闭</button></div><div id="reading-info-meta"></div><p id="reading-info-position" class="hint"></p><div id="reading-info-help"></div><div id="reading-info-settings"></div></div></details>
+<button id="toggle-reader-media" class="media-disclosure" type="button" aria-expanded="false" aria-controls="episode-media" aria-label="关联原声 · 回听这一篇" title="关联原声 · 回听这一篇"><span id="reader-media-label" class="utility-label-full" aria-hidden="true">关联原声 · 回听这一篇</span><span id="reader-media-short-label" class="utility-label-short" aria-hidden="true">原声</span></button>
 <section id="episode-media" class="episode-media" aria-label="本集声音与回源"><div class="episode-media-heading"><span class="eyebrow">原声与来源</span><span class="hint">阅读时随时回听</span><button id="close-reader-media" type="button" aria-label="关闭原声设置" hidden>关闭</button></div><div id="podcast-playback" class="podcast-playback" hidden><button id="download-podcast-media" type="button">下载并回听本集原声</button><button id="cancel-podcast-media" type="button" hidden>取消下载</button><p id="podcast-media-status" class="hint">只在点击后下载（最多 200 MiB），媒体仅保留在本次页面，刷新后需重新获取。</p></div>
 <div class="local-media-entry"><button id="attach-reader-media" type="button">选择对应的音频或视频</button><button id="detach-reader-media" type="button" hidden>移除本次媒体</button><button id="replace-reader-media" type="button" hidden>更换关联文件</button><button id="unlink-reader-media" type="button" hidden>解除文件关联</button><input id="reader-media-file" type="file" accept="audio/*,video/*,.mp3,.m4a,.wav,.ogg,.flac,.mp4,.webm,.mov" hidden><p id="reader-media-status" class="hint">在浏览器中打开文件，不上传。请选与文字稿对应的原文件；刷新页面后需重新选择。</p></div>
 <fieldset id="media-timing" class="media-timing" hidden><legend>字幕与原声对齐</legend>

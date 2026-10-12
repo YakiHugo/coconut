@@ -681,7 +681,7 @@ function showWorkspace(next) {
 function clearReadingContext(retireSearchRoute=false) {
  if(retireSearchRoute&&readingSearchSession?.readingContext===readingContext)readingSearchSession.readingContext=null;
  readingContext=null;
- $('reading-context').hidden=true;
+ $('reading-context').hidden=true;syncReadingStickyStack();
  document.querySelectorAll('.context-target').forEach(row=>row.classList.remove('context-target'));
 }
 function endReadingSearch(){readingSearchSession=null;$('reading-search-session').hidden=true;}
@@ -797,6 +797,7 @@ function renderReadingContext() {
  else if(readingContextHome.nextSibling!==bar)readingContextHome.after(bar);
  $('reading-context').hidden=!origin||workspace!=='read'||readingMode==='summary';
  if(origin)$('reading-context-label').textContent=origin.label+' · '+(!origin.count?'原筛选已无匹配结果':(origin.resultMissing?'原片段已离开结果 · 返回第 ':'第 ')+(origin.index+1)+' / '+origin.count+' 个结果');
+ syncReadingStickyStack();
 }
 function captureReadingContext(id) {
  const doc=active(),query=$('search').value;
@@ -868,6 +869,7 @@ function goToSegment(id,contextDetour=false,preservePassageReturn=false) {
 	// A context detour can cross most of a 100-cue page. Land immediately so
  // the requested evidence is readable instead of animating past the AI tools.
  row?.scrollIntoView?.({block: alignment, behavior: contextDetour ? "auto" : "smooth"});
+ if(contextDetour&&row){const edge=readingDisplayTopEdge(),top=row.getBoundingClientRect().top;if(edge&&top<edge)window.scrollBy(0,top-edge-6);}
 	row?.focus({preventScroll: true});
 }
 // Explicit opens share one resume policy. Run synchronously with activation,
@@ -1837,6 +1839,7 @@ function renderChapterReturn(){
  if(!bar.hidden){const target=readingMode==='passages'?$('passage-workspace'):$('transcript-layout');if(bar.nextElementSibling!==target)target.before(bar);}
  $('open-source-correction').hidden=!active()?.segments.length;
  $('open-chapters').hidden=!chapterEligible(active());$('open-chapters').textContent='章节目录'+(active()?.reading_chapters?.length?'（'+active().reading_chapters.length+'）':'');
+ syncReadingStickyStack();
 }
 function chapterPosition(){const doc=chapterDirectoryDoc;return doc?.segments.findIndex(cue=>cue.id===chapterDirectoryCue)??-1;}
 function renderChapterDirectory(focusId=null){
@@ -2345,7 +2348,7 @@ function refreshRecoveredJobMedia(doc){
  // A late result may make the current book playable, but never expand panels,
  // replace a selected local file, rerender a draft, seek, or start playback.
  const {mediaPath}=renderSourceMedia(doc);
- if(mediaPath&&$('episode-media').hidden)$('toggle-reader-media').textContent='本地原声已就绪 · 打开回听';
+ if(mediaPath&&$('episode-media').hidden)setReaderMediaLabel('本地原声已就绪 · 打开回听','原声');
  passagePlayback?.sync();refreshPlaybackDock();
 }
 function render({keepNoteEditor=false,reuseLibraryMetadata=false}={}) {
@@ -3703,9 +3706,25 @@ function renderReadingDisplayControl(){
  select.disabled=languages.size===0;
  select.value=textExportLanguage(doc);
 }
+function readingStickyNodes(){return [$('reading-mode-toolbar'),...document.querySelectorAll('#reader-workspace > .reading-context')];}
+function syncReadingStickyStack(){
+ // Every retained return route owns its own row. Measure wrapped labels rather
+ // than guessing a mobile height; geometry updates never scroll or move nodes.
+ const measurements=readingStickyNodes().map(node=>({node,height:node.hidden?0:node.getBoundingClientRect().height}));
+ let inset=6;
+ for(const {node,height} of measurements){
+  const top=(height>0?inset:6)+'px';if(node.style.top!==top)node.style.top=top;
+  if(height>0)inset+=height+6;
+ }
+}
+const readingStickyObserver=typeof ResizeObserver==='function'?new ResizeObserver(syncReadingStickyStack):null;
+for(const node of readingStickyNodes())readingStickyObserver?.observe(node);
+window.addEventListener('resize',syncReadingStickyStack);
 function readingDisplayTopEdge(){
- const toolbar=$('reading-mode-toolbar'),rect=toolbar.getBoundingClientRect(),inset=parseFloat(getComputedStyle(toolbar).top)||0;
- return !toolbar.hidden&&rect.height>0&&rect.top<=inset?Math.max(0,rect.bottom):0;
+ return readingStickyNodes().reduce((edge,node)=>{
+  const rect=node.getBoundingClientRect(),inset=parseFloat(getComputedStyle(node).top)||0;
+  return !node.hidden&&rect.height>0&&rect.top<=inset?Math.max(edge,rect.bottom):edge;
+ },0);
 }
 function readingDisplayCueNode(id){
  return [...document.querySelectorAll(readingMode==='passages'?'#passage-body .passage-original .passage-cue':'#transcript .segment')].find(node=>(node.dataset.cueId||node.dataset.segmentId)===id);
@@ -3892,7 +3911,14 @@ function advanceReadingFollow(){
  const rect=row.getBoundingClientRect(),height=window.visualViewport?.height||window.innerHeight;
  // An instant bounded correction avoids queued smooth scrolling competing with
  // manual intent and also respects reduced-motion preferences.
- if(rect.top<64||rect.bottom>height-128)row.scrollIntoView?.({block:rect.height>height-192?'start':'center',behavior:'auto'});
+ const ceiling=Math.max(64,readingDisplayTopEdge()+6);
+ if(rect.top<ceiling||rect.bottom>height-128){
+  row.scrollIntoView?.({block:rect.height>height-ceiling-128?'start':'center',behavior:'auto'});
+  // Native start alignment can leave a long cue below the browser edge but
+  // behind our sticky controls. This correction retains the same follow owner.
+  const edge=readingDisplayTopEdge(),top=row.getBoundingClientRect().top;
+  if(edge&&top<edge+6)window.scrollBy(0,top-edge-6);
+ }
 }
 function scheduleReadingFollow(){
  refreshReadingFollow();if(!readingFollow||readingFollow.suspended||readingFollowFrame!==null)return;
@@ -4451,6 +4477,10 @@ window.addEventListener('resize',pauseBoundedForCompactNote);
 window.visualViewport?.addEventListener('resize',pauseBoundedForCompactNote);
 window.addEventListener('pagehide',()=>{if(passagePlayback?.getState().range)$('source-media').querySelector('audio,video')?.pause();passagePlayback?.cancel();});
 
+function setReaderMediaLabel(label,shortLabel){
+ const control=$('toggle-reader-media');control.setAttribute('aria-label',label);control.title=label;
+ $('reader-media-label').textContent=label;$('reader-media-short-label').textContent=shortLabel;
+}
 function updateReaderMediaVisibility(doc=active(),hasMedia=!!$('source-media').querySelector('audio,video')){
  if(!doc)return;
  const audioOnly=Coconut.isAudioProject(doc),demo=doc.provenance?.kind==='authored_demo',compact=readingMode==='passages'&&!audioOnly;
@@ -4458,7 +4488,8 @@ function updateReaderMediaVisibility(doc=active(),hasMedia=!!$('source-media').q
  $('episode-media').hidden=(demo&&!hasMedia)||!visible;
  $('toggle-reader-media').hidden=(demo&&!hasMedia)||audioOnly;
  $('toggle-reader-media').setAttribute('aria-expanded',String(visible));
- $('toggle-reader-media').textContent=compact?(visible?'收起原声':hasMedia?'原声':'关联原声'):(visible?'收起原声设置':'关联原声 · 回听这一篇');
+ const label=compact?(visible?'收起原声':hasMedia?'原声':'关联原声'):(visible?'收起原声设置':'关联原声 · 回听这一篇');
+ setReaderMediaLabel(label,visible?'收起':'原声');
  $('close-reader-media').hidden=audioOnly||!visible;
 }
 function composeReadingHeader(){
@@ -4542,6 +4573,7 @@ function renderReadingDisplay(){
  $('bilingual-status').textContent=count?`当前语言已有 ${count}/${doc.segments.length} 段有效译文；缺失部分可逐段「自己写译文」，过期译文可核对／修正；也可在翻译选项中继续。`:'还没有当前语言的有效译文。可逐段「自己写译文」，或打开翻译选项，核对发送范围与额度后生成；切换视图和自己写译文不会调用模型。';}
  renderReadingDisplayControl();
  renderTextExportAction();
+ syncReadingStickyStack();
 }
 function setReadingMode(mode) {
  const previousMode=readingMode;

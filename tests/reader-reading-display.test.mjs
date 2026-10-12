@@ -119,3 +119,50 @@ test('language reflow anchors the first source cue below the whole sticky toolba
   choose(env,'fr');assert.equal(scrolls.at(-1),120);assert.equal(doc.readingPosition,undefined);
  }finally{await w.happyDOM.close();}
 });
+
+test('all four retained return bars stack by current DOM order, reset hidden insets, and never scroll or move focus',async()=>{
+ const env=setup(),{w,$}=env;try{
+  $('mode-bilingual').click();const toolbar=$('reading-mode-toolbar'),select=$('translation-view'),bars=[...w.document.querySelectorAll('#reader-workspace > .reading-context')];assert.equal(bars.length,4);
+  let toolbarHeight=88;const heights=new Map(bars.map((bar,i)=>[bar,60+i*10])),parents=new Map(bars.map(bar=>[bar,bar.parentElement]));let scrolls=0;w.scrollBy=w.scrollTo=()=>{scrolls++;};
+  toolbar.getBoundingClientRect=()=>({top:6,height:toolbarHeight,bottom:6+toolbarHeight});
+  for(const bar of bars){bar.hidden=false;bar.getBoundingClientRect=()=>({top:parseFloat(bar.style.top)||6,height:bar.hidden?0:heights.get(bar),bottom:(parseFloat(bar.style.top)||6)+(bar.hidden?0:heights.get(bar))});}
+  select.focus();w.dispatchEvent(new w.Event('resize'));let expected=100;for(const bar of bars){assert.equal(bar.style.top,expected+'px');expected+=heights.get(bar)+6;assert.equal(bar.parentElement,parents.get(bar));}
+  bars[1].hidden=true;toolbarHeight=44;w.dispatchEvent(new w.Event('resize'));expected=56;for(const bar of bars){assert.equal(bar.style.top,(bar.hidden?6:expected)+'px');if(!bar.hidden)expected+=heights.get(bar)+6;}
+  assert.equal(scrolls,0);assert.equal(w.document.activeElement,select);assert.equal($('translation-view'),select);
+  for(const bar of bars)bar.hidden=true;w.dispatchEvent(new w.Event('resize'));assert.ok(bars.every(bar=>bar.style.top==='6px'));
+ }finally{await w.happyDOM.close();}
+});
+test('a pinned return row also excludes covered source cues from display anchoring',async()=>{
+ const env=setup(),{w,$}=env;try{
+  $('mode-bilingual').click();const doc=w.libraryProbe.documents[0],scrolls=[];$('reading-context').hidden=false;
+  w.HTMLElement.prototype.getBoundingClientRect=function(){
+   if(this.id==='reading-mode-toolbar')return {top:6,bottom:94,height:88};
+   if(this.id==='reading-context')return {top:100,bottom:188,height:88};
+   if(!this.matches('.segment'))return {top:0,bottom:0,height:0};
+   const index=Number(this.dataset.segmentId.slice(4)),top=index===0?110:220+(index-1)*100+(doc.translation_view==='fr'?120:0);return {top,bottom:top+50,height:50};
+  };w.dispatchEvent(new w.Event('resize'));w.scrollBy=(x,y)=>scrolls.push(y);choose(env,'fr');assert.equal(scrolls.at(-1),120);assert.equal(doc.readingPosition,undefined);
+ }finally{await w.happyDOM.close();}
+});
+test('native backup comparison crosses only the JSON prototype boundary and still rejects every changed field or cue order',()=>{
+ const doc=readingDisplayFixture({count:240}),expected=JSON.parse(JSON.stringify(doc.segments));assert.equal(Object.getPrototypeOf(doc.segments[0].translations),null);assert.throws(()=>assert.deepEqual(expected,doc.segments));assert.deepEqual(expected,JSON.parse(JSON.stringify(doc.segments)));
+ for(const mutate of [cues=>{cues[239].text+='changed';},cues=>{cues[0].start+=1;},cues=>{cues[239].translations.fr.text+='changed';},cues=>{delete cues[2].translations.zh.source_text;},cues=>cues.reverse()]){const changed=JSON.parse(JSON.stringify(expected));mutate(changed);assert.throws(()=>assert.deepEqual(changed,expected));}
+});
+
+test('natural-flow toolbar and return row do not exclude source cues near the viewport top',async()=>{
+ const env=setup(),{w,$}=env;try{
+  $('mode-bilingual').click();const doc=w.libraryProbe.documents[0],scrolls=[];$('reading-context').hidden=false;
+  w.HTMLElement.prototype.getBoundingClientRect=function(){
+   if(this.id==='reading-mode-toolbar')return {top:200,bottom:288,height:88};
+   if(this.id==='reading-context')return {top:400,bottom:488,height:88};
+   if(!this.matches('.segment'))return {top:0,bottom:0,height:0};
+   const index=Number(this.dataset.segmentId.slice(4)),top=index===0?(doc.translation_view==='fr'?95:20):220+index*100+(doc.translation_view==='fr'?120:0);return {top,bottom:top+50,height:50};
+  };w.dispatchEvent(new w.Event('resize'));w.scrollBy=(x,y)=>scrolls.push(y);choose(env,'fr');assert.equal(scrolls.at(-1),75);
+ }finally{await w.happyDOM.close();}
+});
+test('narrow utility labels retain the full names, titles and expanded state without replacing control nodes',async()=>{
+ const env=setup(),{w,$}=env;try{
+  const info=$('reading-info').querySelector('summary'),media=$('toggle-reader-media');assert.equal(info.getAttribute('aria-label'),'信息与设置');assert.equal(info.title,'信息与设置');assert.equal(info.querySelector('.utility-label-short').textContent,'设置');
+  assert.equal(media.getAttribute('aria-label'),'关联原声');assert.equal(media.title,'关联原声');assert.equal($('reader-media-short-label').textContent,'原声');assert.equal(media.getAttribute('aria-expanded'),'false');media.click();assert.equal($('toggle-reader-media'),media);assert.equal(media.getAttribute('aria-expanded'),'true');assert.equal(media.getAttribute('aria-label'),'收起原声');assert.equal(media.title,'收起原声');assert.equal($('reader-media-short-label').textContent,'收起');
+  const css=fs.readFileSync(new URL('../reader/style.css',import.meta.url),'utf8');assert.match(css,/@media\(max-width:350px\)/);assert.match(css,/reading-utility\.is-compact \{ column-gap:8px;/);assert.match(css,/\.media-disclosure,\.reading-info > summary\) \{ min-width:44px;/);
+ }finally{await w.happyDOM.close();}
+});
