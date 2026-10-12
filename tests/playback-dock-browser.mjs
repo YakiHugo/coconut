@@ -11,7 +11,7 @@ import {authoredAudioFixture} from './helpers/authored-audio-fixture.mjs';
 import {installDockViewportObserver} from './helpers/dock-viewport-observer.mjs';
 import {evaluateNativeIME,evaluateNativeIMEPointer} from './helpers/native-ime-proof.mjs';
 const root=fileURLToPath(new URL('../',import.meta.url));
-const checks=[],rewinds=[],ime=[],geometry=[];let server,browser,directory,page,viewportFailure,stage='setup',external=0,mutations=0,errors=0;
+const checks=[],rewinds=[],ime=[],geometry=[],popovers=[];let server,browser,directory,page,viewportFailure,stage='setup',external=0,mutations=0,errors=0;
 function check(name,value){stage=name;assert.ok(value,name);checks.push(name);}
 const settle=()=>page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));
 async function seek(time){
@@ -274,7 +274,20 @@ try{
  // Separately label adversarial old-event dispatch; it is not native evidence.
  await page.evaluate(()=>{for(const type of ['timeupdate','seeked','ended'])window.__retiredDockPlayer.dispatchEvent(new Event(type));});await settle();
  check('synthetic_retired_media_events_cannot_control_current_player',await page.locator('audio').evaluate(p=>p.paused&&p.currentTime===0));
- await page.locator('#mode-bilingual').click();await page.locator('#reading-jump').selectOption('clip-126');await page.locator('.segment[data-segment-id="clip-126"]').scrollIntoViewIfNeeded();await page.locator('#media-dock').waitFor({state:'visible'});
+ // Return-to-player and successful re-selection deliberately keep source setup
+ // open for inspection. Use its real Close action before selecting a covered mode.
+ stage='close_replacement_media_popover';
+ const popover={label:stage,before:await page.evaluate(()=>{
+  const player=document.querySelector('audio'),panel=document.getElementById('episode-media'),button=document.getElementById('close-reader-media');
+  window.__replacementPopover={player,source:player.getAttribute('src'),time:player.currentTime,rate:player.playbackRate,volume:player.volume,paused:player.paused,document:JSON.stringify(state.documents),mode:document.body.dataset.readingMode,clicked:false,trusted:false};
+  button.addEventListener('click',event=>{window.__replacementPopover.clicked=true;window.__replacementPopover.trusted=event.isTrusted;},{once:true,capture:true});
+  return {visible:!panel.hidden,expanded:document.getElementById('toggle-reader-media').getAttribute('aria-expanded'),mode:document.body.dataset.readingMode,panel:panel.getBoundingClientRect().toJSON(),close:button.getBoundingClientRect().toJSON()};
+ })};popovers.push(popover);
+ check('replacement_media_popover_remains_open_for_review',popover.before.visible&&popover.before.expanded==='true'&&popover.before.mode==='passages');
+ stage='close_replacement_media_popover';await page.locator('#close-reader-media').click();await page.locator('#episode-media').waitFor({state:'hidden'});await settle();
+ popover.after=await page.evaluate(()=>{const before=window.__replacementPopover,p=document.querySelector('audio');return {clicked:before.clicked,trusted:before.trusted,hidden:document.getElementById('episode-media').hidden,expanded:document.getElementById('toggle-reader-media').getAttribute('aria-expanded'),focused:document.activeElement.id,samePlayer:p===before.player,sourceSame:p.getAttribute('src')===before.source,timeSame:p.currentTime===before.time,pausedSame:p.paused===before.paused,rateSame:p.playbackRate===before.rate,volumeSame:p.volume===before.volume,documentSame:JSON.stringify(state.documents)===before.document,modeSame:document.body.dataset.readingMode===before.mode};});
+ check('native_popover_close_preserves_replacement_and_returns_focus',popover.after.clicked&&popover.after.trusted&&popover.after.hidden&&popover.after.expanded==='false'&&popover.after.focused==='toggle-reader-media'&&['samePlayer','sourceSame','timeSame','pausedSame','rateSame','volumeSame','documentSame','modeSame'].every(key=>popover.after[key]));
+ stage='select_bilingual_after_replacement_popover_close';await page.locator('#mode-bilingual').click();await page.locator('#reading-jump').selectOption('clip-126');await page.locator('.segment[data-segment-id="clip-126"]').scrollIntoViewIfNeeded();await page.locator('#media-dock').waitFor({state:'visible'});
  await seek(35);await rewind('replacement_uses_current_player_at_action_time');
  await page.locator('#add-content').click();check('changed_workspace_disables_and_hides_rewind',await page.locator('#media-dock').isHidden()&&await page.locator('#dock-rewind').isDisabled());
  await page.locator('#back-reading').click();await page.locator('#reading-jump').selectOption('clip-126');await page.locator('.segment[data-segment-id="clip-126"]').scrollIntoViewIfNeeded();await page.locator('#media-dock').waitFor({state:'visible'});
@@ -286,11 +299,11 @@ try{
  check('changing_documents_without_media_keeps_rewind_unavailable',await page.locator('#media-dock').isHidden()&&await page.locator('#dock-rewind').isDisabled()&&await page.locator('audio,video').count()===0);
  await page.evaluate(()=>libraryStore.flush());
  check('no_media_urls_saved_and_no_network_or_model_side_effects',await page.evaluate(async () =>!JSON.stringify(await readPersistedLibrary()).includes('blob:'))&&external===0&&mutations===0&&errors===0);
- if(process.env.COCONUT_UI_SCREENSHOTS)await fs.writeFile(path.join(process.env.COCONUT_UI_SCREENSHOTS,'dock-rewind-evidence.json'),JSON.stringify({rewinds,ime,geometry},null,2));
- console.log(JSON.stringify({suite:'playback-dock-authored-media',status:'passed',checks,rewinds,ime,geometry}));
+ if(process.env.COCONUT_UI_SCREENSHOTS)await fs.writeFile(path.join(process.env.COCONUT_UI_SCREENSHOTS,'dock-rewind-evidence.json'),JSON.stringify({rewinds,ime,geometry,popovers},null,2));
+ console.log(JSON.stringify({suite:'playback-dock-authored-media',status:'passed',checks,rewinds,ime,geometry,popovers}));
 }catch(error){
  try{if(page&&!page.isClosed())viewportFailure=await page.evaluate(()=>{const observer=window.__dockViewportObserver;if(!observer)return null;observer.record('failure');observer.stop();return {events:observer.events,calls:observer.calls};});}catch{}
- if(process.env.COCONUT_UI_SCREENSHOTS){try{await fs.mkdir(process.env.COCONUT_UI_SCREENSHOTS,{recursive:true});await fs.writeFile(path.join(process.env.COCONUT_UI_SCREENSHOTS,'dock-rewind-evidence.json'),JSON.stringify({stage,checks,rewinds,ime,geometry,viewportFailure,error:error.stack},null,2));if(page&&!page.isClosed())await page.screenshot({path:path.join(process.env.COCONUT_UI_SCREENSHOTS,'dock-rewind-failure.png'),animations:'disabled'});}catch(captureError){console.error('dock failure evidence: '+captureError.message);}}
- console.log(JSON.stringify({suite:'playback-dock-authored-media',status:'failed',stage,error:error.stack,checks,rewinds,ime,geometry,viewportFailure}));process.exitCode=1;
+ if(process.env.COCONUT_UI_SCREENSHOTS){try{await fs.mkdir(process.env.COCONUT_UI_SCREENSHOTS,{recursive:true});await fs.writeFile(path.join(process.env.COCONUT_UI_SCREENSHOTS,'dock-rewind-evidence.json'),JSON.stringify({stage,checks,rewinds,ime,geometry,popovers,viewportFailure,error:error.stack},null,2));if(page&&!page.isClosed())await page.screenshot({path:path.join(process.env.COCONUT_UI_SCREENSHOTS,'dock-rewind-failure.png'),animations:'disabled'});}catch(captureError){console.error('dock failure evidence: '+captureError.message);}}
+ console.log(JSON.stringify({suite:'playback-dock-authored-media',status:'failed',stage,error:error.stack,checks,rewinds,ime,geometry,popovers,viewportFailure}));process.exitCode=1;
 }
 finally{await browser?.close();await new Promise(resolve=>server?.listening?server.close(resolve):resolve());if(directory)await fs.rm(directory,{recursive:true,force:true});}

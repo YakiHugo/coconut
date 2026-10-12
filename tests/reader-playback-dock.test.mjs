@@ -287,10 +287,12 @@ test('native dock inset follows actual lower occlusion, clears on retirement and
   const {w,$,scrolls}=env,m=await media(env),root=w.document.documentElement;
   w.happyDOM.setWindowSize({width:390,height:480});
   $('media-dock').getBoundingClientRect=()=>({top:404,bottom:468,height:64});scrolls.length=0;
-  m.refresh();assert.equal(root.style.getPropertyValue('--reading-dock-inset'),'84px');assert.equal(scrolls.length,0);
+  m.refresh();assert.equal(root.style.getPropertyValue('--reading-dock-inset'),'92px');assert.equal(scrolls.length,0);
   const observer=new w.MutationObserver(()=>{});observer.observe(root,{attributes:true});m.refresh();assert.equal(observer.takeRecords().length,0);observer.disconnect();
   w.happyDOM.setWindowSize({width:1360,height:1000});$('media-dock').getBoundingClientRect=()=>({top:914,bottom:984,height:70});m.refresh();
-  assert.equal(root.style.getPropertyValue('--reading-dock-inset'),'94px');assert.equal(scrolls.length,0);
+  assert.equal(root.style.getPropertyValue('--reading-dock-inset'),'102px');assert.equal(scrolls.length,0);
+  $('media-dock').getBoundingClientRect=()=>({top:913.625,bottom:983.625,height:70});m.refresh();
+  assert.equal(root.style.getPropertyValue('--reading-dock-inset'),'103px','fractional obstruction rounds outward before adding the reading gutter');assert.equal(scrolls.length,0);
   m.headerBottom=100;assert.equal(root.style.getPropertyValue('--reading-dock-inset'),'0px');assert.equal(scrolls.length,0);
  }finally{await env.w.happyDOM.close();}
 });

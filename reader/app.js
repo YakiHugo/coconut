@@ -3972,7 +3972,9 @@ function dockRewindAvailable(){
 }
 function syncPlaybackDockInset(){
  const dock=$('media-dock'),rect=dock.getBoundingClientRect();
- const inset=!dock.hidden&&rect.height>0?Math.max(0,window.innerHeight-rect.top)+8:0;
+ // Round the occupied edge outward and leave a full reading gutter. Native
+ // centered scrolling halves this clearance and can quantize fractional rows.
+ const inset=!dock.hidden&&rect.height>0?Math.ceil(Math.max(0,window.innerHeight-rect.top))+16:0;
  const root=document.documentElement,value=inset+'px';
  if(root.style.getPropertyValue('--reading-dock-inset')!==value)root.style.setProperty('--reading-dock-inset',value);
 }
