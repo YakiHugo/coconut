@@ -1,5 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import {readingDisplayFixture} from './helpers/reading-display-fixture.mjs';
 import {libraryHarness} from './helpers/large-library-harness.mjs';
 import {displayedTranslationExportsFixture as fixture} from './helpers/displayed-translation-exports-fixture.mjs';
 const setup=(docs=[fixture()])=>libraryHarness(docs,{probe:true});
@@ -83,5 +85,37 @@ for(const kind of ['audio','video'])test(`${kind} real follow owner survives pic
   choose(env,'fr');choose(env,'');choose(env,'zh');player.dispatchEvent(new w.Event('timeupdate'));tick();
   assert.equal($('source-media').querySelector(kind),player);assert.equal(player.currentTime,37);assert.equal(player.paused,false);assert.equal(player.playbackRate,1.5);assert.equal(player.loop,true);assert.equal($('follow-playback').dataset.state,'following');assert.deepEqual([seeks,plays,pauses],[0,0,0]);
   w.dispatchEvent(new w.WheelEvent('wheel',{deltaY:40,bubbles:true}));tick();assert.equal($('follow-playback').dataset.state,'suspended');
+ }finally{await w.happyDOM.close();}
+});
+
+test('native seven-language fixture has the real normalized en fallback, actual text and no display write',async()=>{
+ const doc=readingDisplayFixture({count:112});assert.deepEqual(Object.keys(doc.segments[0].translations),['en','zh','ja','ko','fr','de','es']);
+ const env=setup([doc]),{w,$,pipeline}=env;try{
+  const generation=pipeline.store.status().generation,before=JSON.stringify(w.libraryProbe.documents[0]);
+  assert.equal($('translation-view').value,'en');assert.equal($('passage-body').querySelector('.passage-translation').lang,'en');assert.match($('passage-body').textContent,/en authored saved reading/);assert.equal(w.libraryProbe.documents[0].translation_view,'');
+  w.libraryProbe.render();assert.equal(pipeline.store.status().generation,generation);assert.equal(JSON.stringify(w.libraryProbe.documents[0]),before);
+  assert.deepEqual(values(env),['','en','zh','ja','ko','fr','de','es']);
+ }finally{await w.happyDOM.close();}
+});
+test('the one sticky mode/display owner spans both text surfaces outside the intro, across resize and modes',async()=>{
+ const env=setup(),{w,$}=env;try{
+  const toolbar=$('reading-mode-toolbar'),select=$('translation-view'),parent=select.parentElement;assert.equal(toolbar.parentElement,$('reader-workspace'));assert.equal(toolbar.closest('.intro'),null);assert.equal($('reading-modes').parentElement,toolbar);assert.equal(parent.parentElement,toolbar);
+  for(const surface of ['passage-workspace','transcript-controls','reader-options','transcript-layout'])assert.equal($(surface).parentElement,$('reader-workspace'));
+  select.focus();for(const width of [320,1360,390]){w.happyDOM.setWindowSize({width,height:650});assert.equal($('translation-view'),select);assert.equal(select.parentElement,parent);assert.equal(w.document.activeElement,select);}
+  $('mode-transcript').click();assert.equal($('translation-view'),select);$('mode-summary').click();assert.equal($('reading-display-control').hidden,true);$('mode-passages').click();assert.equal($('reading-display-control').hidden,false);
+  const css=fs.readFileSync(new URL('../reader/style.css',import.meta.url),'utf8');assert.match(css,/reading-mode-toolbar \{ position:sticky; top:6px/);assert.match(css,/reading-display-control \{[^}]*margin:0; padding:0;/);assert.doesNotMatch(css,/@media\(max-width:400px\) \{ \.reading-display-control select/);
+  assert.match(css,/:has\(#transcript-tools-disclosure:not\(\[open\]\)\):has\(#language-panel:not\(\[open\]\)\) #reader-workspace/);
+ }finally{await w.happyDOM.close();}
+});
+
+test('language reflow anchors the first source cue below the whole sticky toolbar, not an obscured cue',async()=>{
+ const env=setup(),{w,$}=env;try{
+  $('mode-bilingual').click();const doc=w.libraryProbe.documents[0],scrolls=[];$('reading-mode-toolbar').style.top='6px';
+  w.HTMLElement.prototype.getBoundingClientRect=function(){
+   if(this.id==='reading-mode-toolbar')return {top:6,bottom:94,height:88};
+   if(!this.matches('.segment'))return {top:0,bottom:0,height:0};
+   const index=Number(this.dataset.segmentId.slice(4)),top=index===0?10:100+(index-1)*100+(doc.translation_view==='fr'?120:0);return {top,bottom:top+50,height:50};
+  };w.scrollBy=(x,y)=>scrolls.push(y);
+  choose(env,'fr');assert.equal(scrolls.at(-1),120);assert.equal(doc.readingPosition,undefined);
  }finally{await w.happyDOM.close();}
 });

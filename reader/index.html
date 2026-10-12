@@ -8,7 +8,7 @@
 <meta name="theme-color" content="#faf9f7">
 <link rel="icon" type="image/png" href="coconut-mark.png">
 <script src="appearance.js?v=86ea922669"></script>
-<link rel="stylesheet" href="style.css?v=3f6530b59e">
+<link rel="stylesheet" href="style.css?v=8cf2305a61">
 <script src="summary.js?v=580ffdad1e" defer></script>
 <script src="core.js?v=47de1151f8" defer>
 </script>
@@ -18,7 +18,7 @@
 <script src="library-store.js?v=e76ded9456" defer></script>
 <script src="indexeddb-document-adapter.js?v=65c0c5a814" defer></script>
 <script src="storage-provider.js?v=1cb898e984" defer></script>
-<script src="app.js?v=bd5c9a2b1e" type="text/coconut-pending" data-reader-script>
+<script src="app.js?v=1d51c168d6" type="text/coconut-pending" data-reader-script>
 </script>
 <script src="language.js?v=6357c608b0" type="text/coconut-pending" data-reader-script></script>
 <script src="translation-review.js?v=e8289ebd90" type="text/coconut-pending" data-reader-script></script>
@@ -201,8 +201,11 @@ cd coconut
 </div>
 </section>
 <div class="passage-toolbar"><button id="passage-toggle-translation" type="button" aria-pressed="true" hidden>收起已存译文</button><button id="passage-search" type="button">搜索原文</button></div></div>
+</section>
+<div id="reading-mode-toolbar" class="reading-mode-toolbar">
 <nav id="reading-modes" class="reading-modes" aria-label="播客阅读方式"><button id="mode-passages" aria-pressed="false">连贯阅读</button><button id="mode-summary" aria-pressed="true">摘要</button><button id="mode-transcript" aria-pressed="false">原文</button><button id="mode-bilingual" aria-pressed="false">双语对照</button><button id="toggle-demo-tools" type="button" aria-expanded="false" aria-controls="transcript-reading-tools reader-options" hidden>搜索与工具</button></nav>
 <div id="reading-display-control" class="reading-display-control" hidden><label for="translation-view">阅读显示</label><select id="translation-view"><option value="">仅原文</option></select></div>
+</div>
 <section id="passage-workspace" class="passage-workspace" aria-label="连贯原文阅读" hidden>
 <div class="passage-browse"><div class="passage-browse-heading"><label for="passage-time-range">沿时间浏览原文</label><span id="passage-position" class="hint" role="status"></span></div><input id="passage-time-range" type="range" min="0" max="1" step="1" value="0" aria-describedby="passage-browse-help"><div class="passage-browse-caption"><span id="passage-time-label">00:00</span><span id="passage-total-time"></span></div><p id="passage-browse-help" class="hint">连续字幕排成段落，原话与时间不变。</p></div>
 
@@ -251,7 +254,6 @@ cd coconut
 <div id="reading-search-session" class="reading-search-session" hidden><p id="reading-search-status" class="hint" role="status"></p><div><button id="return-before-search" type="button">返回搜索前的阅读</button><button id="continue-search-reading" type="button">从当前结果继续读</button></div><p class="hint">搜索框中按 Esc 返回。</p></div>
 </div></details>
 </div>
-</section>
 <div id="reader-options" class="reader-options">
 <details id="reading-settings" class="reading-settings"><summary>阅读设置</summary><div class="disclosure-content"><div class="settings-actions"><button id="document-details">标题与语言</button><button id="open-chapters" type="button">章节目录</button>
 <button id="source">原始来源链接</button>

@@ -3703,6 +3703,10 @@ function renderReadingDisplayControl(){
  select.disabled=languages.size===0;
  select.value=textExportLanguage(doc);
 }
+function readingDisplayTopEdge(){
+ const toolbar=$('reading-mode-toolbar'),rect=toolbar.getBoundingClientRect(),inset=parseFloat(getComputedStyle(toolbar).top)||0;
+ return !toolbar.hidden&&rect.height>0&&rect.top<=inset?Math.max(0,rect.bottom):0;
+}
 function readingDisplayCueNode(id){
  return [...document.querySelectorAll(readingMode==='passages'?'#passage-body .passage-original .passage-cue':'#transcript .segment')].find(node=>(node.dataset.cueId||node.dataset.segmentId)===id);
 }
@@ -3710,7 +3714,7 @@ function setReadingDisplayLanguage(target){
  const doc=active();if(!doc||!contentIngressAllowed(doc)||Coconut.isAudioProject(doc))return;
  if(target&&!Array.from($('translation-view').options).some(option=>option.value===target))return;
  const sourceNodes=[...document.querySelectorAll(readingMode==='passages'?'#passage-body .passage-original .passage-cue':'#transcript .segment')];
- const toolbar=$('reading-display-control').getBoundingClientRect(),edge=Math.max(0,toolbar.top<=0?toolbar.bottom:0);
+ const edge=readingDisplayTopEdge();
  const node=sourceNodes.find(node=>{const rect=node.getBoundingClientRect();return rect.bottom>edge&&rect.top<(window.visualViewport?.height||innerHeight);})||readingDisplayCueNode(visibleReadingCue());
  const cueId=node?.dataset.cueId||node?.dataset.segmentId,top=node?.getBoundingClientRect().top;
  recordReadingDisplaySelection(doc);
@@ -4249,8 +4253,8 @@ document.addEventListener('focusin',event=>{
   if(!rect.width||!rect.height)return;
   const ring=(parseFloat(style.outlineWidth)||0)+(parseFloat(style.outlineOffset)||0)+2;
   const bounds={left:rect.left-ring,right:rect.right+ring,top:rect.top-ring,bottom:rect.bottom+ring};
-  const toolbar=$('reading-display-control'),bar=toolbar.getBoundingClientRect();
-  if(!toolbar.hidden&&bar.top<=0&&bar.bottom>0&&bounds.top<bar.bottom&&bounds.right>bar.left&&bounds.left<bar.right){window.scrollBy(0,Math.floor(bounds.top-bar.bottom-2));return;}
+  const toolbar=$('reading-mode-toolbar'),bar=toolbar.getBoundingClientRect(),edge=readingDisplayTopEdge();
+  if(edge&&bounds.top<edge&&bounds.right>bar.left&&bounds.left<bar.right){window.scrollBy(0,Math.floor(bounds.top-edge-2));return;}
   let ceiling=Infinity,occluded=false;
   for(const overlay of [$('reading-feedback'),$('media-dock')]){
    if(overlay.hidden||getComputedStyle(overlay).display==='none')continue;
@@ -4508,6 +4512,7 @@ function composeReadingHeader(){
 
 function applyReadingMode() {
  const audioOnly=Coconut.isAudioProject(active());
+ $('reading-mode-toolbar').hidden=audioOnly;
  updateReaderMediaVisibility(active());
  const summary=readingMode==='summary'&&!audioOnly;
  const passages=readingMode==='passages'&&!audioOnly;
