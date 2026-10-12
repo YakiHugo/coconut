@@ -569,9 +569,13 @@ body[data-demo="true"] #transcript { max-width: 100%; }
 
 /* Keep the real source within reach after its native player scrolls away. */
 .media-dock { position: fixed; z-index: 5; left: 268px; right: 44px; bottom: 16px; display: flex; align-items: center; gap: 12px; max-width: 1192px; margin: 0 auto; padding: 12px 14px; background: #282a2c; color: #fff; border: 1px solid #ffffff1a; border-radius: 16px; box-shadow: 0 12px 40px #1d171c30; }
-.media-dock button { flex-shrink: 0; min-height: 42px; background: #ffffff09; color: #f8f6f3; border-color: #ffffff20; font-size: 12px; }
+.media-dock button { flex-shrink: 0; min-width: 44px; min-height: 44px; white-space: nowrap; background: #ffffff09; color: #f8f6f3; border-color: #ffffff20; font-size: 12px; }
 .media-dock button:hover { background: #ffffff1c; border-color: #ffffff40; }
 .media-dock button:disabled { opacity: .6; }
+/* Keep keyboard focus inside each 44px target, clear of its neighbors. */
+.media-dock button:focus-visible { outline: 2px solid #ffd2b4; outline-offset: -4px; }
+.media-dock .dock-play:focus-visible { outline-color: #743716; }
+.dock-label-short { display: none; }
 .media-dock .dock-play { min-width: 60px; background: #fff0e6; border-color: #fff0e6; color: #4e3527; font-weight: 600; }
 .media-dock .dock-play:hover { background: #ffe0cd; }
 .dock-copy { min-width: 0; flex: 1; display: grid; gap: 2px; }
@@ -1060,10 +1064,13 @@ body[data-media-docked="true"] .reading-feedback:has(#save-warning-home .has-war
 #follow-playback, #dock-follow { min-height: 44px; min-width: 44px; }
 #follow-playback[aria-pressed="true"], #dock-follow[aria-pressed="true"] { border-color: var(--accent, #a95832); }
 #follow-playback[data-state="suspended"], #dock-follow[data-state="suspended"] { border-style: dashed; }
-@media (max-width: 420px) {
- .media-dock { gap: 5px; }
- .media-dock .dock-copy { display: none; }
- .media-dock button { flex: 1; min-width: 44px; padding-inline: 4px; }
+@media (max-width: 850px) {
+ /* At 320px: 276px inner width = 44+44+80+44+44 and four 5px gaps. */
+ .media-dock { display: grid; grid-template-columns: 44px 44px minmax(80px, 1.4fr) minmax(44px, 1fr) minmax(44px, 1fr); gap: 5px; padding: 9px; }
+ .media-dock .dock-copy, .media-dock .dock-label-full { display: none; }
+ .media-dock .dock-label-short { display: inline; }
+ .media-dock button, .media-dock .dock-play { min-width: 44px; min-height: 44px; padding: 7px 4px; font-size: 11px; }
+ .media-dock:has(#dock-locate[hidden]) { grid-template-columns: 44px 44px minmax(80px, 1.4fr) minmax(44px, 1fr); }
 }
 
 /* Browsing needs a real viewport, rather than half a screen mostly occupied by

@@ -3953,7 +3953,7 @@ $('follow-playback').onclick=toggleReadingFollow;$('dock-follow').onclick=toggle
 // our instant correction records its final position before async scroll events.
 // Capture runs before navigation removes a focused row or opens an editor.
 window.addEventListener('scroll',()=>{if(readingFollow&&!readingFollowMoving&&Math.abs(window.scrollY-readingFollow.scrollY)>1)suspendReadingFollow();},{passive:true});
-const followTransport='#reading-display-control,#passage-toggle-translation,#follow-playback,#dock-follow,#dock-play,#skip-back,#skip-forward,#playback-rate,audio,video';
+const followTransport='#reading-display-control,#passage-toggle-translation,#follow-playback,#dock-follow,#dock-play,#dock-rewind,#skip-back,#skip-forward,#playback-rate,audio,video';
 window.addEventListener('wheel',()=>suspendReadingFollow(),{capture:true,passive:true});
 window.addEventListener('touchstart',event=>{if(!event.target.closest?.(followTransport))suspendReadingFollow();},{capture:true,passive:true});
 document.addEventListener('pointerdown',event=>{if(!event.target.closest?.(followTransport))suspendReadingFollow();},true);
@@ -3964,7 +3964,11 @@ document.addEventListener('keydown',event=>{if(['ArrowUp','ArrowDown','PageUp','
 window.addEventListener('coconut-render',refreshReadingFollow);
 document.addEventListener('visibilitychange',()=>{if(document.hidden)suspendReadingFollow('页面已离开');});
 
-// The dock controls the existing source player; it never owns or starts media.
+// The dock controls the existing source player; it never creates another one.
+function dockRewindAvailable(){
+ const player=$('source-media').querySelector('audio,video');
+ return !!(workspace==='read'&&!$('reader-workspace').hidden&&!$('source-media').hidden&&contentIngressAllowed(active())&&!$('media-dock').closest('[inert]')&&!document.querySelector('dialog[open]')&&player&&!player.error&&Number.isFinite(player.duration)&&player.duration>0);
+}
 function refreshPlaybackDock(){
  refreshReadingFollow();
  const dock=$('media-dock'),player=$('source-media').querySelector('audio,video');
@@ -3973,6 +3977,9 @@ function refreshPlaybackDock(){
  if(!readingFollowMoving&&(!readingFollow||readingFollow.suspended)&&!visible&&!dock.hidden&&dock.contains(document.activeElement)&&player&&workspace==='read')player.focus({preventScroll:true});
  if(dock.hidden!==!visible)dock.hidden=!visible;
  if(document.body.dataset.mediaDocked!==String(visible))document.body.dataset.mediaDocked=String(visible);
+ // Modal/native-close barriers are checked when invoked; do not latch a paused
+ // player's button disabled after a dialog closes without another media event.
+ const rewindDisabled=!visible;if($('dock-rewind').disabled!==rewindDisabled)$('dock-rewind').disabled=rewindDisabled;
  if(!visible)return;
  // Time events need not rewrite unchanged labels or invalidate layout styles.
  const write=(id,value)=>{const node=$(id);if(node.textContent!==value)node.textContent=value;};
@@ -3983,7 +3990,11 @@ function refreshPlaybackDock(){
  if($('dock-play').getAttribute('aria-label')!==label)$('dock-play').setAttribute('aria-label',label);
  write('dock-current',Coconut.time(player.currentTime));write('dock-total',' / '+Coconut.time(player.duration));write('dock-rate',' · '+player.playbackRate+'×');
  const audioOnly=Coconut.isAudioProject(active());if($('dock-locate').hidden!==audioOnly)$('dock-locate').hidden=audioOnly;
- const cue=playbackSegment();if($('dock-locate').disabled!==!cue)$('dock-locate').disabled=!cue;write('dock-locate',cue?'定位原文':'此刻无字幕');
+ const cue=playbackSegment();if($('dock-locate').disabled!==!cue)$('dock-locate').disabled=!cue;
+ write('dock-locate-full',cue?'定位原文':'此刻无字幕');write('dock-locate-short',cue?'定位':'无字幕');
+ const locateLabel=cue?'定位当前播放的原文':'当前时间没有字幕';
+ if($('dock-locate').getAttribute('aria-label')!==locateLabel)$('dock-locate').setAttribute('aria-label',locateLabel);
+ if($('dock-locate').title!==locateLabel)$('dock-locate').title=locateLabel;
 }
 function schedulePlaybackDock(){
  if(dockFramePending)return;
@@ -3998,6 +4009,12 @@ $('dock-play').onclick=async()=>{
  try{if(player.ended){stopRepeating();player.currentTime=0;}await player.play();}
  catch(error){if(error?.name!=='AbortError'&&ownsPlaybackError())notice('媒体暂时无法播放，请回到播放器检查文件或重试。');}
  refreshPlaybackDock();
+};
+$('dock-rewind').onclick=()=>{
+ // Validate at action time: stale/retired controls cannot seek another workspace
+ // or bypass a native-close barrier or modal. Shared skip owns loop/preview exit.
+ if($('media-dock').hidden||!dockRewindAvailable())return;
+ skipPlayback(-10);refreshPlaybackDock();
 };
 $('media-dock').addEventListener('focusout',schedulePlaybackDock);
 $('dock-locate').onclick=()=>locateReadingPlayback();
