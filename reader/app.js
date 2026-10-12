@@ -4074,7 +4074,7 @@ function toggleRepeat(segment){
  const player=$("source-media").querySelector("audio,video");
  const range=timingRange(segment);
  if(!player || !range){$("repeat-status").textContent="请等待媒体加载，并确认片段时间在媒体范围内。";return;}
- stopRepeating();const target={key:active().key,doc:active(),attachment:browserMedia.get(active().key),player,id:segment.id,path:player.getAttribute("src"),start:range.start,end:range.end,expectedSeek:null};repeating=target;
+ stopRepeating();const target={key:active().key,doc:active(),attachment:browserMedia.get(active().key),player,id:segment.id,path:player.getAttribute("src"),start:range.start,end:range.end,expectedSeek:null,seekAcknowledged:false};repeating=target;
  try{seekRepeat(target);const pending=player.play();pending?.catch(()=>{if(repeating===target){stopRepeating();$("repeat-status").textContent="请先在播放器中开始播放，再循环此段。";}});}
  catch{stopRepeating();$("repeat-status").textContent="此媒体暂时无法循环播放。";return;}
  $("stop-repeat").hidden=false;$("repeat-status").textContent="循环 · "+Coconut.time(segment.start)+"–"+Coconut.time(segment.end);
@@ -4090,16 +4090,25 @@ function repeatTarget(player){
 }
 function seekRepeat(target){
  // Keep ownership until seeked: browsers queue seeking/seeked asynchronously.
- if(!target.player.seeking&&target.player.currentTime===target.start){target.expectedSeek=null;return;}
- target.expectedSeek=target.start;target.player.currentTime=target.start;
+ if(!target.player.seeking&&target.player.currentTime===target.start){target.expectedSeek=null;target.seekAcknowledged=false;return;}
+ target.expectedSeek=target.start;target.seekAcknowledged=false;target.player.currentTime=target.start;
 }
 function observeRepeatSeek(player,completed){
  const target=repeatTarget(player);if(!target)return;
- if(target.expectedSeek===null||Math.abs(player.currentTime-target.expectedSeek)>REPEAT_SEEK_TOLERANCE){stopRepeating();return;}
- if(completed)target.expectedSeek=null;
+ if(target.expectedSeek===null){stopRepeating();return;}
+ if(!completed){
+  // Only the first near-target seeking acknowledges this owned request. A new
+  // seeking event after that is user takeover, even at the same media time.
+  if(target.seekAcknowledged||Math.abs(player.currentTime-target.expectedSeek)>REPEAT_SEEK_TOLERANCE){stopRepeating();return;}
+  target.seekAcknowledged=true;return;
+ }
+ // Playback can advance before queued seeked delivery. Complete the matched
+ // transaction, rather than measuring its running clock against the old target.
+ if(!target.seekAcknowledged||player.seeking){stopRepeating();return;}
+ target.expectedSeek=null;target.seekAcknowledged=false;
 }
 function repeatPlayback(ended=false,player=$('source-media').querySelector('audio,video')){
- const target=repeatTarget(player);if(!target||player.seeking)return;
+ const target=repeatTarget(player);if(!target||player.seeking||target.expectedSeek!==null)return;
  // Native clocks can round an owned seek just below a fractional mapped start.
  // Use the same tolerance as its seek acknowledgement; later native seeks still
  // retire ownership unconditionally once expectedSeek has been cleared.

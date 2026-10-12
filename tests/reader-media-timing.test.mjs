@@ -60,7 +60,7 @@ test('draft alignment, bounded preview and return preserve physical listening wh
  await $('media-timing-return').onclick();assert.equal(p.currentTime,40);assert.equal(p.paused,true);
  await $('media-timing-save').onclick();assert.match($('media-timing-status').textContent,/已保存/);assert.equal(doc.media_timing.offset,2);
  p.currentTime=11;assert.equal(w.localTest.cue(),undefined);p.currentTime=13;assert.equal(w.localTest.cue().id,'a');
- w.localTest.repeat(doc.segments[0]);assert.equal(p.currentTime,12);p.currentTime=14;p.dispatchEvent(new w.Event('timeupdate'));assert.equal(p.currentTime,12);$('stop-repeat').click();
+ w.localTest.repeat(doc.segments[0]);assert.equal(p.currentTime,12);p.dispatchEvent(new w.Event('seeking'));p.dispatchEvent(new w.Event('seeked'));p.currentTime=14;p.dispatchEvent(new w.Event('timeupdate'));assert.equal(p.currentTime,12);$('stop-repeat').click();
  $('mode-transcript').click();const seek=$('transcript').querySelector('.segment .time button');seek.click();assert.equal(p.currentTime,12);
  p.currentTime=40;draft(env,-11);$('media-timing-preview').click();assert.equal(p.currentTime,40);assert.match($('media-timing-status').textContent,/无法试听/);
  draft(env,111);$('media-timing-preview').click();assert.equal(p.currentTime,40);
@@ -187,5 +187,37 @@ test('loop lower-bound tolerance stops just outside30ms and retains the exact bo
   begin();clock=start-.03;p.dispatchEvent(new w.Event('timeupdate'));assert.equal($('stop-repeat').hidden,false,'exact30ms lower boundary uses the existing owned-seek tolerance');
   clock=start-.030001;p.dispatchEvent(new w.Event('timeupdate'));assert.equal($('stop-repeat').hidden,true);assert.equal(clock,start-.030001);
   begin();p.setAttribute('src','blob:different-current-source');p.dispatchEvent(new w.Event('timeupdate'));assert.equal($('stop-repeat').hidden,true,'a matching clock cannot retain an invalid source owner');
+ }finally{await env.w.happyDOM.close();}
+});
+
+
+test('a matched owned seeking completes after playback advances without extra media commands',async()=>{
+ for(const rate of [1,1.5,2])for(const advance of [.033714,.12]){
+  const env=setup();try{
+   const {w,$}=env,p=await open(env),cue=w.localTest.active().segments[0];cue.start=.125;cue.end=20;p.playbackRate=rate;let plays=0;const play=p.play;p.play=()=>{plays++;return play();};
+   w.localTest.repeat(cue);p.dispatchEvent(new w.Event('seeking'));p.currentTime=.125+advance;p.dispatchEvent(new w.Event('timeupdate'));p.dispatchEvent(new w.Event('seeked'));
+   assert.equal($('stop-repeat').hidden,false);assert.equal(p.currentTime,.125+advance);assert.equal(p.paused,false);assert.equal(p.playbackRate,rate);assert.equal(plays,1);
+  }finally{await env.w.happyDOM.close();}
+ }
+});
+
+test('a second native seeking takes over an acknowledged but unfinished loop seek even at the same clock',async()=>{
+ for(const paused of [false,true])for(const delta of [0,-.001,.001]){
+  const env=setup();try{
+   const {w,$}=env,p=await open(env),cue=w.localTest.active().segments[0];let plays=0;const play=p.play;p.play=()=>{plays++;return play();};
+   w.localTest.repeat(cue);if(paused)p.pause();p.dispatchEvent(new w.Event('seeking'));p.currentTime=cue.start+delta;p.dispatchEvent(new w.Event('seeking'));
+   assert.equal($('stop-repeat').hidden,true);p.dispatchEvent(new w.Event('seeked'));assert.equal($('stop-repeat').hidden,true);assert.equal(p.currentTime,cue.start+delta);assert.equal(p.paused,paused);assert.equal(plays,1);
+  }finally{await env.w.happyDOM.close();}
+ }
+});
+
+test('owned wraps wait for their completion and unacknowledged or overtaken seeked cannot claim ownership',async()=>{
+ const env=setup();try{
+  const {w,$}=env,p=await open(env),cue=w.localTest.active().segments[0];let busy=false;Object.defineProperty(p,'seeking',{configurable:true,get:()=>busy});
+  w.localTest.repeat(cue);p.dispatchEvent(new w.Event('seeking'));p.currentTime=cue.end+.05;p.dispatchEvent(new w.Event('timeupdate'));assert.equal(p.currentTime,cue.end+.05,'no second request before queued completion');
+  p.dispatchEvent(new w.Event('seeked'));assert.equal($('stop-repeat').hidden,false);p.dispatchEvent(new w.Event('timeupdate'));assert.equal(p.currentTime,cue.start);
+  p.dispatchEvent(new w.Event('seeking'));p.currentTime=cue.start+.05;p.dispatchEvent(new w.Event('seeked'));assert.equal($('stop-repeat').hidden,false,'the next owned wrap has an independent acknowledgement');
+  $('stop-repeat').click();p.currentTime=40;w.localTest.repeat(cue);p.dispatchEvent(new w.Event('seeked'));assert.equal($('stop-repeat').hidden,true,'completion without a seeking acknowledgement is not owned');
+  p.currentTime=40;w.localTest.repeat(cue);p.dispatchEvent(new w.Event('seeking'));busy=true;p.dispatchEvent(new w.Event('seeked'));assert.equal($('stop-repeat').hidden,true,'an old completion cannot swallow a new in-progress native seek');
  }finally{await env.w.happyDOM.close();}
 });
