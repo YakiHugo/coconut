@@ -15,7 +15,7 @@ const MIME = {'.png':'image/png','.html':'text/html; charset=utf-8','.js':'text/
 const MAX_BODY = 1024 * 1024;
 export const CSP = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self'; img-src 'self' data: blob:; media-src 'self' blob:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'";
 
-export function createBridge({readerDirectory = path.resolve(ROOT,'../reader'), providers = createProviders(), podcastSources = createPodcastSources(), captionService = null} = {}) {
+export function createBridge({readerDirectory = path.resolve(ROOT,'../reader'), providers = createProviders(), podcastSources = createPodcastSources(), captionService = null, localMediaService = null} = {}) {
   const translate = createTranslator(providers);
   const capabilities=Object.freeze({...CAPABILITIES,caption_import:captionService?.available===true});
   const active = new Set();
@@ -36,6 +36,7 @@ export function createBridge({readerDirectory = path.resolve(ROOT,'../reader'), 
     const controller = new AbortController(); active.add(controller);
     res.on('close',()=>{ if (!res.writableEnded) controller.abort(); active.delete(controller); });
     try {
+      if (localMediaService && await localMediaService.handle(req,res,pathname)) return;
       if (req.method === 'GET' || req.method === 'HEAD') {
         if (pathname === '/api/health') return json(200,{local_worker:false,runtime:'desktop-bridge',paid_processing:false,max_upload_bytes:0,capabilities});
         if (pathname === '/api/language-tools' && req.method === 'GET') return json(200,{translation_models:[],local_translation:false,capabilities,

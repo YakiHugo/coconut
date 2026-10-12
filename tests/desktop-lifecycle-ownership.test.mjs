@@ -15,7 +15,7 @@ function section(start,end){
 }
 // Evaluate verbatim production bodies. Only Electron/OS boundaries are fakes;
 // assertions below run real main-process coordination and real renderer code.
-const factory=new Function('deps',`const {window,app,updater,prepareInstall,dialog,path,process,createCloseCoordinator,createLifecycleOwnership,captionHelper,server}=deps;
+const factory=new Function('deps',`const {window,app,updater,prepareInstall,dialog,path,process,createCloseCoordinator,createLifecycleOwnership,captionHelper,server,localMediaService}=deps;
 let quitting=false,quitReady=false,closeCoordinator,updateTimer,updateInterval;const startupAbort=new AbortController();
 ${section('function finishQuit(){','\nfunction ordinaryWebLink')}
 ${section('    const lifecycle=createLifecycleOwnership();','    // Native close')}
@@ -29,7 +29,7 @@ async function until(predicate,label){
  for(let i=0;i<100;i++){if(predicate())return;await turn();}
  assert.fail('Missing expected boundary: '+label);
 }
-function setup(t){
+function setup(t,{nativeMedia=false}={}){
  t.mock.timers.enable({apis:['setTimeout','Date'],now:1800000000000});
  const w=new Window({url:'https://coconut.example/'}),trace=[],executions=[],queue=[];
  Object.defineProperty(w,'Date',{value:Date});
@@ -43,7 +43,7 @@ function setup(t){
   return new Promise(resolve=>writes.pending.push({signal:context.signal,settle:()=>resolve(adapter.write(value,context)),fail:()=>resolve({ok:false,status:'failed',error:{code:'quota'}})}));
  }}};
  w.eval(['app','language','podcasts'].map(file=>read(`reader/${file}.js`)).join('\n')+'\nlet sourceSubmitting=false,sourceCaptionRequest=null;\n'+read('reader/updates.js')+'\nwindow.ownershipTest={closing:()=>readerClosing,revision:()=>localImportRevision,save:()=>commitDocument(active()),flush:()=>libraryStore.flush(),status:()=>libraryStore.status()};');
- const shutdown=deferred(),stage=deferred(),start=deferred();
+ const shutdown=deferred(),mediaShutdown=deferred(),stage=deferred(),start=deferred();
  let paused=false,holdNext=null,runtime,closeDecision=false,updateDecision=1,storageFlush=null;
  const classify=source=>source.includes('coconutPrepareClose')?source.match(/coconutPrepareClose\("([^"]+)"/)?.[1]:source.includes('coconutPrepareUpdate')?'update:'+source.match(/coconutPrepareUpdate\((true|false)/)?.[1]:'unknown';
  const execute=source=>{
@@ -57,11 +57,11 @@ function setup(t){
  const closeRequests=[];
  const app={isPackaged:true,getVersion:()=> 'fixture',quit(){trace.push('app.quit');if(!runtime.quitReady)closeRequests.push(runtime.closeCoordinator.request());}};
  const dialog={showMessageBox:async(_window,options)=>{trace.push('dialog '+options.title);return {response:options.title==='安装 Coconut 更新'?updateDecision:options.title==='关闭 Coconut？'?(closeDecision?1:0):0};}};
- runtime=factory({window:{isDestroyed:()=>false,webContents:{executeJavaScript:execute,session:{flushStorageData(){trace.push('flushStorageData');return storageFlush?.promise;}}}},app,updater,prepareInstall:()=>{trace.push('prepareInstall');return stage.promise;},dialog,path,process:{resourcesPath:'/Applications/Coconut.app/Contents/Resources',arch:'arm64'},createCloseCoordinator,createLifecycleOwnership:()=>createLifecycleOwnership({timeoutMs}),captionHelper:{shutdown(){trace.push('helper.shutdown');return shutdown.promise;}},server:{shutdown(){trace.push('server.shutdown');}}});
+ runtime=factory({window:{isDestroyed:()=>false,webContents:{executeJavaScript:execute,session:{flushStorageData(){trace.push('flushStorageData');return storageFlush?.promise;}}}},app,updater,prepareInstall:()=>{trace.push('prepareInstall');return stage.promise;},dialog,path,process:{resourcesPath:'/Applications/Coconut.app/Contents/Resources',arch:'arm64'},createCloseCoordinator,createLifecycleOwnership:()=>createLifecycleOwnership({timeoutMs}),localMediaService:nativeMedia?{shutdown(){trace.push('media.shutdown');return mediaShutdown.promise;}}:undefined,captionHelper:{shutdown(){trace.push('helper.shutdown');return shutdown.promise;}},server:{shutdown(){trace.push('server.shutdown');}}});
  const install={async discard(){trace.push('install.discard');},start(){trace.push('install.start');return start.promise;}};
  const drain=async()=>{paused=false;while(queue.length){queue.shift().run();await turn();}};
- t.after(async()=>{stage.resolve(install);start.resolve();shutdown.resolve();await drain();await turn();await w.happyDOM.close();});
- return {w,$:id=>w.document.getElementById(id),trace,executions,queue,runtime,updater,stage,start,shutdown,install,closeRequests,writes,
+ t.after(async()=>{stage.resolve(install);start.resolve();shutdown.resolve();mediaShutdown.resolve();await drain();await turn();await w.happyDOM.close();});
+ return {w,$:id=>w.document.getElementById(id),trace,executions,queue,runtime,updater,stage,start,shutdown,mediaShutdown,install,closeRequests,writes,
   holdStorage(){return storageFlush=deferred();},
   result:()=>({inert:!!w.document.body.inert,closing:w.ownershipTest.closing(),quitting:runtime.quitting,quitReady:runtime.quitReady,status:updater.state.status}),
   freeze(){paused=true;},hold(mode){holdNext=mode;},drain,
@@ -228,4 +228,11 @@ for(const failure of ['failure','timeout'])test(`staging-time content ${failure}
  assert.equal(s.trace.includes('install.start'),false);assert.equal(s.trace.includes('flushStorageData'),false);assert.equal(s.result().closing,false);assert.equal(s.result().status,'ready');
  if(failure==='timeout'){s.writes.pending[0].settle();await s.w.ownershipTest.flush();await turn();}assert.equal(s.trace.includes('install.start'),false);
  s.writes.held=false;await assertEditable(s,'Edit after failed update writer');
+});
+
+
+test('native quit waits for pending private-reference shutdown as well as helper cleanup',async t=>{
+ const s=setup(t,{nativeMedia:true});assert.equal(await s.runtime.closeCoordinator.request(),true);
+ assert.ok(s.trace.includes('media.shutdown'));s.shutdown.resolve();await turn();assert.equal(s.result().quitReady,false);
+ s.mediaShutdown.resolve();await until(()=>s.result().quitReady,'native media shutdown completion');assert.equal(s.trace.filter(event=>event==='app.quit').length,1);
 });

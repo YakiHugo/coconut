@@ -10,10 +10,11 @@ import { Updater } from './updater.mjs';
 import { prepareInstall } from './update-install.mjs';
 import { createCloseCoordinator, createLifecycleOwnership } from './close-coordinator.mjs';
 import { createFileMenu } from './file-menu.mjs';
+import { createLocalMediaService } from './local-media.mjs';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const PORT = 47831; // Stable origin preserves the local bookshelf between launches.
-let server, window, captionHelper, updater, updateTimer, updateInterval;
+let server, window, captionHelper, updater, updateTimer, updateInterval, localMediaService;
 const startupAbort=new AbortController();
 let quitting=false,quitReady=false,closeCoordinator;
 function finishQuit(){
@@ -22,9 +23,8 @@ function finishQuit(){
  clearTimeout(updateTimer);clearInterval(updateInterval);updater?.cancel();
  startupAbort.abort();server?.shutdown();
  const finish=()=>{if(quitReady)return;quitReady=true;app.quit();};
- if(!captionHelper){finish();return;}
  const failSafe=setTimeout(finish,5000);
- Promise.resolve().then(()=>captionHelper.shutdown()).catch(()=>{}).finally(()=>{clearTimeout(failSafe);finish();});
+ Promise.allSettled([localMediaService?.shutdown(),captionHelper?.shutdown()]).finally(()=>{clearTimeout(failSafe);finish();});
 }
 function ordinaryWebLink(value) {
   try { const url = new URL(value); return ['https:','http:'].includes(url.protocol) && !url.username && !url.password; } catch { return false; }
@@ -60,7 +60,8 @@ else {
       if(startupAbort.signal.aborted)return;
       if(status.ready)captionService=createCaptionService({helper:captionHelper,readerDirectory,enabledProviders:['x']});
     }
-    server = await startBridge({port:PORT,readerDirectory,captionService});
+    localMediaService=createLocalMediaService({userDataDirectory:app.getPath('userData'),readerDirectory});
+    server = await startBridge({port:PORT,readerDirectory,captionService,localMediaService});
     if(startupAbort.signal.aborted){server.shutdown();return;}
     const origin = `http://127.0.0.1:${PORT}`;
     window = new BrowserWindow({width:1280,height:880,minWidth:780,minHeight:620,show:process.env.COCONUT_SMOKE_TEST !== '1',title:'Coconut',icon:windowIcon,
@@ -98,7 +99,7 @@ else {
       const current=()=>{if(!lifecycle.current(attempt))throw new Error('已有关闭操作，安装已暂停。');};
       try{
         if(!await safe(false))throw new Error('请先完成编辑、暂停播放和处理任务，并确保书架已保存，再安装更新。');
-        const confirmation=await dialog.showMessageBox(window,{type:'question',title:'安装 Coconut 更新',message:`安装 ${updater.release.version} 并重启？`,detail:'书架已保存。未签名应用可能需要 macOS 安全确认；旧应用会保留在 Applications 中。书架、笔记和设置不会移动。重启后本地媒体需重新选择。',buttons:['稍后','安装并重启'],defaultId:0,cancelId:0});
+        const confirmation=await dialog.showMessageBox(window,{type:'question',title:'安装 Coconut 更新',message:`安装 ${updater.release.version} 并重启？`,detail:'书架已保存。未签名应用可能需要 macOS 安全确认；旧应用会保留在 Applications 中。书架、笔记和设置不会移动。已在这台电脑记住且未改变的原文件可重新载入；其他本地媒体需重新选择。',buttons:['稍后','安装并重启'],defaultId:0,cancelId:0});
         current();
         if(confirmation.response!==1)return updater.change({status:'ready',message:'已推迟安装，下载保留，可以稍后重试。'});
         updater.change({status:'installing',message:'正在验证应用结构并准备安装…'});
@@ -123,7 +124,7 @@ else {
       }
     }
     ipcMain.handle('coconut:update',async(event,action,value)=>{
-      if(event.sender!==window.webContents||event.senderFrame!==window.webContents.mainFrame||![origin+'/',origin+'/index.html'].includes(event.senderFrame.url))throw new Error('更新请求来源无效');
+      if(event.sender!==window.webContents||event.senderFrame!==window.webContents.mainFrame||![origin+'/',origin+'/index.html'].includes(event.senderFrame.url.split('#')[0]))throw new Error('更新请求来源无效');
       if(action==='state')return updater.snapshot();
       if(action==='check')return updater.check({manual:true});
       if(action==='download')return updater.download();
@@ -131,6 +132,16 @@ else {
       if(action==='developer')return updater.setDeveloper(value);
       if(action==='install')return installUpdate();
       throw new Error('不支持的更新操作');
+    });
+    ipcMain.handle('coconut:local-media',async(event,action,value)=>{
+      if(event.sender!==window.webContents||event.senderFrame!==window.webContents.mainFrame||![origin+'/',origin+'/index.html'].includes(event.senderFrame.url.split('#')[0]))throw new Error('原文件请求来源无效');
+      if(quitting)return {status:'unavailable'};
+      if(action==='remember')return localMediaService.remember(value?.owner,value?.path,value?.identity);
+      if(action==='resolve')return localMediaService.resolve(value?.owner);
+      if(action==='forget')return localMediaService.forget(value?.owner);
+      if(action==='reconcile')return localMediaService.reconcile(value?.owners);
+      if(action==='release')return localMediaService.release(value?.token);
+      throw new Error('不支持的原文件操作');
     });
     const {bind:bindFileMenu,findItem,...fileMenu}=createFileMenu({window,origin,blocked:()=>quitting||lifecycle.busy()});
     const applicationMenu=Menu.buildFromTemplate([{label:'Coconut',submenu:[{role:'about'},{label:'检查更新…',click:()=>{void updater.check({manual:true});void window.webContents.executeJavaScript('document.getElementById("app-updates").open=true');}},{type:'separator'},{role:'quit'}]},fileMenu,{id:'coconut-edit-menu',role:'editMenu'},{role:'windowMenu'}]);
@@ -142,9 +153,11 @@ else {
     bindFileMenu(Menu.getApplicationMenu());
     window.webContents.session.setPermissionRequestHandler((_contents,_permission,callback)=>callback(false));
     window.webContents.session.setPermissionCheckHandler(()=>false);
+    window.webContents.on('did-start-navigation',(_event,_url,isInPlace,isMainFrame)=>{if(isMainFrame&&!isInPlace)localMediaService.releaseAll();});
+    window.webContents.on('render-process-gone',()=>localMediaService.releaseAll());
     window.webContents.on('will-attach-webview',event=>event.preventDefault());
     window.webContents.on('will-navigate',(event,url)=>{
-      if (url !== origin+'/' && url !== origin+'/index.html') event.preventDefault();
+      if (![origin+'/',origin+'/index.html'].includes(url.split('#')[0])) event.preventDefault();
     });
     window.webContents.setWindowOpenHandler(({url})=>{
       // Only a normal web link is handed to the system browser. Never custom schemes or file paths.

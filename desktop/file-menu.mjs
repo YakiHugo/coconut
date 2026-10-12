@@ -2,7 +2,7 @@
 export function createFileMenu({window,origin,blocked=()=>false,now=Date.now}) {
  let generation=0,ready=false;
  const live=()=>!window.isDestroyed()&&!window.webContents.isDestroyed();
- const trusted=()=>live()&&[origin+'/',origin+'/index.html'].includes(window.webContents.getURL());
+ const trusted=()=>live()&&[origin+'/',origin+'/index.html'].includes(window.webContents.getURL().split('#')[0]);
  const commands=[['import-transcript','导入文字稿…','CmdOrCtrl+O'],
   ['open-local-media','打开本地音频或视频…','CmdOrCtrl+Shift+O'],
   ['backup-library','导出整个书架的完整备份…','CmdOrCtrl+Shift+S'],

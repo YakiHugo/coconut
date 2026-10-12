@@ -1426,3 +1426,4 @@ body[data-short-reading-compact="true"] #language-panel > summary { min-height:4
 body[data-media-docked="true"] #reader-workspace #transcript .segment { scroll-margin-top: max(24px, var(--reading-sticky-inset, 24px)); }
 body[data-media-docked="true"] #reader-workspace #passage-workspace .passage { scroll-margin-top: max(20px, var(--reading-sticky-inset, 20px)); }
 body[data-media-docked="true"] #reader-workspace #reading-context:not([hidden]) + #passage-workspace .passage { scroll-margin-top: max(112px, var(--reading-sticky-inset, 20px)); }
+.remember-local-media{margin:10px 0}.remember-local-media>label{display:inline-flex;align-items:center;gap:6px}.remember-local-media>button{margin-left:8px}.remember-local-media input{width:auto}
