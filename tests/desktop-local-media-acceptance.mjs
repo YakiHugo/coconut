@@ -10,6 +10,7 @@ import {execFileSync} from 'node:child_process';
 import {_electron as electron,expect} from '@playwright/test';
 import {authoredAudioFixture} from './helpers/authored-audio-fixture.mjs';
 import {installDockViewportObserver} from './helpers/dock-viewport-observer.mjs';
+import {installNativeMediaViewportProof,nativeMediaAnchorIsStable,nativeMediaPhaseDelta} from './helpers/native-media-viewport.mjs';
 import {installStorageAssertions,readerReady} from './helpers/browser-storage.mjs';
 const root=fileURLToPath(new URL('../',import.meta.url)),origin='http://127.0.0.1:47831';
 let temporary,application,page,executable,version,stage='configuration',forbidden=0,pageErrors=0;
@@ -57,6 +58,11 @@ async function releaseHeldNativeDockWrites(){
  if(!page||page.isClosed())return;
  await page.evaluate(()=>{const writes=window.__nativeDockWrites;if(!writes)return;writes.hold=false;for(const release of writes.pending.splice(0))release();});
 }
+async function settleNativeDockLayout(){
+ await page.evaluate(()=>{window.__nativeDockStable={last:null,count:0};});
+ await page.waitForFunction(()=>{const state=window.__nativeDockStable,value=JSON.stringify([innerWidth,innerHeight,scrollY,...['.segment.selected','#notes-panel','#reading-mode-toolbar','#media-dock'].map(selector=>{const r=document.querySelector(selector).getBoundingClientRect();return [r.top,r.bottom,r.height];})]);state.count=state.last===value?state.count+1:0;state.last=value;return state.count>=6;},null,{polling:'raf'});
+}
+function noteControlsVisible(view){return view.note.visible&&view.close.visible&&view.rewind.visible&&view.note.rect.bottom<view.rewind.rect.top&&view.notePanel.bottom<view.rewind.rect.top;}
 async function expectNoPlayer(){
  // A no-player assertion before native initialization/resolve settles could
  // pass and then attach incorrectly after the test had already moved on.
@@ -91,54 +97,46 @@ async function rememberedDockAcceptance(audioPath){
  await page.locator('#source-media audio').evaluate(player=>{player.currentTime=player.duration;});
  await page.waitForFunction(()=>{const p=document.querySelector('#source-media audio');return !p.seeking&&p.ended&&p.paused&&document.getElementById('resume-listening').hidden;});
  stage='native_remembered_dock_wait_for_reachable_control';
- await expect(page.locator('#dock-rewind')).toBeVisible();
+ await expect(page.locator('#dock-rewind')).toBeVisible();await settleNativeDockLayout();await page.evaluate(installNativeMediaViewportProof);
+ const minimum=await page.evaluate(()=>window.__nativeDockReadingView(window.__nativeDockSourceAnchor()));dockReceipts.push({stage:'remembered-minimum-note-controls',...minimum});
+ check('native_remembered_minimum_window_note_close_and_dock_are_unobscured',minimum.viewport.width===780&&minimum.viewport.height===620&&noteControlsVisible(minimum));
+ // At the supported minimum, the legitimate note overlay can cover the source.
+ // Use one fixed taller supported window for simultaneous source + editor proof,
+ // not repeated resizing until an assertion happens to pass. Narrow coverage above
+ // and in the unchanged dock/IME suite remains separate and explicit.
+ await application.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].setContentSize(780,800));
+ await page.waitForFunction(()=>innerWidth===780&&innerHeight===800);await settleNativeDockLayout();
  // Hold the existing adapter, then release an actual IndexedDB transaction.
  await page.evaluate(()=>{const adapter=CoconutStorageBootstrap.result.adapter,write=adapter.write.bind(adapter);window.__nativeDockWrites={pending:[],hold:true,completed:0};adapter.write=(...args)=>window.__nativeDockWrites.hold?new Promise((resolve,reject)=>window.__nativeDockWrites.pending.push(()=>write(...args).then(value=>{window.__nativeDockWrites.completed++;resolve(value);},reject))):write(...args);});
  await page.locator('#note').fill('Authored remembered dock note pending receipt');await page.locator('#note').evaluate(node=>node.setSelectionRange(3,12,'backward'));
  stage='native_remembered_dock_hold_note_receipt';
  await page.waitForFunction(()=>window.__nativeDockWrites.pending.length>0);
- await page.evaluate(()=>{window.__nativeDockStable={last:null,count:0};});
- await page.waitForFunction(()=>{const state=window.__nativeDockStable,value=JSON.stringify([scrollY,document.querySelector('.segment.selected').getBoundingClientRect().top]);state.count=state.last===value?state.count+1:0;state.last=value;return state.count>=6;},null,{polling:'raf'});
- await page.evaluate(installDockViewportObserver);
- await page.evaluate(()=>{
-  // Bind one actually visible authored source glyph to its text node/offset.
-  // Raw document scrolling may correctly anchor this glyph during header reflow.
-  window.__nativeDockSourceAnchor=()=>{
-   const toolbar=document.getElementById('reading-mode-toolbar').getBoundingClientRect(),dock=document.getElementById('media-dock').getBoundingClientRect(),top=Math.max(0,toolbar.bottom),bottom=Math.min(innerHeight,dock.top);
-   for(const words of document.querySelectorAll('#transcript .words')){
-    const box=words.getBoundingClientRect();if(box.bottom<=top||box.top>=bottom)continue;
-    const walker=document.createTreeWalker(words,NodeFilter.SHOW_TEXT);let node;
-    while(node=walker.nextNode())for(let offset=0;offset<node.length;offset++){
-     if(!node.data[offset].trim())continue;const range=document.createRange();range.setStart(node,offset);range.setEnd(node,offset+1);const rect=range.getBoundingClientRect();
-     if(rect.width<=0||rect.height<=0||rect.top<top||rect.bottom>bottom||rect.left<0||rect.right>innerWidth)continue;
-     if(!words.contains(document.elementFromPoint(rect.left+rect.width/2,rect.top+rect.height/2)))continue;
-     return {node,offset,text:node.data,range,x:rect.left,y:rect.top,words,segment:words.closest('.segment'),cue:words.closest('.segment').dataset.segmentId};
-    }
-   }return null;
-  };
-  window.__nativeDockCheckAnchor=a=>{
-   if(!a)return {valid:false};const r=a.range.getBoundingClientRect(),words=a.node.parentElement?.closest('#transcript .words'),toolbar=document.getElementById('reading-mode-toolbar').getBoundingClientRect(),dock=document.getElementById('media-dock').getBoundingClientRect();
-   return {valid:true,connected:a.node.isConnected,identitySame:a.range.startContainer===a.node&&a.range.endContainer===a.node&&a.range.startOffset===a.offset&&a.range.endOffset===a.offset+1,textSame:a.node.data===a.text,ownerSame:words===a.words&&words?.closest('.segment')===a.segment&&a.segment.dataset.segmentId===a.cue,visible:r.width>0&&r.height>0&&r.top>=Math.max(0,toolbar.bottom)&&r.bottom<=Math.min(innerHeight,dock.top)&&r.left>=0&&r.right<=innerWidth&&!!words?.contains(document.elementFromPoint(r.left+r.width/2,r.top+r.height/2)),cue:a.cue,offset:a.offset,before:{x:a.x,y:a.y},after:{x:r.left,y:r.top},xDelta:r.left-a.x,yDelta:r.top-a.y};
-  };
- });
+ await settleNativeDockLayout();
+ const preparation=await page.evaluate(()=>window.__nativeDockReadingPreparation());dockReceipts.push({stage:'remembered-reading-preparation',...preparation});
+ check('native_remembered_source_has_measured_unobscured_preparation_point',preparation.ready);
+ await page.mouse.move(preparation.point.x,preparation.point.y);await page.mouse.wheel(0,preparation.wheelDelta);await settleNativeDockLayout();
+ const preflight=await page.evaluate(()=>{window.__nativeDockPreparedAnchor=window.__nativeDockSourceAnchor();return window.__nativeDockReadingView(window.__nativeDockPreparedAnchor);});dockReceipts.push({stage:'remembered-reading-preflight',...preflight});
+ check('native_remembered_source_and_note_are_really_visible_before_pointer',preflight.viewport.width===780&&preflight.viewport.height===800&&noteControlsVisible(preflight)&&nativeMediaAnchorIsStable(preflight.sourceAnchor));
+ await page.evaluate(installDockViewportObserver,{readingAnchors:true});
  const point=await page.locator('#dock-rewind').evaluate(button=>{
   const r=button.getBoundingClientRect();button.addEventListener('pointerdown',event=>{
    const player=document.querySelector('#source-media audio'),note=document.getElementById('note'),status=document.getElementById('remember-local-media-status');
-   window.__nativeDockBefore={trusted:event.isTrusted,anchor:window.__nativeDockSourceAnchor(),player,attachment:browserMedia.get(active().key),note,value:note.value,start:note.selectionStart,end:note.selectionEnd,direction:note.selectionDirection,status:status.firstChild,statusText:status.textContent,time:player.currentTime,paused:player.paused,rate:player.playbackRate,volume:player.volume,y:scrollY,top:document.querySelector('.segment.selected').getBoundingClientRect().top,header:document.getElementById('episode-media').getBoundingClientRect().height,headerBottom:document.getElementById('episode-media').getBoundingClientRect().bottom,headerHidden:document.getElementById('episode-media').hidden,resume:document.querySelector('.listening-progress').getBoundingClientRect().height};
+   window.__nativeDockBefore={trusted:event.isTrusted,anchor:window.__nativeDockPreparedAnchor,sourceAtPointer:window.__nativeDockCheckAnchor(window.__nativeDockPreparedAnchor),player,attachment:browserMedia.get(active().key),note,value:note.value,start:note.selectionStart,end:note.selectionEnd,direction:note.selectionDirection,status:status.firstChild,statusText:status.textContent,time:player.currentTime,paused:player.paused,rate:player.playbackRate,volume:player.volume,y:scrollY,top:document.querySelector('.segment.selected').getBoundingClientRect().top,header:document.getElementById('episode-media').getBoundingClientRect().height,headerBottom:document.getElementById('episode-media').getBoundingClientRect().bottom,headerHidden:document.getElementById('episode-media').hidden,resume:document.querySelector('.listening-progress').getBoundingClientRect().height};
   },{capture:true,once:true});button.addEventListener('click',event=>{window.__nativeDockTrustedClick=event.isTrusted;},{capture:true,once:true});return {x:r.x+r.width/2,y:r.y+r.height/2,reachable:document.elementFromPoint(r.x+r.width/2,r.y+r.height/2)===button};
  });check('native_remembered_dock_pointer_is_reachable',point.reachable);await page.mouse.click(point.x,point.y);
  await page.waitForFunction(()=>{const p=document.querySelector('#source-media audio');return !p.seeking&&p.currentTime===50&&!document.getElementById('resume-listening').hidden;});await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));
  const receipt=await page.evaluate(()=>{
   const b=window.__nativeDockBefore,p=document.querySelector('#source-media audio'),n=document.getElementById('note'),status=document.getElementById('remember-local-media-status');
-  return {trusted:b.trusted&&window.__nativeDockTrustedClick,sourceAnchor:window.__nativeDockCheckAnchor(b.anchor),headerIsReal:!b.headerHidden&&b.header>0&&b.resume>=44&&b.headerBottom<=0,playerSame:p===b.player,attachmentSame:browserMedia.get(active().key)===b.attachment,time:p.currentTime,paused:p.paused&&b.paused,rateSame:p.playbackRate===b.rate,volumeSame:p.volume===b.volume,scrollDelta:scrollY-b.y,rowDelta:document.querySelector('.segment.selected').getBoundingClientRect().top-b.top,headerDelta:document.getElementById('episode-media').getBoundingClientRect().height-b.header,resumeDelta:document.querySelector('.listening-progress').getBoundingClientRect().height-b.resume,resumeVisible:!document.getElementById('resume-listening').hidden,noteSame:n===b.note&&n.value===b.value&&n.selectionStart===b.start&&n.selectionEnd===b.end&&n.selectionDirection===b.direction,statusSame:status.firstChild===b.status&&status.textContent===b.statusText,focus:document.activeElement.id,inset:getComputedStyle(document.documentElement).scrollPaddingBottom,viewport:{width:innerWidth,height:innerHeight}};
+  const layout={scrollY,header:document.getElementById('episode-media').getBoundingClientRect().height,rowTop:document.querySelector('.segment.selected').getBoundingClientRect().top};window.__dockViewportObserver.record('remembered-after-rewind');
+  return {layout,sourceAtPointer:b.sourceAtPointer,readingView:window.__nativeDockReadingView(b.anchor),trusted:b.trusted&&window.__nativeDockTrustedClick,sourceAnchor:window.__nativeDockCheckAnchor(b.anchor),headerIsReal:!b.headerHidden&&b.header>0&&b.resume>=44&&b.headerBottom<=0,playerSame:p===b.player,attachmentSame:browserMedia.get(active().key)===b.attachment,time:p.currentTime,paused:p.paused&&b.paused,rateSame:p.playbackRate===b.rate,volumeSame:p.volume===b.volume,scrollDelta:scrollY-b.y,rowDelta:document.querySelector('.segment.selected').getBoundingClientRect().top-b.top,headerDelta:document.getElementById('episode-media').getBoundingClientRect().height-b.header,resumeDelta:document.querySelector('.listening-progress').getBoundingClientRect().height-b.resume,resumeVisible:!document.getElementById('resume-listening').hidden,noteSame:n===b.note&&n.value===b.value&&n.selectionStart===b.start&&n.selectionEnd===b.end&&n.selectionDirection===b.direction,statusSame:status.firstChild===b.status&&status.textContent===b.statusText,focus:document.activeElement.id,inset:getComputedStyle(document.documentElement).scrollPaddingBottom,viewport:{width:innerWidth,height:innerHeight}};
  });dockReceipts.push({stage:'remembered-ended-rewind',...receipt});
- check('native_remembered_ended_rewind_keeps_visible_source_and_resume_row',receipt.trusted&&receipt.headerIsReal&&receipt.playerSame&&receipt.attachmentSame&&receipt.time===50&&receipt.paused&&receipt.rateSame&&receipt.volumeSame&&receipt.sourceAnchor.valid&&receipt.sourceAnchor.connected&&receipt.sourceAnchor.identitySame&&receipt.sourceAnchor.textSame&&receipt.sourceAnchor.ownerSame&&receipt.sourceAnchor.visible&&receipt.sourceAnchor.xDelta===0&&receipt.sourceAnchor.yDelta===0&&receipt.rowDelta===0&&receipt.resumeDelta===0&&receipt.resumeVisible&&receipt.noteSame&&receipt.statusSame&&receipt.focus==='dock-rewind');
+ check('native_remembered_ended_rewind_keeps_visible_source_and_resume_row',receipt.trusted&&receipt.headerIsReal&&receipt.playerSame&&receipt.attachmentSame&&receipt.time===50&&receipt.paused&&receipt.rateSame&&receipt.volumeSame&&nativeMediaAnchorIsStable(receipt.sourceAtPointer)&&nativeMediaAnchorIsStable(receipt.sourceAnchor)&&noteControlsVisible(receipt.readingView)&&receipt.rowDelta===0&&receipt.resumeDelta===0&&receipt.resumeVisible&&receipt.noteSame&&receipt.statusSame&&receipt.focus==='dock-rewind');
  await releaseHeldNativeDockWrites();await page.evaluate(()=>libraryStore.flush());await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));
  const savedReceipt=await page.evaluate(()=>{
   const b=window.__nativeDockBefore,n=document.getElementById('note'),status=document.getElementById('remember-local-media-status'),observer=window.__dockViewportObserver;observer.record('remembered-note-receipt');const evidence={events:observer.events,calls:observer.calls};observer.stop();
-  return {sourceAnchor:window.__nativeDockCheckAnchor(b.anchor),completed:window.__nativeDockWrites.completed,playerSame:document.querySelector('#source-media audio')===b.player,attachmentSame:browserMedia.get(active().key)===b.attachment,noteSame:n===b.note&&n.value===b.value&&n.selectionStart===b.start&&n.selectionEnd===b.end&&n.selectionDirection===b.direction,statusSame:status.firstChild===b.status&&status.textContent===b.statusText,scrollDelta:scrollY-b.y,rowDelta:document.querySelector('.segment.selected').getBoundingClientRect().top-b.top,headerDelta:document.getElementById('episode-media').getBoundingClientRect().height-b.header,focus:document.activeElement.id,evidence};
- });dockReceipts.push({stage:'remembered-note-receipt',...savedReceipt});
- check('native_remembered_note_receipt_keeps_exact_header_focus_and_viewport',savedReceipt.completed>0&&savedReceipt.playerSame&&savedReceipt.attachmentSame&&savedReceipt.noteSame&&savedReceipt.statusSame&&savedReceipt.sourceAnchor.valid&&savedReceipt.sourceAnchor.connected&&savedReceipt.sourceAnchor.identitySame&&savedReceipt.sourceAnchor.textSame&&savedReceipt.sourceAnchor.ownerSame&&savedReceipt.sourceAnchor.visible&&savedReceipt.sourceAnchor.xDelta===0&&savedReceipt.sourceAnchor.yDelta===0&&savedReceipt.rowDelta===0&&savedReceipt.headerDelta===0&&savedReceipt.focus==='dock-rewind'&&savedReceipt.evidence.calls.every(call=>!['scrollTo','scrollBy','scrollIntoView'].includes(call.type)));
+  return {layout:{scrollY,header:document.getElementById('episode-media').getBoundingClientRect().height,rowTop:document.querySelector('.segment.selected').getBoundingClientRect().top},readingView:window.__nativeDockReadingView(b.anchor),sourceAnchor:window.__nativeDockCheckAnchor(b.anchor),completed:window.__nativeDockWrites.completed,playerSame:document.querySelector('#source-media audio')===b.player,attachmentSame:browserMedia.get(active().key)===b.attachment,noteSame:n===b.note&&n.value===b.value&&n.selectionStart===b.start&&n.selectionEnd===b.end&&n.selectionDirection===b.direction,statusSame:status.firstChild===b.status&&status.textContent===b.statusText,scrollDelta:scrollY-b.y,rowDelta:document.querySelector('.segment.selected').getBoundingClientRect().top-b.top,headerDelta:document.getElementById('episode-media').getBoundingClientRect().height-b.header,focus:document.activeElement.id,evidence};
+ });savedReceipt.saveOnlyDelta=nativeMediaPhaseDelta(savedReceipt.layout,receipt.layout);dockReceipts.push({stage:'remembered-note-receipt',postRewindBaseline:receipt.layout,...savedReceipt});
+ check('native_remembered_note_receipt_keeps_exact_header_focus_and_viewport',savedReceipt.completed>0&&savedReceipt.playerSame&&savedReceipt.attachmentSame&&savedReceipt.noteSame&&savedReceipt.statusSame&&nativeMediaAnchorIsStable(savedReceipt.sourceAnchor)&&noteControlsVisible(savedReceipt.readingView)&&savedReceipt.rowDelta===0&&savedReceipt.saveOnlyDelta.headerDelta===0&&savedReceipt.saveOnlyDelta.scrollDelta===0&&savedReceipt.saveOnlyDelta.rowDelta===0&&savedReceipt.focus==='dock-rewind'&&savedReceipt.evidence.calls.every(call=>!['scrollTo','scrollBy','scrollIntoView'].includes(call.type)));
  check('native_remembered_note_has_real_saved_receipt',await page.evaluate(async()=>{const saved=(await readPersistedLibrary()).documents.find(doc=>doc.key===active().key);return saved.notes['dock-65']==='Authored remembered dock note pending receipt';}));
  await quit();
 }
