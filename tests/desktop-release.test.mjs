@@ -19,7 +19,7 @@ test('release is main-only and publishes only after exact checks and asset diges
  const s=await setup(t);await assert.rejects(()=>publishDesktopRelease({...s,context:{...context,eventName:'pull_request'},core,version:'0.2.0'}),/main push/);assert.equal(s.calls.length,0);
  await publishDesktopRelease({...s,context,core,version:'0.2.0'});assert.equal(s.calls[0][0],'create');assert.equal(s.calls[0][1].draft,true);assert.deepEqual(s.calls.filter(c=>c[0]==='upload').map(c=>c[1]),['Coconut-0.2.0-arm64-unsigned.zip','Coconut-0.2.0-x64-unsigned.zip','SHA256SUMS.txt']);assert.equal(s.calls.at(-1)[0],'publish');
  const body=s.calls[0][1].body;
- for(const phrase of ["Changes since 0.7.7", "Transcript-first local media association", "explicitly confirm a candidate", "not full-file equality", "Paste timed SRT/VTT", "fresh preview", "Bulk literal source correction", "one latest-batch undo", "Search current saved translations", "across all library languages", "semantic translation quality", "Displayed-language export fix", "actual visible language", "Hidden or stale translations", "Historical bilingual excerpts keep their snapshots", "Version 0.7.6 rejects exact_excerpts v2", "including those inside reading collections", "fail closed for the entire library", "actual 0.7.6 modules", "not downgrade compatibility", "Do not clear storage", "complete library JSON backup", "JSON transcripts remain UTF-8", "universal font coverage", "U+20000", "New edits remain in IndexedDB", "v0.6.0 cannot read them", "all unsaved documents", "clear unsaved warnings", "already-sent requests cannot be recalled", "Publication is gated on exact-commit"])assert.ok(body.includes(phrase),'Missing release scope or limitation: '+phrase);
+ for(const phrase of ["Changes since 0.7.8", "Wide library search", "40-document pages", "per-language previous/next hits", "Search sessions are not persisted", "semantic translation quality", "Direct reading-language picker", "Missing or stale translations", "IME state", "AI task target or consent", "do not steal a newer display choice", "Source-only hiding is page-local", "clears old bilingual export opt-ins", "Rewind 10 seconds", "keep paused media paused and playing media playing", "Rewinding exits cue loops and bounded passage previews", "seeking event is acknowledged", "a new external seek still exits the loop", "not sample-accurate", "Version 0.7.6 rejects exact_excerpts v2", "including those inside reading collections", "fail closed for the entire library", "actual 0.7.6 modules", "not downgrade compatibility", "Do not clear storage", "complete library JSON backup", "JSON transcripts remain UTF-8", "universal font coverage", "U+20000", "New edits remain in IndexedDB", "v0.6.0 cannot read them", "all unsaved documents", "clear unsaved warnings", "already-sent requests cannot be recalled", "does not remember or restore local-media disk access", "reselect local media after reload", "Publication is gated on exact-commit"])assert.ok(body.includes(phrase),'Missing release scope or limitation: '+phrase);
  assert.match(body,/do not require model calls/);assert.match(body,/no Developer ID or notarization/);assert.match(body,/Do not bypass an OS security warning/);
  assert.ok(body.includes(`https://github.com/${repo.owner}/${repo.repo}/blob/${sha}/docs/release-notes.md`));assert.match(body,/No real-account inference quality is claimed/);
 });
@@ -56,25 +56,26 @@ test('desktop version, lock metadata and checked-in release notes agree',async()
 
 
 test('prior release notes remain byte-identical historical records',async()=>{
- for(const [version,digest] of [['0.7.0','2ec4424bcef49240abcdd009e1fe7d80ad2b4e19d9ae6d803193e101a86d995b'],['0.7.1','c2605dbe061b84462c64f720b620e6db57a7cbb558bc67adf015e3a2bd896ea4'],['0.7.2','22a0d76936b6bc0e0cc7b82eddad1a0fd72037fcc7c2199a2c2d355d8d63b506'],['0.7.3','ee9fcb6f9db134b2bc0cf0f451ee9cd1afe6ad4e9bb2422fcac0882bb0ac0445'],['0.7.4','4baf322d872ddadd1fa2aec95fbb691f5f5653864acc248ce866032757136a3d'],['0.7.5','8c16bfa15b60452be90e2386342fff7b44302ae33435d6cfea13bc545f71b29c'],['0.7.6','fd460ec5aef6f45469447617e6089b9c07278a70c1626a52ef0911a3e65ab930'],['0.7.7','412a12bf4a31118c7af82d16e0eac6d6d655cbd999536684dd49ae97930b7e60']]){
+ for(const [version,digest] of [['0.7.0','2ec4424bcef49240abcdd009e1fe7d80ad2b4e19d9ae6d803193e101a86d995b'],['0.7.1','c2605dbe061b84462c64f720b620e6db57a7cbb558bc67adf015e3a2bd896ea4'],['0.7.2','22a0d76936b6bc0e0cc7b82eddad1a0fd72037fcc7c2199a2c2d355d8d63b506'],['0.7.3','ee9fcb6f9db134b2bc0cf0f451ee9cd1afe6ad4e9bb2422fcac0882bb0ac0445'],['0.7.4','4baf322d872ddadd1fa2aec95fbb691f5f5653864acc248ce866032757136a3d'],['0.7.5','8c16bfa15b60452be90e2386342fff7b44302ae33435d6cfea13bc545f71b29c'],['0.7.6','fd460ec5aef6f45469447617e6089b9c07278a70c1626a52ef0911a3e65ab930'],['0.7.7','412a12bf4a31118c7af82d16e0eac6d6d655cbd999536684dd49ae97930b7e60'],['0.7.8','3daf269faa3f50a5c09b5dad62020da266c948cd7191dc62b5a6f61d749fcd00']]){
   const bytes=await readFile(new URL('../docs/release-notes-'+version+'.md',import.meta.url));
   assert.equal(createHash('sha256').update(bytes).digest('hex'),digest);
  }
 });
 
 
-test('0.7.8 notes retain five-change scope, recovery and existing v2 refusal boundaries',async()=>{
+test('0.7.9 notes retain three-change scope, recovery and existing v2 refusal boundaries',async()=>{
  const notes=await readFile(new URL('../docs/release-notes.md',import.meta.url),'utf8');
  const compatibility=await readFile(new URL('../docs/bilingual-excerpts.md',import.meta.url),'utf8');
  const readme=await readFile(new URL('../README.md',import.meta.url),'utf8');
  const publisher=await readFile(new URL('../scripts/publish_desktop_release.mjs',import.meta.url),'utf8');
- assert.ok(readme.includes('目标版本为 `0.7.8`'));
+ assert.ok(readme.includes('目标版本为 `0.7.9`'));
  assert.ok(readme.includes('https://github.com/YakiHugo/coconut/releases'));
  for(const phrase of ['升级前','完整书架 JSON','0.7.6','整个书架','不要清数据绕过'])assert.ok(readme.includes(phrase),phrase);
- for(const phrase of ['字幕优先关联原声','即使只找到一篇文字稿候选','不是全文件内容相等保证','刷新后仍须重选媒体','直接粘贴定时字幕','需重新预览','不读取剪贴板权限','15 MiB','整篇批量纠正原文','逐处核对','最近一批撤销','导出完整 JSON 救援','跨书架查找译文','所有语言的当前有效已存译文','不保证译文语义正确','修复显示译文导出','当前实际显示语言','不带出隐藏译文','历史双语摘录仍保留当时快照','跨书架笔记仍使用各篇已保存语言设置','已发送请求无法撤回','exact_excerpts v2','本版沿用它，不新增 schema','包括成果集中的双语摘录','legacy／IndexedDB','拒绝打开整个书架','实际 0.7.6 模块','保留原数据','支持版本可重新打开完整记录','这不代表降级兼容','不要为了让旧版打开而清数据','原始 JSON','不代表所有字体都能显示','U+20000','不构成发布或验证完成凭证'])assert.ok(notes.includes(phrase),phrase);
+ for(const phrase of ["宽幅书架查找", "每页40篇", "返回书架结果", "搜索会话不写入备份或持久存储", "不保证译文语义正确", "直接选择阅读语言", "阅读显示", "缺失或过期译文明示", "未提交笔记与输入法状态", "不修改 AI 任务目标或发送同意", "不抢回已重新选择的显示语言", "「仅原文」的隐藏选择只在本页", "清除旧的双语导出勾选", "浮动原声栏后退10秒", "暂停时仍暂停，播放时继续播放", "后退退出当前片段循环或有边界的段落回听", "后续新的外部跳转仍会解除循环", "不承诺逐采样精度", "不会记住或恢复本地媒体的磁盘访问权", "刷新后仍须重选媒体", "exact_excerpts v2", "本版沿用它，不新增 schema", "包括成果集中的双语摘录", "legacy／IndexedDB", "拒绝打开整个书架", "实际 0.7.6 模块", "保留原数据", "支持版本可重新打开完整记录", "这不代表降级兼容", "不要为了让旧版打开而清数据", "原始 JSON", "不代表所有字体都能显示", "U+20000", "不构成发布或验证完成凭证"])assert.ok(notes.includes(phrase),phrase);
  for(const phrase of ['0.7.6','拒绝 v2','嵌入成果集','拒绝整个书架','保留原数据'])assert.ok(compatibility.includes(phrase),phrase);
- for(const phrase of ['Changes since 0.7.7','same-profile legacy/IndexedDB startup can fail closed','This is not downgrade compatibility','No database or library-backup protocol migration','this release adds no schema'])assert.ok(publisher.includes(phrase),phrase);
- assert.ok(notes.includes('已交付的 v0.7.7'));
+ for(const phrase of ['Changes since 0.7.8','same-profile legacy/IndexedDB startup can fail closed','This is not downgrade compatibility','No database or library-backup protocol migration','this release adds no schema'])assert.ok(publisher.includes(phrase),phrase);
+ assert.ok(notes.includes('已交付的 v0.7.8'));
+ assert.ok(notes.includes('release-notes-0.7.8.md'));
  assert.ok(notes.includes('release-notes-0.7.7.md'));
  assert.ok(notes.includes('release-notes-0.7.6.md'));
  assert.ok(notes.includes('本文不表示构建、验收或发布已完成'));
