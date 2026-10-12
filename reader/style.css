@@ -1365,3 +1365,9 @@ body[data-short-reading-compact="true"] #language-panel { margin-top: 8px; }
  #library-search-results .library-pagination { grid-template-columns:minmax(0,1fr); gap:6px; }
  #library-search-results .library-translation-pagination { gap:8px; }
 }
+
+/* A fixed reader-owned control: never reparent it into AI/settings disclosures. */
+.reading-display-control { position:sticky; top:0; z-index:4; background:var(--canvas,#faf9f7); display:flex; align-items:center; flex-wrap:wrap; gap:8px 12px; margin:8px 0; padding:6px; min-width:0; }
+.reading-display-control label { margin:0; font-size:12px; color:var(--muted); flex:none; }
+.reading-display-control select { min-height:44px; min-width:44px; max-width:100%; width:auto; flex:0 1 auto; }
+@media(max-width:400px) { .reading-display-control select { width:100%; } }

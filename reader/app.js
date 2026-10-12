@@ -820,7 +820,7 @@ function returnReadingResults() {
  $('search').value=origin.query;notesOnly=origin.notesOnly;excerptsOnly=origin.excerptsOnly;speakerFilter=origin.speakerFilter;
  // Display choice can change during the detour; restore the original view without
  // reverting source edits, annotations, or the user's explicit reading bookmark.
- if(contentIngressAllowed(doc)&&(doc.translation_view||'')!==origin.translationView){doc.translation_view=origin.translationView;queueDocument(doc);}
+ if(contentIngressAllowed(doc)){recordReadingDisplaySelection(doc);if((doc.translation_view||'')!==origin.translationView){doc.translation_view=origin.translationView;queueDocument(doc);}}
  readingMode='transcript';selected=null;
  const matches=doc.segments.filter(s=>matchesReadingSegment(s,doc,origin.query.trim().toLocaleLowerCase()));
  const exact=matches.findIndex(s=>s.id===origin.id);
@@ -2245,7 +2245,7 @@ $('notebook-export').onclick=()=>{
 };
 function openLibraryHit(hit) {
  if(hit.kind==='text'||hit.kind==='note'||hit.kind==='translation'){
-  if(hit.kind==='translation'){const doc=active();if(!contentIngressAllowed(doc))return;doc.translation_view=hit.language;queueDocument(doc);libraryTranslationReveal={doc,hit};}
+  if(hit.kind==='translation'){const doc=active();if(!contentIngressAllowed(doc))return;recordReadingDisplaySelection(doc);doc.translation_view=hit.language;queueDocument(doc);libraryTranslationReveal={doc,hit};}
   goToSegment(hit.id,true);
   if(hit.kind==='translation'){
    const row=[...$('transcript').querySelectorAll('.segment')].find(row=>row.dataset.segmentId===hit.id);
@@ -2355,7 +2355,6 @@ function render({keepNoteEditor=false,reuseLibraryMetadata=false}={}) {
  playbackIndex=null;
  const focusedCueAction=document.activeElement?.closest('.cue-more');
  const cueFocus=focusedCueAction?{key:focusedCueAction.dataset.cueKey,selector:document.activeElement.tagName==='SUMMARY'?'summary':'.'+document.activeElement.className}:null;
- const openCueActions=new Set([...document.querySelectorAll(".cue-more[open]")].map(node=>node.dataset.cueKey));
 	const doc = active();
  readingExcerptControls=[];const excerptIndex=doc&&!Coconut.isAudioProject(doc)?readingExcerptIndex(doc):null;
  if(readingExcerptDialog&&readingExcerptDialog.doc===doc)for(const row of readingExcerptDialog.rows)row.source=excerptIndex?.states.get(row.record.id)||row.source;
@@ -2413,6 +2412,24 @@ function render({keepNoteEditor=false,reuseLibraryMetadata=false}={}) {
   renderAudioProject(doc);renderNotebookAction(doc);applyReadingMode();
   window.dispatchEvent(new Event('coconut-render'));return;
  }
+ renderTranscript(doc,excerptIndex,{keepNoteEditor});
+ renderSummary();
+ renderPassages(doc,excerptIndex);
+ applyReadingMode();
+ pauseBoundedForCompactNote();
+ if(cueFocus){
+  const disclosure=[...document.querySelectorAll('.cue-more')].find(node=>node.dataset.cueKey===cueFocus.key);
+  focusCueAction(disclosure?.querySelector(cueFocus.selector));
+ }
+	highlightPlayback();
+	window.dispatchEvent(new Event("coconut-render"));
+}
+// Display-only updates do not touch the media owner or the live note/IME editor.
+function renderTranscript(doc,excerptIndex,{keepNoteEditor=false,displayOnly=false}={}){
+ readingExcerptControls=readingExcerptControls.filter(entry=>entry.mode!=='transcript'&&entry.button.isConnected);
+ const mediaHost=$("source-media"),mediaPath=mediaHost.querySelector("audio,video")?.getAttribute("src")||"",isDemo=doc.provenance?.kind==='authored_demo';
+ const openCueActions=new Set([...document.querySelectorAll(".cue-more[open]")].map(node=>node.dataset.cueKey));
+ const hasReadingFilter=!!$('search').value.trim()||notesOnly||excerptsOnly||speakerFilter!==null;
  const speakers=[...new Set(doc.segments.map(s=>s.speaker||''))];
  if(speakerFilter!==null&&!speakers.includes(speakerFilter))speakerFilter=null;
  const selector=$('speaker-filter');selector.replaceChildren(el('option','','全部说话人'));selector.firstChild.value='all';
@@ -2429,6 +2446,7 @@ function render({keepNoteEditor=false,reuseLibraryMetadata=false}={}) {
  $("search-navigation").hidden=!query;
  $("previous-match").disabled=!filtered.length;$("next-match").disabled=!filtered.length;
  $("match-position").textContent=(searchFocusedId?filtered.findIndex(s=>s.id===searchFocusedId)+1:0)+" / "+filtered.length+" 个匹配片段";
+	if(!displayOnly){
 	const currentNote = visible.find((segment) => segment.id === selected) || (keepNoteEditor && doc.segments.find(segment=>segment.id===selected));
 	if (!currentNote) selected = null;
 	$("notes-panel").hidden = !selected;
@@ -2436,6 +2454,7 @@ function render({keepNoteEditor=false,reuseLibraryMetadata=false}={}) {
 		$("quote").textContent = currentNote.text;
 		$("note-time").textContent = Coconut.time(currentNote.start) + " 的想法";
 		if($("note").value !== (doc.notes[currentNote.id] || "")) $("note").value = doc.notes[currentNote.id] || "";
+	}
 	}
 	$("filter-all").setAttribute("aria-pressed", String(!notesOnly && !excerptsOnly));
 	$("filter-notes").setAttribute("aria-pressed", String(notesOnly));
@@ -2503,14 +2522,14 @@ function render({keepNoteEditor=false,reuseLibraryMetadata=false}={}) {
 		body.className="segment-content";
   const parallel=el("div","parallel-text");
   parallel.append(highlightedText("p", "words", s.text, query, searchMatches?.byCue.get(s.id)?.text||[]));
-        if(translated) parallel.append(highlightedText("p", "translation"+(!Coconut.translationCurrent(s,doc,translated)?" stale":""), Coconut.translationCurrent(s,doc,translated) ? translated.text : "原文或上下文已变化，或旧译文缺少上下文记录，可核对／修正此译文或重新生成", query||(translationReveal?.id===s.id?'translation match':''), translationReveal?.id===s.id?[translationReveal.firstRange]:searchMatches?.byCue.get(s.id)?.translations[doc.translation_view]||[]));
+        if(translated) parallel.append(highlightedText("p", "translation"+(!Coconut.translationCurrent(s,doc,translated)?" stale":""), Coconut.translationCurrent(s,doc,translated) ? (translated.text.trim()?translated.text:"暂无译文") : "原文或上下文已变化，或旧译文缺少上下文记录，可核对／修正此译文或重新生成", query||(translationReveal?.id===s.id?'translation match':''), translationReveal?.id===s.id?[translationReveal.firstRange]:searchMatches?.byCue.get(s.id)?.translations[doc.translation_view]||[]));
   const textHit=searchMatches?.byCue.get(s.id)?.phrases.text;
   if(textHit?.cueCount>1)body.append(phrasePreview(textHit));
   for(const [language,ranges] of Object.entries(searchMatches?.byCue.get(s.id)?.translations||{})){
    const hit=searchMatches.byCue.get(s.id).phrases['translation:'+language]||searchMatches.previews.get('translation:'+language+':'+s.id),hidden=language!==doc.translation_view;
    if(hit?.cueCount>1||hidden){
     const preview=phrasePreview(hit||{field:'translation',language,id:s.id,ids:[s.id],snippet:CoconutPassages.rangeSnippet(s.translations[language].text,ranges[0].start,ranges[0].end)});
-    if(hidden){const reveal=el('button','phrase-show-translation','查看'+translationLabel(language)+'译文');reveal.type='button';reveal.onclick=()=>{if(active()!==doc||!contentIngressAllowed(doc))return;doc.translation_view=language;queueDocument(doc);render();[...$('transcript').querySelectorAll('.segment')].find(row=>row.dataset.segmentId===s.id)?.focus({preventScroll:true});};preview.append(reveal);}
+    if(hidden){const reveal=el('button','phrase-show-translation','查看'+translationLabel(language)+'译文');reveal.type='button';reveal.onclick=()=>{if(active()!==doc||!contentIngressAllowed(doc))return;recordReadingDisplaySelection(doc);doc.translation_view=language;queueDocument(doc);render();[...$('transcript').querySelectorAll('.segment')].find(row=>row.dataset.segmentId===s.id)?.focus({preventScroll:true});};preview.append(reveal);}
     body.append(preview);
    }
   }
@@ -2622,16 +2641,6 @@ function render({keepNoteEditor=false,reuseLibraryMetadata=false}={}) {
 		navigation.append(previous, position, next);
 		$("transcript").append(navigation);
 	}
- renderSummary();
- renderPassages(doc,excerptIndex);
- applyReadingMode();
- pauseBoundedForCompactNote();
- if(cueFocus){
-  const disclosure=[...document.querySelectorAll('.cue-more')].find(node=>node.dataset.cueKey===cueFocus.key);
-  focusCueAction(disclosure?.querySelector(cueFocus.selector));
- }
-	highlightPlayback();
-	window.dispatchEvent(new Event("coconut-render"));
 }
 function changeReadingPage(direction) {
 	pageStart = Math.max(0, pageStart + direction * PAGE_SIZE);
@@ -3676,6 +3685,53 @@ $("library-file").onchange = async () => {
  finally { if(ownsRequest())$("library-file").value=""; }
 };
 
+// Reader intent is page-local and identity-owned. Even A → B → A must stop a
+// previously sent translation from stealing the newer display selection.
+const readingDisplayRevisions=new WeakMap();
+function readingDisplayRevision(doc){return readingDisplayRevisions.get(doc)||0;}
+function recordReadingDisplaySelection(doc){readingDisplayRevisions.set(doc,readingDisplayRevision(doc)+1);}
+function renderReadingDisplayControl(){
+ const doc=active(),control=$('reading-display-control'),select=$('translation-view');
+ control.hidden=workspace!=='read'||!doc||Coconut.isAudioProject(doc)||!doc.segments.length||readingMode==='summary';
+ if(!doc)return;
+ const languages=new Set();
+ for(const cue of doc.segments)for(const [language,item] of Object.entries(cue.translations||{}))if(item?.text?.trim())languages.add(language);
+ const saved=new Set(languages);if(doc.translation_view)languages.add(doc.translation_view);
+ const options=[['',languages.size?'仅原文':'仅原文 · 暂无已存译文'],...[...languages].map(language=>[language,translationLabel(language)+' + 原文'+(saved.has(language)?'':' · 暂无已存译文')])];
+ const signature=JSON.stringify(options);
+ if(select.dataset.options!==signature){select.replaceChildren(...options.map(([value,label])=>{const option=el('option','',label);option.value=value;return option;}));select.dataset.options=signature;}
+ select.disabled=languages.size===0;
+ select.value=textExportLanguage(doc);
+}
+function readingDisplayCueNode(id){
+ return [...document.querySelectorAll(readingMode==='passages'?'#passage-body .passage-original .passage-cue':'#transcript .segment')].find(node=>(node.dataset.cueId||node.dataset.segmentId)===id);
+}
+function setReadingDisplayLanguage(target){
+ const doc=active();if(!doc||!contentIngressAllowed(doc)||Coconut.isAudioProject(doc))return;
+ if(target&&!Array.from($('translation-view').options).some(option=>option.value===target))return;
+ const sourceNodes=[...document.querySelectorAll(readingMode==='passages'?'#passage-body .passage-original .passage-cue':'#transcript .segment')];
+ const toolbar=$('reading-display-control').getBoundingClientRect(),edge=Math.max(0,toolbar.top<=0?toolbar.bottom:0);
+ const node=sourceNodes.find(node=>{const rect=node.getBoundingClientRect();return rect.bottom>edge&&rect.top<(window.visualViewport?.height||innerHeight);})||readingDisplayCueNode(visibleReadingCue());
+ const cueId=node?.dataset.cueId||node?.dataset.segmentId,top=node?.getBoundingClientRect().top;
+ recordReadingDisplaySelection(doc);
+ // Source-only shares the existing page-local passage lifecycle. A concrete
+ // language remains persisted; fallback reads never manufacture a saved choice.
+ passageTranslations=!!target;
+ if((doc.translation_view||'')!==target){doc.translation_view=target;queueDocument(doc);}
+ const excerptIndex=readingExcerptIndex(doc);
+ if(readingMode==='passages')renderPassages(doc,excerptIndex);
+ else if(readingMode==='transcript')renderTranscript(doc,excerptIndex,{keepNoteEditor:true,displayOnly:true});
+ renderReadingDisplay();highlightPlayback();
+ const restored=readingDisplayCueNode(cueId);
+ if(restored&&Number.isFinite(top)){
+  const owner=followOwns()?readingFollow:null;window.scrollBy(0,restored.getBoundingClientRect().top-top);
+  // Only this synchronous, exact display compensation belongs to the reader.
+  // A later wheel/touch/keyboard or different scroll position still suspends.
+  if(owner&&readingFollow===owner)owner.scrollY=window.scrollY;
+ }
+}
+$('translation-view').onchange=()=>setReadingDisplayLanguage($('translation-view').value);
+
 function textExportLanguage(doc=active()){
  if(!doc||Coconut.isAudioProject(doc)||readingMode==='summary')return '';
  return readingMode==='passages'?(passageTranslations?passageTargetLanguage(doc):''):doc.translation_view||'';
@@ -3683,6 +3739,7 @@ function textExportLanguage(doc=active()){
 function renderTextExportAction(){
  const doc=active(),unavailable=!doc||Coconut.isAudioProject(doc)||!doc.segments.length,target=textExportLanguage(doc);
  $('export-subtitles').disabled=unavailable;
+ const changed=subtitleExportDocument!==doc||subtitleExportLanguage!==target;
  const subtitleOption=$('subtitle-bilingual');
  subtitleOption.disabled=unavailable||!target;
  if(subtitleOption.disabled||subtitleExportDocument!==doc||subtitleExportLanguage!==target)subtitleOption.checked=false;
@@ -3690,7 +3747,7 @@ function renderTextExportAction(){
  $('subtitle-bilingual-label').textContent=target?'附加当前显示的'+translationLabel(target)+'（'+target+'）有效译文':'当前未显示译文';
  $('export-text').disabled=unavailable;
  $('text-bilingual').disabled=unavailable||!target;
- if($('text-bilingual').disabled)$('text-bilingual').checked=false;
+ if($('text-bilingual').disabled||changed)$('text-bilingual').checked=false;
  $('text-export-language').textContent=unavailable?'补充文字稿后可导出。':target?'当前显示语言：'+target+'；缺失与过期译文会标注，不会导出过期内容。':'当前未显示译文；切换双语或展开连贯阅读的译文后可附加。';
 }
 $('export-text').onclick=()=>{
@@ -3851,7 +3908,7 @@ $('follow-playback').onclick=toggleReadingFollow;$('dock-follow').onclick=toggle
 // our instant correction records its final position before async scroll events.
 // Capture runs before navigation removes a focused row or opens an editor.
 window.addEventListener('scroll',()=>{if(readingFollow&&!readingFollowMoving&&Math.abs(window.scrollY-readingFollow.scrollY)>1)suspendReadingFollow();},{passive:true});
-const followTransport='#follow-playback,#dock-follow,#dock-play,#skip-back,#skip-forward,#playback-rate,audio,video';
+const followTransport='#reading-display-control,#passage-toggle-translation,#follow-playback,#dock-follow,#dock-play,#skip-back,#skip-forward,#playback-rate,audio,video';
 window.addEventListener('wheel',()=>suspendReadingFollow(),{capture:true,passive:true});
 window.addEventListener('touchstart',event=>{if(!event.target.closest?.(followTransport))suspendReadingFollow();},{capture:true,passive:true});
 document.addEventListener('pointerdown',event=>{if(!event.target.closest?.(followTransport))suspendReadingFollow();},true);
@@ -4035,7 +4092,7 @@ document.addEventListener("keydown", event => {
 function readingPassages(doc=active()){return doc&&!Coconut.isAudioProject(doc)?CoconutPassages.build(doc.segments):[];}
 function passageTargetLanguage(doc){
  if(doc.translation_view)return doc.translation_view;
- for(const cue of doc.segments)for(const [language,item] of Object.entries(cue.translations||{}))if(Coconut.translationCurrent(cue,doc,item))return language;
+ for(const cue of doc.segments)for(const [language,item] of Object.entries(cue.translations||{}))if(item?.text?.trim()&&Coconut.translationCurrent(cue,doc,item))return language;
  return '';
 }
 function appendPassageCue(paragraph,cue,text,previousText){
@@ -4064,7 +4121,7 @@ function renderPassages(doc,excerptIndex=readingExcerptIndex(doc)){
  const anchored=CoconutPassages.locate(passages,passageAnchor)||passages[0];
  const index=passages.indexOf(anchored);passagePageStart=Math.floor(index/PASSAGES_PER_PAGE)*PASSAGES_PER_PAGE;
  const visible=passages.slice(passagePageStart,passagePageStart+PASSAGES_PER_PAGE),target=passageTargetLanguage(doc);
- const hasTranslation=!!target&&doc.segments.some(cue=>Coconut.translationCurrent(cue,doc,cue.translations?.[target]));
+ const hasTranslation=!!target&&doc.segments.some(cue=>cue.translations?.[target]?.text?.trim()&&Coconut.translationCurrent(cue,doc,cue.translations[target]));
  const toggle=$('passage-toggle-translation');toggle.hidden=!hasTranslation;toggle.setAttribute('aria-pressed',String(passageTranslations));toggle.textContent=passageTranslations?'收起已存译文':'对照已存译文';
  const duration=Coconut.documentDuration(doc);
  const slider=$('passage-time-range');slider.max=String(Math.max(1,Math.ceil(duration)));slider.value=String(anchored.start);slider.disabled=duration<=0;
@@ -4084,11 +4141,11 @@ function renderPassages(doc,excerptIndex=readingExcerptIndex(doc)){
   if(target&&passageTranslations){
    const translated=el('p','passage-translation');translated.lang=target;previous=null;
    for(const cue of passage.cues){
-    const item=cue.translations?.[target],current=item&&Coconut.translationCurrent(cue,doc,item);
+    const item=cue.translations?.[target],current=item?.text?.trim()&&Coconut.translationCurrent(cue,doc,item);
     if(current){previous=appendPassageCue(translated,cue,item.text,previous);}
     else{
-     const gap=el('span','passage-translation-gap',Coconut.time(cue.start)+(item?' 译文已过期，请核对原文':' 暂无译文'));
-     gap.dataset.cueId=cue.id;gap.dataset.state=item?'stale':'missing';translated.append(gap);previous=null;
+     const gap=el('span','passage-translation-gap',Coconut.time(cue.start)+(item?.text?.trim()?' 译文已过期，请核对原文':' 暂无译文'));
+     gap.dataset.cueId=cue.id;gap.dataset.state=item?.text?.trim()?'stale':'missing';translated.append(gap);previous=null;
     }
    }
    columns.append(translated);
@@ -4180,7 +4237,7 @@ document.addEventListener('pointerdown',()=>{passageActionTab=false;libraryFocus
 document.addEventListener('focusin',event=>{
  const target=event.target,keyboard=passageActionTab;passageActionTab=false;
  const workspace=$('library-search-dialog').open&&target.matches?.('#library-search-results :is(button,input,select,summary), #library-search-feedback :is(button,input,select,summary)');
- if(!keyboard||(!workspace&&!target.matches?.('.passage-actions button, .passage-actions a, .segment .reading-excerpt-open, .library-select, .library-translation-hit, .library-translation-pagination button'))||!target.matches(':focus-visible'))return;
+ if(!keyboard||(!workspace&&!target.matches?.('#passage-body :is(button,a), #transcript :is(button,a,summary), .library-select, .library-translation-hit, .library-translation-pagination button'))||!target.matches(':focus-visible'))return;
  if(workspace||target.matches('.library-select, .library-translation-hit, .library-translation-pagination button')){
   const card=libraryCards.get(target.closest('.library-entry')?.dataset.documentKey),revision=libraryFocusRevealRevision;
   requestAnimationFrame(()=>revealLibrarySelectionFocus(target,card,revision));return;
@@ -4192,6 +4249,8 @@ document.addEventListener('focusin',event=>{
   if(!rect.width||!rect.height)return;
   const ring=(parseFloat(style.outlineWidth)||0)+(parseFloat(style.outlineOffset)||0)+2;
   const bounds={left:rect.left-ring,right:rect.right+ring,top:rect.top-ring,bottom:rect.bottom+ring};
+  const toolbar=$('reading-display-control'),bar=toolbar.getBoundingClientRect();
+  if(!toolbar.hidden&&bar.top<=0&&bar.bottom>0&&bounds.top<bar.bottom&&bounds.right>bar.left&&bounds.left<bar.right){window.scrollBy(0,Math.floor(bounds.top-bar.bottom-2));return;}
   let ceiling=Infinity,occluded=false;
   for(const overlay of [$('reading-feedback'),$('media-dock')]){
    if(overlay.hidden||getComputedStyle(overlay).display==='none')continue;
@@ -4270,7 +4329,7 @@ $('passage-time-range').oninput=()=>{$('passage-time-label').textContent=Coconut
 $('passage-time-range').onchange=()=>{const passage=CoconutPassages.atTime(readingPassages(),Number($('passage-time-range').value));if(passage)openPassage(passage.cues[0].id);};
 $('passage-previous').onclick=()=>movePassagePage(-1);$('passage-next').onclick=()=>movePassagePage(1);
 $('return-to-passages').onclick=returnToPassages;
-$('passage-toggle-translation').onclick=()=>{passageTranslations=!passageTranslations;renderPassages(active());renderTextExportAction();};
+$('passage-toggle-translation').onclick=()=>setReadingDisplayLanguage(passageTranslations?'':passageTargetLanguage(active()));
 $('passage-search').onclick=()=>{
  beginReadingSearch();const doc=active(),anchor=visibleReadingCue();passageReturn=null;
  if(readingMode==='passages'&&doc){const matches=doc.segments.filter(cue=>matchesReadingSegment(cue,doc,$('search').value.trim().toLocaleLowerCase())),index=matches.findIndex(cue=>cue.id===anchor);if(index>=0)pageStart=Math.floor(index/PAGE_SIZE)*PAGE_SIZE;}
@@ -4448,7 +4507,6 @@ function composeReadingHeader(){
 }
 
 function applyReadingMode() {
- renderTextExportAction();
  const audioOnly=Coconut.isAudioProject(active());
  updateReaderMediaVisibility(active());
  const summary=readingMode==='summary'&&!audioOnly;
@@ -4464,16 +4522,21 @@ function applyReadingMode() {
  $('reading-settings').hidden=summary;
  $('language-panel').hidden=audioOnly||summary||passages;
  $('mode-summary').setAttribute('aria-pressed',String(summary));
- const bilingual=!summary&&!passages&&!audioOnly&&!!active()?.translation_view;
- $('mode-transcript').setAttribute('aria-pressed',String(!summary&&!passages&&!bilingual));
- $('mode-bilingual').setAttribute('aria-pressed',String(bilingual));
- $('transcript-layout').classList.toggle('is-bilingual',bilingual);
  $('mode-bilingual').disabled=audioOnly;
  renderReadingContext();renderReadingSearch();
- $('bilingual-readiness').hidden=!bilingual||active()?.provenance?.kind==='authored_demo';
  composeReadingHeader();
- if(bilingual){const doc=active(),target=doc.translation_view,count=doc.segments.filter(s=>Coconut.translationCurrent(s,doc,s.translations?.[target])).length;
+ renderReadingDisplay();
+}
+function renderReadingDisplay(){
+ const doc=active(),bilingual=readingMode==='transcript'&&!Coconut.isAudioProject(doc)&&!!doc?.translation_view;
+ $('mode-transcript').setAttribute('aria-pressed',String(readingMode==='transcript'&&!bilingual));
+ $('mode-bilingual').setAttribute('aria-pressed',String(bilingual));
+ $('transcript-layout').classList.toggle('is-bilingual',bilingual);
+ $('bilingual-readiness').hidden=!bilingual||active()?.provenance?.kind==='authored_demo';
+ if(bilingual){const doc=active(),target=doc.translation_view,count=doc.segments.filter(s=>s.translations?.[target]?.text?.trim()&&Coconut.translationCurrent(s,doc,s.translations[target])).length;
  $('bilingual-status').textContent=count?`当前语言已有 ${count}/${doc.segments.length} 段有效译文；缺失部分可逐段「自己写译文」，过期译文可核对／修正；也可在翻译选项中继续。`:'还没有当前语言的有效译文。可逐段「自己写译文」，或打开翻译选项，核对发送范围与额度后生成；切换视图和自己写译文不会调用模型。';}
+ renderReadingDisplayControl();
+ renderTextExportAction();
 }
 function setReadingMode(mode) {
  const previousMode=readingMode;
@@ -4581,6 +4644,7 @@ function switchTranscriptView(bilingual){
  const doc=active();if(!doc||bilingual&&(!contentIngressAllowed(doc)||Coconut.isAudioProject(doc)))return;
  const anchor=selected||readingContext?.document===doc&&readingContext.id||searchFocusedId||visibleReadingCue();
  if(contentIngressAllowed(doc)){
+  recordReadingDisplaySelection(doc);
   const target=bilingual?doc.translation_view||$('translation-target').value||'zh':'';
   if((doc.translation_view||'')!==target){doc.translation_view=target;queueDocument(doc);}
  }

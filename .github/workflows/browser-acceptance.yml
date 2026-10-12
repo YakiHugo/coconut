@@ -119,6 +119,11 @@ jobs:
         env:
           COCONUT_UI_SCREENSHOTS: ${{ runner.temp }}/coconut-authored-ui
         run: node tests/displayed-translation-exports-browser.mjs
+      - name: Verify native saved reading language selection, viewport, IME and media ownership
+        if: ${{ !cancelled() && steps.browser_setup.outcome == 'success' }}
+        env:
+          COCONUT_UI_SCREENSHOTS: ${{ runner.temp }}/coconut-authored-ui
+        run: node tests/reading-display-browser.mjs
       - name: Verify human translation review, draft protection and actual JSON VTT Markdown exports
         if: ${{ !cancelled() && steps.browser_setup.outcome == 'success' }}
         run: node tests/translation-review-browser.mjs
@@ -299,6 +304,7 @@ jobs:
             ${{ runner.temp }}/coconut-authored-ui/playback-follow-geometry.json
             ${{ runner.temp }}/coconut-authored-ui/playback-follow-scroll.json
             ${{ runner.temp }}/coconut-authored-ui/compact-library-geometry.json
+            ${{ runner.temp }}/coconut-authored-ui/reading-display-checks.json
             ${{ runner.temp }}/coconut-authored-ui/wide-library-search-checks.json
             ${{ runner.temp }}/coconut-authored-ui/search-return-checks.json
             ${{ runner.temp }}/coconut-authored-ui/inline-excerpts-checks.json
