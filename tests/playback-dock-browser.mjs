@@ -8,21 +8,23 @@ import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {chromium} from './helpers/browser-storage.mjs';
 import {authoredAudioFixture} from './helpers/authored-audio-fixture.mjs';
-import {installDockViewportObserver} from './helpers/dock-viewport-observer.mjs';
+import {installDockViewportObserver,evaluateDockLoopViewport} from './helpers/dock-viewport-observer.mjs';
 import {evaluateNativeIME,evaluateNativeIMEPointer} from './helpers/native-ime-proof.mjs';
 const root=fileURLToPath(new URL('../',import.meta.url));
 const checks=[],rewinds=[],ime=[],geometry=[],popovers=[];let server,browser,directory,page,viewportFailure,stage='setup',external=0,mutations=0,errors=0;
 function check(name,value){stage=name;assert.ok(value,name);checks.push(name);}
+const capture=async name=>{if(!process.env.COCONUT_UI_SCREENSHOTS)return;await fs.mkdir(process.env.COCONUT_UI_SCREENSHOTS,{recursive:true});await page.screenshot({path:path.join(process.env.COCONUT_UI_SCREENSHOTS,'dock-'+name+'.png'),fullPage:false,animations:'disabled'});};
 const settle=()=>page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));
 async function seek(time){
  await page.locator('#source-media audio').evaluate((player,time)=>{player.currentTime=time;},time);
  await page.waitForFunction(time=>{const p=document.querySelector('#source-media audio');return !p.seeking&&Math.abs(p.currentTime-time)<.15;},time);await settle();
 }
-async function rewind(label,{preserveView=true,note=false,resumeTransition=false}={}){
+async function rewind(label,{preserveView=true,note=false,resumeTransition=false,loopTransition=false}={}){
  stage=label;await settle();
  await page.evaluate(()=>{window.__dockRewindSettlement={last:null,count:0};});
  await page.waitForFunction(()=>{const state=window.__dockRewindSettlement,value=JSON.stringify([scrollY,document.querySelector('.segment.selected')?.getBoundingClientRect().top]);state.count=state.last===value?state.count+1:0;state.last=value;return state.count>=6;},null,{polling:'raf'});
- await page.evaluate(installDockViewportObserver);
+ if(loopTransition)await capture('loop-rewind-before');
+ await page.evaluate(installDockViewportObserver,{readingAnchors:loopTransition});
  const point=await page.locator('#dock-rewind').evaluate(button=>{
   const rect=button.getBoundingClientRect(),hit=document.elementFromPoint(rect.x+rect.width/2,rect.y+rect.height/2);
   button.addEventListener('click',event=>{
@@ -43,7 +45,12 @@ async function rewind(label,{preserveView=true,note=false,resumeTransition=false
  check(label+'_physical_ten_seconds_keep_player_rate_volume_pause_and_source',proof.trusted&&proof.same&&proof.sourceSame&&proof.paused===proof.pausedBefore&&proof.rate===proof.rateBefore&&proof.volume===proof.volumeBefore&&Math.abs(proof.after-Math.max(0,proof.before-10))<(proof.paused ? .08 : .65));
  check(label+'_never_calls_play_or_rewrites_source_or_document',proof.extraPlayCalls===0&&proof.rowsSame&&proof.sourceSameDOM&&proof.documentUnchanged&&proof.modeSame);
  if(preserveView){
-  check(label+'_keeps_manual_reading_viewport',Math.abs(proof.scrollDelta)<2);
+  if(loopTransition){
+   // A legitimate offscreen loop-control collapse can change scrollY while
+   // native anchoring keeps the same visible characters at identical pixels.
+   await capture('loop-rewind-after');
+   for(const [name,passed] of Object.entries(evaluateDockLoopViewport(viewport)))check(label+'_native_reading_'+name,passed);
+  }else check(label+'_keeps_manual_reading_viewport',Math.abs(proof.scrollDelta)<2);
   if(resumeTransition){
    const before=viewport.events.find(event=>event.type==='click'),after=viewport.events.at(-1);
    check(label+'_completion_checkpoint_reappears_without_header_reflow',before.boxes['#resume-listening'].hidden&&!after.boxes['#resume-listening'].hidden&&Math.abs(after.boxes['.listening-progress'].rect.height-before.boxes['.listening-progress'].rect.height)<2&&Math.abs(after.boxes['#episode-media'].rect.height-before.boxes['#episode-media'].rect.height)<2);
@@ -102,7 +109,6 @@ try{
  await context.route('**/*',async route=>{const u=new URL(route.request().url());if(u.origin===origin||u.protocol==='blob:')await route.continue();else{external++;await route.abort();}});
  await context.addInitScript(()=>{window.__dockPlayCalls=0;const play=HTMLMediaElement.prototype.play;HTMLMediaElement.prototype.play=function(...args){window.__dockPlayCalls++;return play.apply(this,args);};});
  page=await context.newPage();page.setDefaultTimeout(15000);page.on('pageerror',()=>errors++);
- const capture=async name=>{if(!process.env.COCONUT_UI_SCREENSHOTS)return;await fs.mkdir(process.env.COCONUT_UI_SCREENSHOTS,{recursive:true});await page.screenshot({path:path.join(process.env.COCONUT_UI_SCREENSHOTS,'dock-'+name+'.png'),fullPage:false,animations:'disabled'});};
  await page.goto(origin);check('no_dock_without_media',await page.locator('#media-dock').isHidden());
  await page.locator('#file').setInputFiles({name:'authored-short-cues.json',mimeType:'application/json',buffer:Buffer.from(JSON.stringify(fixture))});await page.locator('#mode-bilingual').click();
  if(!await page.locator('#attach-reader-media').isVisible())await page.locator('#toggle-reader-media').click();
@@ -235,7 +241,7 @@ try{
  // Native cue-loop cancellation must survive the seek's queued media events.
  const loopCue=page.locator('.segment[data-segment-id="clip-126"]');await loopCue.locator('.cue-more > summary').click();await loopCue.locator('.repeat-button').click();
  await page.waitForFunction(()=>repeating?.id==='clip-126'&&!document.querySelector('audio').paused);
- await rewind('rewind_releases_cue_loop');check('old_cue_loop_cannot_reacquire_after_native_seeked',await page.evaluate(()=>!repeating)&&await page.locator('#stop-repeat').isHidden());
+ await rewind('rewind_releases_cue_loop',{loopTransition:true});check('old_cue_loop_cannot_reacquire_after_native_seeked',await page.evaluate(()=>!repeating)&&await page.locator('#stop-repeat').isHidden());
  await page.locator('#dock-play').click();await page.waitForFunction(()=>document.querySelector('audio').paused);
  await page.locator('#mode-passages').click();
  for(const status of ['playing','paused','finished']){

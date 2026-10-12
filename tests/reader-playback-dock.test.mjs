@@ -1,6 +1,6 @@
 import {installSavePipeline,settle} from './helpers/save-pipeline.mjs';
 import {evaluateNativeIMEPointer} from './helpers/native-ime-proof.mjs';
-import {installDockViewportObserver} from './helpers/dock-viewport-observer.mjs';
+import {installDockViewportObserver,evaluateDockLoopViewport} from './helpers/dock-viewport-observer.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -350,4 +350,52 @@ test('explicit centered landings include the root bottom inset in their tall-tar
    assert.equal(calls,1);assert.equal(corrections,0);assert.equal(target.style.scrollMarginTop,'31px');assert.equal(target.style.getPropertyPriority('scroll-margin-top'),'important');assert.equal($('dock-follow').dataset.state,'off');
   }finally{await env.w.happyDOM.close();}
  }
+});
+
+test('loop viewport proof permits only content-stable native compensation or no layout change',()=>{
+ const rect=(top=120,height=18,left=74,width=8)=>({top,bottom:top+height,left,right:left+width,width,height});
+ const reading={bounds:{top:97.1875,bottom:768},anchors:[0,1,2].map(id=>({id,cue:'visible-cue',text:'Original',start:id,end:id+1,character:'Original'[id],rect:rect(120,18,74+id*8),sameNode:true,sameOffsets:true,sameText:true,connected:true,clear:true})),rows:[{cue:'visible-cue',connected:true,rect:rect(100,180,20,350)}],loopCue:{cue:'visible-cue',connected:true,rect:rect(100,180,20,350),pressed:'true'}};
+ const make=(delta=-39)=>{
+  const before={type:'installed',y:5827,x:0,width:390,height:844,scrollTop:5827,scrollHeight:10449,clientHeight:844,scrollOwner:'HTML',inset:'92px',focused:'repeat-button',follow:'off',boxes:{'#episode-media':{rect:rect(-5314.78125,1094.140625)},'#playback-controls':{rect:rect(-4495.640625,135)},'#stop-repeat':{hidden:false},'#repeat-status':{text:'循环 · 01:40–01:41'}},reading:structuredClone(reading)};
+  const events=[before,...['pointerdown','pointerup','click'].map((type,i)=>({...structuredClone(before),type,trusted:true,target:'dock-rewind',focused:i===0?'repeat-button':'dock-rewind'}))];
+  const after=structuredClone(events.at(-1));after.type='settled';after.y+=delta;after.scrollTop+=delta;after.scrollHeight+=delta;
+  for(const key of ['#episode-media','#playback-controls']){after.boxes[key].rect.top-=delta;after.boxes[key].rect.height+=delta;}
+  after.boxes['#stop-repeat'].hidden=true;after.boxes['#repeat-status'].text='';after.reading.loopCue.pressed='false';events.push(after);return {events,calls:[]};
+ };
+ const valid=a=>Object.values(evaluateDockLoopViewport(a)).every(Boolean);
+ assert.equal(valid(make()),true,'native compensation is accepted only with exact same visible source characters');assert.equal(valid(make(0)),true,'normal no-reflow loop retirement remains valid');
+ for(const change of [
+  a=>{for(const e of a.events)e.reading.anchors=[];},
+  a=>{a.events.at(-1).reading.anchors[0].rect.top+=3;},a=>{a.events.at(-1).reading.anchors[0].rect.right+=3;},
+  a=>{a.events.at(-1).reading.anchors[0].rect.height+=18;},a=>{a.events.at(-1).reading.anchors.pop();},
+  a=>{a.events.at(-1).reading.anchors[0].clear=false;},a=>{a.events.at(-1).reading.anchors[0].sameNode=false;},
+  a=>{a.events.at(-1).reading.anchors[0].sameOffsets=false;},a=>{a.events.at(-1).reading.anchors[0].start++;},
+  a=>{a.events.at(-1).reading.anchors[0].sameText=false;},a=>{a.events.at(-1).reading.anchors[0].connected=false;},
+  a=>{a.events.at(-1).reading.anchors[0].rect.top=-20;},a=>{a.events.at(-1).reading.rows[0].rect.bottom+=3;},
+  a=>{a.events.at(-1).scrollHeight-=5;},a=>{a.events.at(-1).y-=5;},a=>{a.events.at(-1).boxes['#playback-controls'].rect.height-=5;},
+  a=>{a.events.at(-1).boxes['#episode-media'].rect.bottom+=3;},a=>{a.events.at(-1).reading.loopCue.pressed='true';},
+  a=>{a.events.at(-1).boxes['#stop-repeat'].hidden=false;},a=>{a.events.at(-1).boxes['#repeat-status'].text='still looping';},
+  a=>{a.events.at(-1).focused='transcript';},a=>{a.events.at(-1).follow='following';},a=>{a.events.at(-1).scrollOwner='BODY';},
+  a=>{a.events.at(-1).clientHeight--;},a=>{a.events.at(-1).inset='0px';},a=>{a.calls.push({type:'scrollBy'});},
+  a=>{a.events[1].trusted=false;},a=>{a.events.splice(1,1);},a=>{a.events[1].y+=3;},a=>{a.events[1].follow='following';},a=>{a.events.at(-1).width++;},a=>{a.events[1].reading.anchors[0].rect.top+=3;},
+  a=>{for(const e of a.events)e.boxes['#episode-media'].rect.bottom=100;}
+ ]){const audit=make();change(audit);assert.equal(valid(audit),false,'moved/lost/covered/replaced anchors, unrelated layout, or takeover must fail');}
+ for(const field of ['width','height','clientHeight'])for(const value of [undefined,NaN,Infinity,0,-1]){const audit=make();for(const event of audit.events){if(value===undefined)delete event[field];else event[field]=value;}assert.equal(valid(audit),false,'missing or invalid viewport dimensions cannot compare equal and pass');}
+ assert.equal(valid(make(39)),false,'positive scroll/layout growth is not loop-control retirement');assert.equal(valid(make(1)),false,'even a small positive scroll is not contraction');assert.equal(valid({events:[],calls:[]}),false);
+});
+
+test('loop observer binds visible original Text nodes and exact offsets before pointerdown',async()=>{
+ const env=setup();try{
+  const {w,$}=env;await media(env);const sources=[...$('transcript').querySelectorAll('.words')],source=sources[2],text=source.firstChild;
+  $('reading-mode-toolbar').getBoundingClientRect=()=>({bottom:100});$('media-dock').getBoundingClientRect=()=>({top:700});
+  for(const words of sources)words.getBoundingClientRect=()=>({top:-100,bottom:-80});
+  source.getBoundingClientRect=()=>({top:120,bottom:138});
+  const geometry={top:120,bottom:138,left:74,right:82,width:8,height:18};
+  w.Range.prototype.getBoundingClientRect=function(){return {...geometry,left:74+this.startOffset*8,right:82+this.startOffset*8};};
+  w.document.elementFromPoint=()=>source;
+  w.eval('('+installDockViewportObserver.toString()+')({readingAnchors:true})');const audit=w.__dockViewportObserver,initial=audit.events[0];
+  assert.equal(initial.type,'installed');assert.equal(initial.reading.anchors.length,3);assert.equal(initial.reading.anchors[0].cue,source.closest('.segment').dataset.segmentId);assert.equal(initial.reading.anchors[0].start,0);assert.equal(initial.reading.anchors[0].character,text.textContent[0]);assert.ok(initial.reading.anchors.every(a=>a.sameNode&&a.sameOffsets&&a.sameText&&a.connected&&a.clear));
+  text.textContent='replacement text';const changed=audit.snapshot();assert.ok(changed.reading.anchors.some(a=>!a.sameText||!a.sameOffsets));
+  source.replaceChildren(w.document.createTextNode('replacement text'));assert.ok(audit.snapshot().reading.anchors.some(a=>!a.connected));audit.stop();
+ }finally{await env.w.happyDOM.close();}
 });
