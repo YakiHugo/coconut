@@ -681,7 +681,7 @@ function showWorkspace(next) {
 function clearReadingContext(retireSearchRoute=false) {
  if(retireSearchRoute&&readingSearchSession?.readingContext===readingContext)readingSearchSession.readingContext=null;
  readingContext=null;
- $('reading-context').hidden=true;
+ $('reading-context').hidden=true;syncReadingStickyStack();
  document.querySelectorAll('.context-target').forEach(row=>row.classList.remove('context-target'));
 }
 function endReadingSearch(){readingSearchSession=null;$('reading-search-session').hidden=true;}
@@ -717,7 +717,7 @@ function readingSearchTarget(){
   // A mounted row with no layout can still own an explicit match. Once layout
   // exists, an old result cannot overrule a newer page or reading scrolled away.
   const unmeasured=!rect.height&&!rect.width&&rect.top===0&&rect.bottom===0;
-  return (unmeasured||rect.bottom>0&&rect.top<(window.visualViewport?.height||window.innerHeight))?id:null;
+  return (unmeasured||rect.bottom>readingDisplayTopEdge()&&rect.top<(window.visualViewport?.height||window.innerHeight))?id:null;
  };
  for(const id of [visibleCandidate(selected),visibleCandidate(searchFocusedId),visibleCandidate(readingContext?.document===doc?readingContext.id:null),visibleReadingCue()]){
   if(id===null||id===undefined)continue;
@@ -742,7 +742,7 @@ function clearReadingFiltersAt(cue){
  if(index>=0)pageStart=Math.floor(index/PAGE_SIZE)*PAGE_SIZE;
  render();
  const node=index>=0?chapterCueNode(cue.id,'transcript'):null;
- if(node){node.scrollIntoView?.({block:'center',behavior:'auto'});node.focus({preventScroll:true});}
+ if(node){scrollReadingTarget(node,{block:'center',behavior:'auto'});node.focus({preventScroll:true});}
  else focusReadingSearchAfterNavigation();
 }
 function focusReadingSearchAfterNavigation(options){
@@ -771,7 +771,7 @@ function returnBeforeSearch(){
  if(node){
   node.tabIndex=-1;
   if(anchor.unchanged&&Number.isFinite(origin.viewportTop))window.scrollBy(0,node.getBoundingClientRect().top-origin.viewportTop);
-  else node.scrollIntoView?.({block:'center',behavior:'auto'});
+  else scrollReadingTarget(node,{block:'center',behavior:'auto'});
   node.focus({preventScroll:true});
  }else{focusReadingSearchAfterNavigation({preventScroll:true});notice('原片段已离开搜索前的筛选；已恢复筛选，请选择当前结果。');}
  if(!anchor.unchanged)notice('搜索前的原片段已变化，已定位当前原文。');
@@ -787,7 +787,7 @@ $('continue-search-reading').onclick=()=>{
  if(!ownedReadingSearch())return;const cue=readingSearchTarget();if(!cue)return;
  endReadingSearch();clearReadingContext();chapterReturn=null;$('search').value='';notesOnly=false;excerptsOnly=false;speakerFilter=null;searchFocusedId=null;selected=null;$('ai-consent').checked=false;
  openPassage(cue.id,false);
- const node=chapterCueNode(cue.id,'passages');if(node){node.tabIndex=-1;node.classList.add('search-return-target');node.scrollIntoView?.({block:node.getBoundingClientRect().height>(window.visualViewport?.height||window.innerHeight)?'start':'center',behavior:'auto'});node.focus({preventScroll:true});}
+ const node=chapterCueNode(cue.id,'passages');if(node){node.tabIndex=-1;node.classList.add('search-return-target');scrollReadingTarget(node,{block:node.getBoundingClientRect().height>(window.visualViewport?.height||window.innerHeight)?'start':'center',behavior:'auto'});node.focus({preventScroll:true});}
 };
 function renderReadingContext() {
  if(readingContext?.document!==active())readingContext=null;
@@ -797,6 +797,7 @@ function renderReadingContext() {
  else if(readingContextHome.nextSibling!==bar)readingContextHome.after(bar);
  $('reading-context').hidden=!origin||workspace!=='read'||readingMode==='summary';
  if(origin)$('reading-context-label').textContent=origin.label+' · '+(!origin.count?'原筛选已无匹配结果':(origin.resultMissing?'原片段已离开结果 · 返回第 ':'第 ')+(origin.index+1)+' / '+origin.count+' 个结果');
+ syncReadingStickyStack();
 }
 function captureReadingContext(id) {
  const doc=active(),query=$('search').value;
@@ -820,7 +821,7 @@ function returnReadingResults() {
  $('search').value=origin.query;notesOnly=origin.notesOnly;excerptsOnly=origin.excerptsOnly;speakerFilter=origin.speakerFilter;
  // Display choice can change during the detour; restore the original view without
  // reverting source edits, annotations, or the user's explicit reading bookmark.
- if(contentIngressAllowed(doc)&&(doc.translation_view||'')!==origin.translationView){doc.translation_view=origin.translationView;queueDocument(doc);}
+ if(contentIngressAllowed(doc)){recordReadingDisplaySelection(doc);if((doc.translation_view||'')!==origin.translationView){doc.translation_view=origin.translationView;queueDocument(doc);}}
  readingMode='transcript';selected=null;
  const matches=doc.segments.filter(s=>matchesReadingSegment(s,doc,origin.query.trim().toLocaleLowerCase()));
  const exact=matches.findIndex(s=>s.id===origin.id);
@@ -833,7 +834,7 @@ function returnReadingResults() {
  const row=[...$('transcript').querySelectorAll('.segment')].find(node=>node.dataset.segmentId===target?.id);
  if(row){
   if(exact>=0&&Number.isFinite(origin.viewportTop))window.scrollBy(0,row.getBoundingClientRect().top-origin.viewportTop);
-  else row.scrollIntoView?.({block:'center'});
+  else scrollReadingTarget(row,{block:'center'});
   (row.querySelector('.context-button')||row).focus({preventScroll:true});
  }else focusReadingSearch();
  if(exact<0)notice(target?'原片段已不在筛选结果中，已返回相邻结果。':'原筛选已没有匹配片段；可调整筛选继续阅读。');
@@ -867,7 +868,7 @@ function goToSegment(id,contextDetour=false,preservePassageReturn=false) {
  const alignment = row && row.getBoundingClientRect().height > (window.visualViewport?.height || window.innerHeight) ? "start" : "center";
 	// A context detour can cross most of a 100-cue page. Land immediately so
  // the requested evidence is readable instead of animating past the AI tools.
- row?.scrollIntoView?.({block: alignment, behavior: contextDetour ? "auto" : "smooth"});
+ scrollReadingTarget(row,{block:alignment,behavior:contextDetour?"auto":"smooth"});
 	row?.focus({preventScroll: true});
 }
 // Explicit opens share one resume policy. Run synchronously with activation,
@@ -1837,6 +1838,7 @@ function renderChapterReturn(){
  if(!bar.hidden){const target=readingMode==='passages'?$('passage-workspace'):$('transcript-layout');if(bar.nextElementSibling!==target)target.before(bar);}
  $('open-source-correction').hidden=!active()?.segments.length;
  $('open-chapters').hidden=!chapterEligible(active());$('open-chapters').textContent='章节目录'+(active()?.reading_chapters?.length?'（'+active().reading_chapters.length+'）':'');
+ syncReadingStickyStack();
 }
 function chapterPosition(){const doc=chapterDirectoryDoc;return doc?.segments.findIndex(cue=>cue.id===chapterDirectoryCue)??-1;}
 function renderChapterDirectory(focusId=null){
@@ -2245,11 +2247,11 @@ $('notebook-export').onclick=()=>{
 };
 function openLibraryHit(hit) {
  if(hit.kind==='text'||hit.kind==='note'||hit.kind==='translation'){
-  if(hit.kind==='translation'){const doc=active();if(!contentIngressAllowed(doc))return;doc.translation_view=hit.language;queueDocument(doc);libraryTranslationReveal={doc,hit};}
+  if(hit.kind==='translation'){const doc=active();if(!contentIngressAllowed(doc))return;recordReadingDisplaySelection(doc);doc.translation_view=hit.language;queueDocument(doc);libraryTranslationReveal={doc,hit};}
   goToSegment(hit.id,true);
   if(hit.kind==='translation'){
    const row=[...$('transcript').querySelectorAll('.segment')].find(row=>row.dataset.segmentId===hit.id);
-   row?.querySelector('.translation mark')?.scrollIntoView?.({block:'center',behavior:'auto'});
+   scrollReadingTarget(row?.querySelector('.translation mark'),{block:'center',behavior:'auto'});
   }
   if(hit.kind==='note'){
    const row=[...$('transcript').querySelectorAll('.segment')].find(row=>row.dataset.segmentId===hit.id);
@@ -2345,7 +2347,7 @@ function refreshRecoveredJobMedia(doc){
  // A late result may make the current book playable, but never expand panels,
  // replace a selected local file, rerender a draft, seek, or start playback.
  const {mediaPath}=renderSourceMedia(doc);
- if(mediaPath&&$('episode-media').hidden)$('toggle-reader-media').textContent='本地原声已就绪 · 打开回听';
+ if(mediaPath&&$('episode-media').hidden)setReaderMediaLabel('本地原声已就绪 · 打开回听','原声');
  passagePlayback?.sync();refreshPlaybackDock();
 }
 function render({keepNoteEditor=false,reuseLibraryMetadata=false}={}) {
@@ -2355,7 +2357,6 @@ function render({keepNoteEditor=false,reuseLibraryMetadata=false}={}) {
  playbackIndex=null;
  const focusedCueAction=document.activeElement?.closest('.cue-more');
  const cueFocus=focusedCueAction?{key:focusedCueAction.dataset.cueKey,selector:document.activeElement.tagName==='SUMMARY'?'summary':'.'+document.activeElement.className}:null;
- const openCueActions=new Set([...document.querySelectorAll(".cue-more[open]")].map(node=>node.dataset.cueKey));
 	const doc = active();
  readingExcerptControls=[];const excerptIndex=doc&&!Coconut.isAudioProject(doc)?readingExcerptIndex(doc):null;
  if(readingExcerptDialog&&readingExcerptDialog.doc===doc)for(const row of readingExcerptDialog.rows)row.source=excerptIndex?.states.get(row.record.id)||row.source;
@@ -2413,6 +2414,24 @@ function render({keepNoteEditor=false,reuseLibraryMetadata=false}={}) {
   renderAudioProject(doc);renderNotebookAction(doc);applyReadingMode();
   window.dispatchEvent(new Event('coconut-render'));return;
  }
+ renderTranscript(doc,excerptIndex,{keepNoteEditor});
+ renderSummary();
+ renderPassages(doc,excerptIndex);
+ applyReadingMode();
+ pauseBoundedForCompactNote();
+ if(cueFocus){
+  const disclosure=[...document.querySelectorAll('.cue-more')].find(node=>node.dataset.cueKey===cueFocus.key);
+  focusCueAction(disclosure?.querySelector(cueFocus.selector));
+ }
+	highlightPlayback();
+	window.dispatchEvent(new Event("coconut-render"));
+}
+// Display-only updates do not touch the media owner or the live note/IME editor.
+function renderTranscript(doc,excerptIndex,{keepNoteEditor=false,displayOnly=false}={}){
+ readingExcerptControls=readingExcerptControls.filter(entry=>entry.mode!=='transcript'&&entry.button.isConnected);
+ const mediaHost=$("source-media"),mediaPath=mediaHost.querySelector("audio,video")?.getAttribute("src")||"",isDemo=doc.provenance?.kind==='authored_demo';
+ const openCueActions=new Set([...document.querySelectorAll(".cue-more[open]")].map(node=>node.dataset.cueKey));
+ const hasReadingFilter=!!$('search').value.trim()||notesOnly||excerptsOnly||speakerFilter!==null;
  const speakers=[...new Set(doc.segments.map(s=>s.speaker||''))];
  if(speakerFilter!==null&&!speakers.includes(speakerFilter))speakerFilter=null;
  const selector=$('speaker-filter');selector.replaceChildren(el('option','','全部说话人'));selector.firstChild.value='all';
@@ -2429,6 +2448,7 @@ function render({keepNoteEditor=false,reuseLibraryMetadata=false}={}) {
  $("search-navigation").hidden=!query;
  $("previous-match").disabled=!filtered.length;$("next-match").disabled=!filtered.length;
  $("match-position").textContent=(searchFocusedId?filtered.findIndex(s=>s.id===searchFocusedId)+1:0)+" / "+filtered.length+" 个匹配片段";
+	if(!displayOnly){
 	const currentNote = visible.find((segment) => segment.id === selected) || (keepNoteEditor && doc.segments.find(segment=>segment.id===selected));
 	if (!currentNote) selected = null;
 	$("notes-panel").hidden = !selected;
@@ -2436,6 +2456,7 @@ function render({keepNoteEditor=false,reuseLibraryMetadata=false}={}) {
 		$("quote").textContent = currentNote.text;
 		$("note-time").textContent = Coconut.time(currentNote.start) + " 的想法";
 		if($("note").value !== (doc.notes[currentNote.id] || "")) $("note").value = doc.notes[currentNote.id] || "";
+	}
 	}
 	$("filter-all").setAttribute("aria-pressed", String(!notesOnly && !excerptsOnly));
 	$("filter-notes").setAttribute("aria-pressed", String(notesOnly));
@@ -2503,14 +2524,14 @@ function render({keepNoteEditor=false,reuseLibraryMetadata=false}={}) {
 		body.className="segment-content";
   const parallel=el("div","parallel-text");
   parallel.append(highlightedText("p", "words", s.text, query, searchMatches?.byCue.get(s.id)?.text||[]));
-        if(translated) parallel.append(highlightedText("p", "translation"+(!Coconut.translationCurrent(s,doc,translated)?" stale":""), Coconut.translationCurrent(s,doc,translated) ? translated.text : "原文或上下文已变化，或旧译文缺少上下文记录，可核对／修正此译文或重新生成", query||(translationReveal?.id===s.id?'translation match':''), translationReveal?.id===s.id?[translationReveal.firstRange]:searchMatches?.byCue.get(s.id)?.translations[doc.translation_view]||[]));
+        if(translated) parallel.append(highlightedText("p", "translation"+(!Coconut.translationCurrent(s,doc,translated)?" stale":""), Coconut.translationCurrent(s,doc,translated) ? (translated.text.trim()?translated.text:"暂无译文") : "原文或上下文已变化，或旧译文缺少上下文记录，可核对／修正此译文或重新生成", query||(translationReveal?.id===s.id?'translation match':''), translationReveal?.id===s.id?[translationReveal.firstRange]:searchMatches?.byCue.get(s.id)?.translations[doc.translation_view]||[]));
   const textHit=searchMatches?.byCue.get(s.id)?.phrases.text;
   if(textHit?.cueCount>1)body.append(phrasePreview(textHit));
   for(const [language,ranges] of Object.entries(searchMatches?.byCue.get(s.id)?.translations||{})){
    const hit=searchMatches.byCue.get(s.id).phrases['translation:'+language]||searchMatches.previews.get('translation:'+language+':'+s.id),hidden=language!==doc.translation_view;
    if(hit?.cueCount>1||hidden){
     const preview=phrasePreview(hit||{field:'translation',language,id:s.id,ids:[s.id],snippet:CoconutPassages.rangeSnippet(s.translations[language].text,ranges[0].start,ranges[0].end)});
-    if(hidden){const reveal=el('button','phrase-show-translation','查看'+translationLabel(language)+'译文');reveal.type='button';reveal.onclick=()=>{if(active()!==doc||!contentIngressAllowed(doc))return;doc.translation_view=language;queueDocument(doc);render();[...$('transcript').querySelectorAll('.segment')].find(row=>row.dataset.segmentId===s.id)?.focus({preventScroll:true});};preview.append(reveal);}
+    if(hidden){const reveal=el('button','phrase-show-translation','查看'+translationLabel(language)+'译文');reveal.type='button';reveal.onclick=()=>{if(active()!==doc||!contentIngressAllowed(doc))return;recordReadingDisplaySelection(doc);doc.translation_view=language;queueDocument(doc);render();[...$('transcript').querySelectorAll('.segment')].find(row=>row.dataset.segmentId===s.id)?.focus({preventScroll:true});};preview.append(reveal);}
     body.append(preview);
    }
   }
@@ -2622,16 +2643,6 @@ function render({keepNoteEditor=false,reuseLibraryMetadata=false}={}) {
 		navigation.append(previous, position, next);
 		$("transcript").append(navigation);
 	}
- renderSummary();
- renderPassages(doc,excerptIndex);
- applyReadingMode();
- pauseBoundedForCompactNote();
- if(cueFocus){
-  const disclosure=[...document.querySelectorAll('.cue-more')].find(node=>node.dataset.cueKey===cueFocus.key);
-  focusCueAction(disclosure?.querySelector(cueFocus.selector));
- }
-	highlightPlayback();
-	window.dispatchEvent(new Event("coconut-render"));
 }
 function changeReadingPage(direction) {
 	pageStart = Math.max(0, pageStart + direction * PAGE_SIZE);
@@ -2640,7 +2651,7 @@ function changeReadingPage(direction) {
 	// Replacing a page removes its controls: move focus into the new content
 	// rather than dropping keyboard users back to the top of the document.
 	const row = $("transcript").querySelector(".segment");
-	row?.scrollIntoView?.({block: "start"});
+	scrollReadingTarget(row,{block:"start"});
 	row?.focus({preventScroll: true});
 }
 function playbackSegment() {
@@ -3676,6 +3687,89 @@ $("library-file").onchange = async () => {
  finally { if(ownsRequest())$("library-file").value=""; }
 };
 
+// Reader intent is page-local and identity-owned. Even A → B → A must stop a
+// previously sent translation from stealing the newer display selection.
+const readingDisplayRevisions=new WeakMap();
+function readingDisplayRevision(doc){return readingDisplayRevisions.get(doc)||0;}
+function recordReadingDisplaySelection(doc){readingDisplayRevisions.set(doc,readingDisplayRevision(doc)+1);}
+function renderReadingDisplayControl(){
+ const doc=active(),control=$('reading-display-control'),select=$('translation-view');
+ control.hidden=workspace!=='read'||!doc||Coconut.isAudioProject(doc)||!doc.segments.length||readingMode==='summary';
+ if(!doc)return;
+ const languages=new Set();
+ for(const cue of doc.segments)for(const [language,item] of Object.entries(cue.translations||{}))if(item?.text?.trim())languages.add(language);
+ const saved=new Set(languages);if(doc.translation_view)languages.add(doc.translation_view);
+ const options=[['',languages.size?'仅原文':'仅原文 · 暂无已存译文'],...[...languages].map(language=>[language,translationLabel(language)+' + 原文'+(saved.has(language)?'':' · 暂无已存译文')])];
+ const signature=JSON.stringify(options);
+ if(select.dataset.options!==signature){select.replaceChildren(...options.map(([value,label])=>{const option=el('option','',label);option.value=value;return option;}));select.dataset.options=signature;}
+ select.disabled=languages.size===0;
+ select.value=textExportLanguage(doc);
+}
+function readingStickyNodes(){return [$('reading-mode-toolbar'),...document.querySelectorAll('#reader-workspace > .reading-context')];}
+function syncReadingStickyStack(){
+ // Every retained return route owns its own row. Measure wrapped labels rather
+ // than guessing a mobile height; geometry updates never scroll or move nodes.
+ const measurements=readingStickyNodes().map(node=>({node,height:node.hidden?0:node.getBoundingClientRect().height}));
+ let inset=6;
+ for(const {node,height} of measurements){
+  const top=(height>0?inset:6)+'px';if(node.style.top!==top)node.style.top=top;
+  if(height>0)inset+=height+6;
+ }
+ const workspace=$('reader-workspace'),value=inset+'px';
+ if(workspace.style.getPropertyValue('--reading-sticky-inset')!==value)workspace.style.setProperty('--reading-sticky-inset',value);
+ return inset;
+}
+const readingStickyObserver=typeof ResizeObserver==='function'?new ResizeObserver(syncReadingStickyStack):null;
+for(const node of readingStickyNodes())readingStickyObserver?.observe(node);
+window.addEventListener('resize',syncReadingStickyStack);
+function readingDisplayTopEdge(){
+ return readingStickyNodes().reduce((edge,node)=>{
+  const rect=node.getBoundingClientRect(),inset=parseFloat(getComputedStyle(node).top)||0;
+  return !node.hidden&&rect.height>0&&rect.top<=inset?Math.max(edge,rect.bottom):edge;
+ },0);
+}
+// Explicit new landings reserve the forthcoming sticky stack even when it is
+// still in natural flow. Native smooth scrolling reads this margin immediately;
+// restore the inline style afterwards so no old return inset survives the route.
+function scrollReadingTarget(node,{block='start',behavior='auto'}={}){
+ if(!node)return;
+ if(node.closest('dialog')){node.scrollIntoView?.({block,behavior});return;}
+ const inset=syncReadingStickyStack(),prior=node.style.getPropertyValue('scroll-margin-top'),priority=node.style.getPropertyPriority('scroll-margin-top');
+ const margin=Math.max(parseFloat(getComputedStyle(node).scrollMarginTop)||0,inset);
+ if(block==='center'&&node.getBoundingClientRect().height>(window.visualViewport?.height||window.innerHeight)-margin)block='start';
+ node.style.setProperty('scroll-margin-top',margin+'px',priority);
+ try{node.scrollIntoView?.({block,behavior});}finally{if(prior)node.style.setProperty('scroll-margin-top',prior,priority);else node.style.removeProperty('scroll-margin-top');}
+ if(behavior!=='smooth'){const edge=readingDisplayTopEdge(),top=node.getBoundingClientRect().top;if(edge&&top<edge+6)window.scrollBy(0,top-edge-6);}
+}
+function readingDisplayCueNode(id){
+ return [...document.querySelectorAll(readingMode==='passages'?'#passage-body .passage-original .passage-cue':'#transcript .segment')].find(node=>(node.dataset.cueId||node.dataset.segmentId)===id);
+}
+function setReadingDisplayLanguage(target){
+ const doc=active();if(!doc||!contentIngressAllowed(doc)||Coconut.isAudioProject(doc))return;
+ if(target&&!Array.from($('translation-view').options).some(option=>option.value===target))return;
+ const sourceNodes=[...document.querySelectorAll(readingMode==='passages'?'#passage-body .passage-original .passage-cue':'#transcript .segment')];
+ const edge=readingDisplayTopEdge();
+ const node=sourceNodes.find(node=>{const rect=node.getBoundingClientRect();return rect.bottom>edge&&rect.top<(window.visualViewport?.height||innerHeight);})||readingDisplayCueNode(visibleReadingCue());
+ const cueId=node?.dataset.cueId||node?.dataset.segmentId,top=node?.getBoundingClientRect().top;
+ recordReadingDisplaySelection(doc);
+ // Source-only shares the existing page-local passage lifecycle. A concrete
+ // language remains persisted; fallback reads never manufacture a saved choice.
+ passageTranslations=!!target;
+ if((doc.translation_view||'')!==target){doc.translation_view=target;queueDocument(doc);}
+ const excerptIndex=readingExcerptIndex(doc);
+ if(readingMode==='passages')renderPassages(doc,excerptIndex);
+ else if(readingMode==='transcript')renderTranscript(doc,excerptIndex,{keepNoteEditor:true,displayOnly:true});
+ renderReadingDisplay();highlightPlayback();
+ const restored=readingDisplayCueNode(cueId);
+ if(restored&&Number.isFinite(top)){
+  const owner=followOwns()?readingFollow:null;window.scrollBy(0,restored.getBoundingClientRect().top-top);
+  // Only this synchronous, exact display compensation belongs to the reader.
+  // A later wheel/touch/keyboard or different scroll position still suspends.
+  if(owner&&readingFollow===owner)owner.scrollY=window.scrollY;
+ }
+}
+$('translation-view').onchange=()=>setReadingDisplayLanguage($('translation-view').value);
+
 function textExportLanguage(doc=active()){
  if(!doc||Coconut.isAudioProject(doc)||readingMode==='summary')return '';
  return readingMode==='passages'?(passageTranslations?passageTargetLanguage(doc):''):doc.translation_view||'';
@@ -3683,6 +3777,7 @@ function textExportLanguage(doc=active()){
 function renderTextExportAction(){
  const doc=active(),unavailable=!doc||Coconut.isAudioProject(doc)||!doc.segments.length,target=textExportLanguage(doc);
  $('export-subtitles').disabled=unavailable;
+ const changed=subtitleExportDocument!==doc||subtitleExportLanguage!==target;
  const subtitleOption=$('subtitle-bilingual');
  subtitleOption.disabled=unavailable||!target;
  if(subtitleOption.disabled||subtitleExportDocument!==doc||subtitleExportLanguage!==target)subtitleOption.checked=false;
@@ -3690,7 +3785,7 @@ function renderTextExportAction(){
  $('subtitle-bilingual-label').textContent=target?'附加当前显示的'+translationLabel(target)+'（'+target+'）有效译文':'当前未显示译文';
  $('export-text').disabled=unavailable;
  $('text-bilingual').disabled=unavailable||!target;
- if($('text-bilingual').disabled)$('text-bilingual').checked=false;
+ if($('text-bilingual').disabled||changed)$('text-bilingual').checked=false;
  $('text-export-language').textContent=unavailable?'补充文字稿后可导出。':target?'当前显示语言：'+target+'；缺失与过期译文会标注，不会导出过期内容。':'当前未显示译文；切换双语或展开连贯阅读的译文后可附加。';
 }
 $('export-text').onclick=()=>{
@@ -3831,7 +3926,14 @@ function advanceReadingFollow(){
  const rect=row.getBoundingClientRect(),height=window.visualViewport?.height||window.innerHeight;
  // An instant bounded correction avoids queued smooth scrolling competing with
  // manual intent and also respects reduced-motion preferences.
- if(rect.top<64||rect.bottom>height-128)row.scrollIntoView?.({block:rect.height>height-192?'start':'center',behavior:'auto'});
+ const ceiling=Math.max(64,readingDisplayTopEdge()+6);
+ if(rect.top<ceiling||rect.bottom>height-128){
+  row.scrollIntoView?.({block:rect.height>height-ceiling-128?'start':'center',behavior:'auto'});
+  // Native start alignment can leave a long cue below the browser edge but
+  // behind our sticky controls. This correction retains the same follow owner.
+  const edge=readingDisplayTopEdge(),top=row.getBoundingClientRect().top;
+  if(edge&&top<edge+6)window.scrollBy(0,top-edge-6);
+ }
 }
 function scheduleReadingFollow(){
  refreshReadingFollow();if(!readingFollow||readingFollow.suspended||readingFollowFrame!==null)return;
@@ -3851,7 +3953,7 @@ $('follow-playback').onclick=toggleReadingFollow;$('dock-follow').onclick=toggle
 // our instant correction records its final position before async scroll events.
 // Capture runs before navigation removes a focused row or opens an editor.
 window.addEventListener('scroll',()=>{if(readingFollow&&!readingFollowMoving&&Math.abs(window.scrollY-readingFollow.scrollY)>1)suspendReadingFollow();},{passive:true});
-const followTransport='#follow-playback,#dock-follow,#dock-play,#skip-back,#skip-forward,#playback-rate,audio,video';
+const followTransport='#reading-display-control,#passage-toggle-translation,#follow-playback,#dock-follow,#dock-play,#skip-back,#skip-forward,#playback-rate,audio,video';
 window.addEventListener('wheel',()=>suspendReadingFollow(),{capture:true,passive:true});
 window.addEventListener('touchstart',event=>{if(!event.target.closest?.(followTransport))suspendReadingFollow();},{capture:true,passive:true});
 document.addEventListener('pointerdown',event=>{if(!event.target.closest?.(followTransport))suspendReadingFollow();},true);
@@ -4007,7 +4109,7 @@ function moveSearchMatch(direction){
  searchFocusedId=matches[index].id;pageStart=Math.floor(index/PAGE_SIZE)*PAGE_SIZE;selected=null;render();
  const row=[...$("transcript").querySelectorAll(".segment")].find(s=>s.dataset.segmentId===searchFocusedId);
  const alignment = row && row.getBoundingClientRect().height > (window.visualViewport?.height || window.innerHeight) ? "start" : "center";
- row?.scrollIntoView?.({block:alignment});row?.focus({preventScroll:true});
+ scrollReadingTarget(row,{block:alignment});row?.focus({preventScroll:true});
 }
 $("previous-match").onclick=()=>moveSearchMatch(-1);$("next-match").onclick=()=>moveSearchMatch(1);
 
@@ -4035,7 +4137,7 @@ document.addEventListener("keydown", event => {
 function readingPassages(doc=active()){return doc&&!Coconut.isAudioProject(doc)?CoconutPassages.build(doc.segments):[];}
 function passageTargetLanguage(doc){
  if(doc.translation_view)return doc.translation_view;
- for(const cue of doc.segments)for(const [language,item] of Object.entries(cue.translations||{}))if(Coconut.translationCurrent(cue,doc,item))return language;
+ for(const cue of doc.segments)for(const [language,item] of Object.entries(cue.translations||{}))if(item?.text?.trim()&&Coconut.translationCurrent(cue,doc,item))return language;
  return '';
 }
 function appendPassageCue(paragraph,cue,text,previousText){
@@ -4064,7 +4166,7 @@ function renderPassages(doc,excerptIndex=readingExcerptIndex(doc)){
  const anchored=CoconutPassages.locate(passages,passageAnchor)||passages[0];
  const index=passages.indexOf(anchored);passagePageStart=Math.floor(index/PASSAGES_PER_PAGE)*PASSAGES_PER_PAGE;
  const visible=passages.slice(passagePageStart,passagePageStart+PASSAGES_PER_PAGE),target=passageTargetLanguage(doc);
- const hasTranslation=!!target&&doc.segments.some(cue=>Coconut.translationCurrent(cue,doc,cue.translations?.[target]));
+ const hasTranslation=!!target&&doc.segments.some(cue=>cue.translations?.[target]?.text?.trim()&&Coconut.translationCurrent(cue,doc,cue.translations[target]));
  const toggle=$('passage-toggle-translation');toggle.hidden=!hasTranslation;toggle.setAttribute('aria-pressed',String(passageTranslations));toggle.textContent=passageTranslations?'收起已存译文':'对照已存译文';
  const duration=Coconut.documentDuration(doc);
  const slider=$('passage-time-range');slider.max=String(Math.max(1,Math.ceil(duration)));slider.value=String(anchored.start);slider.disabled=duration<=0;
@@ -4084,11 +4186,11 @@ function renderPassages(doc,excerptIndex=readingExcerptIndex(doc)){
   if(target&&passageTranslations){
    const translated=el('p','passage-translation');translated.lang=target;previous=null;
    for(const cue of passage.cues){
-    const item=cue.translations?.[target],current=item&&Coconut.translationCurrent(cue,doc,item);
+    const item=cue.translations?.[target],current=item?.text?.trim()&&Coconut.translationCurrent(cue,doc,item);
     if(current){previous=appendPassageCue(translated,cue,item.text,previous);}
     else{
-     const gap=el('span','passage-translation-gap',Coconut.time(cue.start)+(item?' 译文已过期，请核对原文':' 暂无译文'));
-     gap.dataset.cueId=cue.id;gap.dataset.state=item?'stale':'missing';translated.append(gap);previous=null;
+     const gap=el('span','passage-translation-gap',Coconut.time(cue.start)+(item?.text?.trim()?' 译文已过期，请核对原文':' 暂无译文'));
+     gap.dataset.cueId=cue.id;gap.dataset.state=item?.text?.trim()?'stale':'missing';translated.append(gap);previous=null;
     }
    }
    columns.append(translated);
@@ -4180,7 +4282,7 @@ document.addEventListener('pointerdown',()=>{passageActionTab=false;libraryFocus
 document.addEventListener('focusin',event=>{
  const target=event.target,keyboard=passageActionTab;passageActionTab=false;
  const workspace=$('library-search-dialog').open&&target.matches?.('#library-search-results :is(button,input,select,summary), #library-search-feedback :is(button,input,select,summary)');
- if(!keyboard||(!workspace&&!target.matches?.('.passage-actions button, .passage-actions a, .segment .reading-excerpt-open, .library-select, .library-translation-hit, .library-translation-pagination button'))||!target.matches(':focus-visible'))return;
+ if(!keyboard||(!workspace&&!target.matches?.('#passage-body :is(button,a), #transcript :is(button,a,summary), .library-select, .library-translation-hit, .library-translation-pagination button'))||!target.matches(':focus-visible'))return;
  if(workspace||target.matches('.library-select, .library-translation-hit, .library-translation-pagination button')){
   const card=libraryCards.get(target.closest('.library-entry')?.dataset.documentKey),revision=libraryFocusRevealRevision;
   requestAnimationFrame(()=>revealLibrarySelectionFocus(target,card,revision));return;
@@ -4192,6 +4294,8 @@ document.addEventListener('focusin',event=>{
   if(!rect.width||!rect.height)return;
   const ring=(parseFloat(style.outlineWidth)||0)+(parseFloat(style.outlineOffset)||0)+2;
   const bounds={left:rect.left-ring,right:rect.right+ring,top:rect.top-ring,bottom:rect.bottom+ring};
+  const toolbar=$('reading-mode-toolbar'),bar=toolbar.getBoundingClientRect(),edge=readingDisplayTopEdge();
+  if(edge&&bounds.top<edge&&bounds.right>bar.left&&bounds.left<bar.right){window.scrollBy(0,Math.floor(bounds.top-edge-2));return;}
   let ceiling=Infinity,occluded=false;
   for(const overlay of [$('reading-feedback'),$('media-dock')]){
    if(overlay.hidden||getComputedStyle(overlay).display==='none')continue;
@@ -4204,13 +4308,77 @@ document.addEventListener('focusin',event=>{
   if(occluded&&bounds.bottom>ceiling)window.scrollBy({top:bounds.bottom-ceiling,left:0,behavior:'instant'});
  });
 });
+// Only the utility ring may paint over an adjacent, still-unpinned toolbar.
+// Once reading scrolls under sticky controls, their normal foreground wins.
+const readingUtilityFocusTargets='#keyboard-help-open,#reading-info > summary,#toggle-reader-media,#passage-toggle-translation,#passage-search';
+function syncReadingUtilityFocusLayer(){
+ const utility=$('reading-utility'),toolbar=$('reading-mode-toolbar'),target=document.activeElement;let raised=false;
+ if(workspace==='read'&&!toolbar.hidden&&utility.classList.contains('is-compact')&&target?.matches(readingUtilityFocusTargets)&&target.matches(':focus-visible')){
+  const r=target.getBoundingClientRect(),bar=toolbar.getBoundingClientRect(),style=getComputedStyle(target),ring=(parseFloat(style.outlineWidth)||0)+Math.max(0,parseFloat(style.outlineOffset)||0),top=parseFloat(getComputedStyle(toolbar).top)||0;
+  raised=r.height>0&&bar.height>0&&bar.top>top&&r.bottom<=bar.top&&r.bottom+ring>bar.top;
+ }
+ if(utility.classList.contains('utility-focus-front')!==raised)utility.classList.toggle('utility-focus-front',raised);
+}
+document.addEventListener('focusin',syncReadingUtilityFocusLayer);
+document.addEventListener('focusout',event=>{if($('reading-utility').contains(event.target))$('reading-utility').classList.remove('utility-focus-front');});
+window.addEventListener('scroll',syncReadingUtilityFocusLayer,{passive:true});
+window.addEventListener('resize',syncReadingUtilityFocusLayer);
+window.addEventListener('coconut-render',syncReadingUtilityFocusLayer);
+// A native select can keep focus while a narrower/shorter viewport moves a
+// fixed receipt over its ring. Reveal only that focused control, never dismiss
+// the receipt or schedule a source/follow navigation. New user intent wins.
+let readingDisplayRevealFrame=null,readingDisplayRevealOwner=null;
+function cancelReadingDisplayReveal(){
+ if(readingDisplayRevealFrame!==null)cancelAnimationFrame(readingDisplayRevealFrame);
+ readingDisplayRevealFrame=null;readingDisplayRevealOwner=null;
+}
+function scheduleReadingDisplayReveal(){
+ cancelReadingDisplayReveal();const target=$('translation-view'),doc=active();
+ if(document.activeElement!==target||!doc)return;
+ const owner={doc,segments:doc.segments,selection:activeSelectionRevision,display:readingDisplayRevision(doc),scrollY:window.scrollY};readingDisplayRevealOwner=owner;
+ readingDisplayRevealFrame=requestAnimationFrame(()=>{
+  readingDisplayRevealFrame=null;readingDisplayRevealOwner=null;
+  if(document.activeElement!==target||!target.isConnected||workspace!=='read'||document.hidden||$('reading-display-control').hidden||$('reading-mode-toolbar').hidden||active()!==doc||doc.segments!==owner.segments||activeSelectionRevision!==owner.selection||readingDisplayRevision(doc)!==owner.display||window.scrollY!==owner.scrollY)return;
+  const r=target.getBoundingClientRect(),style=getComputedStyle(target);if(!r.width||!r.height||style.display==='none'||style.visibility==='hidden')return;
+  const ring=(parseFloat(style.outlineWidth)||0)+Math.max(0,parseFloat(style.outlineOffset)||0)+2;
+  const bounds={left:r.left-ring,right:r.right+ring,top:r.top-ring,bottom:r.bottom+ring};
+  const viewport=window.visualViewport,top=viewport?.offsetTop||0,height=viewport?.height||window.innerHeight;let slots=[[top,top+height]];
+  for(const overlay of [$('reading-feedback'),$('media-dock')]){
+   const css=getComputedStyle(overlay),box=overlay.getBoundingClientRect();
+   if(overlay.hidden||css.display==='none'||css.visibility==='hidden'||!box.width||!box.height||box.left>=bounds.right||box.right<=bounds.left)continue;
+   slots=slots.flatMap(([start,end])=>box.bottom<=start||box.top>=end?[[start,end]]:[[start,Math.min(end,box.top)],[Math.max(start,box.bottom),end]].filter(([a,b])=>b>a));
+  }
+  const toolbar=$('reading-mode-toolbar'),bar=toolbar.getBoundingClientRect(),stickyTop=parseFloat(getComputedStyle(toolbar).top)||0;
+  // A pinned toolbar does not move linearly with the page. Do not blindly scroll
+  // it, or choose a slot that requires scrolling beyond either document edge.
+  if(!bar.height||bar.top<=stickyTop)return;
+  const maxY=Math.max(0,document.documentElement.scrollHeight,document.body.scrollHeight)-window.innerHeight;
+  const lower=-window.scrollY,upper=Math.min(Math.max(0,maxY)-window.scrollY,bar.top-stickyTop),required=bounds.bottom-bounds.top;
+  const moves=slots.filter(([start,end])=>end-start>=required).flatMap(([start,end])=>{
+   const first=Math.ceil(Math.max(lower,bounds.bottom-end)),last=Math.floor(Math.min(upper,bounds.top-start));
+   return first<=last?[Math.max(first,Math.min(last,0))]:[];
+  }).sort((a,b)=>Math.abs(a)-Math.abs(b));
+  if(!moves.length||!moves[0])return;
+  const follow=followOwns()?readingFollow:null;
+  window.scrollBy({top:moves[0],left:0,behavior:'instant'});
+  if(window.scrollY===owner.scrollY)return;
+  // Only this exact synchronous compensation is owned; a later different
+  // scroll position still suspends playback following through its usual path.
+  if(follow&&readingFollow===follow)follow.scrollY=window.scrollY;
+ });
+}
+$('translation-view').addEventListener('focus',scheduleReadingDisplayReveal);
+window.addEventListener('resize',scheduleReadingDisplayReveal);
+window.visualViewport?.addEventListener('resize',scheduleReadingDisplayReveal);
+for(const type of ['pointerdown','keydown','touchstart','wheel'])window.addEventListener(type,cancelReadingDisplayReveal,{capture:true,passive:true});
+window.addEventListener('scroll',()=>{if(readingDisplayRevealOwner&&window.scrollY!==readingDisplayRevealOwner.scrollY)cancelReadingDisplayReveal();},{passive:true});
 function openPassage(cueId,scroll=true){
  const doc=active(),passages=readingPassages(doc),passage=CoconutPassages.locate(passages,cueId)||passages[0];if(!passage)return;
  $('reading-info').open=false;mediaExpandedKey=null;
  passageReturn=null;passageDocumentKey=doc.key;passageAnchor=passage.cues[0].id;
  setReadingMode('passages');render();
  const target=[...$('passage-body').querySelectorAll('.passage')].find(row=>row.dataset.firstCueId===passageAnchor);
- if(scroll){target?.scrollIntoView?.({block:'start',behavior:'auto'});target?.focus({preventScroll:true});}
+ if(scroll){scrollReadingTarget(target,{block:'start',behavior:'auto'});target?.focus({preventScroll:true});}
 }
 function openPassageDetails(cueId,section){
  const doc=active();if(!doc)return;
@@ -4225,7 +4393,7 @@ function returnToPassages(){
  const passage=CoconutPassages.locate(readingPassages(doc),origin.cueId);
  const section=[...$('passage-body').querySelectorAll('.passage')].find(row=>row.dataset.firstCueId===passage?.cues[0].id);
  if(section){window.scrollBy(0,section.getBoundingClientRect().top-origin.viewportTop);section.querySelector('.passage-details')?.focus({preventScroll:true});}
- else{$('passage-body').scrollIntoView?.({block:'start'});$('mode-passages').focus({preventScroll:true});}
+ else{scrollReadingTarget($('passage-body'),{block:'start'});$('mode-passages').focus({preventScroll:true});}
 }
 function movePassagePage(direction){
  const passages=readingPassages(),index=Math.max(0,Math.min(passages.length-1,passagePageStart+direction*PASSAGES_PER_PAGE));
@@ -4270,7 +4438,7 @@ $('passage-time-range').oninput=()=>{$('passage-time-label').textContent=Coconut
 $('passage-time-range').onchange=()=>{const passage=CoconutPassages.atTime(readingPassages(),Number($('passage-time-range').value));if(passage)openPassage(passage.cues[0].id);};
 $('passage-previous').onclick=()=>movePassagePage(-1);$('passage-next').onclick=()=>movePassagePage(1);
 $('return-to-passages').onclick=returnToPassages;
-$('passage-toggle-translation').onclick=()=>{passageTranslations=!passageTranslations;renderPassages(active());renderTextExportAction();};
+$('passage-toggle-translation').onclick=()=>setReadingDisplayLanguage(passageTranslations?'':passageTargetLanguage(active()));
 $('passage-search').onclick=()=>{
  beginReadingSearch();const doc=active(),anchor=visibleReadingCue();passageReturn=null;
  if(readingMode==='passages'&&doc){const matches=doc.segments.filter(cue=>matchesReadingSegment(cue,doc,$('search').value.trim().toLocaleLowerCase())),index=matches.findIndex(cue=>cue.id===anchor);if(index>=0)pageStart=Math.floor(index/PAGE_SIZE)*PAGE_SIZE;}
@@ -4388,6 +4556,10 @@ window.addEventListener('resize',pauseBoundedForCompactNote);
 window.visualViewport?.addEventListener('resize',pauseBoundedForCompactNote);
 window.addEventListener('pagehide',()=>{if(passagePlayback?.getState().range)$('source-media').querySelector('audio,video')?.pause();passagePlayback?.cancel();});
 
+function setReaderMediaLabel(label,shortLabel){
+ const control=$('toggle-reader-media');control.setAttribute('aria-label',label);control.title=label;
+ $('reader-media-label').textContent=label;$('reader-media-short-label').textContent=shortLabel;
+}
 function updateReaderMediaVisibility(doc=active(),hasMedia=!!$('source-media').querySelector('audio,video')){
  if(!doc)return;
  const audioOnly=Coconut.isAudioProject(doc),demo=doc.provenance?.kind==='authored_demo',compact=readingMode==='passages'&&!audioOnly;
@@ -4395,7 +4567,8 @@ function updateReaderMediaVisibility(doc=active(),hasMedia=!!$('source-media').q
  $('episode-media').hidden=(demo&&!hasMedia)||!visible;
  $('toggle-reader-media').hidden=(demo&&!hasMedia)||audioOnly;
  $('toggle-reader-media').setAttribute('aria-expanded',String(visible));
- $('toggle-reader-media').textContent=compact?(visible?'收起原声':hasMedia?'原声':'关联原声'):(visible?'收起原声设置':'关联原声 · 回听这一篇');
+ const label=compact?(visible?'收起原声':hasMedia?'原声':'关联原声'):(visible?'收起原声设置':'关联原声 · 回听这一篇');
+ setReaderMediaLabel(label,visible?'收起':'原声');
  $('close-reader-media').hidden=audioOnly||!visible;
 }
 function composeReadingHeader(){
@@ -4448,8 +4621,8 @@ function composeReadingHeader(){
 }
 
 function applyReadingMode() {
- renderTextExportAction();
  const audioOnly=Coconut.isAudioProject(active());
+ $('reading-mode-toolbar').hidden=audioOnly;
  updateReaderMediaVisibility(active());
  const summary=readingMode==='summary'&&!audioOnly;
  const passages=readingMode==='passages'&&!audioOnly;
@@ -4464,16 +4637,22 @@ function applyReadingMode() {
  $('reading-settings').hidden=summary;
  $('language-panel').hidden=audioOnly||summary||passages;
  $('mode-summary').setAttribute('aria-pressed',String(summary));
- const bilingual=!summary&&!passages&&!audioOnly&&!!active()?.translation_view;
- $('mode-transcript').setAttribute('aria-pressed',String(!summary&&!passages&&!bilingual));
- $('mode-bilingual').setAttribute('aria-pressed',String(bilingual));
- $('transcript-layout').classList.toggle('is-bilingual',bilingual);
  $('mode-bilingual').disabled=audioOnly;
  renderReadingContext();renderReadingSearch();
- $('bilingual-readiness').hidden=!bilingual||active()?.provenance?.kind==='authored_demo';
  composeReadingHeader();
- if(bilingual){const doc=active(),target=doc.translation_view,count=doc.segments.filter(s=>Coconut.translationCurrent(s,doc,s.translations?.[target])).length;
+ renderReadingDisplay();
+}
+function renderReadingDisplay(){
+ const doc=active(),bilingual=readingMode==='transcript'&&!Coconut.isAudioProject(doc)&&!!doc?.translation_view;
+ $('mode-transcript').setAttribute('aria-pressed',String(readingMode==='transcript'&&!bilingual));
+ $('mode-bilingual').setAttribute('aria-pressed',String(bilingual));
+ $('transcript-layout').classList.toggle('is-bilingual',bilingual);
+ $('bilingual-readiness').hidden=!bilingual||active()?.provenance?.kind==='authored_demo';
+ if(bilingual){const doc=active(),target=doc.translation_view,count=doc.segments.filter(s=>s.translations?.[target]?.text?.trim()&&Coconut.translationCurrent(s,doc,s.translations[target])).length;
  $('bilingual-status').textContent=count?`当前语言已有 ${count}/${doc.segments.length} 段有效译文；缺失部分可逐段「自己写译文」，过期译文可核对／修正；也可在翻译选项中继续。`:'还没有当前语言的有效译文。可逐段「自己写译文」，或打开翻译选项，核对发送范围与额度后生成；切换视图和自己写译文不会调用模型。';}
+ renderReadingDisplayControl();
+ renderTextExportAction();
+ syncReadingStickyStack();
 }
 function setReadingMode(mode) {
  const previousMode=readingMode;
@@ -4570,8 +4749,8 @@ function visibleReadingCue(){
  if(!passages&&readingMode!=='transcript')return null;
  const nodes=[...document.querySelectorAll(passages?'#passage-body .passage-original .passage-cue':'#transcript .segment')];
  const id=node=>passages?node?.dataset.cueId:node?.dataset.segmentId;
- const height=window.visualViewport?.height||window.innerHeight;
- const visible=nodes.find(node=>{const rect=node.getBoundingClientRect();return rect.bottom>0&&rect.top<height;});
+ const height=window.visualViewport?.height||window.innerHeight,edge=readingDisplayTopEdge();
+ const visible=nodes.find(node=>{const rect=node.getBoundingClientRect();return rect.bottom>edge&&rect.top<height;});
  if(visible)return id(visible);
  // A header can be in view while all source is below it. Keep the current
  // passage anchor when it still belongs to the mounted page, otherwise its start.
@@ -4581,6 +4760,7 @@ function switchTranscriptView(bilingual){
  const doc=active();if(!doc||bilingual&&(!contentIngressAllowed(doc)||Coconut.isAudioProject(doc)))return;
  const anchor=selected||readingContext?.document===doc&&readingContext.id||searchFocusedId||visibleReadingCue();
  if(contentIngressAllowed(doc)){
+  recordReadingDisplaySelection(doc);
   const target=bilingual?doc.translation_view||$('translation-target').value||'zh':'';
   if((doc.translation_view||'')!==target){doc.translation_view=target;queueDocument(doc);}
  }
@@ -4589,7 +4769,7 @@ function switchTranscriptView(bilingual){
  if(index>=0)pageStart=Math.floor(index/PAGE_SIZE)*PAGE_SIZE;
  setReadingMode('transcript');render();
  const row=[...$('transcript').querySelectorAll('.segment')].find(node=>node.dataset.segmentId===anchor);
- if(row){row.scrollIntoView?.({block:'start',behavior:'auto'});row.focus({preventScroll:true});}
+ if(row){scrollReadingTarget(row,{block:'start',behavior:'auto'});row.focus({preventScroll:true});}
 }
 $('mode-passages').onclick=()=>{
  const doc=active();if(!doc)return;

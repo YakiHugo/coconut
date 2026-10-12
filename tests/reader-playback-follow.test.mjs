@@ -206,3 +206,16 @@ test('transport input exemption never exempts search or note editing from manual
   }
  }finally{await env.w.happyDOM.close();}
 });
+
+for(const mode of ['transcript','passages'])for(const long of [false,true])test(`${mode} active follow clears the real sticky edge for a ${long?'long':'short'} cue without media commands`,async()=>{
+ const env=setup();try{const m=await media(env),{$,w,tick,scrolls}=env;if(mode==='passages')$('mode-passages').click();
+  $('reading-mode-toolbar').getBoundingClientRect=()=>({top:6,bottom:94,height:88});
+  const row=w.document.querySelector(mode==='passages'?'.passage-original .passage-cue':'.segment');let top=70;const height=long?1200:20;row.getBoundingClientRect=()=>({top,bottom:top+height,height});
+  row.scrollIntoView=options=>{scrolls.push({id:row.dataset.segmentId||row.dataset.cueId,options});top=options.block==='start'?24:180;};
+  const corrections=[];w.scrollBy=(x,y)=>{corrections.push(y);top-=y;};
+  await m.player.play();const plays=m.played,time=m.player.currentTime,player=m.player;enable(env);
+  assert.equal(scrolls.at(-1).options.block,long?'start':'center');assert.equal(top,long?100:180);assert.deepEqual(corrections,long?[-76]:[]);assert.equal($('follow-playback').dataset.state,'following');assert.equal(m.player,player);assert.equal(m.player.currentTime,time);assert.equal(m.played,plays);assert.equal(m.player.paused,false);
+  w.dispatchEvent(new w.Event('scroll'));tick();assert.equal($('follow-playback').dataset.state,'following');
+  w.dispatchEvent(new w.WheelEvent('wheel',{deltaY:40}));tick();assert.equal($('follow-playback').dataset.state,'suspended');
+ }finally{await env.w.happyDOM.close();}
+});

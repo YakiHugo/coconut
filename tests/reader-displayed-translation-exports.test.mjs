@@ -78,7 +78,7 @@ test('language overrides never rewrite immutable bilingual excerpt or AI history
   assert.ok(C.notebookMarkdown(doc,target).includes(history));for(const format of ['srt','vtt'])C.subtitleExport(doc,format,true,target);assert.equal(JSON.stringify(doc),before);
  }
 });
-test('native export journey reaches display languages through both real translation disclosures without AI',async()=>{
+test('export journey reaches saved display languages directly with AI disclosures closed',async()=>{
  const env=setup(),{w,$,download}=env;let fetches=0;w.fetch=async()=>{fetches++;throw Error('No request authorized');};
  const visibleThroughDisclosures=node=>{
   for(let current=node;current;current=current.parentElement){
@@ -89,12 +89,9 @@ test('native export journey reaches display languages through both real translat
  };
  try{
   $('mode-summary').click();$('mode-bilingual').click();
-  // The old native sequence opened the outer panel only, leaving two blockers.
-  $('language-panel').open=true;assert.equal($('ai-task').value,'question');assert.equal($('translation-options').hidden,true);assert.equal($('translation-options').open,false);assert.equal(visibleThroughDisclosures($('translation-view')),false);
-  $('prepare-bilingual').click();assert.equal($('language-panel').open,true);assert.equal($('ai-task').value,'translation');assert.equal($('translation-options').hidden,false);assert.equal(visibleThroughDisclosures($('translation-view')),false);
-  $('translation-options').querySelector(':scope > summary').click();assert.equal($('translation-options').open,true);assert.equal(visibleThroughDisclosures($('translation-view')),true);
+  assert.equal($('ai-task').value,'question');assert.equal($('language-panel').open,false);assert.equal($('translation-options').open,false);assert.equal(visibleThroughDisclosures($('translation-view')),true);
   setLanguage(env,'fr');assert.match($('transcript').querySelector('.translation').textContent,/Traduction française 0/);
-  $('translation-options').querySelector(':scope > summary').click();$('language-panel').querySelector(':scope > summary').click();assert.equal($('translation-options').open,false);assert.equal($('language-panel').open,false);assert.equal(visibleThroughDisclosures($('translation-view')),false);
+  assert.equal($('ai-task').value,'question');assert.equal($('language-panel').open,false);assert.equal($('translation-options').open,false);assert.equal(visibleThroughDisclosures($('translation-view')),true);
   $('next-page').click();$('search').value='Authored source 111';$('search').dispatchEvent(new w.Event('input'));assert.equal($('transcript').querySelectorAll('.segment').length,1);
   $('subtitle-bilingual').checked=true;assert.match(await download('export-subtitles'),/Traduction française 111/);assert.match(await download('export-notebook'),/Traduction française 0/);assert.equal(fetches,0);assert.equal($('ai-consent').checked,false);
  }finally{await w.happyDOM.close();}

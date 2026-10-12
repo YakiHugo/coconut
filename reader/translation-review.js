@@ -70,7 +70,7 @@
   if(!segment||!Object.hasOwn(names,target)||active()!==doc||!contentIngressAllowed(doc))return;
   if(editor.open){drafts.delete(signature(session));session=null;editor.close();}
   queueDialog.close();
-  goToSegment(id);if(doc.translation_view!==target){doc.translation_view=target;queueDocument(doc);}setReadingMode('transcript');render();
+  goToSegment(id);recordReadingDisplaySelection(doc);if(doc.translation_view!==target){doc.translation_view=target;queueDocument(doc);}setReadingMode('transcript');render();
   const snapshot=Coconut.manualReviewSnapshot(doc,segment,target);
   const draft=drafts.get(signature({key,id,target}));
   session=draft?{...draft,returnQueue}:{key,id,target,document:doc,segment,snapshot,context:[...snapshot.cues.filter(c=>c.id!==id),...(snapshot.missing_cue_ids||[]).map(missing_id=>({missing_id}))],contextOffset:0,expected:JSON.stringify(item),text:item?.text||'',creating:!item,returnQueue};

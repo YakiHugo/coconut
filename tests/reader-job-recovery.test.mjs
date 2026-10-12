@@ -160,6 +160,9 @@ test('late same-book recovery mounts paused media without replacing note editor 
   release();await pending;
   assert.equal(h.$('source-media').querySelector('video').getAttribute('src'),`/api/jobs/${A}/media`);assert.equal(h.$('source-media').querySelector('video').paused,true);
   assert.equal(h.$('episode-media').hidden,hidden);assert.equal(h.w.document.querySelector('.segment'),row);assert.equal(h.$('note'),note);assert.equal(note.value,'Draft while playback recovers');assert.equal(h.w.document.activeElement,focused);assert.equal(h.w.document.body.dataset.workspace,workspace);assert.equal(h.scrolls,scrolls);
+  const control=h.$('toggle-reader-media'),full=h.$('reader-media-label'),short=h.$('reader-media-short-label'),player=h.$('source-media').querySelector('video');
+  assert.ok(full&&short);assert.equal(control.getAttribute('aria-label'),'本地原声已就绪 · 打开回听');assert.equal(control.title,'本地原声已就绪 · 打开回听');assert.equal(full.textContent,'本地原声已就绪 · 打开回听');assert.equal(short.textContent,'原声');
+  control.click();assert.equal(h.$('toggle-reader-media'),control);assert.equal(h.$('reader-media-label'),full);assert.equal(h.$('reader-media-short-label'),short);assert.equal(control.getAttribute('aria-expanded'),'true');assert.equal(control.getAttribute('aria-label'),'收起原声设置');assert.equal(h.$('source-media').querySelector('video'),player);assert.equal(player.paused,true);
  }finally{await h.w.happyDOM.close();}
 });
 

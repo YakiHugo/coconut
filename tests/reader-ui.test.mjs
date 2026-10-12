@@ -1140,10 +1140,12 @@ test('Chinese reading canvas keeps essential content visible and secondary tools
   for(const id of ['document-details','source','reading-layout','reading-time'])assert.equal($(id).closest('details').id,'reading-settings');
   for(const id of ['export','export-notebook','export-subtitles','subtitle-format','subtitle-bilingual'])assert.equal($(id).closest('details').id,'export-menu');
   assert.match($('search-status').textContent,/没有对应音视频/);
-  for(const id of ['import-language','document-language','translation-source','translation-target','translation-view']){
+  for(const id of ['import-language','document-language','translation-source','translation-target']){
    const label=$(id).querySelector('option[value="en"]').textContent;
    assert.match(label,/英语/);assert.doesNotMatch(label,/English/);
   }
+  assert.deepEqual([...$('translation-view').options].map(option=>option.value),['','zh']);
+  assert.match($('translation-view').options[1].textContent,/中文/);
  }finally{await w.happyDOM.close();}
 });
 
