@@ -218,3 +218,55 @@ test('desktop notes reserve the measured stack while the mobile bottom-sheet rul
   const css=fs.readFileSync(new URL('../reader/style.css',import.meta.url),'utf8');assert.match(css,/@media \(min-width: 1101px\) \{\s*#notes-panel \{ top: max\(24px, var\(--reading-sticky-inset, 6px\)\);/);assert.match(css,/#notes-panel \{ position: fixed;[^}]*top: auto; bottom: 12px; max-height: 65dvh;/);
  }finally{await w.happyDOM.close();}
 });
+
+function focusedPickerGeometry(env){
+ const {w,$}=env;let y=0,id=0;const frames=new Map(),scrolls=[];w.requestAnimationFrame=fn=>{frames.set(++id,fn);return id;};w.cancelAnimationFrame=id=>frames.delete(id);const tick=()=>{const ready=[...frames.values()];frames.clear();for(const fn of ready)fn();};
+ Object.defineProperty(w,'scrollY',{configurable:true,get:()=>y});Object.defineProperty(w,'innerHeight',{configurable:true,value:650});Object.defineProperty(w.document.documentElement,'scrollHeight',{configurable:true,value:5000});
+ const rect=(left,top,width,height)=>({left,right:left+width,top,bottom:top+height,width,height});const picker=$('translation-view');picker.style.outline='4px solid red';picker.style.outlineOffset='2px';picker.getBoundingClientRect=()=>rect(76.015625,447.765625-y,203.984375,44);
+ $('reading-mode-toolbar').getBoundingClientRect=()=>rect(20,403.765625-y,350,88);$('reading-feedback').hidden=false;$('reading-feedback').getBoundingClientRect=()=>rect(12,480.4375,366,75.5625);$('media-dock').getBoundingClientRect=()=>rect(12,574,366,64);
+ w.scrollBy=(x,dy)=>{const delta=typeof x==='object'?x.top:dy;y+=delta;scrolls.push(delta);};return {picker,tick,scrolls,get y(){return y;}};
+}
+test('a focused picker resized beneath feedback moves only enough for its full ring, without dismissing or changing display state',async()=>{
+ const env=setup(),{w,$}=env;try{
+  const g=focusedPickerGeometry(env),doc=w.libraryProbe.documents[0],before=JSON.stringify(doc),feedback=$('reading-feedback');feedback.hidden=true;g.picker.focus();g.tick();assert.deepEqual(g.scrolls,[]);feedback.hidden=false;w.dispatchEvent(new w.Event('resize'));g.tick();assert.deepEqual(g.scrolls,[20]);assert.ok(g.picker.getBoundingClientRect().bottom+6<feedback.getBoundingClientRect().top);assert.equal(feedback.hidden,false);assert.equal(w.document.activeElement,g.picker);assert.equal(JSON.stringify(doc),before);
+  w.dispatchEvent(new w.Event('resize'));g.tick();assert.deepEqual(g.scrolls,[20],'already-clear control never scrolls again');
+ }finally{await w.happyDOM.close();}
+});
+for(const cancel of ['wheel','pointerdown','keydown','blur','hidden','replacement','language','scroll','scroll-before-event'])test(`queued picker resize reveal respects newer ${cancel} intent`,async()=>{
+ const env=setup(),{w,$}=env;try{
+  const g=focusedPickerGeometry(env);g.picker.focus();w.dispatchEvent(new w.Event('resize'));
+  if(cancel==='language'){choose(env,'fr');g.scrolls.length=0;}else if(cancel==='scroll'||cancel==='scroll-before-event'){w.scrollBy(0,30);g.scrolls.length=0;if(cancel==='scroll')w.dispatchEvent(new w.Event('scroll'));}else if(cancel==='blur')$('search').focus();else if(cancel==='hidden')$('reading-display-control').hidden=true;else if(cancel==='replacement')w.libraryProbe.documents[0]={...w.libraryProbe.documents[0]};else if(cancel==='wheel')w.dispatchEvent(new w.WheelEvent('wheel',{deltaY:40,bubbles:true}));else w.document.body.dispatchEvent(cancel==='pointerdown'?new w.PointerEvent('pointerdown',{bubbles:true}):new w.KeyboardEvent('keydown',{key:'PageDown',bubbles:true}));
+  g.tick();assert.deepEqual(g.scrolls,[]);
+ }finally{await w.happyDOM.close();}
+});
+test('picker resize compensation preserves the current follow owner and media while later manual scrolling still suspends',async()=>{
+ const doc=fixture();doc.source_media={job_id:'a'.repeat(32),kind:'audio'};const env=setup([doc]),{w,$}=env;try{
+  w.dispatchEvent(new w.Event('coconut-worker-ready'));$('mode-bilingual').click();const player=$('source-media').querySelector('audio');let plays=0,pauses=0,seeks=0,time=37;Object.defineProperties(player,{currentTime:{configurable:true,get:()=>time,set:v=>{time=v;seeks++;}},paused:{configurable:true,value:false},duration:{configurable:true,value:1200}});player.play=async()=>{plays++;};player.pause=()=>{pauses++;};player.onloadedmetadata();player.playbackRate=1.5;player.loop=true;
+  const g=focusedPickerGeometry(env);for(const row of $('transcript').querySelectorAll('.segment'))row.getBoundingClientRect=()=>({top:180,bottom:240,height:60});$('follow-playback').focus();$('follow-playback').click();g.tick();assert.equal($('follow-playback').dataset.state,'following');g.picker.focus();w.dispatchEvent(new w.Event('resize'));g.tick();assert.deepEqual(g.scrolls,[20]);w.dispatchEvent(new w.Event('scroll'));assert.equal($('follow-playback').dataset.state,'following');assert.equal(player.currentTime,37);assert.equal(player.playbackRate,1.5);assert.equal(player.loop,true);assert.equal($('source-media').querySelector('audio'),player);assert.deepEqual([plays,pauses,seeks],[0,0,0]);
+  w.scrollBy(0,30);w.dispatchEvent(new w.Event('scroll'));assert.equal($('follow-playback').dataset.state,'suspended');
+ }finally{await w.happyDOM.close();}
+});
+
+for(const overlay of ['top','separate-column','hidden'])test(`picker reveal treats ${overlay} feedback according to its actual occupied region`,async()=>{
+ const env=setup(),{w,$}=env;try{
+  const g=focusedPickerGeometry(env),feedback=$('reading-feedback');
+  if(overlay==='hidden')feedback.hidden=true;else feedback.getBoundingClientRect=()=>overlay==='top'?{left:12,right:378,top:8,bottom:100,width:366,height:92}:{left:300,right:380,top:480,bottom:556,width:80,height:76};
+  g.picker.focus();w.dispatchEvent(new w.Event('resize'));g.tick();assert.deepEqual(g.scrolls,[]);
+ }finally{await w.happyDOM.close();}
+});
+
+test('focused picker skips the nearest unreachable lower slot and uses the reachable upper slot',async()=>{
+ const env=setup(),{w,$}=env;try{
+  const g=focusedPickerGeometry(env);$('media-dock').hidden=true;g.picker.getBoundingClientRect=()=>({left:76,right:280,top:530-g.y,bottom:574-g.y,width:204,height:44});$('reading-mode-toolbar').getBoundingClientRect=()=>({left:20,right:370,top:486-g.y,bottom:574-g.y,width:350,height:88});
+  g.picker.focus();g.tick();assert.deepEqual(g.scrolls,[102]);assert.ok(g.picker.getBoundingClientRect().bottom+6<480.4375);
+ }finally{await w.happyDOM.close();}
+});
+for(const edge of ['pinned','document-end','no-slot'])test(`picker reveal never blindly scrolls when ${edge} prevents a full-ring landing`,async()=>{
+ const env=setup(),{w,$}=env;try{
+  const g=focusedPickerGeometry(env);
+  if(edge==='pinned'){w.scrollBy(0,1000);g.scrolls.length=0;g.picker.getBoundingClientRect=()=>({left:76,right:280,top:52,bottom:96,width:204,height:44});$('reading-mode-toolbar').getBoundingClientRect=()=>({left:20,right:370,top:6,bottom:94,width:350,height:88});$('reading-feedback').getBoundingClientRect=()=>({left:12,right:378,top:8,bottom:158,width:366,height:150});}
+  if(edge==='document-end')Object.defineProperty(w.document.documentElement,'scrollHeight',{configurable:true,value:650});
+  if(edge==='no-slot')$('reading-feedback').getBoundingClientRect=()=>({left:12,right:378,top:0,bottom:620,width:366,height:620});
+  g.picker.focus();g.tick();assert.deepEqual(g.scrolls,[]);assert.equal(w.document.activeElement,g.picker);
+ }finally{await w.happyDOM.close();}
+});

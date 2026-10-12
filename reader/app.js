@@ -4308,6 +4308,54 @@ document.addEventListener('focusin',event=>{
   if(occluded&&bounds.bottom>ceiling)window.scrollBy({top:bounds.bottom-ceiling,left:0,behavior:'instant'});
  });
 });
+// A native select can keep focus while a narrower/shorter viewport moves a
+// fixed receipt over its ring. Reveal only that focused control, never dismiss
+// the receipt or schedule a source/follow navigation. New user intent wins.
+let readingDisplayRevealFrame=null,readingDisplayRevealOwner=null;
+function cancelReadingDisplayReveal(){
+ if(readingDisplayRevealFrame!==null)cancelAnimationFrame(readingDisplayRevealFrame);
+ readingDisplayRevealFrame=null;readingDisplayRevealOwner=null;
+}
+function scheduleReadingDisplayReveal(){
+ cancelReadingDisplayReveal();const target=$('translation-view'),doc=active();
+ if(document.activeElement!==target||!doc)return;
+ const owner={doc,segments:doc.segments,selection:activeSelectionRevision,display:readingDisplayRevision(doc),scrollY:window.scrollY};readingDisplayRevealOwner=owner;
+ readingDisplayRevealFrame=requestAnimationFrame(()=>{
+  readingDisplayRevealFrame=null;readingDisplayRevealOwner=null;
+  if(document.activeElement!==target||!target.isConnected||workspace!=='read'||document.hidden||$('reading-display-control').hidden||$('reading-mode-toolbar').hidden||active()!==doc||doc.segments!==owner.segments||activeSelectionRevision!==owner.selection||readingDisplayRevision(doc)!==owner.display||window.scrollY!==owner.scrollY)return;
+  const r=target.getBoundingClientRect(),style=getComputedStyle(target);if(!r.width||!r.height||style.display==='none'||style.visibility==='hidden')return;
+  const ring=(parseFloat(style.outlineWidth)||0)+Math.max(0,parseFloat(style.outlineOffset)||0)+2;
+  const bounds={left:r.left-ring,right:r.right+ring,top:r.top-ring,bottom:r.bottom+ring};
+  const viewport=window.visualViewport,top=viewport?.offsetTop||0,height=viewport?.height||window.innerHeight;let slots=[[top,top+height]];
+  for(const overlay of [$('reading-feedback'),$('media-dock')]){
+   const css=getComputedStyle(overlay),box=overlay.getBoundingClientRect();
+   if(overlay.hidden||css.display==='none'||css.visibility==='hidden'||!box.width||!box.height||box.left>=bounds.right||box.right<=bounds.left)continue;
+   slots=slots.flatMap(([start,end])=>box.bottom<=start||box.top>=end?[[start,end]]:[[start,Math.min(end,box.top)],[Math.max(start,box.bottom),end]].filter(([a,b])=>b>a));
+  }
+  const toolbar=$('reading-mode-toolbar'),bar=toolbar.getBoundingClientRect(),stickyTop=parseFloat(getComputedStyle(toolbar).top)||0;
+  // A pinned toolbar does not move linearly with the page. Do not blindly scroll
+  // it, or choose a slot that requires scrolling beyond either document edge.
+  if(!bar.height||bar.top<=stickyTop)return;
+  const maxY=Math.max(0,document.documentElement.scrollHeight,document.body.scrollHeight)-window.innerHeight;
+  const lower=-window.scrollY,upper=Math.min(Math.max(0,maxY)-window.scrollY,bar.top-stickyTop),required=bounds.bottom-bounds.top;
+  const moves=slots.filter(([start,end])=>end-start>=required).flatMap(([start,end])=>{
+   const first=Math.ceil(Math.max(lower,bounds.bottom-end)),last=Math.floor(Math.min(upper,bounds.top-start));
+   return first<=last?[Math.max(first,Math.min(last,0))]:[];
+  }).sort((a,b)=>Math.abs(a)-Math.abs(b));
+  if(!moves.length||!moves[0])return;
+  const follow=followOwns()?readingFollow:null;
+  window.scrollBy({top:moves[0],left:0,behavior:'instant'});
+  if(window.scrollY===owner.scrollY)return;
+  // Only this exact synchronous compensation is owned; a later different
+  // scroll position still suspends playback following through its usual path.
+  if(follow&&readingFollow===follow)follow.scrollY=window.scrollY;
+ });
+}
+$('translation-view').addEventListener('focus',scheduleReadingDisplayReveal);
+window.addEventListener('resize',scheduleReadingDisplayReveal);
+window.visualViewport?.addEventListener('resize',scheduleReadingDisplayReveal);
+for(const type of ['pointerdown','keydown','touchstart','wheel'])window.addEventListener(type,cancelReadingDisplayReveal,{capture:true,passive:true});
+window.addEventListener('scroll',()=>{if(readingDisplayRevealOwner&&window.scrollY!==readingDisplayRevealOwner.scrollY)cancelReadingDisplayReveal();},{passive:true});
 function openPassage(cueId,scroll=true){
  const doc=active(),passages=readingPassages(doc),passage=CoconutPassages.locate(passages,cueId)||passages[0];if(!passage)return;
  $('reading-info').open=false;mediaExpandedKey=null;

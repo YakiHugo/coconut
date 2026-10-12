@@ -38,7 +38,7 @@ async function pickerGeometry(label){
   const overlays=['notice-shell','reading-feedback','media-dock'].map(id=>{const n=document.getElementById(id),box=n.getBoundingClientRect(),css=getComputedStyle(n);return {r:box.toJSON(),visible:!n.hidden&&css.display!=='none'&&css.visibility!=='hidden'&&box.width>0&&box.height>0};});
   const label=document.querySelector('label[for="translation-view"]'),l=label.getBoundingClientRect();
   return {r:r.toJSON(),ring,focus:node===document.activeElement&&node.matches(':focus-visible'),outline:s.outlineStyle,points,clips,overlays,width:innerWidth,height:innerHeight,overflow:document.documentElement.scrollWidth>innerWidth,label:label.textContent,labelRect:l.toJSON(),single:document.querySelectorAll('#translation-view').length===1,parent:node.parentElement.id};
- });geometry.push({...m,controlLabel:m.label,label});const r=m.r,ring=m.ring;
+ });geometry.push({...m,controlLabel:m.label,label});console.log(JSON.stringify({suite:'reading-display',stage:label,geometry:m}));const r=m.r,ring=m.ring;
  check(label+'_44px_full_ring_5_hits_label_and_no_overflow',m.focus&&m.outline!=='none'&&ring>=6&&r.width>=44&&r.height>=44&&r.left-ring>=0&&r.top-ring>=0&&r.right+ring<=m.width&&r.bottom+ring<=m.height&&m.points.every(p=>p.clear)&&m.clips.every(c=>(!c.x||r.left-ring>=c.left&&r.right+ring<=c.right)&&(!c.y||r.top-ring>=c.top&&r.bottom+ring<=c.bottom))&&m.overlays.every(o=>!o.visible||o.r.right<=r.left-ring||o.r.left>=r.right+ring||o.r.top>=r.bottom+ring||o.r.bottom<=r.top-ring)&&!m.overflow&&m.label==='阅读显示'&&m.single&&m.parent==='reading-display-control'&&m.labelRect.left>=0&&m.labelRect.right<=m.width);
 }
 async function narrowUtilityGeometry(width){
