@@ -1,5 +1,6 @@
 import {installSavePipeline,settle} from './helpers/save-pipeline.mjs';
 import {evaluateNativeIMEPointer} from './helpers/native-ime-proof.mjs';
+import {installDockViewportObserver} from './helpers/dock-viewport-observer.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -278,4 +279,73 @@ test('active native IME pointer proof uses the browser baseline and rejects inac
  const untrusted=clone();untrusted.pointerEvents[0].trusted=false;assert.equal(valid(untrusted,structuredClone(untrusted)),false,'matching untrusted pointers do not establish native proof');
  const dropped=clone();dropped.value='路';assert.equal(valid(dropped,structuredClone(dropped)),false,'matching text loss is still unacceptable');
  const noBlur=clone();noBlur.events=noBlur.events.filter(e=>!['blur','focusout'].includes(e.type));assert.equal(valid(noBlur,structuredClone(noBlur)),false,'a pointer trace must include actual editor blur');
+});
+
+
+test('native dock inset follows actual lower occlusion, clears on retirement and never scrolls',async()=>{
+ const env=setup();try{
+  const {w,$,scrolls}=env,m=await media(env),root=w.document.documentElement;
+  w.happyDOM.setWindowSize({width:390,height:480});
+  $('media-dock').getBoundingClientRect=()=>({top:404,bottom:468,height:64});scrolls.length=0;
+  m.refresh();assert.equal(root.style.getPropertyValue('--reading-dock-inset'),'84px');assert.equal(scrolls.length,0);
+  const observer=new w.MutationObserver(()=>{});observer.observe(root,{attributes:true});m.refresh();assert.equal(observer.takeRecords().length,0);observer.disconnect();
+  w.happyDOM.setWindowSize({width:1360,height:1000});$('media-dock').getBoundingClientRect=()=>({top:914,bottom:984,height:70});m.refresh();
+  assert.equal(root.style.getPropertyValue('--reading-dock-inset'),'94px');assert.equal(scrolls.length,0);
+  m.headerBottom=100;assert.equal(root.style.getPropertyValue('--reading-dock-inset'),'0px');assert.equal(scrolls.length,0);
+ }finally{await env.w.happyDOM.close();}
+});
+test('ended rewind recreates a real checkpoint in a reserved grid row without changing hidden semantics',async()=>{
+ const env=setup();try{
+  const {w,$}=env,m=await media(env);await m.player.play();m.player.currentTime=700;m.player.pause();m.player.dispatchEvent(new w.Event('ended'));
+  assert.equal($('resume-listening').hidden,true);const button=$('resume-listening'),parent=button.parentElement;
+  rewind(env);m.player.dispatchEvent(new w.Event('seeked'));
+  assert.equal(m.player.currentTime,690);assert.equal(m.player.paused,true);assert.equal($('resume-listening'),button);assert.equal(button.parentElement,parent);assert.equal(button.hidden,false);assert.match(button.textContent,/11:30/);
+  const style=w.document.createElement('style');style.textContent=fs.readFileSync(new URL('reader/style.css',root),'utf8');w.document.head.append(style);
+  assert.equal(w.getComputedStyle(parent).display,'grid');assert.equal(w.getComputedStyle(parent).gridTemplateRows,'minmax(44px, auto) auto');
+  m.player.currentTime=700;m.player.dispatchEvent(new w.Event('ended'));assert.equal(button.hidden,true);assert.equal(w.getComputedStyle(button).display,'none');assert.equal(w.getComputedStyle(parent).gridTemplateRows,'minmax(44px, auto) auto');
+ }finally{await env.w.happyDOM.close();}
+});
+test('dock viewport diagnostics observe actual scroll owner, resume mutation and calls without controlling them',async()=>{
+ const env=setup();try{
+  const {w,$}=env;await media(env);const scrolls=[];w.scrollBy=(...args)=>scrolls.push(args);const original=w.scrollBy;
+  w.eval('('+installDockViewportObserver.toString()+')()');const audit=w.__dockViewportObserver;
+  assert.equal(audit.events[0].type,'installed');$('dock-rewind').focus();w.scrollBy(0,7);assert.deepEqual(scrolls,[[0,7]]);
+  assert.ok(audit.calls.some(call=>call.type==='focus'&&call.target==='dock-rewind'));assert.ok(audit.calls.some(call=>call.type==='scrollBy'));
+  $('resume-listening').hidden=false;await Promise.resolve();await Promise.resolve();assert.ok(audit.events.some(event=>event.type==='resume-mutation'));
+  audit.stop();assert.equal(w.scrollBy,original);const count=audit.events.length;w.scrollBy(0,3);assert.equal(audit.events.length,count);
+ }finally{await env.w.happyDOM.close();}
+});
+
+test('docked native source margins share the measured sticky stack and preserve undocked/context defaults',async()=>{
+ const html=fs.readFileSync(new URL('reader/index.html',root),'utf8').split('<body>')[1].split('</body>')[0],css=fs.readFileSync(new URL('reader/style.css',root),'utf8');
+ for(const docked of [false,true])for(const context of [false,true]){
+  const w=new Window();try{
+   w.document.body.innerHTML=html;w.document.body.dataset.mediaDocked=String(docked);
+   const $=id=>w.document.getElementById(id),workspace=$('reader-workspace');workspace.style.setProperty('--reading-sticky-inset','194px');
+   if(context){$('reading-context').hidden=false;workspace.insertBefore($('reading-context'),$('passage-workspace'));}
+   const segment=w.document.createElement('section');segment.className='segment';$('transcript').append(segment);
+   const passage=w.document.createElement('section');passage.className='passage';$('passage-body').append(passage);
+   const unrelated=w.document.createElement('section');unrelated.className='segment';$('passage-question-dialog').append(unrelated);
+   const style=w.document.createElement('style');style.textContent=css;w.document.head.append(style);
+   assert.equal(w.getComputedStyle(segment).scrollMarginTop,docked?'max(24px, 194px)':'24px');
+   assert.equal(w.getComputedStyle(passage).scrollMarginTop,docked?(context?'max(112px, 194px)':'max(20px, 194px)'):(context?'112px':'20px'));
+   assert.equal(w.getComputedStyle(unrelated).scrollMarginTop,'24px','nested dialog nodes never acquire root source margins');
+  }finally{await w.happyDOM.close();}
+ }
+});
+
+
+test('explicit centered landings include the root bottom inset in their tall-target cutoff without changing top margins',async()=>{
+ for(const bottom of [0,84])for(const context of [false,true]){
+  const env=setup();try{
+   const {w,$}=env;await media(env);w.happyDOM.setWindowSize({width:390,height:480});w.document.documentElement.style.scrollPaddingBottom=bottom+'px';
+   $('reading-mode-toolbar').getBoundingClientRect=()=>({top:6,bottom:94,height:88});
+   if(context){$('reading-context').hidden=false;$('reading-context').getBoundingClientRect=()=>({top:100,bottom:188,height:88});}
+   const target=$('transcript').querySelector('.segment'),height=context?250:360,margin=context?194:100;let top=1800,calls=0,corrections=0;
+   target.style.setProperty('scroll-margin-top','31px','important');target.getBoundingClientRect=()=>({top,bottom:top+height,height});
+   target.scrollIntoView=options=>{calls++;assert.equal(options.block,bottom?'start':'center');assert.equal(target.style.scrollMarginTop,margin+'px');assert.equal(target.style.getPropertyPriority('scroll-margin-top'),'important');top=margin;};
+   w.scrollBy=()=>{corrections++;};w.__dockMarginTarget=target;w.eval('scrollReadingTarget(window.__dockMarginTarget,{block:"center",behavior:"auto"})');
+   assert.equal(calls,1);assert.equal(corrections,0);assert.equal(target.style.scrollMarginTop,'31px');assert.equal(target.style.getPropertyPriority('scroll-margin-top'),'important');assert.equal($('dock-follow').dataset.state,'off');
+  }finally{await env.w.happyDOM.close();}
+ }
 });

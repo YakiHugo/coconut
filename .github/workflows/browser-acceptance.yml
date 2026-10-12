@@ -303,6 +303,9 @@ jobs:
             ${{ runner.temp }}/coconut-authored-ui/autosave-geometry.json
             ${{ runner.temp }}/coconut-authored-ui/playback-follow-geometry.json
             ${{ runner.temp }}/coconut-authored-ui/playback-follow-scroll.json
+            ${{ runner.temp }}/coconut-authored-ui/playback-follow-rewind.json
+            ${{ runner.temp }}/coconut-authored-ui/playback-follow-last-cue.json
+            ${{ runner.temp }}/coconut-authored-ui/dock-rewind-evidence.json
             ${{ runner.temp }}/coconut-authored-ui/compact-library-geometry.json
             ${{ runner.temp }}/coconut-authored-ui/reading-display-checks.json
             ${{ runner.temp }}/coconut-authored-ui/wide-library-search-checks.json

@@ -8,7 +8,7 @@ import {chromium} from './helpers/browser-storage.mjs';
 import {installFollowScrollObserver,followWheelSettled} from './helpers/follow-scroll-observer.mjs';
 import {authoredAudioFixture} from './helpers/authored-audio-fixture.mjs';
 let browser,server,directory,page,manualScroll,stage='setup',external=0;
-const checks=[],errors=[],geometry=[],rewinds=[];
+const checks=[],errors=[],geometry=[],rewinds=[],lastCue=[];
 function check(name,value){stage=name;assert.ok(value,name);checks.push(name);}
 const settle=()=>page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));
 async function capture(label){
@@ -145,7 +145,11 @@ try{
   await page.locator('audio').evaluate(p=>{p.currentTime=650;});await page.waitForFunction(()=>document.querySelector('#dock-locate').disabled);await dockGeometry(label+'-no-current-cue');
   // Real final-cue reachability, then an exact note draft above the same dock.
   await last.evaluate(row=>row.scrollIntoView({block:'center'}));await settle();
-  check('last_cue_not_covered_'+width,await page.evaluate(()=>{const row=[...document.querySelectorAll('.segment')].at(-1).getBoundingClientRect();return row.bottom<=document.querySelector('#media-dock').getBoundingClientRect().top;}));
+  const finalCue=await page.evaluate(()=>{const node=[...document.querySelectorAll('.segment')].at(-1),row=node.getBoundingClientRect(),dock=document.querySelector('#media-dock').getBoundingClientRect(),style=getComputedStyle(node),owner=document.scrollingElement;return {width:innerWidth,height:innerHeight,y:scrollY,row:row.toJSON(),dock:dock.toJSON(),words:node.querySelector('.words').getBoundingClientRect().toJSON(),note:node.querySelector('.saved-note')?.getBoundingClientRect().toJSON()||null,scrollOwner:owner?.tagName,scrollHeight:owner?.scrollHeight,clientHeight:owner?.clientHeight,scrollPaddingBottom:getComputedStyle(document.documentElement).scrollPaddingBottom,scrollMarginTop:style.scrollMarginTop,scrollMarginBottom:style.scrollMarginBottom,mainPaddingBottom:getComputedStyle(document.querySelector('main')).paddingBottom,toolbar:document.querySelector('#reading-mode-toolbar').getBoundingClientRect().toJSON()};});
+  lastCue.push({label,...finalCue});
+  check('last_cue_not_covered_'+width,finalCue.row.bottom<=finalCue.dock.top);
+  check('last_cue_source_clear_of_both_toolbars_'+label,finalCue.words.top>=Math.max(0,finalCue.toolbar.bottom)&&finalCue.words.bottom<=finalCue.dock.top);
+  if(finalCue.note)check('last_cue_saved_note_clear_of_both_toolbars_'+label,finalCue.note.top>=Math.max(0,finalCue.toolbar.bottom)&&finalCue.note.bottom<=finalCue.dock.top);
   await last.locator('.note-button').click();await page.locator('#note').fill('  exact\n  authored draft  ');
   check('note_editor_not_covered_'+width,await page.evaluate(()=>document.querySelector('#note').getBoundingClientRect().bottom<=document.querySelector('#media-dock').getBoundingClientRect().top));
   await page.locator('audio').evaluate(p=>{p.currentTime=420;p.dispatchEvent(new Event('timeupdate'));});
@@ -170,8 +174,8 @@ try{
  }
  if(process.env.COCONUT_UI_SCREENSHOTS){await fs.mkdir(process.env.COCONUT_UI_SCREENSHOTS,{recursive:true});await fs.writeFile(path.join(process.env.COCONUT_UI_SCREENSHOTS,'playback-follow-geometry.json'),JSON.stringify(geometry,null,2));}
  check('no_external_calls_or_page_errors',external===0&&errors.length===0);
- if(process.env.COCONUT_UI_SCREENSHOTS){await fs.writeFile(path.join(process.env.COCONUT_UI_SCREENSHOTS,'playback-follow-scroll.json'),JSON.stringify(manualScroll,null,2));await fs.writeFile(path.join(process.env.COCONUT_UI_SCREENSHOTS,'playback-follow-rewind.json'),JSON.stringify(rewinds,null,2));}
- console.log(JSON.stringify({ok:true,checks,geometry,rewinds,manualScroll,errors},null,2));
+ if(process.env.COCONUT_UI_SCREENSHOTS){await fs.writeFile(path.join(process.env.COCONUT_UI_SCREENSHOTS,'playback-follow-scroll.json'),JSON.stringify(manualScroll,null,2));await fs.writeFile(path.join(process.env.COCONUT_UI_SCREENSHOTS,'playback-follow-rewind.json'),JSON.stringify(rewinds,null,2));await fs.writeFile(path.join(process.env.COCONUT_UI_SCREENSHOTS,'playback-follow-last-cue.json'),JSON.stringify(lastCue,null,2));}
+ console.log(JSON.stringify({ok:true,checks,geometry,rewinds,lastCue,manualScroll,errors},null,2));
 }catch(error){
  try{
   if(page&&!page.isClosed()){
@@ -181,11 +185,11 @@ try{
     await fs.mkdir(process.env.COCONUT_UI_SCREENSHOTS,{recursive:true});
     await fs.writeFile(path.join(process.env.COCONUT_UI_SCREENSHOTS,'playback-follow-scroll.json'),JSON.stringify(manualScroll,null,2));
     await fs.writeFile(path.join(process.env.COCONUT_UI_SCREENSHOTS,'playback-follow-geometry.json'),JSON.stringify(geometry,null,2));
-    await fs.writeFile(path.join(process.env.COCONUT_UI_SCREENSHOTS,'playback-follow-rewind.json'),JSON.stringify(rewinds,null,2));
+    await fs.writeFile(path.join(process.env.COCONUT_UI_SCREENSHOTS,'playback-follow-rewind.json'),JSON.stringify(rewinds,null,2));await fs.writeFile(path.join(process.env.COCONUT_UI_SCREENSHOTS,'playback-follow-last-cue.json'),JSON.stringify(lastCue,null,2));
     await page.screenshot({path:path.join(process.env.COCONUT_UI_SCREENSHOTS,'playback-follow-failure.png')});
    }
   }
  }catch(captureError){errors.push('failure diagnostics: '+captureError.message);}
- console.error(JSON.stringify({ok:false,stage,checks,error:error.stack,geometry,rewinds,manualScroll,errors},null,2));process.exitCode=1;
+ console.error(JSON.stringify({ok:false,stage,checks,error:error.stack,geometry,rewinds,lastCue,manualScroll,errors},null,2));process.exitCode=1;
 }
 finally{await browser?.close();await new Promise(resolve=>server?server.close(resolve):resolve());if(directory)await fs.rm(directory,{recursive:true,force:true});}

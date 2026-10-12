@@ -3736,7 +3736,8 @@ function scrollReadingTarget(node,{block='start',behavior='auto'}={}){
  if(node.closest('dialog')){node.scrollIntoView?.({block,behavior});return;}
  const inset=syncReadingStickyStack(),prior=node.style.getPropertyValue('scroll-margin-top'),priority=node.style.getPropertyPriority('scroll-margin-top');
  const margin=Math.max(parseFloat(getComputedStyle(node).scrollMarginTop)||0,inset);
- if(block==='center'&&node.getBoundingClientRect().height>(window.visualViewport?.height||window.innerHeight)-margin)block='start';
+ const bottomInset=parseFloat(getComputedStyle(document.documentElement).scrollPaddingBottom)||0;
+ if(block==='center'&&node.getBoundingClientRect().height>(window.visualViewport?.height||window.innerHeight)-margin-bottomInset)block='start';
  node.style.setProperty('scroll-margin-top',margin+'px',priority);
  try{node.scrollIntoView?.({block,behavior});}finally{if(prior)node.style.setProperty('scroll-margin-top',prior,priority);else node.style.removeProperty('scroll-margin-top');}
  if(behavior!=='smooth'){const edge=readingDisplayTopEdge(),top=node.getBoundingClientRect().top;if(edge&&top<edge+6)window.scrollBy(0,top-edge-6);}
@@ -3969,6 +3970,12 @@ function dockRewindAvailable(){
  const player=$('source-media').querySelector('audio,video');
  return !!(workspace==='read'&&!$('reader-workspace').hidden&&!$('source-media').hidden&&contentIngressAllowed(active())&&!$('media-dock').closest('[inert]')&&!document.querySelector('dialog[open]')&&player&&!player.error&&Number.isFinite(player.duration)&&player.duration>0);
 }
+function syncPlaybackDockInset(){
+ const dock=$('media-dock'),rect=dock.getBoundingClientRect();
+ const inset=!dock.hidden&&rect.height>0?Math.max(0,window.innerHeight-rect.top)+8:0;
+ const root=document.documentElement,value=inset+'px';
+ if(root.style.getPropertyValue('--reading-dock-inset')!==value)root.style.setProperty('--reading-dock-inset',value);
+}
 function refreshPlaybackDock(){
  refreshReadingFollow();
  const dock=$('media-dock'),player=$('source-media').querySelector('audio,video');
@@ -3980,7 +3987,7 @@ function refreshPlaybackDock(){
  // Modal/native-close barriers are checked when invoked; do not latch a paused
  // player's button disabled after a dialog closes without another media event.
  const rewindDisabled=!visible;if($('dock-rewind').disabled!==rewindDisabled)$('dock-rewind').disabled=rewindDisabled;
- if(!visible)return;
+ if(!visible){syncPlaybackDockInset();return;}
  // Time events need not rewrite unchanged labels or invalidate layout styles.
  const write=(id,value)=>{const node=$(id);if(node.textContent!==value)node.textContent=value;};
  const title=(active()?.title||'当前原声').replace(/\s+/g,' ').slice(0,240);
@@ -3995,6 +4002,8 @@ function refreshPlaybackDock(){
  const locateLabel=cue?'定位当前播放的原文':'当前时间没有字幕';
  if($('dock-locate').getAttribute('aria-label')!==locateLabel)$('dock-locate').setAttribute('aria-label',locateLabel);
  if($('dock-locate').title!==locateLabel)$('dock-locate').title=locateLabel;
+ // Geometry only: native scrolling uses this inset; refreshing never scrolls.
+ syncPlaybackDockInset();
 }
 function schedulePlaybackDock(){
  if(dockFramePending)return;
