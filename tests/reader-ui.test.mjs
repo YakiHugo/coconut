@@ -944,6 +944,7 @@ test('repeat listening respects cue bounds and clears on skip, repeated click an
   const $=id=>w.document.getElementById(id);await importDocument(w,{title:'Loop',source_media:{job_id:'a'.repeat(32),kind:'audio'},segments:[{id:'a',start:2,end:4,text:'A'},{id:'b',start:4,end:8,text:'B'}]});w.dispatchEvent(new w.Event('coconut-worker-ready'));
   const player=w.document.querySelector('audio');Object.defineProperty(player,'duration',{value:10});player.play=async()=>{};player.onloadedmetadata();
   const button=w.document.querySelector('.repeat-button');button.click();assert.equal(player.currentTime,2);assert.equal(button.getAttribute('aria-pressed'),'true');
+  player.dispatchEvent(new w.Event('seeking'));player.dispatchEvent(new w.Event('seeked'));
   player.currentTime=4.1;player.ontimeupdate();assert.equal(player.currentTime,2);assert.equal($('stop-repeat').hidden,false);
   button.click();assert.equal($('stop-repeat').hidden,true);player.currentTime=5;player.ontimeupdate();assert.equal(player.currentTime,5);
   button.click();$('skip-forward').click();assert.equal($('stop-repeat').hidden,true);assert.equal(player.currentTime,10);

@@ -28,3 +28,36 @@ export function evaluateNativeIME({baseline,actual,text}){
   noSyntheticDispatch:noSynthetic(baseline)&&noSynthetic(actual)
  };
 }
+
+// The same native pointer action may commit composition on blur or leave it
+// active. Compare the observed plain-input behavior, never prescribe an end flag.
+export function evaluateNativeIMEPointer({baseline,actual,text}){
+ const list=trace=>Array.isArray(trace?.events)?trace.events:[];
+ const prefix=trace=>{
+  const before=trace?.beforePointer,events=list(before);
+  return !!(typeof text==='string'&&text.length&&before?.composing===true&&before.focused===true&&before.same===true&&before.value===text&&
+   events.filter(e=>e.type==='compositionstart').length===1&&events.some(e=>e.type==='compositionupdate'&&e.data===text)&&
+   events.some(e=>e.type==='beforeinput')&&events.some(e=>e.type==='input')&&!events.some(e=>['compositionend','blur','focusout'].includes(e.type))&&
+   events.every(e=>e.trusted===true&&e.same===true&&e.focused===true&&e.currentNodeSame===true&&e.connected===true)&&JSON.stringify(events)===JSON.stringify(list(trace).slice(0,events.length)));
+ };
+ const owned=trace=>trace?.same===true&&list(trace).every(e=>e.same===true&&e.currentNodeSame===true&&e.connected===true);
+ const pointer=trace=>Array.isArray(trace?.pointerEvents)&&trace.pointerEvents.map(e=>e.type).join(',')==='pointerdown,pointerup,click'&&trace.pointerEvents.every(e=>e.trusted===true&&e.same===true&&e.originalSame===true&&e.connected===true);
+ const blur=trace=>['blur','focusout'].every(type=>list(trace).filter(e=>e.type===type).length===1)&&list(trace).filter(e=>['blur','focusout'].includes(e.type)).every(e=>e.trusted===true);
+ const projection=events=>events.map(e=>[e.type,e.data??null,e.trusted,e.inputType??null,e.isComposing??null,e.value,e.selectionStart,e.selectionEnd,e.selectionDirection,e.focused]);
+ const result=trace=>[trace?.value,trace?.selectionStart,trace?.selectionEnd,trace?.selectionDirection,trace?.composing];
+ const bounded=trace=>list(trace).every(e=>['compositionstart','compositionupdate','compositionend','beforeinput','input','blur','focusout'].includes(e.type)&&typeof e.trusted==='boolean'&&(e.type==='compositionend'||e.trusted===true))&&list(trace).filter(e=>e.type==='compositionstart').length===1&&list(trace).filter(e=>e.type==='compositionend').length<=1&&typeof trace?.composing==='boolean'&&
+  (trace.composing?list(trace).every(e=>e.type!=='compositionend'):list(trace).filter(e=>e.type==='compositionend').length===1);
+ const noSynthetic=trace=>Array.isArray(trace?.manualDispatches)&&trace.manualDispatches.length===0;
+ return {
+  activeCompositionBeforePointer:prefix(baseline)&&prefix(actual),
+  sameNativePrefix:JSON.stringify(projection(list(baseline?.beforePointer)))===JSON.stringify(projection(list(actual?.beforePointer))),
+  trustedPointerAndBlur:pointer(baseline)&&pointer(actual)&&blur(baseline)&&blur(actual),
+  exactNativeSequence:JSON.stringify(projection(list(baseline)))===JSON.stringify(projection(list(actual))),
+  exactPointerSequence:JSON.stringify(baseline?.pointerEvents)===JSON.stringify(actual?.pointerEvents),
+  sameNativeOutcome:JSON.stringify(result(baseline))===JSON.stringify(result(actual))&&bounded(baseline)&&bounded(actual),
+  originalInput:owned(baseline)&&owned(actual),
+  exactText:baseline?.value===text&&actual?.value===text,
+  intentionalButtonFocus:baseline?.buttonFocused===true&&actual?.buttonFocused===true&&baseline?.focused===false&&actual?.focused===false,
+  noSyntheticDispatch:noSynthetic(baseline)&&noSynthetic(actual)
+ };
+}

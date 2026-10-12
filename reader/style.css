@@ -13,6 +13,8 @@
 * { box-sizing: border-box; }
 [hidden] { display: none !important; }
 body { margin: 0; font-size: 14px; line-height: 1.6; }
+/* Native focus/scrollIntoView must use the readable viewport above the dock. */
+html { scroll-padding-bottom: var(--reading-dock-inset, 0px); }
 button, input, select, textarea { font: inherit; color: inherit; }
 button, summary, a, input, select, textarea { -webkit-tap-highlight-color: transparent; }
 button {
@@ -194,6 +196,12 @@ header button { font-size: 12px; }
 #playback-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 12px 0; }
 #playback-controls button, #playback-controls label { font-size: 12px; }
 #playback-controls select { margin-left: 8px; }
+/* Completing/re-entering media toggles the saved resume control. Keep its real
+   44px row in place so a seeked receipt cannot shift the transcript above it.
+   The hidden button remains display:none, unfocusable and absent from AT. */
+.episode-media:has(#source-media:not([hidden])) .listening-progress { display: grid; grid-template-rows: minmax(44px, auto) auto; }
+.listening-progress #resume-listening { grid-area: 1 / 1; justify-self: start; }
+.listening-progress #listening-progress-status { grid-area: 2 / 1; }
 #locate-playback { font-size: 12px; margin-top: 18px; }
 #source-media { background: #222524; border-radius: 12px; overflow: hidden; margin-top: 14px; }
 .source-player { display: block; }
@@ -569,15 +577,19 @@ body[data-demo="true"] #transcript { max-width: 100%; }
 
 /* Keep the real source within reach after its native player scrolls away. */
 .media-dock { position: fixed; z-index: 5; left: 268px; right: 44px; bottom: 16px; display: flex; align-items: center; gap: 12px; max-width: 1192px; margin: 0 auto; padding: 12px 14px; background: #282a2c; color: #fff; border: 1px solid #ffffff1a; border-radius: 16px; box-shadow: 0 12px 40px #1d171c30; }
-.media-dock button { flex-shrink: 0; min-height: 42px; background: #ffffff09; color: #f8f6f3; border-color: #ffffff20; font-size: 12px; }
+.media-dock button { flex-shrink: 0; min-width: 44px; min-height: 44px; white-space: nowrap; background: #ffffff09; color: #f8f6f3; border-color: #ffffff20; font-size: 12px; }
 .media-dock button:hover { background: #ffffff1c; border-color: #ffffff40; }
 .media-dock button:disabled { opacity: .6; }
+/* Keep keyboard focus inside each 44px target, clear of its neighbors. */
+.media-dock button:focus-visible { outline: 2px solid #ffd2b4; outline-offset: -4px; }
+.media-dock .dock-play:focus-visible { outline-color: #743716; }
+.dock-label-short { display: none; }
 .media-dock .dock-play { min-width: 60px; background: #fff0e6; border-color: #fff0e6; color: #4e3527; font-weight: 600; }
 .media-dock .dock-play:hover { background: #ffe0cd; }
 .dock-copy { min-width: 0; flex: 1; display: grid; gap: 2px; }
 #dock-title { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; font-weight: 500; }
 .dock-clock { color: #d4c8bd; font-size: 11px; font-variant-numeric: tabular-nums; white-space: nowrap; }
-body[data-media-docked="true"] main { padding-bottom: 112px; }
+body[data-media-docked="true"] main { padding-bottom: max(112px, var(--reading-dock-inset, 0px)); }
 @media (max-width:1100px) {
  .media-dock { left: 232px; right: 32px; }
  body[data-media-docked="true"] #notes-panel { bottom: 100px; max-height: min(65dvh, calc(100dvh - 132px)); }
@@ -1060,10 +1072,13 @@ body[data-media-docked="true"] .reading-feedback:has(#save-warning-home .has-war
 #follow-playback, #dock-follow { min-height: 44px; min-width: 44px; }
 #follow-playback[aria-pressed="true"], #dock-follow[aria-pressed="true"] { border-color: var(--accent, #a95832); }
 #follow-playback[data-state="suspended"], #dock-follow[data-state="suspended"] { border-style: dashed; }
-@media (max-width: 420px) {
- .media-dock { gap: 5px; }
- .media-dock .dock-copy { display: none; }
- .media-dock button { flex: 1; min-width: 44px; padding-inline: 4px; }
+@media (max-width: 850px) {
+ /* At 320px: 276px inner width = 44+44+80+44+44 and four 5px gaps. */
+ .media-dock { display: grid; grid-template-columns: 44px 44px minmax(80px, 1.4fr) minmax(44px, 1fr) minmax(44px, 1fr); gap: 5px; padding: 9px; }
+ .media-dock .dock-copy, .media-dock .dock-label-full { display: none; }
+ .media-dock .dock-label-short { display: inline; }
+ .media-dock button, .media-dock .dock-play { min-width: 44px; min-height: 44px; padding: 7px 4px; font-size: 11px; }
+ .media-dock:has(#dock-locate[hidden]) { grid-template-columns: 44px 44px minmax(80px, 1.4fr) minmax(44px, 1fr); }
 }
 
 /* Browsing needs a real viewport, rather than half a screen mostly occupied by
@@ -1403,3 +1418,11 @@ body[data-short-reading-compact="true"] #language-panel > summary { min-height:4
  body[data-reading-mode="passages"] .reading-utility.is-compact :is(.media-disclosure,.reading-info > summary) { min-width:44px; }
  body[data-reading-mode="passages"] .reading-utility.is-compact :is(button,summary):focus-visible { position:relative; z-index:1; }
 }
+
+
+/* Native cue centering combines the measured upper sticky stack with the
+   dock-aware root scrollport. Explicit landings already use this same maximum.
+   Scope to real source nodes; retiring the dock restores their original margins. */
+body[data-media-docked="true"] #reader-workspace #transcript .segment { scroll-margin-top: max(24px, var(--reading-sticky-inset, 24px)); }
+body[data-media-docked="true"] #reader-workspace #passage-workspace .passage { scroll-margin-top: max(20px, var(--reading-sticky-inset, 20px)); }
+body[data-media-docked="true"] #reader-workspace #reading-context:not([hidden]) + #passage-workspace .passage { scroll-margin-top: max(112px, var(--reading-sticky-inset, 20px)); }

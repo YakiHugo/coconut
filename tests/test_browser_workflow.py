@@ -102,6 +102,8 @@ class BrowserWorkflowTests(unittest.TestCase):
                                  'displayed-exports-*.notes.md', 'displayed-exports-*.json',
                                  'passages-geometry.json', 'autosave-geometry.json',
                                  'playback-follow-geometry.json', 'playback-follow-scroll.json',
+                                 'playback-follow-rewind.json', 'playback-follow-last-cue.json',
+                                 'dock-rewind-evidence.json',
                                  'compact-library-geometry.json', 'reading-display-checks.json',
                                  'wide-library-search-checks.json',
                                  'search-return-checks.json',

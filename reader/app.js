@@ -271,6 +271,7 @@ function localMediaBindingSnapshot(doc){return JSON.stringify([doc.local_media_s
 const PLAYBACK_RATES=[0.75,1,1.25,1.5,1.75,2];
 let playbackRate=1;
 let repeating=null;
+const REPEAT_SEEK_TOLERANCE=.03;
 let dockFramePending=false;
 let playbackIndex=null;
 // Range metadata belongs to the rendered button and expires with that render.
@@ -3736,7 +3737,8 @@ function scrollReadingTarget(node,{block='start',behavior='auto'}={}){
  if(node.closest('dialog')){node.scrollIntoView?.({block,behavior});return;}
  const inset=syncReadingStickyStack(),prior=node.style.getPropertyValue('scroll-margin-top'),priority=node.style.getPropertyPriority('scroll-margin-top');
  const margin=Math.max(parseFloat(getComputedStyle(node).scrollMarginTop)||0,inset);
- if(block==='center'&&node.getBoundingClientRect().height>(window.visualViewport?.height||window.innerHeight)-margin)block='start';
+ const bottomInset=parseFloat(getComputedStyle(document.documentElement).scrollPaddingBottom)||0;
+ if(block==='center'&&node.getBoundingClientRect().height>(window.visualViewport?.height||window.innerHeight)-margin-bottomInset)block='start';
  node.style.setProperty('scroll-margin-top',margin+'px',priority);
  try{node.scrollIntoView?.({block,behavior});}finally{if(prior)node.style.setProperty('scroll-margin-top',prior,priority);else node.style.removeProperty('scroll-margin-top');}
  if(behavior!=='smooth'){const edge=readingDisplayTopEdge(),top=node.getBoundingClientRect().top;if(edge&&top<edge+6)window.scrollBy(0,top-edge-6);}
@@ -3953,7 +3955,7 @@ $('follow-playback').onclick=toggleReadingFollow;$('dock-follow').onclick=toggle
 // our instant correction records its final position before async scroll events.
 // Capture runs before navigation removes a focused row or opens an editor.
 window.addEventListener('scroll',()=>{if(readingFollow&&!readingFollowMoving&&Math.abs(window.scrollY-readingFollow.scrollY)>1)suspendReadingFollow();},{passive:true});
-const followTransport='#reading-display-control,#passage-toggle-translation,#follow-playback,#dock-follow,#dock-play,#skip-back,#skip-forward,#playback-rate,audio,video';
+const followTransport='#reading-display-control,#passage-toggle-translation,#follow-playback,#dock-follow,#dock-play,#dock-rewind,#skip-back,#skip-forward,#playback-rate,audio,video';
 window.addEventListener('wheel',()=>suspendReadingFollow(),{capture:true,passive:true});
 window.addEventListener('touchstart',event=>{if(!event.target.closest?.(followTransport))suspendReadingFollow();},{capture:true,passive:true});
 document.addEventListener('pointerdown',event=>{if(!event.target.closest?.(followTransport))suspendReadingFollow();},true);
@@ -3964,7 +3966,19 @@ document.addEventListener('keydown',event=>{if(['ArrowUp','ArrowDown','PageUp','
 window.addEventListener('coconut-render',refreshReadingFollow);
 document.addEventListener('visibilitychange',()=>{if(document.hidden)suspendReadingFollow('页面已离开');});
 
-// The dock controls the existing source player; it never owns or starts media.
+// The dock controls the existing source player; it never creates another one.
+function dockRewindAvailable(){
+ const player=$('source-media').querySelector('audio,video');
+ return !!(workspace==='read'&&!$('reader-workspace').hidden&&!$('source-media').hidden&&contentIngressAllowed(active())&&!$('media-dock').closest('[inert]')&&!document.querySelector('dialog[open]')&&player&&!player.error&&Number.isFinite(player.duration)&&player.duration>0);
+}
+function syncPlaybackDockInset(){
+ const dock=$('media-dock'),rect=dock.getBoundingClientRect();
+ // Round the occupied edge outward and leave a full reading gutter. Native
+ // centered scrolling halves this clearance and can quantize fractional rows.
+ const inset=!dock.hidden&&rect.height>0?Math.ceil(Math.max(0,window.innerHeight-rect.top))+16:0;
+ const root=document.documentElement,value=inset+'px';
+ if(root.style.getPropertyValue('--reading-dock-inset')!==value)root.style.setProperty('--reading-dock-inset',value);
+}
 function refreshPlaybackDock(){
  refreshReadingFollow();
  const dock=$('media-dock'),player=$('source-media').querySelector('audio,video');
@@ -3973,7 +3987,10 @@ function refreshPlaybackDock(){
  if(!readingFollowMoving&&(!readingFollow||readingFollow.suspended)&&!visible&&!dock.hidden&&dock.contains(document.activeElement)&&player&&workspace==='read')player.focus({preventScroll:true});
  if(dock.hidden!==!visible)dock.hidden=!visible;
  if(document.body.dataset.mediaDocked!==String(visible))document.body.dataset.mediaDocked=String(visible);
- if(!visible)return;
+ // Modal/native-close barriers are checked when invoked; do not latch a paused
+ // player's button disabled after a dialog closes without another media event.
+ const rewindDisabled=!visible;if($('dock-rewind').disabled!==rewindDisabled)$('dock-rewind').disabled=rewindDisabled;
+ if(!visible){syncPlaybackDockInset();return;}
  // Time events need not rewrite unchanged labels or invalidate layout styles.
  const write=(id,value)=>{const node=$(id);if(node.textContent!==value)node.textContent=value;};
  const title=(active()?.title||'当前原声').replace(/\s+/g,' ').slice(0,240);
@@ -3983,7 +4000,13 @@ function refreshPlaybackDock(){
  if($('dock-play').getAttribute('aria-label')!==label)$('dock-play').setAttribute('aria-label',label);
  write('dock-current',Coconut.time(player.currentTime));write('dock-total',' / '+Coconut.time(player.duration));write('dock-rate',' · '+player.playbackRate+'×');
  const audioOnly=Coconut.isAudioProject(active());if($('dock-locate').hidden!==audioOnly)$('dock-locate').hidden=audioOnly;
- const cue=playbackSegment();if($('dock-locate').disabled!==!cue)$('dock-locate').disabled=!cue;write('dock-locate',cue?'定位原文':'此刻无字幕');
+ const cue=playbackSegment();if($('dock-locate').disabled!==!cue)$('dock-locate').disabled=!cue;
+ write('dock-locate-full',cue?'定位原文':'此刻无字幕');write('dock-locate-short',cue?'定位':'无字幕');
+ const locateLabel=cue?'定位当前播放的原文':'当前时间没有字幕';
+ if($('dock-locate').getAttribute('aria-label')!==locateLabel)$('dock-locate').setAttribute('aria-label',locateLabel);
+ if($('dock-locate').title!==locateLabel)$('dock-locate').title=locateLabel;
+ // Geometry only: native scrolling uses this inset; refreshing never scrolls.
+ syncPlaybackDockInset();
 }
 function schedulePlaybackDock(){
  if(dockFramePending)return;
@@ -3998,6 +4021,12 @@ $('dock-play').onclick=async()=>{
  try{if(player.ended){stopRepeating();player.currentTime=0;}await player.play();}
  catch(error){if(error?.name!=='AbortError'&&ownsPlaybackError())notice('媒体暂时无法播放，请回到播放器检查文件或重试。');}
  refreshPlaybackDock();
+};
+$('dock-rewind').onclick=()=>{
+ // Validate at action time: stale/retired controls cannot seek another workspace
+ // or bypass a native-close barrier or modal. Shared skip owns loop/preview exit.
+ if($('media-dock').hidden||!dockRewindAvailable())return;
+ skipPlayback(-10);refreshPlaybackDock();
 };
 $('media-dock').addEventListener('focusout',schedulePlaybackDock);
 $('dock-locate').onclick=()=>locateReadingPlayback();
@@ -4045,7 +4074,7 @@ function toggleRepeat(segment){
  const player=$("source-media").querySelector("audio,video");
  const range=timingRange(segment);
  if(!player || !range){$("repeat-status").textContent="请等待媒体加载，并确认片段时间在媒体范围内。";return;}
- stopRepeating();const target={key:active().key,doc:active(),attachment:browserMedia.get(active().key),player,id:segment.id,path:player.getAttribute("src"),start:range.start,end:range.end,expectedSeek:null};repeating=target;
+ stopRepeating();const target={key:active().key,doc:active(),attachment:browserMedia.get(active().key),player,id:segment.id,path:player.getAttribute("src"),start:range.start,end:range.end,expectedSeek:null,seekAcknowledged:false};repeating=target;
  try{seekRepeat(target);const pending=player.play();pending?.catch(()=>{if(repeating===target){stopRepeating();$("repeat-status").textContent="请先在播放器中开始播放，再循环此段。";}});}
  catch{stopRepeating();$("repeat-status").textContent="此媒体暂时无法循环播放。";return;}
  $("stop-repeat").hidden=false;$("repeat-status").textContent="循环 · "+Coconut.time(segment.start)+"–"+Coconut.time(segment.end);
@@ -4061,17 +4090,29 @@ function repeatTarget(player){
 }
 function seekRepeat(target){
  // Keep ownership until seeked: browsers queue seeking/seeked asynchronously.
- if(!target.player.seeking&&target.player.currentTime===target.start){target.expectedSeek=null;return;}
- target.expectedSeek=target.start;target.player.currentTime=target.start;
+ if(!target.player.seeking&&target.player.currentTime===target.start){target.expectedSeek=null;target.seekAcknowledged=false;return;}
+ target.expectedSeek=target.start;target.seekAcknowledged=false;target.player.currentTime=target.start;
 }
 function observeRepeatSeek(player,completed){
  const target=repeatTarget(player);if(!target)return;
- if(target.expectedSeek===null||Math.abs(player.currentTime-target.expectedSeek)>.03){stopRepeating();return;}
- if(completed)target.expectedSeek=null;
+ if(target.expectedSeek===null){stopRepeating();return;}
+ if(!completed){
+  // Only the first near-target seeking acknowledges this owned request. A new
+  // seeking event after that is user takeover, even at the same media time.
+  if(target.seekAcknowledged||Math.abs(player.currentTime-target.expectedSeek)>REPEAT_SEEK_TOLERANCE){stopRepeating();return;}
+  target.seekAcknowledged=true;return;
+ }
+ // Playback can advance before queued seeked delivery. Complete the matched
+ // transaction, rather than measuring its running clock against the old target.
+ if(!target.seekAcknowledged||player.seeking){stopRepeating();return;}
+ target.expectedSeek=null;target.seekAcknowledged=false;
 }
 function repeatPlayback(ended=false,player=$('source-media').querySelector('audio,video')){
- const target=repeatTarget(player);if(!target||player.seeking)return;
- if(player.currentTime<target.start){stopRepeating();return;}
+ const target=repeatTarget(player);if(!target||player.seeking||target.expectedSeek!==null)return;
+ // Native clocks can round an owned seek just below a fractional mapped start.
+ // Use the same tolerance as its seek acknowledgement; later native seeks still
+ // retire ownership unconditionally once expectedSeek has been cleared.
+ if(player.currentTime<target.start-REPEAT_SEEK_TOLERANCE){stopRepeating();return;}
  if(player.currentTime>=target.end || ended){
   try{seekRepeat(target);if(ended)player.play()?.catch(()=>{if(repeating===target)stopRepeating();});}catch{stopRepeating();}
  }

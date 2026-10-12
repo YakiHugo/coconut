@@ -8,7 +8,7 @@
 <meta name="theme-color" content="#faf9f7">
 <link rel="icon" type="image/png" href="coconut-mark.png">
 <script src="appearance.js?v=86ea922669"></script>
-<link rel="stylesheet" href="style.css?v=6d747c8e3e">
+<link rel="stylesheet" href="style.css?v=4799e2548e">
 <script src="summary.js?v=580ffdad1e" defer></script>
 <script src="core.js?v=47de1151f8" defer>
 </script>
@@ -18,7 +18,7 @@
 <script src="library-store.js?v=e76ded9456" defer></script>
 <script src="indexeddb-document-adapter.js?v=65c0c5a814" defer></script>
 <script src="storage-provider.js?v=1cb898e984" defer></script>
-<script src="app.js?v=5bfb770de9" type="text/coconut-pending" data-reader-script>
+<script src="app.js?v=8b2d131963" type="text/coconut-pending" data-reader-script>
 </script>
 <script src="language.js?v=64d7859585" type="text/coconut-pending" data-reader-script></script>
 <script src="translation-review.js?v=e8289ebd90" type="text/coconut-pending" data-reader-script></script>
@@ -330,9 +330,10 @@ cd coconut
 </div>
 <div id="reading-feedback" class="reading-feedback"><div id="save-warning-home"></div><div id="passage-playback-controls" class="passage-playback-controls" hidden><p id="passage-playback-status" role="status"></p><div><button id="passage-replay" type="button">再听一次</button><button id="passage-continue" type="button">接着听后面</button><button id="passage-return-playback" type="button">回到之前播放处</button><button id="passage-stop" type="button">停止回听</button></div></div></div>
 <section id="media-dock" class="media-dock" aria-label="当前原声播放控制" hidden>
+<button id="dock-rewind" type="button" aria-label="后退10秒" title="后退10秒" disabled>−10秒</button>
 <button id="dock-play" class="dock-play" type="button">播放</button>
 <div class="dock-copy"><strong id="dock-title"></strong><span class="dock-clock"><span id="dock-current">00:00</span><span id="dock-total"></span><span id="dock-rate"></span></span></div>
-<button id="dock-follow" type="button" aria-pressed="false" disabled>跟随原声</button><button id="dock-locate" type="button">定位原文</button><button id="dock-return" type="button" aria-label="回到原声播放器">播放器 ↑</button>
+<button id="dock-follow" type="button" aria-pressed="false" disabled>跟随原声</button><button id="dock-locate" type="button" aria-label="定位当前播放的原文" title="定位当前播放的原文"><span id="dock-locate-full" class="dock-label-full" aria-hidden="true">定位原文</span><span id="dock-locate-short" class="dock-label-short" aria-hidden="true">定位</span></button><button id="dock-return" type="button" aria-label="回到原声播放器" title="回到原声播放器"><span class="dock-label-full" aria-hidden="true">播放器 ↑</span><span class="dock-label-short" aria-hidden="true">原声</span></button>
 </section>
 <dialog id="paste-subtitle-dialog" aria-labelledby="paste-subtitle-heading" aria-describedby="paste-subtitle-help">
 <div class="paste-subtitle-heading"><h2 id="paste-subtitle-heading">粘贴已有字幕</h2><button id="close-paste-subtitle" type="button">关闭</button></div>
