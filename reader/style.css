@@ -182,6 +182,9 @@ header button { font-size: 12px; }
 .translation.stale { color: var(--tone-warning, #845d20); }
 .words mark, .translation mark, .saved-note mark, .speaker mark { background: var(--highlight, #ffe28e); color: var(--ink); border-radius: 2px; }
 #notes-panel { position: sticky; top: 24px; align-self: start; margin-top: 24px; padding: 22px; border: 1px solid var(--edge, #e7dfd8); border-radius: 14px; background: var(--surface-soft, #faf7f2); max-height: calc(100dvh - 48px); overflow-y: auto; }
+@media (min-width: 1101px) {
+  #notes-panel { top: max(24px, var(--reading-sticky-inset, 6px)); max-height: calc(100dvh - max(24px, var(--reading-sticky-inset, 6px)) - 24px); }
+}
 .note-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .note-heading .eyebrow { margin: 0; font-size: 10px; }
 #close-note { font-size: 12px; padding: 5px 8px; min-height: 32px; }

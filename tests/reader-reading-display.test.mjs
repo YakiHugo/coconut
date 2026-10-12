@@ -166,3 +166,55 @@ test('narrow utility labels retain the full names, titles and expanded state wit
   const css=fs.readFileSync(new URL('../reader/style.css',import.meta.url),'utf8');assert.match(css,/@media\(max-width:350px\)/);assert.match(css,/reading-utility\.is-compact \{ column-gap:8px;/);assert.match(css,/\.media-disclosure,\.reading-info > summary\) \{ min-width:44px;/);
  }finally{await w.happyDOM.close();}
 });
+
+test('a searched passage lands below the measured toolbar plus return row, not the fixed legacy margin',async()=>{
+ const env=setup(),{w,$}=env;try{
+  $('mode-bilingual').click();const doc=w.libraryProbe.documents[0];doc.readingPosition='cue-3';$('search').value='Authored source 25';$('search').oninput();$('transcript').querySelector('.context-button').click();
+  let landing=112;const corrections=[];
+  w.HTMLElement.prototype.getBoundingClientRect=function(){
+   if(this.id==='reading-mode-toolbar')return {top:6,bottom:94,height:88};
+   if(this.id==='reading-context')return {top:100,bottom:188,height:88};
+   if(this.matches('.passage'))return {top:landing,bottom:landing+500,height:500};
+   if(this.matches('.passage-original'))return {top:landing+40,bottom:landing+150,height:110};
+   return {top:0,bottom:0,height:0};
+  };w.HTMLElement.prototype.scrollIntoView=function(){if(this.matches('.passage'))landing=112;};w.scrollBy=(x,y)=>{corrections.push(y);landing-=y;};
+  $('mode-passages').click();const target=w.document.activeElement;assert.ok(target.matches('.passage'));assert.equal($('reading-context').nextElementSibling,$('passage-workspace'));assert.equal(landing,194);assert.deepEqual(corrections,[-82]);assert.ok(target.querySelector('.passage-original').getBoundingClientRect().top>188);assert.equal(doc.readingPosition,'cue-3');
+  $('return-reading-results').click();assert.equal($('search').value,'Authored source 25');assert.equal($('transcript').querySelectorAll('.segment').length,1);assert.equal(doc.readingPosition,'cue-3');
+ }finally{await w.happyDOM.close();}
+});
+
+for(const route of ['jump-long-cue','next-page','mode-switch','next-long-match'])test(`${route} reserves the measured sticky stack for a fresh landing`,async()=>{
+ const env=setup([fixture({count:240})]),{w,$}=env;try{
+  $('mode-bilingual').click();if(route==='next-long-match'){$('search').value='Authored source';$('search').oninput();}
+  const tops=new Map(),calls=[];const rect=(top,height)=>({top,bottom:top+height,height,width:320,left:0,right:320});
+  w.HTMLElement.prototype.getBoundingClientRect=function(){if(this.id==='reading-mode-toolbar')return rect(6,88);if(this.matches('.segment'))return rect(tops.get(this)??1800,route.includes('long')?900:100);return rect(0,0);};
+  w.HTMLElement.prototype.scrollIntoView=function(options){if(!this.matches('.segment'))return;calls.push({node:this,options,margin:this.style.scrollMarginTop});tops.set(this,options.block==='start'?parseFloat(this.style.scrollMarginTop):350);};
+  w.scrollBy=(x,y)=>{for(const [node,top]of tops)tops.set(node,top-y);};
+  if(route==='jump-long-cue'){$('reading-jump').value='cue-100';$('reading-jump').onchange();}else if(route==='next-page')$('next-page').click();else if(route==='mode-switch')$('mode-transcript').click();else $('next-match').click();
+  const call=calls.at(-1);assert.ok(call);assert.equal(call.margin,'100px');assert.ok(call.node.getBoundingClientRect().top>=100);assert.equal(call.node.style.scrollMarginTop,'');if(route==='jump-long-cue')assert.equal(call.options.behavior,'smooth');
+ }finally{await w.happyDOM.close();}
+});
+test('reader history temporary scroll margin restores its authored value and priority even if native scrolling throws',async()=>{
+ const env=setup(),{w,$}=env;try{
+  const heading=$('ai-history-heading');heading.style.setProperty('scroll-margin-top','31px','important');$('language-panel').open=true;
+  $('reading-mode-toolbar').getBoundingClientRect=()=>({top:6,bottom:94,height:88});heading.getBoundingClientRect=()=>({top:100,bottom:140,height:40});
+  let calls=0;heading.scrollIntoView=options=>{calls++;assert.equal(options.block,'start');assert.equal(heading.style.scrollMarginTop,'100px');assert.equal(heading.style.getPropertyPriority('scroll-margin-top'),'important');};
+  $('ai-history-latest').onclick();assert.equal(calls,1);assert.equal(heading.style.scrollMarginTop,'31px');assert.equal(heading.style.getPropertyPriority('scroll-margin-top'),'important');
+  heading.scrollIntoView=()=>{throw Error('Authored native scroll failure');};assert.throws(()=>$('ai-history-latest').onclick(),/Authored native scroll failure/);assert.equal(heading.style.scrollMarginTop,'31px');assert.equal(heading.style.getPropertyPriority('scroll-margin-top'),'important');
+ }finally{await w.happyDOM.close();}
+});
+test('dialog-owned history retains its local scroll owner and never receives reader stack margins or page compensation',async()=>{
+ const env=setup(),{w,$}=env;try{
+  const heading=$('ai-history-heading'),dialog=$('passage-question-dialog');dialog.append(heading);dialog.open=true;heading.style.setProperty('scroll-margin-top','12px','important');
+  let pageScrolls=0,measures=0,calls=0;w.scrollBy=()=>{pageScrolls++;};$('reading-mode-toolbar').getBoundingClientRect=()=>{measures++;return {top:6,bottom:94,height:88};};
+  heading.scrollIntoView=options=>{calls++;assert.equal(options.block,'start');assert.equal(heading.style.scrollMarginTop,'12px');assert.equal(heading.style.getPropertyPriority('scroll-margin-top'),'important');};
+  $('ai-history-latest').onclick();assert.equal(calls,1);assert.equal(pageScrolls,0);assert.equal(measures,0);assert.equal(w.document.activeElement,heading);
+ }finally{await w.happyDOM.close();}
+});
+test('desktop notes reserve the measured stack while the mobile bottom-sheet rule remains independent',async()=>{
+ const env=setup(),{w,$}=env;try{
+  const toolbar=$('reading-mode-toolbar'),bar=$('reading-context'),workspace=$('reader-workspace');let height=88;toolbar.getBoundingClientRect=()=>({top:6,bottom:6+height,height});bar.hidden=false;bar.getBoundingClientRect=()=>({top:100,bottom:188,height:88});
+  w.dispatchEvent(new w.Event('resize'));assert.equal(workspace.style.getPropertyValue('--reading-sticky-inset'),'194px');bar.hidden=true;height=44;w.dispatchEvent(new w.Event('resize'));assert.equal(workspace.style.getPropertyValue('--reading-sticky-inset'),'56px');toolbar.hidden=true;w.dispatchEvent(new w.Event('resize'));assert.equal(workspace.style.getPropertyValue('--reading-sticky-inset'),'6px');
+  const css=fs.readFileSync(new URL('../reader/style.css',import.meta.url),'utf8');assert.match(css,/@media \(min-width: 1101px\) \{\s*#notes-panel \{ top: max\(24px, var\(--reading-sticky-inset, 6px\)\);/);assert.match(css,/#notes-panel \{ position: fixed;[^}]*top: auto; bottom: 12px; max-height: 65dvh;/);
+ }finally{await w.happyDOM.close();}
+});

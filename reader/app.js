@@ -717,7 +717,7 @@ function readingSearchTarget(){
   // A mounted row with no layout can still own an explicit match. Once layout
   // exists, an old result cannot overrule a newer page or reading scrolled away.
   const unmeasured=!rect.height&&!rect.width&&rect.top===0&&rect.bottom===0;
-  return (unmeasured||rect.bottom>0&&rect.top<(window.visualViewport?.height||window.innerHeight))?id:null;
+  return (unmeasured||rect.bottom>readingDisplayTopEdge()&&rect.top<(window.visualViewport?.height||window.innerHeight))?id:null;
  };
  for(const id of [visibleCandidate(selected),visibleCandidate(searchFocusedId),visibleCandidate(readingContext?.document===doc?readingContext.id:null),visibleReadingCue()]){
   if(id===null||id===undefined)continue;
@@ -742,7 +742,7 @@ function clearReadingFiltersAt(cue){
  if(index>=0)pageStart=Math.floor(index/PAGE_SIZE)*PAGE_SIZE;
  render();
  const node=index>=0?chapterCueNode(cue.id,'transcript'):null;
- if(node){node.scrollIntoView?.({block:'center',behavior:'auto'});node.focus({preventScroll:true});}
+ if(node){scrollReadingTarget(node,{block:'center',behavior:'auto'});node.focus({preventScroll:true});}
  else focusReadingSearchAfterNavigation();
 }
 function focusReadingSearchAfterNavigation(options){
@@ -771,7 +771,7 @@ function returnBeforeSearch(){
  if(node){
   node.tabIndex=-1;
   if(anchor.unchanged&&Number.isFinite(origin.viewportTop))window.scrollBy(0,node.getBoundingClientRect().top-origin.viewportTop);
-  else node.scrollIntoView?.({block:'center',behavior:'auto'});
+  else scrollReadingTarget(node,{block:'center',behavior:'auto'});
   node.focus({preventScroll:true});
  }else{focusReadingSearchAfterNavigation({preventScroll:true});notice('原片段已离开搜索前的筛选；已恢复筛选，请选择当前结果。');}
  if(!anchor.unchanged)notice('搜索前的原片段已变化，已定位当前原文。');
@@ -787,7 +787,7 @@ $('continue-search-reading').onclick=()=>{
  if(!ownedReadingSearch())return;const cue=readingSearchTarget();if(!cue)return;
  endReadingSearch();clearReadingContext();chapterReturn=null;$('search').value='';notesOnly=false;excerptsOnly=false;speakerFilter=null;searchFocusedId=null;selected=null;$('ai-consent').checked=false;
  openPassage(cue.id,false);
- const node=chapterCueNode(cue.id,'passages');if(node){node.tabIndex=-1;node.classList.add('search-return-target');node.scrollIntoView?.({block:node.getBoundingClientRect().height>(window.visualViewport?.height||window.innerHeight)?'start':'center',behavior:'auto'});node.focus({preventScroll:true});}
+ const node=chapterCueNode(cue.id,'passages');if(node){node.tabIndex=-1;node.classList.add('search-return-target');scrollReadingTarget(node,{block:node.getBoundingClientRect().height>(window.visualViewport?.height||window.innerHeight)?'start':'center',behavior:'auto'});node.focus({preventScroll:true});}
 };
 function renderReadingContext() {
  if(readingContext?.document!==active())readingContext=null;
@@ -834,7 +834,7 @@ function returnReadingResults() {
  const row=[...$('transcript').querySelectorAll('.segment')].find(node=>node.dataset.segmentId===target?.id);
  if(row){
   if(exact>=0&&Number.isFinite(origin.viewportTop))window.scrollBy(0,row.getBoundingClientRect().top-origin.viewportTop);
-  else row.scrollIntoView?.({block:'center'});
+  else scrollReadingTarget(row,{block:'center'});
   (row.querySelector('.context-button')||row).focus({preventScroll:true});
  }else focusReadingSearch();
  if(exact<0)notice(target?'原片段已不在筛选结果中，已返回相邻结果。':'原筛选已没有匹配片段；可调整筛选继续阅读。');
@@ -868,8 +868,7 @@ function goToSegment(id,contextDetour=false,preservePassageReturn=false) {
  const alignment = row && row.getBoundingClientRect().height > (window.visualViewport?.height || window.innerHeight) ? "start" : "center";
 	// A context detour can cross most of a 100-cue page. Land immediately so
  // the requested evidence is readable instead of animating past the AI tools.
- row?.scrollIntoView?.({block: alignment, behavior: contextDetour ? "auto" : "smooth"});
- if(contextDetour&&row){const edge=readingDisplayTopEdge(),top=row.getBoundingClientRect().top;if(edge&&top<edge)window.scrollBy(0,top-edge-6);}
+ scrollReadingTarget(row,{block:alignment,behavior:contextDetour?"auto":"smooth"});
 	row?.focus({preventScroll: true});
 }
 // Explicit opens share one resume policy. Run synchronously with activation,
@@ -2252,7 +2251,7 @@ function openLibraryHit(hit) {
   goToSegment(hit.id,true);
   if(hit.kind==='translation'){
    const row=[...$('transcript').querySelectorAll('.segment')].find(row=>row.dataset.segmentId===hit.id);
-   row?.querySelector('.translation mark')?.scrollIntoView?.({block:'center',behavior:'auto'});
+   scrollReadingTarget(row?.querySelector('.translation mark'),{block:'center',behavior:'auto'});
   }
   if(hit.kind==='note'){
    const row=[...$('transcript').querySelectorAll('.segment')].find(row=>row.dataset.segmentId===hit.id);
@@ -2652,7 +2651,7 @@ function changeReadingPage(direction) {
 	// Replacing a page removes its controls: move focus into the new content
 	// rather than dropping keyboard users back to the top of the document.
 	const row = $("transcript").querySelector(".segment");
-	row?.scrollIntoView?.({block: "start"});
+	scrollReadingTarget(row,{block:"start"});
 	row?.focus({preventScroll: true});
 }
 function playbackSegment() {
@@ -3716,6 +3715,9 @@ function syncReadingStickyStack(){
   const top=(height>0?inset:6)+'px';if(node.style.top!==top)node.style.top=top;
   if(height>0)inset+=height+6;
  }
+ const workspace=$('reader-workspace'),value=inset+'px';
+ if(workspace.style.getPropertyValue('--reading-sticky-inset')!==value)workspace.style.setProperty('--reading-sticky-inset',value);
+ return inset;
 }
 const readingStickyObserver=typeof ResizeObserver==='function'?new ResizeObserver(syncReadingStickyStack):null;
 for(const node of readingStickyNodes())readingStickyObserver?.observe(node);
@@ -3725,6 +3727,19 @@ function readingDisplayTopEdge(){
   const rect=node.getBoundingClientRect(),inset=parseFloat(getComputedStyle(node).top)||0;
   return !node.hidden&&rect.height>0&&rect.top<=inset?Math.max(edge,rect.bottom):edge;
  },0);
+}
+// Explicit new landings reserve the forthcoming sticky stack even when it is
+// still in natural flow. Native smooth scrolling reads this margin immediately;
+// restore the inline style afterwards so no old return inset survives the route.
+function scrollReadingTarget(node,{block='start',behavior='auto'}={}){
+ if(!node)return;
+ if(node.closest('dialog')){node.scrollIntoView?.({block,behavior});return;}
+ const inset=syncReadingStickyStack(),prior=node.style.getPropertyValue('scroll-margin-top'),priority=node.style.getPropertyPriority('scroll-margin-top');
+ const margin=Math.max(parseFloat(getComputedStyle(node).scrollMarginTop)||0,inset);
+ if(block==='center'&&node.getBoundingClientRect().height>(window.visualViewport?.height||window.innerHeight)-margin)block='start';
+ node.style.setProperty('scroll-margin-top',margin+'px',priority);
+ try{node.scrollIntoView?.({block,behavior});}finally{if(prior)node.style.setProperty('scroll-margin-top',prior,priority);else node.style.removeProperty('scroll-margin-top');}
+ if(behavior!=='smooth'){const edge=readingDisplayTopEdge(),top=node.getBoundingClientRect().top;if(edge&&top<edge+6)window.scrollBy(0,top-edge-6);}
 }
 function readingDisplayCueNode(id){
  return [...document.querySelectorAll(readingMode==='passages'?'#passage-body .passage-original .passage-cue':'#transcript .segment')].find(node=>(node.dataset.cueId||node.dataset.segmentId)===id);
@@ -4094,7 +4109,7 @@ function moveSearchMatch(direction){
  searchFocusedId=matches[index].id;pageStart=Math.floor(index/PAGE_SIZE)*PAGE_SIZE;selected=null;render();
  const row=[...$("transcript").querySelectorAll(".segment")].find(s=>s.dataset.segmentId===searchFocusedId);
  const alignment = row && row.getBoundingClientRect().height > (window.visualViewport?.height || window.innerHeight) ? "start" : "center";
- row?.scrollIntoView?.({block:alignment});row?.focus({preventScroll:true});
+ scrollReadingTarget(row,{block:alignment});row?.focus({preventScroll:true});
 }
 $("previous-match").onclick=()=>moveSearchMatch(-1);$("next-match").onclick=()=>moveSearchMatch(1);
 
@@ -4299,7 +4314,7 @@ function openPassage(cueId,scroll=true){
  passageReturn=null;passageDocumentKey=doc.key;passageAnchor=passage.cues[0].id;
  setReadingMode('passages');render();
  const target=[...$('passage-body').querySelectorAll('.passage')].find(row=>row.dataset.firstCueId===passageAnchor);
- if(scroll){target?.scrollIntoView?.({block:'start',behavior:'auto'});target?.focus({preventScroll:true});}
+ if(scroll){scrollReadingTarget(target,{block:'start',behavior:'auto'});target?.focus({preventScroll:true});}
 }
 function openPassageDetails(cueId,section){
  const doc=active();if(!doc)return;
@@ -4314,7 +4329,7 @@ function returnToPassages(){
  const passage=CoconutPassages.locate(readingPassages(doc),origin.cueId);
  const section=[...$('passage-body').querySelectorAll('.passage')].find(row=>row.dataset.firstCueId===passage?.cues[0].id);
  if(section){window.scrollBy(0,section.getBoundingClientRect().top-origin.viewportTop);section.querySelector('.passage-details')?.focus({preventScroll:true});}
- else{$('passage-body').scrollIntoView?.({block:'start'});$('mode-passages').focus({preventScroll:true});}
+ else{scrollReadingTarget($('passage-body'),{block:'start'});$('mode-passages').focus({preventScroll:true});}
 }
 function movePassagePage(direction){
  const passages=readingPassages(),index=Math.max(0,Math.min(passages.length-1,passagePageStart+direction*PASSAGES_PER_PAGE));
@@ -4670,8 +4685,8 @@ function visibleReadingCue(){
  if(!passages&&readingMode!=='transcript')return null;
  const nodes=[...document.querySelectorAll(passages?'#passage-body .passage-original .passage-cue':'#transcript .segment')];
  const id=node=>passages?node?.dataset.cueId:node?.dataset.segmentId;
- const height=window.visualViewport?.height||window.innerHeight;
- const visible=nodes.find(node=>{const rect=node.getBoundingClientRect();return rect.bottom>0&&rect.top<height;});
+ const height=window.visualViewport?.height||window.innerHeight,edge=readingDisplayTopEdge();
+ const visible=nodes.find(node=>{const rect=node.getBoundingClientRect();return rect.bottom>edge&&rect.top<height;});
  if(visible)return id(visible);
  // A header can be in view while all source is below it. Keep the current
  // passage anchor when it still belongs to the mounted page, otherwise its start.
@@ -4690,7 +4705,7 @@ function switchTranscriptView(bilingual){
  if(index>=0)pageStart=Math.floor(index/PAGE_SIZE)*PAGE_SIZE;
  setReadingMode('transcript');render();
  const row=[...$('transcript').querySelectorAll('.segment')].find(node=>node.dataset.segmentId===anchor);
- if(row){row.scrollIntoView?.({block:'start',behavior:'auto'});row.focus({preventScroll:true});}
+ if(row){scrollReadingTarget(row,{block:'start',behavior:'auto'});row.focus({preventScroll:true});}
 }
 $('mode-passages').onclick=()=>{
  const doc=active();if(!doc)return;

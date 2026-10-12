@@ -141,10 +141,13 @@ try {
     const destination=page.locator('.passage').filter({has:page.locator('.passage-cue[data-cue-id="split-296"]')});
     await screenshot(page,label+'-search-passage-return');
     check(label+'_search_opens_matching_passage_by_keyboard',await destination.evaluate(node=>node===document.activeElement));
-    check(label+'_single_return_bar_precedes_passage_and_does_not_cover_source',await page.evaluate(()=>{
-      const bar=document.getElementById('reading-context'),passage=document.activeElement,source=passage.querySelector('.passage-original'),b=bar.getBoundingClientRect(),r=source.getBoundingClientRect();
-      return document.querySelectorAll('#reading-context').length===1&&!bar.hidden&&bar.nextElementSibling===document.getElementById('passage-workspace')&&b.top>=0&&b.bottom<innerHeight&&r.top>=b.bottom&&r.top<innerHeight&&document.documentElement.scrollWidth<=innerWidth;
-    }));
+    const returnGeometry=await page.evaluate(()=>{
+      const bar=document.getElementById('reading-context'),passage=document.activeElement,source=passage.querySelector('.passage-original'),b=bar.getBoundingClientRect(),r=source.getBoundingClientRect(),toolbar=document.getElementById('reading-mode-toolbar').getBoundingClientRect();
+      const hit=document.elementFromPoint(r.left+r.width/2,Math.min(r.top+8,r.bottom-1));
+      return {single:document.querySelectorAll('#reading-context').length===1,visible:!bar.hidden,precedes:bar.nextElementSibling===document.getElementById('passage-workspace'),bar:b.toJSON(),source:r.toJSON(),toolbar:toolbar.toJSON(),barInset:getComputedStyle(bar).top,scrollY,height:innerHeight,width:innerWidth,scrollWidth:document.documentElement.scrollWidth,sourceHit:hit===source||source.contains(hit),hitId:hit?.id,hitClass:hit?.className,focusedCue:passage.dataset.firstCueId};
+    });
+    console.log(JSON.stringify({suite:'cross-cue-phrase-search',stage:label+'_return_geometry',...returnGeometry}));
+    check(label+'_single_return_bar_precedes_passage_and_does_not_cover_source',returnGeometry.single&&returnGeometry.visible&&returnGeometry.precedes&&returnGeometry.bar.top>=0&&returnGeometry.bar.bottom<returnGeometry.height&&returnGeometry.source.top>=returnGeometry.bar.bottom&&returnGeometry.source.top<returnGeometry.height&&returnGeometry.scrollWidth<=returnGeometry.width);
     const continuityBefore=await stored(page),unchangedBookmark=continuityBefore.readingPosition;
     await destination.locator('.passage-details').focus();await page.keyboard.press('Enter');
     await cue(page,'split-296').locator('.note-button').click();await page.locator('#note').fill('Authored note from a searched passage');
