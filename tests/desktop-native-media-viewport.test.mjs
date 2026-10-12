@@ -2,7 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {Window} from 'happy-dom';
-import {installNativeMediaViewportProof,nativeMediaAnchorIsStable,nativeMediaPhaseDelta} from './helpers/native-media-viewport.mjs';
+import {installNativeMediaViewportProof,nativeMediaAnchorIsStable,nativeMediaPhaseDelta,planNativeMediaWindow,evaluateNativeMediaWindow} from './helpers/native-media-viewport.mjs';
 
 function fixture(t){
  const w=new Window();t.after(()=>w.happyDOM.close());
@@ -71,4 +71,38 @@ test('save-only layout baseline distinguishes the settled rewind growth from any
  assert.deepEqual(nativeMediaPhaseDelta(saved,original),{scrollDelta:39,headerDelta:39,rowDelta:0});
  assert.deepEqual(nativeMediaPhaseDelta(saved,rewound),{scrollDelta:0,headerDelta:0,rowDelta:0});
  for(const field of ['scrollY','header','rowTop'])assert.ok(Object.values(nativeMediaPhaseDelta({...saved,[field]:saved[field]+1},rewound)).some(delta=>delta!==0));
+});
+
+// Native bounds below are explicitly synthetic DIP fixtures, not observations
+// about a particular CI runner. No unsupported screenshot-to-workArea inference.
+function windowFacts(){return {window:{bounds:{x:122,y:70,width:780,height:648},contentBounds:{x:122,y:98,width:780,height:620},minimumSize:[780,620],maximumSize:[0,0],resizable:true,visible:true,fullScreen:false,zoomFactor:1},display:{id:7,workArea:{x:0,y:25,width:1024,height:673},scaleFactor:2},renderer:{inner:{width:780,height:620}}};}
+function plannedFacts(plan){const f=windowFacts();f.window.bounds={...plan.bounds};f.window.contentBounds={x:plan.bounds.x+plan.frame.left,y:plan.bounds.y+plan.frame.top,...plan.content};f.renderer.inner={...plan.content};return f;}
+test('one compact landscape plan accounts for native frame and DIP work area without guessing a tall display',()=>{
+ const facts=windowFacts(),before=structuredClone(facts),plan=planNativeMediaWindow(facts);
+ assert.equal(plan.admitted,true);assert.deepEqual(plan.content,{width:1000,height:620});assert.deepEqual(plan.bounds,{x:12,y:37,width:1000,height:648});assert.deepEqual(facts,before);
+ assert.ok(Object.values(evaluateNativeMediaWindow(plannedFacts(plan),plan)).every(Boolean));
+});
+for(const [name,change]of [
+ ['insufficient native width',f=>{f.display.workArea.width=999;}],
+ ['insufficient decorated height',f=>{f.display.workArea.height=647;}],
+ ['higher minimum width',f=>{f.window.minimumSize=[1100,620];}],
+ ['lower maximum width',f=>{f.window.maximumSize=[900,0];}],
+ ['unresizable window',f=>{f.window.resizable=false;}],
+ ['fullscreen instead of ordinary window',f=>{f.window.fullScreen=true;}],
+ ['inconsistent frame insets',f=>{f.window.contentBounds.x=120;}],
+ ['missing constraint measurements',f=>{f.window.maximumSize=[];}],
+ ['invalid work-area measurement',f=>{f.display.workArea.width=NaN;}],
+])test('compact landscape admission rejects '+name+' without alternative size selection',()=>{
+ const facts=windowFacts();change(facts);const plan=planNativeMediaWindow(facts);assert.equal(plan.admitted,false);assert.deepEqual(plan.content,{width:1000,height:620});assert.equal(plan.bounds,undefined);
+});
+for(const [name,change]of [
+ ['OS-clamped content height',f=>{f.window.contentBounds.height=645;}],
+ ['different actual renderer height',f=>{f.renderer.inner.height=645;}],
+ ['offscreen outer window',f=>{f.window.bounds.x=-1;}],
+ ['different native display',f=>{f.display.id=8;}],
+ ['changed frame',f=>{f.window.contentBounds.y++;}],
+ ['hidden window',f=>{f.window.visible=false;}],
+ ['page zoom substitution',f=>{f.window.zoomFactor=.8;}],
+])test('actual native window contract rejects '+name,()=>{
+ const plan=planNativeMediaWindow(windowFacts()),facts=plannedFacts(plan);change(facts);assert.ok(Object.values(evaluateNativeMediaWindow(facts,plan)).some(value=>value!==true));
 });

@@ -57,3 +57,23 @@ export function nativeMediaAnchorIsStable(a){
 export function nativeMediaPhaseDelta(current,baseline){
  return {scrollDelta:current.scrollY-baseline.scrollY,headerDelta:current.header-baseline.header,rowDelta:current.rowTop-baseline.rowTop};
 }
+
+/** One explicitly designed compact-landscape layout. Admission uses native DIP
+ * work-area/frame measurements, never screenshot pixels or a guessed display. */
+export function planNativeMediaWindow(facts){
+ const content={width:1000,height:620},w=facts.window,area=facts.display?.workArea,b=w?.bounds,c=w?.contentBounds;
+ const validRect=r=>r&&['x','y','width','height'].every(k=>Number.isFinite(r[k]))&&r.width>0&&r.height>0;
+ const validLimits=value=>Array.isArray(value)&&value.length===2&&value.every(n=>Number.isFinite(n)&&n>=0);
+ if(!validRect(area)||!validRect(b)||!validRect(c)||!validLimits(w.minimumSize)||!validLimits(w.maximumSize)||!Number.isFinite(facts.display.id))return {admitted:false,reason:'missing-native-geometry',content};
+ const frame={left:c.x-b.x,top:c.y-b.y,right:b.x+b.width-c.x-c.width,bottom:b.y+b.height-c.y-c.height};
+ if(Object.values(frame).some(n=>!Number.isInteger(n)||n<0))return {admitted:false,reason:'inconsistent-native-frame',content,frame};
+ const width=content.width+frame.left+frame.right,height=content.height+frame.top+frame.bottom;
+ const fitsMinimum=w.minimumSize.every((n,i)=>Number.isFinite(n)&&[width,height][i]>=n),fitsMaximum=w.maximumSize.every((n,i)=>Number.isFinite(n)&&(n===0||[width,height][i]<=n));
+ if(!w.resizable||w.fullScreen||!fitsMinimum||!fitsMaximum||width>area.width||height>area.height)return {admitted:false,reason:'compact-landscape-does-not-fit-native-work-area-or-constraints',content,frame,requiredOuter:{width,height},workArea:area};
+ return {admitted:true,mode:'compact-landscape',content,frame,displayId:facts.display.id,workArea:area,bounds:{x:area.x+Math.floor((area.width-width)/2),y:area.y+Math.floor((area.height-height)/2),width,height}};
+}
+
+export function evaluateNativeMediaWindow(facts,plan){
+ const w=facts.window,b=w.bounds,c=w.contentBounds,a=facts.display.workArea,r=facts.renderer.inner;
+ return {planAdmitted:plan.admitted===true,contentExact:c.width===plan.content.width&&c.height===plan.content.height,rendererExact:r.width===plan.content.width&&r.height===plan.content.height,withinWorkArea:b.x>=a.x&&b.y>=a.y&&b.x+b.width<=a.x+a.width&&b.y+b.height<=a.y+a.height,sameDisplay:facts.display.id===plan.displayId,frameUnchanged:c.x-b.x===plan.frame.left&&c.y-b.y===plan.frame.top&&b.x+b.width-c.x-c.width===plan.frame.right&&b.y+b.height-c.y-c.height===plan.frame.bottom,ordinaryNativeWindow:!w.fullScreen&&w.visible&&w.zoomFactor===1};
+}

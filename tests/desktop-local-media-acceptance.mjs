@@ -10,11 +10,11 @@ import {execFileSync} from 'node:child_process';
 import {_electron as electron,expect} from '@playwright/test';
 import {authoredAudioFixture} from './helpers/authored-audio-fixture.mjs';
 import {installDockViewportObserver} from './helpers/dock-viewport-observer.mjs';
-import {installNativeMediaViewportProof,nativeMediaAnchorIsStable,nativeMediaPhaseDelta} from './helpers/native-media-viewport.mjs';
+import {installNativeMediaViewportProof,nativeMediaAnchorIsStable,nativeMediaPhaseDelta,planNativeMediaWindow,evaluateNativeMediaWindow} from './helpers/native-media-viewport.mjs';
 import {installStorageAssertions,readerReady} from './helpers/browser-storage.mjs';
 const root=fileURLToPath(new URL('../',import.meta.url)),origin='http://127.0.0.1:47831';
 let temporary,application,page,executable,version,stage='configuration',forbidden=0,pageErrors=0;
-const checks=[],dockReceipts=[];process.umask(0o077);delete process.env.DEBUG;delete process.env.PWDEBUG;
+const checks=[],dockReceipts=[],windowReceipts=[];process.umask(0o077);delete process.env.DEBUG;delete process.env.PWDEBUG;
 function check(name,value){stage=name;assert.ok(value,name);checks.push(name);}
 async function launch(profile){
  stage='launch';await fs.mkdir(profile,{recursive:true});const home=path.join(temporary,'home');await fs.mkdir(home,{recursive:true});
@@ -69,11 +69,20 @@ async function expectNoPlayer(){
  await page.waitForFunction(()=>{const doc=active(),entry=doc&&rememberedMediaStates.get(doc);return nativeMediaReady&&(!doc?.local_media_source||entry?.checked&&!entry.pending);});
  await expect(page.locator('#source-media audio')).toHaveCount(0);
 }
+async function captureNativeWindowGeometry(phase){
+ const native=await application.evaluate(({BrowserWindow,screen})=>{
+  const win=BrowserWindow.getAllWindows()[0],display=screen.getDisplayMatching(win.getBounds()),describe=d=>({id:d.id,bounds:d.bounds,workArea:d.workArea,scaleFactor:d.scaleFactor,rotation:d.rotation});
+  return {window:{bounds:win.getBounds(),contentBounds:win.getContentBounds(),minimumSize:win.getMinimumSize(),maximumSize:win.getMaximumSize(),resizable:win.isResizable(),visible:win.isVisible(),fullScreen:win.isFullScreen(),zoomFactor:win.webContents.getZoomFactor()},display:describe(display),displays:screen.getAllDisplays().map(describe)};
+ });
+ const renderer=await page.evaluate(()=>({inner:{width:innerWidth,height:innerHeight},outer:{width:outerWidth,height:outerHeight},screenPosition:{x:screenX,y:screenY},screen:{width:screen.width,height:screen.height,availWidth:screen.availWidth,availHeight:screen.availHeight,availLeft:screen.availLeft,availTop:screen.availTop},devicePixelRatio,visualViewport:visualViewport?{width:visualViewport.width,height:visualViewport.height,scale:visualViewport.scale,offsetLeft:visualViewport.offsetLeft,offsetTop:visualViewport.offsetTop,pageLeft:visualViewport.pageLeft,pageTop:visualViewport.pageTop}:null}));
+ const facts={phase,...native,renderer};windowReceipts.push(facts);return facts;
+}
 async function failureEvidence(error){
  const clean=value=>String(value||'').replaceAll(temporary||'\0','<fixture-temp>').replaceAll(root,'<checkout>').replace(/(?:\/Users\/|\/home\/|\/private\/|\/var\/)[^\s)\]}]+/g,'<path>');
  let activeDockEvidence=null;
+ if(application&&page&&!page.isClosed())try{await captureNativeWindowGeometry('failure:'+stage);}catch(geometryError){windowReceipts.push({phase:'failure:'+stage,geometryError:clean(geometryError.message)});}
  if(page&&!page.isClosed())try{activeDockEvidence=await page.evaluate(()=>{const observer=window.__dockViewportObserver;if(!observer)return null;observer.record('native-media-failure');return {snapshot:observer.snapshot(),events:observer.events,calls:observer.calls};});}catch{}
- const report={suite:'packaged-local-media',status:'failed',stage,message:clean(error.message),stack:clean(error.stack),checks,forbidden,pageErrors,dockReceipts,activeDockEvidence};
+ const report={suite:'packaged-local-media',status:'failed',stage,message:clean(error.message),stack:clean(error.stack),checks,forbidden,pageErrors,dockReceipts,windowReceipts,activeDockEvidence};
  console.error(JSON.stringify(report));const directory=process.env.COCONUT_NATIVE_DIAGNOSTICS;if(!directory)return;
  await fs.mkdir(directory,{recursive:true});await fs.writeFile(path.join(directory,'native-media-failure.json'),JSON.stringify(report,null,2));
  if(page&&!page.isClosed())await page.screenshot({path:path.join(directory,'native-media-failure.png'),timeout:5000}).catch(()=>{});
@@ -89,7 +98,9 @@ async function rememberedDockAcceptance(audioPath){
  check('dock_restored_native_player_starts_paused',await page.evaluate(()=>!!browserMedia.get(active().key)?.nativeToken&&document.querySelector('#source-media audio').paused&&document.querySelector('#source-media audio').currentTime===0));
  // Use a supported macOS window size. The separate unchanged browser suite
  // owns 390x480 coverage; do not defeat Electron's product minimum dimensions.
+ stage='native_remembered_minimum_window_resize';await captureNativeWindowGeometry('before-minimum-window');
  await application.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].setContentSize(780,620));
+ await captureNativeWindowGeometry('after-minimum-window-request');
  await page.waitForFunction(()=>innerWidth===780&&innerHeight===620);
  if(await page.locator('#episode-media').isVisible())await page.locator('#close-reader-media').click();await page.locator('#mode-transcript').click();await mediaPanel();
  const row=page.locator('.segment[data-segment-id="dock-65"]');await row.scrollIntoViewIfNeeded();await row.locator('.note-button').click();
@@ -100,12 +111,18 @@ async function rememberedDockAcceptance(audioPath){
  await expect(page.locator('#dock-rewind')).toBeVisible();await settleNativeDockLayout();await page.evaluate(installNativeMediaViewportProof);
  const minimum=await page.evaluate(()=>window.__nativeDockReadingView(window.__nativeDockSourceAnchor()));dockReceipts.push({stage:'remembered-minimum-note-controls',...minimum});
  check('native_remembered_minimum_window_note_close_and_dock_are_unobscured',minimum.viewport.width===780&&minimum.viewport.height===620&&noteControlsVisible(minimum));
- // At the supported minimum, the legitimate note overlay can cover the source.
- // Use one fixed taller supported window for simultaneous source + editor proof,
- // not repeated resizing until an assertion happens to pass. Narrow coverage above
- // and in the unchanged dock/IME suite remains separate and explicit.
- await application.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].setContentSize(780,800));
- await page.waitForFunction(()=>innerWidth===780&&innerHeight===800);await settleNativeDockLayout();
+ // A compact landscape layout keeps the original overlay/dock contract while
+ // giving the toolbar room for one row. Fit one explicit plan to actual native
+ // workArea + frame measurements; never force an offscreen/tall window or retry
+ // sizes until source visibility happens to pass. Real preflight still decides.
+ stage='native_remembered_reading_window_plan';
+ const readingWindowPlan=planNativeMediaWindow(await captureNativeWindowGeometry('before-reading-window'));windowReceipts.push({phase:'reading-window-plan',...readingWindowPlan});
+ check('native_remembered_reading_window_plan_fits_native_work_area',readingWindowPlan.admitted);
+ stage='native_remembered_reading_window_resize';
+ await application.evaluate(({BrowserWindow},bounds)=>BrowserWindow.getAllWindows()[0].setBounds(bounds,false),readingWindowPlan.bounds);
+ await captureNativeWindowGeometry('after-reading-window-request');await settleNativeDockLayout();
+ const windowProof=evaluateNativeMediaWindow(await captureNativeWindowGeometry('after-reading-window-settled'),readingWindowPlan);windowReceipts.push({phase:'reading-window-contract',...windowProof});
+ check('native_remembered_reading_window_matches_measured_plan',Object.values(windowProof).every(value=>value===true));
  // Hold the existing adapter, then release an actual IndexedDB transaction.
  await page.evaluate(()=>{const adapter=CoconutStorageBootstrap.result.adapter,write=adapter.write.bind(adapter);window.__nativeDockWrites={pending:[],hold:true,completed:0};adapter.write=(...args)=>window.__nativeDockWrites.hold?new Promise((resolve,reject)=>window.__nativeDockWrites.pending.push(()=>write(...args).then(value=>{window.__nativeDockWrites.completed++;resolve(value);},reject))):write(...args);});
  await page.locator('#note').fill('Authored remembered dock note pending receipt');await page.locator('#note').evaluate(node=>node.setSelectionRange(3,12,'backward'));
@@ -116,7 +133,7 @@ async function rememberedDockAcceptance(audioPath){
  check('native_remembered_source_has_measured_unobscured_preparation_point',preparation.ready);
  await page.mouse.move(preparation.point.x,preparation.point.y);await page.mouse.wheel(0,preparation.wheelDelta);await settleNativeDockLayout();
  const preflight=await page.evaluate(()=>{window.__nativeDockPreparedAnchor=window.__nativeDockSourceAnchor();return window.__nativeDockReadingView(window.__nativeDockPreparedAnchor);});dockReceipts.push({stage:'remembered-reading-preflight',...preflight});
- check('native_remembered_source_and_note_are_really_visible_before_pointer',preflight.viewport.width===780&&preflight.viewport.height===800&&noteControlsVisible(preflight)&&nativeMediaAnchorIsStable(preflight.sourceAnchor));
+ check('native_remembered_source_and_note_are_really_visible_before_pointer',preflight.viewport.width===readingWindowPlan.content.width&&preflight.viewport.height===readingWindowPlan.content.height&&noteControlsVisible(preflight)&&nativeMediaAnchorIsStable(preflight.sourceAnchor));
  await page.evaluate(installDockViewportObserver,{readingAnchors:true});
  const point=await page.locator('#dock-rewind').evaluate(button=>{
   const r=button.getBoundingClientRect();button.addEventListener('pointerdown',event=>{
@@ -130,13 +147,13 @@ async function rememberedDockAcceptance(audioPath){
   const layout={scrollY,header:document.getElementById('episode-media').getBoundingClientRect().height,rowTop:document.querySelector('.segment.selected').getBoundingClientRect().top};window.__dockViewportObserver.record('remembered-after-rewind');
   return {layout,sourceAtPointer:b.sourceAtPointer,readingView:window.__nativeDockReadingView(b.anchor),trusted:b.trusted&&window.__nativeDockTrustedClick,sourceAnchor:window.__nativeDockCheckAnchor(b.anchor),headerIsReal:!b.headerHidden&&b.header>0&&b.resume>=44&&b.headerBottom<=0,playerSame:p===b.player,attachmentSame:browserMedia.get(active().key)===b.attachment,time:p.currentTime,paused:p.paused&&b.paused,rateSame:p.playbackRate===b.rate,volumeSame:p.volume===b.volume,scrollDelta:scrollY-b.y,rowDelta:document.querySelector('.segment.selected').getBoundingClientRect().top-b.top,headerDelta:document.getElementById('episode-media').getBoundingClientRect().height-b.header,resumeDelta:document.querySelector('.listening-progress').getBoundingClientRect().height-b.resume,resumeVisible:!document.getElementById('resume-listening').hidden,noteSame:n===b.note&&n.value===b.value&&n.selectionStart===b.start&&n.selectionEnd===b.end&&n.selectionDirection===b.direction,statusSame:status.firstChild===b.status&&status.textContent===b.statusText,focus:document.activeElement.id,inset:getComputedStyle(document.documentElement).scrollPaddingBottom,viewport:{width:innerWidth,height:innerHeight}};
  });dockReceipts.push({stage:'remembered-ended-rewind',...receipt});
- check('native_remembered_ended_rewind_keeps_visible_source_and_resume_row',receipt.trusted&&receipt.headerIsReal&&receipt.playerSame&&receipt.attachmentSame&&receipt.time===50&&receipt.paused&&receipt.rateSame&&receipt.volumeSame&&nativeMediaAnchorIsStable(receipt.sourceAtPointer)&&nativeMediaAnchorIsStable(receipt.sourceAnchor)&&noteControlsVisible(receipt.readingView)&&receipt.rowDelta===0&&receipt.resumeDelta===0&&receipt.resumeVisible&&receipt.noteSame&&receipt.statusSame&&receipt.focus==='dock-rewind');
+ check('native_remembered_ended_rewind_keeps_visible_source_and_resume_row',receipt.readingView.viewport.width===readingWindowPlan.content.width&&receipt.readingView.viewport.height===readingWindowPlan.content.height&&receipt.trusted&&receipt.headerIsReal&&receipt.playerSame&&receipt.attachmentSame&&receipt.time===50&&receipt.paused&&receipt.rateSame&&receipt.volumeSame&&nativeMediaAnchorIsStable(receipt.sourceAtPointer)&&nativeMediaAnchorIsStable(receipt.sourceAnchor)&&noteControlsVisible(receipt.readingView)&&receipt.rowDelta===0&&receipt.resumeDelta===0&&receipt.resumeVisible&&receipt.noteSame&&receipt.statusSame&&receipt.focus==='dock-rewind');
  await releaseHeldNativeDockWrites();await page.evaluate(()=>libraryStore.flush());await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));
  const savedReceipt=await page.evaluate(()=>{
   const b=window.__nativeDockBefore,n=document.getElementById('note'),status=document.getElementById('remember-local-media-status'),observer=window.__dockViewportObserver;observer.record('remembered-note-receipt');const evidence={events:observer.events,calls:observer.calls};observer.stop();
   return {layout:{scrollY,header:document.getElementById('episode-media').getBoundingClientRect().height,rowTop:document.querySelector('.segment.selected').getBoundingClientRect().top},readingView:window.__nativeDockReadingView(b.anchor),sourceAnchor:window.__nativeDockCheckAnchor(b.anchor),completed:window.__nativeDockWrites.completed,playerSame:document.querySelector('#source-media audio')===b.player,attachmentSame:browserMedia.get(active().key)===b.attachment,noteSame:n===b.note&&n.value===b.value&&n.selectionStart===b.start&&n.selectionEnd===b.end&&n.selectionDirection===b.direction,statusSame:status.firstChild===b.status&&status.textContent===b.statusText,scrollDelta:scrollY-b.y,rowDelta:document.querySelector('.segment.selected').getBoundingClientRect().top-b.top,headerDelta:document.getElementById('episode-media').getBoundingClientRect().height-b.header,focus:document.activeElement.id,evidence};
  });savedReceipt.saveOnlyDelta=nativeMediaPhaseDelta(savedReceipt.layout,receipt.layout);dockReceipts.push({stage:'remembered-note-receipt',postRewindBaseline:receipt.layout,...savedReceipt});
- check('native_remembered_note_receipt_keeps_exact_header_focus_and_viewport',savedReceipt.completed>0&&savedReceipt.playerSame&&savedReceipt.attachmentSame&&savedReceipt.noteSame&&savedReceipt.statusSame&&nativeMediaAnchorIsStable(savedReceipt.sourceAnchor)&&noteControlsVisible(savedReceipt.readingView)&&savedReceipt.rowDelta===0&&savedReceipt.saveOnlyDelta.headerDelta===0&&savedReceipt.saveOnlyDelta.scrollDelta===0&&savedReceipt.saveOnlyDelta.rowDelta===0&&savedReceipt.focus==='dock-rewind'&&savedReceipt.evidence.calls.every(call=>!['scrollTo','scrollBy','scrollIntoView'].includes(call.type)));
+ check('native_remembered_note_receipt_keeps_exact_header_focus_and_viewport',savedReceipt.readingView.viewport.width===readingWindowPlan.content.width&&savedReceipt.readingView.viewport.height===readingWindowPlan.content.height&&savedReceipt.completed>0&&savedReceipt.playerSame&&savedReceipt.attachmentSame&&savedReceipt.noteSame&&savedReceipt.statusSame&&nativeMediaAnchorIsStable(savedReceipt.sourceAnchor)&&noteControlsVisible(savedReceipt.readingView)&&savedReceipt.rowDelta===0&&savedReceipt.saveOnlyDelta.headerDelta===0&&savedReceipt.saveOnlyDelta.scrollDelta===0&&savedReceipt.saveOnlyDelta.rowDelta===0&&savedReceipt.focus==='dock-rewind'&&savedReceipt.evidence.calls.every(call=>!['scrollTo','scrollBy','scrollIntoView'].includes(call.type)));
  check('native_remembered_note_has_real_saved_receipt',await page.evaluate(async()=>{const saved=(await readPersistedLibrary()).documents.find(doc=>doc.key===active().key);return saved.notes['dock-65']==='Authored remembered dock note pending receipt';}));
  await quit();
 }
@@ -185,7 +202,7 @@ try{
  await launch(path.join(temporary,'fresh-profile'));const [importChooser]=await Promise.all([page.waitForEvent('filechooser'),page.locator('#import').click()]);await importChooser.setFiles(backup);await page.locator('#audio-project').waitFor({state:'visible'});await page.evaluate(()=>libraryStore.flush());await expectNoPlayer();check('fresh_profile_backup_has_no_native_consent',(await saved()).project_note===initial.project_note);
  await quit();await rememberedDockAcceptance(moved);
  check('no_model_upload_or_external_request',forbidden===0);check('no_renderer_errors',pageErrors===0);await quit();
- console.log(JSON.stringify({suite:'packaged-local-media',status:'passed',architecture:process.arch,checks,dockReceipts,gatekeeper_verified:false}));
+ console.log(JSON.stringify({suite:'packaged-local-media',status:'passed',architecture:process.arch,checks,dockReceipts,windowReceipts,gatekeeper_verified:false}));
 }catch(error){process.exitCode=1;await failureEvidence(error);}finally{
  // Release only this authored adapter gate after retaining the original failure.
  await releaseHeldNativeDockWrites().catch(()=>{});
