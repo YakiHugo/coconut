@@ -271,6 +271,7 @@ function localMediaBindingSnapshot(doc){return JSON.stringify([doc.local_media_s
 const PLAYBACK_RATES=[0.75,1,1.25,1.5,1.75,2];
 let playbackRate=1;
 let repeating=null;
+const REPEAT_SEEK_TOLERANCE=.03;
 let dockFramePending=false;
 let playbackIndex=null;
 // Range metadata belongs to the rendered button and expires with that render.
@@ -4094,12 +4095,15 @@ function seekRepeat(target){
 }
 function observeRepeatSeek(player,completed){
  const target=repeatTarget(player);if(!target)return;
- if(target.expectedSeek===null||Math.abs(player.currentTime-target.expectedSeek)>.03){stopRepeating();return;}
+ if(target.expectedSeek===null||Math.abs(player.currentTime-target.expectedSeek)>REPEAT_SEEK_TOLERANCE){stopRepeating();return;}
  if(completed)target.expectedSeek=null;
 }
 function repeatPlayback(ended=false,player=$('source-media').querySelector('audio,video')){
  const target=repeatTarget(player);if(!target||player.seeking)return;
- if(player.currentTime<target.start){stopRepeating();return;}
+ // Native clocks can round an owned seek just below a fractional mapped start.
+ // Use the same tolerance as its seek acknowledgement; later native seeks still
+ // retire ownership unconditionally once expectedSeek has been cleared.
+ if(player.currentTime<target.start-REPEAT_SEEK_TOLERANCE){stopRepeating();return;}
  if(player.currentTime>=target.end || ended){
   try{seekRepeat(target);if(ended)player.play()?.catch(()=>{if(repeating===target)stopRepeating();});}catch{stopRepeating();}
  }

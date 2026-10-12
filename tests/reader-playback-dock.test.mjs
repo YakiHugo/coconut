@@ -1,6 +1,6 @@
 import {installSavePipeline,settle} from './helpers/save-pipeline.mjs';
 import {evaluateNativeIMEPointer} from './helpers/native-ime-proof.mjs';
-import {installDockViewportObserver,evaluateDockLoopViewport} from './helpers/dock-viewport-observer.mjs';
+import {installDockViewportObserver,evaluateDockLoopViewport,installDockLoopPreparationObserver} from './helpers/dock-viewport-observer.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -17,7 +17,7 @@ function setup(){
  w.requestAnimationFrame=fn=>{frames.set(++frameId,fn);return frameId;};w.cancelAnimationFrame=id=>frames.delete(id);
  const tick=()=>{for(const [id,fn] of [...frames]){frames.delete(id);fn();}};
  w.HTMLElement.prototype.scrollIntoView=function(options){scrolls.push({id:this.id,cue:this.dataset.segmentId||this.dataset.cueId,options});};
- w.eval(['summary','core','passages','passage-playback','app','language','podcasts'].map(name=>fs.readFileSync(new URL('reader/'+name+'.js',root),'utf8')).join('\n')+`\nwindow.dockTest={doc:()=>active(),navigation:()=>({selected,pageStart,readingMode,passageAnchor,searchFocusedId,query:$('search').value,readingPosition:active()?.readingPosition}),listen:range=>passagePlayback.listen(range),preview:()=>passagePlayback.getState(),loop:cue=>toggleRepeat(cue),loopState:()=>repeating,closing:value=>{readerClosing=value;},offset:value=>{browserMedia.set(active().key,{origin:'local',identity:'file-candidate-v1:authored',url:followPlayer().getAttribute('src'),kind:'audio'});active().media_timing={version:1,identity:'file-candidate-v1:authored',offset:value};}};`);
+ w.eval(['summary','core','passages','passage-playback','app','language','podcasts'].map(name=>fs.readFileSync(new URL('reader/'+name+'.js',root),'utf8')).join('\n')+`\nwindow.dockTest={installLoopAudit:()=>(${installDockLoopPreparationObserver.toString()})(),doc:()=>active(),navigation:()=>({selected,pageStart,readingMode,passageAnchor,searchFocusedId,query:$('search').value,readingPosition:active()?.readingPosition}),listen:range=>passagePlayback.listen(range),preview:()=>passagePlayback.getState(),loop:cue=>toggleRepeat(cue),loopState:()=>repeating,closing:value=>{readerClosing=value;},offset:value=>{browserMedia.set(active().key,{origin:'local',identity:'file-candidate-v1:authored',url:followPlayer().getAttribute('src'),kind:'audio'});active().media_timing={version:1,identity:'file-candidate-v1:authored',offset:value};}};`);
  return {w,$:id=>w.document.getElementById(id),calls,pipeline,tick,scrolls};
 }
 async function add($,doc){
@@ -397,5 +397,20 @@ test('loop observer binds visible original Text nodes and exact offsets before p
   assert.equal(initial.type,'installed');assert.equal(initial.reading.anchors.length,3);assert.equal(initial.reading.anchors[0].cue,source.closest('.segment').dataset.segmentId);assert.equal(initial.reading.anchors[0].start,0);assert.equal(initial.reading.anchors[0].character,text.textContent[0]);assert.ok(initial.reading.anchors.every(a=>a.sameNode&&a.sameOffsets&&a.sameText&&a.connected&&a.clear));
   text.textContent='replacement text';const changed=audit.snapshot();assert.ok(changed.reading.anchors.some(a=>!a.sameText||!a.sameOffsets));
   source.replaceChildren(w.document.createTextNode('replacement text'));assert.ok(audit.snapshot().reading.anchors.some(a=>!a.connected));audit.stop();
+ }finally{await env.w.happyDOM.close();}
+});
+
+
+test('loop preparation diagnostics retain event phases without changing functions, playback or ownership',async()=>{
+ const env=setup();try{
+  const {w,$}=env,m=await media(env);w.eval('window.__originalStopRepeating=stopRepeating;window.__originalObserveRepeatSeek=observeRepeatSeek;');
+  const beforeTime=m.player.currentTime,plays=m.played;w.dockTest.installLoopAudit();const audit=w.__dockLoopPreparation;
+  assert.equal(audit.events[0].type,'installed');assert.equal(audit.events[0].loop,null);assert.equal(m.player.currentTime,beforeTime);assert.equal(m.played,plays);
+  assert.equal(w.eval('stopRepeating===window.__originalStopRepeating&&observeRepeatSeek===window.__originalObserveRepeatSeek'),true);
+  audit.record('phase',{phase:'test-native-start'});w.dockTest.loop(w.dockTest.doc().segments[1]);
+  m.player.dispatchEvent(new w.Event('seeking'));m.player.dispatchEvent(new w.Event('seeked'));await Promise.resolve();await Promise.resolve();
+  const seek=audit.events.find(e=>e.type==='seeking-before'),settled=audit.events.find(e=>e.type==='seeked-after');assert.equal(seek.phase,'test-native-start');assert.notEqual(seek.trusted,true,'CPU events cannot establish native provenance');assert.ok(seek.loop);assert.equal(settled.loop.expectedSeek,null);assert.equal(settled.samePlayer,true);assert.equal(settled.sameDocument,true);assert.equal(settled.sameSource,true);assert.equal(settled.sameAttachment,true);
+  m.player.currentTime=40;m.player.dispatchEvent(new w.Event('seeking'));await Promise.resolve();await Promise.resolve();assert.equal(audit.events.at(-1).loop,null);assert.equal($('stop-repeat').hidden,true);assert.equal(m.player.currentTime,40);
+  audit.stop();const count=audit.events.length;m.player.dispatchEvent(new w.Event('timeupdate'));await Promise.resolve();assert.equal(audit.events.length,count);
  }finally{await env.w.happyDOM.close();}
 });

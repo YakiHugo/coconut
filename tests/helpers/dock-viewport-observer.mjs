@@ -86,3 +86,28 @@ export function evaluateDockLoopViewport({events=[],calls=[]}={}){
  const nativeOwnership=validDimensions&&trustedPointer&&preClickStable&&post.length>=2&&before.trusted===true&&after.type==='settled'&&calls.length===0&&events.every(event=>event.follow==='off'&&event.scrollOwner==='HTML'&&event.width===baseline.width&&event.height===baseline.height)&&post.every(event=>event.focused==='dock-rewind'&&(!['scroll','seeking','seeked'].includes(event.type)||event.trusted===true));
  return {visibleAnchors,sameAnchors,sameRows,loopRetired,explainedLayout,nativeOwnership};
 }
+
+/** Observe loop preparation from the real cue-button pointer onward. Capturing
+ * each native media event before and after its target handlers
+ * exposes which ownership/boundary guard retired a loop, without wrapping or
+ * replacing any product function or synthesizing events. */
+export function installDockLoopPreparationObserver(){
+ window.__dockLoopPreparation?.stop();
+ const events=[],controller=new AbortController(),player=document.querySelector('#source-media audio, #source-media video'),doc=active(),attachment=browserMedia.get(doc?.key),source=player?.getAttribute('src');let phase='before-loop-pointer';
+ const snapshot=()=>{
+  const current=document.querySelector('#source-media audio, #source-media video'),target=repeating;
+  return {phase,time:performance.now(),y:scrollY,player:{currentTime:current?.currentTime,paused:current?.paused,seeking:current?.seeking,rate:current?.playbackRate,readyState:current?.readyState},samePlayer:current===player,sameDocument:active()===doc,sameSource:current?.getAttribute('src')===source,sameAttachment:browserMedia.get(doc?.key)===attachment,loop:target?{id:target.id,start:target.start,end:target.end,expectedSeek:target.expectedSeek,playerOwns:target.player===current,documentOwns:target.doc===active(),sourceOwns:target.path===current?.getAttribute('src'),attachmentOwns:target.attachment===browserMedia.get(target.key)}:null,stopHidden:document.getElementById('stop-repeat').hidden,status:document.getElementById('repeat-status').textContent,buttonPressed:document.querySelector('.segment[data-segment-id="clip-126"] .repeat-button')?.getAttribute('aria-pressed')};
+ };
+ const record=(type,details={})=>{if(details.phase)phase=details.phase;const value={type,...snapshot(),...details};if(events.length<200)events.push(value);return value;};
+ const details=event=>({target:event.target.id||event.target.className||event.target.tagName,trusted:event.isTrusted});
+ for(const type of ['seeking','seeked','timeupdate','play','playing','pause','ended','ratechange','error','emptied']){
+  document.addEventListener(type,event=>{if(event.target===player)record(type+'-before',details(event));},{capture:true,passive:true,signal:controller.signal});
+  // Registered after the app's existing player handlers. Unlike a queued
+  // microtask from capture, this is an actual post-handler listener boundary.
+  player.addEventListener(type,event=>record(type+'-after',details(event)),{passive:true,signal:controller.signal});
+ }
+ for(const type of ['pointerdown','pointerup','click'])for(const capture of [true,false])document.addEventListener(type,event=>{
+  if(event.target.closest?.('.repeat-button,#dock-rewind,#dock-play'))record(type+(capture?'-before':'-after'),details(event));
+ },{capture,passive:true,signal:controller.signal});
+ const stop=()=>controller.abort();window.__dockLoopPreparation={events,record,stop};record('installed');
+}

@@ -159,3 +159,33 @@ test('a timeupdate queued before native seeking cannot rewind the requested posi
   p.dispatchEvent(new w.Event('seeking'));assert.equal($('stop-repeat').hidden,true);assert.equal(p.currentTime,10);
  }finally{await env.w.happyDOM.close();}
 });
+
+test('quantized native loop clocks preserve canonical fractional starts without relaxing later seek ownership',async()=>{
+ for(const [start,offset] of [[.1,.2],[126*.8,2]])for(const paused of [false,true]){
+  const env=setup();try{
+   const {w,$}=env,p=await open(env),cue=w.localTest.active().segments[0];cue.start=start;cue.end=start+.8;draft(env,offset);await $('media-timing-save').onclick();
+   let clock=0;Object.defineProperty(p,'currentTime',{configurable:true,get:()=>clock,set:value=>{clock=Math.round(value*1e6)/1e6;}});
+   const acknowledge=()=>{p.dispatchEvent(new w.Event('seeking'));p.dispatchEvent(new w.Event('seeked'));};
+   const begin=()=>{w.localTest.repeat(cue);acknowledge();if(paused)p.pause();};
+   begin();assert.ok(clock<start+offset,'native quantization can fall below the exact JS sum');p.dispatchEvent(new w.Event('timeupdate'));assert.equal($('stop-repeat').hidden,false);assert.equal(p.paused,paused);assert.equal(clock,Math.round((start+offset)*1e6)/1e6);
+   // An ordinary owned wrap keeps the same fractional range and physical seek.
+   clock=cue.end+offset;p.dispatchEvent(new w.Event('timeupdate'));acknowledge();p.dispatchEvent(new w.Event('timeupdate'));assert.equal($('stop-repeat').hidden,false);assert.equal(clock,Math.round((start+offset)*1e6)/1e6);
+   for(const delta of [0,-.001,.001]){
+    if($('stop-repeat').hidden)begin();clock=start+offset+delta;p.dispatchEvent(new w.Event('seeking'));p.dispatchEvent(new w.Event('seeked'));
+    assert.equal($('stop-repeat').hidden,true,'a later genuine seek retires even at the same clock or within tolerance');assert.equal(clock,start+offset+delta);assert.equal(p.paused,paused);
+   }
+   assert.equal(env.calls.length,0);
+  }finally{await env.w.happyDOM.close();}
+ }
+});
+
+test('loop lower-bound tolerance stops just outside30ms and retains the exact boundary without changing source ownership',async()=>{
+ const env=setup();try{
+  const {w,$}=env,p=await open(env),cue=w.localTest.active().segments[0],start=cue.start;let clock=0;
+  Object.defineProperty(p,'currentTime',{configurable:true,get:()=>clock,set:value=>{clock=value;}});
+  const begin=()=>{w.localTest.repeat(cue);p.dispatchEvent(new w.Event('seeking'));p.dispatchEvent(new w.Event('seeked'));};
+  begin();clock=start-.03;p.dispatchEvent(new w.Event('timeupdate'));assert.equal($('stop-repeat').hidden,false,'exact30ms lower boundary uses the existing owned-seek tolerance');
+  clock=start-.030001;p.dispatchEvent(new w.Event('timeupdate'));assert.equal($('stop-repeat').hidden,true);assert.equal(clock,start-.030001);
+  begin();p.setAttribute('src','blob:different-current-source');p.dispatchEvent(new w.Event('timeupdate'));assert.equal($('stop-repeat').hidden,true,'a matching clock cannot retain an invalid source owner');
+ }finally{await env.w.happyDOM.close();}
+});

@@ -8,10 +8,10 @@ import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {chromium} from './helpers/browser-storage.mjs';
 import {authoredAudioFixture} from './helpers/authored-audio-fixture.mjs';
-import {installDockViewportObserver,evaluateDockLoopViewport} from './helpers/dock-viewport-observer.mjs';
+import {installDockViewportObserver,evaluateDockLoopViewport,installDockLoopPreparationObserver} from './helpers/dock-viewport-observer.mjs';
 import {evaluateNativeIME,evaluateNativeIMEPointer} from './helpers/native-ime-proof.mjs';
 const root=fileURLToPath(new URL('../',import.meta.url));
-const checks=[],rewinds=[],ime=[],geometry=[],popovers=[];let server,browser,directory,page,viewportFailure,stage='setup',external=0,mutations=0,errors=0;
+const checks=[],rewinds=[],ime=[],geometry=[],popovers=[];let server,browser,directory,page,viewportFailure,loopPreparation=[],stage='setup',external=0,mutations=0,errors=0;
 function check(name,value){stage=name;assert.ok(value,name);checks.push(name);}
 const capture=async name=>{if(!process.env.COCONUT_UI_SCREENSHOTS)return;await fs.mkdir(process.env.COCONUT_UI_SCREENSHOTS,{recursive:true});await page.screenshot({path:path.join(process.env.COCONUT_UI_SCREENSHOTS,'dock-'+name+'.png'),fullPage:false,animations:'disabled'});};
 const settle=()=>page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));
@@ -19,12 +19,18 @@ async function seek(time){
  await page.locator('#source-media audio').evaluate((player,time)=>{player.currentTime=time;},time);
  await page.waitForFunction(time=>{const p=document.querySelector('#source-media audio');return !p.seeking&&Math.abs(p.currentTime-time)<.15;},time);await settle();
 }
+async function activeLoopPhase(phase,{settled=false}={}){
+ const receipt=await page.evaluate(phase=>window.__dockLoopPreparation.record('phase',{phase}),phase);
+ check('loop_preparation_'+phase,receipt.loop?.id==='clip-126'&&!receipt.player.paused&&(receipt.loop.expectedSeek===null||receipt.loop.expectedSeek===receipt.loop.start)&&(!receipt.player.seeking||receipt.loop.expectedSeek!==null)&&(!settled||(receipt.loop.expectedSeek===null&&!receipt.player.seeking))&&receipt.samePlayer&&receipt.sameDocument&&receipt.sameSource&&receipt.sameAttachment&&['playerOwns','documentOwns','sourceOwns','attachmentOwns'].every(key=>receipt.loop[key]===true)&&!receipt.stopHidden&&receipt.buttonPressed==='true');
+}
 async function rewind(label,{preserveView=true,note=false,resumeTransition=false,loopTransition=false}={}){
- stage=label;await settle();
+ stage=label;if(loopTransition)await activeLoopPhase('rewind-entry');await settle();
+ if(loopTransition)await activeLoopPhase('after-initial-settle');
  await page.evaluate(()=>{window.__dockRewindSettlement={last:null,count:0};});
  await page.waitForFunction(()=>{const state=window.__dockRewindSettlement,value=JSON.stringify([scrollY,document.querySelector('.segment.selected')?.getBoundingClientRect().top]);state.count=state.last===value?state.count+1:0;state.last=value;return state.count>=6;},null,{polling:'raf'});
- if(loopTransition)await capture('loop-rewind-before');
+ if(loopTransition){await activeLoopPhase('after-six-frame-settle');await capture('loop-rewind-before');await activeLoopPhase('after-before-screenshot');}
  await page.evaluate(installDockViewportObserver,{readingAnchors:loopTransition});
+ if(loopTransition)await activeLoopPhase('viewport-baseline-installed');
  const point=await page.locator('#dock-rewind').evaluate(button=>{
   const rect=button.getBoundingClientRect(),hit=document.elementFromPoint(rect.x+rect.width/2,rect.y+rect.height/2);
   button.addEventListener('click',event=>{
@@ -239,9 +245,12 @@ try{
  await page.locator('#reading-jump').selectOption('clip-126');await page.locator('.segment[data-segment-id="clip-126"]').scrollIntoViewIfNeeded();await page.locator('#media-dock').waitFor({state:'visible'});
  await seek(70);await rewind('calibrated_media_still_rewinds_physical_ten_seconds');
  // Native cue-loop cancellation must survive the seek's queued media events.
- const loopCue=page.locator('.segment[data-segment-id="clip-126"]');await loopCue.locator('.cue-more > summary').click();await loopCue.locator('.repeat-button').click();
- await page.waitForFunction(()=>repeating?.id==='clip-126'&&!document.querySelector('audio').paused);
+ const loopCue=page.locator('.segment[data-segment-id="clip-126"]');await loopCue.locator('.cue-more > summary').click();
+ await page.evaluate(installDockLoopPreparationObserver);stage='start_loop_from_real_cue_button';await loopCue.locator('.repeat-button').click();
+ await page.evaluate(()=>window.__dockLoopPreparation.record('phase',{phase:'await-native-start-seeked'}));
+ await page.waitForFunction(()=>repeating?.id==='clip-126'&&repeating.expectedSeek===null&&!document.querySelector('audio').seeking&&!document.querySelector('audio').paused);await activeLoopPhase('native-start-settled',{settled:true});
  await rewind('rewind_releases_cue_loop',{loopTransition:true});check('old_cue_loop_cannot_reacquire_after_native_seeked',await page.evaluate(()=>!repeating)&&await page.locator('#stop-repeat').isHidden());
+ loopPreparation=await page.evaluate(()=>{const audit=window.__dockLoopPreparation;audit.record('phase',{phase:'rewind-settled-retired'});audit.stop();return audit.events;});
  await page.locator('#dock-play').click();await page.waitForFunction(()=>document.querySelector('audio').paused);
  await page.locator('#mode-passages').click();
  for(const status of ['playing','paused','finished']){
@@ -305,11 +314,12 @@ try{
  check('changing_documents_without_media_keeps_rewind_unavailable',await page.locator('#media-dock').isHidden()&&await page.locator('#dock-rewind').isDisabled()&&await page.locator('audio,video').count()===0);
  await page.evaluate(()=>libraryStore.flush());
  check('no_media_urls_saved_and_no_network_or_model_side_effects',await page.evaluate(async () =>!JSON.stringify(await readPersistedLibrary()).includes('blob:'))&&external===0&&mutations===0&&errors===0);
- if(process.env.COCONUT_UI_SCREENSHOTS)await fs.writeFile(path.join(process.env.COCONUT_UI_SCREENSHOTS,'dock-rewind-evidence.json'),JSON.stringify({rewinds,ime,geometry,popovers},null,2));
- console.log(JSON.stringify({suite:'playback-dock-authored-media',status:'passed',checks,rewinds,ime,geometry,popovers}));
+ if(process.env.COCONUT_UI_SCREENSHOTS)await fs.writeFile(path.join(process.env.COCONUT_UI_SCREENSHOTS,'dock-rewind-evidence.json'),JSON.stringify({rewinds,ime,geometry,popovers,loopPreparation},null,2));
+ console.log(JSON.stringify({suite:'playback-dock-authored-media',status:'passed',checks,rewinds,ime,geometry,popovers,loopPreparation}));
 }catch(error){
+ try{if(page&&!page.isClosed())loopPreparation=await page.evaluate(()=>{const audit=window.__dockLoopPreparation;if(!audit)return [];audit.record('failure');audit.stop();return audit.events;});}catch{}
  try{if(page&&!page.isClosed())viewportFailure=await page.evaluate(()=>{const observer=window.__dockViewportObserver;if(!observer)return null;observer.record('failure');observer.stop();return {events:observer.events,calls:observer.calls};});}catch{}
- if(process.env.COCONUT_UI_SCREENSHOTS){try{await fs.mkdir(process.env.COCONUT_UI_SCREENSHOTS,{recursive:true});await fs.writeFile(path.join(process.env.COCONUT_UI_SCREENSHOTS,'dock-rewind-evidence.json'),JSON.stringify({stage,checks,rewinds,ime,geometry,popovers,viewportFailure,error:error.stack},null,2));if(page&&!page.isClosed())await page.screenshot({path:path.join(process.env.COCONUT_UI_SCREENSHOTS,'dock-rewind-failure.png'),animations:'disabled'});}catch(captureError){console.error('dock failure evidence: '+captureError.message);}}
- console.log(JSON.stringify({suite:'playback-dock-authored-media',status:'failed',stage,error:error.stack,checks,rewinds,ime,geometry,popovers,viewportFailure}));process.exitCode=1;
+ if(process.env.COCONUT_UI_SCREENSHOTS){try{await fs.mkdir(process.env.COCONUT_UI_SCREENSHOTS,{recursive:true});await fs.writeFile(path.join(process.env.COCONUT_UI_SCREENSHOTS,'dock-rewind-evidence.json'),JSON.stringify({stage,checks,rewinds,ime,geometry,popovers,loopPreparation,viewportFailure,error:error.stack},null,2));if(page&&!page.isClosed())await page.screenshot({path:path.join(process.env.COCONUT_UI_SCREENSHOTS,'dock-rewind-failure.png'),animations:'disabled'});}catch(captureError){console.error('dock failure evidence: '+captureError.message);}}
+ console.log(JSON.stringify({suite:'playback-dock-authored-media',status:'failed',stage,error:error.stack,checks,rewinds,ime,geometry,popovers,loopPreparation,viewportFailure}));process.exitCode=1;
 }
 finally{await browser?.close();await new Promise(resolve=>server?.listening?server.close(resolve):resolve());if(directory)await fs.rm(directory,{recursive:true,force:true});}
