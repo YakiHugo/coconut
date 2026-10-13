@@ -41,3 +41,46 @@ test('out-of-order cues are rejected instead of silently rearranging source evid
 test('VTT comments and style/region metadata never become spoken source evidence',async()=>{
  const r=result();r.bytes=Buffer.from('WEBVTT\n\nNOTE source comments\n00:00.000 --> 00:00.500\nThis is not a spoken cue\n\nSTYLE\n00:00.000 --> 00:00.500\nNot spoken CSS\n\nREGION\n00:00.000 --> 00:00.500\nNot spoken region\n\n00:00.500 --> 00:01.000\nActual spoken cue.\n');const doc=(await service(async()=>r).importCaption({url})).document;assert.equal(doc.segments.length,1);assert.equal(doc.segments[0].text,'Actual spoken cue.');assert.equal(doc.segments[0].start,.5);
 });
+
+// Diagnostics are produced by the shared parser, never accepted from the helper.
+import C from '../reader/core.js';
+import {captionFixtureURL,captionFixtureResult} from './helpers/caption-diagnostics-fixtures.mjs';
+for(const format of ['srt','vtt'])test(`${format} caption response preserves parser loss details outside document identity`,async()=>{
+ const fixture=captionFixtureResult({format});fixture.diagnostics=[{category:'forged'}];
+ const expected=C.parseWithDiagnostics(fixture.bytes.toString('utf8'),'captions.'+format);
+ const actual=await service(async()=>fixture).importCaption({url:captionFixtureURL,language:'en'});
+ assert.equal(actual.status,'ready');assert.deepEqual(actual.diagnostics,expected.diagnostics);
+ assert.deepEqual(actual.document.segments,expected.document.segments);
+ assert.deepEqual(actual.diagnostics.map(item=>item.category),['malformed_timing','empty_cue']);
+ assert.equal(actual.document.title,fixture.source.title);assert.equal(actual.document.provenance.caption_track,'en-original-fixture');
+ assert.equal(actual.document.provenance.caption_method,'platform_provided');assert.equal(actual.document.provenance.review_status,'unreviewed');
+ assert.equal(Object.hasOwn(actual.document,'diagnostics'),false);assert.equal(JSON.stringify(actual.document).includes('Missing authored detail'),false);
+ const complete=await service(async()=>captionFixtureResult({format,complete:true})).importCaption({url:captionFixtureURL});
+ assert.deepEqual(complete.diagnostics,[]);assert.deepEqual(actual.document,complete.document);
+});
+test('all-invalid caption blocks and empty output still fail; later valid imports are allowed',async()=>{
+ let fixture=captionFixtureResult({onlyInvalid:true});const captions=service(async()=>fixture);
+ await assert.rejects(captions.importCaption({url:captionFixtureURL}),/必须包含/);
+ fixture={...fixture,bytes:Buffer.from('WEBVTT\n\nNOTE no spoken cues'),format:'vtt'};
+ await assert.rejects(captions.importCaption({url:captionFixtureURL}),/必须包含/);
+ fixture=captionFixtureResult({complete:true});assert.equal((await captions.importCaption({url:captionFixtureURL})).document.segments.length,2);
+});
+test('caption diagnostics retain every skipped block with bounded literal previews',async()=>{
+ const fixture=captionFixtureResult({warningCount:105});
+ fixture.bytes=Buffer.from(fixture.bytes.toString('utf8').replace('missing-1','x'.repeat(1000)).replace('Missing authored detail 1.','🌱'.repeat(1000)));
+ const actual=await service(async()=>fixture).importCaption({url:captionFixtureURL});
+ assert.equal(actual.diagnostics.length,106);assert.ok(actual.diagnostics.every(item=>item.preview.length<=240&&(!item.cueId||item.cueId.length<=120)));
+ assert.equal(actual.document.segments.length,2);
+});
+
+import {startBridge} from '../desktop/server.mjs';
+test('HTTP caption import carries authoritative loss diagnostics and rejects all-invalid output',async t=>{
+ let fixture=captionFixtureResult(),calls=0;
+ const server=await startBridge({port:0,captionService:service(async()=>{calls++;return fixture;}),providers:{status:async()=>{throw new Error('No provider probes');}}});
+ t.after(()=>new Promise(resolve=>server.shutdown(resolve)));const origin=`http://127.0.0.1:${server.address().port}`;
+ const send=()=>fetch(origin+'/api/captions/import',{method:'POST',headers:{Origin:origin,'Content-Type':'application/json'},body:JSON.stringify({url:captionFixtureURL,language:'en'})});
+ assert.equal((await (await fetch(origin+'/api/health')).json()).capabilities.caption_import,true);assert.equal(calls,0);
+ const partial=await send();assert.equal(partial.status,200);const actual=await partial.json();assert.equal(actual.diagnostics.length,2);assert.equal(actual.document.segments.length,2);
+ fixture=captionFixtureResult({onlyInvalid:true});const invalid=await send();assert.equal(invalid.status,400);assert.match((await invalid.json()).error,/必须包含/);
+ fixture=captionFixtureResult({complete:true});const normal=await send();assert.equal(normal.status,200);assert.deepEqual((await normal.json()).diagnostics,[]);assert.equal(calls,3);
+});

@@ -251,6 +251,7 @@ async function importVideoCaptions(url) {
  controller.signal.addEventListener('abort',()=>{if(ownsStatus())$('source-route-status').textContent=sourceCaptionActivation?'已停止等待导入结果。已打开的文字稿请查看保存状态。':'已取消获取字幕，书架保留。';});
  $('process-url').disabled=true;$('cancel-source').hidden=false;
  $('source-route-status').textContent='正在读取公开原语言字幕，不下载音视频、不识别或调用模型。';
+ let warningBatch=null;
  const current=()=>ownsStatus()&&!controller.signal.aborted&&workspace==='add'&&state.active===startingDocument&&activeSelectionRevision===startingSelection&&localImportRevision===startingNavigation;
  try{
   const response=await fetch('api/captions/import',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({url,language:$('caption-language').value||null}),signal:controller.signal});
@@ -262,18 +263,31 @@ async function importVideoCaptions(url) {
    if(result.status==='language_required'){$('caption-language-control').hidden=false;$('caption-language').focus();}
    return;
   }
-  const persisted=await add(Coconut.validate(result.document),current,false,revision,undefined,{onActivate:opened=>{
+  const document=Coconut.validate(result.document),diagnostics=Array.isArray(result.diagnostics)?result.diagnostics:[];
+  const warning=diagnostics.length?transcriptImportWarningNotice(diagnostics):'';
+  transcriptImportBatch=null;$('transcript-import-results').hidden=true;
+  if(diagnostics.length){
+   // Extraction is finished; this receipt is not a cancellable file queue.
+   warningBatch=createTranscriptImportBatch([{name:document.title+' · X 原语言字幕'}]);warningBatch.cancellable=false;
+   setTranscriptImportDiagnostics(warningBatch.items[0],diagnostics);warningBatch.items[0].status='saving';renderTranscriptImportBatch(warningBatch);
+  }
+  const persisted=await add(document,current,false,revision,undefined,{onActivate:opened=>{
    // This synchronous handoff precedes render. Only this exact activation may
    // survive the reader transition; subsequent navigation still retires it.
    sourceCaptionActivation=opened;
-   $('source-route-status').textContent='文字稿已打开，正在确认本机保存结果。';
+   $('source-route-status').textContent='文字稿已打开，正在确认本机保存结果。'+warning;
   }});
+  if(warningBatch)finishTranscriptImportReceipt(warningBatch.items[0],persisted);
   if(ownsStatus()&&!controller.signal.aborted&&captionOwnsReader(controller)&&contentIngressAllowed(persisted.identity)){
-   const message=persisted.ok?'原语言字幕已保存。尚未经人工核对；摘要需单独确认，时间戳可回到原站。未下载媒体或运行识别。':'文字稿已在本页打开，但尚未保存，请立即导出 JSON 备份。';
+   const message=(persisted.ok?(diagnostics.length?'可识别的原语言字幕已保存。':'原语言字幕已保存。')+'尚未经人工核对；摘要需单独确认，时间戳可回到原站。未下载媒体或运行识别。':'文字稿已在本页打开，但尚未保存，请立即导出 JSON 备份。')+warning;
    $('source-route-status').textContent=message;notice(message);
   }
- }catch(error){if(ownsStatus()&&!controller.signal.aborted)$('source-route-status').textContent=error.message;}
- finally{if(sourceCaptionRequest===controller){sourceCaptionRequest=null;sourceCaptionURL=null;sourceCaptionActivation=null;$('cancel-source').hidden=true;$('process-url').disabled=false;}}
+ }catch(error){
+  if(warningBatch){const item=warningBatch.items[0];item.status=ownsStatus()&&!controller.signal.aborted?'failed':'cancelled';if(item.status==='failed')item.error=localFileError(error);}
+  if(ownsStatus()&&!controller.signal.aborted)$('source-route-status').textContent=error.message;
+ }finally{
+  if(warningBatch){warningBatch.finished=true;renderTranscriptImportBatch(warningBatch);}
+  if(sourceCaptionRequest===controller){sourceCaptionRequest=null;sourceCaptionURL=null;sourceCaptionActivation=null;$('cancel-source').hidden=true;$('process-url').disabled=false;}}
 }
 $('cancel-source').onclick=()=>sourceCaptionRequest?.abort();
 $('video-url').addEventListener('input',()=>{
