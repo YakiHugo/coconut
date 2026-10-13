@@ -12,6 +12,7 @@ import os from 'node:os';
 import {createHash} from 'node:crypto';
 import {createRequire} from 'node:module';
 import {chromium, expect, waitForPersistedLibrary} from './helpers/browser-storage.mjs';
+import {openLibraryTools} from './helpers/library-tools-browser.mjs';
 import {authoredAudioFixture} from './helpers/authored-audio-fixture.mjs';
 import {startBridge} from '../desktop/server.mjs';
 
@@ -536,6 +537,7 @@ try {
     await closeInline(page, label + '_missing_snapshot_return');
     assert.deepEqual((await saved(page, key)).exact_excerpts, baseline.exact_excerpts);
     check(label + '_historical_snapshot_bytes_survive_source_changes', true);
+    await openLibraryTools(page);
     await page.locator('#open-library-notebook').click();
     const historicalRow = page.locator('#notebook-captures > li').filter({has: page.locator('.notebook-paired-translation')});
     await expect(historicalRow).toHaveCount(1); await expect(historicalRow.locator('.notebook-open')).toBeDisabled();
