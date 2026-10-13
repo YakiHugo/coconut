@@ -56,7 +56,7 @@ test('mixed JSON SRT VTT continues after malformed, duplicate, oversized subtitl
   assert.equal(f.stored().documents[0].notes.cue,'Keep JSON');assert.equal(f.stored().documents.find(d=>d.title==='voice').segments[0].speaker,'Ada');
   assert.match(f.rows()[5].textContent,/恢复书架备份/);assert.match(f.rows()[6].textContent,/15 MiB/);
   assert.match(f.$('transcript-import-progress').textContent,/导入完成 · 8 \/ 8/);assert.equal(f.w.document.body.dataset.workspace,'add');
-  f.rows()[3].querySelector('button').click();assert.equal(f.$('title').textContent,'字幕');assert.equal(f.w.document.body.dataset.workspace,'read');assert.equal(f.w.document.activeElement,f.$('reader-workspace'));assert.equal(f.$('transcript-import-results').closest('#add-workspace').hidden,true);
+  f.rows()[3].querySelector('button').click();assert.equal(f.$('title').textContent,'字幕');assert.equal(f.w.document.body.dataset.workspace,'read');assert.equal(f.w.document.activeElement===f.$('reader-workspace'),true);assert.equal(f.$('transcript-import-results').closest('#add-workspace').hidden,true);
   const reload=setup({raw:f.w.localStorage.getItem(KEY)});try{assert.deepEqual(reload.stored(),f.stored());}finally{await reload.w.happyDOM.close();}
  }finally{await f.w.happyDOM.close();}
 });
@@ -102,7 +102,7 @@ test('newer navigation during a pending write survives its receipt and prevents 
   await f.choose([file('Existing')]);f.$('add-content').click();f.saves.hold();pending=f.choose([file('First'),file('Never')]);await until(()=>f.saves.writes.length===1);
   f.$('back-reading').click();f.$('mode-transcript').click();f.w.document.querySelector('.note-button').click();f.$('note').value='A newer note';f.$('note').oninput();f.$('note').focus();
   f.saves.hold(false);f.saves.writes[0].commit();await pending;await f.w.flushContentForTest();
-  assert.equal(f.$('title').textContent,'Existing');assert.equal(f.$('note').value,'A newer note');assert.equal(f.w.document.activeElement,f.$('note'));assert.deepEqual(f.statuses(),['saved','cancelled']);assert.equal(f.stored().documents.length,2);
+  assert.equal(f.$('title').textContent,'Existing');assert.equal(f.$('note').value,'A newer note');assert.equal(f.w.document.activeElement===f.$('note'),true);assert.deepEqual(f.statuses(),['saved','cancelled']);assert.equal(f.stored().documents.length,2);
  }finally{releaseSaves(f);await pending;await f.w.happyDOM.close();}
 });
 test('a newer file selection retires an old batch without clearing or overwriting its pending selection',async()=>{
@@ -194,7 +194,7 @@ test('drop target owns only file drags, including protected empty file lists, an
   f.drag('dragenter',{target:child});f.drag('dragleave',{relatedTarget:f.$('url')});assert.equal(target.classList.contains('is-file-drag'),false);
   assert.equal(f.drag('dragover',{target:f.w.document.body}).defaultPrevented,false,'no global navigation interception');
   f.drag('dragenter');f.w.dispatchEvent(new f.w.Event('pagehide'));assert.equal(target.classList.contains('is-file-drag'),false);
-  let picks=0;f.$('file').click=()=>picks++;child.focus();child.click();assert.equal(picks,1);assert.equal(f.w.document.activeElement,child);
+  let picks=0;f.$('file').click=()=>picks++;child.focus();child.click();assert.equal(picks,1);assert.equal(f.w.document.activeElement===child,true);
  }finally{await f.w.happyDOM.close();}
 });
 test('mixed unsupported drops reject before reading or retiring an active batch and render filenames as text',async()=>{
@@ -202,7 +202,7 @@ test('mixed unsupported drops reject before reading or retiring an active batch 
   pending=f.choose([file('Held',{text:()=>gate.promise}),file('Next')]);await until(()=>f.statuses()[0]==='reading');
   const batch=f.w.multiTest.batch;
   await f.drop([file('Valid',{text:async()=>{reads++;return '{}';}}),file('unsupported',{name:'<img src=x>.mp3',text:async()=>{reads++;return '{}';}})]);
-  assert.equal(reads,0);assert.equal(f.w.multiTest.batch,batch);assert.equal(batch.cancelled,false);assert.equal(f.stored().documents.length,0);
+  assert.equal(reads,0);assert.equal(f.w.multiTest.batch===batch,true);assert.equal(batch.cancelled,false);assert.equal(f.stored().documents.length,0);
   assert.match(f.$('transcript-drop-status').textContent,/未导入任何文件.*<img src=x>.mp3/);assert.equal(f.$('transcript-drop-status').querySelector('img'),null);
   gate.resolve(JSON.stringify(doc('Held')));await pending;assert.deepEqual(f.statuses(),['saved','saved']);
  }finally{gate.resolve('{}');await pending;await f.w.happyDOM.close();}
@@ -234,7 +234,7 @@ test('drop admission obeys lifecycle locks before reads or cancelling an existin
  const f=setup(),gate=deferred();let pending,reads=0;try{
   pending=f.choose([file('Held',{text:()=>gate.promise}),file('Next')]);await until(()=>f.statuses()[0]==='reading');const batch=f.w.multiTest.batch;
   f.w.multiTest.closing=true;await f.drop([file('Blocked',{text:async()=>{reads++;return '{}';}})]);
-  assert.equal(reads,0);assert.equal(f.w.multiTest.batch,batch);assert.equal(batch.cancelled,false);assert.match(f.$('transcript-drop-status').textContent,/暂时无法导入/);
+  assert.equal(reads,0);assert.equal(f.w.multiTest.batch===batch,true);assert.equal(batch.cancelled,false);assert.match(f.$('transcript-drop-status').textContent,/暂时无法导入/);
   assert.equal(f.drag('dragover').dataTransfer.dropEffect,'none');f.w.multiTest.closing=false;gate.resolve(JSON.stringify(doc('Held')));await pending;
  }finally{gate.resolve('{}');await pending;await f.w.happyDOM.close();}
 });
@@ -251,7 +251,7 @@ test('mixed directory drops reject before reading or replacing an active batch e
  const f=setup(),gate=deferred();let pending,reads=0;try{
   pending=f.choose([file('Held',{text:()=>gate.promise}),file('Next')]);await until(()=>f.statuses()[0]==='reading');const batch=f.w.multiTest.batch;
   await f.$('transcript-drop-target').ondrop({preventDefault(){},dataTransfer:{types:['Files'],files:[file('Valid',{text:async()=>{reads++;return '{}';}}),file('Folder')],items:[{kind:'file',webkitGetAsEntry:()=>({isDirectory:true,name:'Folder.json'})}]}});
-  assert.equal(reads,0);assert.equal(f.w.multiTest.batch,batch);assert.equal(batch.cancelled,false);assert.match(f.$('transcript-drop-status').textContent,/未导入任何文件.*文件夹.*Folder.json/);
+  assert.equal(reads,0);assert.equal(f.w.multiTest.batch===batch,true);assert.equal(batch.cancelled,false);assert.match(f.$('transcript-drop-status').textContent,/未导入任何文件.*文件夹.*Folder.json/);
   gate.resolve(JSON.stringify(doc('Held')));await pending;
  }finally{gate.resolve('{}');await pending;await f.w.happyDOM.close();}
 });
@@ -261,7 +261,7 @@ test('rejected picker resets its own selection while a rejected drop preserves t
  const f=setup(),gate=deferred();let pending;try{
   pending=f.choose([file('Held',{text:()=>gate.promise}),file('Next')]);await until(()=>f.statuses()[0]==='reading');const batch=f.w.multiTest.batch;
   await f.drop([file('Wrong',{name:'wrong.mp3'})]);assert.equal(f.$('file').value,'Held.json,Next.json');
-  await f.choose([file('Wrong',{name:'wrong.mp3'})]);assert.equal(f.$('file').value,'');assert.equal(f.w.multiTest.batch,batch);assert.equal(batch.cancelled,false);
+  await f.choose([file('Wrong',{name:'wrong.mp3'})]);assert.equal(f.$('file').value,'');assert.equal(f.w.multiTest.batch===batch,true);assert.equal(batch.cancelled,false);
   f.w.multiTest.closing=true;await f.choose([file('Blocked')]);assert.equal(f.$('file').value,'');f.w.multiTest.closing=false;
   gate.resolve(JSON.stringify(doc('Held')));await pending;
  }finally{gate.resolve('{}');await pending;await f.w.happyDOM.close();}
@@ -280,11 +280,11 @@ function resumedTranscript({bookmark=900,cues=1000}={}){
 function assertResume(f,id){
  const cue=f.$('passage-body').querySelector(`[data-cue-id="${id}"]`);
  assert.ok(cue,'saved cue is mounted in the passage window');
- assert.equal(f.w.document.activeElement,cue.closest('.passage'),'saved passage receives focus');
+ assert.equal(f.w.document.activeElement===cue.closest('.passage'),true,'saved passage receives focus');
  assert.equal(f.w.document.body.dataset.readingMode,'passages');
  assert.equal(f.w.multiTest.active.readingPosition,id,'opening does not rewrite the saved cue');
 }
-for(const entry of ['picker','drop','batch'])test(`${entry} saved JSON opens its late reading cue just like the library card without playback`,async()=>{
+for(const entry of ['picker','drop','batch'])test(`${entry} saved JSON opens its manual bookmark and ordinary reopening restores the exact visible cue without playback`,async()=>{
  const f=setup();let plays=0;f.w.HTMLMediaElement.prototype.play=function(){plays++;return Promise.resolve();};
  try{
   const saved=resumedTranscript(),input=file('Saved reading',{text:JSON.stringify(saved)});
@@ -295,8 +295,20 @@ for(const entry of ['picker','drop','batch'])test(`${entry} saved JSON opens its
   assertResume(f,'resume-900');
   const first=f.$('passage-body').firstElementChild.dataset.firstCueId;
   const last=f.$('passage-body').lastElementChild.dataset.firstCueId;
+  // Happy DOM has no layout. Establish a different, exact visible source cue
+  // before capturing ordinary progress; the manual bookmark remains separate.
+  const key=f.w.multiTest.active.key,visible='resume-901';
+  assert.ok(f.$('passage-body').querySelector(`.passage-original [data-cue-id="${visible}"]`));
+  for(const node of f.$('passage-body').querySelectorAll('.passage-original .passage-cue'))node.getBoundingClientRect=()=>({top:node.dataset.cueId===visible?120:2000,bottom:node.dataset.cueId===visible?180:2060,height:60,width:100});
+  f.w.dispatchEvent(new f.w.Event('pagehide'));
+  const view=JSON.parse(f.w.sessionStorage.getItem('coconut-reading-view-v1')).views.find(view=>view[0]===key);
+  assert.deepEqual(view,[key,visible,'passages']);
   [...f.$('library').querySelectorAll('.library-open')].find(button=>button.querySelector('.library-title').textContent==='Saved reading').click();
-  assertResume(f,'resume-900');
+  const resumed=f.$('passage-body').querySelector(`.passage-original [data-cue-id="${view[1]}"]`);
+  assert.ok(resumed,'the exact ordinary reading cue is mounted');
+  assert.equal(f.w.document.activeElement===resumed,true,'ordinary reopening focuses the saved cue, not the whole manual-bookmark passage');
+  assert.equal(f.w.document.body.dataset.readingMode,view[2]);
+  assert.equal(f.w.multiTest.active.readingPosition,'resume-900','ordinary progress never replaces the manual bookmark');
   assert.equal(f.$('passage-body').firstElementChild.dataset.firstCueId,first);
   assert.equal(f.$('passage-body').lastElementChild.dataset.firstCueId,last);
   assert.equal(plays,0);assert.equal(f.stored().documents.find(d=>d.title==='Saved reading').readingPosition,'resume-900');
@@ -322,7 +334,7 @@ test('single import resumes before its receipt and a late receipt cannot reclaim
   [...f.$('library').querySelectorAll('.library-open')].find(button=>button.querySelector('.library-title').textContent==='Existing').click();
   f.$('mode-transcript').click();f.w.document.querySelector('.note-button').click();f.$('note').focus();
   f.saves.hold(false);f.saves.writes[0].commit();await pending;
-  assert.equal(f.$('title').textContent,'Existing');assert.equal(f.w.document.activeElement,f.$('note'));
+  assert.equal(f.$('title').textContent,'Existing');assert.equal(f.w.document.activeElement===f.$('note'),true);
   assert.equal(f.w.document.body.dataset.readingMode,'transcript');
  }finally{releaseSaves(f);await pending;await f.w.happyDOM.close();}
 });
@@ -350,7 +362,7 @@ test('normal partial normal batch keeps parse diagnostics orthogonal to saved re
   const details=expandWarning(f,f.rows()[1]);assert.match(details.textContent,/跳过 1 个字幕块/);assert.match(details.textContent,/第 5–7 行/);assert.match(details.textContent,/Critical <img/);assert.equal(details.querySelector('img'),null);
   assert.match(f.$('transcript-import-progress').textContent,/部分字幕未导入 1 块/);
   const saved=f.stored().documents.find(doc=>doc.title==='Partial');assert.equal(saved.segments.length,2);assert.equal(saved.diagnostics,undefined);assert.equal(saved.segments[1].text,'Closing');
-  f.rows()[1].querySelector('button').click();assert.equal(f.$('title').textContent,'Partial');f.$('add-content').click();assert.equal(warning(f.rows()[1]),details);assert.equal(details.open,true);
+  f.rows()[1].querySelector('button').click();assert.equal(f.$('title').textContent,'Partial');f.$('add-content').click();assert.equal(warning(f.rows()[1])===details,true);assert.equal(details.open,true);
  }finally{await f.w.happyDOM.close();}
 });
 for(const ingress of ['choose','drop'])test(ingress+' single partial result survives completion and ordinary single imports retain old experience',async()=>{
@@ -364,8 +376,8 @@ for(const multiple of [false,true])test('partial '+(multiple?'batch':'single')+'
  const f=setup({held:true});let pending;try{
   pending=f.choose(multiple?[partialFile(),file('Never')]:[partialFile()]);await until(()=>f.saves.writes.length===1);
   assert.equal(f.rows()[0].dataset.status,'saving');const details=expandWarning(f,f.rows()[0]);assert.match(details.textContent,/第 5–7 行/);assert.doesNotMatch(f.rows()[0].querySelector('.transcript-import-outcome').textContent,/已保存/);
-  f.saves.writes[0].fail();await pending;assert.equal(f.rows()[0].dataset.status,'unsaved');assert.equal(warning(f.rows()[0]),details);assert.equal(f.stored().documents.length,0);
-  f.saves.hold(false);await f.$('retry-save').onclick();assert.equal(f.rows()[0].dataset.status,'saved');assert.equal(warning(f.rows()[0]),details);assert.equal(f.stored().documents[0].segments.length,2);
+  f.saves.writes[0].fail();await pending;assert.equal(f.rows()[0].dataset.status,'unsaved');assert.equal(warning(f.rows()[0])===details,true);assert.equal(f.stored().documents.length,0);
+  f.saves.hold(false);await f.$('retry-save').onclick();assert.equal(f.rows()[0].dataset.status,'saved');assert.equal(warning(f.rows()[0])===details,true);assert.equal(f.stored().documents[0].segments.length,2);
   if(multiple)assert.deepEqual(f.statuses(),['saved','cancelled']);
  }finally{releaseSaves(f);await pending;await f.w.happyDOM.close();}
 });
@@ -378,10 +390,10 @@ test('duplicate partial import retains warning and does not duplicate or replace
 test('cancel and newer navigation cannot erase a pending partial warning or steal the note editor',async()=>{
  const f=setup();let pending;try{
   await f.choose([file('Existing')]);f.$('add-content').click();f.saves.hold();pending=f.choose([partialFile(),file('Never')]);await until(()=>f.saves.writes.length===1);
-  const details=expandWarning(f,f.rows()[0]);f.$('stop-transcript-import').click();assert.equal(warning(f.rows()[0]),details);
+  const details=expandWarning(f,f.rows()[0]);f.$('stop-transcript-import').click();assert.equal(warning(f.rows()[0])===details,true);
   f.$('back-reading').click();f.$('mode-transcript').click();f.w.document.querySelector('.note-button').click();f.$('note').value='Keep focus and edit';f.$('note').oninput();f.$('note').focus();
   f.saves.hold(false);f.saves.writes[0].commit();await pending;await f.w.flushContentForTest();
-  assert.equal(f.$('title').textContent,'Existing');assert.equal(f.w.document.activeElement,f.$('note'));assert.equal(f.$('note').value,'Keep focus and edit');assert.deepEqual(f.statuses(),['saved','cancelled']);assert.equal(warning(f.rows()[0]),details);assert.match(details.textContent,/第 5–7 行/);
+  assert.equal(f.$('title').textContent,'Existing');assert.equal(f.w.document.activeElement===f.$('note'),true);assert.equal(f.$('note').value,'Keep focus and edit');assert.deepEqual(f.statuses(),['saved','cancelled']);assert.equal(warning(f.rows()[0])===details,true);assert.match(details.textContent,/第 5–7 行/);
  }finally{releaseSaves(f);await pending;await f.w.happyDOM.close();}
 });
 test('late partial receipt cannot replace a newer import result or notice',async()=>{
