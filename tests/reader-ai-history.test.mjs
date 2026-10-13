@@ -300,9 +300,9 @@ test('production bootstrap admits the full reader before historical source brows
   // Only script transport is replaced with local bytes; storage provider uses its
   // real no-IndexedDB legacy path in this DOM environment.
   w.document.head.append=script=>{const name=new URL(script.src).pathname.slice(1);admitted.push(name);try{run(fs.readFileSync(new URL('reader/'+name,root),'utf8'));queueMicrotask(()=>script.onload());}catch(error){script.onerror(error);}};
-  for(const name of ['appearance','summary','core','passages','quotation','passage-playback','library-store','indexeddb-document-adapter','storage-provider','storage-bootstrap'])run(fs.readFileSync(new URL('reader/'+name+'.js',root),'utf8'));
+  for(const name of ['appearance','summary','task-client','core','passages','quotation','passage-playback','library-store','indexeddb-document-adapter','storage-provider','storage-bootstrap'])run(fs.readFileSync(new URL('reader/'+name+'.js',root),'utf8'));
   for(let i=0;i<100&&w.CoconutStorageBootstrap.phase==='loading';i++)await new Promise(resolve=>setImmediate(resolve));
-  assert.equal(w.CoconutStorageBootstrap.phase,'ready');assert.deepEqual(admitted,['app.js','language.js','translation-review.js','podcasts.js','jobs.js','updates.js']);
+  assert.equal(w.CoconutStorageBootstrap.phase,'ready');assert.equal(typeof w.CoconutTasks.createClient,'function');assert.equal(typeof w.CoconutBackgroundSummary.refresh,'function');assert.deepEqual(admitted,['app.js','language.js','background-summary.js','translation-review.js','podcasts.js','jobs.js','updates.js']);
   const source=fixture(2);for(const answer of source.ai_answers)answer.input_snapshot.segments[0].text='Historical source before correction.';
   await importDocument(w,source);$('browse-ai-history').click();assert.equal($('language-panel').hidden,false);
   const disk=w.localStorage.getItem(KEY);for(const details of $('ai-answers').querySelectorAll('.ai-answer-evidence')){await openEvidence(w,details);assert.match(details.textContent,/Historical source before correction/);}

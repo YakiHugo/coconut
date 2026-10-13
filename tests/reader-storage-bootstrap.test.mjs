@@ -14,7 +14,7 @@ test('bootstrap admits no app script or input until complete load, then runs cla
  try{
   assert.equal(f.w.document.querySelector('.shell').inert,true);assert.equal(f.admitted.length,0);assert.equal(f.w.coconutPrepareClose('inspect').readiness,'loading');assert.equal(f.w.coconutPrepareUpdate(),false);
   resolve({ok:true,backend:'indexeddb',legacyRaw:'original',loaded:{documents:[]},adapter:{}});await tick();
-  assert.deepEqual(f.admitted.map(src=>new URL(src).pathname),['/app.js','/language.js','/translation-review.js','/podcasts.js','/jobs.js','/updates.js']);
+  assert.deepEqual(f.admitted.map(src=>new URL(src).pathname),['/app.js','/language.js','/background-summary.js','/translation-review.js','/podcasts.js','/jobs.js','/updates.js']);
   assert.equal(f.w.CoconutStorageBootstrap.phase,'ready');assert.equal(f.w.document.querySelector('.shell').inert,false);assert.equal(f.$('storage-startup').hidden,true);assert.equal(f.$('export-original-storage').hidden,false);
  }finally{await f.w.happyDOM.close();}
 });

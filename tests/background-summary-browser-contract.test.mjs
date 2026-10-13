@@ -1,0 +1,30 @@
+/** CPU-only contract for the exact real-HTTP fake-CLI browser harness. */
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {backgroundSummaryBridge,authoredSource,until} from './helpers/background-summary-bridge.mjs';
+const payload=key=>({protocolVersion:1,kind:'summary',idempotencyKey:key,document:{key:'authored-document',revision:key},provider:'codex',consent:true,segments:authoredSource('Authored').segments});
+
+test('browser harness serves actual production assets and enforces consent/idempotency before a fake CLI run',async t=>{
+ const h=await backgroundSummaryBridge();t.after(()=>h.close());
+ const html=await (await fetch(h.origin)).text();assert.match(html,/background-summary\.js/);
+ for(const asset of ['task-client.js','background-summary.js'])assert.equal((await fetch(h.origin+'/'+asset)).status,200);
+ const language=await h.request('/api/language-tools');assert.equal(language.status,200);assert.equal(language.ai.codex.ready,true);assert.equal(language.ai.claude.ready,false);assert.equal(h.invocations.length,0);
+ const invalid=await h.request('/api/v1/tasks',{...payload('one'),consent:false});assert.equal(invalid.status,400);assert.equal(h.invocations.length,0);
+ const first=await h.request('/api/v1/tasks',payload('one'));assert.equal(first.status,202);
+ await until(()=>h.invocations.length===1);
+ const duplicate=await h.request('/api/v1/tasks',payload('one'));assert.equal(duplicate.status,200);assert.equal(duplicate.task.taskId,first.task.taskId);assert.equal((await h.tasks()).length,1);assert.equal(h.invocations.length,1);
+ assert.equal(JSON.stringify(h.invocations[0].input).includes('LOCAL NOTE'),false);
+ h.invocations[0].release();const task=await h.waitTask(first.task.taskId,'succeeded');assert.equal(task.result.input_snapshot.segments.length,2);
+});
+test('browser harness holds real cancellation until a deliberately late fake CLI completion',async t=>{
+ const h=await backgroundSummaryBridge();t.after(()=>h.close());const {task}=await h.request('/api/v1/tasks',payload('cancel'));
+ await until(()=>h.invocations.length===1);assert.equal((await h.request('/api/v1/tasks/'+task.taskId+'/cancel',{protocolVersion:1})).task.status,'cancel_requested');
+ assert.equal(h.invocations[0].signal.aborted,true);h.invocations[0].release();assert.equal((await h.waitTask(task.taskId,'cancelled')).result,undefined);
+});
+test('browser harness reopens the same real HTTP origin and disk ledger without restarting interrupted inference',async t=>{
+ const h=await backgroundSummaryBridge();t.after(()=>h.close());const {task}=await h.request('/api/v1/tasks',payload('restart'));
+ await until(()=>h.invocations.length===1);const origin=h.origin;await h.restart();assert.equal(h.origin,origin);assert.equal(h.invocations[0].signal.aborted,true);
+ h.invocations[0].release();await h.invocations[0].settled;
+ assert.equal((await h.waitTask(task.taskId,'interrupted')).result,undefined);assert.equal(h.invocations.length,1);
+ assert.equal((await h.request('/api/v1/tasks',payload('restart'))).task.status,'interrupted');assert.equal(h.invocations.length,1);
+});

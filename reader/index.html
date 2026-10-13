@@ -8,8 +8,9 @@
 <meta name="theme-color" content="#faf9f7">
 <link rel="icon" type="image/png" href="coconut-mark.png">
 <script src="appearance.js?v=86ea922669"></script>
-<link rel="stylesheet" href="style.css?v=adb4bcca24">
+<link rel="stylesheet" href="style.css?v=dd9552d93d">
 <script src="summary.js?v=580ffdad1e" defer></script>
+<script src="task-client.js?v=1dbd02a43c" defer></script>
 <script src="core.js?v=c24def6fcc" defer>
 </script>
 <script src="passages.js?v=998756df3c" defer></script>
@@ -18,9 +19,10 @@
 <script src="library-store.js?v=e76ded9456" defer></script>
 <script src="indexeddb-document-adapter.js?v=8ecfdf5789" defer></script>
 <script src="storage-provider.js?v=369d522f14" defer></script>
-<script src="app.js?v=7df790ff56" type="text/coconut-pending" data-reader-script>
+<script src="app.js?v=f4b28b3edd" type="text/coconut-pending" data-reader-script>
 </script>
-<script src="language.js?v=64d7859585" type="text/coconut-pending" data-reader-script></script>
+<script src="language.js?v=50bf8fea91" type="text/coconut-pending" data-reader-script></script>
+<script src="background-summary.js?v=751007a6b8" type="text/coconut-pending" data-reader-script></script>
 <script src="translation-review.js?v=e8289ebd90" type="text/coconut-pending" data-reader-script></script>
 <script src="podcasts.js?v=d3db57978f" type="text/coconut-pending" data-reader-script></script>
 <script src="jobs.js?v=c5208f6283" type="text/coconut-pending" data-reader-script>
@@ -39,10 +41,11 @@
 <button id="open-library-search" type="button" aria-haspopup="dialog" aria-controls="library-search-dialog">查找书架</button>
 <button id="toggle-library" aria-expanded="false" aria-controls="library-list"><span class="library-open-label">书架</span><span class="library-close-label">← 收起书架</span> <span id="library-total">0</span></button>
 <div id="library-list">
+<details id="background-tasks" class="background-tasks"><summary>本机后台任务 <span id="background-task-count">0</span></summary><p id="background-executor-status" class="hint" role="status">尚未检查本机执行器；阅读不受影响。</p><p class="hint">当前仅连接此电脑的 bridge，未连接手机。关闭页面不取消；退出执行器后不会自动续跑。</p><button id="background-refresh" type="button">刷新任务与连接</button><p id="background-task-message" class="hint" role="status"></p><div id="background-task-list"></div></details>
 <button id="open-library-notebook" type="button">我的笔记与摘录</button>
 <label class="library-search">查找书架<input id="library-search" type="search" placeholder="按标题查找"></label>
 <div id="library-search-scope"><label>查找范围<select id="library-scope" aria-describedby="library-scope-hint"><option value="title">标题</option><option value="notes">标题与笔记（含摘录笔记）</option><option value="text">标题、原文、笔记与已存摘录</option><option value="translations">译文</option></select></label><p id="library-scope-hint" class="hint" hidden>全部语言，仅当前有效的已存译文；每种语言可翻页查看匹配片段。</p></div>
-<details id="library-tools" hidden><summary>书架工具与分页</summary><div id="library-tools-content"></div></details>
+<details id="library-tools" hidden><summary>工具、任务与分页<span id="library-background-task-status" role="status" hidden></span></summary><div id="library-tools-content"></div></details>
 <input type="file" id="file" accept=".json,.srt,.vtt" multiple hidden>
 <details class="library-backup"><summary>书架备份</summary><div class="disclosure-content"><button id="export-library">备份整个书架</button><button id="export-pending-library" type="button" hidden>导出未保存文档备份</button><button id="restore-library">恢复书架备份</button><button id="export-original-storage" hidden>导出升级前原始数据</button><p id="storage-backend-hint" class="hint" hidden></p><input id="library-file" type="file" accept=".json" hidden></div></details>
 <p class="eyebrow">你的书架</p>
@@ -227,6 +230,7 @@ cd coconut
 <div id="summary-citations" class="summary-citations" aria-label="摘要引用"></div>
 <p id="summary-readiness" class="hint" role="status" hidden></p>
 <div class="summary-actions"><button id="prepare-summary" class="primary" aria-describedby="summary-readiness">使用本地 AI 工具生成摘要</button><button id="summary-open-transcript">直接读原文</button><button id="summary-select-excerpt" hidden>筛选原文后提问</button><button id="export-summary" hidden>导出这份摘要</button><button id="browse-ai-history" type="button" hidden>浏览全部 AI 历史</button></div>
+<button id="summary-open-background-tasks" type="button" hidden>查看本机后台任务</button>
 <section id="summary-request" class="summary-request" hidden aria-label="生成摘要"><div class="summary-request-heading"><h3 tabindex="-1" id="summary-request-heading">生成这篇的摘要</h3><button id="close-summary-request" type="button">收起</button></div><p class="hint">确认全文范围，生成带原文引用的中文摘要。</p><p id="summary-connection-help" class="hint"></p><button id="summary-connection-setup" type="button">查看连接步骤</button><div id="summary-request-slot"></div></section>
 <p class="hint summary-boundary">摘要仅展示明确生成并保存的结果。模型可能遗漏或理解有误，请点引用核对；打开页面不会发送原文或使用额度。</p>
 </section>
@@ -279,6 +283,7 @@ cd coconut
 <p id="language-prerequisite" class="hint">先启动本地 Coconut，再检查已登录的 Codex 或 Claude Code。</p><button id="language-setup" type="button">查看连接步骤</button>
 <div id="ai-request-home"><section id="ai-request-panel" aria-label="AI 阅读请求">
 <div class="ai-request-choices"><label class="ai-task-control">想做什么<select id="ai-task"><option value="question">向原文提问</option><option value="translation">翻译原文</option><option value="summary">生成整篇摘要</option></select></label><label>使用订阅<select id="ai-provider"><option value="codex">ChatGPT / Codex</option><option value="claude">Claude</option></select></label></div>
+<label id="summary-execution-control" hidden>执行方式<select id="summary-execution"><option value="foreground">前台分批（收起后停止后续批次）</option><option value="background">本机后台（收起或离页后继续）</option></select></label><p id="summary-background-status" class="hint" role="status" hidden></p>
 <div class="ai-connection"><p id="ai-status" class="hint">点击检查连接，确认本机已登录的工具。</p><button id="check-ai" type="button" disabled>检查连接</button></div>
 <div class="language-controls"><label class="ai-translation-only">原文语言<select id="translation-source"><option value="">请选择</option></select></label><label class="ai-answer-language"><span id="translation-target-label">回答语言</span><select id="translation-target"></select></label></div>
 <div class="ai-question-only"><label for="ai-question">想了解什么？</label><textarea id="ai-question" rows="2" placeholder="这段谈话最重要的观点是什么？"></textarea><label><input id="ai-filtered" type="checkbox">仅使用当前筛选的原文</label></div>

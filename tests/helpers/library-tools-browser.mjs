@@ -20,7 +20,7 @@ export async function closeLibrarySearch(page){
 export function libraryToolsLayoutReady(_=null,root=document){
  const mobile=root.defaultView.matchMedia('(max-width: 650px)').matches;
  const tools=root.getElementById('library-tools'),content=root.getElementById('library-tools-content'),home=root.getElementById('library-list');
- const nodes=[root.getElementById('open-library-notebook'),root.querySelector('.library-backup'),root.getElementById('library-options'),root.getElementById('library-pagination')];
+ const nodes=[root.getElementById('background-tasks'),root.getElementById('open-library-notebook'),root.querySelector('.library-backup'),root.getElementById('library-options'),root.getElementById('library-pagination')];
  return !!(tools&&content&&home&&tools.hidden===!mobile&&nodes.every(node=>node&&node.parentElement===(mobile?content:home)));
 }
 

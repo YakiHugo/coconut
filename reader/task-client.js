@@ -1,4 +1,4 @@
-/* v1 task client foundation. Not wired into the reader UI; no automatic requests. */
+/* v1 task transport and source-bound receipt validation. */
 (function(root){
  'use strict';
  const Summary=typeof module!=='undefined'&&module.exports?require('./summary.js'):root.CoconutSummary;
@@ -12,12 +12,13 @@
  // A result is an independent receipt. Never mutate or overwrite the document.
  // Caller must use a revision including document lifetime; removing/reimporting
  // the same key is a new lifetime, even if the source text looks unchanged.
- function resultFor(task,document,revision){
-  if(task?.kind!=='summary'||task.status!=='succeeded'||task.document?.key!==document?.key||task.document?.revision!==revision||task.result?.purpose!=='summary')return null;
+ function matchesResult(task,document,revision){
+  if(task?.kind!=='summary'||task.status!=='succeeded'||task.document?.key!==document?.key||task.document?.revision!==revision||task.result?.purpose!=='summary')return false;
   const snapshot=task.result.input_snapshot;
-  if(snapshot?.version!==1||!Array.isArray(snapshot.segments)||!Array.isArray(document.segments)||snapshot.segments.length!==document.segments.length||snapshot.segments.some((cue,i)=>cue.id!==document.segments[i].id||cue.text!==document.segments[i].text))return null;
-  return copy(task.result);
+  if(snapshot?.version!==1||!Array.isArray(snapshot.segments)||!Array.isArray(document.segments)||snapshot.segments.length!==document.segments.length||snapshot.segments.some((cue,i)=>!cue||!document.segments[i]||cue.id!==document.segments[i].id||cue.text!==document.segments[i].text))return false;
+  return true;
  }
+ function resultFor(task,document,revision){return matchesResult(task,document,revision)?copy(task.result):null;}
  function createClient({fetch:request=root.fetch.bind(root)}={}){
   async function call(endpoint,{body,signal}={}){
    const response=await request('api/v1/'+endpoint,{method:body?'POST':'GET',headers:body?{'Content-Type':'application/json'}:{},body:body?JSON.stringify(body):undefined,signal});
@@ -40,6 +41,6 @@
    cancel:(id,options={})=>call('tasks/'+encodeURIComponent(id)+'/cancel',{...options,body:{protocolVersion:1}})
   });
  }
- const api={submission,resultFor,createClient};
+ const api={submission,matchesResult,resultFor,createClient};
  if(typeof module!=='undefined'&&module.exports)module.exports=api;else root.CoconutTasks=api;
 })(typeof window!=='undefined'?window:globalThis);

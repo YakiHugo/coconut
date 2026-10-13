@@ -97,9 +97,9 @@ test('production bootstrap admits separate shipped scripts before exact save, du
   w.fetch=async url=>{if(url==='api/health')return {ok:true,json:async()=>({})};requests.push(url);throw Error('Unexpected request');};
   w.document.head.innerHTML=[...html.matchAll(/<script\b[^>]*data-reader-script[^>]*>[\s\S]*?<\/script>/g)].map(match=>match[0]).join('');
   w.document.head.append=script=>{const name=new URL(script.src).pathname.slice(1);admitted.push(name);try{run(fs.readFileSync(new URL('reader/'+name,root),'utf8'));queueMicrotask(()=>script.onload());}catch(error){script.onerror(error);}};
-  for(const name of ['appearance','summary','core','passages','quotation','passage-playback','library-store','indexeddb-document-adapter','storage-provider','storage-bootstrap'])run(fs.readFileSync(new URL('reader/'+name+'.js',root),'utf8'));
+  for(const name of ['appearance','summary','task-client','core','passages','quotation','passage-playback','library-store','indexeddb-document-adapter','storage-provider','storage-bootstrap'])run(fs.readFileSync(new URL('reader/'+name+'.js',root),'utf8'));
   for(let i=0;i<100&&w.CoconutStorageBootstrap.phase==='loading';i++)await new Promise(resolve=>setImmediate(resolve));
-  assert.equal(w.CoconutStorageBootstrap.phase,'ready');assert.deepEqual(admitted,['app.js','language.js','translation-review.js','podcasts.js','jobs.js','updates.js']);
+  assert.equal(w.CoconutStorageBootstrap.phase,'ready');assert.equal(typeof w.CoconutTasks.createClient,'function');assert.equal(typeof w.CoconutBackgroundSummary.refresh,'function');assert.deepEqual(admitted,['app.js','language.js','background-summary.js','translation-review.js','podcasts.js','jobs.js','updates.js']);
   const value=JSON.stringify(fixture());Object.defineProperty($('file'),'files',{configurable:true,value:[{name:'authored-exact.json',size:value.length,text:async()=>value}]});await $('file').onchange();
   $('mode-passages').click();preview({w,$});await $('quotation-save').onclick();
   assert.match($('quotation-save-status').textContent,/已保存到本机/);assert.equal(run('active().exact_excerpts.length'),1);assert.equal(run('active().exact_excerpts[0].text'),'repeated 🌴 words');

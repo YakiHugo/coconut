@@ -83,9 +83,9 @@ test('production bootstrap admits separate classic scripts before native Find us
   w.fetch=async url=>{if(url==='api/health')return {ok:true,json:async()=>({})};requests.push(url);throw Error('Unexpected request');};
   w.document.head.innerHTML=[...html.matchAll(/<script\b[^>]*data-reader-script[^>]*>[\s\S]*?<\/script>/g)].map(match=>match[0]).join('');
   w.document.head.append=script=>{const name=new URL(script.src).pathname.slice(1);admitted.push(name);try{run(fs.readFileSync(new URL('reader/'+name,root),'utf8'));queueMicrotask(()=>script.onload());}catch(error){script.onerror(error);}};
-  for(const name of ['appearance','summary','core','passages','quotation','passage-playback','library-store','indexeddb-document-adapter','storage-provider','storage-bootstrap'])run(fs.readFileSync(new URL('reader/'+name+'.js',root),'utf8'));
+  for(const name of ['appearance','summary','task-client','core','passages','quotation','passage-playback','library-store','indexeddb-document-adapter','storage-provider','storage-bootstrap'])run(fs.readFileSync(new URL('reader/'+name+'.js',root),'utf8'));
   for(let i=0;i<100&&w.CoconutStorageBootstrap.phase==='loading';i++)await new Promise(resolve=>setImmediate(resolve));
-  assert.equal(w.CoconutStorageBootstrap.phase,'ready');assert.deepEqual(admitted,['app.js','language.js','translation-review.js','podcasts.js','jobs.js','updates.js']);
+  assert.equal(w.CoconutStorageBootstrap.phase,'ready');assert.equal(typeof w.CoconutTasks.createClient,'function');assert.equal(typeof w.CoconutBackgroundSummary.refresh,'function');assert.deepEqual(admitted,['app.js','language.js','background-summary.js','translation-review.js','podcasts.js','jobs.js','updates.js']);
   await load({w,$});$('passage-body').focus();
   assert.equal(w.coconutFileCommand('find-transcript',{issuedAt:Date.now(),expiresAt:Date.now()+2000}),true);assert.equal(w.document.activeElement,$('search'));
   $('search').value='needle';$('search').oninput();$('search').dispatchEvent(new w.KeyboardEvent('keydown',{key:'Enter',bubbles:true,cancelable:true}));assert.equal(w.document.activeElement.dataset.segmentId,'cue-0');

@@ -273,6 +273,13 @@ jobs:
       - name: Verify bounded long-summary plans with injected fixtures only
         if: ${{ !cancelled() && steps.browser_setup.outcome == 'success' }}
         run: node tests/summary-browser-acceptance.mjs
+      - name: Verify background summary consent, reload, cancellation and restart through real HTTP
+        if: ${{ !cancelled() && steps.browser_setup.outcome == 'success' }}
+        env:
+          COCONUT_UI_ARTIFACT_DIR: ${{ runner.temp }}/coconut-authored-ui
+        run: |
+          node --test tests/background-summary-browser-contract.test.mjs
+          node tests/background-summary-browser.mjs
       - name: Verify explicit podcast source imports through the desktop HTTP bridge
         if: ${{ !cancelled() && steps.browser_setup.outcome == 'success' }}
         env:
@@ -327,6 +334,7 @@ jobs:
             ${{ runner.temp }}/coconut-authored-ui/pasted-subtitles-checks.json
             ${{ runner.temp }}/coconut-authored-ui/source-corrections-checks.json
             ${{ runner.temp }}/coconut-authored-ui/transcript-media-association-checks.json
+            ${{ runner.temp }}/coconut-authored-ui/background-summary-checks.json
             ${{ runner.temp }}/coconut-authored-ui/web-browser-acceptance-checks.json
             ${{ runner.temp }}/coconut-authored-ui/compact-library-failure.png
           if-no-files-found: ignore

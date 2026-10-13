@@ -4,12 +4,26 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {libraryHarness} from './helpers/large-library-harness.mjs';
 import {largeLibraryFixture} from './helpers/large-library-fixture.mjs';
-function setup(mobile=true){
- let media,listener;const h=libraryHarness(largeLibraryFixture(500),{configureCore(w){
+function setup(mobile=true,count=500){
+ let media,listener;const h=libraryHarness(largeLibraryFixture(count),{configureCore(w){
   const original=w.matchMedia.bind(w);media={matches:mobile,addEventListener(type,fn){listener=fn;}};
   w.matchMedia=query=>query==='(max-width: 650px)'?media:original(query);
  }});return {...h,resize(value){media.matches=value;listener();},setViewport(value){media.matches=value;},deliverChange(){listener();}};
 }
+test('background tasks share compact tools without losing node identity, open state or focus on resize',async()=>{
+ const {w,$,resize}=setup(true,2);try{
+  const tasks=$('background-tasks'),summary=tasks.querySelector('summary');
+  assert.equal(tasks.parentElement.id,'library-tools-content');
+  assert.equal($('library-tools').open,false);
+  $('library-tools').open=true;tasks.open=true;summary.focus();
+  for(let i=0;i<2;i++){
+   resize(false);assert.equal(tasks.parentElement.id,'library-list');assert.equal(tasks.nextElementSibling.id,'open-library-notebook');
+   assert.equal(w.document.activeElement,summary);assert.equal(tasks.open,true);
+   resize(true);assert.equal(tasks.parentElement.id,'library-tools-content');assert.equal($('library-tools').open,true);
+   assert.equal(w.document.activeElement,summary);assert.equal(tasks.open,true);
+  }
+ }finally{await w.happyDOM.close();}
+});
 test('mobile tools keep original nodes, edits, open state and focus through repeated desktop resize',async()=>{
  const {w,$,resize}=setup();try{
   const nodes=['open-library-notebook','library-options','library-pagination'].map($),backup=w.document.querySelector('.library-backup');
