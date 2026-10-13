@@ -21,10 +21,10 @@ function finishQuit(){
  if(quitting)return;
  quitting=true;
  clearTimeout(updateTimer);clearInterval(updateInterval);updater?.cancel();
- startupAbort.abort();server?.shutdown();
+ startupAbort.abort();const bridgeShutdown=server?.shutdown();
  const finish=()=>{if(quitReady)return;quitReady=true;app.quit();};
  const failSafe=setTimeout(finish,5000);
- Promise.allSettled([localMediaService?.shutdown(),captionHelper?.shutdown()]).finally(()=>{clearTimeout(failSafe);finish();});
+ Promise.allSettled([bridgeShutdown,localMediaService?.shutdown(),captionHelper?.shutdown()]).finally(()=>{clearTimeout(failSafe);finish();});
 }
 function ordinaryWebLink(value) {
   try { const url = new URL(value); return ['https:','http:'].includes(url.protocol) && !url.username && !url.password; } catch { return false; }
@@ -61,7 +61,7 @@ else {
       if(status.ready)captionService=createCaptionService({helper:captionHelper,readerDirectory,enabledProviders:['x']});
     }
     localMediaService=createLocalMediaService({userDataDirectory:app.getPath('userData'),readerDirectory});
-    server = await startBridge({port:PORT,readerDirectory,captionService,localMediaService});
+    server = await startBridge({port:PORT,readerDirectory,captionService,localMediaService,taskDirectory:path.join(app.getPath('userData'),'tasks')});
     if(startupAbort.signal.aborted){server.shutdown();return;}
     const origin = `http://127.0.0.1:${PORT}`;
     window = new BrowserWindow({width:1280,height:880,minWidth:780,minHeight:620,show:process.env.COCONUT_SMOKE_TEST !== '1',title:'Coconut',icon:windowIcon,

@@ -3,21 +3,23 @@
 import http from 'node:http';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
+import {homedir} from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { createProviders } from './providers.mjs';
 import { createTranslator } from './translation.mjs';
 import { createPodcastSources } from './podcast-sources.mjs';
+import {createTaskStore,TASK_BODY_BYTES} from './tasks.mjs';
 
 export const CAPABILITIES = Object.freeze({reader:true,local_agents:true,subscription_ask:true,subscription_translation:true,media_import:false,local_translation:false,podcast_import:true,caption_import:false});
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
-const ASSETS = new Map([['/','index.html'],...['index.html','app.js','summary.js','core.js','passages.js','passage-playback.js','quotation.js','library-store.js','appearance.js','indexeddb-document-adapter.js','storage-provider.js','storage-bootstrap.js','jobs.js','language.js','translation-review.js','podcasts.js','updates.js','style.css','coconut-mark.png'].map(name=>['/'+name,name])]);
+const ASSETS = new Map([['/','index.html'],...['index.html','app.js','summary.js','task-client.js','core.js','passages.js','passage-playback.js','quotation.js','library-store.js','appearance.js','indexeddb-document-adapter.js','storage-provider.js','storage-bootstrap.js','jobs.js','language.js','translation-review.js','podcasts.js','updates.js','style.css','coconut-mark.png'].map(name=>['/'+name,name])]);
 const MIME = {'.png':'image/png','.html':'text/html; charset=utf-8','.js':'text/javascript; charset=utf-8','.css':'text/css; charset=utf-8'};
 const MAX_BODY = 1024 * 1024;
 export const CSP = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self'; img-src 'self' data: blob:; media-src 'self' blob:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'";
 
-export function createBridge({readerDirectory = path.resolve(ROOT,'../reader'), providers = createProviders(), podcastSources = createPodcastSources(), captionService = null, localMediaService = null} = {}) {
+export function createBridge({readerDirectory = path.resolve(ROOT,'../reader'), providers = createProviders(), podcastSources = createPodcastSources(), captionService = null, localMediaService = null, taskStore = null, taskUnavailable = null} = {}) {
   const translate = createTranslator(providers);
-  const capabilities=Object.freeze({...CAPABILITIES,caption_import:captionService?.available===true});
+  const capabilities=Object.freeze({...CAPABILITIES,caption_import:captionService?.available===true,persistent_tasks:!!taskStore});
   const active = new Set();
   const server = http.createServer(async (req,res) => {
     for (const [key,value] of Object.entries({'X-Content-Type-Options':'nosniff','Referrer-Policy':'no-referrer','Cache-Control':'no-store',
@@ -38,6 +40,16 @@ export function createBridge({readerDirectory = path.resolve(ROOT,'../reader'), 
     try {
       if (localMediaService && await localMediaService.handle(req,res,pathname)) return;
       if (req.method === 'GET' || req.method === 'HEAD') {
+        if (pathname === '/api/v1/executor') return json(200,taskStore?.describe()||{protocolVersion:1,executor:{type:'local-node',online:true},supportedTaskKinds:['summary'],enabled:false,...(taskUnavailable?{unavailable:taskUnavailable}:{}),providers:{codex:{supported:true,availability:'not_checked'},claude:{supported:true,availability:'not_checked'}},remoteSubmission:false});
+        if (pathname === '/api/v1/tasks' || /^\/api\/v1\/tasks\/[a-f0-9-]+$/.test(pathname)) {
+          if(!taskStore)return json(503,{error:taskUnavailable?.message||'此执行器尚未配置持久任务目录',code:taskUnavailable?.code||'tasks_disabled'});
+          if(req.method!=='GET')return json(405,{error:'Method not allowed'});
+          if(pathname==='/api/v1/tasks'){
+            const key=new URL(req.url,origin).searchParams.get('submissionKey');
+            return json(200,{protocolVersion:1,...(key!==null?{task:await taskStore.findSubmission(key)}:{tasks:await taskStore.list()})});
+          }
+          return json(200,{protocolVersion:1,task:await taskStore.get(pathname.split('/').at(-1))});
+        }
         if (pathname === '/api/health') return json(200,{local_worker:false,runtime:'desktop-bridge',paid_processing:false,max_upload_bytes:0,capabilities});
         if (pathname === '/api/language-tools' && req.method === 'GET') return json(200,{translation_models:[],local_translation:false,capabilities,
           ai:{codex:await providers.status('codex',{signal:controller.signal}),claude:await providers.status('claude',{signal:controller.signal})}});
@@ -49,19 +61,27 @@ export function createBridge({readerDirectory = path.resolve(ROOT,'../reader'), 
       if (req.method !== 'POST') return json(405,{error:'Method not allowed'});
       // Cross-site HTML forms and opaque-origin pages must never start a local CLI.
       if (req.headers.origin !== origin) return json(403,{error:'发送请求必须来自此本机阅读器'});
-      if (!['/api/ask','/api/translate-subscription','/api/podcasts/discover','/api/podcasts/import','/api/podcasts/media','/api/captions/import'].includes(pathname)) return json(501,{error:'轻量版未启用视频站下载、ASR 或离线翻译。可使用公开播客源、字幕或本地音视频；完整本地处理服务为可选高级功能。'});
+      const taskRoute=pathname==='/api/v1/tasks'||/^\/api\/v1\/tasks\/[a-f0-9-]+\/cancel$/.test(pathname);
+      if (taskRoute&&!taskStore)return json(503,{error:taskUnavailable?.message||'此执行器尚未配置持久任务目录',code:taskUnavailable?.code||'tasks_disabled'});
+      if (!taskRoute&&!['/api/ask','/api/translate-subscription','/api/podcasts/discover','/api/podcasts/import','/api/podcasts/media','/api/captions/import'].includes(pathname)) return json(501,{error:'轻量版未启用视频站下载、ASR 或离线翻译。可使用公开播客源、字幕或本地音视频；完整本地处理服务为可选高级功能。'});
       if (req.headers['content-type']?.split(';')[0] !== 'application/json') return json(400,{error:'Use application/json'});
+      const limit=taskRoute?TASK_BODY_BYTES:MAX_BODY;
       const declared = req.headers['content-length'];
-      if (declared && (!/^\d+$/.test(declared) || Number(declared) > MAX_BODY)) { req.resume(); return json(413,{error:'请求过大'}); }
+      if (declared && (!/^\d+$/.test(declared) || Number(declared) > limit)) { req.resume(); return json(413,{error:'请求过大'}); }
       const chunks = []; let bytes = 0;
       for await (const chunk of req) {
         bytes += chunk.length;
-        if (bytes > MAX_BODY) { json(413,{error:'请求过大'}); return; }
+        if (bytes > limit) { json(413,{error:'请求过大'}); return; }
         chunks.push(chunk);
       }
       let data;
       try { data = JSON.parse(Buffer.concat(chunks).toString('utf8')); } catch { return json(400,{error:'请求 JSON 无效'}); }
       if (!data || typeof data !== 'object' || Array.isArray(data)) return json(400,{error:'请求 JSON 无效'});
+      if(taskRoute){
+        if(data.protocolVersion!==1)return json(400,{error:'任务协议版本无效',code:'invalid_request'});
+        if(pathname.endsWith('/cancel'))return json(200,{protocolVersion:1,task:await taskStore.cancel(pathname.split('/').at(-2))});
+        const receipt=await taskStore.submit(data);return json(receipt.created?202:200,{protocolVersion:1,...receipt});
+      }
       if(pathname === '/api/captions/import'){
         if(!capabilities.caption_import)return json(501,{error:'此版本尚未启用内置视频字幕获取，可导入已有字幕；不会启动识别或下载模型'});
         return json(200,await captionService.importCaption(data,{signal:controller.signal}));
@@ -78,29 +98,37 @@ export function createBridge({readerDirectory = path.resolve(ROOT,'../reader'), 
       if (pathname === '/api/ask') return json(200,await providers.ask(data,{signal:controller.signal}));
       return json(200,{translations:await translate(data,{signal:controller.signal})});
     } catch (error) {
-      return json(error.code === 'ENOENT' ? 404 : 400,{error:error.code === 'ENOENT' ? 'File not found' : String(error.message || '请求未完成').slice(0,300)});
+      return json(error.status|| (error.code === 'ENOENT' ? 404 : 400),{...(error.taskCode?{code:error.taskCode}:{}),error:error.code === 'ENOENT' ? 'File not found' : String(error.message || '请求未完成').slice(0,300)});
     }
   });
   server.requestTimeout = 30000; server.headersTimeout = 10000;
-  server.on('close',()=>{ for (const controller of active) controller.abort(); active.clear(); });
+  server.on('close',()=>{ for (const controller of active) controller.abort(); active.clear();void taskStore?.shutdown().catch(()=>{}); });
   // Abort synchronously before Electron exits: detached CLI process groups must
   // not outlive the app while waiting for a later HTTP close event.
   server.shutdown = callback => {
     for (const controller of active) controller.abort();
-    active.clear(); server.close(callback); server.closeAllConnections();
+    active.clear(); const stopping=taskStore?.shutdown()||Promise.resolve();
+    server.close(error=>void stopping.then(()=>callback?.(error),failure=>callback?.(failure))); server.closeAllConnections();
+    return stopping;
   };
   return server;
 }
-export async function startBridge({port = 8080, ...options} = {}) {
+export async function startBridge({port = 8080, taskDirectory = null, ...options} = {}) {
   if (!Number.isInteger(port) || port < 0 || port > 65535) throw new Error('Invalid port');
+  if(taskDirectory){
+    options.providers??=createProviders();
+    try{options.taskStore=await createTaskStore({directory:taskDirectory,providers:options.providers,readerDirectory:options.readerDirectory});}
+    catch(error){options.taskStore=null;options.taskUnavailable={code:error.taskCode||'store_unavailable',message:'持久任务存储不可用，请检查本机任务目录；阅读与现有前台功能仍可使用。'};}
+  }
   const server = createBridge(options);
-  await new Promise((resolve,reject)=>{server.once('error',reject);server.listen(port,'127.0.0.1',resolve);});
+  try{await new Promise((resolve,reject)=>{server.once('error',reject);server.listen(port,'127.0.0.1',resolve);});}
+  catch(error){await options.taskStore?.shutdown();throw error;}
   return server;
 }
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const args = process.argv.slice(2);
   if (args.length && (args.length !== 2 || args[0] !== '--port')) { console.error('Usage: node desktop/server.mjs [--port 8080]'); process.exit(1); }
-  const server = await startBridge({port:args.length ? Number(args[1]) : 8080});
+  const server = await startBridge({port:args.length ? Number(args[1]) : 8080,taskDirectory:path.join(homedir(),'.coconut','tasks')});
   console.log(`Coconut 轻量阅读器：http://127.0.0.1:${server.address().port}（不需要 Python；未发起模型请求）`);
   const stop = () => server.shutdown();
   process.on('SIGINT',stop); process.on('SIGTERM',stop);

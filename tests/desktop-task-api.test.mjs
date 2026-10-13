@@ -1,0 +1,97 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+import http from 'node:http';
+import {createRequire} from 'node:module';
+import {startBridge} from '../desktop/server.mjs';
+const require=createRequire(import.meta.url),Tasks=require('../reader/task-client.js');
+const doc={key:'authored',segments:[{id:'a',text:'One authored source.'}],notes:{a:'Private reading note'}};
+const input=()=>Tasks.submission(doc,{revision:'lifetime-1/rev-1',provider:'codex',idempotencyKey:'author-intent-1',consent:true});
+const deferred=()=>{let resolve;return {promise:new Promise(r=>{resolve=r;}),resolve:value=>resolve(value)};};
+async function setup(t,{ask=async()=>({answer:'Summary',citations:['a']})}={}){
+ const directory=await fs.mkdtemp(path.join(os.tmpdir(),'coconut-task-api-')),calls=[];
+ const providers={ask:async(data,options)=>{calls.push({data,options});return ask(data,options);},status:()=>{throw new Error('Unexpected CLI status probe');}};
+ const server=await startBridge({port:0,taskDirectory:directory,providers});
+ t.after(async()=>{await new Promise(resolve=>server.shutdown(resolve));await fs.rm(directory,{recursive:true,force:true});});
+ const origin=`http://127.0.0.1:${server.address().port}`;
+ const request=(relative,options)=>fetch(origin+'/'+relative,{...options,headers:{...options?.headers,Origin:origin}});
+ return {directory,server,origin,calls,client:Tasks.createClient({fetch:request})};
+}
+async function until(client,id,status){for(let i=0;i<100;i++){const {task}=await client.get(id);if(task.status===status)return task;await new Promise(r=>setTimeout(r,5));}throw new Error('Task did not become '+status);}
+
+test('executor capability describes support separately from unchecked provider availability without inference',async t=>{
+ const {client,calls,origin}=await setup(t);const capability=await client.describe();
+ assert.equal(capability.protocolVersion,1);assert.equal(capability.enabled,true);assert.equal(capability.executor.online,true);assert.deepEqual(capability.supportedTaskKinds,['summary']);
+ assert.equal(capability.providers.codex.availability,'not_checked');assert.equal(capability.remoteSubmission,false);assert.equal(calls.length,0);
+ assert.equal((await fetch(origin+'/task-client.js')).status,200);
+});
+
+test('disconnect after submit does not cancel; a fresh client queries by key and safely accepts exact revision',async t=>{
+ const gate=deferred(),{client,calls,origin}=await setup(t,{ask:()=>gate.promise}),value=input();
+ const controller=new AbortController();const receipt=await client.submit(value,{signal:controller.signal});controller.abort();
+ await until(client,receipt.task.taskId,'running');assert.equal(calls[0].options.signal.aborted,false);
+ const refreshed=Tasks.createClient({fetch:(relative,options)=>fetch(origin+'/'+relative,{...options,headers:{...options?.headers,Origin:origin}})});
+ const found=await refreshed.findSubmission(value.idempotencyKey);assert.equal(found.task.taskId,receipt.task.taskId);
+ const duplicate=await refreshed.submit(value);assert.equal(duplicate.created,false);assert.equal(calls.length,1);
+ gate.resolve({answer:'Summary',citations:['a']});const done=await until(refreshed,receipt.task.taskId,'succeeded');
+ const before=JSON.stringify(doc),answer=Tasks.resultFor(done,doc,'lifetime-1/rev-1');assert.equal(answer.answer,'Summary');assert.equal(JSON.stringify(doc),before);
+ for(const [document,revision] of [[{...doc,key:'other'},'lifetime-1/rev-1'],[doc,'lifetime-2/rev-1'],[{...doc,segments:[{id:'a',text:'Newer draft.'}]},'lifetime-1/rev-1']])assert.equal(Tasks.resultFor(done,document,revision),null);
+ assert.equal(calls[0].data.segments[0].text,'One authored source.');assert.ok(!JSON.stringify(calls[0].data).includes('Private reading note'));
+});
+
+test('unknown submission receipt is exposed without automatic resubmit or new idempotency key',async()=>{
+ let calls=0;const client=Tasks.createClient({fetch:async()=>{calls++;throw new TypeError('Network lost');}});
+ await assert.rejects(client.submit(input()),error=>error.outcomeUnknown===true&&error.idempotencyKey==='author-intent-1');assert.equal(calls,1);
+});
+
+test('cancel API distinguishes durable request from settled cancellation; late result is discarded',async t=>{
+ const gate=deferred(),{client,calls}=await setup(t,{ask:()=>gate.promise}),receipt=await client.submit(input());await until(client,receipt.task.taskId,'running');
+ const cancelled=await client.cancel(receipt.task.taskId);assert.equal(cancelled.task.status,'cancel_requested');assert.equal(cancelled.task.cancellation.executionSettled,false);assert.equal(calls[0].options.signal.aborted,true);
+ gate.resolve({answer:'Late',citations:['a']});const final=await until(client,receipt.task.taskId,'cancelled');assert.equal(final.result,undefined);assert.equal(final.cancellation.executionSettled,true);
+});
+
+test('versioned task mutations preserve existing host, origin and JSON boundaries',async t=>{
+ const {client,origin,calls,server}=await setup(t);
+ for(const endpoint of ['/api/v1/tasks','/api/v1/tasks/00000000-0000-4000-8000-000000000000/cancel']){
+  for(const Origin of [undefined,'null','https://example.org'])assert.equal((await fetch(origin+endpoint,{method:'POST',headers:{'Content-Type':'application/json',...(Origin?{Origin}: {})},body:JSON.stringify(input())})).status,403);
+  assert.equal((await fetch(origin+endpoint,{method:'POST',headers:{Origin:origin,'Content-Type':'text/plain'},body:'{}'})).status,400);
+ }
+ assert.equal((await fetch(origin+'/api/v1/tasks',{headers:{Origin:'https://example.org'}})).status,403);
+ const wrong=await new Promise((resolve,reject)=>{const request=http.get({host:'127.0.0.1',port:server.address().port,path:'/api/v1/executor',headers:{Host:'attacker.example'}},res=>{res.resume();resolve(res.statusCode);});request.on('error',reject);});assert.equal(wrong,403);
+ assert.equal(calls.length,0);assert.deepEqual((await client.list()).tasks,[]);
+});
+
+test('existing foreground ask still cancels on connection close and never creates background tasks',async t=>{
+ const gate=deferred(),{client,origin,calls}=await setup(t,{ask:()=>gate.promise});
+ const controller=new AbortController(),pending=fetch(origin+'/api/ask',{method:'POST',headers:{Origin:origin,'Content-Type':'application/json'},body:JSON.stringify({consent:true,question:'Question',provider:'codex',language:'en',segments:doc.segments}),signal:controller.signal}).catch(()=>{});
+ for(let i=0;!calls.length&&i<100;i++)await new Promise(r=>setTimeout(r,5));assert.equal(calls.length,1);controller.abort();await pending;
+ for(let i=0;!calls[0].options.signal.aborted&&i<100;i++)await new Promise(r=>setTimeout(r,5));assert.equal(calls[0].options.signal.aborted,true);assert.deepEqual((await client.list()).tasks,[]);gate.resolve({answer:'Late',citations:['a']});
+});
+
+test('lost ACK after server acceptance is recovered with the same key and never executes twice',async t=>{
+ const gate=deferred(),{client,origin,calls}=await setup(t,{ask:()=>gate.promise});
+ const unreliable=Tasks.createClient({fetch:async(relative,options)=>{await fetch(origin+'/'+relative,{...options,headers:{...options.headers,Origin:origin}});throw new TypeError('ACK lost');}});
+ await assert.rejects(unreliable.submit(input()),error=>error.outcomeUnknown===true);
+ const found=await client.findSubmission(input().idempotencyKey);assert.ok(found.task.taskId);await until(client,found.task.taskId,'running');
+ assert.equal((await client.submit(input())).task.taskId,found.task.taskId);assert.equal(calls.length,1);gate.resolve({answer:'Summary',citations:['a']});await until(client,found.task.taskId,'succeeded');
+});
+
+test('unreadable task storage disables tasks but preserves independent reader and foreground endpoints',async t=>{
+ const directory=await fs.mkdtemp(path.join(os.tmpdir(),'coconut-task-unavailable-'));await fs.writeFile(path.join(directory,'tasks.json'),'truncated');
+ const server=await startBridge({port:0,taskDirectory:directory,providers:{ask:async()=>({answer:'Foreground remains available',citations:['a']})}});
+ t.after(async()=>{await new Promise(resolve=>server.shutdown(resolve));await fs.rm(directory,{recursive:true,force:true});});const origin=`http://127.0.0.1:${server.address().port}`;
+ assert.equal((await fetch(origin+'/')).status,200);const descriptor=await fetch(origin+'/api/v1/executor').then(r=>r.json());assert.equal(descriptor.enabled,false);assert.equal(descriptor.unavailable.code,'store_unavailable');assert.equal((await fetch(origin+'/api/v1/tasks')).status,503);
+ const foreground=await fetch(origin+'/api/ask',{method:'POST',headers:{Origin:origin,'Content-Type':'application/json'},body:JSON.stringify({consent:true})});assert.equal(foreground.status,200);
+ assert.equal(await fs.readFile(path.join(directory,'tasks.json'),'utf8'),'truncated');
+});
+
+test('packaged task runner resolves summary code from its explicit reader resource directory',async t=>{
+ const {createTaskStore}=await import('../desktop/tasks.mjs'),directory=await fs.mkdtemp(path.join(os.tmpdir(),'coconut-task-package-')),reader=path.join(directory,'resources','reader');await fs.mkdir(reader,{recursive:true});
+ await fs.copyFile(new URL('../reader/summary.js',import.meta.url),path.join(reader,'summary.js'));await fs.copyFile(new URL('../reader/package.json',import.meta.url),path.join(reader,'package.json'));
+ const store=await createTaskStore({directory:path.join(directory,'tasks'),readerDirectory:reader,providers:{ask:async()=>({answer:'Packaged summary',citations:['a']})}});
+ t.after(async()=>{await store.shutdown();await fs.rm(directory,{recursive:true,force:true});});const receipt=await store.submit(input());
+ for(let i=0;i<100&&(await store.get(receipt.task.taskId)).status!=='succeeded';i++)await new Promise(r=>setTimeout(r,5));assert.equal((await store.get(receipt.task.taskId)).result.answer,'Packaged summary');
+ const packaging=await fs.readFile(new URL('../desktop/package.mjs',import.meta.url),'utf8');assert.match(packaging,/'tasks\.mjs'/);assert.match(packaging,/'task-client\.js'/);
+});
