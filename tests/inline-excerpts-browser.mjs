@@ -1,7 +1,8 @@
 /** CI-only real Chromium acceptance for inline exact-excerpt recall.
  * Sources, paired translations, notes and the local PCM tone are authored
  * fixtures. Only loopback reads are permitted; no model, account, external
- * source, recording, user's browser or host clipboard is used. Local runners
+ * source, recording or user's browser is used. Happy-path copy writes and reads
+ * authored text through the real isolated CI Chromium clipboard. Local runners
  * may use node --check; a syntax check is not browser acceptance evidence.
  */
 import assert from 'node:assert/strict';
@@ -11,12 +12,13 @@ import os from 'node:os';
 import {createHash} from 'node:crypto';
 import {createRequire} from 'node:module';
 import {chromium, expect, waitForPersistedLibrary} from './helpers/browser-storage.mjs';
+import {openLibraryTools} from './helpers/library-tools-browser.mjs';
 import {authoredAudioFixture} from './helpers/authored-audio-fixture.mjs';
 import {startBridge} from '../desktop/server.mjs';
 
 if (!process.env.CI) throw new Error('Inline excerpt browser acceptance is CI-only; use node --check locally.');
 
-const require = createRequire(import.meta.url), C = require('../reader/core.js'), P = require('../reader/passages.js');
+const require = createRequire(import.meta.url), C = require('../reader/core.js'), P = require('../reader/passages.js'), Q = require('../reader/quotation.js');
 const checks = [], errors = [], geometry = [], screenshots = [];
 let server, browser, directory, diagnosticPage, stage = 'setup', external = 0, mutations = 0, providers = 0;
 const check = (name, passed) => {assert.ok(passed, name); checks.push(name);};
@@ -96,6 +98,14 @@ async function activate(page, selector) {
   const node = page.locator(selector); await node.waitFor({state: 'visible'});
   await node.evaluate(node => node.focus({preventScroll: true}));
   await page.keyboard.press('Enter'); await frames(page);
+}
+async function prepareNativeClipboard(page, label) {
+  // Overwrite first, so readback can only inspect this run's authored data.
+  // A missing permission/API is a CI failure, never a mock fallback or skip.
+  await page.evaluate(async label => {
+    if (!navigator.clipboard || navigator.clipboard !== window.__savedCopyNative) throw Error('Native clipboard was not restored');
+    await navigator.clipboard.writeText('Authored clipboard sentinel: ' + label);
+  }, label);
 }
 async function position(page, selector) {
   await page.locator(selector).evaluate(node => window.scrollBy({top: node.getBoundingClientRect().top - 120, behavior: 'instant'}));
@@ -222,6 +232,7 @@ try {
   for (const [label, viewport] of [['desktop', {width: 1360, height: 1000}], ['390', {width: 390, height: 844}]]) {
     stage = label + '_setup';
     const context = await browser.newContext({viewport, acceptDownloads: true, serviceWorkers: 'block'});
+    await context.grantPermissions(['clipboard-read', 'clipboard-write'], {origin});
     await context.route('**/*', async route => {
       const request = route.request(), url = new URL(request.url());
       if (!['GET', 'HEAD'].includes(request.method())) {mutations++; return route.abort();}
@@ -230,6 +241,23 @@ try {
     });
     await context.addInitScript(() => {
       window.__inlineAudit = {plays: 0, seeks: 0, scroll: []};
+      // Native clipboard remains untouched for every success assertion. Only
+      // the explicitly labeled denial/delay scenarios install this fault double.
+      const descriptor = Object.getOwnPropertyDescriptor(navigator, 'clipboard');
+      window.__savedCopyNative = navigator.clipboard;
+      window.__savedCopy = {writes: [], reads: 0, legacy: 0, reject: false, hold: false, finish: null};
+      window.__injectSavedCopyFault = () => Object.defineProperty(navigator, 'clipboard', {configurable: true, value: {
+        async writeText(text) {
+          const copy = window.__savedCopy; copy.writes.push(String(text));
+          if (copy.hold) await new Promise((resolve, reject) => {copy.finish = {resolve, reject};});
+          if (copy.reject) throw new DOMException('Authored denied clipboard', 'NotAllowedError');
+        },
+        async readText() {window.__savedCopy.reads++; throw Error('Unexpected app clipboard read during injected fault');},
+        async read() {window.__savedCopy.reads++; throw Error('Unexpected app clipboard read during injected fault');},
+      }});
+      window.__restoreSavedCopyNative = () => {if (descriptor) Object.defineProperty(navigator, 'clipboard', descriptor); else delete navigator.clipboard;};
+      const exec = document.execCommand.bind(document);
+      document.execCommand = (command, ...args) => {if (String(command).toLowerCase() === 'copy') {window.__savedCopy.legacy++; return false;} return exec(command, ...args);};
       document.addEventListener('play', () => window.__inlineAudit.plays++, true);
       document.addEventListener('seeking', () => window.__inlineAudit.seeks++, true);
     });
@@ -285,6 +313,20 @@ try {
     await expect(page.locator(itemSelector('paired') + ' .reading-excerpt-details')).toContainText(authored.title);
     await capture(page, label + '-paired-evidence');
     await page.keyboard.press('Enter'); await page.keyboard.press('Tab');
+    const copyButton = itemSelector('paired') + ' .saved-excerpt-copy button';
+    await expect(page.locator(copyButton)).toBeFocused();
+    await keyboardGeometry(page, copyButton, label + '_saved_copy');
+    await prepareNativeClipboard(page, label + '_first_copy');
+    await page.keyboard.press('Enter');
+    await expect(page.locator(itemSelector('paired') + ' .saved-excerpt-copy [role="status"]')).toContainText('已复制');
+    const savedCitation = await page.evaluate(() => navigator.clipboard.readText());
+    assert.equal(savedCitation, Q.savedAttribution(pair, C));
+    check(label + '_native_clipboard_write_readback_matches_complete_saved_citation', true);
+    check(label + '_saved_copy_contains_exact_snapshot_and_bilingual_evidence', savedCitation.startsWith(pair.text + '\n\n—— ' + authored.title) &&
+      savedCitation.includes(pair.translation.text) && savedCitation.includes('Authored fixture; no model') && savedCitation.includes(createdAt) &&
+      savedCitation.includes('本地原始媒体') && savedCitation.includes('不等于译文人工核对') && !savedCitation.includes(authored.exact_excerpt_notes.paired));
+    await expect(page.locator(copyButton)).toBeFocused();
+    await page.keyboard.press('Tab');
     await expect(page.locator(itemSelector('paired') + ' .reading-excerpt-edit')).toBeFocused();
     await keyboardGeometry(page, itemSelector('paired') + ' .reading-excerpt-edit', label + '_edit');
     await page.locator('#reading-excerpts-next').click();
@@ -297,6 +339,37 @@ try {
     await closeInline(page, label + '_continuous_escape', true);
     assert.deepEqual(await saved(page, key), baseline);
     check(label + '_recall_and_pagination_are_read_only', true);
+
+    stage = label + '_injected_saved_copy_clipboard_failure';
+    await openInline(page, passageOpen);
+    await page.evaluate(() => {window.__injectSavedCopyFault(); window.__savedCopy.reject = true;});
+    await activate(page, copyButton);
+    const copyPreview = page.locator(itemSelector('paired') + ' .saved-excerpt-copy-preview');
+    await expect(copyPreview).toBeFocused(); await expect(copyPreview).toHaveValue(savedCitation);
+    await expect(page.locator(itemSelector('paired') + ' .saved-excerpt-copy [role="status"]')).toContainText('未能自动复制');
+    await page.keyboard.press('Control+a');
+    check(label + '_injected_failure_retains_complete_readonly_selected_plain_text', await copyPreview.evaluate(node => node.readOnly &&
+      node.selectionStart === 0 && node.selectionEnd === node.value.length && node.getAttribute('aria-label').includes('完整引用与出处')));
+    await page.keyboard.press('x'); await expect(copyPreview).toHaveValue(savedCitation);
+    await modalGeometry(page, label + '_manual_copy'); await capture(page, label + '-saved-copy-fallback');
+    await closeInline(page, label + '_copy_failure_return');
+    await page.evaluate(() => {window.__savedCopy.reject = false; window.__savedCopy.hold = true;});
+    await openInline(page, passageOpen); await activate(page, copyButton);
+    const pendingCount = await page.evaluate(() => window.__savedCopy.writes.length);
+    await expect(page.locator(copyButton)).toBeDisabled(); await page.keyboard.press('Enter');
+    check(label + '_injected_pending_duplicate_writes_are_suppressed', await page.evaluate(() => window.__savedCopy.writes.length) === pendingCount);
+    await closeInline(page, label + '_pending_copy_return');
+    await openInline(page, passageOpen);
+    await page.evaluate(() => {window.__savedCopy.hold = false; window.__savedCopy.finish.reject(Error('Authored late denial'));});
+    await frames(page);
+    await expect(page.locator('#reading-excerpts-heading')).toBeFocused();
+    await expect(page.locator(itemSelector('paired') + ' .saved-excerpt-copy [role="status"]')).toHaveText('');
+    await expect(page.locator('.saved-excerpt-copy-preview')).toHaveCount(0);
+    check(label + '_injected_late_copy_result_does_not_reopen_or_steal_new_view_focus', true);
+    await closeInline(page, label + '_late_copy_return');
+    await page.evaluate(() => window.__restoreSavedCopyNative());
+    check(label + '_native_clipboard_restored_after_injected_faults', await page.evaluate(() => navigator.clipboard === window.__savedCopyNative));
+    assert.deepEqual(await saved(page, key), baseline);
 
     stage = label + '_nested_note_late_real_receipt';
     await openInline(page, passageOpen);
@@ -440,6 +513,7 @@ try {
       doc.exact_excerpt_notes = {paired: doc.exact_excerpt_notes.paired};
       doc.segments[0].text = 'A deliberately revised current source, unlike the saved historical words.';
       doc.segments[0].translations.zh.text = '已经变化的当前译文';
+      doc.title = 'Changed current title'; doc.source_url = 'https://youtu.be/changed-current';
       queueDocument(doc); render();
     }, {key, records: baseline.exact_excerpts});
     await saved(page, key); await openInline(page, passageOpen);
@@ -449,6 +523,10 @@ try {
     await page.locator(itemSelector('paired') + ' .reading-excerpt-details > summary').click();
     await expect(page.locator(itemSelector('paired') + ' .reading-excerpt-content').first()).toHaveText(pair.text);
     await expect(page.locator(itemSelector('paired') + ' .reading-excerpt-content').nth(1)).toContainText(pair.translation.text);
+    await prepareNativeClipboard(page, label + '_changed_source');
+    await activate(page, copyButton);
+    await expect(page.locator(itemSelector('paired') + ' .saved-excerpt-copy [role="status"]')).toContainText('已复制');
+    check(label + '_native_clipboard_retains_historical_citation_after_source_changes', await page.evaluate(() => navigator.clipboard.readText()) === savedCitation);
     await capture(page, label + '-historical-paired-snapshot');
     await closeInline(page, label + '_stale_snapshot_return');
     await page.evaluate(key => {const doc = state.documents.find(doc => doc.key === key); doc.segments.splice(1, 1); queueDocument(doc); render();}, key);
@@ -459,6 +537,15 @@ try {
     await closeInline(page, label + '_missing_snapshot_return');
     assert.deepEqual((await saved(page, key)).exact_excerpts, baseline.exact_excerpts);
     check(label + '_historical_snapshot_bytes_survive_source_changes', true);
+    await openLibraryTools(page);
+    await page.locator('#open-library-notebook').click();
+    const historicalRow = page.locator('#notebook-captures > li').filter({has: page.locator('.notebook-paired-translation')});
+    await expect(historicalRow).toHaveCount(1); await expect(historicalRow.locator('.notebook-open')).toBeDisabled();
+    await prepareNativeClipboard(page, label + '_notebook_deleted_source');
+    await historicalRow.locator('.saved-excerpt-copy button').click();
+    await expect(historicalRow.locator('.saved-excerpt-copy [role="status"]')).toContainText('已复制');
+    check(label + '_native_notebook_clipboard_retains_citation_after_source_cue_deletion', await page.evaluate(() => navigator.clipboard.readText()) === savedCitation);
+    await page.locator('#notebook-close').click();
     stage = label + '_rerender_fallback_remains_keyboard_reachable';
     await openInline(page, passageOpen);
     await page.evaluate(() => render());
@@ -467,7 +554,7 @@ try {
     const fallback = page.locator(passage + ' .passage-original .passage-cue[data-cue-id="cue-0"]');
     await expect(fallback).toBeFocused();
     check(label + '_rerendered_reader_returns_to_a_focusable_original_cue', await fallback.evaluate(node => node.tabIndex === -1 && node.childElementCount === 0));
-    check(label + '_no_playback_model_external_requests_or_browser_errors', await page.evaluate(() => window.__inlineAudit.plays === 0 && window.__inlineAudit.seeks === 0) && external === 0 && mutations === 0 && providers === 0 && errors.length === 0);
+    check(label + '_no_playback_model_external_requests_injected_fault_reads_or_browser_errors', await page.evaluate(() => window.__inlineAudit.plays === 0 && window.__inlineAudit.seeks === 0 && window.__savedCopy.reads === 0 && window.__savedCopy.legacy === 0) && external === 0 && mutations === 0 && providers === 0 && errors.length === 0);
     await context.close(); diagnosticPage = null;
   }
   await report('passed');

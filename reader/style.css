@@ -1246,6 +1246,10 @@ body[data-short-reading-compact="true"] #language-panel { margin-top: 8px; }
 .reading-excerpt-translation { color: var(--muted); }
 .reading-excerpt-details > summary { cursor: pointer; min-height: 44px; padding: 10px 0; font-size: 12px; }
 .reading-excerpts-dialog button { min-height: 44px; }
+.saved-excerpt-copy button { min-width: 44px; min-height: 44px; }
+.saved-excerpt-copy button[aria-disabled="true"] { opacity: .5; cursor: progress; }
+.saved-excerpt-copy .hint:empty { display: none; }
+.saved-excerpt-copy-preview { display: block; box-sizing: border-box; width: 100%; max-width: 100%; min-height: 160px; resize: vertical; white-space: pre-wrap; overflow-wrap: anywhere; }
 .reading-excerpts-dialog nav { align-items: center; flex-wrap: wrap; }
 #reading-excerpts-close { width: 100%; }
 

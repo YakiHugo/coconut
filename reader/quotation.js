@@ -41,7 +41,7 @@
   const label=value=>String(value??'').replace(/\r/g,'\\r').replace(/\n/g,'\\n');
   const demo=doc.provenance?.kind==='authored_demo';
   const timed=demo?'':core.source(doc.source_url,quote.start);
-  const origin=demo?'':doc.podcast_source?(core.podcastURL(doc.source_url)||core.podcastURL(doc.podcast_source.feed_url)):'';
+  const origin=demo?'':doc.podcast_source?(core.podcastURL(doc.source_url)||core.podcastURL(doc.podcast_source.feed_url)||(doc.podcast_source.kind==='direct_media'?core.podcastURL(doc.podcast_source.media_url):'')):'';
   const location=demo?'自写演示内容（无对应音视频）':timed?'来源：'+timed:origin?'来源：'+origin+'（按时间手动定位）':doc.local_media_source||doc.source_media?'本地原始媒体（无原站链接，请按文字稿时间定位）':'未关联原站链接或媒体（仅文字稿时间定位）';
   const corrected=quote.parts.some(({cue})=>cue.original_text!==undefined&&cue.original_text!==cue.text);
   return {title:label(doc.title),range:stamp(quote.start)+'–'+stamp(quote.end),corrected,location};
@@ -49,6 +49,21 @@
  function attribution(doc,quote,core){
   const details=attributionDetails(doc,quote,core);
   return quote.text+'\n\n—— '+details.title+' · '+details.range+(details.corrected?' · 已修正文字稿':'')+'\n'+details.location;
+ }
+ // Saved excerpts own their evidence. Never accept a live document here: title,
+ // links, original words and bilingual provenance must all come from the capture.
+ function savedAttribution(record,core){
+  const parts=core.exactExcerptParts(record),quote={text:record.text,parts,start:parts[0].cue.start,end:Math.max(...parts.map(part=>part.cue.end))};
+  let text=attribution(core.exactExcerptSource(record),quote,core)+'\n选取时快照 · 摘录时间：'+record.created_at+'\n时间按文字稿片段定位，并非逐字时间。';
+  const paired=core.exactExcerptTranslation(record);
+  if(paired){
+   const translated=core.exactExcerptTranslationParts(record),labels={'user-authored':'用户自写','human-reviewed':'已有人工核对','machine':'机器生成，需核对'};
+   text+='\n\n选取时译文（'+paired.language+'）：\n'+paired.text+'\n译文时间：'+stamp(translated[0].cue.start)+'–'+stamp(Math.max(...translated.map(part=>part.cue.end)))+'（按原片段定位）'+
+    '\n初始来源：'+paired.providers.join('、')+' · '+paired.reviewStates.map(value=>labels[value]||value).join('、')+
+    '\n译文生成时间：未记录。配对确认时间：'+paired.confirmedAt+'\n原文与译文分别选取；用户确认两段对应，不等于译文人工核对。'+
+    (paired.qualityWarnings.length?'\n选取时质量提示：'+core.translationQualityMessage({quality_warnings:paired.qualityWarnings}):'');
+  }
+  return text;
  }
  // Chromium can focus readonly textareas while leaving native arrow selection
  // inert. Own only the documented horizontal selection and document-edge keys;
@@ -213,5 +228,5 @@
    button.onclick=event=>{const selection=root.getSelection(),live=selection&&selection.rangeCount&&!selection.isCollapsed;const captured=!live&&event.detail>0&&pointer?.button===button?pointer:capture(binding);pointer=null;open(binding,captured);};
   }};
  }
- const api={compose,slice,domSelection,inputOffset,stamp,attribution,attributionDetails,selectionOffsets,moveSelection,create};if(typeof module!=='undefined'&&module.exports)module.exports=api;else root.CoconutQuotation=api;
+ const api={compose,slice,domSelection,inputOffset,stamp,attribution,attributionDetails,savedAttribution,selectionOffsets,moveSelection,create};if(typeof module!=='undefined'&&module.exports)module.exports=api;else root.CoconutQuotation=api;
 })(typeof window!=='undefined'?window:globalThis);
