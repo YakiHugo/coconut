@@ -6,6 +6,7 @@ import os from 'node:os';
 import {fileURLToPath} from 'node:url';
 import {_electron as electron} from '@playwright/test';
 import {installStorageAssertions,readerReady} from './helpers/browser-storage.mjs';
+import {runNativeUpdateFixture} from './helpers/native-update-diagnostics.mjs';
 const root=fileURLToPath(new URL('../',import.meta.url)),temporary=await fs.mkdtemp(path.join(os.tmpdir(),'coconut-update-ui-'));
 const {version}=JSON.parse(await fs.readFile(path.join(root,'desktop/package.json'),'utf8'));
 let application;
@@ -14,20 +15,26 @@ async function nativeReady(page){
  await page.waitForFunction(()=>typeof window.coconutPrepareUpdate==='function'&&typeof window.coconutPrepareClose==='function');
  assert.equal(await page.evaluate(()=>window.CoconutStorageBootstrap.result.backend),'indexeddb','native update journeys use the default production IndexedDB backend');
 }
-try{
+await runNativeUpdateFixture({getApplication:()=>application,run:async mark=>{
+ mark('create-profile');
  const profile=path.join(temporary,'profile'),home=path.join(temporary,'home');await fs.mkdir(home);
- const launch=async()=>{
+ const launch=async(label)=>{
+  mark(label+':launch');
   application=await electron.launch({executablePath:path.join(root,'desktop/node_modules/electron/dist/Electron.app/Contents/MacOS/Electron'),args:[path.join(root,'desktop'),'--user-data-dir='+profile],chromiumSandbox:true,
    env:{HOME:home,TMPDIR:temporary,PATH:'/usr/bin:/bin'},timeout:45000});
-  const page=await application.firstWindow();await page.waitForLoadState('domcontentloaded');await installStorageAssertions(page);await nativeReady(page);return page;
+  mark(label+':first-window');
+  const page=await application.firstWindow();await page.waitForLoadState('domcontentloaded');
+  mark(label+':storage-ready');
+  await installStorageAssertions(page);await nativeReady(page);return page;
  };
- let page=await launch();await page.locator('#app-updates > summary').click();
+ let page=await launch('initial');mark('update-settings');await page.locator('#app-updates > summary').click();
  assert.ok((await page.locator('#update-version').textContent()).includes(version));
  assert.equal(await page.evaluate(()=>typeof require==='undefined'&&typeof process==='undefined'),true);
  assert.equal(await page.evaluate(()=>coconutPrepareUpdate()),true);
  await page.locator('#update-developer').check();
  await page.waitForFunction(()=>document.getElementById('update-status').textContent.includes('已启用'));
  assert.equal(JSON.parse(await fs.readFile(path.join(profile,'updates/settings.json'),'utf8')).developer,true);
+ mark('unsaved-and-busy-guards');
  // Confirm every important unsaved/busy condition blocks restart.
  for(const expression of [
   `document.getElementById('audio-bookmark-time').value='12:34'`,
@@ -45,9 +52,11 @@ try{
   await page.evaluate(expression);assert.equal(await page.evaluate(()=>coconutPrepareUpdate()),false,expression);
   await page.evaluate(()=>{document.getElementById('audio-bookmark-form').reset();document.getElementById('ai-question').value='';document.getElementById('translation-glossary').value='';document.getElementById('edit-dialog').close();podcastRequest=null;podcastMediaRequest=null;projectCaptionRequest=null;sourceCaptionRequest=null;sourceSubmitting=false;document.getElementById('sample').disabled=false;asking=false;});
  }
+ mark('import-and-note');
  const fixture=path.join(temporary,'authored.json');await fs.writeFile(fixture,JSON.stringify({schema_version:1,title:'Update persistence fixture',language:'en',segments:[{id:'first',start:0,end:4,text:'Authored updater acceptance words.'}]}));
  await page.locator('#add-content').click();const [chooser]=await Promise.all([page.waitForEvent('filechooser'),page.locator('#import').click()]);await chooser.setFiles(fixture);
  await page.locator('#mode-transcript').click();await page.locator('.segment[data-segment-id="first"] .note-button').click();await page.locator('#note').fill('更新重启后保留这则笔记');await page.locator('#close-note').click();
+ mark('glossary-guards');
  // A glossary belongs to an imported document. Exercise the actual visible
  // controls instead of assigning a hidden field on the empty startup page.
  await page.locator('#language-panel > summary').click();await page.locator('#ai-task').selectOption('translation');await page.locator('#translation-options > summary').click();
@@ -59,6 +68,7 @@ try{
  await page.locator('#save-translation-glossary').click();assert.equal(await page.evaluate(()=>coconutPrepareUpdate()),true,'saving the glossary releases the update guard');
  assert.equal(await page.evaluate(()=>coconutPrepareClose('inspect').safe),true);
  await page.locator('#language-panel > summary').click();
+ mark('native-unsaved-guards');
  // Web unload prompts must not intercept native quit after service teardown.
  const webUnloadAbsent=()=>page.evaluate(()=>{const event=new Event('beforeunload',{cancelable:true});window.dispatchEvent(event);return !!window.coconutUpdates&&!unloadGuardReady&&!unloadGuardAttached&&!event.defaultPrevented;});
  await page.locator('#reading-settings > summary').click();
@@ -74,10 +84,13 @@ try{
  assert.equal(await webUnloadAbsent(),true);
  assert.equal(await page.evaluate(()=>coconutPrepareUpdate()),true);
  const expected=await page.evaluate(()=>window.readPersistedLibrary());
- await application.close();application=null;page=await launch();
+ mark('first-graceful-close');
+ await application.close();application=null;page=await launch('restart');
+ mark('restart-persistence');
  assert.deepEqual(await page.evaluate(()=>window.readPersistedLibrary()),expected);
  assert.equal(await page.locator('#update-developer').isChecked(),true);
  assert.equal(await page.evaluate(()=>coconutPrepareUpdate()),true);
+ mark('scoped-ownership');
  // CI-only real-renderer ownership acceptance. Authored tokens are deliberately
  // scoped to this page; reload afterward resets the page before native app quit.
  assert.equal(await page.evaluate(()=>coconutPrepareClose('safe')),false);
@@ -106,6 +119,7 @@ try{
  await page.locator('#note').fill('Ownership release remains writable');await page.locator('#close-note').click();
  await page.evaluate(()=>libraryStore.flush());
  assert.ok(JSON.stringify(await page.evaluate(()=>window.readPersistedLibrary())).includes('Ownership release remains writable'));
+ mark('sample-hashing');
  // Hold real sample hashing: update readiness must remain blocked at the final
  // boundary without cancelling that import or making the visible UI inert.
  await page.evaluate(()=>{
@@ -122,9 +136,11 @@ try{
  await page.evaluate(async()=>{window.finishNativeSample();await window.nativeSample;});
  assert.equal(await page.evaluate(()=>document.getElementById('sample').disabled),false);
  assert.equal(await page.evaluate(()=>coconutPrepareUpdate()),true);
+ mark('sample-reload');
  const finalSaved=await page.evaluate(()=>window.readPersistedLibrary());
  await page.reload();await nativeReady(page);
  assert.deepEqual(await page.evaluate(()=>window.readPersistedLibrary()),finalSaved);
+ mark('install-held-writer');
  // Hold the selected production writer in the real renderer. Only admission
  // timing is authored: transactions, AbortSignal handling and disk writes are real.
  await page.addInitScript(()=>{
@@ -143,6 +159,7 @@ try{
   }});
  });
  await page.reload();await nativeReady(page);
+ mark('delayed-write');
  const beforeDelayedWrite=await page.evaluate(()=>window.readPersistedLibrary());
  await page.locator('#mode-transcript').click();await page.locator('.segment .note-button').first().click();
  await page.evaluate(()=>{nativeWriterTest.held=true;});await page.locator('#note').fill('Native delayed acknowledgement fixture');await page.locator('#close-note').click();
@@ -155,17 +172,22 @@ try{
  await page.waitForFunction(()=>nativeWriterTest.pending.length===1);
  assert.equal(await page.evaluate(()=>libraryStore.status().blocked&&!readerClosing&&document.body.inert),true);
  assert.deepEqual(await page.evaluate(()=>window.readPersistedLibrary()),beforeDelayedWrite,'a held native write has no persisted acknowledgement');
+ mark('delayed-write-receipt');
  assert.equal(await page.evaluate(async()=>{nativeWriterTest.pending[0].settle();return await nativePendingClose;}),true);
  assert.equal(await page.evaluate(async()=>readerClosing&&document.body.inert&&JSON.stringify(await window.readPersistedLibrary()).includes('Native delayed acknowledgement fixture')),true);
+ mark('quota-write');
  const beforeQuota=await page.evaluate(()=>window.readPersistedLibrary());
  assert.equal(await page.evaluate(()=>coconutPrepareClose('release',nativePendingOwner)),true);
  await page.locator('.segment .note-button').first().click();await page.locator('#note').fill('Native quota retains this note');await page.locator('#close-note').click();
  await page.evaluate(()=>{window.nativeFailedOwner={id:2,kind:'update',expiresAt:Date.now()+60000};window.nativeFailedUpdate=coconutPrepareUpdate(true,nativeFailedOwner);});
  await page.waitForFunction(()=>nativeWriterTest.pending.length===2);
+ mark('quota-failure-receipt');
  assert.equal(await page.evaluate(async()=>{nativeWriterTest.pending[1].fail();return await nativeFailedUpdate;}),false);
  assert.equal(await page.evaluate(()=>!readerClosing&&!document.body.inert&&!libraryStore.status().blocked&&coconutPrepareClose('inspect').contentFailed),true);
  assert.deepEqual(await page.evaluate(()=>window.readPersistedLibrary()),beforeQuota,'a quota-aborted IndexedDB transaction preserves the last committed content');
+ mark('quota-retry');
  await page.evaluate(async()=>{coconutPrepareClose('release',nativeFailedOwner);nativeWriterTest.held=false;await libraryStore.retry();});
+ mark('discard-write');
  const beforeDiscard=await page.evaluate(()=>window.readPersistedLibrary());
  assert.ok(JSON.stringify(beforeDiscard).includes('Native quota retains this note'),'retry commits the retained note to IndexedDB');
  await page.locator('.segment .note-button').first().click();await page.evaluate(()=>{nativeWriterTest.held=true;});await page.locator('#note').fill('Native discard awaiting abort acknowledgement');await page.locator('#close-note').click();
@@ -173,11 +195,14 @@ try{
  await page.evaluate(()=>{window.nativeDiscardOwner={id:3,kind:'close',expiresAt:Date.now()+60000};window.nativeDiscardClose=coconutPrepareClose('discard',nativeDiscardOwner);});
  await page.waitForFunction(()=>nativeWriterTest.pending[2].signal.aborted);
  assert.equal(await page.evaluate(()=>!readerClosing&&document.body.inert&&libraryStore.status().blocked),true,'discard must wait for the actual abort acknowledgement');
+ mark('discard-abort-receipt');
  assert.equal(await page.evaluate(async()=>{nativeWriterTest.pending[2].settle();await nativeDiscardFlush;return await nativeDiscardClose;}),true);
  assert.deepEqual(await page.evaluate(()=>window.readPersistedLibrary()),beforeDiscard,'acknowledged discard does not commit the aborted edit');
+ mark('discard-retry-and-reload');
  await page.evaluate(async()=>{coconutPrepareClose('release',nativeDiscardOwner);nativeWriterTest.held=false;await libraryStore.retry();});
  const delayedSaved=await page.evaluate(()=>window.readPersistedLibrary());await page.reload();await nativeReady(page);
  assert.deepEqual(await page.evaluate(()=>window.readPersistedLibrary()),delayedSaved,'delayed receipt content survives a real renderer reload');
+ mark('migration-reset');
  // The isolated authored profile now exercises native close during first-time
  // migration. Preserve its complete library as the immutable legacy source.
  assert.equal((await page.evaluate(()=>libraryStore.flush())).ok,true);
@@ -192,6 +217,7 @@ try{
   });
   localStorage.clear();sessionStorage.clear();localStorage.setItem('coconut-reader-v1',raw);
  },migrationRaw);
+ mark('migration-hold');
  await page.addInitScript(()=>{
   const add=IDBObjectStore.prototype.add;
   IDBObjectStore.prototype.add=function(value,key){
@@ -216,17 +242,20 @@ try{
   safe:coconutPrepareClose('inspect').safe,update:coconutPrepareUpdate()})),
   {active:true,mode:'readwrite',phase:'loading',inert:true,readerLoaded:false,flushable:true,safe:false,update:false});
  assert.equal(await page.evaluate(()=>localStorage.getItem('coconut-reader-v1')),migrationRaw,'in-flight migration preserves its complete source');
+ mark('migration-native-close');
  // Any unexpected native prompt chooses keep-editing and makes this close fail
  // its timeout, rather than silently authorizing a discard or forcing exit.
  await application.evaluate(({dialog})=>{dialog.showMessageBox=async()=>({response:0});});
  const startupClosed=application.waitForEvent('close',{timeout:15000});
  await application.evaluate(({BrowserWindow})=>{setTimeout(()=>BrowserWindow.getAllWindows()[0].close(),0);});
  await startupClosed;application=null;
- page=await launch();
+ page=await launch('migration-recovery');
+ mark('migration-recovery-persistence');
  assert.equal(await page.evaluate(()=>window.CoconutStorageBootstrap.result.migrated),true,'startup close aborted the held migration before relaunch completed it');
  assert.deepEqual(await page.evaluate(()=>window.readPersistedLibrary()),migrationExpected,'native close during migration preserves every authored document across relaunch');
  assert.equal(await page.evaluate(()=>localStorage.getItem('coconut-reader-v1')),migrationRaw,'native migration recovery leaves legacy source bytes unchanged');
  assert.equal(await page.evaluate(()=>coconutPrepareUpdate()),true,'recovered native reader is ready for a safe update');
+ mark('final-graceful-close');
  await application.close();application=null;
- console.log('Update UI acceptance passed: sandboxed native IPC, developer opt-in, restart guards, expired/scoped ownership, sample hashing, delayed IndexedDB receipts, quota recovery, acknowledged discard, startup migration close/recovery and writable notes across release/relaunch. No inference or model downloads.');
-}finally{if(application)await application.close();await fs.rm(temporary,{recursive:true,force:true});}
+},cleanup:async()=>{if(application)await application.close();await fs.rm(temporary,{recursive:true,force:true});}});
+console.log('Update UI acceptance passed: sandboxed native IPC, developer opt-in, restart guards, expired/scoped ownership, sample hashing, delayed IndexedDB receipts, quota recovery, acknowledged discard, startup migration close/recovery and writable notes across release/relaunch. No inference or model downloads.');
