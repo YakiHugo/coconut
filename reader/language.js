@@ -282,6 +282,7 @@ function renderLanguage(){
  $('ai-consent-copy').textContent=`同意将${sentData}发送给 ${providerName}，按上述请求次数使用我的订阅额度。`;
 
  renderAIHistory(doc);
+ window.CoconutBackgroundSummary?.render();
 }
 const AI_HISTORY_PAGE_SIZE=10;
 let aiHistoryDocument=null,aiHistoryCount=0,aiHistoryPage=0;
@@ -592,7 +593,7 @@ $('ask-ai').onclick=async()=>{
   $('ai-consent').checked=false;renderLanguage();notice('提问内容或原文范围已变化，请重新核对并确认。');return;
  }
  if(!$('ai-consent').checked){notice('请先确认本次把所选文字发送给所选提供商并使用订阅额度');return;}
- if(purpose==='summary'){await runDocumentSummary(doc);return;}
+ if(purpose==='summary'){if($('summary-execution')?.value==='background'){await window.CoconutBackgroundSummary?.submit();return;}await runDocumentSummary(doc);return;}
  if(!aiReady){notice('请先检查本地 CLI 连接');return;}
  const question=purpose==='summary'?Coconut.SUMMARY_QUESTION:$('ai-question').value.trim();if(!question){notice('请先输入问题');return;}
  const segments=questionSources(doc);

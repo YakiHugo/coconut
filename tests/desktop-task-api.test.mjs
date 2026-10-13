@@ -26,6 +26,7 @@ test('executor capability describes support separately from unchecked provider a
  assert.equal(capability.protocolVersion,1);assert.equal(capability.enabled,true);assert.equal(capability.executor.online,true);assert.deepEqual(capability.supportedTaskKinds,['summary']);
  assert.equal(capability.providers.codex.availability,'not_checked');assert.equal(capability.remoteSubmission,false);assert.equal(calls.length,0);
  assert.equal((await fetch(origin+'/task-client.js')).status,200);
+ assert.equal((await fetch(origin+'/background-summary.js')).status,200);
 });
 
 test('disconnect after submit does not cancel; a fresh client queries by key and safely accepts exact revision',async t=>{

@@ -1431,3 +1431,12 @@ body[data-media-docked="true"] #reader-workspace #transcript .segment { scroll-m
 body[data-media-docked="true"] #reader-workspace #passage-workspace .passage { scroll-margin-top: max(20px, var(--reading-sticky-inset, 20px)); }
 body[data-media-docked="true"] #reader-workspace #reading-context:not([hidden]) + #passage-workspace .passage { scroll-margin-top: max(112px, var(--reading-sticky-inset, 20px)); }
 .remember-local-media{margin:10px 0}.remember-local-media>label{display:inline-flex;align-items:center;gap:6px}.remember-local-media>button{margin-left:8px}.remember-local-media input{width:auto}
+
+/* Task receipts stay in the shelf; they never replace the reading surface. */
+.background-tasks { margin: 12px 0; }
+.background-tasks > summary { cursor: pointer; }
+.background-task { border-top: 1px solid var(--line); padding: 12px 0; overflow-wrap: anywhere; }
+.background-task h3 { font-size: 14px; margin: 0 0 6px; }
+.background-task button { margin-top: 8px; }
+.background-result { white-space: pre-wrap; max-height: 24rem; overflow: auto; }
+#summary-open-background-tasks { margin-bottom: 12px; }
