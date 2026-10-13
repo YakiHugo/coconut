@@ -8,7 +8,7 @@
 <meta name="theme-color" content="#faf9f7">
 <link rel="icon" type="image/png" href="coconut-mark.png">
 <script src="appearance.js?v=86ea922669"></script>
-<link rel="stylesheet" href="style.css?v=d7191fdac0">
+<link rel="stylesheet" href="style.css?v=77b74e9e58">
 <script src="summary.js?v=580ffdad1e" defer></script>
 <script src="core.js?v=47de1151f8" defer>
 </script>
@@ -18,7 +18,7 @@
 <script src="library-store.js?v=e76ded9456" defer></script>
 <script src="indexeddb-document-adapter.js?v=8ecfdf5789" defer></script>
 <script src="storage-provider.js?v=369d522f14" defer></script>
-<script src="app.js?v=5ae3752df2" type="text/coconut-pending" data-reader-script>
+<script src="app.js?v=4c9a6cfaef" type="text/coconut-pending" data-reader-script>
 </script>
 <script src="language.js?v=64d7859585" type="text/coconut-pending" data-reader-script></script>
 <script src="translation-review.js?v=e8289ebd90" type="text/coconut-pending" data-reader-script></script>
@@ -233,7 +233,7 @@ cd coconut
 <div id="transcript-controls" hidden>
 <section id="audio-project" hidden aria-label="原声项目与笔记">
 <h2 id="audio-project-heading">先留下声音和想法</h2><p id="audio-project-boundary" class="hint">尚未导入文字稿，没有可生成摘要的原文。节目简介不会代替文字稿；项目笔记和时间书签只记录你的想法，不会作为原文发送给 AI。</p>
-<button id="attach-project-transcript" type="button">为此项目补充文字稿</button><button id="fetch-project-transcript" type="button" hidden>检查并补充发布者文字稿</button><button id="cancel-project-transcript" type="button" hidden>取消获取文字稿</button><input id="project-transcript-file" type="file" accept=".json,.srt,.vtt" hidden><p id="attach-project-help" class="hint">选择与本集声音对应的定时文字稿，包括已完成的字幕或 ASR JSON。JSON 超过50 MiB 时先确认读取；SRT / VTT 字幕限15 MiB。只导入文件，不自动识别或调用模型；保留当前项目的标题、笔记、书签及已选择的媒体。</p>
+<button id="attach-project-transcript" type="button">为此项目补充文字稿</button><button id="paste-project-subtitles" type="button">粘贴字幕到此项目</button><button id="fetch-project-transcript" type="button" hidden>检查并补充发布者文字稿</button><button id="cancel-project-transcript" type="button" hidden>取消获取文字稿</button><input id="project-transcript-file" type="file" accept=".json,.srt,.vtt" hidden><p id="attach-project-help" class="hint">选择与本集声音对应的定时文字稿，包括已完成的字幕或 ASR JSON。JSON 超过50 MiB 时先确认读取；SRT / VTT 字幕限15 MiB。只导入文件，不自动识别或调用模型；保留当前项目的标题、笔记、书签及已选择的媒体。</p>
 <label for="project-note">项目笔记</label><textarea id="project-note" rows="4" placeholder="记下想法、疑问或之后要核对的内容"></textarea>
 <p class="hint">来源、笔记与时间书签自动保存在此浏览器；媒体只在本次页面可用，刷新后请单独重新获取。迁移请导出 JSON 备份。</p>
 <form id="audio-bookmark-form"><label for="audio-bookmark-time">时间书签</label><input id="audio-bookmark-time" required placeholder="12:34 或秒数" inputmode="decimal"><button id="use-playback-time" type="button">填入正在播放的时间</button><label for="audio-bookmark-note">书签笔记（可选）</label><input id="audio-bookmark-note" placeholder="此刻想记住什么？"><button type="submit">保存时间书签</button><button id="cancel-audio-bookmark" type="button">取消新书签</button></form>
@@ -336,10 +336,11 @@ cd coconut
 <div class="dock-copy"><strong id="dock-title"></strong><span class="dock-clock"><span id="dock-current">00:00</span><span id="dock-total"></span><span id="dock-rate"></span></span></div>
 <button id="dock-follow" type="button" aria-pressed="false" disabled>跟随原声</button><button id="dock-locate" type="button" aria-label="定位当前播放的原文" title="定位当前播放的原文"><span id="dock-locate-full" class="dock-label-full" aria-hidden="true">定位原文</span><span id="dock-locate-short" class="dock-label-short" aria-hidden="true">定位</span></button><button id="dock-return" type="button" aria-label="回到原声播放器" title="回到原声播放器"><span class="dock-label-full" aria-hidden="true">播放器 ↑</span><span class="dock-label-short" aria-hidden="true">原声</span></button>
 </section>
-<dialog id="paste-subtitle-dialog" aria-labelledby="paste-subtitle-heading" aria-describedby="paste-subtitle-help">
+<dialog id="paste-subtitle-dialog" aria-labelledby="paste-subtitle-heading" aria-describedby="paste-subtitle-help paste-subtitle-destination">
 <div class="paste-subtitle-heading"><h2 id="paste-subtitle-heading">粘贴已有字幕</h2><button id="close-paste-subtitle" type="button">关闭</button></div>
 <p id="paste-subtitle-help" class="hint">粘贴已有的 SRT / VTT 定时字幕，无需另存文件，不上传或调用 AI。草稿仅留在当前页；关闭弹窗可继续编辑，刷新或离页不会保留。普通文字不会自动补时间。</p>
-<label for="paste-subtitle-title">标题（可选）</label><input id="paste-subtitle-title" maxlength="200" placeholder="粘贴字幕" autocomplete="off">
+<p id="paste-subtitle-destination" class="hint"></p>
+<label id="paste-subtitle-title-label" for="paste-subtitle-title">标题（可选）</label><input id="paste-subtitle-title" maxlength="200" placeholder="粘贴字幕" autocomplete="off">
 <label for="paste-subtitle-format">字幕格式</label><select id="paste-subtitle-format"><option value="auto">自动识别 SRT / VTT</option><option value="srt">SRT</option><option value="vtt">VTT</option></select>
 <details id="paste-subtitle-example"><summary>查看格式示例</summary><p class="hint">SRT 需要每段完整的开始、结束时间与文字；VTT 可用 WEBVTT 文件头和点号毫秒。</p><pre>1
 00:00:00,000 --&gt; 00:00:02,000
