@@ -180,10 +180,10 @@ test('successful active removal and undo change preferences only after content p
   const events=[],writeDisk=disk.setItem,writeSession=session.setItem;
   disk.setItem=(key,value)=>{events.push(key);writeDisk(key,value);};session.setItem=(key,value)=>{events.push(key);writeSession(key,value);};
   await requestRemoval(env,'b');
-  assert.deepEqual(events,[KEY,ACTIVE,LAST_ACTIVE,'coconut-reading-recency-v1']);assert.equal(session.getItem(ACTIVE),'c');assert.equal(disk.getItem(LAST_ACTIVE),'c');assert.equal(env.$('title').textContent,'Authored c');
+  assert.deepEqual(events.filter(key=>!['coconut-reading-view-v1','coconut-reading-view-defaults-v1'].includes(key)),[KEY,ACTIVE,LAST_ACTIVE,'coconut-reading-recency-v1']);assert.equal(session.getItem(ACTIVE),'c');assert.equal(disk.getItem(LAST_ACTIVE),'c');assert.equal(env.$('title').textContent,'Authored c');
   assert.equal(Object.hasOwn(JSON.parse(disk.getItem(KEY)),'active'),false);
   events.length=0;await env.$('undo-removal').onclick();
-  assert.deepEqual(events,[KEY,ACTIVE,LAST_ACTIVE]);assert.equal(session.getItem(ACTIVE),'b');assert.equal(disk.getItem(LAST_ACTIVE),'b');assert.equal(env.$('title').textContent,'Authored b');
+  assert.deepEqual(events.filter(key=>!['coconut-reading-view-v1','coconut-reading-view-defaults-v1'].includes(key)),[KEY,ACTIVE,LAST_ACTIVE]);assert.equal(session.getItem(ACTIVE),'b');assert.equal(disk.getItem(LAST_ACTIVE),'b');assert.equal(env.$('title').textContent,'Authored b');
  }finally{await env.w.happyDOM.close();}
 });
 
@@ -192,15 +192,15 @@ test('failed removal and failed undo preserve the existing selection and last-op
  try{
   env.open('b');const write=env.disk.setItem,original=env.disk.getItem(KEY);let blocked=true;
   env.disk.setItem=(key,value)=>{if(key===KEY&&blocked)throw new Error('Injected quota');write(key,value);};
-  const sessionWrites=env.session.writes.length,preferenceWrites=env.disk.writes.filter(([key])=>key===LAST_ACTIVE).length;
+  const sessionWrites=env.session.writes.filter(([key])=>key===ACTIVE).length,preferenceWrites=env.disk.writes.filter(([key])=>key===LAST_ACTIVE).length;
   await requestRemoval(env,'b');
   assert.equal(env.disk.getItem(KEY),original);assert.equal(env.w.active().key,'b');assert.equal(env.session.getItem(ACTIVE),'b');assert.equal(env.disk.getItem(LAST_ACTIVE),'b');
-  assert.equal(env.session.writes.length,sessionWrites);assert.equal(env.disk.writes.filter(([key])=>key===LAST_ACTIVE).length,preferenceWrites);
+  assert.equal(env.session.writes.filter(([key])=>key===ACTIVE).length,sessionWrites);assert.equal(env.disk.writes.filter(([key])=>key===LAST_ACTIVE).length,preferenceWrites);
   blocked=false;await requestRemoval(env,'b');assert.equal(env.w.active().key,'c');
-  const removed=env.disk.getItem(KEY),sessionAfter=env.session.writes.length,preferenceAfter=env.disk.writes.filter(([key])=>key===LAST_ACTIVE).length;
+  const removed=env.disk.getItem(KEY),sessionAfter=env.session.writes.filter(([key])=>key===ACTIVE).length,preferenceAfter=env.disk.writes.filter(([key])=>key===LAST_ACTIVE).length;
   blocked=true;await env.$('undo-removal').onclick();
   assert.equal(env.disk.getItem(KEY),removed);assert.equal(env.w.active().key,'c');assert.equal(env.session.getItem(ACTIVE),'c');assert.equal(env.disk.getItem(LAST_ACTIVE),'c');
-  assert.equal(env.session.writes.length,sessionAfter);assert.equal(env.disk.writes.filter(([key])=>key===LAST_ACTIVE).length,preferenceAfter);assert.equal(env.$('removal-recovery').hidden,false);
+  assert.equal(env.session.writes.filter(([key])=>key===ACTIVE).length,sessionAfter);assert.equal(env.disk.writes.filter(([key])=>key===LAST_ACTIVE).length,preferenceAfter);assert.equal(env.$('removal-recovery').hidden,false);
   blocked=false;await env.$('undo-removal').onclick();assert.equal(env.session.getItem(ACTIVE),'b');assert.equal(env.disk.getItem(LAST_ACTIVE),'b');
  }finally{await env.w.happyDOM.close();}
 });
@@ -208,10 +208,10 @@ test('failed removal and failed undo preserve the existing selection and last-op
 test('noncurrent removal and undo do not overwrite another window last-open hint or the current selection',async()=>{
  const env=setup();
  try{
-  env.disk.values.set(LAST_ACTIVE,'c');const sessionWrites=env.session.writes.length,preferenceWrites=env.disk.writes.filter(([key])=>key===LAST_ACTIVE).length;
+  env.disk.values.set(LAST_ACTIVE,'c');const sessionWrites=env.session.writes.filter(([key])=>key===ACTIVE).length,preferenceWrites=env.disk.writes.filter(([key])=>key===LAST_ACTIVE).length;
   await requestRemoval(env,'b');await env.$('undo-removal').onclick();
   assert.equal(env.w.active().key,'a');assert.equal(env.session.getItem(ACTIVE),'a');assert.equal(env.disk.getItem(LAST_ACTIVE),'c');
-  assert.equal(env.session.writes.length,sessionWrites);assert.equal(env.disk.writes.filter(([key])=>key===LAST_ACTIVE).length,preferenceWrites);
+  assert.equal(env.session.writes.filter(([key])=>key===ACTIVE).length,sessionWrites);assert.equal(env.disk.writes.filter(([key])=>key===LAST_ACTIVE).length,preferenceWrites);
  }finally{await env.w.happyDOM.close();}
 });
 

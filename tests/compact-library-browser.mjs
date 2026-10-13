@@ -63,8 +63,12 @@ try{
  await page.locator('#library-search').focus();await page.keyboard.press('Escape');check('native_escape_closes_search_before_returning_from_sidebar',!await page.locator('#library-search-dialog').evaluate(n=>n.open)&&await page.locator('#library-search').evaluate(n=>n===document.activeElement));await page.keyboard.press('Escape');check('escape_returns_to_reader_title',await page.locator('#title').evaluate(n=>n===document.activeElement)&&await page.locator('#toggle-library').getAttribute('aria-expanded')==='false');
  await open();await page.locator('.library-open').first().click();check('current_document_returns_to_same_reader_anchor',await page.locator('#title').evaluate(n=>n===document.activeElement));
  check('current_document_preserves_real_media_identity_time_and_pause',await page.evaluate(()=>window.__compactPlayer===document.querySelector('#source-media audio')&&window.__compactPlayer.paused&&Math.abs(window.__compactPlayer.currentTime-6)<.1));
- stage='active document opens reading from Add';await page.locator('#add-content').click();await open();await page.locator('.library-open').first().click();
- check('active_document_from_add_opens_reader',await page.locator('#reader-workspace').isVisible()&&await page.locator('#title').evaluate(n=>n===document.activeElement));
+ stage='active document opens reading from Add';await page.locator('#add-content').click();
+ const remembered=await page.evaluate(()=>JSON.parse(sessionStorage.getItem('coconut-reading-view-v1')).views.find(view=>view[0]==='shelf-0'));
+ assert.equal(remembered[2],'transcript');assert.ok(docs[0].segments.some(cue=>cue.id===remembered[1]));
+ await open();await page.locator('.library-open').first().click();
+ check('active_document_from_add_opens_reader',await page.locator('#reader-workspace').isVisible());
+ check('active_document_from_add_restores_exact_reading_view',await page.locator(`.segment[data-segment-id="${remembered[1]}"]`).evaluate(n=>n===document.activeElement)&&await page.locator('body').getAttribute('data-reading-mode')===remembered[2]);
  stage='target-owned Escape';await open();await page.locator('#library-search').focus();await page.evaluate(()=>document.getElementById('library-search').addEventListener('keydown',event=>event.preventDefault(),{once:true}));await page.keyboard.press('Escape');
  check('focused_control_can_prevent_Escape',await page.locator('#library-search-dialog').evaluate(n=>n.open));await page.keyboard.press('Escape');
  stage='desktop focused search enters mobile from closed toggle';await responsiveSnapshot('distinct-before-desktop');await page.setViewportSize({width:1360,height:1000});await waitForArrangement(false);await responsiveSnapshot('distinct-desktop-arranged');

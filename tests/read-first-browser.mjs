@@ -7,6 +7,7 @@ import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {chromium,expect,waitForPersistedLibrary} from './helpers/browser-storage.mjs';
 import {readFirstFixture} from './helpers/read-first-fixture.mjs';
+import {openTranscriptTools} from './helpers/reading-tools-browser.mjs';
 const root=fileURLToPath(new URL('../reader/',import.meta.url));
 let server,browser,external=0,mutations=0;const errors=[],checks=[];
 async function mode(page,value){await expect(page.locator('body')).toHaveAttribute('data-reading-mode',value);await expect(page.locator(value==='summary'?'#summary-workspace':value==='passages'?'#passage-workspace':'#transcript-layout')).toBeVisible();}
@@ -14,8 +15,10 @@ async function saved(page,title){await waitForPersistedLibrary(page,async title=
 async function importDoc(page,doc){await page.locator('#file').setInputFiles({name:'authored-read-first.json',mimeType:'application/json',buffer:Buffer.from(JSON.stringify(doc))});await expect(page.locator('#title')).toHaveText(doc.title);await saved(page,doc.title);}
 async function reopen(page,title){
  await page.locator('#add-content').click();
+ const view=await page.evaluate(()=>JSON.parse(sessionStorage.getItem('coconut-reading-view-v1')||'{"views":[]}').views.find(view=>view[0]===sessionStorage.getItem('coconut-reader-active-v1')));
  if(await page.locator('#toggle-library').isVisible()&&await page.locator('#toggle-library').getAttribute('aria-expanded')!=='true')await page.locator('#toggle-library').click();
  await page.locator('.library-open').filter({has:page.locator('.library-title',{hasText:title})}).click();
+ return view;
 }
 async function capture(page,label){if(process.env.COCONUT_UI_SCREENSHOTS){await fs.mkdir(process.env.COCONUT_UI_SCREENSHOTS,{recursive:true});await page.screenshot({path:path.join(process.env.COCONUT_UI_SCREENSHOTS,`read-first-${label}.png`),fullPage:false,animations:'disabled'});}}
 try{
@@ -43,9 +46,12 @@ try{
     await page.evaluate(()=>window.dispatchEvent(new CustomEvent('coconut-worker-ready',{detail:{media_import:false}})));await mode(page,'summary');
    }else if(state!=='job')await expect(page.locator('#summary-state')).toHaveAttribute('data-state',state);
    else await expect(page.locator('#prepare-summary')).toHaveText('查看分批进度 / 继续摘要');
-   await reopen(page,doc.title);await mode(page,expected);await page.reload();await mode(page,expected);
+   // First entry still uses the read-first default. An explicit summary choice
+   // now belongs to this document's lightweight view and survives reopening.
+   const remembered=state==='none'?'summary':expected;
+   await reopen(page,doc.title);await mode(page,remembered);await page.reload();await mode(page,remembered);
    assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),true,'narrow reading must not overflow');
-   checks.push(`${width}:${count}:${state}:import/reopen/reload`);
+   checks.push(`${width}:${count}:${state}:first-entry-default/remembered-mode-reopen/reload`);
   }
   for(const state of ['none','current','job','demo']){
    const doc=readFirstFixture(3,{summary:state==='current'?state:null,job:state==='job',demo:state==='demo'});doc.title+=` restored ${state}`;
@@ -57,8 +63,16 @@ try{
    const doc=readFirstFixture(3,{summary:'current',bookmark});doc.title+=` ${bookmark}`;
    await importDoc(page,doc);await mode(page,bookmark==='read-2'?'transcript':'summary');
    if(bookmark==='read-2')await expect(page.locator('.segment[data-segment-id="read-2"]')).toBeFocused();
-   await reopen(page,doc.title);await mode(page,bookmark==='read-2'?'transcript':'summary');
-   if(bookmark==='read-2')await expect(page.locator('.segment[data-segment-id="read-2"]')).toBeFocused();
+   const view=await reopen(page,doc.title);await mode(page,bookmark==='read-2'?'transcript':'summary');
+   if(bookmark==='read-2'){
+    assert.equal(view[2],'transcript');
+    await expect(page.locator(`.segment[data-segment-id="${view[1]}"]`)).toBeFocused();
+    // Ordinary reopening uses the captured reading view. The distinct manual
+    // bookmark control must still reach exactly the saved bookmark.
+    await openTranscriptTools(page);await page.locator('#resume').click();
+    await expect(page.locator('.segment[data-segment-id="read-2"]')).toBeFocused();
+    assert.equal(await page.evaluate(async key=>(await readPersistedLibrary()).documents.find(doc=>doc.key===key).readingPosition,view[0]),'read-2');
+   }
    await page.locator('#mode-summary').click();await page.locator('#summary-citations button').click();await expect(page.locator('.segment[data-segment-id="read-0"]')).toBeFocused();
    checks.push(`${width}:${bookmark}:precise-resume-and-citation`);
   }

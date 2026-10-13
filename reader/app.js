@@ -68,6 +68,7 @@ const readingContextHome=document.createComment('reading context home');
 $('reading-context').before(readingContextHome);
 let workspace = "read";
 let readingScroll = 0;
+let readingViewOwner=null;
 let editingTarget = null;
 let sourceTarget = null;
 let sourceTargetIdentity = null;
@@ -726,6 +727,9 @@ function rememberActiveDocument() {
  } catch { /* A preference failure is not a failed document save. */ }
 }
 const readingRecency=Coconut.createReadingRecency({getStorage:()=>localStorage});
+const readingViews=Coconut.createReadingViews({getSessionStorage:()=>sessionStorage,getStorage:()=>localStorage});
+window.addEventListener('pagehide',()=>rememberReadingView());
+document.addEventListener('visibilitychange',()=>{if(document.hidden)rememberReadingView();});
 function markDocumentOpened(doc){
  if(doc&&state.documents.includes(doc)&&!pendingStructuralDocuments.has(doc.key))readingRecency.record(doc.key);
 }
@@ -733,9 +737,10 @@ window.addEventListener('storage',event=>{
  if(event.key!==readingRecency.key&&event.key!==null)return;
  readingRecency.refresh();if($('library-sort').value==='opened')renderLibrary();
 });
-window.addEventListener('coconut-document-removed',event=>readingRecency.record(event.detail.key,true));
+window.addEventListener('coconut-document-removed',event=>{readingRecency.record(event.detail.key,true);readingViews.remove(event.detail.key);});
 let activeSelectionRevision=0;
 function selectActiveDocument(key,{persist=true}={}) {
+ rememberReadingView();readingViewOwner=null;
  endReadingSearch();
  closeSourceCorrection(false);
  activeSelectionRevision++;
@@ -846,6 +851,7 @@ async function add(doc, canCommit = null, reuseAudioSource = false, lifecycleRev
 	return {...await receipt,duplicate,mediaRevision,selectionRevision};
 }
 function showWorkspace(next) {
+ if(workspace==="read"&&next!==workspace)rememberReadingView();
  if(next!==workspace)cancelLocalImports();
  if(next!=="read"){endReadingSearch();clearReadingContext();passageReturn=null;passagePlayback?.cancel();}
  if(next!==workspace)window.dispatchEvent(new CustomEvent("coconut-workspace-change",{detail:{workspace:next}}));
@@ -890,6 +896,7 @@ function readingSearchAnchor(origin){
 function beginReadingSearch(){
  if(restoringReadingSearchFocus)return;
  if(ownedReadingSearch())return;
+ rememberReadingView();
  const doc=active();if(workspace!=='read'||!doc||Coconut.isAudioProject(doc)||!['transcript','passages'].includes(readingMode))return;
  const id=visibleReadingCue(),cue=doc.segments.find(cue=>cue.id===id);if(!cue)return;
  const node=chapterCueNode(id,readingMode);
@@ -1060,18 +1067,21 @@ function goToSegment(id,contextDetour=false,preservePassageReturn=false) {
  // the requested evidence is readable instead of animating past the AI tools.
  scrollReadingTarget(row,{block:alignment,behavior:contextDetour?"auto":"smooth"});
 	row?.focus({preventScroll: true});
+ rememberReadingView({cueId:row?.dataset.segmentId});
 }
 // Explicit opens share one resume policy. Run synchronously with activation,
 // never after a save receipt that may outlive newer navigation. This only moves
 // the reading view: it neither changes the saved position nor starts playback.
-function resumeOpenedDocument(doc,fallbackFocus='title'){
+function resumeOpenedDocument(doc,fallbackFocus='title',{remembered=false}={}){
  if(active()!==doc)return;
+ if(remembered&&restoreReadingView(doc))return;
  const bookmark=doc.segments.find(cue=>cue.id===doc.readingPosition);
  if(bookmark){if(prefersPassageReading(doc))openPassage(bookmark.id);else goToSegment(bookmark.id);}
  else if(fallbackFocus){$('title').scrollIntoView?.({block:'start'});$(fallbackFocus).focus({preventScroll:true});}
 }
 // Ordinary library navigation, active removal, and active undo share ownership teardown.
 function resetReaderForDocumentNavigation(){
+ rememberReadingView();readingViewOwner=null;
  libraryTranslationActivation++;libraryTranslationReveal=null;
  if(typeof closePassageQuestion==='function')closePassageQuestion();
  // Flush while the old player owns its own key. Preview clocks never become
@@ -1305,6 +1315,7 @@ function rememberLibraryWorkspace(doc,hit=null,node=document.activeElement){
  $('return-library-search').hidden=false;
 }
 function openLibraryWorkspace({restore=false}={}){
+ rememberReadingView();
  const dialog=$('library-search-dialog');if(dialog.open||libraryWorkspaceRestore)return;
  if(document.querySelector('dialog[open]'))return;
  librarySearchCancelledComposition=false;
@@ -1426,6 +1437,7 @@ function returnFromLibrary(){
 }
 function toggleLibraryBrowsing(){
  if($('toggle-library').getAttribute('aria-expanded')==='true'){returnFromLibrary();return;}
+ rememberReadingView();
  libraryBrowseOrigin={key:active()?.key,doc:active(),selectionRevision:activeSelectionRevision,reading:!$('reader-workspace').hidden,node:libraryReaderFocus&&libraryReaderFocus.key===active()?.key?libraryReaderFocus.node:null,scrollY:window.scrollY};
  $('toggle-library').setAttribute('aria-expanded','true');
  if(libraryMobile.matches)$('toggle-library').closest('aside').scrollIntoView?.({block:'start',behavior:'instant'});
@@ -1493,7 +1505,7 @@ function createLibraryCard(d){
   $('toggle-library').setAttribute('aria-expanded','false');showWorkspace('read');render();
   if(fromWorkspace)closeLibraryWorkspace('selection');
   if(hit)openLibraryHit(hit);
-  else resumeOpenedDocument(d);
+  else resumeOpenedDocument(d,'title',{remembered:true});
  };
  open.onclick=()=>openDocument();
  const remove=el('button','library-remove','移除…');remove.type='button';remove.onclick=()=>requestLibraryRemoval(d);
@@ -2059,6 +2071,7 @@ function renderChapterDirectory(focusId=null){
  if(focusId!==null)[...host.children].find(row=>row.dataset.chapterId===focusId)?.querySelector('.chapter-rename')?.focus({preventScroll:true});
 }
 function openChapterDirectory(){
+ rememberReadingView();
  const doc=active();if(!chapterEligible(doc))return;chapterDirectoryDoc=doc;const landed=chapterLanding,landedNode=landed&&chapterCueNode(landed.cue.id,landed.mode);chapterDirectoryPrecise=!!landed&&landed.doc===doc&&landed.mode===readingMode&&doc.segments.includes(landed.cue)&&landedNode?.classList.contains('chapter-target');chapterDirectoryCue=chapterDirectoryPrecise?landed.cue.id:visibleReadingCue();chapterOpener=document.activeElement;chapterDirectoryPage=0;
  $('chapter-dialog').showModal();renderChapterDirectory();$('chapter-add').focus({preventScroll:true});
 }
@@ -2114,6 +2127,7 @@ $('chapter-backup').onclick=()=>{
 function jumpReadingChapter(doc,item){
  if(active()!==doc||!state.documents.includes(doc)||pendingStructuralDocuments.has(doc.key)||!doc.reading_chapters?.includes(item))return;
  const entry=Coconut.readingChapters(doc).find(entry=>entry.item===item);if(entry?.status!=='current')return;
+ rememberReadingView();
  if(!chapterReturn||chapterReturn.doc!==doc){const cueId=chapterDirectoryCue??visibleReadingCue(),node=chapterCueNode(cueId);chapterReturn={doc,mode:readingMode,query:$('search').value,notesOnly,excerptsOnly,speakerFilter,pageStart,passageAnchor,passageReturn,readingContext,selected,searchFocusedId,cueId,viewportTop:node?.getBoundingClientRect().top,scrollY:window.scrollY};}
  $('chapter-dialog').close();$('reading-info').open=false;$('ai-consent').checked=false;clearReadingContext();$('search').value='';notesOnly=false;excerptsOnly=false;speakerFilter=null;selected=null;
  if(readingMode==='passages'){
@@ -2141,7 +2155,7 @@ $('return-from-chapter').onclick=()=>{
  render();
  const node=chapterCueNode(origin.cueId,origin.mode);if(node){if(origin.mode==='passages')node.tabIndex=-1;if(Number.isFinite(origin.viewportTop))window.scrollBy(0,node.getBoundingClientRect().top-origin.viewportTop);node.focus({preventScroll:true});}else{window.scrollTo?.({top:origin.scrollY,behavior:'auto'});if(origin.mode==='passages')$('passage-body').focus({preventScroll:true});else focusReadingSearch();notice('原片段已不在当前视图；已恢复跳转前的阅读方式与筛选。');}
 };
-$('stay-at-chapter').onclick=()=>{if(readingSearchSession?.chapterReturn===chapterReturn)endReadingSearch();chapterReturn=null;renderChapterReturn();const node=chapterCueNode(chapterDirectoryCue);node?.focus({preventScroll:true});};
+$('stay-at-chapter').onclick=()=>{if(readingSearchSession?.chapterReturn===chapterReturn)endReadingSearch();chapterReturn=null;renderChapterReturn();const node=chapterCueNode(chapterDirectoryCue);node?.focus({preventScroll:true});rememberReadingView({cueId:chapterDirectoryCue});};
 
 // A collection is a saved work product, never the active transcript.
 let collectionDocument=null,collectionPage=0;
@@ -2550,6 +2564,7 @@ function render({keepNoteEditor=false,reuseLibraryMetadata=false}={}) {
  const focusedCueAction=document.activeElement?.closest('.cue-more');
  const cueFocus=focusedCueAction?{key:focusedCueAction.dataset.cueKey,selector:document.activeElement.tagName==='SUMMARY'?'summary':'.'+document.activeElement.className}:null;
 	const doc = active();
+ readingViewOwner=doc||null;
  readingExcerptControls=[];const excerptIndex=doc&&!Coconut.isAudioProject(doc)?readingExcerptIndex(doc):null;
  if(readingExcerptDialog&&readingExcerptDialog.doc===doc)for(const row of readingExcerptDialog.rows)row.source=excerptIndex?.states.get(row.record.id)||row.source;
  refreshReadingExcerptSaveState();
@@ -2663,6 +2678,7 @@ function renderTranscript(doc,excerptIndex,{keepNoteEditor=false,displayOnly=fal
 	const bookmark = doc.segments.find(s => s.id === doc.readingPosition);
 	$("resume").hidden = !bookmark;
 	$("resume").textContent = bookmark ? "继续阅读 · " + Coconut.time(bookmark.start) : "";
+ $("resume").title="回到手动标记的位置；普通重新打开会记住上次浏览的位置。";
 	$("resume").onclick = () => {if(bookmark){markDocumentOpened(doc);goToSegment(bookmark.id);}};
 	$("transcript").replaceChildren();
 	for (const s of visible) {
@@ -2845,6 +2861,7 @@ function changeReadingPage(direction) {
 	const row = $("transcript").querySelector(".segment");
 	scrollReadingTarget(row,{block:"start"});
 	row?.focus({preventScroll: true});
+ rememberReadingView({cueId:row?.dataset.segmentId});
 }
 function playbackSegment() {
  const player=$("source-media").querySelector("audio,video");
@@ -4633,8 +4650,10 @@ function openPassage(cueId,scroll=true){
  setReadingMode('passages');render();
  const target=[...$('passage-body').querySelectorAll('.passage')].find(row=>row.dataset.firstCueId===passageAnchor);
  if(scroll){scrollReadingTarget(target,{block:'start',behavior:'auto'});target?.focus({preventScroll:true});}
+ rememberReadingView({cueId});
 }
 function openPassageDetails(cueId,section){
+ rememberReadingView();
  const doc=active();if(!doc)return;
  passageAnchor=section.dataset.firstCueId;
  passageReturn={key:doc.key,cueId:passageAnchor,viewportTop:section.getBoundingClientRect().top,scrollY:window.scrollY,focusCueId:cueId};
@@ -5010,6 +5029,37 @@ function visibleReadingCue(){
  // passage anchor when it still belongs to the mounted page, otherwise its start.
  return passages&&nodes.some(node=>id(node)===passageAnchor)?passageAnchor:id(nodes[0]);
 }
+// Capture at navigation boundaries, never on every scroll pixel. Temporary
+// search/chapter/note routes keep the origin until the reader chooses to stay.
+function rememberReadingView({cueId}={}){
+ const doc=active();
+ if(!doc||readingViewOwner!==doc||workspace!=='read'||Coconut.isAudioProject(doc)||pendingStructuralDocuments.has(doc.key))return;
+ if(readingSearchSession||readingContext||chapterReturn||passageReturn||$('search').value.trim()||notesOnly||excerptsOnly||speakerFilter!==null)return;
+ // Narrow shelves and modal search can hide or move source geometry. Their
+ // entry already captured the visible cue, so don't replace it with page start.
+ if($('library-search-dialog').open||libraryMobile.matches&&$('toggle-library').getAttribute('aria-expanded')==='true')return;
+ const id=cueId??visibleReadingCue()??readingViews.get(doc.key)?.cueId??doc.segments[0]?.id;
+ if(doc.segments.some(cue=>cue.id===id))readingViews.record(doc.key,id,readingMode);
+}
+function restoreReadingView(doc,{focus=true}={}){
+ if(!doc||active()!==doc||Coconut.isAudioProject(doc))return false;
+ const view=readingViews.get(doc.key),index=doc.segments.findIndex(cue=>cue.id===view?.cueId);
+ if(index<0)return false;
+ readingViews.record(doc.key,view.cueId,view.mode);
+ readingMode=view.mode;pageStart=Math.floor(index/PAGE_SIZE)*PAGE_SIZE;
+ passageDocumentKey=doc.key;passageAnchor=view.cueId;
+ render();
+ const node=view.mode==='summary'?$('title'):chapterCueNode(view.cueId,view.mode);
+ if(node){
+  if(view.mode==='passages')node.tabIndex=-1;
+  // Align the actual source text. Aligning a transcript section's border below
+  // the sticky toolbar leaves the preceding section's tail visible, which can
+  // become a different saved cue on the next navigation or reload.
+  const target=view.mode==='transcript'?node.querySelector('.words')||node:node;
+  scrollReadingTarget(target,{block:'start',behavior:'auto'});if(focus)node.focus({preventScroll:true});
+ }
+ return true;
+}
 function switchTranscriptView(bilingual){
  const doc=active();if(!doc||bilingual&&(!contentIngressAllowed(doc)||Coconut.isAudioProject(doc)))return;
  const anchor=selected||readingContext?.document===doc&&readingContext.id||searchFocusedId||visibleReadingCue();
@@ -5024,6 +5074,7 @@ function switchTranscriptView(bilingual){
  setReadingMode('transcript');render();
  const row=[...$('transcript').querySelectorAll('.segment')].find(node=>node.dataset.segmentId===anchor);
  if(row){scrollReadingTarget(row,{block:'start',behavior:'auto'});row.focus({preventScroll:true});}
+ rememberReadingView({cueId:anchor});
 }
 $('mode-passages').onclick=()=>{
  const doc=active();if(!doc)return;
@@ -5042,7 +5093,7 @@ $('mode-passages').onclick=()=>{
  if(readingContext?.document===doc){$('search').value='';notesOnly=false;excerptsOnly=false;speakerFilter=null;searchFocusedId=null;}
  openPassage(cueId||visibleReadingCue()||passageAnchor||doc.readingPosition||doc.segments[0]?.id);
 };
-$('mode-summary').onclick=()=>setReadingMode('summary');
+$('mode-summary').onclick=()=>{rememberReadingView();setReadingMode('summary');rememberReadingView();};
 $('mode-transcript').onclick=()=>switchTranscriptView(false);
 $('mode-bilingual').onclick=()=>switchTranscriptView(true);
 $('prepare-bilingual').onclick=()=>{closeSummaryRequest(false);$('ai-task').value='translation';$('ai-task').dispatchEvent(new Event('change'));$('language-panel').open=true;$('ai-task').scrollIntoView?.({block:'center',behavior:'smooth'});$('translation-target').focus();};
@@ -5417,6 +5468,8 @@ if(!window.coconutUpdates){
  document.addEventListener("close",syncUnsavedUnloadGuard,true);
  syncUnsavedUnloadGuard();
 }
+
+restoreReadingView(active(),{focus:false});
 
 // Bootstrap can still be admitting language scripts; do not race its ingress
 // barrier or offer a reference before the coherent library is ready.

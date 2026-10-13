@@ -6,12 +6,12 @@ const mode=h=>h.w.document.body.dataset.readingMode;
 async function importDoc(h,doc){const text=JSON.stringify(doc);Object.defineProperty(h.$('file'),'files',{configurable:true,value:[{name:'authored.json',size:text.length,text:async()=>text}]});await h.$('file').onchange();}
 const open=h=>h.$('library').querySelector('.library-open').click();
 for(const count of [1,11,12])for(const state of ['none','current','stale','unknown','job']){
- test(`${count} cues with ${state}: import, reopen and startup choose the bounded entry mode`,async()=>{
+ test(`${count} cues with ${state}: import and fresh startup choose defaults; ordinary reopen remembers the chosen mode`,async()=>{
   const doc=readFirstFixture(count,{summary:['current','stale','unknown'].includes(state)?state:null,job:state==='job'}),expected=count>=12?'passages':state==='none'?'transcript':'summary';
   const h=libraryHarness([],{probe:true});let stored;try{
    await importDoc(h,doc);assert.equal(mode(h),expected);
    h.$('mode-summary').click();h.w.libraryProbe.render();assert.equal(mode(h),'summary','ordinary render preserves manual summary even without an answer');
-   open(h);assert.equal(mode(h),expected);await h.w.flushContentForTest();stored=JSON.parse(h.w.localStorage.getItem('coconut-reader-v1')).documents;
+   open(h);assert.equal(mode(h),'summary');await h.w.flushContentForTest();stored=JSON.parse(h.w.localStorage.getItem('coconut-reader-v1')).documents;
    if(state==='job')assert.ok(stored[0].summary_job);if(['current','stale','unknown'].includes(state))assert.equal(h.w.Coconut.summaryFreshness(h.w.Coconut.latestSummary(stored[0]),stored[0]),state);
   }finally{await h.w.happyDOM.close();}
   const reloaded=libraryHarness(stored);try{assert.equal(mode(reloaded),expected);}finally{await reloaded.w.happyDOM.close();}
@@ -22,16 +22,22 @@ test('demo startup and reopen retain bilingual or explicitly chosen source-only 
   const doc=readFirstFixture(3,{demo:true});doc.translation_view=target;
   const h=libraryHarness([doc],{probe:true});try{
    assert.equal(mode(h),'transcript');assert.equal(h.$('mode-bilingual').getAttribute('aria-pressed'),String(!!target));
-   h.$('mode-summary').click();h.w.libraryProbe.render();assert.equal(mode(h),'summary');open(h);assert.equal(mode(h),'transcript');assert.equal(h.w.libraryProbe.documents[0].translation_view,target);
+   h.$('mode-summary').click();h.w.libraryProbe.render();assert.equal(mode(h),'summary');open(h);assert.equal(mode(h),'summary');assert.equal(h.w.libraryProbe.documents[0].translation_view,target);
   }finally{await h.w.happyDOM.close();}
  }
 });
-test('valid bookmark overrides a saved summary on explicit import/open; invalid bookmark uses default',async()=>{
+test('explicit import and bookmark control reach the saved bookmark; invalid bookmark uses default',async()=>{
  for(const bookmark of ['read-2','missing']){
   const h=libraryHarness([],{probe:true});try{
    await importDoc(h,readFirstFixture(3,{summary:'current',bookmark}));assert.equal(mode(h),bookmark==='read-2'?'transcript':'summary');
    if(bookmark==='read-2')assert.equal(h.w.document.activeElement.dataset.segmentId,bookmark);
-   open(h);assert.equal(mode(h),bookmark==='read-2'?'transcript':'summary');
+   if(bookmark==='read-2'){
+    for(const node of h.$('transcript').querySelectorAll('.segment'))node.getBoundingClientRect=()=>({top:node.dataset.segmentId==='read-0'?100:2000,bottom:node.dataset.segmentId==='read-0'?160:2060,height:60,width:100});
+    h.$('add-content').click();open(h);
+    assert.equal(h.w.document.activeElement.dataset.segmentId,'read-0','ordinary reopening restores the visible cue, independently of the bookmark');
+    assert.equal(h.w.libraryProbe.documents[0].readingPosition,'read-2');h.$('resume').click();
+   }else open(h);
+   assert.equal(mode(h),bookmark==='read-2'?'transcript':'summary');
    if(bookmark==='read-2')assert.equal(h.w.document.activeElement.dataset.segmentId,bookmark);
   }finally{await h.w.happyDOM.close();}
  }
@@ -64,9 +70,9 @@ for(const choice of ['summary','source-only','other-document'])test(`a delayed d
   pending=h.$('sample').onclick();await waitFor(()=>h.pipeline.writes.length>0);
   const firstScroll=scrolls;assert.equal(firstScroll,1);assert.equal(mode(h),'transcript');
   if(choice==='summary')h.$('mode-summary').click();else if(choice==='source-only')h.$('mode-transcript').click();else open(h);
-  const selectedTitle=h.$('title').textContent,currentMode=mode(h),translation=h.w.libraryProbe.documents.find(d=>d.title===h.$('title').textContent)?.translation_view;
+  const chosenScrolls=scrolls,selectedTitle=h.$('title').textContent,currentMode=mode(h),translation=h.w.libraryProbe.documents.find(d=>d.title===h.$('title').textContent)?.translation_view;
   h.pipeline.hold(false);h.pipeline.writes[0].commit();await pending;pending=null;await h.w.flushContentForTest();
-  assert.equal(h.$('title').textContent,selectedTitle);assert.equal(mode(h),currentMode);assert.equal(h.w.libraryProbe.documents.find(d=>d.title===selectedTitle)?.translation_view,translation);assert.equal(scrolls,firstScroll+(choice==='other-document'?1:0));
+  assert.equal(h.$('title').textContent,selectedTitle);assert.equal(mode(h),currentMode);assert.equal(h.w.libraryProbe.documents.find(d=>d.title===selectedTitle)?.translation_view,translation);assert.equal(scrolls,chosenScrolls,'the delayed receipt must not scroll the newer reading view');
  }finally{h.pipeline.hold(false);for(const write of h.pipeline.writes)write.commit();await pending;await h.w.happyDOM.close();}
 });
 test('a delayed restored-document receipt preserves a newer explicit view choice',async()=>{

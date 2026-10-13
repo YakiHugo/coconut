@@ -129,11 +129,14 @@ test('desktop focused tools and card stay visible when entering mobile from a co
   assert.equal($('toggle-library').getAttribute('aria-expanded'),'false');assert.equal(w.document.activeElement,$('title'));
  }finally{await w.happyDOM.close();}
 });
-test('selecting the active document from Add opens reading rather than returning to the URL field',async()=>{
+test('selecting the active document from Add restores its exact reading view rather than returning to the URL field',async()=>{
  const {w,$}=setup();try{
   $('add-content').click();assert.equal($('reader-workspace').hidden,true);assert.equal(w.document.activeElement,$('video-url'));
+  const view=JSON.parse(w.sessionStorage.getItem('coconut-reading-view-v1')).views.find(view=>view[0]==='shelf-0');
+  assert.equal(view[2],'transcript');assert.equal(view[1],'shelf-0-cue-0');
   $('toggle-library').click();$('library').querySelector('.library-open').click();
-  assert.equal($('reader-workspace').hidden,false);assert.equal(w.document.activeElement,$('title'));
+  assert.equal($('reader-workspace').hidden,false);assert.equal(w.document.body.dataset.readingMode,view[2]);
+  assert.equal(w.document.activeElement,$('transcript').querySelector(`[data-segment-id="${view[1]}"]`));
  }finally{await w.happyDOM.close();}
 });
 test('a focused control owns prevented Escape before the library handler runs',async()=>{

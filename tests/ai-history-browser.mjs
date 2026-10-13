@@ -101,6 +101,11 @@ try{
  assert.deepEqual(json.ai_answers,(await active(page)).ai_answers);check('real_json_download_keeps_every_record_snapshot_and_missing_reference',json.ai_answers.length===245&&json.ai_answers[0].citations[0]==='removed-cue');
  stage='reload';await page.reload();await page.waitForFunction(()=>window.CoconutStorageBootstrap?.phase==='ready');await page.locator('#reader-workspace').waitFor({state:'visible'});
  check('refresh_keeps_all_records_and_latest_summary',(await active(page)).ai_answers.length===245&&await page.locator('#summary-body').textContent()==='Authored answer 25');
+ // Browsing history entered transcript mode; the search detour preserves that
+ // ordinary view across reload. Reopen summary through its visible mode tab.
+ check('refresh_resumes_transcript_without_showing_summary_entry',await page.locator('body').getAttribute('data-reading-mode')==='transcript'&&await page.locator('#summary-workspace').isHidden()&&await page.locator('#browse-ai-history').isHidden());
+ await page.locator('#mode-summary').click();
+ check('explicit_summary_mode_exposes_saved_history_entry',await page.locator('#mode-summary').getAttribute('aria-pressed')==='true'&&await page.locator('#browse-ai-history').isVisible());
  await page.locator('#browse-ai-history').click();check('refresh_shows_bounded_latest_page_and_saved_count',await page.locator('.ai-answer').count()===10&&(await page.locator('#ai-history-storage').textContent()).includes('245 则均已保存'));
  stage='clean_browser_restore';const restored=await newPage(390);await choose(restored,jsonFile);assert.deepEqual((await active(restored)).ai_answers,json.ai_answers);
  await restored.locator('#browse-ai-history').click();await restored.locator('#ai-history-oldest').click();

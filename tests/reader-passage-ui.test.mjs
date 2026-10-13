@@ -250,17 +250,31 @@ test('passage reading marker saves explicitly across pages without replacing foc
   const marked=$('passage-body').querySelector('.passage-bookmark[aria-pressed="true"]');
   assert.equal(marked.closest('.passage').dataset.firstCueId,'split-18');assert.equal(marked.textContent,'阅读位置在本段');
   $('passage-toggle-translation').click();$('passage-next').click();$('passage-previous').click();
+  // The search trip keeps ordinary progress separate from a later manual mark.
+  // Supply actual source geometry because Happy DOM otherwise has none.
+  const originalKey=saved(env).key,ordinaryCue='split-1';
+  assert.ok($('passage-body').querySelector(`.passage-original [data-cue-id="${ordinaryCue}"]`));
+  for(const node of $('passage-body').querySelectorAll('.passage-original .passage-cue'))node.getBoundingClientRect=()=>({top:node.dataset.cueId===ordinaryCue?120:2000,bottom:node.dataset.cueId===ordinaryCue?180:2060,height:60,width:100});
   $('passage-search').click();$('search').value='question';$('search').oninput();$('clear-search').click();$('mode-passages').click();
+  const view=()=>JSON.parse(w.sessionStorage.getItem('coconut-reading-view-v1')).views.find(view=>view[0]===originalKey);
+  assert.deepEqual(view(),[originalKey,ordinaryCue,'passages']);
   assert.equal(saved(env).readingPosition,'split-19');
   const player=await media(env);player.currentTime=43;await player.play();
   $('passage-next').click();const section=passages(env)[2],button=section.querySelector('.passage-bookmark'),id=section.dataset.firstCueId;
   let scrolls=0;w.scrollBy=()=>scrolls++;w.scrollTo=()=>scrolls++;button.focus();button.click();
-  assert.equal(w.document.activeElement,button);assert.equal(button.isConnected,true);assert.equal($('source-media').querySelector('audio'),player);
+  assert.equal(w.document.activeElement===button,true);assert.equal(button.isConnected,true);assert.equal($('source-media').querySelector('audio')===player,true);
   assert.equal(player.currentTime,43);assert.equal(player.paused,false);assert.equal(scrolls,0);assert.equal($('passage-workspace').hidden,false);
   await w.flushContentForTest();assert.equal(saved(env).readingPosition,id);assert.equal(button.textContent,'阅读位置在本段');
   const persisted=w.localStorage.getItem(key);const reopened=setup(persisted);try{reopened.$('library').querySelector('.library-open').click();assert.ok(reopened.$('passage-body').querySelector('.passage-cue[data-cue-id="'+id+'"]'));assert.equal(saved(reopened).readingPosition,id);}finally{await reopened.close();}
-  const originalKey=saved(env).key,stale=button;await load(env,{...irregularPassageFixture(),title:'Other marker document'});const before=saved(env).readingPosition;stale.click();assert.equal(saved(env).readingPosition,before);
-  $('library').querySelector('[data-document-key="'+originalKey+'"] .library-open').click();assert.ok($('passage-body').querySelector('.passage-cue[data-cue-id="'+id+'"]'));assert.equal(saved(env).readingPosition,id);
+  assert.deepEqual(view(),[originalKey,ordinaryCue,'passages'],'marking within a temporary search trip leaves ordinary progress intact');
+  const stale=button;await load(env,{...irregularPassageFixture(),title:'Other marker document'});const before=saved(env).readingPosition;stale.click();assert.equal(saved(env).readingPosition,before);
+  $('library').querySelector('[data-document-key="'+originalKey+'"] .library-open').click();
+  const resumed=$('passage-body').querySelector(`.passage-original [data-cue-id="${ordinaryCue}"]`);
+  assert.ok(resumed);assert.equal(w.document.activeElement===resumed,true);assert.equal(w.document.body.dataset.readingMode,'passages');
+  assert.deepEqual(view(),[originalKey,ordinaryCue,'passages']);assert.equal(saved(env).readingPosition,id);
+  $('mode-transcript').click();$('resume').click();
+  assert.equal(w.document.activeElement.dataset.segmentId,id,'the explicit bookmark still reaches the later marked source');
+  assert.equal(w.document.body.dataset.readingMode,'transcript');assert.equal(saved(env).readingPosition,id);
  }finally{await env.close();}
 });
 
