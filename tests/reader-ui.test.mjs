@@ -204,22 +204,36 @@ test('reading position beyond first page survives reload, backup validation and 
  const w=setup();let stored;try{
   const $=id=>w.document.getElementById(id);
   await importDocument(w,{title:'Long document',segments:Array.from({length:205},(_,i)=>({id:'s'+i,start:i,end:i+1,text:'Part '+i}))});
+  assert.equal(w.document.body.dataset.readingMode,'passages');assert.equal($('passage-workspace').hidden,false);
   $('mode-transcript').click();
   [...$('transcript').querySelectorAll('button')].find(b=>b.textContent==='继续阅读后面的片段').click();
   w.document.querySelectorAll('.bookmark-button')[50].click();assert.equal((await w.flushContentForTest()).ok,true);stored=w.localStorage.getItem('coconut-reader-v1');
   assert.equal(w.Coconut.validate(JSON.parse(stored).documents[0]).readingPosition,'s150');
  }finally{await w.happyDOM.close();}
  const restored=setup(stored);try{
-  const $=id=>restored.document.getElementById(id);$('mode-transcript').click();$('resume').click();
+  const $=id=>restored.document.getElementById(id),key=JSON.parse(stored).documents[0].key;
+  const remembered=()=>JSON.parse(restored.sessionStorage.getItem('coconut-reading-view-v1')).views.find(view=>view[0]===key);
+  const captureOrdinaryCue=()=>{
+   // Happy DOM has no layout: make ordinary progress distinct from the manual bookmark.
+   for(const row of $('transcript').querySelectorAll('.segment'))row.getBoundingClientRect=()=>({top:row.dataset.segmentId==='s151'?120:2000,bottom:row.dataset.segmentId==='s151'?180:2060,height:60,width:100});
+   restored.dispatchEvent(new restored.Event('pagehide'));
+   assert.deepEqual(remembered(),[key,'s151','transcript']);
+  };
+  assert.equal(restored.document.body.dataset.readingMode,'passages');assert.equal($('passage-workspace').hidden,false);
+  $('mode-transcript').click();$('resume').click();
   assert.equal(restored.document.activeElement.dataset.segmentId,'s150');assert.equal(restored.document.querySelectorAll('.segment').length,100);
+  captureOrdinaryCue();
   await $('sample').onclick();$('library-search').value='Long';$('library-search').oninput();
-  assert.equal($('library').querySelectorAll('.library-open').length,1);$('library').querySelector('button').click();
+  assert.equal($('library').querySelectorAll('.library-open').length,1);$('library').querySelector('.library-open').click();
   for(let visit=0;visit<2;visit++){
-   assert.equal($('passage-workspace').hidden,false);
-   const passage=restored.document.activeElement;assert.ok(passage.classList.contains('passage'));
-   assert.ok(passage.querySelector('.passage-original [data-cue-id="s150"]'));
-   $('mode-transcript').click();$('resume').click();assert.equal(restored.document.activeElement.dataset.segmentId,'s150');
-   if(visit===0)$('library').querySelector('button').click();
+   assert.equal(restored.document.body.dataset.readingMode,'transcript');assert.equal($('transcript-layout').hidden,false);assert.equal($('passage-workspace').hidden,true);
+   assert.equal($('transcript').querySelector('.segment').dataset.segmentId,'s100');assert.equal($('transcript').querySelectorAll('.segment').length,100);
+   assert.equal(restored.document.activeElement===$('transcript').querySelector('.segment[data-segment-id="s151"]'),true);
+   assert.deepEqual(remembered(),[key,'s151','transcript']);
+   assert.equal(JSON.parse(restored.localStorage.getItem('coconut-reader-v1')).documents.find(doc=>doc.key===key).readingPosition,'s150');
+   $('resume').click();assert.equal(restored.document.activeElement===$('transcript').querySelector('.segment[data-segment-id="s150"]'),true);
+   captureOrdinaryCue();
+   if(visit===0)$('library').querySelector('.library-open').click();
   }
  }finally{await restored.happyDOM.close();}
 });
