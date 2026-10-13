@@ -23,6 +23,27 @@ UI / API 的 `protocol` 值是 `codex-exec-json` 或 `claude-print-json`。这�
 
 ## 开发与检查
 
+从仓库根目录运行，使用 Node.js 22+；不需要安装 app、Python 或 Electron：
+
+```sh
+npm run dev
+# 打开 http://127.0.0.1:8080，保持终端运行
+npm run test:tasks             # 另开终端：零依赖、假 provider + 真实本机 HTTP
+npm ci --ignore-scripts        # 只在需要下面的 DOM 回归时安装开发依赖
+node --test tests/reader-background-summary.test.mjs
+npm test                      # 阅读器完整 DOM/逻辑回归，不等于真实 GUI 验收
+```
+
+开发任务固定放在本仓库已忽略的 `.coconut/dev/tasks`，不写入 `~/.coconut`；启动会打印实际地址与任务存储是否可用。不要把真实私密材料用于开发测试。`start:light` 仍使用原来的 `~/.coconut/tasks`，开发入口不自动迁移其任务。
+
+开发地址固定为 `http://127.0.0.1:8080`，端口占用会停止，不会自动换地址或连接未知服务。浏览器书架按 origin 隔离，服务端开发目录并不隔离同一 origin 的 IndexedDB：建议用单独浏览器配置文件；不要与已有 `8080` 书架混用，切换前先导出 JSON 备份。`localhost`、其他端口、公开 Web 与 app 的书架也各自独立。
+
+修改 `reader/` 的 JS/CSS/HTML 后刷新页面即可读取新文件；修改 `desktop/` 服务代码需 Ctrl+C 后重新 `npm run dev`。重启会把未完成后台任务标为中断，不自动续跑或重新调用模型。提交 reader 资源修改前，运行 `python scripts/reader_assets.py` 更新资源标记，再用 `python scripts/reader_assets.py --check` 核对；这一步是现有贡献者检查，不是开发服务的启动依赖。没有通用 `npm run check` 命令。
+
+可选服务端断点：先停止开发服务，再显式运行 `node --inspect=127.0.0.1:9229 desktop/dev.mjs`，用本机调试器连接；用完关闭。默认不启用 inspector，不要改成公开监听或暴露调试端口。网页问题可使用浏览器开发者工具；任务状态可在 `/api/v1/executor` 与 `/api/v1/tasks` 查看，查询不会调用模型，`not_checked` 不表示已登录或有额度。
+
+以下保留普通轻量服务与桌面贡献者入口：
+
 ```sh
 # 零 Python 的本地 Web 入口，无需 npm install
 node desktop/server.mjs --port 8080
