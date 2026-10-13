@@ -112,6 +112,99 @@ test('asynchronous internal seek events are accepted but later manual seeks canc
   assert.equal(env.controller.getState().status, 'idle');
 });
 
+test('queued seeked after the observed 35.125ms playback advance keeps the bounded preview', async () => {
+  const env = setup(), preview = {...range, start: .125, end: 20};
+  env.player.seekEvents = false; env.player.playbackRate = 1.5; env.player._time = .217877;
+  let resolve;
+  env.player.play = () => {
+    env.player.plays++; env.player.paused = false;
+    return new Promise(done => { resolve = done; });
+  };
+  const pending = env.controller.listen(preview);
+  // Actions Chromium: seeking at .125, then timeupdate and queued seeked at
+  // .160125 while the same player runs at 1.5x. No second seek occurred.
+  env.player.seeking = true; env.player.emit('seeking'); env.player.emit('play');
+  env.player.seeking = false; env.player.advance(.160125);
+  assert.equal(env.controller.getState().status, 'playing');
+  env.player.emit('seeked'); env.player.emit('playing');
+  assert.equal(env.controller.getState().status, 'playing');
+  assert.deepEqual(env.controller.getState().range, preview);
+  assert.deepEqual(env.controller.getState().returnPosition, {time: .217877, wasPlaying: false});
+  assert.equal(env.player.playbackRate, 1.5); assert.equal(env.player.plays, 1);
+  resolve(); assert.equal(await pending, true);
+  env.player.seekEvents = true; env.player.advance(20.1);
+  assert.equal(env.player.currentTime, 20); assert.equal(env.player.paused, true);
+  assert.equal(env.controller.getState().status, 'finished'); assert.equal(env.timers.size, 0);
+});
+
+test('rapid same-player replacement or replay and cancel then fresh listen retain the latest range', async () => {
+  for (const cancelFirst of [false, true]) for (const start of [10, 30]) {
+    const env = setup(); env.player.seekEvents = false;
+    const first = env.controller.listen(range);
+    if (cancelFirst) env.controller.cancel();
+    const replay = !cancelFirst && start === range.start;
+    const latestRange = replay ? range : {...range, id: 'latest', start, end: start + 4};
+    const latest = replay ? env.controller.replay() : env.controller.listen(latestRange);
+    // Native seeking tasks already queued by both owned assignments can reach
+    // the latest listener; neither is evidence of an additional user action.
+    env.player.seeking = true; env.player.emit('seeking'); env.player.emit('seeking');
+    env.player.seeking = false; env.player.emit('seeked');
+    assert.deepEqual(await Promise.all([first, latest]), [false, true]);
+    assert.equal(env.controller.getState().status, 'playing');
+    assert.deepEqual(env.controller.getState().range, latestRange);
+    assert.deepEqual(env.controller.getState().returnPosition, cancelFirst ? {time: 10, wasPlaying: true} : {time: 40, wasPlaying: false});
+    assert.equal(env.timers.size, 1);
+    env.player.advance(latestRange.end);
+    assert.equal(env.player.paused, true); assert.equal(env.controller.getState().status, 'finished');
+  }
+});
+
+test('a different manual target still takes over before the owned seek completes', async () => {
+  for (const time of [12, 38]) {
+    const env = setup(); env.player.seekEvents = false; await env.controller.listen(range);
+    env.player.emit('seeking'); env.player._time = time; env.player.emit('seeking'); env.player.emit('seeked');
+    assert.equal(env.controller.getState().status, 'idle'); assert.equal(env.controller.getState().returnPosition, null);
+    assert.equal(env.player.currentTime, time); assert.equal(env.player.paused, false); assert.equal(env.timers.size, 0);
+  }
+});
+
+test('a queued old seeked cannot clamp a newer manual seek before its seeking event arrives', async () => {
+  for (const stillSeeking of [true, false]) for (const time of [38, 12]) {
+    const env = setup(); env.player.seekEvents = false; await env.controller.listen(range);
+    env.player.seeking = true; env.player.emit('seeking');
+    // The old completion was queued before a user scrub changed currentTime.
+    // The newer native seek may also settle before its seeking event arrives.
+    env.player.seeking = false; env.player.currentTime = time; env.player.seeking = stillSeeking;
+    const pauses = env.player.pauses, plays = env.player.plays;
+    env.player.emit('seeked');
+    assert.equal(env.player.currentTime, time); assert.equal(env.player.paused, false);
+    assert.equal(env.player.pauses, pauses); assert.equal(env.player.plays, plays);
+    if (stillSeeking) assert.equal(env.controller.getState().status, 'idle');
+    env.player.emit('seeking'); env.player.seeking = false; env.player.emit('seeked');
+    assert.equal(env.controller.getState().status, 'idle');
+    assert.equal(env.controller.getState().range, null); assert.equal(env.controller.getState().returnPosition, null);
+    assert.equal(env.player.currentTime, time); assert.equal(env.timers.size, 0);
+  }
+});
+
+test('manual seeking after owned completion still cancels even at the same or nearby target', async () => {
+  for (const time of [10, 10.01, 12, 38]) {
+    const env = setup(); env.player.seekEvents = false; await env.controller.listen(range);
+    env.player.emit('seeking'); env.player.emit('seeked');
+    env.player._time = time; env.player.emit('seeking');
+    assert.equal(env.controller.getState().status, 'idle'); assert.equal(env.controller.getState().returnPosition, null);
+    assert.equal(env.player.currentTime, time); assert.equal(env.timers.size, 0);
+  }
+});
+
+test('pending same-target seeking retains the existing indistinguishable-receipt behavior', async () => {
+  const env = setup(); env.player.seekEvents = false; await env.controller.listen(range);
+  // Preserved limitation: same-target seeking before completion can also be a
+  // queued owned request. This patch does not add a new transaction protocol.
+  env.player.emit('seeking'); env.player.emit('seeking'); env.player.emit('seeked');
+  assert.equal(env.controller.getState().status, 'playing'); assert.deepEqual(env.controller.getState().range, range);
+});
+
 test('cancel hands the player to existing cue-loop or ordinary controls without pausing', async () => {
   const env = setup(); await env.controller.listen(range); const pauses = env.player.pauses;
   env.controller.cancel(); env.player.currentTime = 3; env.player.advance(15);

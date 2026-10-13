@@ -95,8 +95,12 @@
         if (target.expectedSeek === null || Math.abs(target.player.currentTime - target.expectedSeek) > .03) cancel('takeover');
       });
       listen('seeked', () => {
-        if (target.expectedSeek !== null && Math.abs(target.player.currentTime - target.expectedSeek) > .03) { cancel('takeover'); return; }
-        target.expectedSeek = null; observe(target);
+        // The seeking handler checks the destination. Playback can advance
+        // before this queued completion arrives; do not recheck its old clock.
+        if (target.player.seeking === true) { cancel('takeover'); return; }
+        // A later seek may already have settled with its seeking event queued.
+        // Leave boundary observation to timeupdate, play completion and the clock.
+        target.expectedSeek = null;
       });
       listen('play', () => {
         // Pressing the ordinary Play control after a completed preview means
