@@ -137,3 +137,82 @@ test('removing the reading target in Add ends a late X request without importing
   assert.doesNotMatch($('source-route-status').textContent,/正在/);assert.equal(JSON.parse(w.localStorage.getItem('coconut-reader-v1')).documents.length,0);
  }finally{await w.happyDOM.close();}
 });
+
+import {createCaptionService} from '../desktop/caption-service.mjs';
+import {captionFixtureURL,captionFixtureResult} from './helpers/caption-diagnostics-fixtures.mjs';
+const fixtureCaptionService=fixture=>createCaptionService({enabledProviders:['x'],helper:{extractCaptions:async()=>fixture}});
+for(const failed of [false,true])test('partial X import exposes source diagnostics and the actual save receipt, failed='+failed,async()=>{
+ const captions=fixtureCaptionService(captionFixtureResult());
+ const {w,$,pipeline}=await setup(light({caption_import:true}),async()=>response(await captions.importCaption({url:captionFixtureURL})));
+ try{
+  pipeline.hold();const pending=submit($,captionFixtureURL);await feedbackUntil(()=>pipeline.writes.length===1);
+  assert.match($('source-route-status').textContent,/部分字幕未导入.*跳过 2/);assert.doesNotMatch($('source-route-status').textContent,/字幕已保存/);
+  if(failed)pipeline.writes[0].fail();else pipeline.writes[0].commit();await pending;
+  assert.match($('notice').textContent,failed?/尚未保存/:/字幕已保存/);assert.match($('notice').textContent,/部分字幕未导入.*跳过 2/);
+  $('add-content').click();assert.match($('source-route-status').textContent,/部分字幕未导入.*跳过 2/);
+  const row=$('transcript-import-list').firstElementChild;assert.equal(row.dataset.parseState,'partial');assert.equal(row.dataset.status,failed?'unsaved':'saved');
+  assert.match(row.textContent,/Authored partial caption fixture/);
+  const details=row.querySelector('details');details.open=true;details.ontoggle();
+  assert.match(details.textContent,/第 5–7 行.*missing-1.*时间行无法识别/);assert.match(details.textContent,/empty.*没有可导入的文字/);
+  assert.match(details.textContent,/<script>plain excerpt<\/script>/);assert.equal(details.querySelector('script'),null);
+  assert.equal(JSON.parse(pipeline.writes[0].value).documents[0].segments.length,2);assert.equal(JSON.parse(pipeline.writes[0].value).documents[0].diagnostics,undefined);
+  pipeline.hold(false);
+  if(failed){await pipeline.store.retry();assert.equal(row.dataset.status,'saved');assert.match(details.textContent,/跳过 2/);}
+ }finally{pipeline.hold(false);await w.happyDOM.close();}
+});
+test('late cancelled partial X output cannot replace a newer source result or create a warning receipt',async()=>{
+ const partial=await fixtureCaptionService(captionFixtureResult()).importCaption({url:captionFixtureURL});
+ const replies=[];const {w,$}=await setup(light({caption_import:true}),()=>new Promise(resolve=>replies.push(resolve)));
+ try{
+  const old=submit($,captionFixtureURL);await feedbackUntil(()=>replies.length===1);$('cancel-source').click();
+  const fresh=submit($,'https://x.com/newsource/status/456');await feedbackUntil(()=>replies.length===2);
+  replies[1](response({status:'unavailable',message:'New source unavailable'}));await fresh;
+  replies[0](response(partial));await old;
+  assert.equal($('source-route-status').textContent,'New source unavailable');assert.equal($('transcript-import-list').children.length,0);assert.equal(w.localStorage.getItem('coconut-reader-v1'),null);
+ }finally{await w.happyDOM.close();}
+});
+test('partial X reimport keeps one document, reading work and complete access to later diagnostics',async()=>{
+ let fixture=captionFixtureResult({complete:true});const captions=createCaptionService({enabledProviders:['x'],helper:{extractCaptions:async()=>fixture}});
+ const {w,$}=await setup(light({caption_import:true}),async()=>response(await captions.importCaption({url:captionFixtureURL})));
+ try{
+  await submit($,captionFixtureURL);$('mode-transcript').click();w.document.querySelector('.note-button').click();$('note').value='Keep my authored note';$('note').dispatchEvent(new w.Event('input'));$('close-note').click();await w.flushContentForTest();
+  const original=JSON.parse(w.localStorage.getItem('coconut-reader-v1')).documents[0];
+  $('add-content').click();fixture=captionFixtureResult({warningCount:105});await submit($,captionFixtureURL);
+  const saved=JSON.parse(w.localStorage.getItem('coconut-reader-v1')).documents;assert.equal(saved.length,1);assert.equal(saved[0].key,original.key);assert.deepEqual(saved[0].notes,original.notes);
+  const row=$('transcript-import-list').firstElementChild;assert.equal(row.dataset.status,'duplicate');assert.match(row.textContent,/跳过 106/);assert.equal($('stop-transcript-import').hidden,true);
+  const details=row.querySelector('details');assert.equal(details.querySelectorAll('li').length,0);details.open=true;details.ontoggle();assert.equal(details.querySelectorAll('li').length,50);
+  details.querySelector('button').click();assert.equal(details.querySelectorAll('li').length,100);details.querySelector('button').click();assert.equal(details.querySelectorAll('li').length,106);assert.equal(details.querySelector('button').hidden,true);assert.match(details.textContent,/missing-105/);
+ }finally{await w.happyDOM.close();}
+});
+test('all-invalid X source cannot replace an existing readable document or announce saved captions',async()=>{
+ let fixture=captionFixtureResult({complete:true});const captions=createCaptionService({enabledProviders:['x'],helper:{extractCaptions:async()=>fixture}});
+ const {w,$}=await setup(light({caption_import:true}),async()=>{try{return response(await captions.importCaption({url:captionFixtureURL}));}catch(error){return {ok:false,json:async()=>({error:error.message})};}});
+ try{
+  await submit($,captionFixtureURL);const before=w.localStorage.getItem('coconut-reader-v1');$('add-content').click();fixture=captionFixtureResult({onlyInvalid:true});await submit($,captionFixtureURL);
+  assert.equal(w.localStorage.getItem('coconut-reader-v1'),before);assert.match($('source-route-status').textContent,/必须包含/);assert.doesNotMatch($('source-route-status').textContent,/字幕已保存|正在/);assert.equal($('add-workspace').hidden,false);
+ }finally{await w.happyDOM.close();}
+});
+for(const change of ['cancel','url','language','navigation'])test('partial X save warning survives '+change+' without a late completion announcement',async()=>{
+ const captions=fixtureCaptionService(captionFixtureResult());const {w,$,pipeline}=await setup(light({caption_import:true}),async()=>response(await captions.importCaption({url:captionFixtureURL})));
+ let pending;try{
+  pipeline.hold();pending=submit($,captionFixtureURL);await feedbackUntil(()=>pipeline.writes.length===1);assert.equal($('stop-transcript-import').hidden,true);
+  if(change==='cancel')$('cancel-source').click();
+  if(change==='url'){$('video-url').value='https://x.com/other/status/789';$('video-url').dispatchEvent(new w.Event('input'));}
+  if(change==='language'){$('caption-language').value='ja';$('caption-language').dispatchEvent(new w.Event('change'));}
+  if(change==='navigation')$('add-content').click();
+  const status=$('source-route-status').textContent;assert.doesNotMatch(status,/正在/);
+  pipeline.hold(false);pipeline.writes[0].commit();await pending;
+  assert.equal($('source-route-status').textContent,status);assert.doesNotMatch($('notice').textContent,/字幕已保存/);
+  const row=$('transcript-import-list').firstElementChild;assert.equal(row.dataset.status,'saved');assert.match(row.textContent,/跳过 2/);
+ }finally{pipeline.hold(false);for(const write of pipeline.writes)write.commit();await pending;await w.happyDOM.close();}
+});
+test('a later fully parsed X import retires the earlier partial result without changing identity',async()=>{
+ let fixture=captionFixtureResult();const captions=createCaptionService({enabledProviders:['x'],helper:{extractCaptions:async()=>fixture}});
+ const {w,$}=await setup(light({caption_import:true}),async()=>response(await captions.importCaption({url:captionFixtureURL})));
+ try{
+  await submit($,captionFixtureURL);const original=JSON.parse(w.localStorage.getItem('coconut-reader-v1')).documents[0];assert.equal($('transcript-import-results').hidden,false);
+  $('add-content').click();fixture=captionFixtureResult({complete:true});await submit($,captionFixtureURL);
+  assert.equal($('transcript-import-results').hidden,true);assert.doesNotMatch($('source-route-status').textContent,/部分字幕|跳过/);assert.doesNotMatch($('notice').textContent,/部分字幕|跳过/);
+  const saved=JSON.parse(w.localStorage.getItem('coconut-reader-v1')).documents;assert.equal(saved.length,1);assert.equal(saved[0].key,original.key);
+ }finally{await w.happyDOM.close();}
+});

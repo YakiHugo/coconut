@@ -121,6 +121,8 @@ jobs:
             ${{ runner.temp }}/coconut-native-diagnostics/native-media-failure.png
           if-no-files-found: ignore
           retention-days: 7
+      - name: Verify partial caption warnings through the native UI with authored offline fixtures
+        run: node tests/desktop-caption-ui-proof.mjs --offline-diagnostics
       - name: Verify exact ZIP helper integrity and native public captions
         run: node tests/desktop-caption-helper-packaged-proof.mjs --live
       - name: Verify real captions through the native primary journey

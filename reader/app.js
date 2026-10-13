@@ -3210,7 +3210,7 @@ function renderTranscriptImportBatch(batch){
  const warnings=batch.items.reduce((count,item)=>count+(item.diagnostics?.length||0),0);
  if(warnings)parts.push('部分字幕未导入 '+warnings+' 块');
  $('transcript-import-progress').textContent=parts.join(' · ');
- $('stop-transcript-import').hidden=batch.finished||batch.cancelled;
+ $('stop-transcript-import').hidden=batch.finished||batch.cancelled||batch.cancellable===false;
 }
 window.addEventListener('coconut-persistence-change',()=>{
  const batch=transcriptImportBatch;if(!batch)return;

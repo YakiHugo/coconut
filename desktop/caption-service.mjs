@@ -56,12 +56,13 @@ export function createCaptionService({helper,readerDirectory=path.resolve(ROOT,'
     const basis=track.languageBasis||meta.language_basis||'unknown';
     if(!['user_hint','platform_metadata','original_track','single_track','unknown'].includes(basis))throw new Error('字幕语言依据无法核对');
     const text=new TextDecoder('utf-8',{fatal:true}).decode(result.bytes);
-    const document=Coconut.parse(text,'captions.'+result.format);
+    const {document,diagnostics}=Coconut.parseWithDiagnostics(text,'captions.'+result.format);
     if(!document.segments.length||document.segments.length>20000||document.segments.some(cue=>cue.end>meta.duration+1||cue.end>MAX_DURATION))throw new Error('字幕片段范围与视频时长无法核对');
     document.title=typeof meta.title==='string'&&meta.title.trim()?meta.title.trim().slice(0,500):'视频文字稿';
     document.source_url=source.url;document.language=meta.language;
     document.provenance={kind:meta.automatic?'automatic_subtitles':'platform_subtitles',caption_method:meta.automatic?'automatic':'platform_provided',review_status:'unreviewed',language:meta.language,caption_track:String(track.captionTrack||meta.caption_track||meta.language).slice(0,100),language_basis:basis,subtitle_check:'found',source_platform:'x',source_medium:'video',media_id:meta.id,media_duration:meta.duration};
-    return {status:'ready',document:Coconut.validate(document)};
+    // Keep parse loss on this import receipt, outside document identity and provenance.
+    return {status:'ready',document:Coconut.validate(document),diagnostics};
    }finally{busy=false;}
   }
  });
