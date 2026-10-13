@@ -101,7 +101,13 @@ async function position(doc, index, mode, label) {
   const selector = cueSelector(doc, index, mode);
   await stable(selector);
   const edge = (await page.evaluate(cueGeometry, selector)).edge;
-  await page.locator(selector).evaluate((node, top) => window.scrollBy({top: node.getBoundingClientRect().top - top, left: 0, behavior: 'instant'}), edge + 2);
+  // A transcript section includes trailing padding and a border. Put its source
+  // text at the reading edge so the preceding section is genuinely out of view;
+  // the independent first-cue assertion below must still name this exact cue.
+  await page.locator(selector).evaluate((node, top) => {
+    const source = node.matches('.segment') ? node.querySelector('.words') : node;
+    window.scrollBy({top: source.getBoundingClientRect().top - top, left: 0, behavior: 'instant'});
+  }, edge + 2);
   const result = await landed(doc, index, mode, label, {focus: false});
   check(label + '_fixture_really_reads_this_cue_first', result.first === doc.segments[index].id);
   return result;

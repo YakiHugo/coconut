@@ -404,12 +404,19 @@ try {
     check('failed_real_IDB_write_retains_edit_explicit_retry_and_undo_' + width, true);
 
     stage = 'latest batch and later authored edit ' + width;
+    await expect(page.locator('body')).toHaveAttribute('data-reading-mode', 'transcript');
+    await expect(page.locator('#reader-options > #reading-settings')).toHaveCount(1);
+    check('reload_restores_explicit_transcript_mode_before_settings_journey_' + width, true);
+    // Reload preserves the earlier transcript choice. Establish continuous
+    // reading explicitly before exercising its settings-modal return path.
+    await clickVisibleReaderControl('#mode-passages', 'continuous_reading_before_correction_' + width);
+    await expect(page.locator('#mode-passages')).toHaveAttribute('aria-pressed', 'true');
     await preview('REMOVE_ME', 'REPLACED'); const firstBatch = expectedCorrection(allChanged, 'REMOVE_ME', 'REPLACED'); await apply(firstBatch);
     await preview('CUE', 'cue'); const secondBatch = expectedCorrection(firstBatch, 'CUE', 'cue'); await apply(secondBatch);
     await undo(firstBatch); await expect(page.locator('#undo-source-correction')).toBeHidden();
     check('new_batch_replaces_previous_undo_and_only_latest_batch_reverts_' + width, (await activeSaved()).segments[238].text === 'Keep REPLACED content.');
     await preview('CUE', 'cue'); await apply(secondBatch); await close('button');
-    // Reload entered continuous reading. Opening correction used its information
+    // Explicit continuous reading puts correction in its information
     // panel; closing the child modal correctly returns to that still-open panel.
     // Dismiss it through the same visible button a reader uses before reaching
     // the mode tabs behind it. A missing/hidden control remains a hard failure.

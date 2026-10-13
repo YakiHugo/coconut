@@ -25,6 +25,33 @@ test('ordinary A to B to A resumes the last transcript page without a manual boo
   assert.equal(h.w.document.body.dataset.readingMode,'transcript');assert.equal(first(h),'shelf-0-cue-700');assert.equal(h.disk.getItem(CONTENT),content);assert.equal(h.pipeline.store.status().generation,generation);assert.equal(h.w.libraryProbe.documents[0].readingPosition,undefined);
  }finally{await h.w.happyDOM.close();}
 });
+test('restoring transcript source text excludes the preceding row tail and repeated reopening never drifts backward',async()=>{
+ const h=setup({docs:largeLibraryFixture(2,{cues:40})});try{
+  let scroll=0;const originalRect=h.w.HTMLElement.prototype.getBoundingClientRect;
+  Object.defineProperty(h.w,'scrollY',{configurable:true,get:()=>scroll});
+  h.w.HTMLElement.prototype.getBoundingClientRect=function(){
+   if(this.id==='reading-mode-toolbar')return {top:6,bottom:54,height:48,width:900};
+   const row=this.closest('.segment');if(!row)return originalRect.call(this);
+   const index=Number(row.dataset.segmentId.split('-cue-')[1]),source=this.matches('.words'),top=index*120-scroll+(source?28:0),height=source?42:120;
+   return {top,bottom:top+height,height,width:900};
+  };
+  h.w.scrollBy=(x,y)=>{scroll+=y;};
+  h.w.HTMLElement.prototype.scrollIntoView=function(){
+   h.scrolled.push(this);if(this.matches('.segment,.words'))scroll+=this.getBoundingClientRect().top-(parseFloat(this.style.scrollMarginTop)||0);
+  };
+  h.$('mode-transcript').click();scroll=19*120+28-60;h.w.dispatchEvent(new h.w.Event('pagehide'));
+  const before=h.disk.getItem(CONTENT),generation=h.pipeline.store.status().generation;
+  assert.deepEqual(remembered(h),['shelf-0','shelf-0-cue-19','transcript']);
+  for(let i=0;i<3;i++){
+   h.open('shelf-1');h.open('shelf-0');
+   const row=h.$('transcript').querySelector('[data-segment-id="shelf-0-cue-19"]');
+   assert.equal(h.w.document.activeElement,row);assert.ok(row.querySelector('.words').getBoundingClientRect().top>=54,'source is below the real sticky edge');
+   assert.ok(row.previousElementSibling.getBoundingClientRect().bottom<=54,'the preceding row tail is wholly behind the toolbar');
+   h.w.dispatchEvent(new h.w.Event('pagehide'));assert.deepEqual(remembered(h),['shelf-0','shelf-0-cue-19','transcript']);
+  }
+  assert.equal(h.disk.getItem(CONTENT),before);assert.equal(h.pipeline.store.status().generation,generation);
+ }finally{await h.w.happyDOM.close();}
+});
 test('pagehide captures the visible cue, same-window reload and a new window resume it independently',async()=>{
  const h=setup();let reload,other,again;try{lateTranscript(h);visibleOnly(h,'shelf-0-cue-735');h.w.dispatchEvent(new h.w.Event('pagehide'));assert.deepEqual(remembered(h),['shelf-0','shelf-0-cue-735','transcript']);
   reload=setup({disk:h.disk,session:h.session});assert.equal(first(reload),'shelf-0-cue-700');assert.equal(reload.w.document.body.dataset.readingMode,'transcript');

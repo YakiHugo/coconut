@@ -5050,7 +5050,14 @@ function restoreReadingView(doc,{focus=true}={}){
  passageDocumentKey=doc.key;passageAnchor=view.cueId;
  render();
  const node=view.mode==='summary'?$('title'):chapterCueNode(view.cueId,view.mode);
- if(node){if(view.mode==='passages')node.tabIndex=-1;scrollReadingTarget(node,{block:'start',behavior:'auto'});if(focus)node.focus({preventScroll:true});}
+ if(node){
+  if(view.mode==='passages')node.tabIndex=-1;
+  // Align the actual source text. Aligning a transcript section's border below
+  // the sticky toolbar leaves the preceding section's tail visible, which can
+  // become a different saved cue on the next navigation or reload.
+  const target=view.mode==='transcript'?node.querySelector('.words')||node:node;
+  scrollReadingTarget(target,{block:'start',behavior:'auto'});if(focus)node.focus({preventScroll:true});
+ }
  return true;
 }
 function switchTranscriptView(bilingual){

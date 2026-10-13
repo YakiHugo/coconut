@@ -31,7 +31,13 @@ test('explicit import and bookmark control reach the saved bookmark; invalid boo
   const h=libraryHarness([],{probe:true});try{
    await importDoc(h,readFirstFixture(3,{summary:'current',bookmark}));assert.equal(mode(h),bookmark==='read-2'?'transcript':'summary');
    if(bookmark==='read-2')assert.equal(h.w.document.activeElement.dataset.segmentId,bookmark);
-   open(h);if(bookmark==='read-2')h.$('resume').click();assert.equal(mode(h),bookmark==='read-2'?'transcript':'summary');
+   if(bookmark==='read-2'){
+    for(const node of h.$('transcript').querySelectorAll('.segment'))node.getBoundingClientRect=()=>({top:node.dataset.segmentId==='read-0'?100:2000,bottom:node.dataset.segmentId==='read-0'?160:2060,height:60,width:100});
+    h.$('add-content').click();open(h);
+    assert.equal(h.w.document.activeElement.dataset.segmentId,'read-0','ordinary reopening restores the visible cue, independently of the bookmark');
+    assert.equal(h.w.libraryProbe.documents[0].readingPosition,'read-2');h.$('resume').click();
+   }else open(h);
+   assert.equal(mode(h),bookmark==='read-2'?'transcript':'summary');
    if(bookmark==='read-2')assert.equal(h.w.document.activeElement.dataset.segmentId,bookmark);
   }finally{await h.w.happyDOM.close();}
  }
