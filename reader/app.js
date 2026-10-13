@@ -1715,6 +1715,33 @@ function bilingualExcerptDisplay(record){
  const labels={'user-authored':'用户自写','human-reviewed':'已有人工核对','machine':'机器生成，需核对'};
  return '选取时译文（'+paired.language+'）：\n'+paired.text+'\n初始来源：'+paired.providers.join('、')+' · '+paired.reviewStates.map(value=>labels[value]||value).join('、')+'\n译文生成时间：未记录。配对确认时间：'+paired.confirmedAt+'\n用户确认两段对应，不等于重新核对整份翻译；后续来源变化不会改写快照。'+(paired.qualityWarnings.length?'\n选取时质量提示：'+Coconut.translationQualityMessage({quality_warnings:paired.qualityWarnings}):'');
 }
+// Copy is read-only and receipt-bound to its own mounted view. A denied clipboard
+// write keeps a selectable plain-text fallback, without touching the note editor.
+function savedExcerptCopy(record,isCurrent){
+ const host=el('div','saved-excerpt-copy'),button=el('button','','复制引用与出处'),status=el('p','hint');let busy=false,field=null;
+ button.type='button';button.title='复制选取时原文、译文与出处；不包含个人笔记。';status.setAttribute('role','status');status.setAttribute('aria-live','polite');
+ const current=()=>host.isConnected&&isCurrent();
+ button.onclick=async()=>{
+  if(busy||!current())return;
+  // Keep native keyboard focus while the permission request is pending. The
+  // busy guard owns repeated activation; aria-disabled announces that state.
+  const payload=CoconutQuotation.savedAttribution(record,Coconut);busy=true;button.setAttribute('aria-disabled','true');status.textContent='正在复制选取时引用与出处…';
+  try{
+   if(!navigator.clipboard?.writeText)throw Error('unavailable');await navigator.clipboard.writeText(payload);
+   if(current())status.textContent='已复制选取时引用与出处，不含个人笔记。';
+  }catch{
+   if(current()){
+    status.textContent='未能自动复制。完整引用已保留，请在下方全选后手动复制。'+(payload.includes('\r\n')?' 手动复制采用预览中的换行格式。':'');
+    if(!field){field=el('textarea','saved-excerpt-copy-preview');field.readOnly=true;field.rows=8;field.setAttribute('aria-label','完整引用与出处（选取时快照）');host.append(field);}
+    field.value=payload.replace(/\r\n?/g,'\n');
+    // A late rejection must not take focus back from a note, another record or
+    // a nested dialog the user opened while the native permission was pending.
+    if(document.activeElement===button){field.focus();field.select();}
+   }
+  }finally{busy=false;button.removeAttribute('aria-disabled');}
+ };
+ host.append(button,status);return {host,button};
+}
 // Reading recall is derived from immutable captures. It never marks source words,
 // changes cue annotations, or persists a second anchor. Each render batches source
 // checks once; save receipts only update mounted controls and status text.
@@ -1788,7 +1815,7 @@ function refreshReadingExcerptSaveState(){
  $('reading-excerpts-save-status').textContent=ownedView?persistence:'篇目已更换或移除；这里保留刚才的快照，请关闭后重新选择。';
  for(const row of view.rows){
   const owned=ownedView&&liveRecords.has(row.record);
-  row.edit.disabled=!owned;row.state.textContent=owned?readingExcerptHistory(row.source):'这条摘录已更换或移除；显示的是刚才的快照。';
+  row.edit.disabled=!owned;row.copy.disabled=!owned;row.state.textContent=owned?readingExcerptHistory(row.source):'这条摘录已更换或移除；显示的是刚才的快照。';
   const note=owned?Coconut.exactExcerptNote(view.doc,row.record.id):row.noteText;
   if(owned)row.noteText=note;
   row.note.textContent=Coconut.hasNoteContent(note)?'我的笔记：'+readingExcerptPreview(note):'还没有个人笔记';
@@ -1830,7 +1857,8 @@ function renderReadingExcerptList(index=readingExcerptIndex(readingExcerptDialog
    const origin=Coconut.exactExcerptSource(record);details.append(el('p','hint','摘录时篇目：'+origin.title+'\n摘录时间：'+record.created_at+'\n'+(origin.source_url||'无原站链接')));
   });
   edit.onclick=()=>{if(readingExcerptDialog!==view||!readingExcerptDialogOwned()||!view.doc.exact_excerpts?.includes(record))return;openExactNote(view.doc,record,edit);};
-  row.append(details,note,edit);host.append(row);view.rows.push({record,state:source,source:index.states.get(record.id),note,noteText:Coconut.exactExcerptNote(view.doc,record.id),edit});
+  const copy=savedExcerptCopy(record,()=>readingExcerptDialog===view&&$('reading-excerpts-dialog').open&&readingExcerptDialogOwned()&&view.doc.exact_excerpts?.includes(record));
+  row.append(details,copy.host,note,edit);host.append(row);view.rows.push({record,state:source,source:index.states.get(record.id),note,noteText:Coconut.exactExcerptNote(view.doc,record.id),edit,copy:copy.button});
  }
  refreshReadingExcerptSaveState();
 }
@@ -2364,6 +2392,7 @@ function renderLibraryNotebook(){
    $('return-library-notebook').hidden=false;
   };row.append(details,open);
   if(exact){
+   row.append(savedExcerptCopy(exact,()=>$('library-notebook').open&&state.documents.includes(doc)&&doc.exact_excerpts?.includes(exact)).host);
    const remove=el('button','notebook-remove','移除所选摘录');remove.type='button';
    remove.onclick=()=>{
     if(!$('library-notebook').open||!contentIngressAllowed(doc)||!doc.exact_excerpts?.includes(exact)||!Coconut.libraryCaptureCurrent(capture,state.documents)||!notebookSearch.isCurrent(selection))return;

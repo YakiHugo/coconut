@@ -16,6 +16,24 @@ personal-note editor handles drafts, conflict checks, persistence retry and
 exports. An unsaved quotation or note is labeled as such; merely seeing an
 entry does not claim it has reached local storage.
 
+**复制引用与出处** is available on each exact-excerpt row here and in the library
+notebook. It copies the complete selected original, captured title/source link,
+cue-level time range and capture date from the immutable snapshot. A bilingual
+capture also includes its independently selected translation, original cue time
+range, saved provider/review evidence and pairing confirmation date. Missing
+links and translation-generation dates remain explicitly unknown. Personal notes
+and unselected context are not included. Current title, link, text or translation
+edits never replace the historical citation; a missing source cue can still be
+copied from the notebook.
+
+Copying does not save, edit, navigate or play anything. Clipboard access is only
+requested by the button, with no clipboard reads. If automatic copying is denied
+or unavailable, a labeled readonly field preserves the entire plain-text payload
+for manual copying; the status explains CRLF preview normalization when relevant.
+Repeated clicks cannot start overlapping writes. A late result from a closed,
+paginated or replaced row cannot reopen it or steal focus from a newer view or
+personal-note editor.
+
 **返回阅读** restores focus to the opening control with no page, filter, bookmark,
 selection, player or reading-mode change. Nested personal-note editing returns
 to the same record. If the opening control was rebuilt, a surviving original
@@ -56,3 +74,16 @@ workflow runs `tests/inline-excerpts-browser.mjs` at desktop and 390px using
 authored data and real IndexedDB. Screenshots and `inline-excerpts-checks.json`
 are retained in its authored UI artifact. Local DOM checks or syntax checks
 alone do not establish native-browser geometry, media or model quality.
+
+`tests/reader-saved-quotation.test.mjs` covers historical citation formatting,
+v1 source gaps, bilingual attribution, complete Unicode/CRLF payloads, both UI
+entry points, clipboard success/failure/retry, late results and read-only behavior.
+The authored CI-only browser fixture also exercises native keyboard copying,
+focus-visible targets, manual-copy selection, changed/deleted source evidence
+and real IndexedDB invariance. Happy paths grant clipboard read/write permission
+to the loopback origin and compare actual Chromium clipboard readback with the
+complete expected citation, including after source edits/deletion. An authored
+sentinel is written before each copy, so a stale clipboard value cannot pass.
+Only denied/delayed branches inject a boundary double; the native API is restored
+before further success checks. These checks require a real CI browser run;
+syntax checks alone do not establish clipboard success or permission behavior.
