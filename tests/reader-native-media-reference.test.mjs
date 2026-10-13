@@ -149,6 +149,15 @@ test('supplementing the same audio project preserves its settled remembered cons
 });
 
 
+test('pasting captions through the actual dialog retains settled native consent and player without another resolve',async()=>{
+ const env=await setup({docs:[doc('audio',{project_kind:'audio_only',segments:[],project_note:'Native project note',timestamp_bookmarks:[{id:'keep',time:2,note:'Native bookmark'}]})],seedRemembered:true});try{
+  const original=env.w.referenceTest.active(),owner=clone(env.w.referenceTest.owner(original)),attachment=env.w.referenceTest.attachment(),player=env.$('source-media').querySelector('audio'),calls=env.service.calls.length;
+  player.currentTime=1.5;env.$('paste-project-subtitles').click();env.$('paste-subtitle-text').value='1\n00:00:00,125 --> 00:00:03,875\nAuthored native pasted words';env.$('paste-subtitle-text').dispatchEvent(new env.w.Event('input'));env.$('preview-paste-subtitle').click();await env.$('confirm-paste-subtitle').onclick();await settle();
+  const attached=env.w.referenceTest.active();assert.equal(attached.key,original.key);assert.equal(attached.segments[0].text,'Authored native pasted words');assert.equal(attached.project_note,'Native project note');assert.equal(attached.timestamp_bookmarks[0].note,'Native bookmark');assert.deepEqual(clone(env.w.referenceTest.owner(attached)),owner);assert.equal(env.$('remember-local-media-choice').checked,true);assert.equal(env.service.records.size,1);assert.equal(env.w.referenceTest.attachment(),attachment);assert.equal(env.$('source-media').querySelector('audio'),player);assert.equal(player.currentTime,1.5);assert.equal(player.paused,true);assert.equal(env.service.calls.length,calls);
+ }finally{await close(env);}
+});
+
+
 test('removing a never-visited remembered project retires its reference immediately',async()=>{
  const env=await setup({docs:[doc(),doc('unvisited')],seedRemembered:true});try{
   assert.equal(env.service.records.size,2);assert.equal(env.w.referenceTest.active().key,'authored');env.w.referenceTest.removeKey('unvisited');await env.$('confirm-removal').onclick();await settle();assert.equal(env.service.records.size,1);assert.equal(env.w.referenceTest.active().key,'authored');

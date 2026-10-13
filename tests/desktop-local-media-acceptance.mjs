@@ -87,6 +87,29 @@ async function failureEvidence(error){
  await fs.mkdir(directory,{recursive:true});await fs.writeFile(path.join(directory,'native-media-failure.json'),JSON.stringify(report,null,2));
  if(page&&!page.isClosed())await page.screenshot({path:path.join(directory,'native-media-failure.png'),timeout:5000}).catch(()=>{});
 }
+async function pasteProjectCaptionsAcceptance(audioPath){
+ stage='native_project_paste_setup';const profile=path.join(temporary,'project-paste-profile');
+ await launch(profile);await selectNative(audioPath);await optIn();
+ await page.locator('#project-note').fill('Authored native pasted-caption project note');
+ await page.locator('#audio-bookmark-time').fill('12.5');await page.locator('#audio-bookmark-note').fill('Authored native saved time bookmark');await page.locator('#audio-bookmark-form button[type=submit]').click();
+ const original=await saved();await page.locator('#audio-bookmark-time').fill('29.125');await page.locator('#audio-bookmark-note').fill('Authored pending time bookmark');
+ await page.locator('#source-media audio').evaluate(async player=>{const seeked=new Promise(resolve=>player.addEventListener('seeked',resolve,{once:true}));player.currentTime=25;await seeked;player.pause();window.__nativePasteBefore={player,attachment:browserMedia.get(active().key),time:player.currentTime};});
+ await page.locator('#paste-project-subtitles').click();await expect(page.locator('#paste-subtitle-destination')).toContainText(original.title);
+ await page.locator('#paste-subtitle-text').fill('00:01 Only a start');await page.locator('#preview-paste-subtitle').click();await expect(page.locator('#confirm-paste-subtitle')).toBeDisabled();
+ await page.locator('#close-paste-subtitle').click();check('native_invalid_paste_close_preserves_project_and_draft',await page.evaluate(()=>active().segments.length===0&&document.getElementById('paste-subtitle-text').value==='00:01 Only a start'&&document.getElementById('audio-bookmark-note').value==='Authored pending time bookmark'));
+ await page.locator('#paste-project-subtitles').click();await expect(page.locator('#confirm-paste-subtitle')).toBeDisabled();
+ const captions='1\n00:00:01,125 --> 00:00:03,875\nNative authored first caption 你好\nSecond line\n\n2\n00:00:04,000 --> 00:00:05,250\nNative authored second caption';
+ await page.locator('#paste-subtitle-text').fill(captions);await page.locator('#preview-paste-subtitle').click();await expect(page.locator('#paste-subtitle-preview li')).toHaveCount(2);await expect(page.locator('#confirm-paste-subtitle')).toHaveText('附加到此项目');
+ check('native_caption_preview_leaves_original_project_unchanged',await page.evaluate(()=>active().segments.length===0&&state.documents.length===1));
+ await page.locator('#confirm-paste-subtitle').click();await expect(page.locator('#paste-subtitle-dialog')).not.toBeVisible();
+ const attached=await saved();check('native_paste_keeps_one_exact_project_and_annotations',attached.key===original.key&&attached.title===original.title&&attached.project_note===original.project_note&&JSON.stringify(attached.timestamp_bookmarks)===JSON.stringify(original.timestamp_bookmarks)&&attached.local_media_source.fingerprint===original.local_media_source.fingerprint&&attached.segments.length===2&&attached.segments[0].start===1.125&&attached.segments[0].end===3.875);
+ check('native_paste_keeps_player_manual_clock_consent_and_bookmark_draft',await page.evaluate(()=>{const before=window.__nativePasteBefore,player=document.querySelector('#source-media audio');return state.documents.length===1&&player===before.player&&browserMedia.get(active().key)===before.attachment&&player.currentTime===before.time&&player.paused&&document.getElementById('remember-local-media-choice').checked&&document.getElementById('audio-bookmark-time').value==='29.125'&&document.getElementById('audio-bookmark-note').value==='Authored pending time bookmark';}));
+ // Only this explicit timestamp click is allowed to seek/play after attachment.
+ await page.locator('.segment .time button').first().click();await expect.poll(()=>page.locator('#source-media audio').evaluate(p=>p.currentTime>=1.125&&p.currentTime<3.875)).toBe(true);await page.locator('#source-media audio').evaluate(p=>p.pause());
+ await page.locator('#cancel-audio-bookmark').click();await quit();await launch(profile);await decoded();
+ check('native_pasted_project_restarts_with_same_reference_without_autoplay',await page.evaluate(key=>state.documents.length===1&&active().key===key&&active().segments.length===2&&!!browserMedia.get(active().key)?.nativeToken&&document.querySelector('#source-media audio').paused&&document.querySelector('#source-media audio').currentTime===0,original.key));
+ await quit();
+}
 async function rememberedDockAcceptance(audioPath){
  stage='native_remembered_dock_setup';
  const profile=path.join(temporary,'dock-profile'),transcript=path.join(temporary,'dock-transcript.json');
@@ -200,7 +223,7 @@ try{
  await quit();await launch(profile);await expectNoPlayer();check('forget_persists_across_restart',true);await quit();
  // A backup in a fresh profile never grants the native file reference.
  await launch(path.join(temporary,'fresh-profile'));const [importChooser]=await Promise.all([page.waitForEvent('filechooser'),page.locator('#import').click()]);await importChooser.setFiles(backup);await page.locator('#audio-project').waitFor({state:'visible'});await page.evaluate(()=>libraryStore.flush());await expectNoPlayer();check('fresh_profile_backup_has_no_native_consent',(await saved()).project_note===initial.project_note);
- await quit();await rememberedDockAcceptance(moved);
+ await quit();await pasteProjectCaptionsAcceptance(moved);await rememberedDockAcceptance(moved);
  check('no_model_upload_or_external_request',forbidden===0);check('no_renderer_errors',pageErrors===0);await quit();
  console.log(JSON.stringify({suite:'packaged-local-media',status:'passed',architecture:process.arch,checks,dockReceipts,windowReceipts,gatekeeper_verified:false}));
 }catch(error){process.exitCode=1;await failureEvidence(error);}finally{
