@@ -57,7 +57,11 @@
  function button(label,action,entry,handler,disabled=false){const node=el('button','',label);node.type='button';node.dataset.action=action;node.disabled=disabled;node.onclick=handler;return node;}
  function renderTasks(){
   const host=$('background-task-list');
-  $('background-task-count').textContent=String(entries.length+external.length);
+  const count=entries.length+external.length,unfinished=entries.filter(entry=>live.has(entry.task?.status)).length+external.filter(task=>live.has(task.status)).length,unknown=entries.filter(entry=>!entry.task).length,ready=entries.filter(entry=>entry.task?.status==='succeeded'&&!entry.cancelRequested&&!accepted(entry)).length;
+  $('background-task-count').textContent=String(count);
+  const compactStatus=$('library-background-task-status');compactStatus.hidden=!count;
+  const compactText=count?' · '+(unfinished?'进行中 '+unfinished:unknown?'待确认 '+unknown:ready?'待接收 '+ready:count+' 条记录'):'';
+  if(compactStatus.textContent!==compactText)compactStatus.textContent=compactText;
   $('background-executor-status').textContent=connection;
   if(storageError)message(storageError);
   const signature=JSON.stringify([entries.map(entry=>[entry.key,entry.task&&[entry.task.taskId,entry.task.status,entry.task.progress,entry.task.error,entry.task.result?.answer,entry.task.result?.citations],entry.cancelRequested,entry.retired,entry.missing,accepted(entry),canReceive(entry),owner(entry)===active(),accepting.has(entry.key)]),external,supported(),submitting,storageError]);
@@ -220,7 +224,7 @@
  }
  $('summary-execution').onchange=async()=>{$('ai-consent').checked=false;consentSignature='';renderLanguage();render();if($('summary-execution').value==='background')await refresh();};
  $('background-refresh').onclick=refresh;
- $('summary-open-background-tasks').onclick=()=>{if($('toggle-library').getAttribute('aria-expanded')!=='true')toggleLibraryBrowsing();$('background-tasks').open=true;$('background-tasks').querySelector('summary').focus({preventScroll:true});$('background-tasks').scrollIntoView?.({block:'start'});void refresh();};
+ $('summary-open-background-tasks').onclick=()=>{if($('toggle-library').getAttribute('aria-expanded')!=='true')toggleLibraryBrowsing();if($('library-tools').contains($('background-tasks')))$('library-tools').open=true;$('background-tasks').open=true;$('background-tasks').querySelector('summary').focus({preventScroll:true});$('background-tasks').scrollIntoView?.({block:'start'});void refresh();};
  window.addEventListener('coconut-render',render);
  window.addEventListener('coconut-storage-ready',render);
  window.addEventListener('pageshow',()=>{closed=false;if(entries.length)void refresh();});

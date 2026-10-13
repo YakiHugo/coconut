@@ -34,6 +34,7 @@ function backend(){
 }
 function setup(api=backend(),storage={},options={}){
  const w=new Window({url:'http://127.0.0.1:8080/'});Object.defineProperty(w,'crypto',{value:webcrypto});
+ if(options.mobile){const original=w.matchMedia.bind(w);w.matchMedia=query=>query==='(max-width: 650px)'?{matches:true,addEventListener(){}}:original(query);}
  w.document.body.innerHTML=fs.readFileSync(new URL('reader/index.html',root),'utf8').split('<body>')[1].split('</body>')[0];
  for(const [key,value] of Object.entries(storage))w.localStorage.setItem(key,value);
  if(options.phase)w.CoconutStorageBootstrap={phase:options.phase};
@@ -49,6 +50,19 @@ function setup(api=backend(),storage={},options={}){
  },async submit(){ $('ai-consent').checked=true;await $('ask-ai').onclick(); },async refresh(){await $('background-refresh').onclick();}};
 }
 const posted=api=>api.calls.filter(c=>c.url==='api/v1/tasks'&&c.body);
+
+test('compact tasks expose current activity and summary shortcut opens the real ancestors without resubmitting',async()=>{
+ const h=setup(backend(),{},{mobile:true});try{
+  await h.import();assert.equal(h.$('background-tasks').parentElement.id,'library-tools-content');
+  assert.equal(h.$('library-background-task-status').hidden,true);
+  await h.choose();await h.submit();assert.match(h.$('library-background-task-status').textContent,/进行中 1/);
+  h.$('library-tools').open=false;h.$('background-tasks').open=false;
+  h.$('summary-open-background-tasks').click();await h.refresh();
+  assert.equal(h.$('library-tools').open,true);assert.equal(h.$('background-tasks').open,true);
+  assert.equal(h.w.document.activeElement,h.$('background-tasks').querySelector('summary'));assert.equal(posted(h.api).length,1);
+  h.api.succeed();await h.refresh();assert.match(h.$('library-background-task-status').textContent,/待接收 1/);
+ }finally{await h.w.happyDOM.close();}
+});
 
 test('background is an explicit whole-source mode with one consent; panel closure does not cancel',async()=>{
  const h=setup();try{await h.import();await h.choose();assert.match(h.$('ai-consent-copy').textContent,/后台.*收起|收起.*后台/);assert.match(h.$('ai-send-description').textContent,/重启.*自动/);

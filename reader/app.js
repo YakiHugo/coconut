@@ -1398,7 +1398,7 @@ $('library-search-dialog').addEventListener('cancel',event=>{event.preventDefaul
 // close initiated by the host while ignoring the delayed event from our path.
 $('library-search-dialog').addEventListener('close',()=>{if(!$('library-search-dialog').open&&libraryWorkspaceOrigin)closeLibraryWorkspace();});
 const libraryMobile=window.matchMedia('(max-width: 650px)');
-const libraryToolNodes=[$('open-library-notebook'),document.querySelector('.library-backup'),$('library-options'),$('library-pagination')];
+const libraryToolNodes=[$('background-tasks'),$('open-library-notebook'),document.querySelector('.library-backup'),$('library-options'),$('library-pagination')];
 const libraryToolAnchors=libraryToolNodes.map(node=>{const anchor=document.createComment('library tool home');node.before(anchor);return anchor;});
 let libraryReaderFocus=null,libraryBrowseOrigin=null;
 document.addEventListener('focusin',event=>{

@@ -74,6 +74,17 @@ try{
  await page.locator('#ai-consent').check();await page.locator('#ask-ai').click();
  await expect(page.locator('#background-task-message')).toContainText('已有相同范围');
  check('repeat_submission_is_one_durable_task_and_cli_call',(await bridge.tasks()).length===1&&bridge.invocations.length===1&&bridge.posts.filter(path=>path==='/api/v1/tasks').length===1);
+ stage='compact_task_entry_preserves_reading_space_and_status';await page.setViewportSize({width:320,height:568});
+ await page.waitForFunction(()=>!document.getElementById('library-tools').hidden&&document.getElementById('background-tasks').parentElement.id==='library-tools-content');
+ if(await page.locator('#toggle-library').getAttribute('aria-expanded')==='false')await page.locator('#toggle-library').click();
+ await expect(page.locator('#library-background-task-status')).toBeVisible();await expect(page.locator('#library-background-task-status')).toContainText('进行中 1');
+ check('compact_collapsed_tools_keep_running_task_discoverable',!await page.locator('#library-tools').evaluate(node=>node.open)&&await page.locator('#library-tools > summary').evaluate(node=>node.getBoundingClientRect().height>=44)&&await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
+ await page.locator('#toggle-library').click();await page.locator('#summary-open-background-tasks').click();
+ await expect(page.locator('#background-refresh')).toBeVisible();
+ check('compact_summary_shortcut_opens_real_task_ancestors_and_focus',await page.evaluate(()=>document.getElementById('library-tools').open&&document.getElementById('background-tasks').open&&document.activeElement===document.querySelector('#background-tasks > summary'))&&await page.locator('#background-tasks > summary').evaluate(node=>node.getBoundingClientRect().height>=44));
+ await page.setViewportSize({width:1360,height:1000});
+ await page.waitForFunction(()=>document.getElementById('library-tools').hidden&&document.getElementById('background-tasks').parentElement.id==='library-list');
+ check('wide_task_entry_restores_focus_without_resubmitting',await page.locator('#background-tasks > summary').evaluate(node=>node===document.activeElement)&&bridge.invocations.length===1&&bridge.posts.filter(path=>path==='/api/v1/tasks').length===1);
  await page.locator('#close-summary-request').click();await page.reload();await refresh();
  await expect(row(first)).toContainText('执行中');
  const firstSubmissionKey=await row(first).getAttribute('data-submission-key');assert.ok(firstSubmissionKey);

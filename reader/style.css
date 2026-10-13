@@ -1434,7 +1434,7 @@ body[data-media-docked="true"] #reader-workspace #reading-context:not([hidden]) 
 
 /* Task receipts stay in the shelf; they never replace the reading surface. */
 .background-tasks { margin: 12px 0; }
-.background-tasks > summary { cursor: pointer; }
+.background-tasks > summary { cursor: pointer; min-height: 44px; }
 .background-task { border-top: 1px solid var(--line); padding: 12px 0; overflow-wrap: anywhere; }
 .background-task h3 { font-size: 14px; margin: 0 0 6px; }
 .background-task button { margin-top: 8px; }

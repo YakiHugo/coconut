@@ -112,6 +112,7 @@ class BrowserWorkflowTests(unittest.TestCase):
                                  'subtitle-encoding-checks.json', 'pasted-subtitles-checks.json',
                                  'source-corrections-checks.json',
                                  'transcript-media-association-checks.json',
+                                 'background-summary-checks.json',
                                  'web-browser-acceptance-checks.json',
                                  'compact-library-failure.png'])
         self.assertIn('if: always()', upload)

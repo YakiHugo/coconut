@@ -8,7 +8,7 @@
 <meta name="theme-color" content="#faf9f7">
 <link rel="icon" type="image/png" href="coconut-mark.png">
 <script src="appearance.js?v=86ea922669"></script>
-<link rel="stylesheet" href="style.css?v=85a5c21170">
+<link rel="stylesheet" href="style.css?v=dd9552d93d">
 <script src="summary.js?v=580ffdad1e" defer></script>
 <script src="task-client.js?v=1dbd02a43c" defer></script>
 <script src="core.js?v=c24def6fcc" defer>
@@ -19,10 +19,10 @@
 <script src="library-store.js?v=e76ded9456" defer></script>
 <script src="indexeddb-document-adapter.js?v=8ecfdf5789" defer></script>
 <script src="storage-provider.js?v=369d522f14" defer></script>
-<script src="app.js?v=7df790ff56" type="text/coconut-pending" data-reader-script>
+<script src="app.js?v=f4b28b3edd" type="text/coconut-pending" data-reader-script>
 </script>
 <script src="language.js?v=50bf8fea91" type="text/coconut-pending" data-reader-script></script>
-<script src="background-summary.js?v=8dcc793752" type="text/coconut-pending" data-reader-script></script>
+<script src="background-summary.js?v=751007a6b8" type="text/coconut-pending" data-reader-script></script>
 <script src="translation-review.js?v=e8289ebd90" type="text/coconut-pending" data-reader-script></script>
 <script src="podcasts.js?v=d3db57978f" type="text/coconut-pending" data-reader-script></script>
 <script src="jobs.js?v=c5208f6283" type="text/coconut-pending" data-reader-script>
@@ -45,7 +45,7 @@
 <button id="open-library-notebook" type="button">我的笔记与摘录</button>
 <label class="library-search">查找书架<input id="library-search" type="search" placeholder="按标题查找"></label>
 <div id="library-search-scope"><label>查找范围<select id="library-scope" aria-describedby="library-scope-hint"><option value="title">标题</option><option value="notes">标题与笔记（含摘录笔记）</option><option value="text">标题、原文、笔记与已存摘录</option><option value="translations">译文</option></select></label><p id="library-scope-hint" class="hint" hidden>全部语言，仅当前有效的已存译文；每种语言可翻页查看匹配片段。</p></div>
-<details id="library-tools" hidden><summary>书架工具与分页</summary><div id="library-tools-content"></div></details>
+<details id="library-tools" hidden><summary>工具、任务与分页<span id="library-background-task-status" role="status" hidden></span></summary><div id="library-tools-content"></div></details>
 <input type="file" id="file" accept=".json,.srt,.vtt" multiple hidden>
 <details class="library-backup"><summary>书架备份</summary><div class="disclosure-content"><button id="export-library">备份整个书架</button><button id="export-pending-library" type="button" hidden>导出未保存文档备份</button><button id="restore-library">恢复书架备份</button><button id="export-original-storage" hidden>导出升级前原始数据</button><p id="storage-backend-hint" class="hint" hidden></p><input id="library-file" type="file" accept=".json" hidden></div></details>
 <p class="eyebrow">你的书架</p>
