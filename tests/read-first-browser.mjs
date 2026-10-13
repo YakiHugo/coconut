@@ -43,9 +43,12 @@ try{
     await page.evaluate(()=>window.dispatchEvent(new CustomEvent('coconut-worker-ready',{detail:{media_import:false}})));await mode(page,'summary');
    }else if(state!=='job')await expect(page.locator('#summary-state')).toHaveAttribute('data-state',state);
    else await expect(page.locator('#prepare-summary')).toHaveText('查看分批进度 / 继续摘要');
-   await reopen(page,doc.title);await mode(page,expected);await page.reload();await mode(page,expected);
+   // First entry still uses the read-first default. An explicit summary choice
+   // now belongs to this document's lightweight view and survives reopening.
+   const remembered=state==='none'?'summary':expected;
+   await reopen(page,doc.title);await mode(page,remembered);await page.reload();await mode(page,remembered);
    assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),true,'narrow reading must not overflow');
-   checks.push(`${width}:${count}:${state}:import/reopen/reload`);
+   checks.push(`${width}:${count}:${state}:first-entry-default/remembered-mode-reopen/reload`);
   }
   for(const state of ['none','current','job','demo']){
    const doc=readFirstFixture(3,{summary:state==='current'?state:null,job:state==='job',demo:state==='demo'});doc.title+=` restored ${state}`;
