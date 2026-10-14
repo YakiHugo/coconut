@@ -3,15 +3,18 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import {webcrypto} from 'node:crypto';
 import {Window} from 'happy-dom';
+import {saveClock} from './helpers/save-pipeline.mjs';
+import {prepareNativeNoteBaseline} from './helpers/native-update-baseline.mjs';
 const root=new URL('../',import.meta.url),key='coconut-reader-v1';
 const turn=()=>new Promise(resolve=>setImmediate(resolve));
 async function until(predicate){for(let i=0;i<100;i++){if(predicate())return;await turn();}assert.fail('Missing expected native lifecycle boundary');}
-function setup(){
+function setup({clock}={}){
  const w=new Window({url:'https://coconut.example/'});
  w.document.body.innerHTML=fs.readFileSync(new URL('reader/index.html',root),'utf8').split('<body>')[1].split('</body>')[0];
  Object.defineProperty(w,'crypto',{configurable:true,value:webcrypto});
  w.coconutUpdates={state:async()=>({status:'idle',version:'test',arch:'arm64'}),subscribe:()=>{}};
  for(const file of ['summary','core','passages','passage-playback','library-store'])w.eval(fs.readFileSync(new URL(`reader/${file}.js`,root),'utf8'));
+ if(clock){const create=w.CoconutLibraryStore.create;w.CoconutLibraryStore.create=options=>create({...options,...clock});}
  const writes={held:false,pending:[],count:0};
  const createAdapter=w.CoconutLibraryStore.createLegacyAdapter;
  w.CoconutLibraryStore.createLegacyAdapter=options=>{
@@ -20,7 +23,7 @@ function setup(){
    return new Promise(resolve=>writes.pending.push({value,signal:context.signal,settle:()=>resolve(adapter.write(value,context)),fail:()=>resolve({ok:false,status:'failed',error:{code:'quota'}})}));
   }};
  };
- w.eval(['app','language','podcasts'].map(file=>fs.readFileSync(new URL(`reader/${file}.js`,root),'utf8')).join('\n')+'\nlet sourceSubmitting=false,sourceCaptionRequest=null;\n'+fs.readFileSync(new URL('reader/updates.js',root),'utf8')+'\nlet closeTestFlushes=0,closeTestScope;const originalCloseTestFlush=flushListening;flushListening=(...args)=>{closeTestFlushes++;return originalCloseTestFlush(...args);};\nwindow.closeTest={personalNote(){const doc=active(),cue=doc.segments[0],record=Coconut.exactExcerptSnapshot(doc,[cue],[],0,Math.min(4,cue.text.length),{id:"native-note",createdAt:"2026-10-11T00:00:00.000Z"});doc.exact_excerpts=[record];openExactNote(doc,record,null);},flushes:()=>closeTestFlushes,start(){asking=true;summaryScope=closeTestScope={stop:false};},revision:()=>localImportRevision,stopped:()=>closeTestScope.stop,answer(question){if(!contentIngressAllowed(active()))return Promise.resolve({ok:false});active().ai_answers=[{question,answer:"Authored answer",citations:["demo-1"],provider:"fixture"}];return commitDocument(active());},flush:()=>libraryStore.flush(),status:()=>libraryStore.status(),closing:()=>readerClosing,requests(){sourceCaptionRequest=new AbortController();podcastRequest=new AbortController();podcastMediaRequest=new AbortController();projectCaptionRequest={controller:new AbortController()};return [sourceCaptionRequest,podcastRequest,podcastMediaRequest,projectCaptionRequest.controller];}};');
+ w.eval(['app','language','podcasts'].map(file=>fs.readFileSync(new URL(`reader/${file}.js`,root),'utf8')).join('\n')+'\nlet sourceSubmitting=false,sourceCaptionRequest=null;\n'+fs.readFileSync(new URL('reader/updates.js',root),'utf8')+'\nlet closeTestFlushes=0,closeTestScope;const originalCloseTestFlush=flushListening;flushListening=(...args)=>{closeTestFlushes++;return originalCloseTestFlush(...args);};\nwindow.closeTest={evaluate:source=>eval("("+source+")()"),personalNote(){const doc=active(),cue=doc.segments[0],record=Coconut.exactExcerptSnapshot(doc,[cue],[],0,Math.min(4,cue.text.length),{id:"native-note",createdAt:"2026-10-11T00:00:00.000Z"});doc.exact_excerpts=[record];openExactNote(doc,record,null);},flushes:()=>closeTestFlushes,start(){asking=true;summaryScope=closeTestScope={stop:false};},revision:()=>localImportRevision,stopped:()=>closeTestScope.stop,answer(question){if(!contentIngressAllowed(active()))return Promise.resolve({ok:false});active().ai_answers=[{question,answer:"Authored answer",citations:["demo-1"],provider:"fixture"}];return commitDocument(active());},flush:()=>libraryStore.flush(),status:()=>libraryStore.status(),closing:()=>readerClosing,requests(){sourceCaptionRequest=new AbortController();podcastRequest=new AbortController();podcastMediaRequest=new AbortController();projectCaptionRequest={controller:new AbortController()};return [sourceCaptionRequest,podcastRequest,podcastMediaRequest,projectCaptionRequest.controller];}};');
  let nextRequestId=0;
  const request=(kind='close')=>({id:++nextRequestId,kind,expiresAt:Date.now()+60000});
  return {w,$:id=>w.document.getElementById(id),request,writes};
@@ -204,6 +207,51 @@ test('sample hashing blocks both update preflight and final commit without retir
 function editNote({w,$},text){
  w.document.querySelector('.note-button').click();$('note').value=text;$('note').dispatchEvent(new w.Event('input',{bubbles:true}));
 }
+function nativeBaselinePage({w},afterModeSwitch=async()=>{}){
+ w.readPersistedLibrary=async()=>JSON.parse(w.localStorage.getItem(key));
+ return {
+  locator:selector=>({first(){return this;},async click(){
+   const element=w.document.querySelector(selector);assert.ok(element,selector);element.click();
+   if(selector==='#mode-transcript')await afterModeSwitch();
+  }}),
+  evaluate:fn=>w.closeTest.evaluate(fn.toString()),
+ };
+}
+for(const autosaveFirst of [false,true])test(`native held-note baseline waits for the source-only receipt when autosave ${autosaveFirst?'already ran':'is still queued'}`,async()=>{
+ const clock=saveClock(),s=setup({clock}),{w,$,request,writes}=s;let pending,owner;
+ try{
+  await $('sample').onclick();
+  const beforeSetup=JSON.parse(w.localStorage.getItem(key));assert.equal(beforeSetup.documents[0].translation_view,'zh');
+  const page=nativeBaselinePage(s,async()=>{if(autosaveFirst)await clock.tick(250);});
+  const baseline=await prepareNativeNoteBaseline(page);
+  beforeSetup.documents[0].translation_view='';assert.deepEqual(baseline,beforeSetup,'only the legitimate setup display choice changed');
+  assert.equal(writes.count,2,'both schedules acknowledge the sample and display generations before holding');
+  writes.held=true;$('note').value='Native delayed acknowledgement fixture';$('note').dispatchEvent(new w.Event('input',{bubbles:true}));$('close-note').click();
+  owner=request();pending=w.coconutPrepareClose('safe',owner);
+  await until(()=>writes.pending.length===1);
+  assert.equal(w.closeTest.status().blocked,true);assert.equal(w.closeTest.closing(),false);assert.equal(w.document.body.inert,true);
+  assert.deepEqual(await w.readPersistedLibrary(),baseline,'a held native write has no persisted acknowledgement');
+  writes.pending[0].settle();assert.equal(await pending,true);pending=null;
+  assert.match(w.localStorage.getItem(key),/Native delayed acknowledgement fixture/);
+ }finally{
+  if(pending){for(const write of writes.pending)write.settle();await pending;}
+  if(owner)w.coconutPrepareClose('release',owner);await w.happyDOM.close();
+ }
+});
+test('native held-note setup rejects a failed display receipt before reading its baseline',async()=>{
+ const s=setup({clock:saveClock()}),{w,$,writes}=s;let preparing;
+ try{
+  await $('sample').onclick();writes.held=true;const page=nativeBaselinePage(s);let reads=0;
+  w.readPersistedLibrary=async()=>{reads++;return JSON.parse(w.localStorage.getItem(key));};
+  preparing=assert.rejects(prepareNativeNoteBaseline(page),/native note setup must receive a successful persistence receipt/);
+  await until(()=>writes.pending.length===1);assert.equal(reads,0);
+  writes.pending[0].fail();await preparing;preparing=null;
+  assert.equal(reads,0);assert.equal(JSON.parse(w.localStorage.getItem(key)).documents[0].translation_view,'zh');
+ }finally{
+  if(preparing){for(const write of writes.pending)write.fail();await preparing;}
+  await w.happyDOM.close();
+ }
+});
 for(const kind of ['close','update'])test(`pending ${kind} shares one completion and locks only after the real legacy receipt`,async()=>{
  const s=setup(),{w,$,request,writes}=s;try{
   await $('sample').onclick();writes.held=true;editNote(s,'Held native content');

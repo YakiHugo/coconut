@@ -7,6 +7,7 @@ import {fileURLToPath} from 'node:url';
 import {_electron as electron} from '@playwright/test';
 import {installStorageAssertions,readerReady} from './helpers/browser-storage.mjs';
 import {runNativeUpdateFixture} from './helpers/native-update-diagnostics.mjs';
+import {prepareNativeNoteBaseline} from './helpers/native-update-baseline.mjs';
 const root=fileURLToPath(new URL('../',import.meta.url)),temporary=await fs.mkdtemp(path.join(os.tmpdir(),'coconut-update-ui-'));
 const {version}=JSON.parse(await fs.readFile(path.join(root,'desktop/package.json'),'utf8'));
 let application;
@@ -160,8 +161,7 @@ await runNativeUpdateFixture({getApplication:()=>application,run:async mark=>{
  });
  await page.reload();await nativeReady(page);
  mark('delayed-write');
- const beforeDelayedWrite=await page.evaluate(()=>window.readPersistedLibrary());
- await page.locator('#mode-transcript').click();await page.locator('.segment .note-button').first().click();
+ const beforeDelayedWrite=await prepareNativeNoteBaseline(page);
  await page.evaluate(()=>{nativeWriterTest.held=true;});await page.locator('#note').fill('Native delayed acknowledgement fixture');await page.locator('#close-note').click();
  const pendingOwner=await page.evaluate(()=>{
   const snapshot=coconutPrepareClose('inspect'),owner={id:1,kind:'close',expiresAt:Date.now()+60000};window.nativePendingOwner=owner;
