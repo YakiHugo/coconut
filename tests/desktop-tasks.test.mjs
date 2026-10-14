@@ -216,3 +216,11 @@ for(const phase of ['before','after','enospc'])test('interrupted archive commit 
  const result=await recovered.exportTask(fixture.tasks[0].taskId);for(const key of ['taskId','attemptId','idempotencyKey','inputDigest','snapshot','result'])assert.deepEqual(result.task[key],fixture.tasks[0][key]);assert.equal(!!result.task.archivedAt,phase==='after');
  assert.equal((await recovered.list()).length+(await recovered.listArchived()).total,1);assert.equal((await recovered.submit(submission({idempotencyKey:'fixture-0'}))).created,false);
 });
+
+test('archive identity is compared inside the write queue and remains enforced for already archived records',async t=>{
+ const {store,calls,directory}=await setup(t),{task}=await store.submit(submission()),done=await until(store,task.taskId,'succeeded');
+ const expected={taskId:done.taskId,attemptId:done.attemptId,inputDigest:done.inputDigest};
+ const [valid,conflict]=await Promise.allSettled([store.archive(done.taskId,expected),store.archive(done.taskId,{...expected,inputDigest:'0'.repeat(64)})]);
+ assert.equal(valid.status,'fulfilled');assert.ok(valid.value.archivedAt);assert.equal(conflict.status,'rejected');assert.equal(conflict.reason.taskCode,'task_identity_conflict');assert.equal(calls.length,1);
+ const disk=JSON.parse(await fs.readFile(path.join(directory,'tasks.json'),'utf8'));assert.equal(disk.tasks.length,1);assert.equal(disk.tasks[0].attemptId,expected.attemptId);assert.equal(disk.tasks[0].archivedAt,valid.value.archivedAt);
+});
