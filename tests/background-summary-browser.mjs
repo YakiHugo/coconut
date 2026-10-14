@@ -46,12 +46,12 @@ try{
   await expect(page.locator('#summary-background-status')).toContainText('已连接此电脑');
   await expect(page.locator('#ai-consent')).not.toBeChecked();
  }
- async function submit(count){
+ async function submit(count,taskCount=count){
   stage='explicit_background_submission';
   await page.locator('#ai-consent').check();await page.locator('#ask-ai').click();
   await until(()=>bridge.invocations.length===count,'Fake CLI call');
   await expect(page.locator('#ask-ai')).toBeEnabled();
-  const tasks=await bridge.tasks();assert.equal(tasks.length,count);return tasks.at(-1).taskId;
+  const tasks=await bridge.tasks();assert.equal(tasks.length,taskCount);return tasks.at(-1).taskId;
  }
  const row=id=>page.locator('#background-task-list .background-task').filter({hasText:id});
  async function answers(title,count){
@@ -142,6 +142,7 @@ try{
  check('edited_source_stays_saved_and_cannot_receive_old_result',bridge.invocations.length===4);
  // A genuinely new browser profile has neither manuscript lifetimes nor the
  // submission journal. The same executor still owns the completed receipts.
+ const associatedPage=page;
  stage='fresh_browser_rescues_unassociated_result';
  const rescueContext=await browser.newContext({viewport:{width:390,height:844},serviceWorkers:'block',acceptDownloads:true});
  await rescueContext.route('**/*',async route=>{const url=new URL(route.request().url());if(url.origin===bridge.origin||['blob:','data:'].includes(url.protocol))await route.continue();else{external++;await route.abort();}});
@@ -164,6 +165,28 @@ try{
  await page.reload();await refresh();await expect(row(first).locator('[data-action="view-result"]')).toBeVisible();await expect(row(first).locator('[data-action="accept"]')).toHaveCount(0);await answers(rescueTitle,0);
  check('independent_rescue_does_not_create_association_on_reload',bridge.invocations.length===4);
  check('no_duplicate_submission_or_hidden_foreground_calls',bridge.posts.filter(path=>path==='/api/v1/tasks').length===4&&bridge.posts.filter(path=>path.endsWith('/cancel')).length===1&&bridge.posts.every(path=>path==='/api/v1/tasks'||path.endsWith('/cancel')));
+ // The actual same-origin reader profile retains old acknowledgements while
+ // the bridge moves between independent disk ledgers, as source/dev modes do.
+ stage='same_origin_different_task_directory';page=associatedPage;
+ const switchedTitle='Authored executor directory switch';await importSource(switchedTitle);await chooseBackground();const oldDirectoryTask=await submit(5);
+ bridge.invocations[4].release();await bridge.waitTask(oldDirectoryTask,'succeeded');await page.locator('#close-summary-request').click();await refresh();await answers(switchedTitle,0);
+ const originBeforeSwitch=bridge.origin;await bridge.switchTaskDirectory('alternate');assert.equal(bridge.origin,originBeforeSwitch);
+ const oldLookup=await bridge.request('/api/v1/tasks/'+oldDirectoryTask);assert.equal(oldLookup.status,404);assert.equal(oldLookup.code,'not_found');
+ await page.reload();await refresh();await expect(row(oldDirectoryTask)).toContainText('此执行器找不到此任务');await expect(page.locator('#background-executor-status')).toContainText('已连接此电脑');
+ await expect(row(oldDirectoryTask).locator('[data-action="resubmit"]')).toHaveCount(0);await expect(row(oldDirectoryTask).locator('[data-action="accept"]')).toHaveCount(0);
+ check('missing_old_task_isolated_without_resending_or_disabling_new_executor',bridge.invocations.length===5&&bridge.posts.filter(path=>path==='/api/v1/tasks').length===5&&(await bridge.tasks()).length===0);
+ await page.setViewportSize({width:390,height:844});await openTasks();await row(oldDirectoryTask).scrollIntoViewIfNeeded();
+ check('missing_task_status_remains_readable_in_compact_library',await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
+ if(process.env.COCONUT_UI_ARTIFACT_DIR)await page.screenshot({path:path.join(process.env.COCONUT_UI_ARTIFACT_DIR,'background-executor-directory-switch-390.png')});
+ await page.setViewportSize({width:1360,height:1000});await chooseBackground();await page.locator('#ask-ai').click();
+ check('new_executor_still_requires_explicit_fresh_consent',bridge.invocations.length===5&&bridge.posts.filter(path=>path==='/api/v1/tasks').length===5);
+ const newDirectoryTask=await submit(6,1);assert.notEqual(newDirectoryTask,oldDirectoryTask);bridge.invocations[5].release();await bridge.waitTask(newDirectoryTask,'succeeded');await page.locator('#close-summary-request').click();await refresh();
+ await expect(row(newDirectoryTask)).toContainText('已完成');await expect(row(newDirectoryTask).locator('[data-action="accept"]')).toBeEnabled();await expect(row(oldDirectoryTask).locator('[data-action="accept"]')).toHaveCount(0);await answers(switchedTitle,0);
+ check('explicit_new_task_does_not_replace_old_task_identity',await row(newDirectoryTask).getAttribute('data-submission-key')!==await row(oldDirectoryTask).getAttribute('data-submission-key')&&bridge.invocations.length===6);
+ await bridge.switchTaskDirectory('original');await page.reload();await refresh();await expect(row(newDirectoryTask)).toContainText('此执行器找不到此任务');await expect(row(oldDirectoryTask).locator('[data-action="accept"]')).toBeEnabled();
+ await row(oldDirectoryTask).locator('[data-action="accept"]').click();await answers(switchedTitle,1);await page.reload();await refresh();await answers(switchedTitle,1);await expect(row(oldDirectoryTask)).toContainText('已接收');
+ await waitForPersistedLibrary(page,async({title,taskId})=>{const receipts=(await readPersistedLibrary()).documents.find(doc=>doc.title===title)?.background_summary_receipts;return Array.isArray(receipts)&&receipts.length===1&&receipts[0]===taskId;},{title:switchedTitle,taskId:oldDirectoryTask});
+ check('returning_to_original_directory_recovers_exact_result_once_without_model_retry',bridge.invocations.length===6&&bridge.posts.filter(path=>path==='/api/v1/tasks').length===6&&bridge.posts.filter(path=>path.endsWith('/cancel')).length===1&&(await bridge.tasks()).length===5);
  check('authored_private_notes_never_reach_fake_cli',bridge.invocations.every(call=>!JSON.stringify(call.input).includes('LOCAL NOTE')));
  check('no_external_requests_or_page_errors',external===0&&pageErrors===0);
 }catch{process.exitCode=1;}
