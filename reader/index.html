@@ -8,10 +8,10 @@
 <meta name="theme-color" content="#faf9f7">
 <link rel="icon" type="image/png" href="coconut-mark.png">
 <script src="appearance.js?v=86ea922669"></script>
-<link rel="stylesheet" href="style.css?v=dd9552d93d">
+<link rel="stylesheet" href="style.css?v=1ef2323c52">
 <script src="summary.js?v=580ffdad1e" defer></script>
-<script src="task-client.js?v=1dbd02a43c" defer></script>
-<script src="core.js?v=c24def6fcc" defer>
+<script src="task-client.js?v=49a9b5ae41" defer></script>
+<script src="core.js?v=a401f2e1db" defer>
 </script>
 <script src="passages.js?v=998756df3c" defer></script>
 <script src="quotation.js?v=25d6c26853" defer></script>
@@ -19,10 +19,10 @@
 <script src="library-store.js?v=e76ded9456" defer></script>
 <script src="indexeddb-document-adapter.js?v=8ecfdf5789" defer></script>
 <script src="storage-provider.js?v=369d522f14" defer></script>
-<script src="app.js?v=f4b28b3edd" type="text/coconut-pending" data-reader-script>
+<script src="app.js?v=c3f6497924" type="text/coconut-pending" data-reader-script>
 </script>
 <script src="language.js?v=50bf8fea91" type="text/coconut-pending" data-reader-script></script>
-<script src="background-summary.js?v=751007a6b8" type="text/coconut-pending" data-reader-script></script>
+<script src="background-summary.js?v=d12c8c243b" type="text/coconut-pending" data-reader-script></script>
 <script src="translation-review.js?v=e8289ebd90" type="text/coconut-pending" data-reader-script></script>
 <script src="podcasts.js?v=d3db57978f" type="text/coconut-pending" data-reader-script></script>
 <script src="jobs.js?v=c5208f6283" type="text/coconut-pending" data-reader-script>
@@ -47,7 +47,7 @@
 <div id="library-search-scope"><label>查找范围<select id="library-scope" aria-describedby="library-scope-hint"><option value="title">标题</option><option value="notes">标题与笔记（含摘录笔记）</option><option value="text">标题、原文、笔记与已存摘录</option><option value="translations">译文</option></select></label><p id="library-scope-hint" class="hint" hidden>全部语言，仅当前有效的已存译文；每种语言可翻页查看匹配片段。</p></div>
 <details id="library-tools" hidden><summary>工具、任务与分页<span id="library-background-task-status" role="status" hidden></span></summary><div id="library-tools-content"></div></details>
 <input type="file" id="file" accept=".json,.srt,.vtt" multiple hidden>
-<details class="library-backup"><summary>书架备份</summary><div class="disclosure-content"><button id="export-library">备份整个书架</button><button id="export-pending-library" type="button" hidden>导出未保存文档备份</button><button id="restore-library">恢复书架备份</button><button id="export-original-storage" hidden>导出升级前原始数据</button><p id="storage-backend-hint" class="hint" hidden></p><input id="library-file" type="file" accept=".json" hidden></div></details>
+<details class="library-backup"><summary>书架备份</summary><div class="disclosure-content"><button id="export-library">备份整个书架</button><button id="export-pending-library" type="button" hidden>导出未保存文档备份</button><button id="restore-library">恢复书架备份</button><button id="open-library-restore-results" type="button" hidden>最近恢复结果</button><button id="export-original-storage" hidden>导出升级前原始数据</button><p id="storage-backend-hint" class="hint" hidden></p><input id="library-file" type="file" accept=".json" hidden></div></details>
 <p class="eyebrow">你的书架</p>
 <details id="library-options" class="library-options"><summary>整理书架</summary><p class="hint library-manage-hint">展开时，每篇下方可移除内容。</p><button id="library-selection-mode" type="button" aria-pressed="false" aria-controls="library-selection-controls">选择备份</button><div id="library-selection-controls" hidden><p id="library-selection-status" class="hint" role="status" aria-live="polite"></p><button id="export-selected-library" type="button" aria-describedby="library-selection-status" disabled>备份所选 0 份</button><button id="clear-library-selection" type="button" disabled>清空选择</button><p class="hint">所选文档可恢复备份，不含媒体和未提交草稿。</p><details id="selected-backup-details"><summary>备份包含什么？</summary><p class="hint">包含完整文字、笔记、摘录、译文与 AI 记录及依据。可用「恢复书架备份」恢复。包含本页已生效的修改，不代表已保存到书架；未提交的编辑草稿请先保存。</p></details></div><label>排序<select id="library-sort"><option value="added">按添加顺序</option><option value="opened">最近打开</option><option value="title">按标题</option><option value="duration">按时长（短到长）</option></select></label><label>内容<select id="library-kind"><option value="all">全部</option><option value="transcript">有文字稿</option><option value="audio">原声项目</option><option value="annotated">有笔记或摘录</option></select></label></details>
 <p id="library-page-status" class="hint" role="status" aria-live="polite" aria-atomic="true"></p>
@@ -451,6 +451,16 @@ cd coconut
 <button id="save-edit" class="primary">保存修正</button>
 </div>
 </form>
+</dialog>
+<dialog id="library-restore-results-dialog" class="library-notebook" aria-labelledby="library-restore-results-heading" aria-describedby="library-restore-results-help">
+<h2 id="library-restore-results-heading" tabindex="-1">最近恢复结果</h2>
+<p id="library-restore-results-file"></p><p id="library-restore-results-summary"></p>
+<p id="library-restore-results-help" class="hint">原书架未删除。冲突副本独立保留；重复项指向当时匹配的文档。下方显示对应内容当前的本机保存状态，读取成功不代表保存成功。仅保留本页最近一次实际合入的结果，关闭此面板不撤销恢复；刷新后结果列表不保留。</p>
+<p id="library-restore-results-status" role="status"></p>
+<ol id="library-restore-results-list"></ol>
+<nav class="dialog-actions" aria-label="恢复结果分页"><button id="library-restore-results-previous" type="button">上一页</button><span id="library-restore-results-position"></span><button id="library-restore-results-next" type="button">下一页</button></nav>
+<p id="library-restore-results-feedback" role="alert"></p>
+<div class="dialog-actions"><button id="library-restore-results-retry" type="button" hidden>重试保存</button><button id="library-restore-results-backup" type="button" hidden>导出未保存文档备份</button><button id="library-restore-results-close" type="button">关闭</button></div>
 </dialog>
 <dialog id="remove-document-dialog" aria-labelledby="remove-document-heading" aria-describedby="remove-document-description">
 <h2 id="remove-document-heading">从书架移除？</h2><p id="remove-document-title"></p>

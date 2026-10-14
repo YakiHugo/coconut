@@ -9,6 +9,11 @@ const KEY = "coconut-reader-v1";
 const ACTIVE_KEY = "coconut-reader-active-v1";
 const LAST_ACTIVE_KEY = "coconut-reader-last-active-v1";
 let state = { documents: [], active: null };
+// Recovery results retain small identity tokens, never removed document copies.
+let libraryRestoreReport=null,libraryRestorePage=0,libraryRestoreSequence=0,libraryRestorePainted='';
+const libraryRestoreIdentities=new WeakMap();
+let libraryRestoreIdentitySequence=0;
+const LIBRARY_RESTORE_PAGE_SIZE=25;
 let readerClosing = false;
 // One bounded recovery slot, held only in this page so removal frees storage.
 // Never replace it silently or mistake a requested download for a saved backup.
@@ -614,6 +619,7 @@ function renderSaveStatus(snapshot,detail='') {
  $('pending-export').hidden=!snapshot.unsaved&&!$('pending-export').contains(focused);
  $('export-pending-library').hidden=!snapshot.unsaved&&focused!==$('export-pending-library');
  if(unloadGuardReady)syncUnsavedUnloadGuard();
+ renderLibraryRestoreResults();
 }
 function notice(text,kind = "") {
  if(noticeTimer!==null){clearTimeout(noticeTimer);noticeTimer=null;}
@@ -636,6 +642,7 @@ const libraryLoad=window.CoconutStorageBootstrap?.result?.loaded||libraryAdapter
 // Direct embedding without the asynchronous bootstrap uses the legacy adapter.
 if(!window.CoconutStorageBootstrap){$('storage-startup').hidden=true;document.querySelector('.shell').inert=false;}
 state={documents:libraryLoad.documents,active:libraryLoad.active};
+const restoreLoadedIdentities=new WeakSet(libraryLoad.ok?state.documents:[]);
 const loadedCollectionIdentities=new WeakSet(libraryLoad.ok?state.documents.filter(Coconut.isReadingCollection):[]);
 if(libraryLoad.ok)for(const doc of state.documents)recordPersistenceCheckpoint(doc,persistenceCheckpoint(doc));
 else notice('上次保存的数据无法读取，已停止写入以保留原数据。本次内容可继续阅读，请导出备份后再关闭页面。');
@@ -1529,6 +1536,7 @@ function libraryDocumentMetadata(doc){
 const librarySearch=Coconut.createLibrarySearch({getDocuments:()=>state.documents,getRevision:()=>libraryContentRevision,getDuration:doc=>libraryDocumentMetadata(doc).duration,onChange:()=>renderLibrary(null,{reuseMetadata:true})});
 let libraryPendingReveal=null,libraryTranslationReveal=null,libraryTranslationActivation=0;
 function renderLibrary(revealKey=null,{reuseMetadata=false}={}) {
+ renderLibraryRestoreResults();
  if(!reuseMetadata)libraryMetadata=new WeakMap();
  libraryRenderedRevision=libraryContentRevision;
  const host=$('library'),query=$('library-search').value.trim().toLocaleLowerCase(),scope=$('library-scope').value;
@@ -3881,6 +3889,95 @@ window.addEventListener("coconut-worker-ready", event => {
 	render();
 });
 
+// The report's outcome is historical; persistence and reachability are live.
+function libraryRestoreIdentity(doc){
+ if(!libraryRestoreIdentities.has(doc))libraryRestoreIdentities.set(doc,++libraryRestoreIdentitySequence);
+ return libraryRestoreIdentities.get(doc);
+}
+function libraryRestoreTarget(entry,documents=state.documents){
+ const doc=documents.find(doc=>doc.key===entry.key);
+ return doc&&libraryRestoreIdentities.get(doc)===entry.identity?doc:null;
+}
+function libraryRestoreEntryState(entry,documents){
+ const doc=documents.get(entry.key);
+ if(!doc||libraryRestoreIdentities.get(doc)!==entry.identity)return {status:'unavailable',text:'对应文档已移除或替换，未重新关联'};
+ if(pendingStructuralDocuments.has(doc.key))return {doc,status:'processing',text:'正在移除或恢复，请稍候'};
+ const receipt=libraryStore.status(doc.key);
+ if(receipt?.identity===doc){
+  if(receipt.status==='saved')return {doc,status:'saved',text:'当前内容已保存到本机'};
+  if(receipt.status==='pending')return {doc,status:'pending',text:'当前内容正在保存，尚无成功回执'};
+  return {doc,status:'failed',text:'当前内容未保存，仍在本页；请重试或导出备份'};
+ }
+ return restoreLoadedIdentities.has(doc)&&!receipt?{doc,status:'saved',text:'已从本机存储读取'}:{doc,status:'unknown',text:'尚未取得当前内容的保存回执，请保留原备份'};
+}
+function recordLibraryRestoreReport(file,entries){
+ libraryRestoreReport={id:++libraryRestoreSequence,name:file.name,entries:entries.map(entry=>({sourceKey:entry.sourceKey,key:entry.document.key,identity:libraryRestoreIdentity(entry.document),title:entry.document.title,kind:Coconut.isReadingCollection(entry.document)?'成果集':Coconut.isAudioProject(entry.document)?'音视频项目':'文字稿',outcome:entry.outcome}))};
+ libraryRestorePage=0;$('open-library-restore-results').hidden=false;$('library-restore-results-feedback').textContent='';renderLibraryRestoreResults();
+ if($('library-restore-results-dialog').open)$('library-restore-results-heading').focus({preventScroll:true});
+}
+function renderLibraryRestoreResults(){
+ if(!libraryRestoreReport||!$('library-restore-results-dialog').open)return;
+ const report=libraryRestoreReport,entries=report.entries,documents=new Map(state.documents.map(doc=>[doc.key,doc]));
+ libraryRestorePage=Math.max(0,Math.min(libraryRestorePage,Math.ceil(entries.length/LIBRARY_RESTORE_PAGE_SIZE)-1));
+ const counts={added:0,conflict:0,duplicate:0},states=entries.map(entry=>{counts[entry.outcome]++;return libraryRestoreEntryState(entry,documents);});
+ $('library-restore-results-file').textContent=report.name;
+ $('library-restore-results-summary').textContent=`共 ${entries.length} 项：新增 ${counts.added} · 冲突副本 ${counts.conflict} · 重复跳过 ${counts.duplicate}`;
+ const saved=states.filter(item=>item.status==='saved').length,pending=states.filter(item=>item.status==='pending').length,failed=states.filter(item=>['failed','unknown'].includes(item.status)).length,unavailable=entries.length-saved-pending-failed;
+ const statusText=`当前对应内容：已保存 ${saved} · 正在保存 ${pending} · 未确认保存 ${failed} · 不可打开 ${unavailable}`;
+ if($('library-restore-results-status').textContent!==statusText)$('library-restore-results-status').textContent=statusText;
+ const first=libraryRestorePage*LIBRARY_RESTORE_PAGE_SIZE,signature=report.id+':'+libraryRestorePage,host=$('library-restore-results-list');
+ if(libraryRestorePainted!==signature){
+  libraryRestorePainted=signature;host.replaceChildren();host.start=first+1;
+  for(const [offset,entry] of entries.slice(first,first+LIBRARY_RESTORE_PAGE_SIZE).entries()){
+   const index=first+offset,row=el('li','library-restore-result');row.dataset.resultIndex=index;row.dataset.outcome=entry.outcome;row.dataset.documentKey=entry.key;
+   row.append(el('strong','library-restore-result-title',entry.title),el('p','hint',entry.kind+' · '+({added:'新增',conflict:'冲突副本，原版本保留',duplicate:'重复跳过，未新增'}[entry.outcome])),el('p','hint','备份标识：'+entry.sourceKey+' · 对应标识：'+entry.key),el('p','library-restore-result-status'));
+   const button=el('button','library-restore-result-open',entry.kind==='成果集'?'打开对应成果集':'打开对应文档');button.type='button';
+   button.onclick=()=>{
+    // A stale detached button must never open a newer report or reused key.
+    if(libraryRestoreReport!==report||!row.isConnected)return;
+    const doc=libraryRestoreTarget(entry);
+    if(!doc||pendingStructuralDocuments.has(entry.key)){renderLibraryRestoreResults();return;}
+    if(Coconut.isReadingCollection(doc)&&collectionTitleDraft()){$('library-restore-results-feedback').textContent='成果集有尚未提交的名称，请先在书架笔记本中保存或取消名称修改。';return;}
+    $('library-restore-results-dialog').close();
+    if($('library-search-dialog').open)closeLibraryWorkspace('selection');
+    if(Coconut.isReadingCollection(doc)){cancelLocalImports();openCollection(doc);return;}
+    markDocumentOpened(doc);resetReaderForDocumentNavigation();selectActiveDocument(doc.key);setReadingMode(defaultReadingMode(doc));
+    $('toggle-library').setAttribute('aria-expanded','false');showWorkspace('read');render();resumeOpenedDocument(doc,'title',{remembered:true});
+   };
+   row.append(button);host.append(row);
+  }
+ }
+ for(const row of host.children){
+  const item=states[Number(row.dataset.resultIndex)];row.dataset.state=item.status;
+  const status=row.querySelector('.library-restore-result-status');if(status.textContent!==item.text)status.textContent=item.text;
+  row.querySelector('.library-restore-result-open').disabled=!item.doc||item.status==='processing';
+ }
+ $('library-restore-results-position').textContent=entries.length?`${first+1}–${Math.min(first+LIBRARY_RESTORE_PAGE_SIZE,entries.length)} / ${entries.length}`:'没有恢复条目';
+ $('library-restore-results-previous').disabled=libraryRestorePage===0;
+ $('library-restore-results-next').disabled=first+LIBRARY_RESTORE_PAGE_SIZE>=entries.length;
+ const snapshot=libraryStore.status(),retry=$('library-restore-results-retry'),backup=$('library-restore-results-backup');
+ retry.hidden=(!failed||!snapshot.unsaved)&&document.activeElement!==retry;retry.disabled=snapshot.blocked||snapshot.status==='pending'||!snapshot.unsaved;
+ backup.hidden=(!failed||!snapshot.unsaved)&&document.activeElement!==backup;
+}
+$('open-library-restore-results').onclick=()=>{
+ if(!libraryRestoreReport)return;
+ $('library-restore-results-feedback').textContent='';$('library-restore-results-dialog').showModal();renderLibraryRestoreResults();$('library-restore-results-heading').focus({preventScroll:true});
+};
+function closeLibraryRestoreResults(){
+ $('library-restore-results-dialog').close();
+ const button=$('open-library-restore-results');if(button.isConnected&&!button.closest('[hidden]'))button.focus({preventScroll:true});
+}
+$('library-restore-results-close').onclick=closeLibraryRestoreResults;
+$('library-restore-results-dialog').addEventListener('cancel',event=>{event.preventDefault();closeLibraryRestoreResults();});
+for(const [id,delta] of [['library-restore-results-previous',-1],['library-restore-results-next',1]])$(id).onclick=()=>{
+ if($(id).disabled)return;libraryRestorePage+=delta;renderLibraryRestoreResults();$('library-restore-results-heading').focus({preventScroll:true});
+};
+$('library-restore-results-retry').onclick=async()=>{
+ await $('retry-save').onclick();renderLibraryRestoreResults();
+ $('library-restore-results-feedback').textContent=libraryStore.status().unsaved?'仍有未保存内容，请保留原备份，并查看保存提示。':'本页待保存内容已取得成功回执。';
+};
+$('library-restore-results-backup').onclick=()=>{$('export-unsaved-documents').onclick();$('library-restore-results-feedback').textContent=$('notice').textContent;};
+
 // Library restore is additive: a conflicting version becomes another document.
 $("export-library").onclick = () => {
  let url, link;
@@ -3931,7 +4028,7 @@ $("library-file").onchange = async () => {
    // A later document's digest may have yielded while an earlier one was removed.
    // Recheck the batch at one stable lifecycle revision before the synchronous merge.
   }while(checkedRevision!==documentLifecycleRevision);
-  const existing=new Set(state.documents),restored=Coconut.mergeLibraryBackup(state,backup),added=restored.documents.filter(doc=>!existing.has(doc));
+  const existing=new Set(state.documents),plan=Coconut.planLibraryBackup(state,backup),restored=plan.library,added=restored.documents.filter(doc=>!existing.has(doc));
  if(added.some(doc=>pendingStructuralDocuments.has(doc.key)))throw new Error('文档正在移除或恢复，请稍候重试');
   // An empty restore stays in Add without looking like new navigation on render.
   clearReadingContext();
@@ -3940,9 +4037,10 @@ $("library-file").onchange = async () => {
   // Only a newly activated document gets an entry default. An additive/empty
   // restore of the current document preserves its explicit reading choice.
   if(active()!==previousDocument)setReadingMode(defaultReadingMode(active()));
+  recordLibraryRestoreReport(file,plan.entries);
   const receipt=commitDocuments(added);render();
   const persisted=await receipt;
-  if(persisted.ok && ownsRequest() && state.active===restored.active && workspace===(restored.active?"read":"add"))notice("已恢复 " + added.length + " 份文字稿；相同内容已跳过，不同版本分别保留，原书架未删除。");
+  if(persisted.ok && ownsRequest() && state.active===restored.active && workspace===(restored.active?"read":"add"))notice("已恢复 " + added.length + " 份文字稿／项目／成果集；相同内容已跳过，不同版本分别保留，原书架未删除。可从书架备份查看“最近恢复结果”。");
  } catch(error) { if(canCommit())notice("恢复失败，原书架未改变："+localFileError(error)); }
  finally { if(ownsRequest())$("library-file").value=""; }
 };

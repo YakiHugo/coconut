@@ -60,6 +60,43 @@ saved documents; it does not resume unstarted imports or restore the old result
 list. Re-selecting files remains duplicate-safe. Only ordinary transcript files
 are batched; project subtitle attachment and whole-library restore remain separate.
 
+## Inspecting a restore's exact results
+
+After a valid library backup is merged, **最近恢复结果** (Recent restore results)
+appears under **书架备份**. Opening it shows every incoming entry in file order,
+25 per page, with its original identifier, exact destination identifier and one
+of three outcomes: newly added, retained as a separate conflicting version, or
+skipped because that complete snapshot already exists. Transcript documents,
+audio/video projects and reading collections are labeled separately. Entries
+can open their exact destination, including a restored collection; shared titles
+do not determine which document opens.
+
+The outcome describes that restore; the save indicator describes the current
+content at its destination. A successful read or a duplicate match is not a
+successful write. Pending and failed writes remain explicit, including duplicates
+of an earlier unsaved import. Retry and rescue export use the ordinary save
+pipeline. Export never clears a failed save. Existing saved duplicates may remain
+saved while newly restored entries fail their atomic write. Subsequent edits can
+make a formerly saved destination pending or unsaved again.
+
+A removed or replaced destination is unavailable: reusing its key, reimporting,
+or undoing a removal does not silently attach the old result to another object.
+The report keeps only labels and identity tokens, not extra copies of removed
+content. Unsubmitted collection-name drafts are protected when opening results.
+Closing the panel or pressing Escape does not undo restoration. A newer valid
+merge replaces the report; rejected, abandoned or superseded reads do not replace
+it. The report is page-local and disappears on reload; saved library content and
+its backup format are unchanged. Keep the original backup file.
+
+`tests/reader-library-restore-results.test.mjs` covers precise mapping, collisions,
+duplicates within a file, atomic validation, receipt failure/retry and rescue,
+later edits, stale identities, removal rollback, stale reads, pagination,
+collections and reload. It also exercises the production IndexedDB provider with
+a deterministic transaction double and independent reload verification. Native
+dialog/focus, result navigation, pagination, collection access and real quota
+failure are added to the existing CI-only `backup-roundtrip-browser.mjs` fixture;
+local CPU/DOM runs are not browser proof.
+
 ## When local saving fails
 
 A quota or disabled-storage failure keeps imported content in the current page,

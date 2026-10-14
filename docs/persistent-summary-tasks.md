@@ -13,7 +13,7 @@
 - 实际模型调用仍使用本机已登录的 Codex / Claude Code 订阅，不能推断模型在本机 GPU 上运行。账户可用性及剩余额度不会因 task API 就绪而得到验证。
 - 仅任务队列内部串行执行；它与原前台请求共用原 provider 排他约束。遇到正在使用的 provider 会失败并保留状态，不偷偷重试或额外消费额度。
 
-源码 CLI `node desktop/server.mjs` 在当前用户 `~/.coconut/tasks` 保存任务；原生应用使用 `app.getPath('userData')/tasks`。两者是独立目录。程序调用 `startBridge` 需要显式 `taskDirectory` 才启用任务，测试使用临时目录。只探测健康、能力或读取任务不启动模型；页面加载客户端 helper 不会发送模型请求；已有任务关联会自动查询状态，查询本身不调用模型。
+`npm run dev` 在当前源码目录的 `.coconut/dev/tasks` 保存开发任务；源码 CLI `node desktop/server.mjs` 在当前用户 `~/.coconut/tasks` 保存任务；原生应用使用 `app.getPath('userData')/tasks`。三者是独立目录。程序调用 `startBridge` 需要显式 `taskDirectory` 才启用任务，测试使用临时目录。只探测健康、能力或读取任务不启动模型；页面加载客户端 helper 不会发送模型请求；已有任务关联会自动查询状态，查询本身不调用模型。
 
 ## v1 接口
 
@@ -64,7 +64,7 @@
 
 ## 客户端与文稿隔离
 
-`reader/task-client.js` 提供 `submission`、`createClient`、只读 `matchesResult` 和复制回执的 `resultFor`。它没有轮询、重试、写入书架、取消前台或自动发起请求的副作用。测试中的新 client 模拟刷新后重连。
+`reader/task-client.js` 提供 `submission`、`createClient`、只读 `matchesResult`、复制回执的 `resultFor` 和独立救援包 `recoveryFor`。它没有轮询、重试、写入书架、取消前台或自动发起请求的副作用。测试中的新 client 模拟刷新后重连。
 
 `resultFor(task, document, revision)` 只在成功结果的文稿 key、lifetime/revision、完整 cue ID/原文顺序和文本都一致时返回一个结果副本，否则返回 null。它从不改写文稿。UI 接受结果走现有存储回执流程，在同步追加历史前再次检查 owner/revision/完整原文；储存失败明确提示仅在此页，允许使用既有保存重试或备份。原文、译文、笔记和既有 AI 历史不会被任务快照覆盖。相同 key 被移除后重新导入是新 lifetime，不能复用旧 revision。
 
@@ -96,13 +96,18 @@ node --test tests/desktop-tasks.test.mjs tests/desktop-task-api.test.mjs tests/d
 - 书架普通 JSON/全书架备份导入会剥离本地 lifetime 和已接收 taskId 标记；重新导入不会继承旧任务所有权。书架本身的刷新和既有 IndexedDB/legacy 存储加载保留这些本地字段。
 - 丢失回执或 5xx/网络异常先用原 key 查询；不会换 key 自动重做。查不到时提供显式“重发原提交”，只用原 key/原 payload，且原文稿/范围仍须一致。失败/执行器中断没有自动 retry/resume。
 - 取消是独立动作；撤销勾选、收起、切换和 fetch 断开不是取消。丢失 taskId 时仍可按原 key 请求取消。取消意图先保存，不接收迟到结果；较早开始的查询或取消回执不能覆盖较新状态。重发前在异步查询之后重新检查取消、文稿、原文与存储闸门；中途取消/编辑/移除即不再发送。若取消到达前任务已完成/失败/中断，显示真实终态及已放弃接收，不永久显示等待执行收尾。未确认取消会明确提示继续查询/取消。
-- 其他本机任务可查看状态并显式取消；本浏览器没有原提交关联时，不可把结果接收进任意当前文稿。清除站点数据或更换端口后需要保留这一限制。
+- 其他本机任务可查看状态并显式取消；已发现的活动任务会继续只读轮询，离页停止查询，返回后重新查询。本浏览器没有原提交关联时，不可把结果接收进任意当前文稿。清除站点数据或更换端口后需要保留这一限制。
+- 清除站点数据、换浏览器或端口后，只要原执行器任务目录仍在且服务可读，打开「书架 → 本机后台任务 → 刷新」，在成功任务中点「查看独立结果」。列表不预先下载全部原文；点击后才读取该 taskId，核对协议、任务身份、成功状态、完整快照和引用。正文立即展开，可查看最多 8 条提交时的引用原文预览，每条最多 1,200 字符；完整原文由下方「下载独立结果 JSON（含原文）」保留。任务标识、原文稿标识和提供商一起显示，不能靠相似文字认领当前稿件。
+- 独立 JSON 使用 `format: "coconut-background-summary-result"`、`version: 1`，包含 taskId/attemptId、原文稿 key/revision、提供商、时间（有记录时）、摘要正文、引用和完整 ID/文字快照。不伪造时间轴，不包含阅读笔记、媒体、幂等提交键或本地接收标记；它供独立核查留存，不能作为书架备份导入，也不恢复原文稿所有权。下载提示只说明已发起，请确认文件确实保存。
+- 仍有关联但原文被删除、修改或重新导入时，也可查看和下载原成功结果，接收限制不变。保存的取消意图仍会隐藏其结果接收与导出入口。损坏的浏览器关联记录不会阻止其他本机成功任务的只读取回，也不会被救援覆盖。失败、取消和活动任务不提供结果导出；查询失败可显式重试读取，绝不重跑模型。过期查询若遇到任务从列表消失或身份/状态变化，不会展示旧响应。
 - 关联存储采用读取后比较和写入回读，发现其他页面更新则阻止后续提交/接收并要求刷新。它不是跨进程原子 CAS，也不宣称跨设备并发协调。正式多端配对与强一致协调仍未实现。
 
 ## 新增 UI 验证
 
-`tests/reader-background-summary.test.mjs` 包含 DOM、假执行器响应和真实 Node bridge 的假 provider 场景：单份模式确认、全文范围、刷新查找、显式接收、原文/文稿切换、丢回执、重复点击、同 key 重发、取消/迟到响应、移除重导、文稿身份和关联存储失败、接收保存失败、协议降级、损坏记录不阻断阅读，以及多批请求中关闭/重载和真实 bridge 重启不自动续跑。
+`tests/reader-background-summary.test.mjs` 包含 DOM、假执行器响应和真实 Node bridge 的假 provider 场景：单份模式确认、全文范围、刷新查找、显式接收、原文/文稿切换、丢回执、重复点击、同 key 重发、取消/迟到响应、移除重导、文稿身份和关联存储失败、接收保存失败、协议降级、损坏记录不阻断阅读，以及多批请求中关闭/重载和真实 bridge 重启不自动续跑。独立救援还覆盖关联丢失、坏关联保留、原稿删除、下载失败、错误身份/引用/快照、迟到响应、重复点击、焦点与展开状态、活动任务只读轮询和有界预览/完整导出。API 测试通过 `startDevelopmentBridge` 验证开发入口的完成结果在服务重启后仍可读取，且没有新的模型调用。
 
 测试输入是自写文字和假摘要。通过这些测试只证明控制流与数据边界，不证明模型摘要质量。最终全套检查和独立审查必须以交付候选的精确 commit 为准；真实 GUI 尚未运行。
+
+独立救援的 GHA 专用 Chromium 旅程使用全新浏览器 profile，实际点击查看、原生下载完整 JSON 并校验内容，检查 390/1280 像素入口与截图、焦点接续以及刷新后仍无接收关联；本地仅运行其 Node 合同，不以此代替真实浏览器验收。
 
 真实 Chromium 验收脚本为 `tests/background-summary-browser.mjs`，只允许在 GitHub Actions 运行，已接入 Browser acceptance。它使用真实页面、IndexedDB、loopback HTTP bridge、磁盘任务记录和生产 CLI 适配器；只有 CLI 查找/运行边界注入自写假实现，不启动真实 CLI 或模型。覆盖一次范围确认、重复提交、收起/reload、断网和切换文稿时迟到结果、原文显式一次接收、取消迟到、执行器同端口重启中断，以及已修改原文不可接收旧结果。合约预检 `node --test tests/background-summary-browser-contract.test.mjs` 不启动浏览器。语法/合约通过不等于 Chromium 通过；发布须查看精确 PR commit 的 Browser acceptance 结果与 `background-summary-checks.json`。

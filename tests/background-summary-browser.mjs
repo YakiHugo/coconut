@@ -140,6 +140,29 @@ try{
  await expect(row(edited).locator('[data-action="accept"]')).toBeDisabled();await answers(editedTitle,0);
  await page.reload();await refresh();await expect(row(edited).locator('[data-action="accept"]')).toBeDisabled();
  check('edited_source_stays_saved_and_cannot_receive_old_result',bridge.invocations.length===4);
+ // A genuinely new browser profile has neither manuscript lifetimes nor the
+ // submission journal. The same executor still owns the completed receipts.
+ stage='fresh_browser_rescues_unassociated_result';
+ const rescueContext=await browser.newContext({viewport:{width:390,height:844},serviceWorkers:'block',acceptDownloads:true});
+ await rescueContext.route('**/*',async route=>{const url=new URL(route.request().url());if(url.origin===bridge.origin||['blob:','data:'].includes(url.protocol))await route.continue();else{external++;await route.abort();}});
+ page=await rescueContext.newPage();page.on('pageerror',()=>pageErrors++);page.setDefaultTimeout(15000);await page.goto(bridge.origin);
+ const rescueTitle='Authored unrelated rescue document';await importSource(rescueTitle);await refresh();
+ await expect(row(first).locator('[data-action="view-result"]')).toBeVisible();await expect(row(first).locator('[data-action="accept"]')).toHaveCount(0);
+ await row(first).locator('[data-action="view-result"]').click();await expect(row(first).locator('.background-result')).toBeVisible();await expect(row(first).locator('.background-result')).toContainText('Authored background result');
+ await expect(row(first).locator('.background-source').first()).toContainText(authoredSource(original).segments[0].text);
+ check('unassociated_result_opens_and_receives_focus_without_adopting_document',await row(first).locator('details').evaluate(node=>node.open&&node.querySelector('summary')===document.activeElement));
+ for(const width of [390,1280]){
+  await page.setViewportSize({width,height:900});await openTasks();const button=row(first).locator('[data-action="export-result"]');await button.scrollIntoViewIfNeeded();
+  check('rescue_download_remains_reachable_without_overflow_'+width,await button.evaluate(node=>{const rect=node.getBoundingClientRect();return rect.height>=44&&rect.width>=44&&rect.x>=0&&rect.right<=innerWidth;})&&await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
+  if(process.env.COCONUT_UI_ARTIFACT_DIR){await fs.mkdir(process.env.COCONUT_UI_ARTIFACT_DIR,{recursive:true});await page.screenshot({path:path.join(process.env.COCONUT_UI_ARTIFACT_DIR,'background-result-rescue-'+width+'.png')});}
+ }
+ const savedDownload=page.waitForEvent('download');await row(first).locator('[data-action="export-result"]').click();const download=await savedDownload;
+ assert.match(download.suggestedFilename(),/^coconut-summary-.*\.json$/);const recovered=JSON.parse(await fs.readFile(await download.path(),'utf8'));
+ assert.equal(recovered.format,'coconut-background-summary-result');assert.equal(recovered.task.taskId,first);assert.equal(recovered.result.answer,(await bridge.task(first)).result.answer);assert.deepEqual(recovered.result.input_snapshot,(await bridge.task(first)).result.input_snapshot);assert.equal(recovered.segments,undefined);assert.equal(recovered.documents,undefined);
+ await answers(rescueTitle,0);await expect(page.locator('#background-task-message')).toContainText('请确认文件已保存');
+ check('native_result_download_retains_complete_source_without_restoring_ownership',await page.evaluate(()=>JSON.parse(localStorage.getItem('coconut-background-summary-v1')).entries.length===0)&&bridge.invocations.length===4);
+ await page.reload();await refresh();await expect(row(first).locator('[data-action="view-result"]')).toBeVisible();await expect(row(first).locator('[data-action="accept"]')).toHaveCount(0);await answers(rescueTitle,0);
+ check('independent_rescue_does_not_create_association_on_reload',bridge.invocations.length===4);
  check('no_duplicate_submission_or_hidden_foreground_calls',bridge.posts.filter(path=>path==='/api/v1/tasks').length===4&&bridge.posts.filter(path=>path.endsWith('/cancel')).length===1&&bridge.posts.every(path=>path==='/api/v1/tasks'||path.endsWith('/cancel')));
  check('authored_private_notes_never_reach_fake_cli',bridge.invocations.every(call=>!JSON.stringify(call.input).includes('LOCAL NOTE')));
  check('no_external_requests_or_page_errors',external===0&&pageErrors===0);
