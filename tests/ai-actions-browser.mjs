@@ -7,7 +7,7 @@ import {chromium, waitForPersistedLibrary} from './helpers/browser-storage.mjs';
 import {startBridge} from '../desktop/server.mjs';
 let server,browser,stage='setup',release,holdTranslation=false,holdSummary=false;
 const checks=[],posts=[];let providerCalls=0,external=0,errors=0;
-const check=(name,value)=>{stage=name;assert.ok(value,name);checks.push(name);};
+const check=(name,value,message=name)=>{stage=name;assert.ok(value,message);checks.push(name);};
 const fixture=(title,count=65)=>({title,language:'en',notes:{'cue-5':'PRIVATE LOCAL NOTE'},segments:Array.from({length:count},(_,i)=>({id:'cue-'+i,start:i*4,end:i*4+4,text:`Authored observation ${i+1}: compare the original evidence before drawing a conclusion.${[5,40].includes(i)?' selected-needle':''}`}))});
 const providers={
  status:async()=>({ready:true,reason:'Injected acceptance provider; no real CLI or model'}),exclusive:async fn=>fn(),
@@ -33,6 +33,7 @@ try{
  await page.locator('#ai-question').fill('Which original observations support the conclusion?');
  await page.locator('#ai-filtered').uncheck();
  // Each action shows its own plan and exactly one subscription submission.
+ const reviewChecks=[];
  for(const [label,viewport] of [['desktop',{width:1360,height:1000}],['mobile',{width:390,height:844}]]){
   await page.setViewportSize(viewport);
   for(const action of ['question','translation','summary']){
@@ -43,12 +44,23 @@ try{
    await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));
    check(label+'_'+action+'_viewport_fits',await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
    if(process.env.COCONUT_UI_SCREENSHOTS){await fs.mkdir(process.env.COCONUT_UI_SCREENSHOTS,{recursive:true});await page.screenshot({path:path.join(process.env.COCONUT_UI_SCREENSHOTS,`ai-action-${label}-${action}.png`),fullPage:false});}
-   const reviewVisible=await page.evaluate(({plan,submit})=>[plan,'#ai-consent',submit].every(selector=>{const r=document.querySelector(selector).getBoundingClientRect();return r.width>0&&r.height>0&&r.top>=0&&r.bottom<=innerHeight;}),{plan:planFor[action],submit:action==='translation'?'#subscription-translate':'#ask-ai'});
-   check(label+'_'+action+'_scope_consent_and_submit_visible_together',reviewVisible);
+   const reviewGeometry=await page.evaluate(({plan,submit})=>[plan,'#ai-task','#ai-provider','#ai-model','#ai-consent','.ai-consent',submit].map(selector=>{
+    const node=document.querySelector(selector),r=node.getBoundingClientRect();
+    const hit=document.elementFromPoint(r.left+r.width/2,r.top+r.height/2);
+    return {selector,top:r.top,bottom:r.bottom,width:r.width,height:r.height,unobscured:!!hit&&(node===hit||node.contains(hit))};
+   }),{plan:planFor[action],submit:action==='translation'?'#subscription-translate':'#ask-ai'});
+   if(process.env.COCONUT_UI_SCREENSHOTS)await fs.writeFile(path.join(process.env.COCONUT_UI_SCREENSHOTS,`ai-action-${label}-${action}-geometry.json`),JSON.stringify(reviewGeometry,null,2));
+   const reviewVisible=reviewGeometry.every(r=>r.width>0&&r.height>0&&r.top>=0&&r.bottom<=viewport.height&&r.unobscured);
+   reviewChecks.push({name:label+'_'+action+'_scope_consent_and_submit_visible_together',visible:reviewVisible,geometry:reviewGeometry});
    await page.locator('#ai-consent').check();
   }
  }
  check('six_action_reviews_send_nothing',posts.length===0&&providerCalls===0);
+ // Capture every viewport/action before asserting geometry so a failed run
+ // retains all six screenshots. Do not submit any request until all pass.
+ const failedReviews=reviewChecks.filter(review=>!review.visible);
+ for(const review of reviewChecks)if(review.visible)checks.push(review.name);
+ check('all_six_action_reviews_scope_consent_and_submit_visible_together',failedReviews.length===0,JSON.stringify(failedReviews));
  await select('question');await page.locator('#ai-filtered').uncheck();await planCount('question',65,1);
  await page.locator('#ask-ai').click();check('question_without_new_consent_sends_nothing',posts.length===0);
  await sendQuestion();await savedAnswers(1);

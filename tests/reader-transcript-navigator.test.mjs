@@ -47,11 +47,11 @@ test('every shipped server and desktop package includes the self-contained islan
 test('production React island mounts and routes dialog controls without owning content state',async()=>{
  const {w,$}=setup();try{
   w.eval(fs.readFileSync(new URL('../reader/transcript-navigator.js',import.meta.url),'utf8'));
-  const settle=()=>new Promise(resolve=>setTimeout(resolve,40));await settle();
+  const settle=async predicate=>{const deadline=Date.now()+3000;while(!predicate()&&Date.now()<deadline)await new Promise(resolve=>setTimeout(resolve,10));assert.ok(predicate(),'React reached the requested commit milestone');};await settle(()=>w.document.body.dataset.transcriptNavigation==='ready');
   assert.equal(w.document.body.dataset.transcriptNavigation,'ready');assert.equal($('open-transcript-navigator').hidden,false);
-  $('open-transcript-navigator').click();await settle();assert.equal($('transcript-navigator-dialog').open,true);assert.equal(w.document.querySelectorAll('.navigator-results li').length,40);
-  [...$('transcript-navigator-dialog').querySelectorAll('button')].find(node=>node.textContent==='后面的原文').click();await settle();assert.match(w.document.querySelector('.navigator-results li').textContent,/observation 41/);
-  const cancel=new w.Event('cancel',{cancelable:true});$('transcript-navigator-dialog').dispatchEvent(cancel);await settle();assert.equal($('transcript-navigator-dialog').open,false);assert.equal(w.document.activeElement,$('open-transcript-navigator'));
+  $('open-transcript-navigator').click();await settle(()=>$('transcript-navigator-dialog').open&&w.document.querySelectorAll('.navigator-results li').length===40);assert.equal($('transcript-navigator-dialog').open,true);assert.equal(w.document.querySelectorAll('.navigator-results li').length,40);
+  [...$('transcript-navigator-dialog').querySelectorAll('button')].find(node=>node.textContent==='后面的原文').click();await settle(()=>/observation 41/.test(w.document.querySelector('.navigator-results li')?.textContent||''));assert.match(w.document.querySelector('.navigator-results li').textContent,/observation 41/);
+  const cancel=new w.Event('cancel',{cancelable:true});$('transcript-navigator-dialog').dispatchEvent(cancel);await settle(()=>!$('transcript-navigator-dialog').open&&w.document.activeElement===$('open-transcript-navigator'));assert.equal($('transcript-navigator-dialog').open,false);assert.equal(w.document.activeElement,$('open-transcript-navigator'));
  }finally{await w.happyDOM.close();}
 });
 test('selection ABA retires an otherwise identical document session',async()=>{

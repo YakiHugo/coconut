@@ -229,7 +229,7 @@ test('long valid local provenance reaches the real Node contract, stays out of m
  const {startBridge}=await import('../desktop/server.mjs'),{createProviders,CODEX_DISABLED}=await import('../desktop/providers.mjs');
  const modelInputs=[];
  const providers=createProviders({find:async name=>'/authored-fake/'+name,environment:{PATH:'/bin'},run:async(_binary,args,options)=>{
-  if(args.includes('--help'))return {code:0,stdout:'--ephemeral --ignore-user-config --ignore-rules --output-schema --sandbox',stderr:''};
+  if(args.includes('--help'))return {code:0,stdout:'--ephemeral --ignore-user-config --ignore-rules --output-schema --sandbox --model',stderr:''};
   if(args[0]==='features')return {code:0,stdout:CODEX_DISABLED.join('\n'),stderr:''};
   if(args[0]==='login')return {code:0,stdout:'Logged in using ChatGPT',stderr:''};
   if(args.includes('auth'))return {code:0,stdout:JSON.stringify({loggedIn:true,authMethod:'claude.ai'}),stderr:''};
