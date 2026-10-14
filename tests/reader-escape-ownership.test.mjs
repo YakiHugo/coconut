@@ -47,13 +47,37 @@ for(const panel of ['export','info','media'])test(`Escape preserves ${panel} dur
  }finally{await e.w.happyDOM.close();}
 });
 
-for(const id of ['subtitle-format','reading-jump','playback-rate'])test(`native ${id} retains Escape ownership`,async()=>{
+function pickerPanel(e,id){
+ const {$}=e;$('close-note').click();
+ if(id==='reading-theme'){$('reading-info').open=true;return {open:()=>$('reading-info').open,opener:$('reading-info').querySelector('summary')};}
+ if(id==='subtitle-format'){$('export-menu').open=true;return {open:()=>$('export-menu').open,opener:$('export-menu').querySelector('summary')};}
+ if(id==='playback-rate'){$('mode-passages').click();$('toggle-reader-media').click();return {open:()=>!$('episode-media').hidden,opener:$('toggle-reader-media')};}
+ $('transcript').querySelector('.note-button').click();return {open:()=>!$('notes-panel').hidden,opener:()=>e.w.document.activeElement.className==='note-button'};
+}
+for(const id of ['reading-theme','subtitle-format','reading-jump','playback-rate'])test(`only the open ${id} picker retains Escape ownership`,async()=>{
  const e=setup();try{
-  const {w,$}=e;
-  if(id==='subtitle-format')$('export-menu').open=true;
-  $(id).focus();const before=$('export-menu').open;
-  assert.equal(escape(e,$(id)).defaultPrevented,false);
-  assert.equal($('notes-panel').hidden,false);assert.equal($('export-menu').open,before);assert.equal(w.document.activeElement,$(id));
+  const {w,$}=e,panel=pickerPanel(e,id),field=$(id),matches=field.matches.bind(field);let open=true;
+  // HappyDOM cannot display an OS picker. Only its :open state is modeled;
+  // the real open/close keyboard journey runs in the GHA browser fixture.
+  field.matches=selector=>selector===':open'?open:matches(selector);
+  field.focus();assert.equal(panel.open(),true);
+  assert.equal(escape(e,field).defaultPrevented,false);assert.equal(panel.open(),true);assert.equal(w.document.activeElement,field);
+  open=false;
+  for(const options of [{isComposing:true},{keyCode:229}]){assert.equal(escape(e,field,options).defaultPrevented,false);assert.equal(panel.open(),true);}
+  field.addEventListener('keydown',event=>event.preventDefault(),{once:true});
+  assert.equal(escape(e,field).defaultPrevented,true);assert.equal(panel.open(),true);assert.equal(w.document.activeElement,field);
+  assert.equal(escape(e,field).defaultPrevented,true);assert.equal(panel.open(),false);
+  if(typeof panel.opener==='function')assert.equal(panel.opener(),true);else assert.equal(w.document.activeElement,panel.opener);
+ }finally{await e.w.happyDOM.close();}
+});
+
+test('unsupported picker state detection does not trap focus in a closed select',async()=>{
+ const e=setup();try{
+  const {w,$}=e,panel=pickerPanel(e,'reading-theme'),field=$('reading-theme'),matches=field.matches.bind(field);
+  field.matches=selector=>{if(selector===':open')throw new w.DOMException('Unsupported selector','SyntaxError');return matches(selector);};
+  field.focus();field.addEventListener('keydown',event=>event.preventDefault(),{once:true});
+  escape(e,field);assert.equal(panel.open(),true);assert.equal(w.document.activeElement,field);
+  escape(e,field);assert.equal(panel.open(),false);assert.equal(w.document.activeElement,panel.opener);
  }finally{await e.w.happyDOM.close();}
 });
 
@@ -91,5 +115,15 @@ for(const boundary of ['native-modal','aria-modal','inert','other-workspace'])te
   else $('add-content').click();
   const focus=w.document.activeElement;
   assert.equal(escape(e,w.document).defaultPrevented,false);assert.equal($('notes-panel').hidden,false);assert.equal(w.document.activeElement,focus);
+ }finally{await e.w.happyDOM.close();}
+});
+
+test('a closed appearance select lets ordinary Escape dismiss reading information',async()=>{
+ const e=setup();try{
+  const {w,$}=e;$('close-note').click();$('reading-info').open=true;
+  const field=$('reading-theme');field.value='dark';field.focus();
+  const event=escape(e,field);
+  assert.equal($('reading-info').open,false);assert.equal(event.defaultPrevented,true);
+  assert.equal(w.document.activeElement,$('reading-info').querySelector('summary'));
  }finally{await e.w.happyDOM.close();}
 });
