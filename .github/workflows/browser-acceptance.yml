@@ -64,6 +64,11 @@ jobs:
       - name: Verify production IndexedDB migration, dirty receipts, capacity, conflicts and recovery
         if: ${{ !cancelled() && steps.browser_setup.outcome == 'success' }}
         run: node tests/indexeddb-library-browser.mjs
+      - name: Verify explicit canonical adoption with Chromium and real SQLite
+        if: ${{ !cancelled() && steps.browser_setup.outcome == 'success' }}
+        env:
+          COCONUT_UI_SCREENSHOTS: ${{ runner.temp }}/coconut-authored-ui
+        run: node tests/canonical-library-browser.mjs
       - name: Verify legacy fallback pending save receipts, retry, complete rescue and provisional Undo with authored data
         if: ${{ !cancelled() && steps.browser_setup.outcome == 'success' }}
         env:
@@ -332,6 +337,7 @@ jobs:
             ${{ runner.temp }}/coconut-authored-ui/compact-library-geometry.json
             ${{ runner.temp }}/coconut-authored-ui/navigator-*.png
             ${{ runner.temp }}/coconut-authored-ui/navigator-checks.json
+            ${{ runner.temp }}/coconut-authored-ui/canonical-library-checks.json
             ${{ runner.temp }}/coconut-authored-ui/reading-display-checks.json
             ${{ runner.temp }}/coconut-authored-ui/wide-library-search-checks.json
             ${{ runner.temp }}/coconut-authored-ui/search-return-checks.json

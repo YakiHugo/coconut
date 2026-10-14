@@ -101,6 +101,35 @@
    document.head.append(script);
   });
  }
+ // Controls remain outside the inert reader while authority is frozen.
+ const migrate=document.createElement('button');migrate.type='button';migrate.textContent='迁移到此 PC 的统一书架';migrate.hidden=true;
+ document.querySelector('.library-backup .disclosure-content')?.append(migrate);
+ const sourceRecovery=document.createElement('button');sourceRecovery.type='button';sourceRecovery.textContent='导出迁移原始恢复文件';sourceRecovery.hidden=true;
+ document.querySelector('.library-backup .disclosure-content')?.append(sourceRecovery);
+ sourceRecovery.onclick=async()=>{try{const snapshot=await (boot.storage.canonicalRecovery?.()||boot.storage.readRecovery());if(!snapshot.ok)throw new Error('原始恢复文件暂时无法读取，请重试。');boot.result.recovery=snapshot;recovery.onclick();window.dispatchEvent(new CustomEvent('coconut-storage-export',{detail:{text:document.getElementById('storage-recovery-hint').textContent}}));}catch(error){window.dispatchEvent(new CustomEvent('coconut-storage-export',{detail:{text:error.message}}));}};
+
+ const resume=document.createElement('button'),cancel=document.createElement('button');
+ resume.type=cancel.type='button';resume.textContent='继续迁移';cancel.textContent='确认取消迁移';resume.hidden=cancel.hidden=true;panel.append(resume,cancel);
+ let migrationBusy=false;
+ async function migrateAction(action){
+  if(migrationBusy||!boot.result?.canonical)return;migrationBusy=true;let release;
+  try{
+   if(action==='begin')release=await window.coconutAcquireCanonicalMigration();
+   resume.disabled=cancel.disabled=migrate.disabled=true;
+   const result=await boot.result.canonical[action]();
+   if(result.ok){location.reload();return;}
+  }catch(error){
+   const marker=await boot.result.canonical.marker().catch(()=>({state:'unknown'}));
+   if(!marker){release?.();message.textContent=error.message;window.dispatchEvent(new CustomEvent('coconut-storage-export',{detail:{text:error.message}}));}
+   else{boot.phase='migration';shell.inert=true;panel.hidden=false;message.textContent=error.message||'迁移尚未完成，请继续或确认取消。';
+    resume.hidden=marker.state==='canonical';cancel.hidden=marker.state==='canonical';retry.hidden=false;
+    try{const raw=await (boot.storage.canonicalRecovery?.()||boot.storage.readRecovery());if(raw.ok){boot.result.recovery=raw;recovery.hidden=false;}}catch{}
+   }
+  }finally{migrationBusy=false;resume.disabled=cancel.disabled=migrate.disabled=false;}
+ }
+ boot.migrateCanonical=()=>migrateAction('begin');boot.resumeCanonical=()=>migrateAction('resume');boot.cancelCanonical=()=>migrateAction('cancel');
+ migrate.onclick=()=>{if(window.confirm('将当前浏览器书架完整迁移到此 PC 的统一数据库？原始数据会保留并停止浏览器写入。请先提交所有草稿。'))void boot.migrateCanonical();};
+ resume.onclick=()=>void boot.resumeCanonical();cancel.onclick=()=>void boot.cancelCanonical();
  let loading=false,scriptsStarted=false,scriptPending=null;
  async function start(){
   if(loading||startupOwner)return;loading=true;boot.controller=new AbortController();boot.storage=null;boot.phase='loading';retry.hidden=true;rescue.hidden=true;recovery.hidden=true;message.textContent='正在打开本机书架并核验原始数据…';
@@ -116,15 +145,16 @@
    scriptPending=null;if(boot.controller.signal.aborted)return;
    boot.phase='ready';panel.hidden=true;shell.inert=false;document.body.dataset.storageBackend=result.backend;
    const original=document.getElementById('export-original-storage');original.hidden=typeof result.legacyRaw!=='string';
-   const mode=document.getElementById('storage-backend-hint');mode.textContent=result.backend==='indexeddb'?
+   const mode=document.getElementById('storage-backend-hint');mode.textContent=result.backend==='canonical'?'当前由此 PC 的统一书架保存；浏览器原始记录保留为只读恢复副本。':result.backend==='indexeddb'?
     '文档分开保存到本机数据库。原始旧书架仍保留，不自动清理；原始数据下载供恢复使用，不能作为普通书架备份直接导入。':'当前使用兼容存储，容量较小；保存失败时请导出完整备份。';
-   mode.hidden=false;
+   mode.hidden=false;sourceRecovery.hidden=result.backend!=='canonical';migrate.hidden=result.backend!=='indexeddb'||!result.canonical;
    window.dispatchEvent(new CustomEvent('coconut-storage-ready',{detail:{backend:result.backend,migrated:result.migrated===true}}));
   }catch(error){
    if(boot.controller.signal.aborted)return;
    boot.phase='failed';message.textContent=reasons[error?.code]||error?.message||'书架暂时无法载入。原数据仍保留，请重试。';
    panel.dataset.state='failed';retry.hidden=false;retry.textContent=scriptsStarted?'刷新并重试':'重试载入';
    rescue.hidden=typeof boot.result?.legacyRaw!=='string';recovery.hidden=!boot.result?.recovery;
+   resume.hidden=cancel.hidden=error?.code!=='canonical_pending';
   }finally{loading=false;}
  }
  retry.onclick=()=>{if(scriptsStarted)location.reload();else void start();};

@@ -384,3 +384,224 @@ test('a Promise-returning rollback never claims that its unverified structural b
  const f=fixture(),[a,b]=f.documents;f.documents=[b];const removal=f.store.queueDocument('a',a,'remove',{rollback(){f.documents=[a,b];return Promise.resolve(true);}}),flush=f.store.flush();
  f.writes[0].fail({code:'quota'});await flush;assert.equal((await removal.committed).ok,false);assert.equal(f.store.status('a').status,'failed');assert.equal(f.store.status('a').kind,'remove');
 });
+
+function boundedFixture(count, maxBatchSize = 100, maxBatchBytes = Infinity) {
+  let documents = Array.from({length: count}, (_, index) => doc('bounded-' + index));
+  const writes = [], timers = clock();
+  const adapter = {maxBatchSize, maxBatchBytes, estimateBatchBytes: changes => new TextEncoder().encode(JSON.stringify(changes.map(change => change.identity))).length, prepareChanges(changes) {
+    assert.ok(changes.length <= maxBatchSize, 'adapter limit is never exceeded');
+    assert.ok(adapter.estimateBatchBytes(changes) <= maxBatchBytes, 'adapter byte limit is never exceeded');
+    return changes.map(change => ({...change, document: JSON.parse(JSON.stringify(change.identity))}));
+  }, write(value, {signal}) {
+    return new Promise(resolve => writes.push({value, signal,
+      commit: () => resolve({ok: true, status: 'saved', receipts: value.map(change => ({key: change.key, generation: change.generation}))}),
+      fail: (error, extra = {}) => resolve({ok: false, status: error.code === 'conflict' ? 'conflict' : 'failed', error, ...extra})}));
+  }};
+  const store = create({adapter, getDocuments: () => documents, checkpoint: document => ({title: document.title}), ...timers});
+  return {store, writes, timers, get documents() { return documents; }, set documents(value) { documents = value; }};
+}
+
+test('101 independent dirty documents drain in bounded batches with exact generation, identity, checkpoint and receipt ownership', async () => {
+  const f = boundedFixture(101);
+  const tickets = f.documents.map(document => { document.notes.one = 'Exact ' + document.key; return f.store.queueDocument(document.key, document); });
+  let finished = false;
+  const flush = f.store.flush().then(result => { finished = true; return result; });
+  assert.equal(f.writes.length, 1); assert.equal(f.writes[0].value.length, 100);
+  f.writes[0].commit(); await turn();
+  assert.equal(finished, false); assert.equal(f.writes.length, 2); assert.equal(f.writes[1].value.length, 1);
+  assert.equal(f.store.status().unsaved, 1);
+  const first = await tickets[0].committed;
+  assert.equal(first.identity, f.documents[0]); assert.equal(first.generation, tickets[0].generation);
+  assert.equal(first.committedGeneration, tickets[0].generation); assert.equal(first.changes.length, 100);
+  assert.equal(first.checkpoints[0].identity, f.documents[0]); assert.equal(first.checkpoints[0].checkpoint.title, f.documents[0].title);
+  assert.equal(first.receipts.length, 100);
+  f.writes[1].commit(); assert.equal((await flush).ok, true);
+  const last = await tickets[100].committed;
+  assert.equal(last.identity, f.documents[100]); assert.equal(last.generation, tickets[100].generation);
+  assert.deepEqual(last.changes.map(change => change.key), [f.documents[100].key]);
+  assert.deepEqual(f.writes.flatMap(write => write.value.map(change => change.document.notes.one)), f.documents.map(document => document.notes.one));
+  assert.equal(f.store.status().unsaved, 0);
+});
+
+test('bounded capture keeps an atomic group intact across a transaction boundary', async () => {
+  const f = boundedFixture(102);
+  for (const document of f.documents.slice(0, 99)) f.store.queueDocument(document.key, document);
+  const atomic = f.store.queueDocuments(f.documents.slice(99).map(identity => ({key: identity.key, identity})));
+  const flush = f.store.flush();
+  assert.equal(f.writes[0].value.length, 99); f.writes[0].commit(); await turn();
+  assert.equal(f.writes[1].value.length, 3);
+  assert.deepEqual(f.writes[1].value.map(change => change.key), f.documents.slice(99).map(document => document.key));
+  f.writes[1].commit(); assert.equal((await flush).ok, true);
+  assert.ok((await Promise.all(atomic.tickets.map(ticket => ticket.committed))).every(result => result.changes.length === 3));
+});
+
+test('oversized direct and transitively joined atomic groups reject before registration with a nonretryable error', async () => {
+  const f = boundedFixture(101);
+  const rejected = f.store.queueDocuments(f.documents.map(identity => ({key: identity.key, identity})));
+  assert.equal(rejected.accepted, false); assert.equal(f.store.status().generation, 0); assert.equal(f.store.status().unsaved, 0);
+  for (const result of await Promise.all(rejected.tickets.map(ticket => ticket.committed))) {
+    assert.equal(result.error.code, 'atomic_batch_too_large'); assert.equal(result.error.retryable, false); assert.match(result.error.message, /101.*100/);
+  }
+  assert.equal((await f.store.flush()).ok, true); assert.equal(f.writes.length, 0);
+  const first = f.store.queueDocuments(f.documents.slice(0, 100).map(identity => ({key: identity.key, identity})));
+  const before = f.store.status().generation;
+  const overlap = f.store.queueDocuments(f.documents.slice(99).map(identity => ({key: identity.key, identity})));
+  assert.equal(overlap.accepted, false); assert.equal(f.store.status().generation, before); assert.equal(f.store.status(f.documents[100].key).status, 'saved');
+  assert.ok((await Promise.all(overlap.tickets.map(ticket => ticket.committed))).every(result => result.error.retryable === false));
+  const flush = f.store.flush(); assert.equal(f.writes[0].value.length, 100); f.writes[0].commit(); assert.equal((await flush).ok, true);
+  assert.ok((await Promise.all(first.tickets.map(ticket => ticket.committed))).every(result => result.ok));
+});
+
+test('a failed first bounded batch cannot spin or starve its pending successor; fresh intent retries failed content', async () => {
+  const f = boundedFixture(101);
+  for (const document of f.documents) f.store.queueDocument(document.key, document);
+  const flush = f.store.flush(); f.writes[0].fail({code: 'quota'}); await turn();
+  assert.equal(f.writes.length, 2); assert.deepEqual(f.writes[1].value.map(change => change.key), [f.documents[100].key]);
+  const secondFlush = f.store.flush(); f.writes[1].commit();
+  assert.equal((await flush).ok, false); assert.equal((await secondFlush).ok, false);
+  await f.timers.tick(10000); assert.equal(f.writes.length, 2); assert.equal(f.store.status().unsaved, 100);
+  const last = f.documents[100]; last.notes.one = 'New intent'; f.store.queueDocument(last.key, last);
+  const retry = f.store.flush(); assert.equal(f.writes[2].value.length, 100); f.writes[2].commit(); await turn();
+  assert.equal(f.writes[3].value.length, 1); f.writes[3].commit(); assert.equal((await retry).ok, true);
+});
+
+test('a later edit and replaced identity keep truthful tickets while bounded predecessors drain', async () => {
+  const f = boundedFixture(101), original = f.documents[0], last = f.documents[100];
+  const old = f.store.queueDocument(original.key, original);
+  for (const document of f.documents.slice(1)) f.store.queueDocument(document.key, document);
+  const flush = f.store.flush();
+  const replacement = {...original, title: 'Replacement identity'}; f.documents = [replacement, ...f.documents.slice(1)];
+  const replacing = f.store.queueDocument(replacement.key, replacement);
+  last.title = 'Last edited before capture'; const newer = f.store.queueDocument(last.key, last);
+  f.writes[0].commit(); await turn();
+  assert.equal((await old.committed).identity, original); assert.equal(f.writes[1].value.length, 2);
+  assert.equal(f.writes[1].value[0].identity, replacement); assert.equal(f.writes[1].value[1].document.title, last.title);
+  f.writes[1].commit(); assert.equal((await flush).ok, true);
+  assert.equal((await replacing.committed).identity, replacement); assert.equal((await newer.committed).committedGeneration, newer.generation);
+});
+
+test('unknown structural outcome retains its operation and rescue data, blocks discard, and unrelated work cannot replay it', async () => {
+  const f = boundedFixture(2), [a, b] = f.documents;
+  f.documents = [b]; let rollbacks = 0;
+  const removal = f.store.queueDocument(a.key, a, 'remove', {rollback() { rollbacks++; f.documents = [a, b]; return true; }});
+  const flush = f.store.flush(); f.writes[0].fail({code: 'uncertain', message: 'Receipt lost'}, {uncertain: true});
+  assert.equal((await flush).ok, false); assert.equal((await removal.committed).uncertain, true); assert.equal(rollbacks, 0);
+  assert.equal(f.store.status(a.key).status, 'failed'); assert.deepEqual(f.store.snapshotForExport().pendingRemovals, [a.key]);
+  const token = f.store.acquireBarrier('unknown-discard');
+  assert.equal((await f.store.discardPending(token)).error.code, 'uncertain'); assert.equal(rollbacks, 0); f.store.releaseBarrier(token);
+  const independent = f.store.queueDocument(b.key, b); const savingB = f.store.flush();
+  assert.deepEqual(f.writes[1].value.map(change => change.key), [b.key]); f.writes[1].commit();
+  assert.equal((await independent.committed).ok, true); assert.equal((await savingB).ok, false); assert.equal(f.store.status().unsaved, 1);
+  const retry = f.store.retry(a.key); assert.deepEqual(f.writes[2].value.map(change => change.key), [a.key]);
+  f.writes[2].commit(); assert.equal((await retry).ok, true); assert.equal(rollbacks, 0); assert.equal(f.store.status(a.key), null);
+});
+
+test('discard begun before an uncertain result cannot claim a confirmed discard', async () => {
+  const f = boundedFixture(1), a = f.documents[0]; f.documents = []; let rollbacks = 0;
+  f.store.queueDocument(a.key, a, 'remove', {rollback() { rollbacks++; return true; }});
+  const flush = f.store.flush(), token = f.store.acquireBarrier('inflight-discard'), discard = f.store.discardPending(token);
+  f.writes[0].fail({code: 'uncertain'}, {uncertain: true});
+  assert.equal((await flush).ok, false); assert.equal((await discard).error.code, 'uncertain'); assert.equal(rollbacks, 0);
+  assert.deepEqual(f.store.snapshotForExport().pendingRemovals, [a.key]); f.store.releaseBarrier(token);
+});
+
+test('new intent on an uncertain atomic member recaptures its whole group, while late edits receive an honest uncertainty receipt', async () => {
+  const f = boundedFixture(3), [a, b, c] = f.documents;
+  f.store.queueDocuments([a, b].map(identity => ({key: identity.key, identity})));
+  const flush = f.store.flush(); a.notes.one = 'Queued before receipt loss'; const late = f.store.queueDocument(a.key, a);
+  f.writes[0].fail({code: 'uncertain'}, {uncertain: true}); await flush;
+  assert.equal((await late.committed).uncertain, true); await f.timers.tick(1000); assert.equal(f.writes.length, 1);
+  f.store.queueDocument(c.key, c); const independent = f.store.flush();
+  assert.deepEqual(f.writes[1].value.map(change => change.key), [c.key]); f.writes[1].commit(); assert.equal((await independent).ok, false);
+  const newer = f.store.queueDocument(a.key, a), retry = f.store.flush();
+  assert.deepEqual(f.writes[2].value.map(change => change.key), [a.key, b.key]); f.writes[2].commit();
+  assert.equal((await newer.committed).ok, true); assert.equal((await retry).ok, true);
+});
+
+test('a keyed conflict in a bounded batch isolates its atomic group and drains independent successors', async () => {
+  const f = boundedFixture(3, 2), [a, b, c] = f.documents;
+  const atomic = f.store.queueDocuments([a, c].map(identity => ({key: identity.key, identity})));
+  const independent = f.store.queueDocument(b.key, b), flush = f.store.flush();
+  assert.deepEqual(f.writes[0].value.map(change => change.key), [a.key, c.key]);
+  f.writes[0].fail({code: 'conflict'}, {key: c.key}); await turn();
+  assert.deepEqual(f.writes[1].value.map(change => change.key), [b.key]); f.writes[1].commit();
+  assert.equal((await independent.committed).ok, true); assert.equal((await flush).ok, false);
+  assert.ok((await Promise.all(atomic.tickets.map(ticket => ticket.committed))).every(result => result.status === 'conflict'));
+  assert.equal(f.store.status().unsaved, 2); await f.timers.tick(10000); assert.equal(f.writes.length, 2);
+});
+
+test('joining an uncertain group cannot silently re-enable a known CAS conflict or roll back uncertain structure', async () => {
+  const f = boundedFixture(2), [a, b] = f.documents;
+  f.store.queueDocument(a.key, a); const first = f.store.flush(); f.writes[0].fail({code: 'conflict'}, {key: a.key}); await first;
+  f.documents = [a]; let rollbacks = 0;
+  f.store.queueDocument(b.key, b, 'remove', {rollback() { rollbacks++; f.documents = [a, b]; return true; }});
+  const removal = f.store.flush(); f.writes[1].fail({code: 'uncertain'}, {uncertain: true}); await removal;
+  const joined = f.store.queueDocuments([{key: b.key, identity: b, kind: 'remove'}, {key: a.key, identity: a}]);
+  assert.ok((await Promise.all(joined.tickets.map(ticket => ticket.committed))).every(result => result.uncertain));
+  assert.equal((await f.store.flush()).ok, false); await f.timers.tick(10000);
+  assert.equal(f.writes.length, 2); assert.equal(rollbacks, 0); assert.deepEqual(f.store.snapshotForExport().pendingRemovals, [b.key]);
+  const retry = f.store.retry(a.key); assert.equal(f.writes[2].value.length, 2); f.writes[2].commit(); assert.equal((await retry).ok, true);
+});
+
+test('byte-aware packing keeps independent documents and atomic groups within both limits', async () => {
+  const f = boundedFixture(5, 100, 600);
+  const size = document => new TextEncoder().encode(JSON.stringify(document)).length;
+  for (const document of f.documents) { document.notes.one = 'x'.repeat(200 - size(document)); }
+  const tickets = f.documents.slice(0, 3).map(document => f.store.queueDocument(document.key, document));
+  const atomic = f.store.queueDocuments(f.documents.slice(3).map(identity => ({key: identity.key, identity})));
+  const flush = f.store.flush();
+  assert.equal(f.writes[0].value.length, 2); f.writes[0].commit(); await turn();
+  assert.equal(f.writes[1].value.length, 1); f.writes[1].commit(); await turn();
+  assert.deepEqual(f.writes[2].value.map(change => change.key), f.documents.slice(3).map(document => document.key));
+  f.writes[2].commit(); assert.equal((await flush).ok, true);
+  assert.ok((await Promise.all([...tickets, ...atomic.tickets].map(ticket => ticket.committed))).every(result => result.ok));
+});
+
+test('restore preflight rejects byte overflow before identities enter the live library and sees transitive dependencies', async () => {
+  const f = boundedFixture(0, 100, 600), a = doc('proposed-a'), b = doc('proposed-b'), c = doc('proposed-c');
+  for (const document of [a, b, c]) document.notes.one = 'x'.repeat(80);
+  const before = f.store.status();
+  const rejected = f.store.preflightDocuments([a, b, c].map(identity => ({key: identity.key, identity})));
+  assert.equal(rejected.ok, false); assert.equal(rejected.error.code, 'atomic_batch_too_large'); assert.equal(rejected.error.retryable, false);
+  assert.deepEqual(f.store.status(), before); assert.equal(f.documents.length, 0); assert.equal(f.writes.length, 0);
+  f.documents = [a, b]; f.store.queueDocuments([a, b].map(identity => ({key: identity.key, identity})));
+  assert.equal(f.store.preflightDocuments([{key: b.key, identity: b}, {key: c.key, identity: c}]).ok, false);
+  const flush = f.store.flush(); f.writes[0].commit(); assert.equal((await flush).ok, true);
+});
+
+test('oversized edited content remains dirty and exportable, preserves an older captured receipt, and recovers after reduction', async () => {
+  const f = boundedFixture(1, 100, 500), a = f.documents[0];
+  const older = f.store.queueDocument(a.key, a), firstFlush = f.store.flush();
+  a.notes.one = '雪'.repeat(300); const oversized = f.store.queueDocument(a.key, a);
+  assert.equal(oversized.accepted, true, 'changed content is registered for rescue even though it cannot save');
+  const failed = await oversized.committed;
+  assert.equal(failed.error.code, 'atomic_batch_too_large'); assert.equal(failed.error.retryable, false);
+  assert.equal(f.store.status(a.key).status, 'failed'); assert.equal(f.store.status(a.key).generation, oversized.generation);
+  assert.equal(f.store.snapshotForExport().documents[0].notes.one, a.notes.one);
+  f.writes[0].commit(); assert.equal((await older.committed).ok, true); assert.equal((await firstFlush).ok, true);
+  assert.equal(f.store.status(a.key).status, 'failed'); await f.timers.tick(10000); assert.equal(f.writes.length, 1);
+  a.notes.one = 'Reduced'; const reduced = f.store.queueDocument(a.key, a), retry = f.store.flush();
+  f.writes[1].commit(); assert.equal((await reduced.committed).ok, true); assert.equal((await retry).ok, true);
+});
+
+test('a group that grows past its byte budget after enqueue fails without starving a valid successor', async () => {
+  const f = boundedFixture(2, 100, 500), [a, b] = f.documents;
+  const tooLarge = f.store.queueDocument(a.key, a), valid = f.store.queueDocument(b.key, b);
+  a.notes.one = 'x'.repeat(600);
+  const flush = f.store.flush(); await turn();
+  assert.equal((await tooLarge.committed).error.code, 'atomic_batch_too_large');
+  assert.deepEqual(f.writes[0].value.map(change => change.key), [b.key]); f.writes[0].commit();
+  assert.equal((await valid.committed).ok, true); assert.equal((await flush).ok, false);
+  await f.timers.tick(10000); assert.equal(f.writes.length, 1); assert.equal(f.store.snapshotForExport().documents[0].notes.one, a.notes.one);
+});
+
+test('oversized new text cannot roll back a structural peer already captured in the earlier atomic generation', async () => {
+  const f = boundedFixture(2, 100, 600), [a, b] = f.documents; f.documents = [a]; let rollbacks = 0;
+  const atomic = f.store.queueDocuments([{key: a.key, identity: a}, {key: b.key, identity: b, kind: 'remove', rollback() { rollbacks++; f.documents = [a, b]; return true; }}]);
+  const flush = f.store.flush(); a.notes.one = 'x'.repeat(700);
+  const failed = f.store.queueDocument(a.key, a); assert.equal((await failed.committed).error.code, 'atomic_batch_too_large');
+  assert.equal(rollbacks, 0); assert.equal(f.store.status(b.key).status, 'pending');
+  f.writes[0].commit(); assert.equal((await flush).ok, true);
+  assert.ok((await Promise.all(atomic.tickets.map(ticket => ticket.committed))).every(result => result.ok));
+  assert.equal(rollbacks, 0); assert.equal(f.store.status(b.key), null); assert.equal(f.store.status(a.key).status, 'failed');
+});

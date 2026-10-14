@@ -66,7 +66,8 @@ class BrowserWorkflowTests(unittest.TestCase):
                          'pasted-subtitles-browser.mjs', 'source-corrections-browser.mjs',
                          'transcript-media-association-browser.mjs',
                          'displayed-translation-exports-browser.mjs', 'reading-display-browser.mjs',
-                         'wide-library-search-browser.mjs', 'reading-view-resume-browser.mjs'):
+                         'wide-library-search-browser.mjs', 'reading-view-resume-browser.mjs',
+                         'canonical-library-browser.mjs'):
             self.assertTrue((ROOT / 'tests' / filename).is_file())
             self.assertEqual([step['run'] for step in suites].count('node tests/' + filename), 1)
 
@@ -105,6 +106,7 @@ class BrowserWorkflowTests(unittest.TestCase):
                                  'playback-follow-rewind.json', 'playback-follow-last-cue.json',
                                  'dock-rewind-evidence.json',
                                  'compact-library-geometry.json', 'navigator-*.png', 'navigator-checks.json',
+                                 'canonical-library-checks.json',
                                  'reading-display-checks.json',
                                  'wide-library-search-checks.json',
                                  'search-return-checks.json',

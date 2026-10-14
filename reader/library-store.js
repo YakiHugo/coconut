@@ -8,7 +8,8 @@
     const code = (typeof error?.code === 'string' ? error.code : null) || ({QuotaExceededError: 'quota', SecurityError: 'denied',
       AbortError: 'cancelled', InvalidStateError: 'unavailable'}[error?.name]) || fallback;
     return Object.freeze({ok: false, status: code === 'cancelled' ? 'cancelled' :
-      code === 'conflict' ? 'conflict' : 'failed', error: Object.freeze({code, message: String(error?.message || error || code)})});
+      code === 'conflict' ? 'conflict' : 'failed', error: Object.freeze({code, message: String(error?.message || error || code),
+      ...(typeof error?.retryable === 'boolean' ? {retryable: error.retryable} : {})})});
   }
   const problem = (code, message = code) => failure({code, message});
 
@@ -69,10 +70,13 @@
     clearTimer = timer => root.clearTimeout(timer)} = {}) {
     const entries = new Map(), listeners = new Set();
     const perDocument = typeof adapter.prepareChanges === 'function';
+    const maxBatchSize = perDocument && Number.isSafeInteger(adapter.maxBatchSize) && adapter.maxBatchSize > 0 ? adapter.maxBatchSize : Infinity;
+    const maxBatchBytes = perDocument && typeof adapter.estimateBatchBytes === 'function' && Number.isSafeInteger(adapter.maxBatchBytes) && adapter.maxBatchBytes > 0 ? adapter.maxBatchBytes : Infinity;
+    const bounded = Number.isFinite(maxBatchSize) || Number.isFinite(maxBatchBytes);
     // Dirty atomic groups are page-owned dependencies, not revision tokens.
     // Overlap joins groups until their captured generations are acknowledged.
     const groups = new Map();
-    let generation = 0, timer = null, firstQueued = null, running = null, barrier = null;
+    let generation = 0, attempt = 0, timer = null, firstQueued = null, running = null, barrier = null;
     for (const doc of getDocuments()) entries.set(doc.key, entry(doc.key, doc, 0, 'update', 'saved'));
     function entry(key, identity, version, kind, state = 'pending') {
       return {key, identity, generation: version, committedGeneration: state === 'saved' ? version : 0,
@@ -88,20 +92,84 @@
       if (!perDocument || !changes.length) return null;
       pruneGroups();
       const joined = new Set(changes.map(change => groups.get(change.key)).filter(Boolean));
-      const group = {keys: new Set(changes.map(change => change.key)), conflict: null};
+      const group = {keys: new Set(changes.map(change => change.key)), conflict: null, conflicted: false};
       for (const previous of joined) {
-        group.conflict ||= previous.conflict;
+        group.conflicted ||= previous.conflicted || Boolean(previous.conflict && !previous.conflict.uncertain);
+        // Preserve an unknown outcome without making an existing CAS conflict
+        // implicitly retryable when the two dependency groups are joined.
+        if (previous.conflict?.uncertain || !group.conflict) group.conflict = previous.conflict;
         for (const key of previous.keys) group.keys.add(key);
       }
+      if (group.keys.size > maxBatchSize) return {error: {code: 'atomic_batch_too_large', retryable: false,
+        message: `Atomic document group contains ${group.keys.size} changes; this storage backend accepts at most ${maxBatchSize}.`}};
       for (const key of group.keys) groups.set(key, group);
       return group;
     }
     const quarantined = item => perDocument && groups.get(item.key)?.conflict;
-    const capturable = item => dirty(item) && !quarantined(item);
+    const capturable = item => dirty(item) && item.error?.code !== 'uncertain' && !quarantined(item);
+    // A failed bounded transaction cannot starve untouched successor batches.
+    // A fresh queue/retry intent still retries the full eligible dirty library.
+    const eligible = item => capturable(item) && (item.status === 'pending' || item.failedAttempt !== attempt);
+    const changesFor = items => items.map(item => ({key: item.key, identity: item.identity, generation: item.generation, kind: item.kind}));
+    function batchProblem(changes) {
+      if (changes.length > maxBatchSize) return {code: 'atomic_batch_too_large', retryable: false, limit: 'count',
+        message: `Atomic document group contains ${changes.length} changes; this storage backend accepts at most ${maxBatchSize}.`};
+      if (Number.isFinite(maxBatchBytes)) {
+        try {
+          const size = adapter.estimateBatchBytes(changes);
+          if (!Number.isSafeInteger(size) || size < 0) return {code: 'protocol', retryable: false, message: 'Invalid storage batch byte estimate.'};
+          if (size > maxBatchBytes) return {code: 'atomic_batch_too_large', retryable: false, limit: 'bytes',
+            message: `Atomic document group requires ${size} bytes; this storage backend accepts at most ${maxBatchBytes}.`};
+        } catch (error) { return failure(error).error; }
+      }
+      return null;
+    }
+    function preflightDocuments(changes) {
+      // Restore can check proposed identities before inserting them into the
+      // live library. This does not register, capture, or mutate any document.
+      const proposed = new Map();
+      for (const change of changes) {
+        if (!change.identity || change.identity.key !== change.key || proposed.has(change.key)) return problem('identity');
+        proposed.set(change.key, {...change, kind: change.kind || 'update'});
+      }
+      for (const change of changes) for (const key of groups.get(change.key)?.keys || []) {
+        const item = entries.get(key);
+        if (item && dirty(item) && !proposed.has(key)) proposed.set(key, changesFor([item])[0]);
+      }
+      const error = batchProblem([...proposed.values()]);
+      return error ? Object.freeze({...failure(error), limit: error.limit || 'document'}) : Object.freeze({ok: true});
+    }
+    function captureBatch() {
+      const candidates = [...entries.values()].filter(capturable);
+      if (!bounded) return candidates;
+      const grouped = new Map();
+      for (const item of candidates) {
+        const group = groups.get(item.key) || item;
+        if (!grouped.has(group)) grouped.set(group, []);
+        grouped.get(group).push(item);
+      }
+      const units = [...grouped.values()].filter(unit => unit.some(eligible));
+      const select = count => {
+        const members = new Set(units.slice(0, count).flat());
+        return candidates.filter(item => members.has(item));
+      };
+      // Find the largest ordered prefix of complete groups. Binary search
+      // avoids repeatedly serializing growing multi-megabyte document batches.
+      let low = 0, high = units.length;
+      while (low < high) {
+        const middle = Math.ceil((low + high) / 2);
+        if (batchProblem(changesFor(select(middle)))) high = middle - 1;
+        else low = middle;
+      }
+      // A document may grow after registration. Capture that one whole group
+      // so its budget failure settles honestly rather than spinning or hanging.
+      return select(Math.max(1, low));
+    }
     const hasPending = () => [...entries.values()].some(item => item.status === 'pending' && capturable(item));
     function quarantine(group, result) {
       if (!group) return;
-      group.conflict = Object.freeze({ok: false, status: result.status, error: result.error, key: result.key});
+      group.conflicted ||= !result.uncertain && result.error?.code === 'conflict';
+      group.conflict = Object.freeze({ok: false, status: result.status, error: result.error, key: result.key, ...(result.uncertain ? {uncertain: true} : {})});
       for (const key of [...group.keys]) {
         const item = entries.get(key);
         if (!item || !dirty(item) || groups.get(key) !== group) continue;
@@ -138,8 +206,8 @@
       item.waiters.push({generation: item.generation, resolve});
       return Object.freeze({accepted: true, key: item.key, identity: item.identity, generation: item.generation, committed});
     }
-    function rejected(key, identity, code) {
-      return Object.freeze({accepted: false, key, identity, generation, committed: Promise.resolve(problem(code))});
+    function rejected(key, identity, reason) {
+      return Object.freeze({accepted: false, key, identity, generation, committed: Promise.resolve(typeof reason === 'string' ? problem(reason) : failure(reason))});
     }
     function settle(item, through, result) {
       const ready = item.waiters.filter(waiter => waiter.generation <= through);
@@ -171,9 +239,35 @@
         return duplicate || !identity || identity.key !== key || (kind === 'remove' ? live.has(key) : live.get(key) !== identity);
       }) ? 'identity' : null;
       if (invalid) return Object.freeze({accepted: false, tickets: Object.freeze(changes.map(({key, identity}) => rejected(key, identity, invalid)))});
+      const preflight = preflightDocuments(changes);
+      if (!preflight.ok && (preflight.limit === 'count' || preflight.error.code === 'identity')) return Object.freeze({accepted: false, tickets: Object.freeze(changes.map(({key, identity}) => rejected(key, identity, preflight.error)))});
       const group = joinGroups(changes);
+      if (group?.error) return Object.freeze({accepted: false, tickets: Object.freeze(changes.map(({key, identity}) => rejected(key, identity, group.error)))});
+      if (preflight.ok && group?.conflict?.uncertain && !group.conflicted) {
+        // New intent on an uncertain member re-enables its entire dependency
+        // group. An unrelated document must not replay that structural intent.
+        group.conflict = null;
+        for (const key of group.keys) {
+          const item = entries.get(key);
+          if (item && dirty(item)) { item.status = 'pending'; item.error = null; }
+        }
+      }
+      if (changes.length) attempt++;
       const tickets = changes.map(({key, identity, kind = 'update', rollback}) => register(key, identity, kind, rollback));
       if (group?.conflict) quarantine(group, group.conflict);
+      else if (!preflight.ok) {
+        // Ordinary editors mutate before enqueue. A byte-budget rejection must
+        // retain that exact content as dirty/rescuable, never leave it 'saved'.
+        // Older generations already captured by a writer keep their own receipt.
+        for (const key of group?.keys || changes.map(change => change.key)) {
+          const item = entries.get(key); if (!item || !dirty(item)) continue;
+          const captured = running?.batch.find(saved => saved.item === item)?.generation ?? -1;
+          if (item.generation <= captured) continue;
+          item.status = preflight.status; item.error = preflight.error; item.failedAttempt = attempt;
+          reconcileFailure(item, item.generation, preflight); cancelUncaptured(item, preflight);
+        }
+        pruneGroups();
+      }
       if (tickets.length) { firstQueued ??= now(); schedule(); publish({type: 'queued', keys: Object.freeze(tickets.map(item => item.key))}); }
       return Object.freeze({accepted: true, tickets: Object.freeze(tickets)});
     }
@@ -195,6 +289,8 @@
       return ticket(item);
     }
     function reconcileFailure(item, version, result) {
+      // An unacknowledged write may already be durable; never invent a rollback.
+      if (result.uncertain) return;
       const owner = item.operation;
       if (owner?.generation !== version || owner.reconciled || item.generation !== version || entries.get(item.key) !== item) return;
       // Disarm before calling user-owned rollback code: it can synchronously
@@ -223,10 +319,11 @@
       if (!hasPending()) return;
       // Legacy writes still capture the complete library. Per-document writes
       // omit known-conflicted atomic groups, without rebasing their CAS tokens.
-      // Other failures retain the established full dirty-batch retry behavior.
-      const batch = [...entries.values()].filter(capturable).map(item => ({item, generation: item.generation, kind: item.kind}));
+      // Other failures retry on new intent, without replaying a failed chunk
+      // simply because an untouched independent successor is still pending.
+      const batch = captureBatch().map(item => ({item, generation: item.generation, kind: item.kind}));
       const controller = new AbortController();
-      const operation = {batch, controller, done: null}; running = operation;
+      const operation = {batch, controller, attempt, done: null}; running = operation;
       operation.done = (async () => {
         let result, checkpoints = [];
         try {
@@ -237,6 +334,7 @@
             if (item.kind === 'remove' ? identities.has(item.key) : identities.get(item.key) !== item.identity) throw {code: 'identity', message: 'Document identity changed before capture'};
           }
           const changes = batch.map(({item, generation, kind}) => ({key: item.key, identity: item.identity, generation, kind}));
+          const budget = batchProblem(changes); if (budget) throw budget;
           const value = perDocument ? adapter.prepareChanges(changes) : adapter.prepare(documents);
           const capturedDocuments = perDocument ? changes.filter(change => change.kind !== 'remove').map(change => change.identity) : documents;
           checkpoints = capturedDocuments.map(doc => Object.freeze({key: doc.key, identity: doc,
@@ -260,6 +358,7 @@
             if (item.generation === saved.generation) { item.status = 'pending'; item.error = null; }
             continue;
           }
+          if (!result.ok) item.failedAttempt = operation.attempt;
           if (result.ok) item.committedGeneration = Math.max(item.committedGeneration, saved.generation);
           // A late success or failure cannot clear a newer edit or failure.
           if (item.generation === saved.generation) { item.status = result.status; item.error = result.error || null; }
@@ -271,6 +370,9 @@
           if (result.ok && saved.kind === 'remove' && item.generation === saved.generation && entries.get(item.key) === item) entries.delete(item.key);
         }
         if (conflictGroup) quarantine(conflictGroup, result);
+        if (result.uncertain) {
+          for (const group of new Set(batch.map(saved => groups.get(saved.item.key)).filter(Boolean))) quarantine(group, result);
+        }
         pruneGroups();
         running = null;
         publish({type: 'commit', result});
@@ -283,7 +385,7 @@
       if (token && barrier?.token !== token) return problem('cancelled');
       const willCapture = hasPending();
       const waits = [...entries.values()].filter(dirty).map(item =>
-        (willCapture && capturable(item)) || running?.batch.some(saved => saved.item === item && saved.generation >= item.generation) ? ticket(item).committed :
+        (willCapture && (bounded ? eligible(item) : capturable(item))) || running?.batch.some(saved => saved.item === item && saved.generation >= item.generation) ? ticket(item).committed :
         Promise.resolve({...problem(item.error?.code || item.status), key: item.key, identity: item.identity, generation: item.generation}));
       // Force this and any successor already included in the flush boundary.
       // Edits queued later remain pending rather than extending the boundary.
@@ -300,9 +402,10 @@
     }
     function retry(key) {
       if (barrier) return Promise.resolve(problem('cancelled'));
+      attempt++;
       const retryGroup = key === undefined ? null : groups.get(key);
       for (const item of entries.values()) if (dirty(item) && (key === undefined || item.key === key || groups.get(item.key) === retryGroup && retryGroup)) {
-        const group = groups.get(item.key); if (group) group.conflict = null;
+        const group = groups.get(item.key); if (group) { group.conflict = null; group.conflicted = false; }
         // A timed-out discard may still be waiting for its writer to abort.
         // Recovery is a new intent; that late abort must not consume it.
         if (running?.controller.signal.aborted && running.batch.some(saved => saved.item === item)) item.generation = ++generation;
@@ -324,6 +427,9 @@
     }
     async function discardPending(token) {
       if (barrier?.token !== token) return problem('cancelled');
+      if ([...entries.values()].some(item => dirty(item) && item.error?.code === 'uncertain')) {
+        return problem('uncertain', 'Resolve the uncertain storage write before discarding pending changes.');
+      }
       clearClock();
       const operation = running;
       for (const item of entries.values()) if (dirty(item)) {
@@ -337,7 +443,9 @@
       operation?.controller.abort();
       const released = barrier.released;
       const settled = Promise.resolve(operation?.done).then(result => barrier?.token === token ?
-        Object.freeze({ok: true, status: 'discarded', committed: result?.ok === true}) : problem('cancelled'));
+        result?.uncertain || [...entries.values()].some(item => dirty(item) && item.error?.code === 'uncertain') ?
+          problem('uncertain', 'Resolve the uncertain storage write before discarding pending changes.') :
+          Object.freeze({ok: true, status: 'discarded', committed: result?.ok === true}) : problem('cancelled'));
       publish({type: 'discard'});
       const result = await Promise.race([settled, released]);
       return barrier?.token === token ? result : problem('cancelled');
@@ -347,7 +455,7 @@
       return {documents: copy(unsaved.map(item => getDocuments().find(doc => doc.key === item.key) || item.identity)),
         pendingRemovals: unsaved.filter(item => item.kind === 'remove').map(item => item.key)};
     }
-    return Object.freeze({queueDocument, queueDocuments, flush, retry, status, snapshotForExport, acquireBarrier, releaseBarrier,
+    return Object.freeze({queueDocument, queueDocuments, preflightDocuments, flush, retry, status, snapshotForExport, acquireBarrier, releaseBarrier,
       barrierActive: token => barrier?.token === token, discardPending,
       subscribe(listener) { listeners.add(listener); return () => listeners.delete(listener); }});
   }
