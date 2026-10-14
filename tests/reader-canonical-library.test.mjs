@@ -288,3 +288,63 @@ test('canonical preflight detects exact UTF-8 request bytes, individual document
  assert.equal(store.snapshotForExport().documents[0].unknown.large,oversized.unknown.large);assert.equal((await store.flush()).ok,false);
  assert.equal(f.calls.length,before);assert.equal(f.server.get('a').document.unknown.large,undefined);
 });
+
+async function secondClient(f, documents=[]) {
+ const engine=transactionDouble(),values=new Map([[idb.LEGACY_KEY,JSON.stringify({documents})]]),storage={getItem:k=>values.get(k)??null,setItem:(k,v)=>values.set(k,v)};
+ const primitive=idb.create({indexedDB:engine.indexedDB,getLegacyStorage:()=>storage,name:'second-client'});
+ assert.equal((await primitive.ready()).ok,true);
+ return {primitive,client:canonical.create({primitive,fetch:f.fetch}),values};
+}
+test('independent browser connects existing library without migration and shares CAS writes',async t=>{
+ const f=await fixture(t);await f.client.begin();const a=await f.client.initialize(await f.client.marker());
+ const b=await secondClient(f,[doc('browser-only')]),original=await b.primitive.readRecovery(),before=f.calls.length;
+ await b.client.connect();const marker=await b.client.marker();assert.equal(marker.state,'connected');
+ assert.equal(f.calls.slice(before).some(c=>c.body),false,'connection never writes the server');
+ const connected=await b.client.initializeBinding(marker);assert.deepEqual(connected.loaded.documents.map(d=>d.key),['a']);
+ assert.deepEqual((await b.primitive.readRecovery()).stores.documents,original.stores.documents);
+ const change={key:'a',kind:'update',generation:1,identity:{...doc(),title:'B edited'}};
+ assert.equal((await connected.adapter.write(connected.adapter.prepareChanges([change]))).ok,true);
+ assert.equal((await f.client.initialize(await f.client.marker())).loaded.documents[0].title,'B edited');
+ assert.equal((await a.adapter.write(a.adapter.prepareChanges([{...change,identity:{...doc(),title:'Stale A'}}]))).ok,false);
+ assert.equal((await b.primitive.commit(b.primitive.prepare([{kind:'create',key:'stale-browser',expected:null,document:doc('stale-browser'),generation:1,mutationId:'stale-browser'}]))).ok,false);
+});
+test('connection reads failing before local commit leave browser authority writable',async t=>{
+ const f=await fixture(t);await f.client.begin();const b=await secondClient(f,[doc('local')]);
+ f.control.before=()=>{throw Error('offline');};await assert.rejects(b.client.connect());assert.equal(await b.client.marker(),undefined);
+ assert.equal((await b.primitive.commit(b.primitive.prepare([{kind:'create',key:'still-local',expected:null,document:doc('still-local'),generation:1,mutationId:'still-local'}]))).ok,true);
+});
+test('lost local connection acknowledgement resumes binding; missing migration receipts do not revoke binding',async t=>{
+ const f=await fixture(t);await f.client.begin();const b=await secondClient(f);
+ const client=canonical.create({primitive:{...b.primitive,bindCanonical:async m=>{await b.primitive.bindCanonical(m);throw Error('lost local receipt');}},fetch:f.fetch});
+ await assert.rejects(client.connect());const m=await b.client.marker();assert.equal(m.state,'connected');
+ f.control.before=(_,url)=>{if(url.pathname.endsWith('/migration'))throw Error('migration endpoint unavailable');};
+ assert.equal((await b.client.initializeBinding(m)).ok,true);
+ f.control.before=undefined;f.control.after=(_,value)=>{if(value.enabled)value.epoch='00000000-0000-4000-8000-000000000000';};
+ await assert.rejects(b.client.initializeBinding(m),{code:'epoch_conflict'});
+ assert.equal((await b.primitive.commit(b.primitive.prepare([{kind:'create',key:'blocked',expected:null,document:doc('blocked'),generation:1,mutationId:'blocked'}]))).ok,false);
+});
+test('binding corruption and preserved-source changes fail closed',async t=>{
+ const f=await fixture(t);await f.client.begin();const b=await secondClient(f,[doc('original')]);await b.client.connect();const m=await b.client.marker();
+ await assert.rejects(b.client.initializeBinding({...m,sha256:'0'.repeat(64)}),{code:'corruption'});
+ b.values.set(idb.LEGACY_KEY,'changed');await assert.rejects(b.client.initializeBinding(m),{code:'source_changed'});
+});
+test('API-only canonical namespace survives reopen and is separate from library epoch',async t=>{
+ const f=await fixture(t);assert.equal(f.server.describe().binding,null);
+ const epoch=f.server.describe().epoch;
+ f.server.commit({protocolVersion:1,epoch,key:'api',action:'put',expected:null,receiptKey:'namespace-test',document:doc('api')});
+ const identity=f.server.describe().binding.mediaLibraryIdentity;assert.notEqual(identity,epoch);
+ const b=await secondClient(f);await b.client.connect();assert.equal((await b.client.initializeBinding(await b.client.marker())).loaded.documents[0].key,'api');
+});
+
+test('API-created library binding survives later matching browser migration without namespace change',async t=>{
+ const f=await fixture(t),epoch=f.server.describe().epoch;
+ f.engine.rows('client').get('catalog').get('a').order=1;f.engine.rows('client').get('meta').get('state').nextOrder=2;
+ f.server.commit({protocolVersion:1,epoch,key:'a',action:'put',expected:null,receiptKey:'api-created',document:doc()});
+ const namespace=f.server.describe().binding.mediaLibraryIdentity,b=await secondClient(f);await b.client.connect();const binding=await b.client.marker();
+ await f.client.begin();const migration=await f.client.marker();assert.notEqual(migration.mediaLibraryIdentity,namespace);
+ assert.equal(f.server.describe().binding.mediaLibraryIdentity,namespace);assert.equal((await b.client.initializeBinding(binding)).ok,true);
+ const a=await f.client.initialize(migration);assert.equal((await a.adapter.mediaLibraryIdentity()).identity,namespace);
+ const reconnected=await b.client.initializeBinding(binding),changed={...doc(),title:'B after migration'};
+ assert.equal((await reconnected.adapter.write(reconnected.adapter.prepareChanges([{key:'a',kind:'update',generation:1,identity:changed}]))).ok,true);
+ assert.equal((await f.client.initialize(migration)).loaded.documents[0].title,changed.title);
+});

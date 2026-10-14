@@ -73,3 +73,22 @@ test('literal unsafe integer archive bytes are rejected before rounded payloads 
   assert.equal(store.get('live'),null);assert.equal(store.get('removed'),null);assert.equal(store.describe().sequence,0);assert.equal(store.migration.status(id).state,'staging');store.migration.request(p.cancel);
  }
 });
+
+test('discovery exposes verified migration media namespace across restart and rejects altered manifest',async t=>{
+ const {store,open,directory}=await setup(t),p=plan(store);stage(store,p);const committed=store.migration.request(p.finalize);
+ assert.equal(store.describe().binding.mediaLibraryIdentity,mediaLibraryIdentity);store.close();
+ const reopened=await open();assert.equal(reopened.describe().binding.mediaLibraryIdentity,mediaLibraryIdentity);assert.deepEqual(reopened.migration.status(migrationId).receipt,committed.receipt);
+ const {DatabaseSync}=await import('node:sqlite'),db=new DatabaseSync(path.join(directory,'library.sqlite'));
+ db.prepare('UPDATE migrations SET manifest=? WHERE id=?').run(JSON.stringify({...p.manifest,mediaLibraryIdentity:'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'}),migrationId);db.close();
+ assert.throws(()=>reopened.describe(),error=>error.libraryCode==='library_corrupt');
+ assert.deepEqual(reopened.get('live').document,recoveryFixture().stores.documents[0].value.payload);
+});
+
+test('first migration namespace and documents roll back together if receipt commit fails',async t=>{
+ const {store,directory}=await setup(t),p=plan(store);stage(store,p);
+ const {DatabaseSync}=await import('node:sqlite'),db=new DatabaseSync(path.join(directory,'library.sqlite'));
+ const original=db.prepare('SELECT media FROM library_identity WHERE id=1').get().media;
+ db.exec("CREATE TRIGGER fail_receipt BEFORE UPDATE OF state ON migrations WHEN NEW.state='committed' BEGIN SELECT RAISE(ABORT,'authored receipt failure'); END;");
+ assert.throws(()=>store.migration.request(p.finalize));assert.equal(store.describe().sequence,0);assert.equal(store.describe().binding,null);assert.equal(store.list().entries.length,0);assert.equal(store.migration.status(migrationId).state,'staging');assert.equal(db.prepare('SELECT media FROM library_identity WHERE id=1').get().media,original);
+ db.exec('DROP TRIGGER fail_receipt');db.close();assert.equal(store.migration.request(p.finalize).state,'committed');assert.equal(store.describe().binding.mediaLibraryIdentity,mediaLibraryIdentity);
+});

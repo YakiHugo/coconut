@@ -78,7 +78,7 @@ export async function createLibraryStore({directory,exclusiveWriter=false}={}){
     if(exclusiveWriter)db.exec('PRAGMA locking_mode=EXCLUSIVE');
     // Reject future/foreign schemas before modifying their contents.
     const version=db.prepare('PRAGMA user_version').get().user_version;
-    if(![0,1,2].includes(version))throw libraryError('schema_unsupported','Unsupported library schema',503);
+    if(![0,1,2,3].includes(version))throw libraryError('schema_unsupported','Unsupported library schema',503);
     transaction(()=>{
       if(version===0){
         if(db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'").get())throw libraryError('schema_unsupported','Refusing to initialize an existing foreign database',503);
@@ -102,13 +102,24 @@ export async function createLibraryStore({directory,exclusiveWriter=false}={}){
           INSERT INTO identities SELECT key,1,revision,NULL FROM documents;
           PRAGMA user_version=2;`);
       }
+      if(version<3){db.exec('CREATE TABLE library_identity (id INTEGER PRIMARY KEY CHECK(id=1), media TEXT NOT NULL) STRICT; PRAGMA user_version=3;');const prior=db.prepare("SELECT id FROM migrations WHERE state='committed' ORDER BY id").all();if(prior.length>1)corrupt();const identity=prior.length?createMigrationStore({db,transaction,epoch,metadata,validateRow,validKey,titleOf,corrupt}).status(prior[0].id).receipt.mediaLibraryIdentity:randomUUID();db.prepare('INSERT INTO library_identity VALUES (1,?)').run(identity);}
       for(const row of db.prepare('SELECT d.key,i.lifetime,i.position FROM documents d LEFT JOIN identities i ON d.key=i.key').iterate())if(!Number.isSafeInteger(row.lifetime)||row.lifetime<1||!Number.isSafeInteger(row.position)||row.position<0)corrupt();
     });
     db.exec('PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL');
   }catch(error){db.close();if(exclusiveWriter&&error.errcode===5)throw libraryError('library_in_use','Library is already open in another service',503);throw error;}
   const ensure=()=>{if(closed)throw libraryError('library_closed','Library is closed',503);};
   const meta=row=>({sha256:createHash('sha256').update(row.payload).digest('hex'),identity:db.prepare('SELECT lifetime,position FROM identities WHERE key=?').get(row.key),key:row.key,token:{epoch,revision:row.revision},deleted:!!row.deleted,title:row.title,updatedAt:row.updated,bytes:row.bytes});
-  const describe=()=>{ensure();return {protocolVersion:1,enabled:true,backend:'sqlite',epoch,sequence:metadata().sequence,browserMigration:db.prepare("SELECT id FROM migrations WHERE state='committed' LIMIT 1").get()?'committed':'not_started',migration:{protocolVersion:1,maxBytes:MIGRATION_BYTES,chunkBytes:CHUNK_BYTES,maxNodes:2000000},batchProtocolVersion:2,limits:{documentBytes:LIBRARY_DOCUMENT_BYTES,requestBytes:LIBRARY_BODY_BYTES,pageBytes:LIBRARY_PAGE_BYTES,pageSize:100},minimumNode:LIBRARY_MIN_NODE};};
+  const mediaNamespace=()=>{
+    const migrated=db.prepare("SELECT id FROM migrations WHERE state='committed' ORDER BY id").all();
+    if(migrated.length>1)corrupt();
+    const persisted=db.prepare('SELECT media FROM library_identity WHERE id=1').get()?.media;
+    if(typeof persisted!=='string'||! /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(persisted))corrupt();
+    if(migrated.length)migration.status(migrated[0].id);
+    const value=persisted;
+    if(typeof value!=='string'||! /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(value))corrupt();
+    return value;
+  };
+  const describe=()=>{ensure();return {protocolVersion:1,enabled:true,backend:'sqlite',epoch,sequence:metadata().sequence,binding:metadata().sequence>0||db.prepare("SELECT id FROM migrations WHERE state='committed' LIMIT 1").get()?{protocolVersion:1,mediaLibraryIdentity:mediaNamespace()}:null,browserMigration:db.prepare("SELECT id FROM migrations WHERE state='committed' LIMIT 1").get()?'committed':'not_started',migration:{protocolVersion:1,maxBytes:MIGRATION_BYTES,chunkBytes:CHUNK_BYTES,maxNodes:2000000},batchProtocolVersion:2,limits:{documentBytes:LIBRARY_DOCUMENT_BYTES,requestBytes:LIBRARY_BODY_BYTES,pageBytes:LIBRARY_PAGE_BYTES,pageSize:100},minimumNode:LIBRARY_MIN_NODE};};
   const get=key=>{ensure();if(!validKey(key))invalid();const row=db.prepare('SELECT * FROM documents WHERE key=?').get(key);return row?{...meta(row),document:validateRow(row,metadata().sequence)}:null;};
   function list({limit=50,after='',expectedSequence}={}){
     ensure();if(!Number.isInteger(limit)||limit<1||limit>100||(after!==''&&!validKey(after)))invalid();

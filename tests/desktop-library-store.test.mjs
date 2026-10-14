@@ -93,3 +93,24 @@ test('replayed receipt is bound to the original requested key, action and next r
   assert.throws(()=>store.commit(input),code('library_corrupt'));assert.equal(store.describe().sequence,2);
  }
 });
+
+test('schema two upgrade preserves records and receipts and namespace survives restart',async t=>{
+ const {store,open,directory}=await fixture(t),request=put(store),receipt=store.commit(request),epoch=store.describe().epoch;store.close();
+ const {DatabaseSync}=await import('node:sqlite'),db=new DatabaseSync(path.join(directory,'library.sqlite'));
+ db.exec('DROP TABLE library_identity; PRAGMA user_version=2;');db.close();
+ const upgraded=await open(),identity=upgraded.describe().binding.mediaLibraryIdentity;
+ assert.notEqual(identity,epoch);assert.equal(upgraded.describe().epoch,epoch);assert.deepEqual(upgraded.get(document.key).document,document);assert.deepEqual(upgraded.commit(request),receipt);upgraded.close();
+ const reopened=await open();assert.equal(reopened.describe().binding.mediaLibraryIdentity,identity);assert.deepEqual(reopened.get(document.key).document,document);
+});
+test('failed schema two upgrade rolls back identity allocation and user_version',async t=>{
+ const {store,directory}=await fixture(t);store.commit(put(store));store.close();
+ const {DatabaseSync}=await import('node:sqlite'),db=new DatabaseSync(path.join(directory,'library.sqlite'));
+ db.exec('DROP TABLE library_identity; PRAGMA user_version=2; UPDATE identities SET lifetime=0;');db.close();
+ await assert.rejects(createLibraryStore({directory}),code('library_corrupt'));
+ const verify=new DatabaseSync(path.join(directory,'library.sqlite'));assert.equal(verify.prepare('PRAGMA user_version').get().user_version,2);assert.equal(verify.prepare("SELECT name FROM sqlite_master WHERE name='library_identity'").get(),undefined);verify.close();
+});
+test('corrupt media namespace never produces a discovery binding',async t=>{
+ const {store,directory}=await fixture(t);store.commit(put(store));
+ const {DatabaseSync}=await import('node:sqlite'),db=new DatabaseSync(path.join(directory,'library.sqlite'));db.prepare('UPDATE library_identity SET media=?').run('invalid');db.close();
+ assert.throws(()=>store.describe(),code('library_corrupt'));
+});

@@ -104,6 +104,18 @@
  // Controls remain outside the inert reader while authority is frozen.
  const migrate=document.createElement('button');migrate.type='button';migrate.textContent='迁移到此 PC 的统一书架';migrate.hidden=true;
  document.querySelector('.library-backup .disclosure-content')?.append(migrate);
+ const connect=document.createElement('button');connect.type='button';connect.textContent='连接已有电脑书架';connect.hidden=true;
+ document.querySelector('.library-backup .disclosure-content')?.append(connect);
+ const connectionHint=document.createElement('p');connectionHint.hidden=true;
+ document.querySelector('.library-backup .disclosure-content')?.append(connectionHint);
+ let discoveryBusy=false;
+ document.querySelector('.library-backup')?.addEventListener('toggle',async event=>{
+  if(!event.currentTarget.open||discoveryBusy||boot.result?.backend!=='indexeddb'||!boot.result.canonical)return;
+  discoveryBusy=true;connectionHint.hidden=false;connectionHint.textContent='正在检查此电脑已有书架…';
+  try{const server=await boot.result.canonical.request();connect.hidden=!(server.enabled&&server.binding?.protocolVersion===1);connectionHint.textContent=!connect.hidden?'可连接已有电脑书架；当前仍使用本浏览器书架。连接不会合并两份内容。':server.enabled?'此电脑尚无可连接的已有书架。可先迁移本浏览器书架。':'电脑统一书架服务未启用；当前仍使用本浏览器书架。';}
+  catch{connect.hidden=true;connectionHint.textContent='暂时无法检查电脑书架。当前浏览器书架仍可使用；关闭并重新打开备份工具可重试。';}
+  finally{discoveryBusy=false;}
+ });
  const sourceRecovery=document.createElement('button');sourceRecovery.type='button';sourceRecovery.textContent='导出迁移原始恢复文件';sourceRecovery.hidden=true;
  document.querySelector('.library-backup .disclosure-content')?.append(sourceRecovery);
  sourceRecovery.onclick=async()=>{try{const snapshot=await (boot.storage.canonicalRecovery?.()||boot.storage.readRecovery());if(!snapshot.ok)throw new Error('原始恢复文件暂时无法读取，请重试。');boot.result.recovery=snapshot;recovery.onclick();window.dispatchEvent(new CustomEvent('coconut-storage-export',{detail:{text:document.getElementById('storage-recovery-hint').textContent}}));}catch(error){window.dispatchEvent(new CustomEvent('coconut-storage-export',{detail:{text:error.message}}));}};
@@ -114,19 +126,21 @@
  async function migrateAction(action){
   if(migrationBusy||!boot.result?.canonical)return;migrationBusy=true;let release;
   try{
-   if(action==='begin')release=await window.coconutAcquireCanonicalMigration();
-   resume.disabled=cancel.disabled=migrate.disabled=true;
+   if(['begin','connect'].includes(action))release=await window.coconutAcquireCanonicalMigration();
+   resume.disabled=cancel.disabled=migrate.disabled=connect.disabled=true;
    const result=await boot.result.canonical[action]();
    if(result.ok){location.reload();return;}
   }catch(error){
    const marker=await boot.result.canonical.marker().catch(()=>({state:'unknown'}));
    if(!marker){release?.();message.textContent=error.message;window.dispatchEvent(new CustomEvent('coconut-storage-export',{detail:{text:error.message}}));}
    else{boot.phase='migration';shell.inert=true;panel.hidden=false;message.textContent=error.message||'迁移尚未完成，请继续或确认取消。';
-    resume.hidden=marker.state==='canonical';cancel.hidden=marker.state==='canonical';retry.hidden=false;
+    resume.hidden=cancel.hidden=marker.state!=='frozen';retry.hidden=false;
     try{const raw=await (boot.storage.canonicalRecovery?.()||boot.storage.readRecovery());if(raw.ok){boot.result.recovery=raw;recovery.hidden=false;}}catch{}
    }
-  }finally{migrationBusy=false;resume.disabled=cancel.disabled=migrate.disabled=false;}
+  }finally{migrationBusy=false;resume.disabled=cancel.disabled=migrate.disabled=connect.disabled=false;}
  }
+ boot.connectCanonical=()=>migrateAction('connect');
+ connect.onclick=()=>{if(window.confirm('连接此电脑已有的统一书架？当前浏览器书架会完整保留为只读恢复副本，不会合并或覆盖电脑书架。'))void boot.connectCanonical();};
  boot.migrateCanonical=()=>migrateAction('begin');boot.resumeCanonical=()=>migrateAction('resume');boot.cancelCanonical=()=>migrateAction('cancel');
  migrate.onclick=()=>{if(window.confirm('将当前浏览器书架完整迁移到此 PC 的统一数据库？原始数据会保留并停止浏览器写入。请先提交所有草稿。'))void boot.migrateCanonical();};
  resume.onclick=()=>void boot.resumeCanonical();cancel.onclick=()=>void boot.cancelCanonical();
@@ -145,8 +159,10 @@
    scriptPending=null;if(boot.controller.signal.aborted)return;
    boot.phase='ready';panel.hidden=true;shell.inert=false;document.body.dataset.storageBackend=result.backend;
    const original=document.getElementById('export-original-storage');original.hidden=typeof result.legacyRaw!=='string';
-   const mode=document.getElementById('storage-backend-hint');mode.textContent=result.backend==='canonical'?'当前由此 PC 的统一书架保存；浏览器原始记录保留为只读恢复副本。':result.backend==='indexeddb'?
+   const mode=document.getElementById('storage-backend-hint');mode.textContent=result.backend==='canonical'?'当前已连接此电脑的统一书架；连接前的浏览器记录保留为只读恢复副本。本地音视频需要重新选择关联。':result.backend==='indexeddb'?
     '文档分开保存到本机数据库。原始旧书架仍保留，不自动清理；原始数据下载供恢复使用，不能作为普通书架备份直接导入。':'当前使用兼容存储，容量较小；保存失败时请导出完整备份。';
+   sourceRecovery.textContent=result.connected?'导出连接前浏览器恢复文件':'导出迁移原始恢复文件';
+   connect.hidden=true;
    mode.hidden=false;sourceRecovery.hidden=result.backend!=='canonical';migrate.hidden=result.backend!=='indexeddb'||!result.canonical;
    window.dispatchEvent(new CustomEvent('coconut-storage-ready',{detail:{backend:result.backend,migrated:result.migrated===true}}));
   }catch(error){

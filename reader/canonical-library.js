@@ -111,14 +111,42 @@
    if(status.state!=='cancelled'||status.migrationId!==m.migrationId)throw issue('cancellation_unconfirmed');
    const result=await primitive.finishCanonical(m,null,true);if(!result.ok)throw issue(result.error.code);return {ok:true,state:'cancelled'};
   }
+  async function discover(){
+   const server=await request();
+   if(!server.enabled||server.protocolVersion!==1||server.batchProtocolVersion!==2||!server.binding||server.binding.protocolVersion!==1||!server.binding.mediaLibraryIdentity)throw issue('unsupported','此服务尚未支持连接已有书架。');
+   await load(server.epoch);return server;
+  }
+  async function connect(){
+   if(await marker())throw issue('fenced','此浏览器已有书架连接或迁移，请刷新后继续。');
+   // All remote reads precede the local authority commit. Failures here leave
+   // the original browser library writable; no remote writes or imports occur.
+   const server=await discover(),snapshot=await primitive.canonicalSource();
+   if(!snapshot.ok)throw issue(snapshot.error.code,snapshot.error.message);
+   const text=json(snapshot),data=bytes(text);if(data.length>MAX)throw issue('too_large');
+   const latest=requireEpoch(await request(),server.epoch);
+   if(latest.binding?.mediaLibraryIdentity!==server.binding.mediaLibraryIdentity)throw issue('epoch_conflict');
+   const m={state:'connected',version:1,bindingId:root.crypto.randomUUID(),epoch:server.epoch,mediaLibraryIdentity:server.binding.mediaLibraryIdentity,text,sha256:await hash(data)};
+   const saved=await primitive.bindCanonical(m);if(!saved.ok)throw issue(saved.error.code,saved.error.message);
+   return {ok:true,state:'connected'};
+  }
+  async function initializeBinding(m){
+   if(m.state!=='connected'||m.version!==1||!m.bindingId||await hash(m.text)!==m.sha256)throw issue('corruption');
+   const integrity=await primitive.canonicalIntegrity(m);if(!integrity.ok)throw issue(integrity.error.code,integrity.error.message);
+   const server=requireEpoch(await request(),m.epoch);
+   if(server.binding?.protocolVersion!==1||server.binding.mediaLibraryIdentity!==m.mediaLibraryIdentity)throw issue('binding_mismatch','电脑书架连接身份不一致，请恢复原服务后重试。');
+   return {...await initializeAdapter(m),connected:true};
+  }
   async function initialize(m){
    if(await hash(m.text)!==m.sha256)throw issue('corruption');
    const integrity=await primitive.canonicalIntegrity(m);if(!integrity.ok)throw issue(integrity.error.code,integrity.error.message);
    if(m.state!=='canonical'||m.receipt?.epoch!==m.epoch||m.receipt?.migrationId!==m.migrationId||m.receipt?.sha256!==m.sha256||m.receipt?.sourceId!==m.sourceId||m.receipt?.mediaLibraryIdentity!==m.mediaLibraryIdentity)throw issue('corruption');
    if(await hash(m.text)!==m.sha256||bytes(m.text).length!==m.bytes||Math.ceil(m.bytes/CHUNK)!==m.chunks)throw issue('corruption');
-   requireEpoch(await request(),m.epoch);
+   const server=requireEpoch(await request(),m.epoch);
    const committed=requireEpoch(await request('/migration?'+new URLSearchParams({protocolVersion:'1',migrationId:m.migrationId})),m.epoch);
    if(committed.state!=='committed'||committed.migrationId!==m.migrationId||JSON.stringify(committed.receipt)!==JSON.stringify(m.receipt)||committed.manifest?.sha256!==m.sha256||committed.manifest?.sourceId!==m.sourceId||committed.manifest?.mediaLibraryIdentity!==m.mediaLibraryIdentity||committed.manifest?.bytes!==m.bytes||committed.manifest?.chunks!==m.chunks)throw issue('corruption');
+   return initializeAdapter({...m,mediaLibraryIdentity:server.binding?.mediaLibraryIdentity||m.mediaLibraryIdentity});
+  }
+  async function initializeAdapter(m){
    const records=await load(m.epoch),tokens=new Map(records.map(r=>[r.key,r])),captures=new WeakMap(),retries=new Map(),unresolved=new Set();let closed=false,writeTail=Promise.resolve();
    async function send(capture){
     if(capture.result)return capture.result;
@@ -169,7 +197,7 @@
     },status:()=>({backend:'canonical'}),subscribe:()=>()=>{},close(){closed=true;primitive.close();}};
    return {ok:true,backend:'canonical',adapter,loaded:{ok:true,documents:records.filter(r=>!r.deleted).sort((a,b)=>a.identity.position-b.identity.position||a.key.localeCompare(b.key)).map(r=>project(r.document,{...validate(root.structuredClone(r.document)),key:r.key})),active:null}};
   }
-  return {begin,resume,cancel,initialize,marker,load,request};
+  return {begin,resume,cancel,initialize,initializeBinding,connect,discover,marker,load,request};
  }
  const api={create,json,hash};if(typeof module!=='undefined'&&module.exports)module.exports=api;else root.CoconutCanonicalLibrary=api;
 })(typeof globalThis==='undefined'?this:globalThis);

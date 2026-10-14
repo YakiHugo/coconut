@@ -45,8 +45,8 @@
       if (authority.value) {
         const recovery = await primitive.canonicalRecovery();
         if (!canonical) return {...failure('fenced'),recovery:recovery.ok?recovery:null};
-        if (authority.value.state === 'canonical') {
-          try { return {...await canonical.initialize(authority.value),canonical}; }
+        if (['canonical','connected'].includes(authority.value.state)) {
+          try { return {...await (authority.value.state === 'connected' ? canonical.initializeBinding(authority.value) : canonical.initialize(authority.value)),canonical}; }
           catch(error) { return {...failure(error.code||'unavailable',error.message),canonical,recovery:recovery.ok?recovery:null}; }
         }
         return {...failure('canonical_pending','书架迁移已冻结原始数据。请继续迁移或确认取消；不会自动切回浏览器写入。'),canonical,recovery:recovery.ok?recovery:null};

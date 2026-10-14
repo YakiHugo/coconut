@@ -465,7 +465,9 @@
     // Canonical authority is inspected before legacy readiness, including after a crash.
     async function canonicalStatus() {
       const opened = await open(); if (!opened.ok) return opened;
-      return getOne('meta', 'canonical-migration');
+      const migration = await getOne('meta', 'canonical-migration');
+      if (!migration.ok || migration.value) return migration;
+      return getOne('meta', 'canonical-binding');
     }
     async function canonicalSource() {
       const initialized = await ready(); if (!initialized.ok) return initialized;
@@ -481,7 +483,7 @@
       });
       return ids.ok ? readRecovery() : ids;
     }
-    function freezeCanonical(marker) {
+    function freezeCanonical(marker, binding = false) {
       return transaction(STORES, 'readwrite', ({tx, get, guard, stop, setResult}) => {
         const stores = {}; let pending = STORES.length * 2;
         const values = {}, keys = {};
@@ -490,11 +492,11 @@
           for (const store of STORES) stores[store] = keys[store].map((key,index)=>({key,value:values[store][index]}));
           const snapshot = {ok:true,format:'coconut-storage-recovery',version:1,database:name,stores};
           const fence=checkWriteFence();if(!fence.ok){stop(fence);return;}
-          if (JSON.stringify(snapshot) !== marker.text || stores.meta.find(row=>row.key==='state')?.value.status !== 'ready' || stores.meta.some(row=>row.key==='canonical-migration')) {
+          if (JSON.stringify(snapshot) !== marker.text || stores.meta.find(row=>row.key==='state')?.value.status !== 'ready' || stores.meta.some(row=>['canonical-migration','canonical-binding'].includes(row.key))) {
             stop(fail('conflict','Source changed before freeze; retry migration')); return;
           }
           tx.objectStore('meta').put({...stores.meta.find(row=>row.key==='state').value,status:'canonical-frozen'},'state');
-          tx.objectStore('meta').put(clone(marker),'canonical-migration'); setResult({ok:true});
+          tx.objectStore('meta').put(clone(marker),binding?'canonical-binding':'canonical-migration'); setResult({ok:true});
         };
         for (const store of STORES) {
           const rows=tx.objectStore(store).getAll(), allKeys=tx.objectStore(store).getAllKeys();
@@ -513,7 +515,7 @@
         const original=JSON.parse(migration.text),state=original.stores.meta.find(row=>row.key==='state').value;
         const currentState=snapshot.stores.meta.find(row=>row.key==='state');
         if(!equalJSON(currentState?.value,{...state,status:'canonical-frozen'}))return fail('source_changed','冻结的原始书架已改变，请保留两份数据并导出恢复文件。');
-        snapshot.stores.meta=snapshot.stores.meta.filter(row=>row.key!=='canonical-migration');
+        snapshot.stores.meta=snapshot.stores.meta.filter(row=>row.key!==(migration.state==='connected'?'canonical-binding':'canonical-migration'));
         snapshot.stores.meta.find(row=>row.key==='state').value=state;
         const legacy=original.stores.legacySnapshots.find(row=>row.key==='legacy-v1')?.value.raw;
         if(JSON.stringify(snapshot)!==migration.text||getLegacyStorage().getItem(legacyKey)!==legacy||getLegacyStorage().getItem(fenceKey)!==marker)return fail('source_changed','冻结的原始书架或旧版数据已改变，请保留两份数据并导出恢复文件。');
@@ -552,7 +554,7 @@
       const result = await loadLibrary();
       return result.ok ? {ok: true, catalog: result.catalog, unreadable: []} : result;
     }
-    return Object.freeze({canonicalStatus, canonicalSource, freezeCanonical, canonicalIntegrity, canonicalRecovery, finishCanonical, ready, prepare, commit, readDocument, loadCatalog, loadLibrary, readRecovery, checkLegacy, mediaLibraryIdentity,
+    return Object.freeze({canonicalStatus, canonicalSource, freezeCanonical, bindCanonical: marker => freezeCanonical(marker, true), canonicalIntegrity, canonicalRecovery, finishCanonical, ready, prepare, commit, readDocument, loadCatalog, loadLibrary, readRecovery, checkLegacy, mediaLibraryIdentity,
       readTombstone: key => getOne('tombstones', key), readLegacySnapshot: () => getOne('legacySnapshots', 'legacy-v1'),
       close, shutdown, status: () => Object.freeze({state: lifecycle, writable})});
   }

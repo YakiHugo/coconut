@@ -106,6 +106,9 @@ export function createMigrationStore({db,transaction,epoch,metadata,validateRow,
      db.prepare('INSERT INTO identities VALUES (?,?,?,?)').run(key,source.epoch,catalog.order,JSON.stringify(source));
     }
    }
+   // Before the first content write, no binding has been advertised. Preserve
+   // migrated native ownership then; an already published API namespace stays stable.
+   if(sequence===0)db.prepare('UPDATE library_identity SET media=? WHERE id=1').run(manifest.mediaLibraryIdentity);
    db.prepare('UPDATE metadata SET sequence=? WHERE id=1').run(next);
    const receipt={epoch,migrationId:id,sourceId:manifest.sourceId,sha256:manifest.sha256,sequence:next,documents:imported.length,mediaLibraryIdentity:manifest.mediaLibraryIdentity};
    db.prepare("UPDATE migrations SET state='committed',receipt=? WHERE id=?").run(JSON.stringify(receipt),id);
