@@ -56,7 +56,7 @@
    list:options=>call('tasks',options),
    listArchived:({after='',limit=20,...options}={})=>call('tasks?archived=true&limit='+encodeURIComponent(limit)+'&after='+encodeURIComponent(after),options),
    exportTask:(id,options)=>call('tasks/'+encodeURIComponent(id)+'/export',options),
-   archive:(id,options={})=>call('tasks/'+encodeURIComponent(id)+'/archive',{...options,body:{protocolVersion:1}}),
+   archive:(id,{expected,...options}={})=>call('tasks/'+encodeURIComponent(id)+'/archive',{...options,body:expected===undefined?{protocolVersion:1}:{protocolVersion:2,expected}}),
    restore:(id,options={})=>call('tasks/'+encodeURIComponent(id)+'/restore',{...options,body:{protocolVersion:1}}),
    cancel:(id,options={})=>call('tasks/'+encodeURIComponent(id)+'/cancel',{...options,body:{protocolVersion:1}})
   });
