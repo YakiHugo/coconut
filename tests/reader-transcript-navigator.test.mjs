@@ -47,7 +47,9 @@ test('every shipped server and desktop package includes the self-contained islan
 test('production React island mounts and routes dialog controls without owning content state',async()=>{
  const {w,$}=setup();try{
   w.eval(fs.readFileSync(new URL('../reader/transcript-navigator.js',import.meta.url),'utf8'));
-  const settle=async predicate=>{const deadline=Date.now()+3000;while(!predicate()&&Date.now()<deadline)await new Promise(resolve=>setTimeout(resolve,10));assert.ok(predicate(),'React reached the requested commit milestone');};await settle(()=>w.document.body.dataset.transcriptNavigation==='ready');
+  const settle=async predicate=>{const deadline=Date.now()+3000;while(!predicate()&&Date.now()<deadline)await new Promise(resolve=>setTimeout(resolve,10));assert.ok(predicate(),'React reached the requested commit milestone');};
+  // The mount effect marks ready before React commits the trigger's available state.
+  await settle(()=>w.document.body.dataset.transcriptNavigation==='ready'&&$('open-transcript-navigator')?.hidden===false);
   assert.equal(w.document.body.dataset.transcriptNavigation,'ready');assert.equal($('open-transcript-navigator').hidden,false);
   $('open-transcript-navigator').click();await settle(()=>$('transcript-navigator-dialog').open&&w.document.querySelectorAll('.navigator-results li').length===40);assert.equal($('transcript-navigator-dialog').open,true);assert.equal(w.document.querySelectorAll('.navigator-results li').length,40);
   [...$('transcript-navigator-dialog').querySelectorAll('button')].find(node=>node.textContent==='后面的原文').click();await settle(()=>/observation 41/.test(w.document.querySelector('.navigator-results li')?.textContent||''));assert.match(w.document.querySelector('.navigator-results li').textContent,/observation 41/);
