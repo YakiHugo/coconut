@@ -669,3 +669,30 @@ test('bulk candidates reject incomplete metadata and only expose cancellation af
   h.api.tasks.set('malformed',{taskId:'malformed',attemptId:'fake-attempt',inputDigest:'fake-digest',kind:'summary',status:'failed',provider:'codex'});await h.refresh();assert.equal(bulkRow(h,'malformed').querySelector('[data-action=select-archive]'),null);assert.equal(h.doc().segments.length,2);
  }finally{await h.w.happyDOM.close();}
 });
+
+for(const order of ['ascending','descending'])test('native-click restore waits for the exact durable receipt with archive UUID order '+order,async()=>{
+ const {backgroundSummaryBridge,until}=await import('./helpers/background-summary-bridge.mjs');
+ const bridge=await backgroundSummaryBridge();let h,heldId='',release=()=>{},started=false,gate=Promise.resolve();
+ const api={fetch:async(url,options={})=>{
+  if(heldId&&url==='api/v1/tasks/'+heldId+'/restore'){started=true;await gate;}
+  return fetch(bridge.origin+'/'+url,{...options,headers:{...options.headers,Origin:bridge.origin}});
+ }};
+ try{
+  h=setup(api);await h.import(fixture('Restore receipt ordering'));await h.choose();await h.submit();await until(()=>bridge.invocations.length===1);const first=(await bridge.tasks())[0].taskId;bridge.invocations[0].release();await bridge.waitTask(first,'succeeded');await h.refresh();
+  await h.submit();await until(()=>bridge.invocations.length===2);const second=(await bridge.tasks()).find(task=>task.taskId!==first).taskId;await bulkRow(h,second).querySelector('[data-action=cancel]').onclick();bridge.invocations[1].release();await bridge.waitTask(second,'cancelled');await h.refresh();
+  reviewCurrent(h);await h.$('background-bulk-confirm').onclick();const snapshots=await Promise.all([first,second].map(id=>bridge.task(id)));assert.ok(snapshots.every(task=>task.archivedAt));
+  const storage=h.snapshot();await h.w.happyDOM.close();h=setup(api,storage);await h.refresh();await openArchive(h);
+  const tasks=[...snapshots].sort((a,b)=>a.taskId.localeCompare(b.taskId));if(order==='descending')tasks.reverse();
+  for(const task of tasks){
+   heldId=task.taskId;started=false;gate=new Promise(resolve=>release=resolve);
+   const archived=[...h.$('background-archive-list').querySelectorAll('section')].find(node=>node.textContent.includes(task.taskId));assert.ok(archived);
+   // Like Playwright locator.click(), native dispatch does not await the
+   // asynchronous handler. This models the exact formerly racy fixture step.
+   archived.querySelector('[data-action=restore]').click();await until(()=>started);
+   const tooEarly=await bridge.task(task.taskId);assert.ok(tooEarly.archivedAt,'an immediate post-click GET can still see the durable archived state');
+   release();await until(()=>{const button=bulkRow(h,task.taskId)?.querySelector('[data-action=archive]');return button&&!button.disabled;},'Exact restore receipt visible and operation settled');
+   const restored=await bridge.task(task.taskId);assert.equal(restored.archivedAt,undefined);for(const field of ['taskId','attemptId','inputDigest','document','provider'])assert.deepEqual(restored[field],task[field]);
+  }
+  assert.equal(bridge.invocations.length,2);assert.equal(bridge.posts.filter(url=>url==='/api/v1/tasks').length,2);assert.equal(bridge.posts.filter(url=>url.endsWith('/restore')).length,2);
+ }finally{release();await h?.w.happyDOM.close();await bridge.close();}
+});
