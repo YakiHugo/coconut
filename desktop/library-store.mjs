@@ -13,11 +13,13 @@ export const libraryError=(code,message,status=400)=>Object.assign(new Error(mes
 const invalid=()=>{throw libraryError('invalid_request','Invalid library request');};
 const encode=value=>{try{return JSON.stringify(value,(_key,item)=>{if(item===undefined||typeof item==='function'||typeof item==='symbol'||typeof item==='bigint'||(typeof item==='number'&&!Number.isFinite(item)))invalid();return item;});}catch{invalid();}};
 export function libraryRuntimeSupported(version=process.versions.node){const [major,minor]=version.split('.').map(Number);return major>22||(major===22&&minor>=13);}
-export async function createLibraryStore({directory}={}){
+export async function createLibraryStore({directory,exclusiveWriter=false}={}){
   if(!libraryRuntimeSupported())throw libraryError('runtime_unsupported',`Canonical library requires Node ${LIBRARY_MIN_NODE} or newer`,503);
   if(typeof directory!=='string'||!path.isAbsolute(directory))invalid();
   // Lazy import keeps the existing reader usable on older Node versions.
-  const {DatabaseSync}=await import('node:sqlite');
+  let DatabaseSync;
+  try{({DatabaseSync}=await import('node:sqlite'));}
+  catch{throw libraryError('runtime_unsupported',`Canonical library requires a runtime with node:sqlite (Node ${LIBRARY_MIN_NODE} or newer)`,503);}
   await mkdir(directory,{recursive:true,mode:0o700});
   const privatePath=async(file,directory=false)=>{
     const stat=await lstat(file);
@@ -72,6 +74,8 @@ export async function createLibraryStore({directory}={}){
   }
   try{
     db.exec('PRAGMA busy_timeout=3000');
+    // Service instances retain a SQLite OS lock until close/crash; no stale PID files.
+    if(exclusiveWriter)db.exec('PRAGMA locking_mode=EXCLUSIVE');
     // Reject future/foreign schemas before modifying their contents.
     const version=db.prepare('PRAGMA user_version').get().user_version;
     if(![0,1,2].includes(version))throw libraryError('schema_unsupported','Unsupported library schema',503);
@@ -101,7 +105,7 @@ export async function createLibraryStore({directory}={}){
       for(const row of db.prepare('SELECT d.key,i.lifetime,i.position FROM documents d LEFT JOIN identities i ON d.key=i.key').iterate())if(!Number.isSafeInteger(row.lifetime)||row.lifetime<1||!Number.isSafeInteger(row.position)||row.position<0)corrupt();
     });
     db.exec('PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL');
-  }catch(error){db.close();throw error;}
+  }catch(error){db.close();if(exclusiveWriter&&error.errcode===5)throw libraryError('library_in_use','Library is already open in another service',503);throw error;}
   const ensure=()=>{if(closed)throw libraryError('library_closed','Library is closed',503);};
   const meta=row=>({sha256:createHash('sha256').update(row.payload).digest('hex'),identity:db.prepare('SELECT lifetime,position FROM identities WHERE key=?').get(row.key),key:row.key,token:{epoch,revision:row.revision},deleted:!!row.deleted,title:row.title,updatedAt:row.updated,bytes:row.bytes});
   const describe=()=>{ensure();return {protocolVersion:1,enabled:true,backend:'sqlite',epoch,sequence:metadata().sequence,browserMigration:db.prepare("SELECT id FROM migrations WHERE state='committed' LIMIT 1").get()?'committed':'not_started',migration:{protocolVersion:1,maxBytes:MIGRATION_BYTES,chunkBytes:CHUNK_BYTES,maxNodes:2000000},batchProtocolVersion:2,limits:{documentBytes:LIBRARY_DOCUMENT_BYTES,requestBytes:LIBRARY_BODY_BYTES,pageBytes:LIBRARY_PAGE_BYTES,pageSize:100},minimumNode:LIBRARY_MIN_NODE};};

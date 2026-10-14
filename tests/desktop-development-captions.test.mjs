@@ -19,7 +19,7 @@ async function fixture(t,{probe=version,result=caption,delay=0}={}){
 test('explicit developer adapter runs real isolated process from URL through HTTP to validated document',async t=>{
  const f=await fixture(t);let server;
  t.after(async()=>{if(server)await server.shutdown();});
- const started=await startDevelopmentBridge({port:0,taskDirectory:path.join(f.directory,'tasks'),captionPython:f.executable,providers:{status(){throw Error('Unexpected provider probe');}}});server=started.server;
+ const started=await startDevelopmentBridge({libraryDirectory:null,port:0,taskDirectory:path.join(f.directory,'tasks'),captionPython:f.executable,providers:{status(){throw Error('Unexpected provider probe');}}});server=started.server;
  assert.equal(started.captions.available,true);assert.deepEqual(started.captions.providers.filter(p=>p.available).map(p=>p.id),['x','youtube','bilibili']);
  assert.equal(started.captions.automatic_asr,false);
  assert.equal((await fetch(started.origin+'/api/captions/status',{headers:{Origin:'https://example.com'}})).status,403);
@@ -33,11 +33,11 @@ test('explicit developer adapter runs real isolated process from URL through HTT
  const report=await diagnoseDevelopment({port:server.address().port});assert.equal(report.captions.available,true);assert.match(formatDoctorReport(report),/YouTube/);
 });
 test('missing or mismatched Python fails closed with actionable status and no source extraction',async t=>{
- for(const probe of [{...version,version:'wrong'},{...version,tlsRootsVerified:false}]){
-  const f=await fixture(t,{probe});const {server,origin,captions}=await startDevelopmentBridge({port:0,taskDirectory:path.join(f.directory,'tasks'),captionPython:f.executable});
+ for(const probe of [{...version,version:'wrong'},{status:'version_mismatch',version:'2025.1.1'},{...version,tlsRootsVerified:false}]){
+  const f=await fixture(t,{probe});const {server,origin,captions}=await startDevelopmentBridge({libraryDirectory:null,port:0,taskDirectory:path.join(f.directory,'tasks'),captionPython:f.executable});
   try{assert.equal(captions.available,false);assert.equal(captions.code,'CAPTION_VERSION');assert.match(captions.message,/COCONUT_CAPTION_PYTHON/);const doctor=formatDoctorReport(await diagnoseDevelopment({port:server.address().port}));assert.match(doctor,/yt-dlp==2026.8.19/);assert.match(doctor,/COCONUT_CAPTION_PYTHON=.*npm run dev/);assert.equal((await fetch(origin+'/api/health').then(r=>r.json())).capabilities.caption_import,false);assert.equal((await readFile(f.log,'utf8')).trim().split('\n').length,1);}finally{await server.shutdown();}
  }
- const f=await fixture(t);const {server,captions}=await startDevelopmentBridge({port:0,taskDirectory:path.join(f.directory,'missing-tasks'),captionPython:path.join(f.directory,'missing')});try{assert.equal(captions.available,false);assert.equal(captions.code,'CAPTION_START');}finally{await server.shutdown();}
+ const f=await fixture(t);const {server,captions}=await startDevelopmentBridge({libraryDirectory:null,port:0,taskDirectory:path.join(f.directory,'missing-tasks'),captionPython:path.join(f.directory,'missing')});try{assert.equal(captions.available,false);assert.equal(captions.code,'CAPTION_START');}finally{await server.shutdown();}
 });
 test('adapter cancellation, busy protection, timeout and cleanup bound real child processes',async t=>{
  const f=await fixture(t,{delay:5000});const helper=createDevelopmentCaptionHelper({python:f.executable,tempRoot:f.directory,timeoutMs:500});
@@ -63,11 +63,80 @@ test('developer HTTP route imports YouTube VTT and Bilibili SRT with provider id
   ['youtube','https://www.youtube.com/watch?v=BaW_jenozKc','BaW_jenozKc','vtt','WEBVTT\n\n00:00.000 --> 00:02.000\nOriginal fixture.\n'],
   ['bilibili','https://www.bilibili.com/video/BV1xx411c7mD','BV1xx411c7mD','srt','1\n00:00:00,000 --> 00:00:02,000\nOriginal fixture.\n']]){
   const result={...caption,format,captionBase64:Buffer.from(body).toString('base64'),source:{...caption.source,url,id,extractor:provider,live_status:'not_live'}};
-  const f=await fixture(t,{result});const {server,origin}=await startDevelopmentBridge({port:0,taskDirectory:path.join(f.directory,'tasks'),captionPython:f.executable});
+  const f=await fixture(t,{result});const {server,origin}=await startDevelopmentBridge({libraryDirectory:null,port:0,taskDirectory:path.join(f.directory,'tasks'),captionPython:f.executable});
   try{
    const response=await fetch(origin+'/api/captions/import',{method:'POST',headers:{Origin:origin,'Content-Type':'application/json'},body:JSON.stringify({url})});
    assert.equal(response.status,200);const receipt=await response.json();assert.equal(receipt.status,'ready');
    assert.equal(receipt.document.provenance.source_platform,provider);assert.equal(receipt.document.provenance.media_id,id);assert.equal(receipt.document.segments[0].text,'Original fixture.');
   }finally{await server.shutdown();}
  }
+});
+
+test('dependency failures flow through HTTP and doctor without attempting extraction or leaking diagnostics',async t=>{
+ for(const [missing,code,phrase] of [
+  [['yt_dlp'],'CAPTION_MISSING_YT_DLP','缺少 yt-dlp'],
+  [['certifi'],'CAPTION_MISSING_CERTIFI','缺少 certifi'],
+  [['yt_dlp','certifi'],'CAPTION_MISSING_DEPENDENCIES','缺少 yt-dlp 和 certifi'],
+  [['yt_dlp','private/path/token'],'CAPTION_OUTPUT','检查未通过'],
+  [['yt_dlp','yt_dlp'],'CAPTION_OUTPUT','检查未通过'],
+  [[],'CAPTION_OUTPUT','检查未通过'],
+ ]){
+  const f=await fixture(t,{probe:{status:'dependencies_missing',missing,stderr:'PRIVATE_SECRET'}});
+  const {server,origin,captions}=await startDevelopmentBridge({libraryDirectory:null,port:0,taskDirectory:path.join(f.directory,'tasks'),captionPython:f.executable});
+  try{
+   assert.equal(captions.available,false);assert.equal(captions.code,code);
+   const report=await diagnoseDevelopment({port:server.address().port});const output=formatDoctorReport(report);
+   assert.match(output,new RegExp(phrase));assert.doesNotMatch(output,/PRIVATE_SECRET|private\/path\/token/);
+   assert.match(output,/手动重启/);
+   assert.equal((await fetch(origin+'/api/health').then(r=>r.json())).capabilities.caption_import,false);
+   assert.equal((await readFile(f.log,'utf8')).trim().split('\n').length,1);
+  }finally{await server.shutdown();}
+ }
+});
+
+test('development guidance uses hashed runtime-only pins and displays only safe actual versions',async()=>{
+ const {captionSetupGuidance}=await import('../desktop/caption-setup-guidance.mjs');
+ const lock=JSON.parse(await readFile(new URL('../desktop/caption-helper-lock.json',import.meta.url),'utf8'));
+ const requirements=await readFile(new URL('../desktop/development-caption-requirements.txt',import.meta.url),'utf8');
+ const lines=requirements.split('\n').filter(line=>line&&!line.startsWith('#'));assert.equal(lines.length,2);
+ for(const name of ['yt-dlp','certifi']){
+  const pkg=lock.packages.find(p=>p.name===name),wheel=pkg.files.find(f=>f.type==='bdist_wheel');
+  assert.ok(lines.includes(`${name}==${pkg.version} --hash=sha256:${wheel.sha256}`));
+ }
+ const unconfigured=captionSetupGuidance('CAPTION_UNAVAILABLE');
+ assert.match(unconfigured,/python3 --version/);assert.match(unconfigured,/Python 3.10\+/);
+ assert.match(captionSetupGuidance('CAPTION_PYTHON_VERSION'),/重新创建独立环境/);
+ assert.match(unconfigured,/python3 -m venv \.venv-captions/);assert.match(unconfigured,/--require-hashes --only-binary=:all: --no-deps -r desktop\/development-caption-requirements.txt/);
+ assert.match(unconfigured,/COCONUT_CAPTION_PYTHON="\$PWD\/\.venv-captions\/bin\/python" npm run dev/);
+ assert.match(captionSetupGuidance('CAPTION_MISSING_CERTIFI'),/同一 Python/);
+ assert.match(captionSetupGuidance('CAPTION_VERSION',{actualVersion:'2025.01.01'}),/当前 yt-dlp=2025.01.01；需要 2026.08.19/);
+ assert.doesNotMatch(captionSetupGuidance('CAPTION_VERSION',{actualVersion:'secret\ncommand'}),/secret|command/);
+ assert.match(captionSetupGuidance('CAPTION_CONFIGURATION'),/绝对路径/);
+});
+
+test('real isolated Python dependency preflight emits only allowlisted missing modules',async t=>{
+ const {spawnSync}=await import('node:child_process');
+ const python=spawnSync('python3',['-I','-c','import sys;print(sys.executable)'],{encoding:'utf8'});
+ if(python.status!==0)return t.skip('Python 3 unavailable; real interpreter preflight not exercised');
+ const f=await fixture(t);const helper=createDevelopmentCaptionHelper({python:f.executable});
+ await helper.status();await helper.shutdown();
+ const launcher=JSON.parse((await readFile(f.log,'utf8')).trim()).args[3];
+ for(const missing of [['yt_dlp','certifi'],['yt_dlp'],['certifi']]){
+  // -S supplies a truly empty site-packages environment for the both-missing case.
+  // Single-module cases use authored module-discovery results, never package imports.
+  const prefix=missing.length===2?'':`import importlib.util;importlib.util.find_spec=lambda name: None if name in ${JSON.stringify(missing)} else object();\n`;
+  const result=spawnSync(python.stdout.trim(),['-I','-S','-B','-c',prefix+launcher],{input:'{"operation":"version"}\n',encoding:'utf8',timeout:10000,cwd:f.directory});
+  assert.equal(result.status,0,result.stderr);assert.equal(result.stderr,'');
+  assert.deepEqual(JSON.parse(result.stdout),{status:'dependencies_missing',missing});
+ }
+ const oldPython=spawnSync(python.stdout.trim(),['-I','-S','-B','-c',"import sys;sys.version_info=(3,9,0);\n"+launcher],{input:'{"operation":"version"}\n',encoding:'utf8',timeout:10000,cwd:f.directory});
+ assert.equal(oldPython.status,0,oldPython.stderr);assert.equal(oldPython.stderr,'');
+ assert.deepEqual(JSON.parse(oldPython.stdout),{status:'python_unsupported'});
+ const oldFixture=await fixture(t,{probe:{status:'python_unsupported'}});
+ const oldHelper=createDevelopmentCaptionHelper({python:oldFixture.executable});
+ assert.deepEqual(await oldHelper.status(),{ready:false,code:'CAPTION_PYTHON_VERSION'});await oldHelper.shutdown();
+ const oldVersion=spawnSync(python.stdout.trim(),['-I','-S','-B','-c',"import importlib.util,importlib.metadata;importlib.util.find_spec=lambda name: object();importlib.metadata.version=lambda name: '2025.1.1';\n"+launcher],{input:'{"operation":"version"}\n',encoding:'utf8',timeout:10000,cwd:f.directory});
+ assert.equal(oldVersion.status,0,oldVersion.stderr);assert.equal(oldVersion.stderr,'');
+ assert.deepEqual(JSON.parse(oldVersion.stdout),{status:'version_mismatch',version:'2025.1.1'});
+ assert.deepEqual((await readdir(f.directory)).sort(),['authored-python','requests.jsonl']);
 });

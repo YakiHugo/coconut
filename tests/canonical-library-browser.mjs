@@ -6,7 +6,8 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import {chromium} from '@playwright/test';
-import {startBridge} from '../desktop/server.mjs';
+import {startDevelopmentBridge} from '../desktop/dev.mjs';
+async function startBridge(options){return (await startDevelopmentBridge({...options,taskDirectory:null})).server;}
 import {openLibraryTools} from './helpers/library-tools-browser.mjs';
 
 const fixture={schema_version:1,key:'authored-canonical',title:'自写迁移验证',language:'en',notes:{cue:'Original authored note'},unknown:{preserve:'exact source'},segments:[{id:'cue',start:0,end:3,text:'An authored migration fixture.',opaque:{preserve:true}}]};

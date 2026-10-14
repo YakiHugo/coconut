@@ -4,13 +4,14 @@
 
 ## 启用和检查
 
-已有 Python 环境需要固定版本 `yt-dlp==2026.8.19`（运行时 `2026.08.19`）和 `certifi`。Coconut 不安装、更改或自动寻找解释器。不要使用未知下载程序充当 Python，也不必安装完整 ASR requirements、ffmpeg、Whisper 或模型。
+已有 Python 环境必须为 **Python 3.10+**，并需要固定版本 `yt-dlp==2026.8.19`（运行时 `2026.08.19`）和 `certifi`。Coconut 不安装、更改或自动寻找解释器。不要使用未知下载程序充当 Python，也不必安装完整 ASR requirements、ffmpeg、Whisper 或模型。
 
 如果开发机尚无独立字幕环境，可由开发者自行创建（这些是手动命令，不会由应用运行，也不会在用户 Mac 上自动执行）：
 
 ```sh
+python3 --version  # 必须为 3.10+；否则用已有可信 Python 3.10+ 的绝对路径替换下面的 python3
 python3 -m venv .venv-captions
-.venv-captions/bin/python -m pip install --no-deps yt-dlp==2026.8.19 certifi==2026.7.22
+.venv-captions/bin/python -m pip install --require-hashes --only-binary=:all: --no-deps -r desktop/development-caption-requirements.txt
 COCONUT_CAPTION_PYTHON="$PWD/.venv-captions/bin/python" npm run dev
 ```
 
@@ -22,11 +23,15 @@ COCONUT_CAPTION_PYTHON=/absolute/path/to/venv/bin/python npm run dev
 
 先确认服务端口未被占用。另一个终端运行 `npm run doctor`，或查看 `GET /api/captions/status`。每个平台分别报告是否启用。未配置、依赖缺失或校验失败不会妨碍阅读；修改环境后需自行重启服务。HTTP/页面不能更改解释器或执行命令。
 
+- `CAPTION_PYTHON_VERSION`：指定解释器低于 Python 3.10；先选择已有可信 3.10+ 解释器并重新创建独立环境，不要在旧环境反复安装依赖。
 - `CAPTION_CONFIGURATION`：解释器不是绝对路径
 - `CAPTION_START`：解释器无法启动
-- `CAPTION_EXIT`：依赖探测未完成，例如缺少包
+- `CAPTION_MISSING_YT_DLP` / `CAPTION_MISSING_CERTIFI` / `CAPTION_MISSING_DEPENDENCIES`：明确缺少对应模块；仅检查显式配置的隔离解释器。请在同一解释器环境手动安装锁定依赖，不要使用系统 `pip`。
+- `CAPTION_EXIT`：依赖已找到，但导入或探测未完成，例如包损坏或不兼容
 - `CAPTION_VERSION`：固定版本、TLS、协议或开发平台列表不匹配
 - `CAPTION_UNAVAILABLE`：未配置可用助手
+
+开发依赖文件 `desktop/development-caption-requirements.txt` 仅包含 helper 锁文件中的 yt-dlp 和 certifi，保留 wheel 哈希，不安装打包工具或 ASR。启动终端与 doctor 会按具体状态给出下一步；版本不匹配时启动终端显示可验证的实际 yt-dlp 版本和期望版本。doctor 只读取运行中服务的快照，不会启动解释器重新探测；修复后必须手动重启服务，旧服务状态不会自行改变。模块存在不等于能够成功导入；仍须通过原有完整版本、TLS 和协议检查才会就绪。
 
 ## 链接、轨道和结果
 

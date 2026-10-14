@@ -11,6 +11,7 @@ import { createPodcastSources } from './podcast-sources.mjs';
 import {createTaskStore,TASK_BODY_BYTES} from './tasks.mjs';
 import {createLibraryStore} from './library-store.mjs';
 import {handleLibraryRequest} from './library-api.mjs';
+import {libraryLocation,libraryStartupMessage} from './library-location.mjs';
 
 export const CAPABILITIES = Object.freeze({reader:true,local_agents:true,subscription_ask:true,subscription_translation:true,media_import:false,local_translation:false,podcast_import:true,caption_import:false});
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
@@ -19,7 +20,7 @@ const MIME = {'.png':'image/png','.html':'text/html; charset=utf-8','.js':'text/
 const MAX_BODY = 1024 * 1024;
 export const CSP = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self'; img-src 'self' data: blob:; media-src 'self' blob:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'";
 
-export function createBridge({readerDirectory = path.resolve(ROOT,'../reader'), providers = createProviders(), podcastSources = createPodcastSources(), captionService = null, captionStatus = null, localMediaService = null, taskStore = null, taskUnavailable = null, libraryStore = null, libraryUnavailable = null} = {}) {
+export function createBridge({readerDirectory = path.resolve(ROOT,'../reader'), providers = createProviders(), podcastSources = createPodcastSources(), captionService = null, captionStatus = null, localMediaService = null, taskStore = null, taskUnavailable = null, libraryStore = null, libraryUnavailable = null, libraryLocation = null} = {}) {
   const translate = createTranslator(providers);
   const capabilities=Object.freeze({...CAPABILITIES,caption_import:captionService?.available===true,persistent_tasks:!!taskStore,canonical_library:!!libraryStore});
   const captionSources=Object.freeze({available:capabilities.caption_import,mode:captionStatus?.mode||(capabilities.caption_import?'bundled-helper':'disabled'),
@@ -58,10 +59,12 @@ export function createBridge({readerDirectory = path.resolve(ROOT,'../reader'), 
             return json(200,{protocolVersion:1,...(key!==null?{task:await taskStore.findSubmission(key)}:{tasks:await taskStore.list()})});
           }
           if(pathname.endsWith('/export'))return json(200,{protocolVersion:1,record:await taskStore.exportTask(pathname.split('/').at(-2))});
+          const resumeKey=new URL(req.url,origin).searchParams.get('resumeKey');
+          if(resumeKey!==null)return json(200,{protocolVersion:1,...await taskStore.findResume(pathname.split('/').at(-1),resumeKey)});
           return json(200,{protocolVersion:1,task:await taskStore.get(pathname.split('/').at(-1))});
         }
         if (pathname === '/api/captions/status') return json(200,captionSources);
-        if (pathname === '/api/health') return json(200,{local_worker:false,runtime:'desktop-bridge',paid_processing:false,max_upload_bytes:0,capabilities,caption_sources:captionSources});
+        if (pathname === '/api/health') return json(200,{local_worker:false,runtime:'desktop-bridge',paid_processing:false,max_upload_bytes:0,capabilities,caption_sources:captionSources,...(libraryLocation?{library_storage:{...libraryLocation,enabled:!!libraryStore,unavailable:libraryUnavailable}}:{})});
         if (pathname === '/api/language-tools' && req.method === 'GET') return json(200,{translation_models:[],local_translation:false,capabilities,
           ai:{codex:await providers.status('codex',{signal:controller.signal}),claude:await providers.status('claude',{signal:controller.signal})}});
         if (pathname === '/api/jobs') return json(501,{error:'轻量版不提供处理队列，请重新检查本地服务能力'});
@@ -72,7 +75,7 @@ export function createBridge({readerDirectory = path.resolve(ROOT,'../reader'), 
       if (req.method !== 'POST') return json(405,{error:'Method not allowed'});
       // Cross-site HTML forms and opaque-origin pages must never start a local CLI.
       if (req.headers.origin !== origin) return json(403,{error:'发送请求必须来自此本机阅读器'});
-      const taskRoute=pathname==='/api/v1/tasks'||/^\/api\/v1\/tasks\/[a-f0-9-]+\/(?:cancel|archive|restore)$/.test(pathname);
+      const taskRoute=pathname==='/api/v1/tasks'||/^\/api\/v1\/tasks\/[a-f0-9-]+\/(?:cancel|archive|restore|resume)$/.test(pathname);
       if (taskRoute&&!taskStore)return json(503,{error:taskUnavailable?.message||'此执行器尚未配置持久任务目录',code:taskUnavailable?.code||'tasks_disabled'});
       if (!taskRoute&&!['/api/ask','/api/translate-subscription','/api/podcasts/discover','/api/podcasts/import','/api/podcasts/media','/api/captions/import'].includes(pathname)) return json(501,{error:'轻量版未启用视频站下载、ASR 或离线翻译。可使用公开播客源、字幕或本地音视频；完整本地处理服务为可选高级功能。'});
       if (req.headers['content-type']?.split(';')[0] !== 'application/json') return json(400,{error:'Use application/json'});
@@ -89,11 +92,12 @@ export function createBridge({readerDirectory = path.resolve(ROOT,'../reader'), 
       try { data = JSON.parse(Buffer.concat(chunks).toString('utf8')); } catch { return json(400,{error:'请求 JSON 无效'}); }
       if (!data || typeof data !== 'object' || Array.isArray(data)) return json(400,{error:'请求 JSON 无效'});
       if(taskRoute){
-        const action=pathname.split('/').at(-1),guardedArchive=action==='archive'&&data.protocolVersion===2;
-        // v2 is only the guarded archive request envelope. Old servers reject
+        const action=pathname.split('/').at(-1),guardedMutation=['archive','cancel'].includes(action)&&data.protocolVersion===2;
+        if(action==='resume'){const receipt=await taskStore.resume(pathname.split('/').at(-2),data);return json(receipt.created?202:200,{protocolVersion:1,...receipt});}
+        // v2 is the guarded archive/cancel request envelope. Old servers reject
         // it instead of silently ignoring a caller's identity precondition.
-        if((data.protocolVersion!==1&&!guardedArchive)||(guardedArchive&&!Object.hasOwn(data,'expected'))||(!guardedArchive&&Object.hasOwn(data,'expected')))return json(400,{error:'任务协议版本或身份条件无效',code:'invalid_request'});
-        if(['cancel','archive','restore'].includes(action))return json(200,{protocolVersion:1,task:await taskStore[action](pathname.split('/').at(-2),guardedArchive?data.expected:undefined)});
+        if((data.protocolVersion!==1&&!guardedMutation)||(guardedMutation&&!Object.hasOwn(data,'expected'))||(!guardedMutation&&Object.hasOwn(data,'expected')))return json(400,{error:'任务协议版本或身份条件无效',code:'invalid_request'});
+        if(['cancel','archive','restore'].includes(action))return json(200,{protocolVersion:1,task:await taskStore[action](pathname.split('/').at(-2),guardedMutation?data.expected:undefined)});
         const receipt=await taskStore.submit(data);return json(receipt.created?202:200,{protocolVersion:1,...receipt});
       }
       if(pathname === '/api/captions/import'){
@@ -119,11 +123,18 @@ export function createBridge({readerDirectory = path.resolve(ROOT,'../reader'), 
   server.on('close',()=>{ libraryStore?.close(); for (const controller of active) controller.abort(); active.clear();void taskStore?.shutdown().catch(()=>{}); });
   // Abort synchronously before Electron exits: detached CLI process groups must
   // not outlive the app while waiting for a later HTTP close event.
+  let shutdown;
   server.shutdown = callback => {
-    for (const controller of active) controller.abort();
-    active.clear(); const stopping=taskStore?.shutdown()||Promise.resolve();
-    server.close(error=>void stopping.then(()=>callback?.(error),failure=>callback?.(failure))); server.closeAllConnections();
-    return stopping;
+    if(!shutdown){
+      for (const controller of active) controller.abort();
+      active.clear(); const stopping=taskStore?.shutdown()||Promise.resolve();
+      shutdown=new Promise((resolve,reject)=>{
+        server.close(error=>void stopping.then(()=>error?reject(error):resolve(),reject));
+        server.closeAllConnections();
+      });
+    }
+    if(callback)void shutdown.then(()=>callback(),error=>callback(error));
+    return shutdown;
   };
   return server;
 }
@@ -135,7 +146,8 @@ export async function startBridge({port = 8080, taskDirectory = null, libraryDir
     catch(error){options.taskStore=null;options.taskUnavailable={code:error.taskCode||'store_unavailable',message:'持久任务存储不可用，请检查本机任务目录；阅读与现有前台功能仍可使用。'};}
   }
   if(libraryDirectory){
-    try{options.libraryStore=await createLibraryStore({directory:libraryDirectory});}
+    options.libraryLocation={mode:options.startupMode||'embedded',directory:libraryDirectory};
+    try{options.libraryStore=await createLibraryStore({directory:libraryDirectory,exclusiveWriter:true});}
     catch(error){options.libraryStore=null;options.libraryUnavailable={code:error.libraryCode||'library_unavailable',message:'Canonical library could not open; browser storage remains unchanged.'};}
   }
   const server = createBridge(options);
@@ -146,8 +158,10 @@ export async function startBridge({port = 8080, taskDirectory = null, libraryDir
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const args = process.argv.slice(2);
   if (args.length && (args.length !== 2 || args[0] !== '--port')) { console.error('Usage: node desktop/server.mjs [--port 8080]'); process.exit(1); }
-  const server = await startBridge({port:args.length ? Number(args[1]) : 8080,taskDirectory:path.join(homedir(),'.coconut','tasks'),libraryDirectory:process.env.COCONUT_LIBRARY_DIRECTORY||null});
+  const library=libraryLocation({mode:'cli'});
+  const server = await startBridge({port:args.length ? Number(args[1]) : 8080,taskDirectory:path.join(homedir(),'.coconut','tasks'),libraryDirectory:library.directory,startupMode:'cli'});
   console.log(`Coconut 轻量阅读器：http://127.0.0.1:${server.address().port}（不需要 Python；未发起模型请求）`);
+  console.log(libraryStartupMessage(library,await fetch(`http://127.0.0.1:${server.address().port}/api/v1/library`).then(response=>response.json())));
   const stop = () => server.shutdown();
   process.on('SIGINT',stop); process.on('SIGTERM',stop);
 }
