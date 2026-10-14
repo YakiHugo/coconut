@@ -361,6 +361,8 @@ dialog select { display: block; margin-top: 8px; }
 .ai-consent input { flex-shrink: 0; margin: 5px 0 0; }
 .ai-submit-actions, .ai-run-controls { display: flex; flex-wrap: wrap; gap: 8px; }
 .ai-run-controls:has(button:not([hidden])) { margin-top: 10px; }
+/* Explicit summary confirmation keeps a 44px target at desktop widths too. */
+#summary-request #ask-ai { min-height: 44px; }
 #ai-progress { overflow-wrap: anywhere; }
 #ai-progress:empty { display: none; }
 .summary-only .ai-task-control { display: none !important; }
