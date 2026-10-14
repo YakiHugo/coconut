@@ -1,3 +1,4 @@
+import {navigateReadingTime} from './helpers/transcript-navigation-browser.mjs';
 /** CI-only real Chromium acceptance for a temporary reading/search session.
  * All source, translations, corrections and notes are authored fixtures. No
  * model, provider, CLI, recording, external site, or user's computer is used.
@@ -95,13 +96,9 @@ async function importFixture(page, fixture) {
 }
 async function originalPassage(page, id = SEARCH_RETURN_ORIGIN) {
   if (!await page.locator('#passage-workspace').isVisible()) await activate(page, '#mode-passages');
-  // Drive the real time-range control; only the source IDs/layout come from the
+  // Drive the real navigation dialog; only the source IDs/layout come from the
   // product. Six-cue speaker boundaries make cue-282 an unambiguous paragraph.
-  await page.locator('#passage-time-range').evaluate((slider, seconds) => {
-    slider.value = String(seconds);
-    slider.dispatchEvent(new Event('input', {bubbles: true}));
-    slider.dispatchEvent(new Event('change', {bubbles: true}));
-  }, Number(id.slice(4)) * 2);
+  await navigateReadingTime(page,Number(id.slice(4))*2);
   const selector = passageCueSelector(id), before = await position(page, selector);
   await page.locator('#passage-body').evaluate(node => node.focus({preventScroll: true}));
   const firstVisible = await page.locator('#passage-body .passage-original .passage-cue').evaluateAll(nodes => nodes.find(node => {
