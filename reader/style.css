@@ -345,6 +345,9 @@ dialog select { display: block; margin-top: 8px; }
 .ai-request-choices, .ai-connection { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 24px; }
 .ai-request-choices label { display: flex !important; align-items: center; gap: 8px; }
 .ai-request-choices select { margin-left: 0 !important; }
+/* Start-aligned review keeps the first fields, their labels and focus ring
+   inside the viewport, including fractional native scroll rounding. */
+#ai-task { scroll-margin-block-start: 32px; }
 .ai-connection { gap: 8px 14px; margin-bottom: 8px; }
 .ai-connection .hint { margin: 0; }
 .ai-request-plan { padding: 12px 14px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface, #fff); line-height: 1.7; font-size: 13px; margin: 14px 0 10px; }
