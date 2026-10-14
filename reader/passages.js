@@ -267,12 +267,18 @@
   }
   return null;
  }
+ // Inputs are already bounded preview windows. Without a surrogate pair,
+ // UTF-16 slicing is identical to Array.from's code-point slicing, including
+ // isolated surrogates; preserve the existing path for astral characters.
+ function sliceSnippetCodePoints(text,start,end){
+  return /[\uD800-\uDBFF][\uDC00-\uDFFF]/.test(text)?Array.from(text).slice(start,end).join(''):text.slice(start,end);
+ }
  function rangeSnippet(text,start,end){
   // Preview slices inspect at most 446 UTF-16 units and retain at most
   // 220 source code points plus ellipses, even for million-character cues.
-  const before=Array.from(text.slice(Math.max(0,start-72),start)).slice(-35).join('');
-  const match=Array.from(text.slice(start,Math.min(end,start+242))).slice(0,120).join('');
-  const after=Array.from(text.slice(end,end+132)).slice(0,65).join('');
+  const before=sliceSnippetCodePoints(text.slice(Math.max(0,start-72),start),-35);
+  const match=sliceSnippetCodePoints(text.slice(start,Math.min(end,start+242)),0,120);
+  const after=sliceSnippetCodePoints(text.slice(end,end+132),0,65);
   return {before:(start>before.length?'…':'')+before,match:match+(end-start>match.length?'…':''),after:after+(end+after.length<text.length?'…':'')};
  }
 
