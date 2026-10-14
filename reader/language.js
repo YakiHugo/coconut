@@ -87,10 +87,12 @@ function passageInput(doc,passageIds,expanded=false){
  }
  const scope={kind:'passage',passage_ids:[...passageIds],expanded,source_title:doc.title||'',source_url:doc.source_url||'',source_language:doc.language||'',provider:$('ai-provider').value,answer_language:$('translation-target').value,cues:cues.map(({id,start,end,speaker})=>({id,start,end,speaker:speaker??null}))};
  const input={version:1,segments:cues.map(({id,text})=>({id,text})),scope};
+ const limit=Coconut.answerInputLimitReason(input);if(limit)throw new Error(limit);
  // Freeze our evidence rather than keeping live cue/annotation references.
  for(const cue of input.segments)Object.freeze(cue);for(const cue of scope.cues)Object.freeze(cue);
  Object.freeze(scope.passage_ids);Object.freeze(scope.cues);Object.freeze(scope);Object.freeze(input.segments);return Object.freeze(input);
 }
+function passageRequestInput(segments=passageQuestion.input.segments){return {version:1,segments,scope:{...passageQuestion.input.scope,provider:$('ai-provider').value,answer_language:$('translation-target').value}};}
 function passageScopeCurrent(owner=passageQuestion){return !!owner&&contentIngressAllowed(owner.doc)&&Coconut.answerFreshness({input_snapshot:owner.input},owner.doc)==='current';}
 function passageQuestionSignature(){return JSON.stringify([passageQuestion?.input,$('ai-provider').value,$('translation-target').value,$('ai-question').value]);}
 function retirePassageRequest(){
@@ -163,7 +165,7 @@ $('passage-question-dialog').addEventListener('close',()=>{
 $('passage-question-neighbors').onchange=()=>{
  const owner=passageQuestion;if(!owner)return;$('ai-consent').checked=false;
  if(!passageScopeCurrent(owner)){renderLanguage();return;}
- try{owner.input=passageInput(owner.doc,owner.input.scope.passage_ids,$('passage-question-neighbors').checked);renderLanguage();}catch(error){notice(error.message);}
+ try{owner.input=passageInput(owner.doc,owner.input.scope.passage_ids,$('passage-question-neighbors').checked);renderLanguage();}catch(error){renderLanguage();notice(error.message);}
 };
 $('refresh-passage-question').onclick=()=>{
  const owner=passageQuestion;if(!owner)return;$('ai-consent').checked=false;
@@ -227,8 +229,9 @@ function renderLanguage(){
  const summaryBlocked=summaryReadiness?.ready===false;
  const sources=questionSources(doc),questionCharacters=sources.reduce((count,cue)=>count+cue.text.length,0);
  const questionInput=JSON.stringify({question:$('ai-question').value.trim(),answer_language:$('translation-target').value,transcript:sources});
- const questionBlocked=questionSelected&&(!sources.length||sources.length>5000||questionInput.length>250000||$('ai-question').value.trim().length>4000);
- const questionReason=!sources.length?'当前筛选没有原文，换个关键词或清除筛选后再提问。':$('ai-question').value.trim().length>4000?'问题超过 4,000 字符，请缩短后再发送。':'所选原文超过单次提问范围，请筛选较小范围后再提问。';
+ const evidenceLimit=questionSelected&&passageQuestion?Coconut.answerInputLimitReason(passageRequestInput()):'';
+ const questionBlocked=questionSelected&&(!!evidenceLimit||!sources.length||sources.length>5000||questionInput.length>250000||$('ai-question').value.trim().length>4000);
+ const questionReason=evidenceLimit||(!sources.length?'当前筛选没有原文，换个关键词或清除筛选后再提问。':$('ai-question').value.trim().length>4000?'问题超过 4,000 字符，请缩短后再发送。':'所选原文超过单次提问范围，请筛选较小范围后再提问。');
  $('ask-ai').disabled=translationSelected||!hasTranscript||!aiReady||asking||translating||subscriptionTranslating||summaryBlocked||questionBlocked;
  $('ai-request-readiness').hidden=!summaryBlocked&&!questionBlocked;
  $('ai-request-readiness').textContent=summaryBlocked?summaryReadiness.reason:questionBlocked?questionReason:'';
@@ -600,7 +603,8 @@ $('ask-ai').onclick=async()=>{
  const segments=questionSources(doc);
  if(!segments.length){notice('当前筛选没有可发送的原文');return;}
  if(segments.length>5000||question.length>4000||JSON.stringify({question,answer_language:$('translation-target').value,transcript:segments}).length>250000){notice('问题或原文超过单次范围，请缩短问题或筛选较小范围');return;}
- const input_snapshot=passageQuestion?{version:1,segments,scope:{...passageQuestion.input.scope,provider:$('ai-provider').value,answer_language:$('translation-target').value}}:{version:1,segments};
+ const input_snapshot=passageQuestion?passageRequestInput(segments):{version:1,segments};
+ const evidenceLimit=Coconut.answerInputLimitReason(input_snapshot);if(evidenceLimit){$('ai-consent').checked=false;renderLanguage();notice(evidenceLimit);return;}
  const provider=$('ai-provider').value,language=$('translation-target').value;
  const key=doc.key,owner={doc,key,retired:false,passage:!!passageQuestion,input:input_snapshot};questionScope=owner;questionKey=key;asking=true;renderLanguage();aiProgress(key,`正在让所选 AI 阅读 ${segments.length} 段；不会切换到付费 API。${owner.passage?'可返回阅读，回答仍会保存在这篇文字稿；修改原文或取消接收会停止保留结果，已发送请求仍可能消耗额度。':''}`);
  try{
