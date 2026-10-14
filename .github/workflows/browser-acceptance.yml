@@ -336,6 +336,7 @@ jobs:
             ${{ runner.temp }}/coconut-authored-ui/transcript-media-association-checks.json
             ${{ runner.temp }}/coconut-authored-ui/background-summary-checks.json
             ${{ runner.temp }}/coconut-authored-ui/web-browser-acceptance-checks.json
+            ${{ runner.temp }}/coconut-authored-ui/keyboard-escape-composition.json
             ${{ runner.temp }}/coconut-authored-ui/compact-library-failure.png
           if-no-files-found: ignore
           retention-days: 7

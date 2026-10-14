@@ -3017,7 +3017,7 @@ $("close-note").onclick = () => {
 };
 $("return-excerpt").onclick = () => goToSegment(selected,false,!!passageReturn);
 document.addEventListener("keydown", event => {
-	if (event.key === "Escape" && selected!==null && !$("export-menu").open && !document.querySelector("dialog[open]")) $("close-note").click();
+	if (!readingEscapeIgnored(event) && selected!==null && !$("export-menu").open) {event.preventDefault();$("close-note").click();}
 });
 // Chromium may leave an already-visible control's border at the scrollport
 // edge after reverse Tab; CSS scroll-margin does not include its focus ring.
@@ -4591,7 +4591,8 @@ document.addEventListener("click", event => {
 });
 document.addEventListener("keydown", event => {
  const menu = $("export-menu");
- if (event.key === "Escape" && menu.open && !document.querySelector("dialog[open]")) {
+ if (!readingEscapeIgnored(event) && menu.open) {
+  event.preventDefault();
   menu.open = false;
   menu.querySelector("summary").focus();
  }
@@ -4887,7 +4888,7 @@ $('close-reading-info').onclick=()=>{$('reading-info').open=false;$('reading-inf
 $('reading-info').querySelector('summary').addEventListener('click',()=>{if(!$('reading-info').open){$('export-menu').open=false;if(readingMode==='passages'){mediaExpandedKey=null;updateReaderMediaVisibility(active());refreshPlaybackDock();}}});
 $('export-menu').querySelector('summary').addEventListener('click',()=>{if(!$('export-menu').open){$('reading-info').open=false;if(readingMode==='passages'){mediaExpandedKey=null;updateReaderMediaVisibility(active());refreshPlaybackDock();}}});
 document.addEventListener('keydown',event=>{
- if(event.key!=='Escape'||document.querySelector('dialog[open]'))return;
+ if(readingEscapeIgnored(event))return;
  if($('reading-info').open){event.preventDefault();$('close-reading-info').click();}
  else if(readingMode==='passages'&&!$('episode-media').hidden){event.preventDefault();$('close-reader-media').click();}
 });
@@ -4935,6 +4936,19 @@ function readingKeyIgnored(event){
  return readerClosing||document.body.inert||$('reader-workspace').inert||!!$('reader-workspace').closest('[inert]')||
   event.defaultPrevented||event.repeat||event.isComposing||readingKeyComposition||event.keyCode===229||
   event.ctrlKey||event.metaKey||event.altKey||event.getModifierState?.('AltGraph')||workspace!=='read'||$('reader-workspace').hidden||!active()||hasReadingModal();
+}
+// Escape may belong to IME candidate cancellation, a native control, or a
+// previously handled inner action. Disclosures must share the same ownership
+// guards as character shortcuts instead of stealing focus during editing.
+function readingEscapeIgnored(event){
+ if(event.key!=='Escape'||readingKeyIgnored(event))return true;
+ const targets=[event.target,event.composedPath?.()[0]];
+ if(targets.some(node=>node?.closest?.('audio,video')))return true;
+ // Focus alone does not mean a select's picker is open. After choosing a
+ // preference, ordinary Escape must still dismiss the surrounding panel.
+ // Native popups can consume Escape before it reaches the document; when it
+ // does reach us, use the browser's actual open state rather than a guess.
+ return targets.some(node=>{const select=node?.closest?.('select');if(!select)return false;try{return select.matches(':open');}catch{return false;}});
 }
 function readingTextTarget(node,find=false){
  if(document.designMode==='on'||document.body.isContentEditable||document.body.hasAttribute('contenteditable')&&document.body.getAttribute('contenteditable')!=='false')return false;

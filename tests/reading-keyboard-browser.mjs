@@ -134,6 +134,100 @@ async function helpFocusLoop(label) {
   // dialog's control before the caller exercises Escape or takes a screenshot.
   await page.locator('#keyboard-help-close').focus();
 }
+// Chromium's CDP composition pipeline is a browser-level IME regression;
+// it is not evidence about an operating-system input method or real typing.
+async function compositionEscape(targetPage, selector) {
+  await targetPage.locator(selector).fill('');
+  await targetPage.locator(selector).focus();
+  await targetPage.evaluate(selector => {
+    const node = document.querySelector(selector), events = [];
+    window.__escapeComposition = {node, events, selector};
+    for (const type of ['compositionstart', 'compositionupdate', 'compositionend', 'beforeinput', 'input', 'keydown', 'keyup']) {
+      window.addEventListener(type, event => {
+        if (event.target !== node) return;
+        events.push({type, key: event.key ?? null, data: event.data ?? null, inputType: event.inputType ?? null,
+          isComposing: event.isComposing ?? null, trusted: event.isTrusted, prevented: event.defaultPrevented,
+          focused: document.activeElement === node, value: node.value, start: node.selectionStart, end: node.selectionEnd});
+      });
+    }
+  }, selector);
+  const snapshot = () => targetPage.evaluate(() => {
+    const {node, events, selector} = window.__escapeComposition;
+    return {events: [...events], value: node.value, start: node.selectionStart, end: node.selectionEnd,
+      focused: document.activeElement === node, same: node.isConnected && document.querySelector(selector) === node};
+  });
+  const cdp = await targetPage.context().newCDPSession(targetPage);
+  try {
+    await cdp.send('Input.imeSetComposition', {text: '路标', selectionStart: 2, selectionEnd: 2});
+    const composing = await snapshot();
+    await targetPage.keyboard.press('Escape');
+    const escaped = await snapshot();
+    // If the browser already ended composition before Escape, an ordinary
+    // app dismissal can legitimately move focus. Never refocus or force an
+    // IME flag just to manufacture a composition-owned Escape.
+    let completed = null;
+    if (escaped.focused) {
+      await cdp.send('Input.imeSetComposition', {text: '', selectionStart: 0, selectionEnd: 0});
+      await cdp.send('Input.insertText', {text: '已完成'});
+      completed = await snapshot();
+    }
+    return {composing, escaped, completed};
+  } finally {await cdp.detach();}
+}
+function compositionState(snapshot) {
+  return {value: snapshot.value, start: snapshot.start, end: snapshot.end, focused: snapshot.focused, same: snapshot.same,
+    events: snapshot.events.map(({type, key, data, inputType, isComposing, trusted, prevented}) => ({type, key, data, inputType, isComposing, trusted, prevented}))};
+}
+function compositionOwnsEscape(result) {
+  let composing = false;
+  for (const event of result.escaped.events) {
+    if (event.type === 'compositionstart') composing = true;
+    if (event.type === 'compositionend') composing = false;
+    if (event.type === 'keydown' && event.key === 'Escape') return event.isComposing === true || composing;
+  }
+  return false;
+}
+async function verifyNoteEscapeOwnership(context) {
+  const baselinePage = await context.newPage();
+  let baseline;
+  try {
+    await baselinePage.setContent('<!doctype html><label>Authored browser composition baseline<textarea id="baseline"></textarea></label>');
+    baseline = await compositionEscape(baselinePage, '#baseline');
+  } finally {await baselinePage.close();}
+  const before = await interactionState(), actual = await compositionEscape(page, '#note');
+  const receipt = {scope: 'Chromium CDP browser composition and trusted Escape; not operating-system IME acceptance', observedEscape: Object.fromEntries(Object.entries({baseline, actual}).map(([role, result]) => [role, compositionOwnsEscape(result) ? 'composition-owned' : 'ordinary-after-compositionend'])), baseline, actual};
+  console.log(JSON.stringify({suite: 'reading-escape-browser-composition', ...receipt}));
+  if (process.env.COCONUT_UI_SCREENSHOTS) {
+    await fs.mkdir(process.env.COCONUT_UI_SCREENSHOTS, {recursive: true});
+    await fs.writeFile(path.join(process.env.COCONUT_UI_SCREENSHOTS, 'keyboard-escape-composition.json'), JSON.stringify(receipt, null, 2));
+  }
+  for (const [role, result] of Object.entries({baseline, actual})) {
+    check(role + '_browser_composition_really_started', result.composing.events.some(event => event.type === 'compositionstart' && event.trusted) && result.composing.events.some(event => event.type === 'input' && event.isComposing && event.trusted));
+    check(role + '_composition_escape_uses_a_trusted_browser_key', result.escaped.events.some(event => event.type === 'keydown' && event.key === 'Escape' && event.trusted));
+  }
+  check('note_composition_matches_plain_textarea_browser_pipeline', JSON.stringify(compositionState(actual.composing)) === JSON.stringify(compositionState(baseline.composing)));
+  check('note_observes_same_escape_ownership_as_plain_textarea', compositionOwnsEscape(actual) === compositionOwnsEscape(baseline));
+  if (compositionOwnsEscape(baseline)) {
+    for (const phase of ['escaped', 'completed']) {
+      check('note_' + phase + '_matches_plain_textarea_browser_pipeline', actual[phase] && JSON.stringify(compositionState(actual[phase])) === JSON.stringify(compositionState(baseline[phase])));
+      check('note_' + phase + '_preserves_editor_focus_and_identity', actual[phase].focused && actual[phase].same);
+    }
+    check('composition_owned_escape_keeps_note_open', await page.locator('#notes-panel').isVisible());
+  } else {
+    // Some browser versions can end composition first. Verify that observed
+    // order honestly instead of calling an ordinary Escape an IME guard test.
+    check('ordinary_escape_after_browser_compositionend_closes_note', await page.locator('#notes-panel').isHidden());
+    check('ordinary_escape_preserves_the_browser_committed_note', actual.escaped.value === baseline.escaped.value && ((await stored()).notes['split-125'] ?? '') === baseline.escaped.value);
+    await page.locator('.segment[data-segment-id="split-125"] .note-button').click();
+  }
+  check('browser_composition_escape_keeps_media_unchanged', sameInteraction(before, await interactionState()));
+  await page.locator('#note').fill('jklg/?');
+  await page.locator('#note').evaluate(node => node.addEventListener('keydown', event => event.preventDefault(), {once: true}));
+  await page.keyboard.press('Escape');
+  check('target_handled_escape_keeps_note_focus', await page.locator('#notes-panel').isVisible() && await focusIs('#note'));
+  await page.keyboard.press('Escape');
+  check('ordinary_escape_after_composition_closes_note', await page.locator('#notes-panel').isHidden() && await page.evaluate(() => document.activeElement.classList.contains('note-button')));
+}
 async function escapeHelp(label, before) {
   await page.keyboard.press('Escape');
   await page.locator('#keyboard-help').waitFor({state: 'hidden'});
@@ -287,8 +381,19 @@ try {
   await page.locator('#note').fill('');
   await ignoredKeys('note_textarea', '#note');
   check('note_editor_receives_literal_keys_without_losing_the_note', await page.locator('#note').inputValue() === 'jklg/?');
-  await page.locator('#close-note').click();
+  stage = 'browser_composition_escape_ownership';
+  await verifyNoteEscapeOwnership(context);
   check('literal_keyboard_note_is_saved_on_its_original_cue', (await stored()).notes['split-125'] === 'jklg/?');
+  await page.locator('#export-menu > summary').click();
+  await page.locator('#subtitle-format').focus();
+  await page.keyboard.press('Space');
+  check('native_subtitle_picker_is_really_open', await page.locator('#subtitle-format').evaluate(node => node.matches(':open')));
+  await page.keyboard.press('Escape');
+  check('native_subtitle_select_escape_preserves_export_disclosure', await page.locator('#export-menu').evaluate(node => node.open) && await focusIs('#subtitle-format') && !await page.locator('#subtitle-format').evaluate(node => node.matches(':open')));
+  // Keep focus on the same, now-closed select. This second Escape belongs to
+  // the disclosure rather than a picker; moving to a button hides regressions.
+  await page.keyboard.press('Escape');
+  check('closed_subtitle_select_escape_closes_export_disclosure', !await page.locator('#export-menu').evaluate(node => node.open) && await focusIs('#export-menu > summary'));
   await ignoredKeys('focused_button', '#mode-transcript');
   await ignoredKeys('focused_link', '.brand');
   await ignoredKeys('focused_native_select', '#reading-jump');
@@ -296,7 +401,14 @@ try {
   await ignoredKeys('focused_native_range', '#passage-time-range');
   await page.locator('#toggle-reader-media').click();
   await ignoredKeys('focused_native_media', '#source-media audio');
-  await page.locator('#close-reader-media').click();
+  await page.keyboard.press('Escape');
+  check('native_player_escape_keeps_media_panel_and_focus', await page.locator('#episode-media').isVisible() && await focusIs('#source-media audio'));
+  await page.locator('#playback-rate').focus();await page.keyboard.press('Space');
+  check('native_rate_picker_is_really_open', await page.locator('#playback-rate').evaluate(node => node.matches(':open')));
+  await page.keyboard.press('Escape');
+  check('native_rate_select_escape_keeps_media_panel', await page.locator('#episode-media').isVisible() && await focusIs('#playback-rate') && !await page.locator('#playback-rate').evaluate(node => node.matches(':open')));
+  await page.keyboard.press('Escape');
+  check('closed_rate_select_escape_closes_media_panel', await page.locator('#episode-media').isHidden() && await focusIs('#toggle-reader-media'));
 
   // DOM-only interaction probes cover editable nesting and ARIA widgets that
   // imported prose might contain. They never alter app handlers or media APIs.
