@@ -727,3 +727,105 @@ test('old executor cannot silently ignore explicit model but still accepts defau
   h.$('ai-model').value='';h.$('ai-model').oninput();await h.submit();assert.equal(posted(api).length,1);assert.equal('model' in posted(api)[0].body,false);
  }finally{await h.w.happyDOM.close();}
 });
+
+function resumableBackend(){
+ const api=backend(),base=api.fetch.bind(api);api.descriptor.execution.resume='explicit_checkpoint_with_identity';api.resumeReceipts=new Map();api.resumePosts=[];api.lostResume=false;
+ api.interrupt=()=>{const task=[...api.tasks.values()][0];task.status='interrupted';task.progress={completed:1,total:3};task.resume={eligible:true,completedBatches:1,remainingRequests:2,outcomeUnknown:true};return task;};
+ api.fetch=async function(url,options={}){
+  const query=url.match(/^api\/v1\/tasks\/([^/?]+)\?resumeKey=(.+)$/),post=url.match(/^api\/v1\/tasks\/([^/]+)\/resume$/),ok=value=>({ok:true,json:async()=>structuredClone(value)});
+  if(query){api.calls.push({url});if(api.resumeLookupGate)await api.resumeLookupGate;return ok({protocolVersion:1,receipt:api.resumeReceipts.get(decodeURIComponent(query[2]))||null,task:api.tasks.get(query[1])});}
+  if(post){const body=JSON.parse(options.body);api.calls.push({url,body});api.resumePosts.push(body);if(api.beforeResume)api.beforeResume(body);
+   if(api.rejectResume){api.rejectResume=false;throw new Error('Authored transport before acceptance');}
+   const task=api.tasks.get(post[1]);let receipt=api.resumeReceipts.get(body.resumeKey);if(!receipt){receipt={key:body.resumeKey,fromAttemptId:body.attemptId,attemptId:'resumed-'+api.resumeReceipts.size,completedBatches:1,outcomeUnknown:true};api.resumeReceipts.set(body.resumeKey,receipt);task.attemptId=receipt.attemptId;task.status='running';task.resume.eligible=false;}
+   if(api.resumeGate)await api.resumeGate;if(api.lostResume){api.lostResume=false;throw new Error('Authored lost resume ACK');}return ok({protocolVersion:1,created:true,receipt,task});
+  }
+  if(url==='api/v1/tasks'&&!options.body&&api.listGate){const captured=await(await base(url,options)).json();api.listEntered?.();await api.listGate;return ok(captured);}
+  if(/^api\/v1\/tasks\/[^/?]+$/.test(url)&&!options.body&&api.preflightGate){api.preflightEntered?.();await api.preflightGate;}
+  return base(url,options);
+ };
+ return api;
+}
+async function prepareResume(h){await h.import({...fixture(),segments:[...fixture().segments,...Array.from({length:399},(_,i)=>({id:'extra-'+i,start:i+6,end:i+7,text:'Authored continuation '+i}))]});await h.choose();await h.submit();const original=structuredClone(h.api.interrupt());await h.refresh();const open=h.$('background-task-list').querySelector('[data-action="resume"]');assert.ok(open&&!open.disabled);open.click();return original;}
+const journal=h=>JSON.parse(h.w.localStorage.getItem(journalKey));
+test('resume uses one existing consent, durable intent before POST and immutable provider/model; then accepts once',async()=>{
+ const h=setup(resumableBackend());try{
+  const original=await prepareResume(h);assert.match(h.$('ask-ai').textContent,/续跑/);assert.match(h.$('summary-plan').textContent,/已保存 1 批.*最多 2/);assert.match(h.$('ai-send-description').textContent,/在途.*额度.*未知/);assert.equal(h.$('ai-consent').checked,false);assert.equal(h.w.document.querySelectorAll('#ai-consent').length,1);assert.equal(h.$('ai-provider').disabled,true);
+  await h.$('ask-ai').onclick();assert.equal(h.api.resumePosts.length,0);
+  h.api.beforeResume=body=>{const intent=journal(h).entries[0].resumeIntent;assert.deepEqual(intent.payload,body);assert.equal(intent.taskId,original.taskId);};
+  h.$('ai-consent').checked=true;await h.$('ask-ai').onclick();assert.equal(h.api.resumePosts.length,1);assert.equal(posted(h.api).length,1);assert.equal(journal(h).version,3);assert.notEqual(journal(h).entries[0].task.attemptId,original.attemptId);
+  h.api.succeed();await h.refresh();await h.$('background-task-list').querySelector('[data-action="accept"]').onclick();assert.equal(h.doc().ai_answers.length,1);assert.equal(h.$('ai-provider').disabled,false);
+ }finally{await h.w.happyDOM.close();}
+});
+test('lost resume ACK reload queries the exact key without new request or attempt',async()=>{
+ const api=resumableBackend();let h=setup(api),storage,key;try{await prepareResume(h);api.lostResume=true;h.$('ai-consent').checked=true;await h.$('ask-ai').onclick();storage=h.snapshot();key=journal(h).entries[0].resumeIntent.payload.resumeKey;assert.equal(api.resumePosts.length,1);}finally{await h.w.happyDOM.close();}
+ h=setup(api,storage);try{await h.refresh();assert.equal(api.resumePosts.length,1);assert.equal(journal(h).entries[0].task.status,'running');assert.equal(journal(h).entries[0].resumeIntent.receipt.key,key);assert.ok(api.calls.some(call=>call.url.endsWith('?resumeKey='+key)));}finally{await h.w.happyDOM.close();}
+});
+test('missing resume ACK is never automatically retried; explicit re-confirmation reuses original payload',async()=>{
+ const h=setup(resumableBackend());try{await prepareResume(h);h.api.rejectResume=true;h.$('ai-consent').checked=true;await h.$('ask-ai').onclick();const original=h.api.resumePosts[0];await h.refresh();assert.equal(h.api.resumePosts.length,1);
+  h.$('background-task-list').querySelector('[data-action="resume"]').click();assert.equal(h.$('ai-consent').checked,false);h.$('ai-consent').checked=true;await h.$('ask-ai').onclick();assert.equal(h.api.resumePosts.length,2);assert.deepEqual(h.api.resumePosts[1],original);assert.equal(h.api.resumeReceipts.size,1);
+ }finally{await h.w.happyDOM.close();}
+});
+for(const kind of ['source','selection','close','storage'])test('resume preflight fences '+kind+' while current task read is pending',async()=>{
+ const h=setup(resumableBackend());try{await prepareResume(h);let release,started;const entered=new Promise(r=>started=r);h.api.preflightEntered=started;h.api.preflightGate=new Promise(r=>release=r);
+  h.$('ai-consent').checked=true;const pending=h.$('ask-ai').onclick();await entered;
+  if(kind==='source'){h.doc().segments[0].text+=' Changed';h.w.dispatchEvent(new h.w.Event('coconut-render'));}
+  if(kind==='selection'){const key=h.doc().key;await h.import(fixture('Other resume source'));h.w.__test.select(key);}
+  if(kind==='close')h.$('close-summary-request').click();
+  if(kind==='storage'){h.w.localStorage.setItem(journalKey,'other-page');h.w.dispatchEvent(new h.w.StorageEvent('storage',{key:journalKey,newValue:'other-page'}));}
+  release();await pending;assert.equal(h.api.resumePosts.length,0);assert.equal(posted(h.api).length,1);
+ }finally{await h.w.happyDOM.close();}
+});
+test('resume journal write failure blocks execution and preserves prior saved record',async()=>{
+ const h=setup(resumableBackend());try{await prepareResume(h);const before=h.w.localStorage.getItem(journalKey),backing=h.w.localStorage;Object.defineProperty(h.w,'localStorage',{configurable:true,value:{getItem:key=>backing.getItem(key),setItem(key,value){if(key===journalKey)throw new Error('Authored quota');backing.setItem(key,value);}}});h.$('ai-consent').checked=true;await h.$('ask-ai').onclick();assert.equal(h.api.resumePosts.length,0);assert.equal(h.w.localStorage.getItem(journalKey),before);assert.match(h.$('background-task-message').textContent,/未保存|quota/);}finally{await h.w.happyDOM.close();}
+});
+test('cancellation during lost resume recovery targets the confirmed new attempt and never resurrects cancelled work',async()=>{
+ const h=setup(resumableBackend());try{const old=await prepareResume(h);h.api.lostResume=true;h.$('ai-consent').checked=true;await h.$('ask-ai').onclick();await h.$('background-task-list').querySelector('[data-action="cancel"]').onclick();const cancel=h.api.calls.findLast(call=>call.url.endsWith('/cancel'));assert.equal(cancel.body.protocolVersion,2);assert.notEqual(cancel.body.expected.attemptId,old.attemptId);assert.equal(journal(h).entries[0].task.status,'cancelled');assert.equal(h.$('background-task-list').querySelector('[data-action="resume"]'),null);assert.equal(h.api.resumePosts.length,1);}finally{await h.w.happyDOM.close();}
+});
+test('late resume acknowledgement cannot overwrite guarded cancellation or restore a prior attempt',async()=>{
+ const h=setup(resumableBackend());let release;try{await prepareResume(h);h.api.resumeGate=new Promise(r=>release=r);h.$('ai-consent').checked=true;const pending=h.$('ask-ai').onclick();for(let i=0;i<50&&!h.api.resumePosts.length;i++)await settle();assert.equal(h.api.resumePosts.length,1);
+  await h.$('background-task-list').querySelector('[data-action="cancel"]').onclick();release();await pending;assert.equal(journal(h).entries[0].task.status,'cancelled');assert.equal(h.doc().ai_answers.length,0);assert.equal(h.api.resumePosts.length,1);
+ }finally{release?.();await h.w.happyDOM.close();}
+});
+test('changed source and independently discovered tasks never expose an enabled resume path',async()=>{
+ const h=setup(resumableBackend());try{await prepareResume(h);h.$('close-summary-request').click();h.doc().segments[0].text+=' Edited';h.w.dispatchEvent(new h.w.Event('coconut-render'));assert.equal(h.$('background-task-list').querySelector('[data-action="resume"]').disabled,true);assert.match(h.$('background-task-list').textContent,/不能接收或续跑/);const storage=h.snapshot();storage[journalKey]=JSON.stringify({version:3,entries:[]});const other=setup(h.api,storage);try{await other.refresh();assert.equal(other.$('background-task-list').querySelector('[data-action="resume"]'),null);}finally{await other.w.happyDOM.close();}
+ }finally{await h.w.happyDOM.close();}
+});
+test('real HTTP checkpoint restart resumes only remaining batches through the existing DOM confirmation',async()=>{
+ const {backgroundSummaryBridge,until}=await import('./helpers/background-summary-bridge.mjs');const bridge=await backgroundSummaryBridge();const api={fetch:(url,options)=>fetch(bridge.origin+'/'+url,{...options,headers:{...options?.headers,Origin:bridge.origin}})};let h=setup(api),storage,id;
+ try{
+  await h.import({title:'Checkpoint DOM source',language:'en',segments:Array.from({length:401},(_,i)=>({id:'cue-'+i,start:i,end:i+1,text:'Authored '+i}))});await h.choose();await h.submit();id=(await bridge.tasks())[0].taskId;await until(()=>bridge.invocations.length===1);bridge.invocations[0].release();await until(()=>bridge.invocations.length===2);await bridge.restart();bridge.invocations[1].release();await bridge.invocations[1].settled;storage=h.snapshot();await h.w.happyDOM.close();h=setup(api,storage);await h.refresh();assert.equal(bridge.invocations.length,2);assert.equal((await bridge.task(id)).checkpoint.completed,1);
+  h.$('background-task-list').querySelector('[data-action="resume"]').click();h.$('ai-consent').checked=true;await h.$('ask-ai').onclick();await until(()=>bridge.invocations.length===3);assert.deepEqual(bridge.invocations[2].input.transcript.map(x=>x.id),['cue-400']);bridge.invocations[2].release();await until(()=>bridge.invocations.length===4);assert.deepEqual(bridge.invocations[3].input.transcript.map(x=>x.id),['batch-1','batch-2']);bridge.invocations[3].release();await bridge.waitTask(id,'succeeded');await h.refresh();await h.$('background-task-list').querySelector('[data-action="accept"]').onclick();assert.equal(h.doc().ai_answers.length,1);assert.equal(bridge.posts.filter(url=>url==='/api/v1/tasks').length,1);assert.equal(bridge.posts.filter(url=>url.endsWith('/resume')).length,1);
+ }finally{await h.w.happyDOM.close();await bridge.close();}
+});
+
+test('stale pre-resume list cannot replace the new attempt after explicit confirmation',async()=>{
+ const h=setup(resumableBackend());let release;try{const original=await prepareResume(h);let entered;const started=new Promise(r=>entered=r);h.api.listEntered=entered;h.api.listGate=new Promise(r=>release=r);const refresh=h.refresh();await started;h.$('ai-consent').checked=true;await h.$('ask-ai').onclick();const current=journal(h).entries[0].task;assert.notEqual(current.attemptId,original.attemptId);release();await refresh;assert.equal(journal(h).entries[0].task.attemptId,current.attemptId);assert.equal(journal(h).entries[0].task.status,'running');}finally{release?.();await h.w.happyDOM.close();}
+});
+test('cancelled pending resume is read-only after an unknown missing receipt, including reload',async()=>{
+ const api=resumableBackend();let h=setup(api),storage;try{await prepareResume(h);api.rejectResume=true;h.$('ai-consent').checked=true;await h.$('ask-ai').onclick();await h.$('background-task-list').querySelector('[data-action="cancel"]').onclick();await h.refresh();storage=h.snapshot();assert.equal(api.resumePosts.length,1);assert.equal(journal(h).entries[0].cancelRequested,true);assert.match(h.$('background-task-list').textContent,/回执待确认/);}finally{await h.w.happyDOM.close();}
+ h=setup(api,storage);try{await h.refresh();assert.equal(api.resumePosts.length,1);assert.equal(h.$('background-task-list').querySelector('[data-action="resume"]').disabled,true);}finally{await h.w.happyDOM.close();}
+});
+
+test('unconfirmed resume blocks a fresh duplicate submission for the same source',async()=>{
+ const h=setup(resumableBackend());try{await prepareResume(h);h.api.rejectResume=true;h.$('ai-consent').checked=true;await h.$('ask-ai').onclick();h.$('close-summary-request').click();h.$('prepare-summary').click();h.$('summary-execution').value='background';await h.$('summary-execution').onchange();h.$('ai-consent').checked=true;await h.$('ask-ai').onclick();assert.equal(posted(h.api).length,1);assert.equal(h.api.resumePosts.length,1);assert.match(h.$('background-task-message').textContent,/已有相同范围/);}finally{await h.w.happyDOM.close();}
+});
+
+for(const field of ['remainingRequests','completedBatches','outcomeUnknown'])test('resume rejects malformed or undercounted '+field+' in executor metadata',async()=>{
+ const h=setup(resumableBackend());try{await prepareResume(h);h.$('close-summary-request').click();const task=[...h.api.tasks.values()][0];task.resume[field]=field==='outcomeUnknown'?'unknown':-1;await h.refresh();assert.equal(h.$('background-task-list').querySelector('[data-action="resume"]').disabled,true);assert.equal(h.api.resumePosts.length,0);}finally{await h.w.happyDOM.close();}
+});
+
+test('closing then reopening the panel cannot revive an in-flight resume confirmation',async()=>{
+ const h=setup(resumableBackend());let release;try{await prepareResume(h);let entered;const started=new Promise(r=>entered=r);h.api.preflightEntered=entered;h.api.preflightGate=new Promise(r=>release=r);h.$('ai-consent').checked=true;const pending=h.$('ask-ai').onclick();await started;h.$('close-summary-request').click();h.$('prepare-summary').click();h.$('ai-consent').checked=true;release();await pending;assert.equal(h.api.resumePosts.length,0);assert.equal(posted(h.api).length,1);}finally{release?.();await h.w.happyDOM.close();}
+});
+
+test('uncheck then recheck cannot revive a pending resume without a fresh submit',async()=>{
+ const h=setup(resumableBackend());let release;try{await prepareResume(h);let entered;const started=new Promise(r=>entered=r);h.api.preflightEntered=entered;h.api.preflightGate=new Promise(r=>release=r);h.$('ai-consent').click();const pending=h.$('ask-ai').onclick();await started;h.$('ai-consent').click();h.$('ai-consent').click();assert.equal(h.$('ai-consent').checked,true);release();await pending;assert.equal(h.api.resumePosts.length,0);assert.equal(posted(h.api).length,1);}finally{release?.();await h.w.happyDOM.close();}
+});
+
+test('BFCache pagehide/pageshow cannot revive an earlier resume preflight',async()=>{
+ const h=setup(resumableBackend());let release,releaseList;try{await prepareResume(h);let entered;const started=new Promise(r=>entered=r);h.api.preflightEntered=entered;h.api.preflightGate=new Promise(r=>release=r);h.$('ai-consent').checked=true;const pending=h.$('ask-ai').onclick();await started;h.api.listGate=new Promise(r=>releaseList=r);h.w.dispatchEvent(new h.w.Event('pagehide'));h.w.dispatchEvent(new h.w.Event('pageshow'));h.$('ai-consent').checked=true;release();await pending;assert.equal(h.api.resumePosts.length,0);releaseList();await h.refresh();assert.equal(posted(h.api).length,1);}finally{release?.();releaseList?.();await h.w.happyDOM.close();}
+});
+
+test('desktop resume confirmation retains a 44px minimum target in the existing summary panel',async()=>{
+ const h=setup(resumableBackend());try{h.w.happyDOM.setWindowSize({width:1280,height:1000});const style=h.w.document.createElement('style');style.textContent=fs.readFileSync(new URL('reader/style.css',root),'utf8');h.w.document.head.append(style);await prepareResume(h);assert.equal(h.w.getComputedStyle(h.$('ask-ai')).minHeight,'44px');assert.equal(h.$('ask-ai').closest('#summary-request')?.id,'summary-request');}finally{await h.w.happyDOM.close();}
+});

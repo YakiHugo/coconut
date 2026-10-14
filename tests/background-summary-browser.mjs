@@ -11,7 +11,7 @@ import {backgroundSummaryBridge,authoredSource,until} from './helpers/background
 if(process.env.GITHUB_ACTIONS!=='true')throw new Error('Run this real Chromium journey in GitHub Actions only.');
 let bridge,browser,stage='setup',external=0,pageErrors=0,failure=null,releaseBulk=()=>{};
 const checks=[];
-const check=(name,value)=>{stage=name;assert.ok(value,name);checks.push(name);};
+const check=(name,value,details)=>{stage=name;assert.ok(value,details?name+' '+JSON.stringify(details):name);checks.push(name);};
 const report=()=>({suite:'background-summary-authored-http',status:process.exitCode?'failed':'passed',stage,checks,external,pageErrors,failure});
 try{
  bridge=await backgroundSummaryBridge();
@@ -27,9 +27,9 @@ try{
  });
  let page=await context.newPage();page.on('pageerror',()=>pageErrors++);page.setDefaultTimeout(15000);
  await page.goto(bridge.origin);
- async function importSource(title){
+ async function importSource(title,source=authoredSource(title)){
   stage='import_authored_source';
-  await page.locator('#file').setInputFiles({name:'authored-background.json',mimeType:'application/json',buffer:Buffer.from(JSON.stringify(authoredSource(title)))});
+  await page.locator('#file').setInputFiles({name:'authored-background.json',mimeType:'application/json',buffer:Buffer.from(JSON.stringify(source))});
   await expect(page.locator('#title')).toHaveText(title);
   await waitForPersistedLibrary(page,async title=>(await readPersistedLibrary()).documents.some(doc=>doc.title===title),title);
  }
@@ -247,6 +247,34 @@ try{
   const restored=await bridge.task(task.taskId);assert.equal(restored.archivedAt,undefined);for(const field of ['taskId','attemptId','inputDigest','document','provider'])assert.deepEqual(restored[field],task[field]);
  }
  check('bulk_results_remain_restorable_after_reload_with_original_identity_and_no_model_retry',bridge.invocations.length===6&&bridge.posts.filter(path=>path==='/api/v1/tasks').length===6);
+ stage='checkpoint_resume_multibatch_restart';
+ const resumeTitle='Authored checkpoint continuation',resumeSource=authoredSource(resumeTitle),beforeResumeCalls=bridge.invocations.length;
+ resumeSource.segments=Array.from({length:401},(_,i)=>({id:'resume-cue-'+i,start:i,end:i+1,text:'Authored checkpoint source '+i}));
+ await importSource(resumeTitle,resumeSource);await chooseBackground();await page.locator('#ai-consent').check();await page.locator('#ask-ai').click();await until(()=>bridge.invocations.length===beforeResumeCalls+1);
+ const resumeTask=(await bridge.tasks()).at(-1),resumeId=resumeTask.taskId;
+ bridge.invocations[beforeResumeCalls].release();await until(()=>bridge.invocations.length===beforeResumeCalls+2);
+ await bridge.restart();bridge.invocations[beforeResumeCalls+1].release();await bridge.invocations[beforeResumeCalls+1].settled;
+ await page.reload();await refresh();await expect(row(resumeId).locator('[data-action="resume"]')).toBeEnabled();
+ check('checkpoint_restart_only_reads_and_retains_one_accepted_batch',bridge.invocations.length===beforeResumeCalls+2&&(await bridge.task(resumeId)).checkpoint.completed===1);
+ await row(resumeId).locator('[data-action="resume"]').click();await expect(page.locator('#ai-consent')).not.toBeChecked();await expect(page.locator('#summary-plan')).toContainText('已保存 1 批');await expect(page.locator('#summary-plan')).toContainText('最多 2 次');await expect(page.locator('#ai-send-description')).toContainText('额度可能未知');
+ await expect(page.locator('#ai-provider')).toBeDisabled();await expect(page.locator('#ai-model')).toBeDisabled();await expect(page.locator('#ai-consent')).toHaveCount(1);
+ for(const width of [390,1280]){
+  await page.setViewportSize({width,height:1000});await page.locator('#ask-ai').scrollIntoViewIfNeeded();
+  const geometry=await page.locator('#ask-ai').evaluate(node=>{const r=node.getBoundingClientRect();return {height:r.height,x:r.x,right:r.right,viewport:innerWidth,scrollWidth:document.documentElement.scrollWidth};});
+  if(process.env.COCONUT_UI_ARTIFACT_DIR)await page.screenshot({path:path.join(process.env.COCONUT_UI_ARTIFACT_DIR,'background-checkpoint-resume-'+width+'.png')});
+  check('resume_single_confirmation_reachable_without_overflow_'+width,geometry.height>=44&&geometry.x>=0&&geometry.right<=geometry.viewport&&geometry.scrollWidth<=geometry.viewport,geometry);
+ }
+ const resumeRoute='**/api/v1/tasks/'+resumeId+'/resume';let acceptedResumeKey;
+ await page.route(resumeRoute,async route=>{
+  const body=route.request().postDataJSON();acceptedResumeKey=body.resumeKey;
+  const durable=await page.evaluate(id=>JSON.parse(localStorage.getItem('coconut-background-summary-v1')).entries.find(entry=>entry.task?.taskId===id)?.resumeIntent,resumeId);
+  assert.deepEqual(durable.payload,body);await route.fetch();await route.abort('failed');
+ });
+ stage='checkpoint_resume_lost_ack';await page.locator('#ai-consent').check();await page.locator('#ask-ai').click();await until(()=>bridge.invocations.length===beforeResumeCalls+3);await expect(page.locator('#background-task-message')).toContainText('续跑结果未确认');await page.unroute(resumeRoute);
+ await page.reload();await refresh();await expect(row(resumeId)).toContainText('执行中');
+ check('resume_lost_ack_reload_queries_same_key_without_resubmission',bridge.posts.filter(url=>url==='/api/v1/tasks/'+resumeId+'/resume').length===1&&bridge.invocations.length===beforeResumeCalls+3&&await page.evaluate(({id,key})=>JSON.parse(localStorage.getItem('coconut-background-summary-v1')).entries.find(entry=>entry.task?.taskId===id)?.resumeIntent?.receipt?.key===key,{id:resumeId,key:acceptedResumeKey}));
+ assert.deepEqual(bridge.invocations[beforeResumeCalls+2].input.transcript.map(cue=>cue.id),['resume-cue-400']);bridge.invocations[beforeResumeCalls+2].release();await until(()=>bridge.invocations.length===beforeResumeCalls+4);assert.deepEqual(bridge.invocations[beforeResumeCalls+3].input.transcript.map(cue=>cue.id),['batch-1','batch-2']);bridge.invocations[beforeResumeCalls+3].release();await bridge.waitTask(resumeId,'succeeded');await refresh();await row(resumeId).locator('[data-action="accept"]').click();await answers(resumeTitle,1);await page.reload();await refresh();await answers(resumeTitle,1);
+ check('checkpoint_resume_preserves_task_changes_attempt_and_accepts_once',bridge.invocations.length===beforeResumeCalls+4&&(await bridge.task(resumeId)).attemptId!==resumeTask.attemptId&&(await bridge.task(resumeId)).resume.remainingRequests===0);
  check('authored_private_notes_never_reach_fake_cli',bridge.invocations.every(call=>!JSON.stringify(call.input).includes('LOCAL NOTE')));
  check('no_external_requests_or_page_errors',external===0&&pageErrors===0);
 }catch(error){process.exitCode=1;failure={message:String(error?.message||error),stack:error?.stack||null};}

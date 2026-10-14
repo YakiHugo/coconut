@@ -17,7 +17,7 @@
 
 ## v1 接口
 
-这是第一个有版本标识的窄接口，后续扩展不应让客户端依赖额外未知字段。协议版本与磁盘格式版本分开；HTTP 协议仍为 1，磁盘 ledger 为 3（兼容读取 1/2），浏览器关联格式仍为 2（兼容读取 1）。
+这是第一个有版本标识的窄接口，后续扩展不应让客户端依赖额外未知字段。协议版本与磁盘格式版本分开；HTTP 协议仍为 1，磁盘 ledger 为 3（兼容读取 1/2），浏览器关联格式为 3（兼容读取 1/2）。
 
 - `GET /api/v1/executor`：`protocolVersion`、执行器类型和在线状态、`supportedTaskKinds`、`enabled`、队列限制和取消/重启语义。提供商分别声明 `supported: true`、`availability: "not_checked"`，不把支持与已登录可执行混为一谈。当前 `remoteSubmission: false`。
 - `POST /api/v1/tasks`：新任务返回 202 和 `{protocolVersion, created: true, receipt, task}`；重复提交相同意图返回 200、原 taskId 和当前状态。
@@ -47,7 +47,7 @@
 
 客户端应先可靠保存幂等键、文稿 lifetime/revision 与提交输入，再发送。超时、网络错误或 5xx 可能发生在接收已经落盘之后，先按原 key 查询，不要生成新 key 重做。找不到时，只能重发原 key 和原 payload；后到的原请求仍会被同一个 key 去重。相同 key 配不同 revision、provider 或原文返回 409。API 不自动重试任何模型请求。
 
-每个新意图有稳定 `taskId`，首次执行生成 `attemptId`。下方的显式续跑 API 保留 taskId、不可变输入与提交 key；每次新确认的续跑生成新 attemptId。重启、查询、重发同一续跑 key 均不增加 attempt，也不自动执行。阅读器 UI 尚未接入这个续跑 API。
+每个新意图有稳定 `taskId`，首次执行生成 `attemptId`。下方的显式续跑 API 保留 taskId、不可变输入与提交 key；每次新确认的续跑生成新 attemptId。重启、查询、重发同一续跑 key 均不增加 attempt，也不自动执行。阅读器只从仍匹配原文稿 lifetime/revision 与完整原文快照的原关联入口接入明确续跑。
 
 ## 状态与持久化
 
@@ -131,7 +131,7 @@ node --test tests/desktop-tasks.test.mjs tests/desktop-task-api.test.mjs tests/d
 
 ### 版本迁移与回滚
 
-新版读取 v1/v2 终态记录不立即改写原文件；下一次成功持久化（含正常关闭保存，或启动时将活动任务标记中断）写成 v3，保留全部任务和未知扩展字段。浏览器关联格式仍为 v2。旧执行器遇到 v3 会保守拒绝读取该任务存储，旧 v1 浏览器客户端也会拒绝 v2 关联，仍保留原始数据；不会自动删归档或降级版本号。因此降级软件前应退出执行器并备份任务目录及浏览器站点数据，保留新版环境用于查询/导出。不要手改磁盘 v3 或浏览器关联 v2 的版本号，也不要把备份覆盖在仍有新任务的目录上；没有无损反向迁移或合并工具。
+新版读取 v1/v2 终态记录不立即改写原文件；下一次成功持久化（含正常关闭保存，或启动时将活动任务标记中断）写成 v3，保留全部任务和未知扩展字段。浏览器关联下一次可靠保存写为 v3，兼容读取 v1/v2；保留未确认的续跑 key、原 payload 与已核查回执。旧执行器遇到 v3 会保守拒绝读取该任务存储，旧 v1/v2 浏览器客户端也会拒绝 v3 关联，仍保留原始数据；不会自动删归档或降级版本号。因此降级软件前应退出执行器并备份任务目录及浏览器站点数据，保留新版环境用于查询/导出。不要手改磁盘或浏览器关联 v3 的版本号，也不要把备份覆盖在仍有新任务的目录上；没有无损反向迁移或合并工具。
 
 ### 归档验证边界
 
@@ -152,9 +152,9 @@ node --test tests/desktop-tasks.test.mjs tests/desktop-task-api.test.mjs tests/d
 新增 CPU/DOM/假 HTTP 用例覆盖完整 128 项顺序处理、单独确认、局部失败与精确重试、取消/离页、导航/刷新/新任务、身份替换、同端口真实双目录中相同 taskId 不同 attemptId 的拒写、旧服务拒绝条件请求及浏览器保存失败。GHA 专用 Chromium fixture 补充 390/1280 像素确认、真实点击取消、逐项失败与重新确认、刷新后恢复身份；本地没有运行浏览器，真实 GUI 结论仍以该提交的 Browser acceptance 为准。
 
 
-## 持久 checkpoint 与显式续跑 API（UI 接入尚未完成）
+## 持久 checkpoint 与显式续跑 API
 
-本变更交付 store/API 与 CPU/loopback HTTP 合同，不宣称阅读器已可点击续跑。现有后台确认、提交、取消与接收 UI 不变。后续 UI 必须沿用现有同一份范围确认，显示已保存批次、剩余请求、不可变 provider/请求模型和未知额度，不能新增重复勾选或自动触发续跑。
+阅读器的失败/中断关联条目提供“查看续跑计划”，打开既有整篇摘要面板和同一份确认勾选。面板显示已保存批次、剩余请求上限、固定 provider/请求模型与在途结果/额度未知说明；没有新增确认表单。原文稿仍须存在且 lifetime/revision 与全文 ID/文字一致，并当前打开此文稿。修改/移除/重导的文稿、取消任务及没有原提交关联的独立任务不提供可执行续跑。
 
 - 每次请求前持久化 `checkpoint.inFlight`；每个分批通过 `Summary.accept` 后，将 notes 与进度一次性 fsync/原子替换。结果未知或校验失败的批次不会被算作已保存批次。
 - checkpoint 有独立 `version: 1`、确定性完整计划 digest、按计划顺序保存的 notes；恢复通过 `Summary.clean` 重新检查每批长度与引用、完整计划、provider/model 与输入 digest。计划算法变化或损坏记录 fail closed、保留原文件、不调用模型。新 checkpoint 终态通过同源摘要校验器 `Summary.cleanFinal` 验证；旧无 checkpoint 成功记录保留原 answer/引用/requested_model 合同，不强制后来新增的过程字段，且在 v3 重写后仍可读；多批最终聚合不新增一条 note，单批成功不留下可复用 note。
@@ -167,3 +167,14 @@ node --test tests/desktop-tasks.test.mjs tests/desktop-task-api.test.mjs tests/d
 - cancel 落盘后，即使 provider 迟到成功，也不保存它的 note/结果。取消终态不能复活。重启和旧执行回调不生成新 attempt；运行中更改输入仍不受支持。
 
 新增 `tests/desktop-task-checkpoints.test.mjs` 与 `tests/helpers/task-checkpoint-crash-worker.mjs` 使用真实子进程 SIGKILL 验证分批和汇总时的中断、重启零调用、仅复用已验收批次；还覆盖幂等回执、HTTP恢复、旧取消竞态、不可变身份、旧格式非零进度、空/损坏/未来格式 checkpoint、存储满额/写入故障及64次续跑上限。全部 provider 为自写假实现，不启动真实 CLI、模型、用户电脑或订阅额度。真实 UI、macOS 与模型质量验证仍未执行。
+
+
+### 续跑阅读器的保存与竞态边界
+
+- 新确认在发送前先保存原 resumeKey、attemptId、inputDigest 和 taskId；本地保存失败不发送。复用原任务/provider/model，不能把新文稿或前台批次嫁接到后台任务。
+- 网络错误、5xx 或关闭页面后回执丢失，重载只查询原 key。找到后核对 fromAttemptId/new attemptId，再保存新回执；查不到时只提供重新核查并明确重发原 payload，不能自动重试或换 key。
+- 保存和异步核查期间，原文变化、文稿切换再返回、关闭计划、取消、关联存储冲突或内容写入闸门会阻止新发送。选择其他模式或重新打开计划会撤销旧勾选。确认期间提供商和请求模型不可改。
+- 同一 taskId 的旧查询/旧续跑回执不能覆盖已确认的新 attempt。发现不同执行身份只阻止该关联的接收/续跑/取消，保留记录；不能将未知 attempt 认领为本浏览器原结果。当前执行的取消带其精确身份。未确认续跑的取消先保存取消意图，只读核查找到新 attempt 后才取消；不重发续跑。
+- 原有显式一次接收结果、独立成功结果救援和阅读功能保留。中断或失败的原文被改动后仍保留任务记录，但不添加独立旧快照续跑分支。
+
+DOM 与真实 loopback bridge 测试覆盖单份确认、先保存再 POST、丢回执刷新、同 key 显式重发、原文/选稿 ABA/关闭/存储失败、旧查询和取消迟到、真实重启后仅执行剩余批次及一次接收。GHA-only Chromium 旅程补充 390/1280 像素计划与点击、实际 IndexedDB 原文、真实任务磁盘、已验收首批后的执行器重启、续跑回执丢失后 reload、仅发送剩余批次/汇总以及一次接收。所有模型边界均为自写假实现。脚本语法与 CPU 合同不代表 Chromium 已通过；真实浏览器结论以精确 PR commit 的 Browser acceptance 为准。
