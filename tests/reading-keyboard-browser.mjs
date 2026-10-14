@@ -396,9 +396,11 @@ try {
   check('closed_subtitle_select_escape_closes_export_disclosure', !await page.locator('#export-menu').evaluate(node => node.open) && await focusIs('#export-menu > summary'));
   await ignoredKeys('focused_button', '#mode-transcript');
   await ignoredKeys('focused_link', '.brand');
-  await ignoredKeys('focused_native_select', '#reading-jump');
+  await ignoredKeys('focused_native_select', '#translation-view');
   await page.locator('#mode-passages').click();
-  await ignoredKeys('focused_native_range', '#passage-time-range');
+  await page.locator('#open-transcript-navigator').click();
+  await ignoredKeys('focused_navigation_input', '#navigator-time');
+  await page.locator('#transcript-navigator-dialog').getByRole('button',{name:'关闭原文导航'}).click();
   await page.locator('#toggle-reader-media').click();
   await ignoredKeys('focused_native_media', '#source-media audio');
   await page.keyboard.press('Escape');

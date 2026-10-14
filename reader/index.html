@@ -8,7 +8,7 @@
 <meta name="theme-color" content="#faf9f7">
 <link rel="icon" type="image/png" href="coconut-mark.png">
 <script src="appearance.js?v=86ea922669"></script>
-<link rel="stylesheet" href="style.css?v=cc3fb042e9">
+<link rel="stylesheet" href="style.css?v=db4871c293">
 <script src="summary.js?v=20da7780c3" defer></script>
 <script src="task-client.js?v=1f5e2c42de" defer></script>
 <script src="core.js?v=f8fa795a65" defer>
@@ -19,7 +19,7 @@
 <script src="library-store.js?v=e76ded9456" defer></script>
 <script src="indexeddb-document-adapter.js?v=8ecfdf5789" defer></script>
 <script src="storage-provider.js?v=369d522f14" defer></script>
-<script src="app.js?v=5b47bd7fa5" type="text/coconut-pending" data-reader-script>
+<script src="app.js?v=703bd99618" type="text/coconut-pending" data-reader-script>
 </script>
 <script src="language.js?v=07dbbeaa02" type="text/coconut-pending" data-reader-script></script>
 <script src="background-summary.js?v=bf0d34fa70" type="text/coconut-pending" data-reader-script></script>
@@ -28,6 +28,7 @@
 <script src="jobs.js?v=221718acc6" type="text/coconut-pending" data-reader-script>
 </script>
 <script src="updates.js?v=52e9d1e937" type="text/coconut-pending" data-reader-script></script>
+<script src="transcript-navigator.js?v=d7fc0091ee" defer></script>
 <script src="storage-bootstrap.js?v=bf60514d5d" defer></script>
 </head>
 <body>
@@ -222,6 +223,7 @@ cd coconut
 </section>
 <div id="reading-mode-toolbar" class="reading-mode-toolbar">
 <nav id="reading-modes" class="reading-modes" aria-label="播客阅读方式"><button id="mode-passages" aria-pressed="false">连贯阅读</button><button id="mode-summary" aria-pressed="true">摘要</button><button id="mode-transcript" aria-pressed="false">原文</button><button id="mode-bilingual" aria-pressed="false">双语对照</button><button id="toggle-demo-tools" type="button" aria-expanded="false" aria-controls="transcript-reading-tools reader-options" hidden>搜索与工具</button></nav>
+<div id="transcript-navigator"></div>
 <div id="reading-display-control" class="reading-display-control" hidden><label for="translation-view">阅读显示</label><select id="translation-view"><option value="">仅原文</option></select></div>
 </div>
 <section id="passage-workspace" class="passage-workspace" aria-label="连贯原文阅读" hidden>

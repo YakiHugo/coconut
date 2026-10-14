@@ -1,3 +1,4 @@
+import {navigateReadingStop} from './helpers/transcript-navigation-browser.mjs';
 /** Real Chromium recovery through the production UI and local HTTP bridge.
  * Sources and provider responses are authored fixtures. No real CLI/model call,
  * media, real transcript, browser trace, or storage dump is produced as an artifact.
@@ -71,7 +72,7 @@ try{
  stage='same_source_jump_during_translation';
  const jumpSource={...source,title:'同篇定位与翻译 · 自写流程样例'};await importFixture(jumpSource);await openLanguage();await page.locator('#check-ai').click();
  const jumpStart=requests.length;holdNext=true;const jumpStarted=waitStarted();await page.locator('#ai-consent').check();await page.locator('#subscription-translate').click();await boundedStart(jumpStarted);
- await page.locator('#reading-jump').selectOption('cue-64');
+ await navigateReadingStop(page,'cue-64');
  check('same_source_jump_retains_original_consent',await page.locator('#ai-consent').isChecked()&&await page.locator('#language-panel').evaluate(node=>node.open));
  release();await settled();
  check('same_source_jump_finishes_all_confirmed_batches',requests.length-jumpStart===3&&translatedCount(await readDocument(jumpSource.title))===65);

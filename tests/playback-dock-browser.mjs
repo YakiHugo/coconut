@@ -1,3 +1,4 @@
+import {navigateReadingStop} from './helpers/transcript-navigation-browser.mjs';
 /** Real decoded local audio and authored short-cue captions. No real recording,
  * account, model, third-party transcript, trace or media artifact is used. */
 import assert from 'node:assert/strict';
@@ -122,7 +123,7 @@ try{
  await page.waitForFunction(()=>{const p=document.querySelector('#source-media audio');return p&&!p.error&&p.readyState>=2&&p.duration>=179;});
  await page.locator('audio').evaluate(p=>{window.__dockPlayer=p;});
  check('decoded_audio_does_not_autoplay',await page.locator('audio').evaluate(p=>p.paused&&p.currentTime===0));
- await page.locator('#reading-jump').selectOption('clip-126');const cue=page.locator('.segment[data-segment-id="clip-126"]');
+ await navigateReadingStop(page,'clip-126');const cue=page.locator('.segment[data-segment-id="clip-126"]');
  await cue.locator('.time > button').first().click();await page.waitForFunction(()=>{const p=document.querySelector('audio');return p&&!p.paused&&p.currentTime>100.8;});
  await page.locator('#media-dock').waitFor({state:'visible'});await page.locator('#dock-play').click();
  check('deep_reading_dock_pauses_the_actual_audio',await page.locator('audio').evaluate(p=>p.paused)&&await page.locator('#dock-play').textContent()==='播放');
@@ -141,7 +142,7 @@ try{
  await page.locator('audio').evaluate(p=>{p.playbackRate=1;p.volume=1;});await seek(originalTime);
  await capture('01-short-cues-desktop');
  // Return to another page without changing the original audio position, then locate it again.
- await page.locator('#reading-jump').selectOption('clip-0');await page.locator('.segment').last().scrollIntoViewIfNeeded();await page.locator('#media-dock').waitFor({state:'visible'});
+ await navigateReadingStop(page,'clip-0');await page.locator('.segment').last().scrollIntoViewIfNeeded();await page.locator('#media-dock').waitFor({state:'visible'});
  await page.locator('#dock-locate').click();
  check('dock_locates_current_sound_across_pages',await page.evaluate(()=>document.activeElement.classList.contains('segment')&&Number(document.activeElement.dataset.segmentId.split('-')[1])>=126&&document.querySelector('audio')===window.__dockPlayer));
  await page.setViewportSize({width:390,height:844});await page.locator('#media-dock').waitFor({state:'visible'});
@@ -242,7 +243,7 @@ try{
  // Calibration changes subtitle mapping, never the physical ten-second step.
  await page.locator('#media-timing-offset').fill('2');await page.locator('#media-timing-save').click();
  await page.waitForFunction(()=>document.querySelector('#media-timing-status').textContent.startsWith('已保存偏移 2'));
- await page.locator('#reading-jump').selectOption('clip-126');await page.locator('.segment[data-segment-id="clip-126"]').scrollIntoViewIfNeeded();await page.locator('#media-dock').waitFor({state:'visible'});
+ await navigateReadingStop(page,'clip-126');await page.locator('.segment[data-segment-id="clip-126"]').scrollIntoViewIfNeeded();await page.locator('#media-dock').waitFor({state:'visible'});
  await seek(70);await rewind('calibrated_media_still_rewinds_physical_ten_seconds');
  // Native cue-loop cancellation must survive the seek's queued media events.
  const loopCue=page.locator('.segment[data-segment-id="clip-126"]');await loopCue.locator('.cue-more > summary').click();
@@ -302,10 +303,10 @@ try{
  stage='close_replacement_media_popover';await page.locator('#close-reader-media').click();await page.locator('#episode-media').waitFor({state:'hidden'});await settle();
  popover.after=await page.evaluate(()=>{const before=window.__replacementPopover,p=document.querySelector('audio');return {clicked:before.clicked,trusted:before.trusted,hidden:document.getElementById('episode-media').hidden,expanded:document.getElementById('toggle-reader-media').getAttribute('aria-expanded'),focused:document.activeElement.id,samePlayer:p===before.player,sourceSame:p.getAttribute('src')===before.source,timeSame:p.currentTime===before.time,pausedSame:p.paused===before.paused,rateSame:p.playbackRate===before.rate,volumeSame:p.volume===before.volume,documentSame:JSON.stringify(state.documents)===before.document,modeSame:document.body.dataset.readingMode===before.mode};});
  check('native_popover_close_preserves_replacement_and_returns_focus',popover.after.clicked&&popover.after.trusted&&popover.after.hidden&&popover.after.expanded==='false'&&popover.after.focused==='toggle-reader-media'&&['samePlayer','sourceSame','timeSame','pausedSame','rateSame','volumeSame','documentSame','modeSame'].every(key=>popover.after[key]));
- stage='select_bilingual_after_replacement_popover_close';await page.locator('#mode-bilingual').click();await page.locator('#reading-jump').selectOption('clip-126');await page.locator('.segment[data-segment-id="clip-126"]').scrollIntoViewIfNeeded();await page.locator('#media-dock').waitFor({state:'visible'});
+ stage='select_bilingual_after_replacement_popover_close';await page.locator('#mode-bilingual').click();await navigateReadingStop(page,'clip-126');await page.locator('.segment[data-segment-id="clip-126"]').scrollIntoViewIfNeeded();await page.locator('#media-dock').waitFor({state:'visible'});
  await seek(35);await rewind('replacement_uses_current_player_at_action_time');
  await page.locator('#add-content').click();check('changed_workspace_disables_and_hides_rewind',await page.locator('#media-dock').isHidden()&&await page.locator('#dock-rewind').isDisabled());
- await page.locator('#back-reading').click();await page.locator('#reading-jump').selectOption('clip-126');await page.locator('.segment[data-segment-id="clip-126"]').scrollIntoViewIfNeeded();await page.locator('#media-dock').waitFor({state:'visible'});
+ await page.locator('#back-reading').click();await navigateReadingStop(page,'clip-126');await page.locator('.segment[data-segment-id="clip-126"]').scrollIntoViewIfNeeded();await page.locator('#media-dock').waitFor({state:'visible'});
  await rewind('return_to_reading_rewind_keeps_replacement');await page.locator('#dock-return').click();
  await page.locator('#detach-reader-media').click();
  check('removing_media_removes_all_dock_controls',await page.locator('#media-dock').isHidden()&&await page.locator('#dock-rewind').isDisabled()&&await page.locator('audio,video').count()===0);
