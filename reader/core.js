@@ -277,7 +277,7 @@
   for(const language of ["en","zh","ja","ko","fr","de","es"]) {
    const item=value[language];
    if(item && typeof item.text==="string" && item.text.length<=12000 && typeof item.source_text==="string" && (item.provider==='user'||item.source_text.length<=4000||unicodeLength(item.source_text,4000)<=4000) && typeof item.provider==="string"){
-    output[language]={text:item.text,source_text:item.source_text,provider:item.provider.slice(0,100),source_language:typeof item.source_language==="string"?item.source_language:"",...(typeof item.context_id==="string"&&/^[a-f0-9-]{36}$/.test(item.context_id)?{context_id:item.context_id}:{})};
+    output[language]={...(typeof item.requested_model==='string'&&/^[A-Za-z0-9][A-Za-z0-9._-]{0,119}$/.test(item.requested_model)?{requested_model:item.requested_model}:{}),text:item.text,source_text:item.source_text,provider:item.provider.slice(0,100),source_language:typeof item.source_language==="string"?item.source_language:"",...(typeof item.context_id==="string"&&/^[a-f0-9-]{36}$/.test(item.context_id)?{context_id:item.context_id}:{})};
     if(typeof item.document_language==='string'&&item.document_language.length<=100)output[language].document_language=item.document_language;
     if(item.context_version===2){
      Object.assign(output[language],{context_version:2,target_language:language});
@@ -435,7 +435,7 @@
  function semanticBoundary(before, after) {
   return before && (!after || before.speaker!==after.speaker || after.start-before.end>2 || /[.!?。！？][\s"'”’）)]*$/.test(before.text));
  }
- function subscriptionPlan(doc, selectedIds, source, target, provider) {
+ function subscriptionPlan(doc, selectedIds, source, target, provider, model='') {
   const selected=new Set(selectedIds),runs=[];
   for(let position=0;position<doc.segments.length;position++){
    const s=doc.segments[position];if(!selected.has(s.id))continue;
@@ -453,7 +453,7 @@
     if(end<run.length)for(let candidate=end;candidate>=start+Math.max(1,Math.ceil((end-start)/2));candidate--){
      if(semanticBoundary(run[candidate-1],run[candidate])){end=candidate;break;}
     }
-    const segments=run.slice(start,end).filter(c=>{const s=doc.segments[c.position],t=s.translations?.[target];return !(translationCurrent(s,doc,t)&&(t.manual_review||t.source_language===source&&t.provider===provider));});
+    const segments=run.slice(start,end).filter(c=>{const s=doc.segments[c.position],t=s.translations?.[target];return !(translationCurrent(s,doc,t)&&(t.manual_review||t.source_language===source&&t.provider===provider&&(t.requested_model||'')===model));});
     const targetIds=new Set(segments.map(c=>c.id));
     const snapshot=run.slice(Math.max(0,start-2),Math.min(run.length,end+2)).map(c=>({...c}));
     if(segments.length){
@@ -461,7 +461,7 @@
      for(const cue of snapshot){
       if(targetIds.has(cue.id))continue;
       const s=doc.segments[cue.position],t=s.translations?.[target];
-      if(translationCurrent(s,doc,t)&&!t.manual_review&&t.source_language===source&&t.provider===provider&&!t.quality_warnings?.length&&memoryChars+t.text.length<=24000){
+      if(translationCurrent(s,doc,t)&&!t.manual_review&&t.source_language===source&&t.provider===provider&&(t.requested_model||'')===model&&!t.quality_warnings?.length&&memoryChars+t.text.length<=24000){
        memory.push({id:cue.id,source_text:cue.text,text:t.text});memoryChars+=t.text.length;
        cue.memory_text=t.text;cue.memory_language=target;
       }
@@ -1408,6 +1408,7 @@
  function cleanAnswer(answer) {
   const input=cleanAnswerInput(answer.input_snapshot),process=answer.summary_process;
   return {
+   ...(typeof answer.requested_model==='string'&&/^[A-Za-z0-9][A-Za-z0-9._-]{0,119}$/.test(answer.requested_model)?{requested_model:answer.requested_model}:{}),
    question:answer.question.slice(0,4000),answer:answer.answer.slice(0,100000),
    // References are historical data too. Missing current cues must stay visible
    // as unavailable references, never be silently erased or retargeted.
@@ -1443,7 +1444,7 @@
   const origin=podcastOrigin(doc);if(origin)lines.push("[播客原站]("+origin+")","时间戳需在原声中手动定位；没有伪造平台时间跳转链接。", "");
   for(const [index,answer] of (doc.ai_answers||[]).entries()){
    const freshness=answer.purpose==="summary"?summaryFreshness(answer,doc):answerFreshness(answer,doc), input=cleanAnswerInput(answer.input_snapshot);
-   lines.push("## 回答 "+(index+1),"","提供商："+line(answer.provider||"unknown"),"",
+   lines.push("## 回答 "+(index+1),"","提供商："+line(answer.provider||"unknown")+(answer.requested_model?" · 请求模型："+line(answer.requested_model):""),"",
     "依据状态："+({current:"完整发送原文仍与当前稿一致（不代表回答正确）",stale:"发送原文或整篇范围已变化，回答依据可能过期",unknown:"缺少完整发送原文，无法确认依据是否仍有效"}[freshness]),"",
     "问题：","",quote(answer.question),"","回答：","",quote(answer.answer),"","引用：","");
    const cited=[...new Set(answer.citations||[])];

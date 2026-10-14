@@ -224,3 +224,23 @@ test('archive identity is compared inside the write queue and remains enforced f
  assert.equal(valid.status,'fulfilled');assert.ok(valid.value.archivedAt);assert.equal(conflict.status,'rejected');assert.equal(conflict.reason.taskCode,'task_identity_conflict');assert.equal(calls.length,1);
  const disk=JSON.parse(await fs.readFile(path.join(directory,'tasks.json'),'utf8'));assert.equal(disk.tasks.length,1);assert.equal(disk.tasks[0].attemptId,expected.attemptId);assert.equal(disk.tasks[0].archivedAt,valid.value.archivedAt);
 });
+
+test('explicit model is immutable input, survives restart and reaches every summary stage',async t=>{
+ const {store,calls,directory}=await setup(t,async data=>({answer:'Summary',citations:[data.segments[0].id],requested_model:data.model}));
+ const input=submission({model:'authored-model',segments:[{id:'a',text:'A'.repeat(16000)},{id:'b',text:'B'.repeat(100)}]});
+ const {task}=await store.submit(input);const done=await until(store,task.taskId,'succeeded');
+ assert.equal(calls.length,3);assert.ok(calls.every(call=>call.data.model==='authored-model'));
+ assert.equal(done.model,'authored-model');assert.equal(done.result.requested_model,'authored-model');
+ await assert.rejects(store.submit({...input,model:'other-model'}),error=>error.status===409);
+ await assert.rejects(store.submit({...input,model:''}),error=>error.status===409);
+ await store.shutdown();let restartCalls=0;
+ const recovered=await createTaskStore({directory,providers:{ask:async()=>{restartCalls++;}}});
+ try{assert.deepEqual(await recovered.get(task.taskId),done);assert.equal((await recovered.submit(input)).created,false);assert.equal(restartCalls,0);}finally{await recovered.shutdown();}
+});
+test('default model retains legacy digest while invalid models never start tasks',async t=>{
+ const {store,calls}=await setup(t);const first=await store.submit(submission());
+ assert.equal((await store.submit(submission({model:''}))).task.inputDigest,first.task.inputDigest);
+ assert.equal((await store.submit(submission({model:null}))).created,false);
+ for(const model of ['--help','vendor/model',{},'x'.repeat(121)])await assert.rejects(store.submit(submission({idempotencyKey:'bad-model',model})),error=>error.status===400);
+ await until(store,first.task.taskId,'succeeded');assert.equal(calls.length,1);assert.equal(Object.hasOwn(calls[0].data,'model'),false);
+});

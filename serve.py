@@ -221,10 +221,10 @@ class Handler(SimpleHTTPRequestHandler):
                 return self._json(200, {'translations': translated})
             if parsed.path == '/api/translate-subscription':
                 if data.get('consent') is not True: raise ValueError('Explicit subscription data/usage consent is required')
-                return self._json(200, {'translations':subscription_translate(data.get('source'),data.get('target'),data.get('segments'),data.get('provider','codex'),context=data.get('context'),glossary=data.get('glossary'),memory=data.get('memory'))})
+                return self._json(200, {'translations':subscription_translate(data.get('source'),data.get('target'),data.get('segments'),data.get('provider','codex'),context=data.get('context'),glossary=data.get('glossary'),memory=data.get('memory'),model=data.get('model'))})
             if parsed.path == '/api/ask':
                 if data.get('consent') is not True: raise ValueError('Explicit subscription data/usage consent is required')
-                return self._json(200, ask(data.get('question'), data.get('language'), data.get('segments'), data.get('provider', 'codex')))
+                return self._json(200, ask(data.get('question'), data.get('language'), data.get('segments'), data.get('provider', 'codex'),model=data.get('model')))
             if parsed.path == '/api/jobs':
                 url = data.get('url')
                 if not isinstance(url, str):

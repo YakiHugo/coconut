@@ -88,6 +88,21 @@ class ServerTests(unittest.TestCase):
         self.assertEqual([t['id'] for t in result['translations']],['target'])
         sent=json.loads(provider.call_args.args[0]);self.assertEqual(sent['target_ids'],['target']);self.assertEqual(sent['cues'],[context,source]);self.assertEqual(sent['glossary'],payload['glossary']);self.assertEqual(sent['translation_memory'],payload['memory'])
 
+    def test_subscription_routes_preserve_explicit_model_and_reject_invalid_before_inference(self):
+        requests=[('/api/ask',{'question':'Q','language':'en'}, {'answer':'Answer','citations':['a']}),
+                  ('/api/translate-subscription',{'source':'en','target':'zh'}, {'translations':[{'id':'a','text':'译文'}]})]
+        for endpoint,fields,output in requests:
+            payload={**fields,'segments':[{'id':'a','text':'Source'}],'provider':'codex','consent':True,'model':'authored-model'}
+            with patch('ai_reader.codex_answer',return_value=output) as provider:
+                with urlopen(Request(self.base+endpoint,data=json.dumps(payload).encode(),headers={'Content-Type':'application/json'})) as response:
+                    result=json.load(response)
+                self.assertEqual(provider.call_args.kwargs['model'],'authored-model')
+                self.assertEqual((result.get('translations') or [result])[0]['requested_model'],'authored-model')
+                provider.reset_mock();payload['model']='--help'
+                with self.assertRaises(HTTPError) as raised:
+                    urlopen(Request(self.base+endpoint,data=json.dumps(payload).encode(),headers={'Content-Type':'application/json'}))
+                self.assertEqual(raised.exception.code,400);provider.assert_not_called()
+
     def test_cross_origin_and_unscoped_host_rejected(self):
         for headers in [{'Origin':'https://evil.example'},{'Host':'evil.example'}]:
             with self.assertRaises(HTTPError) as error:urlopen(Request(self.base+'/api/jobs',headers=headers))

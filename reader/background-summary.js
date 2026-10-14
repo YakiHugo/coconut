@@ -25,7 +25,7 @@
   const keys=new Set();
   for(const entry of saved.entries){
    if(keys.has(entry.key)||!uuid(entry.lifetime)||entry.payload.protocolVersion!==1||entry.payload.kind!=='summary'||entry.payload.consent!==true)throw new Error('任务身份无效');
-   TaskAPI.submission({key:entry.payload.document.key,segments:entry.payload.segments},{revision:entry.payload.document.revision,provider:entry.payload.provider,idempotencyKey:entry.key,consent:true});
+   TaskAPI.submission({key:entry.payload.document.key,segments:entry.payload.segments},{revision:entry.payload.document.revision,provider:entry.payload.provider,model:entry.payload.model,idempotencyKey:entry.key,consent:true});
    if(entry.task&&(!validTask(entry,entry.task)||!Object.hasOwn(labels,entry.task.status)||(Object.hasOwn(entry.task,'archivedAt')&&(saved.version!==2||!isArchived(entry.task)||!Number.isFinite(Date.parse(entry.task.archivedAt))||!canArchive(entry.task)))))throw new Error('任务状态无效');keys.add(entry.key);
   }
   entries=saved.entries;
@@ -45,7 +45,8 @@
   return capability?.protocolVersion===1&&capability.enabled===true&&capability.executor?.type==='local-node'&&capability.executor.online===true&&capability.remoteSubmission===false&&capability.supportedTaskKinds?.includes('summary')&&capability.execution?.disconnect==='continue'&&capability.execution.restart==='interrupt_without_retry'&&capability.execution.cancel==='request_then_settle';
  }
  function localOrigin(){return ['127.0.0.1','localhost','[::1]'].includes(location.hostname);}
- function available(provider=$('ai-provider').value){return localOrigin()&&supported()&&capability.providers?.[provider]?.supported===true&&!storageError;}
+ function modelSupported(provider){return capability?.providers?.[provider]?.model_selection?.supported===true;}
+ function available(provider=$('ai-provider').value,model=selectedAIModel()){return localOrigin()&&supported()&&capability.providers?.[provider]?.supported===true&&(!model||modelSupported(provider))&&!storageError;}
  function owner(entry){return state.documents.find(doc=>doc.key===entry.payload?.document.key&&doc.background_summary_lifetime===entry.lifetime);}
  function sourceMatches(entry,doc){return !!doc&&doc.segments.length===entry.payload.segments.length&&entry.payload.segments.every((cue,i)=>cue.id===doc.segments[i].id&&cue.text===doc.segments[i].text);}
  function missingTask(entry){return !!entry.task?.taskId&&entry.missing===true;}
@@ -62,7 +63,7 @@
  }
  function terminalCancellation(task){return task&&['succeeded','failed','interrupted'].includes(task.status)?'任务已结束（'+({succeeded:'已完成',failed:'失败',interrupted:'中断'})[task.status]+'）；已放弃接收，先前请求可能已消耗额度。':null;}
  function button(label,action,entry,handler,disabled=false){const node=el('button','',label);node.type='button';node.dataset.action=action;node.disabled=disabled;node.onclick=handler;return node;}
- function sameTask(left,right){return left?.taskId===right?.taskId&&left?.kind===right?.kind&&left?.status===right?.status&&left?.provider===right?.provider&&left?.document?.key===right?.document?.key&&left?.document?.revision===right?.document?.revision;}
+ function sameTask(left,right){return left?.taskId===right?.taskId&&left?.kind===right?.kind&&left?.status===right?.status&&left?.provider===right?.provider&&(left?.model||'')===(right?.model||'')&&left?.document?.key===right?.document?.key&&left?.document?.revision===right?.document?.revision;}
  function exportResult(task){
   const receipt=TaskAPI.recoveryFor(task);if(!receipt){message('结果不完整，未生成下载；请重新查询原任务。');return;}
   let url,link;
@@ -266,7 +267,7 @@
   host.replaceChildren();archiveHost.replaceChildren();
   for(const entry of [...visibleEntries].reverse().concat(archivedEntries)){
    const task=entry.task,row=el('section','background-task');row.dataset.submissionKey=entry.key;
-   row.append(el('h3','',entry.title||'文字稿摘要'));
+   row.append(el('h3','',entry.title||'文字稿摘要'),el('p','hint',entry.payload.provider+' · '+(entry.payload.model?'请求模型：'+entry.payload.model:'CLI 默认模型')));
    let status=entry.cancelRequested?'已请求取消；未确认执行收尾':task?labels[task.status]||'未知任务状态':'提交结果待确认，请刷新查询';
    if(entry.cancelRequested&&terminalCancellation(task))status=terminalCancellation(task);
    if(task?.status==='cancelled')status='已取消；已发送的请求仍可能消耗额度';
@@ -284,7 +285,7 @@
     row.append(button(accepted(entry)?'已接收':'接收至当前原文稿','accept',entry,()=>accept(entry),!canAccept));
     if(!accepted(entry)&&!canAccept)row.append(el('p','hint','请打开原文稿并保持原文一致；修改稿、重新导入或其他文档不能接收此结果。'));
    }
-   if(!task&&!entry.cancelRequested&&entry.missing)row.append(button('重发原提交（同一任务意图）','resubmit',entry,()=>resubmit(entry),!available(entry.payload.provider)||submitting||!mayResubmit(entry)));
+   if(!task&&!entry.cancelRequested&&entry.missing)row.append(button('重发原提交（同一任务意图）','resubmit',entry,()=>resubmit(entry),!available(entry.payload.provider,entry.payload.model||'')||submitting||!mayResubmit(entry)));
    if(!missingTask(entry)&&(!task||live.has(task.status)))row.append(button('取消后台任务','cancel',entry,()=>cancel(entry),!supported()));
    archiveActions(row,task,entry);(isArchived(task)?archiveHost:host).append(row);
   }
@@ -293,7 +294,7 @@
    row.append(el('h3','','本机其他任务'),el('p','',`${task.taskId} · ${task.status==='succeeded'?'已完成，可查看独立结果':labels[task.status]||task.status}`),el('p','hint','此浏览器没有原提交关联，不能接收至文稿。'));
    if(task.error?.message)row.append(el('p','hint',task.error.message));
    if(task.status==='succeeded'){
-    const state=externalResults.get(task.taskId);row.append(el('p','hint','原文稿标识：'+task.document?.key+' · '+task.provider));
+    const state=externalResults.get(task.taskId);row.append(el('p','hint','原文稿标识：'+task.document?.key+' · '+task.provider+(task.model?' · 请求模型：'+task.model:' · CLI 默认模型')));
     if(state?.task){resultPreview(row,state.task,opened,key,state.open);state.open=false;}
     else{
      const view=button(state?.loading?'正在读取结果…':state?.error?'重试读取独立结果':'查看独立结果','view-result',null,()=>loadExternal(task));
@@ -315,17 +316,17 @@
   $('summary-open-background-tasks').hidden=!entries.length&&!background;
   if(background){
    const readiness=Coconut.summaryReadiness(doc),plan=readiness.plan;
-   const signature=JSON.stringify([doc?.key,doc?.background_summary_lifetime,$('ai-provider').value,plan?.source]);
+   const signature=JSON.stringify([doc?.key,doc?.background_summary_lifetime,$('ai-provider').value,selectedAIModel(),plan?.source]);
    if(signature!==consentSignature){consentSignature=signature;$('ai-consent').checked=false;}
    const provider=$('ai-provider').value==='codex'?'ChatGPT / Codex':'Claude';
    const current=entries.findLast(entry=>owner(entry)===doc);
-   $('summary-background-status').textContent=(current?'本篇后台任务：'+(missingTask(current)?'此执行器找不到此任务；新提交会创建独立任务':current.task?labels[current.task.status]||current.task.status:'提交结果待确认')+'。':'')+connection+(storageError?' '+storageError:'');
+   $('summary-background-status').textContent=(current?'本篇后台任务：'+(missingTask(current)?'此执行器找不到此任务；新提交会创建独立任务':current.task?labels[current.task.status]||current.task.status:'提交结果待确认')+'。':'')+connection+(selectedAIModel()&&!modelSupported($('ai-provider').value)?' 此执行器未声明支持指定模型，请更新服务或清空模型使用 CLI 默认值。':'')+(storageError?' '+storageError:'');
    $('summary-job-state').hidden=true;$('restart-summary').hidden=true;$('stop-summary').hidden=true;
    $('ask-ai').textContent=submitting?'正在保存并提交…':'提交本机后台摘要';
    $('ask-ai').disabled=!readiness.ready||!available()||submitting||asking||translating||subscriptionTranslating||!contentIngressAllowed(doc);
    if(plan){$('summary-plan').textContent=compactSummaryPlan(plan,null,true);planCounts('summary-plan',plan.segments,plan.requests);}
    $('ai-send-description').textContent='本机后台处理完整原文，以及分批汇总所需的笔记与引用；不发送阅读笔记、译文或音视频。收起面板、切换文档或关闭页面后继续，只能在本机后台任务中显式取消。电脑及执行器须保持运行；重启中断后不会自动重跑，已发送请求的额度可能未知。结果需你核对后接收。前台分批进度不用于此任务。';
-   $('ai-consent-copy').textContent=`同意按上述完整范围和最多请求次数发送给 ${provider} 并使用订阅额度；本机后台在收起或离页后继续。登录与剩余额度未由任务接口核验。`;
+   $('ai-consent-copy').textContent=`同意按上述完整范围和最多请求次数发送给 ${provider}（${selectedAIModel()?'请求模型：'+selectedAIModel():'CLI 默认模型'}）并使用订阅额度；本机后台在收起或离页后继续。登录与剩余额度未由任务接口核验。Coconut 无法核验提供商计费；请求可能消耗已启用的额外付费额度，尤其是指定模型时。`;
   }else if(selected&&!$('ai-send-description').textContent.includes('前台模式：')){$('ai-send-description').textContent+=' 前台模式：收起或离开此面板后停止后续批次，当前批次仍可能完成；保留原有分批继续流程。';}
   renderTasks();
  }
@@ -367,7 +368,7 @@
   })().finally(()=>{refreshing=null;renderLanguage();render();schedule();});
   return refreshing;
  }
- function validTask(entry,task){return task?.kind==='summary'&&Object.hasOwn(labels,task.status)&&typeof task.taskId==='string'&&task.document?.key===entry.payload.document.key&&task.document.revision===entry.payload.document.revision&&task.provider===entry.payload.provider;}
+ function validTask(entry,task){return task?.kind==='summary'&&Object.hasOwn(labels,task.status)&&typeof task.taskId==='string'&&task.document?.key===entry.payload.document.key&&task.document.revision===entry.payload.document.revision&&task.provider===entry.payload.provider&&(task.model||'')===(entry.payload.model||'');}
  async function send(entry){
   const version=beginRead(entry);
   try{
@@ -377,10 +378,11 @@
  }
  async function submit(){
   if(submitting)return;
-  const doc=active(),provider=$('ai-provider').value;
+  const doc=active(),provider=$('ai-provider').value,model=selectedAIModel();
+  if(!validAIModel({background:true}))return;
   if(!$('ai-consent').checked||$('summary-execution').value!=='background'||!available(provider)||!contentIngressAllowed(doc))return;
   const readiness=Coconut.summaryReadiness(doc);if(!readiness.ready)return;
-  const signature=JSON.stringify([doc.key,doc.background_summary_lifetime,provider,readiness.plan.source]);
+  const signature=JSON.stringify([doc.key,doc.background_summary_lifetime,provider,model,readiness.plan.source]);
   if(signature!==consentSignature){$('ai-consent').checked=false;render();message('原文或范围已变化，请重新确认。');return;}
   if(entries.some(entry=>owner(entry)===doc&&sourceMatches(entry,doc)&&entry.payload.provider===provider&&!missingTask(entry)&&(!entry.task||live.has(entry.task.status)))){message('已有相同范围的后台任务，请先查询或取消。');$('background-tasks').open=true;return;}
   submitting=true;const source=copy(readiness.plan.source),originalSelection=activeSelectionRevision;renderLanguage();
@@ -391,16 +393,16 @@
    if(!uuid(doc.background_summary_lifetime))doc.background_summary_lifetime=crypto.randomUUID();const lifetime=doc.background_summary_lifetime;
    const saved=await commitDocument(doc);
    if(!saved.ok)throw new Error('原文稿身份未保存，未提交后台任务');
-   if(!contentIngressAllowed(doc)||active()!==doc||activeSelectionRevision!==originalSelection||doc.background_summary_lifetime!==lifetime||JSON.stringify(source)!==JSON.stringify(CoconutSummary.plan(doc).source)||!$('ai-consent').checked||$('summary-execution').value!=='background'||$('ai-provider').value!==provider)throw new Error('保存期间文稿或确认已变化，未提交后台任务');
+   if(!contentIngressAllowed(doc)||active()!==doc||activeSelectionRevision!==originalSelection||doc.background_summary_lifetime!==lifetime||JSON.stringify(source)!==JSON.stringify(CoconutSummary.plan(doc).source)||!$('ai-consent').checked||$('summary-execution').value!=='background'||$('ai-provider').value!==provider||selectedAIModel()!==model)throw new Error('保存期间文稿或确认已变化，未提交后台任务');
    const key=crypto.randomUUID(),revision=lifetime+':'+crypto.randomUUID();
-   const entry={key,lifetime,title:doc.title,payload:TaskAPI.submission(doc,{revision,provider,idempotencyKey:key,consent:true})};
+   const entry={key,lifetime,title:doc.title,payload:TaskAPI.submission(doc,{revision,provider,model,idempotencyKey:key,consent:true})};
    entries.push(entry);try{save();}catch(error){entries.pop();throw error;}
    $('background-tasks').open=true;$('ai-consent').checked=false;render();await send(entry);
   }catch(error){message(error.message);}
   finally{submitting=false;$('ai-consent').checked=false;renderLanguage();render();schedule();}
  }
  async function resubmit(entry){
-  if(submitting||entry.task?.taskId||!entry.missing||!available(entry.payload.provider)||!mayResubmit(entry))return;
+  if(submitting||entry.task?.taskId||!entry.missing||!available(entry.payload.provider,entry.payload.model||'')||!mayResubmit(entry))return;
   submitting=true;const doc=owner(entry),version=beginRead(entry);
   try{
    const response=await client.findSubmission(entry.key);
@@ -410,7 +412,7 @@
    else{
     // A read can outlive the user's cancellation, edit, removal, storage
     // conflict or native-close barrier. Only the original live intent may send.
-    if(owner(entry)!==doc||!available(entry.payload.provider)||!mayResubmit(entry))throw new Error('查询期间原文、取消意图或保存状态已变化');
+    if(owner(entry)!==doc||!available(entry.payload.provider,entry.payload.model||'')||!mayResubmit(entry))throw new Error('查询期间原文、取消意图或保存状态已变化');
     await send(entry);
    }
   }catch(error){message('原任务查询失败，未重发：'+error.message);}
@@ -469,6 +471,6 @@
  window.addEventListener('coconut-source-corrected',event=>{const doc=event.detail?.identity;if(doc?.background_summary_lifetime){doc.background_summary_lifetime=crypto.randomUUID();queueDocument(doc);}render();});
  window.addEventListener('storage',event=>{if(event.key===STORE&&event.newValue!==previous){storageError='其他页面已更新任务关联，请刷新此页再提交或接收。';render();}});
  window.addEventListener('pagehide',()=>{closed=true;if(archiveBatch?.phase==='running')archiveBatch.cancelled=true;clearTimeout(timer);});
- window.CoconutBackgroundSummary={render,submit,refresh};render();
+ window.CoconutBackgroundSummary={render,submit,refresh,modelSupported};render();
  if(entries.length)void refresh();
 })();

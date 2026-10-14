@@ -1,4 +1,5 @@
 /** Local, single-writer task ledger. This module never retries a model request. */
+import {normalizeModel} from './providers.mjs';
 import * as fs from 'node:fs/promises';
 import path from 'node:path';
 import {createHash,randomUUID} from 'node:crypto';
@@ -63,8 +64,9 @@ export async function createTaskStore({directory,providers,readerDirectory=path.
   if(typeof value.idempotencyKey!=='string'||! /^[a-zA-Z0-9_-]{1,128}$/.test(value.idempotencyKey))throw fail('提交幂等键无效');
   if(!value.document||typeof value.document.key!=='string'||!value.document.key||value.document.key.length>1000||typeof value.document.revision!=='string'||!value.document.revision||value.document.revision.length>200)throw fail('文稿标识或 revision 无效');
   if(!['codex','claude'].includes(value.provider))throw fail('请选择支持的本地 AI 工具');
+  let model;try{model=normalizeModel(value.model);}catch(error){throw fail(error.message);}
   const plan=Summary.plan({segments:value.segments});
-  const input={kind:'summary',document:{key:value.document.key,revision:value.document.revision},provider:value.provider,snapshot:plan.source};
+  const input={kind:'summary',document:{key:value.document.key,revision:value.document.revision},provider:value.provider,snapshot:plan.source,...(model?{model}:{})};
   return {input,plan,inputDigest:hash(input),idempotencyKey:value.idempotencyKey};
  }
  function publicTask(task,{result=true}={}){
@@ -81,8 +83,8 @@ export async function createTaskStore({directory,providers,readerDirectory=path.
   const data=JSON.stringify({...ledgerFields,version:2,tasks:[...next.values()]});
   let budget=Buffer.byteLength(data);
   for(const task of next.values())if(ACTIVE.has(task.status)){
-   const {taskId,attemptId,idempotencyKey,inputDigest,kind,document,provider,snapshot}=task;
-   const fixed=JSON.stringify({taskId,attemptId,idempotencyKey,inputDigest,kind,document,provider,snapshot});
+   const {taskId,attemptId,idempotencyKey,inputDigest,kind,document,provider,snapshot,model}=task;
+   const fixed=JSON.stringify({taskId,attemptId,idempotencyKey,inputDigest,kind,document,provider,snapshot,model});
    budget+=Math.max(0,Buffer.byteLength(fixed)+TERMINAL_RESERVE_BYTES-Buffer.byteLength(JSON.stringify(task)));
   }
   const archivedCount=[...next.values()].filter(archived).length;
@@ -123,6 +125,7 @@ export async function createTaskStore({directory,providers,readerDirectory=path.
      delete task.result;changed=true;
     }
     if(task.status==='succeeded'){
+     if((task.result?.requested_model||'')!==(task.model||''))throw new Error('Invalid result model');
      const result=task.result,ids=new Set(task.snapshot.map(cue=>cue.id));
      if(!result||result.purpose!=='summary'||typeof result.answer!=='string'||!result.answer.trim()||result.answer.length>8000||!Array.isArray(result.citations)||!result.citations.length||result.citations.some(id=>!ids.has(id)))throw new Error('Invalid task result');
     }else if(task.result)throw new Error('Unexpected result');
@@ -133,17 +136,17 @@ export async function createTaskStore({directory,providers,readerDirectory=path.
   finally{await handle?.close();}
  }
  async function run(task,controller){
-  const plan=Summary.plan({segments:task.snapshot}),job=Summary.create(plan,task.provider);
+  const plan=Summary.plan({segments:task.snapshot}),job=Summary.create(plan,task.provider,task.model);
   try{
    while(!closed&&!broken&&!controller.signal.aborted){
-    const data=Summary.request(plan,job);
+    const data={...Summary.request(plan,job),...(task.model?{model:task.model}:{})};
     const response=await providers.ask(data,{signal:controller.signal});
     if(closed||broken||controller.signal.aborted)break;
     const result=Summary.accept(plan,job,response);
     const continued=await serial(async()=>{
      if(closed||broken||tasks.get(task.taskId)?.status!=='running')return false;
      const update={progress:{completed:result?plan.requests:job.results.length,total:plan.requests}};
-     if(result){const {input_snapshot,...small}=result;update.status='succeeded';update.result=small;}
+     if(result){const {input_snapshot,...small}=result;update.status='succeeded';update.result={...small,...(task.model?{requested_model:task.model}:{})};}
      await change(task.taskId,update);return !result;
     });
     if(!continued)break;
@@ -177,7 +180,7 @@ export async function createTaskStore({directory,providers,readerDirectory=path.
  }
  try{await recover();}catch(error){await release();throw error;}
  return Object.freeze({
-  describe(){return {protocolVersion:1,executor:{type:'local-node',online:!closed&&!broken},supportedTaskKinds:['summary'],enabled:!closed&&!broken,execution:{concurrency:1,disconnect:'continue',restart:'interrupt_without_retry',cancel:'request_then_settle'},providers:{codex:{supported:true,availability:'not_checked'},claude:{supported:true,availability:'not_checked'}},archive:{supported:true,identityPrecondition:true,restore:'original_identity_without_execution',automaticDeletion:false},limits:{tasks:MAX_TASKS,archivedTasks:MAX_ARCHIVED_TASKS,archivePage:50,pending:MAX_PENDING,bodyBytes:TASK_BODY_BYTES,ledgerBytes:maxLedgerBytes},remoteSubmission:false};},
+  describe(){return {protocolVersion:1,executor:{type:'local-node',online:!closed&&!broken},supportedTaskKinds:['summary'],enabled:!closed&&!broken,execution:{concurrency:1,disconnect:'continue',restart:'interrupt_without_retry',cancel:'request_then_settle'},providers:{codex:{supported:true,availability:'not_checked',model_selection:{supported:true}},claude:{supported:true,availability:'not_checked',model_selection:{supported:true}}},archive:{supported:true,identityPrecondition:true,restore:'original_identity_without_execution',automaticDeletion:false},limits:{tasks:MAX_TASKS,archivedTasks:MAX_ARCHIVED_TASKS,archivePage:50,pending:MAX_PENDING,bodyBytes:TASK_BODY_BYTES,ledgerBytes:maxLedgerBytes},remoteSubmission:false};},
   submit(value){
    let normalized;try{normalized=normalize(value);}catch(error){return Promise.reject(error);}
    return serial(async()=>{

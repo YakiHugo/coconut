@@ -14,7 +14,7 @@ const feed=`<rss xmlns:p="https://podcastindex.org/namespace/1.0"><channel><titl
 function providersFixture(){
  const calls=[];
  const providers=createProviders({find:async provider=>'/fixture/'+provider,run:async(_binary,args,options)=>{
-  if(args.includes('--help'))return {code:0,stdout:'--ephemeral --ignore-user-config --ignore-rules --output-schema --sandbox'};
+  if(args.includes('--help'))return {code:0,stdout:'--ephemeral --ignore-user-config --ignore-rules --output-schema --sandbox --model'};
   if(args[0]==='features')return {code:0,stdout:CODEX_DISABLED.join('\n')};
   if(args[0]==='login')return {code:0,stdout:'Logged in using ChatGPT'};
   if(args.includes('auth'))return {code:0,stdout:JSON.stringify({loggedIn:false})};
@@ -48,16 +48,16 @@ test('public source → timed document → consented translation and cited summa
  assert.deepEqual(sourceCalls,[feedUrl,feedUrl,captionUrl]);assert.deepEqual(calls,[]);
  doc.notes[doc.segments[1].id]='Private reading note must not be model context.';
  const plan=Coconut.subscriptionPlan(doc,[doc.segments[0].id],'en','zh','chatgpt_subscription_translation'),batch=plan.windows[0];
- const payload={source:'en',target:'zh',provider:'codex',segments:batch.segments,context:batch.context,glossary:batch.glossary,memory:batch.memory};
+ const payload={source:'en',target:'zh',provider:'codex',model:'authored-journey-model',segments:batch.segments,context:batch.context,glossary:batch.glossary,memory:batch.memory};
  assert.equal((await post('/api/translate-subscription',payload)).status,400);assert.deepEqual(calls,[]);
  const translated=await post('/api/translate-subscription',{...payload,consent:true});assert.equal(translated.status,200);
- const {translations}=await translated.json();assert.equal(translations.length,1);assert.equal(translations[0].source_text,doc.segments[0].text);
+ const {translations}=await translated.json();assert.equal(translations.length,1);assert.equal(translations[0].requested_model,'authored-journey-model');assert.equal(translations[0].source_text,doc.segments[0].text);
  assert.deepEqual(calls[0].cues.map(c=>c.id),[doc.segments[0].id]);assert.deepEqual(calls[0].target_ids,[doc.segments[0].id]);
  const contextId=randomUUID();doc.translation_contexts={[contextId]:batch.snapshot};doc.segments[0].translations.zh={...translations[0],context_id:contextId,document_language:doc.language,source_language:'en',target_language:'zh',glossary_snapshot:batch.glossary};doc.translation_view='zh';
- const summaryPlan=Summary.plan(doc),job=Summary.create(summaryPlan,'codex'),request=Summary.request(summaryPlan,job);
+ const summaryPlan=Summary.plan(doc),job=Summary.create(summaryPlan,'codex','authored-summary-model'),request=Summary.request(summaryPlan,job);
  assert.equal((await post('/api/ask',{...request,consent:false})).status,400);assert.equal(calls.length,1);
  const summaryResponse=await post('/api/ask',request);assert.equal(summaryResponse.status,200);
- const summary=Summary.accept(summaryPlan,job,await summaryResponse.json());doc.ai_answers=[summary];
+ const summary=Summary.accept(summaryPlan,job,await summaryResponse.json());doc.ai_answers=[summary];assert.equal(summary.requested_model,'authored-summary-model');
  assert.equal(calls.length,2);assert.deepEqual(calls[1].transcript.map(c=>c.id),doc.segments.map(c=>c.id));assert.equal(JSON.stringify(calls).includes('Private reading note'),false);
  const restored=Coconut.parse(JSON.stringify(doc),'recovery.json');assert.equal(restored.language,'en-us');assert.equal(restored.notes[doc.segments[1].id],doc.notes[doc.segments[1].id]);assert.equal(Coconut.summaryFreshness(restored.ai_answers[0],restored),'current');assert.equal(Coconut.translationCurrent(restored.segments[0],restored,restored.segments[0].translations.zh),true);
  assert.match(Coconut.summaryMarkdown(restored),/Authored, injected summary/);assert.equal(Coconut.subtitleExport(restored,'vtt',true).translated,1);

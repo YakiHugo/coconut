@@ -9,9 +9,9 @@
 <link rel="icon" type="image/png" href="coconut-mark.png">
 <script src="appearance.js?v=86ea922669"></script>
 <link rel="stylesheet" href="style.css?v=86213e340a">
-<script src="summary.js?v=580ffdad1e" defer></script>
-<script src="task-client.js?v=c216432696" defer></script>
-<script src="core.js?v=01a7ffb90f" defer>
+<script src="summary.js?v=20da7780c3" defer></script>
+<script src="task-client.js?v=1f5e2c42de" defer></script>
+<script src="core.js?v=f8fa795a65" defer>
 </script>
 <script src="passages.js?v=02036c2d14" defer></script>
 <script src="quotation.js?v=25d6c26853" defer></script>
@@ -21,8 +21,8 @@
 <script src="storage-provider.js?v=369d522f14" defer></script>
 <script src="app.js?v=5b47bd7fa5" type="text/coconut-pending" data-reader-script>
 </script>
-<script src="language.js?v=b346332736" type="text/coconut-pending" data-reader-script></script>
-<script src="background-summary.js?v=9e2da3b02d" type="text/coconut-pending" data-reader-script></script>
+<script src="language.js?v=07dbbeaa02" type="text/coconut-pending" data-reader-script></script>
+<script src="background-summary.js?v=bf0d34fa70" type="text/coconut-pending" data-reader-script></script>
 <script src="translation-review.js?v=e8289ebd90" type="text/coconut-pending" data-reader-script></script>
 <script src="podcasts.js?v=d3db57978f" type="text/coconut-pending" data-reader-script></script>
 <script src="jobs.js?v=221718acc6" type="text/coconut-pending" data-reader-script>
@@ -297,6 +297,7 @@ cd coconut
 <p id="language-prerequisite" class="hint">先启动本地 Coconut，再检查已登录的 Codex 或 Claude Code。</p><button id="language-setup" type="button">查看连接步骤</button>
 <div id="ai-request-home"><section id="ai-request-panel" aria-label="AI 阅读请求">
 <div class="ai-request-choices"><label class="ai-task-control">想做什么<select id="ai-task"><option value="question">向原文提问</option><option value="translation">翻译原文</option><option value="summary">生成整篇摘要</option></select></label><label>使用订阅<select id="ai-provider"><option value="codex">ChatGPT / Codex</option><option value="claude">Claude</option></select></label></div>
+<label>模型（可选）<input id="ai-model" type="text" maxlength="120" pattern="[A-Za-z0-9][A-Za-z0-9._-]{0,119}" autocomplete="off" placeholder="留空使用 CLI 默认模型" aria-describedby="ai-model-help"></label><p id="ai-model-help" class="hint">模型名称由所选 CLI 解释；连接检查不证明模型可用或账号已授权。</p>
 <label id="summary-execution-control" hidden>执行方式<select id="summary-execution"><option value="foreground">前台分批（收起后停止后续批次）</option><option value="background">本机后台（收起或离页后继续）</option></select></label><p id="summary-background-status" class="hint" role="status" hidden></p>
 <div class="ai-connection"><p id="ai-status" class="hint">点击检查连接，确认本机已登录的工具。</p><button id="check-ai" type="button" disabled>检查连接</button></div>
 <div class="language-controls"><label class="ai-translation-only">原文语言<select id="translation-source"><option value="">请选择</option></select></label><label class="ai-answer-language"><span id="translation-target-label">回答语言</span><select id="translation-target"></select></label></div>
@@ -304,12 +305,12 @@ cd coconut
 <div class="ai-request-plan"><p id="summary-plan" role="status" hidden></p><p id="subscription-translation-scope" role="status" hidden></p><p id="question-scope" role="status"></p></div>
 <p id="summary-job-state" class="hint" role="status" hidden></p><button id="restart-summary" type="button" hidden>放弃分批进度，按当前原文重做</button>
 <p id="ai-request-readiness" class="hint" role="status" hidden></p><button id="ai-select-excerpt" type="button" hidden>改为筛选原文后提问</button>
-<details id="ai-send-details" class="ai-send-details"><summary>发送详情</summary><p id="ai-send-description" class="hint"></p><p class="hint">使用本机已登录的官方工具。额度耗尽会停止，不购买额度、不切换 API；具体 token 和剩余额度未知。</p></details>
+<details id="ai-send-details" class="ai-send-details"><summary>发送详情</summary><p id="ai-send-description" class="hint"></p><p class="hint">使用本机已登录的官方工具。Coconut 不主动购买额度或切换 API，但无法核验提供商计费；请求可能消耗已启用的额外付费额度，尤其是指定模型时。具体 token 和剩余额度未知。</p></details>
 <details id="translation-options" class="ai-translation-only translation-options"><summary>术语与翻译设置</summary>
 <label for="translation-glossary">本篇术语表</label><textarea id="translation-glossary" rows="3" placeholder="每行：原词 = 统一译法，例如 Coconut = Coconut"></textarea><button id="save-translation-glossary" type="button">保存术语表</button><button id="cancel-translation-glossary" type="button">取消术语表修改</button><p class="hint">相关术语会随翻译发送。更改术语表后，依赖它的译文需要重新生成。</p><p id="translation-quality" class="hint"></p>
 <details id="offline-translation-options"><summary>离线粗译</summary><p class="hint">逐段在本机翻译，适合先看大意；上下文与术语请对照原文。</p><label><input id="download-model" type="checkbox">允许首次下载离线模型（约 1 GB 磁盘）</label><button id="translate-document" disabled>离线粗译全文 / 继续未完成翻译</button></details>
 </details>
-<label class="ai-consent"><input id="ai-consent" type="checkbox"><span id="ai-consent-copy">同意将上述原文发送给所选提供商，并使用我的订阅额度。</span></label>
+<label class="ai-consent"><input id="ai-consent" type="checkbox"><span id="ai-consent-copy">同意将上述原文发送给所选提供商，并使用我的订阅额度；请求可能消耗已启用的额外付费额度，Coconut 无法核验提供商计费。</span></label>
 <div class="ai-submit-actions"><button id="subscription-translate" class="primary" disabled hidden>翻译原文</button><button id="ask-ai" class="primary" disabled>发送问题</button></div>
 <div class="ai-run-controls"><button id="stop-question" type="button" hidden>取消接收本次回答</button><button id="stop-subscription-translation" hidden>停止后续翻译</button><button id="stop-summary" type="button" hidden>停止后续摘要</button><button id="stop-translation" hidden>停止后续离线批次</button></div>
 <p id="ai-progress" role="status"></p><p id="language-status" role="status" class="hint" hidden>连接本地服务后可翻译；现有译文可直接阅读与备份。</p>

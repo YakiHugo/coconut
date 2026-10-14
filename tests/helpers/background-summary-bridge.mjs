@@ -23,7 +23,7 @@ export async function backgroundSummaryBridge(){
   find:async name=>{assert.ok(['codex','claude'].includes(name));return name==='codex'?'/authored-fake/codex':null;},
   run:async(binary,args,options)=>{
    assert.equal(binary,'/authored-fake/codex');
-   if(args.includes('--help'))return {code:0,stdout:'--ephemeral --ignore-user-config --ignore-rules --output-schema --sandbox',stderr:''};
+   if(args.includes('--help'))return {code:0,stdout:'--ephemeral --ignore-user-config --ignore-rules --output-schema --sandbox --model',stderr:''};
    if(args[0]==='features')return {code:0,stdout:CODEX_DISABLED.join('\n'),stderr:''};
    if(args[0]==='login')return {code:0,stdout:'Logged in using ChatGPT',stderr:''};
    assert.equal(args[0],'exec');assert.ok(args.includes('--json'));

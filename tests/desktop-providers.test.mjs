@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
-import { CODEX_DISABLED, createProviders, safeEnvironment, runCommand } from '../desktop/providers.mjs';
+import { CODEX_DISABLED, CLAUDE_REQUIRED_FLAGS, normalizeModel, createProviders, safeEnvironment, runCommand } from '../desktop/providers.mjs';
 import { createTranslator, prepareTranslation, qualityWarnings, semanticUnits, termPresent } from '../desktop/translation.mjs';
 
 const question = {consent:true,provider:'codex',question:'What happened?',language:'zh',segments:[{id:'a',text:'Quoted source'}]};
@@ -10,12 +10,12 @@ function fixture(output = {answer:'Answer',citations:['a']}, options = {}) {
   const calls = [];
   const run = async (binary,args,settings) => {
     calls.push({binary,args,settings});
-    if (args.includes('--help')) return {code:0,stdout:'--ephemeral --ignore-user-config --ignore-rules --output-schema --sandbox',stderr:''};
+    if (args.includes('--help')) return {code:0,stdout:binary.endsWith('/claude') ? CLAUDE_REQUIRED_FLAGS.join(' ') : '--ephemeral --ignore-user-config --ignore-rules --output-schema --sandbox --model',stderr:''};
     if (args[0] === 'features') return {code:0,stdout:CODEX_DISABLED.join('\n'),stderr:''};
     if (args[0] === 'login') return {code:0,stdout:'',stderr:options.auth || 'Logged in using ChatGPT'};
     if (args.includes('auth')) return {code:0,stdout:JSON.stringify({loggedIn:true,authMethod:options.auth || 'claude.ai'})};
     if (options.invoke) return options.invoke(binary,args,settings);
-    return {code:0,stdout:args[0] === 'exec' ? response(output) : JSON.stringify({structured_output:output})};
+    return {code:0,stdout:args[0] === 'exec' ? response(output) : JSON.stringify({type:"result",subtype:"success",is_error:false,structured_output:output})};
   };
   return {calls,providers:createProviders({run,find:async name=>'/trusted/'+name,environment:{HOME:'/safe/home',PATH:'/bin',OPENAI_API_KEY:'do-not-forward',NODE_OPTIONS:'do-not-forward',CODEX_HOME:'do-not-forward'}})};
 }
@@ -127,4 +127,71 @@ test('portable Python/Node translation fixtures retain the same selected context
     const result=await createTranslator(providers)({...entry.request,consent:true});
     assert.deepEqual(result.map(item=>item.quality_warnings),entry.expected_warnings,entry.name);
   }
+});
+
+test('explicit models reach both CLIs and response provenance without contaminating transcript input',async()=>{
+  for(const provider of ['codex','claude']){
+    const {providers,calls}=fixture();
+    const result=await providers.ask({...question,provider,model:'authored-test-model'});
+    const request=calls.at(-1);
+    assert.equal(request.args[request.args.indexOf('--model')+1],'authored-test-model');
+    assert.equal(request.args.filter(arg=>arg==='--model').length,1);
+    assert.equal(result.requested_model,'authored-test-model');
+    assert.equal(request.settings.input.includes('authored-test-model'),false);
+    assert.equal(request.args.includes('--fallback-model'),false);
+    assert.equal((await providers.status(provider)).model_selection.availability,'not-checked');
+  }
+});
+test('default model omits override and never claims to know which model ran',async()=>{
+  for(const provider of ['codex','claude'])for(const model of [undefined,null,'']){
+    const {providers,calls}=fixture();const answer=await providers.ask({...question,provider,model});
+    assert.equal(calls.at(-1).args.includes('--model'),false);
+    assert.equal(Object.hasOwn(answer,'requested_model'),false);
+  }
+});
+test('invalid model cannot trigger discovery, inference or implicit fallback',async()=>{
+  for(const model of [' model','model ','--help','x\n--tools','../model','https://host/model','a/b','x;echo nope','x'.repeat(121),{},[],true,23]){
+    assert.throws(()=>normalizeModel(model),/模型名称/);
+    const {providers,calls}=fixture();await assert.rejects(providers.ask({...question,model}),/模型名称/);assert.equal(calls.length,0);
+    await assert.rejects(createTranslator(providers)({consent:true,source:'en',target:'zh',segments:question.segments,model}),/模型名称/);assert.equal(calls.length,0);
+  }
+});
+test('model choice is carried through translation results for both providers',async()=>{
+  for(const provider of ['codex','claude']){
+    const {providers,calls}=fixture({translations:[{id:'a',text:'原文译文'}]});
+    const result=await createTranslator(providers)({consent:true,source:'en',target:'zh',segments:question.segments,provider,model:'authored-model'});
+    assert.equal(result[0].requested_model,'authored-model');
+    assert.equal(calls.at(-1).args[calls.at(-1).args.indexOf('--model')+1],'authored-model');
+  }
+});
+test('unsupported Claude contract fails at read-only preflight before auth or inference',async()=>{
+  for(const missing of CLAUDE_REQUIRED_FLAGS){
+    const calls=[];const providers=createProviders({find:async()=>'/cli/claude',run:async(binary,args)=>{calls.push(args);return {code:0,stdout:CLAUDE_REQUIRED_FLAGS.filter(flag=>flag!==missing).join(' ')};}});
+    assert.equal((await providers.status('claude')).ready,false);
+    assert.equal(calls.length,1);assert.ok(calls[0].includes('--help'));assert.ok(!calls[0].includes('--print'));
+  }
+});
+test('Claude rejects incomplete, failed, interrupted and non-result envelopes even with valid answer',async()=>{
+  const structured_output={answer:'Must not save',citations:['a']};
+  for(const envelope of [{structured_output},{type:'result',subtype:'error_max_turns',is_error:false,structured_output},
+    {type:'result',subtype:'success',is_error:true,structured_output},
+    {type:'assistant',subtype:'success',is_error:false,structured_output},
+    {type:'result',subtype:'success',is_error:false,terminal_reason:'aborted_streaming',structured_output}]){
+    const {providers,calls}=fixture(undefined,{invoke:async()=>({code:0,stdout:JSON.stringify(envelope)})});
+    await assert.rejects(providers.ask({...question,provider:'claude',model:'authored-model'}),/未保存/);
+    assert.equal(calls.filter(call=>call.args.includes('--print')).length,1);
+  }
+});
+test('selected unavailable model fails once without changing models or providers',async()=>{
+  for(const provider of ['codex','claude']){
+    const {providers,calls}=fixture(undefined,{invoke:async()=>({code:1,stdout:'',stderr:'model unavailable private account details'})});
+    await assert.rejects(providers.ask({...question,provider,model:'unavailable-model'}),error=>!error.message.includes('private'));
+    assert.equal(calls.filter(call=>call.args.includes('--print')||call.args.includes('--json')).length,1);
+    assert.ok(calls.every(call=>call.binary==='/trusted/'+provider));
+  }
+});
+test('Claude invocation requests refusal instead of model switching and clears fallback chain',async()=>{
+  const {providers,calls}=fixture();await providers.ask({...question,provider:'claude',model:'authored-model'});
+  for(const call of calls){const index=call.args.indexOf('--settings');assert.notEqual(index,-1);
+    assert.deepEqual(JSON.parse(call.args[index+1]),{disableAllHooks:true,switchModelsOnFlag:false,fallbackModel:[]});}
 });

@@ -8,7 +8,7 @@ import {Window} from 'happy-dom';
 import {installSavePipeline,settle} from './helpers/save-pipeline.mjs';
 const root=new URL('../',import.meta.url),journalKey='coconut-background-summary-v1';
 const fixture=(title='Background source')=>({title,language:'en',segments:[{id:'one',start:0,end:3,text:'Authored first sentence.'},{id:'two',start:3,end:6,text:'Authored second sentence.'}]});
-const descriptor={protocolVersion:1,executor:{type:'local-node',online:true},enabled:true,supportedTaskKinds:['summary'],remoteSubmission:false,archive:{supported:true,identityPrecondition:true},execution:{disconnect:'continue',restart:'interrupt_without_retry',cancel:'request_then_settle'},providers:{codex:{supported:true},claude:{supported:true}}};
+const descriptor={protocolVersion:1,executor:{type:'local-node',online:true},enabled:true,supportedTaskKinds:['summary'],remoteSubmission:false,archive:{supported:true,identityPrecondition:true},execution:{disconnect:'continue',restart:'interrupt_without_retry',cancel:'request_then_settle'},providers:{codex:{supported:true,model_selection:{supported:true}},claude:{supported:true,model_selection:{supported:true}}}};
 function backend(){
  const tasks=new Map(),keys=new Map(),calls=[];let next=1;
  return {tasks,keys,calls,descriptor:structuredClone(descriptor),lost:false,hold:null,
@@ -19,7 +19,7 @@ function backend(){
    if(url==='api/v1/executor')return ok(this.descriptor);
    if(url==='api/v1/tasks'&&body){
     const id=keys.get(body.idempotencyKey)||'task-'+next++;keys.set(body.idempotencyKey,id);
-    if(!tasks.has(id))tasks.set(id,{taskId:id,attemptId:'attempt-'+id,inputDigest:'digest-'+id,idempotencyKey:body.idempotencyKey,kind:'summary',document:body.document,provider:body.provider,status:'running',progress:{completed:0,total:1},input:body.segments});
+    if(!tasks.has(id))tasks.set(id,{taskId:id,attemptId:'attempt-'+id,inputDigest:'digest-'+id,idempotencyKey:body.idempotencyKey,kind:'summary',document:body.document,provider:body.provider,...(body.model?{model:body.model}:{}),status:'running',progress:{completed:0,total:1},input:body.segments});
     if(this.hold)await this.hold;
     if(this.lost){this.lost=false;throw new Error('Lost receipt');}return ok({protocolVersion:1,task:tasks.get(id)});
    }
@@ -33,7 +33,7 @@ function backend(){
    if(match){const task=tasks.get(match[1]);if(!task)return {ok:false,status:404,json:async()=>({code:'not_found',error:'Authored missing task'})};if(match[2])task.status='cancelled';return ok({protocolVersion:1,task});}
    throw new Error('Unexpected endpoint '+url);
   },
-  succeed(id=[...tasks.keys()][0]){const task=tasks.get(id);task.status='succeeded';task.result={question:'Summary',purpose:'summary',answer:'Fake background summary.',provider:task.provider,citations:['one'],input_snapshot:{version:1,segments:task.input},summary_process:{version:1,batches:1,requests:1}};}
+  succeed(id=[...tasks.keys()][0]){const task=tasks.get(id);task.status='succeeded';task.result={question:'Summary',...(task.model?{requested_model:task.model}:{}),purpose:'summary',answer:'Fake background summary.',provider:task.provider,citations:['one'],input_snapshot:{version:1,segments:task.input},summary_process:{version:1,batches:1,requests:1}};}
  };
 }
 function setup(api=backend(),storage={},options={}){
@@ -695,4 +695,35 @@ for(const order of ['ascending','descending'])test('native-click restore waits f
   }
   assert.equal(bridge.invocations.length,2);assert.equal(bridge.posts.filter(url=>url==='/api/v1/tasks').length,2);assert.equal(bridge.posts.filter(url=>url.endsWith('/restore')).length,2);
  }finally{release();await h?.w.happyDOM.close();await bridge.close();}
+});
+
+
+test('explicit background model survives lost receipt, reload and acceptance',async()=>{
+ const api=backend();let h=setup(api),storage;
+ try{await h.import();await h.choose();h.$('ai-model').value='background-test';h.$('ai-model').oninput();api.lost=true;await h.submit();
+  assert.equal(posted(api)[0].body.model,'background-test');storage=h.snapshot();
+ }finally{await h.w.happyDOM.close();}
+ h=setup(api,storage);try{h.$('ai-model').value='new-selection';h.$('ai-model').oninput();api.succeed();await h.refresh();
+  assert.equal(posted(api).length,1);assert.match(h.$('background-task-list').textContent,/background-test/);
+  await h.$('background-task-list').querySelector('[data-action="accept"]').onclick();assert.equal(h.doc().ai_answers[0].requested_model,'background-test');
+ }finally{await h.w.happyDOM.close();}
+});
+
+test('resending an uncertain background intent preserves original model and idempotency key after selection changes',async()=>{
+ const h=setup();try{
+  await h.import();await h.choose();h.$('ai-model').value='original-model';h.$('ai-model').oninput();h.api.lost=true;await h.submit();
+  const original=posted(h.api)[0].body;h.api.tasks.clear();h.api.keys.clear();
+  h.$('ai-model').value='new-model';h.$('ai-model').oninput();await h.refresh();
+  const retry=h.$('background-task-list').querySelector('[data-action="resubmit"]');assert.ok(retry);await retry.onclick();
+  assert.equal(posted(h.api).length,2);assert.deepEqual(posted(h.api)[1].body,original);assert.equal(posted(h.api)[1].body.model,'original-model');
+ }finally{await h.w.happyDOM.close();}
+});
+
+test('old executor cannot silently ignore explicit model but still accepts default-model tasks',async()=>{
+ const api=backend();delete api.descriptor.providers.codex.model_selection;const h=setup(api);try{
+  await h.import();await h.choose();h.$('ai-model').value='explicit-model';h.$('ai-model').oninput();
+  assert.equal(h.$('ask-ai').disabled,true);assert.match(h.$('ai-consent-copy').textContent,/无法核验提供商计费.*额外付费额度/);
+  await h.submit();assert.equal(posted(api).length,0);
+  h.$('ai-model').value='';h.$('ai-model').oninput();await h.submit();assert.equal(posted(api).length,1);assert.equal('model' in posted(api)[0].body,false);
+ }finally{await h.w.happyDOM.close();}
 });

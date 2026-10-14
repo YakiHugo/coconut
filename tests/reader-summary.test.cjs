@@ -59,3 +59,12 @@ test('bounded plans reject oversized work and malformed or citation-free results
  for(const value of [{answer:'No citations',citations:[]},{answer:'x'.repeat(1201),citations:['source-0']},{answer:'Not this chunk',citations:['source-800']}])assert.throws(()=>S.accept(p,job,value),/未保存/);
  assert.equal(job.results.length,0);assert.match(S.notice(p,job),/共 4 次/);assert.match(S.notice(p,job),/具体 token 和剩余额度未知/);
 });
+
+test('model checkpoint identity survives cleanup and every stage while legacy jobs stay unchanged',()=>{
+ const p=S.plan(document()),job=S.create(p,'codex','model-test');
+ assert.equal(S.clean(job).model,'model-test');
+ while(job.results.length<p.chunks.length){const request=S.request(p,job);assert.equal(request.model,'model-test');S.accept(p,job,note(request));}
+ const request=S.request(p,job);assert.equal(request.model,'model-test');const answer=S.accept(p,job,note(request));assert.equal(answer.requested_model,'model-test');
+ assert.equal('model' in S.create(p,'codex'),false);assert.equal('model' in S.request(p,S.create(p,'codex')),false);
+ assert.equal(S.clean({...job,model:'--bad'}),null);
+});
