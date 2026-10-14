@@ -18,7 +18,7 @@ export async function until(predicate,message='Authored fixture condition',timeo
 }
 export async function backgroundSummaryBridge(){
  const directory=await fs.mkdtemp(path.join(os.tmpdir(),'coconut-background-authored-'));
- const invocations=[],posts=[];let server,origin;
+ const invocations=[],posts=[];let server,origin,taskDirectory='original';
  const providers=()=>createProviders({environment:{HOME:directory,PATH:'/usr/bin'},
   find:async name=>{assert.ok(['codex','claude'].includes(name));return name==='codex'?'/authored-fake/codex':null;},
   run:async(binary,args,options)=>{
@@ -39,7 +39,7 @@ export async function backgroundSummaryBridge(){
  });
  async function start(port=0){
   // Both find and run are injected above. No provider fallback can spawn a CLI.
-  server=await startBridge({port,taskDirectory:directory,providers:providers()});
+  server=await startBridge({port,taskDirectory:path.join(directory,taskDirectory),providers:providers()});
   server.on('request',req=>{if(req.method==='POST')posts.push(new URL(req.url,'http://localhost').pathname);});
   origin='http://127.0.0.1:'+server.address().port;
  }
@@ -55,6 +55,7 @@ export async function backgroundSummaryBridge(){
   async task(id){const response=await this.request('/api/v1/tasks/'+id);assert.equal(response.status,200);return response.task;},
   async waitTask(id,status){return until(async()=>{const task=await this.task(id);return task.status===status&&task;},'Task '+status);},
   async restart(){const port=server.address().port;await stop();await start(port);},
+  async switchTaskDirectory(name){assert.ok(['original','alternate'].includes(name));const port=server.address().port;await stop();taskDirectory=name;await start(port);},
   async close(){await stop();for(const invocation of invocations)invocation.release();await Promise.all(invocations.map(invocation=>invocation.settled));await fs.rm(directory,{recursive:true,force:true});},
  };
 }

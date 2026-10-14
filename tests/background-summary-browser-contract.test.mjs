@@ -36,3 +36,11 @@ test('browser harness preserves independently exportable completed source after 
  const listed=await h.tasks();assert.equal(listed[0].result,undefined);const receipt=Tasks.recoveryFor(await h.task(listed[0].taskId));
  assert.equal(receipt.task.taskId,task.taskId);assert.equal(receipt.result.answer,completed.result.answer);assert.deepEqual(receipt.result.input_snapshot,completed.result.input_snapshot);assert.equal(receipt.segments,undefined);assert.equal(receipt.documents,undefined);assert.equal(h.invocations.length,1);assert.deepEqual(h.posts,['/api/v1/tasks']);
 });
+test('browser harness switches independent task directories on the same origin without rerunning known intents',async t=>{
+ const h=await backgroundSummaryBridge();t.after(()=>h.close());const origin=h.origin,{task:first}=await h.request('/api/v1/tasks',payload('original-directory'));
+ await until(()=>h.invocations.length===1);h.invocations[0].release();await h.waitTask(first.taskId,'succeeded');
+ await h.switchTaskDirectory('alternate');assert.equal(h.origin,origin);assert.equal((await h.request('/api/v1/executor')).enabled,true);assert.deepEqual(await h.tasks(),[]);
+ const absent=await h.request('/api/v1/tasks/'+first.taskId);assert.equal(absent.status,404);assert.equal(absent.code,'not_found');assert.equal(h.invocations.length,1);
+ const {task:second}=await h.request('/api/v1/tasks',payload('alternate-directory'));await until(()=>h.invocations.length===2);h.invocations[1].release();await h.waitTask(second.taskId,'succeeded');assert.notEqual(second.taskId,first.taskId);
+ await h.switchTaskDirectory('original');assert.equal(h.origin,origin);assert.equal((await h.task(first.taskId)).status,'succeeded');assert.equal((await h.request('/api/v1/tasks/'+second.taskId)).status,404);assert.equal(h.invocations.length,2);assert.deepEqual(h.posts,['/api/v1/tasks','/api/v1/tasks']);
+});

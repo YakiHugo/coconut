@@ -335,3 +335,81 @@ test('large standalone snapshots have bounded visible citation previews and comp
  const task=api.tasks.get('task-1');task.result.input_snapshot.segments=Array.from({length:12},(_,i)=>({id:'large-'+i,text:'Full authored source '.repeat(100)}));task.result.citations=task.result.input_snapshot.segments.map(cue=>cue.id);
  const h=setup(api),files=[];try{await h.refresh();await h.$('background-task-list').querySelector('[data-action="view-result"]').onclick();const excerpts=h.$('background-task-list').querySelectorAll('.background-source');assert.equal(excerpts.length,8);assert.ok([...excerpts].every(node=>node.textContent.length<1300));assert.match(h.$('background-task-list').textContent,/预览已截短/);h.w.URL.createObjectURL=blob=>{files.push(blob);return 'blob:complete';};h.w.HTMLAnchorElement.prototype.click=function(){};await h.$('background-task-list').querySelector('[data-action="export-result"]').onclick();const saved=JSON.parse(await files[0].text());assert.deepEqual(saved.result.input_snapshot,task.result.input_snapshot);assert.deepEqual(saved.result.citations,task.result.citations);assert.equal(saved.result.answer,task.result.answer);assert.equal(posted(api).length,1);}finally{await h.w.happyDOM.close();}
 });
+
+function missingTaskResponse(){return {ok:false,status:404,json:async()=>({code:'not_found',error:'任务不存在'})};}
+test('one missing associated task preserves the healthy executor, other tasks and explicit new submissions',async()=>{
+ const api=backend(),request=api.fetch.bind(api);let missing=false;
+ api.fetch=(url,options)=>missing&&url==='api/v1/tasks/task-1'?missingTaskResponse():request(url,options);
+ const h=setup(api);try{
+  await h.import();await h.choose();await h.submit();const original=structuredClone(api.tasks.get('task-1')),payload=structuredClone(posted(api)[0].body),cancel=h.$('background-task-list').querySelector('[data-action="cancel"]');
+  api.tasks.delete('task-1');missing=true;
+  api.tasks.set('elsewhere-ready',{...structuredClone(original),taskId:'elsewhere-ready'});api.succeed('elsewhere-ready');
+  api.tasks.set('elsewhere-running',{...structuredClone(original),taskId:'elsewhere-running'});
+  await h.refresh();
+  assert.match(h.$('background-executor-status').textContent,/已连接/);assert.equal(h.$('ask-ai').disabled,false);
+  const old=h.$('background-task-list').querySelector(`[data-submission-key="${payload.idempotencyKey}"]`);
+  assert.match(old.textContent,/此执行器找不到此任务/);assert.match(old.textContent,/不会自动重提交/);assert.equal(old.querySelector('[data-action="resubmit"]'),null);assert.equal(old.querySelector('[data-action="cancel"]'),null);
+  await cancel.onclick();assert.equal(api.calls.filter(call=>call.url.endsWith('/cancel')).length,0,'stale cancel handler must not target an absent task');
+  const view=h.$('background-task-list').querySelector('[data-submission-key="external:elsewhere-ready"] [data-action="view-result"]');await view.onclick();
+  assert.equal(h.doc().ai_answers.length,0);assert.equal(h.$('background-task-list').querySelector('[data-action="accept"]'),null,'same source/key/revision never adopts a different taskId');
+  await h.$('background-task-list').querySelector('[data-submission-key="external:elsewhere-running"] [data-action="cancel"]').onclick();assert.equal(api.tasks.get('elsewhere-running').status,'cancelled');
+  h.$('ai-consent').checked=false;await h.$('ask-ai').onclick();assert.equal(posted(api).length,1);
+  await h.submit();assert.equal(posted(api).length,2);assert.notEqual(posted(api)[1].body.idempotencyKey,payload.idempotencyKey);
+  const saved=JSON.parse(h.w.localStorage.getItem(journalKey)).entries;assert.equal(saved[0].task.taskId,'task-1');assert.deepEqual(saved[0].payload,payload);assert.equal(saved[0].missing,true);assert.equal(saved[0].cancelRequested,undefined);assert.equal(saved.length,2);
+ }finally{await h.w.happyDOM.close();}
+});
+
+test('a cached success cannot be accepted after its executor reports not found, and returning restores its exact receipt',async()=>{
+ const api=backend(),request=api.fetch.bind(api);let missing=false;
+ api.fetch=(url,options)=>missing&&url==='api/v1/tasks/task-1'?missingTaskResponse():request(url,options);
+ const h=setup(api);try{
+  await h.import();await h.choose();await h.submit();api.succeed();await h.refresh();const original=structuredClone(api.tasks.get('task-1')),accept=h.$('background-task-list').querySelector('[data-action="accept"]');
+  api.tasks.clear();missing=true;await h.refresh();await accept.onclick();assert.equal(h.doc().ai_answers.length,0);assert.equal(h.$('background-task-list').querySelector('[data-action="accept"]'),null);
+  assert.match(h.$('library-background-task-status').textContent,/待确认 1/);assert.equal(posted(api).length,1);
+  api.tasks.set('task-1',original);missing=false;await h.refresh();assert.doesNotMatch(h.$('background-task-list').textContent,/此执行器找不到/);
+  const restored=h.$('background-task-list').querySelector('[data-action="accept"]');assert.equal(restored.disabled,false);await restored.onclick();await restored.onclick();assert.equal(h.doc().ai_answers.length,1);assert.equal(posted(api).length,1);
+  assert.equal(JSON.parse(h.w.localStorage.getItem(journalKey)).entries[0].missing,false);
+ }finally{await h.w.happyDOM.close();}
+});
+
+for(const failure of ['offline','500','unrecognized-404'])test('task '+failure+' remains an executor failure rather than a confirmed missing association',async()=>{
+ const api=backend(),request=api.fetch.bind(api);let fail=false;
+ api.fetch=async(url,options)=>{
+  if(fail&&url==='api/v1/tasks'&&!options?.body)return {ok:true,json:async()=>({protocolVersion:1,tasks:[]})};
+  if(fail&&url==='api/v1/tasks/task-1'){
+   if(failure==='offline')throw new Error('Network offline');
+   return {ok:false,status:failure==='500'?500:404,json:async()=>({error:'Service failure',...(failure==='500'?{code:'not_found'}:{})})};
+  }
+  return request(url,options);
+ };
+ const h=setup(api);try{await h.import();await h.choose();await h.submit();fail=true;await h.refresh();assert.match(h.$('background-executor-status').textContent,/暂时不可用/);assert.equal(h.$('ask-ai').disabled,true);assert.doesNotMatch(h.$('background-task-list').textContent,/此执行器找不到/);assert.notEqual(JSON.parse(h.w.localStorage.getItem(journalKey)).entries[0].missing,true);assert.equal(posted(api).length,1);}finally{await h.w.happyDOM.close();}
+});
+
+test('an older not-found lookup cannot overwrite a newer cancellation receipt',async()=>{
+ const api=backend(),request=api.fetch.bind(api);let missing=false,release,started;const ready=new Promise(r=>started=r),gate=new Promise(r=>release=r);
+ api.fetch=async(url,options)=>{
+  if(missing&&url==='api/v1/tasks'&&!options?.body)return {ok:true,json:async()=>({protocolVersion:1,tasks:[]})};
+  if(missing&&url==='api/v1/tasks/task-1'){started();await gate;return missingTaskResponse();}
+  return request(url,options);
+ };
+ const h=setup(api);try{await h.import();await h.choose();await h.submit();missing=true;const pending=h.refresh();await ready;await h.$('background-task-list').querySelector('[data-action="cancel"]').onclick();release();await pending;const saved=JSON.parse(h.w.localStorage.getItem(journalKey)).entries[0];assert.equal(saved.task.status,'cancelled');assert.equal(saved.missing,false);assert.doesNotMatch(h.$('background-task-list').textContent,/此执行器找不到/);assert.equal(posted(api).length,1);}finally{release();await h.w.happyDOM.close();}
+});
+
+test('real same-origin executor-directory switch isolates old 404 and restores the original result on return',async t=>{
+ const {startBridge}=await import('../desktop/server.mjs'),{startDevelopmentBridge}=await import('../desktop/dev.mjs'),os=await import('node:os'),path=await import('node:path');
+ const directory=await fs.promises.mkdtemp(path.join(os.tmpdir(),'coconut-executor-switch-'));let server,h,calls=0;
+ const providers={ask:async data=>{calls++;return {answer:'Authored fake-provider result.',citations:[data.segments[0].id]};},status:async()=>({ready:true})};
+ const close=async()=>{if(server){await new Promise(resolve=>server.shutdown(resolve));server=null;}};
+ t.after(async()=>{await h?.w.happyDOM.close();await close();await fs.promises.rm(directory,{recursive:true,force:true});});
+ server=await startBridge({port:0,taskDirectory:path.join(directory,'source-cli'),providers});const port=server.address().port,origin=`http://127.0.0.1:${port}`;
+ const api={fetch:(url,options={})=>fetch(origin+'/'+url,{...options,headers:{...options.headers,Origin:origin}})};
+ const complete=async id=>{let task;for(let i=0;i<100;i++){task=(await(await api.fetch('api/v1/tasks/'+id)).json()).task;if(task.status==='succeeded')return task;await new Promise(r=>setTimeout(r,5));}assert.equal(task?.status,'succeeded');};
+ h=setup(api);await h.import();await h.choose();await h.submit();const first=JSON.parse(h.w.localStorage.getItem(journalKey)).entries[0];await complete(first.task.taskId);await h.refresh();let storage=h.snapshot();await h.w.happyDOM.close();h=null;await close();
+ ({server}=await startDevelopmentBridge({port,taskDirectory:path.join(directory,'dev'),providers}));
+ const created=await(await api.fetch('api/v1/tasks',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({...first.payload,idempotencyKey:'independent-new-executor-intent'})})).json();await complete(created.task.taskId);
+ const absent=await api.fetch('api/v1/tasks/'+first.task.taskId);assert.equal(absent.status,404);assert.equal((await absent.json()).code,'not_found');
+ h=setup(api,storage);await h.refresh();await h.choose();assert.match(h.$('background-executor-status').textContent,/已连接/);assert.equal(h.$('ask-ai').disabled,false);assert.match(h.$('background-task-list').textContent,/此执行器找不到/);
+ await h.$('background-task-list').querySelector('[data-action="view-result"]').onclick();assert.match(h.$('background-task-list').textContent,/Authored fake-provider result/);assert.equal(h.$('background-task-list').querySelector('[data-action="accept"]'),null);assert.equal(h.doc().ai_answers.length,0);assert.equal(calls,2);
+ storage=h.snapshot();await h.w.happyDOM.close();h=null;await close();server=await startBridge({port,taskDirectory:path.join(directory,'source-cli'),providers});
+ h=setup(api,storage);await h.refresh();assert.doesNotMatch(h.$('background-task-list').textContent,/此执行器找不到/);const accept=h.$('background-task-list').querySelector('[data-action="accept"]');assert.equal(accept.disabled,false);await accept.onclick();await accept.onclick();assert.equal(h.doc().ai_answers.length,1);assert.deepEqual([...h.doc().background_summary_receipts],[first.task.taskId]);assert.equal(calls,2,'switching services never reruns either model intent');assert.equal(JSON.parse(h.w.localStorage.getItem(journalKey)).entries[0].task.taskId,first.task.taskId);
+});
