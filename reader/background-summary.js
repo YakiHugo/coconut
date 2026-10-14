@@ -1,13 +1,18 @@
 /* The UI owns durable user intent, never the executor's request lifetime. */
 (function(){
  'use strict';
- const STORE='coconut-background-summary-v1',MAX_ENTRIES=128;
+ const STORE='coconut-background-summary-v1',MAX_ENTRIES=128,MAX_ARCHIVED_ENTRIES=2048;
  const TaskAPI=window.CoconutTasks,client=typeof TaskAPI?.createClient==='function'?TaskAPI.createClient():null,copy=value=>JSON.parse(JSON.stringify(value));
  const live=new Set(['queued','running','cancel_requested']);
  const labels={queued:'排队中',running:'执行中',cancel_requested:'取消已请求，等待执行收尾',cancelled:'已取消',succeeded:'已完成，等待接收',failed:'失败',interrupted:'执行器中断，不会自动重跑'};
  let entries=[],external=[],previous=null,storageError='',capability=null,connection='尚未检查本机执行器；阅读不受影响。';
  let submitting=false,refreshing=null,timer=null,closed=false,consentSignature='',listSignature='';
- const reads=new Map(),accepting=new Set(),externalResults=new Map();
+ const reads=new Map(),accepting=new Set(),externalResults=new Map(),archiveBusy=new Set();
+ let archivePage=[],archiveAfter='',archiveLookup='',archiveLocal=false,archiveNext=null,archiveTotal=0,archiveLoading=false,archiveError='',archiveGeneration=0;
+ const isArchived=task=>typeof task?.archivedAt==='string';
+ const currentEntries=()=>entries.filter(entry=>!isArchived(entry.task));
+ const canArchive=task=>task&&(['succeeded','failed'].includes(task.status)||(task.status==='cancelled'&&task.cancellation?.executionSettled===true));
+ const archiveSupported=()=>supported()&&capability.archive?.supported===true;
  function beginRead(entry){const version=(reads.get(entry.key)||0)+1;reads.set(entry.key,version);return version;}
  function currentRead(entry,version){return (reads.get(entry.key)||0)===version;}
  function applyTask(entry,task,version){if(!currentRead(entry,version))return false;if(entry.task&&!live.has(entry.task.status)&&task.status!==entry.task.status)throw new Error('任务终态与已保存回执冲突，请刷新核查');entry.task=task;entry.missing=false;beginRead(entry);return true;}
@@ -16,12 +21,12 @@
   previous=localStorage.getItem(STORE);
   if(!client&&previous!==null)throw new Error('后台任务客户端未加载，无法核对关联；请保留原记录并刷新或修复完整安装');
   const saved=previous===null?{version:1,entries:[]}:JSON.parse(previous);
-  if(saved.version!==1||!Array.isArray(saved.entries)||saved.entries.length>MAX_ENTRIES||saved.entries.some(item=>!item||typeof item.key!=='string'||typeof item.lifetime!=='string'||typeof item.payload?.document?.revision!=='string'||item.payload?.idempotencyKey!==item.key||!Array.isArray(item.payload?.segments)))throw new Error('任务关联格式不可用');
+  if(![1,2].includes(saved.version)||!Array.isArray(saved.entries)||saved.entries.length>MAX_ENTRIES+MAX_ARCHIVED_ENTRIES||saved.entries.filter(entry=>!isArchived(entry?.task)).length>MAX_ENTRIES||saved.entries.filter(entry=>isArchived(entry?.task)).length>MAX_ARCHIVED_ENTRIES||saved.entries.some(item=>!item||typeof item.key!=='string'||typeof item.lifetime!=='string'||typeof item.payload?.document?.revision!=='string'||item.payload?.idempotencyKey!==item.key||!Array.isArray(item.payload?.segments)))throw new Error('任务关联格式不可用');
   const keys=new Set();
   for(const entry of saved.entries){
    if(keys.has(entry.key)||!uuid(entry.lifetime)||entry.payload.protocolVersion!==1||entry.payload.kind!=='summary'||entry.payload.consent!==true)throw new Error('任务身份无效');
    TaskAPI.submission({key:entry.payload.document.key,segments:entry.payload.segments},{revision:entry.payload.document.revision,provider:entry.payload.provider,idempotencyKey:entry.key,consent:true});
-   if(entry.task&&(!validTask(entry,entry.task)||!Object.hasOwn(labels,entry.task.status)))throw new Error('任务状态无效');keys.add(entry.key);
+   if(entry.task&&(!validTask(entry,entry.task)||!Object.hasOwn(labels,entry.task.status)||(Object.hasOwn(entry.task,'archivedAt')&&(saved.version!==2||!isArchived(entry.task)||!Number.isFinite(Date.parse(entry.task.archivedAt))||!canArchive(entry.task)))))throw new Error('任务状态无效');keys.add(entry.key);
   }
   entries=saved.entries;
  }catch(error){storageError='无法读取任务关联，未覆盖原记录。'+error.message;}
@@ -29,7 +34,8 @@
   if(storageError)throw new Error(storageError);
   try{
    if(localStorage.getItem(STORE)!==previous)throw new Error('其他页面已更新任务关联，请刷新此页后继续');
-   const next=JSON.stringify({version:1,entries:entries.map(entry=>({...entry,...(entry.task?{task:{...entry.task,result:undefined}}:{})}))});localStorage.setItem(STORE,next);
+   if(currentEntries().length>MAX_ENTRIES||entries.length-currentEntries().length>MAX_ARCHIVED_ENTRIES)throw new Error('任务关联数量超出本版上限；未覆盖原记录');
+   const next=JSON.stringify({version:2,entries:entries.map(entry=>({...entry,...(entry.task?{task:{...entry.task,result:undefined}}:{})}))});localStorage.setItem(STORE,next);
    if(localStorage.getItem(STORE)!==next)throw new Error('任务关联写入未确认');previous=next;
   }catch(error){storageError='任务关联未保存：'+error.message;throw new Error(storageError);}
  }
@@ -44,7 +50,7 @@
  function sourceMatches(entry,doc){return !!doc&&doc.segments.length===entry.payload.segments.length&&entry.payload.segments.every((cue,i)=>cue.id===doc.segments[i].id&&cue.text===doc.segments[i].text);}
  function missingTask(entry){return !!entry.task?.taskId&&entry.missing===true;}
  function canReceive(entry){
-  const doc=owner(entry);if(storageError||missingTask(entry)||entry.cancelRequested||entry.retired||!doc||!contentIngressAllowed(doc)||!sourceMatches(entry,doc))return false;
+  const doc=owner(entry);if(storageError||isArchived(entry.task)||missingTask(entry)||entry.cancelRequested||entry.retired||!doc||!contentIngressAllowed(doc)||!sourceMatches(entry,doc))return false;
   return TaskAPI.matchesResult(entry.task,doc,entry.payload.document.revision);
  }
  function receipt(entry){return canReceive(entry)?TaskAPI.resultFor(entry.task,owner(entry),entry.payload.document.revision):null;}
@@ -76,31 +82,88 @@
   return true;
  }
  async function loadExternal(task){
-  if(!client||!localOrigin()||task.status!=='succeeded'||externalResults.get(task.taskId)?.loading||!external.some(current=>sameTask(current,task)))return;
+  if(!client||!localOrigin()||task.status!=='succeeded'||externalResults.get(task.taskId)?.loading||![...external,...archivePage].some(current=>sameTask(current,task)))return;
   const state={loading:true,error:'',task:null,identity:task,open:false};externalResults.set(task.taskId,state);render();
   try{
    const response=await client.get(task.taskId);
-   if(externalResults.get(task.taskId)!==state||!external.some(current=>sameTask(current,task)))return;
+   if(externalResults.get(task.taskId)!==state||![...external,...archivePage].some(current=>sameTask(current,task)))return;
    if(response.protocolVersion!==1||!sameTask(response.task,task)||!TaskAPI.recoveryFor(response.task))throw new Error('任务身份、原文快照或结果引用不一致');
    state.task=response.task;state.open=true;
   }catch(error){if(externalResults.get(task.taskId)===state)state.error='无法读取独立结果：'+error.message+'。可重试查询，不会重跑模型。';}
   finally{state.loading=false;render();}
  }
+ function archiveActions(row,task,entry){
+  if(!task||entry&&missingTask(entry)||!archiveSupported())return;
+  const busy=archiveBusy.has(task.taskId);
+  if(isArchived(task)||canArchive(task))row.append(button(isArchived(task)?'恢复至当前任务列表':'归档任务（保留原文与结果）',isArchived(task)?'restore':'archive',entry,()=>moveArchive(task,entry,!isArchived(task)),busy||!!storageError));
+  if(isArchived(task))row.append(button('下载完整任务救援 JSON（含原文与身份）','export-archive',entry,()=>exportArchive(task,entry),busy));
+ }
+ async function loadArchive(after='',taskId='',local=false){
+  if(archiveLoading||!archiveSupported())return;
+  archiveLoading=true;archiveError='';const generation=archiveGeneration,versions=new Map(entries.map(entry=>[entry.key,reads.get(entry.key)||0]));renderTasks();
+  try{
+   let response;const retained=entries.filter(entry=>isArchived(entry.task)).sort((a,b)=>a.task.taskId.localeCompare(b.task.taskId));
+   if(taskId){const found=await client.get(taskId);if(found.protocolVersion!==1||!isArchived(found.task))throw new Error('此 taskId 未归档；请查看当前任务列表');const {result,...metadata}=found.task;response={protocolVersion:1,tasks:[metadata],total:1,nextCursor:null};}
+   else if(!local)response=await client.listArchived({after,limit:20});
+   if(local||(!taskId&&!after&&response?.total===0&&retained.length)){local=true;const remaining=retained.filter(entry=>!after||entry.task.taskId>after),page=remaining.slice(0,20);response={protocolVersion:1,tasks:page.map(entry=>{const {result,...metadata}=entry.task;return metadata;}),total:retained.length,nextCursor:remaining.length>20?page.at(-1).task.taskId:null};}
+   if(generation!==archiveGeneration)return;
+   if(response.protocolVersion!==1||!Array.isArray(response.tasks)||response.tasks.length>20||response.tasks.some(task=>!isArchived(task)||!canArchive(task)))throw new Error('归档列表协议不兼容');
+   archivePage=response.tasks;archiveAfter=after;archiveLookup=taskId;archiveLocal=local;archiveNext=response.nextCursor;archiveTotal=response.total;
+   for(const metadata of archivePage){
+    const entry=entries.find(entry=>entry.task?.taskId===metadata.taskId);if(!entry||!currentRead(entry,versions.get(entry.key)))continue;
+    const version=beginRead(entry);let response;
+    try{response=local||metadata.status==='succeeded'?await client.get(metadata.taskId):{protocolVersion:1,task:metadata};}
+    catch(error){if(!currentRead(entry,version))continue;if(error.status!==404||error.code!=='not_found')throw error;entry.missing=true;beginRead(entry);continue;}
+    if(!currentRead(entry,version))continue;
+    if(response.protocolVersion!==1||!validTask(entry,response.task))throw new Error('归档回执与原提交不一致');
+    applyTask(entry,response.task,version);
+   }
+   safeSave();
+  }catch(error){archiveError='归档读取失败：'+error.message+'。可重试查询，不会重新执行。';}
+  finally{archiveLoading=false;renderTasks();if(generation!==archiveGeneration&&$('background-archive').open)void loadArchive('');}
+ }
+ async function moveArchive(task,entry,toArchive){
+  if(!archiveSupported()||archiveBusy.has(task.taskId)||storageError)return;
+  if(entry&&((toArchive&&entries.length-currentEntries().length>=MAX_ARCHIVED_ENTRIES)||(!toArchive&&currentEntries().length>=MAX_ENTRIES))){message(toArchive?'浏览器归档关联已达 2048 条；未删除记录。':'浏览器当前关联已达 128 条，请先归档其他已收尾任务。');return;}
+  let confirmed=false;archiveBusy.add(task.taskId);archiveGeneration++;if(entry)beginRead(entry);renderTasks();
+  try{
+   const response=await client[toArchive?'archive':'restore'](task.taskId);
+   if(response.protocolVersion!==1||!sameTask(response.task,task)||isArchived(response.task)!==toArchive)throw new Error('归档状态回执不一致');
+   confirmed=true;archivePage=archivePage.filter(item=>item.taskId!==task.taskId);
+   if(entry){if(!validTask(entry,response.task))throw new Error('任务身份不一致');applyTask(entry,response.task,beginRead(entry));if(!safeSave())throw new Error('执行器已保存；浏览器关联未保存，请刷新页面按原任务核查。');}
+   message(toArchive?'已归档，原文、结果和提交身份保留；可在归档中查看、导出或恢复。归档释放当前列表名额，不释放总存储字节。':'已恢复至当前任务列表；仍是原任务，没有重新执行。');
+  }catch(error){message('操作结果未确认：'+error.message+'。请刷新任务核查原记录，不要重新提交。');}
+  finally{if(refreshing)await refreshing;await refresh();if($('background-archive').open)await loadArchive('');archiveBusy.delete(task.taskId);renderTasks();if(confirmed&&(document.activeElement===document.body||document.activeElement.closest?.('section')?.dataset.submissionKey===(entry?entry.key:'external:'+task.taskId))){if(toArchive)$('background-archive').querySelector('summary').focus({preventScroll:true});else [...$('background-task-list').querySelectorAll('section')].find(row=>row.textContent.includes(task.taskId))?.querySelector('[data-action=archive]')?.focus({preventScroll:true});}}
+ }
+ async function exportArchive(task,entry){
+  if(archiveBusy.has(task.taskId))return;archiveBusy.add(task.taskId);renderTasks();let url,link;
+  try{
+   const response=await client.exportTask(task.taskId),record=response.record;
+   if(response.protocolVersion!==1||record?.format!=='coconut-background-task-record'||record.version!==1||!sameTask(record.task,task)||!Array.isArray(record.task.snapshot)||typeof record.task.idempotencyKey!=='string'||typeof record.task.inputDigest!=='string')throw new Error('完整任务记录无效');
+   if(entry&&record.task.idempotencyKey!==entry.key)throw new Error('提交身份不一致');
+   const saved={format:'coconut-background-task-recovery',version:1,record,...(entry?{association:copy(entry)}:{})};
+   url=URL.createObjectURL(new Blob([JSON.stringify(saved,null,2)],{type:'application/json'}));link=el('a');link.href=url;link.download='coconut-task-recovery-'+task.taskId.replace(/[^a-zA-Z0-9_-]/g,'_')+'.json';link.hidden=true;document.body.append(link);link.click();
+   message('已发起完整任务救援 JSON 下载，请确认保存。含完整提交原文、结果和任务身份；原浏览器关联如有也已保留。仅用于备份核查，本版不能导入或接管文稿，也不会删除本机记录。');
+  }catch(error){message('救援下载失败：'+error.message+'；本机记录未更改。');}
+  finally{archiveBusy.delete(task.taskId);link?.remove();if(url)setTimeout(()=>URL.revokeObjectURL(url),60000);renderTasks();}
+ }
  function renderTasks(){
-  const host=$('background-task-list');
-  const count=entries.length+external.length,unfinished=entries.filter(entry=>!missingTask(entry)&&live.has(entry.task?.status)).length+external.filter(task=>live.has(task.status)).length,unknown=entries.filter(entry=>!entry.task||missingTask(entry)).length,ready=entries.filter(entry=>!missingTask(entry)&&entry.task?.status==='succeeded'&&!entry.cancelRequested&&!accepted(entry)).length,standalone=external.filter(task=>task.status==='succeeded').length;
+  const host=$('background-task-list'),archiveHost=$('background-archive-list'),visibleEntries=currentEntries(),archivedEntries=$('background-archive').open?archivePage.map(task=>entries.find(entry=>entry.task?.taskId===task.taskId)).filter(entry=>entry&&isArchived(entry.task)):[];
+  $('background-archive-status').textContent=archiveLoading?'正在读取归档…':archiveError||(!archiveSupported()?'归档需要连接支持此功能的本机执行器。':archiveLookup?'taskId 精确查找：'+archiveLookup+'。恢复不会重新执行。':archiveLocal?'本浏览器保留 '+archiveTotal+' 条归档关联；每页核对最多 20 条，找不到时请切回原执行器。':'归档 '+archiveTotal+' 条；每页最多 20 条。恢复只返回当前列表，不会重新执行。');
+  $('background-archive-next').disabled=archiveLoading||!archiveNext;$('background-archive-first').disabled=archiveLoading||!archiveSupported();$('background-archive-find').disabled=archiveLoading||!archiveSupported();$('background-archive-local').disabled=archiveLoading||!archiveSupported();$('background-archive-local').textContent='查看本浏览器归档关联（'+entries.filter(entry=>isArchived(entry.task)).length+'）';
+  const count=visibleEntries.length+external.length,unfinished=visibleEntries.filter(entry=>!missingTask(entry)&&live.has(entry.task?.status)).length+external.filter(task=>live.has(task.status)).length,unknown=visibleEntries.filter(entry=>!entry.task||missingTask(entry)).length,ready=visibleEntries.filter(entry=>!missingTask(entry)&&entry.task?.status==='succeeded'&&!entry.cancelRequested&&!accepted(entry)).length,standalone=external.filter(task=>task.status==='succeeded').length;
   $('background-task-count').textContent=String(count);
   const compactStatus=$('library-background-task-status');compactStatus.hidden=!count;
   const compactText=count?' · '+(unfinished?'进行中 '+unfinished:unknown?'待确认 '+unknown:ready?'待接收 '+ready:standalone?'可查看结果 '+standalone:count+' 条记录'):'';
   if(compactStatus.textContent!==compactText)compactStatus.textContent=compactText;
   $('background-executor-status').textContent=connection;
   if(storageError)message(storageError);
-  const signature=JSON.stringify([entries.map(entry=>[entry.key,entry.task&&[entry.task.taskId,entry.task.status,entry.task.progress,entry.task.error,entry.task.result?.answer,entry.task.result?.citations],entry.cancelRequested,entry.retired,entry.missing,accepted(entry),canReceive(entry),owner(entry)===active(),accepting.has(entry.key)]),external,[...externalResults].map(([id,state])=>[id,state.loading,state.error,!!state.task]),supported(),submitting,storageError]);
+  const signature=JSON.stringify([archivePage,archiveLocal,archiveLookup,archiveLoading,archiveError,$('background-archive').open,[...archiveBusy],entries.map(entry=>[entry.key,entry.task&&[entry.task.taskId,entry.task.status,entry.task.progress,entry.task.archivedAt,entry.task.error,entry.task.result?.answer,entry.task.result?.citations],entry.cancelRequested,entry.retired,entry.missing,accepted(entry),canReceive(entry),owner(entry)===active(),accepting.has(entry.key)]),external,[...externalResults].map(([id,state])=>[id,state.loading,state.error,!!state.task]),supported(),submitting,storageError]);
   if(signature===listSignature)return;listSignature=signature;
-  const opened=new Set([...host.querySelectorAll('section[data-submission-key] details[open]')].map(node=>node.closest('section').dataset.submissionKey));
-  const focused=host.contains(document.activeElement)?{key:document.activeElement.closest('section')?.dataset.submissionKey,action:document.activeElement.dataset.action,summary:document.activeElement.tagName==='SUMMARY'}:null;
-  host.replaceChildren();
-  for(const entry of [...entries].reverse()){
+  const opened=new Set([...$('background-tasks').querySelectorAll('section[data-submission-key] details[open]')].map(node=>node.closest('section').dataset.submissionKey));
+  const focused=$('background-tasks').contains(document.activeElement)&&document.activeElement.closest('section[data-submission-key]')?{key:document.activeElement.closest('section')?.dataset.submissionKey,action:document.activeElement.dataset.action,summary:document.activeElement.tagName==='SUMMARY'}:null;
+  host.replaceChildren();archiveHost.replaceChildren();
+  for(const entry of [...visibleEntries].reverse().concat(archivedEntries)){
    const task=entry.task,row=el('section','background-task');row.dataset.submissionKey=entry.key;
    row.append(el('h3','',entry.title||'文字稿摘要'));
    let status=entry.cancelRequested?'已请求取消；未确认执行收尾':task?labels[task.status]||'未知任务状态':'提交结果待确认，请刷新查询';
@@ -113,17 +176,18 @@
    if(missingTask(entry))row.append(el('p','hint','已保留原任务标识和提交关联。它可能来自其他本机执行器目录；请切回原服务后刷新核查。本页保留的是上次回执，不能据此确认当前执行情况；原请求可能已消耗额度，新提交会创建独立任务。'));
    if(task?.error?.message)row.append(el('p','hint',task.error.message));
    if(entry.retired)row.append(el('p','hint','原文稿已移除或更换，不能接收旧结果。'));
+   if(isArchived(task))row.append(el('p','hint','已归档；保留原任务身份、原文与结果。'));
    if(task?.status==='succeeded'&&!entry.cancelRequested&&!missingTask(entry)){
     if(!resultPreview(row,task,opened,entry.key))row.append(el('p','hint',task.result?'结果不完整或引用无法核对，请刷新重新查询；此结果不能接收。':'结果内容尚未读取，请恢复执行器连接后刷新查询。'));
-    const doc=owner(entry),canAccept=canReceive(entry)&&active()===doc&&!accepted(entry)&&!accepting.has(entry.key);
+    const doc=owner(entry),canAccept=!isArchived(task)&&canReceive(entry)&&active()===doc&&!accepted(entry)&&!accepting.has(entry.key);
     row.append(button(accepted(entry)?'已接收':'接收至当前原文稿','accept',entry,()=>accept(entry),!canAccept));
     if(!accepted(entry)&&!canAccept)row.append(el('p','hint','请打开原文稿并保持原文一致；修改稿、重新导入或其他文档不能接收此结果。'));
    }
    if(!task&&!entry.cancelRequested&&entry.missing)row.append(button('重发原提交（同一任务意图）','resubmit',entry,()=>resubmit(entry),!available(entry.payload.provider)||submitting||!mayResubmit(entry)));
    if(!missingTask(entry)&&(!task||live.has(task.status)))row.append(button('取消后台任务','cancel',entry,()=>cancel(entry),!supported()));
-   host.append(row);
+   archiveActions(row,task,entry);(isArchived(task)?archiveHost:host).append(row);
   }
-  for(const task of external){
+  for(const task of external.concat($('background-archive').open?archivePage.filter(task=>!entries.some(entry=>entry.task?.taskId===task.taskId)):[])){
    const row=el('section','background-task'),key='external:'+task.taskId;row.dataset.submissionKey=key;
    row.append(el('h3','','本机其他任务'),el('p','',`${task.taskId} · ${task.status==='succeeded'?'已完成，可查看独立结果':labels[task.status]||task.status}`),el('p','hint','此浏览器没有原提交关联，不能接收至文稿。'));
    if(task.error?.message)row.append(el('p','hint',task.error.message));
@@ -138,10 +202,10 @@
     }
     if(state?.error)row.append(el('p','hint',state.error));
    }
-   if(live.has(task.status))row.append(button('取消后台任务','cancel',null,async()=>{try{await client.cancel(task.taskId);await refresh();}catch(error){message('取消结果未确认：'+error.message);}},!supported()));host.append(row);
+   if(live.has(task.status))row.append(button('取消后台任务','cancel',null,async()=>{try{await client.cancel(task.taskId);await refresh();}catch(error){message('取消结果未确认：'+error.message);}},!supported()));archiveActions(row,task,null);(isArchived(task)?archiveHost:host).append(row);
   }
-  if(focused){const row=[...host.children].find(node=>node.dataset.submissionKey===focused.key),target=focused.summary?row?.querySelector('summary'):[...row?.querySelectorAll('button')||[]].find(node=>node.dataset.action===focused.action&&!node.disabled)||(focused.action==='view-result'?row?.querySelector('summary'):null);target?.focus({preventScroll:true});}
-  if(!entries.length&&!external.length)host.append(el('p','hint','暂无后台任务。可在整篇摘要中选择“本机后台”。'));
+  if(focused){const row=[...host.children,...archiveHost.children].find(node=>node.dataset.submissionKey===focused.key),target=focused.summary?row?.querySelector('summary'):[...row?.querySelectorAll('button')||[]].find(node=>node.dataset.action===focused.action&&!node.disabled)||(focused.action==='view-result'?row?.querySelector('summary'):null);target?.focus({preventScroll:true});}
+  if(!visibleEntries.length&&!external.length)host.append(el('p','hint','暂无后台任务。可在整篇摘要中选择“本机后台”。'));
  }
  function render(){
   const selected=$('ai-task').value==='summary',background=selected&&$('summary-execution').value==='background',doc=active();
@@ -177,11 +241,11 @@
     const listing=await client.list();if(listing.protocolVersion!==1||!Array.isArray(listing.tasks))throw new Error('任务列表协议不兼容');
     const byId=new Map(listing.tasks.map(task=>[task.taskId,task]));
     for(const entry of entries){
-     if(!initialReads.has(entry.key)||!currentRead(entry,initialReads.get(entry.key)))continue;
+     if(!initialReads.has(entry.key)||!currentRead(entry,initialReads.get(entry.key))||(isArchived(entry.task)&&!byId.has(entry.task.taskId)&&!archivePage.some(task=>task.taskId===entry.task.taskId)))continue;
      const version=beginRead(entry);
      const metadata=byId.get(entry.task?.taskId);
      let response;
-     try{response=metadata&&metadata.status!=='succeeded'?{protocolVersion:1,task:metadata}:metadata?.status==='succeeded'&&TaskAPI.recoveryFor(entry.task)?{protocolVersion:1,task:entry.task}:entry.task?.taskId?await client.get(entry.task.taskId):await client.findSubmission(entry.key);}
+     try{response=metadata&&metadata.status!=='succeeded'?{protocolVersion:1,task:metadata}:metadata?.status==='succeeded'&&TaskAPI.recoveryFor(entry.task)?{protocolVersion:1,task:{...metadata,result:entry.task.result}}:entry.task?.taskId?await client.get(entry.task.taskId):await client.findSubmission(entry.key);}
      catch(error){
       if(!currentRead(entry,version))continue;
       // A healthy executor can use a different task directory at this same
@@ -196,8 +260,8 @@
      else entry.missing=true;
     }
     external=listing.tasks.filter(task=>!entries.some(entry=>entry.task?.taskId===task.taskId));
-    for(const [id,state] of externalResults)if(!external.some(task=>task.taskId===id&&sameTask(task,state.identity)))externalResults.delete(id);
-    safeSave();
+    for(const [id,state] of externalResults)if(![...external,...archivePage].some(task=>task.taskId===id&&sameTask(task,state.identity)))externalResults.delete(id);
+    safeSave();if($('background-archive').open)await loadArchive(archiveAfter,archiveLookup,archiveLocal);
    }catch(error){capability=null;connection='本机执行器暂时不可用：'+error.message+'。任务可能仍在后台执行，请恢复连接后刷新；阅读不受影响。';}
   })().finally(()=>{refreshing=null;renderLanguage();render();schedule();});
   return refreshing;
@@ -220,7 +284,7 @@
   if(entries.some(entry=>owner(entry)===doc&&sourceMatches(entry,doc)&&entry.payload.provider===provider&&!missingTask(entry)&&(!entry.task||live.has(entry.task.status)))){message('已有相同范围的后台任务，请先查询或取消。');$('background-tasks').open=true;return;}
   submitting=true;const source=copy(readiness.plan.source),originalSelection=activeSelectionRevision;renderLanguage();
   try{
-   if(entries.length>=MAX_ENTRIES)throw new Error('本机任务关联已达 128 条上限，请保留现有记录；本版尚无清理功能');
+   if(currentEntries().length>=MAX_ENTRIES)throw new Error('未归档任务关联已达 128 条上限；请在本机后台任务中显式归档已收尾记录后再提交');
    // Local-only ownership survives storage reload, but Coconut.validate strips
    // it on ordinary JSON imports. Reimported copies cannot inherit a task.
    if(!uuid(doc.background_summary_lifetime))doc.background_summary_lifetime=crypto.randomUUID();const lifetime=doc.background_summary_lifetime;
@@ -285,6 +349,11 @@
  }
  $('summary-execution').onchange=async()=>{$('ai-consent').checked=false;consentSignature='';renderLanguage();render();if($('summary-execution').value==='background')await refresh();};
  $('background-refresh').onclick=refresh;
+ $('background-archive').ontoggle=()=>{if($('background-archive').open)void refresh();};
+ $('background-archive-first').onclick=()=>loadArchive('');
+ $('background-archive-next').onclick=()=>loadArchive(archiveNext||'','',archiveLocal);
+ $('background-archive-local').onclick=()=>loadArchive('','',true);
+ $('background-archive-find').onclick=()=>{const id=$('background-archive-id').value.trim();if(!id||id.length>128){message('请输入完整 taskId（最多 128 字符）。');return;}return loadArchive('',id);};
  $('summary-open-background-tasks').onclick=()=>{if($('toggle-library').getAttribute('aria-expanded')!=='true')toggleLibraryBrowsing();if($('library-tools').contains($('background-tasks')))$('library-tools').open=true;$('background-tasks').open=true;$('background-tasks').querySelector('summary').focus({preventScroll:true});$('background-tasks').scrollIntoView?.({block:'start'});void refresh();};
  window.addEventListener('coconut-render',render);
  window.addEventListener('coconut-storage-ready',render);

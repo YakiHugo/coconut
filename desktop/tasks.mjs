@@ -8,7 +8,7 @@ const require=createRequire(import.meta.url);
 const ROOT=path.dirname(fileURLToPath(import.meta.url));
 export const TASK_PROTOCOL_VERSION=1;
 export const TASK_BODY_BYTES=8*1024*1024;
-const MAX_LEDGER_BYTES=32*1024*1024,MAX_TASKS=128,MAX_PENDING=8;
+const MAX_LEDGER_BYTES=32*1024*1024,MAX_TASKS=128,MAX_ARCHIVED_TASKS=2048,MAX_PENDING=8;
 // Covers worst-case JSON escapes for 8,000 answer characters, up to
 // 64 * 8 source citations of 200 characters, and bounded terminal metadata.
 const TERMINAL_RESERVE_BYTES=1024*1024;
@@ -56,7 +56,7 @@ export async function createTaskStore({directory,providers,readerDirectory=path.
  if(typeof providers?.ask!=='function')throw new Error('A summary provider is required');
  const Summary=require(path.join(readerDirectory,'summary.js'));
  const release=await acquire(directory),filename=path.join(directory,'tasks.json');
- let tasks=new Map(),queue=Promise.resolve(),closed=false,broken=false,draining=false;
+ let tasks=new Map(),ledgerFields={},queue=Promise.resolve(),closed=false,broken=false,draining=false;
  const controllers=new Map();
  function normalize(value){
   if(!value||value.protocolVersion!==1||value.kind!=='summary'||value.consent!==true)throw fail('仅支持明确同意的 v1 整篇摘要任务');
@@ -74,16 +74,21 @@ export async function createTaskStore({directory,providers,readerDirectory=path.
   return value;
  }
  function serial(action){const work=queue.then(action);queue=work.catch(()=>{});return work;}
+ function archived(task){return typeof task.archivedAt==='string';}
+ function archivable(task){return ['succeeded','failed'].includes(task.status)||(task.status==='cancelled'&&task.cancellation?.executionSettled===true);}
  function available(){if(closed||broken)throw fail('本机任务存储不可用，请先检查执行器；不要用新提交键盲目重试',503,'store_unavailable');}
  async function persist(next){
-  const data=JSON.stringify({version:1,tasks:[...next.values()]});
+  const data=JSON.stringify({...ledgerFields,version:2,tasks:[...next.values()]});
   let budget=Buffer.byteLength(data);
   for(const task of next.values())if(ACTIVE.has(task.status)){
    const {taskId,attemptId,idempotencyKey,inputDigest,kind,document,provider,snapshot}=task;
    const fixed=JSON.stringify({taskId,attemptId,idempotencyKey,inputDigest,kind,document,provider,snapshot});
    budget+=Math.max(0,Buffer.byteLength(fixed)+TERMINAL_RESERVE_BYTES-Buffer.byteLength(JSON.stringify(task)));
   }
-  if(next.size>MAX_TASKS||budget>maxLedgerBytes)throw fail('本机任务记录已满，请保留现有结果并检查存储；未发起新的模型请求',507,'store_full');
+  const archivedCount=[...next.values()].filter(archived).length;
+  if(next.size-archivedCount>MAX_TASKS)throw fail('未归档任务已达 128 条，请显式归档已收尾任务后继续；未发起新的模型请求',507,'active_tasks_full');
+  if(archivedCount>MAX_ARCHIVED_TASKS)throw fail('归档已达 2048 条上限；所有记录均已保留，未自动删除',507,'archive_full');
+  if(budget>maxLedgerBytes)throw fail('本机任务总存储预算已满，归档不会释放字节；请导出救援记录并检查存储，未发起新的模型请求',507,'store_full');
   const temporary=filename+'.'+randomUUID()+'.tmp';let handle;
   try{
    handle=await fs.open(temporary,'wx',0o600);await handle.writeFile(data);await handle.sync();await handle.close();handle=null;
@@ -102,11 +107,15 @@ export async function createTaskStore({directory,providers,readerDirectory=path.
   try{
    handle=await fs.open(filename,fs.constants.O_RDONLY|fs.constants.O_NOFOLLOW|fs.constants.O_NONBLOCK);
    const stat=await handle.stat();if(!stat.isFile()||stat.size>maxLedgerBytes)throw new Error('Invalid ledger');
-   const ledger=JSON.parse(await readBounded(handle,maxLedgerBytes));if(ledger.version!==1||!Array.isArray(ledger.tasks)||ledger.tasks.length>MAX_TASKS)throw new Error('Invalid ledger');
+   const ledger=JSON.parse(await readBounded(handle,maxLedgerBytes));if(![1,2].includes(ledger.version)||!Array.isArray(ledger.tasks)||ledger.tasks.length>(ledger.version===1?MAX_TASKS:MAX_TASKS+MAX_ARCHIVED_TASKS))throw new Error('Invalid ledger');
+   const archivedCount=ledger.tasks.filter(archived).length;
+   if(archivedCount>MAX_ARCHIVED_TASKS||ledger.tasks.length-archivedCount>MAX_TASKS)throw new Error('Invalid ledger limits');
+   ledgerFields={...ledger};delete ledgerFields.version;delete ledgerFields.tasks;
    const keys=new Set();let changed=false;
    for(const raw of ledger.tasks){
     const checked=normalize({...raw,protocolVersion:1,consent:true,segments:raw.snapshot});
     if(!UUID.test(raw.taskId)||!UUID.test(raw.attemptId)||tasks.has(raw.taskId)||keys.has(raw.idempotencyKey)||raw.inputDigest!==checked.inputDigest||!STATES.has(raw.status)||typeof raw.createdAt!=='string'||typeof raw.updatedAt!=='string'||!Number.isInteger(raw.progress?.completed)||raw.progress.completed<0||raw.progress.completed>checked.plan.requests||raw.progress.total!==checked.plan.requests)throw new Error('Invalid task record');
+    if(Object.hasOwn(raw,'archivedAt')&&(ledger.version!==2||typeof raw.archivedAt!=='string'||!Number.isFinite(Date.parse(raw.archivedAt))||!archivable(raw)))throw new Error('Invalid archive record');
     const task=clone(raw);keys.add(task.idempotencyKey);
     if(ACTIVE.has(task.status)){
      const cancelled=task.status==='cancel_requested';task.status=cancelled?'cancelled':'interrupted';task.updatedAt=now();
@@ -168,7 +177,7 @@ export async function createTaskStore({directory,providers,readerDirectory=path.
  }
  try{await recover();}catch(error){await release();throw error;}
  return Object.freeze({
-  describe(){return {protocolVersion:1,executor:{type:'local-node',online:!closed&&!broken},supportedTaskKinds:['summary'],enabled:!closed&&!broken,execution:{concurrency:1,disconnect:'continue',restart:'interrupt_without_retry',cancel:'request_then_settle'},providers:{codex:{supported:true,availability:'not_checked'},claude:{supported:true,availability:'not_checked'}},limits:{tasks:MAX_TASKS,pending:MAX_PENDING,bodyBytes:TASK_BODY_BYTES,ledgerBytes:maxLedgerBytes},remoteSubmission:false};},
+  describe(){return {protocolVersion:1,executor:{type:'local-node',online:!closed&&!broken},supportedTaskKinds:['summary'],enabled:!closed&&!broken,execution:{concurrency:1,disconnect:'continue',restart:'interrupt_without_retry',cancel:'request_then_settle'},providers:{codex:{supported:true,availability:'not_checked'},claude:{supported:true,availability:'not_checked'}},archive:{supported:true,restore:'original_identity_without_execution',automaticDeletion:false},limits:{tasks:MAX_TASKS,archivedTasks:MAX_ARCHIVED_TASKS,archivePage:50,pending:MAX_PENDING,bodyBytes:TASK_BODY_BYTES,ledgerBytes:maxLedgerBytes},remoteSubmission:false};},
   submit(value){
    let normalized;try{normalized=normalize(value);}catch(error){return Promise.reject(error);}
    return serial(async()=>{
@@ -183,7 +192,26 @@ export async function createTaskStore({directory,providers,readerDirectory=path.
   },
   findSubmission(key){return serial(()=>{available();const task=[...tasks.values()].find(task=>task.idempotencyKey===key);return task?publicTask(task):null;});},
   get(id){return serial(()=>{available();const task=tasks.get(id);if(!task)throw fail('任务不存在',404,'not_found');return publicTask(task);});},
-  list(){return serial(()=>{available();return [...tasks.values()].map(task=>publicTask(task,{result:false}));});},
+  list(){return serial(()=>{available();return [...tasks.values()].filter(task=>!archived(task)).map(task=>publicTask(task,{result:false}));});},
+  listArchived({limit=20,after=''}={}){return serial(()=>{
+   available();if(!Number.isInteger(limit)||limit<1||limit>50||typeof after!=='string'||(after&&!UUID.test(after)))throw fail('归档分页参数无效');
+   const all=[...tasks.values()].filter(archived).sort((a,b)=>a.taskId.localeCompare(b.taskId));
+   const remaining=all.filter(task=>!after||task.taskId>after),page=remaining.slice(0,limit);
+   return {tasks:page.map(task=>publicTask(task,{result:false})),total:all.length,nextCursor:remaining.length>limit?page.at(-1).taskId:null};
+  });},
+  archive(id){return serial(async()=>{
+   available();const task=tasks.get(id);if(!task)throw fail('任务不存在',404,'not_found');
+   if(archived(task))return publicTask(task);
+   if(!archivable(task))throw fail('只能归档已完成、失败或已确认取消收尾的任务；执行中、中断及未知结果必须保留在当前列表',409,'task_not_archivable');
+   return publicTask(await change(id,{archivedAt:now()}));
+  });},
+  restore(id){return serial(async()=>{
+   available();const task=tasks.get(id);if(!task)throw fail('任务不存在',404,'not_found');
+   if(!archived(task))return publicTask(task);
+   const restored={...task,updatedAt:now()};delete restored.archivedAt;
+   const next=new Map(tasks);next.set(id,restored);await persist(next);return publicTask(restored);
+  });},
+  exportTask(id){return serial(()=>{available();const task=tasks.get(id);if(!task)throw fail('任务不存在',404,'not_found');return {format:'coconut-background-task-record',version:1,task:clone(task)};});},
   cancel(id){return serial(async()=>{
    available();const task=tasks.get(id);if(!task)throw fail('任务不存在',404,'not_found');
    if(!['queued','running'].includes(task.status))return publicTask(task);

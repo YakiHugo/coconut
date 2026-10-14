@@ -133,3 +133,86 @@ test('near-full admission preserves an older successful result while reserving c
  const third=await createTaskStore({directory,maxLedgerBytes,providers:{ask:async()=>{throw new Error('No automatic retry');}}});
  try{assert.deepEqual(await third.get(first.task.taskId),old);assert.equal((await third.get(queued.task.taskId)).status,'cancelled');}finally{await third.shutdown();}gate.resolve({answer:'Late',citations:['a']});
 });
+
+const archiveStores=new Map();
+async function openArchiveStore(options){const store=await createTaskStore(options);archiveStores.get(options.directory)?.push(store);return store;}
+
+async function archivedFixture(t,{active=1,archived=0,version=2}={}){
+ const {directory,store}=await setup({after(){}});archiveStores.set(directory,[]);t.after(async()=>{for(const opened of archiveStores.get(directory))await opened.shutdown();archiveStores.delete(directory);await fs.rm(directory,{recursive:true,force:true});});const receipt=await store.submit(submission());await until(store,receipt.task.taskId,'succeeded');await store.shutdown();
+ const file=path.join(directory,'tasks.json'),seed=JSON.parse(await fs.readFile(file,'utf8')).tasks[0];
+ const {randomUUID}=await import('node:crypto');
+ const tasks=Array.from({length:active+archived},(_,i)=>({...seed,taskId:randomUUID(),attemptId:randomUUID(),idempotencyKey:'fixture-'+i,...(i>=active?{archivedAt:'2026-10-14T00:00:00.000Z'}:{})}));
+ await fs.writeFile(file,JSON.stringify({version,extension:{kept:true},tasks}));return {directory,file,tasks};
+}
+
+test('128 retained terminal tasks can explicitly archive then submit, with archived identity/digest/source/result intact',async t=>{
+ const {directory,file,tasks}=await archivedFixture(t,{active:128});let calls=0;
+ let store=await openArchiveStore({directory,providers:{ask:async()=>{calls++;return {answer:'New result',citations:['a']};}}});t.after(()=>store.shutdown());
+ await assert.rejects(store.submit(submission({idempotencyKey:'new-intent'})),e=>e.taskCode==='active_tasks_full');assert.equal(calls,0);
+ const archived=await store.archive(tasks[0].taskId);assert.ok(archived.archivedAt);assert.equal((await store.list()).length,127);
+ const newTask=await store.submit(submission({idempotencyKey:'new-intent'}));await until(store,newTask.task.taskId,'succeeded');assert.equal(calls,1);
+ const duplicate=await store.submit(submission({idempotencyKey:'fixture-0'}));assert.equal(duplicate.created,false);assert.equal(duplicate.task.taskId,tasks[0].taskId);assert.equal(duplicate.task.archivedAt,archived.archivedAt);assert.equal(calls,1);
+ await assert.rejects(store.submit(submission({idempotencyKey:'fixture-0',provider:'claude'})),e=>e.taskCode==='idempotency_conflict');
+ assert.equal((await store.findSubmission('fixture-0')).taskId,tasks[0].taskId);
+ const exported=await store.exportTask(tasks[0].taskId);for(const key of ['taskId','attemptId','idempotencyKey','inputDigest','snapshot','result'])assert.deepEqual(exported.task[key],tasks[0][key]);
+ assert.equal((await store.archive(tasks[0].taskId)).archivedAt,archived.archivedAt);
+ await assert.rejects(store.restore(tasks[0].taskId),e=>e.taskCode==='active_tasks_full');
+ await store.archive(newTask.task.taskId);const restored=await store.restore(tasks[0].taskId);assert.equal(restored.archivedAt,undefined);assert.equal(restored.taskId,tasks[0].taskId);assert.equal(calls,1);
+ await store.archive(tasks[0].taskId);await store.shutdown();
+ store=await openArchiveStore({directory,providers:{ask:async()=>{calls++;}}});assert.equal((await store.submit(submission({idempotencyKey:'fixture-0'}))).created,false);assert.equal(calls,1);
+ const persisted=JSON.parse(await fs.readFile(file,'utf8'));assert.equal(persisted.version,2);assert.equal(persisted.tasks.length,129);assert.deepEqual(persisted.extension,{kept:true});
+});
+
+test('running, queued, cancel-unsettled and interrupted tasks cannot be archived',async t=>{
+ const gate=deferred(),{store}=await setup(t,()=>gate.promise);const first=await store.submit(submission());await until(store,first.task.taskId,'running');
+ const second=await store.submit(submission({idempotencyKey:'queued'}));
+ for(const task of [first.task,second.task])await assert.rejects(store.archive(task.taskId),e=>e.taskCode==='task_not_archivable');
+ await store.cancel(first.task.taskId);await assert.rejects(store.archive(first.task.taskId),e=>e.taskCode==='task_not_archivable');
+ await store.cancel(second.task.taskId);assert.ok((await store.archive(second.task.taskId)).archivedAt);
+ gate.resolve({answer:'Late result',citations:['a']});await until(store,first.task.taskId,'cancelled');assert.ok((await store.archive(first.task.taskId)).archivedAt);
+ const fixture=await archivedFixture(t);const raw=JSON.parse(await fs.readFile(fixture.file,'utf8'));raw.tasks[0].status='interrupted';delete raw.tasks[0].result;await fs.writeFile(fixture.file,JSON.stringify(raw));
+ const recovered=await openArchiveStore({directory:fixture.directory,providers:{ask:async()=>{throw new Error('No inference');}}});t.after(()=>recovered.shutdown());await assert.rejects(recovered.archive(raw.tasks[0].taskId),e=>e.taskCode==='task_not_archivable');
+});
+
+test('archive bound is 2048 and paginated reads stay bounded without deleting old records',async t=>{
+ const {directory,tasks}=await archivedFixture(t,{active:1,archived:2048});const store=await openArchiveStore({directory,providers:{ask:async()=>{throw new Error('No inference');}}});t.after(()=>store.shutdown());
+ await assert.rejects(store.archive(tasks[0].taskId),e=>e.taskCode==='archive_full');assert.equal((await store.list()).length,1);
+ let after='',ids=[];do{const page=await store.listArchived({after,limit:50});assert.ok(page.tasks.length<=50);assert.equal(page.total,2048);assert.ok(page.tasks.every(task=>!task.result&&!task.snapshot));ids.push(...page.tasks.map(task=>task.taskId));after=page.nextCursor;}while(after);
+ assert.equal(ids.length,2048);assert.equal(new Set(ids).size,2048);
+ for(const options of [{limit:0},{limit:51},{limit:1.5},{after:'bad-cursor'}])await assert.rejects(store.listArchived(options),e=>e.taskCode==='invalid_request');
+ await store.restore(tasks[1].taskId);await store.archive(tasks[0].taskId);assert.equal((await store.listArchived()).total,2048);assert.equal((await store.get(tasks[1].taskId)).taskId,tasks[1].taskId);
+});
+
+test('exact byte-full archive rejection leaves the existing manifest and identity readable',async t=>{
+ const {directory,file,tasks}=await archivedFixture(t),before=await fs.readFile(file,'utf8');
+ const store=await openArchiveStore({directory,maxLedgerBytes:Buffer.byteLength(before),providers:{ask:async()=>{throw new Error('No inference');}}});t.after(()=>store.shutdown());
+ await assert.rejects(store.archive(tasks[0].taskId),e=>e.taskCode==='store_full');assert.equal(await fs.readFile(file,'utf8'),before);assert.equal(store.describe().enabled,true);assert.equal((await store.findSubmission('fixture-0')).archivedAt,undefined);
+});
+
+test('v1 migration retains all records and extension fields on its first atomic archive write',async t=>{
+ const {directory,file,tasks}=await archivedFixture(t,{version:1});const ledger=JSON.parse(await fs.readFile(file,'utf8'));ledger.tasks[0].extension={retained:'record field'};await fs.writeFile(file,JSON.stringify(ledger));
+ const store=await openArchiveStore({directory,providers:{ask:async()=>{throw new Error('No inference');}}});t.after(()=>store.shutdown());
+ assert.equal(JSON.parse(await fs.readFile(file,'utf8')).version,1);await store.archive(tasks[0].taskId);
+ const saved=JSON.parse(await fs.readFile(file,'utf8'));assert.equal(saved.version,2);assert.deepEqual(saved.tasks[0].extension,{retained:'record field'});assert.deepEqual(saved.extension,{kept:true});assert.equal(saved.tasks.length,1);
+});
+
+for(const damage of ['duplicate-key','duplicate-id','active-archived','archive-overflow'])test('invalid archive '+damage+' fails closed and preserves original bytes',async t=>{
+ const fixture=await archivedFixture(t,{active:1,archived:damage==='archive-overflow'?2049:1});let ledger=JSON.parse(await fs.readFile(fixture.file,'utf8'));
+ if(damage==='duplicate-key')ledger.tasks[1].idempotencyKey=ledger.tasks[0].idempotencyKey;
+ if(damage==='duplicate-id')ledger.tasks[1].taskId=ledger.tasks[0].taskId;
+ if(damage==='active-archived')ledger.tasks[1].status='running';
+ const before=JSON.stringify(ledger);await fs.writeFile(fixture.file,before);let calls=0;
+ await assert.rejects(openArchiveStore({directory:fixture.directory,providers:{ask:async()=>{calls++;}}}),e=>e.taskCode==='store_unavailable');assert.equal(await fs.readFile(fixture.file,'utf8'),before);assert.equal(calls,0);
+});
+
+for(const phase of ['before','after','enospc'])test('interrupted archive commit '+phase+' retains exactly one complete record across restart',async t=>{
+ const {fork}=await import('node:child_process'),fixture=await archivedFixture(t),before=await fs.readFile(fixture.file,'utf8');
+ const child=fork(new URL('./helpers/task-archive-crash-worker.mjs',import.meta.url),[fixture.directory,fixture.tasks[0].taskId,phase],{stdio:['ignore','ignore','ignore','ipc']});
+ t.after(()=>{if(child.exitCode===null)child.kill('SIGKILL');});
+ await new Promise((resolve,reject)=>{const timer=setTimeout(()=>reject(new Error('Fault fixture did not pause')),5000);child.on('error',reject);child.on('message',m=>{if(m.paused===phase||(phase==='enospc'&&m.error==='store_unavailable')){clearTimeout(timer);resolve();}});child.on('exit',()=>reject(new Error('Fixture exited early')));});
+ const exit=new Promise(resolve=>child.once('exit',resolve));child.kill('SIGKILL');await exit;
+ if(phase!=='after')assert.equal(await fs.readFile(fixture.file,'utf8'),before);
+ const recovered=await openArchiveStore({directory:fixture.directory,providers:{ask:async()=>{throw new Error('No inference');}}});t.after(()=>recovered.shutdown());
+ const result=await recovered.exportTask(fixture.tasks[0].taskId);for(const key of ['taskId','attemptId','idempotencyKey','inputDigest','snapshot','result'])assert.deepEqual(result.task[key],fixture.tasks[0][key]);assert.equal(!!result.task.archivedAt,phase==='after');
+ assert.equal((await recovered.list()).length+(await recovered.listArchived()).total,1);assert.equal((await recovered.submit(submission({idempotencyKey:'fixture-0'}))).created,false);
+});

@@ -44,3 +44,14 @@ test('browser harness switches independent task directories on the same origin w
  const {task:second}=await h.request('/api/v1/tasks',payload('alternate-directory'));await until(()=>h.invocations.length===2);h.invocations[1].release();await h.waitTask(second.taskId,'succeeded');assert.notEqual(second.taskId,first.taskId);
  await h.switchTaskDirectory('original');assert.equal(h.origin,origin);assert.equal((await h.task(first.taskId)).status,'succeeded');assert.equal((await h.request('/api/v1/tasks/'+second.taskId)).status,404);assert.equal(h.invocations.length,2);assert.deepEqual(h.posts,['/api/v1/tasks','/api/v1/tasks']);
 });
+
+
+test('browser harness archive survives restart and complete rescue preserves original identity without another CLI run',async t=>{
+ const h=await backgroundSummaryBridge();t.after(()=>h.close());const value=payload('archive-lifecycle'),{task}=await h.request('/api/v1/tasks',value);
+ await until(()=>h.invocations.length===1);h.invocations[0].release();await h.waitTask(task.taskId,'succeeded');
+ const original=(await h.request('/api/v1/tasks/'+task.taskId+'/export')).record.task;
+ assert.ok((await h.request('/api/v1/tasks/'+task.taskId+'/archive',{protocolVersion:1})).task.archivedAt);assert.deepEqual(await h.tasks(),[]);await h.restart();
+ const page=await h.request('/api/v1/tasks?archived=true&limit=20');assert.equal(page.total,1);assert.equal(page.tasks[0].taskId,task.taskId);
+ const rescued=(await h.request('/api/v1/tasks/'+task.taskId+'/export')).record.task;for(const key of ['taskId','attemptId','idempotencyKey','inputDigest','snapshot','result'])assert.deepEqual(rescued[key],original[key]);
+ assert.equal((await h.request('/api/v1/tasks',value)).created,false);assert.equal((await h.request('/api/v1/tasks/'+task.taskId+'/restore',{protocolVersion:1})).task.archivedAt,undefined);assert.equal((await h.tasks()).length,1);assert.equal(h.invocations.length,1);
+});
