@@ -17,9 +17,14 @@ const MIME = {'.png':'image/png','.html':'text/html; charset=utf-8','.js':'text/
 const MAX_BODY = 1024 * 1024;
 export const CSP = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self'; img-src 'self' data: blob:; media-src 'self' blob:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'";
 
-export function createBridge({readerDirectory = path.resolve(ROOT,'../reader'), providers = createProviders(), podcastSources = createPodcastSources(), captionService = null, localMediaService = null, taskStore = null, taskUnavailable = null} = {}) {
+export function createBridge({readerDirectory = path.resolve(ROOT,'../reader'), providers = createProviders(), podcastSources = createPodcastSources(), captionService = null, captionStatus = null, localMediaService = null, taskStore = null, taskUnavailable = null} = {}) {
   const translate = createTranslator(providers);
   const capabilities=Object.freeze({...CAPABILITIES,caption_import:captionService?.available===true,persistent_tasks:!!taskStore});
+  const captionSources=Object.freeze({available:capabilities.caption_import,mode:captionStatus?.mode||(capabilities.caption_import?'bundled-helper':'disabled'),
+    code:capabilities.caption_import?'ready':captionStatus?.code||'CAPTION_UNAVAILABLE',
+    providers:[{id:'x',label:'X / Twitter',available:capabilities.caption_import},{id:'youtube',label:'YouTube',available:false},{id:'bilibili',label:'Bilibili',available:false}],
+    automatic_asr:false,fallback:'import_transcript',
+    message:capabilities.caption_import?'可获取公开 X 原语言字幕；YouTube / Bilibili 尚未接入此服务。':'字幕助手未就绪。可导入或粘贴已有字幕；开发环境可用 COCONUT_CAPTION_PYTHON 指定已安装的兼容 Python。不会自动安装依赖或启动识别。'});
   const active = new Set();
   const server = http.createServer(async (req,res) => {
     for (const [key,value] of Object.entries({'X-Content-Type-Options':'nosniff','Referrer-Policy':'no-referrer','Cache-Control':'no-store',
@@ -52,7 +57,8 @@ export function createBridge({readerDirectory = path.resolve(ROOT,'../reader'), 
           if(pathname.endsWith('/export'))return json(200,{protocolVersion:1,record:await taskStore.exportTask(pathname.split('/').at(-2))});
           return json(200,{protocolVersion:1,task:await taskStore.get(pathname.split('/').at(-1))});
         }
-        if (pathname === '/api/health') return json(200,{local_worker:false,runtime:'desktop-bridge',paid_processing:false,max_upload_bytes:0,capabilities});
+        if (pathname === '/api/captions/status') return json(200,captionSources);
+        if (pathname === '/api/health') return json(200,{local_worker:false,runtime:'desktop-bridge',paid_processing:false,max_upload_bytes:0,capabilities,caption_sources:captionSources});
         if (pathname === '/api/language-tools' && req.method === 'GET') return json(200,{translation_models:[],local_translation:false,capabilities,
           ai:{codex:await providers.status('codex',{signal:controller.signal}),claude:await providers.status('claude',{signal:controller.signal})}});
         if (pathname === '/api/jobs') return json(501,{error:'轻量版不提供处理队列，请重新检查本地服务能力'});
@@ -88,7 +94,7 @@ export function createBridge({readerDirectory = path.resolve(ROOT,'../reader'), 
         const receipt=await taskStore.submit(data);return json(receipt.created?202:200,{protocolVersion:1,...receipt});
       }
       if(pathname === '/api/captions/import'){
-        if(!capabilities.caption_import)return json(501,{error:'此版本尚未启用内置视频字幕获取，可导入已有字幕；不会启动识别或下载模型'});
+        if(!capabilities.caption_import)return json(501,{code:captionSources.code,error:captionSources.message});
         return json(200,await captionService.importCaption(data,{signal:controller.signal}));
       }
       if(pathname === '/api/podcasts/discover') return json(200,await podcastSources.discover(data,{signal:controller.signal}));
@@ -103,7 +109,7 @@ export function createBridge({readerDirectory = path.resolve(ROOT,'../reader'), 
       if (pathname === '/api/ask') return json(200,await providers.ask(data,{signal:controller.signal}));
       return json(200,{translations:await translate(data,{signal:controller.signal})});
     } catch (error) {
-      return json(error.status|| (error.code === 'ENOENT' ? 404 : 400),{...(error.taskCode?{code:error.taskCode}:{}),error:error.code === 'ENOENT' ? 'File not found' : String(error.message || '请求未完成').slice(0,300)});
+      return json(error.status|| (error.code === 'ENOENT' ? 404 : 400),{...(error.taskCode?{code:error.taskCode}:pathname==='/api/captions/import'&&error.code?{code:error.code}:{}),error:error.code === 'ENOENT' ? 'File not found' : String(error.message || '请求未完成').slice(0,300)});
     }
   });
   server.requestTimeout = 30000; server.headersTimeout = 10000;

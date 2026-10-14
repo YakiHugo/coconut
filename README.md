@@ -33,6 +33,8 @@
 - 片段、时间戳、媒体标识、具体字幕轨道和语言依据均保留。“平台提供”不等于人工字幕，也不表示已校对
 - 应用使用临时签名（ad-hoc），没有 Developer ID 签名或 Apple 公证；不应绕过操作系统安全警告。真实账户摘要/翻译质量没有因此获得验证
 
+源码开发可显式复用已有兼容 Python 环境启用同一条受限 X 字幕路线，默认不启用；配置、doctor 检查与平台边界见 [开发字幕获取](docs/development-captions.md)。
+
 实现与组件来源见 [原生字幕助手](docs/caption-helper-licenses.md)，公开路线证据见 [受限 X 字幕验收](docs/public-x-caption-proof.md)。
 
 ## macOS + Web 阅读优先

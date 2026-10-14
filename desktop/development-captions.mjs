@@ -1,0 +1,59 @@
+/** Opt-in source helper. Never searches PATH, installs dependencies or invokes ASR. */
+import path from 'node:path';
+import {fileURLToPath} from 'node:url';
+import {readFile,mkdtemp,mkdir,rm} from 'node:fs/promises';
+import {tmpdir} from 'node:os';
+import {captionSource} from './caption-service.mjs';
+import {runCaptionProcess,HELPER_LIMITS,CaptionHelperError} from './caption-helper-process.mjs';
+const root=fileURLToPath(new URL('../',import.meta.url));
+const lock=JSON.parse(await readFile(new URL('./caption-helper-lock.json',import.meta.url),'utf8'));
+// -I excludes user site, PYTHONPATH and cwd; only this repository is added back.
+const launcher=`import runpy,sys;sys.path.insert(0,${JSON.stringify(root)});sys.argv=[${JSON.stringify(path.join(root,'desktop/helper/caption_helper_launcher.py'))},'--protocol=1'];runpy.run_path(sys.argv[0],run_name='__main__')`;
+const fail=(code,message)=>new CaptionHelperError(code,message);
+export function createDevelopmentCaptionHelper({python,timeoutMs=HELPER_LIMITS.timeoutMs,tempRoot=tmpdir(),onSpawn}={}){
+ if(typeof python!=='string'||!path.isAbsolute(python))throw fail('CAPTION_CONFIGURATION','字幕 Python 必须是已安装解释器的绝对路径');
+ if(!Number.isInteger(timeoutMs)||timeoutMs<1||timeoutMs>HELPER_LIMITS.timeoutMs)throw fail('CAPTION_LIMIT','无效的字幕助手限制');
+ const active=new Set();let closing=false;
+ async function execute(input,{signal}={}){
+  if(closing||signal?.aborted)throw fail('CAPTION_CANCELLED','字幕请求已取消');
+  if(active.size)throw fail('CAPTION_BUSY','已有字幕请求正在运行');
+  const controller=new AbortController();let directory;
+  const operation=(async()=>{
+   try{
+    directory=await mkdtemp(path.join(tempRoot,'coconut-dev-caption-'));
+    for(const name of ['home','tmp','config','cache','data','empty-bin'])await mkdir(path.join(directory,name),{mode:0o700});
+    const output=await runCaptionProcess(python,input,{directory,signal:signal?AbortSignal.any([signal,controller.signal]):controller.signal,
+     timeoutMs:input.operation==='version'?Math.min(timeoutMs,10000):timeoutMs,maxOutputBytes:HELPER_LIMITS.outputBytes,onSpawn,args:['-I','-B','-c',launcher]});
+    let result;try{result=JSON.parse(output);}catch{throw fail('CAPTION_OUTPUT','字幕助手没有返回完整元数据');}
+    if(!result||typeof result!=='object'||Array.isArray(result))throw fail('CAPTION_OUTPUT','字幕助手没有返回完整元数据');
+    return result;
+   }finally{if(directory)await rm(directory,{recursive:true,force:true});}
+  })();
+  active.add(controller);controller.operation=operation;
+  try{return await operation;}finally{active.delete(controller);}
+ }
+ let ready=false;
+ return Object.freeze({
+  async status({signal}={}){
+   ready=false;
+   try{
+    const r=await execute({operation:'version'},{signal});
+    if(r.status!=='ok'||r.protocol!==1||r.version!==lock.ytDlpVersion||r.publicExtraction!==true||r.guardProtocol!==1||r.tlsRootsVerified!==true)throw fail('CAPTION_VERSION','字幕依赖版本或协议不匹配');
+    ready=true;return {ready:true,code:'ready',version:r.version};
+   }catch(error){if(error.code==='CAPTION_CANCELLED')throw error;return {ready:false,code:error.code||'CAPTION_UNAVAILABLE'};}
+  },
+  async extractCaptions({url,language=null,signal}={}){
+   if(!ready)throw fail('CAPTION_UNAVAILABLE','开发字幕助手尚未通过检查');
+   const source=captionSource(url);
+   if(language!==null&&(typeof language!=='string'||!/^([a-z]{2,3})(-[A-Za-z0-9]{2,8}){0,2}$/.test(language)))throw fail('CAPTION_INPUT','原语言标记无效');
+   const r=await execute({operation:'extract',url:source.url,language},{signal});
+   if(['unavailable','access_restricted','language_required'].includes(r.status))return {status:r.status};
+   if(r.status!=='ok'||r.format!=='vtt'||typeof r.captionBase64!=='string'||r.captionBase64.length>Math.ceil(HELPER_LIMITS.captionBytes/3)*4||
+    !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(r.captionBase64))throw fail('CAPTION_OUTPUT','字幕助手输出格式无效');
+   const bytes=Buffer.from(r.captionBase64,'base64');
+   if(!bytes.length||bytes.length>HELPER_LIMITS.captionBytes||!/^\uFEFF?WEBVTT(?:[ \t].*)?\r?\n/.test(bytes.toString('utf8')))throw fail('CAPTION_OUTPUT','字幕文件无效');
+   return {source:r.source,track:r.track,format:'vtt',bytes};
+  },
+  shutdown(){closing=true;for(const controller of active)controller.abort();return Promise.allSettled([...active].map(controller=>controller.operation));},
+ });
+}
