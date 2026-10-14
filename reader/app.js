@@ -1189,8 +1189,10 @@ $('remove-document-dialog').addEventListener('close',()=>{
  if(state.documents.includes(origin.doc))focusLibraryRemoval(origin.doc.key);
 });
 function finishStructuralOperation(operation){
- if(pendingStructuralDocuments.get(operation.key)===operation)pendingStructuralDocuments.delete(operation.key);
+ const owned=pendingStructuralDocuments.get(operation.key)===operation;
+ if(owned)pendingStructuralDocuments.delete(operation.key);
  if(pendingLibraryOperation===operation)pendingLibraryOperation=null;
+ if(owned&&$('library-notebook').open)renderLibraryNotebook();
 }
 function restoreRemovedDrafts(bundle){
  if(bundle.bookmarkDraft)audioBookmarkDrafts.set(bundle.doc.key,bundle.bookmarkDraft);
@@ -2323,6 +2325,8 @@ function addCollectionCapture(capture,selection){
  }catch(error){$('collection-status').textContent='未加入成果集：'+error.message;}
 }
 
+// A notebook export selects live documents, not reusable backup keys. Pending
+// removal retains only its original identity so a failed save can roll back.
 const notebookSelection=new Set();
 let notebookPage=0,notebookReturn=null,notebookOpener=null,notebookRestore=null,notebookPainted=null;
 let notebookSavedReveal=null,notebookSavedOrigin=null;
@@ -2330,7 +2334,9 @@ const notebookSearch=Coconut.createLibraryNotebookSearch({getDocuments:()=>state
  onChange:()=>{if($('library-notebook').open)renderLibraryNotebook();else notebookSearch.cancel();}});
 const NOTEBOOK_PAGE_SIZE=30;
 function pruneNotebookSelection(){
- const keys=new Set(state.documents.map(doc=>doc.key));for(const key of notebookSelection)if(!keys.has(key))notebookSelection.delete(key);
+ const current=new Set(state.documents);let removed=0;
+ for(const doc of notebookSelection)if(!current.has(doc)&&pendingStructuralDocuments.get(doc.key)?.identity!==doc){notebookSelection.delete(doc);removed++;}
+ return removed;
 }
 function renderLibraryNotebook(){
  const selection=notebookSearch.request($('notebook-search').value,$('notebook-kind').value),host=$('notebook-captures');
@@ -2367,7 +2373,7 @@ function renderLibraryNotebook(){
  }
  for(const capture of pageCaptures){
   const doc=state.documents.find(doc=>doc.key===capture.documentKey),row=el('li','notebook-capture');row.dataset.captureKey=capture.key;row.dataset.captureId=capture.id;row.dataset.captureType=capture.type;row.dataset.documentKey=doc.key;
-  const label=el('label'),check=el('input');check.type='checkbox';check.checked=notebookSelection.has(doc.key);check.setAttribute('aria-label','选择篇目 '+doc.title);check.onchange=()=>{check.checked?notebookSelection.add(doc.key):notebookSelection.delete(doc.key);syncNotebookSelection();};label.append(check,document.createTextNode(doc.title));row.append(label);
+  const label=el('label'),check=el('input');check.type='checkbox';check.checked=notebookSelection.has(doc);check.setAttribute('aria-label','选择篇目 '+doc.title);check.onchange=()=>{if(!check.isConnected||!state.documents.includes(doc)||pendingStructuralDocuments.has(doc.key))return;check.checked?notebookSelection.add(doc):notebookSelection.delete(doc);syncNotebookSelection();};label.append(check,document.createTextNode(doc.title));row.append(label);
   const collect=el('button','collection-add','加入成果集');collect.type='button';collect.hidden=true;collect.onclick=()=>addCollectionCapture(capture,selection);row.append(collect);
   row.append(el('p','hint',(capture.type==='cue'?(capture.excerpt?'整段摘录':'片段')+(Coconut.hasNoteContent(capture.note)?' · 笔记':''):capture.type==='exact-excerpt'?'所选文字摘录 · 历史快照':capture.type==='project-note'?'项目笔记':'时间书签')+(capture.time===null?'':' · '+Coconut.time(capture.time))));
   const details=el('details','notebook-details'),summary=el('summary','','查看完整记录与来源');details.append(summary);
@@ -2467,9 +2473,10 @@ function renderLibraryNotebook(){
 }
 function syncNotebookSelection(){
  collectionStatus();
- for(const row of $('notebook-captures').children){const key=JSON.parse(row.dataset.captureKey)[0];row.querySelector('input').checked=notebookSelection.has(key);}
+ const documents=new Map(state.documents.map(doc=>[doc.key,doc]));
+ for(const row of $('notebook-captures').children){const doc=documents.get(row.dataset.documentKey),check=row.querySelector('input');check.checked=notebookSelection.has(doc);check.disabled=!doc||pendingStructuralDocuments.has(doc.key);}
  $('notebook-export-scope').textContent='已选 '+notebookSelection.size+' 篇；导出所选篇目的全部记录（包括当前搜索未显示的记录）。';
- $('notebook-export').disabled=notebookSelection.size===0;
+ $('notebook-export').disabled=notebookSelection.size===0||[...notebookSelection].some(doc=>pendingStructuralDocuments.has(doc.key));
 }
 function openLibraryNotebook(returning=false){
  notebookSavedReveal=null;notebookSavedOrigin=null;notebookOpener=document.activeElement;notebookRestore=null;
@@ -2514,9 +2521,12 @@ $('notebook-clear-selection').onclick=()=>{notebookSelection.clear();syncNoteboo
 $('notebook-export').onclick=()=>{
  let url,link;
  try{
-  pruneNotebookSelection();syncNotebookSelection();if(!notebookSelection.size)return;
-  if([...notebookSelection].some(key=>pendingStructuralDocuments.has(key))){$('notebook-status').textContent='所选篇目的来源正在变动，请稍后重新导出。';return;}
-  url=URL.createObjectURL(new Blob([Coconut.libraryNotebookMarkdown(state.documents,notebookSelection)],{type:'text/markdown;charset=utf-8'}));
+  const removed=pruneNotebookSelection();syncNotebookSelection();
+  if(removed){$('notebook-status').textContent='部分所选篇目已移除或替换，请核对选择后重新导出。';return;}
+  if(!notebookSelection.size)return;
+  if([...notebookSelection].some(doc=>pendingStructuralDocuments.has(doc.key))){$('notebook-status').textContent='所选篇目的来源正在变动，请稍后重新导出。';return;}
+  const keys=state.documents.filter(doc=>notebookSelection.has(doc)).map(doc=>doc.key);
+  url=URL.createObjectURL(new Blob([Coconut.libraryNotebookMarkdown(state.documents,keys)],{type:'text/markdown;charset=utf-8'}));
   link=el('a');link.href=url;link.download='coconut-library.notes.md';link.hidden=true;document.body.append(link);link.click();
   notice('已发起所选篇目全部记录的 Markdown 下载，请检查下载记录。完整恢复仍需 JSON 备份。','success');
  }catch{notice('笔记本下载失败，请重试或使用书架备份。');}finally{link?.remove();if(url)setTimeout(()=>URL.revokeObjectURL(url),1000);}

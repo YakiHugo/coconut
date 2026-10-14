@@ -3,9 +3,74 @@ import assert from 'node:assert/strict';
 import {createRequire} from 'node:module';
 import {libraryHarness} from './helpers/large-library-harness.mjs';
 import {largeLibraryFixture} from './helpers/large-library-fixture.mjs';
+import {settle} from './helpers/save-pipeline.mjs';
 const C=createRequire(import.meta.url)('../reader/core.js');
 function fixture(){const docs=largeLibraryFixture(2,{cues:65});for(const doc of docs){doc.segments.forEach((cue,i)=>{cue.id='shared-'+i;cue.saved_excerpt=true;});doc.notes={'shared-64':'Private last note '+doc.key};}return docs;}
 const rows=$=>[...$('notebook-captures').children];
+const selectionDoc=(key,label)=>({key,title:label,segments:[{id:'cue',start:0,end:3,text:label+' source'}],notes:{cue:label+' note'}});
+function selectionDownloads(w){const blobs=[];w.URL.createObjectURL=blob=>{blobs.push(blob);return 'blob:notebook-selection';};w.URL.revokeObjectURL=()=>{};w.HTMLAnchorElement.prototype.click=function(){};return blobs;}
+function selectNotebookDocument($,key){rows($).find(row=>row.dataset.documentKey===key).querySelector('input').click();}
+async function restoreSelectionDocument($,doc){
+ const data={format:'coconut-library',version:1,documents:[doc],active:null};
+ Object.defineProperty($('library-file'),'files',{configurable:true,value:[{name:'restored-notebook.json',size:1000,text:async()=>JSON.stringify(data)}]});
+ await $('library-file').onchange();
+}
+for(const keepOtherSelected of [false,true])test(`notebook export selection never transfers to a restored document reusing a removed key (${keepOtherSelected?'multiple':'single'} selection)`,async()=>{
+ const {w,$}=libraryHarness([selectionDoc('reused','Original selected'),selectionDoc('other','Surviving document')],{probe:true});try{
+  const blobs=selectionDownloads(w);$('open-library-notebook').click();selectNotebookDocument($,'reused');if(keepOtherSelected)selectNotebookDocument($,'other');
+  $('notebook-close').click();$('open-library-notebook').click();assert.equal(rows($).find(row=>row.dataset.documentKey==='reused').querySelector('input').checked,true,'closing does not retire a live selection');$('notebook-close').click();
+  $('library').querySelector('[data-document-key="reused"] .library-remove').click();await $('confirm-removal').onclick();
+  await restoreSelectionDocument($,selectionDoc('reused','Never selected replacement'));
+  $('open-library-notebook').click();
+  const replacement=rows($).find(row=>row.dataset.documentKey==='reused').querySelector('input');
+  assert.equal(replacement.checked,false,'a replacement is not the selected original document');
+  assert.match($('notebook-export-scope').textContent,new RegExp('已选 '+Number(keepOtherSelected)+' 篇'));
+  $('notebook-export').onclick();assert.equal(blobs.length,Number(keepOtherSelected));
+  if(keepOtherSelected){const text=await blobs[0].text();assert.match(text,/Surviving document note/);assert.doesNotMatch(text,/Never selected replacement|Original selected/);}
+  replacement.click();$('notebook-export').click();assert.match(await blobs.at(-1).text(),/Never selected replacement note/,'the user can explicitly select the replacement');
+ }finally{await w.happyDOM.close();}
+});
+test('notebook selection preserves same-object note edits across close and reopen',async()=>{
+ const {w,$}=libraryHarness([selectionDoc('selected','Original selected')],{probe:true});try{
+  const blobs=selectionDownloads(w),original=w.libraryProbe.documents[0];$('open-library-notebook').click();selectNotebookDocument($,'selected');
+  rows($)[0].querySelector('.notebook-open').click();$('note').value='Revised note on the same document';$('note').oninput();
+  $('return-library-notebook').click();assert.equal(w.libraryProbe.documents[0],original);assert.equal(rows($)[0].querySelector('input').checked,true);
+  $('notebook-export').click();assert.match(await blobs[0].text(),/Revised note on the same document/);assert.doesNotMatch(await blobs[0].text(),/Original selected note/);
+ }finally{await w.happyDOM.close();}
+});
+test('notebook selection blocks pending removal and survives the original identity rollback',async()=>{
+ const {w,$,pipeline}=libraryHarness([selectionDoc('selected','Original selected'),selectionDoc('other','Survivor')],{probe:true});try{
+  const blobs=selectionDownloads(w),original=w.libraryProbe.documents[0];$('open-library-notebook').click();selectNotebookDocument($,'selected');$('notebook-close').click();pipeline.hold();
+  $('library').querySelector('[data-document-key="selected"] .library-remove').click();const removing=$('confirm-removal').onclick();await settle();
+  $('open-library-notebook').click();assert.match($('notebook-export-scope').textContent,/已选 1 篇/);assert.equal($('notebook-export').disabled,true);
+  $('notebook-export').onclick();assert.equal(blobs.length,0);assert.match($('notebook-status').textContent,/来源正在变动/);
+  pipeline.writes[0].fail();await removing;
+  assert.equal(w.libraryProbe.documents[0],original);assert.equal($('library-notebook').open,true,'the receipt updates the open notebook without another user action');
+  assert.equal(rows($).find(row=>row.dataset.documentKey==='selected').querySelector('input').checked,true);assert.equal($('notebook-export').disabled,false);
+  $('notebook-export').click();assert.match(await blobs[0].text(),/Original selected note/);
+ }finally{await w.happyDOM.close();}
+});
+test('successful removal refreshes the open notebook and exports only the surviving selected identity',async()=>{
+ const {w,$,pipeline}=libraryHarness([selectionDoc('selected','Removed selected'),selectionDoc('other','Surviving selected')],{probe:true});try{
+  const blobs=selectionDownloads(w);$('open-library-notebook').click();selectNotebookDocument($,'selected');selectNotebookDocument($,'other');$('notebook-close').click();pipeline.hold();
+  $('library').querySelector('[data-document-key="selected"] .library-remove').click();const removing=$('confirm-removal').onclick();await settle();
+  $('open-library-notebook').click();assert.equal($('notebook-export').disabled,true);pipeline.writes[0].commit();await removing;
+  assert.equal($('library-notebook').open,true);assert.match($('notebook-export-scope').textContent,/已选 1 篇/);assert.equal($('notebook-export').disabled,false);
+  assert.equal(rows($).length,1);assert.equal(rows($)[0].querySelector('input').checked,true);
+  $('notebook-export').click();const text=await blobs[0].text();assert.match(text,/Surviving selected note/);assert.doesNotMatch(text,/Removed selected/);
+ }finally{await w.happyDOM.close();}
+});
+test('notebook export revalidates identities before download and ignores a detached old selection control',async()=>{
+ const {w,$}=libraryHarness([selectionDoc('reused','Original selected'),selectionDoc('other','Survivor')],{probe:true});try{
+  const blobs=selectionDownloads(w);$('open-library-notebook').click();selectNotebookDocument($,'reused');selectNotebookDocument($,'other');
+  const old=rows($).find(row=>row.dataset.documentKey==='reused').querySelector('input');
+  w.libraryProbe.documents[0]={...w.libraryProbe.documents[0],title:'Replacement without rendering',notes:{cue:'Unselected replacement note'}};
+  $('notebook-export').onclick();assert.equal(blobs.length,0,'an unrendered replacement first requires the changed selection to be shown');assert.match($('notebook-status').textContent,/移除或替换/);
+  $('notebook-close').click();$('open-library-notebook').click();old.checked=true;old.onchange();
+  assert.equal(rows($).find(row=>row.dataset.documentKey==='reused').querySelector('input').checked,false);assert.match($('notebook-export-scope').textContent,/已选 1 篇/);
+  $('notebook-export').click();const text=await blobs[0].text();assert.match(text,/Survivor note/);assert.doesNotMatch(text,/Unselected replacement/);
+ }finally{await w.happyDOM.close();}
+});
 test('captures use document-qualified ownership, merge cue annotations once, and include blank bookmarks',()=>{
  const docs=fixture();docs.push({key:'audio',title:'Recording',segments:[],project_kind:'audio_only',project_note:'Audio thought',timestamp_bookmarks:[{id:'shared-64',time:90,note:''}]});
  const all=C.libraryCaptures(docs);assert.equal(all.length,132);assert.equal(new Set(all.map(c=>c.key)).size,132);
