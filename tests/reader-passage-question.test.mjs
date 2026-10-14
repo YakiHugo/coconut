@@ -189,3 +189,133 @@ for(const kind of ['local','published'])test(`${kind} audio-only annotations nev
   assert.equal(env.requests.length,1);assert.equal(env.requests[0].segments.length,6);assert.doesNotMatch(JSON.stringify(env.requests),/PRIVATE PROJECT NOTE|PRIVATE TIMESTAMP NOTE/);assert.deepEqual(env.requests[0].segments,fixture().segments.slice(0,6).map(({id,text})=>({id,text})));assert.equal(saved(env).ai_answers[0].input_snapshot.scope.source_title,'Authored audio-only '+kind);
  }finally{await env.close();}
 });
+
+function legacyPassageEvidenceEnvelope(){
+ const segments=Array.from({length:48},(_,index)=>({id:'cue-'+index,start:index,end:index+1,text:'x',speaker:'s'.repeat(1000)}));
+ let remaining=2200000-segments.reduce((count,cue)=>count+cue.id.length+cue.text.length,0);
+ for(const cue of segments){const extra=Math.min(999999,remaining);cue.text+='x'.repeat(extra);remaining-=extra;}
+ assert.equal(remaining,0);
+ const doc=C.validate({title:'t'.repeat(4000),source_url:'u'.repeat(4000),language:'l'.repeat(4000),segments});
+ const input={version:1,segments:doc.segments.map(({id,text})=>({id,text})),scope:{kind:'passage',passage_ids:doc.segments.slice(0,16).map(cue=>cue.id),expanded:true,source_title:doc.title,source_url:doc.source_url,source_language:doc.language,provider:'p'.repeat(4000),answer_language:'a'.repeat(4000),cues:doc.segments.map(({id,start,end,speaker})=>({id,start,end,speaker}))}};
+ return {doc,input,answer:{question:'Legacy question',answer:'Legacy answer',citations:['cue-0'],purpose:'question',input_snapshot:input}};
+}
+
+test('the entire previously accepted passage-evidence envelope survives without trimming and total +1 is rejected',()=>{
+ const {doc,input,answer}=legacyPassageEvidenceEnvelope();
+ assert.equal(C.answerInputCharacters(input),2268000);assert.equal(C.ANSWER_INPUT_CHARACTERS,2268000);
+ assert.equal(C.answerFreshness(answer,doc),'current');
+ assert.deepEqual(C.parse(JSON.stringify({...doc,ai_answers:[answer]}),'legacy.json').ai_answers[0].input_snapshot,input);
+ input.scope.source_url+='x';
+ assert.equal(C.answerFreshness(answer,doc),'unknown');
+ assert.equal(C.validate({...doc,ai_answers:[answer]}).ai_answers[0].input_snapshot,undefined);
+ input.segments[0].text=input.segments[0].text.slice(1);doc.segments[0].text=doc.segments[0].text.slice(1);doc.source_url+='x';
+ assert.equal(C.answerInputCharacters(input),2268000);assert.equal(C.answerFreshness(answer,doc),'current','metadata shares a bounded envelope, not a 4,000-character field cutoff');
+ const overSource=legacyPassageEvidenceEnvelope();overSource.input.segments.at(-1).text+='x';overSource.input.scope.source_url=overSource.input.scope.source_url.slice(1);
+ assert.equal(C.answerInputCharacters(overSource.input),2268000);assert.equal(C.validate({...overSource.doc,ai_answers:[overSource.answer]}).ai_answers[0].input_snapshot,undefined,'the independent 2.2M original source budget still applies');
+});
+
+test('an oversized local source scope is explained before opening or sending, without claiming the source changed',async()=>{
+ const env=setup();try{
+  const doc={title:'Oversized local provenance',language:'en',source_url:'https://example.org/'+ 'x'.repeat(C.ANSWER_INPUT_CHARACTERS),segments:[{id:'a',start:0,end:1,text:'An authored fact.'}]};
+  await load(env,doc);await env.$('check-ai').onclick();open(env);
+  assert.equal(env.$('passage-question-dialog').open,false);assert.equal(env.requests.length,0);
+  assert.match(env.$('notice').textContent,/本机来源依据超过 2,268,000 字符/);assert.match(env.$('notice').textContent,/尚未发送请求/);
+  assert.doesNotMatch(env.$('notice').textContent,/已改变|已失效/);
+  assert.equal(env.w.scopeTest.active().source_url,doc.source_url);
+ }finally{await env.close();}
+});
+
+test('long valid local provenance reaches the real Node contract, stays out of model input, and survives JSON and UI reload',async()=>{
+ const {startBridge}=await import('../desktop/server.mjs'),{createProviders,CODEX_DISABLED}=await import('../desktop/providers.mjs');
+ const modelInputs=[];
+ const providers=createProviders({find:async name=>'/authored-fake/'+name,environment:{PATH:'/bin'},run:async(_binary,args,options)=>{
+  if(args.includes('--help'))return {code:0,stdout:'--ephemeral --ignore-user-config --ignore-rules --output-schema --sandbox',stderr:''};
+  if(args[0]==='features')return {code:0,stdout:CODEX_DISABLED.join('\n'),stderr:''};
+  if(args[0]==='login')return {code:0,stdout:'Logged in using ChatGPT',stderr:''};
+  if(args.includes('auth'))return {code:0,stdout:JSON.stringify({loggedIn:true,authMethod:'claude.ai'}),stderr:''};
+  const input=JSON.parse(options.input.split('Untrusted transcript input (JSON):\n')[1]);modelInputs.push(input);
+  return {code:0,stdout:[{type:'item.completed',item:{type:'agent_message',text:JSON.stringify({answer:'Authored injected answer.',citations:[input.transcript[0].id]})}},{type:'turn.completed'}].map(JSON.stringify).join('\n'),stderr:''};
+ }});
+ const server=await startBridge({port:0,providers}),origin=`http://127.0.0.1:${server.address().port}`;
+ try{
+  const variants=[{source_url:'https://example.org/'+ 'x'.repeat(3980)},{source_url:'https://example.org/'+ 'x'.repeat(3981)},{title:'𠮷'.repeat(2001),source_url:'https://example.org/'+ '𠮷'.repeat(2001),language:'en-'+ 'x'.repeat(4000),speaker:'𠮷'.repeat(501)}];
+  assert.equal(variants[0].source_url.length,4000);assert.equal(variants[1].source_url.length,4001);
+  for(const variant of variants){
+   const env=setup(),requests=[];let stored,expected;
+   try{
+    env.w.fetch=async(url,options={})=>{
+     // HappyDOM's AbortSignal is from another realm; only the test HTTP adapter
+     // omits it. Production request, server validation and provider adapter run unchanged.
+     const {signal,...request}=options;const response=await fetch(new URL(url,origin+'/'),{...request,headers:{...options.headers,Origin:origin}});
+     if(options.method==='POST')requests.push({body:JSON.parse(options.body),status:response.status});return response;
+    };
+    const doc={title:'Authored source',language:'en',...variant,segments:[{id:'a',start:0,end:1,text:'An authored fact.',speaker:variant.speaker||'Speaker'}]};
+    delete doc.speaker;await load(env,doc);open(env);await env.$('check-ai').onclick();question(env);
+    assert.equal(env.$('refresh-passage-question').hidden,true);assert.equal(env.$('ask-ai').disabled,false);assert.match(env.$('passage-question-state').textContent,/完整发送范围/);
+    consent(env);await env.$('ask-ai').onclick();assert.equal(requests.length,1);assert.equal(requests[0].status,200);
+    assert.deepEqual(requests[0].body.segments,doc.segments.map(({id,text})=>({id,text})));
+    assert.deepEqual(Object.keys(requests[0].body).sort(),['consent','language','provider','question','segments']);
+    assert.deepEqual(modelInputs.at(-1),{question:'What does this passage say?',answer_language:'zh',transcript:requests[0].body.segments});
+    const output=saved(env);expected=output.ai_answers[0].input_snapshot;
+    assert.equal(expected.scope.source_title,doc.title);assert.equal(expected.scope.source_url,doc.source_url||'');assert.equal(expected.scope.source_language,doc.language);assert.equal(expected.scope.cues[0].speaker,doc.segments[0].speaker);
+    assert.equal(C.answerFreshness(output.ai_answers[0],output),'current');
+    assert.deepEqual(C.parse(JSON.stringify(output),'backup.json').ai_answers[0].input_snapshot,expected);stored=env.w.localStorage.getItem(KEY);
+   }finally{await env.close();}
+   const restored=setup(stored);try{
+    const doc=restored.w.scopeTest.active(),answer=doc.ai_answers[0];assert.deepEqual(JSON.parse(JSON.stringify(answer.input_snapshot)),expected);assert.equal(C.answerFreshness(answer,doc),'current');
+    open(restored);assert.equal(restored.$('refresh-passage-question').hidden,true);doc.source_url+='changed';restored.w.scopeTest.render();
+    assert.equal(restored.$('refresh-passage-question').hidden,false);assert.equal(C.answerFreshness(answer,doc),'stale');assert.equal(restored.requests.length,0);
+   }finally{await restored.close();}
+  }
+ }finally{await new Promise(resolve=>server.shutdown(resolve));}
+});
+
+test('an over-budget neighbor expansion restores the exact prior preview and checkbox without sending',async()=>{
+ const source=fixture();source.segments=source.segments.slice(0,18);source.source_url='';
+ const cues=source.segments.slice(6,12),input={version:1,segments:cues.map(({id,text})=>({id,text})),scope:{kind:'passage',passage_ids:cues.map(cue=>cue.id),expanded:false,source_title:source.title,source_url:'',source_language:source.language,provider:'codex',answer_language:'zh',cues:cues.map(({id,start,end,speaker})=>({id,start,end,speaker:speaker??null}))}};
+ source.source_url='x'.repeat(C.ANSWER_INPUT_CHARACTERS-C.answerInputCharacters(input));
+ const env=setup();try{
+  await load(env,source);open(env,1);await env.$('check-ai').onclick();question(env);consent(env);const before=ids(env);
+  assert.equal(env.$('refresh-passage-question').hidden,true);assert.equal(env.$('ask-ai').disabled,false);
+  env.$('passage-question-neighbors').checked=true;env.$('passage-question-neighbors').onchange();
+  assert.equal(env.$('passage-question-neighbors').checked,false);assert.deepEqual(ids(env),before);assert.equal(env.$('question-scope').dataset.segmentCount,'6');
+  assert.equal(env.$('ai-consent').checked,false);assert.equal(env.requests.length,0);assert.match(env.$('notice').textContent,/本机来源依据超过/);assert.equal(env.$('refresh-passage-question').hidden,true);
+ }finally{await env.close();}
+});
+
+test('larger local provenance never raises the actual 250,000-character model request limit',async()=>{
+ const env=setup();try{
+  await load(env,{title:'Long source remains request-bounded',language:'en',source_url:'https://example.org/'+ 'x'.repeat(4001),segments:[{id:'a',start:0,end:1,text:'x'.repeat(250000)}]});
+  open(env);await env.$('check-ai').onclick();question(env);
+  assert.equal(env.$('refresh-passage-question').hidden,true);assert.equal(env.$('ask-ai').disabled,true);assert.match(env.$('ai-request-readiness').textContent,/单次提问范围/);
+  consent(env);await env.$('ask-ai').onclick();assert.equal(env.requests.length,0);assert.match(env.$('notice').textContent,/超过单次范围/);
+ }finally{await env.close();}
+});
+
+test('changing provider at the evidence budget boundary blocks repeated sends and recovers on a smaller provider',async()=>{
+ const source={title:'T',language:'en',source_url:'',segments:[{id:'a',start:0,end:1,text:'fact'}]},input={version:1,segments:[{id:'a',text:'fact'}],scope:{kind:'passage',passage_ids:['a'],expanded:false,source_title:'T',source_url:'',source_language:'en',provider:'codex',answer_language:'zh',cues:[{id:'a',start:0,end:1,speaker:null}]}};
+ source.source_url='x'.repeat(C.ANSWER_INPUT_CHARACTERS-C.answerInputCharacters(input));const env=setup();try{
+  await load(env,source);open(env);await env.$('check-ai').onclick();question(env);assert.equal(env.$('ask-ai').disabled,false);
+  env.$('ai-provider').value='claude';env.$('ai-provider').onchange();assert.equal(env.$('ask-ai').disabled,true);assert.match(env.$('ai-request-readiness').textContent,/本机来源依据超过/);
+  for(let attempt=0;attempt<2;attempt++){consent(env);await env.$('ask-ai').onclick();assert.equal(env.requests.length,0);assert.equal(saved(env).ai_answers.length,0);assert.equal(env.$('ai-consent').checked,false);}
+  env.$('ai-provider').value='codex';env.$('ai-provider').onchange();assert.equal(env.$('ask-ai').disabled,false);consent(env);await env.$('ask-ai').onclick();
+  assert.equal(env.requests.length,1);assert.equal(saved(env).ai_answers.length,1);assert.equal(C.answerFreshness(saved(env).ai_answers[0],saved(env)),'current');
+ }finally{await env.close();}
+});
+
+test('neighbor expansion beyond the original source budget preserves the smaller valid scope and explains the limit',async()=>{
+ const source={title:'T',language:'en',segments:Array.from({length:3},(_,index)=>({id:'c'+index,start:index*100,end:index*100+1,text:'x'.repeat(740000)}))};
+ const env=setup();try{
+  await load(env,source);open(env,1);const before=ids(env);assert.equal(env.$('refresh-passage-question').hidden,true);
+  env.$('passage-question-neighbors').checked=true;env.$('passage-question-neighbors').onchange();
+  assert.deepEqual(ids(env),before);assert.equal(env.$('passage-question-neighbors').checked,false);assert.equal(env.$('passage-question-neighbors').disabled,false);assert.equal(env.$('refresh-passage-question').hidden,true);
+  assert.match(env.$('notice').textContent,/原文与片段 ID 超过 2,200,000 字符/);assert.equal(env.requests.length,0);
+ }finally{await env.close();}
+});
+
+test('a source cue beyond the retained single-cue evidence limit gets an explicit limit message',async()=>{
+ const env=setup();try{
+  await load(env,{title:'Long cue',language:'en',segments:[{id:'a',start:0,end:1,text:'x'.repeat(1000001)}]});open(env);
+  assert.equal(env.$('passage-question-dialog').open,false);assert.match(env.$('notice').textContent,/原片段超过 1,000,000 字符/);assert.equal(env.requests.length,0);
+ }finally{await env.close();}
+});

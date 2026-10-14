@@ -483,12 +483,31 @@
  // The exact ordered {id,text} payload is evidence for a saved answer.
  // Passage questions additionally retain source identity and timing as local provenance.
  // Never discard missing IDs: doing so would make a removed dependency look current.
+ const ANSWER_SOURCE_CHARACTERS=2200000;
+ // Preserve the full old envelope: 2.2M source + five 4k scope fields + 48 1k speakers.
+ const ANSWER_INPUT_CHARACTERS=ANSWER_SOURCE_CHARACTERS+5*4000+48*1000;
+ // One bounded budget covers the source strings retained as local evidence.
+ // Source metadata never goes to the model and must not be silently truncated.
+ function answerInputCharacters(input) {
+  let characters=input.segments.reduce((total,cue)=>total+cue.id.length+cue.text.length,0);
+  if(input.scope){
+   for(const key of ["source_title","source_url","source_language","provider","answer_language"])characters+=input.scope[key].length;
+   for(const cue of input.scope.cues)characters+=cue.speaker?.length||0;
+  }
+  return characters;
+ }
+ function answerInputLimitReason(input) {
+  if(input.segments.some(cue=>cue.text.length>1000000))return '本次段落提问有原片段超过 1,000,000 字符，无法完整保存依据。请先备份并拆分原文；尚未发送请求。';
+  if(input.segments.reduce((total,cue)=>total+cue.id.length+cue.text.length,0)>ANSWER_SOURCE_CHARACTERS)return '本次段落提问的原文与片段 ID 超过 2,200,000 字符，无法完整保存依据。请缩小上下文或先备份并拆分原文；尚未发送请求。';
+  if(answerInputCharacters(input)>ANSWER_INPUT_CHARACTERS)return '本次段落提问的本机来源依据超过 2,268,000 字符，无法完整保存。请缩小上下文，或先备份并整理过长的来源信息；尚未发送请求。';
+  return '';
+ }
  function cleanAnswerInput(value) {
   if(!value || value.version!==1 || !Array.isArray(value.segments) || !value.segments.length || value.segments.length>20000)return undefined;
   const ids=new Set();let chars=0;
   if(!value.segments.every(s=>{
    if(!s || typeof s.id!=="string" || !s.id.length || s.id.length>400 || ids.has(s.id) || typeof s.text!=="string"||s.text.length>1000000)return false;
-   ids.add(s.id);chars+=s.id.length+s.text.length;return chars<=2200000;
+   ids.add(s.id);chars+=s.id.length+s.text.length;return chars<=ANSWER_SOURCE_CHARACTERS;
   }))return undefined;
   const segments=value.segments.map(s=>({id:s.id,text:s.text}));
   let scope;
@@ -496,15 +515,17 @@
    const v=value.scope,ordered=segments.map(s=>s.id);
    if(!v||v.kind!=="passage"||segments.length>48||!Array.isArray(v.passage_ids)||!v.passage_ids.length||v.passage_ids.length>16||
     !Array.isArray(v.cues)||v.cues.length!==segments.length||typeof v.expanded!=="boolean"||
-    !["source_title","source_url","source_language","provider","answer_language"].every(key=>typeof v[key]==="string"&&v[key].length<=4000))return undefined;
+    !["source_title","source_url","source_language","provider","answer_language"].every(key=>typeof v[key]==="string")||
+    !["provider","answer_language"].every(key=>v[key].length<=4000))return undefined;
    const start=ordered.indexOf(v.passage_ids[0]);
    if(start<0||!v.expanded&&v.passage_ids.length!==segments.length||v.passage_ids.some((id,index)=>typeof id!=="string"||ordered[start+index]!==id)||
-    !v.cues.every((cue,index)=>cue&&cue.id===ordered[index]&&Number.isFinite(cue.start)&&cue.start>=0&&Number.isFinite(cue.end)&&cue.end>=cue.start&&(cue.speaker===null||typeof cue.speaker==="string"&&cue.speaker.length<=1000)))return undefined;
+    !v.cues.every((cue,index)=>cue&&cue.id===ordered[index]&&Number.isFinite(cue.start)&&cue.start>=0&&Number.isFinite(cue.end)&&cue.end>=cue.start&&(cue.speaker===null||typeof cue.speaker==="string")))return undefined;
    scope={kind:"passage",passage_ids:[...v.passage_ids],expanded:v.expanded,
     source_title:v.source_title,source_url:v.source_url,source_language:v.source_language,provider:v.provider,answer_language:v.answer_language,
     cues:v.cues.map(({id,start,end,speaker})=>({id,start,end,speaker}))};
   }
-  return {version:1,segments,...(scope?{scope}:{})};
+  const input={version:1,segments,...(scope?{scope}:{})};
+  return answerInputCharacters(input)<=ANSWER_INPUT_CHARACTERS?input:undefined;
  }
  function answerFreshness(answer, doc) {
   const input=cleanAnswerInput(answer.input_snapshot);
@@ -1970,7 +1991,7 @@
 	function parse(text, filename) {
 		return parseWithDiagnostics(text, filename).document;
 	}
-	const api = { createSourceCorrectionPreview, applySourceCorrectionPreview, undoSourceCorrection, parsePastedSubtitles, subtitleEncodings, decodeSubtitleBytes, translationSelectionInfo, translationSelectionModels, pairedExactExcerptSnapshot, exactExcerptTranslation, exactExcerptTranslationParts, normalizeReadingChapters, readingChapters, createReadingChapter, updateReadingChapter, readingChaptersWith, isReadingCollection, normalizeReadingCollection, createReadingCollection, collectionItemFromCapture, readingCollectionItemKey, readingCollectionItemState, readingCollectionMarkdown, SPEAKER_CORRECTION_LABEL_LIMIT, createSpeakerCorrectionPreview, applySpeakerCorrectionPreview, createLibraryBackupSelection, librarySavedHits, librarySavedHitCurrent, libraryTranslationHitCurrent, libraryTranslationHitCurrentSteps, exactExcerptNote, exactExcerptNotesWith, exactExcerptRemoval, exactExcerptSnapshot, exactExcerptText, exactExcerptParts, exactExcerptSource, exactExcerptCount, exactExcerptDuplicate, exactExcerptFreshness, exactExcerptFreshnessBatch, exactExcerptState, exactExcerptStateBatch, createReadingRecency, createReadingViews, createLibrarySearch, createLibraryNotebookSearch, libraryCaptureSteps, libraryCaptureCurrent, libraryCaptures, libraryNotebookMarkdown, mediaTiming, mediaTimingOffset, mediaTimingRange, localMediaSource, searchDocument, invalidateSearch, manualReviewSnapshot, manualReviewCurrent, saveManualTranslation, translationReviewQueue, hasNoteContent, segmentNoteCount, BACKUP_REVIEW_BYTES, SUBTITLE_IMPORT_BYTES, vttPayload, libraryHits, librarySnippet, hasProjectAnnotations, projectAnnotationCount, attachProjectTranscript, libraryMatches, documentDuration, sortedLibrary, AUDIO_NOTE_BUDGET, audioNoteCharacters, isAudioProject, audioProjectIdentity, podcastMediaIdentity, SUMMARY_QUESTION, summaryReadiness, podcastURL, podcastSource, cleanGlossary, relevantGlossary, translationQualityMessage, retainAnswers, summaryFreshness, latestSummary, summaryMarkdown, aiReadingMarkdown, parseReadingTime, createPlaybackIndex, segmentAtTime, transcriptText, subtitleExport, planLibraryBackup, mergeLibraryBackup, time, source, media, validate, parse, parseWithDiagnostics, matchesSegment, notebookSegments, notebookMarkdown, translationCurrent, sameCueSnapshot, offlineTranslationBatches, subscriptionPlan, cleanContexts, answerFreshness };
+	const api = { ANSWER_INPUT_CHARACTERS, answerInputCharacters, answerInputLimitReason, createSourceCorrectionPreview, applySourceCorrectionPreview, undoSourceCorrection, parsePastedSubtitles, subtitleEncodings, decodeSubtitleBytes, translationSelectionInfo, translationSelectionModels, pairedExactExcerptSnapshot, exactExcerptTranslation, exactExcerptTranslationParts, normalizeReadingChapters, readingChapters, createReadingChapter, updateReadingChapter, readingChaptersWith, isReadingCollection, normalizeReadingCollection, createReadingCollection, collectionItemFromCapture, readingCollectionItemKey, readingCollectionItemState, readingCollectionMarkdown, SPEAKER_CORRECTION_LABEL_LIMIT, createSpeakerCorrectionPreview, applySpeakerCorrectionPreview, createLibraryBackupSelection, librarySavedHits, librarySavedHitCurrent, libraryTranslationHitCurrent, libraryTranslationHitCurrentSteps, exactExcerptNote, exactExcerptNotesWith, exactExcerptRemoval, exactExcerptSnapshot, exactExcerptText, exactExcerptParts, exactExcerptSource, exactExcerptCount, exactExcerptDuplicate, exactExcerptFreshness, exactExcerptFreshnessBatch, exactExcerptState, exactExcerptStateBatch, createReadingRecency, createReadingViews, createLibrarySearch, createLibraryNotebookSearch, libraryCaptureSteps, libraryCaptureCurrent, libraryCaptures, libraryNotebookMarkdown, mediaTiming, mediaTimingOffset, mediaTimingRange, localMediaSource, searchDocument, invalidateSearch, manualReviewSnapshot, manualReviewCurrent, saveManualTranslation, translationReviewQueue, hasNoteContent, segmentNoteCount, BACKUP_REVIEW_BYTES, SUBTITLE_IMPORT_BYTES, vttPayload, libraryHits, librarySnippet, hasProjectAnnotations, projectAnnotationCount, attachProjectTranscript, libraryMatches, documentDuration, sortedLibrary, AUDIO_NOTE_BUDGET, audioNoteCharacters, isAudioProject, audioProjectIdentity, podcastMediaIdentity, SUMMARY_QUESTION, summaryReadiness, podcastURL, podcastSource, cleanGlossary, relevantGlossary, translationQualityMessage, retainAnswers, summaryFreshness, latestSummary, summaryMarkdown, aiReadingMarkdown, parseReadingTime, createPlaybackIndex, segmentAtTime, transcriptText, subtitleExport, planLibraryBackup, mergeLibraryBackup, time, source, media, validate, parse, parseWithDiagnostics, matchesSegment, notebookSegments, notebookMarkdown, translationCurrent, sameCueSnapshot, offlineTranslationBatches, subscriptionPlan, cleanContexts, answerFreshness };
 	if (typeof module !== "undefined" && module.exports) module.exports = api;
 	else root.Coconut = api;
 })(typeof window !== "undefined" ? window : globalThis);
