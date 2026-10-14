@@ -7,6 +7,7 @@ import fs from 'node:fs/promises';
 import {chromium} from './helpers/browser-storage.mjs';
 import {openCueActions} from './cue-actions-browser.mjs';
 import {subtitleFixtures,expectedCues,note,correction,cueSnapshot} from './helpers/subtitle-import-fixtures.mjs';
+import {incompleteSubtitleFixtures} from './helpers/incomplete-subtitle-fixtures.mjs';
 const root=new URL('../reader/',import.meta.url),KEY='coconut-reader-v1';
 const checks=[];let browser,server,stage='setup',external=0,mutations=0,errors=0;
 function check(name,value){assert.ok(value,name);checks.push(name);}
@@ -92,6 +93,21 @@ try{
   await restored.reload();await restored.locator('#reader-workspace').waitFor({state:'visible'});await restored.locator('#mode-transcript').click();
   check(label+'_refresh_keeps_reimported_notes_and_correction',await restored.locator('.saved-note').textContent()===note&&await restored.locator('.words').nth(1).textContent()===correction);
   await page.context().close();await restored.context().close();await roundtrip.context().close();
+ }
+ for(const fixture of incompleteSubtitleFixtures){
+  stage=fixture.format+'_incomplete_timing_native_import';const page=await newPage(390);
+  await choose(page,{name:fixture.name,mimeType:'text/plain',buffer:Buffer.from(fixture.text)},fixture.title);
+  check(fixture.format+'_incomplete_timing_announces_skipped_blocks',/部分字幕未导入：跳过 2 个字幕块/.test(await page.locator('#notice').textContent()));
+  const saved=await active(page);assert.deepEqual(saved.segments.map(cue=>cue.text),fixture.cues);assert.equal(saved.diagnostics,undefined);
+  await page.locator('#add-content').click();const row=page.locator('#transcript-import-list > li').first(),details=row.locator('details');
+  await details.locator('summary').click();await details.locator('li').first().waitFor();
+  assert.equal(await details.locator('li').count(),2);assert.equal(await details.locator('img').count(),0);
+  const detailText=await details.textContent();for(const [start,end] of fixture.ranges)assert.ok(detailText.includes(`第 ${start}–${end} 行`));
+  check(fixture.format+'_incomplete_timing_has_original_lines_and_plain_preview',detailText.includes('Omitted <img src=x> detail'));
+  check(fixture.format+'_incomplete_timing_warning_fits_mobile',await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)&&await details.evaluate(node=>node.scrollWidth<=node.clientWidth+1));
+  await row.getByRole('button',{name:'阅读 '+fixture.name,exact:true}).click();await page.reload();await page.locator('#reader-workspace').waitFor({state:'visible'});
+  assert.deepEqual((await active(page)).segments,saved.segments);check(fixture.format+'_incomplete_import_reload_preserves_valid_cues',true);
+  await page.context().close();
  }
  check('no_uploads_model_calls_external_requests_or_page_errors',mutations===0&&external===0&&errors===0);
  console.log(JSON.stringify({suite:'subtitle-file-import',status:'passed',checks}));

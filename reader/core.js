@@ -1866,16 +1866,23 @@
   }
 		const isVtt = filename.toLowerCase().endsWith(".vtt") || /^(?:\uFEFF)?WEBVTT(?:[ \t]|\r?\n|$)/.test(text);
 		const segments = [], diagnostics = [];
-		// Only two clock-shaped timestamps with an arrow-like/blank separator,
-		// in the timing position (optionally after one cue ID), identify a skipped
-		// malformed cue. Unknown prose and numbering gaps are not evidence of loss.
+		// A full timing pair, or a millisecond clock followed only by a damaged
+		// separator/truncated clock, identifies skipped timed text. Never infer
+		// an end time. Clock mentions in prose and numbering gaps are not evidence.
 		const timeLike = /^(?:\d{2,}:)?\d{2}:\d{2}[.,]\d{3}[\t \-=<>–—→]+(?:\d{2,}:)?\d{2}:\d{2}[.,]\d{3}(?:[\t ]|$)/;
+		const incompleteTime = /^(?:\d{2,}:)?\d{2}:\d{2}[.,]\d{3}(?:[\t \-=<>–—→][\d:.,\t \-=<>–—→]*)?$/;
 		for (const {lines, startLine} of subtitleBlocks(text)) {
 			if (isVtt && /^(?:WEBVTT|NOTE|STYLE|REGION)(?:[ \t]|$)/.test(lines[0].trim())) continue;
 			const index = lines.findIndex((line) => line.includes("-->"));
 			if (index < 0) {
 				const first = lines.findIndex(line=>line.trim());
-				const timingIndex = first < 0 ? -1 : [first, first+1].find(i=>timeLike.test(lines[i]?.trim() || "")) ?? -1;
+				// For newly detected incomplete rows, only a numeric SRT counter
+				// or a WebVTT cue ID can precede the timing. Keep the older complete
+				// pair diagnostic contract, including its legacy arbitrary SRT IDs.
+				const timingIndex = first < 0 ? -1 : [first, first+1].find(i=>{
+					const line=lines[i]?.trim() || "";
+					return timeLike.test(line) || incompleteTime.test(line) && (i===first || isVtt || /^\d+$/.test(lines[first].trim()));
+				}) ?? -1;
 				if (timingIndex >= 0) diagnostics.push(subtitleDiagnostic(lines, startLine, timingIndex, "malformed_timing"));
 				continue;
 			}
