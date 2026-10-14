@@ -21,7 +21,9 @@ concurrency:
 jobs:
   browser-smoke:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # Full authored suite measured 918s on hosted CI; allow ~31% setup/runtime headroom.
+    # Keep every suite and its own failure/timeout assertions unchanged.
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
