@@ -825,3 +825,7 @@ test('uncheck then recheck cannot revive a pending resume without a fresh submit
 test('BFCache pagehide/pageshow cannot revive an earlier resume preflight',async()=>{
  const h=setup(resumableBackend());let release,releaseList;try{await prepareResume(h);let entered;const started=new Promise(r=>entered=r);h.api.preflightEntered=entered;h.api.preflightGate=new Promise(r=>release=r);h.$('ai-consent').checked=true;const pending=h.$('ask-ai').onclick();await started;h.api.listGate=new Promise(r=>releaseList=r);h.w.dispatchEvent(new h.w.Event('pagehide'));h.w.dispatchEvent(new h.w.Event('pageshow'));h.$('ai-consent').checked=true;release();await pending;assert.equal(h.api.resumePosts.length,0);releaseList();await h.refresh();assert.equal(posted(h.api).length,1);}finally{release?.();releaseList?.();await h.w.happyDOM.close();}
 });
+
+test('desktop resume confirmation retains a 44px minimum target in the existing summary panel',async()=>{
+ const h=setup(resumableBackend());try{h.w.happyDOM.setWindowSize({width:1280,height:1000});const style=h.w.document.createElement('style');style.textContent=fs.readFileSync(new URL('reader/style.css',root),'utf8');h.w.document.head.append(style);await prepareResume(h);assert.equal(h.w.getComputedStyle(h.$('ask-ai')).minHeight,'44px');assert.equal(h.$('ask-ai').closest('#summary-request')?.id,'summary-request');}finally{await h.w.happyDOM.close();}
+});

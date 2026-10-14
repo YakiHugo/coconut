@@ -11,7 +11,7 @@ import {backgroundSummaryBridge,authoredSource,until} from './helpers/background
 if(process.env.GITHUB_ACTIONS!=='true')throw new Error('Run this real Chromium journey in GitHub Actions only.');
 let bridge,browser,stage='setup',external=0,pageErrors=0,failure=null,releaseBulk=()=>{};
 const checks=[];
-const check=(name,value)=>{stage=name;assert.ok(value,name);checks.push(name);};
+const check=(name,value,details)=>{stage=name;assert.ok(value,details?name+' '+JSON.stringify(details):name);checks.push(name);};
 const report=()=>({suite:'background-summary-authored-http',status:process.exitCode?'failed':'passed',stage,checks,external,pageErrors,failure});
 try{
  bridge=await backgroundSummaryBridge();
@@ -260,8 +260,9 @@ try{
  await expect(page.locator('#ai-provider')).toBeDisabled();await expect(page.locator('#ai-model')).toBeDisabled();await expect(page.locator('#ai-consent')).toHaveCount(1);
  for(const width of [390,1280]){
   await page.setViewportSize({width,height:1000});await page.locator('#ask-ai').scrollIntoViewIfNeeded();
-  check('resume_single_confirmation_reachable_without_overflow_'+width,await page.locator('#ask-ai').evaluate(node=>{const r=node.getBoundingClientRect();return r.height>=44&&r.x>=0&&r.right<=innerWidth;})&&await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
+  const geometry=await page.locator('#ask-ai').evaluate(node=>{const r=node.getBoundingClientRect();return {height:r.height,x:r.x,right:r.right,viewport:innerWidth,scrollWidth:document.documentElement.scrollWidth};});
   if(process.env.COCONUT_UI_ARTIFACT_DIR)await page.screenshot({path:path.join(process.env.COCONUT_UI_ARTIFACT_DIR,'background-checkpoint-resume-'+width+'.png')});
+  check('resume_single_confirmation_reachable_without_overflow_'+width,geometry.height>=44&&geometry.x>=0&&geometry.right<=geometry.viewport&&geometry.scrollWidth<=geometry.viewport,geometry);
  }
  const resumeRoute='**/api/v1/tasks/'+resumeId+'/resume';let acceptedResumeKey;
  await page.route(resumeRoute,async route=>{
