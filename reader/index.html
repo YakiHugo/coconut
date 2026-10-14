@@ -8,9 +8,9 @@
 <meta name="theme-color" content="#faf9f7">
 <link rel="icon" type="image/png" href="coconut-mark.png">
 <script src="appearance.js?v=86ea922669"></script>
-<link rel="stylesheet" href="style.css?v=1ef2323c52">
+<link rel="stylesheet" href="style.css?v=86213e340a">
 <script src="summary.js?v=580ffdad1e" defer></script>
-<script src="task-client.js?v=a7f908fa90" defer></script>
+<script src="task-client.js?v=c216432696" defer></script>
 <script src="core.js?v=a7a08ef168" defer>
 </script>
 <script src="passages.js?v=998756df3c" defer></script>
@@ -22,7 +22,7 @@
 <script src="app.js?v=26fc874b2a" type="text/coconut-pending" data-reader-script>
 </script>
 <script src="language.js?v=be0a7b4ce4" type="text/coconut-pending" data-reader-script></script>
-<script src="background-summary.js?v=3596b6e344" type="text/coconut-pending" data-reader-script></script>
+<script src="background-summary.js?v=9e2da3b02d" type="text/coconut-pending" data-reader-script></script>
 <script src="translation-review.js?v=e8289ebd90" type="text/coconut-pending" data-reader-script></script>
 <script src="podcasts.js?v=d3db57978f" type="text/coconut-pending" data-reader-script></script>
 <script src="jobs.js?v=c5208f6283" type="text/coconut-pending" data-reader-script>
@@ -41,7 +41,21 @@
 <button id="open-library-search" type="button" aria-haspopup="dialog" aria-controls="library-search-dialog">查找书架</button>
 <button id="toggle-library" aria-expanded="false" aria-controls="library-list"><span class="library-open-label">书架</span><span class="library-close-label">← 收起书架</span> <span id="library-total">0</span></button>
 <div id="library-list">
-<details id="background-tasks" class="background-tasks"><summary>本机后台任务 <span id="background-task-count">0</span></summary><p id="background-executor-status" class="hint" role="status">尚未检查本机执行器；阅读不受影响。</p><p class="hint">当前仅连接此电脑的 bridge，未连接手机。关闭页面不取消；退出执行器后不会自动续跑。</p><button id="background-refresh" type="button">刷新任务与连接</button><p id="background-task-message" class="hint" role="status"></p><div id="background-task-list"></div><details id="background-archive"><summary>已归档任务</summary><p class="hint">显式归档保留原文、结果和任务身份，不会重新执行或自动删除。当前列表最多 128 条，归档最多 2048 条，共用执行器 32 MiB 存储预算；浏览器也受本地存储空间限制。</p><label for="background-archive-id">按完整 taskId 查找归档</label><input id="background-archive-id" type="text" maxlength="128" autocomplete="off"><button id="background-archive-find" type="button">查找归档任务</button><p id="background-archive-status" class="hint" role="status"></p><button id="background-archive-local" type="button">查看本浏览器归档关联</button><button id="background-archive-first" type="button">刷新归档首页</button><button id="background-archive-next" type="button" disabled>下一页归档</button><div id="background-archive-list"></div></details></details>
+<details id="background-tasks" class="background-tasks"><summary>本机后台任务 <span id="background-task-count">0</span></summary><p id="background-executor-status" class="hint" role="status">尚未检查本机执行器；阅读不受影响。</p><p class="hint">当前仅连接此电脑的 bridge，未连接手机。关闭页面不取消；退出执行器后不会自动续跑。</p><button id="background-refresh" type="button">刷新任务与连接</button><p id="background-task-message" class="hint" role="status"></p><div id="background-bulk-controls">
+<p id="background-bulk-scope" class="hint" role="status"></p>
+<button id="background-bulk-select" type="button">选择当前列表可归档任务</button>
+<button id="background-bulk-clear" type="button">清除选择</button>
+<button id="background-bulk-review" type="button">核对所选任务</button>
+</div>
+<section id="background-bulk-panel" class="background-bulk-panel" aria-labelledby="background-bulk-title" hidden>
+<h3 id="background-bulk-title" tabindex="-1">核对批量归档</h3>
+<p class="hint">仅处理下面明确列出的任务；保留原文、结果和身份，可在“已归档任务”恢复。只释放当前列表名额，不释放总存储空间。取消或关闭页面只停止后续请求，已发送项仍可能完成；刷新页面不会自动继续。</p>
+<p id="background-bulk-status" role="status" aria-live="polite"></p>
+<ol id="background-bulk-items"></ol>
+<button id="background-bulk-confirm" type="button">确认归档</button>
+<button id="background-bulk-cancel" type="button">返回选择</button>
+<button id="background-bulk-retry" type="button" hidden>核对未完成项</button>
+</section><div id="background-task-list"></div><details id="background-archive"><summary>已归档任务</summary><p class="hint">显式归档保留原文、结果和任务身份，不会重新执行或自动删除。当前列表最多 128 条，归档最多 2048 条，共用执行器 32 MiB 存储预算；浏览器也受本地存储空间限制。</p><label for="background-archive-id">按完整 taskId 查找归档</label><input id="background-archive-id" type="text" maxlength="128" autocomplete="off"><button id="background-archive-find" type="button">查找归档任务</button><p id="background-archive-status" class="hint" role="status"></p><button id="background-archive-local" type="button">查看本浏览器归档关联</button><button id="background-archive-first" type="button">刷新归档首页</button><button id="background-archive-next" type="button" disabled>下一页归档</button><div id="background-archive-list"></div></details></details>
 <button id="open-library-notebook" type="button">我的笔记与摘录</button>
 <label class="library-search">查找书架<input id="library-search" type="search" placeholder="按标题查找"></label>
 <div id="library-search-scope"><label>查找范围<select id="library-scope" aria-describedby="library-scope-hint"><option value="title">标题</option><option value="notes">标题与笔记（含摘录笔记）</option><option value="text">标题、原文、笔记与已存摘录</option><option value="translations">译文</option></select></label><p id="library-scope-hint" class="hint" hidden>全部语言，仅当前有效的已存译文；每种语言可翻页查看匹配片段。</p></div>
