@@ -39,6 +39,9 @@ def allows(condition, outcomes, cancelled=False, prior_success=True):
 
 
 class BrowserWorkflowTests(unittest.TestCase):
+    def test_job_budget_covers_measured_full_suite_with_bounded_headroom(self):
+        self.assertRegex(SMOKE, r"(?m)^    timeout-minutes: 20$")
+
     def test_setup_is_a_success_only_prefix(self):
         setup_index = next(i for i, step in enumerate(STEPS)
                            if step.get('id') == 'browser_setup')

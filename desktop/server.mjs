@@ -55,6 +55,8 @@ export function createBridge({readerDirectory = path.resolve(ROOT,'../reader'), 
             return json(200,{protocolVersion:1,...(key!==null?{task:await taskStore.findSubmission(key)}:{tasks:await taskStore.list()})});
           }
           if(pathname.endsWith('/export'))return json(200,{protocolVersion:1,record:await taskStore.exportTask(pathname.split('/').at(-2))});
+          const resumeKey=new URL(req.url,origin).searchParams.get('resumeKey');
+          if(resumeKey!==null)return json(200,{protocolVersion:1,...await taskStore.findResume(pathname.split('/').at(-1),resumeKey)});
           return json(200,{protocolVersion:1,task:await taskStore.get(pathname.split('/').at(-1))});
         }
         if (pathname === '/api/captions/status') return json(200,captionSources);
@@ -69,7 +71,7 @@ export function createBridge({readerDirectory = path.resolve(ROOT,'../reader'), 
       if (req.method !== 'POST') return json(405,{error:'Method not allowed'});
       // Cross-site HTML forms and opaque-origin pages must never start a local CLI.
       if (req.headers.origin !== origin) return json(403,{error:'发送请求必须来自此本机阅读器'});
-      const taskRoute=pathname==='/api/v1/tasks'||/^\/api\/v1\/tasks\/[a-f0-9-]+\/(?:cancel|archive|restore)$/.test(pathname);
+      const taskRoute=pathname==='/api/v1/tasks'||/^\/api\/v1\/tasks\/[a-f0-9-]+\/(?:cancel|archive|restore|resume)$/.test(pathname);
       if (taskRoute&&!taskStore)return json(503,{error:taskUnavailable?.message||'此执行器尚未配置持久任务目录',code:taskUnavailable?.code||'tasks_disabled'});
       if (!taskRoute&&!['/api/ask','/api/translate-subscription','/api/podcasts/discover','/api/podcasts/import','/api/podcasts/media','/api/captions/import'].includes(pathname)) return json(501,{error:'轻量版未启用视频站下载、ASR 或离线翻译。可使用公开播客源、字幕或本地音视频；完整本地处理服务为可选高级功能。'});
       if (req.headers['content-type']?.split(';')[0] !== 'application/json') return json(400,{error:'Use application/json'});
@@ -86,11 +88,12 @@ export function createBridge({readerDirectory = path.resolve(ROOT,'../reader'), 
       try { data = JSON.parse(Buffer.concat(chunks).toString('utf8')); } catch { return json(400,{error:'请求 JSON 无效'}); }
       if (!data || typeof data !== 'object' || Array.isArray(data)) return json(400,{error:'请求 JSON 无效'});
       if(taskRoute){
-        const action=pathname.split('/').at(-1),guardedArchive=action==='archive'&&data.protocolVersion===2;
-        // v2 is only the guarded archive request envelope. Old servers reject
+        const action=pathname.split('/').at(-1),guardedMutation=['archive','cancel'].includes(action)&&data.protocolVersion===2;
+        if(action==='resume'){const receipt=await taskStore.resume(pathname.split('/').at(-2),data);return json(receipt.created?202:200,{protocolVersion:1,...receipt});}
+        // v2 is the guarded archive/cancel request envelope. Old servers reject
         // it instead of silently ignoring a caller's identity precondition.
-        if((data.protocolVersion!==1&&!guardedArchive)||(guardedArchive&&!Object.hasOwn(data,'expected'))||(!guardedArchive&&Object.hasOwn(data,'expected')))return json(400,{error:'任务协议版本或身份条件无效',code:'invalid_request'});
-        if(['cancel','archive','restore'].includes(action))return json(200,{protocolVersion:1,task:await taskStore[action](pathname.split('/').at(-2),guardedArchive?data.expected:undefined)});
+        if((data.protocolVersion!==1&&!guardedMutation)||(guardedMutation&&!Object.hasOwn(data,'expected'))||(!guardedMutation&&Object.hasOwn(data,'expected')))return json(400,{error:'任务协议版本或身份条件无效',code:'invalid_request'});
+        if(['cancel','archive','restore'].includes(action))return json(200,{protocolVersion:1,task:await taskStore[action](pathname.split('/').at(-2),guardedMutation?data.expected:undefined)});
         const receipt=await taskStore.submit(data);return json(receipt.created?202:200,{protocolVersion:1,...receipt});
       }
       if(pathname === '/api/captions/import'){

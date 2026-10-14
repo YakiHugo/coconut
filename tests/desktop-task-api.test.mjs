@@ -141,7 +141,7 @@ test('guarded single archive uses a narrow v2 request envelope and immutable pre
  for(const body of [{protocolVersion:2},{protocolVersion:2,expected:null},{protocolVersion:2,expected:{}},{protocolVersion:2,expected:{...expected,attemptId:'invalid'}},{protocolVersion:1,expected}]){
   const result=await fetch(origin+'/api/v1/tasks/'+done.taskId+'/archive',{method:'POST',headers:{Origin:origin,'Content-Type':'application/json'},body:JSON.stringify(body)});assert.equal(result.status,400);
  }
- for(const action of ['cancel','restore']){
+ for(const action of ['restore']){
   const response=await fetch(origin+'/api/v1/tasks/'+done.taskId+'/'+action,{method:'POST',headers:{Origin:origin,'Content-Type':'application/json'},body:JSON.stringify({protocolVersion:2,expected})});assert.equal(response.status,400);
  }
  const invalidSubmit=await fetch(origin+'/api/v1/tasks',{method:'POST',headers:{Origin:origin,'Content-Type':'application/json'},body:JSON.stringify({...input(),protocolVersion:2,expected})});assert.equal(invalidSubmit.status,400);
