@@ -44,8 +44,8 @@
  function current(job,doc){return !!job&&Array.isArray(doc?.segments)&&job.snapshot.length===doc.segments.length&&job.snapshot.every((cue,i)=>cue.id===doc.segments[i].id&&cue.text===doc.segments[i].text);}
  function model(value){if(value===undefined||value===null||value==='')return '';if(typeof value!=='string'||! /^[A-Za-z0-9][A-Za-z0-9._-]{0,119}$/.test(value))throw new Error('模型名称须为 1–120 个英文字母、数字、点、下划线或连字符，并以字母或数字开头');return value;}
  function create(plan,provider,selectedModel){const chosen=model(selectedModel);if(!['codex','claude'].includes(provider))throw new Error('请选择支持的本地 AI 工具');return {version:1,provider,...(chosen?{model:chosen}:{}),snapshot:plan.source.map(c=>({...c})),results:[],status:'paused',in_flight:null};}
- function result(value,ids,{note=false}={}){
-  if(!object(value)||typeof value.answer!=='string'||!value.answer.trim()||value.answer.length>(note?LIMITS.noteCharacters:LIMITS.answerCharacters)||!Array.isArray(value.citations)||!value.citations.length||value.citations.length>(note?LIMITS.noteCitations:LIMITS.chunks)||value.citations.some(id=>typeof id!=='string'||!ids.has(id)))throw new Error('摘要结果不完整、超出长度限制或缺少有效引用，本批未保存');
+ function result(value,ids,{note=false,citationLimit=LIMITS.chunks}={}){
+  if(!object(value)||typeof value.answer!=='string'||!value.answer.trim()||value.answer.length>(note?LIMITS.noteCharacters:LIMITS.answerCharacters)||!Array.isArray(value.citations)||!value.citations.length||value.citations.length>(note?LIMITS.noteCitations:citationLimit)||value.citations.some(id=>typeof id!=='string'||!ids.has(id)))throw new Error('摘要结果不完整、超出长度限制或缺少有效引用，本批未保存');
   const accepted={answer:value.answer,citations:[...new Set(value.citations)]};
   if(note&&JSON.stringify({batch:64,summary:accepted.answer,source_citations:accepted.citations}).length>LIMITS.noteSerializedCharacters)throw new Error('分批摘要及引用过大，本批未保存');
   return accepted;
@@ -60,6 +60,22 @@
    // An outstanding request can have consumed quota even if its response was lost.
    if(value.in_flight!==null&&value.in_flight!==undefined){if(value.in_flight!==job.results.length||value.in_flight>=p.requests)return null;job.status='interrupted';}
    return job;
+  }catch{return null;}
+ }
+ // Validate persisted terminal output with the same bounds and source membership
+ // as live acceptance. Aggregation expands batch citations to up to 64 * 8 IDs.
+ function cleanFinal(p,value,provider,selectedModel,{legacy=false}={}){
+  try{
+   const job=create(p,provider,selectedModel),expectedProvider=provider==='codex'?'chatgpt_subscription':'claude_subscription';
+   if(!object(value)||value.purpose!=='summary'||(value.requested_model||'')!==(job.model||''))return null;
+   // Pre-checkpoint ledgers only promised answer/source citations and requested model.
+   // Keep their original records readable even after a v3 ledger rewrite.
+   if(legacy)return final(p,job,result(value,new Set(p.source.map(c=>c.id)),{citationLimit:Infinity}));
+   if(value.provider!==expectedProvider)return null;
+   const process=value.summary_process;
+   if(!object(process)||process.version!==1||process.batches!==p.chunks.length||process.requests!==p.requests||process.citation_basis!==(p.chunks.length>1?'batch_sources':'direct'))return null;
+   const accepted=result(value,new Set(p.source.map(c=>c.id)),{citationLimit:p.chunks.length>1?LIMITS.chunks*LIMITS.noteCitations:LIMITS.chunks});
+   return final(p,job,accepted);
   }catch{return null;}
  }
  function buildRequest(p,job){
@@ -95,6 +111,6 @@
   const completed=job?.results.length||0,remaining=p.requests-completed;
   return `整篇 ${p.segments.toLocaleString('en-US')} 段、${p.characters.toLocaleString('en-US')} 字符；${p.chunks.length} 个原文批次${p.chunks.length>1?' + 1 次汇总':''}，${completed?`${saved?'已保存':'当前页暂存'} ${completed} 批，本次继续 ${remaining} 次`:`共 ${p.requests} 次`}模型请求。原文分批发送给所选提供商${p.chunks.length>1?'，汇总时另发送全部分批笔记及其引用':''}；不发送阅读笔记、音视频或筛选外的其他文档。会使用订阅额度，具体 token 和剩余额度未知；Coconut 不主动购买额度或切换 API，但无法核验提供商计费，请求可能消耗已启用的额外付费额度。每批先保存才继续，每轮确认最多 65 次请求，手动重试另计；中断后需再次确认，最后汇总完成前不产生整篇摘要。`;
  }
- const api={LIMITS,QUESTION,model,plan,current,create,clean,request,accept,notice};
+ const api={LIMITS,QUESTION,model,plan,current,create,clean,cleanFinal,request,accept,notice};
  if(typeof module!=='undefined'&&module.exports)module.exports=api;else root.CoconutSummary=api;
 })(typeof window!=='undefined'?window:globalThis);

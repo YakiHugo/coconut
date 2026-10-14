@@ -140,6 +140,7 @@ async function openArchiveStore(options){const store=await createTaskStore(optio
 async function archivedFixture(t,{active=1,archived=0,version=2}={}){
  const {directory,store}=await setup({after(){}});archiveStores.set(directory,[]);t.after(async()=>{for(const opened of archiveStores.get(directory))await opened.shutdown();archiveStores.delete(directory);await fs.rm(directory,{recursive:true,force:true});});const receipt=await store.submit(submission());await until(store,receipt.task.taskId,'succeeded');await store.shutdown();
  const file=path.join(directory,'tasks.json'),seed=JSON.parse(await fs.readFile(file,'utf8')).tasks[0];
+ if(version<3){delete seed.checkpoint;delete seed.resumeReceipts;}
  const {randomUUID}=await import('node:crypto');
  const tasks=Array.from({length:active+archived},(_,i)=>({...seed,taskId:randomUUID(),attemptId:randomUUID(),idempotencyKey:'fixture-'+i,...(i>=active?{archivedAt:'2026-10-14T00:00:00.000Z'}:{})}));
  await fs.writeFile(file,JSON.stringify({version,extension:{kept:true},tasks}));return {directory,file,tasks};
@@ -160,7 +161,7 @@ test('128 retained terminal tasks can explicitly archive then submit, with archi
  await store.archive(newTask.task.taskId);const restored=await store.restore(tasks[0].taskId);assert.equal(restored.archivedAt,undefined);assert.equal(restored.taskId,tasks[0].taskId);assert.equal(calls,1);
  await store.archive(tasks[0].taskId);await store.shutdown();
  store=await openArchiveStore({directory,providers:{ask:async()=>{calls++;}}});assert.equal((await store.submit(submission({idempotencyKey:'fixture-0'}))).created,false);assert.equal(calls,1);
- const persisted=JSON.parse(await fs.readFile(file,'utf8'));assert.equal(persisted.version,2);assert.equal(persisted.tasks.length,129);assert.deepEqual(persisted.extension,{kept:true});
+ const persisted=JSON.parse(await fs.readFile(file,'utf8'));assert.equal(persisted.version,3);assert.equal(persisted.tasks.length,129);assert.deepEqual(persisted.extension,{kept:true});
 });
 
 test('running, queued, cancel-unsettled and interrupted tasks cannot be archived',async t=>{
@@ -193,7 +194,7 @@ test('v1 migration retains all records and extension fields on its first atomic 
  const {directory,file,tasks}=await archivedFixture(t,{version:1});const ledger=JSON.parse(await fs.readFile(file,'utf8'));ledger.tasks[0].extension={retained:'record field'};await fs.writeFile(file,JSON.stringify(ledger));
  const store=await openArchiveStore({directory,providers:{ask:async()=>{throw new Error('No inference');}}});t.after(()=>store.shutdown());
  assert.equal(JSON.parse(await fs.readFile(file,'utf8')).version,1);await store.archive(tasks[0].taskId);
- const saved=JSON.parse(await fs.readFile(file,'utf8'));assert.equal(saved.version,2);assert.deepEqual(saved.tasks[0].extension,{retained:'record field'});assert.deepEqual(saved.extension,{kept:true});assert.equal(saved.tasks.length,1);
+ const saved=JSON.parse(await fs.readFile(file,'utf8'));assert.equal(saved.version,3);assert.deepEqual(saved.tasks[0].extension,{retained:'record field'});assert.deepEqual(saved.extension,{kept:true});assert.equal(saved.tasks.length,1);
 });
 
 for(const damage of ['duplicate-key','duplicate-id','active-archived','archive-overflow'])test('invalid archive '+damage+' fails closed and preserves original bytes',async t=>{

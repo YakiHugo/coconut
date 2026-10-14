@@ -17,10 +17,10 @@
 
 ## v1 接口
 
-这是第一个有版本标识的窄接口，后续扩展不应让客户端依赖额外未知字段。协议版本与磁盘格式版本分开；HTTP 协议仍为 1，磁盘 ledger 与浏览器关联格式为 2，兼容读取格式 1。
+这是第一个有版本标识的窄接口，后续扩展不应让客户端依赖额外未知字段。协议版本与磁盘格式版本分开；HTTP 协议仍为 1，磁盘 ledger 为 3（兼容读取 1/2），浏览器关联格式仍为 2（兼容读取 1）。
 
 - `GET /api/v1/executor`：`protocolVersion`、执行器类型和在线状态、`supportedTaskKinds`、`enabled`、队列限制和取消/重启语义。提供商分别声明 `supported: true`、`availability: "not_checked"`，不把支持与已登录可执行混为一谈。当前 `remoteSubmission: false`。
-- `POST /api/v1/tasks`：新任务返回 202 和 `{protocolVersion, created: true, task}`；重复提交相同意图返回 200、原 taskId 和当前状态。
+- `POST /api/v1/tasks`：新任务返回 202 和 `{protocolVersion, created: true, receipt, task}`；重复提交相同意图返回 200、原 taskId 和当前状态。
 - `GET /api/v1/tasks`：最多 128 条未归档任务的元数据列表，不附全文或结果正文。
 - `GET /api/v1/tasks?archived=true&limit=20&after=...`：归档元数据页，默认 20 条、最多 50 条，返回 `total` 和 `nextCursor`。按 taskId 排序，cursor 为上一页末尾的 taskId；不是快照隔离列表，并发归档/恢复后可刷新首页。
 - `POST /api/v1/tasks/{taskId}/archive` / `restore`：请求体 `{ "protocolVersion": 1 }`，显式归档或恢复原任务到当前列表，不执行模型。重复操作幂等。
@@ -47,7 +47,7 @@
 
 客户端应先可靠保存幂等键、文稿 lifetime/revision 与提交输入，再发送。超时、网络错误或 5xx 可能发生在接收已经落盘之后，先按原 key 查询，不要生成新 key 重做。找不到时，只能重发原 key 和原 payload；后到的原请求仍会被同一个 key 去重。相同 key 配不同 revision、provider 或原文返回 409。API 不自动重试任何模型请求。
 
-每个新意图有稳定 `taskId` 和单个 `attemptId`。当前没有 retry/resume 接口，也不会在重启时增加 attempt。若用户在核查中断/失败后决定重新执行，需要新明确意图和新 key，可能再次消耗额度。
+每个新意图有稳定 `taskId`，首次执行生成 `attemptId`。下方的显式续跑 API 保留 taskId、不可变输入与提交 key；每次新确认的续跑生成新 attemptId。重启、查询、重发同一续跑 key 均不增加 attempt，也不自动执行。阅读器 UI 尚未接入这个续跑 API。
 
 ## 状态与持久化
 
@@ -61,7 +61,7 @@
 - 写入失败使任务子系统停止接收/执行并 abort 当前信号；不声称结果已保存。损坏、不支持版本或超过上限的 manifest 不覆盖、不推理，任务能力降级为不可用，阅读仍可使用。
 - 目录内仅允许一个在线 writer。进程锁保存 PID 和随机 token；确认原 PID 已退出后才恢复。死锁恢复步骤本身的异常/残留恢复锁会保守阻止恢复，需人工检查，不冒险启动第二个 writer。PID 被复用可能导致保守拒绝。
 - 文件以 0600 创建，目录新建为 0700；明文存储在用户自己的磁盘，不是加密保险库。最多 128 条未归档任务、2048 条归档任务、8 条未结束任务，共用 32 MiB manifest；每条活动任务按不可变输入之外另保留 1 MiB 终态/结果预算，接收前检查全部活动任务的预算，防止接收成功后因状态增长、取消或最终摘要而无法落盘；不静默删除旧任务或幂等记录，满额时拒绝新提交。提供显式终态归档与恢复，归档只释放未归档条数名额，不释放字节或自动删除数据。
-- 每条任务只持久一份原文快照、文稿 key/revision、provider、摘要意图 digest、状态/时间/进度及最终结果。不保存阅读笔记、音视频、文件路径、账号凭据。中间批次摘要仅在内存中供同一轮汇总；重启后不复用中间结果，不继续消费。
+- 每条任务只持久一份原文快照、文稿 key/revision、provider/请求模型、摘要意图 digest、状态/时间/进度、已验收分批笔记及最终结果。不保存阅读笔记、音视频、文件路径、账号凭据。分批笔记在继续下一请求前落盘；重启只恢复状态，不继续消费。多批任务在原 1 MiB 结果预算之外额外预留 512 KiB checkpoint 空间，最多保留 64 次显式续跑回执，不静默裁剪。
 
 批次数与内容上限直接复用 `Summary.plan`：最多 20,000 段、1,000,000 字符、64 个原文批次加 1 次汇总。新任务 HTTP body 上限 8 MiB，原前台 API 仍保留 1 MiB 上限。计划及最终引用必须通过现有摘要校验。
 
@@ -131,7 +131,7 @@ node --test tests/desktop-tasks.test.mjs tests/desktop-task-api.test.mjs tests/d
 
 ### 版本迁移与回滚
 
-新版读取 v1 不立即改写原文件；下一次成功持久化（含正常关闭保存）写成 v2，保留全部任务和未知扩展字段。浏览器关联下一次成功保存也升级为 v2。旧版遇到 v2 会保守拒绝读取该任务存储/关联，仍保留原始数据；不会自动删归档或降级版本号。因此降级软件前应退出执行器并备份任务目录及浏览器站点数据，保留新版环境用于查询/导出。不要把 v2 的版本号手改成 1，也不要把备份覆盖在仍有新任务的目录上；没有无损反向迁移或合并工具。
+新版读取 v1/v2 终态记录不立即改写原文件；下一次成功持久化（含正常关闭保存，或启动时将活动任务标记中断）写成 v3，保留全部任务和未知扩展字段。浏览器关联格式仍为 v2。旧执行器遇到 v3 会保守拒绝读取该任务存储，旧 v1 浏览器客户端也会拒绝 v2 关联，仍保留原始数据；不会自动删归档或降级版本号。因此降级软件前应退出执行器并备份任务目录及浏览器站点数据，保留新版环境用于查询/导出。不要手改磁盘 v3 或浏览器关联 v2 的版本号，也不要把备份覆盖在仍有新任务的目录上；没有无损反向迁移或合并工具。
 
 ### 归档验证边界
 
@@ -145,8 +145,25 @@ node --test tests/desktop-tasks.test.mjs tests/desktop-task-api.test.mjs tests/d
 
 每批固定任务身份和范围，顺序调用原单条归档接口，一次最多一个。刷新列表、切换文稿、新增任务或迟到回执不会扩展批次。逐项记录已确认归档、失败/未确认与未处理数量；「停止剩余请求」或关闭页面不会撤销已发送的请求，已成功项仍可从归档恢复。页面重载不自动恢复批次或发新请求；需按原任务查询真实状态。失败或停止后可点「核对未完成项」，只带入原批次未成功项，仍须重新确认，不包含后来的任务，不重新执行模型。
 
-为防同一端口切换执行器目录时误归档，`archive.identityPrecondition: true` 声明条件归档能力。仅条件归档使用原路径 `POST /api/v1/tasks/:taskId/archive` 的 `protocolVersion: 2` 请求 body，并携带 `expected: {taskId, attemptId, inputDigest}`；在原持久写队列内先比较不可变身份，再检查可归档终态并写入。请求身份冲突返回 `409 / task_identity_conflict`，没有新增批量接口、权限或持久身份字段。其余任务请求、能力描述及归档响应仍为 v1；这不是整套任务协议的 v2 升级。普通 v1 单条归档保持兼容。旧服务收到 v2 请求按原有版本检查拒绝，而不会忽略身份条件；连接到未声明该能力的服务时批量入口禁用，原单条入口保留。
+为防同一端口切换执行器目录时误归档，`archive.identityPrecondition: true` 声明条件归档能力。条件归档使用原路径 `POST /api/v1/tasks/:taskId/archive` 的 `protocolVersion: 2` 请求 body，并携带 `expected: {taskId, attemptId, inputDigest}`；在原持久写队列内先比较不可变身份，再检查可归档终态并写入。请求身份冲突返回 `409 / task_identity_conflict`，没有新增批量接口、权限或持久身份字段。后续显式续跑的身份绑定取消也使用 v2 请求 envelope（见下节），其余任务请求、能力描述及响应仍为 v1；这不是整套任务协议的 v2 升级。普通 v1 单条归档保持兼容。旧服务收到 v2 请求按原有版本检查拒绝，而不会忽略身份条件；连接到未声明该能力的服务时批量入口禁用，原单条入口保留。
 
 每项发出前先按原 taskId 读取核对；若此前回执丢失但原任务已归档，只读核查即计为成功，不重复请求。丢失归档回执时也只读重查；无法核实则明确标为未确认。执行器归档已确认但浏览器关联保存失败时，显示该项的存储警告并停止后续请求，原已保存关联仍保留，可解决存储问题后刷新收敛。归档仍不释放总字节、不清除原文/结果、不接收摘要、不生成新意图。
 
 新增 CPU/DOM/假 HTTP 用例覆盖完整 128 项顺序处理、单独确认、局部失败与精确重试、取消/离页、导航/刷新/新任务、身份替换、同端口真实双目录中相同 taskId 不同 attemptId 的拒写、旧服务拒绝条件请求及浏览器保存失败。GHA 专用 Chromium fixture 补充 390/1280 像素确认、真实点击取消、逐项失败与重新确认、刷新后恢复身份；本地没有运行浏览器，真实 GUI 结论仍以该提交的 Browser acceptance 为准。
+
+
+## 持久 checkpoint 与显式续跑 API（UI 接入尚未完成）
+
+本变更交付 store/API 与 CPU/loopback HTTP 合同，不宣称阅读器已可点击续跑。现有后台确认、提交、取消与接收 UI 不变。后续 UI 必须沿用现有同一份范围确认，显示已保存批次、剩余请求、不可变 provider/请求模型和未知额度，不能新增重复勾选或自动触发续跑。
+
+- 每次请求前持久化 `checkpoint.inFlight`；每个分批通过 `Summary.accept` 后，将 notes 与进度一次性 fsync/原子替换。结果未知或校验失败的批次不会被算作已保存批次。
+- checkpoint 有独立 `version: 1`、确定性完整计划 digest、按计划顺序保存的 notes；恢复通过 `Summary.clean` 重新检查每批长度与引用、完整计划、provider/model 与输入 digest。计划算法变化或损坏记录 fail closed、保留原文件、不调用模型。新 checkpoint 终态通过同源摘要校验器 `Summary.cleanFinal` 验证；旧无 checkpoint 成功记录保留原 answer/引用/requested_model 合同，不强制后来新增的过程字段，且在 v3 重写后仍可读；多批最终聚合不新增一条 note，单批成功不留下可复用 note。
+- 旧 v1/v2 无 checkpoint 的非零 progress 仅供历史显示；明确续跑必须从零开始，不能据其跳过批次。旧失败/中断的 `outcomeUnknown: true` 是缺乏在途记录时的保守提示，并非证明实际消耗。
+- `POST /api/v1/tasks/{taskId}/resume` 请求体为 `{protocolVersion: 1, consent: true, resumeKey, attemptId, inputDigest}`。resumeKey 是本次明确确认的独立 1–128 字符字母数字/下划线/连字符 key；attemptId/inputDigest 必须来自用户核查的原任务。不能通过额外字段替换原文、provider、model 或文稿身份。只允许未归档的 failed/interrupted；cancelled、cancel_requested、queued、running、succeeded 均不能以新 key 续跑。
+- 新续跑返回 202 `{protocolVersion: 1, created: true, receipt, task}`；相同 key 与原 attemptId 的重发返回 200、`created: false` 和当前 task，绝不再次执行，即使已经完成、取消或后来又有新续跑。最多 64 次明确续跑；满额保留全部回执，不自动删除。新尝试 admission 检查队列与完整存储预算后才更改 attemptId。
+- 丢回执先 `GET /api/v1/tasks/{taskId}?resumeKey=原键`，只读返回 `{protocolVersion:1, receipt: {key, fromAttemptId, attemptId, completedBatches, outcomeUnknown} | null, task}`。receipt 指向这一确认产生的 attempt；task 可已属于后来的 attempt，不能混淆。未查到只能显式重发原 payload，不换 key。浏览器接入必须在发送前可靠保存这份原 payload，刷新后先核对。
+- public task 的 checkpoint 只展示 completed/inFlight，不列出笔记正文；`resume` 提供 eligible、completedBatches、remainingRequests、outcomeUnknown 和额度说明。成功任务剩余请求恒为零。完整救援 export 保留 notes/回执。
+- 已续跑任务的取消必须用 `{protocolVersion:2, expected:{taskId,attemptId,inputDigest}}`，在同一串行写队列内校验。旧 attempt 的迟到取消被 409 拒绝；旧 v1 cancel 对从未续跑的任务保持兼容，对已续跑的任务返回 `cancel_identity_required` 与明确刷新/升级客户端提示，不会悄悄取消新执行。只升级 cancel 的请求 envelope，响应及整体 HTTP 协议仍为1。
+- cancel 落盘后，即使 provider 迟到成功，也不保存它的 note/结果。取消终态不能复活。重启和旧执行回调不生成新 attempt；运行中更改输入仍不受支持。
+
+新增 `tests/desktop-task-checkpoints.test.mjs` 与 `tests/helpers/task-checkpoint-crash-worker.mjs` 使用真实子进程 SIGKILL 验证分批和汇总时的中断、重启零调用、仅复用已验收批次；还覆盖幂等回执、HTTP恢复、旧取消竞态、不可变身份、旧格式非零进度、空/损坏/未来格式 checkpoint、存储满额/写入故障及64次续跑上限。全部 provider 为自写假实现，不启动真实 CLI、模型、用户电脑或订阅额度。真实 UI、macOS 与模型质量验证仍未执行。
