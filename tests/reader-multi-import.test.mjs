@@ -6,6 +6,7 @@ import {Window} from 'happy-dom';
 import {createRequire} from 'node:module';
 import {transactionDouble} from './helpers/indexeddb-transaction-double.mjs';
 import {installSavePipeline} from './helpers/save-pipeline.mjs';
+import {incompleteSubtitleFixtures} from './helpers/incomplete-subtitle-fixtures.mjs';
 const root=new URL('../',import.meta.url),KEY='coconut-reader-v1';
 const doc=title=>({title,language:'en',segments:[{id:'cue',start:0,end:3,text:'Authored source '+title}],notes:{cue:'Keep '+title}});
 const file=(title,{name=title+'.json',text=JSON.stringify(doc(title)),size=100}={})=>({name,size,text:typeof text==='function'?text:async()=>text,arrayBuffer:async()=>new TextEncoder().encode(typeof text==='function'?await text():text).buffer});
@@ -355,6 +356,25 @@ const partialSubtitle='1\n00:00:00,000 --> 00:00:01,000\nOpening\n\n2\n00:00:01,
 const partialFile=(title='Partial')=>file(title,{name:title+'.srt',text:partialSubtitle});
 const warning=row=>row.querySelector('.transcript-import-warning');
 function expandWarning(f,row){const details=warning(row);details.open=true;details.ontoggle();return details;}
+for(const fixture of incompleteSubtitleFixtures)for(const entry of ['single','batch','drop'])test(fixture.format+' '+entry+' reports incomplete timing loss while saving and reloading only valid cues',async()=>{
+ const f=setup();let reload;try{
+  await f.choose([file('Existing')]);f.$('add-content').click();
+  const damaged=file(fixture.title,{name:fixture.name,text:fixture.text}),files=entry==='batch'?[file('Before'),damaged,file('After')]:[damaged];
+  await (entry==='drop'?f.drop(files):f.choose(files));
+  const index=entry==='batch'?1:0,row=f.rows()[index];
+  assert.equal(row.dataset.status,'saved');assert.equal(row.dataset.parseState,'partial');
+  assert.match(f.$('transcript-import-progress').textContent,/部分字幕未导入 2 块/);
+  if(entry!=='batch')assert.match(f.$('notice').textContent,/部分字幕未导入：跳过 2 个字幕块/);
+  const details=expandWarning(f,row);assert.equal(details.querySelectorAll('li').length,2);
+  for(const [start,end] of fixture.ranges)assert.ok(details.textContent.includes(`第 ${start}–${end} 行`));
+  assert.match(details.textContent,/Omitted <img src=x> detail/);assert.equal(details.querySelector('img'),null);
+  const saved=f.stored().documents.find(doc=>doc.title===fixture.title);
+  assert.deepEqual(saved.segments.map(cue=>cue.text),fixture.cues);assert.equal(saved.diagnostics,undefined);
+  assert.equal(f.stored().documents.find(doc=>doc.title==='Existing').notes.cue,'Keep Existing');
+  reload=setup({raw:f.w.localStorage.getItem(KEY)});
+  assert.deepEqual(reload.stored().documents,f.stored().documents);
+ }finally{await reload?.w.happyDOM.close();await f.w.happyDOM.close();}
+});
 test('normal partial normal batch keeps parse diagnostics orthogonal to saved receipts and untrusted previews',async()=>{
  const f=setup();try{
   await f.choose([file('Before'),partialFile(),file('After')]);
