@@ -460,17 +460,18 @@ $('translate-document').onclick=async()=>{
  if(!languageReady){notice('当前连接不提供离线模型；请使用本地 CLI 上下文翻译');return;}
  const documentLanguage=doc.language||'';const key=doc.key;const pending=doc.segments.filter(s=>!(Coconut.translationCurrent(s,doc,s.translations?.[target])&&(s.translations[target].manual_review||s.translations[target].source_language===source)));
  if(!pending.length){doc.translation_view=target;queueDocument(doc);render();return;}
+ let batches;try{batches=Coconut.offlineTranslationBatches(pending);}catch(error){notice(error.message);return;}
  const confirmedSource=doc.segments.map((cue,position)=>({id:cue.id,text:cue.text,start:cue.start,end:cue.end,speaker:cue.speaker||null,position}));
  const watchSurface=translationSurfaceOpen(),owner={doc,key,source,target,retired:false,displayRevision:readingDisplayRevision(doc)};offlineTranslationScope=owner;
  offlineTranslationKey=key;translating=true;stopTranslation=false;$('stop-translation').hidden=false;renderLanguage();let completed=0;
  try{
-  for(let index=0;index<pending.length&&!stopTranslation;index+=32){
+  for(const batch of batches){
+   if(stopTranslation)break;
    if(offlineTranslationScope!==owner||!languageOwnerLive(owner))return;
    if(active()!==doc||(doc.language||'')!==documentLanguage||$('translation-source').value!==source||$('translation-target').value!==target){stopTranslation=true;break;}
    if(!Coconut.sameCueSnapshot(doc,confirmedSource)||doc.segments.length!==confirmedSource.length)throw new Error('原文已修改，后续请求已停止；请按新原文重新翻译');
    if(watchSurface&&!translationSurfaceOpen()){stopTranslation=true;break;}
-   const batch=pending.slice(index,index+32).map(s=>({id:s.id,text:s.text}));
-   if(pending.slice(index,index+32).some(s=>s.translations?.[target]?.manual_review&&Coconut.translationCurrent(s,doc,s.translations[target])))throw new Error('本批已有新的人工核对译文，未发送请求；请重新确认剩余范围');
+   if(batch.some(c=>{const s=doc.segments.find(s=>s.id===c.id);return s?.translations?.[target]?.manual_review&&Coconut.translationCurrent(s,doc,s.translations[target]);}))throw new Error('本批已有新的人工核对译文，未发送请求；请重新确认剩余范围');
    const targetVersions=new Map(batch.map(c=>[c.id,doc.segments.find(s=>s.id===c.id)?.translations?.[target]]));
    translationProgress(key,`本机翻译中：${completed}/${pending.length} 段；可以停止后续批次，已完成内容会保存。`);
    const result=await languageApi('translate',{source,target,segments:batch,allow_download:$('download-model').checked});
