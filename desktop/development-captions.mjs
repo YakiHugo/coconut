@@ -8,7 +8,28 @@ import {runCaptionProcess,HELPER_LIMITS,CaptionHelperError} from './caption-help
 const root=fileURLToPath(new URL('../',import.meta.url));
 const lock=JSON.parse(await readFile(new URL('./caption-helper-lock.json',import.meta.url),'utf8'));
 // -I excludes user site, PYTHONPATH and cwd; only this repository is added back.
-const launcher=`import runpy,sys;sys.path.insert(0,${JSON.stringify(root)});sys.argv=[${JSON.stringify(path.join(root,'desktop/helper/caption_helper_launcher.py'))},'--protocol=1'];runpy.run_path(sys.argv[0],run_name='__main__')`;
+const launcher=`import json,sys
+if sys.version_info < (3,10):
+ print(json.dumps({'status':'python_unsupported'}))
+ sys.exit(0)
+import importlib.util,importlib.metadata,runpy
+# Check only module presence in the explicitly selected isolated interpreter.
+# No package install, platform request, credentials, or dependency error text.
+missing=[name for name in ('yt_dlp','certifi') if importlib.util.find_spec(name) is None]
+if missing:
+ print(json.dumps({'status':'dependencies_missing','missing':missing}))
+ sys.exit(0)
+# Read distribution metadata before importing possibly incompatible package APIs.
+try:
+ installed=importlib.metadata.version('yt-dlp')
+except importlib.metadata.PackageNotFoundError:
+ installed=None
+if installed is not None and installed.split('.') not in (${JSON.stringify(lock.packages.find(pkg=>pkg.name==='yt-dlp').version.split('.'))},${JSON.stringify(lock.ytDlpVersion.split('.'))}):
+ print(json.dumps({'status':'version_mismatch','version':installed}))
+ sys.exit(0)
+sys.path.insert(0,${JSON.stringify(root)})
+sys.argv=[${JSON.stringify(path.join(root,'desktop/helper/caption_helper_launcher.py'))},'--protocol=1']
+runpy.run_path(sys.argv[0],run_name='__main__')`;
 const fail=(code,message)=>new CaptionHelperError(code,message);
 export function createDevelopmentCaptionHelper({python,timeoutMs=HELPER_LIMITS.timeoutMs,tempRoot=tmpdir(),onSpawn}={}){
  if(typeof python!=='string'||!path.isAbsolute(python))throw fail('CAPTION_CONFIGURATION','字幕 Python 必须是已安装解释器的绝对路径');
@@ -38,6 +59,13 @@ export function createDevelopmentCaptionHelper({python,timeoutMs=HELPER_LIMITS.t
    ready=false;
    try{
     const r=await execute({operation:'version'},{signal});
+    if(r.status==='python_unsupported')return {ready:false,code:'CAPTION_PYTHON_VERSION'};
+    if(r.status==='dependencies_missing'){
+     const missing=r.missing;
+     if(!Array.isArray(missing)||!missing.length||missing.length>2||new Set(missing).size!==missing.length||missing.some(name=>!['yt_dlp','certifi'].includes(name)))throw fail('CAPTION_OUTPUT','字幕依赖诊断无效');
+     return {ready:false,code:missing.length===2?'CAPTION_MISSING_DEPENDENCIES':missing[0]==='yt_dlp'?'CAPTION_MISSING_YT_DLP':'CAPTION_MISSING_CERTIFI'};
+    }
+    if(r.status==='version_mismatch'||r.status==='ok'&&r.version!==lock.ytDlpVersion)return {ready:false,code:'CAPTION_VERSION',expectedVersion:lock.ytDlpVersion,actualVersion:typeof r.version==='string'&&/^\d{4}\.\d{1,2}\.\d{1,2}$/.test(r.version)?r.version:'unknown'};
     if(r.status!=='ok'||r.protocol!==1||r.version!==lock.ytDlpVersion||r.publicExtraction!==true||r.guardProtocol!==1||r.tlsRootsVerified!==true||JSON.stringify(r.developmentProviders)!==JSON.stringify(['x','youtube','bilibili']))throw fail('CAPTION_VERSION','字幕依赖版本或协议不匹配');
     ready=true;return {ready:true,code:'ready',version:r.version,providers:r.developmentProviders};
    }catch(error){if(error.code==='CAPTION_CANCELLED')throw error;return {ready:false,code:error.code||'CAPTION_UNAVAILABLE'};}
