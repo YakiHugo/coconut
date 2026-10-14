@@ -9,10 +9,10 @@ import {openLibraryTools} from './helpers/library-tools-browser.mjs';
 import {openCueActions} from './cue-actions-browser.mjs';
 import {backgroundSummaryBridge,authoredSource,until} from './helpers/background-summary-bridge.mjs';
 if(process.env.GITHUB_ACTIONS!=='true')throw new Error('Run this real Chromium journey in GitHub Actions only.');
-let bridge,browser,stage='setup',external=0,pageErrors=0,releaseBulk=()=>{};
+let bridge,browser,stage='setup',external=0,pageErrors=0,failure=null,releaseBulk=()=>{};
 const checks=[];
 const check=(name,value)=>{stage=name;assert.ok(value,name);checks.push(name);};
-const report=()=>({suite:'background-summary-authored-http',status:process.exitCode?'failed':'passed',stage,checks,external,pageErrors});
+const report=()=>({suite:'background-summary-authored-http',status:process.exitCode?'failed':'passed',stage,checks,external,pageErrors,failure});
 try{
  bridge=await backgroundSummaryBridge();
  browser=await chromium.launch({headless:true,...(process.env.COCONUT_CHROMIUM_EXECUTABLE?{executablePath:process.env.COCONUT_CHROMIUM_EXECUTABLE}:{})});
@@ -237,18 +237,22 @@ try{
  await page.locator('#background-bulk-retry').click();await expect(page.locator('#background-bulk-items > li')).toHaveCount(1);await expect(page.locator('#background-bulk-confirm')).toHaveText('确认归档这 1 条');await page.locator('#background-bulk-confirm').click();
  await expect(page.locator('#background-bulk-status')).toContainText('已确认归档 1 条，失败或未确认 0 条，未处理 0 条');
  check('bulk_retry_requires_a_new_exact_confirmation_and_never_rearchives_successes',bulkArchivePosts()===postsBeforeBulk+2&&bridge.invocations.length===6&&bridge.posts.filter(path=>path==='/api/v1/tasks').length===6);
- await page.reload();await refresh();await page.locator('#background-archive > summary').click();
+ stage='bulk_reload_before_restore';await page.reload();await refresh();await page.locator('#background-archive > summary').click();
  for(const task of bulkTasks){
+  stage='bulk_restore_'+task.status+'_'+task.taskId;
   const archived=page.locator('#background-archive-list .background-task').filter({hasText:task.taskId});await expect(archived.locator('[data-action="restore"]')).toBeVisible();await archived.locator('[data-action="restore"]').click();
+  // click() does not await moveArchive's asynchronous POST. Wait for this
+  // exact task's settled UI receipt before reading the durable HTTP state.
+  await expect(row(task.taskId).locator('[data-action="archive"]')).toBeEnabled();
   const restored=await bridge.task(task.taskId);assert.equal(restored.archivedAt,undefined);for(const field of ['taskId','attemptId','inputDigest','document','provider'])assert.deepEqual(restored[field],task[field]);
  }
  check('bulk_results_remain_restorable_after_reload_with_original_identity_and_no_model_retry',bridge.invocations.length===6&&bridge.posts.filter(path=>path==='/api/v1/tasks').length===6);
  check('authored_private_notes_never_reach_fake_cli',bridge.invocations.every(call=>!JSON.stringify(call.input).includes('LOCAL NOTE')));
  check('no_external_requests_or_page_errors',external===0&&pageErrors===0);
-}catch{process.exitCode=1;}
+}catch(error){process.exitCode=1;failure={message:String(error?.message||error),stack:error?.stack||null};}
 finally{
  releaseBulk();
- try{await browser?.close();await bridge?.close();}catch{process.exitCode=1;stage='cleanup';}
+ try{await browser?.close();await bridge?.close();}catch(error){process.exitCode=1;if(!failure){stage='cleanup';failure={message:String(error?.message||error),stack:error?.stack||null};}}
  const result=report();console.log(JSON.stringify(result));
  if(process.env.COCONUT_UI_ARTIFACT_DIR){await fs.mkdir(process.env.COCONUT_UI_ARTIFACT_DIR,{recursive:true});await fs.writeFile(path.join(process.env.COCONUT_UI_ARTIFACT_DIR,'background-summary-checks.json'),JSON.stringify(result,null,2));}
 }
