@@ -1450,3 +1450,13 @@ body[data-media-docked="true"] #reader-workspace #reading-context:not([hidden]) 
 .library-restore-result button { min-height:44px; }
 .library-restore-result[data-state="failed"] .library-restore-result-status,
 .library-restore-result[data-state="unknown"] .library-restore-result-status { color:var(--danger,#a33); }
+
+/* Bounded task selection and review stay readable in the narrow library. */
+.background-archive-selection { display:flex; align-items:center; gap:8px; min-height:44px; cursor:pointer; }
+.background-archive-selection input { width:20px; height:20px; flex:none; }
+.background-bulk-panel { border:1px solid var(--line); border-radius:8px; padding:12px; margin:12px 0; overflow-wrap:anywhere; }
+.background-bulk-panel h3 { font-size:14px; }
+.background-bulk-panel ol { margin:8px 0; padding-left:24px; }
+.background-bulk-panel li { margin:10px 0; }
+.background-bulk-panel summary { min-height:44px; cursor:pointer; }
+.background-bulk-panel button, #background-bulk-controls button { min-height:44px; max-width:100%; white-space:normal; }

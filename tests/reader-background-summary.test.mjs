@@ -8,7 +8,7 @@ import {Window} from 'happy-dom';
 import {installSavePipeline,settle} from './helpers/save-pipeline.mjs';
 const root=new URL('../',import.meta.url),journalKey='coconut-background-summary-v1';
 const fixture=(title='Background source')=>({title,language:'en',segments:[{id:'one',start:0,end:3,text:'Authored first sentence.'},{id:'two',start:3,end:6,text:'Authored second sentence.'}]});
-const descriptor={protocolVersion:1,executor:{type:'local-node',online:true},enabled:true,supportedTaskKinds:['summary'],remoteSubmission:false,archive:{supported:true},execution:{disconnect:'continue',restart:'interrupt_without_retry',cancel:'request_then_settle'},providers:{codex:{supported:true},claude:{supported:true}}};
+const descriptor={protocolVersion:1,executor:{type:'local-node',online:true},enabled:true,supportedTaskKinds:['summary'],remoteSubmission:false,archive:{supported:true,identityPrecondition:true},execution:{disconnect:'continue',restart:'interrupt_without_retry',cancel:'request_then_settle'},providers:{codex:{supported:true},claude:{supported:true}}};
 function backend(){
  const tasks=new Map(),keys=new Map(),calls=[];let next=1;
  return {tasks,keys,calls,descriptor:structuredClone(descriptor),lost:false,hold:null,
@@ -27,7 +27,7 @@ function backend(){
    if(url==='api/v1/tasks')return ok({protocolVersion:1,tasks:[...tasks.values()].filter(task=>!task.archivedAt)});
    if(url.startsWith('api/v1/tasks?archived=true')){const params=new URL(url,'http://localhost').searchParams,all=[...tasks.values()].filter(task=>task.archivedAt).sort((a,b)=>a.taskId.localeCompare(b.taskId)),after=params.get('after'),limit=Number(params.get('limit')),remaining=all.filter(task=>!after||task.taskId>after),page=remaining.slice(0,limit);return ok({protocolVersion:1,tasks:page,total:all.length,nextCursor:remaining.length>limit?page.at(-1).taskId:null});}
    const archive=url.match(/^api\/v1\/tasks\/([^/]+)\/(archive|restore|export)$/);
-   if(archive){const task=tasks.get(archive[1]);if(archive[2]==='export')return ok({protocolVersion:1,record:{format:'coconut-background-task-record',version:1,task:{...task,snapshot:task.input}}});if(archive[2]==='archive')task.archivedAt='2026-10-14T00:00:00.000Z';else delete task.archivedAt;if(this.archiveLost){this.archiveLost=false;throw new Error('Lost archive response');}return ok({protocolVersion:1,task});}
+   if(archive){const task=tasks.get(archive[1]);if(body?.protocolVersion===2&&['taskId','attemptId','inputDigest'].some(key=>body.expected?.[key]!==task?.[key]))return {ok:false,status:409,json:async()=>({code:'task_identity_conflict',error:'Authored identity conflict'})};if(archive[2]==='export')return ok({protocolVersion:1,record:{format:'coconut-background-task-record',version:1,task:{...task,snapshot:task.input}}});if(archive[2]==='archive')task.archivedAt='2026-10-14T00:00:00.000Z';else delete task.archivedAt;if(this.archiveLost){this.archiveLost=false;throw new Error('Lost archive response');}return ok({protocolVersion:1,task});}
 
    const match=url.match(/^api\/v1\/tasks\/([^/]+)(\/cancel)?$/);
    if(match){const task=tasks.get(match[1]);if(!task)return {ok:false,status:404,json:async()=>({code:'not_found',error:'Authored missing task'})};if(match[2])task.status='cancelled';return ok({protocolVersion:1,task});}
@@ -536,4 +536,136 @@ test('archiving one task preserves newer keyboard focus on another task archive 
   const row=id=>[...h.$('background-task-list').querySelectorAll('section')].find(node=>node.textContent.includes(id));hold=true;const moving=row('task-1').querySelector('[data-action=archive]').onclick();await ready;row('task-2').querySelector('[data-action=archive]').focus();release();await moving;
   assert.equal(h.w.document.activeElement.closest('section')?.dataset.submissionKey,row('task-2').dataset.submissionKey);assert.equal(h.w.document.activeElement.dataset.action,'archive');assert.equal(posted(api).length,2);
  }finally{release();await h.w.happyDOM.close();}
+});
+
+// Bulk archive uses only authored tasks and a fake executor; never a model.
+const archivePosts=api=>api.calls.filter(call=>call.url.endsWith('/archive'));
+const bulkRow=(h,id)=>[...h.$('background-task-list').querySelectorAll('section')].find(row=>row.textContent.includes(id));
+async function bulkFixture(h,count=3){await h.import(fixture('Selected archive source'));await h.choose();for(let i=0;i<count;i++){await h.submit();h.api.succeed('task-'+(i+1));await h.refresh();}}
+function reviewCurrent(h){h.$('background-bulk-select').click();h.$('background-bulk-review').click();}
+
+test('bulk archive requires selection and a separate exact review; only confirmed terminal tasks are selectable',async()=>{
+ const h=setup();try{
+  await bulkFixture(h,2);for(const [id,status,cancellation] of [['live','running'],['interrupted','interrupted'],['unsettled','cancelled'],['settled','cancelled',{executionSettled:true}]])h.api.tasks.set(id,{...structuredClone(h.api.tasks.get('task-1')),taskId:id,attemptId:'attempt-'+id,status,cancellation});await h.refresh();
+  assert.equal(h.$('background-bulk-review').disabled,true);assert.equal(h.$('background-bulk-panel').hidden,true);
+  assert.equal(h.$('background-task-list').querySelectorAll('[data-action=select-archive]').length,3);
+  for(const id of ['live','interrupted','unsettled'])assert.equal(bulkRow(h,id).querySelector('[data-action=select-archive]'),null);
+  reviewCurrent(h);assert.equal(h.$('background-bulk-items').children.length,3);assert.match(h.$('background-bulk-items').textContent,/Selected archive source/);assert.match(h.$('background-bulk-confirm').textContent,/3/);assert.equal(archivePosts(h.api).length,0);
+  h.$('background-bulk-cancel').click();assert.equal(h.$('background-bulk-panel').hidden,true);assert.equal(archivePosts(h.api).length,0);h.$('background-bulk-clear').click();assert.equal(h.$('background-bulk-review').disabled,true);
+ }finally{await h.w.happyDOM.close();}
+});
+
+test('bulk archive serially archives the reviewed identities, reports each success and restores original tasks without inference',async()=>{
+ const h=setup();try{
+  await bulkFixture(h);const original=structuredClone([...h.api.tasks.values()]);reviewCurrent(h);const first=h.$('background-bulk-confirm').onclick();await h.$('background-bulk-confirm').onclick();await first;
+  assert.equal(archivePosts(h.api).length,3);assert.ok(archivePosts(h.api).every(call=>call.body.protocolVersion===2&&call.body.expected.attemptId));assert.match(h.$('background-bulk-status').textContent,/已确认归档 3 条，失败或未确认 0 条，未处理 0 条/);assert.equal(h.$('background-task-list').querySelectorAll('section').length,0);
+  const saved=JSON.parse(h.w.localStorage.getItem(journalKey));assert.equal(saved.entries.filter(entry=>entry.task.archivedAt).length,3);
+  await openArchive(h);await h.$('background-archive-list').querySelector('[data-action=restore]').onclick();assert.equal(posted(h.api).length,3);
+  for(const task of original){const current=h.api.tasks.get(task.taskId);for(const key of ['taskId','attemptId','inputDigest','input','result'])assert.deepEqual(current[key],task[key]);}
+ }finally{await h.w.happyDOM.close();}
+});
+
+test('partial bulk failure remains itemized; explicit retry only reviews failed original tasks',async()=>{
+ const api=backend(),original=api.fetch.bind(api);let fail=true;
+ api.fetch=async(url,options)=>{if(fail&&url==='api/v1/tasks/task-2/archive'){api.calls.push({url,body:JSON.parse(options.body)});return {ok:false,status:507,json:async()=>({code:'archive_full',error:'Authored archive capacity'})};}return original(url,options);};
+ const h=setup(api);try{
+  await bulkFixture(h);reviewCurrent(h);await h.$('background-bulk-confirm').onclick();assert.match(h.$('background-bulk-status').textContent,/已确认归档 2 条，失败或未确认 1 条，未处理 0 条/);assert.match(h.$('background-bulk-items').textContent,/Authored archive capacity/);assert.equal(api.tasks.get('task-2').archivedAt,undefined);
+  await h.submit();api.succeed('task-4');await h.refresh();fail=false;h.$('background-bulk-retry').click();assert.equal(h.$('background-bulk-items').children.length,1);assert.match(h.$('background-bulk-items').textContent,/task-2/);assert.doesNotMatch(h.$('background-bulk-items').textContent,/task-4/);assert.equal(archivePosts(api).length,3);
+  await h.$('background-bulk-confirm').onclick();assert.match(h.$('background-bulk-status').textContent,/已确认归档 1 条，失败或未确认 0 条/);assert.equal(archivePosts(api).filter(call=>call.url.includes('task-1/')).length,1);assert.equal(api.tasks.get('task-4').archivedAt,undefined);assert.equal(posted(api).length,4);
+ }finally{await h.w.happyDOM.close();}
+});
+
+test('lost bulk ACK is reconciled by reading the exact archived task, without a second archive or model request',async()=>{
+ const h=setup();try{await bulkFixture(h,2);h.api.archiveLost=true;reviewCurrent(h);await h.$('background-bulk-confirm').onclick();assert.match(h.$('background-bulk-status').textContent,/已确认归档 2 条，失败或未确认 0 条/);assert.match(h.$('background-bulk-items').textContent,/重新读取并核实/);assert.equal(archivePosts(h.api).length,2);assert.equal(posted(h.api).length,2);}finally{await h.w.happyDOM.close();}
+});
+
+for(const stop of ['cancel','pagehide'])test('bulk '+stop+' stops only remaining requests; in-flight success stays recoverable and never automatically resumes',async()=>{
+ const api=backend(),original=api.fetch.bind(api);let release,started;const gate=new Promise(r=>release=r),ready=new Promise(r=>started=r);
+ api.fetch=async(url,options)=>{const response=await original(url,options);if(url==='api/v1/tasks/task-1/archive'){started();await gate;}return response;};
+ const h=setup(api);try{
+  await bulkFixture(h);reviewCurrent(h);const running=h.$('background-bulk-confirm').onclick();await ready;
+  if(stop==='cancel')h.$('background-bulk-cancel').click();else h.w.dispatchEvent(new h.w.Event('pagehide'));
+  release();await running;assert.equal(archivePosts(api).length,1);assert.ok(api.tasks.get('task-1').archivedAt);assert.equal(api.tasks.get('task-2').archivedAt,undefined);assert.match(h.$('background-bulk-status').textContent,/已确认归档 1 条，失败或未确认 0 条，未处理 2 条/);
+  if(stop==='pagehide'){h.w.dispatchEvent(new h.w.Event('pageshow'));await h.refresh();assert.equal(archivePosts(api).length,1);}
+  h.$('background-bulk-retry').click();assert.equal(h.$('background-bulk-items').children.length,2);assert.doesNotMatch(h.$('background-bulk-items').textContent,/task-1/);assert.equal(archivePosts(api).length,1);
+  await h.$('background-bulk-confirm').onclick();assert.equal(archivePosts(api).length,3);assert.equal(posted(api).length,3);
+ }finally{release();await h.w.happyDOM.close();}
+});
+
+test('refresh, navigation, new completion and stale selection callbacks cannot expand a reviewed or running bulk batch',async()=>{
+ const api=backend(),original=api.fetch.bind(api);let release,started;const gate=new Promise(r=>release=r),ready=new Promise(r=>started=r);
+ api.fetch=async(url,options)=>{const response=await original(url,options);if(url==='api/v1/tasks/task-1/archive'){started();await gate;}return response;};
+ const h=setup(api);try{
+  await bulkFixture(h,2);const firstCheckbox=bulkRow(h,'task-1').querySelector('[data-action=select-archive]');firstCheckbox.click();h.$('background-bulk-review').click();
+  const stale=bulkRow(h,'task-2').querySelector('[data-action=select-archive]');stale.checked=true;stale.onchange();assert.equal(h.$('background-bulk-items').children.length,1);
+  const running=h.$('background-bulk-confirm').onclick();await ready;await h.import(fixture('New navigation'));h.$('prepare-summary').click();h.$('summary-execution').value='background';await h.$('summary-execution').onchange();await h.submit();api.succeed('task-3');await h.refresh();
+  h.$('background-bulk-select').onclick();assert.equal(h.$('background-bulk-items').children.length,1);release();await running;
+  assert.equal(archivePosts(api).length,1);assert.equal(api.tasks.get('task-2').archivedAt,undefined);assert.equal(api.tasks.get('task-3').archivedAt,undefined);assert.equal(h.doc().title,'New navigation');assert.equal(posted(api).length,3);
+ }finally{release();await h.w.happyDOM.close();}
+});
+
+test('refresh prunes selected identities that disappeared, changed or were already archived without selecting replacements',async()=>{
+ const h=setup();try{
+  await bulkFixture(h);h.$('background-bulk-select').click();h.api.tasks.get('task-1').archivedAt='2026-10-14T00:00:00.000Z';h.api.tasks.get('task-2').attemptId='replacement-attempt';h.api.tasks.delete('task-3');await h.refresh();
+  assert.equal(h.$('background-bulk-review').disabled,true);assert.match(h.$('background-bulk-scope').textContent,/已选择 0 条/);assert.equal(archivePosts(h.api).length,0);
+ }finally{await h.w.happyDOM.close();}
+});
+
+for(const replacement of ['different-identity','old-server'])test('bulk guards directory switch after the preflight read: '+replacement,async()=>{
+ const api=backend(),original=api.fetch.bind(api);let armed=false,switched=false;
+ api.fetch=async(url,options)=>{
+  if(armed&&switched&&replacement==='old-server'&&url.endsWith('/archive')){api.calls.push({url,body:JSON.parse(options.body)});return {ok:false,status:400,json:async()=>({code:'invalid_request',error:'Old server rejects protocol v2'})};}
+  const response=await original(url,options);
+  if(armed&&!switched&&url==='api/v1/tasks/task-1'){
+   const value=await response.json();switched=true;if(replacement==='different-identity')api.tasks.get('task-1').attemptId='replacement-attempt';
+   return {ok:true,json:async()=>value};
+  }return response;
+ };
+ const h=setup(api);try{
+  await bulkFixture(h,1);reviewCurrent(h);armed=true;await h.$('background-bulk-confirm').onclick();assert.equal(api.tasks.get('task-1').archivedAt,undefined);assert.match(h.$('background-bulk-status').textContent,/已确认归档 0 条，失败或未确认 1 条/);assert.equal(posted(api).length,1);assert.equal(archivePosts(api).length,1);
+ }finally{await h.w.happyDOM.close();}
+});
+
+test('bulk is disabled on old archive-capable executors but their existing single archive action stays usable',async()=>{
+ const h=setup();try{await bulkFixture(h,1);delete h.api.descriptor.archive.identityPrecondition;await h.refresh();assert.equal(h.$('background-bulk-select').disabled,true);assert.equal(h.$('background-task-list').querySelector('[data-action=select-archive]'),null);assert.match(h.$('background-bulk-scope').textContent,/旧版仍可逐条/);await h.$('background-task-list').querySelector('[data-action=archive]').onclick();assert.ok(h.api.tasks.get('task-1').archivedAt);assert.equal(archivePosts(h.api)[0].body.protocolVersion,1);}finally{await h.w.happyDOM.close();}
+});
+
+test('browser persistence failure stops the rest of a bulk batch and distinguishes durable server success',async()=>{
+ const h=setup();try{
+  await bulkFixture(h,2);reviewCurrent(h);const backing=h.w.localStorage;Object.defineProperty(h.w,'localStorage',{configurable:true,value:{getItem:key=>backing.getItem(key),setItem(key,value){if(key===journalKey)throw new Error('Authored journal quota');backing.setItem(key,value);}}});
+  await h.$('background-bulk-confirm').onclick();assert.equal(archivePosts(h.api).length,1);assert.ok(h.api.tasks.get('task-1').archivedAt);assert.equal(JSON.parse(backing.getItem(journalKey)).entries[0].task.archivedAt,undefined);assert.match(h.$('background-bulk-status').textContent,/已确认归档 1 条，失败或未确认 0 条，未处理 1 条/);assert.match(h.$('background-bulk-items').textContent,/浏览器关联未保存/);assert.equal(posted(h.api).length,2);
+ }finally{await h.w.happyDOM.close();}
+});
+
+test('bulk selection and sequential processing are bounded to 128 explicitly displayed terminal tasks',async()=>{
+ const api=backend();for(let i=0;i<128;i++){const taskId='bounded-'+String(i).padStart(3,'0');api.tasks.set(taskId,{taskId,attemptId:'attempt-'+taskId,inputDigest:'digest-'+taskId,kind:'summary',provider:'codex',document:{key:'Authored '+i,revision:'revision'},status:'failed'});}
+ const h=setup(api);try{
+  await h.refresh();assert.equal(h.$('background-task-list').querySelectorAll('[data-action=select-archive]').length,128);reviewCurrent(h);assert.equal(h.$('background-bulk-items').children.length,128);assert.equal(archivePosts(api).length,0);await h.$('background-bulk-confirm').onclick();assert.equal(archivePosts(api).length,128);assert.match(h.$('background-bulk-status').textContent,/已确认归档 128 条，失败或未确认 0 条，未处理 0 条/);assert.equal(posted(api).length,0);
+ }finally{await h.w.happyDOM.close();}
+});
+
+test('unknown bulk outcome stays explicit, and a user-confirmed retry first discovers an already archived original without posting again',async()=>{
+ const api=backend(),original=api.fetch.bind(api);let lost=false,hideReceipt=false;
+ api.fetch=async(url,options)=>{if(hideReceipt&&url==='api/v1/tasks/task-1')throw new Error('Authored offline receipt');const response=await original(url,options);if(lost&&url==='api/v1/tasks/task-1/archive'){lost=false;hideReceipt=true;throw new Error('Authored lost ACK');}return response;};
+ const h=setup(api);try{
+  await bulkFixture(h,1);reviewCurrent(h);lost=true;await h.$('background-bulk-confirm').onclick();assert.match(h.$('background-bulk-status').textContent,/已确认归档 0 条，失败或未确认 1 条/);assert.match(h.$('background-bulk-items').textContent,/结果未确认/);assert.equal(archivePosts(api).length,1);
+  hideReceipt=false;await h.refresh();h.$('background-bulk-retry').click();assert.equal(h.$('background-bulk-items').children.length,1);await h.$('background-bulk-confirm').onclick();assert.match(h.$('background-bulk-status').textContent,/已确认归档 1 条，失败或未确认 0 条/);assert.equal(archivePosts(api).length,1);assert.equal(posted(api).length,1);
+ }finally{await h.w.happyDOM.close();}
+});
+
+test('stopping during bulk preflight sends no mutation and confirmation controls retain usable keyboard focus',async()=>{
+ const api=backend(),original=api.fetch.bind(api);let armed=false,release,started;const gate=new Promise(r=>release=r),ready=new Promise(r=>started=r);
+ api.fetch=async(url,options)=>{const response=await original(url,options);if(armed&&url==='api/v1/tasks/task-1'){armed=false;started();await gate;}return response;};
+ const h=setup(api);try{
+  await bulkFixture(h,1);const checkbox=bulkRow(h,'task-1').querySelector('[data-action=select-archive]');checkbox.focus();checkbox.click();assert.equal(h.w.document.activeElement.dataset.action,'select-archive');
+  h.$('background-bulk-review').click();assert.equal(h.w.document.activeElement,h.$('background-bulk-title'));h.$('background-bulk-cancel').click();assert.equal(h.w.document.activeElement,h.$('background-bulk-review'));h.$('background-bulk-review').click();h.$('background-bulk-confirm').focus();armed=true;
+  const running=h.$('background-bulk-confirm').onclick();await ready;assert.equal(h.w.document.activeElement,h.$('background-bulk-cancel'));h.$('background-bulk-cancel').click();release();await running;assert.equal(archivePosts(api).length,0);assert.match(h.$('background-bulk-status').textContent,/未处理 1 条/);
+ }finally{release();await h.w.happyDOM.close();}
+});
+
+test('bulk candidates reject incomplete metadata and only expose cancellation after settlement is confirmed',async()=>{
+ const h=setup();try{
+  await h.import();await h.choose();await h.submit();const task=h.api.tasks.get('task-1');task.status='cancelled';await h.refresh();assert.equal(h.$('background-task-list').querySelector('[data-action=select-archive]'),null);task.cancellation={executionSettled:true};await h.refresh();assert.ok(h.$('background-task-list').querySelector('[data-action=select-archive]'));
+  h.api.tasks.set('malformed',{taskId:'malformed',attemptId:'fake-attempt',inputDigest:'fake-digest',kind:'summary',status:'failed',provider:'codex'});await h.refresh();assert.equal(bulkRow(h,'malformed').querySelector('[data-action=select-archive]'),null);assert.equal(h.doc().segments.length,2);
+ }finally{await h.w.happyDOM.close();}
 });
