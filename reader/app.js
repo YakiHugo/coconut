@@ -4679,7 +4679,7 @@ function renderPassages(doc,excerptIndex=readingExcerptIndex(doc)){
   };
   actions.append(bookmark,readingExcerptControl(doc,passage.cues,'passages',excerptIndex));
   if(window.CoconutQuotation){
-   quotationController??=CoconutQuotation.create({isCurrent:owner=>active()===owner&&state.documents.includes(owner)&&contentIngressAllowed(owner),saveExcerpt:saveExactExcerpt,excerptState:exactExcerptSaveState,onDraftChange:syncUnsavedUnloadGuard});
+   quotationController??=CoconutQuotation.create({isCurrent:owner=>active()===owner&&state.documents.includes(owner)&&contentIngressAllowed(owner),saveExcerpt:saveExactExcerpt,excerptState:exactExcerptSaveState,onDraftChange:syncUnsavedUnloadGuard,onSelectionAction:(...args)=>prepareSelectionQuestion(...args)});
    const quote=el('button','passage-quote','引用原文');quote.type='button';quote.setAttribute('aria-label','引用 '+Coconut.time(passage.start)+' 的原文');
    quotationController.bind(quote,original,doc,passage.cues);actions.append(quote);
   }

@@ -8,27 +8,27 @@
 <meta name="theme-color" content="#faf9f7">
 <link rel="icon" type="image/png" href="coconut-mark.png">
 <script src="appearance.js?v=86ea922669"></script>
-<link rel="stylesheet" href="style.css?v=655a10595b">
+<link rel="stylesheet" href="style.css?v=4a575db1b9">
 <script src="summary.js?v=20da7780c3" defer></script>
 <script src="task-client.js?v=1f5e2c42de" defer></script>
 <script src="core.js?v=f8fa795a65" defer>
 </script>
 <script src="passages.js?v=02036c2d14" defer></script>
-<script src="quotation.js?v=25d6c26853" defer></script>
+<script src="quotation.js?v=9220bdb2c3" defer></script>
 <script src="passage-playback.js?v=88802adbe8" defer></script>
 <script src="library-store.js?v=e76ded9456" defer></script>
 <script src="indexeddb-document-adapter.js?v=8ecfdf5789" defer></script>
 <script src="storage-provider.js?v=369d522f14" defer></script>
-<script src="app.js?v=703bd99618" type="text/coconut-pending" data-reader-script>
+<script src="app.js?v=00e4248f21" type="text/coconut-pending" data-reader-script>
 </script>
-<script src="language.js?v=07dbbeaa02" type="text/coconut-pending" data-reader-script></script>
+<script src="language.js?v=238364e35d" type="text/coconut-pending" data-reader-script></script>
 <script src="background-summary.js?v=bf0d34fa70" type="text/coconut-pending" data-reader-script></script>
 <script src="translation-review.js?v=e8289ebd90" type="text/coconut-pending" data-reader-script></script>
 <script src="podcasts.js?v=d3db57978f" type="text/coconut-pending" data-reader-script></script>
 <script src="jobs.js?v=221718acc6" type="text/coconut-pending" data-reader-script>
 </script>
 <script src="updates.js?v=52e9d1e937" type="text/coconut-pending" data-reader-script></script>
-<script src="transcript-navigator.js?v=d7fc0091ee" defer></script>
+<script src="transcript-navigator.js?v=8439a57686" defer></script>
 <script src="storage-bootstrap.js?v=bf60514d5d" defer></script>
 </head>
 <body>
@@ -399,6 +399,7 @@ cd coconut
 </dialog>
 <dialog id="passage-question-dialog" class="passage-question-dialog" aria-labelledby="passage-question-heading">
 <div class="passage-question-heading"><h2 id="passage-question-heading" tabindex="-1">问这一段</h2><button id="close-passage-question" type="button">返回阅读</button></div>
+<section id="passage-selection-target" hidden><p class="eyebrow">所选原文</p><p id="passage-selection-text"></p><p class="hint">生成解释或译文供本次阅读参考，不会覆盖原文或已存译文。</p></section>
 <p id="passage-question-source"></p><p id="passage-question-state" role="status"></p>
 <div id="passage-question-preview" class="passage-question-preview" aria-label="本次发送的确切原文"></div>
 <label class="passage-question-expand"><input id="passage-question-neighbors" type="checkbox">加入前后各一段原文（如有）</label>
@@ -576,6 +577,7 @@ cd coconut
 <div class="quotation-selected"><div class="quotation-selected-heading"><label for="quotation-original-text">所选原文</label><button id="quotation-reselect" type="button" aria-controls="quotation-selector" hidden>重新选择原文</button></div><textarea id="quotation-original-text" class="quotation-selected-text" readonly rows="1"></textarea></div>
 <div id="quotation-pair-result" class="quotation-selected" hidden><div class="quotation-selected-heading"><label for="quotation-pair-text">选取时译文</label><button id="quotation-pair-edit" type="button" aria-controls="quotation-pair-selection">重新选择译文</button></div><textarea id="quotation-pair-text" class="quotation-selected-text" readonly rows="1"></textarea></div>
 </div>
+<div id="quotation-context-actions"></div>
 <section id="quotation-pair" hidden aria-label="配对译文">
 <button id="quotation-pair-start" type="button">配对所选译文</button>
 <div id="quotation-pair-editor" hidden>

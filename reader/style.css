@@ -150,7 +150,7 @@ header button { font-size: 12px; }
 .reader-options { display: flex; flex-wrap: wrap; gap: 4px 24px; padding: 8px 0; border-bottom: 1px solid var(--line); margin-top: 4px; }
 .reader-options > details > summary { font-size: 12px; }
 .reader-options > details[open] { flex: 1 1 100%; }
-.reader-options > details[open] > .disclosure-content { padding: 18px; background: var(--soft); border: 1px solid var(--line); border-radius: 12px; margin-bottom: 12px; }
+.reader-options > details[open] > .disclosure-content { padding: 18px 0; background: transparent; border: 0; border-radius: 0; margin-bottom: 12px; }
 .settings-actions { display: flex; flex-wrap: wrap; gap: 10px; }
 .reading-comfort, .time-navigation { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin: 14px 0; }
 .time-navigation input { width: 180px; min-width: 0; }
@@ -262,7 +262,7 @@ dialog select { display: block; margin-top: 8px; }
   .reading-controls { align-items: stretch; gap: 4px; }
   .reading-controls [role="group"] button { padding: 8px 13px; font-size: 13px; }
   .reader-options { gap: 0 20px; padding: 4px 0; }
-  .reader-options > details[open] > .disclosure-content { padding: 14px; }
+  .reader-options > details[open] > .disclosure-content { padding: 14px 0; }
   .language-controls { display: block; }
   #language-panel select { max-width: 100%; margin-left: 0; }
   .segment { grid-template-columns: 45px minmax(0, 1fr); gap: 12px; padding: 22px 0 18px; }
@@ -350,7 +350,7 @@ dialog select { display: block; margin-top: 8px; }
 #ai-task { scroll-margin-block-start: 32px; }
 .ai-connection { gap: 8px 14px; margin-bottom: 8px; }
 .ai-connection .hint { margin: 0; }
-.ai-request-plan { padding: 12px 14px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface, #fff); line-height: 1.7; font-size: 13px; margin: 14px 0 10px; }
+.ai-request-plan { padding: 12px 0; border: 0; border-block: 1px solid var(--line); border-radius: 0; background: transparent; line-height: 1.7; font-size: 13px; margin: 14px 0 10px; }
 .ai-request-plan p { margin: 0; }
 .ai-request-plan:not(:has(p:not([hidden]))) { display: none; }
 .ai-send-details, .translation-options { margin: 10px 0; }
@@ -459,14 +459,14 @@ body[data-workspace="add"] #count { font-size: 12px; }
 .source-overview h2 { font-size: 22px; margin: 0; letter-spacing: -.3px; }
 .source-overview > .hint { font-size: 12px; margin: 9px 0 18px; }
 .overview-segments { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 10px; }
-.overview-segment { display: grid; grid-template-columns: 1fr 16px; gap: 7px 10px; text-align: left; padding: 16px; border-radius: 12px; background: var(--surface, #fff); }
+.overview-segment { display: grid; grid-template-columns: 1fr 16px; gap: 7px 10px; text-align: left; padding: 16px 8px; border: 0; border-top: 1px solid var(--line); border-radius: 0; background: transparent; }
 .overview-segment:hover { background: var(--surface-selected, #fff7f1); border-color: var(--edge-warm, #dcc2af); }
 .overview-time { grid-column: 1; font-size: 10px; font-variant-numeric: tabular-nums; color: var(--accent); }
 .overview-quote { grid-column: 1; grid-row: 2; font-size: 12px; line-height: 1.8; overflow-wrap: anywhere; }
 .overview-arrow { grid-column: 2; grid-row: 1 / 3; align-self: center; color: var(--tone-muted, #a48a78); }
 .summary-heading h2 { font-size: 22px; }
 .summary-heading .eyebrow { font-size: 10px; }
-#summary-body { border-radius: 14px; background: var(--surface, #fff); padding: 22px; border: 1px solid var(--line); }
+#summary-body { border-radius: 0; background: transparent; padding: 12px 0 22px; border: 0; }
 #summary-body:empty { display: none; }
 .summary-boundary { font-size: 11px; }
 .transcript-navigation { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin-top: 18px; }
@@ -963,7 +963,7 @@ body[data-media-docked="true"] .reading-feedback:has(#save-warning-home .has-war
 .passage-question-dialog input[type="checkbox"] { display: inline-block; width: auto; margin: 0 8px 0 0; }
 .passage-question-dialog textarea { width: 100%; box-sizing: border-box; }
 .passage-question-dialog .ai-task-control, .passage-question-dialog #ai-filtered { display: none; }
-.passage-question-preview { max-height: 34dvh; overflow-y: auto; padding: 12px; border: 1px solid var(--line); border-radius: 10px; }
+.passage-question-preview { max-height: 34dvh; overflow-y: auto; padding: 4px 12px 4px 0; border: 0; border-block: 1px solid var(--line); border-radius: 0; }
 .passage-question-preview p, .ai-answer-evidence p { white-space: pre-wrap; overflow-wrap: anywhere; color: var(--ink); }
 .passage-question-preview .hint { color: var(--muted); }
 .passage-question-expand { display: flex; align-items: center; min-height: 44px; margin-top: 8px; }
@@ -1516,3 +1516,19 @@ body[data-transcript-navigation="ready"] .transcript-navigation { display:none; 
 }
 
 @media(max-width:650px) { .reading-mode-toolbar #reading-display-control { flex:1 1 150px; } }
+
+/* Reading is the canvas. Borders distinguish inputs and floating surfaces,
+   not every secondary command or saved annotation. */
+.reading-utility #keyboard-help-open,
+#open-transcript-navigator { background:transparent; border-color:transparent; }
+.reading-utility #keyboard-help-open:hover,
+#open-transcript-navigator:hover { background:var(--soft); }
+.passage-annotation { border:0; border-left:2px solid var(--edge-warm,#d49972); border-radius:0; background:transparent; padding-inline:10px; }
+#passage-selection-target { margin:12px 0 20px; }
+#passage-selection-target .eyebrow { margin:0 0 8px; }
+#passage-selection-text { white-space:pre-wrap; overflow-wrap:anywhere; font-size:18px; line-height:1.8; margin:0; padding-left:14px; border-left:2px solid var(--accent); }
+.quotation-context-actions { display:flex; align-items:center; flex-wrap:wrap; gap:8px; margin:12px 0; }
+.quotation-context-actions button { min-height:44px; }
+.selection-actions { position:fixed; z-index:30; display:flex; gap:4px; max-width:calc(100vw - 24px); padding:4px; border:1px solid var(--line); border-radius:10px; background:var(--surface,#fff); box-shadow:0 4px 20px #28252020; }
+.selection-actions button { min-height:44px; border:0; background:transparent; padding:8px 14px; white-space:nowrap; }
+.selection-actions button:hover { background:var(--soft); }
