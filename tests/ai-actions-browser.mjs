@@ -43,7 +43,13 @@ try{
    await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));
    check(label+'_'+action+'_viewport_fits',await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
    if(process.env.COCONUT_UI_SCREENSHOTS){await fs.mkdir(process.env.COCONUT_UI_SCREENSHOTS,{recursive:true});await page.screenshot({path:path.join(process.env.COCONUT_UI_SCREENSHOTS,`ai-action-${label}-${action}.png`),fullPage:false});}
-   const reviewVisible=await page.evaluate(({plan,submit})=>[plan,'#ai-consent',submit].every(selector=>{const r=document.querySelector(selector).getBoundingClientRect();return r.width>0&&r.height>0&&r.top>=0&&r.bottom<=innerHeight;}),{plan:planFor[action],submit:action==='translation'?'#subscription-translate':'#ask-ai'});
+   const reviewGeometry=await page.evaluate(({plan,submit})=>[plan,'#ai-task','#ai-provider','#ai-model','#ai-consent','.ai-consent',submit].map(selector=>{
+    const node=document.querySelector(selector),r=node.getBoundingClientRect();
+    const hit=document.elementFromPoint(r.left+r.width/2,r.top+r.height/2);
+    return {selector,top:r.top,bottom:r.bottom,width:r.width,height:r.height,unobscured:!!hit&&(node===hit||node.contains(hit))};
+   }),{plan:planFor[action],submit:action==='translation'?'#subscription-translate':'#ask-ai'});
+   if(process.env.COCONUT_UI_SCREENSHOTS)await fs.writeFile(path.join(process.env.COCONUT_UI_SCREENSHOTS,`ai-action-${label}-${action}-geometry.json`),JSON.stringify(reviewGeometry,null,2));
+   const reviewVisible=reviewGeometry.every(r=>r.width>0&&r.height>0&&r.top>=0&&r.bottom<=viewport.height&&r.unobscured);
    check(label+'_'+action+'_scope_consent_and_submit_visible_together',reviewVisible);
    await page.locator('#ai-consent').check();
   }

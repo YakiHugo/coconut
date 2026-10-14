@@ -100,7 +100,7 @@ class BrowserWorkflowTests(unittest.TestCase):
         paths = re.findall(r'^            \$\{\{ runner.temp \}\}/coconut-authored-ui/(.+)$', upload, re.M)
         self.assertEqual(paths, ['*.png', 'displayed-exports-*.srt', 'displayed-exports-*.vtt',
                                  'displayed-exports-*.notes.md', 'displayed-exports-*.json',
-                                 'passages-geometry.json', 'autosave-geometry.json',
+                                 'ai-action-*-geometry.json', 'passages-geometry.json', 'autosave-geometry.json',
                                  'playback-follow-geometry.json', 'playback-follow-scroll.json',
                                  'playback-follow-rewind.json', 'playback-follow-last-cue.json',
                                  'dock-rewind-evidence.json',

@@ -1460,3 +1460,22 @@ body[data-media-docked="true"] #reader-workspace #reading-context:not([hidden]) 
 .background-bulk-panel li { margin:10px 0; }
 .background-bulk-panel summary { min-height:44px; cursor:pointer; }
 .background-bulk-panel button, #background-bulk-controls button { min-height:44px; max-width:100%; white-space:normal; }
+
+/* Keep a complete AI review readable on phones. Reading chrome must not cover
+   the composer; use the available width before spending another vertical row.
+   Disclosure text and the existing single consent remain fully expanded. */
+body:has(#language-panel[open]) .reading-mode-toolbar { position: static; }
+@media (max-width: 640px) {
+ #ai-request-panel .ai-request-choices { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 8px; }
+ #ai-request-panel .ai-request-choices label { display: grid !important; gap: 4px; min-width: 0; }
+ #ai-request-panel .ai-request-choices select { width: 100%; min-width: 0; }
+ #ai-request-panel label { margin: 6px 0; }
+ #ai-request-panel .ai-connection { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; margin: 8px 0; }
+ #ai-request-panel .ai-connection button { margin: 0; }
+ #ai-request-panel #ai-model-help { margin: 6px 0; }
+ #ai-request-panel .language-controls { gap: 8px; }
+ #ai-request-panel .ai-question-only textarea { margin-top: 0; }
+ #ai-request-panel .ai-request-plan { margin: 8px 0; padding: 10px 12px; }
+ #ai-request-panel .ai-send-details, #ai-request-panel .translation-options { margin: 4px 0; }
+ #ai-request-panel .ai-consent { margin: 8px 0; }
+}

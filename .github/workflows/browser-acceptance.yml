@@ -316,6 +316,7 @@ jobs:
             ${{ runner.temp }}/coconut-authored-ui/displayed-exports-*.vtt
             ${{ runner.temp }}/coconut-authored-ui/displayed-exports-*.notes.md
             ${{ runner.temp }}/coconut-authored-ui/displayed-exports-*.json
+            ${{ runner.temp }}/coconut-authored-ui/ai-action-*-geometry.json
             ${{ runner.temp }}/coconut-authored-ui/passages-geometry.json
             ${{ runner.temp }}/coconut-authored-ui/autosave-geometry.json
             ${{ runner.temp }}/coconut-authored-ui/playback-follow-geometry.json
