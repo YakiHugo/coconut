@@ -2980,7 +2980,13 @@ function highlightPlayback() {
  for(const row of $("transcript").querySelectorAll(".segment")) row.classList.toggle("playing",row.dataset.segmentId===segment?.id);
 }
 $("locate-playback").onclick=()=>locateReadingPlayback();
-$("add-content").onclick = () => { if(libraryMobile.matches)$("toggle-library").setAttribute("aria-expanded","false"); showWorkspace("add"); ($("video-url")).focus(); };
+$("add-content").onclick = () => {
+ if(libraryMobile.matches)$("toggle-library").setAttribute("aria-expanded","false");
+ showWorkspace("add");
+ // Follow the current source-entry capability, including reconnection changes.
+ // Navigation focuses a working action; opening a file picker still needs a click.
+ ($('add-workspace').dataset.sourceAvailable==='true'?$('video-url'):$('import')).focus();
+};
  document.querySelector('.brand').onclick=event=>{event.preventDefault();if(libraryMobile.matches)$('toggle-library').setAttribute('aria-expanded','false');showWorkspace('add');$('sample').focus();};
  $('demo-finish').onclick=()=>$('add-content').click();
  $('toggle-demo-tools').onclick=()=>{

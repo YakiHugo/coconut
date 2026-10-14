@@ -57,9 +57,13 @@ function updateSourceEntry() {
  $('process-url').type=sourceAvailable?'submit':'button';
  $('import').classList.toggle('primary',!sourceAvailable);
  $('import').textContent=sourceAvailable?'＋ 导入文字稿':'导入文字稿，开始阅读';
- const entry=$('import').closest('.file-entry'),form=$('url-form');
+ const entry=$('import').closest('.file-entry'),form=$('url-form'),focused=document.activeElement;
+ const entryOwnedFocus=entry.contains(focused);
  if(sourceAvailable){if(form.parentElement.lastElementChild!==entry)form.parentElement.append(entry);}
  else if(entry.nextElementSibling!==form)form.before(entry);
+ // A probe may reorder the focused file entry. Restore only focus lost by this
+ // synchronous move, without scrolling or replacing a newer explicit target.
+ if(entryOwnedFocus&&focused.isConnected&&document.activeElement===document.body)focused.focus({preventScroll:true});
 }
 function updateJobButtons(identifier) {
  for (const row of $("jobs").children) {

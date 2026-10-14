@@ -143,9 +143,9 @@ test('desktop focused tools and card stay visible when entering mobile from a co
   assert.equal($('toggle-library').getAttribute('aria-expanded'),'false');assert.equal(w.document.activeElement,$('title'));
  }finally{await w.happyDOM.close();}
 });
-test('selecting the active document from Add restores its exact reading view rather than returning to the URL field',async()=>{
+test('selecting the active document from Add restores its exact reading view rather than returning to the import action',async()=>{
  const {w,$}=setup();try{
-  $('add-content').click();assert.equal($('reader-workspace').hidden,true);assert.equal(w.document.activeElement,$('video-url'));
+  $('add-content').click();assert.equal($('reader-workspace').hidden,true);assert.equal(w.document.activeElement.id,'import');
   const view=JSON.parse(w.sessionStorage.getItem('coconut-reading-view-v1')).views.find(view=>view[0]==='shelf-0');
   assert.equal(view[2],'transcript');assert.equal(view[1],'shelf-0-cue-0');
   $('toggle-library').click();$('library').querySelector('.library-open').click();
