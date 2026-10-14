@@ -270,12 +270,13 @@
  // User-authored source evidence follows the full validated cue contract; the
  // 4,000-character bound belongs only to model translation inputs. Backup file
  // limits still apply at ingress. Never save a source that restoration truncates.
+ function unicodeLength(value,maximum=Infinity) {let count=0;for(const character of value){if(++count>maximum)break;}return count;}
  function cleanTranslations(value, includeReview=true) {
   const output=Object.create(null);
   if(!value || typeof value!=="object" || Array.isArray(value)) return output;
   for(const language of ["en","zh","ja","ko","fr","de","es"]) {
    const item=value[language];
-   if(item && typeof item.text==="string" && item.text.length<=12000 && typeof item.source_text==="string" && (item.provider==='user'||item.source_text.length<=4000) && typeof item.provider==="string"){
+   if(item && typeof item.text==="string" && item.text.length<=12000 && typeof item.source_text==="string" && (item.provider==='user'||item.source_text.length<=4000||unicodeLength(item.source_text,4000)<=4000) && typeof item.provider==="string"){
     output[language]={text:item.text,source_text:item.source_text,provider:item.provider.slice(0,100),source_language:typeof item.source_language==="string"?item.source_language:"",...(typeof item.context_id==="string"&&/^[a-f0-9-]{36}$/.test(item.context_id)?{context_id:item.context_id}:{})};
     if(typeof item.document_language==='string'&&item.document_language.length<=100)output[language].document_language=item.document_language;
     if(item.context_version===2){
@@ -413,6 +414,23 @@
    if(valid&&chars<=40000&&memoryChars<=24000)output[key]=cues.map(c=>({id:c.id,text:c.text,position:c.position,start:c.start,end:c.end,...(Object.hasOwn(c,'speaker')?{speaker:c.speaker}:{}),...(Object.hasOwn(c,'memory_text')?{memory_text:c.memory_text,memory_language:c.memory_language}:{})}));
   }
   return output;
+ }
+ // The advanced Python service counts Unicode code points, not UTF-16 units.
+ // Preserve complete cue identities/text; preflight the whole remaining plan
+ // before any request rather than retrying an intrinsically oversized batch.
+ function offlineTranslationBatches(segments) {
+  const batches=[],ids=new Set();let batch=[],characters=0;
+  for(const [index,cue] of segments.entries()){
+   const label=`待译第 ${index+1} 段`;
+   if(typeof cue.id!=='string'||!cue.id||unicodeLength(cue.id,200)>200||ids.has(cue.id))throw new Error(label+'的片段 ID 须为不重复的 1–200 字符；尚未发送离线翻译请求，请修正后重试');
+   const size=typeof cue.text==='string'?unicodeLength(cue.text,4000):0;
+   if(size<1||size>4000)throw new Error(label+'原文须为 1–4,000 个 Unicode 字符；尚未发送离线翻译请求，请先修正或自行拆分原文，原片段不会自动截断或改号');
+   ids.add(cue.id);
+   if(batch.length===32||characters+size>40000){batches.push(batch);batch=[];characters=0;}
+   batch.push({id:cue.id,text:cue.text});characters+=size;
+  }
+  if(batch.length)batches.push(batch);
+  return batches;
  }
  function semanticBoundary(before, after) {
   return before && (!after || before.speaker!==after.speaker || after.start-before.end>2 || /[.!?。！？][\s"'”’）)]*$/.test(before.text));
@@ -1952,7 +1970,7 @@
 	function parse(text, filename) {
 		return parseWithDiagnostics(text, filename).document;
 	}
-	const api = { createSourceCorrectionPreview, applySourceCorrectionPreview, undoSourceCorrection, parsePastedSubtitles, subtitleEncodings, decodeSubtitleBytes, translationSelectionInfo, translationSelectionModels, pairedExactExcerptSnapshot, exactExcerptTranslation, exactExcerptTranslationParts, normalizeReadingChapters, readingChapters, createReadingChapter, updateReadingChapter, readingChaptersWith, isReadingCollection, normalizeReadingCollection, createReadingCollection, collectionItemFromCapture, readingCollectionItemKey, readingCollectionItemState, readingCollectionMarkdown, SPEAKER_CORRECTION_LABEL_LIMIT, createSpeakerCorrectionPreview, applySpeakerCorrectionPreview, createLibraryBackupSelection, librarySavedHits, librarySavedHitCurrent, libraryTranslationHitCurrent, libraryTranslationHitCurrentSteps, exactExcerptNote, exactExcerptNotesWith, exactExcerptRemoval, exactExcerptSnapshot, exactExcerptText, exactExcerptParts, exactExcerptSource, exactExcerptCount, exactExcerptDuplicate, exactExcerptFreshness, exactExcerptFreshnessBatch, exactExcerptState, exactExcerptStateBatch, createReadingRecency, createReadingViews, createLibrarySearch, createLibraryNotebookSearch, libraryCaptureSteps, libraryCaptureCurrent, libraryCaptures, libraryNotebookMarkdown, mediaTiming, mediaTimingOffset, mediaTimingRange, localMediaSource, searchDocument, invalidateSearch, manualReviewSnapshot, manualReviewCurrent, saveManualTranslation, translationReviewQueue, hasNoteContent, segmentNoteCount, BACKUP_REVIEW_BYTES, SUBTITLE_IMPORT_BYTES, vttPayload, libraryHits, librarySnippet, hasProjectAnnotations, projectAnnotationCount, attachProjectTranscript, libraryMatches, documentDuration, sortedLibrary, AUDIO_NOTE_BUDGET, audioNoteCharacters, isAudioProject, audioProjectIdentity, podcastMediaIdentity, SUMMARY_QUESTION, summaryReadiness, podcastURL, podcastSource, cleanGlossary, relevantGlossary, translationQualityMessage, retainAnswers, summaryFreshness, latestSummary, summaryMarkdown, aiReadingMarkdown, parseReadingTime, createPlaybackIndex, segmentAtTime, transcriptText, subtitleExport, planLibraryBackup, mergeLibraryBackup, time, source, media, validate, parse, parseWithDiagnostics, matchesSegment, notebookSegments, notebookMarkdown, translationCurrent, sameCueSnapshot, subscriptionPlan, cleanContexts, answerFreshness };
+	const api = { createSourceCorrectionPreview, applySourceCorrectionPreview, undoSourceCorrection, parsePastedSubtitles, subtitleEncodings, decodeSubtitleBytes, translationSelectionInfo, translationSelectionModels, pairedExactExcerptSnapshot, exactExcerptTranslation, exactExcerptTranslationParts, normalizeReadingChapters, readingChapters, createReadingChapter, updateReadingChapter, readingChaptersWith, isReadingCollection, normalizeReadingCollection, createReadingCollection, collectionItemFromCapture, readingCollectionItemKey, readingCollectionItemState, readingCollectionMarkdown, SPEAKER_CORRECTION_LABEL_LIMIT, createSpeakerCorrectionPreview, applySpeakerCorrectionPreview, createLibraryBackupSelection, librarySavedHits, librarySavedHitCurrent, libraryTranslationHitCurrent, libraryTranslationHitCurrentSteps, exactExcerptNote, exactExcerptNotesWith, exactExcerptRemoval, exactExcerptSnapshot, exactExcerptText, exactExcerptParts, exactExcerptSource, exactExcerptCount, exactExcerptDuplicate, exactExcerptFreshness, exactExcerptFreshnessBatch, exactExcerptState, exactExcerptStateBatch, createReadingRecency, createReadingViews, createLibrarySearch, createLibraryNotebookSearch, libraryCaptureSteps, libraryCaptureCurrent, libraryCaptures, libraryNotebookMarkdown, mediaTiming, mediaTimingOffset, mediaTimingRange, localMediaSource, searchDocument, invalidateSearch, manualReviewSnapshot, manualReviewCurrent, saveManualTranslation, translationReviewQueue, hasNoteContent, segmentNoteCount, BACKUP_REVIEW_BYTES, SUBTITLE_IMPORT_BYTES, vttPayload, libraryHits, librarySnippet, hasProjectAnnotations, projectAnnotationCount, attachProjectTranscript, libraryMatches, documentDuration, sortedLibrary, AUDIO_NOTE_BUDGET, audioNoteCharacters, isAudioProject, audioProjectIdentity, podcastMediaIdentity, SUMMARY_QUESTION, summaryReadiness, podcastURL, podcastSource, cleanGlossary, relevantGlossary, translationQualityMessage, retainAnswers, summaryFreshness, latestSummary, summaryMarkdown, aiReadingMarkdown, parseReadingTime, createPlaybackIndex, segmentAtTime, transcriptText, subtitleExport, planLibraryBackup, mergeLibraryBackup, time, source, media, validate, parse, parseWithDiagnostics, matchesSegment, notebookSegments, notebookMarkdown, translationCurrent, sameCueSnapshot, offlineTranslationBatches, subscriptionPlan, cleanContexts, answerFreshness };
 	if (typeof module !== "undefined" && module.exports) module.exports = api;
 	else root.Coconut = api;
 })(typeof window !== "undefined" ? window : globalThis);
