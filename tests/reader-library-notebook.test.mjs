@@ -191,3 +191,57 @@ for(const action of ['delete','no-longer-match'])test(`notebook return retains f
   assert.ok(rows($).every(row=>row.dataset.captureKey!==key));assert.equal(w.document.activeElement,$('notebook-search'));
  }finally{await w.happyDOM.close();}
 });
+
+function returnIdentityDoc(key,title,count=35){return {key,title,language:'en',segments:Array.from({length:count},(_,i)=>({id:'cue-'+i,start:i,end:i+1,text:'Source '+i,speaker:'Original speaker'})),notes:Object.fromEntries(Array.from({length:count},(_,i)=>['cue-'+i,'shared return token '+i]))};}
+function openReturnIdentity($,key='reused',id='cue-34'){
+ $('open-library-notebook').click();$('notebook-search').value='shared return token';$('notebook-search').oninput();$('notebook-next').click();
+ const row=rows($).find(row=>row.dataset.documentKey===key&&row.dataset.captureId===id);assert.ok(row);row.querySelector('.notebook-open').click();
+}
+test('notebook return does not target a restored replacement sharing the old document and capture keys',async()=>{
+ const {w,$}=libraryHarness([returnIdentityDoc('reused','Original A'),returnIdentityDoc('other','Survivor')],{probe:true});try{
+  openReturnIdentity($);assert.equal($('title').textContent,'Original A');
+  $('library').querySelector('[data-document-key="reused"] .library-remove').click();await $('confirm-removal').onclick();
+  await restoreSelectionDocument($,returnIdentityDoc('reused','Replacement B'));
+  $('return-library-notebook').click();
+  assert.equal($('notebook-search').value,'shared return token');assert.match($('notebook-status').textContent,/31–60 \/ 70/);
+  assert.match($('notebook-status').textContent,/原返回记录已移除、替换或不再匹配/);assert.equal(w.document.activeElement===$('notebook-search'),true);
+  assert.equal(rows($).some(row=>row.dataset.documentKey==='reused'&&row.dataset.captureId==='cue-34'),false,'must not jump to the replacement’s later page');
+  // Explicitly opening B establishes a new owner and a new legitimate return.
+  $('notebook-next').click();rows($).at(-1).querySelector('.notebook-open').click();assert.equal($('title').textContent,'Replacement B');
+  $('return-library-notebook').click();assert.equal(w.document.activeElement.closest('li')?.dataset.captureId,'cue-34');assert.doesNotMatch($('notebook-status').textContent,/原返回记录/);
+ }finally{await w.happyDOM.close();}
+});
+for(const type of ['cue','bookmark','exact-excerpt','project-note'])test(`notebook return rejects a replacement ${type} owner even with equal displayed fields`,async()=>{
+ const {w,$}=libraryHarness([returnIdentityDoc('owner','Return owner',1)],{probe:true});try{
+  const doc=w.libraryProbe.documents[0];let id='cue-0';
+  if(type!=='cue')doc.notes={};
+  if(type==='bookmark'){doc.project_note='';doc.timestamp_bookmarks=[{id:'record',time:10,note:'shared return token'}];id='record';}
+  if(type==='project-note'){doc.project_note='shared return token';doc.timestamp_bookmarks=[];id='';}
+  if(type==='exact-excerpt'){doc.exact_excerpts=[w.Coconut.exactExcerptSnapshot(doc,doc.segments,[],0,doc.segments[0].text.length,{id:'record',createdAt:'2026-10-11T00:00:00.000Z'})];doc.exact_excerpt_notes={record:'shared return token'};id='record';}
+  $('open-library-notebook').click();$('notebook-search').value='shared return token';$('notebook-search').oninput();
+  assert.equal(rows($).length,1);assert.equal(rows($)[0].dataset.captureType,type);rows($)[0].querySelector('.notebook-open').click();
+  if(type==='cue')doc.segments[0]={...doc.segments[0]};
+  if(type==='bookmark')doc.timestamp_bookmarks[0]={...doc.timestamp_bookmarks[0]};
+  if(type==='exact-excerpt')doc.exact_excerpts[0]={...doc.exact_excerpts[0]};
+  if(type==='project-note')w.libraryProbe.documents[0]={...doc};
+  $('return-library-notebook').click();
+  assert.equal(rows($).length,1);assert.equal(rows($)[0].dataset.captureId,id);assert.equal(w.document.activeElement===$('notebook-search'),true);
+  assert.match($('notebook-status').textContent,/原返回记录已移除、替换或不再匹配/);assert.equal($('notebook-search').value,'shared return token');
+ }finally{await w.happyDOM.close();}
+});
+for(const operation of ['single-source','batch-source','batch-undo','speaker'])test(`notebook return follows the same owned cue after explicit ${operation} editing`,async()=>{
+ const {w,$}=libraryHarness([returnIdentityDoc('reused','Original A')],{probe:true});try{
+  openReturnIdentity($);const original=w.libraryProbe.documents[0].segments[34];
+  if(operation==='single-source'){
+   w.document.querySelector('[data-segment-id="cue-34"] .edit-button').click();$('edit-segment').value='Corrected source';$('save-edit').click();
+  }else if(operation==='speaker'){
+   w.document.querySelector('[data-segment-id="cue-34"] .speaker-correction-button').click();$('speaker-name').value='Corrected speaker';$('speaker-name').dispatchEvent(new w.Event('input',{bubbles:true}));$('save-speaker').click();
+  }else{
+   $('open-source-correction').click();for(const [id,value] of [['source-find','Source 34'],['source-replace','Corrected source']]){$(id).value=value;$(id).dispatchEvent(new w.Event('input',{bubbles:true}));}
+   $('preview-source-correction').click();$('apply-source-correction').click();if(operation==='batch-undo')$('undo-source-correction').click();$('close-source-correction').click();
+  }
+  const live=w.libraryProbe.documents[0].segments[34];assert.equal(live===original,operation==='single-source');
+  $('return-library-notebook').click();assert.equal(w.document.activeElement.closest('li')?.dataset.captureId,'cue-34');assert.equal($('notebook-search').value,'shared return token');assert.doesNotMatch($('notebook-status').textContent,/原返回记录/);
+  await w.flushContentForTest();
+ }finally{await w.happyDOM.close();}
+});
