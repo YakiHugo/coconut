@@ -13,10 +13,11 @@ function setup(storage={},options={}){
  const w=new Window({url:'https://coconut.example/'}),calls=[],created=[],revoked=[];
  w.document.body.innerHTML=fs.readFileSync(new URL('reader/index.html',root),'utf8').split('<body>')[1].split('</body>')[0];
  Object.defineProperty(w,'crypto',{value:webcrypto});for(const [key,value] of Object.entries(storage))w.localStorage.setItem(key,value);
+ if(options.native)w.coconutUpdates={state:async()=>({status:'idle',version:'test',arch:'arm64'}),subscribe:()=>{}};
  w.fetch=async url=>{calls.push(url);throw new Error('No network permitted');};
  w.URL.createObjectURL=file=>{const url='blob:local-'+(created.length+1);created.push({url,file});return url;};w.URL.revokeObjectURL=url=>revoked.push(url);
  const pipeline=installSavePipeline(w,options);
- w.eval(['summary','core','passages','passage-playback','app'].map(n=>fs.readFileSync(new URL('reader/'+n+'.js',root),'utf8')).join('\n')+'\nwindow.localTest={active:()=>active(),docs:()=>state.documents,media:()=>browserMedia,resetListen:()=>{listeningSession.engaged=false;renderListeningResume();},flush:()=>libraryStore.flush(),cue:()=>playbackSegment(),repeat:cue=>toggleRepeat(cue),preview:()=>passagePlayback.getState(),render:()=>render()};');
+ w.eval(['summary','core','passages','passage-playback','app',...(options.native?['language','podcasts']:[])].map(n=>fs.readFileSync(new URL('reader/'+n+'.js',root),'utf8')).join('\n')+'\nwindow.localTest={active:()=>active(),docs:()=>state.documents,media:()=>browserMedia,resetListen:()=>{listeningSession.engaged=false;renderListeningResume();},flush:()=>libraryStore.flush(),cue:()=>playbackSegment(),repeat:cue=>toggleRepeat(cue),preview:()=>passagePlayback.getState(),render:()=>render(),dirty:()=>hasUnsubmittedReaderDrafts()};'+(options.native?'\nlet sourceSubmitting=false,sourceCaptionRequest=null;\n'+fs.readFileSync(new URL('reader/updates.js',root),'utf8'):''));
  const $=id=>w.document.getElementById(id);
  return {w,$,calls,created,revoked,pipeline};
 }
@@ -219,5 +220,82 @@ test('owned wraps wait for their completion and unacknowledged or overtaken seek
   p.dispatchEvent(new w.Event('seeking'));p.currentTime=cue.start+.05;p.dispatchEvent(new w.Event('seeked'));assert.equal($('stop-repeat').hidden,false,'the next owned wrap has an independent acknowledgement');
   $('stop-repeat').click();p.currentTime=40;w.localTest.repeat(cue);p.dispatchEvent(new w.Event('seeked'));assert.equal($('stop-repeat').hidden,true,'completion without a seeking acknowledgement is not owned');
   p.currentTime=40;w.localTest.repeat(cue);p.dispatchEvent(new w.Event('seeking'));busy=true;p.dispatchEvent(new w.Event('seeked'));assert.equal($('stop-repeat').hidden,true,'an old completion cannot swallow a new in-progress native seek');
+ }finally{await env.w.happyDOM.close();}
+});
+
+function timingUnload(env){const event=new env.w.Event('beforeunload',{cancelable:true});env.w.dispatchEvent(event);return event.defaultPrevented;}
+function timingInput(env,value){env.$('media-timing-offset').value=String(value);env.$('media-timing-offset').dispatchEvent(new env.w.Event('input',{bubbles:true}));}
+function reopenTimingDocument(env,key){[...env.$('library').querySelectorAll('.library-open')].find(button=>button.closest('[data-document-key]').dataset.documentKey===key).click();}
+
+test('unsaved calibration survives document round trips and keeps the Web leave guard while another document is open',async()=>{
+ const env=setup();try{const {w,$}=env;await open(env);await w.localTest.flush();const doc=w.localTest.active();
+ timingInput(env,'2.75');$('media-timing-cue').value='2';$('media-timing-cue').dispatchEvent(new w.Event('input',{bubbles:true}));
+ assert.equal(w.localTest.dirty(),true);assert.equal(timingUnload(env),true);assert.equal(doc.media_timing,undefined);
+ await importJSON(env,{title:'Other source',segments:[{id:'other',start:0,end:2,text:'Other authored source'}]});await w.localTest.flush();
+ assert.equal(timingUnload(env),true,'the inactive document still owns its draft');
+ reopenTimingDocument(env,doc.key);assert.equal($('media-timing-offset').value,'2.75');assert.equal($('media-timing-cue').value,'2');assert.match($('media-timing-status').textContent,/尚未保存/);
+ const generation=env.pipeline.store.status().generation;$('media-timing-discard').click();assert.equal($('media-timing-offset').value,'0');assert.equal(w.localTest.dirty(),false);assert.equal(timingUnload(env),false);assert.equal(doc.media_timing,undefined);assert.equal(env.pipeline.store.status().generation,generation,'discarding a draft does not save a new zero offset');
+ }finally{await env.w.happyDOM.close();}
+});
+
+test('same-file reselection preserves a timing draft, while media removal and replacement require explicit draft resolution',async()=>{
+ const env=setup();try{const {w,$}=env;await open(env);await w.localTest.flush();const doc=w.localTest.active();timingInput(env,2);
+ await pick(env,file(w),{add:false});player(env);assert.equal($('media-timing-offset').value,'2');assert.equal(w.localTest.dirty(),true);
+ $('detach-reader-media').click();assert.ok($('source-media').querySelector('audio'));assert.match($('media-timing-status').textContent,/保存或放弃/);
+ let picks=0;$('reader-media-file').click=()=>{picks++;};$('replace-reader-media').click();assert.equal(picks,0);await $('unlink-reader-media').onclick();assert.equal($('local-media-project-dialog').open,false);
+ $('library').querySelector('.library-remove').click();assert.equal($('remove-document-dialog').open,false);assert.equal(w.localTest.docs().includes(doc),true);
+ $('media-timing-discard').click();$('detach-reader-media').click();assert.equal($('source-media').querySelector('audio'),null);assert.equal(w.localTest.dirty(),false);
+ await pick(env,file(w),{add:false});player(env);assert.equal($('media-timing-offset').value,'0');
+ }finally{await env.w.happyDOM.close();}
+});
+
+
+test('native close inspection sees active and inactive alignment drafts, and safe-close cannot discard them',async()=>{
+ const env=setup({},{native:true});try{const {w,$}=env;await open(env);for(const id of ['file','reader-media-file'])Object.defineProperty($(id),'files',{configurable:true,value:[]});await w.localTest.flush();const doc=w.localTest.active();
+ assert.equal(w.coconutPrepareClose('inspect').safe,true);timingInput(env,2);assert.equal(w.coconutPrepareClose('inspect').safe,false);
+ assert.equal(await w.coconutPrepareClose('safe',{id:1,kind:'close',expiresAt:Date.now()+60000}),false);assert.equal($('media-timing-offset').value,'2');assert.notEqual(w.document.body.inert,true);
+ await importJSON(env,{title:'Native other source',segments:[{id:'other',start:0,end:2,text:'Other authored source'}]});Object.defineProperty($('file'),'files',{configurable:true,value:[]});await w.localTest.flush();assert.equal(w.coconutPrepareClose('inspect').safe,false);
+ reopenTimingDocument(env,doc.key);$('media-timing-discard').click();assert.equal(w.coconutPrepareClose('inspect').safe,true);
+ }finally{await env.w.happyDOM.close();}
+});
+
+test('submitted-save failure stays guarded after discarding a newer draft, and late success does not clear that newer draft',async()=>{
+ const env=setup();try{const {w,$,pipeline}=env;await open(env);await w.localTest.flush();pipeline.hold();timingInput(env,2);
+ const save=$('media-timing-save').onclick();await until(()=>pipeline.writes.length===1);assert.equal(w.localTest.dirty(),false);assert.equal(timingUnload(env),true,'pending submitted content remains protected');
+ timingInput(env,3);pipeline.writes[0].commit();await save;assert.equal($('media-timing-offset').value,'3');assert.equal(w.localTest.dirty(),true);assert.equal(timingUnload(env),true);assert.match($('media-timing-status').textContent,/尚未保存/);
+ const failed=$('media-timing-save').onclick();await until(()=>pipeline.writes.length===2);pipeline.writes[1].fail();await failed;assert.equal(w.localTest.dirty(),false);assert.equal(timingUnload(env),true);
+ timingInput(env,4);$('media-timing-discard').click();assert.equal($('media-timing-offset').value,'3');assert.equal(w.localTest.active().media_timing.offset,3);assert.equal(timingUnload(env),true,'discard never rolls back failed submitted content');
+ pipeline.hold(false);await $('media-timing-save').onclick();assert.equal(timingUnload(env),false);
+ }finally{await env.w.happyDOM.close();}
+});
+
+test('empty invalid alignment is a recoverable draft; equal numeric values and cue-only changes are not unsaved content',async()=>{
+ const env=setup();try{const {w,$}=env;await open(env);await w.localTest.flush();const doc=w.localTest.active();
+ timingInput(env,'0.000');assert.equal(w.localTest.dirty(),false);$('media-timing-cue').value='2';$('media-timing-cue').dispatchEvent(new w.Event('input',{bubbles:true}));assert.equal(timingUnload(env),false);
+ timingInput(env,'');assert.equal(w.localTest.dirty(),true);await importJSON(env,{title:'Other invalid draft source',segments:[{id:'other',start:0,end:2,text:'Other authored source'}]});reopenTimingDocument(env,doc.key);assert.equal($('media-timing-offset').value,'');await $('media-timing-save').onclick();assert.equal(w.localTest.dirty(),true);assert.match($('media-timing-status').textContent,/请输入/);
+ $('media-timing-discard').click();await w.localTest.flush();assert.equal(timingUnload(env),false);
+ }finally{await env.w.happyDOM.close();}
+});
+
+test('removing a drafted document from Add shows visible recovery guidance instead of focusing hidden reading controls',async()=>{
+ const env=setup();try{const {w,$}=env;await open(env);await w.localTest.flush();const doc=w.localTest.active();timingInput(env,2);
+ $('add-content').click();assert.equal($('reader-workspace').hidden,true);$('library').querySelector('.library-remove').click();
+ assert.equal($('remove-document-dialog').open,false);assert.equal($('reader-workspace').hidden,true);assert.match($('notice').textContent,/未保存的字幕对齐草稿/);assert.ok($('notice').textContent.includes(doc.title));assert.notEqual(w.document.activeElement,$('media-timing-offset'));
+ reopenTimingDocument(env,doc.key);assert.equal($('media-timing-offset').value,'2');$('media-timing-discard').click();$('library').querySelector('.library-remove').click();assert.equal($('remove-document-dialog').open,true);
+ }finally{await env.w.happyDOM.close();}
+});
+
+test('separate documents sharing a candidate file retain independent alignment drafts and discard cannot cross owners',async()=>{
+ const env=setup();try{const {w,$}=env;await open(env);await w.localTest.flush();const first=w.localTest.active();timingInput(env,2);
+ await importJSON(env,{title:'Same file different transcript',segments:[{id:'separate',start:0,end:2,text:'Separate authored transcript'}]});const second=w.localTest.active();
+ const attaching=pick(env,file(w),{add:false});await until(()=>$('local-media-project-dialog').open);$('local-media-current-project').click();await attaching;player(env);timingInput(env,4);
+ reopenTimingDocument(env,first.key);assert.equal($('media-timing-offset').value,'2');$('media-timing-discard').click();assert.equal(w.localTest.dirty(),true,'second document draft remains');
+ reopenTimingDocument(env,second.key);assert.equal($('media-timing-offset').value,'4');await $('media-timing-save').onclick();assert.equal(second.media_timing.offset,4);assert.equal(first.media_timing,undefined);assert.equal(timingUnload(env),false);
+ }finally{await env.w.happyDOM.close();}
+});
+
+test('discarding a calibration preview pauses only that preview and leaves unrelated bounded playback owned',async()=>{
+ const env=setup();try{const {w,$}=env,p=await open(env);await w.localTest.flush();timingInput(env,2);$('media-timing-preview').click();await settle();assert.equal(p.paused,false);$('media-timing-discard').click();assert.equal(p.paused,true);assert.equal(w.localTest.preview().range,null);
+ timingInput(env,3);$('mode-passages').click();$('passage-body').querySelector('.passage-listen').click();await settle();const range=w.localTest.preview().range;assert.ok(range);assert.notEqual(range.id,'media-timing-preview');assert.equal(p.paused,false);$('media-timing-discard').click();assert.equal(p.paused,false);assert.equal(w.localTest.preview().range.id,range.id);
  }finally{await env.w.happyDOM.close();}
 });
