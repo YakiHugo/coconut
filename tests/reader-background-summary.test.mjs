@@ -8,7 +8,7 @@ import {Window} from 'happy-dom';
 import {installSavePipeline,settle} from './helpers/save-pipeline.mjs';
 const root=new URL('../',import.meta.url),journalKey='coconut-background-summary-v1';
 const fixture=(title='Background source')=>({title,language:'en',segments:[{id:'one',start:0,end:3,text:'Authored first sentence.'},{id:'two',start:3,end:6,text:'Authored second sentence.'}]});
-const descriptor={protocolVersion:1,executor:{type:'local-node',online:true},enabled:true,supportedTaskKinds:['summary'],remoteSubmission:false,execution:{disconnect:'continue',restart:'interrupt_without_retry',cancel:'request_then_settle'},providers:{codex:{supported:true},claude:{supported:true}}};
+const descriptor={protocolVersion:1,executor:{type:'local-node',online:true},enabled:true,supportedTaskKinds:['summary'],remoteSubmission:false,archive:{supported:true},execution:{disconnect:'continue',restart:'interrupt_without_retry',cancel:'request_then_settle'},providers:{codex:{supported:true},claude:{supported:true}}};
 function backend(){
  const tasks=new Map(),keys=new Map(),calls=[];let next=1;
  return {tasks,keys,calls,descriptor:structuredClone(descriptor),lost:false,hold:null,
@@ -19,14 +19,18 @@ function backend(){
    if(url==='api/v1/executor')return ok(this.descriptor);
    if(url==='api/v1/tasks'&&body){
     const id=keys.get(body.idempotencyKey)||'task-'+next++;keys.set(body.idempotencyKey,id);
-    if(!tasks.has(id))tasks.set(id,{taskId:id,kind:'summary',document:body.document,provider:body.provider,status:'running',progress:{completed:0,total:1},input:body.segments});
+    if(!tasks.has(id))tasks.set(id,{taskId:id,attemptId:'attempt-'+id,inputDigest:'digest-'+id,idempotencyKey:body.idempotencyKey,kind:'summary',document:body.document,provider:body.provider,status:'running',progress:{completed:0,total:1},input:body.segments});
     if(this.hold)await this.hold;
     if(this.lost){this.lost=false;throw new Error('Lost receipt');}return ok({protocolVersion:1,task:tasks.get(id)});
    }
    if(url.startsWith('api/v1/tasks?submissionKey='))return ok({protocolVersion:1,task:tasks.get(keys.get(decodeURIComponent(url.split('=')[1])))||null});
-   if(url==='api/v1/tasks')return ok({protocolVersion:1,tasks:[...tasks.values()]});
+   if(url==='api/v1/tasks')return ok({protocolVersion:1,tasks:[...tasks.values()].filter(task=>!task.archivedAt)});
+   if(url.startsWith('api/v1/tasks?archived=true')){const params=new URL(url,'http://localhost').searchParams,all=[...tasks.values()].filter(task=>task.archivedAt).sort((a,b)=>a.taskId.localeCompare(b.taskId)),after=params.get('after'),limit=Number(params.get('limit')),remaining=all.filter(task=>!after||task.taskId>after),page=remaining.slice(0,limit);return ok({protocolVersion:1,tasks:page,total:all.length,nextCursor:remaining.length>limit?page.at(-1).taskId:null});}
+   const archive=url.match(/^api\/v1\/tasks\/([^/]+)\/(archive|restore|export)$/);
+   if(archive){const task=tasks.get(archive[1]);if(archive[2]==='export')return ok({protocolVersion:1,record:{format:'coconut-background-task-record',version:1,task:{...task,snapshot:task.input}}});if(archive[2]==='archive')task.archivedAt='2026-10-14T00:00:00.000Z';else delete task.archivedAt;if(this.archiveLost){this.archiveLost=false;throw new Error('Lost archive response');}return ok({protocolVersion:1,task});}
+
    const match=url.match(/^api\/v1\/tasks\/([^/]+)(\/cancel)?$/);
-   if(match){const task=tasks.get(match[1]);if(match[2])task.status='cancelled';return ok({protocolVersion:1,task});}
+   if(match){const task=tasks.get(match[1]);if(!task)return {ok:false,status:404,json:async()=>({code:'not_found',error:'Authored missing task'})};if(match[2])task.status='cancelled';return ok({protocolVersion:1,task});}
    throw new Error('Unexpected endpoint '+url);
   },
   succeed(id=[...tasks.keys()][0]){const task=tasks.get(id);task.status='succeeded';task.result={question:'Summary',purpose:'summary',answer:'Fake background summary.',provider:task.provider,citations:['one'],input_snapshot:{version:1,segments:task.input},summary_process:{version:1,batches:1,requests:1}};}
@@ -412,4 +416,124 @@ test('real same-origin executor-directory switch isolates old 404 and restores t
  await h.$('background-task-list').querySelector('[data-action="view-result"]').onclick();assert.match(h.$('background-task-list').textContent,/Authored fake-provider result/);assert.equal(h.$('background-task-list').querySelector('[data-action="accept"]'),null);assert.equal(h.doc().ai_answers.length,0);assert.equal(calls,2);
  storage=h.snapshot();await h.w.happyDOM.close();h=null;await close();server=await startBridge({port,taskDirectory:path.join(directory,'source-cli'),providers});
  h=setup(api,storage);await h.refresh();assert.doesNotMatch(h.$('background-task-list').textContent,/此执行器找不到/);const accept=h.$('background-task-list').querySelector('[data-action="accept"]');assert.equal(accept.disabled,false);await accept.onclick();await accept.onclick();assert.equal(h.doc().ai_answers.length,1);assert.deepEqual([...h.doc().background_summary_receipts],[first.task.taskId]);assert.equal(calls,2,'switching services never reruns either model intent');assert.equal(JSON.parse(h.w.localStorage.getItem(journalKey)).entries[0].task.taskId,first.task.taskId);
+});
+
+async function openArchive(h){h.$('background-archive').open=true;await h.refresh();await h.$('background-archive-first').onclick();}
+const archiveEntry=h=>JSON.parse(h.w.localStorage.getItem(journalKey)).entries[0];
+
+test('explicit archive survives reload, exports full identity and original ownership, then restores without rerunning',async()=>{
+ let h=setup();const api=h.api;let storage,original;
+ try{
+  await h.import();await h.choose();await h.submit();api.succeed();await h.refresh();original=archiveEntry(h);
+  const staleAccept=h.$('background-task-list').querySelector('[data-action=accept]').onclick;
+  const archive=h.$('background-task-list').querySelector('[data-action=archive]');assert.ok(archive);archive.focus();await archive.onclick();await staleAccept();assert.equal(h.doc().ai_answers.length,0);
+  assert.equal(h.$('background-task-list').querySelector('section'),null);assert.ok(archiveEntry(h).task.archivedAt);assert.equal(h.w.document.activeElement,h.$('background-archive').querySelector('summary'));
+  for(const key of ['key','lifetime','payload'])assert.deepEqual(archiveEntry(h)[key],original[key]);storage=h.snapshot();
+ }finally{await h.w.happyDOM.close();}
+ h=setup(api,storage);try{
+  await openArchive(h);assert.match(h.$('background-archive-list').textContent,/Fake background summary/);assert.equal(h.$('background-archive-list').querySelector('[data-action=accept]').disabled,true);
+  const files=[];h.w.URL.createObjectURL=blob=>{files.push(blob);return 'blob:archive';};h.w.URL.revokeObjectURL=()=>{};h.w.HTMLAnchorElement.prototype.click=function(){};
+  await h.$('background-archive-list').querySelector('[data-action=export-archive]').onclick();assert.equal(files.length,1);
+  const saved=JSON.parse(await files[0].text());assert.equal(saved.format,'coconut-background-task-recovery');assert.equal(saved.record.task.idempotencyKey,original.key);assert.equal(saved.record.task.attemptId,original.task.attemptId);assert.deepEqual(saved.record.task.snapshot,original.payload.segments);assert.equal(saved.record.task.result.answer,'Fake background summary.');assert.equal(saved.association.lifetime,original.lifetime);assert.deepEqual(saved.association.payload,original.payload);
+  await h.$('background-archive-list').querySelector('[data-action=restore]').onclick();assert.equal(archiveEntry(h).task.archivedAt,undefined);assert.equal(archiveEntry(h).task.taskId,original.task.taskId);
+  await h.$('background-task-list').querySelector('[data-action=accept]').onclick();assert.equal(h.doc().ai_answers.length,1);assert.equal(posted(api).length,1);
+ }finally{await h.w.happyDOM.close();}
+});
+
+for(const action of ['archive','restore'])test('lost '+action+' response converges from server truth without a new submission',async()=>{
+ const h=setup();try{
+  await h.import();await h.choose();await h.submit();h.api.succeed();await h.refresh();
+  if(action==='restore'){await h.$('background-task-list').querySelector('[data-action=archive]').onclick();await openArchive(h);}
+  h.api.archiveLost=true;await h.$(action==='archive'?'background-task-list':'background-archive-list').querySelector('[data-action='+action+']').onclick();
+  assert.equal(!!archiveEntry(h).task.archivedAt,action==='archive');assert.equal(posted(h.api).length,1);assert.equal(archiveEntry(h).task.taskId,'task-1');
+ }finally{await h.w.happyDOM.close();}
+});
+
+test('archive stored only on server after browser quota failure retains the old association and recovers on reload',async()=>{
+ let h=setup();const api=h.api;let storage,original;
+ try{
+  await h.import();await h.choose();await h.submit();api.succeed();await h.refresh();original=archiveEntry(h);const backing=h.w.localStorage;
+  Object.defineProperty(h.w,'localStorage',{configurable:true,value:{get length(){return backing.length;},key:i=>backing.key(i),getItem:key=>backing.getItem(key),setItem(key,value){if(key===journalKey)throw new h.w.DOMException('Authored quota failure','QuotaExceededError');backing.setItem(key,value);}}});
+  await h.$('background-task-list').querySelector('[data-action=archive]').onclick();assert.ok(api.tasks.get('task-1').archivedAt);assert.equal(archiveEntry(h).task.archivedAt,undefined);assert.deepEqual(archiveEntry(h).payload,original.payload);assert.match(h.$('background-task-message').textContent,/关联未保存/);storage=h.snapshot();
+ }finally{await h.w.happyDOM.close();}
+ h=setup(api,storage);try{await h.refresh();assert.ok(archiveEntry(h).task.archivedAt);assert.deepEqual(archiveEntry(h).payload,original.payload);assert.equal(archiveEntry(h).lifetime,original.lifetime);await openArchive(h);assert.ok(h.$('background-archive-list').querySelector('[data-action=restore]'));assert.equal(posted(api).length,1);}finally{await h.w.happyDOM.close();}
+});
+
+test('archived entries stop consuming browser active slots so the 129th explicit intent is possible',async()=>{
+ let h=setup();const api=h.api;let storage,seed;
+ try{await h.import();await h.choose();await h.submit();api.succeed();await h.refresh();seed=archiveEntry(h);storage=h.snapshot();}finally{await h.w.happyDOM.close();}
+ api.tasks.clear();api.keys.clear();const entries=Array.from({length:128},(_,i)=>{const entry=structuredClone(seed),key=webcrypto.randomUUID(),id='seed-'+i;entry.key=key;entry.payload.idempotencyKey=key;entry.task.taskId=id;entry.task.idempotencyKey=key;api.tasks.set(id,{...structuredClone(entry.task),input:entry.payload.segments,result:{purpose:'summary',answer:'Authored stored result',citations:['one'],input_snapshot:{version:1,segments:entry.payload.segments}}});api.keys.set(key,id);return entry;});storage[journalKey]=JSON.stringify({version:2,entries});
+ h=setup(api,storage);try{
+  await h.choose();await h.submit();assert.equal(posted(api).length,1);assert.match(h.$('background-task-message').textContent,/128/);
+  await h.$('background-task-list').querySelector('[data-action=archive]').onclick();await h.submit();assert.equal(posted(api).length,2);const saved=JSON.parse(h.w.localStorage.getItem(journalKey));assert.equal(saved.entries.length,129);assert.equal(saved.entries.filter(entry=>entry.task?.archivedAt).length,1);
+ }finally{await h.w.happyDOM.close();}
+});
+
+test('archived result retains revision and lifetime restrictions after the manuscript was changed',async()=>{
+ const h=setup();try{await h.import();await h.choose();await h.submit();h.api.succeed();await h.refresh();await h.$('background-task-list').querySelector('[data-action=archive]').onclick();h.doc().segments[0].text+=' changed';await openArchive(h);await h.$('background-archive-list').querySelector('[data-action=restore]').onclick();assert.equal(h.$('background-task-list').querySelector('[data-action=accept]').disabled,true);assert.equal(h.doc().ai_answers.length,0);assert.equal(posted(h.api).length,1);}finally{await h.w.happyDOM.close();}
+});
+
+for(const status of ['running','queued','cancel_requested','interrupted','cancelled'])test('archive is absent for unresolved state '+status,async()=>{
+ const h=setup();try{await h.import();await h.choose();await h.submit();h.api.tasks.get('task-1').status=status;await h.refresh();assert.equal(h.$('background-task-list').querySelector('[data-action=archive]'),null);}finally{await h.w.happyDOM.close();}
+});
+
+test('archive pages render at most 20 records and stale page replies cannot re-archive a restored task',async()=>{
+ const api=backend(),originalFetch=api.fetch.bind(api);let hold=false,release,started;
+ const gate=new Promise(r=>release=r),ready=new Promise(r=>started=r);
+ api.fetch=async(url,options)=>{const response=await originalFetch(url,options);if(hold&&url.startsWith('api/v1/tasks?archived=true')){hold=false;const value=await response.json();started();await gate;return {ok:true,json:async()=>value};}return response;};
+ const h=setup(api);try{
+  await h.import();await h.choose();await h.submit();api.succeed();await h.refresh();await h.$('background-task-list').querySelector('[data-action=archive]').onclick();await openArchive(h);
+  const restore=h.$('background-archive-list').querySelector('[data-action=restore]').onclick;hold=true;const loading=h.$('background-archive-first').onclick();await ready;const restoring=restore();await new Promise(r=>setTimeout(r,10));release();await Promise.all([loading,restoring]);await h.refresh();assert.equal(archiveEntry(h).task.archivedAt,undefined);
+  const seed=api.tasks.get('task-1');for(let i=0;i<25;i++)api.tasks.set('archive-'+String(i).padStart(2,'0'),{...structuredClone(seed),taskId:'archive-'+String(i).padStart(2,'0'),archivedAt:'2026-10-14T00:00:00.000Z'});
+  await openArchive(h);assert.equal(h.$('background-archive-list').querySelectorAll('section').length,20);await h.$('background-archive-next').onclick();assert.equal(h.$('background-archive-list').querySelectorAll('section').length,5);assert.equal(h.$('background-archive-next').disabled,true);assert.equal(posted(api).length,1);
+ }finally{release();await h.w.happyDOM.close();}
+});
+
+test('archive taskId lookup reaches a later-page record without transferring manuscript ownership',async()=>{
+ const api=backend();let h=setup(api);try{await h.import();await h.choose();await h.submit();api.succeed();await h.refresh();await h.$('background-task-list').querySelector('[data-action=archive]').onclick();}finally{await h.w.happyDOM.close();}
+ h=setup(api);try{await openArchive(h);h.$('background-archive-id').value='task-1';await h.$('background-archive-find').onclick();assert.equal(h.$('background-archive-list').querySelectorAll('section').length,1);assert.match(h.$('background-archive-status').textContent,/精确查找/);assert.equal(h.$('background-archive-list').querySelector('[data-action=accept]'),null);assert.equal(archiveEntry(h),undefined);assert.equal(posted(api).length,1);
+  await h.$('background-archive-list').querySelector('[data-action=restore]').onclick();h.$('background-archive-id').value='task-1';await h.$('background-archive-find').onclick();assert.match(h.$('background-archive-status').textContent,/未归档/);assert.equal(posted(api).length,1);
+ }finally{await h.w.happyDOM.close();}
+});
+
+test('an archive reply does not steal focus after the user moves to another control',async()=>{
+ const api=backend(),original=api.fetch.bind(api);let release,started,hold=false;const gate=new Promise(r=>release=r),ready=new Promise(r=>started=r);
+ api.fetch=async(url,options)=>{const response=await original(url,options);if(hold&&url.endsWith('/archive')){hold=false;started();await gate;}return response;};
+ const h=setup(api);try{await h.import();await h.choose();await h.submit();api.succeed();await h.refresh();hold=true;const operation=h.$('background-task-list').querySelector('[data-action=archive]').onclick();await ready;h.$('background-refresh').focus();release();await operation;assert.equal(h.w.document.activeElement,h.$('background-refresh'));assert.equal(posted(api).length,1);}finally{release();await h.w.happyDOM.close();}
+});
+
+test('archive ACK fences a newer-started stale refresh and reconciles after that refresh finishes',async()=>{
+ const api=backend(),original=api.fetch.bind(api);let armed=false,releaseArchive,archiveStarted,releaseMissing,missingStarted,archiveDone;
+ const archiveGate=new Promise(r=>releaseArchive=r),archiveReady=new Promise(r=>archiveStarted=r),missingGate=new Promise(r=>releaseMissing=r),missingReady=new Promise(r=>missingStarted=r),archiveReturned=new Promise(r=>archiveDone=r);
+ api.fetch=async(url,options)=>{
+  if(armed&&url==='api/v1/tasks/task-1/archive'){archiveStarted();await archiveGate;const response=await original(url,options);archiveDone();return response;}
+  if(armed&&url==='api/v1/tasks/task-2'){missingStarted();await missingGate;}
+  return original(url,options);
+ };
+ const h=setup(api);try{
+  await h.import();await h.choose();await h.submit();api.succeed('task-1');await h.refresh();await h.submit();api.succeed('task-2');await h.refresh();api.tasks.delete('task-2');armed=true;
+  const row=[...h.$('background-task-list').querySelectorAll('section')].find(node=>node.textContent.includes('task-1'));
+  const moving=row.querySelector('[data-action=archive]').onclick();await archiveReady;const refreshing=h.refresh();await missingReady;
+  releaseArchive();await archiveReturned;await new Promise(r=>setTimeout(r,10));releaseMissing();await Promise.all([moving,refreshing]);
+  assert.ok(api.tasks.get('task-1').archivedAt);assert.ok(archiveEntry(h).task.archivedAt);assert.equal(h.$('background-task-list').textContent.includes('task-1'),false);assert.equal(posted(api).length,2);
+ }finally{releaseArchive();releaseMissing();await h.w.happyDOM.close();}
+});
+
+test('same-origin directory change keeps bounded local archived associations visible and recovers exact owner on return',async()=>{
+ const h=setup();try{
+  await h.import();await h.choose();await h.submit();h.api.succeed();await h.refresh();await h.$('background-task-list').querySelector('[data-action=archive]').onclick();const original=structuredClone(h.api.tasks.get('task-1')),association=archiveEntry(h);
+  h.api.tasks.clear();h.api.keys.clear();await openArchive(h);
+  assert.equal(h.$('background-archive-list').querySelectorAll('section').length,1);assert.match(h.$('background-archive-list').textContent,/task-1/);assert.match(h.$('background-archive-list').textContent,/此执行器找不到此任务/);assert.equal(h.$('background-archive-list').querySelector('[data-action=restore]'),null);assert.equal(h.$('background-archive-list').querySelector('[data-action=accept]'),null);assert.equal(archiveEntry(h).lifetime,association.lifetime);assert.deepEqual(archiveEntry(h).payload,association.payload);
+  h.api.tasks.set('task-1',original);await h.refresh();assert.ok(h.$('background-archive-list').querySelector('[data-action=restore]'));assert.equal(archiveEntry(h).missing,false);await h.$('background-archive-list').querySelector('[data-action=restore]').onclick();assert.equal(h.$('background-task-list').querySelector('[data-action=accept]').disabled,false);assert.equal(posted(h.api).length,1);
+ }finally{await h.w.happyDOM.close();}
+});
+
+test('archiving one task preserves newer keyboard focus on another task archive button',async()=>{
+ const api=backend(),original=api.fetch.bind(api);let release,started,hold=false;const gate=new Promise(r=>release=r),ready=new Promise(r=>started=r);
+ api.fetch=async(url,options)=>{const response=await original(url,options);if(hold&&url==='api/v1/tasks/task-1/archive'){hold=false;started();await gate;}return response;};
+ const h=setup(api);try{
+  await h.import();await h.choose();await h.submit();api.succeed('task-1');await h.refresh();await h.submit();api.succeed('task-2');await h.refresh();
+  const row=id=>[...h.$('background-task-list').querySelectorAll('section')].find(node=>node.textContent.includes(id));hold=true;const moving=row('task-1').querySelector('[data-action=archive]').onclick();await ready;row('task-2').querySelector('[data-action=archive]').focus();release();await moving;
+  assert.equal(h.w.document.activeElement.closest('section')?.dataset.submissionKey,row('task-2').dataset.submissionKey);assert.equal(h.w.document.activeElement.dataset.action,'archive');assert.equal(posted(api).length,2);
+ }finally{release();await h.w.happyDOM.close();}
 });

@@ -54,6 +54,10 @@
    findSubmission:(key,options)=>call('tasks?submissionKey='+encodeURIComponent(key),options),
    get:(id,options)=>call('tasks/'+encodeURIComponent(id),options),
    list:options=>call('tasks',options),
+   listArchived:({after='',limit=20,...options}={})=>call('tasks?archived=true&limit='+encodeURIComponent(limit)+'&after='+encodeURIComponent(after),options),
+   exportTask:(id,options)=>call('tasks/'+encodeURIComponent(id)+'/export',options),
+   archive:(id,options={})=>call('tasks/'+encodeURIComponent(id)+'/archive',{...options,body:{protocolVersion:1}}),
+   restore:(id,options={})=>call('tasks/'+encodeURIComponent(id)+'/restore',{...options,body:{protocolVersion:1}}),
    cancel:(id,options={})=>call('tasks/'+encodeURIComponent(id)+'/cancel',{...options,body:{protocolVersion:1}})
   });
  }

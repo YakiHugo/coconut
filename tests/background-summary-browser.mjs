@@ -187,6 +187,31 @@ try{
  await row(oldDirectoryTask).locator('[data-action="accept"]').click();await answers(switchedTitle,1);await page.reload();await refresh();await answers(switchedTitle,1);await expect(row(oldDirectoryTask)).toContainText('已接收');
  await waitForPersistedLibrary(page,async({title,taskId})=>{const receipts=(await readPersistedLibrary()).documents.find(doc=>doc.title===title)?.background_summary_receipts;return Array.isArray(receipts)&&receipts.length===1&&receipts[0]===taskId;},{title:switchedTitle,taskId:oldDirectoryTask});
  check('returning_to_original_directory_recovers_exact_result_once_without_model_retry',bridge.invocations.length===6&&bridge.posts.filter(path=>path==='/api/v1/tasks').length===6&&bridge.posts.filter(path=>path.endsWith('/cancel')).length===1&&(await bridge.tasks()).length===5);
+ stage='archive_completed_task_and_keep_its_original_identity';
+ const originalAssociation=await page.evaluate(id=>JSON.parse(localStorage.getItem('coconut-background-summary-v1')).entries.find(entry=>entry.task?.taskId===id),oldDirectoryTask);
+ const originalRecord=await bridge.request('/api/v1/tasks/'+oldDirectoryTask+'/export');
+ await row(oldDirectoryTask).locator('[data-action="archive"]').click();await expect(row(oldDirectoryTask)).toHaveCount(0);
+ await expect(page.locator('#background-archive > summary')).toBeFocused();
+ await page.locator('#background-archive > summary').click();
+ const archivedRow=()=>page.locator('#background-archive-list .background-task').filter({hasText:oldDirectoryTask});
+ await expect(archivedRow().locator('[data-action="restore"]')).toBeVisible();
+ await expect(archivedRow().locator('[data-action="accept"]')).toBeDisabled();
+ for(const width of [390,1280]){
+  await page.setViewportSize({width,height:900});const button=archivedRow().locator('[data-action="export-archive"]');await button.scrollIntoViewIfNeeded();
+  check('archive_rescue_actions_reachable_without_overflow_'+width,await button.evaluate(node=>{const rect=node.getBoundingClientRect();return rect.height>=44&&rect.width>=44&&rect.x>=0&&rect.right<=innerWidth;})&&await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
+  if(process.env.COCONUT_UI_ARTIFACT_DIR)await page.screenshot({path:path.join(process.env.COCONUT_UI_ARTIFACT_DIR,'background-task-archive-'+width+'.png')});
+ }
+ const archiveDownloadEvent=page.waitForEvent('download');await archivedRow().locator('[data-action="export-archive"]').click();const archiveDownload=await archiveDownloadEvent;
+ assert.match(archiveDownload.suggestedFilename(),/^coconut-task-recovery-.*\.json$/);const archiveBackup=JSON.parse(await fs.readFile(await archiveDownload.path(),'utf8'));
+ assert.equal(archiveBackup.format,'coconut-background-task-recovery');for(const key of ['taskId','attemptId','idempotencyKey','inputDigest','snapshot','result'])assert.deepEqual(archiveBackup.record.task[key],originalRecord.record.task[key]);
+ assert.equal(archiveBackup.association.key,originalAssociation.key);assert.equal(archiveBackup.association.lifetime,originalAssociation.lifetime);assert.deepEqual(archiveBackup.association.payload,originalAssociation.payload);
+ check('archive_download_retains_complete_source_result_and_original_browser_ownership',bridge.invocations.length===6&&(await bridge.tasks()).length===4);
+ await bridge.restart();await page.reload();await refresh();await page.locator('#background-archive > summary').click();await expect(archivedRow().locator('[data-action="restore"]')).toBeVisible();
+ const retainedAssociation=await page.evaluate(id=>JSON.parse(localStorage.getItem('coconut-background-summary-v1')).entries.find(entry=>entry.task?.taskId===id),oldDirectoryTask);
+ assert.equal(retainedAssociation.lifetime,originalAssociation.lifetime);assert.deepEqual(retainedAssociation.payload,originalAssociation.payload);
+ await archivedRow().locator('[data-action="restore"]').click();await expect(row(oldDirectoryTask)).toContainText('已接收');await expect(row(oldDirectoryTask).locator('[data-action="archive"]')).toBeFocused();
+ await answers(switchedTitle,1);await page.reload();await refresh();await expect(row(oldDirectoryTask)).toContainText('已接收');await answers(switchedTitle,1);
+ check('archive_restart_restore_preserves_identity_and_receipt_without_model_retry',bridge.invocations.length===6&&bridge.posts.filter(path=>path==='/api/v1/tasks').length===6&&(await bridge.tasks()).length===5);
  check('authored_private_notes_never_reach_fake_cli',bridge.invocations.every(call=>!JSON.stringify(call.input).includes('LOCAL NOTE')));
  check('no_external_requests_or_page_errors',external===0&&pageErrors===0);
 }catch{process.exitCode=1;}

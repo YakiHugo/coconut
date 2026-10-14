@@ -41,13 +41,15 @@ export function createBridge({readerDirectory = path.resolve(ROOT,'../reader'), 
       if (localMediaService && await localMediaService.handle(req,res,pathname)) return;
       if (req.method === 'GET' || req.method === 'HEAD') {
         if (pathname === '/api/v1/executor') return json(200,taskStore?.describe()||{protocolVersion:1,executor:{type:'local-node',online:true},supportedTaskKinds:['summary'],enabled:false,...(taskUnavailable?{unavailable:taskUnavailable}:{}),providers:{codex:{supported:true,availability:'not_checked'},claude:{supported:true,availability:'not_checked'}},remoteSubmission:false});
-        if (pathname === '/api/v1/tasks' || /^\/api\/v1\/tasks\/[a-f0-9-]+$/.test(pathname)) {
+        if (pathname === '/api/v1/tasks' || /^\/api\/v1\/tasks\/[a-f0-9-]+(?:\/export)?$/.test(pathname)) {
           if(!taskStore)return json(503,{error:taskUnavailable?.message||'此执行器尚未配置持久任务目录',code:taskUnavailable?.code||'tasks_disabled'});
           if(req.method!=='GET')return json(405,{error:'Method not allowed'});
           if(pathname==='/api/v1/tasks'){
-            const key=new URL(req.url,origin).searchParams.get('submissionKey');
+            const params=new URL(req.url,origin).searchParams,key=params.get('submissionKey');
+            if(key===null&&params.get('archived')==='true')return json(200,{protocolVersion:1,...await taskStore.listArchived({limit:params.has('limit')?Number(params.get('limit')):20,after:params.get('after')||''})});
             return json(200,{protocolVersion:1,...(key!==null?{task:await taskStore.findSubmission(key)}:{tasks:await taskStore.list()})});
           }
+          if(pathname.endsWith('/export'))return json(200,{protocolVersion:1,record:await taskStore.exportTask(pathname.split('/').at(-2))});
           return json(200,{protocolVersion:1,task:await taskStore.get(pathname.split('/').at(-1))});
         }
         if (pathname === '/api/health') return json(200,{local_worker:false,runtime:'desktop-bridge',paid_processing:false,max_upload_bytes:0,capabilities});
@@ -61,7 +63,7 @@ export function createBridge({readerDirectory = path.resolve(ROOT,'../reader'), 
       if (req.method !== 'POST') return json(405,{error:'Method not allowed'});
       // Cross-site HTML forms and opaque-origin pages must never start a local CLI.
       if (req.headers.origin !== origin) return json(403,{error:'发送请求必须来自此本机阅读器'});
-      const taskRoute=pathname==='/api/v1/tasks'||/^\/api\/v1\/tasks\/[a-f0-9-]+\/cancel$/.test(pathname);
+      const taskRoute=pathname==='/api/v1/tasks'||/^\/api\/v1\/tasks\/[a-f0-9-]+\/(?:cancel|archive|restore)$/.test(pathname);
       if (taskRoute&&!taskStore)return json(503,{error:taskUnavailable?.message||'此执行器尚未配置持久任务目录',code:taskUnavailable?.code||'tasks_disabled'});
       if (!taskRoute&&!['/api/ask','/api/translate-subscription','/api/podcasts/discover','/api/podcasts/import','/api/podcasts/media','/api/captions/import'].includes(pathname)) return json(501,{error:'轻量版未启用视频站下载、ASR 或离线翻译。可使用公开播客源、字幕或本地音视频；完整本地处理服务为可选高级功能。'});
       if (req.headers['content-type']?.split(';')[0] !== 'application/json') return json(400,{error:'Use application/json'});
@@ -79,7 +81,8 @@ export function createBridge({readerDirectory = path.resolve(ROOT,'../reader'), 
       if (!data || typeof data !== 'object' || Array.isArray(data)) return json(400,{error:'请求 JSON 无效'});
       if(taskRoute){
         if(data.protocolVersion!==1)return json(400,{error:'任务协议版本无效',code:'invalid_request'});
-        if(pathname.endsWith('/cancel'))return json(200,{protocolVersion:1,task:await taskStore.cancel(pathname.split('/').at(-2))});
+        const action=pathname.split('/').at(-1);
+        if(['cancel','archive','restore'].includes(action))return json(200,{protocolVersion:1,task:await taskStore[action](pathname.split('/').at(-2))});
         const receipt=await taskStore.submit(data);return json(receipt.created?202:200,{protocolVersion:1,...receipt});
       }
       if(pathname === '/api/captions/import'){

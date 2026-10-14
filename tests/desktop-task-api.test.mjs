@@ -55,7 +55,7 @@ test('cancel API distinguishes durable request from settled cancellation; late r
 
 test('versioned task mutations preserve existing host, origin and JSON boundaries',async t=>{
  const {client,origin,calls,server}=await setup(t);
- for(const endpoint of ['/api/v1/tasks','/api/v1/tasks/00000000-0000-4000-8000-000000000000/cancel']){
+ for(const endpoint of ['/api/v1/tasks','/api/v1/tasks/00000000-0000-4000-8000-000000000000/cancel','/api/v1/tasks/00000000-0000-4000-8000-000000000000/archive','/api/v1/tasks/00000000-0000-4000-8000-000000000000/restore']){
   for(const Origin of [undefined,'null','https://example.org'])assert.equal((await fetch(origin+endpoint,{method:'POST',headers:{'Content-Type':'application/json',...(Origin?{Origin}: {})},body:JSON.stringify(input())})).status,403);
   assert.equal((await fetch(origin+endpoint,{method:'POST',headers:{Origin:origin,'Content-Type':'text/plain'},body:'{}'})).status,400);
  }
@@ -118,4 +118,16 @@ test('development bridge restart makes completed results independently retrievab
  running=await startDevelopmentBridge({port:0,taskDirectory:directory,providers});server=running.server;client=connect(running.origin);
  const listed=(await client.list()).tasks;assert.equal(listed.length,1);assert.equal(listed[0].result,undefined);const recovered=Tasks.recoveryFor((await client.get(listed[0].taskId)).task);
  assert.equal(recovered.task.taskId,finished.taskId);assert.equal(recovered.task.attemptId,finished.attemptId);assert.equal(recovered.result.answer,'Persisted development result.');assert.deepEqual(recovered.result.input_snapshot,finished.result.input_snapshot);assert.equal(calls,1);assert.equal(recovered.documents,undefined);assert.equal(recovered.background_summary_lifetime,undefined);
+});
+
+
+test('archive HTTP endpoints page, export and restore the original durable identity without inference',async t=>{
+ const {client,calls,origin}=await setup(t),value=input(),receipt=await client.submit(value);await until(client,receipt.task.taskId,'succeeded');
+ assert.equal((await client.describe()).archive.supported,true);const archived=await client.archive(receipt.task.taskId);assert.ok(archived.task.archivedAt);assert.deepEqual((await client.list()).tasks,[]);
+ const page=await client.listArchived({limit:1});assert.equal(page.total,1);assert.equal(page.tasks[0].result,undefined);assert.equal(page.nextCursor,null);
+ const found=await client.findSubmission(value.idempotencyKey);assert.equal(found.task.taskId,receipt.task.taskId);assert.ok(found.task.archivedAt);
+ const exported=await client.exportTask(receipt.task.taskId);assert.equal(exported.record.task.idempotencyKey,value.idempotencyKey);assert.deepEqual(exported.record.task.snapshot,value.segments);assert.equal(exported.record.task.result.answer,'Summary');
+ for(const endpoint of ['/api/v1/tasks?archived=true','/api/v1/tasks/'+receipt.task.taskId+'/export'])assert.equal((await fetch(origin+endpoint,{headers:{Origin:'https://example.org'}})).status,403);
+ await assert.rejects(client.listArchived({limit:51}),e=>e.status===400);await assert.rejects(client.listArchived({after:'bad'}),e=>e.status===400);
+ assert.equal((await client.submit(value)).created,false);const restored=await client.restore(receipt.task.taskId);assert.equal(restored.task.archivedAt,undefined);assert.equal(restored.task.attemptId,receipt.task.attemptId);assert.equal((await client.listArchived()).total,0);assert.equal(calls.length,1);
 });
