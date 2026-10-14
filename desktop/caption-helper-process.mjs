@@ -79,7 +79,7 @@ export async function inspectCaptionOutputFiles(directory,{listEntries=readdir,r
   }
 }
 
-function runProcess(executable,input,{directory,signal,timeoutMs,maxOutputBytes,onSpawn,spawnProcess=spawn}) {
+export function runCaptionProcess(executable,input,{directory,signal,timeoutMs,maxOutputBytes,onSpawn,spawnProcess=spawn,args=['--protocol=1']}) {
   return new Promise((resolve,reject)=>{
     let child, timer, monitor, reading=false, firstError, closed=false, outputBytes=0;
     const chunks=[];
@@ -96,7 +96,7 @@ function runProcess(executable,input,{directory,signal,timeoutMs,maxOutputBytes,
     };
     try {
       cancelled(signal);
-      child=spawnProcess(executable,['--protocol=1'],{cwd:directory,env:helperEnvironment(directory),shell:false,
+      child=spawnProcess(executable,args,{cwd:directory,env:helperEnvironment(directory),shell:false,
         stdio:['pipe','pipe','pipe'],detached:process.platform!=='win32'});
     } catch(error) {finish(error instanceof CaptionHelperError?error:fail('CAPTION_START','无法启动字幕助手'));return;}
     child.stdin.on('error',()=>{});child.stdin.end(JSON.stringify(input));
@@ -149,7 +149,7 @@ export async function runPinnedCaptionHelper({resourcesPath,artifact,operation,f
     // Execute a private verified snapshot, closing the resource hash-to-exec race.
     const executable=path.join(directory,'bin','coconut-caption');
     await writeFile(executable,bytes,{mode:0o500,flag:'wx'});
-    const stdout=await runProcess(executable,input,{directory,signal,timeoutMs,maxOutputBytes,onSpawn,spawnProcess});
+    const stdout=await runCaptionProcess(executable,input,{directory,signal,timeoutMs,maxOutputBytes,onSpawn,spawnProcess});
     cancelled(signal);let result;
     try{result=JSON.parse(stdout);}catch{throw fail('CAPTION_OUTPUT','字幕助手没有返回完整元数据');}
     if(!result || typeof result!=='object' || Array.isArray(result))throw fail('CAPTION_OUTPUT','字幕助手没有返回完整元数据');
