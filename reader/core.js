@@ -1542,7 +1542,7 @@
    }
   };
  }
- function mergeLibraryBackup(current, backup) {
+ function planLibraryBackup(current, backup) {
   if (!backup || backup.format !== "coconut-library" || backup.version !== 1 || !Array.isArray(backup.documents))
    throw new Error("不是支持的 Coconut 书架备份");
   const keys = new Set();
@@ -1553,19 +1553,26 @@
    return {...validate(item), key:item.key};
   });
   const documents = current.documents.slice();
-  const fingerprints = new Map(documents.map(d => [JSON.stringify(validate(d)), d.key]));
+  const fingerprints = new Map(documents.map(d => [JSON.stringify(validate(d)), d]));
   const used = new Set(documents.map(d => d.key));
-  const mapping = new Map();
+  const mapping = new Map(), entries = [];
   for (const doc of incoming) {
    const fingerprint = JSON.stringify(validate(doc));
-   if (fingerprints.has(fingerprint)) { mapping.set(doc.key, fingerprints.get(fingerprint)); continue; }
+   if (fingerprints.has(fingerprint)) {
+    const document=fingerprints.get(fingerprint);mapping.set(doc.key,document.key);
+    entries.push({sourceKey:doc.key,document,outcome:"duplicate"});continue;
+   }
    let key = doc.key, suffix = 1;
    while (used.has(key)) { const tail = "-restored-" + suffix++; key = doc.key.slice(0,200-tail.length) + tail; }
-   documents.push({...doc, key}); used.add(key); fingerprints.set(fingerprint,key); mapping.set(doc.key,key);
+   const document={...doc,key};
+   documents.push(document); used.add(key); fingerprints.set(fingerprint,document); mapping.set(doc.key,key);
+   entries.push({sourceKey:doc.key,document,outcome:key===doc.key?"added":"conflict"});
   }
   const preferred=mapping.get(backup.active)||current.active;
-  return {documents,active:documents.some(doc=>doc.key===preferred&&!isReadingCollection(doc))?preferred:documents.find(doc=>!isReadingCollection(doc))?.key||null};
+  return {library:{documents,active:documents.some(doc=>doc.key===preferred&&!isReadingCollection(doc))?preferred:documents.find(doc=>!isReadingCollection(doc))?.key||null},entries};
  }
+ function mergeLibraryBackup(current,backup){return planLibraryBackup(current,backup).library;}
+
 	function notebookSegments(doc) {
 		return doc.segments.filter(s => s.saved_excerpt === true || hasNoteContent(doc.notes?.[s.id]));
 	}
@@ -1938,7 +1945,7 @@
 	function parse(text, filename) {
 		return parseWithDiagnostics(text, filename).document;
 	}
-	const api = { createSourceCorrectionPreview, applySourceCorrectionPreview, undoSourceCorrection, parsePastedSubtitles, subtitleEncodings, decodeSubtitleBytes, translationSelectionInfo, translationSelectionModels, pairedExactExcerptSnapshot, exactExcerptTranslation, exactExcerptTranslationParts, normalizeReadingChapters, readingChapters, createReadingChapter, updateReadingChapter, readingChaptersWith, isReadingCollection, normalizeReadingCollection, createReadingCollection, collectionItemFromCapture, readingCollectionItemKey, readingCollectionItemState, readingCollectionMarkdown, SPEAKER_CORRECTION_LABEL_LIMIT, createSpeakerCorrectionPreview, applySpeakerCorrectionPreview, createLibraryBackupSelection, librarySavedHits, librarySavedHitCurrent, libraryTranslationHitCurrent, libraryTranslationHitCurrentSteps, exactExcerptNote, exactExcerptNotesWith, exactExcerptRemoval, exactExcerptSnapshot, exactExcerptText, exactExcerptParts, exactExcerptSource, exactExcerptCount, exactExcerptDuplicate, exactExcerptFreshness, exactExcerptFreshnessBatch, exactExcerptState, exactExcerptStateBatch, createReadingRecency, createReadingViews, createLibrarySearch, createLibraryNotebookSearch, libraryCaptureSteps, libraryCaptureCurrent, libraryCaptures, libraryNotebookMarkdown, mediaTiming, mediaTimingOffset, mediaTimingRange, localMediaSource, searchDocument, invalidateSearch, manualReviewSnapshot, manualReviewCurrent, saveManualTranslation, translationReviewQueue, hasNoteContent, segmentNoteCount, BACKUP_REVIEW_BYTES, SUBTITLE_IMPORT_BYTES, vttPayload, libraryHits, librarySnippet, hasProjectAnnotations, projectAnnotationCount, attachProjectTranscript, libraryMatches, documentDuration, sortedLibrary, AUDIO_NOTE_BUDGET, audioNoteCharacters, isAudioProject, audioProjectIdentity, podcastMediaIdentity, SUMMARY_QUESTION, summaryReadiness, podcastURL, podcastSource, cleanGlossary, relevantGlossary, translationQualityMessage, retainAnswers, summaryFreshness, latestSummary, summaryMarkdown, aiReadingMarkdown, parseReadingTime, createPlaybackIndex, segmentAtTime, transcriptText, subtitleExport, mergeLibraryBackup, time, source, media, validate, parse, parseWithDiagnostics, matchesSegment, notebookSegments, notebookMarkdown, translationCurrent, sameCueSnapshot, subscriptionPlan, cleanContexts, answerFreshness };
+	const api = { createSourceCorrectionPreview, applySourceCorrectionPreview, undoSourceCorrection, parsePastedSubtitles, subtitleEncodings, decodeSubtitleBytes, translationSelectionInfo, translationSelectionModels, pairedExactExcerptSnapshot, exactExcerptTranslation, exactExcerptTranslationParts, normalizeReadingChapters, readingChapters, createReadingChapter, updateReadingChapter, readingChaptersWith, isReadingCollection, normalizeReadingCollection, createReadingCollection, collectionItemFromCapture, readingCollectionItemKey, readingCollectionItemState, readingCollectionMarkdown, SPEAKER_CORRECTION_LABEL_LIMIT, createSpeakerCorrectionPreview, applySpeakerCorrectionPreview, createLibraryBackupSelection, librarySavedHits, librarySavedHitCurrent, libraryTranslationHitCurrent, libraryTranslationHitCurrentSteps, exactExcerptNote, exactExcerptNotesWith, exactExcerptRemoval, exactExcerptSnapshot, exactExcerptText, exactExcerptParts, exactExcerptSource, exactExcerptCount, exactExcerptDuplicate, exactExcerptFreshness, exactExcerptFreshnessBatch, exactExcerptState, exactExcerptStateBatch, createReadingRecency, createReadingViews, createLibrarySearch, createLibraryNotebookSearch, libraryCaptureSteps, libraryCaptureCurrent, libraryCaptures, libraryNotebookMarkdown, mediaTiming, mediaTimingOffset, mediaTimingRange, localMediaSource, searchDocument, invalidateSearch, manualReviewSnapshot, manualReviewCurrent, saveManualTranslation, translationReviewQueue, hasNoteContent, segmentNoteCount, BACKUP_REVIEW_BYTES, SUBTITLE_IMPORT_BYTES, vttPayload, libraryHits, librarySnippet, hasProjectAnnotations, projectAnnotationCount, attachProjectTranscript, libraryMatches, documentDuration, sortedLibrary, AUDIO_NOTE_BUDGET, audioNoteCharacters, isAudioProject, audioProjectIdentity, podcastMediaIdentity, SUMMARY_QUESTION, summaryReadiness, podcastURL, podcastSource, cleanGlossary, relevantGlossary, translationQualityMessage, retainAnswers, summaryFreshness, latestSummary, summaryMarkdown, aiReadingMarkdown, parseReadingTime, createPlaybackIndex, segmentAtTime, transcriptText, subtitleExport, planLibraryBackup, mergeLibraryBackup, time, source, media, validate, parse, parseWithDiagnostics, matchesSegment, notebookSegments, notebookMarkdown, translationCurrent, sameCueSnapshot, subscriptionPlan, cleanContexts, answerFreshness };
 	if (typeof module !== "undefined" && module.exports) module.exports = api;
 	else root.Coconut = api;
 })(typeof window !== "undefined" ? window : globalThis);

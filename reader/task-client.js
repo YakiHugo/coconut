@@ -16,9 +16,25 @@
   if(task?.kind!=='summary'||task.status!=='succeeded'||task.document?.key!==document?.key||task.document?.revision!==revision||task.result?.purpose!=='summary')return false;
   const snapshot=task.result.input_snapshot;
   if(snapshot?.version!==1||!Array.isArray(snapshot.segments)||!Array.isArray(document.segments)||snapshot.segments.length!==document.segments.length||snapshot.segments.some((cue,i)=>!cue||!document.segments[i]||cue.id!==document.segments[i].id||cue.text!==document.segments[i].text))return false;
+  const ids=new Set(snapshot.segments.map(cue=>cue.id)),result=task.result;
+  if(typeof result.answer!=='string'||!result.answer.trim()||result.answer.length>Summary.LIMITS.answerCharacters||!Array.isArray(result.citations)||!result.citations.length||result.citations.length>Summary.LIMITS.chunks*Summary.LIMITS.noteCitations||result.citations.some(id=>!ids.has(id)))return false;
   return true;
  }
  function resultFor(task,document,revision){return matchesResult(task,document,revision)?copy(task.result):null;}
+ // A standalone receipt can rescue an executor result after browser ownership
+ // was lost. It is deliberately not a manuscript/library import and never
+ // grants a document lifetime or supplies invented subtitle timestamps.
+ function recoveryFor(task){
+  try{
+   if(task?.kind!=='summary'||task.status!=='succeeded'||typeof task.taskId!=='string'||!task.taskId||task.taskId.length>128||!['codex','claude'].includes(task.provider)||typeof task.document?.key!=='string'||!task.document.key||task.document.key.length>1000||typeof task.document.revision!=='string'||!task.document.revision||task.document.revision.length>200)return null;
+   const result=task.result;if(result?.purpose!=='summary'||result.input_snapshot?.version!==1||typeof result.answer!=='string'||!result.answer.trim()||result.answer.length>Summary.LIMITS.answerCharacters)return null;
+   const source=Summary.plan({segments:result.input_snapshot.segments}).source,ids=new Set(source.map(cue=>cue.id));
+   if(!Array.isArray(result.citations)||!result.citations.length||result.citations.length>Summary.LIMITS.chunks*Summary.LIMITS.noteCitations||result.citations.some(id=>!ids.has(id)))return null;
+   const identity={taskId:task.taskId,kind:task.kind,status:task.status,document:{key:task.document.key,revision:task.document.revision},provider:task.provider};
+   for(const key of ['attemptId','createdAt','updatedAt'])if(typeof task[key]==='string'&&task[key].length<=128)identity[key]=task[key];
+   return {format:'coconut-background-summary-result',version:1,task:identity,result:{purpose:'summary',answer:result.answer,citations:[...new Set(result.citations)],input_snapshot:{version:1,segments:source}}};
+  }catch{return null;}
+ }
  function createClient({fetch:request=root.fetch.bind(root)}={}){
   async function call(endpoint,{body,signal}={}){
    const response=await request('api/v1/'+endpoint,{method:body?'POST':'GET',headers:body?{'Content-Type':'application/json'}:{},body:body?JSON.stringify(body):undefined,signal});
@@ -41,6 +57,6 @@
    cancel:(id,options={})=>call('tasks/'+encodeURIComponent(id)+'/cancel',{...options,body:{protocolVersion:1}})
   });
  }
- const api={submission,matchesResult,resultFor,createClient};
+ const api={submission,matchesResult,resultFor,recoveryFor,createClient};
  if(typeof module!=='undefined'&&module.exports)module.exports=api;else root.CoconutTasks=api;
 })(typeof window!=='undefined'?window:globalThis);

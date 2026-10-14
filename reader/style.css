@@ -1437,6 +1437,16 @@ body[data-media-docked="true"] #reader-workspace #reading-context:not([hidden]) 
 .background-tasks > summary { cursor: pointer; min-height: 44px; }
 .background-task { border-top: 1px solid var(--line); padding: 12px 0; overflow-wrap: anywhere; }
 .background-task h3 { font-size: 14px; margin: 0 0 6px; }
-.background-task button { margin-top: 8px; }
+.background-task button { margin-top: 8px; min-height: 44px; }
 .background-result { white-space: pre-wrap; max-height: 24rem; overflow: auto; }
 #summary-open-background-tasks { margin-bottom: 12px; }
+
+/* Recovery receipts remain inspectable without adding another document cache. */
+#library-restore-results-dialog { width:min(760px,calc(100vw - 24px)); max-height:85dvh; overflow:auto; }
+#library-restore-results-dialog p, .library-restore-result { overflow-wrap:anywhere; }
+#library-restore-results-list { padding-left:26px; }
+.library-restore-result { border-top:1px solid var(--line); padding:12px 0; }
+.library-restore-result p { margin:6px 0; }
+.library-restore-result button { min-height:44px; }
+.library-restore-result[data-state="failed"] .library-restore-result-status,
+.library-restore-result[data-state="unknown"] .library-restore-result-status { color:var(--danger,#a33); }

@@ -38,6 +38,11 @@ try{
   await page.evaluate(()=>{for(const id of ['file','library-file','project-transcript-file']){const input=document.getElementById(id),handler=input.onchange;input.onchange=async function(event){window.backupProbe.started++;try{await handler.call(this,event);}finally{window.backupProbe.finished++;}};}document.getElementById('large-backup-dialog').addEventListener('close',()=>{window.backupProbe.dialogCloses++;});});
   return page;
  }
+ async function openRestoreResults(page){
+  await openLibraryTools(page);
+  const disclosure=page.locator('details.library-backup');if(!await disclosure.evaluate(node=>node.open))await disclosure.locator(':scope > summary').click();
+  await page.locator('#open-library-restore-results').click();await page.locator('#library-restore-results-dialog').waitFor({state:'visible'});
+ }
  const write=async(name,value)=>{const file=path.join(directory,name);await fs.writeFile(file,JSON.stringify(value));return file;};
  const finished=(page,count)=>page.waitForFunction(count=>window.backupProbe.finished===count,count);
  const disk = async page => {await page.evaluate(()=>libraryStore.flush());return page.evaluate(key=>localStorage.getItem(key),KEY);};
@@ -111,8 +116,18 @@ try{
  for(const doc of beforeConflict.documents)assert.deepEqual(conflict.documents.find(current=>current.key===doc.key),doc);
  assert.ok(restoredVersion);assert.notEqual(restoredVersion.key,rich.key);assert.deepEqual({...restoredVersion,key:rich.key},richBackup);
  check('selected_restore_retains_conflicting_local_version_and_complete_backup_version',await page.evaluate(()=>sessionStorage.getItem('coconut-reader-active-v1'))===restoredVersion.key);
+ stage='native restore report identifies and opens conflict version';
+ await openRestoreResults(page);
+ check('native_restore_report_labels_conflicts_and_duplicates_separately',/新增 0 · 冲突副本 1 · 重复跳过 1/.test(await page.locator('#library-restore-results-summary').textContent())&&await page.locator('.library-restore-result[data-state="saved"]').count()===2);
+ const conflictResult=page.locator('.library-restore-result[data-outcome="conflict"]');
+ check('native_restore_report_exposes_exact_conflict_destination',await conflictResult.getAttribute('data-document-key')===restoredVersion.key);
+ await conflictResult.locator('button').click();await page.locator('#library-restore-results-dialog').waitFor({state:'hidden'});
+ check('native_restore_result_opens_exact_saved_version',await page.evaluate(()=>active().notes.cue)==='Keep this private note'&&await page.evaluate(()=>state.active)===restoredVersion.key);
+ await openRestoreResults(page);await page.keyboard.press('Escape');
+ check('native_report_escape_preserves_library_and_returns_focus',!await page.locator('#library-restore-results-dialog').isVisible()&&await page.locator('#open-library-restore-results').evaluate(node=>node===document.activeElement));
  await page.locator('#library-file').setInputFiles(selectedFile);await finished(page,5);
- assert.deepEqual(JSON.parse(await disk(page)),conflict);check('selected_conflicting_repeat_restore_deduplicates_the_retained_backup_version',true);await page.context().close();
+ assert.deepEqual(JSON.parse(await disk(page)),conflict);check('selected_conflicting_repeat_restore_deduplicates_the_retained_backup_version',true);
+ await openRestoreResults(page);check('new_restore_replaces_report_with_duplicate_outcomes',await page.locator('.library-restore-result[data-outcome="duplicate"]').count()===2);await page.context().close();
 
  stage='selected pending removal blocks partial backup';page=sourcePage;
  // Verify that the loading-time factory wrapper reached the actual writer;
@@ -139,6 +154,18 @@ try{
  await page.locator('#undo-removal').click();await page.evaluate(()=>libraryStore.flush());await openLibraryTools(page);
  check('undo_does_not_implicitly_select_restored_document',JSON.parse(await disk(page)).documents.length===3&&!await page.locator('.library-entry[data-document-key="selected-rich"] .library-select').isChecked()&&/已选\s*1\s*份/.test(await page.locator('#library-selection-status').textContent()));
  await page.context().close();
+ stage='native restore report pagination and collection access';page=await newPage();
+ const resultDocuments=Array.from({length:60},(_,i)=>({key:'result-'+i,title:'Authored restore result '+i,segments:[{id:'cue',start:0,end:2,text:'Authored result source '+i}]}));
+ const resultCollection={key:'result-collection',schema_version:1,project_kind:'reading_collection',collection_version:1,title:'Authored restored collection',segments:[],notes:{},items:[]};
+ const resultFile=await write('restore-results.json',{format:'coconut-library',version:1,documents:[...resultDocuments,resultCollection],active:'result-0'});
+ await page.locator('#library-file').setInputFiles(resultFile);await finished(page,1);await openRestoreResults(page);
+ check('native_restore_report_bounds_first_page_to_25_rows',await page.locator('.library-restore-result').count()===25);
+ await page.locator('#library-restore-results-next').click();await page.locator('#library-restore-results-next').click();
+ check('native_restore_report_keeps_last_page_and_collection_reachable',await page.locator('.library-restore-result').count()===11&&await page.locator('#library-restore-results-next').isDisabled());
+ await page.locator('.library-restore-result[data-document-key="result-collection"] button').click();
+ check('native_report_opens_collection_without_activating_transcript',await page.locator('#library-notebook').isVisible()&&await page.locator('#collection-select').inputValue()==='result-collection'&&await page.evaluate(()=>state.active)==='result-0');
+ await page.locator('#notebook-close').click();await page.reload();await page.waitForFunction(()=>window.CoconutStorageBootstrap?.phase==='ready');
+ check('reload_keeps_documents_but_not_page_local_restore_results',await page.locator('#open-library-restore-results').isHidden()&&JSON.parse(await disk(page)).documents.length===61);await page.context().close();
  const small=await write('original.json',annotatedDocument('Original saved work'));
  const chinese=await write('chinese.json',chineseDocument());assert.ok((await fs.stat(chinese)).size>15*MiB);
  page=await newPage();await page.locator('#file').setInputFiles(small);await finished(page,1);const before=await disk(page);
@@ -184,6 +211,9 @@ try{
  check('large_library_merge_keeps_original_and_full_annotation',await page.evaluate(()=>state.documents.length===2&&active().notes.cue.length===17600000)&&await disk(page)===preserved);
  await page.locator('#library-file').setInputFiles(library);await page.locator('#continue-large-backup').click();await finished(page,3);
  check('large_library_repeat_restore_deduplicates_without_overwriting',await page.evaluate(()=>state.documents.length)===2&&await disk(page)===preserved);
+ await openRestoreResults(page);
+ check('native_quota_restore_report_never_marks_in_page_duplicate_as_saved',await page.locator('.library-restore-result[data-outcome="duplicate"][data-state="failed"]').count()===1&&await page.locator('#library-restore-results-backup').isVisible());
+ await page.locator('#library-restore-results-close').click();
  const final=await download(page,'export','large-final-rescue.json');const actual=JSON.parse(await fs.readFile(final,'utf8')),expected=oversizedDocument();
  assert.deepEqual(actual.ai_answers,expected.ai_answers);check('rescue_download_keeps_complete_large_notes_and_ai_evidence',digest(actual.notes.cue)===digest(expected.notes.cue));
  await page.context().close();check('no_remote_requests_mutations_or_page_errors',external===0&&mutations===0&&errors===0);

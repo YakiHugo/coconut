@@ -257,3 +257,81 @@ test('production HTML dependency graph enables one explicit background submissio
   $('ai-consent').checked=true;await $('ask-ai').onclick();assert.equal(posted(api).length,1);assert.equal(posted(api)[0].body.segments.length,2);assert.match($('background-task-list').textContent,/task-1/);assert.equal(run('active().ai_answers.length'),0);
  }finally{w.dispatchEvent(new w.Event('pagehide'));await w.happyDOM.close();}
 });
+
+test('cleared browser association can inspect and export a completed task without adopting it',async()=>{
+ const api=backend();let original=setup(api);try{await original.import();await original.choose();await original.submit();api.succeed();}finally{await original.w.happyDOM.close();}
+ const h=setup(api),downloads=[];try{
+  await h.import(fixture('Unrelated current manuscript'));const before=JSON.stringify(h.doc());await h.refresh();
+  assert.equal(h.$('background-task-list').querySelector('[data-action="accept"]'),null);
+  const view=h.$('background-task-list').querySelector('[data-action="view-result"]');assert.ok(view,'unassociated completed results must remain retrievable');
+  assert.equal(api.calls.filter(call=>call.url==='api/v1/tasks/task-1').length,0,'list reads must not eagerly fetch full source snapshots');
+  await view.onclick();assert.match(h.$('background-task-list').textContent,/Fake background summary/);assert.match(h.$('background-task-list').textContent,/Authored first sentence/);
+  h.w.URL.createObjectURL=blob=>{downloads.push(blob);return 'blob:summary-recovery';};h.w.URL.revokeObjectURL=()=>{};
+  const clicks=[];h.w.HTMLAnchorElement.prototype.click=function(){clicks.push({download:this.download,href:this.href});};
+  await h.$('background-task-list').querySelector('[data-action="export-result"]').onclick();
+  assert.equal(downloads.length,1);assert.match(clicks[0].download,/\.json$/);const saved=JSON.parse(await downloads[0].text());
+  assert.equal(saved.format,'coconut-background-summary-result');assert.equal(saved.version,1);assert.equal(saved.task.taskId,'task-1');assert.equal(saved.result.answer,'Fake background summary.');assert.equal(saved.result.input_snapshot.segments.length,2);
+  assert.equal(saved.background_summary_lifetime,undefined);assert.equal(saved.documents,undefined);assert.equal(saved.segments,undefined,'standalone result is not a manuscript import');
+  assert.equal(JSON.stringify(h.doc()),before);assert.equal(JSON.parse(h.w.localStorage.getItem(journalKey)).entries.length,0);assert.equal(posted(api).length,1);assert.equal(api.calls.filter(call=>call.url.endsWith('/cancel')).length,0);
+  assert.match(h.$('background-task-message').textContent,/已发起.*下载.*确认/);
+ }finally{await h.w.happyDOM.close();}
+});
+
+test('unassociated result load is deduplicated and a failed read stays explicitly retryable',async()=>{
+ const api=backend();const original=setup(api);try{await original.import();await original.choose();await original.submit();api.succeed();}finally{await original.w.happyDOM.close();}
+ const request=api.fetch.bind(api);let release,started,fail=true;const ready=new Promise(r=>started=r),gate=new Promise(r=>release=r);
+ api.fetch=async(url,options)=>{if(url==='api/v1/tasks/task-1'&&fail){started();await gate;throw new Error('Temporary disconnect');}return request(url,options);};
+ const h=setup(api);try{
+  await h.refresh();const view=h.$('background-task-list').querySelector('[data-action="view-result"]');assert.ok(view);const pending=view.onclick();await ready;await view.onclick();
+  assert.equal(h.$('background-task-list').querySelector('[data-action="view-result"]').getAttribute('aria-disabled'),'true');release();await pending;assert.match(h.$('background-task-list').textContent,/Temporary disconnect/);assert.equal(h.$('background-task-list').querySelector('[data-action="export-result"]'),null);
+  fail=false;await h.$('background-task-list').querySelector('[data-action="view-result"]').onclick();assert.match(h.$('background-task-list').textContent,/Fake background summary/);assert.equal(posted(api).length,1);
+ }finally{release();await h.w.happyDOM.close();}
+});
+
+for(const corruption of ['identity','citation','source','answer'])test('unassociated result rejects mismatched or incomplete '+corruption,async()=>{
+ const api=backend(),original=setup(api);try{await original.import();await original.choose();await original.submit();api.succeed();}finally{await original.w.happyDOM.close();}
+ const request=api.fetch.bind(api);api.fetch=async(url,options)=>{const response=await request(url,options);if(url!=='api/v1/tasks/task-1')return response;const value=await response.json();if(corruption==='identity')value.task.document.revision='different-revision';if(corruption==='citation')value.task.result.citations=['nonexistent'];if(corruption==='source')value.task.result.input_snapshot.segments[1].id='one';if(corruption==='answer')value.task.result.answer='';return {ok:true,json:async()=>value};};
+ const h=setup(api);try{await h.refresh();const view=h.$('background-task-list').querySelector('[data-action="view-result"]');assert.ok(view);await view.onclick();assert.match(h.$('background-task-list').textContent,/无法读取/);assert.equal(h.$('background-task-list').querySelector('[data-action="export-result"]'),null);assert.equal(posted(api).length,1);}finally{await h.w.happyDOM.close();}
+});
+
+test('a removed source still permits standalone rescue, and a failed download changes no document',async()=>{
+ const h=setup();try{
+  await h.import();await h.choose();await h.submit();h.api.succeed();await h.refresh();h.$('library-options').open=true;h.$('library-options').dispatchEvent(new h.w.Event('toggle'));h.$('library').querySelector('.library-remove').click();await h.$('confirm-removal').onclick();await h.refresh();
+  assert.equal(h.$('background-task-list').querySelector('[data-action="accept"]').disabled,true);const download=h.$('background-task-list').querySelector('[data-action="export-result"]');assert.ok(download);
+  const before=h.snapshot();h.w.URL.createObjectURL=()=>{throw new Error('Download not available');};await download.onclick();assert.match(h.$('background-task-message').textContent,/下载失败/);assert.deepEqual(h.snapshot(),before);assert.match(h.$('background-task-list').textContent,/Fake background summary/);
+  const files=[];h.w.URL.createObjectURL=blob=>{files.push(blob);return 'blob:rescue';};h.w.HTMLAnchorElement.prototype.click=function(){};await download.onclick();assert.equal(files.length,1);assert.equal(JSON.parse(await files[0].text()).result.input_snapshot.segments[0].text,fixture().segments[0].text);assert.equal(posted(h.api).length,1);
+ }finally{await h.w.happyDOM.close();}
+});
+
+test('damaged association journal stays untouched while independent results are rescued',async()=>{
+ const api=backend(),original=setup(api);try{await original.import();await original.choose();await original.submit();api.succeed();}finally{await original.w.happyDOM.close();}
+ const raw='{"version":1,"entries": [broken',h=setup(api,{[journalKey]:raw});try{await h.refresh();await h.$('background-task-list').querySelector('[data-action="view-result"]').onclick();assert.match(h.$('background-task-list').textContent,/Fake background summary/);assert.ok(h.$('background-task-list').querySelector('[data-action="export-result"]'));assert.equal(h.w.localStorage.getItem(journalKey),raw);assert.equal(h.$('background-task-list').querySelector('[data-action="accept"]'),null);assert.equal(posted(api).length,1);}finally{await h.w.happyDOM.close();}
+});
+
+for(const change of ['removed','failed','identity'])test('late independent result cannot survive a changed task listing: '+change,async()=>{
+ const api=backend(),original=setup(api);try{await original.import();await original.choose();await original.submit();api.succeed();}finally{await original.w.happyDOM.close();}
+ const request=api.fetch.bind(api);let release,started;const ready=new Promise(r=>started=r),gate=new Promise(r=>release=r);api.fetch=async(url,options)=>{const response=await request(url,options);if(url==='api/v1/tasks/task-1'){const value=await response.json();started();await gate;return {ok:true,json:async()=>value};}return response;};
+ const h=setup(api);try{await h.refresh();const pending=h.$('background-task-list').querySelector('[data-action="view-result"]').onclick();await ready;if(change==='removed')api.tasks.clear();if(change==='failed')api.tasks.get('task-1').status='failed';if(change==='identity')api.tasks.get('task-1').document.revision='new-revision';await h.refresh();release();await pending;assert.doesNotMatch(h.$('background-task-list').textContent,/Fake background summary/);assert.equal(h.$('background-task-list').querySelector('[data-action="export-result"]'),null);assert.equal(posted(api).length,1);}finally{release();await h.w.happyDOM.close();}
+});
+
+for(const moveFocus of [false,true])test('independent result opens immediately and respects newer focus: '+moveFocus,async()=>{
+ const api=backend(),original=setup(api);try{await original.import();await original.choose();await original.submit();api.succeed();}finally{await original.w.happyDOM.close();}
+ const request=api.fetch.bind(api);let release,started;const ready=new Promise(r=>started=r),gate=new Promise(r=>release=r);api.fetch=async(url,options)=>{if(url==='api/v1/tasks/task-1'){started();await gate;}return request(url,options);};
+ const h=setup(api);try{await h.refresh();const view=h.$('background-task-list').querySelector('[data-action="view-result"]');view.focus();const pending=view.onclick();await ready;if(moveFocus)h.$('background-refresh').focus();release();await pending;const details=h.$('background-task-list').querySelector('details');assert.equal(details.open,true);assert.equal(h.w.document.activeElement,moveFocus?h.$('background-refresh'):details.querySelector('summary'));details.open=false;await h.refresh();assert.equal(h.$('background-task-list').querySelector('details').open,false);}finally{release();await h.w.happyDOM.close();}
+});
+
+test('unassociated running tasks keep polling read-only until their results become available',async()=>{
+ const api=backend(),original=setup(api);try{await original.import();await original.choose();await original.submit();}finally{await original.w.happyDOM.close();}
+ const h=setup(api),pending=new Map();let next=-1;const set=h.w.setTimeout.bind(h.w),clear=h.w.clearTimeout.bind(h.w);h.w.setTimeout=(fn,ms,...args)=>{if(ms!==4000)return set(fn,ms,...args);const id=next--;pending.set(id,fn);return id;};h.w.clearTimeout=id=>{if(pending.has(id))pending.delete(id);else clear(id);};
+ try{await h.refresh();assert.equal(pending.size,1);assert.equal(h.$('background-task-list').querySelector('[data-action="view-result"]'),null);api.succeed();[...pending.values()][0]();await h.refresh();assert.ok(h.$('background-task-list').querySelector('[data-action="view-result"]'));assert.equal(pending.size,0);assert.equal(posted(api).length,1);assert.equal(api.calls.filter(call=>call.url.endsWith('/cancel')).length,0);}finally{await h.w.happyDOM.close();}
+});
+
+test('associated malformed result is visible, cannot be accepted, and refresh can recover it',async()=>{
+ const h=setup();try{await h.import();await h.choose();await h.submit();h.api.succeed();h.api.tasks.get('task-1').result.citations=['missing'];await h.refresh();assert.match(h.$('background-task-list').textContent,/结果不完整|引用无法核对/);assert.equal(h.$('background-task-list').querySelector('[data-action="accept"]').disabled,true);assert.equal(h.$('background-task-list').querySelector('[data-action="export-result"]'),null);h.api.succeed();await h.refresh();assert.ok(h.$('background-task-list').querySelector('[data-action="export-result"]'));assert.equal(h.$('background-task-list').querySelector('[data-action="accept"]').disabled,false);assert.equal(posted(h.api).length,1);}finally{await h.w.happyDOM.close();}
+});
+
+test('large standalone snapshots have bounded visible citation previews and complete JSON',async()=>{
+ const api=backend(),original=setup(api);try{await original.import();await original.choose();await original.submit();api.succeed();}finally{await original.w.happyDOM.close();}
+ const task=api.tasks.get('task-1');task.result.input_snapshot.segments=Array.from({length:12},(_,i)=>({id:'large-'+i,text:'Full authored source '.repeat(100)}));task.result.citations=task.result.input_snapshot.segments.map(cue=>cue.id);
+ const h=setup(api),files=[];try{await h.refresh();await h.$('background-task-list').querySelector('[data-action="view-result"]').onclick();const excerpts=h.$('background-task-list').querySelectorAll('.background-source');assert.equal(excerpts.length,8);assert.ok([...excerpts].every(node=>node.textContent.length<1300));assert.match(h.$('background-task-list').textContent,/预览已截短/);h.w.URL.createObjectURL=blob=>{files.push(blob);return 'blob:complete';};h.w.HTMLAnchorElement.prototype.click=function(){};await h.$('background-task-list').querySelector('[data-action="export-result"]').onclick();const saved=JSON.parse(await files[0].text());assert.deepEqual(saved.result.input_snapshot,task.result.input_snapshot);assert.deepEqual(saved.result.citations,task.result.citations);assert.equal(saved.result.answer,task.result.answer);assert.equal(posted(api).length,1);}finally{await h.w.happyDOM.close();}
+});

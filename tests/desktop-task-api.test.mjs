@@ -96,3 +96,26 @@ test('packaged task runner resolves summary code from its explicit reader resour
  for(let i=0;i<100&&(await store.get(receipt.task.taskId)).status!=='succeeded';i++)await new Promise(r=>setTimeout(r,5));assert.equal((await store.get(receipt.task.taskId)).result.answer,'Packaged summary');
  const packaging=await fs.readFile(new URL('../desktop/package.mjs',import.meta.url),'utf8');assert.match(packaging,/'tasks\.mjs'/);assert.match(packaging,/'task-client\.js'/);
 });
+
+test('standalone recovery validates completed receipts and returns only independent copied data',()=>{
+ const task={taskId:'task-1',attemptId:'attempt-1',kind:'summary',status:'succeeded',document:{key:'authored',revision:'original-lifetime/revision'},provider:'codex',createdAt:'2026-10-14T00:00:00Z',idempotencyKey:'must-not-transfer-intent',result:{purpose:'summary',answer:'Authored result.',citations:['a'],input_snapshot:{version:1,segments:[{id:'a',text:'Authored source.',start:0,notes:'Private note'}]},privateField:'not a result'}};
+ const saved=Tasks.recoveryFor(task);assert.equal(saved.format,'coconut-background-summary-result');assert.equal(saved.task.document.revision,task.document.revision);assert.equal(saved.task.idempotencyKey,undefined);assert.equal(saved.result.privateField,undefined);assert.deepEqual(saved.result.input_snapshot.segments,[{id:'a',text:'Authored source.'}]);
+ saved.task.document.key='changed';saved.result.input_snapshot.segments[0].text='changed';assert.equal(task.document.key,'authored');assert.equal(task.result.input_snapshot.segments[0].text,'Authored source.');
+ for(const status of ['queued','running','cancel_requested','cancelled','failed','interrupted'])assert.equal(Tasks.recoveryFor({...task,status}),null);
+ for(const patch of [{purpose:'question'},{answer:''},{answer:'x'.repeat(8001)},{citations:[]},{citations:['missing']},{input_snapshot:{version:2,segments:task.result.input_snapshot.segments}},{input_snapshot:{version:1,segments:[{id:'a',text:'one'},{id:'a',text:'two'}]}}]){
+  const bad={...task,result:{...task.result,...patch}};assert.equal(Tasks.recoveryFor(bad),null);
+  assert.equal(Tasks.resultFor(bad,doc,task.document.revision),null);
+ }
+});
+
+test('development bridge restart makes completed results independently retrievable without a browser journal or new inference',async t=>{
+ const {startDevelopmentBridge}=await import('../desktop/dev.mjs'),directory=await fs.mkdtemp(path.join(os.tmpdir(),'coconut-dev-result-rescue-'));let calls=0,server;
+ const providers={ask:async()=>{calls++;return {answer:'Persisted development result.',citations:['a']};},status:()=>{throw new Error('No login probes');}};
+ t.after(async()=>{if(server)await new Promise(resolve=>server.shutdown(resolve));await fs.rm(directory,{recursive:true,force:true});});
+ let running=await startDevelopmentBridge({port:0,taskDirectory:directory,providers});server=running.server;
+ const connect=origin=>Tasks.createClient({fetch:(relative,options)=>fetch(origin+'/'+relative,{...options,headers:{...options?.headers,Origin:origin}})});
+ let client=connect(running.origin);const submitted=await client.submit(input()),finished=await until(client,submitted.task.taskId,'succeeded');await new Promise(resolve=>server.shutdown(resolve));server=null;
+ running=await startDevelopmentBridge({port:0,taskDirectory:directory,providers});server=running.server;client=connect(running.origin);
+ const listed=(await client.list()).tasks;assert.equal(listed.length,1);assert.equal(listed[0].result,undefined);const recovered=Tasks.recoveryFor((await client.get(listed[0].taskId)).task);
+ assert.equal(recovered.task.taskId,finished.taskId);assert.equal(recovered.task.attemptId,finished.attemptId);assert.equal(recovered.result.answer,'Persisted development result.');assert.deepEqual(recovered.result.input_snapshot,finished.result.input_snapshot);assert.equal(calls,1);assert.equal(recovered.documents,undefined);assert.equal(recovered.background_summary_lifetime,undefined);
+});

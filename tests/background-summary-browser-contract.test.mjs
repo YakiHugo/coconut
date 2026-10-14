@@ -1,7 +1,9 @@
 /** CPU-only contract for the exact real-HTTP fake-CLI browser harness. */
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import {createRequire} from 'node:module';
 import {backgroundSummaryBridge,authoredSource,until} from './helpers/background-summary-bridge.mjs';
+const Tasks=createRequire(import.meta.url)('../reader/task-client.js');
 const payload=key=>({protocolVersion:1,kind:'summary',idempotencyKey:key,document:{key:'authored-document',revision:key},provider:'codex',consent:true,segments:authoredSource('Authored').segments});
 
 test('browser harness serves actual production assets and enforces consent/idempotency before a fake CLI run',async t=>{
@@ -27,4 +29,10 @@ test('browser harness reopens the same real HTTP origin and disk ledger without 
  h.invocations[0].release();await h.invocations[0].settled;
  assert.equal((await h.waitTask(task.taskId,'interrupted')).result,undefined);assert.equal(h.invocations.length,1);
  assert.equal((await h.request('/api/v1/tasks',payload('restart'))).task.status,'interrupted');assert.equal(h.invocations.length,1);
+});
+test('browser harness preserves independently exportable completed source after executor restart',async t=>{
+ const h=await backgroundSummaryBridge();t.after(()=>h.close());const {task}=await h.request('/api/v1/tasks',payload('standalone-result'));
+ await until(()=>h.invocations.length===1);h.invocations[0].release();const completed=await h.waitTask(task.taskId,'succeeded');await h.restart();
+ const listed=await h.tasks();assert.equal(listed[0].result,undefined);const receipt=Tasks.recoveryFor(await h.task(listed[0].taskId));
+ assert.equal(receipt.task.taskId,task.taskId);assert.equal(receipt.result.answer,completed.result.answer);assert.deepEqual(receipt.result.input_snapshot,completed.result.input_snapshot);assert.equal(receipt.segments,undefined);assert.equal(receipt.documents,undefined);assert.equal(h.invocations.length,1);assert.deepEqual(h.posts,['/api/v1/tasks']);
 });
