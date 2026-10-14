@@ -58,6 +58,7 @@ async function wasRemovedSince(doc,revision,key=doc.key){
  return (removedDocumentRevisions.get(key)||0)>revision;
 }
 let readingFollow = null, readingFollowFrame = null, readingFollowRevision = 0, readingFollowMoving = false;
+// A cue ID may be an empty string; only null means no selected note.
 let selected = null;
 let notesOnly = false;
 let excerptsOnly = false;
@@ -1805,7 +1806,7 @@ function readingExcerptIndex(doc){
   if(owner.replaced)state.replaced=true;
   // Missing/reordered context has no reliable current location. Keep it in the
   // notebook, rather than guessing from remaining words or matching times.
-  if(!state.cueId)continue;
+  if(state.cueId===null)continue;
   for(const part of Coconut.exactExcerptParts(record)){
    if(!byCue.has(part.cue.id))byCue.set(part.cue.id,[]);
    byCue.get(part.cue.id).push(record);
@@ -2422,11 +2423,11 @@ function renderLibraryNotebook(){
   }
   details.append(technical);
   const open=el('button','notebook-open',exact&&freshness==='stale'?'查看当前对应原文':'打开原位置');
-  if(exact&&!exactState.cueId){open.disabled=true;open.textContent=freshness==='missing'?'原位置已删除':'原位置无法确认';}
+  if(exact&&exactState.cueId===null){open.disabled=true;open.textContent=freshness==='missing'?'原位置已删除':'原位置无法确认';}
   open.type='button';open.onclick=()=>{
    if(!$('library-notebook').open)return;
    const sourceCurrent=Coconut.libraryCaptureCurrent(capture,state.documents),exactLocation=exact?Coconut.exactExcerptState(exact,doc).cueId:null;
-   if(!notebookSearch.isCurrent(selection)||pendingStructuralDocuments.has(doc.key)||!sourceCurrent||(exact&&!exactLocation)){notebookSearch.cancel();renderLibraryNotebook();$('notebook-status').textContent='这条记录的来源已变动，请从更新后的笔记本重新选择。';$('notebook-search').focus();return;}
+   if(!notebookSearch.isCurrent(selection)||pendingStructuralDocuments.has(doc.key)||!sourceCurrent||(exact&&exactLocation===null)){notebookSearch.cancel();renderLibraryNotebook();$('notebook-status').textContent='这条记录的来源已变动，请从更新后的笔记本重新选择。';$('notebook-search').focus();return;}
    notebookSavedReveal=null;notebookSavedOrigin=null;
    notebookReturn={key:capture.key,page:notebookPage,scroll:$('library-notebook').scrollTop};notebookSearch.cancel();$('library-notebook').close();
    markDocumentOpened(doc);resetReaderForDocumentNavigation();selectActiveDocument(doc.key);setReadingMode('transcript');showWorkspace('read');render();
@@ -2729,7 +2730,7 @@ function renderTranscript(doc,excerptIndex,{keepNoteEditor=false,displayOnly=fal
 	if(!displayOnly){
 	const currentNote = visible.find((segment) => segment.id === selected) || (keepNoteEditor && doc.segments.find(segment=>segment.id===selected));
 	if (!currentNote) selected = null;
-	$("notes-panel").hidden = !selected;
+	$("notes-panel").hidden = selected===null;
 	if (currentNote) {
 		$("quote").textContent = currentNote.text;
 		$("note-time").textContent = Coconut.time(currentNote.start) + " 的想法";
@@ -2986,7 +2987,7 @@ $("close-note").onclick = () => {
 };
 $("return-excerpt").onclick = () => goToSegment(selected,false,!!passageReturn);
 document.addEventListener("keydown", event => {
-	if (event.key === "Escape" && selected && !$("export-menu").open && !document.querySelector("dialog[open]")) $("close-note").click();
+	if (event.key === "Escape" && selected!==null && !$("export-menu").open && !document.querySelector("dialog[open]")) $("close-note").click();
 });
 // Chromium may leave an already-visible control's border at the scrollport
 // edge after reverse Tab; CSS scroll-margin does not include its focus ring.
@@ -3346,7 +3347,7 @@ $("search").oninput = () => {
 	render();
 };
 $("note").oninput = () => {
- const doc=active(),id=selected;if(!doc||!id||!doc.segments.some(segment=>segment.id===id))return;
+ const doc=active(),id=selected;if(!doc||id===null||!doc.segments.some(segment=>segment.id===id))return;
  if(deferContentInput(doc,$('note'),doc.notes[id]||'',value=>applyCueNote(doc,id,value)))return;
  applyCueNote(doc,id,$('note').value);
 };
@@ -4288,7 +4289,7 @@ function suspendReadingFollow(reason='手动浏览'){
  cancelFollowFrame();readingFollow.suspended=reason;refreshReadingFollow();
 }
 function followBlocked(){
- if(workspace!=='read'||document.hidden||document.querySelector('dialog[open]')||selected||readingContext||passageReturn)return true;
+ if(workspace!=='read'||document.hidden||document.querySelector('dialog[open]')||selected!==null||readingContext||passageReturn)return true;
  const focused=document.activeElement;
  return !!((focused?.matches('input,textarea,select,[contenteditable="true"]')&&!focused.closest(followTransport))||focused?.closest('#transcript,#passage-body'));
 }
@@ -5223,7 +5224,7 @@ function restoreReadingView(doc,{focus=true}={}){
 }
 function switchTranscriptView(bilingual){
  const doc=active();if(!doc||bilingual&&(!contentIngressAllowed(doc)||Coconut.isAudioProject(doc)))return;
- const anchor=selected||readingContext?.document===doc&&readingContext.id||searchFocusedId||visibleReadingCue();
+ const anchor=selected??(readingContext?.document===doc?readingContext.id:null)??searchFocusedId??visibleReadingCue();
  if(contentIngressAllowed(doc)){
   recordReadingDisplaySelection(doc);
   const target=bilingual?doc.translation_view||$('translation-target').value||'zh':'';
@@ -5239,9 +5240,9 @@ function switchTranscriptView(bilingual){
 }
 $('mode-passages').onclick=()=>{
  const doc=active();if(!doc)return;
- if(readingMode==='passages'){openPassage(passageAnchor||doc.readingPosition||doc.segments[0]?.id);return;}
+ if(readingMode==='passages'){openPassage(passageAnchor??doc.readingPosition??doc.segments[0]?.id);return;}
  const origin=readingContext?.document===doc?readingContext:null;
- let cueId=selected||origin?.id||searchFocusedId;
+ let cueId=selected??origin?.id??searchFocusedId;
  if(!doc.segments.some(cue=>cue.id===cueId))cueId=null;
  const query=$('search').value;
  if(!origin&&(query.trim()||notesOnly||excerptsOnly||speakerFilter!==null)){
@@ -5252,7 +5253,7 @@ $('mode-passages').onclick=()=>{
  // The outer result snapshot owns filters; passages and their note detours read
  // full source context. Neither this anchor nor returning changes the bookmark.
  if(readingContext?.document===doc){$('search').value='';notesOnly=false;excerptsOnly=false;speakerFilter=null;searchFocusedId=null;}
- openPassage(cueId||visibleReadingCue()||passageAnchor||doc.readingPosition||doc.segments[0]?.id);
+ openPassage(cueId??visibleReadingCue()??passageAnchor??doc.readingPosition??doc.segments[0]?.id);
 };
 $('mode-summary').onclick=()=>{rememberReadingView();setReadingMode('summary');rememberReadingView();};
 $('mode-transcript').onclick=()=>switchTranscriptView(false);
@@ -5571,7 +5572,7 @@ function hasUnsubmittedReaderDrafts() {
  if(hasMediaTimingDrafts()||pastedSubtitleHasDraft()||quotationController?.hasDraft()||exactNoteDraft()||sourceCorrectionDraft()||speakerCorrectionDraft()||collectionTitleDraft()||chapterDraft())return true;
  if(removedDocument||pendingLibraryOperation||[...deferredContentInputs.values()].some(draft=>state.documents.includes(draft.doc))||hasLanguageDrafts()||window.CoconutTranslationReview?.hasDraft())return true;
  const current=active();
- if(current&&selected&&!$('notes-panel').hidden&&current.segments.some(segment=>segment.id===selected)&&$('note').value!==(current.notes[selected]||''))return true;
+ if(current&&selected!==null&&!$('notes-panel').hidden&&current.segments.some(segment=>segment.id===selected)&&$('note').value!==(current.notes[selected]||''))return true;
  const formKey=$('audio-project').dataset.documentKey;
  for(const [key,draft] of audioBookmarkDrafts){
   const doc=state.documents.find(item=>item.key===key);if(!doc||key===formKey)continue;
