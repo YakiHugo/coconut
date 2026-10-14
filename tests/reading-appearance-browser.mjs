@@ -107,8 +107,10 @@ try{
  await page.locator('#reading-layout').selectOption('spacious');const spacious=await page.locator('.passage-original').first().evaluate(n=>({size:parseFloat(getComputedStyle(n).fontSize),leading:parseFloat(getComputedStyle(n).lineHeight)}));
  check('spacious_adds_leading_without_shrinking_text',spacious.size>=large.size&&spacious.leading>large.leading);
  await page.locator('#reading-theme').selectOption('dark');
+ check('theme_picker_is_closed_after_committed_choice',await page.locator('#reading-theme').evaluate(node=>!node.matches(':open')));
  await contrast('dark_settings',['#reading-theme','#reading-measure','#reading-layout','.reading-appearance .hint','#appearance-status','#close-reading-info']);await capture('dark-settings-desktop');
  await page.keyboard.press('Escape');await expect(page.locator('#reading-info > summary')).toBeFocused();await contrast('dark_bilingual',['.passage-original','.passage-translation','.passage-speaker','.passage-ask','#reading-info > summary']);
+ check('closed_theme_select_escape_dismisses_settings',await page.locator('#reading-info').evaluate(node=>!node.open));
  check('appearance_does_not_rewrite_or_drop_source',await page.locator('#passage-body').textContent()===prose);check('appearance_does_not_change_stored_document',JSON.stringify(await saved())===JSON.stringify(original));
  await capture('dark-spacious-narrow-desktop');
  for(const width of [640,390,360,320]){

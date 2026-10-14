@@ -4941,7 +4941,14 @@ function readingKeyIgnored(event){
 // previously handled inner action. Disclosures must share the same ownership
 // guards as character shortcuts instead of stealing focus during editing.
 function readingEscapeIgnored(event){
- return event.key!=='Escape'||readingKeyIgnored(event)||event.target.closest?.('select,audio,video')||event.composedPath?.()[0]?.closest?.('select,audio,video');
+ if(event.key!=='Escape'||readingKeyIgnored(event))return true;
+ const targets=[event.target,event.composedPath?.()[0]];
+ if(targets.some(node=>node?.closest?.('audio,video')))return true;
+ // Focus alone does not mean a select's picker is open. After choosing a
+ // preference, ordinary Escape must still dismiss the surrounding panel.
+ // Native popups can consume Escape before it reaches the document; when it
+ // does reach us, use the browser's actual open state rather than a guess.
+ return targets.some(node=>{const select=node?.closest?.('select');if(!select)return false;try{return select.matches(':open');}catch{return false;}});
 }
 function readingTextTarget(node,find=false){
  if(document.designMode==='on'||document.body.isContentEditable||document.body.hasAttribute('contenteditable')&&document.body.getAttribute('contenteditable')!=='false')return false;

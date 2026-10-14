@@ -386,10 +386,14 @@ try {
   check('literal_keyboard_note_is_saved_on_its_original_cue', (await stored()).notes['split-125'] === 'jklg/?');
   await page.locator('#export-menu > summary').click();
   await page.locator('#subtitle-format').focus();
-  await page.keyboard.press('Space');await page.keyboard.press('Escape');
-  check('native_subtitle_select_escape_preserves_export_disclosure', await page.locator('#export-menu').evaluate(node => node.open) && await focusIs('#subtitle-format'));
-  await page.locator('#export').focus();await page.keyboard.press('Escape');
-  check('ordinary_escape_still_closes_export_disclosure', !await page.locator('#export-menu').evaluate(node => node.open));
+  await page.keyboard.press('Space');
+  check('native_subtitle_picker_is_really_open', await page.locator('#subtitle-format').evaluate(node => node.matches(':open')));
+  await page.keyboard.press('Escape');
+  check('native_subtitle_select_escape_preserves_export_disclosure', await page.locator('#export-menu').evaluate(node => node.open) && await focusIs('#subtitle-format') && !await page.locator('#subtitle-format').evaluate(node => node.matches(':open')));
+  // Keep focus on the same, now-closed select. This second Escape belongs to
+  // the disclosure rather than a picker; moving to a button hides regressions.
+  await page.keyboard.press('Escape');
+  check('closed_subtitle_select_escape_closes_export_disclosure', !await page.locator('#export-menu').evaluate(node => node.open) && await focusIs('#export-menu > summary'));
   await ignoredKeys('focused_button', '#mode-transcript');
   await ignoredKeys('focused_link', '.brand');
   await ignoredKeys('focused_native_select', '#reading-jump');
@@ -399,9 +403,12 @@ try {
   await ignoredKeys('focused_native_media', '#source-media audio');
   await page.keyboard.press('Escape');
   check('native_player_escape_keeps_media_panel_and_focus', await page.locator('#episode-media').isVisible() && await focusIs('#source-media audio'));
-  await page.locator('#playback-rate').focus();await page.keyboard.press('Space');await page.keyboard.press('Escape');
-  check('native_rate_select_escape_keeps_media_panel', await page.locator('#episode-media').isVisible() && await focusIs('#playback-rate'));
-  await page.locator('#close-reader-media').click();
+  await page.locator('#playback-rate').focus();await page.keyboard.press('Space');
+  check('native_rate_picker_is_really_open', await page.locator('#playback-rate').evaluate(node => node.matches(':open')));
+  await page.keyboard.press('Escape');
+  check('native_rate_select_escape_keeps_media_panel', await page.locator('#episode-media').isVisible() && await focusIs('#playback-rate') && !await page.locator('#playback-rate').evaluate(node => node.matches(':open')));
+  await page.keyboard.press('Escape');
+  check('closed_rate_select_escape_closes_media_panel', await page.locator('#episode-media').isHidden() && await focusIs('#toggle-reader-media'));
 
   // DOM-only interaction probes cover editable nesting and ARIA widgets that
   // imported prose might contain. They never alter app handlers or media APIs.
