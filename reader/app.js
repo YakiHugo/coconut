@@ -475,6 +475,18 @@ try {const saved=Number(localStorage.getItem("coconut-playback-rate-v1"));if(PLA
 // A draft never changes ordinary playback until Save. Preview owns a temporary
 // physical-media range, reusing passage playback's cancellation/return semantics.
 let timingEditor=null,timingRevision=0,timingPreview=null;
+// Unsubmitted alignment belongs to this exact document and file, not its shelf
+// key or transient object URL. It never enters content JSON or a saved offset.
+const mediaTimingDrafts=new WeakMap();
+function mediaTimingDraft(doc){return state.documents.includes(doc)?mediaTimingDrafts.get(doc):null;}
+function hasMediaTimingDrafts(){return state.documents.some(doc=>mediaTimingDrafts.has(doc));}
+function blockMediaTimingMutation(doc){
+ if(!mediaTimingDraft(doc))return false;
+ const message='本篇有未保存的字幕对齐草稿，请先保存或放弃修改，再移除篇目或更改媒体。';
+ if(active()===doc&&workspace==='read'){mediaExpandedKey=doc.key;mediaCollapsedKey=null;render();$('media-timing-status').textContent=message;$('media-timing-offset').focus();$('media-timing').scrollIntoView?.({block:'nearest'});}
+ else notice('“'+doc.title+'”有未保存的字幕对齐草稿，请先打开该篇并保存或放弃修改。');
+ return true;
+}
 function timingAttachment(){const a=browserMedia.get(active()?.key);return a?.origin==='local'&&a.identity?a:null;}
 function timingOffset(){return Coconut.mediaTimingOffset(active(),timingAttachment()?.identity);}
 function timingRange(range,offset=timingOffset()){return Coconut.mediaTimingRange(range,offset,$('source-media').querySelector('audio,video')?.duration);}
@@ -487,12 +499,31 @@ function renderMediaTiming(){
  if(host.hidden){timingEditor=null;return;}
  if(timingEditor?.doc!==doc||timingEditor.attachment!==attachment){
   timingEditor={doc,attachment};timingRevision++;timingPreview=null;
-  $('media-timing-offset').value=String(timingOffset());
-  $('media-timing-cue').max=String(doc.segments.length);$('media-timing-cue').value='1';timingExample();
-  $('media-timing-status').textContent=doc.media_timing&&doc.media_timing.identity!==attachment.identity?'此文件与已保存的校准不同，当前按零偏移回听。':'当前偏移 '+timingOffset()+' 秒；修改后可先试听，再保存。';
+  const draft=mediaTimingDraft(doc),owned=draft?.identity===attachment.identity;
+  $('media-timing-offset').value=owned?draft.offset:String(timingOffset());
+  $('media-timing-cue').max=String(doc.segments.length);$('media-timing-cue').value=owned?draft.cue:'1';timingExample();
+  $('media-timing-discard').hidden=!owned;
+  $('media-timing-status').textContent=owned?'尚未保存的对齐草稿已保留在本页；普通回听仍使用已保存的偏移。':doc.media_timing&&doc.media_timing.identity!==attachment.identity?'此文件与已保存的校准不同，当前按零偏移回听。':'当前偏移 '+timingOffset()+' 秒；修改后可先试听，再保存。';
  }
 }
-function timingChanged(){timingExample();timingRevision++;$('media-timing-status').textContent='尚未保存；普通回听仍使用已保存的偏移。';}
+function timingChanged(){
+ const editor=timingEditor,attachment=timingAttachment();if(!editor||editor.doc!==active()||editor.attachment!==attachment)return;
+ const offset=$('media-timing-offset').value;
+ if(offset.trim()&&Number(offset)===timingOffset())mediaTimingDrafts.delete(editor.doc);
+ else mediaTimingDrafts.set(editor.doc,{identity:attachment.identity,offset,cue:$('media-timing-cue').value});
+ timingExample();timingRevision++;$('media-timing-discard').hidden=!mediaTimingDraft(editor.doc);
+ $('media-timing-status').textContent=mediaTimingDraft(editor.doc)?'尚未保存；草稿仅保留在本页，普通回听仍使用已保存的偏移。':'当前输入与已应用偏移相同，没有未提交的对齐修改。';
+ if(unloadGuardReady)syncUnsavedUnloadGuard();
+}
+$('media-timing-discard').onclick=()=>{
+ const editor=timingEditor,attachment=timingAttachment();if(!editor||editor.doc!==active()||editor.attachment!==attachment)return;
+ mediaTimingDrafts.delete(editor.doc);timingRevision++;
+ if(passagePlayback?.getState().range?.id==='media-timing-preview'){$('source-media').querySelector('audio,video')?.pause();passagePlayback.cancel();}
+ timingPreview=null;
+ $('media-timing-offset').value=String(timingOffset());$('media-timing-cue').value='1';timingExample();
+ $('media-timing-discard').hidden=true;$('media-timing-status').textContent='已放弃未提交的对齐草稿；已应用的偏移未改变。';$('media-timing-offset').focus();
+ if(unloadGuardReady)syncUnsavedUnloadGuard();
+};
 $('media-timing-offset').oninput=timingChanged;
 $('media-timing-cue').oninput=timingChanged;
 $('media-timing-reset').onclick=()=>{$('media-timing-offset').value='0';timingChanged();};
@@ -516,6 +547,7 @@ $('media-timing-save').onclick=async()=>{
  if(passagePlayback?.getState().range?.id==='media-timing-preview')$('source-media').querySelector('audio,video')?.pause();
  passagePlayback?.cancel();stopRepeating();timingPreview=null;
  editor.doc.media_timing={version:1,identity:editor.attachment.identity,offset};
+ mediaTimingDrafts.delete(editor.doc);$('media-timing-discard').hidden=true;
  const revision=++timingRevision;const receipt=commitDocument(editor.doc);
  $('media-timing-status').textContent='对齐已在本页应用，正在保存…';highlightPlayback();renderPassagePlayback(passagePlayback?.getState());
  const result=await receipt;
@@ -1131,6 +1163,7 @@ function showRemovalRecoveryError(message) {
  $('removal-recovery-details').open=true;
 }
 function requestLibraryRemoval(doc) {
+ if(blockMediaTimingMutation(doc))return;
  if(quotationController?.ownsDraft(doc)){quotationController.reopenDraft();return;}
  if(chapterEditor?.doc===doc&&chapterDraft()){if(!$('chapter-editor').open)$('chapter-editor').showModal();$('chapter-editor-status').textContent='本篇有未提交章节草稿，请先保存或取消修改，再移除本篇。';$('chapter-title').focus();return;}
  if(!contentIngressAllowed(doc)||pendingLibraryOperation)return;
@@ -1164,6 +1197,7 @@ function restoreRemovedDrafts(bundle){
 }
 $('confirm-removal').onclick=async()=>{
  const doc=removalTarget;if(!doc||!contentIngressAllowed(doc)||pendingLibraryOperation)return;
+ if(mediaTimingDraft(doc)){$('remove-document-dialog').close();blockMediaTimingMutation(doc);return;}
  captureAudioBookmarkDrafts();
  const index=state.documents.indexOf(doc),wasActive=active()===doc;
  const bundle={doc:JSON.parse(JSON.stringify(doc)),index,wasActive,bookmarkDraft:audioBookmarkDrafts.get(doc.key)};
@@ -5330,6 +5364,7 @@ function chooseLocalMediaProject(matches,canCommit,{allowNew=false,current=null,
 }
 async function openLocalMediaDocument(file,media,source,existing,expectedSource=null){
  if(existing&&(existing.local_media_source?.fingerprint!==source.fingerprint||expectedSource!==null&&localMediaBindingSnapshot(existing)!==expectedSource))throw new Error('候选项目的来源已经改变，请重新选择文件');
+ if(existing&&mediaTimingDraft(existing)&&mediaTimingDraft(existing).identity!==media.identity&&blockMediaTimingMutation(existing))return;
  if(existing&&!contentIngressAllowed(existing))throw new Error('这个项目正在移除或恢复，请稍候再打开');
  const doc=existing||{...Coconut.validate({project_kind:'audio_only',title:file.name,local_media_source:source,segments:[]}),key:'local-'+crypto.randomUUID()};
  const nextURL=URL.createObjectURL(file);
@@ -5372,6 +5407,7 @@ $('local-media-file').onchange=async()=>{
 };
 function beginReaderMediaSelection(action='attach'){
  const doc=active();if(!doc||!contentIngressAllowed(doc)||action==='replace'&&(!canAssociateLocalMedia(doc)||!doc.local_media_source))return;
+ if(action==='replace'&&blockMediaTimingMutation(doc))return;
  if(pendingMediaDocument)cancelReaderMediaSelection(pendingMediaDocument,{resume:false});
  const processing=pendingNativeMediaSelections.get(doc);if(processing)cancelReaderMediaSelection(processing,{resume:false});
  const durable=canAssociateLocalMedia(doc),reference=rememberedMediaState(doc)||rememberedMediaStates.get(doc);
@@ -5400,6 +5436,7 @@ $('replace-reader-media').onclick=()=>beginReaderMediaSelection('replace');
 // Only explicit reassociation/unlink clears file-owned clocks. Cue timestamps,
 // bookmarks and immutable excerpt source snapshots always retain their meaning.
 function clearLocalMediaClocks(doc){
+ mediaTimingDrafts.delete(doc);
  if(active()===doc){passagePlayback?.cancel();stopRepeating();$('source-media').querySelector('audio,video')?.pause();if(listeningSession?.key==='coconut-listening-v1:'+doc.key)listeningSession=null;}
  delete doc.media_timing;delete doc.media_duration;
  try{localStorage.removeItem('coconut-listening-v1:'+doc.key);return true;}catch{return false;}
@@ -5429,6 +5466,7 @@ $('reader-media-file').onchange=async()=>{
     if(choice.action==='existing'){await openLocalMediaDocument(file,media,source,choice.document,choice.source);return;}
    }
   }
+  if(mediaTimingDraft(target.document)&&(target.action==='replace'||mediaTimingDraft(target.document).identity!==media.identity)&&blockMediaTimingMutation(target.document))return;
   nextURL=URL.createObjectURL(file);if(!canCommit()){URL.revokeObjectURL(nextURL);nextURL=null;return;}
   const doc=target.document,previous=browserMedia.get(key),replacement=target.action==='replace'?beginRememberedReplacement(doc):null;let clocksCleared=true;
   if(target.action==='replace')clocksCleared=clearLocalMediaClocks(doc);
@@ -5455,17 +5493,17 @@ $('reader-media-file').onchange=async()=>{
  }
 };
 $('detach-reader-media').onclick=()=>{
- const key=active()?.key,attachment=browserMedia.get(key);if(!attachment)return;
+ const key=active()?.key,attachment=browserMedia.get(key);if(!attachment||blockMediaTimingMutation(active()))return;
  changeMediaSelection(key);suppressRememberedMedia(active(),{detached:true});pendingLocalMediaChoice?.(null);
  flushListening(true);stopRepeating();$('source-media').querySelector('audio,video')?.pause();browserMedia.delete(key);releaseMediaAttachment(attachment);render();
 };
 $('unlink-reader-media').onclick=async()=>{
- const doc=active();if(!canAssociateLocalMedia(doc)||!doc.local_media_source||!contentIngressAllowed(doc))return;
+ const doc=active();if(!canAssociateLocalMedia(doc)||!doc.local_media_source||!contentIngressAllowed(doc)||blockMediaTimingMutation(doc))return;
  cancelLocalImports();pendingMediaDocument=null;readerMediaRequestRevision++;
  const source=localMediaBindingSnapshot(doc),selection=activeSelectionRevision,ingress=localImportRevision,revision=changeMediaSelection(doc.key);
  const owns=()=>active()===doc&&workspace==='read'&&activeSelectionRevision===selection&&localImportRevision===ingress&&mediaSelectionRevision(doc.key)===revision&&contentIngressAllowed(doc);
  const canCommit=()=>owns()&&localMediaBindingSnapshot(doc)===source;
- const choice=await chooseLocalMediaProject([],canCommit,{current:doc,action:'unlink'});if(!choice||!canCommit())return;
+ const choice=await chooseLocalMediaProject([],canCommit,{current:doc,action:'unlink'});if(!choice||!canCommit()||blockMediaTimingMutation(doc))return;
  const clocksCleared=clearLocalMediaClocks(doc),attachment=browserMedia.get(doc.key);
  delete doc.local_media_source;browserMedia.delete(doc.key);if(attachment)releaseMediaAttachment(attachment);
  mediaExpandedKey=doc.key;mediaCollapsedKey=null;render();$('attach-reader-media').focus();const receipt=await commitDocument(doc);
@@ -5530,7 +5568,7 @@ async function attachTranscriptToProject(text,target,{canCommit=null,activate=fa
 function hasPendingOrFailedContent(){return libraryStore.status().unsaved>0;}
 function hasUnsavedReaderChanges(){return hasPendingOrFailedContent()||hasUnsubmittedReaderDrafts();}
 function hasUnsubmittedReaderDrafts() {
- if(pastedSubtitleHasDraft()||quotationController?.hasDraft()||exactNoteDraft()||sourceCorrectionDraft()||speakerCorrectionDraft()||collectionTitleDraft()||chapterDraft())return true;
+ if(hasMediaTimingDrafts()||pastedSubtitleHasDraft()||quotationController?.hasDraft()||exactNoteDraft()||sourceCorrectionDraft()||speakerCorrectionDraft()||collectionTitleDraft()||chapterDraft())return true;
  if(removedDocument||pendingLibraryOperation||[...deferredContentInputs.values()].some(draft=>state.documents.includes(draft.doc))||hasLanguageDrafts()||window.CoconutTranslationReview?.hasDraft())return true;
  const current=active();
  if(current&&selected&&!$('notes-panel').hidden&&current.segments.some(segment=>segment.id===selected)&&$('note').value!==(current.notes[selected]||''))return true;
