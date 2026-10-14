@@ -11,7 +11,7 @@ import {execFileSync} from 'node:child_process';
 import {chromium} from './helpers/browser-storage.mjs';
 const root=fileURLToPath(new URL('../',import.meta.url));
 let directory,server,browser,demoPage,stage='setup';
-const checks=[];
+const checks=[],addEntryGeometry=[];
 // Only authored synthetic fixtures from this file may enter these review images.
 async function capture(page,name,fullPage=true){
  if(!process.env.COCONUT_UI_SCREENSHOTS)return;
@@ -101,6 +101,39 @@ try {
  await page.locator('#mode-summary').click();check('demo_search_tools_hidden_in_summary',await page.locator('#toggle-demo-tools').isHidden());
  await page.locator('#mode-bilingual').click();await page.locator('#toggle-demo-tools').click();
  check('demo_tools_return_to_visible_search',await page.locator('#search').isVisible()&&await page.locator('#search').evaluate(n=>n===document.activeElement));
+ // Both entry points must land on the working import action in static Web.
+ // Inspect the product's native focus scroll, without test scrolling or a chooser.
+ let addEntryChoosers=0;
+ await page.locator('.brand').click();
+ const countAddChooser=()=>addEntryChoosers++;page.on('filechooser',countAddChooser);
+ try{
+  for(const width of [320,390]){
+   await page.setViewportSize({width,height:844});
+   for(const entry of ['header','demo']){
+    stage=`add_entry_${width}_${entry}`;
+    if(entry==='demo')await openSample(page);
+    await page.locator(entry==='demo'?'#demo-finish':'#add-content').click();
+    const geometry=await page.evaluate(async()=>{
+     await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
+     const target=document.getElementById('import'),rect=target.getBoundingClientRect();
+     const hit=document.elementFromPoint(rect.left+rect.width/2,rect.top+rect.height/2);
+     return {viewport:{width:innerWidth,height:innerHeight},scrollY,
+      sourceAvailable:document.getElementById('add-workspace').dataset.sourceAvailable,
+      focused:document.activeElement.id,enabled:!target.disabled,
+      top:rect.top,bottom:rect.bottom,left:rect.left,right:rect.right,
+      width:rect.width,height:rect.height,uncovered:!!hit&&target.contains(hit),
+      fits:document.documentElement.scrollWidth<=innerWidth};
+    });
+    addEntryGeometry.push({entry,...geometry});
+    await capture(page,`add-entry-${width}-${entry}-import`,false);
+    check(`add_entry_${width}_${entry}_focuses_visible_working_import`,geometry.sourceAvailable==='false'&&geometry.focused==='import'&&geometry.enabled&&geometry.uncovered&&geometry.top>=0&&geometry.bottom<=geometry.viewport.height&&geometry.left>=0&&geometry.right<=width&&geometry.width>=44&&geometry.height>=44&&geometry.fits);
+    check(`add_entry_${width}_${entry}_does_not_open_chooser`,addEntryChoosers===0);
+   }
+  }
+ }finally{
+  page.off('filechooser',countAddChooser);
+ }
+ await page.setViewportSize({width:1360,height:1000});
  demoPage=null;await page.setViewportSize({width:1360,height:1000});stage='import';
  // CI-only real-browser coverage: a single saved JSON must resume immediately,
  // before any library-card reopen, without starting attached/source playback.
@@ -244,10 +277,12 @@ try {
  await page.locator('#search').fill('revised sentence');await target.locator('.context-button').click();await page.locator('#dismiss-reading-context').click();
  check('explicit_context_dismiss_stays_in_full_source',await page.locator('#search').inputValue()===''&&await page.locator('#reading-context').isHidden()&&await target.evaluate(n=>n===document.activeElement));
  check('first_use_and_source_map_have_no_external_requests',mutations===0&&external===0&&pageErrors===0);
- console.log(JSON.stringify({suite:'static-web-podcast',status:'passed',checks}));
+ const result={suite:'static-web-podcast',status:'passed',checks,addEntryGeometry};
+ console.log(JSON.stringify(result));
+ if(process.env.COCONUT_UI_SCREENSHOTS)await fs.writeFile(path.join(process.env.COCONUT_UI_SCREENSHOTS,'web-browser-acceptance-checks.json'),JSON.stringify(result,null,2));
 } catch (error) {
  if(demoPage)try{await captureDemoFailure(demoPage);}catch{console.log(JSON.stringify({suite:'static-web-podcast',stage,demoFailureDiagnostics:'unavailable'}));}
- const failure={suite:'static-web-podcast',status:'failed',stage,checks,error:{message:error?.message||String(error),stack:error?.stack}};
+ const failure={suite:'static-web-podcast',status:'failed',stage,checks,addEntryGeometry,error:{message:error?.message||String(error),stack:error?.stack}};
  console.log(JSON.stringify(failure));process.exitCode=1;
  if(process.env.COCONUT_UI_SCREENSHOTS){
   try{await fs.mkdir(process.env.COCONUT_UI_SCREENSHOTS,{recursive:true});await fs.writeFile(path.join(process.env.COCONUT_UI_SCREENSHOTS,'web-browser-acceptance-checks.json'),JSON.stringify(failure,null,2));}

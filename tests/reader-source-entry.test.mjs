@@ -30,6 +30,69 @@ test('static and capability-specific entry text never advertises unavailable sou
  }
 });
 
+// Add is a navigation action, not a file-picker or source-fetch command.
+for(const [name,health,target] of [
+ ['static',{},'import'],
+ ['local without source fetching',light({}),'import'],
+ ['podcast',light({podcast_import:true}),'video-url'],
+ ['captions',light({caption_import:true}),'video-url'],
+ ['advanced worker',{local_worker:true},'video-url'],
+])test(`Add focuses a working entry for ${name}, including the demo exit`,async()=>{
+ const {w,$,calls}=await setup(health);try{
+  let chooser=0;for(const id of ['file','local-media-file','media-file'])$(id).click=()=>chooser++;
+  $('video-url').value='https://publisher.example.org/keep-this-draft';
+  for(const fromDemo of [false,true]){
+   if(fromDemo)await $('sample').onclick();
+   $(fromDemo?'demo-finish':'add-content').click();
+   assert.equal(w.document.body.dataset.workspace,'add');
+   assert.equal(w.document.activeElement.id,target);
+   assert.equal($('video-url').value,'https://publisher.example.org/keep-this-draft');
+   assert.equal($('local-setup').open,false);
+   assert.equal(chooser,0,'navigation must not open a chooser');
+  }
+  assert.ok(calls.every(([url])=>url==='api/health'||url==='api/jobs'));
+ }finally{await w.happyDOM.close();}
+});
+
+test('Add uses current source capabilities after refresh, disconnection and reconnection without moving focus during probes',async()=>{
+ let health=light({podcast_import:true});const {w,$}=await setup(()=>{if(health===null)throw new Error('Temporary disconnect');return health;});
+ try{
+  $('video-url').value='https://publisher.example.org/keep-this-draft';
+  for(const [next,target] of [[light({}),'import'],[light({caption_import:true}),'video-url'],[null,'import'],[light({podcast_import:true}),'video-url']]){
+   $('video-url').focus();health=next;await $('retry-worker').onclick();
+   assert.equal(w.document.activeElement.id,'video-url','a capability probe must not steal focus');
+   assert.equal($('add-workspace').dataset.sourceAvailable,String(target==='video-url'));
+   $('add-content').click();assert.equal(w.document.activeElement.id,target);
+   assert.equal($('video-url').value,'https://publisher.example.org/keep-this-draft');
+   assert.equal($('local-setup').open,false);
+   if(next===null)assert.match($('worker-status').textContent,/连接暂时中断/);
+  }
+ }finally{await w.happyDOM.close();}
+});
+
+for(const id of ['import','open-local-media','paste-subtitles'])test(`source capability reordering keeps the existing ${id} focus`,async()=>{
+ let health={};const {w,$}=await setup(()=>health);try{
+  $(id).focus();let restores=[];const focus=$(id).focus.bind($(id));$(id).focus=options=>{restores.push(options);focus(options);};
+  for(const next of [light({podcast_import:true}),light({}),light({caption_import:true}),{}]){
+   health=next;await $('retry-worker').onclick();
+   assert.equal(w.document.activeElement.id,id);
+   assert.equal($('import').closest('.file-entry').nextElementSibling===$('url-form'),!health.capabilities?.podcast_import&&!health.capabilities?.caption_import);
+  }
+  assert.ok(restores.length>0);assert.ok(restores.every(options=>options?.preventScroll===true));
+ }finally{await w.happyDOM.close();}
+});
+
+for(const health of [{},light({podcast_import:true})])test(`first health response preserves an Add focus made before capabilities resolved: ${!!health.capabilities}`,async()=>{
+ let release;const pending=new Promise(resolve=>release=resolve);const {w,$}=await setup(()=>pending);try{
+  assert.equal($('add-workspace').dataset.sourceAvailable,undefined);
+  $('add-content').click();assert.equal(w.document.activeElement.id,'import');
+  release(health);
+  for(let i=0;i<100&&$('add-workspace').dataset.sourceAvailable===undefined;i++)await new Promise(resolve=>setTimeout(resolve,1));
+  assert.equal($('add-workspace').dataset.sourceAvailable,String(!!health.capabilities));
+  assert.equal(w.document.activeElement.id,'import');
+ }finally{release(health);await w.happyDOM.close();}
+});
+
 test('a changed service capability updates entry controls without waiting for a failed connection',async()=>{
  let health=light({podcast_import:true});const {w,$,label}=await setup(()=>health);try{
   assert.equal($('podcast-import').hidden,false);health=light({caption_import:true});await $('retry-worker').onclick();
