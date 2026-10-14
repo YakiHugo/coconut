@@ -119,7 +119,7 @@ export async function diagnoseDevelopment({port = DEFAULT_PORT, nodeVersion = pr
     report.capabilities[key] = typeof value === 'boolean' ? value : null;
   }
   const captions=health.data.caption_sources;
-  if(record(captions)&&typeof captions.available==='boolean'&&typeof captions.code==='string')report.captions={available:captions.available,code:captions.code.slice(0,80)};
+  if(record(captions)&&typeof captions.available==='boolean'&&typeof captions.code==='string')report.captions={available:captions.available,code:captions.code.slice(0,80),providers:Array.isArray(captions.providers)?captions.providers.filter(p=>record(p)&&['x','youtube','bilibili'].includes(p.id)&&typeof p.available==='boolean').map(p=>({id:p.id,label:{x:'X / Twitter',youtube:'YouTube',bilibili:'Bilibili'}[p.id],available:p.available})):[]};
   const executor = await readDoctorMetadata({port, route:'/api/v1/executor', deadline, request});
   report.executor = executor.kind === 'ok' ? executorStatus(executor.data, report.capabilities.persistent_tasks) : 'metadata_unavailable';
   if (executor.kind !== 'ok') report.executorIssue = executor.kind;
@@ -151,7 +151,7 @@ export function formatDoctorReport(report) {
   } else if (report.service === 'desktop-bridge') {
     lines.push('服务：desktop-bridge 在线（health 无法区分 dev、start:light 与 app，也不验证任务目录）');
     lines.push('接口能力：' + Object.entries(CAPABILITIES).map(([key, label]) => `${label}=${report.capabilities[key] === true ? '已声明' : report.capabilities[key] === false ? '未启用' : '未报告'}`).join('；'));
-    if(report.captions)lines.push(`字幕获取：${report.captions.available?'公开 X 原语言字幕可用；YouTube / Bilibili 未接入':`未就绪（${report.captions.code}）；可导入或粘贴字幕。开发环境需显式设置 COCONUT_CAPTION_PYTHON 为已有兼容 Python 的绝对路径，详见 docs/development-captions.md；不会自动安装依赖。`}`);
+    if(report.captions)lines.push(`字幕获取：${report.captions.available?`已启用：${report.captions.providers?.filter(p=>p.available).map(p=>p.label).join(' / ')||'公开字幕'}；平台访问限制仍可能阻止获取`:`未就绪（${report.captions.code}）；可导入或粘贴字幕。开发环境需显式设置 COCONUT_CAPTION_PYTHON 为已有兼容 Python 的绝对路径，详见 docs/development-captions.md；不会自动安装依赖。`}`);
     if(report.captions&&!report.captions.available)lines.push('字幕启动：COCONUT_CAPTION_PYTHON=/absolute/path/to/venv/bin/python npm run dev；已有环境需 yt-dlp==2026.8.19 和 certifi。不会自动安装或切换现有服务。');
     const states = {ready:'就绪（仅 metadata，未读取任务内容）', disabled:'未配置持久任务存储；服务仍在线',
       offline:'执行器报告离线；阅读服务仍在线', storage_unavailable:'任务存储不可用；阅读服务仍在线',

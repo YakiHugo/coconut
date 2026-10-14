@@ -32,3 +32,15 @@ jobs:
       - name: Remove ephemeral caption output
         if: always()
         run: rm -rf -- "$RUNNER_TEMP"/coconut-public-caption-*
+  public-video-extractor-contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install only the pinned official extractor for offline contracts
+        run: python -m pip install --disable-pip-version-check --no-input --no-deps yt-dlp==2026.8.19
+      - name: Exercise official YouTube and Bilibili extractors through guarded response fixtures
+        run: python -m unittest discover -s tests -p test_public_video_caption_guard.py -v

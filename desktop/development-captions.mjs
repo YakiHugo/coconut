@@ -38,21 +38,21 @@ export function createDevelopmentCaptionHelper({python,timeoutMs=HELPER_LIMITS.t
    ready=false;
    try{
     const r=await execute({operation:'version'},{signal});
-    if(r.status!=='ok'||r.protocol!==1||r.version!==lock.ytDlpVersion||r.publicExtraction!==true||r.guardProtocol!==1||r.tlsRootsVerified!==true)throw fail('CAPTION_VERSION','字幕依赖版本或协议不匹配');
-    ready=true;return {ready:true,code:'ready',version:r.version};
+    if(r.status!=='ok'||r.protocol!==1||r.version!==lock.ytDlpVersion||r.publicExtraction!==true||r.guardProtocol!==1||r.tlsRootsVerified!==true||JSON.stringify(r.developmentProviders)!==JSON.stringify(['x','youtube','bilibili']))throw fail('CAPTION_VERSION','字幕依赖版本或协议不匹配');
+    ready=true;return {ready:true,code:'ready',version:r.version,providers:r.developmentProviders};
    }catch(error){if(error.code==='CAPTION_CANCELLED')throw error;return {ready:false,code:error.code||'CAPTION_UNAVAILABLE'};}
   },
   async extractCaptions({url,language=null,signal}={}){
    if(!ready)throw fail('CAPTION_UNAVAILABLE','开发字幕助手尚未通过检查');
    const source=captionSource(url);
    if(language!==null&&(typeof language!=='string'||!/^([a-z]{2,3})(-[A-Za-z0-9]{2,8}){0,2}$/.test(language)))throw fail('CAPTION_INPUT','原语言标记无效');
-   const r=await execute({operation:'extract',url:source.url,language},{signal});
-   if(['unavailable','access_restricted','language_required'].includes(r.status))return {status:r.status};
-   if(r.status!=='ok'||r.format!=='vtt'||typeof r.captionBase64!=='string'||r.captionBase64.length>Math.ceil(HELPER_LIMITS.captionBytes/3)*4||
+   const r=await execute({operation:'extract-development',url:source.url,language},{signal});
+   if(['unavailable','access_restricted','language_required','network_unavailable','metadata_incomplete'].includes(r.status))return {status:r.status};
+   if(r.status!=='ok'||!['vtt','srt'].includes(r.format)||typeof r.captionBase64!=='string'||r.captionBase64.length>Math.ceil(HELPER_LIMITS.captionBytes/3)*4||
     !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(r.captionBase64))throw fail('CAPTION_OUTPUT','字幕助手输出格式无效');
    const bytes=Buffer.from(r.captionBase64,'base64');
-   if(!bytes.length||bytes.length>HELPER_LIMITS.captionBytes||!/^\uFEFF?WEBVTT(?:[ \t].*)?\r?\n/.test(bytes.toString('utf8')))throw fail('CAPTION_OUTPUT','字幕文件无效');
-   return {source:r.source,track:r.track,format:'vtt',bytes};
+   if(!bytes.length||bytes.length>HELPER_LIMITS.captionBytes||r.format==='vtt'&&!/^\uFEFF?WEBVTT(?:[ \t].*)?\r?\n/.test(bytes.toString('utf8')))throw fail('CAPTION_OUTPUT','字幕文件无效');
+   return {source:r.source,track:r.track,format:r.format,bytes};
   },
   shutdown(){closing=true;for(const controller of active)controller.abort();return Promise.allSettled([...active].map(controller=>controller.operation));},
  });

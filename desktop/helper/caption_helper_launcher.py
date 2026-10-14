@@ -95,25 +95,31 @@ def main():
     operation = request.get('operation')
     if operation == 'version' and set(request) == {'operation'}:
         from scripts.public_x_caption_guard import extract_public_captions
-        assert callable(extract_public_captions)
+        from scripts.public_video_caption_guard import extract_public_video_captions
+        assert callable(extract_public_captions) and callable(extract_public_video_captions)
         trust=ssl.create_default_context(cafile=certifi.where())
         assert trust.check_hostname and trust.verify_mode == ssl.CERT_REQUIRED
         return {'status': 'ok', 'protocol': PROTOCOL, 'version': __version__,
                 'python': '.'.join(map(str, sys.version_info[:3])), 'publicExtraction': PUBLIC_EXTRACTION,
-                'guardProtocol': 1, 'tlsRootsVerified': True}
+                'guardProtocol': 1, 'tlsRootsVerified': True,
+                'developmentProviders': ['x', 'youtube', 'bilibili']}
     if operation == 'authored-fixture' and set(request) == {'operation', 'endpoint'}:
         if not isinstance(request['endpoint'], str) or len(request['endpoint']) > 200:
             return {'status': 'unavailable'}
         return authored_fixture(request['endpoint'])
-    if operation == 'extract' and set(request) == {'operation', 'url', 'language'}:
+    if operation in ('extract', 'extract-development') and set(request) == {'operation', 'url', 'language'}:
         if not isinstance(request['url'], str) or len(request['url']) > 2048:
             return {'status': 'unavailable'}
         language = request['language']
         if language is not None and (not isinstance(language, str) or len(language) > 30):
             return {'status': 'language_required'}
         from scripts.public_x_caption_guard import extract_public_captions
-        result = extract_public_captions(request['url'], language, ca_file=certifi.where())
-        if result.get('status') in ('access_restricted', 'unavailable', 'language_required'):
+        if operation == 'extract-development' and urllib.parse.urlsplit(request['url']).hostname in ('www.youtube.com', 'www.bilibili.com'):
+            from scripts.public_video_caption_guard import extract_public_video_captions
+            result = extract_public_video_captions(request['url'], language, ca_file=certifi.where())
+        else:
+            result = extract_public_captions(request['url'], language, ca_file=certifi.where())
+        if result.get('status') in ('access_restricted', 'unavailable', 'language_required', 'network_unavailable', 'metadata_incomplete'):
             return {'status': result['status']}
         body = result.pop('bytes', None)
         if not isinstance(body, bytes) or not 0 < len(body) <= MAX_CAPTION:

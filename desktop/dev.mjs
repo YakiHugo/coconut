@@ -16,7 +16,7 @@ export async function startDevelopmentBridge({port = 8080, taskDirectory = DEVEL
       helper=createDevelopmentCaptionHelper({python:captionPython});
       const status=await helper.status();
       options.captionStatus={code:status.ready?'ready':status.code,mode:'development-python'};
-      if(status.ready)options.captionService=createCaptionService({helper,readerDirectory:options.readerDirectory,enabledProviders:['x']});
+      if(status.ready)options.captionService=createCaptionService({helper,readerDirectory:options.readerDirectory,enabledProviders:status.providers});
     }catch(error){options.captionStatus={code:error.code||'CAPTION_UNAVAILABLE',mode:'development-python'};}
   }
   let server;
@@ -48,7 +48,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
   console.log(`Coconut 开发阅读器：${origin}`);
   console.log(`开发任务目录：${taskDirectory}`);
   console.log(`本机后台任务：${executor.enabled ? '可用；提供商尚未检查' : '不可用；请检查开发任务目录，阅读仍可使用'}`);
-  console.log(`字幕获取：${captions.available?'公开 X 原语字幕可用':`${captions.message}（${captions.code}）`}`);
+  console.log(`字幕获取：${captions.available?'公开 X / YouTube / Bilibili 字幕入口已就绪（能否取得字幕取决于来源访问状态）':`${captions.message}（${captions.code}）`}`);
   console.log('未发起模型请求。reader 修改后刷新页面；desktop 服务修改后 Ctrl+C 再运行 npm run dev。');
   const stop = () => server.shutdown().catch(() => { process.exitCode = 1; });
   process.on('SIGINT', stop);

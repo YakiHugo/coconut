@@ -7,7 +7,7 @@ import {createDevelopmentCaptionHelper} from '../desktop/development-captions.mj
 import {startDevelopmentBridge} from '../desktop/dev.mjs';
 import {diagnoseDevelopment,formatDoctorReport} from '../desktop/doctor.mjs';
 const url='https://x.com/example/status/123456';
-const version={status:'ok',protocol:1,version:'2026.08.19',publicExtraction:true,guardProtocol:1,tlsRootsVerified:true};
+const version={status:'ok',protocol:1,version:'2026.08.19',publicExtraction:true,guardProtocol:1,tlsRootsVerified:true,developmentProviders:['x','youtube','bilibili']};
 const caption={status:'ok',source:{url,id:'123456',title:'Authored protocol fixture',extractor:'twitter',language:'en',automatic:false,translated:false,live:false,duration:2},track:{language:'en',captionMethod:'platform_provided',languageBasis:'single_track'},format:'vtt',captionBase64:Buffer.from('WEBVTT\n\n00:00.000 --> 00:02.000\nAn authored original sentence.\n').toString('base64')};
 async function fixture(t,{probe=version,result=caption,delay=0}={}){
  const directory=await mkdtemp(path.join(tmpdir(),'coconut-dev-caption-test-'));
@@ -20,7 +20,7 @@ test('explicit developer adapter runs real isolated process from URL through HTT
  const f=await fixture(t);let server;
  t.after(async()=>{if(server)await server.shutdown();});
  const started=await startDevelopmentBridge({port:0,taskDirectory:path.join(f.directory,'tasks'),captionPython:f.executable,providers:{status(){throw Error('Unexpected provider probe');}}});server=started.server;
- assert.equal(started.captions.available,true);assert.deepEqual(started.captions.providers.filter(p=>p.available).map(p=>p.id),['x']);
+ assert.equal(started.captions.available,true);assert.deepEqual(started.captions.providers.filter(p=>p.available).map(p=>p.id),['x','youtube','bilibili']);
  assert.equal(started.captions.automatic_asr,false);
  assert.equal((await fetch(started.origin+'/api/captions/status',{headers:{Origin:'https://example.com'}})).status,403);
  const send=value=>fetch(started.origin+'/api/captions/import',{method:'POST',headers:{Origin:started.origin,'Content-Type':'application/json'},body:JSON.stringify(value)});
@@ -28,9 +28,9 @@ test('explicit developer adapter runs real isolated process from URL through HTT
  const response=await send({url,language:'en'});assert.equal(response.status,200);const result=await response.json();
  assert.equal(result.status,'ready');assert.equal(result.document.segments[0].text,'An authored original sentence.');assert.equal(result.document.source_url,url);assert.equal(result.document.provenance.caption_method,'platform_provided');
  const calls=(await readFile(f.log,'utf8')).trim().split('\n').map(JSON.parse);
- assert.deepEqual(calls.map(c=>c.input.operation),['version','extract']);assert.deepEqual(calls[1].input,{operation:'extract',url,language:'en'});
+ assert.deepEqual(calls.map(c=>c.input.operation),['version','extract-development']);assert.deepEqual(calls[1].input,{operation:'extract-development',url,language:'en'});
  for(const call of calls){assert.deepEqual(call.args.slice(0,3),['-I','-B','-c']);assert.equal(call.env.PYTHONPATH,undefined);assert.equal(call.env.HTTP_PROXY,undefined);assert.equal(call.env.OPENAI_API_KEY,undefined);assert.notEqual(call.env.HOME,process.env.HOME);await assert.rejects(stat(call.cwd),{code:'ENOENT'});}
- const report=await diagnoseDevelopment({port:server.address().port});assert.equal(report.captions.available,true);assert.match(formatDoctorReport(report),/公开 X/);
+ const report=await diagnoseDevelopment({port:server.address().port});assert.equal(report.captions.available,true);assert.match(formatDoctorReport(report),/YouTube/);
 });
 test('missing or mismatched Python fails closed with actionable status and no source extraction',async t=>{
  for(const probe of [{...version,version:'wrong'},{...version,tlsRootsVerified:false}]){
@@ -50,10 +50,24 @@ test('adapter cancellation, busy protection, timeout and cleanup bound real chil
  await assert.rejects(helper.extractCaptions({url}),e=>e.code==='CAPTION_CANCELLED');
 });
 test('malformed output is rejected and restricted responses preserve uncertainty',async t=>{
- for(const result of [{status:'access_restricted'},{...caption,captionBase64:'not base64!'}]){
+ for(const result of [{status:'access_restricted'},{status:'metadata_incomplete'},{...caption,captionBase64:'not base64!'}]){
   const f=await fixture(t,{result});const helper=createDevelopmentCaptionHelper({python:f.executable});assert.equal((await helper.status()).ready,true);
-  if(result.status==='access_restricted')assert.deepEqual(await helper.extractCaptions({url}),{status:'access_restricted'});
+  if(['access_restricted','metadata_incomplete'].includes(result.status))assert.deepEqual(await helper.extractCaptions({url}),{status:result.status});
   else await assert.rejects(helper.extractCaptions({url}),e=>e.code==='CAPTION_OUTPUT');
   await helper.shutdown();
+ }
+});
+
+test('developer HTTP route imports YouTube VTT and Bilibili SRT with provider identities',async t=>{
+ for(const [provider,url,id,format,body] of [
+  ['youtube','https://www.youtube.com/watch?v=BaW_jenozKc','BaW_jenozKc','vtt','WEBVTT\n\n00:00.000 --> 00:02.000\nOriginal fixture.\n'],
+  ['bilibili','https://www.bilibili.com/video/BV1xx411c7mD','BV1xx411c7mD','srt','1\n00:00:00,000 --> 00:00:02,000\nOriginal fixture.\n']]){
+  const result={...caption,format,captionBase64:Buffer.from(body).toString('base64'),source:{...caption.source,url,id,extractor:provider,live_status:'not_live'}};
+  const f=await fixture(t,{result});const {server,origin}=await startDevelopmentBridge({port:0,taskDirectory:path.join(f.directory,'tasks'),captionPython:f.executable});
+  try{
+   const response=await fetch(origin+'/api/captions/import',{method:'POST',headers:{Origin:origin,'Content-Type':'application/json'},body:JSON.stringify({url})});
+   assert.equal(response.status,200);const receipt=await response.json();assert.equal(receipt.status,'ready');
+   assert.equal(receipt.document.provenance.source_platform,provider);assert.equal(receipt.document.provenance.media_id,id);assert.equal(receipt.document.segments[0].text,'Original fixture.');
+  }finally{await server.shutdown();}
  }
 });
