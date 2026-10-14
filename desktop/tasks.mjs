@@ -177,7 +177,7 @@ export async function createTaskStore({directory,providers,readerDirectory=path.
  }
  try{await recover();}catch(error){await release();throw error;}
  return Object.freeze({
-  describe(){return {protocolVersion:1,executor:{type:'local-node',online:!closed&&!broken},supportedTaskKinds:['summary'],enabled:!closed&&!broken,execution:{concurrency:1,disconnect:'continue',restart:'interrupt_without_retry',cancel:'request_then_settle'},providers:{codex:{supported:true,availability:'not_checked'},claude:{supported:true,availability:'not_checked'}},archive:{supported:true,restore:'original_identity_without_execution',automaticDeletion:false},limits:{tasks:MAX_TASKS,archivedTasks:MAX_ARCHIVED_TASKS,archivePage:50,pending:MAX_PENDING,bodyBytes:TASK_BODY_BYTES,ledgerBytes:maxLedgerBytes},remoteSubmission:false};},
+  describe(){return {protocolVersion:1,executor:{type:'local-node',online:!closed&&!broken},supportedTaskKinds:['summary'],enabled:!closed&&!broken,execution:{concurrency:1,disconnect:'continue',restart:'interrupt_without_retry',cancel:'request_then_settle'},providers:{codex:{supported:true,availability:'not_checked'},claude:{supported:true,availability:'not_checked'}},archive:{supported:true,identityPrecondition:true,restore:'original_identity_without_execution',automaticDeletion:false},limits:{tasks:MAX_TASKS,archivedTasks:MAX_ARCHIVED_TASKS,archivePage:50,pending:MAX_PENDING,bodyBytes:TASK_BODY_BYTES,ledgerBytes:maxLedgerBytes},remoteSubmission:false};},
   submit(value){
    let normalized;try{normalized=normalize(value);}catch(error){return Promise.reject(error);}
    return serial(async()=>{
@@ -199,8 +199,14 @@ export async function createTaskStore({directory,providers,readerDirectory=path.
    const remaining=all.filter(task=>!after||task.taskId>after),page=remaining.slice(0,limit);
    return {tasks:page.map(task=>publicTask(task,{result:false})),total:all.length,nextCursor:remaining.length>limit?page.at(-1).taskId:null};
   });},
-  archive(id){return serial(async()=>{
+  archive(id,expected){return serial(async()=>{
    available();const task=tasks.get(id);if(!task)throw fail('任务不存在',404,'not_found');
+   // Compare immutable identity inside the same queue as the durable mutation.
+   // Even an already archived replacement must not acknowledge another task.
+   if(expected!==undefined){
+    if(!expected||typeof expected!=='object'||Array.isArray(expected)||!UUID.test(expected.taskId)||!UUID.test(expected.attemptId)||typeof expected.inputDigest!=='string'||!/^[a-f0-9]{64}$/.test(expected.inputDigest))throw fail('归档身份条件无效');
+    if(['taskId','attemptId','inputDigest'].some(key=>expected[key]!==task[key]))throw fail('任务身份已变化；未归档，请返回原执行器核查',409,'task_identity_conflict');
+   }
    if(archived(task))return publicTask(task);
    if(!archivable(task))throw fail('只能归档已完成、失败或已确认取消收尾的任务；执行中、中断及未知结果必须保留在当前列表',409,'task_not_archivable');
    return publicTask(await change(id,{archivedAt:now()}));
