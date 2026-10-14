@@ -26,6 +26,7 @@ UI / API 的 `protocol` 值是 `codex-exec-json` 或 `claude-print-json`。这�
 从仓库根目录运行，使用 Node.js 22+；不需要安装 app、Python 或 Electron：
 
 ```sh
+npm run doctor                # 只读检查 Node 和指定本机服务；尚未启动时给出下一步
 npm run dev
 # 打开 http://127.0.0.1:8080，保持终端运行
 npm run test:tasks             # 另开终端：零依赖、假 provider + 真实本机 HTTP
@@ -33,6 +34,10 @@ npm ci --ignore-scripts        # 只在需要下面的 DOM 回归时安装开发
 node --test tests/reader-background-summary.test.mjs
 npm test                      # 阅读器完整 DOM/逻辑回归，不等于真实 GUI 验收
 ```
+
+`npm run doctor` 不需要安装依赖，仅检查 `127.0.0.1:8080`；可用 `npm run doctor -- --port 8081` 检查一个明确端口，不接受 URL/主机名、不扫描或自动启动服务。只读取 `/api/health`，确认是轻量 bridge 后再读取 `/api/v1/executor`；不读取任务、原文、私密路径或认证信息，不检查 CLI 登录/额度、不调用模型。整次检查最多 3 秒，每份响应最多 16 KiB，重定向、错误正文及未知字段不输出。健康的 Python 高级服务会明确显示旧协议在线，但不支持 Node 后台摘要，绝不把这当成离线。
+
+退出码：`0` 表示 Node 22+ 且已识别服务的 metadata 正常（包括健康 Python，或明确未配置持久任务的 bridge）；`1` 表示 Node 版本、连接、协议或任务存储需要检查；`2` 表示参数错误。bridge 的 health 无法区分 `dev`、`start:light` 和 app，也不能证明具体任务目录或模型已就绪；命令会提示这一限制。`--port` 只改变检查目标，`npm run dev` 始终使用 8080。诊断结果只反映本次查询，不代替真实模型或浏览器验收。
 
 开发任务固定放在本仓库已忽略的 `.coconut/dev/tasks`，不写入 `~/.coconut`；启动会打印实际地址与任务存储是否可用。不要把真实私密材料用于开发测试。`start:light` 仍使用原来的 `~/.coconut/tasks`，开发入口不自动迁移其任务。
 
