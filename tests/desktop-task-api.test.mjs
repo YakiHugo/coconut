@@ -131,3 +131,52 @@ test('archive HTTP endpoints page, export and restore the original durable ident
  await assert.rejects(client.listArchived({limit:51}),e=>e.status===400);await assert.rejects(client.listArchived({after:'bad'}),e=>e.status===400);
  assert.equal((await client.submit(value)).created,false);const restored=await client.restore(receipt.task.taskId);assert.equal(restored.task.archivedAt,undefined);assert.equal(restored.task.attemptId,receipt.task.attemptId);assert.equal((await client.listArchived()).total,0);assert.equal(calls.length,1);
 });
+
+test('guarded single archive uses a narrow v2 request envelope and immutable preconditions without changing v1 receipts',async t=>{
+ const {client,calls,origin}=await setup(t),{task}=await client.submit(input()),done=await until(client,task.taskId,'succeeded');
+ assert.equal((await client.describe()).archive.identityPrecondition,true);
+ const expected={taskId:done.taskId,attemptId:done.attemptId,inputDigest:done.inputDigest};
+ for(const [key,value] of [['taskId','00000000-0000-4000-8000-000000000000'],['attemptId','00000000-0000-4000-8000-000000000000'],['inputDigest','0'.repeat(64)]])await assert.rejects(client.archive(done.taskId,{expected:{...expected,[key]:value}}),error=>error.status===409&&error.code==='task_identity_conflict');
+ assert.equal((await client.get(done.taskId)).task.archivedAt,undefined);
+ for(const body of [{protocolVersion:2},{protocolVersion:2,expected:null},{protocolVersion:2,expected:{}},{protocolVersion:2,expected:{...expected,attemptId:'invalid'}},{protocolVersion:1,expected}]){
+  const result=await fetch(origin+'/api/v1/tasks/'+done.taskId+'/archive',{method:'POST',headers:{Origin:origin,'Content-Type':'application/json'},body:JSON.stringify(body)});assert.equal(result.status,400);
+ }
+ for(const action of ['cancel','restore']){
+  const response=await fetch(origin+'/api/v1/tasks/'+done.taskId+'/'+action,{method:'POST',headers:{Origin:origin,'Content-Type':'application/json'},body:JSON.stringify({protocolVersion:2,expected})});assert.equal(response.status,400);
+ }
+ const invalidSubmit=await fetch(origin+'/api/v1/tasks',{method:'POST',headers:{Origin:origin,'Content-Type':'application/json'},body:JSON.stringify({...input(),protocolVersion:2,expected})});assert.equal(invalidSubmit.status,400);
+ const receipt=await client.archive(done.taskId,{expected});assert.equal(receipt.protocolVersion,1);assert.ok(receipt.task.archivedAt);
+ await assert.rejects(client.archive(done.taskId,{expected:{...expected,attemptId:'00000000-0000-4000-8000-000000000000'}}),error=>error.status===409);
+ assert.equal((await client.archive(done.taskId,{expected})).task.archivedAt,receipt.task.archivedAt);await client.restore(done.taskId);assert.equal((await client.get(done.taskId)).task.archivedAt,undefined);assert.equal(calls.length,1);
+});
+
+test('guarded identity never makes running or unsettled cancellation archivable',async t=>{
+ const gate=deferred(),{client,calls}=await setup(t,{ask:()=>gate.promise}),{task}=await client.submit(input());const running=await until(client,task.taskId,'running');
+ const expected={taskId:running.taskId,attemptId:running.attemptId,inputDigest:running.inputDigest};
+ await assert.rejects(client.archive(task.taskId,{expected}),error=>error.status===409&&error.code==='task_not_archivable');
+ await client.cancel(task.taskId);await assert.rejects(client.archive(task.taskId,{expected}),error=>error.status===409&&error.code==='task_not_archivable');
+ gate.resolve({answer:'Late',citations:['a']});await until(client,task.taskId,'cancelled');assert.ok((await client.archive(task.taskId,{expected})).task.archivedAt);assert.equal(calls.length,1);
+});
+
+test('same-origin replacement ledger with the same taskId cannot satisfy a guarded archive for another attempt',async t=>{
+ const directory=await fs.mkdtemp(path.join(os.tmpdir(),'coconut-archive-directory-'));let server;
+ t.after(async()=>{if(server?.listening)await new Promise(resolve=>server.shutdown(resolve));await fs.rm(directory,{recursive:true,force:true});});
+ const original=path.join(directory,'original'),alternate=path.join(directory,'alternate');let calls=0;
+ server=await startBridge({port:0,taskDirectory:original,providers:{ask:async()=>{calls++;return {answer:'Authored result',citations:['a']};}}});
+ const port=server.address().port,origin=`http://127.0.0.1:${port}`,client=Tasks.createClient({fetch:(relative,options)=>fetch(origin+'/'+relative,{...options,headers:{...options?.headers,Origin:origin}})});
+ const {task}=await client.submit(input()),done=await until(client,task.taskId,'succeeded'),expected={taskId:done.taskId,attemptId:done.attemptId,inputDigest:done.inputDigest};
+ await new Promise(resolve=>server.shutdown(resolve));const ledger=JSON.parse(await fs.readFile(path.join(original,'tasks.json'),'utf8'));ledger.tasks[0].attemptId='00000000-0000-4000-8000-000000000000';await fs.mkdir(alternate);await fs.writeFile(path.join(alternate,'tasks.json'),JSON.stringify(ledger));
+ server=await startBridge({port,taskDirectory:alternate,providers:{ask:async()=>{throw new Error('No new execution is authorized');}}});
+ await assert.rejects(client.archive(task.taskId,{expected}),error=>error.status===409&&error.code==='task_identity_conflict');assert.equal((await client.get(task.taskId)).task.archivedAt,undefined);assert.equal(calls,1);
+ await new Promise(resolve=>server.shutdown(resolve));server=await startBridge({port,taskDirectory:original,providers:{ask:async()=>{throw new Error('No new execution is authorized');}}});
+ assert.ok((await client.archive(task.taskId,{expected})).task.archivedAt);assert.equal(calls,1);
+});
+
+test('switching to an authored legacy v1 HTTP server after capability read rejects guarded writes instead of ignoring identity',async t=>{
+ let archived=false;const server=http.createServer(async(req,res)=>{
+  let raw='';for await(const chunk of req)raw+=chunk;const body=JSON.parse(raw);const status=body.protocolVersion===1?200:400;
+  if(status===200)archived=true;res.writeHead(status,{'Content-Type':'application/json'});res.end(JSON.stringify(status===200?{protocolVersion:1,task:{}}:{code:'invalid_request',error:'任务协议版本无效'}));
+ });await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));t.after(()=>new Promise(resolve=>server.close(resolve)));
+ const origin=`http://127.0.0.1:${server.address().port}`,client=Tasks.createClient({fetch:(relative,options)=>fetch(origin+'/'+relative,options)});
+ await assert.rejects(client.archive('00000000-0000-4000-8000-000000000001',{expected:{taskId:'00000000-0000-4000-8000-000000000001',attemptId:'00000000-0000-4000-8000-000000000002',inputDigest:'0'.repeat(64)}}),error=>error.status===400);assert.equal(archived,false);
+});

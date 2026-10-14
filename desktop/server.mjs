@@ -80,9 +80,11 @@ export function createBridge({readerDirectory = path.resolve(ROOT,'../reader'), 
       try { data = JSON.parse(Buffer.concat(chunks).toString('utf8')); } catch { return json(400,{error:'请求 JSON 无效'}); }
       if (!data || typeof data !== 'object' || Array.isArray(data)) return json(400,{error:'请求 JSON 无效'});
       if(taskRoute){
-        if(data.protocolVersion!==1)return json(400,{error:'任务协议版本无效',code:'invalid_request'});
-        const action=pathname.split('/').at(-1);
-        if(['cancel','archive','restore'].includes(action))return json(200,{protocolVersion:1,task:await taskStore[action](pathname.split('/').at(-2))});
+        const action=pathname.split('/').at(-1),guardedArchive=action==='archive'&&data.protocolVersion===2;
+        // v2 is only the guarded archive request envelope. Old servers reject
+        // it instead of silently ignoring a caller's identity precondition.
+        if((data.protocolVersion!==1&&!guardedArchive)||(guardedArchive&&!Object.hasOwn(data,'expected'))||(!guardedArchive&&Object.hasOwn(data,'expected')))return json(400,{error:'任务协议版本或身份条件无效',code:'invalid_request'});
+        if(['cancel','archive','restore'].includes(action))return json(200,{protocolVersion:1,task:await taskStore[action](pathname.split('/').at(-2),guardedArchive?data.expected:undefined)});
         const receipt=await taskStore.submit(data);return json(receipt.created?202:200,{protocolVersion:1,...receipt});
       }
       if(pathname === '/api/captions/import'){
