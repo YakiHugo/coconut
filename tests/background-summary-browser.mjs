@@ -9,7 +9,7 @@ import {openLibraryTools} from './helpers/library-tools-browser.mjs';
 import {openCueActions} from './cue-actions-browser.mjs';
 import {backgroundSummaryBridge,authoredSource,until} from './helpers/background-summary-bridge.mjs';
 if(process.env.GITHUB_ACTIONS!=='true')throw new Error('Run this real Chromium journey in GitHub Actions only.');
-let bridge,browser,stage='setup',external=0,pageErrors=0;
+let bridge,browser,stage='setup',external=0,pageErrors=0,releaseBulk=()=>{};
 const checks=[];
 const check=(name,value)=>{stage=name;assert.ok(value,name);checks.push(name);};
 const report=()=>({suite:'background-summary-authored-http',status:process.exitCode?'failed':'passed',stage,checks,external,pageErrors});
@@ -19,8 +19,9 @@ try{
  const context=await browser.newContext({viewport:{width:1360,height:1000},serviceWorkers:'block'});
  await context.route('**/*',async route=>{
   const url=new URL(route.request().url());
-  // Transport is real. No page.route fulfillment, DOM mocks, synthetic click
-  // dispatch, or replacement of the product's fetch/storage/task client.
+  // Production transport except the explicitly labeled archive response
+  // fault injection below. No DOM mocks, synthetic click dispatch, or
+  // replacement of the product's fetch/storage/task client.
   if(url.origin===bridge.origin||['blob:','data:'].includes(url.protocol))await route.continue();
   else{external++;await route.abort();}
  });
@@ -212,10 +213,41 @@ try{
  await archivedRow().locator('[data-action="restore"]').click();await expect(row(oldDirectoryTask)).toContainText('已接收');await expect(row(oldDirectoryTask).locator('[data-action="archive"]')).toBeFocused();
  await answers(switchedTitle,1);await page.reload();await refresh();await expect(row(oldDirectoryTask)).toContainText('已接收');await answers(switchedTitle,1);
  check('archive_restart_restore_preserves_identity_and_receipt_without_model_retry',bridge.invocations.length===6&&bridge.posts.filter(path=>path==='/api/v1/tasks').length===6&&(await bridge.tasks()).length===5);
+ stage='review_selected_terminal_tasks_before_bulk_archive';
+ const bulkTasks=(await bridge.tasks()).filter(task=>['succeeded','failed'].includes(task.status)||(task.status==='cancelled'&&task.cancellation?.executionSettled===true)).slice(0,2);
+ assert.equal(bulkTasks.length,2);const bulkIds=bulkTasks.map(task=>task.taskId),bulkArchivePosts=()=>bridge.posts.filter(path=>path.endsWith('/archive')).length,postsBeforeBulk=bulkArchivePosts();
+ for(const id of bulkIds)await row(id).locator('[data-action="select-archive"]').check();
+ await page.locator('#background-bulk-review').click();await expect(page.locator('#background-bulk-items > li')).toHaveCount(2);await expect(page.locator('#background-bulk-confirm')).toHaveText('确认归档这 2 条');
+ check('bulk_review_is_explicit_and_no_task_is_archived_before_confirmation',bulkArchivePosts()===postsBeforeBulk);
+ for(const width of [390,1280]){
+  await page.setViewportSize({width,height:900});const confirm=page.locator('#background-bulk-confirm');await confirm.scrollIntoViewIfNeeded();
+  check('bulk_confirm_reachable_without_overflow_'+width,await confirm.evaluate(node=>{const r=node.getBoundingClientRect();return r.height>=44&&r.width>=44&&r.x>=0&&r.right<=innerWidth;})&&await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
+  if(process.env.COCONUT_UI_ARTIFACT_DIR)await page.screenshot({path:path.join(process.env.COCONUT_UI_ARTIFACT_DIR,'background-task-bulk-review-'+width+'.png')});
+ }
+ let bulkStarted=false;const bulkGate=new Promise(resolve=>releaseBulk=resolve);
+ const firstArchive='**/api/v1/tasks/'+bulkIds[0]+'/archive';
+ await page.route(firstArchive,async route=>{assert.equal(route.request().postDataJSON().protocolVersion,2);const response=await route.fetch();bulkStarted=true;await bulkGate;await route.fulfill({response});});
+ await page.locator('#background-bulk-confirm').click();await until(()=>bulkStarted,'First real archive ACK');await page.locator('#background-bulk-cancel').click();releaseBulk();
+ await expect(page.locator('#background-bulk-status')).toContainText('已确认归档 1 条，失败或未确认 0 条，未处理 1 条');
+ await expect(page.locator('#background-bulk-retry')).toBeVisible();await page.unroute(firstArchive);
+ check('bulk_cancel_keeps_the_inflight_success_and_sends_no_remaining_archive',bulkArchivePosts()===postsBeforeBulk+1&&!!(await bridge.task(bulkIds[0])).archivedAt&&!(await bridge.task(bulkIds[1])).archivedAt);
+ const secondArchive='**/api/v1/tasks/'+bulkIds[1]+'/archive';await page.route(secondArchive,route=>route.fulfill({status:507,contentType:'application/json',body:JSON.stringify({code:'archive_full',error:'Authored capacity rejection'})}));
+ await page.locator('#background-bulk-retry').click();await expect(page.locator('#background-bulk-confirm')).toHaveText('确认归档这 1 条');await page.locator('#background-bulk-confirm').click();
+ await expect(page.locator('#background-bulk-status')).toContainText('已确认归档 0 条，失败或未确认 1 条，未处理 0 条');await expect(page.locator('#background-bulk-items')).toContainText('Authored capacity rejection');await page.unroute(secondArchive);
+ await page.locator('#background-bulk-retry').click();await expect(page.locator('#background-bulk-items > li')).toHaveCount(1);await expect(page.locator('#background-bulk-confirm')).toHaveText('确认归档这 1 条');await page.locator('#background-bulk-confirm').click();
+ await expect(page.locator('#background-bulk-status')).toContainText('已确认归档 1 条，失败或未确认 0 条，未处理 0 条');
+ check('bulk_retry_requires_a_new_exact_confirmation_and_never_rearchives_successes',bulkArchivePosts()===postsBeforeBulk+2&&bridge.invocations.length===6&&bridge.posts.filter(path=>path==='/api/v1/tasks').length===6);
+ await page.reload();await refresh();await page.locator('#background-archive > summary').click();
+ for(const task of bulkTasks){
+  const archived=page.locator('#background-archive-list .background-task').filter({hasText:task.taskId});await expect(archived.locator('[data-action="restore"]')).toBeVisible();await archived.locator('[data-action="restore"]').click();
+  const restored=await bridge.task(task.taskId);assert.equal(restored.archivedAt,undefined);for(const field of ['taskId','attemptId','inputDigest','document','provider'])assert.deepEqual(restored[field],task[field]);
+ }
+ check('bulk_results_remain_restorable_after_reload_with_original_identity_and_no_model_retry',bridge.invocations.length===6&&bridge.posts.filter(path=>path==='/api/v1/tasks').length===6);
  check('authored_private_notes_never_reach_fake_cli',bridge.invocations.every(call=>!JSON.stringify(call.input).includes('LOCAL NOTE')));
  check('no_external_requests_or_page_errors',external===0&&pageErrors===0);
 }catch{process.exitCode=1;}
 finally{
+ releaseBulk();
  try{await browser?.close();await bridge?.close();}catch{process.exitCode=1;stage='cleanup';}
  const result=report();console.log(JSON.stringify(result));
  if(process.env.COCONUT_UI_ARTIFACT_DIR){await fs.mkdir(process.env.COCONUT_UI_ARTIFACT_DIR,{recursive:true});await fs.writeFile(path.join(process.env.COCONUT_UI_ARTIFACT_DIR,'background-summary-checks.json'),JSON.stringify(result,null,2));}
