@@ -1,3 +1,4 @@
+import {navigateReadingStop} from './helpers/transcript-navigation-browser.mjs';
 import {openCueActions} from './cue-actions-browser.mjs';
 /** Real Chromium acceptance of authored long-text reading and recovery.
  * No model, media, third-party text, or external network calls are used.
@@ -99,7 +100,7 @@ try {
   check('mobile_tall_search_result_reveals_start_of_source', await page.locator('.segment[data-segment-id="harbor-1754"] .words').evaluate(el => {
     const r = el.getBoundingClientRect(); return r.top >= -2 && r.top < innerHeight * 0.75;
   }));
-  await page.locator('#reading-jump').selectOption('harbor-1770'); await visibleCue(page, 'harbor-1770');
+  await navigateReadingStop(page,'harbor-1770'); await visibleCue(page, 'harbor-1770');
   const last = page.locator('.segment[data-segment-id="harbor-1770"]');
   await last.locator('.note-button').click();
   await page.locator('#note').fill('A closing note in my own words.\n末段笔记完整保留。');

@@ -1,3 +1,4 @@
+import {navigateReadingStop,navigateReadingTime} from './helpers/transcript-navigation-browser.mjs';
 /** CI-only Chromium acceptance for cue + mode resume. Authored sources only.
  * Native IndexedDB, real viewport geometry and keyboard actions are evidence.
  * No media, Electron, CLI, providers, user files or external sites are used.
@@ -120,16 +121,12 @@ async function transcriptAt(doc, index, label) {
     const cue = Number(option.value.split('-cue-')[1]); return option.value && Math.floor(cue / 100) === Math.floor(index / 100);
   })?.value, index);
   assert.ok(stop, 'Authored page has a public time-stop control');
-  await page.locator('#reading-jump').selectOption(stop);
+  await navigateReadingStop(page,stop);
   return position(doc, index, 'transcript', label);
 }
 async function passagesAt(doc, index, label) {
   await activate('#mode-passages');
-  await page.locator('#passage-time-range').evaluate((slider, seconds) => {
-    slider.value = String(seconds);
-    slider.dispatchEvent(new Event('input', {bubbles: true}));
-    slider.dispatchEvent(new Event('change', {bubbles: true}));
-  }, doc.segments[index].start);
+  await navigateReadingTime(page,doc.segments[index].start);
   return position(doc, index, 'passages', label);
 }
 async function documents() {
@@ -278,7 +275,7 @@ try {
     stage = label + '_explicit_bookmark_and_goto';
     await transcriptAt(a, 742, label + '_before_explicit_bookmark');
     await activate('#resume'); await landed(a, 19, 'transcript', label + '_manual_bookmark_wins');
-    await page.locator('#reading-jump').selectOption(a.segments[999].id);
+    await navigateReadingStop(page,a.segments[999].id);
     await landed(a, 999, 'transcript', label + '_explicit_goto_wins');
 
     stage = label + '_chapter_and_return';

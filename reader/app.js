@@ -5692,3 +5692,40 @@ restoreReadingView(active(),{focus:false});
 // barrier or offer a reference before the coherent library is ready.
 if(!window.CoconutStorageBootstrap||window.CoconutStorageBootstrap.phase==='ready')nativeMediaInitialization=initializeRememberedMedia();
 else window.addEventListener('coconut-storage-ready',()=>{nativeMediaInitialization=initializeRememberedMedia();},{once:true});
+
+// Incremental UI boundary: view-only snapshots and intent callbacks. The legacy
+// reader remains the sole owner of documents, epochs, saves, selection and media.
+window.CoconutTranscriptNavigation=Object.freeze({
+ available(){const doc=active();return workspace==='read'&&!readerClosing&&!!doc&&!Coconut.isAudioProject(doc)&&doc.segments.length>0;},
+ open(){
+  if(!this.available())return null;
+  const doc=active(),segments=doc.segments,selection=activeSelectionRevision,mode=readingMode;
+  const current=visibleReadingCue(),size=40,initial=Math.floor(Math.max(0,segments.findIndex(cue=>cue.id===current))/size);
+  const previews=new Map();
+  const isCurrent=()=>!readerClosing&&workspace==='read'&&active()===doc&&activeSelectionRevision===selection&&doc.segments===segments&&state.documents.includes(doc);
+  const navigate=cue=>{
+   if(!isCurrent()||!segments.includes(cue))return false;
+   rememberReadingView();
+   if(mode==='passages')openPassage(cue.id);else goToSegment(cue.id);
+   return true;
+  };
+  return Object.freeze({
+   isCurrent,
+   read(page=initial){
+    if(!isCurrent())return null;
+    const pages=Math.ceil(segments.length/size);page=Math.max(0,Math.min(pages-1,Number.isSafeInteger(page)?page:initial));
+    previews.clear();
+    const cues=segments.slice(page*size,(page+1)*size).map(cue=>{
+     previews.set(cue.id,{cue,text:cue.text,start:cue.start,end:cue.end});
+     return Object.freeze({id:cue.id,time:Coconut.time(cue.start),text:sourcePreview(cue,180),current:cue.id===current});
+    });
+    return Object.freeze({title:doc.title,page,pages,total:segments.length,cues:Object.freeze(cues)});
+   },
+   jump(id){const entry=previews.get(id);return !!entry&&entry.cue.id===id&&entry.cue.text===entry.text&&entry.cue.start===entry.start&&entry.cue.end===entry.end&&navigate(entry.cue);},
+   jumpTime(value){if(!isCurrent())return false;const seconds=Coconut.parseReadingTime(value);if(seconds===null)return false;const cue=Coconut.segmentAtTime(doc,seconds);return !!cue&&navigate(cue);},
+   search(){if(isCurrent())openReadingSearch();},
+   chapters(){if(isCurrent())openChapterDirectory();}
+  });
+ }
+});
+window.dispatchEvent(new Event('coconut-navigation-ready'));

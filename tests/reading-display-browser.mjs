@@ -110,7 +110,14 @@ try{
   check(width+'_all_seven_saved_languages',await page.locator('#translation-view option').count()===8);check(width+'_fallback_not_persisted',JSON.parse(await exported('#export')).translation_view==='');
   await choose('fr');await utilityGeometry(width);await pickerGeometry(width+'-passages');await capture(width+'-passages');check(width+'_question_task_and_AI_disclosures_closed',await page.locator('#ai-task').inputValue()==='question'&&await page.locator('#language-panel').evaluate(node=>!node.open)&&await page.locator('#translation-options').evaluate(node=>!node.open));
   await choose('');await expect(page.locator('.passage-translation')).toHaveCount(0);await choose('zh');
-  stage=width+'_late_passage';while(!await page.locator('#passage-body .passage-original [data-cue-id="cue-100"]').count())await page.locator('#passage-next').click();await page.locator('#passage-body .passage-original [data-cue-id="cue-100"]').scrollIntoViewIfNeeded();await stickyGeometry(width+'-late-passage-sticky');await preserveAnchor('fr',width+'_late_passage_long');await preserveAnchor('zh',width+'_late_passage_short');
+  stage=width+'_late_passage';while(!await page.locator('#passage-body .passage-original [data-cue-id="cue-100"]').count())await page.locator('#passage-next').click();await page.locator('#passage-body .passage-original [data-cue-id="cue-100"]').scrollIntoViewIfNeeded();
+  // The unified navigator removes the old slider's vertical space. Cue 100 can
+  // already fit while the toolbar is still six pixels before its sticky inset.
+  // Establish actual deep scrolling with user input before testing pinning.
+  await page.locator('#passage-body .passage-original [data-cue-id="cue-100"]').hover();
+  const passageScroll=await page.evaluate(()=>scrollY);await page.mouse.wheel(0,120);
+  await expect.poll(()=>page.evaluate(()=>scrollY)).toBeGreaterThan(passageScroll+6);await settle();
+  await stickyGeometry(width+'-late-passage-sticky');await preserveAnchor('fr',width+'_late_passage_long');await preserveAnchor('zh',width+'_late_passage_short');
   stage=width+'_late_transcript';await page.locator('#mode-bilingual').click();while(!await page.locator('#transcript [data-segment-id="cue-177"]').count())await page.locator('#next-page').click();await page.locator('#transcript [data-segment-id="cue-177"] .words').scrollIntoViewIfNeeded();await stickyGeometry(width+'-late-transcript-sticky');await preserveAnchor('fr',width+'_cue177_long');await preserveAnchor('zh',width+'_cue177_short');await capture(width+'-late-cue');
   await choose('fr');await pickerGeometry(width+'-transcript');
   stage=width+'_search_return';await openTranscriptTools(page);await page.locator('#search').fill('Authored source 177');await expect(page.locator('#transcript .segment')).toHaveCount(1);await page.locator('.context-button').click();await choose('zh');await returnControlGeometry(width);await page.locator('#return-reading-results').click();await expect(page.locator('#search')).toHaveValue('Authored source 177');await expect(page.locator('#transcript .segment')).toHaveCount(1);check(width+'_search_context_return_preserved',true);

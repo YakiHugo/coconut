@@ -1,3 +1,4 @@
+import {navigateReadingStop} from './helpers/transcript-navigation-browser.mjs';
 /** Native release ZIP caption proof: default real source, or --offline-diagnostics
  * for authored injected extraction bytes with no X requests.
  * Captions/profile stay temporary. No source text, tokens, URLs with credentials,
@@ -116,7 +117,8 @@ try{
  check('no_media_model_status_or_external_renderer_requests',forbidden===0&&errors===0&&await page.locator('#source-media audio,#source-media video').count()===0);
  await page.locator('#close-note').click();
  // Reuse this one real import. No additional source fetch or model requests.
- await page.locator('#reading-jump').selectOption(document.segments.at(-1).id);
+ stage='native_exact_last_cue_navigation';
+ await navigateReadingStop(page,document.segments.at(-1).id);
  const lastId=document.segments.at(-1).id;
  const last=page.locator('.segment').last();
  check('real_last_cue_reached',await last.getAttribute('data-segment-id')===lastId);

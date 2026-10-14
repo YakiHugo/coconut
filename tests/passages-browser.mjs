@@ -1,3 +1,4 @@
+import {navigateReadingTime} from './helpers/transcript-navigation-browser.mjs';
 /** Real Chromium acceptance for skim → continuous reading → listen once.
  * CI runs only authored text, authored translations and a generated tone WAV.
  * No provider, CLI, external API, recording, model or user quota is used. */
@@ -451,7 +452,7 @@ try {
   check('last_skim_stop_opens_its_exact_original_passage', await page.locator('.passage-original .passage-cue[data-cue-id="split-35"]').count() === 1);
   const slider = page.locator('#passage-time-range');
   check('passage_timeline_uses_actual_document_duration', Number(await slider.getAttribute('max')) >= 3600);
-  await slider.focus(); await page.keyboard.press('Home'); await slider.focus(); await page.keyboard.press('End');
+  await navigateReadingTime(page,irregular.segments[0].start); await navigateReadingTime(page,irregular.segments.at(-1).start);
   await page.waitForFunction(() => !!document.querySelector('.passage-original .passage-cue[data-cue-id="split-35"]'));
   check('keyboard_timeline_end_reaches_real_end_without_autoplay', await page.locator('audio,video').count() === 0);
   await capture(page, '04-temporal-source-map');
