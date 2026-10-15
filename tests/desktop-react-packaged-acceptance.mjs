@@ -11,7 +11,7 @@ import {execFileSync} from 'node:child_process';
 import {_electron as electron,expect} from '@playwright/test';
 const root=fileURLToPath(new URL('../',import.meta.url)),origin='http://127.0.0.1:47831';
 const checks=[],receipts=[],errors=[],blocked=[];
-let app,page,temp,stage='configuration',chooserCount=0;
+let app,page,temp,stage='configuration',chooserCount=0,menuDiagnostics=null;
 const output=process.env.COCONUT_NATIVE_DIAGNOSTICS;
 process.umask(0o077);delete process.env.DEBUG;delete process.env.PWDEBUG;
 function sanitizedFailure(error){
@@ -42,7 +42,19 @@ async function launch(executable,profile,version){
  assert.equal(await page.locator('script[src="app.js"],.shell,#transcript').count(),0);
  await page.waitForFunction(()=>window.CoconutReactDesktopReady===true&&typeof window.coconutFileCommand==='function'&&typeof window.coconutPrepareClose==='function');
  const security=await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].webContents.getLastWebPreferences());assert.equal(security.sandbox,true);assert.equal(security.contextIsolation,true);assert.equal(security.nodeIntegration,false);assert.equal(security.webSecurity,true);assert.equal(await page.evaluate(()=>typeof require==='undefined'&&typeof process==='undefined'),true);
- await expect.poll(()=>app.evaluate(({Menu})=>['open-local-media','import-transcript','backup-library'].every(id=>Menu.getApplicationMenu()?.getMenuItemById(id)?.enabled))).toBe(true);
+ menuDiagnostics=null;
+ try{
+  await expect.poll(()=>app.evaluate(({Menu})=>['open-local-media','import-transcript','backup-library'].every(id=>Menu.getApplicationMenu()?.getMenuItemById(id)?.enabled))).toBe(true);
+ }catch(error){
+  // Diagnostic booleans and allowlisted route only: never persist a native path or URL.
+  menuDiagnostics=await app.evaluate(({Menu,BrowserWindow},expectedOrigin)=>{
+   const window=BrowserWindow.getAllWindows()[0],contents=window?.webContents;
+   let trustedOrigin=false,pathname='other';try{const url=new URL(contents?.getURL());trustedOrigin=url.origin===expectedOrigin;if(trustedOrigin&&['/','/index.html'].includes(url.pathname))pathname=url.pathname;}catch{}
+   return {menus:Object.fromEntries(['open-local-media','import-transcript','backup-library'].map(id=>[id,Menu.getApplicationMenu()?.getMenuItemById(id)?.enabled??null])),trustedOrigin,pathname,loadingMainFrame:contents?.isLoadingMainFrame()??null,focusedWindow:BrowserWindow.getFocusedWindow()===window,windowDestroyed:window?.isDestroyed()??null};
+  },origin).catch(error=>({diagnosticFailure:sanitizedFailure(error)}));
+  menuDiagnostics.renderer=await page.evaluate(()=>({ready:window.CoconutReactDesktopReady===true,fileCommand:typeof window.coconutFileCommand==='function',closeHook:typeof window.coconutPrepareClose==='function',documentReady:document.readyState,focused:document.hasFocus()})).catch(error=>({diagnosticFailure:sanitizedFailure(error)}));
+  throw error;
+ }
  // Observe, never replace, the real synchronous renderer command and chooser.
  await page.evaluate(()=>{const original=window.coconutFileCommand;window.authoredMenu={sequence:0,last:null,inputs:[]};document.addEventListener('click',event=>{if(event.target instanceof HTMLInputElement&&event.target.type==='file')window.authoredMenu.inputs.push({activation:navigator.userActivation.isActive,accept:event.target.accept});},true);window.coconutFileCommand=function(command,request){const result=original.apply(this,arguments);window.authoredMenu.last={sequence:++window.authoredMenu.sequence,command,result,type:typeof result,activation:navigator.userActivation.isActive,current:request.issuedAt>=performance.timeOrigin,unexpired:request.expiresAt>Date.now()};return result;};});
  await expect(page.locator('#app-updates')).toBeAttached();assert.equal(await page.getByRole('button',{name:/^下载 .*|安装并重启$/}).count(),0);
@@ -81,5 +93,5 @@ try{
  await page.locator('.rw-original').focus();assert.equal(await menu('find-transcript'),true);await expect(page.getByRole('searchbox',{name:'搜索原话、译文和笔记',exact:true})).toBeFocused();const afterTranscript=(await backup()).documents;assert.equal(afterTranscript.length,2);assert.deepEqual(afterTranscript.find(item=>item.key===expected[0].key),expected[0]);pass('Actual native transcript chooser requires review and Edit Find focuses React search without changing raw project');
  await close();assert.deepEqual(errors,[]);assert.deepEqual(blocked,[]);
  if(output)await fs.writeFile(path.join(output,'react-packaged-report.json'),JSON.stringify({status:'passed',checks,receipts,boundaries:['actual packaged macOS ZIP','authored local media only','native keep-editing dialog answers injected','no signing/Gatekeeper/update download proof'],errors,blocked},null,2));
-}catch(error){if(output){await fs.mkdir(output,{recursive:true});await screenshot('react-packaged-failure.png').catch(()=>{});const failure=sanitizedFailure(error);await fs.writeFile(path.join(output,'react-packaged-report.json'),JSON.stringify({status:'failed',stage,...failure,checks,receipts,errors,blocked},null,2));}throw error;}
+}catch(error){if(output){await fs.mkdir(output,{recursive:true});await screenshot('react-packaged-failure.png').catch(()=>{});const failure=sanitizedFailure(error);await fs.writeFile(path.join(output,'react-packaged-report.json'),JSON.stringify({status:'failed',stage,...failure,menuDiagnostics,checks,receipts,errors,blocked},null,2));}throw error;}
 finally{if(app){await app.evaluate(({dialog})=>{dialog.showMessageBox=async()=>({response:1});}).catch(()=>{});await app.close().catch(()=>{});}if(temp)await fs.rm(temp,{recursive:true,force:true});}

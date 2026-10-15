@@ -8,7 +8,8 @@ const payload=key=>({protocolVersion:1,kind:'summary',idempotencyKey:key,documen
 
 test('browser harness serves actual production assets and enforces consent/idempotency before a fake CLI run',async t=>{
  const h=await backgroundSummaryBridge();t.after(()=>h.close());
- const html=await (await fetch(h.origin)).text();assert.match(html,/background-summary\.js/);
+ const current=await (await fetch(h.origin)).text();assert.match(current,/react-app\.js/);assert.doesNotMatch(current,/background-summary\.js/);assert.equal((await fetch(h.origin+'/react-app.js')).status,200);
+ const html=await (await fetch(h.origin+'/compatibility.html')).text();assert.match(html,/background-summary\.js/);
  for(const asset of ['task-client.js','background-summary.js'])assert.equal((await fetch(h.origin+'/'+asset)).status,200);
  const language=await h.request('/api/language-tools');assert.equal(language.status,200);assert.equal(language.ai.codex.ready,true);assert.equal(language.ai.claude.ready,false);assert.equal(h.invocations.length,0);
  const invalid=await h.request('/api/v1/tasks',{...payload('one'),consent:false});assert.equal(invalid.status,400);assert.equal(h.invocations.length,0);

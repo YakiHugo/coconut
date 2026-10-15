@@ -96,3 +96,28 @@ test('native menu remains trusted after the real reader skip-link fragment, with
  for(const url of ['http://127.0.0.1:47831/#main-content','http://127.0.0.1:47831/index.html#main-content']){n.set({url});assert.equal(await item.click(),true);}
  for(const url of ['http://127.0.0.1:47831/other#main-content','http://127.0.0.1:47831/?next=index.html#main-content']){n.set({url});assert.equal(await item.click(),false);}
 });
+
+test('bootstrap before did-stop-loading retains verified readiness without retrying renderer work',async()=>{
+ const n=native();n.set({loading:true});n.contents.emit('did-start-loading');n.contents.emit('did-finish-load');n.pending.shift()(true);await turn();
+ assert.ok([...n.actual.values()].every(item=>!item.enabled));assert.equal(await n.menu.submenu[0].click(),false);assert.equal(n.calls.length,1);
+ n.set({loading:false});n.contents.emit('did-stop-loading');assert.ok([...n.actual.values()].every(item=>item.enabled));assert.equal(n.calls.length,1);
+ assert.equal(await n.menu.submenu[0].click(),true);assert.equal(n.calls.at(-1).gesture,true);
+});
+test('did-stop-loading before bootstrap does not grant readiness, and later receipt can enable',async()=>{
+ const n=native();n.set({loading:true});n.contents.emit('did-start-loading');n.contents.emit('did-finish-load');const loaded=n.pending.shift();n.set({loading:false});n.contents.emit('did-stop-loading');assert.ok([...n.actual.values()].every(item=>!item.enabled));
+ loaded(true);await turn();assert.ok([...n.actual.values()].every(item=>item.enabled));assert.equal(n.calls.length,1);
+});
+for(const invalidation of ['navigation','crash','closed'])test('saved loading receipt cannot re-enable after '+invalidation,async()=>{
+ const n=native();n.set({loading:true});n.contents.emit('did-finish-load');n.pending.shift()(true);await turn();
+ if(invalidation==='navigation')n.contents.emit('did-start-loading');else if(invalidation==='crash')n.contents.emit('render-process-gone');else {n.set({destroyed:true});n.window.emit('closed');}
+ n.set({loading:false});n.contents.emit('did-stop-loading');assert.ok([...n.actual.values()].every(item=>!item.enabled));assert.equal(await n.menu.submenu[0].click(),false);assert.equal(n.calls.length,1);
+});
+test('late bootstrap from old generation cannot borrow new document stop-loading',async()=>{
+ const n=native();n.set({loading:true});n.contents.emit('did-finish-load');const old=n.pending.shift();n.contents.emit('did-start-loading');n.contents.emit('did-finish-load');const current=n.pending.shift();old(true);await turn();n.set({loading:false});n.contents.emit('did-stop-loading');assert.ok([...n.actual.values()].every(item=>!item.enabled));current(true);await turn();assert.ok([...n.actual.values()].every(item=>item.enabled));
+});
+for(const url of ['https://external.example/','http://127.0.0.1:47831/?other','http://127.0.0.1:47831/compatibility.html'])test('saved bootstrap cannot transfer to a different document URL '+url,async()=>{
+ const n=native();n.set({loading:true});n.contents.emit('did-finish-load');n.pending.shift()(true);await turn();n.set({loading:false,url});n.contents.emit('did-stop-loading');assert.ok([...n.actual.values()].every(item=>!item.enabled));assert.equal(await n.menu.submenu[0].click(),false);
+});
+test('failed bootstrap and stop without bootstrap remain disabled',async()=>{
+ const n=native();n.contents.emit('did-stop-loading');assert.equal(n.menu.submenu[0].enabled,false);n.contents.emit('did-finish-load');n.pending.shift()(false);await turn();n.contents.emit('did-stop-loading');assert.equal(n.menu.submenu[0].enabled,false);
+});

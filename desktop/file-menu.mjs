@@ -1,6 +1,6 @@
 /** Bounded native File and Find commands. No paths, credentials or new renderer privileges. */
 export function createFileMenu({window,origin,blocked=()=>false,now=Date.now}) {
- let generation=0,ready=false;
+ let generation=0,ready=false,bootstrap=null;
  const live=()=>!window.isDestroyed()&&!window.webContents.isDestroyed();
  const trusted=()=>live()&&[origin+'/',origin+'/index.html',origin+'/compatibility.html'].includes(window.webContents.getURL().split('#')[0]);
  const commands=[['import-transcript','导入文字稿…','CmdOrCtrl+O'],
@@ -17,12 +17,19 @@ export function createFileMenu({window,origin,blocked=()=>false,now=Date.now}) {
  // actual installed items in sync; no ready notification grants IPC privileges.
  let installed=null;
  const enable=value=>{ready=value;for(const item of items){item.enabled=value;const native=installed?.getMenuItemById(item.id);if(native)native.enabled=value;}};
- const invalidate=()=>{generation++;enable(false);};
+ // Renderer bootstrap and main-frame loading can finish in either order.
+ // Keep only this document's verified receipt; did-stop-loading alone grants
+ // nothing and never replays a renderer command or a bootstrap probe.
+ const syncReady=()=>{enable(Boolean(bootstrap&&bootstrap.generation===generation&&trusted()&&
+  bootstrap.url===window.webContents.getURL().split('#')[0]&&!window.webContents.isLoadingMainFrame()));};
+ const invalidate=()=>{generation++;bootstrap=null;enable(false);};
  window.webContents.on('did-start-loading',invalidate);
  window.webContents.on('render-process-gone',invalidate);
+ window.webContents.on('did-stop-loading',syncReady);
  window.on('closed',invalidate);
  window.webContents.on('did-finish-load',async()=>{
   const current=generation;if(!trusted())return;
+  const url=window.webContents.getURL().split('#')[0];
   try{
    const loaded=await window.webContents.executeJavaScript(`new Promise(resolve=>{
     if(window.CoconutReactDesktopReady===true||window.CoconutStorageBootstrap?.phase==='ready'){resolve(true);return;}
@@ -30,7 +37,9 @@ export function createFileMenu({window,origin,blocked=()=>false,now=Date.now}) {
     function cleanup(){window.removeEventListener('coconut-storage-ready',done);window.removeEventListener('coconut-react-desktop-ready',done);window.removeEventListener('pagehide',closed);}
     window.addEventListener('coconut-storage-ready',done,{once:true});window.addEventListener('coconut-react-desktop-ready',done,{once:true});window.addEventListener('pagehide',closed,{once:true});
    })`);
-   if(loaded&&current===generation&&trusted()&&!window.webContents.isLoadingMainFrame())enable(true);
+   if(loaded&&current===generation&&trusted()&&url===window.webContents.getURL().split('#')[0]){
+    bootstrap={generation:current,url};syncReady();
+   }
   }catch{} // Failed bootstrap keeps the commands disabled; recovery UI stays available.
  });
  return {id:'coconut-file-menu',label:'文件',submenu:items.slice(0,3),findItem:items[3],
