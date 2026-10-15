@@ -307,6 +307,7 @@ def guarded_extractors(transport):
 def extract_public_video_captions(url, language=None, *, ca_file=None, proxy=None):
     import tempfile
     language_required = False
+    languages = []
     completion = None
     selection_completed = False
     transport = None
@@ -314,7 +315,7 @@ def extract_public_video_captions(url, language=None, *, ca_file=None, proxy=Non
     original_parse = subtitle_import.subtitle_document
 
     def failure(status, reason):
-        return {'status': status, 'diagnostic': {'stage': transport.stage if transport else 'initialization',
+        return {'status': status, **({'languages': languages} if status == 'language_required' else {}), 'diagnostic': {'stage': transport.stage if transport else 'initialization',
                 'reason': reason, 'requests_attempted': transport.count if transport else 0,
                 'responses_received': transport.responses if transport else 0}}
 
@@ -323,7 +324,7 @@ def extract_public_video_captions(url, language=None, *, ca_file=None, proxy=Non
         return original_parse(*args, **kwargs)
 
     def select(info, hint=None):
-        nonlocal language_required, completion, selection_completed
+        nonlocal language_required, languages, completion, selection_completed
         transport.stage = 'track_selection'
         provider, identity = source_identity(url)
         subtitle_import.validate_media_info(info)
@@ -343,6 +344,7 @@ def extract_public_video_captions(url, language=None, *, ca_file=None, proxy=Non
             raise StopProof('duration_unavailable')
         selected = original_select(info, hint)
         selection_completed = True
+        languages = subtitle_import.available_caption_languages(info, selector=original_select)
         language_required = selected is None and subtitle_import.preferred_language(info, hint)[0] is None and any(
             key not in ('danmaku', 'live_chat') and subtitle_import.eligible_formats(tracks)
             for field in ('subtitles', 'automatic_captions') for key, tracks in (info.get(field) or {}).items())

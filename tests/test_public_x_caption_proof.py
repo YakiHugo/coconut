@@ -254,7 +254,7 @@ class IsolatedCaptionAPITests(unittest.TestCase):
             subtitle_import.select_track({'subtitles': {'en': [{'ext': 'vtt'}], 'zh': [{'ext': 'vtt'}]}})
             raise subtitle_import.SubtitleRetrievalError('private error')
         with patch.object(guard, 'guarded_extractor', self.fake_guard), patch.object(subtitle_import, 'fetch_subtitle_document', ambiguous):
-            self.assertEqual(guard.extract_public_captions(proof.SOURCE_URL), {'status': 'language_required'})
+            self.assertEqual(guard.extract_public_captions(proof.SOURCE_URL), {'status': 'language_required', 'languages': ['en', 'zh']})
 
 
 @unittest.skipUnless(importlib.util.find_spec('yt_dlp'), 'Pinned yt-dlp is exercised in the live-proof CI job')

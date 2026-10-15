@@ -133,7 +133,7 @@ def main():
         else:
             result = extract_public_captions(request['url'], language, ca_file=certifi.where())
         if result.get('status') in ('access_restricted', 'unavailable', 'language_required', 'network_unavailable', 'metadata_incomplete', 'no_matching_captions', 'extractor_failed', 'caption_file_invalid', 'caption_parse_failed', 'guard_stopped'):
-            return {key: result[key] for key in ('status', 'diagnostic') if key in result}
+            return {key: result[key] for key in ('status', 'diagnostic', 'languages') if key in result}
         body = result.pop('bytes', None)
         if not isinstance(body, bytes) or not 0 < len(body) <= MAX_CAPTION:
             return {'status': 'caption_file_invalid'}

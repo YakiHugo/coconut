@@ -3,7 +3,7 @@ import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {readFile,mkdtemp,mkdir,rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
-import {captionSource,CAPTION_FAILURE_STATUSES,captionDiagnostic} from './caption-service.mjs';
+import {captionSource,captionLanguages,CAPTION_FAILURE_STATUSES,captionDiagnostic} from './caption-service.mjs';
 import {runCaptionProcess,HELPER_LIMITS,CaptionHelperError} from './caption-helper-process.mjs';
 const root=fileURLToPath(new URL('../',import.meta.url));
 const lock=JSON.parse(await readFile(new URL('./caption-helper-lock.json',import.meta.url),'utf8'));
@@ -86,7 +86,7 @@ export function createDevelopmentCaptionHelper({python,proxy=null,timeoutMs=HELP
    const source=captionSource(url);
    if(language!==null&&(typeof language!=='string'||!/^([a-z]{2,3})(-[A-Za-z0-9]{2,8}){0,2}$/.test(language)))throw fail('CAPTION_INPUT','原语言标记无效');
    const r=await execute({operation:'extract-development',url:source.url,language,...(trustedProxy&&['youtube','bilibili'].includes(source.provider)?{trustedProxy}:{})},{signal});
-   if(CAPTION_FAILURE_STATUSES.includes(r.status)){const diagnostic=captionDiagnostic(r.diagnostic);return {status:r.status,...(diagnostic?{diagnostic}:{})};}
+   if(CAPTION_FAILURE_STATUSES.includes(r.status)){const diagnostic=captionDiagnostic(r.diagnostic);return {status:r.status,...(r.status==='language_required'?{languages:captionLanguages(r.languages)}:{}),...(diagnostic?{diagnostic}:{})};}
    if(r.status!=='ok'||!['vtt','srt'].includes(r.format)||typeof r.captionBase64!=='string'||r.captionBase64.length>Math.ceil(HELPER_LIMITS.captionBytes/3)*4||
     !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(r.captionBase64))throw fail('CAPTION_OUTPUT','字幕助手输出格式无效');
    const bytes=Buffer.from(r.captionBase64,'base64');

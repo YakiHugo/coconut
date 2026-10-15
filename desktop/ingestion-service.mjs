@@ -52,7 +52,7 @@ export function createIngestionService({podcastSources,captionService=null}={}){
    const canonical=captionSource(source.url);base.source={...source,url:canonical.url,provider:canonical.provider,media_id:canonical.mediaId};
    if(!captionService?.available)return finish({state:'blocked',error:{code:'captions_unavailable',message:'字幕获取服务尚未就绪；此链接已保留，可在服务就绪后重试。'}});
    const result=await captionService.importCaption({url:canonical.url,language:data.language},{signal});
-   return result.status==='ready'?finish({state:'ready',transcript:{document:result.document},...(result.diagnostics?{diagnostics:result.diagnostics}:{})}):finish({state:'blocked',error:{code:result.status,message:result.message,...(result.diagnostic?{diagnostic:result.diagnostic}:{})}});
+   return result.status==='ready'?finish({state:'ready',transcript:{document:result.document},...(result.diagnostics?{diagnostics:result.diagnostics}:{})}):finish({state:'blocked',error:{code:result.status,message:result.message,...(result.status==='language_required'?{languages:result.languages}:{}),...(result.diagnostic?{diagnostic:result.diagnostic}:{})}});
   }
   if(data.episode){
    const episode=data.episode;

@@ -171,6 +171,26 @@ def eligible_formats(tracks: object) -> list[dict]:
             and not ('tlang' in parse_qs(urlparse(str(track.get('url', ''))).query, keep_blank_values=True))]
 
 
+def available_caption_languages(info: dict, formats=('vtt', 'srt'), *, selector=None) -> list[str]:
+    """Bounded choices from eligible tracks, not a guess at the original language."""
+    values = {track_language(key)
+              for field in ('subtitles', 'automatic_captions')
+              for key, tracks in (info.get(field) or {}).items()
+              if isinstance(key, str) and key not in ('live_chat', 'danmaku')
+              and eligible_formats(tracks)
+              and re.fullmatch(r'[a-z]{2,3}(?:-[a-z0-9]{2,8}){0,2}', track_language(key))}
+    if len(values) > 128:
+        return []
+    choices = []
+    for code in sorted(values):
+        selected = (selector or select_track)(info, code)
+        if selected:
+            field, key = selected
+            if any(track.get('ext') in formats for track in eligible_formats(info[field][key])):
+                choices.append(code)
+    return choices
+
+
 def preferred_language(info: dict, language: str | None = None) -> tuple[str | None, str]:
     if language:
         return track_language(language), 'user_hint'

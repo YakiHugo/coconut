@@ -65,8 +65,8 @@ test('untrusted routes and language/operation/limit injection never spawn',async
 test('typed public failures never expose raw extractor output',async t=>{
  const s=await fixture(t);
  for(const status of ['unavailable','access_restricted','language_required']) {
-  const result=await runPinnedCaptionHelper({...s,operation:'extract',url:'https://x.com/user/status/123',spawnProcess:fakeSpawn({status,stderr:'secret-url',token:'private'})});
-  assert.deepEqual(result,{status});
+  const result=await runPinnedCaptionHelper({...s,operation:'extract',url:'https://x.com/user/status/123',spawnProcess:fakeSpawn({status,languages:['en','fr','en','https://private.example'],stderr:'secret-url',token:'private'})});
+  assert.deepEqual(result,{status,...(status==='language_required'?{languages:['en','fr']}:{})});
  }
 });
 test('media identity can differ from post identity while source URL remains exact',async t=>{

@@ -249,6 +249,7 @@ class OfficialExtractorTests(unittest.TestCase):
         player['captions']['playerCaptionsTracklistRenderer']['captionTracks'].append(track)
         result, calls = self.extract(YOUTUBE, player=player)
         self.assertEqual(result['status'], 'language_required')
+        self.assertEqual(result['languages'], ['en', 'fr'])
         self.assertFalse(any('/api/timedtext' in url for url in calls))
         state = copy.deepcopy(STATE); state['videoData']['bvid'] = 'BV1aaaaaaaaa'
         result, calls = self.extract(BILIBILI, state=state)

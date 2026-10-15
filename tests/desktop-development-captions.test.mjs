@@ -170,3 +170,8 @@ test('invalid proxy configuration fails closed before spawning and missing proto
  assert.equal((await helper.status()).code,'CAPTION_VERSION');await assert.rejects(helper.extractCaptions({url}),e=>e.code==='CAPTION_UNAVAILABLE');await helper.shutdown();
  assert.equal((await readFile(f.log,'utf8')).trim().split('\n').length,1);
 });
+
+test('development process retains bounded actual language choices without diagnostic payload leakage',async t=>{
+ const f=await fixture(t,{result:{status:'language_required',languages:['fr','en','en','https://private.example'],token:'private'}}),helper=createDevelopmentCaptionHelper({python:f.executable});
+ try{assert.equal((await helper.status()).ready,true);assert.deepEqual(await helper.extractCaptions({url}),{status:'language_required',languages:['en','fr']});}finally{await helper.shutdown();}
+});
