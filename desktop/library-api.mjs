@@ -4,6 +4,7 @@ export async function handleLibraryRequest({req,pathname,origin,json,store,unava
   if(!pathname.startsWith('/api/v1/library'))return false;
   const fail=(status,code,message)=>{json(status,{protocolVersion:1,code,error:message});return true;};
   try{
+    if(pathname==='/api/v1/library/migration'&&req.method!=='GET')return fail(410,'migration_retired','Browser migration has been retired; preserve and export browser recovery data.');
     if(req.method==='GET'&&pathname==='/api/v1/library'){
       json(200,store?.describe()||{protocolVersion:1,enabled:false,browserMigration:'not_started',...(unavailable?{unavailable}:{})});return true;
     }

@@ -4,7 +4,7 @@ export type Owner = {library: string; key: string; epoch: number; source: Record
 export type Attachment = {url: string; kind: 'audio' | 'video'; name: string; identity: string};
 export type NativeAttachment = Attachment & {availability: 'local_session'; nativeToken: string; release: () => void};
 export type Receipt = {status: string; token?: string; url?: string; kind?: 'audio' | 'video'; name?: string; identity?: string; rememberedKeys?: string[]};
-export type Bridge = {reconcile(owners: Owner[]): Promise<Receipt>; resolve(owner: Owner): Promise<Receipt>; remember(owner: Owner, file: File, identity: string): Promise<Receipt>; forget(owner: Owner): Promise<Receipt>; release(token: string): Promise<unknown>};
+export type Bridge = {reconcile(owners: Owner[],library?:string): Promise<Receipt>; resolve(owner: Owner): Promise<Receipt>; remember(owner: Owner, file: File, identity: string): Promise<Receipt>; forget(owner: Owner): Promise<Receipt>; release(token: string): Promise<unknown>};
 export type Dependencies = {
     bridge: Bridge;
     owner(key: string): Owner | null;
@@ -59,10 +59,10 @@ export function createNativeMediaController(deps: Dependencies) {
     }
     return {
         /** Complete catalog only, after storage bootstrap; never a filtered shelf. */
-        async initialize(owners: Owner[]) {
+        async initialize(owners: Owner[],library?:string) {
             if (closed || ready) return;
             try {
-                const receipt = await mutate(() => deps.bridge.reconcile(structuredClone(owners)));
+                const receipt = await mutate(() => deps.bridge.reconcile(structuredClone(owners),library??owners[0]?.library));
                 if (closed) return;
                 if (receipt.status !== 'reconciled' || !Array.isArray(receipt.rememberedKeys)) throw Error('unavailable');
                 ready = true;

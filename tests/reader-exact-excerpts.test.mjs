@@ -4,7 +4,7 @@ import {createRequire} from 'node:module';
 import {webcrypto} from 'node:crypto';
 import {transactionDouble} from './helpers/indexeddb-transaction-double.mjs';
 const require=createRequire(import.meta.url),C=require('../reader/core.js'),P=require('../reader/passages.js');
-const provider=require('../reader/storage-provider.js'),legacy=require('../reader/library-store.js'),storageModule=require('../reader/indexeddb-document-adapter.js');
+const provider=require('./helpers/historical-browser-provider.cjs'),legacy=require('../reader/library-store.js'),storageModule=require('../reader/indexeddb-document-adapter.js');
 const clone=value=>JSON.parse(JSON.stringify(value));
 const stamp='2026-10-11T01:00:00.000Z';
 function document(){return {...C.validate({title:'Captured title',language:'en',source_url:'https://youtu.be/captured',segments:[

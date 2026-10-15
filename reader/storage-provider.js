@@ -1,116 +1,63 @@
-(function (root) {
-  'use strict';
-  const NAME = 'coconut-reader-library-v1';
-  const failure = (code, message = code) => ({ok: false, status: 'failed', error: {code, message}});
-  // Loading is deliberately asynchronous; the application receives its entire
-  // coherent library before any of its classic scripts install input handlers.
-  async function initialize({indexedDB, getStorage = () => root.localStorage,
-    validate, legacyModule = root.CoconutLibraryStore, documentModule = root.CoconutDocumentStorage,
-    onLifecycle = () => {}, onStorage = () => {}, signal, name = NAME, openTimeoutMs} = {}) {
-    if (signal?.aborted) return failure('cancelled');
-    const listeners = new Set();
-    let backendError = null, primitive;
-    const publish = event => {
-      if (['versionchange', 'unexpected-close'].includes(event.state)) backendError = failure(event.state === 'versionchange' ? 'version' : 'unavailable').error;
-      onLifecycle(event);
-      for (const listener of listeners) { try { listener(event); } catch {} }
+(function(root){
+ 'use strict';
+ const NAME='coconut-reader-library-v1',KEY='coconut-reader-v1',FENCE='coconut-reader-storage-fence-v1';
+ const failure=(code,message)=>({ok:false,status:'failed',error:{code,message}});
+ // Recovery is observational only. Never create a database, upgrade it, open a
+ // readwrite transaction, initialize the old adapter, or alter a browser fence.
+ async function browserRecovery({indexedDB,getStorage,name=NAME,openTimeoutMs=3000,summaryOnly=false}={}){
+  let legacyRaw=null,fence=null,storageError=null;
+  try{const storage=getStorage();legacyRaw=storage.getItem(KEY);fence=storage.getItem(FENCE);}catch{storageError='浏览器旧存储无法读取；请保留站点数据。';}
+  const base={ok:true,format:'coconut-browser-recovery',version:1,database:name,legacyRaw,fence,stores:{}};
+  if(!indexedDB)return {...base,warning:storageError};
+  // Without enumeration, opening an unknown name could create a database.
+  if(typeof indexedDB.databases!=='function')return {...base,warning:storageError||'无法只读检查旧浏览器数据库；请保留站点数据。'};
+  try{
+   let enumerationTimer;
+   const databases=await Promise.race([indexedDB.databases(),new Promise((_,reject)=>{enumerationTimer=setTimeout(()=>reject(Error('旧浏览器数据库检查超时；请保留站点数据。')),openTimeoutMs);})]).finally(()=>clearTimeout(enumerationTimer));
+   if(!databases.some(database=>database.name===name))return {...base,warning:storageError};
+   if(summaryOnly)return {...base,hasDatabase:true,summaryOnly:true,warning:storageError};
+   const stores=await new Promise((resolve,reject)=>{
+    let db,settled=false;
+    const finish=(error,value)=>{if(settled)return;settled=true;clearTimeout(timer);db?.close();error?reject(error):resolve(value);};
+    const timer=setTimeout(()=>finish(Error('旧浏览器数据库暂时无法只读打开。')),openTimeoutMs);
+    const request=indexedDB.open(name);
+    request.onupgradeneeded=()=>{db=request.result;request.transaction.abort();finish(Error('旧数据库已变化；未创建或升级数据库。'));};
+    request.onerror=()=>finish(request.error||Error('旧数据库不可读。'));
+    request.onblocked=()=>finish(Error('旧数据库被其他窗口占用。'));
+    request.onsuccess=()=>{
+     db=request.result;if(settled){db.close();return;}db.onversionchange=()=>finish(Error('旧数据库已变化，请重新读取。'));
+     const names=Array.from(db.objectStoreNames),snapshot={};if(!names.length){finish(null,snapshot);return;}
+     let tx;try{tx=db.transaction(names,'readonly');}catch(error){finish(error);return;}
+     for(const name of names){const store=tx.objectStore(name),keys=store.getAllKeys(),rows=store.getAll();let k,v;
+      const collect=()=>{if(k&&v)snapshot[name]=k.map((key,index)=>({key,value:v[index]}));};
+      keys.onsuccess=()=>{k=keys.result;collect();};rows.onsuccess=()=>{v=rows.result;collect();};
+     }
+     tx.oncomplete=()=>finish(null,snapshot);tx.onabort=()=>finish(tx.error||Error('旧数据库只读检查中断。'));tx.onerror=()=>{};
     };
-    const readLegacy = () => {
-      try { return {ok: true, raw: getStorage().getItem(legacyModule.KEY), fence: getStorage().getItem(legacyModule.FENCE_KEY)}; }
-      catch (error) { return failure('denied', error.message); }
-    };
-    const legacy = readLegacy();
-    const fallback = reason => {
-      // Absence of IDB does not make stale legacy content authoritative again.
-      if (!legacy.ok || legacy.fence !== null) return {...failure(legacy.ok ? 'fenced' : 'denied'), legacyRaw: legacy.raw};
-      const adapter = legacyModule.createLegacyAdapter({getStorage, validate});
-      return {ok: true, backend: 'legacy', adapter, loaded: adapter.load(), fallbackReason: reason, legacyRaw: legacy.raw};
-    };
-    if (indexedDB === undefined) {
-      try { indexedDB = root.indexedDB; }
-      catch { return fallback('denied'); }
-    }
-    if (!indexedDB) return fallback('unavailable');
-    try {
-      primitive = documentModule.create({indexedDB, name, getLegacyStorage: getStorage, validate,
-        onLifecycle: publish, ...(openTimeoutMs === undefined ? {} : {openTimeoutMs})});
-      onStorage(primitive);
-      const authority = primitive.canonicalStatus ? await primitive.canonicalStatus() : {ok:true};
-      if (!authority.ok) {
-        primitive.close();
-        if (['unavailable','denied'].includes(authority.error?.code) && legacy.ok && legacy.fence === null) return fallback(authority.error.code);
-        return {...authority,legacyRaw:legacy.raw};
-      }
-      const canonical = root.CoconutCanonicalLibrary?.create({primitive,validate});
-      if (authority.value) {
-        const recovery = await primitive.canonicalRecovery();
-        if (!canonical) return {...failure('fenced'),recovery:recovery.ok?recovery:null};
-        if (['canonical','connected'].includes(authority.value.state)) {
-          try { return {...await (authority.value.state === 'connected' ? canonical.initializeBinding(authority.value) : canonical.initialize(authority.value)),canonical}; }
-          catch(error) { return {...failure(error.code||'unavailable',error.message),canonical,recovery:recovery.ok?recovery:null}; }
-        }
-        return {...failure('canonical_pending','书架迁移已冻结原始数据。请继续迁移或确认取消；不会自动切回浏览器写入。'),canonical,recovery:recovery.ok?recovery:null};
-      }
-      const ready = await primitive.ready();
-      if (signal?.aborted) return failure('cancelled');
-      if (!ready.ok) {
-        const recovery = await primitive.readRecovery();
-        primitive.close();
-        // Re-read the fence after readiness: a failed migration may already own
-        // this origin. It must never fall through to a legacy write.
-        const current = readLegacy();
-        if (['unavailable', 'denied'].includes(ready.error?.code) && current.ok && current.fence === null) return fallback(ready.error.code);
-        return {...ready, legacyRaw: ready.legacyRaw ?? current.raw, recovery: recovery.ok ? {...recovery, currentLegacyRaw: current.raw} : null, close: () => primitive.close()};
-      }
-      const loaded = ready.library || await primitive.loadLibrary();
-      // The provider consumes this startup snapshot. Do not let the cached
-      // readiness Promise retain a second entire library after normalization.
-      delete ready.library;
-      if (signal?.aborted) return failure('cancelled');
-      if (!loaded.ok) { primitive.close(); return {...loaded, legacyRaw: legacy.raw}; }
-      const tokens = new Map();
-      for (const row of loaded.documents) tokens.set(row.key, {epoch: row.epoch, revision: row.revision, deleted: false});
-      for (const row of loaded.tombstones) tokens.set(row.key, {epoch: row.epoch, revision: row.revision, deleted: true});
-      const documents = loaded.documents.map(row => {const normalized={...validate(row.payload),key:row.key};return root.CoconutCanonicalLibrary?.project?root.CoconutCanonicalLibrary.project(row.payload,normalized):{...row.payload,...normalized};});
-      let sequence = 0;
-      const session = root.crypto.randomUUID();
-      const adapter = {
-        backend: 'indexeddb',
-        mediaLibraryIdentity: () => primitive.mediaLibraryIdentity(),
-        documentEpoch(key) {
-          const current = tokens.get(key);
-          return backendError || !current || current.deleted ? null : current.epoch;
-        },
-        prepareChanges(changes) {
-          return primitive.prepare(changes.map(({key, identity, kind, generation}) => {
-            const current = tokens.get(key);
-            return {key, kind: kind === 'remove' ? 'remove' : current?.deleted ? 'restore' : current ? 'update' : 'create',
-              expected: current ? {epoch: current.epoch, revision: current.revision} : null,
-              document: identity, generation, mutationId: session + ':' + (++sequence)};
-          }));
-        },
-        async write(capture, options) {
-          const result = await primitive.commit(capture, options);
-          // Request success is insufficient. Tokens move only with the terminal
-          // transaction receipt, including a commit that races with cancellation.
-          if (result.ok) for (const receipt of result.receipts) tokens.set(receipt.key,
-            {epoch: receipt.epoch, revision: receipt.revision, deleted: receipt.kind === 'remove'});
-          return result;
-        },
-        status: () => ({backend: 'indexeddb', error: backendError}),
-        subscribe(listener) { listeners.add(listener); return () => listeners.delete(listener); },
-        close: () => primitive.close(),
-      };
-      let active = null;
-      try { active = JSON.parse(loaded.legacyRaw)?.active ?? null; } catch {}
-      return {ok: true, backend: 'indexeddb', adapter, loaded: {ok: true, documents, active}, legacyRaw: loaded.legacyRaw,
-        migrated: ready.migrated, report: ready.report, canonical};
-    } catch (error) {
-      primitive?.close();
-      return {...failure('unexpected', error.message), legacyRaw: legacy.raw};
-    }
-  }
-  const api = {initialize, NAME};
-  if (typeof module !== 'undefined' && module.exports) module.exports = api;
-  else root.CoconutStorageProvider = api;
-})(typeof window !== 'undefined' ? window : globalThis);
+   });return {...base,stores,warning:storageError};
+  }catch(error){return {...base,warning:String(error?.message||error)};}
+ }
+ async function initialize({indexedDB,getStorage=()=>root.localStorage,validate,onStorage=()=>{},signal,name=NAME,openTimeoutMs}={}){
+  if(signal?.aborted)return failure('cancelled','书架载入已暂停。');
+  let browserAccessWarning=null;
+  try{if(indexedDB===undefined)indexedDB=root.indexedDB;}catch{indexedDB=null;browserAccessWarning='浏览器旧数据库访问受限；请保留站点数据。';}
+  // The browser snapshot is a recovery copy, never a candidate primary store.
+  const readRecovery=()=>browserRecovery({indexedDB,getStorage,name,openTimeoutMs});
+  const recovery=await browserRecovery({indexedDB,getStorage,name,openTimeoutMs,summaryOnly:true});
+  const lifetime=new AbortController(),abort=()=>lifetime.abort();
+  signal?.addEventListener('abort',abort,{once:true});
+  const storage={readRecovery,shutdown:async()=>{lifetime.abort();}};onStorage(storage);
+  const retained=typeof recovery.legacyRaw==='string'||recovery.fence!==null||recovery.hasDatabase===true||Object.keys(recovery.stores).length>0;
+  const context={legacyRaw:recovery.legacyRaw,retainedBrowserData:retained,recoveryWarning:recovery.warning||browserAccessWarning||null,...(retained?{recovery}:{})};
+  if(signal?.aborted||lifetime.signal.aborted){signal?.removeEventListener('abort',abort);return {...failure('cancelled','书架载入已暂停。'),...context};}
+  try{
+   const client=root.CoconutCanonicalLibrary?.create({validate,signal:lifetime.signal});
+   if(!client)throw Error('电脑书架组件不可用，请修复安装后重试。');
+   const result=await client.initializeServer();
+   if(signal?.aborted||lifetime.signal.aborted){result.adapter.close();return {...failure('cancelled','书架载入已暂停。'),...context};}
+   return {...result,...context};
+  }catch(error){return {...failure(error.code||'library_unavailable',error.message||'电脑书架暂时不可用，请恢复服务后重试。'),...context};}finally{signal?.removeEventListener('abort',abort);}
+ }
+ const api={initialize,browserRecovery,NAME};
+ if(typeof module!=='undefined'&&module.exports)module.exports=api;else root.CoconutStorageProvider=api;
+})(typeof window!=='undefined'?window:globalThis);

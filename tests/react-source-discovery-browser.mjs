@@ -1,29 +1,33 @@
 /** Production React + actual HTTP bridge/coordinator/RSS/VTT parser; authored bytes only. */
 import assert from 'node:assert/strict';
-import {mkdir,readFile,writeFile} from 'node:fs/promises';
+import {mkdir,mkdtemp,readFile,writeFile,rm} from 'node:fs/promises';
 import path from 'node:path';
+import os from 'node:os';
 import {chromium,expect} from '@playwright/test';
 import {startBridge} from '../desktop/server.mjs';
 import {sourceDiscoveryFixture,sourceFeed,frenchTrack,upgradeTrack} from './fixtures/source-discovery.mjs';
 const output=process.env.COCONUT_REACT_ARTIFACTS||'/tmp/coconut-react-authored';
 const fixture=sourceDiscoveryFixture(),forbidden=[],errors=[],checks=[];
 const forbiddenProvider=async()=>{forbidden.push('provider');throw Error('No inference in authored discovery acceptance');};
-const server=await startBridge({port:0,podcastSources:fixture.sources,providers:{status:async()=>({ready:false,reason:'Authored offline fixture'}),ask:forbiddenProvider,structured:forbiddenProvider,exclusive:forbiddenProvider}});
-const origin='http://127.0.0.1:'+server.address().port;
-let browser,release;
+const directory=await mkdtemp(path.join(os.tmpdir(),'coconut-source-sqlite-'));
+let browser,release,server;
 try{
  browser=await chromium.launch({headless:true,...(process.env.COCONUT_CHROMIUM_EXECUTABLE?{executablePath:process.env.COCONUT_CHROMIUM_EXECUTABLE}:{})});await mkdir(output,{recursive:true});
  for(const width of [1360,390]){
+  server=await startBridge({port:0,libraryDirectory:path.join(directory,String(width)),podcastSources:fixture.sources,providers:{status:async()=>({ready:false,reason:'Authored offline fixture'}),ask:forbiddenProvider,structured:forbiddenProvider,exclusive:forbiddenProvider}});
+  const origin='http://127.0.0.1:'+server.address().port;
   fixture.state.upgrade=false;fixture.state.onlyFrench=true;fixture.state.failTrack=false;
   const initial={protocolVersion:1,source:{kind:'url',url:sourceFeed}},second=(await fixture.service.ingest(initial)).ingestion.selection.episodes[1];
   const project=(await fixture.service.ingest({...initial,episode:{feed_url:sourceFeed,episode_id:second.id}})).ingestion.project.document;
   project.key='original-project';project.project_note='Keep my original project note';project.timestamp_bookmarks=[{id:'b',time:1,note:'Keep my bookmark',future:{keep:true}}];project.opaque={keep:['original extension']};project.podcast_source.future={keep:true};
   const context=await browser.newContext({viewport:{width,height:960},acceptDownloads:true,serviceWorkers:'block'});
-  await context.addInitScript(seed=>{if(!localStorage.getItem('source-fixture-seeded')){localStorage.setItem('coconut-reader-v1',JSON.stringify({documents:[seed],active:seed.key}));localStorage.setItem('source-fixture-seeded','yes');}},project);
+  // Seed the real server authority, independently for each viewport.
+  const status=await fetch(origin+'/api/v1/library').then(response=>response.json());assert.equal(status.backend,'sqlite');assert.equal(status.sequence,0);
+  const seeded=await fetch(origin+'/api/v1/library/batch',{method:'POST',headers:{Origin:origin,'Content-Type':'application/json'},body:JSON.stringify({protocolVersion:2,epoch:status.epoch,commands:[{action:'put',key:project.key,receiptKey:'authored-source-seed',expected:null,expectedIdentity:null,document:project}]})});assert.equal(seeded.status,200);assert.equal((await seeded.json()).receipts.length,1);
   await context.route('**/*',route=>{
    const url=new URL(route.request().url());
    if(url.origin!==origin){forbidden.push(url.origin+url.pathname);return route.abort();}
-   if(route.request().method()==='POST'&&url.pathname!=='/api/v1/ingestions'){forbidden.push(url.pathname);return route.abort();}
+   if(route.request().method()==='POST'&&!['/api/v1/ingestions','/api/v1/library/batch'].includes(url.pathname)){forbidden.push(url.pathname);return route.abort();}
    return route.continue();
   });
   const page=await context.newPage();page.setDefaultTimeout(15000);page.on('pageerror',error=>errors.push(error.message));
@@ -53,7 +57,7 @@ try{
   await discover();await page.getByLabel('播客或视频链接').fill(sourceFeed);await page.getByRole('button',{name:'打开链接',exact:true}).click();await expect(multilingual()).toBeVisible();await multilingual().getByRole('combobox').selectOption(frenchTrack);
   fixture.state.hold=new Promise(resolve=>release=resolve);await openFirst();await expect(page.getByRole('button',{name:'取消读取',exact:true})).toBeVisible();await page.getByRole('button',{name:'取消读取',exact:true}).click();release();release=null;fixture.state.hold=null;await expect(multilingual()).toBeVisible();await expect(page.locator('.source-error')).toContainText('读取已取消');
   fixture.state.hold=new Promise(resolve=>release=resolve);await openFirst();await expect(page.getByRole('button',{name:'取消读取',exact:true})).toBeVisible();await page.getByLabel('播客或视频链接').fill('https://publisher.example.org/new');release();release=null;fixture.state.hold=null;await expect(page.locator('.episode-list')).toHaveCount(0);await expect(page.locator('.source-project-choice')).toHaveCount(0);assert.equal((await backup()).length,3);
-  checks.push({width,passed:['real HTTP bridge + RSS/VTT parser','explicit track and retry','browser back discovery session','exact existing/copy/multiple choice','reviewed in-place transcript upgrade','opaque notes/bookmarks durable reload','cancel and newer URL']});await context.close();
+  checks.push({width,passed:['real HTTP bridge + RSS/VTT parser','explicit track and retry','browser back discovery session','exact existing/copy/multiple choice','reviewed in-place transcript upgrade','opaque notes/bookmarks durable reload','cancel and newer URL']});await context.close();await server.shutdown();server=null;
  }
  assert.deepEqual(forbidden,[]);assert.deepEqual(errors,[]);await writeFile(path.join(output,'source-discovery.json'),JSON.stringify({checks,forbidden,errors},null,2));console.log('PASS production source-discovery continuity with actual authored backend parser; no external/model requests.');
-}finally{release?.();fixture.state.hold=null;await browser?.close();await server.shutdown();}
+}finally{release?.();fixture.state.hold=null;await browser?.close();await server?.shutdown();await rm(directory,{recursive:true,force:true});}

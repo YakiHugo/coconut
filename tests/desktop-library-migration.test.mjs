@@ -2,7 +2,7 @@ import test from 'node:test';import assert from 'node:assert/strict';import fs f
 import {createLibraryStore} from '../desktop/library-store.mjs';import {CHUNK_BYTES,MIGRATION_BYTES} from '../desktop/library-migration.mjs';import {recoveryFixture,sourceId,mediaLibraryIdentity,migrationId} from './fixtures/canonical-migration.mjs';
 const hash=bytes=>createHash('sha256').update(bytes).digest('hex');
 async function setup(t){const directory=await fs.mkdtemp(path.join(os.tmpdir(),'coconut-migration-')),stores=[];const open=async()=>{const s=await createLibraryStore({directory});stores.push(s);return s;};t.after(async()=>{stores.forEach(s=>s.close());await fs.rm(directory,{recursive:true,force:true});});return {store:await open(),open,directory};}
-function plan(store,recovery=recoveryFixture(),id=migrationId){const bytes=Buffer.from(JSON.stringify(recovery)),base={protocolVersion:1,epoch:store.describe().epoch,migrationId:id},manifest={sourceId,mediaLibraryIdentity,bytes:bytes.length,chunks:Math.ceil(bytes.length/CHUNK_BYTES),sha256:hash(bytes)};return {base,bytes,manifest,begin:{...base,action:'begin',manifest},chunks:Array.from({length:manifest.chunks},(_,index)=>({...base,action:'chunk',index,data:bytes.subarray(index*CHUNK_BYTES,(index+1)*CHUNK_BYTES).toString('base64')})),finalize:{...base,action:'finalize'},cancel:{...base,action:'cancel'}};}
+function plan(store,recovery=recoveryFixture(),id=migrationId){const mediaLibraryIdentity=store.describe().binding.mediaLibraryIdentity;recovery.stores.meta.find(row=>row.key==='desktop-media-library').value=mediaLibraryIdentity;const bytes=Buffer.from(JSON.stringify(recovery)),base={protocolVersion:1,epoch:store.describe().epoch,migrationId:id},manifest={sourceId,mediaLibraryIdentity,bytes:bytes.length,chunks:Math.ceil(bytes.length/CHUNK_BYTES),sha256:hash(bytes)};return {base,bytes,manifest,begin:{...base,action:'begin',manifest},chunks:Array.from({length:manifest.chunks},(_,index)=>({...base,action:'chunk',index,data:bytes.subarray(index*CHUNK_BYTES,(index+1)*CHUNK_BYTES).toString('base64')})),finalize:{...base,action:'finalize'},cancel:{...base,action:'cancel'}};}
 function stage(store,p){store.migration.request(p.begin);for(const chunk of p.chunks)store.migration.request(chunk);}
 test('staging is invisible; restart resumes exact chunks and atomically adopts complete identities and tombstones',async t=>{
  const {store,open}=await setup(t),p=plan(store);stage(store,p);assert.equal(store.list().entries.length,0);store.close();const next=await open();
@@ -76,8 +76,8 @@ test('literal unsafe integer archive bytes are rejected before rounded payloads 
 
 test('discovery exposes verified migration media namespace across restart and rejects altered manifest',async t=>{
  const {store,open,directory}=await setup(t),p=plan(store);stage(store,p);const committed=store.migration.request(p.finalize);
- assert.equal(store.describe().binding.mediaLibraryIdentity,mediaLibraryIdentity);store.close();
- const reopened=await open();assert.equal(reopened.describe().binding.mediaLibraryIdentity,mediaLibraryIdentity);assert.deepEqual(reopened.migration.status(migrationId).receipt,committed.receipt);
+ assert.equal(store.describe().binding.mediaLibraryIdentity,p.manifest.mediaLibraryIdentity);store.close();
+ const reopened=await open();assert.equal(reopened.describe().binding.mediaLibraryIdentity,p.manifest.mediaLibraryIdentity);assert.deepEqual(reopened.migration.status(migrationId).receipt,committed.receipt);
  const {DatabaseSync}=await import('node:sqlite'),db=new DatabaseSync(path.join(directory,'library.sqlite'));
  db.prepare('UPDATE migrations SET manifest=? WHERE id=?').run(JSON.stringify({...p.manifest,mediaLibraryIdentity:'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'}),migrationId);db.close();
  assert.throws(()=>reopened.describe(),error=>error.libraryCode==='library_corrupt');
@@ -89,6 +89,12 @@ test('first migration namespace and documents roll back together if receipt comm
  const {DatabaseSync}=await import('node:sqlite'),db=new DatabaseSync(path.join(directory,'library.sqlite'));
  const original=db.prepare('SELECT media FROM library_identity WHERE id=1').get().media;
  db.exec("CREATE TRIGGER fail_receipt BEFORE UPDATE OF state ON migrations WHEN NEW.state='committed' BEGIN SELECT RAISE(ABORT,'authored receipt failure'); END;");
- assert.throws(()=>store.migration.request(p.finalize));assert.equal(store.describe().sequence,0);assert.equal(store.describe().binding,null);assert.equal(store.list().entries.length,0);assert.equal(store.migration.status(migrationId).state,'staging');assert.equal(db.prepare('SELECT media FROM library_identity WHERE id=1').get().media,original);
- db.exec('DROP TRIGGER fail_receipt');db.close();assert.equal(store.migration.request(p.finalize).state,'committed');assert.equal(store.describe().binding.mediaLibraryIdentity,mediaLibraryIdentity);
+ assert.throws(()=>store.migration.request(p.finalize));assert.equal(store.describe().sequence,0);assert.equal(store.describe().binding.mediaLibraryIdentity,original);assert.equal(store.list().entries.length,0);assert.equal(store.migration.status(migrationId).state,'staging');assert.equal(db.prepare('SELECT media FROM library_identity WHERE id=1').get().media,original);
+ db.exec('DROP TRIGGER fail_receipt');db.close();assert.equal(store.migration.request(p.finalize).state,'committed');assert.equal(store.describe().binding.mediaLibraryIdentity,p.manifest.mediaLibraryIdentity);
+});
+
+test('even direct historical recovery cannot replace a published empty library namespace',async t=>{
+ const {store}=await setup(t),before=store.describe(),p=plan(store);const recovery=JSON.parse(p.bytes);recovery.stores.meta.find(row=>row.key==='desktop-media-library').value=mediaLibraryIdentity;
+ const bytes=Buffer.from(JSON.stringify(recovery)),manifest={...p.manifest,mediaLibraryIdentity,bytes:bytes.length,chunks:1,sha256:hash(bytes)};
+ store.migration.request({...p.begin,manifest});store.migration.request({...p.base,action:'chunk',index:0,data:bytes.toString('base64')});assert.throws(()=>store.migration.request(p.finalize),e=>e.libraryCode==='migration_conflict');assert.equal(store.describe().sequence,0);assert.deepEqual(store.describe().binding,before.binding);assert.equal(store.list().entries.length,0);
 });

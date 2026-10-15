@@ -79,7 +79,7 @@ export function transactionDouble() {
       let aborted = false;
       if (!data) data = {version, stores: new Map()};
       const connection = {data, closed: false,
-        objectStoreNames: {contains: name => data.stores.has(name)},
+        objectStoreNames: {contains: name => data.stores.has(name),[Symbol.iterator]:()=>data.stores.keys()},
         createObjectStore(name) { data.stores.set(name, new Map()); },
         close() { connection.closed = true; },
         transaction: (names, mode) => makeTransaction(connection, typeof names === 'string' ? [names] : names, mode)};
@@ -94,6 +94,7 @@ export function transactionDouble() {
     later(() => { if (control.blocked) { control.blockedOpens.push(perform); fire(request, 'blocked'); } else perform(); });
     return request;
   }};
+  indexedDB.databases=async()=>[...databases].map(([name,data])=>({name,version:data.version}));
   return {indexedDB, control, transactions, operations, connections, databases,
     async tick() { for (let i = 0; i < 250; i++) await Promise.resolve(); },
     versionchange() { for (const connection of connections) if (!connection.closed) fire(connection, 'versionchange'); },

@@ -18,6 +18,6 @@ contextBridge.exposeInMainWorld('coconutLocalMedia',Object.freeze({
   },
   resolve:owner=>ipcRenderer.invoke('coconut:local-media','resolve',{owner}),
   forget:owner=>ipcRenderer.invoke('coconut:local-media','forget',{owner}),
-  reconcile:owners=>ipcRenderer.invoke('coconut:local-media','reconcile',{owners}),
+  reconcile:(owners,library)=>ipcRenderer.invoke('coconut:local-media','reconcile',{owners,library}),
   release:token=>ipcRenderer.invoke('coconut:local-media','release',{token})
 }));

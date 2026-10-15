@@ -46,7 +46,7 @@ async function loadReader({app,reader}) {
     assert.equal(cues[0].speaker,'René');
     assert.equal(createCaptionService({readerDirectory:${JSON.stringify(reader)}}).available,false);
     const mediaService=createLocalMediaService({readerDirectory:${JSON.stringify(reader)},userDataDirectory:${JSON.stringify(path.join(app,'authored-profile'))}});
-    assert.equal((await mediaService.reconcile([])).status,'reconciled');await mediaService.shutdown();
+    assert.equal((await mediaService.reconcile([],'11111111-1111-4111-8111-111111111111')).status,'reconciled');await mediaService.shutdown();
     console.log('reader module scope passed');`;
   return execute(process.execPath,['--input-type=module','-e',code],{timeout:15000,maxBuffer:1024*1024});
 }

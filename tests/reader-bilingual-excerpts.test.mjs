@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createRequire} from 'node:module';
 import {transactionDouble} from './helpers/indexeddb-transaction-double.mjs';
-const require=createRequire(import.meta.url),C=require('../reader/core.js'),P=require('../reader/passages.js'),Store=require('../reader/library-store.js'),Provider=require('../reader/storage-provider.js'),IDB=require('../reader/indexeddb-document-adapter.js');
+const require=createRequire(import.meta.url),C=require('../reader/core.js'),P=require('../reader/passages.js'),Store=require('../reader/library-store.js'),Provider=require('./helpers/historical-browser-provider.cjs'),IDB=require('../reader/indexeddb-document-adapter.js');
 const stamp='2026-10-11T09:00:00.000Z',copy=v=>JSON.parse(JSON.stringify(v));
 function source(){
  return {...C.validate({title:'Source',language:'en',segments:['One','Two','Three'].map((word,i)=>({id:String(i),text:word,start:i*2,end:i*2+2,speaker:'A',translations:{zh:{text:['第一句。','第二句。','第三句。'][i],source_text:word,source_language:'en',provider:i===1?'user':'model'}}}))}),key:'source'};

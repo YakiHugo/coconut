@@ -42,14 +42,17 @@ function startService(name,port=0){
   });
  });
 }
-async function contextFor(service,{seed=original,width=1360,bridge=false,preferences={},remembered=[]}={}){
+async function contextFor(service,{seed=original,legacySeed=null,unavailable=false,width=1360,bridge=false,preferences={},remembered=[]}={}){
+ const seeded=seed?JSON.parse(seed):null;if(seeded)await seedLibrary(service,seeded.documents);
+ // Last-read selection is a client preference, never a canonical-library field.
+ if(seeded?.active)preferences={'coconut-reader-last-active-v1':seeded.active,...preferences};
  const context=await browser.newContext({viewport:{width,height:960},acceptDownloads:true,serviceWorkers:'block'});contexts.add(context);
  await context.route('**/*',route=>{
   const url=new URL(route.request().url());
-  if(url.origin===service.origin){if(route.request().method()==='POST'&&!['/api/ask','/api/v1/library/migration','/api/v1/library/batch'].includes(url.pathname)){forbidden.push(url.pathname);return route.abort('blockedbyclient');}return route.continue();}if(['blob:','data:'].includes(url.protocol))return route.continue();
+  if(url.origin===service.origin){if(unavailable&&url.pathname.startsWith('/api/v1/library'))return route.abort('failed');if(route.request().method()==='POST'&&!['/api/ask','/api/v1/library/batch'].includes(url.pathname)){forbidden.push(url.pathname);return route.abort('blockedbyclient');}return route.continue();}if(['blob:','data:'].includes(url.protocol))return route.continue();
   blocked.push(url.origin+url.pathname);return route.abort('blockedbyclient');
  });
- if(seed)await context.addInitScript(raw=>{if(!localStorage.getItem('matrix-seeded')){localStorage.setItem('coconut-reader-v1',raw);localStorage.setItem('matrix-seeded','yes');}},seed);
+ if(legacySeed)await context.addInitScript(raw=>{if(!localStorage.getItem('matrix-seeded')){localStorage.setItem('coconut-reader-v1',raw);localStorage.setItem('matrix-seeded','yes');}},legacySeed);
  await context.addInitScript(({preferences,remembered})=>{if(!localStorage.getItem('matrix-preferences-seeded')){for(const [key,value]of Object.entries(preferences))localStorage.setItem(key,value);localStorage.setItem('matrix-preferences-seeded','yes');}if(remembered.length&&!sessionStorage.getItem('matrix-native-seeded')){sessionStorage.setItem('authored-remembered',JSON.stringify(remembered));sessionStorage.setItem('matrix-native-seeded','yes');}},{preferences,remembered});
  if(bridge)await context.exposeBinding('reportAuthoredUpdateAction',(_source,action)=>forbidden.push('native-update:'+action));
  if(bridge)await context.addInitScript(nativeWav=>{
@@ -65,19 +68,20 @@ async function contextFor(service,{seed=original,width=1360,bridge=false,prefere
   };
  },wav(150).toString('base64'));
  const page=await context.newPage();page.setDefaultTimeout(20000);page.on('pageerror',error=>errors.push({stage,message:error.message}));
- await page.goto(service.origin+'/index.html');await expect(page.getByRole('heading',{name:'今天，想听什么？'})).toBeVisible();
+ await page.goto(service.origin+'/index.html');await expect(page.getByRole('heading',{name:unavailable?'暂时无法打开书架':'今天，想听什么？',exact:true})).toBeVisible();
  assert.equal(await page.locator('script[src="app.js"], #transcript, .shell').count(),0,'No legacy renderer');
  return {context,page};
 }
 async function openStorage(page){const settings=page.locator('details.storage-settings');if(await settings.count()&&!await settings.evaluate(node=>node.open))await settings.locator(':scope > summary').click();}
-async function authority(page,action){
- await openStorage(page);
- await page.getByTestId('storage-discover').click();
- await page.getByTestId('storage-'+action).click();
- await expect(page.getByTestId('storage-review-confirm')).toBeVisible();
- await Promise.all([page.waitForEvent('domcontentloaded'),page.getByTestId('storage-review-confirm').click()]);
- await expect(page.getByTestId('storage-review-confirm')).toHaveCount(0);
- await expect(page.getByRole('heading',{name:'今天，想听什么？'})).toBeVisible();
+async function seedLibrary(service,documents){
+ const status=await (await fetch(service.origin+'/api/v1/library')).json();
+ const response=await fetch(service.origin+'/api/v1/library/batch',{method:'POST',headers:{origin:service.origin,'content-type':'application/json'},body:JSON.stringify({protocolVersion:2,epoch:status.epoch,commands:documents.map(document=>({action:'put',key:document.key,expected:null,expectedIdentity:null,receiptKey:'authored-seed-'+document.key,document}))})});
+ assert.equal(response.status,200,await response.text());
+}
+async function noBrowserPrimary(page){
+ assert.equal(await page.evaluate(()=>localStorage.getItem('coconut-reader-v1')),null,'No legacy primary writes');
+ assert.deepEqual(await page.evaluate(async()=> (await indexedDB.databases()).map(db=>db.name)),[],'Fresh client must not create an IndexedDB primary');
+ await expect(page.getByTestId('storage-begin')).toHaveCount(0);await expect(page.getByTestId('storage-connect')).toHaveCount(0);
 }
 
 const record=async(service,key=documentA.key)=>{
@@ -104,13 +108,12 @@ try{
  browser=await chromium.launch({headless:true,...(process.env.COCONUT_CHROMIUM_EXECUTABLE?{executablePath:process.env.COCONUT_CHROMIUM_EXECUTABLE}:{})});
  stage='Canonical authority, durable save, restart, independent binding and CAS';
  let service=await startService('canonical');const first=await contextFor(service);const {page}=first;
- const empty=await (await fetch(service.origin+'/api/v1/library/catalog?protocolVersion=1')).json();assert.equal(empty.entries.length,0,'No automatic adoption');await openStorage(page);const raw=await downloadJSON(page,page.getByTestId('storage-export-raw'));assert.deepEqual(raw,JSON.parse(original));
- await authority(page,'begin');await openA(page);await editNote(page,'Durable React edit');await saved(page);
+ await noBrowserPrimary(page);await openA(page);await editNote(page,'Durable React edit');await saved(page);
  let durable=await record(service);assert.equal(durable.document.notes.cue,'Durable React edit');assert.deepEqual(durable.document.opaque,documentA.opaque);assert.deepEqual(durable.document.segments[0].opaque,documentA.segments[0].opaque);
  const beforeRestart=durable;const port=service.port;await service.close();service=await startService('canonical',port);await page.reload();await expect(page.getByRole('heading',{name:documentA.title,exact:true})).toBeVisible();await expect(page).toHaveURL(new RegExp('#read/'+documentA.key+'$'));
  await page.locator('.rw-cue details > summary').first().click();await expect(page.getByRole('textbox',{name:'00:00 的笔记'})).toHaveValue('Durable React edit');assert.deepEqual(await record(service),beforeRestart);
- pass('React save survives actual Node process restart and SQLite readback',{authoritySetup:'explicit React review and confirmation'});
- const second=await contextFor(service,{seed:null});await authority(second.page,'connect');await openA(second.page);
+ pass('React save survives actual Node process restart and SQLite readback',{authoritySetup:'automatic server SQLite default, no migration or connection step'});
+ const second=await contextFor(service,{seed:null});await noBrowserPrimary(second.page);await openA(second.page);
  await editNote(page,'First client wins');await saved(page);const winner=await record(service);
  await editNote(second.page,'Stale second client must not overwrite');await expect(second.page.locator('.app-header [role=status]')).toHaveText('保存未完成');assert.deepEqual(await record(service),winner);
  const conflictBackup=await backup(second.page);assert.equal(conflictBackup.documents.find(d=>d.key===documentA.key).notes.cue,'Stale second client must not overwrite');
@@ -121,41 +124,46 @@ try{
  await editNote(page,'Lost acknowledgment survives retry');await expect(page.locator('.app-header [role=status]')).toHaveText('保存未完成');const committed=await record(service);assert.equal(committed.document.notes.cue,'Lost acknowledgment survives retry');assert.equal(committed.token.revision,prior.token.revision+1);
  await page.getByRole('button',{name:'重试保存',exact:true}).click();await saved(page);await expect(page.locator('.app-message[role=status]')).toHaveText('保存已确认。');await expect(page.locator('.reader-workspace > p[role=status]')).toHaveText('已保存');await expect(page.getByText('保存结果尚未确认。请重试同一操作或导出未保存内容；不要把它视为已撤销。',{exact:true})).toHaveCount(0);await expect(page.getByText('尚未保存。内容可能已更新或存储暂不可用，请保留草稿后重试。',{exact:true})).toHaveCount(0);assert.deepEqual(await record(service),committed);assert.ok(requests.length>=2);assert.deepEqual(requests[0],requests[1],'Retry exact receipt identity, no duplicate write');await page.unroute('**/api/v1/library/batch');
  await shot(page,'canonical-reading',1360);await shot(page,'canonical-reading',390);pass('Lost successful write acknowledgment retries identical receipt without another SQLite revision');
+
+ const live=await record(service),status=await (await fetch(service.origin+'/api/v1/library')).json();
+ const lifecycle=async(action,current,document)=>{const response=await fetch(service.origin+'/api/v1/library/batch',{method:'POST',headers:{origin:service.origin,'content-type':'application/json'},body:JSON.stringify({protocolVersion:2,epoch:status.epoch,commands:[{action,key:documentA.key,expected:current.token,expectedIdentity:current.identity,receiptKey:'external-'+action, ...(document?{document}: {})}]})});assert.equal(response.status,200,await response.text());return record(service);};
+ const removed=await lifecycle('delete',live),epochRestored=await lifecycle('restore',removed,live.document);assert.ok(epochRestored.identity.lifetime>live.identity.lifetime);
+ await editNote(page,'Stale document lifetime cannot overwrite restore');await expect(page.locator('.app-header [role=status]')).toHaveText('保存未完成');assert.deepEqual(await record(service),epochRestored);assert.equal((await backup(page)).documents.find(doc=>doc.key===documentA.key).notes.cue,'Stale document lifetime cannot overwrite restore');
+ pass('Delete and restore document epoch rejects stale UI write while exporting the unsaved draft');
  await first.context.close();contexts.delete(first.context);await service.close();
 
- stage='React canonical interrupted migration controls and exact recovery download';
- for(const scenario of ['lost-finalize','cancel-before-commit']){
-  const s=await startService(scenario),f=await contextFor(s);let interrupted=false;
-  await f.page.route('**/api/v1/library/migration',async route=>{
-   if(route.request().method()==='POST'){
-    const action=route.request().postDataJSON().action;
-    if(!interrupted&&action===(scenario==='lost-finalize'?'finalize':'chunk')){
-     interrupted=true;if(scenario==='lost-finalize'){const response=await route.fetch();assert.equal(response.status(),200);await response.dispose();}return route.abort('failed');
-    }
-   }return route.continue();
-  });
-  await openStorage(f.page);await f.page.getByTestId('storage-discover').click();await f.page.getByTestId('storage-begin').click();await f.page.getByTestId('storage-review-confirm').click();await expect(f.page.getByTestId('storage-resume')).toBeVisible();assert.equal(interrupted,true);
-  const snapshot=await downloadJSON(f.page,f.page.getByTestId('storage-export-recovery'));assert.ok(JSON.stringify(snapshot).includes(documentA.segments[0].text),'Frozen original source is exportable');assert.equal(await f.page.evaluate(()=>localStorage.getItem('coconut-reader-v1')),original);
-  await f.page.unroute('**/api/v1/library/migration');await f.page.reload();await expect(f.page.getByTestId('storage-resume')).toBeVisible();await expect(f.page.getByRole('textbox',{name:'项目笔记',exact:true})).toHaveCount(0);
-  await f.page.getByTestId(scenario==='lost-finalize'?'storage-resume':'storage-cancel').click();await Promise.all([f.page.waitForEvent('domcontentloaded'),f.page.getByTestId('storage-review-confirm').click()]);await expect(f.page.getByRole('heading',{name:'今天，想听什么？'})).toBeVisible();
-  const catalog=await (await fetch(s.origin+'/api/v1/library/catalog?protocolVersion=1')).json();assert.equal(catalog.entries.length,scenario==='lost-finalize'?2:0);
-  if(scenario==='lost-finalize'){assert.equal((await record(s)).token.revision,1);await expect(f.page.getByTestId('storage-setup')).toContainText('已连接电脑统一书架');}
-  else {await expect(f.page.getByTestId('storage-setup')).toContainText('当前使用本浏览器书架');await openA(f.page);await editNote(f.page,'Browser writes resume after confirmed cancellation');await saved(f.page);}
-  pass('React '+scenario+' uses review, frozen recovery export, reload and confirmed authority receipt');await f.context.close();contexts.delete(f.context);await s.close();
- }
+ stage='Fresh browser server failure cannot create a local primary';
+ const unavailableService=await startService('unavailable'),unavailable=await contextFor(unavailableService,{seed:null,unavailable:true});await noBrowserPrimary(unavailable.page);await expect(unavailable.page.locator('.react-app')).toHaveCount(0);await expect(unavailable.page.getByRole('button',{name:'打开音频或视频文件',exact:true})).toHaveCount(0);assert.equal((await(await fetch(unavailableService.origin+'/api/v1/library/catalog?protocolVersion=1')).json()).entries.length,0);
+ pass('Fresh browser blocks startup when server is unavailable without writing or falling back to IndexedDB');await unavailable.context.close();contexts.delete(unavailable.context);await unavailableService.close();
+
+ stage='Legacy browser content is read-only recovery, never canonical adoption';
+ const legacyRaw=JSON.stringify({documents:[{...documentA,title:'Old browser copy',notes:{cue:'Browser must not win'}}],active:documentA.key}),recoveryService=await startService('legacy-recovery'),recovery=await contextFor(recoveryService,{seed:original,legacySeed:legacyRaw});
+ const idbOriginal={document:{...documentA,title:'Old IndexedDB copy'},opaque:{keep:['all','recovery','fields']}};
+ await recovery.page.evaluate(value=>new Promise((resolve,reject)=>{const request=indexedDB.open('coconut-reader-library-v1',1);request.onupgradeneeded=()=>request.result.createObjectStore('documents');request.onerror=()=>reject(request.error);request.onsuccess=()=>{const db=request.result,tx=db.transaction('documents','readwrite');tx.objectStore('documents').put(value,'old-document');tx.oncomplete=()=>{db.close();resolve();};tx.onabort=()=>reject(tx.error);};}),idbOriginal);
+ await recovery.context.addInitScript(()=>{window.authoredIDBWrites=[];const transaction=IDBDatabase.prototype.transaction;IDBDatabase.prototype.transaction=function(stores,mode,...args){if(mode&&mode!=='readonly')window.authoredIDBWrites.push({stores,mode});return transaction.call(this,stores,mode,...args);};});
+ await recovery.page.reload();await expect(recovery.page.getByRole('heading',{name:'今天，想听什么？',exact:true})).toBeVisible();
+ const recoveryBefore=await record(recoveryService);await openStorage(recovery.page);
+ const fullRecovery=await downloadJSON(recovery.page,recovery.page.getByTestId('storage-export-recovery'));assert.deepEqual(fullRecovery.stores.documents,[{key:'old-document',value:idbOriginal}]);assert.equal(fullRecovery.legacyRaw,legacyRaw);
+
+ const raw=await downloadJSON(recovery.page,recovery.page.getByTestId('storage-export-raw'));assert.deepEqual(raw,JSON.parse(legacyRaw),'Raw recovery preserves all original fields');
+ await openA(recovery.page);await editNote(recovery.page,'Server edit preserves browser recovery');await saved(recovery.page);
+ assert.equal((await record(recoveryService)).document.notes.cue,'Server edit preserves browser recovery');assert.equal(await recovery.page.evaluate(()=>localStorage.getItem('coconut-reader-v1')),legacyRaw,'Canonical writes leave original browser bytes unchanged');
+ assert.equal(recoveryBefore.document.title,documentA.title);assert.deepEqual(await recovery.page.evaluate(()=>authoredIDBWrites),[],'Inspect, export and canonical editing must never open a browser write transaction');await expect(recovery.page.getByTestId('storage-begin')).toHaveCount(0);await expect(recovery.page.getByTestId('storage-connect')).toHaveCount(0);
+ pass('Existing browser content remains exact read-only recovery and cannot overwrite canonical documents');await recovery.context.close();contexts.delete(recovery.context);await recoveryService.close();
 
  stage='Native startup close barrier over actual canonical load and failure';
- const startupService=await startService('native-startup'),startupFixture=await contextFor(startupService,{bridge:true});const sp=startupFixture.page;
- await authority(sp,'begin');const originalRecord=await record(startupService);let releaseLoad,loadArrived=false;
- const loadGate=new Promise(resolve=>{releaseLoad=resolve;});
- await sp.route('**/api/v1/library',async route=>{loadArrived=true;await loadGate;await route.continue();});
+ const startupService=await startService('native-startup'),startupFixture=await contextFor(startupService,{bridge:true,legacySeed:original});const sp=startupFixture.page;
+ const originalRecord=await record(startupService);let releaseLoad,finishLoad,loadArrived=false;
+ const loadGate=new Promise(resolve=>{releaseLoad=resolve;}),loadFinished=new Promise(resolve=>{finishLoad=resolve;});
+ await startupFixture.context.addInitScript(()=>{window.authoredStartupAborts=0;const fetch=window.fetch;window.fetch=function(input,options){if(input==='/api/v1/library')options?.signal?.addEventListener('abort',()=>window.authoredStartupAborts++,{once:true});return fetch.call(this,input,options);};});
+ await sp.route('**/api/v1/library',async route=>{loadArrived=true;await loadGate;await route.continue();finishLoad();});
  await sp.reload();await expect(sp.getByRole('heading',{name:'正在打开 Coconut',exact:true})).toBeVisible();await expect.poll(()=>loadArrived).toBe(true);
  assert.equal(await sp.evaluate(()=>coconutPrepareClose('inspect').safe),false);assert.equal(await sp.evaluate(()=>coconutPrepareUpdate(false,{id:100,kind:'update',expiresAt:Date.now()+20000})),false);
  await sp.evaluate(()=>{window.authoredStartupClose=null;window.authoredStartupRequest={id:101,kind:'close',expiresAt:Date.now()+20000};coconutPrepareClose('safe',authoredStartupRequest).then(result=>{window.authoredStartupClose=result;});});
- assert.equal(await sp.evaluate(()=>authoredStartupClose),null,'Close cannot acknowledge before real canonical read settles');await expect(sp.locator('.react-app')).toHaveCount(0);releaseLoad();await expect.poll(()=>sp.evaluate(()=>authoredStartupClose)).toBe(true);await expect(sp.locator('.react-app')).toHaveCount(0);assert.deepEqual(await record(startupService),originalRecord);assert.equal(await sp.evaluate(()=>localStorage.getItem('coconut-reader-v1')),original);
+ await expect.poll(()=>sp.evaluate(()=>authoredStartupAborts)).toBe(1);await expect.poll(()=>sp.evaluate(()=>authoredStartupClose)).toBe(true);await expect(sp.locator('.react-app')).toHaveCount(0);assert.deepEqual(await record(startupService),originalRecord);releaseLoad();await loadFinished;await expect(sp.locator('.react-app')).toHaveCount(0);assert.deepEqual(await record(startupService),originalRecord);assert.equal(await sp.evaluate(()=>localStorage.getItem('coconut-reader-v1')),original);
  assert.equal(await sp.evaluate(()=>coconutPrepareClose('release',authoredStartupRequest)),true);assert.equal(await sp.evaluate(()=>coconutPrepareClose('safe',authoredStartupRequest)),false,'Retired native receipt cannot close another lifetime');await sp.unroute('**/api/v1/library');
  await sp.route('**/api/v1/library',route=>route.abort('failed'));await sp.reload();await expect(sp.getByRole('heading',{name:'暂时无法打开书架',exact:true})).toBeVisible();await expect(sp.getByTestId('storage-export-recovery')).toBeVisible();await expect.poll(()=>sp.evaluate(()=>coconutPrepareClose('inspect').safe)).toBe(true);assert.equal(await sp.evaluate(()=>coconutPrepareUpdate(false,{id:102,kind:'update',expiresAt:Date.now()+20000})),false);assert.equal(await sp.evaluate(()=>coconutPrepareClose('safe',{id:103,kind:'close',expiresAt:Date.now()+20000})),true);assert.equal(await sp.evaluate(()=>localStorage.getItem('coconut-reader-v1')),original);assert.deepEqual(await record(startupService),originalRecord);
- pass('Native startup mock close waits real canonical loading, blocks update/admission, retires receipt and preserves failed-load recovery');await startupFixture.context.close();contexts.delete(startupFixture.context);await startupService.close();
+ pass('Native startup mock close aborts held canonical fetch before release, blocks admission, retires receipt and preserves failed-load recovery');await startupFixture.context.close();contexts.delete(startupFixture.context);await startupService.close();
 
  stage='Legacy preferences, saved summary reading and scoped keyboard behavior';
  const require=createRequire(import.meta.url),core=require('../reader/core.js'),summary=require('../reader/summary.js');
@@ -196,7 +204,7 @@ try{
  for(const width of [1360,390]){await ep.setViewportSize({width,height:960});await evidenceToggle.focus();await ep.keyboard.press('Enter');await expect(sourceRows).toHaveCount(50);await expect(sourceRows.first()).toHaveAttribute('data-summary-evidence-id','long-summary-0');const next=ep.getByRole('button',{name:'下一页原文依据',exact:true});await next.focus();await ep.keyboard.press('Enter');await expect(sourceRows.first()).toHaveAttribute('data-summary-evidence-id','long-summary-50');await expect(next).toBeFocused();await ep.getByRole('button',{name:'上一页原文依据',exact:true}).click();await expect(sourceRows.first()).toHaveAttribute('data-summary-evidence-id','long-summary-0');await shot(ep,'summary-evidence',width);await evidenceToggle.focus();await ep.keyboard.press('Enter');await expect(sourceRows).toHaveCount(0);await expect(evidenceToggle).toBeFocused();}
  const [summaryExport]=await Promise.all([ep.waitForEvent('download'),ep.getByRole('button',{name:'导出这份摘要',exact:true}).click()]);assert.equal(await readFile(await summaryExport.path(),'utf8'),core.summaryMarkdown(longDoc,longAnswer),'Paging never truncates full historical source export');await ep.getByRole('navigation',{name:'摘要引用'}).getByRole('button').last().click();await expect(ep.locator('[data-cue-id="'+longAnswer.citations.at(-1)+'"]')).toBeVisible();assert.deepEqual(evidenceService.asks,[]);pass('10,000-cue summary mounts zero collapsed and 50 expanded source rows; keyboard paging, original citation and full export preserved');await evidence.context.close();contexts.delete(evidence.context);await evidenceService.close();
  stage='React AI explicit consent, provenance, late source and transient errors';
- const aiService=await startService('ai'),ai=await contextFor(aiService);await authority(ai.page,'begin');await openA(ai.page);
+ const aiService=await startService('ai'),ai=await contextFor(aiService);await openA(ai.page);
  await ai.page.locator('.react-ai-panel > summary').click();assert.equal(aiService.asks.length,0);await ai.page.getByRole('button',{name:'检查本地 AI 连接',exact:true}).click();await expect(ai.page.getByText(/前台语言服务可用|连接可用；发送前/)).toBeVisible();
  const consent=ai.page.getByRole('checkbox',{name:/我确认上述范围、提供商与模型/}),submit=ai.page.getByRole('button',{name:'执行本次任务',exact:true});
  await ai.page.locator('.ai-workspace fieldset label').filter({hasText:/^问题/}).locator('textarea').fill('Explain this authored source');await expect(submit).toBeDisabled();assert.equal(aiService.asks.length,0);
@@ -219,7 +227,7 @@ try{
  const picking=await p.evaluate(()=>coconutPrepareClose('inspect'));assert.equal(picking.safe,false);assert.equal(picking.flushable,false);assert.equal(await p.evaluate(()=>coconutPrepareUpdate()),false);assert.equal(await p.evaluate(()=>coconutPrepareClose('safe',{id:11,kind:'close',expiresAt:Date.now()+10000})),false);
  await emptyChooser.setFiles([]);await expect.poll(()=>p.evaluate(()=>coconutPrepareClose('inspect').safe)).toBe(true);await expect(p.getByRole('heading',{name:'今天，想听什么？'})).toBeVisible();assert.equal(await p.locator('audio,video,.reader-workspace').count(),0);pass('Real picker blocks close/update until an empty selection retires its owner',{limitation:'Empty browser selection, not native OS cancel; native lifecycle bridge is a mock'});
  await chooseFile(p,p.getByRole('button',{name:'打开音频或视频文件',exact:true}),{name:'authored-native.wav',mimeType:'audio/wav',buffer:wav()});await expect(p.getByRole('heading',{name:'authored-native.wav',exact:true})).toBeVisible();await saved(p);assert.equal(await p.locator('audio').evaluate(player=>player.paused),true);assert.equal(await p.locator('.rw-cue').count(),0);await p.getByRole('textbox',{name:'项目笔记',exact:true}).fill('Keep this project note');await p.getByRole('button',{name:'保存笔记',exact:true}).click();await saved(p);
- await p.getByRole('checkbox',{name:'在这台电脑记住原文件',exact:true}).check();await expect(p.getByText(/已在这台电脑记住原文件/)).toBeVisible();const nativeBefore=await p.evaluate(()=>authoredNativeCalls);assert.equal(nativeBefore.filter(c=>c.kind==='remember').length,1);assert.ok(nativeBefore.find(c=>c.kind==='remember').owner.epoch>0);
+ await p.getByRole('checkbox',{name:'在这台电脑记住原文件',exact:true}).check();await expect(p.getByText(/已在这台电脑记住原文件/)).toBeVisible();const nativeBefore=await p.evaluate(()=>authoredNativeCalls);assert.equal(nativeBefore.filter(c=>c.kind==='remember').length,1);const nativeOwner=nativeBefore.find(c=>c.kind==='remember').owner;const nativeStatus=await (await fetch(localService.origin+'/api/v1/library')).json();assert.equal(nativeOwner.library,nativeStatus.binding.mediaLibraryIdentity);assert.equal(nativeOwner.epoch,(await record(localService,(await backup(p)).documents[0].key)).identity.lifetime);await noBrowserPrimary(p);
  const rawBackup=await backup(p),rawDoc=rawBackup.documents[0];assert.equal(rawDoc.project_note,'Keep this project note');assert.ok(!JSON.stringify(rawBackup).includes('authored-native-token'));
  await p.reload();await p.getByRole('button',{name:'继续阅读',exact:true}).click();await expect(p.locator('audio')).toBeVisible();assert.equal(await p.locator('audio').evaluate(player=>player.paused),true);await expect(p.getByText(/已载入本机原文件，未自动播放/)).toBeVisible();await p.getByRole('button',{name:'不再记住',exact:true}).click();await expect(p.getByText(/已不再记住原文件/)).toBeVisible();assert.equal(await p.locator('audio').count(),1,'Forget preserves loaded session');
  const closeInspection=await p.evaluate(()=>coconutPrepareClose('inspect'));assert.equal(closeInspection.safe,true);
@@ -230,7 +238,7 @@ try{
  await expect(p.locator('.subtitle-recovery label').filter({hasText:/^原始文件编码/}).locator('select')).toBeVisible();await expect(p.getByRole('button',{name:'将已核对字幕附加到目标项目',exact:true})).toBeDisabled();await p.locator('.subtitle-recovery label').filter({hasText:/^原始文件编码/}).locator('select').selectOption(encoded.encoding);const reviewed=p.getByRole('checkbox',{name:'我已核对文字、编码和诊断，确认加入',exact:true});await reviewed.check();await p.locator('.subtitle-recovery label').filter({hasText:/^原始文件编码/}).locator('select').selectOption('utf-8');await expect(reviewed).toHaveCount(0);await p.locator('.subtitle-recovery label').filter({hasText:/^原始文件编码/}).locator('select').selectOption(encoded.encoding);await expect(reviewed).not.toBeChecked();await reviewed.check();await p.getByRole('button',{name:'将已核对字幕附加到目标项目',exact:true}).click();await expect(p.locator('.rw-original')).toContainText('中文测试𠀀');await saved(p);assert.equal(await p.locator('audio').count(),1);
  const attached=await backup(p);assert.ok(!JSON.stringify(attached).includes('authored-native-token'),'Resolved native token never enters portable backup');assert.equal(attached.documents.length,1);assert.equal(attached.documents[0].key,rawDoc.key);assert.equal(attached.documents[0].project_note,'Keep this project note');assert.deepEqual(attached.documents[0].local_media_source,rawDoc.local_media_source);assert.equal(attached.documents[0].segments[0].text,'中文测试𠀀\n第二行');await shot(p,'attached-subtitle',390);
  assert.equal(await p.evaluate(()=>coconutPrepareClose('safe',{id:13,kind:'close',expiresAt:Date.now()+10000})),true);await expect.poll(()=>p.evaluate(()=>authoredNativeCalls.filter(c=>c.kind==='release').map(c=>c.token))).toEqual(['authored-native-token']);assert.equal(await p.locator('#react-root').evaluate(node=>node.inert),true);assert.equal(await p.evaluate(()=>coconutPrepareClose('release',{id:13,kind:'close',expiresAt:Date.now()+10000})),true);
- const restored=await contextFor(localService,{seed:null,width:390});await restored.page.locator('.recovery-entry > summary').click();await chooseFile(restored.page,restored.page.getByRole('button',{name:'恢复书架备份',exact:true}),{name:'authored-backup.json',mimeType:'application/json',buffer:Buffer.from(JSON.stringify(attached))});await expect(restored.page.getByText('恢复结果见上方保存状态。',{exact:true})).toBeVisible();await saved(restored.page);const recovered=await backup(restored.page);assert.deepEqual(recovered.documents,attached.documents);await restored.page.reload();await restored.page.getByRole('button',{name:/^我的内容/}).click();await restored.page.locator('.library-page li button').filter({hasText:rawDoc.title}).first().click();await expect(restored.page.getByRole('heading',{name:rawDoc.title,exact:true})).toBeVisible();await expect(restored.page.locator('.rw-original')).toContainText('中文测试𠀀');await expect(restored.page.getByRole('textbox',{name:'项目笔记',exact:true})).toHaveValue('Keep this project note');assert.equal(await restored.page.locator('audio').count(),0,'JSON does not serialize a native session URL');
+ const restoreService=await startService('restore'),restored=await contextFor(restoreService,{seed:null,width:390});await restored.page.locator('.recovery-entry > summary').click();await chooseFile(restored.page,restored.page.getByRole('button',{name:'恢复书架备份',exact:true}),{name:'authored-backup.json',mimeType:'application/json',buffer:Buffer.from(JSON.stringify(attached))});await expect(restored.page.getByText('恢复结果见上方保存状态。',{exact:true})).toBeVisible();await saved(restored.page);const recovered=await backup(restored.page);assert.deepEqual(recovered.documents,attached.documents);await restored.page.reload();await restored.page.getByRole('button',{name:/^我的内容/}).click();await restored.page.locator('.library-page li button').filter({hasText:rawDoc.title}).first().click();await expect(restored.page.getByRole('heading',{name:rawDoc.title,exact:true})).toBeVisible();await expect(restored.page.locator('.rw-original')).toContainText('中文测试𠀀');await expect(restored.page.getByRole('textbox',{name:'项目笔记',exact:true})).toHaveValue('Keep this project note');assert.equal(await restored.page.locator('audio').count(),0,'JSON does not serialize a native session URL');
  pass('Real GB18030 bytes require renewed review; attach preserves raw project identity and JSON recovery reload');
  assert.deepEqual(localService.asks,[],'Recovery/native flow never invokes inference');
  assert.deepEqual(errors,[]);assert.deepEqual(blocked,[]);assert.deepEqual(forbidden,[],'No ASR/upload/download/task submission');

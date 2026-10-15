@@ -1,10 +1,33 @@
-# Canonical PC library: opt-in foundation
+# Canonical computer library: the default storage authority
 
-This increment supplies durable PC-side storage and an API, **not browser migration or cross-device sync**. IndexedDB/localStorage remain authoritative for the existing reader. Starting this service never reads or deletes browser data or starts a model. Desktop Electron integration and client adoption follow separately.
+The React product loads and writes the connected computer's SQLite library by
+default, including on a fresh browser and an empty library. Dev, light-service
+and Electron entrypoints open their configured library automatically. No browser
+migration or connection confirmation is needed. This is a shared library on one
+service, not cross-device synchronization.
 
-For an isolated library, run `COCONUT_LIBRARY_DIRECTORY=/absolute/private/directory npm run start:light`, or pass `libraryDirectory` to `startBridge`. Use an absolute path. On POSIX the existing directory must be owned by this user with no group/other access; permissive directories are rejected without changing their permissions. Existing database/journal files must be private regular files, never symlinks or hard links. New database and sidecars are owner-only. The directory contains `library.sqlite` plus SQLite journal files. Leave the variable unset for unchanged reader behavior. Use a local filesystem, not a network-mounted or cloud-synchronized SQLite file. Do not copy a live SQLite file alone as a backup; stop the service before copying the entire directory.
+`COCONUT_LIBRARY_DIRECTORY=/absolute/private/directory` selects a library for the
+light-service or development entry. Embedders can pass `libraryDirectory` to
+`startBridge`. Paths must be absolute, private and locally owned. Unsafe existing
+permissions, symlinks and hard links are rejected without changing them. The
+directory contains `library.sqlite` and SQLite journal files. Use a local
+filesystem, not a network-mounted or cloud-synchronized live database. Stop the
+service before copying the complete directory for backup.
 
-Only this opt-in capability requires **Node 22.13.0+**, using the official built-in `node:sqlite` API (experimental on Node 22; no third-party native dependency or install hook). Existing reader/dev/doctor runtime requirements remain unchanged. The module is imported lazily after the library-specific runtime gate. Failure to initialize advertises a disabled library with an explicit reason; the reader remains available. The packaging manifest includes both service modules.
+The writable product requires Node 22.13.0+ with built-in `node:sqlite`. A missing,
+unavailable or corrupt server library causes an explicit startup failure or an
+unsaved-edit error; it never creates a new IndexedDB/localStorage authority.
+Existing browser content is detected without opening its database at startup.
+Only explicit recovery export opens existing browser stores, in readonly mode.
+Original rows, malformed legacy bytes and interrupted migration markers remain
+untouched. Migration POSTs return 410; historical migration status, receipts and
+committed archives remain available through versioned GETs. Recovery never
+changes the persisted library namespace or automatically imports browser rows.
+
+Native media reconciliation is scoped to the fully loaded current library UUID.
+Even an empty canonical catalog preserves remembered bindings belonging to a
+retained browser library. Identical document keys in different libraries do not
+overwrite each other's private bindings. Source media files are never deleted.
 
 ## Protocol 1
 
@@ -19,6 +42,16 @@ The receipt, snapshot/tombstone, catalog metadata and global sequence commit in 
 
 Delete retains the full payload and a higher revision; only explicit restore with the current tombstone token revives it. No purge API exists. Existing keys cannot be silently recreated or replaced after deletion. There is no last-writer-wins fallback. Database/schema failures never reset or overwrite existing data. Startup verifies stored payload identities, byte counts and receipt shapes; later reads and writes also refuse corrupt records while preserving their original bytes. Discovery does not imply browser data was imported, and these receipts do not impersonate existing browser save receipts.
 
-## Next integration acceptance
+## Client save contract
 
-Before enabling the client, preserve an immutable browser recovery snapshot and migration source identity; stage records without overwriting server collisions; verify exact JSON and per-document identity/receipts/tombstones; make adoption explicit only after all acknowledgments; retain export/rescue and browser data. Test interruption after every boundary, restart with partial staging, identical retry, source changes during migration, database epoch replacement, existing server records, tombstones, unknown payload fields and oversized input. No automatic browser cleanup is authorized by this foundation.
+The default client uses `POST /api/v1/library/batch` protocol 2 with captured
+revision and logical identity preconditions, atomic document groups and durable
+receipt keys. It advances saved state and native owner lifetimes only after a
+validated receipt. A server or connection identity change cannot apply a stale
+response. Lost acknowledgements retain their exact retry bytes; a later edit
+cannot silently strand an earlier uncertain write.
+
+Discovery includes a stable media-library binding even at sequence zero. The
+library epoch, media namespace, document lifetime and revision have separate
+roles and must not be substituted for one another. Multi-client startup does not
+create or migrate content and does not change any of these identities.

@@ -21,7 +21,7 @@ const idb=require('../reader/indexeddb-document-adapter.js');
 
 const canonical=require('../reader/canonical-library.js');
 
-const provider=require('../reader/storage-provider.js');
+const provider=require('./helpers/historical-browser-provider.cjs');
 
 const legacyModule=require('../reader/library-store.js');
 
@@ -30,7 +30,7 @@ const doc=(key='a')=>({key,title:'Authored '+key,segments:[{id:'cue',start:0,end
 async function fixture(t){
  const directory=await fs.mkdtemp(path.join(os.tmpdir(),'coconut-client-')),server=await createLibraryStore({directory});t.after(async()=>{server.close();await fs.rm(directory,{recursive:true,force:true});});
  const engine=transactionDouble(),values=new Map([[idb.LEGACY_KEY,JSON.stringify({documents:[doc()]})]]),storage={getItem:k=>values.get(k)??null,setItem:(k,v)=>values.set(k,v)},options={indexedDB:engine.indexedDB,getLegacyStorage:()=>storage,name:'client'};
- const primitive=idb.create(options);assert.equal((await primitive.ready()).ok,true);const control={};const calls=[];
+ const primitive=idb.create(options);assert.equal((await primitive.ready()).ok,true);engine.rows('client').get('meta').set('desktop-media-library',server.describe().binding.mediaLibraryIdentity);const control={};const calls=[];
  const fetch=async(url,options={})=>{
   const parsed=new URL(url,'http://localhost'),body=options.body&&JSON.parse(options.body);calls.push({url,body,raw:options.body});
   if(control.before)await control.before(body,parsed);
@@ -339,7 +339,7 @@ test('binding corruption and preserved-source changes fail closed',async t=>{
 });
 
 test('API-only canonical namespace survives reopen and is separate from library epoch',async t=>{
- const f=await fixture(t);assert.equal(f.server.describe().binding,null);
+ const f=await fixture(t);assert.ok(f.server.describe().binding.mediaLibraryIdentity);
  const epoch=f.server.describe().epoch;
  f.server.commit({protocolVersion:1,epoch,key:'api',action:'put',expected:null,receiptKey:'namespace-test',document:doc('api')});
  const identity=f.server.describe().binding.mediaLibraryIdentity;assert.notEqual(identity,epoch);
@@ -351,7 +351,7 @@ test('API-created library binding survives later matching browser migration with
  f.engine.rows('client').get('catalog').get('a').order=1;f.engine.rows('client').get('meta').get('state').nextOrder=2;
  f.server.commit({protocolVersion:1,epoch,key:'a',action:'put',expected:null,receiptKey:'api-created',document:doc()});
  const namespace=f.server.describe().binding.mediaLibraryIdentity,b=await secondClient(f);await b.client.connect();const binding=await b.client.marker();
- await f.client.begin();const migration=await f.client.marker();assert.notEqual(migration.mediaLibraryIdentity,namespace);
+ await f.client.begin();const migration=await f.client.marker();assert.equal(migration.mediaLibraryIdentity,namespace);
  assert.equal(f.server.describe().binding.mediaLibraryIdentity,namespace);assert.equal((await b.client.initializeBinding(binding)).ok,true);
  const a=await f.client.initialize(migration);assert.equal((await a.adapter.mediaLibraryIdentity()).identity,namespace);
  const reconnected=await b.client.initializeBinding(binding),changed={...doc(),title:'B after migration'};

@@ -45,6 +45,8 @@ export function createLocalMediaService({userDataDirectory,readerDirectory=path.
   if(typeof value?.key!=='string'||!value.key||value.key.length>1000||!Number.isSafeInteger(value.epoch)||value.epoch<=0||typeof value.library!=='string'||!/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(value.library)||!source)throw fail('unavailable');
   return {key:value.key,epoch:value.epoch,library:value.library,source};
  }
+ const recordKey=value=>JSON.stringify([value.library,value.key]);
+ const validLibrary=value=>typeof value==='string'&&/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(value);
  const ownerId=value=>JSON.stringify([value.key,value.epoch,value.library,value.source]);
  function validIdentity(identity,source){
   if(typeof identity!=='string'||identity.length>3000||!identity.startsWith('file-candidate-v1:')||hash(identity)!==source.fingerprint)return false;
@@ -69,8 +71,8 @@ export function createLocalMediaService({userDataDirectory,readerDirectory=path.
    const next=new Map();
    for(const record of data.records){
     const normalized=owner(record?.owner);
-    if(!validPath(record.path)||!validIdentity(record.identity,normalized.source)||!record.stat||!STAT_FIELDS.every(key=>typeof record.stat[key]==='string'&&/^-?\d{1,30}$/.test(record.stat[key]))||next.has(normalized.key))throw fail('unavailable');
-    next.set(normalized.key,{owner:normalized,path:record.path,identity:record.identity,stat:Object.fromEntries(STAT_FIELDS.map(key=>[key,record.stat[key]]))});
+    if(!validPath(record.path)||!validIdentity(record.identity,normalized.source)||!record.stat||!STAT_FIELDS.every(key=>typeof record.stat[key]==='string'&&/^-?\d{1,30}$/.test(record.stat[key]))||next.has(recordKey(normalized)))throw fail('unavailable');
+    next.set(recordKey(normalized),{owner:normalized,path:record.path,identity:record.identity,stat:Object.fromEntries(STAT_FIELDS.map(key=>[key,record.stat[key]]))});
    }
    records=next;loaded=true;
   }catch(error){if(error.code==='ENOENT'){records=new Map();loaded=true;}else throw fail('unavailable');}
@@ -126,13 +128,13 @@ export function createLocalMediaService({userDataDirectory,readerDirectory=path.
    const record={owner:normalized,path:filePath,identity};
    const checked=await checkedFile(record,{remember:true});await checked.handle.close();record.stat=checked.stat;
    if(closed)return status('unavailable');
-   const next=new Map(records);next.set(normalized.key,record);await persist(next);
-   retire(item=>item.owner.key===normalized.key);
+   const next=new Map(records);next.set(recordKey(normalized),record);await persist(next);
+   retire(item=>recordKey(item.owner)===recordKey(normalized));
    return status('remembered');
   });},
   resolve(value){const requestedGeneration=generation;return run(async()=>{
    if(requestedGeneration!==generation)return status('unavailable');
-   const normalized=owner(value),record=records.get(normalized.key);
+   const normalized=owner(value),record=records.get(recordKey(normalized));
    if(!record||ownerId(record.owner)!==ownerId(normalized))return status('not-remembered');
    if(tokens.size>=MAX_TOKENS)return status('unavailable');
    const checked=await checkedFile(record);await checked.handle.close();
@@ -142,20 +144,23 @@ export function createLocalMediaService({userDataDirectory,readerDirectory=path.
    return {status:'ready',token,url:PREFIX+token,kind:record.owner.source.kind,name:record.owner.source.name,identity:record.identity};
   });},
   forget(value){return run(async()=>{
-   const normalized=owner(value),record=records.get(normalized.key);
+   const normalized=owner(value),record=records.get(recordKey(normalized));
    if(!record||ownerId(record.owner)!==ownerId(normalized))return status('not-remembered');
-   const next=new Map(records);next.delete(normalized.key);await persist(next);
+   const next=new Map(records);next.delete(recordKey(normalized));await persist(next);
    // Opting out removes persistence, not the already selected session player.
    // Unlink/removal releases its attachment separately; reconcile fences owners.
    return status('forgotten');
   });},
-  // Call only with a complete, successfully loaded catalog with reliable epochs.
-  reconcile(values){return run(async()=>{
-   if(!Array.isArray(values)||values.length>10000)return status('unavailable');
-   const live=new Map();for(const value of values){const normalized=owner(value);if(live.has(normalized.key))return status('unavailable');live.set(normalized.key,ownerId(normalized));}
-   const next=new Map([...records].filter(([key,record])=>live.get(key)===ownerId(record.owner)));
+  // A complete catalog authorizes pruning only its own namespace. Other
+  // libraries (including retained browser recovery) remain intact even when
+  // the current SQLite library is empty or reuses the same document keys.
+  reconcile(values,library){return run(async()=>{
+   if(!validLibrary(library)||!Array.isArray(values)||values.length>10000)return status('unavailable');
+   const live=new Map();for(const value of values){const normalized=owner(value);if(normalized.library!==library||live.has(normalized.key))return status('unavailable');live.set(normalized.key,ownerId(normalized));}
+   const next=new Map([...records].filter(([,record])=>record.owner.library!==library||live.get(record.owner.key)===ownerId(record.owner)));
    if(next.size!==records.size)await persist(next);
-   retire(item=>live.get(item.owner.key)!==ownerId(item.owner));return {status:'reconciled',rememberedKeys:[...next.keys()]};
+   retire(item=>item.owner.library===library&&live.get(item.owner.key)!==ownerId(item.owner));
+   return {status:'reconciled',rememberedKeys:[...next.values()].filter(record=>record.owner.library===library).map(record=>record.owner.key)};
   });},
   async release(token){
    if(typeof token!=='string'||!tokens.has(token))return status('released');

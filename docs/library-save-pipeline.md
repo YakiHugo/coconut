@@ -6,16 +6,20 @@ write receipt acknowledges that generation, then `已保存`. A burst coalesces 
 250 ms debounce and a one-second maximum wait. Clean document navigation writes
 only the independent window selection preferences, never the document library.
 
-The default writer now stores documents separately in IndexedDB, capturing only
-dirty identities in each transaction. A gated startup loads the complete library
-before admitting edits, and an additive verified migration preserves exact legacy
-bytes. Per-document epoch/revision checks reject stale same-document writes while
-allowing independent edits in other windows. See [storage and migration](indexeddb-library-storage.md).
+The default writer stores documents in the connected computer's SQLite library.
+A fresh browser loads that library directly, including an empty library, before
+admitting edits. No IndexedDB content store or migration confirmation is needed.
+Per-document epoch/revision checks reject stale same-document writes while
+allowing independent edits in other windows. Namespace and document lifetimes
+also bind native media references to successful save receipts.
 
-When IndexedDB is unavailable before migration, the explicitly labeled legacy
-fallback still serializes the **whole library synchronously** into localStorage.
-Its read-before-write comparison is not atomic cross-window compare-and-swap.
-Neither backend overwrites unreadable original data or silently evicts content.
+A server outage blocks library startup or leaves an edit explicitly unsaved; it
+never switches content persistence to IndexedDB or localStorage. Existing browser
+records are inspected read-only and can be exported from storage recovery. They
+are never automatically merged, overwritten, deleted, or used as a second writer.
+Historical migration status, receipt and archive GETs remain readable; migration
+POSTs are retired. The existing SQLite namespace never changes during recovery.
+A static-file-only host therefore cannot provide a writable product library.
 
 Failures remain visible with their actual reason: quota, denied access, changed
 library, migration fence, unreadable data, cancellation or identity mismatch.

@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createRequire} from 'node:module';
 import {transactionDouble} from './helpers/indexeddb-transaction-double.mjs';
-const require=createRequire(import.meta.url),C=require('../reader/core.js'),Store=require('../reader/library-store.js'),Provider=require('../reader/storage-provider.js'),IDB=require('../reader/indexeddb-document-adapter.js');
+const require=createRequire(import.meta.url),C=require('../reader/core.js'),Store=require('../reader/library-store.js'),Provider=require('./helpers/historical-browser-provider.cjs'),IDB=require('../reader/indexeddb-document-adapter.js');
 const clone=value=>JSON.parse(JSON.stringify(value));
 function source(){return {...C.validate({title:'No media',segments:[{id:'a',start:0,end:1,text:'First',speaker:'A'},{id:'b',start:0,end:2,text:'Second',speaker:'B'},{id:'c',start:10,end:20,text:'Third'}],readingPosition:'b',notes:{a:'Personal'},timestamp_bookmarks:[{id:'ordinary',time:4,note:'Media note'}]}),key:'source'};}
 function add(doc,id='chapter',cueId='b',title='My chapter'){doc.reading_chapters=C.readingChaptersWith(doc,C.createReadingChapter(doc,{id,title,cueId}));return doc;}
