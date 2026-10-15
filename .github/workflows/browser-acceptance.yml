@@ -72,5 +72,7 @@ jobs:
             ${{ runner.temp }}/coconut-react-authored/matrix-attached-subtitle-390.png
             ${{ runner.temp }}/coconut-react-authored/matrix-summary-preferences-1360.png
             ${{ runner.temp }}/coconut-react-authored/matrix-summary-preferences-390.png
+            ${{ runner.temp }}/coconut-react-authored/matrix-summary-evidence-1360.png
+            ${{ runner.temp }}/coconut-react-authored/matrix-summary-evidence-390.png
             ${{ runner.temp }}/coconut-react-authored/react-production-matrix.json
             ${{ runner.temp }}/coconut-react-authored/react-production-matrix-failure.json
