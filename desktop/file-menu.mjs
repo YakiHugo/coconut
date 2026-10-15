@@ -23,7 +23,15 @@ export function createFileMenu({window,origin,blocked=()=>false,now=Date.now}) {
  const syncReady=()=>{enable(Boolean(bootstrap&&bootstrap.generation===generation&&trusted()&&
   bootstrap.url===window.webContents.getURL().split('#')[0]&&!window.webContents.isLoadingMainFrame()));};
  const invalidate=()=>{generation++;bootstrap=null;enable(false);};
- window.webContents.on('did-start-loading',invalidate);
+ // The loading spinner also runs for same-document navigation. React writes
+ // its initial #discover route with history.replaceState; that does not emit
+ // another did-finish-load and must not discard a verified document receipt.
+ window.webContents.on('did-start-loading',()=>enable(false));
+ window.webContents.on('did-start-navigation',(details,_url,isInPlace,isMainFrame)=>{
+  const main=details?.isMainFrame??isMainFrame,same=details?.isSameDocument??isInPlace;
+  if(main!==false&&same!==true)invalidate();
+ });
+ window.webContents.on('did-navigate-in-page',syncReady);
  window.webContents.on('render-process-gone',invalidate);
  window.webContents.on('did-stop-loading',syncReady);
  window.on('closed',invalidate);
