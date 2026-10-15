@@ -8,7 +8,8 @@ import {installSavePipeline,settle} from './helpers/save-pipeline.mjs';
 const root=new URL('../',import.meta.url),KEY='coconut-reader-v1';
 const fixture=(title='Authored removal fixture')=>({title,language:'en',readingPosition:'cue',notes:{cue:'A private fixture note'},segments:[{id:'cue',start:0,end:5,text:'An authored correction.',original_text:'An authored original.',translations:{zh:{text:'自写译文',provider:'authored-fixture',source_text:'An authored correction.',source_language:'en',document_language:'en'}}}]});
 function setup(stored){
- const w=new Window({url:'https://coconut.example/'});w.document.body.innerHTML=fs.readFileSync(new URL('reader/index.html',root),'utf8').split('<body>')[1].split('</body>')[0];
+ // Legacy local-service fixture: injected AI responses are not private-owner authorization.
+ const w=new Window({url:'http://localhost/'});w.document.body.innerHTML=fs.readFileSync(new URL('reader/index.html',root),'utf8').split('<body>')[1].split('</body>')[0];
  Object.defineProperty(w,'crypto',{configurable:true,value:webcrypto});if(stored)w.localStorage.setItem(KEY,stored);
  w.fetch=async()=>{throw new Error('No real network in authored fixtures');};
  const pipeline=installSavePipeline(w);

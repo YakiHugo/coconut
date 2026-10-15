@@ -3,8 +3,9 @@ import {webcrypto} from 'node:crypto';
 import {Window} from 'happy-dom';
 import {installSavePipeline} from './save-pipeline.mjs';
 const root=new URL('../../',import.meta.url);
-export function libraryHarness(documents=[],{probe=false,sourceRoot=root,configureCore=()=>{}}={}){
- const w=new Window({url:'https://coconut.example/'});
+export function libraryHarness(documents=[],{probe=false,sourceRoot=root,configureCore=()=>{},localService=false}={}){
+ // Legacy local-service fixture: injected AI responses are not private-owner authorization.
+ const w=new Window({url:localService?'http://localhost/':'https://coconut.example/'});
  w.document.body.innerHTML=fs.readFileSync(new URL('reader/index.html',sourceRoot),'utf8').split('<body>')[1].split('</body>')[0];
  Object.defineProperty(w,'crypto',{value:webcrypto});
  w.localStorage.setItem('coconut-reader-v1',JSON.stringify({documents,active:documents[0]?.key||null}));
