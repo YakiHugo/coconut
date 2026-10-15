@@ -74,3 +74,49 @@ test('desktop packaging includes the provider diagnostics dependency',async()=>{
  const packaging=await readFile(new URL('../desktop/package.mjs',import.meta.url),'utf8');
  assert.match(packaging,/'providers\.mjs','provider-errors\.mjs'/);
 });
+test('one bounded message JSON unwrap preserves actual model/login rejection and explicit HTTP metadata',()=>{
+ const reason="The 'gpt-6-luna' model is not supported when using Codex with a ChatGPT account.";
+ const message=JSON.stringify({request_metadata:'x'.repeat(400),status:400,error:{message:reason,type:'invalid_request_error',code:null,param:null}});
+ const error=providerFailure('codex',{code:1,stdout:lines({type:'error',message},{type:'turn.failed',error:{message}})});
+ assert.equal(error.localProviderDetails.message,reason);
+ assert.equal(error.providerDiagnostics.upstreamStatus,400);
+ assert.equal(error.providerDiagnostics.upstreamType,'invalid_request_error');
+ assert.equal(error.providerDiagnostics.upstreamCode,null);
+ assert.match(error.message,/上游 HTTP 400/);assert.match(error.message,/invalid_request_error/);
+ assert.ok(!JSON.stringify(error).includes('gpt-6-luna')); // Only explicit local disclosure retains unknown prose.
+});
+test('outer explicit code and status win over wrapped fields without type/code conflation',()=>{
+ const error=providerFailure('codex',{code:1,stdout:lines({type:'turn.failed',error:{code:'service_unavailable',status_code:503,message:JSON.stringify({status:400,error:{code:'model_not_found',type:'invalid_request_error',message:'Request failed'}})}})});
+ assert.equal(error.providerDiagnostics.upstreamCode,'service_unavailable');assert.equal(error.providerDiagnostics.upstreamStatus,503);
+ assert.equal(error.providerDiagnostics.upstreamType,'invalid_request_error');
+});
+test('message JSON decoding rejects malformed, nonobject, deep, unsafe and oversized envelopes',()=>{
+ for(const message of ['bad JSON','400','null','[]',JSON.stringify({error:{error:{message:'Request failed'},status:401}}),
+  JSON.stringify({error:{message:{text:'Request failed'}},status:401}),
+  JSON.stringify({error:JSON.stringify({status:401,message:'Request failed'})}),
+  JSON.stringify({message:JSON.stringify({status:401,message:'Request failed'})}),
+  '{"__proto__":{"status":401},"status":401,"message":"Request failed"}',
+  JSON.stringify({error:{constructor:'bad',message:'Request failed'},status:401}),
+  JSON.stringify({message:'Request failed',status:401,padding:'x'.repeat(17000)})]){
+  const error=providerFailure('codex',{code:1,stdout:lines({type:'error',message})});
+  assert.equal(error.providerDiagnostics.upstreamStatus,null);assert.equal(error.providerDiagnostics.upstreamCode,null);assert.equal(error.providerDiagnostics.upstreamType,null);
+ }
+ const prose=providerFailure('codex',{code:1,stdout:lines({type:'error',message:'HTTP 401 is mentioned in prose'})});
+ assert.equal(prose.providerDiagnostics.upstreamStatus,null);
+});
+test('decoded message retains the existing local sanitization and persisted-data boundary',()=>{
+ for(const message of ['Authorization: Bearer example-secret','/Users/person/private file.txt','my private source']){
+  const error=providerFailure('codex',{code:1,stdout:lines({type:'error',message:JSON.stringify({status:400,error:{message,code:'unknown_secret_code',type:'unknown_secret_type'}})})},JSON.stringify({text:'my private source'}));
+  assert.ok(!JSON.stringify(error).includes(message));assert.equal(error.providerDiagnostics.upstreamType,null);
+  assert.ok(!error.localProviderDetails.message.includes('example-secret'));assert.ok(!error.localProviderDetails.message.includes('person'));assert.ok(!error.localProviderDetails.message.includes('my private source'));
+ }
+});
+test('outer error type wins and CLI event type is never an upstream error type',()=>{
+ const nested=JSON.stringify({error:{type:'invalid_request_error',message:'Request failed'}});
+ for(const message of [nested,'Request failed']){
+  const error=providerFailure('codex',{code:1,stdout:lines({type:'turn.failed',error:{type:'authentication_error',message}})});
+  assert.equal(error.providerDiagnostics.upstreamType,'authentication_error');
+ }
+ const error=providerFailure('codex',{code:1,stdout:lines({type:'error',message:'Request failed'})});
+ assert.equal(error.providerDiagnostics.upstreamType,null);
+});
