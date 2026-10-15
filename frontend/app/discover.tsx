@@ -55,7 +55,7 @@ export function Discover({ store }: {
             if(valueResult.state==='awaiting_selection')updateSession({selection:valueResult.selection,receipt:null,attempt:null});
             else if(valueResult.state==='blocked')updateSession({error:valueResult.error?.message||'暂时无法读取来源。',languageRequired:valueResult.error?.code==='language_required',languageChoices:captionLanguageChoices(valueResult.error?.languages)});
             else {
-                if(attempt.episode&&typeof valueResult.source.feed_checked_at==='string'&&sessionRef.current.selection)updateSession({selection:{...sessionRef.current.selection,feed_checked_at:valueResult.source.feed_checked_at}});
+                if(attempt.episode&&typeof valueResult.source?.feed_checked_at==='string'&&sessionRef.current.selection)updateSession({selection:{...sessionRef.current.selection,feed_checked_at:valueResult.source.feed_checked_at}});
                 const content=ingestionDocument(valueResult);
                 if(!content){setError('此来源尚未返回可打开的原声或文字稿，请保留来源后重试。');return;}
                 updateSession({receipt:valueResult,attempt:null,languageRequired:false,languageChoices:[]});

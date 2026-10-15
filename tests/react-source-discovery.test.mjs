@@ -141,3 +141,24 @@ test('durable source attachment refuses opaque original cue containers without d
   const reopened=await setup(fixture,x.docs());try{assert.deepEqual(reopened.docs().find(doc=>doc.key===project.key),original);assert.equal(reopened.docs().length,2);}finally{await reopened.w.happyDOM.close();}
  }finally{await x.w.happyDOM.close();}
 });
+
+for(const absent of ['source','check timestamp'])test(`optional feed-check display metadata cannot block a parsed transcript when ${absent} is absent`,async()=>{
+ const fixture=sourceDiscoveryFixture(),ingest=fixture.service.ingest;
+ fixture.service={ingest:async(...args)=>{
+  const value=await ingest(...args);
+  if(args[0].episode){
+   if(absent==='source')delete value.ingestion.source;
+   else{delete value.ingestion.source.feed_checked_at;delete value.ingestion.source.feed_reused;}
+  }
+  return value;
+ }};
+ const x=await setup(fixture);try{
+  await x.load();const checked=x.w.document.querySelector('.feed-refresh p').textContent;
+  await x.open('Authored multilingual episode',frenchTrack);
+  await wait(()=>x.w.document.querySelector('.reader-workspace'));
+  await wait(()=>x.docs().length===1);
+  assert.equal(x.docs()[0].segments[0].text,'Bonjour, cette source reste intacte.');
+  await x.discover();assert.equal(x.w.document.querySelector('.feed-refresh p').textContent,checked);
+  assert.equal(x.w.document.querySelector('.source-error').textContent,'');
+ }finally{await x.w.happyDOM.close();}
+});
