@@ -120,6 +120,7 @@ class BrowserWorkflowTests(unittest.TestCase):
                                  'transcript-media-association-checks.json',
                                  'background-summary-checks.json',
                                  'web-browser-acceptance-checks.json',
+                                 'private-owner-checks.json',
                                  'keyboard-escape-composition.json',
                                  'compact-library-failure.png'])
         self.assertIn('if: always()', upload)

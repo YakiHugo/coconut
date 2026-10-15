@@ -15,6 +15,24 @@ const Tasks=createRequire(import.meta.url)('../../reader/task-client.js');
 export async function privateBackendBrowser(){
  const directory=await fs.mkdtemp(path.join(os.tmpdir(),'coconut-private-browser-')),contexts=[],errors=[];
  const origin='https://reader.authored.ts.net',owner='owner@example.test';let server,browser,calls=0,remotePosts=0;
+ const geometry=[];let stage='setup',passed=false;
+ async function captureConnection(page,label){
+  stage='private_'+label;
+  for(const width of [390,1280]){
+   await page.setViewportSize({width,height:844});await openLibraryTools(page);
+   const backup=page.locator('.library-backup');if(!await backup.evaluate(n=>n.open))await backup.locator(':scope > summary').click();
+   const hint=backup.locator('p').filter({hasText:label==='connected'?'已连接 Authored computer':'电脑服务已失联或未授权'});
+   await hint.waitFor({state:'visible'});await page.evaluate(()=>document.fonts.ready);await hint.scrollIntoViewIfNeeded();
+   const bounds=await hint.evaluate(n=>{const r=n.getBoundingClientRect();return {left:r.left,right:r.right,top:r.top,bottom:r.bottom,width:innerWidth,height:innerHeight,scrollWidth:n.scrollWidth,clientWidth:n.clientWidth};});
+   const controls=await backup.locator('button:visible').evaluateAll(nodes=>nodes.map(n=>{const r=n.getBoundingClientRect();return {label:n.textContent,left:r.left,right:r.right,width:r.width,height:r.height};}));
+   geometry.push({state:label,viewport:width,hint:bounds,controls});
+   if(process.env.COCONUT_UI_SCREENSHOTS){await fs.mkdir(process.env.COCONUT_UI_SCREENSHOTS,{recursive:true});await page.screenshot({path:path.join(process.env.COCONUT_UI_SCREENSHOTS,`private-owner-${label}-${width}.png`),fullPage:false,animations:'disabled'});}
+   assert.ok(bounds.left>=-1&&bounds.right<=width+1&&bounds.top>=-1&&bounds.bottom<=bounds.height+1,'private connection status is visible inside viewport');
+   assert.ok(bounds.scrollWidth<=bounds.clientWidth+1,'private connection text does not overflow');
+   assert.ok(controls.length>0&&controls.every(r=>r.left>=-1&&r.right<=width+1&&r.width>0&&r.height>0),'visible library controls fit horizontally');
+  }
+  await page.setViewportSize({width:390,height:844});
+ }
  try{
   // Canonical authority is intentional here; do not use the static-Web wrapper
   // that requires IndexedDB after every navigation.
@@ -48,6 +66,7 @@ export async function privateBackendBrowser(){
    return {page,state};
   }
   const a=await open(),b=await open();assert.equal(calls,0,'passive read/binding never runs a model');
+  await captureConnection(a.page,'connected');
   const before=await request('/api/v1/library/document?protocolVersion=1&key=live');
   if(await b.page.locator('#mode-transcript').isVisible())await b.page.locator('#mode-transcript').click();
   await b.page.locator('.note-button').first().click();await b.page.locator('#note').fill('Authored private phone note');
@@ -69,9 +88,12 @@ export async function privateBackendBrowser(){
   await a.page.locator('#mode-summary').click();await a.page.locator('#prepare-summary').click();await a.page.locator('#summary-execution').selectOption('background');
   await a.page.waitForFunction(()=>document.getElementById('summary-background-status').textContent.includes('Authored computer'));await a.page.locator('#ai-consent').check();
   const count=remotePosts;a.state.offline=true;await a.page.evaluate(()=>dispatchEvent(new Event('offline')));assert.equal(await a.page.locator('#ai-consent').isChecked(),false);
+  await captureConnection(a.page,'offline');
   a.state.offline=false;a.state.login='other@example.test';await a.page.evaluate(()=>CoconutClientCapabilities.refresh());
   assert.equal(await a.page.evaluate(()=>CoconutClientCapabilities.current),null);await a.page.evaluate(async()=>{document.getElementById('ai-consent').checked=true;await document.getElementById('ask-ai').onclick();});assert.equal(remotePosts,count);assert.equal(calls,1);
-  assert.deepEqual(errors,[]);
+  await captureConnection(a.page,'identity-rejected');
+  assert.equal(remotePosts,count);assert.equal(calls,1);
+  assert.deepEqual(errors,[]);passed=true;
   return 'private_owner_real_bridge_two_contexts_binding_note_cas_pc_task_offline_identity_rejection';
- }finally{for(const context of contexts)await context.close();await browser?.close();await server?.shutdown();await fs.rm(directory,{recursive:true,force:true});}
+ }finally{if(process.env.COCONUT_UI_SCREENSHOTS){await fs.mkdir(process.env.COCONUT_UI_SCREENSHOTS,{recursive:true});await fs.writeFile(path.join(process.env.COCONUT_UI_SCREENSHOTS,'private-owner-checks.json'),JSON.stringify({status:passed?'passed':'failed',stage,transport:'Authored private-owner proxy header fixture over loopback HTTP; no real TLS, tailnet or phone network validation',geometry,errors},null,2));}for(const context of contexts)await context.close();await browser?.close();await server?.shutdown();await fs.rm(directory,{recursive:true,force:true});}
 }

@@ -282,8 +282,8 @@ try {
  await page.locator('#search').fill('revised sentence');await target.locator('.context-button').click();await page.locator('#dismiss-reading-context').click();
  check('explicit_context_dismiss_stays_in_full_source',await page.locator('#search').inputValue()===''&&await page.locator('#reading-context').isHidden()&&await target.evaluate(n=>n===document.activeElement));
  check('first_use_and_source_map_have_no_external_requests',mutations===0&&external===0&&pageErrors===0);
- checks.push(await privateClientBrowser(browser));
- checks.push(await privateBackendBrowser());
+ stage='private_owner_synthetic';checks.push(await privateClientBrowser(browser));
+ stage='private_owner_real_backend';checks.push(await privateBackendBrowser());
  const result={suite:'static-web-podcast',status:'passed',checks,addEntryGeometry};
  console.log(JSON.stringify(result));
  if(process.env.COCONUT_UI_SCREENSHOTS)await fs.writeFile(path.join(process.env.COCONUT_UI_SCREENSHOTS,'web-browser-acceptance-checks.json'),JSON.stringify(result,null,2));
