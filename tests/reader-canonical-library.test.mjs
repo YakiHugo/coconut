@@ -348,3 +348,23 @@ test('API-created library binding survives later matching browser migration with
  assert.equal((await reconnected.adapter.write(reconnected.adapter.prepareChanges([{key:'a',kind:'update',generation:1,identity:changed}]))).ok,true);
  assert.equal((await f.client.initialize(migration)).loaded.documents[0].title,changed.title);
 });
+
+test('private capabilities fence migration before browser freeze and old library writes after identity change',async t=>{
+ let identity='private-owner:library-a';const allowed=new Set(['libraryRead','libraryWrite']);
+ globalThis.CoconutClientCapabilities={identity:()=>identity,allows:name=>allowed.has(name)};t.after(()=>{delete globalThis.CoconutClientCapabilities;});
+ const f=await fixture(t);await assert.rejects(f.client.begin(),error=>error.code==='unsupported');assert.equal(await f.client.marker(),undefined);assert.equal(f.calls.length,0);
+ await f.client.request();const calls=f.calls.length;identity='different-owner:library-a';
+ await assert.rejects(f.client.request('/batch',{protocolVersion:2}),error=>error.code==='connection_changed');assert.equal(f.calls.length,calls);
+ identity='private-owner:library-a';allowed.delete('libraryWrite');await assert.rejects(f.client.request('/batch',{}),error=>error.code==='connection_changed');assert.equal(f.calls.length,calls);
+});
+
+test('canonical late response cannot apply after connection identity changes',async t=>{
+ let identity='owner:library';globalThis.CoconutClientCapabilities={identity:()=>identity,generation:1,allows:()=>true};t.after(()=>{delete globalThis.CoconutClientCapabilities;});
+ const f=await fixture(t);let release,started;const gate=new Promise(r=>release=r),ready=new Promise(r=>started=r);f.control.after=async()=>{started();await gate;};
+ const pending=f.client.request();await ready;identity='other-owner:library';globalThis.CoconutClientCapabilities.generation++;release();await assert.rejects(pending,error=>error.code==='connection_changed');
+});
+
+test('a remote browser missing its capability module cannot read or mutate canonical state',async t=>{
+ globalThis.location={hostname:'reader.example.test'};t.after(()=>{delete globalThis.location;});
+ const f=await fixture(t);await assert.rejects(f.client.request(),error=>error.code==='unsupported');await assert.rejects(f.client.begin(),error=>error.code==='unsupported');assert.equal(f.calls.length,0);assert.equal(await f.client.marker(),undefined);
+});

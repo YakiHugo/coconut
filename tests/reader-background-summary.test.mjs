@@ -15,6 +15,7 @@ function backend(){
   async fetch(url,options={}){
    const body=options.body&&JSON.parse(options.body);calls.push({url,body});
    const ok=value=>({ok:true,json:async()=>structuredClone(value)});
+   if(url==='api/health')return ok({client:this.descriptor.client});
    if(url.endsWith('language-tools'))return ok({local_translation:true,ai:{codex:{ready:true},claude:{ready:true}}});
    if(url==='api/v1/executor')return ok(this.descriptor);
    if(url==='api/v1/tasks'&&body){
@@ -37,12 +38,13 @@ function backend(){
  };
 }
 function setup(api=backend(),storage={},options={}){
- const w=new Window({url:'http://127.0.0.1:8080/'});Object.defineProperty(w,'crypto',{value:webcrypto});
+ const w=new Window({url:options.url||'http://127.0.0.1:8080/'});Object.defineProperty(w,'crypto',{value:webcrypto});
  if(options.mobile){const original=w.matchMedia.bind(w);w.matchMedia=query=>query==='(max-width: 650px)'?{matches:true,addEventListener(){}}:original(query);}
  w.document.body.innerHTML=fs.readFileSync(new URL('reader/index.html',root),'utf8').split('<body>')[1].split('</body>')[0];
  for(const [key,value] of Object.entries(storage))w.localStorage.setItem(key,value);
  if(options.phase)w.CoconutStorageBootstrap={phase:options.phase};
- w.fetch=api.fetch.bind(api);
+ w.fetch=(...args)=>api.fetch(...args);
+ if(options.access!==false){w.eval(fs.readFileSync(new URL('reader/client-capabilities.js',root),'utf8'));w.CoconutClientCapabilities.observe(api.descriptor?.client);}
  const pipeline=installSavePipeline(w);
  w.eval(['summary','core','passages','passage-playback','app','language','task-client','background-summary'].filter(name=>!options.omitTasks||name!=='task-client').map(name=>new URL('reader/'+name+'.js',root)).filter(file=>fs.existsSync(file)).map(file=>fs.readFileSync(file,'utf8')).join('\n')+'\nwindow.__test={doc:()=>active(),select:key=>{selectActiveDocument(key);render();}};');
  const $=id=>w.document.getElementById(id);
@@ -585,8 +587,10 @@ for(const stop of ['cancel','pagehide'])test('bulk '+stop+' stops only remaining
  const h=setup(api);try{
   await bulkFixture(h);reviewCurrent(h);const running=h.$('background-bulk-confirm').onclick();await ready;
   if(stop==='cancel')h.$('background-bulk-cancel').click();else h.w.dispatchEvent(new h.w.Event('pagehide'));
-  release();await running;assert.equal(archivePosts(api).length,1);assert.ok(api.tasks.get('task-1').archivedAt);assert.equal(api.tasks.get('task-2').archivedAt,undefined);assert.match(h.$('background-bulk-status').textContent,/已确认归档 1 条，失败或未确认 0 条，未处理 2 条/);
-  if(stop==='pagehide'){h.w.dispatchEvent(new h.w.Event('pageshow'));await h.refresh();assert.equal(archivePosts(api).length,1);}
+  release();await running;assert.equal(archivePosts(api).length,1);assert.ok(api.tasks.get('task-1').archivedAt);assert.equal(api.tasks.get('task-2').archivedAt,undefined);assert.match(h.$('background-bulk-status').textContent,stop==='pagehide'?/已确认归档 0 条，失败或未确认 1 条，未处理 2 条/:/已确认归档 1 条，失败或未确认 0 条，未处理 2 条/);
+  // Page lifecycle invalidates the old receipt; a fresh same-identity read
+  // confirms it before retry review, without replaying the archive request.
+  if(stop==='pagehide'){h.w.dispatchEvent(new h.w.Event('pageshow'));await h.refresh();assert.equal(archivePosts(api).length,1);assert.match(h.$('background-bulk-status').textContent,/已确认归档 1 条，失败或未确认 0 条，未处理 2 条/);}
   h.$('background-bulk-retry').click();assert.equal(h.$('background-bulk-items').children.length,2);assert.doesNotMatch(h.$('background-bulk-items').textContent,/task-1/);assert.equal(archivePosts(api).length,1);
   await h.$('background-bulk-confirm').onclick();assert.equal(archivePosts(api).length,3);assert.equal(posted(api).length,3);
  }finally{release();await h.w.happyDOM.close();}
@@ -828,4 +832,86 @@ test('BFCache pagehide/pageshow cannot revive an earlier resume preflight',async
 
 test('desktop resume confirmation retains a 44px minimum target in the existing summary panel',async()=>{
  const h=setup(resumableBackend());try{h.w.happyDOM.setWindowSize({width:1280,height:1000});const style=h.w.document.createElement('style');style.textContent=fs.readFileSync(new URL('reader/style.css',root),'utf8');h.w.document.head.append(style);await prepareResume(h);assert.equal(h.w.getComputedStyle(h.$('ask-ai')).minHeight,'44px');assert.equal(h.$('ask-ai').closest('#summary-request')?.id,'summary-request');}finally{await h.w.happyDOM.close();}
+});
+
+const privateClient=()=>({mode:'private-owner',id:'owner-test-identity',backendLabel:'Authored PC',online:true,libraryId:'authored-library-epoch',capabilities:{libraryRead:true,libraryWrite:true,aiActions:true,backgroundTasks:true,localMedia:false,libraryMigration:false}});
+function privateBackend(){const api=backend();api.descriptor.client=privateClient();api.descriptor.remoteSubmission=true;return api;}
+const remoteOptions={access:true,url:'https://reader.example.test/'};
+test('declared private owner on a non-local HTTPS origin can explicitly submit and receive',async()=>{
+ const h=setup(privateBackend(),{},remoteOptions);try{await h.import();await h.choose();assert.match(h.$('summary-background-status').textContent,/Authored PC/);assert.equal(posted(h.api).length,0);await h.submit();assert.equal(posted(h.api).length,1);const saved=JSON.parse(h.w.localStorage.getItem(journalKey));assert.match(saved.entries[0].clientBinding,/owner-test-identity/);h.api.succeed();await h.refresh();assert.ok(h.$('background-task-list').querySelector('[data-action=accept]'));}finally{await h.w.happyDOM.close();}
+});
+for(const change of ['unknown','no-id','no-background','no-ai','offline','http','local-claim'])test('remote admission fails closed: '+change,async()=>{
+ const api=privateBackend(),options={...remoteOptions};if(change==='unknown')delete api.descriptor.client;if(change==='no-id')delete api.descriptor.client.id;if(change==='no-background')api.descriptor.client.capabilities.backgroundTasks=false;if(change==='no-ai')api.descriptor.client.capabilities.aiActions=false;if(change==='offline')api.descriptor.client.online=false;if(change==='http')options.url='http://reader.example.test/';if(change==='local-claim')api.descriptor.client.mode='local';
+ const h=setup(api,{},options);try{await h.import();await h.choose();await h.submit();assert.equal(posted(api).length,0);assert.equal(h.$('ask-ai').disabled,true);}finally{await h.w.happyDOM.close();}
+});
+for(const change of ['identity','library','capability','close','consent-aba','page-aba'])test('private submission preflight rejects '+change,async()=>{
+ const api=privateBackend(),h=setup(api,{},remoteOptions);let release;try{
+  await h.import();await h.choose();const original=api.fetch.bind(api);let started;const ready=new Promise(r=>started=r),gate=new Promise(r=>release=r);let hold=true;
+  api.fetch=async(url,options)=>{if(hold&&url==='api/v1/executor'){hold=false;started();await gate;}return original(url,options);};
+  const pending=h.submit();await ready;
+  if(change==='identity')api.descriptor.client.id='different-owner';if(change==='library')api.descriptor.client.libraryId='different-library';if(change==='capability')api.descriptor.client.capabilities.backgroundTasks=false;
+  if(change==='close')h.w.dispatchEvent(new h.w.Event('coconut-summary-stop'));
+  if(change==='consent-aba'){h.$('ai-consent').checked=false;h.$('ai-consent').dispatchEvent(new h.w.Event('change'));h.$('ai-consent').checked=true;}
+  if(change==='page-aba'){h.w.dispatchEvent(new h.w.Event('pagehide'));h.w.dispatchEvent(new h.w.Event('pageshow'));h.$('ai-consent').checked=true;}
+  release();await pending;assert.equal(posted(api).length,0);
+ }finally{release?.();await h.w.happyDOM.close();}
+});
+test('private disconnection and identity switch preserve submitted intent without automatic submission',async()=>{
+ const api=privateBackend(),h=setup(api,{},remoteOptions);try{await h.import();await h.choose();await h.submit();const before=h.w.localStorage.getItem(journalKey);h.w.dispatchEvent(new h.w.Event('offline'));assert.equal(posted(api).length,1);api.descriptor.client.libraryId='new-library';await h.refresh();assert.equal(posted(api).length,1);assert.equal(h.$('background-task-list').querySelector('[data-action=accept]'),null);assert.equal(JSON.parse(h.w.localStorage.getItem(journalKey)).entries[0].clientBinding,JSON.parse(before).entries[0].clientBinding);}finally{await h.w.happyDOM.close();}
+});
+
+for(const change of ['none','identity','library','no-ai','consent-aba','close','missing-module'])test('private passage question checks current owner and consent after health preflight: '+change,async()=>{
+ const api=privateBackend(),original=api.fetch.bind(api);let hold=false,release,started,posts=0;const gate=new Promise(r=>release=r),ready=new Promise(r=>started=r);
+ api.fetch=async(url,options)=>{if(hold&&url==='api/health'){hold=false;started();await gate;}if(url==='api/ask'){posts++;const body=JSON.parse(options.body);return {ok:true,json:async()=>({answer:'Authored answer.',citations:[body.segments[0].id],provider:'codex'})};}return original(url,options);};
+ const h=setup(api,{},change==='missing-module'?{...remoteOptions,access:false}:remoteOptions);try{await h.import();h.$('mode-passages').click();h.$('passage-body').querySelector('.passage-ask').click();await h.$('check-ai').onclick();h.$('ai-question').value='Explain this passage';h.$('ai-question').oninput();h.$('ai-consent').checked=true;
+  hold=true;const pending=h.$('ask-ai').onclick();if(change!=='missing-module')await ready;
+  if(change==='identity')api.descriptor.client.id='other-owner';if(change==='library')api.descriptor.client.libraryId='other-library';if(change==='no-ai')api.descriptor.client.capabilities.aiActions=false;
+  if(change==='consent-aba'){h.$('ai-consent').checked=false;h.$('ai-consent').dispatchEvent(new h.w.Event('change'));h.$('ai-consent').checked=true;}
+  if(change==='close')h.w.dispatchEvent(new h.w.Event('pagehide'));
+  release();await pending;assert.equal(posts,change==='none'?1:0);assert.equal(h.doc().ai_answers.length,change==='none'?1:0);
+ }finally{release?.();await h.w.happyDOM.close();}
+});
+
+for(const change of ['none','identity','library'])test('private checkpoint resume retains explicit consent and fences changed '+change,async()=>{
+ const api=resumableBackend();api.descriptor.client=privateClient();api.descriptor.remoteSubmission=true;
+ const h=setup(api,{},remoteOptions);let release;try{await prepareResume(h);let started;const ready=new Promise(r=>started=r);api.preflightEntered=started;api.preflightGate=new Promise(r=>release=r);h.$('ai-consent').checked=true;const pending=h.$('ask-ai').onclick();await ready;
+  if(change==='identity')api.descriptor.client.id='new-owner';if(change==='library')api.descriptor.client.libraryId='new-library';release();await pending;assert.equal(api.resumePosts.length,change==='none'?1:0);assert.equal(posted(api).length,1);
+ }finally{release?.();await h.w.happyDOM.close();}
+});
+
+test('private owner reads and exports an unassociated PC result without adopting its document',async()=>{
+ const api=privateBackend();let h=setup(api,{},remoteOptions);try{await h.import();await h.choose();await h.submit();api.succeed();}finally{await h.w.happyDOM.close();}
+ h=setup(api,{},remoteOptions);try{await h.refresh();const view=h.$('background-task-list').querySelector('[data-action=view-result]');assert.ok(view);await view.onclick();assert.match(h.$('background-task-list').textContent,/Fake background summary/);assert.ok(h.$('background-task-list').querySelector('[data-action=export-result]'));assert.equal(h.$('background-task-list').querySelector('[data-action=accept]'),null);assert.equal(posted(api).length,1);}finally{await h.w.happyDOM.close();}
+});
+
+test('an executor response started before offline cannot revive the private connection',async()=>{
+ const api=privateBackend(),h=setup(api,{},remoteOptions);let release;try{await h.import();await h.choose();const base=api.fetch.bind(api);let started;const ready=new Promise(r=>started=r),gate=new Promise(r=>release=r);let once=true;
+ api.fetch=async(url,options)=>{const response=await base(url,options);if(url==='api/v1/executor'&&once){once=false;started();await gate;}return response;};
+ const pending=h.refresh();await ready;h.w.dispatchEvent(new h.w.Event('offline'));assert.equal(h.w.CoconutClientCapabilities.current,null);release();await pending;assert.equal(h.w.CoconutClientCapabilities.current,null);await h.submit();assert.equal(posted(api).length,0);
+ }finally{release?.();await h.w.happyDOM.close();}
+});
+test('changed private library rejects both retained archive handlers and fresh associated archive controls',async()=>{
+ const api=privateBackend(),h=setup(api,{},remoteOptions);try{await h.import();await h.choose();await h.submit();api.succeed();await h.refresh();const old=h.$('background-task-list').querySelector('[data-action=archive]').onclick;api.descriptor.client.libraryId='different-library';await h.refresh();await old();assert.equal(api.calls.filter(call=>call.url.endsWith('/archive')).length,0);assert.equal(h.$('background-task-list').querySelector('[data-action=archive]'),null);h.$('background-bulk-select').click();assert.match(h.$('background-bulk-scope').textContent,/0 条/);}finally{await h.w.happyDOM.close();}
+});
+test('shared observation generation rejects stale health and worker observations after lifecycle invalidation',async()=>{
+ const h=setup(privateBackend(),{},remoteOptions);try{const access=h.w.CoconutClientCapabilities,old=access.begin();h.w.dispatchEvent(new h.w.Event('pagehide'));assert.equal(access.complete(privateClient(),old),false);assert.equal(access.current,null);const next=access.begin();assert.equal(access.complete(privateClient(),next),true);assert.equal(access.complete({...privateClient(),id:'old-worker'},old),false);assert.equal(access.current.id,'owner-test-identity');}finally{await h.w.happyDOM.close();}
+});
+
+for(const action of ['archive','export-archive'])test('private '+action+' late reply is retired after identity change',async()=>{
+ const api=privateBackend(),h=setup(api,{},remoteOptions);let release;try{
+  await h.import();await h.choose();await h.submit();api.succeed();await h.refresh();
+  if(action==='export-archive'){await h.$('background-task-list').querySelector('[data-action=archive]').onclick();h.$('background-archive').open=true;await h.refresh();}
+  const before=JSON.parse(h.w.localStorage.getItem(journalKey)).entries[0].task,base=api.fetch.bind(api);let started,downloads=0;const ready=new Promise(r=>started=r),gate=new Promise(r=>release=r),endpoint=action==='archive'?'/archive':'/export';
+  h.w.URL.createObjectURL=()=>{downloads++;return 'blob:authored';};h.w.URL.revokeObjectURL=()=>{};
+  api.fetch=async(url,options)=>{const response=await base(url,options);if(url.endsWith(endpoint)){started();await gate;}return response;};
+  const node=h.$(action==='archive'?'background-task-list':'background-archive-list').querySelector('[data-action='+action+']');assert.ok(node);const pending=node.onclick();await ready;api.descriptor.client.id='new-private-owner';h.w.CoconutClientCapabilities.observe(api.descriptor.client);release();await pending;
+  assert.equal(downloads,0);assert.deepEqual(JSON.parse(h.w.localStorage.getItem(journalKey)).entries[0].task,before);assert.equal(h.$('background-task-list').querySelector('[data-action=archive]'),null);
+ }finally{release?.();await h.w.happyDOM.close();}
+});
+
+test('concurrent identical health observation does not strand initial executor discovery',async()=>{
+ const api=privateBackend(),h=setup(api,{},remoteOptions);let release;try{const base=api.fetch.bind(api);let started,once=true;const ready=new Promise(r=>started=r),gate=new Promise(r=>release=r);
+ api.fetch=async(url,options)=>{const response=await base(url,options);if(url==='api/v1/executor'&&once){once=false;started();await gate;}return response;};
+ const pending=h.refresh();await ready;const access=h.w.CoconutClientCapabilities;assert.equal(access.complete(privateClient(),access.begin()),true);release();await pending;assert.equal(access.current.id,'owner-test-identity');assert.ok(api.calls.some(call=>call.url==='api/v1/tasks'));assert.match(h.$('background-executor-status').textContent,/已连接/);assert.equal(posted(api).length,0);
+ }finally{release?.();await h.w.happyDOM.close();}
 });

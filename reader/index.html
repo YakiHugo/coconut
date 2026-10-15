@@ -10,6 +10,7 @@
 <script src="appearance.js?v=86ea922669"></script>
 <link rel="stylesheet" href="style.css?v=cc1aebceb2">
 <script src="summary.js?v=a744b5ed79" defer></script>
+<script src="client-capabilities.js?v=61961bc583" defer></script>
 <script src="task-client.js?v=bb7d5fe9f6" defer></script>
 <script src="core.js?v=f8fa795a65" defer>
 </script>
@@ -18,19 +19,19 @@
 <script src="passage-playback.js?v=88802adbe8" defer></script>
 <script src="library-store.js?v=a4914e290b" defer></script>
 <script src="indexeddb-document-adapter.js?v=c1f4128616" defer></script>
-<script src="canonical-library.js?v=9fdbccc642" defer></script>
+<script src="canonical-library.js?v=fc54e6c60e" defer></script>
 <script src="storage-provider.js?v=8e758b7d9f" defer></script>
 <script src="app.js?v=ec1e6e3514" type="text/coconut-pending" data-reader-script>
 </script>
-<script src="language.js?v=238364e35d" type="text/coconut-pending" data-reader-script></script>
-<script src="background-summary.js?v=ad5aa84164" type="text/coconut-pending" data-reader-script></script>
+<script src="language.js?v=76f75a1eb2" type="text/coconut-pending" data-reader-script></script>
+<script src="background-summary.js?v=d7eef6ba67" type="text/coconut-pending" data-reader-script></script>
 <script src="translation-review.js?v=e8289ebd90" type="text/coconut-pending" data-reader-script></script>
 <script src="podcasts.js?v=d3db57978f" type="text/coconut-pending" data-reader-script></script>
-<script src="jobs.js?v=221718acc6" type="text/coconut-pending" data-reader-script>
+<script src="jobs.js?v=0fc7396a43" type="text/coconut-pending" data-reader-script>
 </script>
 <script src="updates.js?v=52e9d1e937" type="text/coconut-pending" data-reader-script></script>
 <script src="transcript-navigator.js?v=8439a57686" defer></script>
-<script src="storage-bootstrap.js?v=8bce66df05" defer></script>
+<script src="storage-bootstrap.js?v=0dcf398410" defer></script>
 </head>
 <body>
 <section id="storage-startup" class="storage-startup" role="status" aria-live="polite"><h1>正在载入 Coconut</h1><p id="storage-startup-message">正在打开本机书架…</p><button id="storage-startup-retry" type="button" hidden>重试载入</button><button id="storage-startup-export" type="button" hidden>导出原始数据备份</button><button id="storage-startup-recovery" type="button" hidden>导出完整存储恢复文件</button><p id="storage-recovery-hint" class="hint">首次升级会保留完整原始数据。请勿清除浏览器存储。</p></section>
@@ -43,7 +44,7 @@
 <button id="open-library-search" type="button" aria-haspopup="dialog" aria-controls="library-search-dialog">查找书架</button>
 <button id="toggle-library" aria-expanded="false" aria-controls="library-list"><span class="library-open-label">书架</span><span class="library-close-label">← 收起书架</span> <span id="library-total">0</span></button>
 <div id="library-list">
-<details id="background-tasks" class="background-tasks"><summary>本机后台任务 <span id="background-task-count">0</span></summary><p id="background-executor-status" class="hint" role="status">尚未检查本机执行器；阅读不受影响。</p><p class="hint">当前仅连接此电脑的 bridge，未连接手机。关闭页面不取消；退出执行器后不会自动续跑。</p><button id="background-refresh" type="button">刷新任务与连接</button><p id="background-task-message" class="hint" role="status"></p><div id="background-bulk-controls">
+<details id="background-tasks" class="background-tasks"><summary>本机后台任务 <span id="background-task-count">0</span></summary><p id="background-executor-status" class="hint" role="status">尚未检查本机执行器；阅读不受影响。</p><p class="hint">后台任务在所连接的电脑执行；此处显示服务声明的连接能力。关闭页面不取消；退出执行器后不会自动续跑。</p><button id="background-refresh" type="button">刷新任务与连接</button><p id="background-task-message" class="hint" role="status"></p><div id="background-bulk-controls">
 <p id="background-bulk-scope" class="hint" role="status"></p>
 <button id="background-bulk-select" type="button">选择当前列表可归档任务</button>
 <button id="background-bulk-clear" type="button">清除选择</button>

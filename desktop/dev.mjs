@@ -3,6 +3,7 @@
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {startBridge} from './server.mjs';
+import {privateProxyFromEnvironment} from './client-access.mjs';
 import {libraryLocation,libraryStartupMessage,DEVELOPMENT_LIBRARY_DIRECTORY} from './library-location.mjs';
 export {DEVELOPMENT_LIBRARY_DIRECTORY};
 import {createDevelopmentCaptionHelper} from './development-captions.mjs';
@@ -49,7 +50,7 @@ export async function startDevelopmentBridge({port = 8080, taskDirectory = DEVEL
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   if (process.argv.length > 2) throw new Error('Usage: npm run dev (fixed development port 8080)');
-  const {server, origin, taskDirectory, libraryDirectory, library, executor, captions, captionDiagnostic} = await startDevelopmentBridge();
+  const {server, origin, taskDirectory, libraryDirectory, library, executor, captions, captionDiagnostic} = await startDevelopmentBridge({privateProxy:privateProxyFromEnvironment()});
   console.log(`Coconut 开发阅读器：${origin}`);
   console.log(`开发任务目录：${taskDirectory}`);
   console.log(libraryStartupMessage({mode:'development',directory:libraryDirectory},library));
