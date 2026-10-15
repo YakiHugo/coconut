@@ -1,4 +1,29 @@
 {
- "compilerOptions":{"target":"ES2022","lib":["ES2022","DOM"],"module":"ESNext","moduleResolution":"Bundler","jsx":"react-jsx","strict":true,"noEmit":true,"skipLibCheck":true},
- "include":["transcript-navigator/**/*.ts","transcript-navigator/**/*.tsx"]
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": [
+      "ES2022",
+      "DOM"
+    ],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "jsx": "react-jsx",
+    "strict": true,
+    "noEmit": true,
+    "skipLibCheck": true
+  },
+  "include": [
+    "transcript-navigator/**/*.ts",
+    "transcript-navigator/**/*.tsx",
+    "app/**/*.ts",
+    "app/**/*.tsx",
+    "reader-workspace/**/*.ts",
+    "reader-workspace/**/*.tsx",
+    "ai-workspace/**/*.ts",
+    "ai-workspace/**/*.tsx",
+    "native-media/**/*.ts",
+    "native-media/**/*.tsx",
+    "recovery-import/**/*.ts",
+    "recovery-import/**/*.tsx"
+  ]
 }

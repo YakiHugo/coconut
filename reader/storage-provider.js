@@ -71,7 +71,7 @@
       const tokens = new Map();
       for (const row of loaded.documents) tokens.set(row.key, {epoch: row.epoch, revision: row.revision, deleted: false});
       for (const row of loaded.tombstones) tokens.set(row.key, {epoch: row.epoch, revision: row.revision, deleted: true});
-      const documents = loaded.documents.map(row => ({...row.payload, ...validate(row.payload), key: row.key}));
+      const documents = loaded.documents.map(row => {const normalized={...validate(row.payload),key:row.key};return root.CoconutCanonicalLibrary?.project?root.CoconutCanonicalLibrary.project(row.payload,normalized):{...row.payload,...normalized};});
       let sequence = 0;
       const session = root.crypto.randomUUID();
       const adapter = {

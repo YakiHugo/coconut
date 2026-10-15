@@ -208,5 +208,5 @@
   }
   return {begin,resume,cancel,initialize,initializeBinding,connect,discover,marker,load,request};
  }
- const api={create,json,hash};if(typeof module!=='undefined'&&module.exports)module.exports=api;else root.CoconutCanonicalLibrary=api;
+ const api={create,json,hash,project};if(typeof module!=='undefined'&&module.exports)module.exports=api;else root.CoconutCanonicalLibrary=api;
 })(typeof globalThis==='undefined'?this:globalThis);

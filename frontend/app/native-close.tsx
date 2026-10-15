@@ -1,0 +1,4 @@
+import {useState} from 'react';
+import {useNativeClose} from '../native-media/close-hook';
+import type {AppStore} from './store';
+export function NativeClose({store}:{store:AppStore}){const [deps]=useState(()=>({snapshot:store.closeSnapshot,acquireBarrier:(id:number)=>store.acquireBarrier(String(id)),barrierActive:store.barrierActive,releaseBarrier:(token:unknown)=>{store.releaseBarrier(token);},flush:store.flush,discardPending:store.discardPending,lockUI:()=>{const root=document.getElementById('react-root');if(!root)return()=>{};const previous=root.inert;root.inert=true;return()=>{root.inert=previous;};},finish:()=>{window.dispatchEvent(new Event('pagehide'));},updateReady:()=>store.closeSnapshot().safe&&!document.querySelector('dialog[open]')&&![...document.querySelectorAll('audio,video')].some(player=>!(player as HTMLMediaElement).paused)}));useNativeClose(deps,!!(window as any).coconutUpdates);return null;}

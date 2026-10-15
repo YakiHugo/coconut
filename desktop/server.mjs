@@ -8,6 +8,8 @@ import { fileURLToPath } from 'node:url';
 import { createProviders } from './providers.mjs';
 import { createTranslator } from './translation.mjs';
 import { createPodcastSources } from './podcast-sources.mjs';
+import {createIngestionService} from './ingestion-service.mjs';
+import {createIngestionExecutor} from './ingestion-executor.mjs';
 import {createTaskStore,TASK_BODY_BYTES} from './tasks.mjs';
 import {createLibraryStore} from './library-store.mjs';
 import {handleLibraryRequest} from './library-api.mjs';
@@ -16,14 +18,15 @@ import {privateProxyProfile,privateProxyFromEnvironment,authorizeClient,describe
 
 export const CAPABILITIES = Object.freeze({reader:true,local_agents:true,subscription_ask:true,subscription_translation:true,media_import:false,local_translation:false,podcast_import:true,caption_import:false});
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
-const ASSETS = new Map([['/','index.html'],...['index.html','app.js','summary.js','task-client.js','core.js','background-summary.js','client-capabilities.js','passages.js','passage-playback.js','quotation.js','library-store.js','appearance.js','indexeddb-document-adapter.js','canonical-library.js','storage-provider.js','storage-bootstrap.js','transcript-navigator.js','jobs.js','language.js','translation-review.js','podcasts.js','updates.js','style.css','coconut-mark.png'].map(name=>['/'+name,name])]);
+const ASSETS = new Map([['/','index.html'],...['index.html','app.js','summary.js','task-client.js','core.js','background-summary.js','client-capabilities.js','passages.js','passage-playback.js','quotation.js','library-store.js','appearance.js','indexeddb-document-adapter.js','canonical-library.js','storage-provider.js','storage-bootstrap.js','transcript-navigator.js','react-preview.html','react-app.js','react-app.css','jobs.js','language.js','translation-review.js','podcasts.js','updates.js','style.css','coconut-mark.png'].map(name=>['/'+name,name])]);
 const MIME = {'.png':'image/png','.html':'text/html; charset=utf-8','.js':'text/javascript; charset=utf-8','.css':'text/css; charset=utf-8'};
 const MAX_BODY = 1024 * 1024;
 export const CSP = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self'; img-src 'self' data: blob:; media-src 'self' blob:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'";
 
-export function createBridge({readerDirectory = path.resolve(ROOT,'../reader'), providers = createProviders(), podcastSources = createPodcastSources(), captionService = null, captionStatus = null, localMediaService = null, taskStore = null, taskUnavailable = null, libraryStore = null, libraryUnavailable = null, libraryLocation = null, privateProxy = null} = {}) {
+export function createBridge({readerDirectory = path.resolve(ROOT,'../reader'), providers = createProviders(), podcastSources = createPodcastSources(), captionService = null, captionStatus = null, localMediaService = null, taskStore = null, taskUnavailable = null, libraryStore = null, libraryUnavailable = null, libraryLocation = null, privateProxy = null, ingestionExecutor = createIngestionExecutor()} = {}) {
   const profile=privateProxyProfile(privateProxy);
   const translate = createTranslator(providers);
+  const ingestionService = createIngestionService({podcastSources,captionService});
   const capabilities=Object.freeze({...CAPABILITIES,caption_import:captionService?.available===true,persistent_tasks:!!taskStore,canonical_library:!!libraryStore});
   const captionSources=Object.freeze({available:capabilities.caption_import,mode:captionStatus?.mode||(capabilities.caption_import?'bundled-helper':'disabled'),
     code:capabilities.caption_import?'ready':captionStatus?.code||'CAPTION_UNAVAILABLE',
@@ -53,7 +56,17 @@ export function createBridge({readerDirectory = path.resolve(ROOT,'../reader'), 
     try {
       if(await handleLibraryRequest({req,pathname,origin,json,store:libraryStore,unavailable:libraryUnavailable}))return;
       if (localMediaService && await localMediaService.handle(req,res,pathname)) return;
+      const ingestionJob=pathname.match(/^\/api\/v1\/ingestions\/jobs\/([a-f0-9]{32})(?:\/(result|media|cancel|retry))?$/);
       if (req.method === 'GET' || req.method === 'HEAD') {
+        const operationMatch=pathname.match(/^\/api\/v1\/ingestions\/operations\/([a-f0-9-]+)$/);
+        if(operationMatch){const params=new URL(req.url,origin).searchParams;const decimal=key=>/^\d+$/.test(params.get(key)||'')?Number(params.get(key)):NaN;return json(200,{protocolVersion:1,ingestion:await ingestionExecutor.recover({operation_id:operationMatch[1],filename:params.get('filename'),size:decimal('size'),fingerprint:params.get('fingerprint'),last_modified:decimal('last_modified'),language:params.get('language')||''},{signal:controller.signal})});}
+        if(pathname==='/api/v1/ingestions/jobs') return json(200,{protocolVersion:1,ingestions:await ingestionExecutor.list({signal:controller.signal})});
+        if(ingestionJob){
+          const [,id,action]=ingestionJob;
+          if(action==='media')return await ingestionExecutor.media(id,req,res,{signal:controller.signal});
+          if(action==='cancel'||action==='retry')return json(405,{error:'Method not allowed'});
+          return json(200,{protocolVersion:1,ingestion:await ingestionExecutor[action==='result'?'result':'get'](id,{signal:controller.signal})});
+        }
         if (pathname === '/api/v1/executor') return json(200,{...(taskStore?.describe()||{protocolVersion:1,executor:{type:'local-node',online:true},supportedTaskKinds:['summary'],enabled:false,...(taskUnavailable?{unavailable:taskUnavailable}:{}),providers:{codex:{supported:true,availability:'not_checked'},claude:{supported:true,availability:'not_checked'}},remoteSubmission:false}),remoteSubmission:remote,client:client()});
         if (pathname === '/api/v1/tasks' || /^\/api\/v1\/tasks\/[a-f0-9-]+(?:\/export)?$/.test(pathname)) {
           if(!taskStore)return json(503,{error:taskUnavailable?.message||'此执行器尚未配置持久任务目录',code:taskUnavailable?.code||'tasks_disabled'});
@@ -68,6 +81,7 @@ export function createBridge({readerDirectory = path.resolve(ROOT,'../reader'), 
           if(resumeKey!==null)return json(200,{protocolVersion:1,...await taskStore.findResume(pathname.split('/').at(-1),resumeKey)});
           return json(200,{protocolVersion:1,task:await taskStore.get(pathname.split('/').at(-1))});
         }
+        if (pathname === '/api/v1/ingestions/capabilities') return json(200,{...ingestionService.capabilities(),transcription:await ingestionExecutor.status({signal:controller.signal})});
         if (pathname === '/api/captions/status') return json(200,captionSources);
         if (pathname === '/api/health') return json(200,{local_worker:false,runtime:'desktop-bridge',paid_processing:false,max_upload_bytes:0,capabilities,client:client(),caption_sources:captionSources,...(libraryLocation&&!remote?{library_storage:{...libraryLocation,enabled:!!libraryStore,unavailable:libraryUnavailable}}:{})});
         if (pathname === '/api/language-tools' && req.method === 'GET') return json(200,{translation_models:[],local_translation:false,capabilities,
@@ -80,9 +94,14 @@ export function createBridge({readerDirectory = path.resolve(ROOT,'../reader'), 
       if (req.method !== 'POST') return json(405,{error:'Method not allowed'});
       // Cross-site HTML forms and opaque-origin pages must never start a local CLI.
       if (req.headers.origin !== origin) return json(403,{error:'发送请求必须来自此本机阅读器'});
+      if(pathname==='/api/v1/ingestions/upload'){
+        const params=new URL(req.url,origin).searchParams;
+        return json(201,{protocolVersion:1,ingestion:await ingestionExecutor.upload(req,{filename:params.get('filename'),language:params.get('language')||'',operation_id:params.get('operation_id'),fingerprint:params.get('fingerprint'),last_modified:/^\d+$/.test(params.get('last_modified')||'')?Number(params.get('last_modified')):NaN,signal:controller.signal})});
+      }
+      const ingestionAction=ingestionJob&&['cancel','retry'].includes(ingestionJob[2]);
       const taskRoute=pathname==='/api/v1/tasks'||/^\/api\/v1\/tasks\/[a-f0-9-]+\/(?:cancel|archive|restore|resume)$/.test(pathname);
       if (taskRoute&&!taskStore)return json(503,{error:taskUnavailable?.message||'此执行器尚未配置持久任务目录',code:taskUnavailable?.code||'tasks_disabled'});
-      if (!taskRoute&&!['/api/ask','/api/translate-subscription','/api/podcasts/discover','/api/podcasts/import','/api/podcasts/media','/api/captions/import'].includes(pathname)) return json(501,{error:'轻量版未启用视频站下载、ASR 或离线翻译。可使用公开播客源、字幕或本地音视频；完整本地处理服务为可选高级功能。'});
+      if (!taskRoute&&!ingestionAction&&!['/api/v1/ingestions','/api/ask','/api/translate-subscription','/api/podcasts/discover','/api/podcasts/import','/api/podcasts/media','/api/captions/import'].includes(pathname)) return json(501,{error:'轻量版未启用视频站下载、ASR 或离线翻译。可使用公开播客源、字幕或本地音视频；完整本地处理服务为可选高级功能。'});
       if (req.headers['content-type']?.split(';')[0] !== 'application/json') return json(400,{error:'Use application/json'});
       const limit=taskRoute?TASK_BODY_BYTES:MAX_BODY;
       const declared = req.headers['content-length'];
@@ -96,6 +115,7 @@ export function createBridge({readerDirectory = path.resolve(ROOT,'../reader'), 
       let data;
       try { data = JSON.parse(Buffer.concat(chunks).toString('utf8')); } catch { return json(400,{error:'请求 JSON 无效'}); }
       if (!data || typeof data !== 'object' || Array.isArray(data)) return json(400,{error:'请求 JSON 无效'});
+      if(ingestionAction){if(data.protocolVersion!==1)return json(400,{error:'导入协议版本无效'});return json(200,{protocolVersion:1,ingestion:await ingestionExecutor.action(ingestionJob[1],ingestionJob[2],{signal:controller.signal})});}
       if(taskRoute){
         const action=pathname.split('/').at(-1),guardedMutation=['archive','cancel'].includes(action)&&data.protocolVersion===2;
         if(action==='resume'){const receipt=await taskStore.resume(pathname.split('/').at(-2),data);return json(receipt.created?202:200,{protocolVersion:1,...receipt});}
@@ -105,6 +125,7 @@ export function createBridge({readerDirectory = path.resolve(ROOT,'../reader'), 
         if(['cancel','archive','restore'].includes(action))return json(200,{protocolVersion:1,task:await taskStore[action](pathname.split('/').at(-2),guardedMutation?data.expected:undefined)});
         const receipt=await taskStore.submit(data);return json(receipt.created?202:200,{protocolVersion:1,...receipt});
       }
+      if(pathname === '/api/v1/ingestions'){const receipt=await ingestionService.ingest(data,{signal:controller.signal});if(receipt.ingestion.state==='needs_transcription')receipt.ingestion.transcription=await ingestionExecutor.status({signal:controller.signal});return json(200,receipt);}
       if(pathname === '/api/captions/import'){
         if(!capabilities.caption_import)return json(501,{code:captionSources.code,error:captionSources.message});
         return json(200,await captionService.importCaption(data,{signal:controller.signal}));
@@ -121,6 +142,7 @@ export function createBridge({readerDirectory = path.resolve(ROOT,'../reader'), 
       if (pathname === '/api/ask') return json(200,await providers.ask(data,{signal:controller.signal}));
       return json(200,{translations:await translate(data,{signal:controller.signal})});
     } catch (error) {
+      if(res.headersSent){res.destroy();return;}
       return json(error.status|| (error.code === 'ENOENT' ? 404 : 400),{...(remote?{code:error.taskCode||error.code||'request_failed'}:{}),...(error.taskCode?{code:error.taskCode}:pathname==='/api/captions/import'&&error.code?{code:error.code}:{}),...(!remote&&error.localProviderDetails?{localProviderDetails:error.localProviderDetails}:{}),...(error.providerDiagnostics?{code:'provider_failed',localHttpStatus:400,providerDiagnostics:error.providerDiagnostics}:{}),error:error.code === 'ENOENT' ? 'File not found' : remote?remoteDiagnostic(error.message):String(error.message || '请求未完成').slice(0,300)});
     }
   });
