@@ -2,7 +2,9 @@
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import { createPodcastSources } from '../desktop/podcast-sources.mjs';
-const sources=createPodcastSources(),signal=AbortSignal.timeout(180000);
+import { createPodcastSmokeDiagnostics } from './helpers/podcast-smoke-diagnostics.mjs';
+const diagnostics=createPodcastSmokeDiagnostics();
+const sources=createPodcastSources({fetchResource:diagnostics.fetchResource}),signal=AbortSignal.timeout(180000);
 async function verifyAudioPlayback(media) {
  const { chromium }=await import('@playwright/test');
  // This test serves only the already downloaded buffer; no arbitrary proxy,
@@ -67,6 +69,7 @@ try {
  assert.ok(episode,'The live feed must provide a supported original-language timed transcript');
  stage='publisher transcript import';
  const result=await sources.importEpisode({feedUrl:feed.feed_url,episodeId:episode.id},{signal});
+ stage='publisher transcript assertions';
  assert.equal(result.status,'ready');assert.equal(result.document.provenance.kind,'publisher_transcript');assert.equal(result.document.provenance.caption_method,'publisher_provided');assert.equal(result.document.provenance.review_status,'unreviewed');
  assert.ok(result.document.segments.length>10);assert.ok(result.document.segments.at(-1).end>60);
  assert.equal(result.document.podcast_source.episode_id,episode.id);
@@ -95,7 +98,7 @@ try {
   const playback=await verifyAudioPlayback(downloaded);
   console.log(JSON.stringify({check:'chromium_public_audio_playback',passed:true,...playback}));
  }
-} catch {
- console.error(JSON.stringify({check:stage,passed:false,message:'Live source, access, schema or transport verification failed. No ASR, account, proxy workaround or paid fallback was attempted.'}));
+} catch(error) {
+ console.error(JSON.stringify({check:stage,passed:false,diagnostic:diagnostics.failure(error),message:'Live source, access, schema or transport verification failed. No ASR, account, proxy workaround or paid fallback was attempted.'}));
  process.exitCode=1;
 }
