@@ -20,6 +20,11 @@ class CaptionWorkflowContracts(unittest.TestCase):
         self.assertEqual(commands.count(install), 1)
         self.assertEqual(commands.count(suite), 1)
         self.assertLess(commands.index(install), commands.index(suite))
+        proxy_suite = 'python -m unittest discover -s tests -p test_caption_proxy_transport.py -v'
+        self.assertEqual(commands.count(proxy_suite), 1)
+        self.assertEqual(commands.count('openssl version'), 1)
+        self.assertLess(commands.index('openssl version'), commands.index(proxy_suite))
+        self.assertLess(commands.index(install), commands.index(proxy_suite))
         self.assertTrue(all('continue-on-error' not in step for step in steps))
         self.assertFalse(any('prove_public' in command for command in commands))
 

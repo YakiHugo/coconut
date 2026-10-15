@@ -33,6 +33,25 @@ COCONUT_CAPTION_PYTHON=/absolute/path/to/venv/bin/python npm run dev
 
 开发依赖文件 `desktop/development-caption-requirements.txt` 仅包含 helper 锁文件中的 yt-dlp 和 certifi，保留 wheel 哈希，不安装打包工具或 ASR。启动终端与 doctor 会按具体状态给出下一步；版本不匹配时启动终端显示可验证的实际 yt-dlp 版本和期望版本。doctor 只读取运行中服务的快照，不会启动解释器重新探测；修复后必须手动重启服务，旧服务状态不会自行改变。模块存在不等于能够成功导入；仍须通过原有完整版本、TLS 和协议检查才会就绪。
 
+## 显式本机代理（开发模式 YouTube / Bilibili）
+
+部分本机代理使用 fake-IP DNS；直连模式拒绝保留地址是预期行为，不能把 `198.18.0.0/15` 当公网放行，也不能据此判断来源没有字幕。服务所有者可以明确选择现有本机 HTTP 代理：
+
+```sh
+COCONUT_CAPTION_PYTHON=/absolute/path/to/venv/bin/python \
+COCONUT_CAPTION_PROXY=http://127.0.0.1:7897 npm run dev
+```
+
+这是手动启用示例，不会自动修改 macOS、VPN、系统代理或 DNS。只有确认信任该本机代理后才启用；修改后需重启服务。未设置时仍为原有直连模式。仅接受 `http://127.0.0.1:端口` 或 `http://[::1]:端口`，端口 1–65535，可带结尾 `/`；不接受用户名/密码、主机别名、远程代理、SOCKS、查询或其他路径。空字符串和错误配置失败关闭，不自动回退直连。`CAPTION_PROXY_CONFIGURATION` 表示启动配置无效。
+
+该设置只作用于开发模式 YouTube/Bilibili 现成字幕获取，不改变 X、模型、播客或其他请求；安装包没有新增可配置代理入口。HTTP/Web/Harness 请求不能设置或覆盖代理地址。配置由启动进程固定，在隔离助手内部协议传递；不继承 `HTTP_PROXY`、`HTTPS_PROXY`、`ALL_PROXY`、`NO_PROXY` 或系统自动代理配置。`/api/captions/status` 仅报告 `networkMode`（`direct_public` 或 `trusted_local_proxy`）和 `proxyProviders`，不暴露代理地址。依赖就绪检查仍不发起平台/代理连接。
+
+**信任边界：** HTTP CONNECT 只连接选定的数值回环端口，向代理提交允许的来源主机名及 443 端口，由代理处理来源 DNS/路由；Coconut 不再验证代理最终连接的 IP 是否公网。所有者因此信任该代理做正确的路由。Coconut 继续使用原始主机名进行 SNI 和 certifi TLS 证书校验，并限制来源域名、路径、视频身份、请求与字节预算。代理能观察目标主机、连接时间和流量大小；正常 TLS 隧道不会向代理明文提供 HTTPS 路径、字幕或视频 ID。不会为了连接成功添加代理证书、关闭 TLS 校验或开放任意私网 URL。
+
+不跟随重定向、不自动更换网络路线，不传递账号 Cookie 或代理凭据。代理返回 407 时停止，不能在网页或环境变量中填密码绕过此限制。结构化诊断区分 `proxy_configuration_invalid`、`proxy_unavailable`、`proxy_auth_required`、`proxy_connect_rejected` 和 `origin_tls_failed`；均不表示来源没有字幕。CONNECT 成功不计为来源响应。平台访问拒绝仍立即停止。
+
+离线测试 `test_caption_proxy_transport.py` 使用现有 OpenSSL 在私有临时目录生成一天有效的专用测试证书与密钥（测试结束或失败后清理），配合本机 CONNECT 服务器，验证真实隧道、SNI、证书失败、无来源 DNS、无直连回退和请求边界；不安装系统证书、不访问平台。它与固定版官方 extractor 合同测试共同运行于 CI。离线通过不代表真实平台可访问；本机启用、平台实时测试和持久化验收仍需在被授权的运行环境完成。
+
 ## 链接、轨道和结果
 
 - X / Twitter：公开单视频帖子，继续使用已有受限 guest 路线。
@@ -50,7 +69,7 @@ COCONUT_CAPTION_PYTHON=/absolute/path/to/venv/bin/python npm run dev
 
 新开发操作 `extract-development` 复用固定版本官方 `YoutubeIE` / `BiliBiliIE` 的元数据、轨道和格式解析，以及既有 `subtitle_import.fetch_subtitle_document`。没有重写一个平台提取器。官方实现仍可能读取播放器/视频格式元数据；读取这些元数据不下载音视频。Bilibili 官方实现会在元数据阶段获取字幕 JSON，生成内联 SRT；所有请求也受同一预算限制。
 
-`public_video_caption_guard.py` 只注册请求平台的 extractor，限制 HTTPS 主机和路径、字幕格式、请求次数及字节数。每次连接只解析一次 DNS；任何混入的非公有/保留地址均阻止连接，直接连接已校验数值地址以防 DNS 重绑定，TLS 仍用原始主机名作 SNI 和证书校验。使用独立无 Cookie 的 urllib 传输，不跟随重定向，不继承代理或私有凭据。YouTube 仅 web 客户端，关闭 JS、远程组件、token 提供者、翻译字幕和媒体 manifests；不发送默认上游网页或 player API 的年龄/内容确认参数。字幕上的可选 TLS impersonation 标记在下载前移除，始终用同一正常 TLS 路线。HTTP/API/页面中的访问拒绝立即终止；不会在拒绝后回退。
+`public_video_caption_guard.py` 只注册请求平台的 extractor，限制 HTTPS 主机和路径、字幕格式、请求次数及字节数。每次连接只解析一次 DNS；任何混入的非公有/保留地址均阻止连接，直接连接已校验数值地址以防 DNS 重绑定，TLS 仍用原始主机名作 SNI 和证书校验。使用独立无 Cookie 的 urllib 传输，不跟随重定向，默认直连不继承代理或私有凭据；显式本机代理模式的不同信任边界见上节。YouTube 仅 web 客户端，关闭 JS、远程组件、token 提供者、翻译字幕和媒体 manifests；不发送默认上游网页或 player API 的年龄/内容确认参数。字幕上的可选 TLS impersonation 标记在下载前移除，始终用同一正常 TLS 路线。HTTP/API/页面中的访问拒绝立即终止；不会在拒绝后回退。
 
 限制：最多 32 次请求，每个元数据响应 4 MiB、字幕响应和最终文件 1 MiB、合计 24 MiB、单次网络等待 15 秒；父进程获取超时 130 秒。只接受六小时内、最多 20,000 条 cue 的完成视频。允许表可能随官方 extractor 变化而需要更新；版本固定、离线真实 extractor 合同测试和失败关闭用于让变化可见，不能证明未来平台可用率。
 

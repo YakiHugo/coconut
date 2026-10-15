@@ -28,6 +28,7 @@ export function createBridge({readerDirectory = path.resolve(ROOT,'../reader'), 
   const captionSources=Object.freeze({available:capabilities.caption_import,mode:captionStatus?.mode||(capabilities.caption_import?'bundled-helper':'disabled'),
     code:capabilities.caption_import?'ready':captionStatus?.code||'CAPTION_UNAVAILABLE',
     providers:[['x','X / Twitter'],['youtube','YouTube'],['bilibili','Bilibili']].map(([id,label])=>({id,label,available:capabilities.caption_import&&(captionService.providers||['x']).includes(id)})),
+    ...(captionStatus?.mode==='development-python'&&['trusted_local_proxy','direct_public'].includes(captionStatus.networkMode)?{networkMode:captionStatus.networkMode==='trusted_local_proxy'?'trusted_local_proxy':'direct_public',proxyProviders:captionStatus.networkMode==='trusted_local_proxy'?['youtube','bilibili']:[]}:{}),
     automatic_asr:false,fallback:'import_transcript',
     message:capabilities.caption_import?'可尝试获取已启用来源的公开原语言字幕；平台访问限制仍可能阻止获取。':'字幕助手未就绪。可导入或粘贴已有字幕；开发环境可用 COCONUT_CAPTION_PYTHON 指定已安装的兼容 Python。不会自动安装依赖或启动识别。'});
   const active = new Set();

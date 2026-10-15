@@ -322,11 +322,11 @@ class FailureDiagnosticTests(unittest.TestCase):
 
 @unittest.skipUnless(importlib.util.find_spec('yt_dlp'), 'Pinned yt-dlp required')
 class LauncherDiagnosticTests(unittest.TestCase):
-    def run_launcher(self, result=None, failure=None):
+    def run_launcher(self, result=None, failure=None, request=None):
         import runpy
         import sys
         from pathlib import Path
-        request={'operation':'extract-development','url':YOUTUBE,'language':'en'}
+        request=request or {'operation':'extract-development','url':YOUTUBE,'language':'en'}
         output=io.StringIO()
         stdin=SimpleNamespace(buffer=io.BytesIO(json.dumps(request).encode()))
         with patch.object(sys, 'argv', ['caption-helper', '--protocol=1']), patch.object(sys, 'stdin', stdin), \
@@ -345,3 +345,29 @@ class LauncherDiagnosticTests(unittest.TestCase):
         self.assertEqual(result,{'status':'extractor_failed','diagnostic':{'stage':'helper_execution',
             'reason':'helper_error','requests_attempted':None,'responses_received':None}})
         self.assertNotIn('PRIVATE',json.dumps(result))
+
+    def test_launcher_rejects_invalid_proxy_and_non_development_scope(self):
+        for proxy in ('http://secret:password@127.0.0.1:7897', '', None, 'http://192.168.1.1:7897'):
+            with self.subTest(proxy=proxy), patch.object(socket, 'socket') as connect:
+                result=self.run_launcher(request={'operation':'extract-development','url':YOUTUBE,'language':'en','trustedProxy':proxy})
+                self.assertEqual(result['diagnostic']['reason'], 'proxy_configuration_invalid')
+                self.assertEqual(result['diagnostic']['requests_attempted'], 0)
+                self.assertNotIn('secret',json.dumps(result))
+                connect.assert_not_called()
+        for operation,url in [('extract',YOUTUBE),('extract-development','https://x.com/example/status/123')]:
+            result=self.run_launcher(request={'operation':operation,'url':url,'language':'en','trustedProxy':'http://127.0.0.1:7897'})
+            self.assertNotEqual(result.get('status'), 'ok')
+
+    def test_launcher_passes_only_validated_development_proxy(self):
+        failure={'status':'network_unavailable','diagnostic':{'stage':'metadata','reason':'proxy_unavailable',
+                 'requests_attempted':1,'responses_received':0}}
+        with patch.object(guard, 'extract_public_video_captions') as extract:
+            # Use main directly so its extraction call can be inspected.
+            import runpy, sys
+            from pathlib import Path
+            module=runpy.run_path(str(Path(__file__).parents[1]/'desktop/helper/caption_helper_launcher.py'))
+            extract.return_value=failure
+            request={'operation':'extract-development','url':YOUTUBE,'language':'en','trustedProxy':'http://127.0.0.1:7897'}
+            with patch.object(sys,'argv',['caption-helper','--protocol=1']), patch.object(sys,'stdin',SimpleNamespace(buffer=io.BytesIO(json.dumps(request).encode()))):
+                self.assertEqual(module['main'](),failure)
+            self.assertEqual(extract.call_args.kwargs['proxy'],'http://127.0.0.1:7897')

@@ -31,10 +31,19 @@ sys.path.insert(0,${JSON.stringify(root)})
 sys.argv=[${JSON.stringify(path.join(root,'desktop/helper/caption_helper_launcher.py'))},'--protocol=1']
 runpy.run_path(sys.argv[0],run_name='__main__')`;
 const fail=(code,message)=>new CaptionHelperError(code,message);
-export function createDevelopmentCaptionHelper({python,timeoutMs=HELPER_LIMITS.timeoutMs,tempRoot=tmpdir(),onSpawn,detached=process.platform!=='win32'}={}){
+// Owner startup only; never parse this setting from an HTTP/import request.
+export function validateCaptionProxy(value){
+ if(value===null||value===undefined)return null;
+ if(typeof value!=='string')throw fail('CAPTION_PROXY_CONFIGURATION','无效的字幕代理配置');
+ const match=/^http:\/\/(127\.0\.0\.1|\[::1\]):([1-9][0-9]{0,4})\/?$/.exec(value);
+ if(!match||Number(match[2])>65535)throw fail('CAPTION_PROXY_CONFIGURATION','字幕代理仅支持显式本机 HTTP 端口，不能包含凭据');
+ return `http://${match[1]}:${match[2]}`;
+}
+export function createDevelopmentCaptionHelper({python,proxy=null,timeoutMs=HELPER_LIMITS.timeoutMs,tempRoot=tmpdir(),onSpawn,detached=process.platform!=='win32'}={}){
  if(typeof detached!=='boolean')throw fail('CAPTION_CONFIGURATION','无效的字幕进程组配置');
  if(typeof python!=='string'||!path.isAbsolute(python))throw fail('CAPTION_CONFIGURATION','字幕 Python 必须是已安装解释器的绝对路径');
  if(!Number.isInteger(timeoutMs)||timeoutMs<1||timeoutMs>HELPER_LIMITS.timeoutMs)throw fail('CAPTION_LIMIT','无效的字幕助手限制');
+ const trustedProxy=validateCaptionProxy(proxy);
  const active=new Set();let closing=false;
  async function execute(input,{signal}={}){
   if(closing||signal?.aborted)throw fail('CAPTION_CANCELLED','字幕请求已取消');
@@ -68,14 +77,15 @@ export function createDevelopmentCaptionHelper({python,timeoutMs=HELPER_LIMITS.t
     }
     if(r.status==='version_mismatch'||r.status==='ok'&&r.version!==lock.ytDlpVersion)return {ready:false,code:'CAPTION_VERSION',expectedVersion:lock.ytDlpVersion,actualVersion:typeof r.version==='string'&&/^\d{4}\.\d{1,2}\.\d{1,2}$/.test(r.version)?r.version:'unknown'};
     if(r.status!=='ok'||r.protocol!==1||r.version!==lock.ytDlpVersion||r.publicExtraction!==true||r.guardProtocol!==1||r.tlsRootsVerified!==true||JSON.stringify(r.developmentProviders)!==JSON.stringify(['x','youtube','bilibili']))throw fail('CAPTION_VERSION','字幕依赖版本或协议不匹配');
-    ready=true;return {ready:true,code:'ready',version:r.version,providers:r.developmentProviders};
+    if(trustedProxy&&r.developmentProxyProtocol!==1)throw fail('CAPTION_VERSION','字幕代理协议不匹配');
+    ready=true;return {ready:true,code:'ready',version:r.version,providers:r.developmentProviders,networkMode:trustedProxy?'trusted_local_proxy':'direct_public'};
    }catch(error){if(error.code==='CAPTION_CANCELLED')throw error;return {ready:false,code:error.code||'CAPTION_UNAVAILABLE'};}
   },
   async extractCaptions({url,language=null,signal}={}){
    if(!ready)throw fail('CAPTION_UNAVAILABLE','开发字幕助手尚未通过检查');
    const source=captionSource(url);
    if(language!==null&&(typeof language!=='string'||!/^([a-z]{2,3})(-[A-Za-z0-9]{2,8}){0,2}$/.test(language)))throw fail('CAPTION_INPUT','原语言标记无效');
-   const r=await execute({operation:'extract-development',url:source.url,language},{signal});
+   const r=await execute({operation:'extract-development',url:source.url,language,...(trustedProxy&&['youtube','bilibili'].includes(source.provider)?{trustedProxy}:{})},{signal});
    if(CAPTION_FAILURE_STATUSES.includes(r.status)){const diagnostic=captionDiagnostic(r.diagnostic);return {status:r.status,...(diagnostic?{diagnostic}:{})};}
    if(r.status!=='ok'||!['vtt','srt'].includes(r.format)||typeof r.captionBase64!=='string'||r.captionBase64.length>Math.ceil(HELPER_LIMITS.captionBytes/3)*4||
     !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(r.captionBase64))throw fail('CAPTION_OUTPUT','字幕助手输出格式无效');

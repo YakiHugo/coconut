@@ -140,3 +140,33 @@ test('real isolated Python dependency preflight emits only allowlisted missing m
  assert.deepEqual(JSON.parse(oldVersion.stdout),{status:'version_mismatch',version:'2025.1.1'});
  assert.deepEqual((await readdir(f.directory)).sort(),['authored-python','requests.jsonl']);
 });
+
+test('owner-only caption proxy crosses isolated protocol, never Web overrides or X',async t=>{
+ let server;t.after(async()=>{if(server)await server.shutdown();});
+ const publicUrl='https://www.youtube.com/watch?v=BaW_jenozKc';
+ const f=await fixture(t,{probe:{...version,developmentProxyProtocol:1},result:{status:'network_unavailable',diagnostic:{stage:'metadata',reason:'proxy_unavailable',requests_attempted:1,responses_received:0}}});
+ const started=await startDevelopmentBridge({libraryDirectory:null,port:0,taskDirectory:path.join(f.directory,'tasks'),captionPython:f.executable,captionProxy:'http://127.0.0.1:7897/'});
+ server=started.server;const {origin,captions}=started;
+ assert.equal(captions.networkMode,'trusted_local_proxy');assert.deepEqual(captions.proxyProviders,['youtube','bilibili']);
+ assert.doesNotMatch(JSON.stringify(captions),/7897|127\.0\.0\.1/);
+ const send=body=>fetch(origin+'/api/captions/import',{method:'POST',headers:{Origin:origin,'Content-Type':'application/json'},body:JSON.stringify(body)});
+ const response=await send({url:publicUrl,trustedProxy:'http://127.0.0.1:9999',proxy:'http://127.0.0.1:9999'});
+ assert.equal(response.status,200);const receipt=await response.json();assert.equal(receipt.diagnostic.reason,'proxy_unavailable');assert.match(receipt.message,/本机字幕代理/);
+ await send({url});
+ const calls=(await readFile(f.log,'utf8')).trim().split('\n').map(JSON.parse);
+ assert.deepEqual(calls[0].input,{operation:'version'});
+ assert.deepEqual(calls[1].input,{operation:'extract-development',url:publicUrl,language:null,trustedProxy:'http://127.0.0.1:7897'});
+ assert.deepEqual(calls[2].input,{operation:'extract-development',url,language:null});
+ for(const call of calls)assert.equal(Object.keys(call.env).some(k=>/proxy/i.test(k)),false);
+});
+
+test('invalid proxy configuration fails closed before spawning and missing protocol cannot silently go direct',async t=>{
+ const {validateCaptionProxy}=await import('../desktop/development-captions.mjs');
+ for(const proxy of ['',false,{},'http://127.1:7897','http://localhost:7897','http://127.0.0.1:0','http://127.0.0.1:65536','http://127.0.0.1:7897?x','http://secret:password@127.0.0.1:7897','socks5://127.0.0.1:7897','https://127.0.0.1:7897','http://192.168.0.1:7897']){
+  assert.throws(()=>createDevelopmentCaptionHelper({python:'/never/spawn',proxy}),e=>e.code==='CAPTION_PROXY_CONFIGURATION'&&!/secret|password/.test(e.message));
+ }
+ assert.equal(validateCaptionProxy('http://[::1]:7897/'),'http://[::1]:7897');assert.equal(validateCaptionProxy(null),null);
+ const f=await fixture(t);const helper=createDevelopmentCaptionHelper({python:f.executable,proxy:'http://127.0.0.1:7897'});
+ assert.equal((await helper.status()).code,'CAPTION_VERSION');await assert.rejects(helper.extractCaptions({url}),e=>e.code==='CAPTION_UNAVAILABLE');await helper.shutdown();
+ assert.equal((await readFile(f.log,'utf8')).trim().split('\n').length,1);
+});

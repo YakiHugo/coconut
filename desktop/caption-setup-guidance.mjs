@@ -1,6 +1,7 @@
 /** Fixed local guidance only. Never render helper stderr, paths, or server text. */
 const guidance = Object.freeze({
   CAPTION_UNAVAILABLE: '尚未配置可用字幕助手。开发模式请显式选择已有可信 Python 的绝对路径。',
+  CAPTION_PROXY_CONFIGURATION: 'COCONUT_CAPTION_PROXY 仅接受 http://127.0.0.1:端口 或 http://[::1]:端口；不接受凭据。请由服务所有者确认代理后手动重启。',
   CAPTION_CONFIGURATION: 'COCONUT_CAPTION_PYTHON 必须是已有可信 Python 的绝对路径，不能只填 python3 或相对路径。',
   CAPTION_PYTHON_VERSION: '指定 Python 低于 3.10，无法使用固定字幕依赖。请选择已有可信 Python 3.10+ 的绝对路径，使用它重新创建独立环境；不要在旧解释器中反复安装。',
   CAPTION_START: '指定 Python 无法启动。请核对绝对路径、文件是否存在及执行权限，再手动重启。',

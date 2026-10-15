@@ -12,15 +12,15 @@ import {captionSetupGuidance,CAPTION_START_GUIDANCE} from './caption-setup-guida
 
 export const DEVELOPMENT_TASK_DIRECTORY = fileURLToPath(new URL('../.coconut/dev/tasks', import.meta.url));
 
-export async function startDevelopmentBridge({port = 8080, taskDirectory = DEVELOPMENT_TASK_DIRECTORY, libraryDirectory = libraryLocation({mode:'development'}).directory, captionPython = process.env.COCONUT_CAPTION_PYTHON, captionHelperDetached = process.platform!=='win32', ...options} = {}) {
+export async function startDevelopmentBridge({port = 8080, taskDirectory = DEVELOPMENT_TASK_DIRECTORY, libraryDirectory = libraryLocation({mode:'development'}).directory, captionPython = process.env.COCONUT_CAPTION_PYTHON, captionProxy = process.env.COCONUT_CAPTION_PROXY, captionHelperDetached = process.platform!=='win32', ...options} = {}) {
   if (Number.parseInt(process.versions.node, 10) < 22) throw new Error('Coconut development requires Node.js 22+.');
   let helper=null,captionDiagnostic=null;
   if(captionPython && !options.captionService){
     try{
-      helper=createDevelopmentCaptionHelper({python:captionPython,detached:captionHelperDetached});
+      helper=createDevelopmentCaptionHelper({python:captionPython,proxy:captionProxy,detached:captionHelperDetached});
       const status=await helper.status();
       captionDiagnostic=status;
-      options.captionStatus={code:status.ready?'ready':status.code,mode:'development-python'};
+      options.captionStatus={code:status.ready?'ready':status.code,mode:'development-python',networkMode:status.networkMode};
       if(status.ready)options.captionService=createCaptionService({helper,readerDirectory:options.readerDirectory,enabledProviders:status.providers});
     }catch(error){options.captionStatus={code:error.code||'CAPTION_UNAVAILABLE',mode:'development-python'};}
   }
@@ -56,6 +56,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
   console.log(libraryStartupMessage({mode:'development',directory:libraryDirectory},library));
   console.log(`本机后台任务：${executor.enabled ? '可用；提供商尚未检查' : '不可用；请检查开发任务目录，阅读仍可使用'}`);
   console.log(`字幕获取：${captions.available?'公开 X / YouTube / Bilibili 字幕入口已就绪（能否取得字幕取决于来源访问状态）':`${captions.message}（${captions.code}）`}`);
+  if(captions.available)console.log(captions.networkMode==='trusted_local_proxy'?'字幕网络：YouTube / Bilibili 使用所有者配置的可信本机代理；X 不变。':'字幕网络：直连公网；未继承系统代理。');
   if(!captions.available){console.log(captionSetupGuidance(captions.code,captionDiagnostic));console.log(CAPTION_START_GUIDANCE);}
   console.log('未发起模型请求。reader 修改后刷新页面；desktop 服务修改后 Ctrl+C 再运行 npm run dev。');
   const stop = () => server.shutdown().catch(() => { process.exitCode = 1; });

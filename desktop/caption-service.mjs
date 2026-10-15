@@ -9,7 +9,7 @@ const MAX_DURATION=6*3600;
 
 export const CAPTION_FAILURE_STATUSES=Object.freeze(['unavailable','access_restricted','language_required','network_unavailable','metadata_incomplete','no_matching_captions','extractor_failed','caption_file_invalid','caption_parse_failed','guard_stopped']);
 const diagnosticStages=new Set(['initialization','extractor_setup','metadata','track_selection','caption_download','caption_parse','caption_output','helper_execution','reader_parse']);
-const diagnosticReasons=new Set(['access_restricted','transport_unavailable','metadata_incomplete','request_scope_stopped','non_public_address','identity_mismatch','budget_exceeded','unexpected_response','upstream_error','dependency_mismatch','alternate_extractor_stopped','unsupported_request','external_execution_stopped','duration_unavailable','redirect_stopped','guard_stopped','language_unknown','no_matching_track','invalid_caption_file','caption_parse_failed','caption_download_or_file_failed','extractor_error','helper_error']);
+const diagnosticReasons=new Set(['access_restricted','transport_unavailable','metadata_incomplete','request_scope_stopped','non_public_address','identity_mismatch','budget_exceeded','unexpected_response','upstream_error','dependency_mismatch','alternate_extractor_stopped','unsupported_request','external_execution_stopped','duration_unavailable','redirect_stopped','guard_stopped','language_unknown','no_matching_track','invalid_caption_file','caption_parse_failed','caption_download_or_file_failed','extractor_error','helper_error','proxy_configuration_invalid','proxy_unavailable','proxy_auth_required','proxy_connect_rejected','origin_tls_failed']);
 // Only finite enum/counter observations cross the helper, UI and report boundary.
 // An attempted request is not evidence of reaching the platform.
 export function captionDiagnostic(value){
@@ -75,9 +75,17 @@ export function createCaptionService({helper,readerDirectory=path.resolve(ROOT,'
      // Do not turn retrieval failure or access denial into a claim of absent subtitles.
      if(!CAPTION_FAILURE_STATUSES.includes(result.status))throw new Error('字幕获取未完成，请重试或导入字幕文件');
      const diagnostic=captionDiagnostic(result.diagnostic);
-     const message=result.status==='extractor_failed'&&diagnostic?.requests_attempted===0&&['initialization','extractor_setup'].includes(diagnostic.stage)
+     const networkGuidance={
+      non_public_address:'本机 DNS 返回非公网地址，本次未连接来源；若使用本机代理，可由服务所有者显式配置字幕代理。不能据此判断没有字幕。',
+      proxy_configuration_invalid:'字幕代理配置无效，请由服务所有者检查本机 HTTP 代理设置；未连接来源。',
+      proxy_unavailable:'无法连接已配置的本机字幕代理；未改用直连，无法判断字幕是否可用。',
+      proxy_auth_required:'本机字幕代理要求认证；此模式不接收代理凭据，未改用其他路线。',
+      proxy_connect_rejected:'本机字幕代理未建立来源连接；未改用直连，无法判断字幕是否可用。',
+      origin_tls_failed:'来源 TLS 证书校验未通过；未关闭校验或改用其他路线。',
+     };
+     const message=networkGuidance[diagnostic?.reason]||(result.status==='extractor_failed'&&diagnostic?.requests_attempted===0&&['initialization','extractor_setup'].includes(diagnostic.stage)
       ?'本机字幕提取器初始化未完成，尚未尝试来源网络请求；无法判断是否有字幕。可导入已有 SRT / VTT。'
-      :failureMessages[result.status];
+      :failureMessages[result.status]);
      return {status:result.status,source_url:source.url,message,...(diagnostic?{diagnostic}:{})};
     }
     const meta=result.source;
