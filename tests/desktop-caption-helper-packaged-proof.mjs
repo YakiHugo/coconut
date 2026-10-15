@@ -26,7 +26,7 @@ try {
     const candidate=path.join(extracted,'Coconut.app/Contents/Resources');
     await verifyReaderResources(path.join(candidate,'reader'));
     assert.deepEqual(await fs.readFile(path.join(candidate,'reader/package.json')),await fs.readFile(path.join(root,'reader/package.json')),'Packaged reader module boundary matches reviewed source');
-    assert.deepEqual(await fs.readFile(path.join(candidate,'reader/updates.js')),await fs.readFile(path.join(root,'reader/updates.js')),'Packaged native File command adapter matches reviewed source');
+    assert.deepEqual(await fs.readFile(path.join(candidate,'reader/react-app.js')),await fs.readFile(path.join(root,'reader/react-app.js')),'Packaged React native command and update UI bundle matches reviewed source');
     const manifest=JSON.parse(extractFile(path.join(candidate,'app.asar'),'caption-helper-artifacts.json').toString('utf8'));
     for(const name of ['main.mjs','file-menu.mjs','caption-helper.mjs','caption-helper-process.mjs','caption-helper-lock.json'])assert.deepEqual(extractFile(path.join(candidate,'app.asar'),name),await fs.readFile(path.join(root,'desktop',name)),`Packaged ${name} matches reviewed runtime`);
     const receipt=manifest.artifacts[`darwin-${arch}`];assert.ok(receipt,'Native helper receipt is inside app.asar');

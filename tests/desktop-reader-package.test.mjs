@@ -84,6 +84,13 @@ test('packager stages the boundary and checks each output before signing; exact 
   const proof=await readFile(path.join(root,'tests/desktop-caption-helper-packaged-proof.mjs'),'utf8');
   assert.match(proof,/await verifyReaderResources\(path.join\(candidate,'reader'\)\)/);
   assert.match(proof,/reader\/package.json/);
+  // The exact-ZIP proof must compare the current compiled renderer, not a
+  // retired source file which the packager no longer stages.
+  assert.match(proof,/assert\.deepEqual\(await fs\.readFile\(path\.join\(candidate,'reader\/react-app\.js'\)\),await fs\.readFile\(path\.join\(root,'reader\/react-app\.js'\)\)/);
+  const comparedAssets=[...proof.matchAll(/path\.join\(candidate,'reader\/([^']+)'\)/g)].map(match=>match[1]);
+  assert.deepEqual(comparedAssets,['package.json','react-app.js']);
+  for(const asset of comparedAssets)assert.ok(stagedNames.includes("'"+asset+"'"),'exact-ZIP comparison asset is staged: '+asset);
+
 });
 test('canonical adapter is staged exactly and missing or corrupted packaged bytes fail closed',async t=>{
  const fixture=await layout(t,'extracted'),name='canonical-library.js';
