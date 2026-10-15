@@ -84,6 +84,7 @@ let localMediaPickerTarget=null,pendingLocalMediaChoice=null;
 function projectSourceSnapshot(doc){return JSON.stringify(doc.podcast_source||doc.local_media_source);}
 let pendingBackupReview = null;
 let pendingSubtitleEncoding = null;
+let pasteSubtitleReturnFocus=null;
 let pasteSubtitleRevision=0,pasteSubtitlePreview=null,pasteSubtitleAttempt=null,pasteSubtitleReceipt=null,pasteSubtitleTarget=null;
 let transcriptImportBatch = null;
 let transcriptDragDepth = 0;
@@ -3082,10 +3083,11 @@ function renderPastedSubtitleRecovery(){
 function pastedSubtitleTargetCurrent(target){
  return !!target&&active()===target.document&&workspace==='read'&&state.documents.includes(target.document)&&Coconut.isAudioProject(target.document)&&contentIngressAllowed(target.document)&&projectSourceSnapshot(target.document)===target.source&&mediaSelectionRevision(target.key)===target.mediaRevision&&activeSelectionRevision===target.selection&&localImportRevision===target.importRevision;
 }
-function openPastedSubtitles(project=null){
+function openPastedSubtitles(project=null,returnFocus=null){
  if(!contentIngressAllowed(project)){notice('暂时无法导入，请先处理当前保存或恢复操作。');return;}
  if(project&&(!Coconut.isAudioProject(project)||active()!==project||workspace!=='read'))return;
  cancelLocalImports('paste-subtitle');
+ pasteSubtitleReturnFocus=returnFocus;
  pasteSubtitleTarget=project?{key:project.key,document:project,source:projectSourceSnapshot(project),mediaRevision:mediaSelectionRevision(project.key),selection:activeSelectionRevision,importRevision:localImportRevision}:null;
  // The text draft is shared between explicit entry points; its destination and
  // preview never are. A recovery receipt cannot silently change this choice.
@@ -3109,7 +3111,7 @@ function dismissPastedSubtitle(event){
  const project=pasteSubtitleTarget?.document;
  event?.preventDefault();cancelLocalImports();
  if(project&&active()===project&&workspace==='read'&&Coconut.isAudioProject(project))$('paste-project-subtitles').focus({preventScroll:true});
- else if(workspace==='add')$('paste-subtitles').focus({preventScroll:true});
+ else if(workspace==='add')(pasteSubtitleReturnFocus?.isConnected&&!pasteSubtitleReturnFocus.closest('[hidden]')?pasteSubtitleReturnFocus:$('paste-subtitles')).focus({preventScroll:true});
 }
 $('close-paste-subtitle').onclick=dismissPastedSubtitle;
 $('paste-subtitle-dialog').addEventListener('cancel',dismissPastedSubtitle);

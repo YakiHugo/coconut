@@ -279,3 +279,44 @@ test('a later fully parsed X import retires the earlier partial result without c
   const saved=JSON.parse(w.localStorage.getItem('coconut-reader-v1')).documents;assert.equal(saved.length,1);assert.equal(saved[0].key,original.key);
  }finally{await w.happyDOM.close();}
 });
+
+for(const status of ['unavailable','access_restricted','language_required','network_unavailable','metadata_incomplete'])test(`caption ${status} offers local recovery without retrying or changing context`,async()=>{
+ const message='Authored service outcome: '+status;
+ const {w,$,calls}=await setup(light({caption_import:true}),()=>response({status,message}));
+ try{
+  await $('sample').onclick();const before=w.localStorage.getItem('coconut-reader-v1');$('add-content').click();
+  $('caption-language').value='en';const url='https://x.com/author/status/123';await submit($,url);
+  assert.equal($('source-route-status').textContent,message);assert.equal($('caption-recovery').hidden,false);
+  assert.equal($('caption-recovery-language').hidden,status!=='language_required');
+  let chooser=0;$('file').click=()=>chooser++;
+  $('caption-recovery-file').click();$('caption-recovery-file').click();
+  assert.equal(chooser,2);assert.equal($('video-url').value,url);assert.equal($('caption-language').value,'en');
+  $('caption-recovery-paste').click();assert.equal($('paste-subtitle-dialog').open,true);
+  $('paste-subtitle-text').value='Retained draft';$('close-paste-subtitle').click();assert.equal(w.document.activeElement.id,'caption-recovery-paste');
+  $('caption-recovery-paste').click();assert.equal($('paste-subtitle-text').value,'Retained draft');$('close-paste-subtitle').click();
+  assert.equal(w.localStorage.getItem('coconut-reader-v1'),before);assert.equal($('video-url').value,url);
+  assert.equal(calls.filter(([url])=>url==='api/captions/import').length,1);
+  $('video-url').value='https://x.com/author/status/456';$('video-url').dispatchEvent(new w.Event('input'));
+  assert.equal($('caption-recovery').hidden,true);
+ }finally{await w.happyDOM.close();}
+});
+test('cancelled late caption failure cannot restore recovery for a newer source',async()=>{
+ let release;const {w,$}=await setup(light({caption_import:true}),()=>new Promise(resolve=>release=resolve));
+ try{
+  const pending=submit($,'https://x.com/author/status/123');await feedbackUntil(()=>release);
+  $('video-url').value='https://x.com/author/status/456';$('video-url').dispatchEvent(new w.Event('input'));
+  release(response({status:'access_restricted',message:'Old failure'}));await pending;
+  assert.equal($('caption-recovery').hidden,true);assert.equal($('source-route-status').textContent,'');
+ }finally{await w.happyDOM.close();}
+});
+test('new caption attempt retires local recovery, including language changes and HTTP errors',async()=>{
+ let result={ok:false,json:async()=>({error:'Authored HTTP error'})};
+ const {w,$}=await setup(light({caption_import:true}),()=>result);
+ try{
+  await submit($,'https://x.com/author/status/123');assert.equal($('caption-recovery').hidden,false);
+  $('caption-language').value='en';$('caption-language').dispatchEvent(new w.Event('change'));assert.equal($('caption-recovery').hidden,true);
+  await submit($,'https://x.com/author/status/123');assert.equal($('caption-recovery').hidden,false);
+  result=response({status:'ready',document:documentFixture});await submit($,'https://x.com/author/status/123');
+  assert.equal($('caption-recovery').hidden,true);assert.equal($('reader-workspace').hidden,false);
+ }finally{await w.happyDOM.close();}
+});

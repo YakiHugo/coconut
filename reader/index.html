@@ -8,7 +8,7 @@
 <meta name="theme-color" content="#faf9f7">
 <link rel="icon" type="image/png" href="coconut-mark.png">
 <script src="appearance.js?v=86ea922669"></script>
-<link rel="stylesheet" href="style.css?v=cc1aebceb2">
+<link rel="stylesheet" href="style.css?v=d1138e0ca2">
 <script src="summary.js?v=a744b5ed79" defer></script>
 <script src="client-capabilities.js?v=61961bc583" defer></script>
 <script src="task-client.js?v=bb7d5fe9f6" defer></script>
@@ -21,13 +21,13 @@
 <script src="indexeddb-document-adapter.js?v=c1f4128616" defer></script>
 <script src="canonical-library.js?v=fc54e6c60e" defer></script>
 <script src="storage-provider.js?v=8e758b7d9f" defer></script>
-<script src="app.js?v=ec1e6e3514" type="text/coconut-pending" data-reader-script>
+<script src="app.js?v=1fecdb182b" type="text/coconut-pending" data-reader-script>
 </script>
 <script src="language.js?v=76f75a1eb2" type="text/coconut-pending" data-reader-script></script>
 <script src="background-summary.js?v=d7eef6ba67" type="text/coconut-pending" data-reader-script></script>
 <script src="translation-review.js?v=e8289ebd90" type="text/coconut-pending" data-reader-script></script>
 <script src="podcasts.js?v=d3db57978f" type="text/coconut-pending" data-reader-script></script>
-<script src="jobs.js?v=0fc7396a43" type="text/coconut-pending" data-reader-script>
+<script src="jobs.js?v=ae32264cb1" type="text/coconut-pending" data-reader-script>
 </script>
 <script src="updates.js?v=52e9d1e937" type="text/coconut-pending" data-reader-script></script>
 <script src="transcript-navigator.js?v=8439a57686" defer></script>
@@ -157,6 +157,11 @@
 </div></details>
 </form>
 <p id="source-route-status" class="hint" role="status">粘贴一个链接，Coconut 会识别来源。只有确认发送原文时才会使用 AI 额度。</p>
+<section id="caption-recovery" class="caption-recovery" hidden aria-label="字幕获取未完成，继续阅读">
+<p class="hint">已有字幕？可导入 SRT / VTT 文件，或粘贴带时间的字幕。仅在本机读取，不会自动重试来源、识别或调用 AI。</p>
+<p id="caption-recovery-language" class="hint" hidden>可在上方选择原字幕语言后重新提交；若列表没有对应语言，也可直接导入已有字幕。</p>
+<div class="add-actions"><button id="caption-recovery-file" type="button">导入已有字幕文件</button><button id="caption-recovery-paste" type="button">粘贴已有字幕</button></div>
+</section>
 <section id="podcast-import" class="podcast-import" hidden aria-label="从播客订阅源添加">
 <form id="podcast-form" hidden><label for="podcast-url">播客 RSS 或公开节目链接</label><div class="url-row"><input id="podcast-url" type="url" required maxlength="4096" placeholder="粘贴发布者 RSS，或支持的公开播客页面"><button id="discover-podcast" class="primary">查找节目</button></div></form>
 <p class="hint">优先读取发布者提供的文字稿。只访问公开来源，不使用登录、会员或私有订阅链接；没有文字稿时会明确提示，不自动转录或扣费。</p>
