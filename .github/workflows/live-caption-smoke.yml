@@ -1,0 +1,32 @@
+name: Manual live caption import
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  live-import:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install hash-locked caption dependencies
+        run: |
+          python -m venv .venv-captions
+          .venv-captions/bin/python -m pip install --disable-pip-version-check --no-input --require-hashes --only-binary=:all: --no-deps -r desktop/development-caption-requirements.txt
+      - name: Import one public English subtitle through the development API
+        timeout-minutes: 3
+        run: COCONUT_CAPTION_PYTHON="$PWD/.venv-captions/bin/python" node scripts/live_caption_smoke.mjs --live
+      - name: Preserve metadata-only evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: live-caption-report
+          path: live-caption-report.json
+          retention-days: 3
+          if-no-files-found: warn

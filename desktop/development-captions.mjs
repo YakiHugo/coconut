@@ -31,7 +31,8 @@ sys.path.insert(0,${JSON.stringify(root)})
 sys.argv=[${JSON.stringify(path.join(root,'desktop/helper/caption_helper_launcher.py'))},'--protocol=1']
 runpy.run_path(sys.argv[0],run_name='__main__')`;
 const fail=(code,message)=>new CaptionHelperError(code,message);
-export function createDevelopmentCaptionHelper({python,timeoutMs=HELPER_LIMITS.timeoutMs,tempRoot=tmpdir(),onSpawn}={}){
+export function createDevelopmentCaptionHelper({python,timeoutMs=HELPER_LIMITS.timeoutMs,tempRoot=tmpdir(),onSpawn,detached=process.platform!=='win32'}={}){
+ if(typeof detached!=='boolean')throw fail('CAPTION_CONFIGURATION','无效的字幕进程组配置');
  if(typeof python!=='string'||!path.isAbsolute(python))throw fail('CAPTION_CONFIGURATION','字幕 Python 必须是已安装解释器的绝对路径');
  if(!Number.isInteger(timeoutMs)||timeoutMs<1||timeoutMs>HELPER_LIMITS.timeoutMs)throw fail('CAPTION_LIMIT','无效的字幕助手限制');
  const active=new Set();let closing=false;
@@ -44,7 +45,7 @@ export function createDevelopmentCaptionHelper({python,timeoutMs=HELPER_LIMITS.t
     directory=await mkdtemp(path.join(tempRoot,'coconut-dev-caption-'));
     for(const name of ['home','tmp','config','cache','data','empty-bin'])await mkdir(path.join(directory,name),{mode:0o700});
     const output=await runCaptionProcess(python,input,{directory,signal:signal?AbortSignal.any([signal,controller.signal]):controller.signal,
-     timeoutMs:input.operation==='version'?Math.min(timeoutMs,10000):timeoutMs,maxOutputBytes:HELPER_LIMITS.outputBytes,onSpawn,args:['-I','-B','-c',launcher]});
+     timeoutMs:input.operation==='version'?Math.min(timeoutMs,10000):timeoutMs,maxOutputBytes:HELPER_LIMITS.outputBytes,onSpawn,detached,args:['-I','-B','-c',launcher]});
     let result;try{result=JSON.parse(output);}catch{throw fail('CAPTION_OUTPUT','字幕助手没有返回完整元数据');}
     if(!result||typeof result!=='object'||Array.isArray(result))throw fail('CAPTION_OUTPUT','字幕助手没有返回完整元数据');
     return result;
