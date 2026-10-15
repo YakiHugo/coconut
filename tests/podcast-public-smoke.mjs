@@ -74,6 +74,13 @@ try {
  assert.ok(result.document.segments.length>10);assert.ok(result.document.segments.at(-1).end>60);
  assert.equal(result.document.podcast_source.episode_id,episode.id);
  console.log(JSON.stringify({check:'native_public_feed_and_transcript',passed:true,episodes:feed.episodes.length,segments:result.document.segments.length,language:result.document.language,kind:result.document.provenance.kind,review_status:result.document.provenance.review_status}));
+ // Import may reuse the completed list, but an explicit refresh must still
+ // exercise the real publisher request and its unchanged transport deadline.
+ stage='public feed refresh';
+ const refreshed=await sources.discover({url:'https://mp3s.nashownotes.com/pc20rss.xml'},{signal});
+ assert.equal(refreshed.kind,'feed');assert.equal(refreshed.feed_reused,false);assert.ok(refreshed.episodes.length>0);
+ assert.ok(Number.isFinite(Date.parse(refreshed.feed_checked_at)));
+ console.log(JSON.stringify({check:'native_public_feed_explicit_refresh',passed:true,episodes:refreshed.episodes.length}));
  stage='Apple publisher feed resolution';
  const apple=await sources.discover({url:'https://podcasts.apple.com/us/podcast/the-changelog-software-development-open-source/id341623264'},{signal});
  assert.equal(apple.kind,'feed');assert.equal(apple.feed_url,'https://changelog.com/podcast/feed');assert.ok(apple.episodes.length>0);

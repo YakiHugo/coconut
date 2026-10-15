@@ -45,7 +45,7 @@ test('public source → timed document → consented translation and cited summa
  const found=await (await post('/api/podcasts/discover',{url:feedUrl})).json();assert.equal(found.episodes.length,1);
  const imported=await (await post('/api/podcasts/import',{feedUrl,episodeId:found.episodes[0].id})).json();assert.equal(imported.status,'ready');
  const doc=Coconut.validate(imported.document);assert.equal(doc.language,'en-us');assert.equal(doc.provenance.review_status,'unreviewed');assert.deepEqual(doc.segments.map(c=>[c.start,c.end]),[[0,5],[5,10]]);
- assert.deepEqual(sourceCalls,[feedUrl,feedUrl,captionUrl]);assert.deepEqual(calls,[]);
+ assert.deepEqual(sourceCalls,[feedUrl,captionUrl]);assert.equal(imported.feed_reused,true);assert.deepEqual(calls,[]);
  doc.notes[doc.segments[1].id]='Private reading note must not be model context.';
  const plan=Coconut.subscriptionPlan(doc,[doc.segments[0].id],'en','zh','chatgpt_subscription_translation'),batch=plan.windows[0];
  const payload={source:'en',target:'zh',provider:'codex',model:'authored-journey-model',segments:batch.segments,context:batch.context,glossary:batch.glossary,memory:batch.memory};

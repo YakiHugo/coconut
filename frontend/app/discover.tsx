@@ -20,6 +20,8 @@ export function Discover({ store }: {
     const setError=(error:string)=>updateSession({error});
     const choiceHeading=useRef<HTMLHeadingElement|null>(null),reviewHeading=useRef<HTMLHeadingElement|null>(null),lossHeading=useRef<HTMLHeadingElement|null>(null),languageHeading=useRef<HTMLHeadingElement|null>(null);
     useEffect(()=>{const heading=review?reviewHeading.current:lossPending?lossHeading.current:languageRequired?languageHeading.current:receipt?choiceHeading.current:null;if(heading){heading.focus();heading.scrollIntoView?.({block:'nearest'});}},[receipt,review,lossPending,languageRequired]);
+    const checkedAt=selection?.feed_checked_at;
+    const checkLabel=checkedAt&&!Number.isNaN(Date.parse(checkedAt))?new Date(checkedAt).toLocaleString():null;
     const content=ingestionDocument(receipt),matches=content?matchingSourceDocuments(store.getSnapshot().documents,content):[];
     const mounted=useRef(true);
     useEffect(()=>{mounted.current=true;return()=>{mounted.current=false;};},[]);
@@ -53,6 +55,7 @@ export function Discover({ store }: {
             if(valueResult.state==='awaiting_selection')updateSession({selection:valueResult.selection,receipt:null,attempt:null});
             else if(valueResult.state==='blocked')updateSession({error:valueResult.error?.message||'暂时无法读取来源。',languageRequired:valueResult.error?.code==='language_required',languageChoices:captionLanguageChoices(valueResult.error?.languages)});
             else {
+                if(attempt.episode&&typeof valueResult.source.feed_checked_at==='string'&&sessionRef.current.selection)updateSession({selection:{...sessionRef.current.selection,feed_checked_at:valueResult.source.feed_checked_at}});
                 const content=ingestionDocument(valueResult);
                 if(!content){setError('此来源尚未返回可打开的原声或文字稿，请保留来源后重试。');return;}
                 updateSession({receipt:valueResult,attempt:null,languageRequired:false,languageChoices:[]});
@@ -127,7 +130,7 @@ export function Discover({ store }: {
   <p role="status" className="source-error">{error}</p>
   {languageRequired&&<section aria-label="选择视频原语言"><h2 ref={languageHeading} tabIndex={-1}>确认视频原语言</h2><p>以下是来源实际提供且格式可用的字幕语言，并不表示已确认视频原语言。请选择你确认的原语言后重试；不会自动换轨或启动识别。</p>{languageChoices.length>0?<label>视频原语言<select value={language} onChange={event=>{cancel();updateSession({language:event.target.value,error,receipt:null,lossReviewed:false});}}><option value="">请选择原语言</option>{languageChoices.map(code=><option key={code} value={code}>{code}</option>)}</select></label>:<p>当前字幕服务没有返回可选语言，无法在此确认原语言。链接已保留；请更新字幕服务后重试。</p>}{languageChoices.length>0&&<button disabled={busy||!languageChoices.includes(language)} onClick={()=>void request({...session.attempt!,language})}>按所选原语言重试</button>}</section>}
   {session.attempt&&!busy&&error&&!languageRequired&&<button onClick={()=>void request(session.attempt!)}>重试上次读取{session.attempt.episode?'：'+session.attempt.episode.title:''}</button>}
-  {selection&&<section className="episode-list" aria-label="选择播客单集"><h2>{selection.title||'选择一集开始'}</h2>{selection.feeds?.map(feed=><button key={feed.url} disabled={busy||attaching} onClick={()=>{changeURL(feed.url);void request({url:feed.url});}}>{feed.title}</button>)}{selection.episodes?.map(episode=>{
+  {selection&&<section className="episode-list" aria-label="选择播客单集"><h2>{selection.title||'选择一集开始'}</h2>{selection.feed_url&&<div className="feed-refresh"><p className="quiet">{checkLabel?'上次来源检查：'+checkLabel+'。一分钟内选择文字稿可能复用此节目列表；文字稿仍从发布者获取。':'选择单集时检查发布者来源。'} 刷新会重新读取来源，失败时不会使用旧缓存。</p><button disabled={busy||attaching} onClick={()=>void request({url,feed:selection.feed_url})}>刷新节目列表</button></div>}{selection.feeds?.map(feed=><button key={feed.url} disabled={busy||attaching} onClick={()=>{changeURL(feed.url);void request({url:feed.url});}}>{feed.title}</button>)}{selection.episodes?.map(episode=>{
       const supported=(episode.transcripts||[]).filter(track=>track.supported&&track.url),selectedTrack=supported.some(track=>track.url===tracks[episode.id])?tracks[episode.id]:'';
       return <article key={episode.id}><div><h3>{episode.title}</h3><p>{supported.length?'发布者提供文字稿':'检查文字稿可用性'}</p>{supported.length>0&&<label>文字稿语言与格式 · {episode.title}<select aria-label={'文字稿语言与格式 · '+episode.title} value={selectedTrack} disabled={attaching} onChange={event=>{cancel();setReview(null);updateSession({tracks:{...sessionRef.current.tracks,[episode.id]:event.target.value},receipt:null,attempt:null,error:''});}}><option value="">请选择发布者文字稿</option>{supported.map((track,index)=><option key={track.url+':'+index} value={track.url}>{track.language||'语言未标明'} · {track.type} · {index+1}</option>)}</select></label>}</div><button disabled={busy||attaching||supported.length>0&&!selectedTrack} onClick={()=>void request({url,episode,feed:selection.feed_url,track:selectedTrack||undefined})}>打开单集</button></article>;
   })}</section>}

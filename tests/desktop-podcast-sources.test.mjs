@@ -34,13 +34,13 @@ test('episode list is bounded, stable IDs use publisher GUID, and no feed is imp
  assert.equal(parsePodcastFeed(many,feedUrl).episodes.length,200);assert.equal(parsePodcastFeed(many,feedUrl).truncated,true);
  const {sources,calls}=service();await assert.rejects(sources.importEpisode({feedUrl}),/选择一集/);assert.equal(calls.length,0);
 });
-test('discover only reads metadata; importing revalidates the episode and retrieves the matching-language timed transcript',async()=>{
+test('discover only reads metadata; importing reuses the completed feed and retrieves the matching-language timed transcript',async()=>{
  const {sources,calls}=service();const feed=await sources.discover({url:feedUrl});assert.equal(calls.length,1);
- const result=await sources.importEpisode({feedUrl,episodeId:feed.episodes[0].id});assert.equal(result.status,'ready');assert.equal(calls.length,3);
+ const result=await sources.importEpisode({feedUrl,episodeId:feed.episodes[0].id});assert.equal(result.status,'ready');assert.equal(calls.length,2);
  assert.equal(result.document.language,'zh-cn');assert.equal(result.document.segments.length,2);assert.equal(result.document.segments[0].text,'这是一段原创测试字幕。');assert.equal(result.document.provenance.kind,'publisher_transcript');assert.equal(result.document.provenance.caption_method,'publisher_provided');assert.equal(result.document.provenance.review_status,'unreviewed');assert.equal(result.document.podcast_source.feed_url,feedUrl);assert.equal(result.document.podcast_source.episode_id,feed.episodes[0].id);assert.equal(result.document.podcast_source.transcript_url,'https://publisher.example.org/one.vtt');assert.equal(calls.some(c=>c.url.includes('media.example')),false);
 });
 test('no captions is needs_transcription, not a fabricated transcript or silent ASR fallback',async()=>{
- const {sources,calls}=service();const feed=await sources.discover({url:feedUrl});const result=await sources.importEpisode({feedUrl,episodeId:feed.episodes[1].id});assert.equal(result.status,'needs_transcription');assert.equal(result.document,undefined);assert.equal(calls.length,2);
+ const {sources,calls}=service();const feed=await sources.discover({url:feedUrl});const result=await sources.importEpisode({feedUrl,episodeId:feed.episodes[1].id});assert.equal(result.status,'needs_transcription');assert.equal(result.document,undefined);assert.equal(calls.length,1);
 });
 test('transcript transport failure, unsupported selection and stale episode fail without fallback',async()=>{
  const {sources}=service({'https://publisher.example.org/one.vtt':new Error('network failure')});const feed=await sources.discover({url:feedUrl}),episodeId=feed.episodes[0].id;

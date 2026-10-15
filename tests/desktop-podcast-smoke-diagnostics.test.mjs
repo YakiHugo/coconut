@@ -64,10 +64,10 @@ test('policy failures and unknown errors stay failed and unclassified without in
 });
 test('actual importer/parser failure is distinguished from successful transcript fetch and assertion failures',async()=>{
  const rss=await readFile(new URL('./fixtures/podcasts/rss.xml',import.meta.url),'utf8');
- const {diagnostics,calls}=setup([{headers:{'content-type':'application/rss+xml'},body:rss},{headers:{'content-type':'application/rss+xml'},body:rss},{headers:{'content-type':'text/vtt'},body:'WEBVTT\n\ninvalid source-body secret'}]);
+ const {diagnostics,calls}=setup([{headers:{'content-type':'application/rss+xml'},body:rss},{headers:{'content-type':'text/vtt'},body:'WEBVTT\n\ninvalid source-body secret'}]);
  const sources=createPodcastSources({fetchResource:diagnostics.fetchResource}),feed=await sources.discover({url});
  let caught;try{await sources.importEpisode({feedUrl:feed.feed_url,episodeId:feed.episodes[0].id});}catch(error){caught=error;}
- assert.ok(caught);const result=diagnostics.failure(caught);assert.equal(result.reason,'invalid_publisher_transcript');assert.equal(result.fetches_attempted,3);assert.equal(result.last_request.fetch_index,3);assert.equal(result.last_request.http_status,200);assert.equal(result.last_request.outcome,'success');assert.equal(result.last_request.timeout,'none');assert.equal(calls.length,3);clean(result);
+ assert.ok(caught);const result=diagnostics.failure(caught);assert.equal(result.reason,'invalid_publisher_transcript');assert.equal(result.fetches_attempted,2);assert.equal(result.last_request.fetch_index,2);assert.equal(result.last_request.http_status,200);assert.equal(result.last_request.outcome,'success');assert.equal(result.last_request.timeout,'none');assert.equal(calls.length,2);clean(result);
 });
 test('smoke gate keeps deadlines, targets, assertions and nonzero failure exit',async()=>{
  const smoke=await readFile(new URL('./podcast-public-smoke.mjs',import.meta.url),'utf8');

@@ -13,6 +13,7 @@ const PAGE_TYPES=new Set([...FEED_TYPES,'text/html','application/xhtml+xml']);
 const TRANSCRIPT_TYPES=new Set(['text/vtt','application/x-subrip','application/srt','text/srt','application/json']);
 const JSON_TYPES=new Set(['application/json','text/javascript','application/javascript']);
 const FEED_IDENTITIES=Symbol('bounded publisher identity index');
+const FEED_SNAPSHOT_LIMITS=Object.freeze({entries:2,ttlMs:60000,sourceBytes:16*1024*1024});
 const hash=value=>createHash('sha256').update(value).digest('hex');
 const plain=value=>String(value??'').replace(/<[^<>]*>/g,'').replace(/\s+/g,' ').trim();
 const small=value=>plain(value).slice(0,500);
@@ -219,17 +220,66 @@ export function matchAppleEpisode(results,collectionId,trackId,episodes,identity
   if(matches.length!==1||matches[0].identity_ambiguous)return null;
   return {episode:matches[0],matched_by:matches[0].id===guidHash?'publisher_guid':'enclosure_url'};
 }
-export function createPodcastSources({fetchResource=fetchPublic}={}) {
+export function createPodcastSources({fetchResource=fetchPublic,now=Date.now}={}) {
   let active=0;
   const bounded=async action=>{if(active>=PODCAST_LIMITS.concurrent)throw new Error('最多同时处理两个播客请求，请稍后重试');active++;try{return await action();}finally{active--;}};
-  async function feed(url,signal) {
-    const input=publicUrl(url),xiaoyuzhou=isXiaoyuzhou(input.href);
-    const resource=await fetchResource(input.href,{signal,maxBytes:PODCAST_LIMITS.metadataBytes,types:xiaoyuzhou?PAGE_TYPES:FEED_TYPES});
-    if(xiaoyuzhou)return parseXiaoyuzhouPage(textBody(resource),resource.url);
-    return parsePodcastFeed(textBody(resource),resource.url);
+  // Completed publisher RSS snapshots only. Bounds are ceilings, not allocations.
+  // No shared in-flight work or client metadata; text/media always use real fetches.
+  const snapshots=new Map();let generation=0;
+  const copyFeed=value=>{
+    const copy=structuredClone(value);
+    if(value[FEED_IDENTITIES])Object.defineProperty(copy,FEED_IDENTITIES,{value:structuredClone(value[FEED_IDENTITIES])});
+    return copy;
+  };
+  const checkSignal=signal=>{if(signal?.aborted)throw signal.reason||new DOMException('Cancelled','AbortError');};
+  const overlaps=(left,right)=>[...left].some(key=>right.has(key));
+  function invalidate(keys,ticket) {
+    for(const [key,entry] of snapshots)if(overlaps(keys,entry.keys)&&(!ticket||entry.generation<ticket.generation)){
+      snapshots.delete(key);
+    }
   }
-  async function discover({url}={}, {signal}={}) {
+  function beginRefresh(url) {
+    const ticket={keys:new Set([url]),generation:++generation};
+    invalidate(ticket.keys,ticket);return ticket;
+  }
+  function remember(result,resource,ticket,signal) {
+    checkSignal(signal);
+    ticket.keys.add(publicUrl(resource.url).href);invalidate(ticket.keys,ticket);
+    const checked=now();result.feed_checked_at=new Date(checked).toISOString();result.feed_reused=false;
+    // Conservatively skip warming from any older concurrent refresh. This also
+    // covers redirect aliases only learned after a newer failed refresh, without
+    // retaining an unbounded per-URL generation/tombstone registry.
+    if(ticket.generation!==generation||isXiaoyuzhou(resource.url)||isXiaoyuzhou([...ticket.keys][0]))return result;
+    const bytes=resource.body.byteLength;
+    if(bytes>PODCAST_LIMITS.metadataBytes)return result;
+    for(const [key,entry] of snapshots)if(checked-entry.checked>=FEED_SNAPSHOT_LIMITS.ttlMs)snapshots.delete(key);
+    while(snapshots.size>=FEED_SNAPSHOT_LIMITS.entries||[...snapshots.values()].reduce((total,entry)=>total+entry.bytes,0)+bytes>FEED_SNAPSHOT_LIMITS.sourceBytes)snapshots.delete(snapshots.keys().next().value);
+    snapshots.set(result.feed_url,{keys:new Set(ticket.keys),generation:ticket.generation,checked,bytes,value:copyFeed(result)});
+    return result;
+  }
+  function cached(url,signal) {
+    checkSignal(signal);const time=now();
+    for(const [key,entry] of snapshots){
+      if(time-entry.checked>=FEED_SNAPSHOT_LIMITS.ttlMs||time<entry.checked){snapshots.delete(key);continue;}
+      if(entry.keys.has(url)){const result=copyFeed(entry.value);result.feed_reused=true;return result;}
+    }
+    return null;
+  }
+  async function feed(url,signal,reuse=false,refreshTicket=null) {
+    const input=publicUrl(url),xiaoyuzhou=isXiaoyuzhou(input.href);
+    checkSignal(signal);
+    if(reuse&&!xiaoyuzhou){const prior=cached(input.href,signal);if(prior)return prior;}
+    const ticket=refreshTicket||beginRefresh(input.href);
+    ticket.keys.add(input.href);invalidate(ticket.keys,ticket);
+    const resource=await fetchResource(input.href,{signal,maxBytes:PODCAST_LIMITS.metadataBytes,types:xiaoyuzhou?PAGE_TYPES:FEED_TYPES});
+    checkSignal(signal);
+    if(xiaoyuzhou)return parseXiaoyuzhouPage(textBody(resource),resource.url);
+    return remember(parsePodcastFeed(textBody(resource),resource.url),resource,ticket,signal);
+  }
+  async function discover({url}={}, {signal}={},ticket) {
     const input=publicUrl(url);
+    checkSignal(signal);
+    try {
     if(/(?:^|\.)spotify\.com$/.test(input.hostname))throw new Error('Spotify 链接不能用于提取音轨。请提供该节目的原发布者公开 RSS，或合法取得的音视频文件');
     if(['podcasts.apple.com','itunes.apple.com'].includes(input.hostname)) {
       const id=input.pathname.match(/\/id(\d+)(?:\/|$)/)?.[1];if(!id)throw new Error('请使用含节目 ID 的 Apple Podcasts 分享链接');
@@ -240,7 +290,7 @@ export function createPodcastSources({fetchResource=fetchPublic}={}) {
       let data;try{data=JSON.parse(textBody(lookup));}catch{throw new Error('Apple 目录返回无效数据');}
       const show=Array.isArray(data.results)&&data.results.find(item=>appleId(item.collectionId)===id&&item.kind==='podcast'&&item.feedUrl);
       if(!show)throw new Error('Apple 目录未提供此节目的公开 RSS；请提供原发布者 RSS 或合法本地文件');
-      const result=await feed(show.feedUrl,signal);
+      const result=await feed(show.feedUrl,signal,false,ticket);
       if(!episodeId)return {...result,resolved_from:input.href,warnings:[...result.warnings,'已通过 Apple 公开目录找到发布者 RSS；仅使用 RSS 中发布的文件。']};
       let matched=null;
       try {
@@ -252,24 +302,28 @@ export function createPodcastSources({fetchResource=fetchPublic}={}) {
         warnings:[...result.warnings,matched?'已用 Apple 单集 ID 与发布者 GUID / 媒体地址精确匹配，只显示此集；仍需点击后才保存或获取文字稿、音视频。':'此分享链接指向单集，但未能在有界公开目录与 RSS 中唯一匹配；请在列表中明确选择对应单集。不会按标题猜测或自动取最新一集，较早内容可打开原站查找。']};
     }
     const resource=await fetchResource(input.href,{signal,maxBytes:PODCAST_LIMITS.metadataBytes,types:PAGE_TYPES,inspectMedia:true,maxMediaBytes:PODCAST_LIMITS.mediaBytes});
+    checkSignal(signal);
     if(isMediaType(resource.type))return {kind:'media',title:small(decodeURIComponent(new URL(resource.url).pathname.split('/').pop()||'公开媒体')),feed_url:'',episodes:[],feeds:[],media:mediaItem(resource.url,resource.type,resource.length,resource.url),warnings:['仅获取了媒体响应头，尚未下载；没有文字稿，不会自动识别。媒体时长将在播放时由浏览器确认。']};
     const text=textBody(resource);
-    if(!['text/html','application/xhtml+xml'].includes(resource.type))return parsePodcastFeed(text,resource.url);
+    if(!['text/html','application/xhtml+xml'].includes(resource.type))return remember(parsePodcastFeed(text,resource.url),resource,ticket,signal);
     const feeds=publisherFeeds(text,resource.url);
     if(isXiaoyuzhou(input.href)&&!feeds.length)return parseXiaoyuzhouPage(text,resource.url);
     // No hidden platform API, arbitrary JSON-state media extraction or authentication fallback.
     if(!feeds.length)throw new Error(['xiaoyuzhoufm.com','www.xiaoyuzhoufm.com'].includes(input.hostname)?'小宇宙此公开页面未声明可用 RSS。请提供主播公开 RSS 或合法本地音视频；节目简介和时间轴不是完整文字稿':'此页面未声明公开 RSS / Atom，请提供发布者 RSS 或音视频文件直链');
     return {kind:'choices',title:'选择发布者公开源',feed_url:'',episodes:[],feeds,warnings:['页面入口不是单集导入；选择 RSS 后，还需明确选择一集。']};
+    } finally {
+      if(signal?.aborted)for(const [key,entry] of snapshots)if(entry.generation===ticket.generation)snapshots.delete(key);
+    }
   }
-  async function chosen(data,signal) {
+  async function chosen(data,signal,reuse=false) {
     if(!data||typeof data.episodeId!=='string'||!/^[a-f0-9]{64}$/.test(data.episodeId))throw new Error('请先明确选择一集播客');
-    const current=await feed(data.feedUrl,signal),episode=current.episodes.find(item=>item.id===data.episodeId);
+    const current=await feed(data.feedUrl,signal,reuse),episode=current.episodes.find(item=>item.id===data.episodeId);
     if(!episode)throw new Error('所选单集不在当前公开源列表中，请刷新来源后重选');
     return {current,episode};
   }
   async function importEpisode(data, {signal}={}) {
-    const {current,episode}=await chosen(data,signal),available=episode.transcripts.filter(t=>t.supported);
-    if(!available.length)return {status:'needs_transcription',episode,feed_url:current.feed_url,message:'此单集没有可导入的发布者时间戳文字稿；可选择合法字幕文件，不会自动识别或下载模型。'};
+    const {current,episode}=await chosen(data,signal,true),available=episode.transcripts.filter(t=>t.supported);
+    if(!available.length)return {status:'needs_transcription',episode,feed_url:current.feed_url,feed_checked_at:current.feed_checked_at,feed_reused:current.feed_reused,message:'此单集没有可导入的发布者时间戳文字稿；可选择合法字幕文件，不会自动识别或下载模型。'};
     let transcript;
     if(data.transcriptUrl)transcript=available.find(item=>item.url===data.transcriptUrl);
     else {
@@ -284,7 +338,7 @@ export function createPodcastSources({fetchResource=fetchPublic}={}) {
     const document={schema_version:1,title:episode.title,source_url:episode.source_url,language:transcript.language||episode.language||null,segments,
       provenance:{kind:'publisher_transcript',caption_method:'publisher_provided',caption_track:transcript.url,subtitle_check:'found',language_basis:'publisher_metadata',review_status:'unreviewed',source_platform:'podcast_rss',...(medium?{source_medium:medium.kind}:{}),...(episode.duration&&episode.duration<=PODCAST_LIMITS.duration?{media_duration:episode.duration}:{})},
       podcast_source:{feed_url:current.feed_url,episode_id:episode.id,transcript_url:transcript.url,...(medium?{media_url:medium.url,media_kind:medium.kind}:{})}};
-    return {status:'ready',document,episode,feed_url:current.feed_url};
+    return {status:'ready',document,episode,feed_url:current.feed_url,feed_checked_at:current.feed_checked_at,feed_reused:current.feed_reused};
   }
   async function downloadMedia(data,{signal}={}) {
     const maxBytes=data?.maxBytes??PODCAST_LIMITS.mediaBytes;
@@ -304,5 +358,16 @@ export function createPodcastSources({fetchResource=fetchPublic}={}) {
     if(!resource.body.length)throw new Error('媒体文件为空');
     return {body:resource.body,type:resource.type,kind,filename:kind==='video'?'podcast-video':'podcast-audio'};
   }
-  return {discover:(...args)=>bounded(()=>discover(...args)),importEpisode:(...args)=>bounded(()=>importEpisode(...args)),downloadMedia:(...args)=>bounded(()=>downloadMedia(...args))};
+  return {discover:async(data={},options={})=>{
+    // Explicit refresh invalidates a valid source even if admission is busy or
+    // the caller has already cancelled. It must never leave a stale fallback.
+    const url=publicUrl(data.url).href;
+    // A previous redirect may have changed or disappeared. Clear the tiny
+    // completed cache on explicit discovery rather than retain historical alias
+    // authority or an unbounded invalidation registry. Cold imports can still
+    // keep two sources; sibling imports from the displayed feed share one.
+    snapshots.clear();
+    const ticket=beginRefresh(url);
+    return bounded(()=>discover(data,options,ticket));
+  },importEpisode:(...args)=>bounded(()=>importEpisode(...args)),downloadMedia:(...args)=>bounded(()=>downloadMedia(...args))};
 }

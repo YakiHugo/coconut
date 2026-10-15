@@ -60,6 +60,10 @@ jobs:
             ${{ runner.temp }}/coconut-react-authored/source-choose-project-390.png
             ${{ runner.temp }}/coconut-react-authored/source-review-transcript-1360.png
             ${{ runner.temp }}/coconut-react-authored/source-review-transcript-390.png
+            ${{ runner.temp }}/coconut-react-authored/source-feed-refreshed-1360.png
+            ${{ runner.temp }}/coconut-react-authored/source-feed-refreshed-390.png
+            ${{ runner.temp }}/coconut-react-authored/source-feed-refresh-failed-1360.png
+            ${{ runner.temp }}/coconut-react-authored/source-feed-refresh-failed-390.png
             ${{ runner.temp }}/coconut-react-authored/source-discovery.json
             ${{ runner.temp }}/coconut-react-authored/caption-partial-review.png
             ${{ runner.temp }}/coconut-react-authored/caption-continuity.json

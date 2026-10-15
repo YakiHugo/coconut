@@ -57,11 +57,11 @@ export function createIngestionService({podcastSources,captionService=null}={}){
   if(data.episode){
    const episode=data.episode;
    if(typeof episode!=='object'||Array.isArray(episode)||typeof episode.feed_url!=='string'||typeof episode.episode_id!=='string')throw new Error('请明确选择播客单集');
-   // The selection URL becomes the source of truth; the adapter re-fetches it
-   // and verifies the episode and transcript against the current feed.
+   // The adapter validates selection against its own recently checked RSS snapshot
+   // (at most 60 seconds) or a fresh fetch, never client episode metadata.
    if(inputSource({kind:'url',url:episode.feed_url}).url!==source.url)throw new Error('单集来源与当前链接不一致');
    const result=await podcastSources.importEpisode({feedUrl:episode.feed_url,episodeId:episode.episode_id,...(episode.transcript_url?{transcriptUrl:episode.transcript_url}:{})},{signal});
-   return finish({state:result.status==='ready'?'ready':'needs_transcription',source:{...source,feed_url:result.feed_url,episode_id:result.episode.id},media:episodeMedia(result),project:result.status==='ready'?null:audioProject(source,episodeMedia(result),result.episode,result.feed_url),transcript:result.status==='ready'?{document:result.document}:null,...(result.status!=='ready'?{message:unavailableTranscription.message}:{})});
+   return finish({state:result.status==='ready'?'ready':'needs_transcription',source:{...source,feed_url:result.feed_url,episode_id:result.episode.id,...(result.feed_checked_at?{feed_checked_at:result.feed_checked_at,feed_reused:result.feed_reused}:{})},media:episodeMedia(result),project:result.status==='ready'?null:audioProject(source,episodeMedia(result),result.episode,result.feed_url),transcript:result.status==='ready'?{document:result.document}:null,...(result.status!=='ready'?{message:unavailableTranscription.message}:{})});
   }
   const discovery=await podcastSources.discover({url:source.url},{signal});
   if(discovery.kind==='media'){const media={kind:discovery.media.kind,url:discovery.media.url,name:discovery.title,mimeType:discovery.media.type,availability:'remote',download:{endpoint:'/api/podcasts/media',body:{url:discovery.media.url}}};return finish({state:'needs_transcription',media,project:audioProject(source,media),message:unavailableTranscription.message});}
