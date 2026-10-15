@@ -245,6 +245,12 @@ $("url-form").onsubmit = async (event) => {
 		button.disabled = false;sourceSubmitting=false;
 	}
 };
+function showCaptionRecovery(languageRequired=false) {
+ $('caption-recovery').hidden=false;
+ $('caption-recovery-language').hidden=!languageRequired;
+}
+$('caption-recovery-file').onclick=()=>$('import').click();
+$('caption-recovery-paste').onclick=()=>openPastedSubtitles(null,$('caption-recovery-paste'));
 function captionOwnsReader(controller) {
  const opened=sourceCaptionActivation;
  return sourceCaptionRequest===controller&&opened&&workspace==='read'&&active()===opened.identity&&activeSelectionRevision===opened.selectionRevision&&localImportRevision===opened.navigationRevision;
@@ -253,6 +259,7 @@ async function importVideoCaptions(url) {
  const revision=documentLifecycleRevision,controller=new AbortController(),startingDocument=state.active,startingSelection=activeSelectionRevision,startingNavigation=localImportRevision,startingLanguage=$('caption-language').value;sourceCaptionRequest=controller;sourceCaptionURL=url;sourceCaptionActivation=null;
  const ownsStatus=()=>sourceCaptionRequest===controller&&$('video-url').value.trim()===url&&$('caption-language').value===startingLanguage;
  controller.signal.addEventListener('abort',()=>{if(ownsStatus())$('source-route-status').textContent=sourceCaptionActivation?'已停止等待导入结果。已打开的文字稿请查看保存状态。':'已取消获取字幕，书架保留。';});
+ $('caption-recovery').hidden=true;
  $('process-url').disabled=true;$('cancel-source').hidden=false;
  $('source-route-status').textContent='正在读取公开原语言字幕，不下载音视频、不识别或调用模型。';
  let warningBatch=null;
@@ -264,6 +271,7 @@ async function importVideoCaptions(url) {
   if(!response.ok)throw new Error(result.error||'当前入口未取得可用公开字幕，请重试或导入字幕文件');
   if(result.status!=='ready'||!result.document){
    $('source-route-status').textContent=result.message||'当前入口未取得可用公开字幕，可打开原站或导入字幕文件；未启动识别。';
+   showCaptionRecovery(result.status==='language_required');
    if(result.status==='language_required'){$('caption-language-control').hidden=false;$('caption-language').focus();}
    return;
   }
@@ -288,7 +296,7 @@ async function importVideoCaptions(url) {
   }
  }catch(error){
   if(warningBatch){const item=warningBatch.items[0];item.status=ownsStatus()&&!controller.signal.aborted?'failed':'cancelled';if(item.status==='failed')item.error=localFileError(error);}
-  if(ownsStatus()&&!controller.signal.aborted)$('source-route-status').textContent=error.message;
+  if(ownsStatus()&&!controller.signal.aborted){$('source-route-status').textContent=error.message;if(current())showCaptionRecovery();}
  }finally{
   if(warningBatch){warningBatch.finished=true;renderTranscriptImportBatch(warningBatch);}
   if(sourceCaptionRequest===controller){sourceCaptionRequest=null;sourceCaptionURL=null;sourceCaptionActivation=null;$('cancel-source').hidden=true;$('process-url').disabled=false;}}
@@ -297,9 +305,9 @@ $('cancel-source').onclick=()=>sourceCaptionRequest?.abort();
 $('video-url').addEventListener('input',()=>{
  sourceCaptionRequest?.abort();retirePodcastSource();
  $('process-url').disabled=sourceSubmitting||!!sourceCaptionRequest;
- $('source-route-status').textContent='';
+ $('source-route-status').textContent='';$('caption-recovery').hidden=true;
 });
-$('caption-language').addEventListener('change',()=>{if(sourceCaptionRequest){sourceCaptionRequest.abort();$('source-route-status').textContent='字幕语言已更改，请重新获取。';}});
+$('caption-language').addEventListener('change',()=>{$('caption-recovery').hidden=true;if(sourceCaptionRequest){sourceCaptionRequest.abort();$('source-route-status').textContent='字幕语言已更改，请重新获取。';}});
 window.addEventListener('coconut-workspace-change',()=>sourceCaptionRequest?.abort());
 window.addEventListener('coconut-render',()=>{if(workspace!=='add'&&!captionOwnsReader(sourceCaptionRequest))sourceCaptionRequest?.abort();});
 function allowMediaRecognition() {

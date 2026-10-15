@@ -70,7 +70,7 @@ class BrowserWorkflowTests(unittest.TestCase):
                          'transcript-media-association-browser.mjs',
                          'displayed-translation-exports-browser.mjs', 'reading-display-browser.mjs',
                          'wide-library-search-browser.mjs', 'reading-view-resume-browser.mjs',
-                         'canonical-library-browser.mjs'):
+                         'canonical-library-browser.mjs', 'caption-recovery-browser.mjs'):
             self.assertTrue((ROOT / 'tests' / filename).is_file())
             self.assertEqual([step['run'] for step in suites].count('node tests/' + filename), 1)
 
@@ -119,7 +119,7 @@ class BrowserWorkflowTests(unittest.TestCase):
                                  'source-corrections-checks.json',
                                  'transcript-media-association-checks.json',
                                  'background-summary-checks.json',
-                                 'web-browser-acceptance-checks.json',
+                                 'web-browser-acceptance-checks.json', 'caption-recovery-checks.json',
                                  'private-owner-checks.json',
                                  'keyboard-escape-composition.json',
                                  'compact-library-failure.png'])

@@ -1534,3 +1534,6 @@ body[data-transcript-navigation="ready"] .transcript-navigation { display:none; 
 .selection-actions { position:fixed; z-index:30; display:flex; gap:4px; max-width:calc(100vw - 24px); padding:4px; border:1px solid var(--line); border-radius:10px; background:var(--surface,#fff); box-shadow:0 4px 20px #28252020; }
 .selection-actions button { min-height:44px; border:0; background:transparent; padding:8px 14px; white-space:nowrap; }
 .selection-actions button:hover { background:var(--soft); }
+
+.caption-recovery { margin: 12px 0 20px; }
+.caption-recovery .hint { margin: 0 0 10px; }
