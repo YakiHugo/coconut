@@ -127,18 +127,18 @@ test('forget persists before reporting success, keeps session playback and never
  assert.deepEqual(await f.service().resolve(f.owner),{status:'not-remembered'});
 });
 
-test('reconcile is all-or-nothing for valid catalog owners and retires removed, replaced and reset-library records',async t=>{
+test('scoped reconcile is all-or-nothing and retires only removed or replaced records in its library',async t=>{
  const f=await fixture(t),service=f.service(),owners=[f.owner,{...f.owner,key:'second'},{...f.owner,key:'third'}];
  await Promise.all(owners.map(owner=>service.remember(owner,f.filePath,f.identity)));
  const media=await service.resolve(owners[1]);
- assert.deepEqual(await service.reconcile([owners[0],{}]),{status:'unavailable'});
- assert.deepEqual(await service.reconcile([owners[0],owners[0]]),{status:'unavailable'});
+ assert.deepEqual(await service.reconcile([owners[0],{}],f.owner.library),{status:'unavailable'});
+ assert.deepEqual(await service.reconcile([owners[0],owners[0]],f.owner.library),{status:'unavailable'});
  assert.equal((await service.resolve(owners[1])).status,'ready');
- assert.deepEqual(await service.reconcile([owners[0],{...owners[1],epoch:2},{...owners[2],library:randomUUID()}]),{status:'reconciled',rememberedKeys:[owners[0].key]});
+ assert.deepEqual(await service.reconcile([owners[0],{...owners[1],epoch:2}],f.owner.library),{status:'reconciled',rememberedKeys:[owners[0].key]});
  assert.equal((await service.resolve(owners[0])).status,'ready');assert.deepEqual(await service.resolve(owners[1]),{status:'not-remembered'});assert.deepEqual(await service.resolve(owners[2]),{status:'not-remembered'});
  const base=await serve(t,service);assert.equal((await fetch(base+media.url)).status,404);
  const restarted=f.service();assert.equal((await restarted.resolve(owners[0])).status,'ready');assert.deepEqual(await restarted.resolve(owners[1]),{status:'not-remembered'});
- assert.deepEqual(await restarted.reconcile([]),{status:'reconciled',rememberedKeys:[]});assert.deepEqual(await restarted.resolve(owners[0]),{status:'not-remembered'});
+ assert.deepEqual(await restarted.reconcile([],f.owner.library),{status:'reconciled',rememberedKeys:[]});assert.deepEqual(await restarted.resolve(owners[0]),{status:'not-remembered'});
 });
 
 test('atomic write failure neither reports success nor changes the in-memory registry',async t=>{
@@ -199,4 +199,19 @@ test('release, response abort and shutdown close active streaming descriptors',a
   response.destroy();request.destroy();
   const descriptors=await openMediaDescriptors(f.filePath);if(descriptors!==null)assert.equal(descriptors,0,mode+' leaves no open media descriptors');
  }
+});
+
+test('empty canonical catalog and same-key remember preserve foreign browser recovery bindings',async t=>{
+ const f=await ready(t),service=f.native,manifest=path.join(f.profile,'local-media.json'),original=await fs.readFile(manifest,'utf8'),canonicalLibrary=randomUUID();
+ assert.deepEqual(await service.reconcile([],canonicalLibrary),{status:'reconciled',rememberedKeys:[]});assert.equal(await fs.readFile(manifest,'utf8'),original);assert.equal((await service.resolve(f.owner)).status,'ready');
+ const newOwner={...f.owner,library:canonicalLibrary};assert.equal((await service.remember(newOwner,f.filePath,f.identity)).status,'remembered');assert.equal(JSON.parse(await fs.readFile(manifest,'utf8')).records.length,2);
+ assert.equal((await service.resolve(f.owner)).status,'ready');assert.equal((await service.resolve(newOwner)).status,'ready');
+ const restarted=f.service();assert.deepEqual(await restarted.reconcile([newOwner],canonicalLibrary),{status:'reconciled',rememberedKeys:[newOwner.key]});assert.equal((await restarted.resolve(f.owner)).status,'ready');
+ assert.deepEqual(await restarted.reconcile([],canonicalLibrary),{status:'reconciled',rememberedKeys:[]});assert.equal((await restarted.resolve(f.owner)).status,'ready');assert.equal((await restarted.resolve(newOwner)).status,'not-remembered');
+ const remaining=JSON.parse(await fs.readFile(manifest,'utf8')).records;assert.equal(remaining.length,1);assert.equal(remaining[0].owner.library,f.owner.library);assert.deepEqual(await fs.readFile(f.filePath),f.bytes);
+});
+test('missing or mixed reconciliation namespace cannot mutate private references',async t=>{
+ const f=await ready(t),manifest=path.join(f.profile,'local-media.json'),original=await fs.readFile(manifest,'utf8');
+ for(const [owners,library] of [[[],undefined],[[f.owner],randomUUID()],[[f.owner,{...f.owner,key:'other',library:randomUUID()}],f.owner.library]])assert.deepEqual(await f.native.reconcile(owners,library),{status:'unavailable'});
+ assert.equal(await fs.readFile(manifest,'utf8'),original);assert.equal((await f.native.resolve(f.owner)).status,'ready');
 });

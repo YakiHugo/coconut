@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createRequire} from 'node:module';
 import {transactionDouble} from './helpers/indexeddb-transaction-double.mjs';
-const require=createRequire(import.meta.url),C=require('../reader/core.js'),Store=require('../reader/library-store.js'),Provider=require('../reader/storage-provider.js');
+const require=createRequire(import.meta.url),C=require('../reader/core.js'),Store=require('../reader/library-store.js'),Provider=require('./helpers/historical-browser-provider.cjs');
 const stamp='2026-10-11T00:00:00.000Z',clone=v=>JSON.parse(JSON.stringify(v));
 function source(key='source'){
  const doc={...C.validate({title:'Source '+key,language:'en',source_url:'https://www.youtube.com/watch?v=authored',segments:[{id:'a',start:1,end:3,text:'First exact original',speaker:'Alice',saved_excerpt:true},{id:'b',start:4,end:6,text:'Second original',original_text:'Before correction'}],notes:{a:'Private\r\nthought',b:'Second thought'},project_note:'Project thought',timestamp_bookmarks:[{id:'mark',time:7,note:'Time thought'}]}),key};

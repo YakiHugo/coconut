@@ -142,7 +142,7 @@ else {
       if(action==='remember')return localMediaService.remember(value?.owner,value?.path,value?.identity);
       if(action==='resolve')return localMediaService.resolve(value?.owner);
       if(action==='forget')return localMediaService.forget(value?.owner);
-      if(action==='reconcile')return localMediaService.reconcile(value?.owners);
+      if(action==='reconcile')return localMediaService.reconcile(value?.owners,value?.library);
       if(action==='release')return localMediaService.release(value?.token);
       throw new Error('不支持的原文件操作');
     });

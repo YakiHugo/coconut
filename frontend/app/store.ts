@@ -144,6 +144,7 @@ export function createAppStore(deps: StoreDependencies) {
     publish();
     return { getSnapshot: () => snapshot, subscribe: (listener: () => void) => { listeners.add(listener); return () => { listeners.delete(listener); }; },
         pendingRetirements:()=>[...retirements.values()].map(value=>({key:value.owner.key,pending:value.pending})),retryRetirement:(key:string)=>{const value=retirements.get(key);if(value&&!value.pending)return retireOwner(value.owner);},
+        nativeLibraryIdentity:()=>deps.nativeLibraryIdentity?.()||null,
         completeNativeOwners(){if(!deps.nativeCatalogReady?.()||!writable())return null;const owners=[];for(const doc of documents){if(!doc.local_media_source)continue;const base=deps.nativeOwner?.(doc.key);if(!base||savedSources.get(doc.key)!==JSON.stringify(doc.local_media_source))return null;owners.push({...base,key:doc.key,source:structuredClone(doc.local_media_source) as Record<string,unknown>});}return owners;},
         nativeOwner(key:string){const doc=getDocument(key),base=deps.nativeOwner?.(key);if(retirements.has(key)||!base||!doc?.local_media_source||!writable()||savedSources.get(key)!==JSON.stringify(doc.local_media_source))return null;return {...base,key,source:structuredClone(doc.local_media_source) as Record<string,unknown>};},
         releaseNativeMedia(){for(const [key,item]of media){if(item.nativeToken){releaseMedia(item);media.delete(key);}}publish();},

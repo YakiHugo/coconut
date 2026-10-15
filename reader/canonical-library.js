@@ -32,21 +32,23 @@
  const bytes=text=>new TextEncoder().encode(text);
  async function hash(value){return [...new Uint8Array(await root.crypto.subtle.digest('SHA-256',typeof value==='string'?bytes(value):value))].map(n=>n.toString(16).padStart(2,'0')).join('');}
  function base64(data){let value='';for(let i=0;i<data.length;i+=8192)value+=String.fromCharCode(...data.subarray(i,i+8192));return root.btoa(value);}
- function create({primitive,fetch=root.fetch.bind(root),validate=d=>d}={}){
+ function create({primitive,fetch=root.fetch.bind(root),validate=d=>d,signal}={}){
   const access=root.CoconutClientCapabilities;let connectionIdentity=access?.identity();
   async function request(path='',body){
+   if(signal?.aborted)throw issue('cancelled','书架操作已暂停。');
    if(!access&&root.location&&!['localhost','127.0.0.1','[::1]'].includes(root.location.hostname))throw issue('unsupported','连接能力组件未加载，未发送书架请求；请刷新或修复完整安装。');
    if(access?.allows('libraryRead')&&!connectionIdentity)connectionIdentity=access.identity();
    if(access&&(!access.allows(body?'libraryWrite':'libraryRead')||connectionIdentity!==access.identity()||path.startsWith('/migration')&&!access.allows('libraryMigration')))throw issue('connection_changed','电脑连接、身份或书架已变化，请恢复原连接后重试；未发送旧书架操作。');
    const generation=access?.generation;
-   const controller=new AbortController(),timer=root.setTimeout(()=>controller.abort(),15000);
+   const controller=new AbortController(),timer=root.setTimeout(()=>controller.abort(),15000),abort=()=>controller.abort();
+   signal?.addEventListener('abort',abort,{once:true});
    try{
     const response=await fetch('/api/v1/library'+path,body?{method:'POST',headers:{'Content-Type':'application/json'},body:typeof body==='string'?body:JSON.stringify(body),cache:'no-store',signal:controller.signal}:{cache:'no-store',signal:controller.signal});
     const data=await response.json();
     if(access&&(generation!==access.generation||connectionIdentity!==access.identity()))throw issue('connection_changed','连接已变化，未接收旧书架回执；请恢复原连接后核查。');
     if(!response.ok&&!(response.status===404&&data.state==='absent'))throw Object.assign(issue(data.code||'unavailable',data.error||'PC 书架暂时不可用，请重试；不会切回浏览器写入。'),{definitive:response.status>=400&&response.status<500});
     return data;
-   }finally{root.clearTimeout(timer);}
+   }finally{root.clearTimeout(timer);signal?.removeEventListener('abort',abort);}
   }
   const requireEpoch=(value,epoch)=>{if(value.epoch!==epoch)throw issue('epoch_conflict','连接的 PC 书架身份已改变，请恢复原服务后重试。');return value;};
   async function catalog(epoch){
@@ -155,6 +157,13 @@
    if(committed.state!=='committed'||committed.migrationId!==m.migrationId||JSON.stringify(committed.receipt)!==JSON.stringify(m.receipt)||committed.manifest?.sha256!==m.sha256||committed.manifest?.sourceId!==m.sourceId||committed.manifest?.mediaLibraryIdentity!==m.mediaLibraryIdentity||committed.manifest?.bytes!==m.bytes||committed.manifest?.chunks!==m.chunks)throw issue('corruption');
    return initializeAdapter({...m,mediaLibraryIdentity:server.binding?.mediaLibraryIdentity||m.mediaLibraryIdentity});
   }
+  // Server authority is available before the first document exists. A fresh
+  // client needs neither a browser content store nor a migration receipt.
+  async function initializeServer(){
+   const server=await request();
+   if(!server.enabled||server.protocolVersion!==1||server.batchProtocolVersion!==2||server.binding?.protocolVersion!==1||!server.binding.mediaLibraryIdentity||!server.epoch)throw issue('library_unavailable','电脑书架暂时不可用，请恢复服务后重试。');
+   return {...await initializeAdapter({epoch:server.epoch,mediaLibraryIdentity:server.binding.mediaLibraryIdentity}),connected:true};
+  }
   async function initializeAdapter(m){
    const records=await load(m.epoch),tokens=new Map(records.map(r=>[r.key,r])),captures=new WeakMap(),retries=new Map(),unresolved=new Set();let closed=false,writeTail=Promise.resolve();
    async function send(capture){
@@ -203,10 +212,10 @@
       return await send(capture);
      }catch(e){const capture=captures.get(handle);return capture&&(unresolved.has(capture)||capture.acknowledgedPrior||e.code==='ambiguous_batch')?{...failure(issue('uncertain','保存结果尚未确认。请重试同一操作或导出未保存内容；不要把它视为已撤销。')),uncertain:true}:failure(e);}});
      writeTail=operation.then(()=>{});return operation;
-    },status:()=>({backend:'canonical'}),subscribe:()=>()=>{},close(){closed=true;primitive.close();}};
+    },status:()=>({backend:'canonical'}),subscribe:()=>()=>{},close(){closed=true;primitive?.close();}};
    return {ok:true,backend:'canonical',adapter,loaded:{ok:true,documents:records.filter(r=>!r.deleted).sort((a,b)=>a.identity.position-b.identity.position||a.key.localeCompare(b.key)).map(r=>project(r.document,{...validate(root.structuredClone(r.document)),key:r.key})),active:null}};
   }
-  return {begin,resume,cancel,initialize,initializeBinding,connect,discover,marker,load,request};
+  return {begin,resume,cancel,initialize,initializeBinding,initializeServer,connect,discover,marker,load,request};
  }
  const api={create,json,hash,project};if(typeof module!=='undefined'&&module.exports)module.exports=api;else root.CoconutCanonicalLibrary=api;
 })(typeof globalThis==='undefined'?this:globalThis);

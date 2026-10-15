@@ -51,6 +51,7 @@ export type SaveResult = {
 };
 export type StoreDependencies = {
     nativeCatalogReady?:()=>boolean;
+    nativeLibraryIdentity?:()=>string|null;
     nativeOwner?:(key:string)=>{library:string;epoch:number}|null;
     documents: Document[];
     active: string | null;

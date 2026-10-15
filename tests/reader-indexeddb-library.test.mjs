@@ -9,7 +9,7 @@ import {transactionDouble} from './helpers/indexeddb-transaction-double.mjs';
 
 const require=createRequire(import.meta.url);
 
-const provider=require('../reader/storage-provider.js');
+const provider=require('./helpers/historical-browser-provider.cjs');
 
 const legacyModule=require('../reader/library-store.js');
 

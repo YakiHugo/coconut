@@ -48,17 +48,11 @@ test('malformed UTF-8 is rejected before any receipt or mutation',async t=>{
  const response=await fetch(origin+'/api/v1/library/commit',{method:'POST',headers:{Origin:origin,'Content-Type':'application/json'},body});assert.equal(response.status,400);
  assert.equal((await(await get('/api/v1/library')).json()).sequence,0);assert.equal((await get('/api/v1/library/document?protocolVersion=1&key=a')).status,404);
 });
-test('migration HTTP contract fences origins and version, adopts staged source and downloads its recovery archive',async t=>{
- const {get,origin}=await setup(t),{recoveryFixture,sourceId,mediaLibraryIdentity,migrationId}=await import('./fixtures/canonical-migration.mjs');const {createHash}=await import('node:crypto');
- const epoch=(await(await get('/api/v1/library')).json()).epoch,bytes=Buffer.from(JSON.stringify(recoveryFixture())),base={protocolVersion:1,epoch,migrationId};
- const send=(data,headers={Origin:origin,'Content-Type':'application/json'})=>fetch(origin+'/api/v1/library/migration',{method:'POST',headers,body:JSON.stringify(data)});
- const begin={...base,action:'begin',manifest:{sourceId,mediaLibraryIdentity,bytes:bytes.length,chunks:1,sha256:createHash('sha256').update(bytes).digest('hex')}};
- assert.equal((await send(begin,{'Content-Type':'application/json'})).status,403);assert.equal((await send({...begin,protocolVersion:2})).status,400);assert.equal((await send(begin)).status,200);
- assert.equal((await send({...base,action:'chunk',index:0,data:bytes.toString('base64')})).status,200);assert.equal((await get('/api/v1/library/document?protocolVersion=1&key=live')).status,404);
- assert.equal((await(await send({...base,action:'finalize'})).json()).state,'committed');
- const status=await(await get('/api/v1/library/migration?protocolVersion=1&migrationId='+migrationId)).json();assert.equal(status.receipt.sourceId,sourceId);
- const archive=await(await get('/api/v1/library/migration?protocolVersion=1&migrationId='+migrationId+'&index=0')).json();assert.deepEqual(Buffer.from(archive.data,'base64'),bytes);
- const document=(await(await get('/api/v1/library/document?protocolVersion=1&key=live')).json()).record;assert.equal(document.identity.lifetime,2);assert.equal(document.sha256,createHash('sha256').update(JSON.stringify(document.document)).digest('hex'));
- const batch={protocolVersion:2,epoch,commands:[{action:'put',key:'live',expected:document.token,expectedIdentity:document.identity,receiptKey:'http-edit',document:{...document.document,title:'Edited'}}]};
- const response=await fetch(origin+'/api/v1/library/batch',{method:'POST',headers:{Origin:origin,'Content-Type':'application/json'},body:JSON.stringify(batch)});assert.equal(response.status,200);assert.equal((await response.json()).receipts[0].identity.lifetime,2);
+test('retired migration writes cannot alter empty binding; read-only status remains available',async t=>{
+ const {get,origin}=await setup(t),before=await(await get('/api/v1/library')).json();
+ for(const action of ['begin','chunk','finalize','cancel']){
+  const response=await fetch(origin+'/api/v1/library/migration',{method:'POST',headers:{Origin:origin,'Content-Type':'application/json'},body:JSON.stringify({protocolVersion:1,epoch:before.epoch,migrationId:'33333333-3333-4333-8333-333333333333',action})});assert.equal(response.status,410);assert.equal((await response.json()).code,'migration_retired');
+ }
+ const status=await get('/api/v1/library/migration?protocolVersion=1&migrationId=33333333-3333-4333-8333-333333333333');assert.equal(status.status,404);assert.equal((await status.json()).state,'absent');
+ const after=await(await get('/api/v1/library')).json();assert.deepEqual(after.binding,before.binding);assert.equal(after.sequence,0);assert.equal(after.epoch,before.epoch);
 });

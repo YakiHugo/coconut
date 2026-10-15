@@ -13,7 +13,7 @@ test('isolated preload derives path only from a selected File and never returns 
  assert.equal((await api.remember(owner,{},'id')).status,'unavailable');assert.equal(calls.length,0);
  const receipt=await api.remember(owner,selected,'candidate');assert.equal(receipt.status,'remembered');assert.equal(JSON.stringify(receipt).includes('/authored'),false);
  assert.equal(calls[0][0],'coconut:local-media');assert.equal(calls[0][1],'remember');assert.equal(calls[0][2].path,'/authored/Original.wav');assert.equal(calls[0][2].owner,owner);
- await api.resolve(owner);await api.forget(owner);await api.release('token');await api.reconcile([owner]);assert.deepEqual(calls.slice(1).map(call=>call[1]),['resolve','forget','release','reconcile']);
+ await api.resolve(owner);await api.forget(owner);await api.release('token');await api.reconcile([owner],'authored-namespace');assert.equal(calls.at(-1)[2].library,'authored-namespace');assert.deepEqual(calls.slice(1).map(call=>call[1]),['resolve','forget','release','reconcile']);
 });
 
 test('native reference IPC admits only the trusted top-level renderer and bounded named actions',async()=>{
@@ -22,8 +22,8 @@ test('native reference IPC admits only the trusted top-level renderer and bounde
  const localMediaService=Object.fromEntries(['remember','resolve','forget','release','reconcile'].map(action=>[action,async(...args)=>{calls.push([action,...args]);return {status:action};}]));
  vm.runInNewContext(main.slice(start,end),{ipcMain:{handle:(name,callback)=>{assert.equal(name,'coconut:local-media');handler=callback;}},window,origin,localMediaService,quitting:false});
  const event={sender:window.webContents,senderFrame:mainFrame},owner={key:'authored'};
- for(const action of ['remember','resolve','forget','release','reconcile'])assert.equal((await handler(event,action,{owner,path:'/authored/file',identity:'id',token:'token',owners:[owner]})).status,action);
- assert.equal(calls.length,5);assert.equal(calls[0][1],owner);assert.equal(calls[0][2],'/authored/file');
+ for(const action of ['remember','resolve','forget','release','reconcile'])assert.equal((await handler(event,action,{owner,path:'/authored/file',identity:'id',token:'token',owners:[owner],library:'authored-namespace'})).status,action);
+ assert.equal(calls.length,5);assert.equal(calls.at(-1)[2],'authored-namespace');assert.equal(calls[0][1],owner);assert.equal(calls[0][2],'/authored/file');
  for(const invalid of [{...event,sender:{}},{...event,senderFrame:{url:origin+'/'}},{...event,senderFrame:{url:'https://example.org/'}}])await assert.rejects(handler(invalid,'resolve',{owner}),/来源无效/);
  for(const url of [origin+'/#main-content',origin+'/index.html#main-content']){mainFrame.url=url;assert.equal((await handler(event,'forget',{owner})).status,'forget');}
  for(const url of [origin+'/other#main-content',origin+'/?path=/index.html#main-content','https://example.org/#main-content',origin+'/index.html/../#main-content']){mainFrame.url=url;await assert.rejects(handler(event,'resolve',{owner}),/来源无效/);}

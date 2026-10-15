@@ -1,4 +1,4 @@
-/** Opt-in canonical library. Browser data is never read, migrated or removed here. */
+/** Canonical server library. Browser data is never read or removed here. */
 import {mkdir,lstat,open} from 'node:fs/promises';
 import path from 'node:path';
 import {randomUUID,createHash} from 'node:crypto';
@@ -119,7 +119,7 @@ export async function createLibraryStore({directory,exclusiveWriter=false}={}){
     if(typeof value!=='string'||! /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(value))corrupt();
     return value;
   };
-  const describe=()=>{ensure();return {protocolVersion:1,enabled:true,backend:'sqlite',epoch,sequence:metadata().sequence,binding:metadata().sequence>0||db.prepare("SELECT id FROM migrations WHERE state='committed' LIMIT 1").get()?{protocolVersion:1,mediaLibraryIdentity:mediaNamespace()}:null,browserMigration:db.prepare("SELECT id FROM migrations WHERE state='committed' LIMIT 1").get()?'committed':'not_started',migration:{protocolVersion:1,maxBytes:MIGRATION_BYTES,chunkBytes:CHUNK_BYTES,maxNodes:2000000},batchProtocolVersion:2,limits:{documentBytes:LIBRARY_DOCUMENT_BYTES,requestBytes:LIBRARY_BODY_BYTES,pageBytes:LIBRARY_PAGE_BYTES,pageSize:100},minimumNode:LIBRARY_MIN_NODE};};
+  const describe=()=>{ensure();return {protocolVersion:1,enabled:true,backend:'sqlite',epoch,sequence:metadata().sequence,binding:{protocolVersion:1,mediaLibraryIdentity:mediaNamespace()},browserMigration:db.prepare("SELECT id FROM migrations WHERE state='committed' LIMIT 1").get()?'committed':'not_started',migration:{protocolVersion:1,maxBytes:MIGRATION_BYTES,chunkBytes:CHUNK_BYTES,maxNodes:2000000},batchProtocolVersion:2,limits:{documentBytes:LIBRARY_DOCUMENT_BYTES,requestBytes:LIBRARY_BODY_BYTES,pageBytes:LIBRARY_PAGE_BYTES,pageSize:100},minimumNode:LIBRARY_MIN_NODE};};
   const get=key=>{ensure();if(!validKey(key))invalid();const row=db.prepare('SELECT * FROM documents WHERE key=?').get(key);return row?{...meta(row),document:validateRow(row,metadata().sequence)}:null;};
   function list({limit=50,after='',expectedSequence}={}){
     ensure();if(!Number.isInteger(limit)||limit<1||limit>100||(after!==''&&!validKey(after)))invalid();

@@ -40,7 +40,7 @@ export function authorizeClient(req,{port,profile=null}={}){
 export function describeClient(access,{profile,libraryStore,taskStore,localMediaService}={}){
   return {id:access.id,mode:access.mode,backendLabel:profile?.backendLabel||'此电脑',online:true,libraryId:libraryStore?.describe().epoch||null,
     capabilities:{libraryRead:!!libraryStore,libraryWrite:!!libraryStore,aiActions:true,backgroundTasks:taskStore?.describe().enabled===true,
-      localMedia:access.mode==='local'&&!!localMediaService,libraryMigration:access.mode==='local'&&!!libraryStore}};
+      localMedia:access.mode==='local'&&!!localMediaService,libraryMigration:false}};
 }
 export function localOnlyRoute(pathname){return pathname==='/api/v1/library/migration'||pathname==='/api/local-media'||pathname.startsWith('/api/local-media/');}
 // Only diagnostic text is sanitized, never document content or model answers.
