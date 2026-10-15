@@ -41,8 +41,10 @@ export type Ingestion = {
             body: unknown;
         };
     };
+    diagnostics?: Array<{category:string;startLine?:number;endLine?:number;cueId?:string;preview?:string}>;
     error?: {
         code: string;
+        languages?: string[];
         message: string;
     };
     transcription?: {

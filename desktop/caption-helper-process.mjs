@@ -1,3 +1,4 @@
+import {captionLanguages} from './caption-service.mjs';
 /**
  * Only pinned bytes, fixed protocol operations, no inherited credentials or shell.
  * The authored-fixture operation is an internal CI seam, never a bridge route.
@@ -154,7 +155,7 @@ export async function runPinnedCaptionHelper({resourcesPath,artifact,operation,f
     cancelled(signal);let result;
     try{result=JSON.parse(stdout);}catch{throw fail('CAPTION_OUTPUT','字幕助手没有返回完整元数据');}
     if(!result || typeof result!=='object' || Array.isArray(result))throw fail('CAPTION_OUTPUT','字幕助手没有返回完整元数据');
-    if(operation==='extract' && ['unavailable','access_restricted','language_required'].includes(result.status))return {status:result.status};
+    if(operation==='extract' && ['unavailable','access_restricted','language_required'].includes(result.status))return {status:result.status,...(result.status==='language_required'?{languages:captionLanguages(result.languages)}:{})};
     if(result.status!=='ok')throw fail('CAPTION_UNAVAILABLE','字幕助手未返回完整原语字幕');
     if(operation==='version') {
       if(result.protocol!==1 || result.version!==lock.ytDlpVersion || result.python!==artifact.python || result.publicExtraction!==true || result.guardProtocol!==1 || result.tlsRootsVerified!==true)throw fail('CAPTION_VERSION','字幕助手版本不匹配');

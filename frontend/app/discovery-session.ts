@@ -1,17 +1,18 @@
 import type {AppStore} from './store';
 import type {Document} from './contracts';
 import type {Episode, Ingestion} from './ingestion';
-export type SourceAttempt = {url:string; episode?:Episode; feed?:string; track?:string};
+export type SourceAttempt = {url:string; language?:string; episode?:Episode; feed?:string; track?:string};
 export type DiscoverySession = {
     url:string; catalogQuery:string; selection:Ingestion['selection']|null;
     tracks:Record<string,string>; attempt:SourceAttempt|null; error:string;
     receipt:Ingestion|null;
+    language:string; languageChoices:string[]; languageRequired:boolean; lossReviewed:boolean;
 };
 // Navigation keeps discovery context, never a running request or a File handle.
 const sessions = new WeakMap<AppStore,DiscoverySession>();
 export function discoverySession(store:AppStore):DiscoverySession {
     let value=sessions.get(store);
-    if(!value){value={url:'',catalogQuery:'',selection:null,tracks:{},attempt:null,error:'',receipt:null};sessions.set(store,value);}
+    if(!value){value={url:'',catalogQuery:'',selection:null,tracks:{},attempt:null,error:'',receipt:null,language:'',languageChoices:[],languageRequired:false,lossReviewed:false};sessions.set(store,value);}
     return value;
 }
 export function saveDiscoverySession(store:AppStore,value:DiscoverySession){sessions.set(store,value);}

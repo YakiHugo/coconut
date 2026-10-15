@@ -130,3 +130,11 @@ test('observed pre-request failure gives a local setup message, unknown counters
  const unknown=await service(async()=>({status:'extractor_failed',diagnostic:{stage:'helper_execution',reason:'helper_error',requests_attempted:null,responses_received:null}})).importCaption({url});
  assert.doesNotMatch(unknown.message,/尚未尝试/);
 });
+
+test('language-required receipts expose only bounded actual track codes and explicit retry reaches parser',async()=>{
+ const calls=[],captions=service(async request=>{calls.push(request.language);return request.language?result():{status:'language_required',languages:['fr','en','en','https://private.example','--cookies',null]};});
+ const first=await captions.importCaption({url});assert.deepEqual(first.languages,['en','fr']);assert.equal(first.status,'language_required');
+ const next=await captions.importCaption({url,language:'en'});assert.equal(next.status,'ready');assert.deepEqual(calls,[null,'en']);
+ const missing=await service(async()=>({status:'language_required'})).importCaption({url});assert.deepEqual(missing.languages,[]);
+ const oversized=await service(async()=>({status:'language_required',languages:Array(129).fill('en')})).importCaption({url});assert.deepEqual(oversized.languages,[]);
+});

@@ -19,6 +19,11 @@ export function captionDiagnostic(value){
  if(!unknown&&(!counts.every(n=>Number.isInteger(n)&&n>=0&&n<=32)||counts[1]>counts[0]))return null;
  return {stage:value.stage,reason:value.reason,requests_attempted:counts[0],responses_received:counts[1]};
 }
+/** Metadata-only choices: never URLs, titles, or an invented language list. */
+export function captionLanguages(value){
+ if(!Array.isArray(value)||value.length>128)return [];
+ return [...new Set(value.filter(code=>typeof code==='string'&&/^[a-z]{2,3}(?:-[A-Za-z0-9]{2,8}){0,2}$/.test(code)))].sort();
+}
 const failureMessages={
  metadata_incomplete:'来源未提供足够的访问或视频完成状态，暂不能安全导入；可稍后重试或导入已有字幕。',
  network_unavailable:'网络或 TLS 连接未完成，无法判断字幕是否可用；请检查网络后重试。',
@@ -86,7 +91,7 @@ export function createCaptionService({helper,readerDirectory=path.resolve(ROOT,'
      const message=networkGuidance[diagnostic?.reason]||(result.status==='extractor_failed'&&diagnostic?.requests_attempted===0&&['initialization','extractor_setup'].includes(diagnostic.stage)
       ?'本机字幕提取器初始化未完成，尚未尝试来源网络请求；无法判断是否有字幕。可导入已有 SRT / VTT。'
       :failureMessages[result.status]);
-     return {status:result.status,source_url:source.url,message,...(diagnostic?{diagnostic}:{})};
+     return {status:result.status,source_url:source.url,message,...(result.status==='language_required'?{languages:captionLanguages(result.languages)}:{}),...(diagnostic?{diagnostic}:{})};
     }
     const meta=result.source;
     if(!meta||captionSource(meta.url).url!==source.url||typeof meta.id!=='string'||!(source.provider==='x'?/^\d{1,20}$/.test(meta.id):meta.id===source.mediaId))throw new Error('字幕来源与请求无法核对，未导入');

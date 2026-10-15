@@ -242,11 +242,13 @@ def extract_public_captions(url: str, language: str | None = None, *, ca_file: s
         return {'status': 'unavailable'}
 
     language_required = False
+    languages = []
     original_select = subtitle_import.select_track
 
     def remember_selection(info, hint=None):
-        nonlocal language_required
+        nonlocal language_required, languages
         selected = original_select(info, hint)
+        languages = subtitle_import.available_caption_languages(info, ('vtt',), selector=original_select)
         if selected is None and subtitle_import.preferred_language(info, hint)[0] is None:
             language_required = any(
                 key not in ('live_chat', 'danmaku') and subtitle_import.eligible_formats(tracks)
@@ -266,7 +268,7 @@ def extract_public_captions(url: str, language: str | None = None, *, ca_file: s
                 with guarded_extractor(transport), patch.object(subtitle_import, 'select_track', remember_selection):
                     document = subtitle_import.fetch_subtitle_document(url, directory, language)
                 if document is None:
-                    return {'status': 'unavailable'}
+                    return {'status': 'language_required', 'languages': languages} if language_required else {'status': 'unavailable'}
                 if (transport.counts['guest_activation'] != 1 or transport.counts['post_metadata'] != 1
                         or not transport.counts['caption']):
                     return {'status': 'unavailable'}
@@ -297,7 +299,7 @@ def extract_public_captions(url: str, language: str | None = None, *, ca_file: s
         return {'status': 'access_restricted' if stopped.outcome in (
             'access_restricted', 'login_required', 'post_unavailable_stopped') else 'unavailable'}
     except Exception:
-        return {'status': 'language_required' if language_required else 'unavailable'}
+        return {'status': 'language_required', 'languages': languages} if language_required else {'status': 'unavailable'}
     finally:
         signal.alarm(0)
         signal.signal(signal.SIGALRM, previous_handler)
