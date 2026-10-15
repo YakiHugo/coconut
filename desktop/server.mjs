@@ -9,6 +9,8 @@ import { createProviders } from './providers.mjs';
 import { createTranslator } from './translation.mjs';
 import { createPodcastSources } from './podcast-sources.mjs';
 import {createTaskStore,TASK_BODY_BYTES} from './tasks.mjs';
+import {createLibraryStore} from './library-store.mjs';
+import {handleLibraryRequest} from './library-api.mjs';
 
 export const CAPABILITIES = Object.freeze({reader:true,local_agents:true,subscription_ask:true,subscription_translation:true,media_import:false,local_translation:false,podcast_import:true,caption_import:false});
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
@@ -17,9 +19,9 @@ const MIME = {'.png':'image/png','.html':'text/html; charset=utf-8','.js':'text/
 const MAX_BODY = 1024 * 1024;
 export const CSP = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self'; img-src 'self' data: blob:; media-src 'self' blob:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'";
 
-export function createBridge({readerDirectory = path.resolve(ROOT,'../reader'), providers = createProviders(), podcastSources = createPodcastSources(), captionService = null, captionStatus = null, localMediaService = null, taskStore = null, taskUnavailable = null} = {}) {
+export function createBridge({readerDirectory = path.resolve(ROOT,'../reader'), providers = createProviders(), podcastSources = createPodcastSources(), captionService = null, captionStatus = null, localMediaService = null, taskStore = null, taskUnavailable = null, libraryStore = null, libraryUnavailable = null} = {}) {
   const translate = createTranslator(providers);
-  const capabilities=Object.freeze({...CAPABILITIES,caption_import:captionService?.available===true,persistent_tasks:!!taskStore});
+  const capabilities=Object.freeze({...CAPABILITIES,caption_import:captionService?.available===true,persistent_tasks:!!taskStore,canonical_library:!!libraryStore});
   const captionSources=Object.freeze({available:capabilities.caption_import,mode:captionStatus?.mode||(capabilities.caption_import?'bundled-helper':'disabled'),
     code:capabilities.caption_import?'ready':captionStatus?.code||'CAPTION_UNAVAILABLE',
     providers:[{id:'x',label:'X / Twitter',available:capabilities.caption_import},{id:'youtube',label:'YouTube',available:false},{id:'bilibili',label:'Bilibili',available:false}],
@@ -43,6 +45,7 @@ export function createBridge({readerDirectory = path.resolve(ROOT,'../reader'), 
     const controller = new AbortController(); active.add(controller);
     res.on('close',()=>{ if (!res.writableEnded) controller.abort(); active.delete(controller); });
     try {
+      if(await handleLibraryRequest({req,pathname,origin,json,store:libraryStore,unavailable:libraryUnavailable}))return;
       if (localMediaService && await localMediaService.handle(req,res,pathname)) return;
       if (req.method === 'GET' || req.method === 'HEAD') {
         if (pathname === '/api/v1/executor') return json(200,taskStore?.describe()||{protocolVersion:1,executor:{type:'local-node',online:true},supportedTaskKinds:['summary'],enabled:false,...(taskUnavailable?{unavailable:taskUnavailable}:{}),providers:{codex:{supported:true,availability:'not_checked'},claude:{supported:true,availability:'not_checked'}},remoteSubmission:false});
@@ -116,7 +119,7 @@ export function createBridge({readerDirectory = path.resolve(ROOT,'../reader'), 
     }
   });
   server.requestTimeout = 30000; server.headersTimeout = 10000;
-  server.on('close',()=>{ for (const controller of active) controller.abort(); active.clear();void taskStore?.shutdown().catch(()=>{}); });
+  server.on('close',()=>{ libraryStore?.close(); for (const controller of active) controller.abort(); active.clear();void taskStore?.shutdown().catch(()=>{}); });
   // Abort synchronously before Electron exits: detached CLI process groups must
   // not outlive the app while waiting for a later HTTP close event.
   server.shutdown = callback => {
@@ -127,22 +130,26 @@ export function createBridge({readerDirectory = path.resolve(ROOT,'../reader'), 
   };
   return server;
 }
-export async function startBridge({port = 8080, taskDirectory = null, ...options} = {}) {
+export async function startBridge({port = 8080, taskDirectory = null, libraryDirectory = null, ...options} = {}) {
   if (!Number.isInteger(port) || port < 0 || port > 65535) throw new Error('Invalid port');
   if(taskDirectory){
     options.providers??=createProviders();
     try{options.taskStore=await createTaskStore({directory:taskDirectory,providers:options.providers,readerDirectory:options.readerDirectory});}
     catch(error){options.taskStore=null;options.taskUnavailable={code:error.taskCode||'store_unavailable',message:'持久任务存储不可用，请检查本机任务目录；阅读与现有前台功能仍可使用。'};}
   }
+  if(libraryDirectory){
+    try{options.libraryStore=await createLibraryStore({directory:libraryDirectory});}
+    catch(error){options.libraryStore=null;options.libraryUnavailable={code:error.libraryCode||'library_unavailable',message:'Canonical library could not open; browser storage remains unchanged.'};}
+  }
   const server = createBridge(options);
   try{await new Promise((resolve,reject)=>{server.once('error',reject);server.listen(port,'127.0.0.1',resolve);});}
-  catch(error){await options.taskStore?.shutdown();throw error;}
+  catch(error){options.libraryStore?.close();await options.taskStore?.shutdown();throw error;}
   return server;
 }
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const args = process.argv.slice(2);
   if (args.length && (args.length !== 2 || args[0] !== '--port')) { console.error('Usage: node desktop/server.mjs [--port 8080]'); process.exit(1); }
-  const server = await startBridge({port:args.length ? Number(args[1]) : 8080,taskDirectory:path.join(homedir(),'.coconut','tasks')});
+  const server = await startBridge({port:args.length ? Number(args[1]) : 8080,taskDirectory:path.join(homedir(),'.coconut','tasks'),libraryDirectory:process.env.COCONUT_LIBRARY_DIRECTORY||null});
   console.log(`Coconut 轻量阅读器：http://127.0.0.1:${server.address().port}（不需要 Python；未发起模型请求）`);
   const stop = () => server.shutdown();
   process.on('SIGINT',stop); process.on('SIGTERM',stop);
