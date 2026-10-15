@@ -54,6 +54,13 @@ jobs:
             ${{ runner.temp }}/coconut-react-authored/react-discover-320.png
             ${{ runner.temp }}/coconut-react-authored/react-reading-320.png
             ${{ runner.temp }}/coconut-react-authored/react-geometry.json
+            ${{ runner.temp }}/coconut-react-authored/source-track-retry-1360.png
+            ${{ runner.temp }}/coconut-react-authored/source-track-retry-390.png
+            ${{ runner.temp }}/coconut-react-authored/source-choose-project-1360.png
+            ${{ runner.temp }}/coconut-react-authored/source-choose-project-390.png
+            ${{ runner.temp }}/coconut-react-authored/source-review-transcript-1360.png
+            ${{ runner.temp }}/coconut-react-authored/source-review-transcript-390.png
+            ${{ runner.temp }}/coconut-react-authored/source-discovery.json
             ${{ runner.temp }}/coconut-react-authored/matrix-canonical-reading-1360.png
             ${{ runner.temp }}/coconut-react-authored/matrix-canonical-reading-390.png
             ${{ runner.temp }}/coconut-react-authored/matrix-ai-error-details-1360.png
