@@ -34,6 +34,7 @@ const domain = () => (window as unknown as {
     Coconut: Domain;
 }).Coconut;
 const PAGE = 50;
+const UNCONFIRMED_SAVE = '尚未保存。内容可能已更新或存储暂不可用，请保留草稿后重试。';
 export function ReaderWorkspace(props: ReaderWorkspaceProps) { return <WorkspaceSession key={props.document.key} {...props}/>; }
 function WorkspaceSession({ document: doc, revision, media, onSaveDocument, onReadingPosition, onRequestAi, onDirtyChange, onMediaProgress, saveStatus, onVisibleSelection, onReviewTranslation, navigationRequest, initialView, onViewChange, resumePosition }: ReaderWorkspaceProps) {
     const validInitialView=initialView?.documentKey===doc.key&&doc.segments.some(cue=>cue.id===initialView.cueId)?initialView:null;
@@ -42,6 +43,7 @@ function WorkspaceSession({ document: doc, revision, media, onSaveDocument, onRe
     const [mode, setMode] = useState<'transcript' | 'passages'>(validInitialView?.mode==='passages'?'passages':'transcript'), [annotationDirty, setAnnotationDirty] = useState(false), [correctionDirty, setCorrectionDirty] = useState(false), [query, setQuery] = useState(''), [notesOnly, setNotesOnly] = useState(false), [speaker, setSpeaker] = useState<string | null>(null), [page, setPage] = useState(Math.floor(Math.max(0, doc.segments.findIndex(c => c.id === initialCue)) / PAGE)), [position, setPosition] = useState(initialCue), [clock, setClock] = useState(0), [follow, setFollow] = useState(false), [seek, setSeek] = useState<SeekIntent | null>(null), [status, setStatus] = useState(''), [busy, setBusy] = useState(false), [drafts, setDrafts] = useState<Record<string, string>>({}), [projectDraft, setProjectDraft] = useState<string | null>(null), [offset, setOffset] = useState(''), [offsetStarted,setOffsetStarted]=useState(false), [jump, setJump] = useState(''), [selection, setSelection] = useState<(SourceSelection & {
         revision: number;
     }) | null>(null);
+    const unconfirmedSave=useRef<{key:string;revision:number;content:string}|null>(null);
     const latest = useRef({ doc, revision });
     latest.current = { doc, revision };
     const attachment=useRef<{signature:string|null;id:number}>({signature:null,id:0});
@@ -64,6 +66,12 @@ function WorkspaceSession({ document: doc, revision, media, onSaveDocument, onRe
             originalDraftRevision.current = null;
         }
     }, [doc, revision, drafts, projectDraft]);
+    useEffect(()=>{
+        const receipt=unconfirmedSave.current;
+        if(!receipt||busy||saveStatus!=='saved'||receipt.key!==doc.key||receipt.revision!==revision||receipt.content!==JSON.stringify(doc))return;
+        unconfirmedSave.current=null;
+        setStatus(current=>current===UNCONFIRMED_SAVE?'已保存':current);
+    },[doc,revision,saveStatus,busy]);
     const calibrated = media ? domain().mediaTimingOffset(doc, media.identity) : 0;
     const calibrationDirty=offsetStarted&&(offset.trim()===''||!Number.isFinite(Number(offset))||Number(offset)!==calibrated);
     const anyDirty = dirty || annotationDirty || correctionDirty || calibrationDirty;
@@ -128,12 +136,14 @@ function WorkspaceSession({ document: doc, revision, media, onSaveDocument, onRe
         if (saving.current)
             return false;
         saving.current = true;
+        unconfirmedSave.current=null;
         setBusy(true);
         try {
             const ok = await onSaveDocument(next, { key: doc.key, revision: expectedRevision });
             if (mounted.current)
-                setStatus(ok ? '已保存' : '尚未保存。内容可能已更新或存储暂不可用，请保留草稿后重试。');
+                setStatus(ok ? '已保存' : UNCONFIRMED_SAVE);
             const applied = latest.current.doc.key === next.key && latest.current.revision !== expectedRevision && Object.entries(next).every(([key, value]) => JSON.stringify(latest.current.doc[key]) === JSON.stringify(value));
+            if(!ok&&applied)unconfirmedSave.current={key:next.key,revision:latest.current.revision,content:JSON.stringify(latest.current.doc)};
             return ok || applied;
         }
         catch (error) {

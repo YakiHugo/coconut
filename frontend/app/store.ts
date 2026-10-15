@@ -1,11 +1,14 @@
 import type { AppSnapshot, Document, Media, RemoteMedia, StoreDependencies, Workspace } from './contracts';
 export function createAppStore(deps: StoreDependencies) {
     let documents = deps.documents, activeKey = deps.active, revision = 0, workspace: Workspace = 'discover', message = '', dirty = false, storageInvalid = false;
+    let messageGeneration=0,persistenceMessageGeneration:number|null=null;
+    const assignMessage=(value:string,persistence=false)=>{message=value;messageGeneration++;persistenceMessageGeneration=persistence?messageGeneration:null;};
+    const reconcileMessage=()=>{const status=pipeline.status();if(persistenceMessageGeneration===messageGeneration&&status.status==='saved'&&status.unsaved===0)assignMessage('保存已确认。');};
     let nativeLifecycle:{invalidate:()=>void;selected:(key:string)=>void;retire:(owner:{library:string;key:string;epoch:number;source:Record<string,unknown>})=>Promise<unknown>;dispose:()=>void}|null=null;
     const removalCleanup=new Map<Document,{owner:{library:string;key:string;epoch:number;source:Record<string,unknown>}|null;attachment:Media|null}>();
     function completeRemoval(doc:Document){const pending=removalCleanup.get(doc);if(!pending)return;removalCleanup.delete(doc);if(pending.attachment){releaseMedia(pending.attachment);if(media.get(doc.key)===pending.attachment)media.delete(doc.key);}if(!getDocument(doc.key))files.delete(doc.key);if(pending.owner)void retireOwner(pending.owner);}
     const retirements=new Map<string,{owner:{library:string;key:string;epoch:number;source:Record<string,unknown>};pending:boolean}>();
-    async function retireOwner(owner:{library:string;key:string;epoch:number;source:Record<string,unknown>}){if(!nativeLifecycle)return;const entry={owner,pending:true};retirements.set(owner.key,entry);publish();const ok=await nativeLifecycle.retire(owner);if(retirements.get(owner.key)!==entry)return;if(ok===true)retirements.delete(owner.key);else{entry.pending=false;message='旧原文件引用未能取消，请重试；新的记住操作暂时锁定。';}publish();}
+    async function retireOwner(owner:{library:string;key:string;epoch:number;source:Record<string,unknown>}){if(!nativeLifecycle)return;const entry={owner,pending:true};retirements.set(owner.key,entry);publish();const ok=await nativeLifecycle.retire(owner);if(retirements.get(owner.key)!==entry)return;if(ok===true)retirements.delete(owner.key);else{entry.pending=false;assignMessage('旧原文件引用未能取消，请重试；新的记住操作暂时锁定。');}publish();}
     const portableMedia=new WeakMap<Document,RemoteMedia>();
     const savedSources=new Map(deps.documents.map(doc=>[doc.key,JSON.stringify(doc.local_media_source||null)]));
     const releaseMedia=(item:Media)=>{if(item.release)item.release();else if(item.url.startsWith('blob:'))URL.revokeObjectURL(item.url);};
@@ -39,7 +42,7 @@ export function createAppStore(deps: StoreDependencies) {
         }
         const preflight = pipeline.preflightDocuments([{ key: next.key, identity: validated, kind: 'update' }]);
         if (!preflight.ok) {
-            message = preflight.error?.message || '内容暂时无法保存，请保留备份。';
+            assignMessage(preflight.error?.message || '内容暂时无法保存，请保留备份。');
             publish();
             return false;
         }
@@ -49,14 +52,14 @@ export function createAppStore(deps: StoreDependencies) {
         if (ticket.accepted === false) {
             documents = documents.map(doc => doc === validated ? current : doc);
             versions.set(next.key, expected.revision);
-            message = '修改未进入保存队列，原内容保留。';
+            assignMessage('修改未进入保存队列，原内容保留。');
             publish();
             return false;
         }
         publish();
         const result = await ticket.committed;
         if (!result.ok) {
-            message = result.error?.message || '修改仍在本页，保存未完成。请重试或导出备份。';
+            assignMessage(result.error?.message || '修改仍在本页，保存未完成。请重试或导出备份。',true);
             publish();
         }
         return result.ok;
@@ -80,19 +83,19 @@ export function createAppStore(deps: StoreDependencies) {
             activeKey = previousActive;
             workspace = previousWorkspace;
             versions.delete(doc.key);
-            message = '内容未进入保存队列，原书架保留。';
+            assignMessage('内容未进入保存队列，原书架保留。');
             publish();
             return null;
         }
         publish();
         void ticket.committed.then(result => { if (!result.ok) {
-            message = '内容已在本页打开，但尚未保存。请重试或导出备份。';
+            assignMessage('内容已在本页打开，但尚未保存。请重试或导出备份。',true);
             publish();
         } });
         return doc;
     }
-    async function removeDocument(key:string){const doc=getDocument(key);if(!doc||dirty||structuralBusy||!writable()||pipeline.status().unsaved)return false;const preflight=pipeline.preflightDocuments([{key,identity:doc,kind:'remove'}]);if(!preflight.ok)return false;const previous=documents,previousActive=activeKey,previousWorkspace=workspace,owner=deps.nativeOwner?.(key),source=doc.local_media_source;structuralBusy=true;removalCleanup.set(doc,{owner:owner&&source?{...owner,key,source:structuredClone(source) as Record<string,unknown>}:null,attachment:media.get(key)||null});nativeLifecycle?.invalidate();documents=documents.filter(item=>item!==doc);if(activeKey===key){activeKey=documents[0]?.key||null;workspace='library';}const ticket=pipeline.queueDocument(key,doc,'remove');if(ticket.accepted===false){removalCleanup.delete(doc);documents=previous;activeKey=previousActive;workspace=previousWorkspace;structuralBusy=false;publish();return false;}removed=doc;publish();const result=await ticket.committed;structuralBusy=false;if(result.ok){completeRemoval(doc);message='已从书架移除，可撤销本次移除。';}else message='移除尚未确认保存，请重试保存或导出备份；本页保留撤销内容。';publish();return result.ok;}
-    async function undoRemove(){if(!removed||dirty||structuralBusy||!writable()||pipeline.status().unsaved||getDocument(removed.key))return false;const doc=structuredClone(removed),preflight=pipeline.preflightDocuments([{key:doc.key,identity:doc,kind:'update'}]);if(!preflight.ok)return false;structuralBusy=true;documents=[...documents,doc];const ticket=pipeline.queueDocument(doc.key,doc);if(ticket.accepted===false){documents=documents.filter(item=>item!==doc);structuralBusy=false;publish();return false;}versions.set(doc.key,(versions.get(doc.key)||0)+1);publish();const result=await ticket.committed;structuralBusy=false;if(result.ok){removed=null;message='已恢复移除的内容。原文件引用需要重新确认。';}else message='恢复内容仍在本页，尚未保存。';publish();return result.ok;}
+    async function removeDocument(key:string){const doc=getDocument(key);if(!doc||dirty||structuralBusy||!writable()||pipeline.status().unsaved)return false;const preflight=pipeline.preflightDocuments([{key,identity:doc,kind:'remove'}]);if(!preflight.ok)return false;const previous=documents,previousActive=activeKey,previousWorkspace=workspace,owner=deps.nativeOwner?.(key),source=doc.local_media_source;structuralBusy=true;removalCleanup.set(doc,{owner:owner&&source?{...owner,key,source:structuredClone(source) as Record<string,unknown>}:null,attachment:media.get(key)||null});nativeLifecycle?.invalidate();documents=documents.filter(item=>item!==doc);if(activeKey===key){activeKey=documents[0]?.key||null;workspace='library';}const ticket=pipeline.queueDocument(key,doc,'remove');if(ticket.accepted===false){removalCleanup.delete(doc);documents=previous;activeKey=previousActive;workspace=previousWorkspace;structuralBusy=false;publish();return false;}removed=doc;publish();const result=await ticket.committed;structuralBusy=false;if(result.ok){completeRemoval(doc);assignMessage('已从书架移除，可撤销本次移除。');}else assignMessage('移除尚未确认保存，请重试保存或导出备份；本页保留撤销内容。',true);publish();return result.ok;}
+    async function undoRemove(){if(!removed||dirty||structuralBusy||!writable()||pipeline.status().unsaved||getDocument(removed.key))return false;const doc=structuredClone(removed),preflight=pipeline.preflightDocuments([{key:doc.key,identity:doc,kind:'update'}]);if(!preflight.ok)return false;structuralBusy=true;documents=[...documents,doc];const ticket=pipeline.queueDocument(doc.key,doc);if(ticket.accepted===false){documents=documents.filter(item=>item!==doc);structuralBusy=false;publish();return false;}versions.set(doc.key,(versions.get(doc.key)||0)+1);publish();const result=await ticket.committed;structuralBusy=false;if(result.ok){removed=null;assignMessage('已恢复移除的内容。原文件引用需要重新确认。');}else assignMessage('恢复内容仍在本页，尚未保存。',true);publish();return result.ok;}
     async function restoreJSON(value:unknown,expectedRevision:number){if(value&&typeof value==='object'&&(value as {format?:string}).format==='coconut-library')return restoreBackup(value,expectedRevision);if(!value||typeof value!=='object'||Array.isArray(value))throw Error('请选择完整 Coconut 项目或书架 JSON。');const raw=structuredClone(value) as Record<string,unknown>;deps.validate(structuredClone(raw));const key=typeof raw.key==='string'&&raw.key.length>0&&raw.key.length<=200?raw.key:'import-'+crypto.randomUUID();return restoreBackup({format:'coconut-library',version:1,documents:[{...raw,key}],active:key},expectedRevision);}
     async function restoreBackup(backup: unknown, expectedRevision: number) {
         if (!writable() || dirty || revision !== expectedRevision)
@@ -126,18 +129,18 @@ export function createAppStore(deps: StoreDependencies) {
             documents = previousDocuments;
             for (const doc of added)
                 versions.delete(doc.key);
-            message = '恢复未进入保存队列，原书架保留。';
+            assignMessage('恢复未进入保存队列，原书架保留。');
             publish();
             return false;
         }
         publish();
         const receipts = await Promise.all(result.tickets.map(ticket => ticket.committed));
         const ok = receipts.every(result => result.ok);
-        message = ok ? `已恢复 ${added.length} 份内容；相同内容已跳过，不同版本分别保留。` : '恢复内容仍在本页，但尚未完整保存。请重试或导出备份。';
+        assignMessage(ok ? `已恢复 ${added.length} 份内容；相同内容已跳过，不同版本分别保留。` : '恢复内容仍在本页，但尚未完整保存。请重试或导出备份。',!ok);
         publish();
         return ok;
     }
-    const unsubscribe = pipeline.subscribe((_status,event)=>{if(event?.result?.ok)for(const change of event.result.changes||[])if(change.kind==='remove')completeRemoval(change.identity);if(event?.result?.ok)for(const saved of event.result.checkpoints||[]){const key=saved.identity.key,previous=savedSources.get(key),next=JSON.stringify(saved.identity.local_media_source||null),base=deps.nativeOwner?.(key);if(previous&&previous!=='null'&&previous!==next&&base)void retireOwner({...base,key,source:JSON.parse(previous)});savedSources.set(key,next);}publish();});
+    const unsubscribe = pipeline.subscribe((_status,event)=>{if(event?.result?.ok)for(const change of event.result.changes||[])if(change.kind==='remove')completeRemoval(change.identity);if(event?.result?.ok)for(const saved of event.result.checkpoints||[]){const key=saved.identity.key,previous=savedSources.get(key),next=JSON.stringify(saved.identity.local_media_source||null),base=deps.nativeOwner?.(key);if(previous&&previous!=='null'&&previous!==next&&base)void retireOwner({...base,key,source:JSON.parse(previous)});savedSources.set(key,next);}if(event?.result?.ok)reconcileMessage();publish();});
     publish();
     return { getSnapshot: () => snapshot, subscribe: (listener: () => void) => { listeners.add(listener); return () => { listeners.delete(listener); }; },
         pendingRetirements:()=>[...retirements.values()].map(value=>({key:value.owner.key,pending:value.pending})),retryRetirement:(key:string)=>{const value=retirements.get(key);if(value&&!value.pending)return retireOwner(value.owner);},
@@ -155,8 +158,8 @@ export function createAppStore(deps: StoreDependencies) {
             dirty = next;
             publish();
         } },
-        setMessage(value: string) { message = value; publish(); },
-        invalidateStorage(value: string) { storageInvalid = true; message = value || '存储连接已变化，请导出备份后重新打开。'; publish(); },
+        setMessage(value: string) { assignMessage(value); publish(); },
+        invalidateStorage(value: string) { storageInvalid = true; assignMessage(value || '存储连接已变化，请导出备份后重新打开。'); publish(); },
         getMedia: (key: string) => media.get(key) || null,
         getRemoteMedia: (key: string) => {const temporary=remoteMedia.get(key);if(temporary)return temporary;const doc=getDocument(key);if(!doc?.podcast_source)return null;const cached=portableMedia.get(doc);if(cached)return cached;try{const checked=deps.validate({project_kind:'audio_only',title:doc.title,segments:[],podcast_source:structuredClone(doc.podcast_source)}).podcast_source as {kind?:string;media_kind?:'audio'|'video';media_url?:string;feed_url?:string;episode_id?:string}|undefined;if(!checked?.media_url||!checked.media_kind)return null;const restored:RemoteMedia={kind:checked.media_kind,name:doc.title,download:{endpoint:'/api/podcasts/media',body:checked.kind==='direct_media'?{url:checked.media_url}:{feedUrl:checked.feed_url,episodeId:checked.episode_id,mediaUrl:checked.media_url}}};portableMedia.set(doc,restored);return restored;}catch{return null;}},
         setRemoteMedia(key: string, value: RemoteMedia) { remoteMedia.set(key, value); publish(); },
