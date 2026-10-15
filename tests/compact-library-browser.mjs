@@ -1,3 +1,4 @@
+// Compatibility renderer regression; this suite does not establish default React acceptance.
 /** CI-only real-browser proof. 500 authored documents, no models or external data. */
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
@@ -34,7 +35,7 @@ try{
  browser=await chromium.launch({headless:true,...(process.env.COCONUT_CHROMIUM_EXECUTABLE?{executablePath:process.env.COCONUT_CHROMIUM_EXECUTABLE}:{})});
  const context=await browser.newContext({viewport:{width:320,height:568},serviceWorkers:'block',acceptDownloads:true});
  await context.route('**/*',async route=>{const request=route.request(),url=new URL(request.url());if(!['GET','HEAD'].includes(request.method())){mutations++;await route.abort();}else if(url.origin===origin||['blob:','data:'].includes(url.protocol))await route.continue();else{external++;await route.abort();}});
- page=await context.newPage();page.on('pageerror',e=>errors.push(e.message));await page.goto(origin);
+ page=await context.newPage();page.on('pageerror',e=>errors.push(e.message));await page.goto(origin+'/compatibility.html');
  // Event audit avoids layout reads: forcing layout inside change/focus events
  // could perturb the race this proof is meant to expose.
  await page.evaluate(()=>{

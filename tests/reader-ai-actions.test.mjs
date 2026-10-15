@@ -1,3 +1,4 @@
+// Compatibility renderer regression; this suite is not default React acceptance.
 /** Request UI uses authored source and injected replies; no model or provider calls. */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -8,7 +9,7 @@ const root=new URL('../',import.meta.url);
 const fixture=(count=65)=>({title:'Action-specific reading',language:'en',notes:{'cue-0':'PRIVATE NOTE'},segments:Array.from({length:count},(_,i)=>({id:'cue-'+i,start:i*3,end:i*3+3,speaker:'Speaker',text:`Original sentence ${i}.`}))});
 function setup(stored){
  const w=new Window({url:'http://127.0.0.1:8080/'});
- w.document.body.innerHTML=fs.readFileSync(new URL('reader/index.html',root),'utf8').split('<body>')[1].split('</body>')[0];
+ w.document.body.innerHTML=fs.readFileSync(new URL('reader/compatibility.html',root),'utf8').split('<body>')[1].split('</body>')[0];
  Object.defineProperty(w,'crypto',{value:webcrypto});if(stored)w.localStorage.setItem('coconut-reader-v1',stored);
  const requests=[];
  w.fetch=async(url,options)=>{

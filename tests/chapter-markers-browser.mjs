@@ -1,3 +1,4 @@
+// Compatibility renderer regression; this suite does not establish default React acceptance.
 /** CI-only Chromium proof for authored reading landmarks. Native clipboard is
  * read only after this isolated CI browser writes its own authored sentinel.
  * There is no clipboard shim, model, external service, recording or user data.
@@ -150,7 +151,7 @@ try{
   await context.grantPermissions(['clipboard-read','clipboard-write'],{origin});
   await context.route('**/*',async route=>{const request=route.request(),url=new URL(request.url());if(!['GET','HEAD'].includes(request.method())){mutations++;await route.abort();}else if(url.origin===origin||['blob:','data:'].includes(url.protocol))await route.continue();else{external++;await route.abort();}});
   await context.addInitScript(()=>{window.__chapterAudit={plays:0,copy:[],scrolls:[]};document.addEventListener('play',event=>{if(event.target instanceof HTMLMediaElement)window.__chapterAudit.plays++;},true);document.addEventListener('copy',event=>queueMicrotask(()=>window.__chapterAudit.copy.push({trusted:event.isTrusted,prevented:event.defaultPrevented})),true);});
-  page=await context.newPage();page.setDefaultTimeout(20000);page.on('pageerror',error=>errors.push({label,message:error.message,stack:error.stack}));await page.goto(origin);
+  page=await context.newPage();page.setDefaultTimeout(20000);page.on('pageerror',error=>errors.push({label,message:error.message,stack:error.stack}));await page.goto(origin+'/compatibility.html');
   const fixture=chapterMarkersFixture(label);await page.locator('#library-file').setInputFiles({name:'authored-chapter-markers.json',mimeType:'application/json',buffer:Buffer.from(JSON.stringify({format:'coconut-library',version:1,documents:[fixture],active:fixture.key}))});
   await page.waitForFunction(title=>document.getElementById('title').textContent===title&&document.getElementById('library-file').value==='',fixture.title);
   await waitForPersistedLibrary(page,async key=>(await readPersistedLibrary()).documents.some(doc=>doc.key===key&&doc.reading_chapters?.length===6),fixture.key);

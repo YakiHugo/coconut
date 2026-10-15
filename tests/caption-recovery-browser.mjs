@@ -1,3 +1,4 @@
+// Compatibility renderer regression; this suite is not default React acceptance.
 /** Real browser/local recovery proof with authored outcomes. No platform requests. */
 import assert from 'node:assert/strict';
 import {createServer} from 'node:http';
@@ -14,7 +15,7 @@ const server=createServer(async(req,res)=>{
  if(url.pathname==='/api/health')return json({local_worker:false,capabilities:{local_agents:true,caption_import:true}});
  if(url.pathname==='/api/captions/import'){posts++;return json({status:outcome,message:messages[outcome]});}
  if(req.method!=='GET'||url.pathname.startsWith('/api/')){res.writeHead(404,{'Content-Type':'application/json'});res.end('{}');return;}
- const filename=url.pathname==='/'?'index.html':url.pathname.slice(1);
+ const filename=url.pathname==='/'?'compatibility.html':url.pathname.slice(1);
  if(!/^[a-z-]+\.(html|js|css|png)$/.test(filename)){res.writeHead(404).end();return;}
  try{const data=await fs.readFile(new URL(filename,root));res.writeHead(200,{'Content-Type':filename.endsWith('.js')?'text/javascript':filename.endsWith('.css')?'text/css':filename.endsWith('.png')?'image/png':'text/html'});res.end(data);}catch{res.writeHead(404).end();}
 });

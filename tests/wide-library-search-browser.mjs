@@ -1,3 +1,4 @@
+// Compatibility renderer regression; this suite does not establish default React acceptance.
 /** Actions-only native-dialog acceptance. Authored fixtures and PCM audio only.
  * Uses native file choosers, Chromium IME/keyboard, production search and IndexedDB.
  * The two explicit adversarial probes hold only a real activation continuation
@@ -201,7 +202,7 @@ try{
   stage=width+' import and native media baseline';
   const context=await browser.newContext({viewport:{width,height:width===390?844:1000},acceptDownloads:true,serviceWorkers:'block'});
   await context.route('**/*',async route=>{const request=route.request(),url=new URL(request.url());if(!['GET','HEAD'].includes(request.method())){mutations++;await route.abort();}else if(url.origin===origin||['blob:','data:'].includes(url.protocol))await route.continue();else{external++;await route.abort();}});
-  page=await context.newPage();page.setDefaultTimeout(15000);page.on('pageerror',error=>errors.push(error.message));await page.goto(origin);
+  page=await context.newPage();page.setDefaultTimeout(15000);page.on('pageerror',error=>errors.push(error.message));await page.goto(origin+'/compatibility.html');
   const docs=fixtures();await openLibraryTools(page);await page.locator('.library-backup > summary').click();
   const [restore]=await Promise.all([page.waitForEvent('filechooser'),page.locator('#restore-library').click()]);
   await restore.setFiles({name:'authored-wide-library.json',mimeType:'application/json',buffer:Buffer.from(JSON.stringify({format:'coconut-library',version:1,documents:docs,active:docs[0].key}))});

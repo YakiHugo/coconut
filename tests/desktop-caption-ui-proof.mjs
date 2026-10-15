@@ -1,3 +1,4 @@
+// Compatibility caption UI regression; React source-first paths have independent default acceptance.
 import {navigateReadingStop} from './helpers/transcript-navigation-browser.mjs';
 /** Native release ZIP caption proof: default real source, or --offline-diagnostics
  * for authored injected extraction bytes with no X requests.
@@ -43,6 +44,10 @@ try{
  const fixtureService=offline?createCaptionService({enabledProviders:['x'],readerDirectory:path.join(extracted,'Coconut.app/Contents/Resources/reader'),helper:{extractCaptions:async()=>captionFixtureResult(fixtureOptions)}}):null;
  const home=path.join(work,'home'),profile=path.join(work,'profile');await fs.mkdir(home);await fs.mkdir(profile);
  async function launch(profile){
+ // Keep this offline authored caption proof inside the existing production
+ // updater throttle; browser routing cannot intercept main-process node:https.
+ const updateDirectory=path.join(profile,'updates'),updateSettings={developer:false,lastCheck:Date.now()};await fs.mkdir(updateDirectory,{recursive:true});await fs.writeFile(path.join(updateDirectory,'settings.json'),JSON.stringify(updateSettings));assert.deepEqual(JSON.parse(await fs.readFile(path.join(updateDirectory,'settings.json'),'utf8')),updateSettings);
+
  app=await electron.launch({executablePath:path.join(extracted,'Coconut.app/Contents/MacOS/Coconut'),args:['--user-data-dir='+profile],cwd:work,acceptDownloads:true,chromiumSandbox:true,bypassCSP:false,timeout:45000,env:{HOME:home,TMPDIR:work,PATH:'/usr/bin:/bin',LANG:'en_US.UTF-8'}});
  const facts=await app.evaluate(({app})=>({packaged:app.isPackaged,version:app.getVersion(),userData:app.getPath('userData')}));
  check('exact_native_zip_and_private_profile',facts.packaged&&facts.version===version&&await fs.realpath(facts.userData)===await fs.realpath(profile));
@@ -60,7 +65,7 @@ try{
   forbidden++;await route.abort();
  });
  const page=await app.firstWindow();page.setDefaultTimeout(20000);page.on('pageerror',()=>errors++);
- await page.waitForURL(origin+'/');await installStorageAssertions(page);await readerReady(page);
+ await page.waitForURL(url=>url.origin===origin&&url.pathname==='/');await page.locator('.react-app').waitFor();await page.goto(origin+'/compatibility.html');await installStorageAssertions(page);await readerReady(page);
  await page.waitForFunction(()=>typeof window.coconutPrepareClose==='function'&&typeof window.coconutPrepareUpdate==='function');
  check('native_default_indexeddb_backend',await page.evaluate(()=>window.CoconutStorageBootstrap.result.backend==='indexeddb'));
  await page.waitForFunction(()=>!document.querySelector('#caption-language-control').hidden);

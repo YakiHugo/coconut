@@ -1,3 +1,4 @@
+// Compatibility renderer regression; this suite is not default React acceptance.
 import {installSelectedBackupWriteProbe} from './helpers/selected-backup-write-probe.mjs';
 import {openLibraryTools} from './helpers/library-tools-browser.mjs';
 /** GitHub browser-CI-only proof: authored files, real downloads/pickers and
@@ -19,7 +20,7 @@ try{
  directory=await fs.mkdtemp(path.join(os.tmpdir(),'coconut-backup-proof-'));
  server=createServer(async(req,res)=>{
   if(!['GET','HEAD'].includes(req.method)){mutations++;res.writeHead(405).end();return;}
-  const filename=new URL(req.url,'http://localhost').pathname.replace(/^\//,'')||'index.html';
+  const filename=new URL(req.url,'http://localhost').pathname.replace(/^\//,'')||'compatibility.html';
   if(!/^[a-z-]+\.(html|js|css|webmanifest|png)$/.test(filename)){res.writeHead(404,{'Content-Type':'application/json'}).end('{"error":"static only"}');return;}
   try{const body=await fs.readFile(new URL(filename,root));res.writeHead(200,{'Content-Type':filename.endsWith('.js')?'text/javascript':filename.endsWith('.css')?'text/css':filename.endsWith('.png')?'image/png':'text/html'}).end(body);}catch{res.writeHead(404).end();}
  });

@@ -1,3 +1,4 @@
+// Compatibility renderer regression; this suite is not default React acceptance.
 import {installSavePipeline} from './helpers/save-pipeline.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -8,7 +9,7 @@ const root=new URL('../',import.meta.url);
 function setup(stored, fetchMock, layout, contextControls=false){
  // Legacy local-service fixture: injected AI responses are not private-owner authorization.
   const window=new Window({url:'http://localhost/'});
-  window.document.body.innerHTML=fs.readFileSync(new URL('reader/index.html',root),'utf8').split('<body>')[1].split('</body>')[0];
+  window.document.body.innerHTML=fs.readFileSync(new URL('reader/compatibility.html',root),'utf8').split('<body>')[1].split('</body>')[0];
   if(contextControls&&!window.document.getElementById('translation-glossary'))window.document.body.insertAdjacentHTML('beforeend','<textarea id="translation-glossary"></textarea><button id="save-translation-glossary"></button><p id="translation-quality"></p><select id="ai-task"><option value="question">提问</option><option value="summary">整篇摘要</option></select>');
   Object.defineProperty(window,'crypto',{value:webcrypto});
   if(stored!==undefined)window.localStorage.setItem('coconut-reader-v1',stored);

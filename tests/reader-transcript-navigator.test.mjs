@@ -1,3 +1,4 @@
+// Compatibility renderer regression; this suite is not default React acceptance.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -38,7 +39,7 @@ test('one navigation surface routes to existing search and chapter ownership, wi
   const session=w.CoconutTranscriptNavigation.open();session.search();assert.equal(w.document.activeElement,$('search'));assert.equal(w.document.body.dataset.readingMode,'transcript');
   const next=w.CoconutTranscriptNavigation.open();next.chapters();assert.equal($('chapter-dialog').open,true);
   assert.equal(w.document.body.dataset.transcriptNavigation,undefined);assert.ok($('reading-jump'));assert.ok($('passage-time-range'));
-  const html=fs.readFileSync(new URL('../reader/index.html',import.meta.url),'utf8');assert.match(html,/<script src="transcript-navigator.js\?v=[a-f0-9]+" defer>/);assert.doesNotMatch(html,/<script src="transcript-navigator[^>]*data-reader-script/);
+  const html=fs.readFileSync(new URL('../reader/compatibility.html',import.meta.url),'utf8');assert.match(html,/<script src="transcript-navigator.js\?v=[a-f0-9]+" defer>/);assert.doesNotMatch(html,/<script src="transcript-navigator[^>]*data-reader-script/);
  }finally{await w.happyDOM.close();}
 });
 test('every shipped server and desktop package includes the self-contained island',()=>{

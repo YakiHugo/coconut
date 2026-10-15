@@ -1,3 +1,4 @@
+// Compatibility renderer regression; this suite is not default React acceptance.
 import {installFollowScrollObserver,followWheelSettled} from './helpers/follow-scroll-observer.mjs';
 import {installSavePipeline,settle} from './helpers/save-pipeline.mjs';
 import test from 'node:test';
@@ -8,7 +9,7 @@ import {Window} from 'happy-dom';
 const root=new URL('../',import.meta.url);
 function setup(){
  const w=new Window({url:'https://coconut.example/'});
- w.document.body.innerHTML=fs.readFileSync(new URL('reader/index.html',root),'utf8').split('<body>')[1].split('</body>')[0];
+ w.document.body.innerHTML=fs.readFileSync(new URL('reader/compatibility.html',root),'utf8').split('<body>')[1].split('</body>')[0];
  Object.defineProperty(w,'crypto',{value:webcrypto});
  const frames=new Map();let frameId=0;w.requestAnimationFrame=fn=>{frames.set(++frameId,fn);return frameId;};w.cancelAnimationFrame=id=>frames.delete(id);
  const tick=()=>{const queued=[...frames.values()];frames.clear();for(const fn of queued)fn();};

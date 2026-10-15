@@ -19,7 +19,59 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  react-source-first:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - run: npm run check:reader-ui
+      - id: react_setup
+        run: npx playwright install --with-deps chromium && sudo apt-get update && sudo apt-get install -y fonts-noto-cjk
+      - name: Verify production React source-first flows at desktop and phone widths
+        if: ${{ !cancelled() && steps.react_setup.outcome == 'success' }}
+        env:
+          COCONUT_REACT_ARTIFACTS: ${{ runner.temp }}/coconut-react-authored
+        run: npm run test:react-browser
+      - name: Verify React canonical persistence, AI scope, native lifecycle and recovery
+        if: ${{ !cancelled() && steps.react_setup.outcome == 'success' }}
+        env:
+          COCONUT_REACT_ARTIFACTS: ${{ runner.temp }}/coconut-react-authored
+        run: npm run test:react-matrix
+      - name: Verify actual reading palette and system theme transitions
+        if: ${{ !cancelled() && steps.react_setup.outcome == 'success' }}
+        run: npm run test:react-palette-browser
+      - name: Upload only authored React review images and geometry
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: react-authored-layout
+          if-no-files-found: ignore
+          path: |
+            ${{ runner.temp }}/coconut-react-authored/react-discover-1360.png
+            ${{ runner.temp }}/coconut-react-authored/react-reading-1360.png
+            ${{ runner.temp }}/coconut-react-authored/react-discover-390.png
+            ${{ runner.temp }}/coconut-react-authored/react-reading-390.png
+            ${{ runner.temp }}/coconut-react-authored/react-discover-320.png
+            ${{ runner.temp }}/coconut-react-authored/react-reading-320.png
+            ${{ runner.temp }}/coconut-react-authored/react-geometry.json
+            ${{ runner.temp }}/coconut-react-authored/matrix-canonical-reading-1360.png
+            ${{ runner.temp }}/coconut-react-authored/matrix-canonical-reading-390.png
+            ${{ runner.temp }}/coconut-react-authored/matrix-ai-error-details-1360.png
+            ${{ runner.temp }}/coconut-react-authored/matrix-ai-error-details-390.png
+            ${{ runner.temp }}/coconut-react-authored/matrix-source-first-home-390.png
+            ${{ runner.temp }}/coconut-react-authored/matrix-source-first-home-1360.png
+            ${{ runner.temp }}/coconut-react-authored/matrix-attached-subtitle-390.png
+            ${{ runner.temp }}/coconut-react-authored/matrix-summary-preferences-1360.png
+            ${{ runner.temp }}/coconut-react-authored/matrix-summary-preferences-390.png
+            ${{ runner.temp }}/coconut-react-authored/react-production-matrix.json
+            ${{ runner.temp }}/coconut-react-authored/react-production-matrix-failure.json
   browser-smoke:
+    name: Compatibility renderer regression (not React acceptance)
     runs-on: ubuntu-latest
     # Full authored suite measured 918s on hosted CI; allow ~31% setup/runtime headroom.
     # Keep every suite and its own failure/timeout assertions unchanged.

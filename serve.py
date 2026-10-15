@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
 import signal
+import sqlite3
 import stat
 import tempfile
 import uuid
@@ -15,7 +17,9 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-from import_jobs import ImportJobs, UPLOAD_MEDIA_TYPES
+from import_jobs import (ImportJobs, UPLOAD_MEDIA_TYPES, InvalidUploadOperation,
+                         UploadOperationConflict, validate_upload_operation)
+from local_asr import executor_status
 from subtitle_import import validate_video_url
 from language_tools import LocalTranslator
 from ai_reader import subscription_status, codex_status, ask, subscription_translate
@@ -24,6 +28,50 @@ from ai_reader import subscription_status, codex_status, ask, subscription_trans
 MAX_UPLOAD = 200 * 1024 * 1024
 MAX_JSON = 16 * 1024
 MEDIA_EXTENSIONS = set(UPLOAD_MEDIA_TYPES) | {'.srt', '.vtt'}
+
+
+def upload_operation_from_query(query, *, operation_id=None, size=None):
+    """Parse one unambiguous identity; fingerprints are client lookup hints."""
+    def single(name, default=None):
+        values = query.get(name)
+        if values is None and default is not None:
+            return default
+        if values is None or len(values) != 1:
+            raise InvalidUploadOperation(f'Provide exactly one {name}')
+        return values[0]
+
+    def integer(name):
+        value = single(name)
+        if not re.fullmatch(r'[0-9]{1,16}', value):
+            raise InvalidUploadOperation(f'{name} must be a nonnegative integer')
+        return int(value)
+
+    if operation_id is None:
+        operation_id = single('operation_id')
+    elif 'operation_id' in query and single('operation_id') != operation_id:
+        raise InvalidUploadOperation('operation_id query does not match its URL')
+    if size is None:
+        size = integer('size')
+    elif 'size' in query and integer('size') != size:
+        raise InvalidUploadOperation('size must match Content-Length')
+    return validate_upload_operation({
+        'operation_id': operation_id, 'filename': single('filename'), 'size': size,
+        'fingerprint': single('fingerprint'), 'last_modified': integer('last_modified'),
+        'language': single('language', ''),
+    })
+
+
+def discard_uncommitted_upload(jobs, identifier, source):
+    """Remove only this request's unowned upload, even after an uncertain commit."""
+    try:
+        committed = jobs.owns_upload_source(identifier, str(source))
+    except Exception:
+        # If the database cannot establish ownership, keep the bytes. A later
+        # recovery query is safer than deleting a possibly committed source.
+        return
+    if not committed:
+        source.unlink(missing_ok=True)
+        source.parent.rmdir()
 
 
 def byte_range(value: str, size: int) -> tuple[int, int]:
@@ -80,13 +128,14 @@ class Handler(SimpleHTTPRequestHandler):
         if self.command != 'HEAD':
             self.wfile.write(body)
 
-    def _media(self, identifier):
+    def _media(self, identifier, *, allow_pending_upload=False):
         # Browsers must not use this private endpoint as cross-site embedded media.
         origin = self.headers.get('Origin')
         if ((origin and origin != 'http://' + self.headers.get('Host', '')) or
                 self.headers.get('Sec-Fetch-Site') not in (None, 'same-origin', 'none')):
             return self._json(403, {'error': 'Cross-origin requests are not permitted'})
-        path, _, content_type = self.jobs.media(identifier)
+        path, _, content_type = (self.jobs.media(identifier, allow_pending_upload=True)
+                                 if allow_pending_upload else self.jobs.media(identifier))
         try:
             # Pin the job directory and reject symlinks swapped in after validation.
             folder = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
@@ -145,21 +194,32 @@ class Handler(SimpleHTTPRequestHandler):
     def do_GET(self):
         if not self._allowed():
             return
-        path = urlparse(self.path).path
+        parsed = urlparse(self.path)
+        path = parsed.path
         try:
             if path == '/api/health':
                 return self._json(200, {'local_worker': True, 'paid_processing': False, 'max_upload_bytes': MAX_UPLOAD})
+            if path == '/api/ingestion-executor/status':
+                return self._json(200, executor_status())
             if path == '/api/language-tools':
                 return self._json(200, {'translation_models': self.server.translator.available(), 'ai': {'codex': codex_status(), 'claude': subscription_status()}})
             if path == '/api/jobs':
                 return self._json(200, {'jobs': self.jobs.list()})
+            match = re.fullmatch(r'/api/ingestion-executor/operations/([^/]+)', path)
+            if match:
+                metadata = upload_operation_from_query(
+                    parse_qs(parsed.query, keep_blank_values=True), operation_id=match[1])
+                return self._json(200, self.jobs.get_upload_operation(metadata))
+            match = re.fullmatch(r'/api/ingestion-executor/jobs/([a-f0-9]{32})/media', path)
+            if match:
+                return self._media(match[1], allow_pending_upload=True)
             match = re.fullmatch(r'/api/jobs/([a-f0-9]{32})/media', path)
             if match:
                 return self._media(match[1])
             match = re.fullmatch(r'/api/jobs/([a-f0-9]{32})(/result)?', path)
             if match:
                 return self._json(200, self.jobs.result(match[1]) if match[2] else self.jobs.get(match[1]))
-            if path not in ('/', '/index.html', '/app.js', '/summary.js', '/task-client.js', '/client-capabilities.js', '/background-summary.js', '/core.js', '/passages.js', '/passage-playback.js', '/quotation.js', '/library-store.js', '/appearance.js', '/indexeddb-document-adapter.js', '/canonical-library.js', '/storage-provider.js', '/storage-bootstrap.js', '/transcript-navigator.js', '/jobs.js', '/language.js', '/translation-review.js', '/podcasts.js', '/updates.js', '/style.css', '/coconut-mark.png'):
+            if path not in ('/', '/index.html', '/app.js', '/summary.js', '/task-client.js', '/client-capabilities.js', '/background-summary.js', '/core.js', '/passages.js', '/passage-playback.js', '/quotation.js', '/library-store.js', '/appearance.js', '/indexeddb-document-adapter.js', '/canonical-library.js', '/storage-provider.js', '/storage-bootstrap.js', '/transcript-navigator.js', '/compatibility.html', '/react-preview.html', '/react-app.js', '/react-app.css', '/jobs.js', '/language.js', '/translation-review.js', '/podcasts.js', '/updates.js', '/style.css', '/coconut-mark.png'):
                 return self._json(404, {'error': 'Not found'})
             if self.command == 'HEAD':
                 super().do_HEAD()
@@ -167,6 +227,10 @@ class Handler(SimpleHTTPRequestHandler):
                 super().do_GET()
         except KeyError:
             self._json(404, {'error': 'Job not found'})
+        except InvalidUploadOperation as error:
+            self._json(400, {'error': str(error)})
+        except UploadOperationConflict as error:
+            self._json(409, {'error': str(error), 'code': 'upload_operation_mismatch'})
         except ValueError as error:
             self._json(409, {'error': str(error)})
         except OSError:
@@ -183,15 +247,35 @@ class Handler(SimpleHTTPRequestHandler):
             if parsed.path == '/api/uploads':
                 if media != 'application/octet-stream' or not 0 < length <= MAX_UPLOAD:
                     return self._json(400, {'error': 'Upload must be a supported media file up to 200 MiB'})
-                filename = parse_qs(parsed.query).get('filename', ['media'])[0]
+                query = parse_qs(parsed.query, keep_blank_values=True)
+                local_only_values = query.get('local_only', ['false'])
+                if len(local_only_values) != 1 or local_only_values[0] not in ('true', 'false'):
+                    raise ValueError('local_only must be true or false')
+                local_only = local_only_values[0] == 'true'
+                filename = query.get('filename', ['media'])[0]
                 suffix = Path(filename).suffix.lower()
                 if suffix not in MEDIA_EXTENSIONS:
                     return self._json(400, {'error': 'Unsupported media extension'})
+                operation = None
+                existing = None
+                if {'operation_id', 'fingerprint', 'last_modified'} & set(query):
+                    if not local_only:
+                        raise InvalidUploadOperation('Upload operations require local_only=true')
+                    operation = upload_operation_from_query(query, size=length)
+                    try:
+                        existing = self.jobs.get_upload_operation(operation)
+                    except KeyError:
+                        pass
+                if local_only and existing is None:
+                    status = executor_status()
+                    if not status['available']:
+                        return self._json(503, {**status, 'error': status['message']})
                 identifier = uuid.uuid4().hex
                 folder = self.jobs.directory / identifier
-                folder.mkdir()
+                folder.mkdir(mode=0o700)
                 source = folder / ('source' + suffix)
                 try:
+                    digest = hashlib.sha256()
                     with source.open('wb') as output:
                         remaining = length
                         while remaining:
@@ -199,15 +283,35 @@ class Handler(SimpleHTTPRequestHandler):
                             if not chunk:
                                 raise ValueError('Upload ended before all bytes arrived')
                             output.write(chunk)
+                            digest.update(chunk)
                             remaining -= len(chunk)
-                    options = {'language': parse_qs(parsed.query).get('language', [''])[0] or None}
-                    job = self.jobs.enqueue(str(source), Path(filename).name, options, job_id=identifier)
+                        output.flush()
+                        os.fsync(output.fileno())
+                    # Persist the source name and its newly created job folder
+                    # before the database acknowledges ownership of these bytes.
+                    for directory in (folder, self.jobs.directory):
+                        descriptor = os.open(directory, os.O_RDONLY | os.O_DIRECTORY)
+                        try:
+                            os.fsync(descriptor)
+                        finally:
+                            os.close(descriptor)
+                    options = {'language': query.get('language', [''])[0] or None}
+                    if local_only:
+                        options['local_only'] = True
+                    extra = ({'upload_operation': operation, 'content_hash': digest.hexdigest()}
+                             if operation is not None else {})
+                    job = self.jobs.enqueue(str(source), Path(filename).name, options,
+                                            job_id=identifier, **extra)
                 except BaseException:
-                    # Only this request's incomplete, generated upload is removed.
-                    source.unlink(missing_ok=True)
-                    folder.rmdir()
+                    # enqueue() commits before returning its representation. An
+                    # error there must not delete a committed source after a lost
+                    # ACK; an unreadable ownership check also fails conservatively.
+                    discard_uncommitted_upload(self.jobs, identifier, source)
                     raise
-                return self._json(201, job)
+                created = job['id'] == identifier
+                if not created:
+                    discard_uncommitted_upload(self.jobs, identifier, source)
+                return self._json(201 if created else 200, job)
             limit = 1024 * 1024 if parsed.path in ('/api/translate','/api/ask','/api/translate-subscription') else MAX_JSON
             if media != 'application/json' or length < 0 or length > limit:
                 return self._json(400, {'error': 'Use a small JSON request'})
@@ -236,6 +340,13 @@ class Handler(SimpleHTTPRequestHandler):
                 action = self.jobs.retry if match[2] == 'retry' else self.jobs.cancel
                 return self._json(200, action(match[1]))
             self._json(404, {'error': 'Not found'})
+        except (BrokenPipeError, ConnectionResetError):
+            # The receipt and source remain recoverable when the ACK is lost.
+            return
+        except UploadOperationConflict as error:
+            self._json(409, {'error': str(error), 'code': 'upload_operation_mismatch'})
+        except sqlite3.Error:
+            self._json(503, {'error': 'Upload storage is temporarily unavailable', 'code': 'storage_unavailable'})
         except ImportError:
             self._json(400, {'error':'本地翻译依赖未安装，请重新运行 install.sh'})
         except (ValueError, TypeError, OSError) as error:

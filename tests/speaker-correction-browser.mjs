@@ -1,3 +1,4 @@
+// Compatibility renderer regression; this suite is not default React acceptance.
 /** CI-only native Chromium speaker correction proof. Every cue, translation,
  * note and saved answer is an authored fixture. The only network destination is
  * a read-only static loopback server; no media, provider, account or model.
@@ -159,7 +160,7 @@ async function geometry(label) {
 try {
   server = createServer(async (req, res) => {
     if (!['GET', 'HEAD'].includes(req.method)) {mutations++; res.writeHead(405).end(); return;}
-    const name = new URL(req.url, 'http://localhost').pathname.slice(1) || 'index.html';
+    const name = new URL(req.url, 'http://localhost').pathname.slice(1) || 'compatibility.html';
     if (!/^[a-z-]+\.(html|js|css|png|webmanifest)$/.test(name)) {res.writeHead(404, {'Content-Type': 'application/json'}).end('{"error":"authored static fixture only"}'); return;}
     try {
       const bytes = await fs.readFile(new URL(name, root));

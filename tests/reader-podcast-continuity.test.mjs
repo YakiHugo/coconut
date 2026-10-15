@@ -1,3 +1,4 @@
+// Compatibility renderer regression; this suite is not default React acceptance.
 /** Production reader/legacy writer, with authored publisher responses only. */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -16,7 +17,7 @@ const json=value=>({ok:true,json:async()=>value});
 const mediaResponse=(kind='audio')=>({ok:true,blob:async()=>new Blob(['ID3 authored bytes'],{type:'audio/mpeg'}),headers:{get:()=>kind}});
 async function setup({documents=[],handler,held=false}={}){
  const w=new Window({url:'http://127.0.0.1:8080/'}),$=id=>w.document.getElementById(id);
- w.document.body.innerHTML=fs.readFileSync(new URL('reader/index.html',root),'utf8').split('<body>')[1].split('</body>')[0];Object.defineProperty(w,'crypto',{value:webcrypto});
+ w.document.body.innerHTML=fs.readFileSync(new URL('reader/compatibility.html',root),'utf8').split('<body>')[1].split('</body>')[0];Object.defineProperty(w,'crypto',{value:webcrypto});
  if(documents.length)w.localStorage.setItem(KEY,JSON.stringify({documents}));
  const calls=[],revoked=[];let urls=0,plays=0;
  w.URL.createObjectURL=()=>`blob:http://127.0.0.1:8080/owned-${++urls}`;w.URL.revokeObjectURL=url=>revoked.push(url);

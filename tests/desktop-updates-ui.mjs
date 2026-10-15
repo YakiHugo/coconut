@@ -1,3 +1,4 @@
+// Compatibility update UI regression; React native update controller is tested separately.
 /** Real isolated Electron UI, authored fixtures only; no account/model/network work. */
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
@@ -24,7 +25,7 @@ await runNativeUpdateFixture({getApplication:()=>application,run:async mark=>{
   application=await electron.launch({executablePath:path.join(root,'desktop/node_modules/electron/dist/Electron.app/Contents/MacOS/Electron'),args:[path.join(root,'desktop'),'--user-data-dir='+profile],chromiumSandbox:true,
    env:{HOME:home,TMPDIR:temporary,PATH:'/usr/bin:/bin'},timeout:45000});
   mark(label+':first-window');
-  const page=await application.firstWindow();await page.waitForLoadState('domcontentloaded');
+  const page=await application.firstWindow();await page.waitForLoadState('domcontentloaded');await page.locator('.react-app').waitFor();await page.goto('http://127.0.0.1:47831/compatibility.html');
   mark(label+':storage-ready');
   await installStorageAssertions(page);await nativeReady(page);return page;
  };
@@ -224,8 +225,8 @@ await runNativeUpdateFixture({getApplication:()=>application,run:async mark=>{
    const request=add.apply(this,arguments);
    if(this.transaction.db.name==='coconut-reader-library-v1'&&this.name==='meta'&&key==='state'&&!window.nativeMigrationHeld){
     const store=this,transaction=this.transaction,held={active:true,terminal:null,mode:transaction.mode};window.nativeMigrationHeld=held;
-    transaction.addEventListener('abort',()=>{held.active=false;held.terminal='aborted';});
-    transaction.addEventListener('complete',()=>{held.active=false;held.terminal='completed';});
+    transaction.addEventListener('abort',()=>{held.active=false;held.terminal='aborted';localStorage.setItem('authored-held-migration-terminal','aborted');});
+    transaction.addEventListener('complete',()=>{held.active=false;held.terminal='completed';localStorage.setItem('authored-held-migration-terminal','completed');});
     // Queue real reads from each success event so migration cannot finish until
     // production startup shutdown aborts its real, still-active transaction.
     const keepAlive=()=>{const next=store.get('state');next.onsuccess=()=>{if(held.active)keepAlive();};};
@@ -251,7 +252,10 @@ await runNativeUpdateFixture({getApplication:()=>application,run:async mark=>{
  await startupClosed;application=null;
  page=await launch('migration-recovery');
  mark('migration-recovery-persistence');
- assert.equal(await page.evaluate(()=>window.CoconutStorageBootstrap.result.migrated),true,'startup close aborted the held migration before relaunch completed it');
+ // The new default React entry completes the next migration before this compatibility
+ // route opens. Prove the previous real transaction aborted directly instead of
+ // mistaking compatibility's subsequent already-migrated load for the first boot.
+ assert.equal(await page.evaluate(()=>localStorage.getItem('authored-held-migration-terminal')),'aborted','startup native close aborted the held real transaction before relaunch');
  assert.deepEqual(await page.evaluate(()=>window.readPersistedLibrary()),migrationExpected,'native close during migration preserves every authored document across relaunch');
  assert.equal(await page.evaluate(()=>localStorage.getItem('coconut-reader-v1')),migrationRaw,'native migration recovery leaves legacy source bytes unchanged');
  assert.equal(await page.evaluate(()=>coconutPrepareUpdate()),true,'recovered native reader is ready for a safe update');

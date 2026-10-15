@@ -25,29 +25,38 @@ class ServerTests(unittest.TestCase):
             with urlopen(self.base+'/translation-review.js') as response:
                 self.assertEqual(response.status,200)
                 self.assertIn(b'CoconutTranslationReview',response.read())
-            with urlopen(self.base+'/') as response:
-                scripts=re.findall(r'<(?:script|link|img)\b[^>]*\b(?:src|href)="([^"]+)"',response.read().decode())
-            self.assertTrue(any(src.startswith('library-store.js') for src in scripts))
-            self.assertTrue(any(src.startswith('quotation.js') for src in scripts))
-            self.assertTrue(any(src.startswith('canonical-library.js') for src in scripts))
-            for src in scripts:
-                with self.subTest(script=src),urlopen(self.base+'/'+src) as response:
-                    self.assertEqual(response.status,200)
-                    payload=response.read()
-                    if src.startswith('canonical-library.js'):
-                        self.assertIn(b'CoconutCanonicalLibrary',payload)
-                    if src.startswith('quotation.js'):
-                        self.assertIn(b'CoconutQuotation',payload)
-                    if src.startswith('library-store.js'):
-                        self.assertIn(b'CoconutLibraryStore',payload)
-                    if src=='coconut-mark.png':
-                        self.assertEqual(response.headers.get_content_type(),'image/png')
-                        self.assertEqual(payload[:8],bytes([137,80,78,71,13,10,26,10]))
-                    content_type=response.headers.get_content_type()
-                with urlopen(Request(self.base+'/'+src,method='HEAD')) as response:
-                    self.assertEqual(response.status,200)
-                    self.assertEqual(response.headers.get_content_type(),content_type)
-                    self.assertEqual(response.read(),b'')
+            for entry in ('/', '/compatibility.html'):
+                with urlopen(self.base+entry) as response:
+                    scripts=re.findall(r'<(?:script|link|img)\b[^>]*\b(?:src|href)="([^"]+)"',response.read().decode())
+                self.assertTrue(any(src.startswith('library-store.js') for src in scripts))
+                if entry=='/compatibility.html':
+                    self.assertTrue(any(src.startswith('quotation.js') for src in scripts))
+                    self.assertTrue(any(src.startswith('app.js') for src in scripts))
+                else:
+                    self.assertTrue(any(src.startswith('react-app.js') for src in scripts))
+                    self.assertTrue(any(src.startswith('react-app.css') for src in scripts))
+                    self.assertTrue(any(src.startswith('passages.js') for src in scripts))
+                    self.assertFalse(any(src.startswith('app.js') for src in scripts))
+                    self.assertFalse(any(src.startswith('quotation.js') for src in scripts))
+                self.assertTrue(any(src.startswith('canonical-library.js') for src in scripts))
+                for src in scripts:
+                    with self.subTest(script=src),urlopen(self.base+'/'+src) as response:
+                        self.assertEqual(response.status,200)
+                        payload=response.read()
+                        if src.startswith('canonical-library.js'):
+                            self.assertIn(b'CoconutCanonicalLibrary',payload)
+                        if src.startswith('quotation.js'):
+                            self.assertIn(b'CoconutQuotation',payload)
+                        if src.startswith('library-store.js'):
+                            self.assertIn(b'CoconutLibraryStore',payload)
+                        if src=='coconut-mark.png':
+                            self.assertEqual(response.headers.get_content_type(),'image/png')
+                            self.assertEqual(payload[:8],bytes([137,80,78,71,13,10,26,10]))
+                        content_type=response.headers.get_content_type()
+                    with urlopen(Request(self.base+'/'+src,method='HEAD')) as response:
+                        self.assertEqual(response.status,200)
+                        self.assertEqual(response.headers.get_content_type(),content_type)
+                        self.assertEqual(response.read(),b'')
             ask.assert_not_called()
 
     def test_actual_upload_to_readable_document(self):

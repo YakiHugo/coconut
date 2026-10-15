@@ -1,3 +1,4 @@
+// Compatibility renderer regression; this suite is not default React acceptance.
 /** Authored DOM/File fixtures only. Never uploads, decodes real media, or calls a service. */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -22,7 +23,7 @@ function transcript(overrides={}){
 }
 function setup(storage={},options={}){
  const w=new Window({url:'https://coconut.example/'}),calls=[],created=[],revoked=[],releases=[];
- w.document.body.innerHTML=fs.readFileSync(new URL('reader/index.html',root),'utf8').split('<body>')[1].split('</body>')[0];
+ w.document.body.innerHTML=fs.readFileSync(new URL('reader/compatibility.html',root),'utf8').split('<body>')[1].split('</body>')[0];
  Object.defineProperty(w,'crypto',{value:webcrypto});for(const [key,value] of Object.entries(storage))w.localStorage.setItem(key,value);
  w.fetch=async url=>{calls.push(url);throw new Error('No network permitted');};
  w.URL.createObjectURL=file=>{const url='blob:association-'+(created.length+1);created.push({url,file});return url;};w.URL.revokeObjectURL=url=>revoked.push(url);

@@ -1,3 +1,4 @@
+// Compatibility renderer regression; this suite is not default React acceptance.
 import {openTranscriptTools} from './helpers/reading-tools-browser.mjs';
 /** CI-only Chromium proof: ordinary SRT/VTT chooser, reading, notes and downloads.
  * Only original authored fixtures, static assets and browser-local data are used. */
@@ -14,7 +15,7 @@ function check(name,value){assert.ok(value,name);checks.push(name);}
 try{
  server=createServer(async(req,res)=>{
   if(!['GET','HEAD'].includes(req.method)){mutations++;res.writeHead(405).end();return;}
-  const pathname=new URL(req.url,'http://localhost').pathname,filename=pathname==='/'?'index.html':pathname.slice(1);
+  const pathname=new URL(req.url,'http://localhost').pathname,filename=pathname==='/'?'compatibility.html':pathname.slice(1);
   if(!/^[a-z-]+\.(html|js|css|webmanifest|png)$/.test(filename)){res.writeHead(404,{'Content-Type':'application/json'}).end('{"error":"static only"}');return;}
   try{const body=await fs.readFile(new URL(filename,root));res.writeHead(200,{'Content-Type':filename.endsWith('.js')?'text/javascript':filename.endsWith('.css')?'text/css':filename.endsWith('.png')?'image/png':'text/html'}).end(body);}catch{res.writeHead(404).end();}
  });

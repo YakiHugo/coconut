@@ -28,7 +28,8 @@
         const documents = parsed.documents.map(doc => {
           if (!doc || typeof doc.key !== 'string' || !doc.key || keys.has(doc.key)) throw new Error('Invalid or duplicate document key');
           keys.add(doc.key);
-          return {...doc, ...validate(doc), key: doc.key};
+          const normalized={...validate(doc),key:doc.key},project=root.CoconutCanonicalLibrary?.project||(typeof module!=='undefined'&&module.exports?require('./canonical-library.js').project:null);
+          return project?project(doc,normalized):{...doc,...normalized};
         });
         readable = true;
         initial = {ok: true, documents, active: parsed.active ?? null, raw: previous};

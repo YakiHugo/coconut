@@ -1,3 +1,4 @@
+// Compatibility renderer regression; this suite is not default React acceptance.
 /** CI-only real Chromium evidence for authored reading appearance. No user
  * sources, model requests, accounts or external services are involved. */
 import assert from 'node:assert/strict';
@@ -71,7 +72,7 @@ async function saved(){await page.evaluate(()=>libraryStore.flush());return page
 try{
  server=createServer(async(req,res)=>{
   if(req.method!=='GET'&&req.method!=='HEAD'){mutations++;res.writeHead(405).end();return;}
-  const name=new URL(req.url,'http://localhost').pathname.slice(1)||'index.html';
+  const name=new URL(req.url,'http://localhost').pathname.slice(1)||'compatibility.html';
   if(!/^[a-z-]+\.(html|js|css|png)$/.test(name)){res.writeHead(404).end();return;}
   try{res.writeHead(200,{'Content-Type':name.endsWith('.js')?'text/javascript':name.endsWith('.css')?'text/css':name.endsWith('.png')?'image/png':'text/html'});res.end(await fs.readFile(path.join(root,'reader',name)));}catch{res.end();}
  });

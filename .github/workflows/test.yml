@@ -29,3 +29,4 @@ jobs:
           python -m pip install --disable-pip-version-check --no-input --only-binary=:all: --no-deps PyYAML==6.0.3
       - run: python -m unittest discover -s tests -v
       - run: npm test
+      - run: npm run test:react

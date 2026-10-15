@@ -20,13 +20,15 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--check', action='store_true')
     args = parser.parse_args()
-    path = ROOT / 'index.html'
-    html = path.read_text()
-    expected = refresh(html)
-    if args.check and expected != html:
-        parser.exit(1, 'Reader asset tokens are stale. Run python scripts/reader_assets.py\n')
-    if not args.check:
-        path.write_text(expected)
+    for entry in ('index.html', 'compatibility.html', 'react-preview.html'):
+        path = ROOT / entry
+        html = path.read_text()
+        expected = refresh(html)
+        if args.check and expected != html:
+            parser.exit(1, f'Reader asset tokens are stale in {entry}. Run python scripts/reader_assets.py\n')
+        if not args.check:
+            path.write_text(expected)
+
 
 
 if __name__ == '__main__':

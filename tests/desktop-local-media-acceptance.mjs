@@ -1,3 +1,4 @@
+// Explicit compatibility native regression. Default React has a separate packaged acceptance suite.
 /** Exact packaged macOS ZIP, isolated profiles and authored tone only.
  * Exercises real File chooser/preload path, decoding, quit/relaunch and backups.
  * This is native product acceptance, not Gatekeeper or an owner-library test. */
@@ -18,14 +19,18 @@ let temporary,application,page,chooserObservation,executable,version,stage='conf
 const checks=[],dockReceipts=[],windowReceipts=[],nativeCommands=[];process.umask(0o077);delete process.env.DEBUG;delete process.env.PWDEBUG;
 function check(name,value){stage=name;assert.ok(value,name);checks.push(name);}
 async function launch(profile){
- stage='launch';await fs.mkdir(profile,{recursive:true});const home=path.join(temporary,'home');await fs.mkdir(home,{recursive:true});
+ stage='launch';await fs.mkdir(profile,{recursive:true});
+ // Isolated fixture uses the existing six-hour updater throttle. Renderer routes
+ // cannot block main-process node:https; refresh before every packaged launch.
+ const updateDirectory=path.join(profile,'updates'),updateSettings={developer:false,lastCheck:Date.now()};await fs.mkdir(updateDirectory,{recursive:true});await fs.writeFile(path.join(updateDirectory,'settings.json'),JSON.stringify(updateSettings));assert.deepEqual(JSON.parse(await fs.readFile(path.join(updateDirectory,'settings.json'),'utf8')),updateSettings);
+ const home=path.join(temporary,'home');await fs.mkdir(home,{recursive:true});
  application=await electron.launch({executablePath:executable,args:['--user-data-dir='+profile],cwd:temporary,acceptDownloads:true,chromiumSandbox:true,bypassCSP:false,timeout:45000,
   env:{HOME:home,TMPDIR:temporary,PATH:'/usr/bin:/bin',LANG:process.env.LANG||'en_US.UTF-8'}});
  const facts=await application.evaluate(({app})=>({packaged:app.isPackaged,version:app.getVersion(),userData:app.getPath('userData'),appPath:app.getAppPath()}));
  check('runs_exact_packaged_asar',facts.packaged&&facts.appPath.endsWith('/app.asar')&&facts.version===version);check('isolated_profile',await fs.realpath(facts.userData)===await fs.realpath(profile));
  await application.context().route('**/*',async route=>{const request=route.request(),url=new URL(request.url());if(['blob:','data:'].includes(url.protocol)||url.origin===origin&&['GET','HEAD'].includes(request.method())&&url.pathname!=='/api/language-tools')await route.continue();else{forbidden++;await route.abort();}});
  page=await application.firstWindow();chooserObservation=observePageFileChoosers(page);page.setDefaultTimeout(15000);page.on('pageerror',()=>pageErrors++);
- await page.waitForURL(origin+'/');await installStorageAssertions(page);await readerReady(page);
+ await page.waitForURL(url=>url.origin===origin&&url.pathname==='/');await page.locator('.react-app').waitFor();await page.goto(origin+'/compatibility.html');await installStorageAssertions(page);await readerReady(page);
  await page.waitForFunction(()=>window.coconutLocalMedia&&window.CoconutStorageBootstrap.phase==='ready'&&nativeMediaReady&&typeof window.coconutFileCommand==='function');
  await page.evaluate(installNativeMenuObservation);
  const preferences=await application.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].webContents.getLastWebPreferences());
@@ -223,7 +228,7 @@ try{
  await quit();const original=path.join(movedDirectory,'original-retained.wav'),stat=await fs.stat(moved);await fs.rename(moved,original);await fs.writeFile(moved,bytes);await fs.utimes(moved,stat.atime,stat.mtime);
  await launch(profile);await expect(page.locator('#remember-local-media-status')).toContainText('已改变');await expectNoPlayer();check('same_path_replacement_rejected',(await saved()).project_note===initial.project_note);
  await fs.unlink(moved);await fs.rename(original,moved);await selectNative(moved,{existing:true});await optIn();await quit();await launch(profile);await decoded();await mediaPanel();
- await page.locator('.skip-link').focus();await page.keyboard.press('Enter');await page.waitForURL(origin+'/#main-content');
+ await page.locator('.skip-link').focus();await page.keyboard.press('Enter');await page.waitForURL(origin+'/compatibility.html#main-content');
  const skipProof=await page.locator('#source-media audio').evaluate(async player=>{const response=await fetch(player.getAttribute('src'),{method:'HEAD',headers:{Range:'bytes=0-43'}});return response.status===206&&response.headers.get('content-length')==='44'&&player.paused;});
  check('skip_link_keeps_native_stream_token_and_paused_player',skipProof);
  await page.locator('#forget-local-media').evaluate(()=>{const player=document.querySelector('#source-media audio');window.__nativeForgetBefore={player,attachment:browserMedia.get(active().key),src:player.getAttribute('src'),paused:player.paused};});

@@ -1,3 +1,4 @@
+// Compatibility renderer regression; this suite is not default React acceptance.
 /** Actions-only native byte files, encoding recovery, committed IndexedDB and
  * actual downloads. Authored fixtures only; no external services or models. */
 import assert from 'node:assert/strict';
@@ -17,7 +18,7 @@ const check=(name,result)=>{assert.ok(result,name);checks.push(name);};
 try{
  server=createServer(async(req,res)=>{
   if(!['GET','HEAD'].includes(req.method)){mutations++;res.writeHead(405).end();return;}
-  const name=new URL(req.url,'http://localhost').pathname.slice(1)||'index.html';
+  const name=new URL(req.url,'http://localhost').pathname.slice(1)||'compatibility.html';
   if(!/^[a-z-]+\.(html|js|css|png)$/.test(name)){res.writeHead(404).end();return;}
   try{res.setHeader('Content-Type',name.endsWith('.js')?'text/javascript':name.endsWith('.css')?'text/css':name.endsWith('.png')?'image/png':'text/html');res.end(await fs.readFile(new URL(name,root)));}catch{res.writeHead(404).end();}
  });

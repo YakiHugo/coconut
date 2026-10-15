@@ -1,3 +1,4 @@
+// Explicit compatibility native regression. Default React has a separate packaged acceptance suite.
 /**
  * Operate the exact native-architecture macOS ZIP, not the source Electron app.
  * Authored text and PCM audio only. No CLI detection, accounts, models, downloads
@@ -69,6 +70,10 @@ function authoredAudio(){
 async function launch(executable,profile,version,label){
  stage=label+'_launch';
  await fs.mkdir(profile,{recursive:true});
+ // Isolated fixture uses the existing six-hour updater throttle. Renderer routes
+ // cannot block main-process node:https; refresh before every packaged launch.
+ const updateDirectory=path.join(profile,'updates'),updateSettings={developer:false,lastCheck:Date.now()};await fs.mkdir(updateDirectory,{recursive:true});await fs.writeFile(path.join(updateDirectory,'settings.json'),JSON.stringify(updateSettings));assert.deepEqual(JSON.parse(await fs.readFile(path.join(updateDirectory,'settings.json'),'utf8')),updateSettings);
+
  const home=path.join(temporary,'home');await fs.mkdir(home,{recursive:true});
  application=await electron.launch({executablePath:executable,args:['--user-data-dir='+profile],
   cwd:temporary,acceptDownloads:true,chromiumSandbox:true,bypassCSP:false,timeout:45000,
@@ -86,7 +91,7 @@ async function launch(executable,profile,version,label){
   else{forbiddenRequests++;await route.abort();}
  });
  const page=await application.firstWindow();diagnosticPage=page;chooserObservation=observePageFileChoosers(page);page.setDefaultTimeout(15000);page.on('pageerror',()=>pageErrors++);
- await page.waitForURL(origin+'/');await installStorageAssertions(page);await readerReady(page);
+ await page.waitForURL(url=>url.origin===origin&&url.pathname==='/');await page.locator('.react-app').waitFor();await page.goto(origin+'/compatibility.html');await installStorageAssertions(page);await readerReady(page);
  await page.waitForFunction(()=>typeof window.coconutPrepareClose==='function'&&typeof window.coconutPrepareUpdate==='function'&&typeof window.coconutFileCommand==='function');
  await page.evaluate(installNativeMenuObservation);
  check(label+'_default_indexeddb_backend',await page.evaluate(()=>window.CoconutStorageBootstrap.result.backend==='indexeddb'));
@@ -125,7 +130,7 @@ async function nativeFileCommand(id){
  const dispatch=await application.evaluate(({Menu,BrowserWindow},id)=>{
   const item=Menu.getApplicationMenu().getMenuItemById(id),windows=BrowserWindow.getAllWindows(),window=windows[0];
   if(!item?.enabled)throw new Error('Native file item unavailable: '+id);
-  const facts={enabled:item.enabled,windowCount:windows.length,windowDestroyed:window.isDestroyed(),loading:window.webContents.isLoadingMainFrame(),trustedURL:['http://127.0.0.1:47831/','http://127.0.0.1:47831/index.html'].includes(window.webContents.getURL())};
+  const facts={enabled:item.enabled,windowCount:windows.length,windowDestroyed:window.isDestroyed(),loading:window.webContents.isLoadingMainFrame(),trustedURL:['http://127.0.0.1:47831/','http://127.0.0.1:47831/index.html','http://127.0.0.1:47831/compatibility.html'].includes(window.webContents.getURL())};
   const result=item.click(item,window,{});return {...facts,wrapperReturnType:typeof result};
  },id);
  // Electron MenuItem.click discards the async template callback's return value.

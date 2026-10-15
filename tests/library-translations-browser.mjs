@@ -1,3 +1,4 @@
+// Compatibility renderer regression; this suite is not default React acceptance.
 /** Actions-only real Chromium acceptance of current, all-language shelf search.
  * Authored English sources, translations and PCM tones only. Native file input,
  * real IndexedDB and actual keyboard navigation provide the acceptance evidence.
@@ -215,7 +216,7 @@ try {
   const reader = new URL('../reader/', import.meta.url);
   server = createServer(async (req,res) => {
     if (!['GET','HEAD'].includes(req.method)) {res.writeHead(405).end(); return;}
-    const name = new URL(req.url,'http://localhost').pathname.slice(1) || 'index.html';
+    const name = new URL(req.url,'http://localhost').pathname.slice(1) || 'compatibility.html';
     if (!/^[a-z-]+\.(html|js|css|webmanifest|png)$/.test(name)) {res.writeHead(404).end(); return;}
     try {const bytes = await fs.readFile(new URL(name,reader)); res.writeHead(200, {'Content-Type': name.endsWith('.js') ? 'text/javascript' : name.endsWith('.css') ? 'text/css' : name.endsWith('.png') ? 'image/png' : 'text/html'}).end(bytes);}
     catch {res.writeHead(404).end();}

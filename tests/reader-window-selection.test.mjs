@@ -1,3 +1,4 @@
+// Compatibility renderer regression; this suite is not default React acceptance.
 import {installSavePipeline} from './helpers/save-pipeline.mjs';
 /** Deterministic DOM/storage integration. Native two-page/reload/download proof runs only in browser CI. */
 import test from 'node:test';
@@ -15,7 +16,7 @@ function storage(entries=[]){
 function library(active='a'){return JSON.stringify({documents:['a','b','c'].map(source),active});}
 function setup({disk=storage([[KEY,library()]]),session=storage(),sessionFailure=null}={}){
  const w=new Window({url:'https://coconut.example/'});
- w.document.body.innerHTML=fs.readFileSync(new URL('reader/index.html',root),'utf8').split('<body>')[1].split('</body>')[0];
+ w.document.body.innerHTML=fs.readFileSync(new URL('reader/compatibility.html',root),'utf8').split('<body>')[1].split('</body>')[0];
  Object.defineProperty(w,'crypto',{value:webcrypto});
  Object.defineProperty(w,'localStorage',{configurable:true,value:disk});
  Object.defineProperty(w,'sessionStorage',{configurable:true,get(){

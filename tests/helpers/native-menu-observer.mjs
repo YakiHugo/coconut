@@ -55,7 +55,7 @@ export async function invokeObservedNativeMenuCommand(application,page,id,diagno
   const item=Menu.getApplicationMenu().getMenuItemById(id),windows=BrowserWindow.getAllWindows(),window=windows[0];
   if(!item?.enabled||!window||window.isDestroyed())throw new Error('Native file item unavailable: '+id);
   const facts={enabled:item.enabled,windowCount:windows.length,windowDestroyed:window.isDestroyed(),loading:window.webContents.isLoadingMainFrame(),
-   trustedURL:['http://127.0.0.1:47831/','http://127.0.0.1:47831/index.html'].includes(window.webContents.getURL().split('#')[0]),
+   trustedURL:['http://127.0.0.1:47831/','http://127.0.0.1:47831/index.html','http://127.0.0.1:47831/compatibility.html'].includes(window.webContents.getURL().split('#')[0]),
    visible:window.isVisible(),focused:window.isFocused(),webContentsFocused:window.webContents.isFocused()};
   const result=item.click(item,window,{});return {...facts,wrapperReturnType:typeof result};
  },id);

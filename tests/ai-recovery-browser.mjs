@@ -1,3 +1,4 @@
+// Compatibility renderer regression; this suite does not establish default React acceptance.
 import {navigateReadingStop} from './helpers/transcript-navigation-browser.mjs';
 /** Real Chromium recovery through the production UI and local HTTP bridge.
  * Sources and provider responses are authored fixtures. No real CLI/model call,
@@ -33,7 +34,7 @@ try{
  browser=await chromium.launch({headless:true,...(process.env.COCONUT_CHROMIUM_EXECUTABLE?{executablePath:process.env.COCONUT_CHROMIUM_EXECUTABLE}:{})});
  const context=await browser.newContext({viewport:{width:390,height:844},serviceWorkers:'block'});let external=0,errors=0;
  await context.route('**/*',async route=>{const url=new URL(route.request().url());if(url.origin===origin||url.protocol==='blob:')await route.continue();else{external++;await route.abort();}});
- const page=await context.newPage();page.setDefaultTimeout(15000);page.on('pageerror',()=>errors++);await page.goto(origin);await page.waitForFunction(()=>window.CoconutStorageBootstrap?.phase==='ready');
+ const page=await context.newPage();page.setDefaultTimeout(15000);page.on('pageerror',()=>errors++);await page.goto(origin+'/compatibility.html');await page.waitForFunction(()=>window.CoconutStorageBootstrap?.phase==='ready');
  const importFixture=async doc=>page.locator('#file').setInputFiles({name:'authored-recovery.json',mimeType:'application/json',buffer:Buffer.from(JSON.stringify(doc))});
  const readDocument = async name => {await page.evaluate(()=>libraryStore.flush());return page.evaluate(async title=>(await readPersistedLibrary()).documents.find(doc=>doc.title===title),name);};
  const translatedCount=doc=>doc.segments.filter(cue=>cue.translations?.zh).length;

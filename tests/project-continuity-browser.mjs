@@ -1,3 +1,4 @@
+// Compatibility renderer regression; this suite does not establish default React acceptance.
 import {openLibraryTools} from './helpers/library-tools-browser.mjs';
 /** Real Chromium project continuity through production HTTP/UI code.
  * All model responses and publisher endpoints are explicitly injected fixtures.
@@ -22,7 +23,7 @@ try{
  const origin='http://127.0.0.1:'+server.address().port;
  browser=await chromium.launch({headless:true,...(process.env.COCONUT_CHROMIUM_EXECUTABLE?{executablePath:process.env.COCONUT_CHROMIUM_EXECUTABLE}:{})});
  let external=0,errors=0;
- async function newPage(){const context=await browser.newContext({acceptDownloads:true,serviceWorkers:'block'});await context.route('**/*',async route=>{const u=new URL(route.request().url());if(u.origin===origin||u.protocol==='blob:')await route.continue();else{external++;await route.abort();}});const page=await context.newPage();page.on('pageerror',()=>errors++);page.setDefaultTimeout(15000);await page.goto(origin);await page.waitForFunction(()=>window.CoconutStorageBootstrap?.phase==='ready');return page;}
+ async function newPage(){const context=await browser.newContext({acceptDownloads:true,serviceWorkers:'block'});await context.route('**/*',async route=>{const u=new URL(route.request().url());if(u.origin===origin||u.protocol==='blob:')await route.continue();else{external++;await route.abort();}});const page=await context.newPage();page.on('pageerror',()=>errors++);page.setDefaultTimeout(15000);await page.goto(origin+'/compatibility.html');await page.waitForFunction(()=>window.CoconutStorageBootstrap?.phase==='ready');return page;}
  const page=await newPage();stage='save_audio_project';await page.locator('#podcast-import').waitFor({state:'visible'});await page.locator('#video-url').fill(source.feed_url);await page.locator('#process-url').click();await page.getByRole('button',{name:'保存原声项目',exact:true}).click();await page.locator('#audio-project').waitFor({state:'visible'});
  await page.locator('#project-note').fill('PRIVATE PROJECT NOTE');await page.locator('#audio-bookmark-time').fill('2');await page.locator('#audio-bookmark-note').fill('PRIVATE BOOKMARK');await page.locator('#audio-bookmark-form button[type=submit]').click();
  await page.locator('#fetch-project-transcript').click();await page.waitForFunction(()=>document.querySelector('#audio-project-status').textContent.includes('仍未提供'));

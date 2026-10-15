@@ -1,3 +1,4 @@
+// Compatibility renderer regression; this suite is not default React acceptance.
 import {installSavePipeline} from './helpers/save-pipeline.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -8,7 +9,7 @@ const root=new URL('../',import.meta.url);
 const fixture=(count,offset=0)=>({key:'performance',title:'Authored performance fixture',language:'en',notes:{},source_media:{job_id:'a'.repeat(32),kind:'audio'},segments:Array.from({length:count},(_,i)=>({id:'cue-'+i,start:offset+i*2,end:offset+i*2+1.8,text:'Authored sentence '+i+'.'}))});
 function setup(){
  const w=new Window({url:'https://coconut.example/'});
- w.document.body.innerHTML=fs.readFileSync(new URL('reader/index.html',root),'utf8').split('<body>')[1].split('</body>')[0];
+ w.document.body.innerHTML=fs.readFileSync(new URL('reader/compatibility.html',root),'utf8').split('<body>')[1].split('</body>')[0];
  for(const name of ['summary','core','passages','passage-playback'])w.eval(fs.readFileSync(new URL('reader/'+name+'.js',root),'utf8'));
  installSavePipeline(w);
  w.eval(['app','language','podcasts'].map(name=>fs.readFileSync(new URL('reader/'+name+'.js',root),'utf8')).join('\n')+`

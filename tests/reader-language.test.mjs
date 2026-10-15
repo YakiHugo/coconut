@@ -1,3 +1,4 @@
+// Compatibility renderer regression; this suite is not default React acceptance.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -7,7 +8,7 @@ import {prepareTranslation} from '../desktop/translation.mjs';
 const root=new URL('../',import.meta.url);
 function setup(stored){
  const w=new Window({url:'http://127.0.0.1:8080/'});
- w.document.body.innerHTML=fs.readFileSync(new URL('reader/index.html',root),'utf8').split('<body>')[1].split('</body>')[0];
+ w.document.body.innerHTML=fs.readFileSync(new URL('reader/compatibility.html',root),'utf8').split('<body>')[1].split('</body>')[0];
  Object.defineProperty(w,'crypto',{value:webcrypto});
  if(stored)w.localStorage.setItem('coconut-reader-v1',stored);
  w.fetch=async()=>{throw new Error('Import and language defaults must not make a request');};

@@ -1,3 +1,4 @@
+// Compatibility renderer regression; this suite is not default React acceptance.
 import {openLibraryTools} from './helpers/library-tools-browser.mjs';
 /** GitHub Actions only: native IndexedDB, authored fixtures, no external content or models. */
 import assert from 'node:assert/strict';
@@ -23,7 +24,7 @@ const download=async(page,selector)=>{const [file]=await Promise.all([page.waitF
 try{
  server=createServer(async(req,res)=>{
   if(!['GET','HEAD'].includes(req.method)){mutations++;res.writeHead(405).end();return;}
-  const filename=new URL(req.url,'http://localhost').pathname.slice(1)||'index.html';
+  const filename=new URL(req.url,'http://localhost').pathname.slice(1)||'compatibility.html';
   if(!/^[a-z-]+\.(html|js|css|png)$/.test(filename)){res.writeHead(404).end();return;}
   try{const bytes=await fs.readFile(new URL(filename,root));res.writeHead(200,{'Content-Type':filename.endsWith('.js')?'text/javascript':filename.endsWith('.css')?'text/css':filename.endsWith('.png')?'image/png':'text/html'}).end(req.method==='HEAD'?undefined:bytes);}catch{res.writeHead(404).end();}
  });await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));const origin='http://127.0.0.1:'+server.address().port;

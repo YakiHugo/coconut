@@ -1,3 +1,4 @@
+// Compatibility renderer regression; this suite is not default React acceptance.
 import {openLibraryTools} from './helpers/library-tools-browser.mjs';
 /** CI-only Chromium, authored data and an injected writer delay. No model calls. */
 import assert from 'node:assert/strict';
@@ -11,7 +12,7 @@ let server,browser,stage='setup',requests=0;
 try{
  server=createServer(async(req,res)=>{
   if(req.method!=='GET'){requests++;res.writeHead(405).end();return;}
-  const filename=new URL(req.url,'http://localhost').pathname.slice(1)||'index.html';
+  const filename=new URL(req.url,'http://localhost').pathname.slice(1)||'compatibility.html';
   if(!/^[a-z-]+\.(html|js|css|png|webmanifest)$/.test(filename)){res.writeHead(404).end();return;}
   try{const bytes=await fs.readFile(new URL(filename,root));res.writeHead(200,{'Content-Type':filename.endsWith('.js')?'text/javascript':filename.endsWith('.css')?'text/css':filename.endsWith('.png')?'image/png':'text/html'}).end(bytes);}catch{res.writeHead(404).end();}
  });await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));const origin='http://127.0.0.1:'+server.address().port;

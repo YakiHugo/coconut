@@ -14,7 +14,8 @@ export async function verifyReaderResources(readerDirectory) {
     throw new Error('Packaged reader CommonJS exports are incomplete');
   // Verify the real page's dependency graph as well as its Node module boundary.
   // A new browser module must never be omitted from the explicit staging list.
-  const index=await readFile(path.join(readerDirectory,'index.html'),'utf8');
+  for(const entry of ['index.html','compatibility.html','react-preview.html']){
+  const index=await readFile(path.join(readerDirectory,entry),'utf8');
   const assets=[...index.matchAll(/<(?:script|link|img)\b[^>]*\b(?:src|href)=["']([^"']+)["']/g)].map(match=>match[1].split('?')[0]);
   if(!assets.length)throw new Error('Packaged reader has no declared assets');
   for(const name of new Set(assets)){
@@ -23,5 +24,6 @@ export async function verifyReaderResources(readerDirectory) {
     const reference=[...index.matchAll(/(?:src|href)=["']([^"']+)["']/g)].map(match=>match[1]).find(value=>value.startsWith(name+'?v='));
     if(reference&&reference.split('?v=')[1]!==createHash('sha256').update(bytes).digest('hex').slice(0,10))
       throw new Error('Packaged reader asset bytes do not match page token: '+name);
+  }
   }
 }

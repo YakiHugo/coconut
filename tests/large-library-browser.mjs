@@ -1,3 +1,4 @@
+// Compatibility renderer regression; this suite does not establish default React acceptance.
 import {openLibraryTools,openLibrarySearch} from './helpers/library-tools-browser.mjs';
 /** CI-only native browser journey. Authored fixtures, no model/media/external requests. */
 import assert from 'node:assert/strict';
@@ -14,7 +15,7 @@ try{
  async function newPage(){
   const context=await browser.newContext({viewport:{width:1360,height:1000},acceptDownloads:true,serviceWorkers:'block'});
   await context.route('**/*',async route=>{const request=route.request(),url=new URL(request.url());if(!['GET','HEAD'].includes(request.method())){mutations++;await route.abort();}else if(url.origin===origin||['blob:','data:'].includes(url.protocol))await route.continue();else{external++;await route.abort();}});
-  const page=await context.newPage();page.setDefaultTimeout(20000);page.on('pageerror',e=>errors.push(e.message));await page.goto(origin);return page;
+  const page=await context.newPage();page.setDefaultTimeout(20000);page.on('pageerror',e=>errors.push(e.message));await page.goto(origin+'/compatibility.html');return page;
  }
  const page=await newPage();
  async function shelf(p=page,options=false){await openLibraryTools(p);if(options&&!await p.locator('#library-options').evaluate(node=>node.open))await p.locator('#library-options > summary').click();}

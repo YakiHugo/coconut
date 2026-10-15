@@ -1,3 +1,4 @@
+// Compatibility renderer regression; this suite is not default React acceptance.
 /** Authored completed-job responses only; no worker, media, model or network. */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -12,7 +13,7 @@ function deferred(){let resolve;const promise=new Promise(yes=>{resolve=yes;});r
 async function until(check){for(let i=0;i<100;i++){if(check())return;await new Promise(resolve=>setTimeout(resolve,0));}assert.ok(check(),'asynchronous checkpoint reached');}
 async function setup(){
  const w=new Window({url:'http://127.0.0.1:8080/'}),$=id=>w.document.getElementById(id);
- w.document.body.innerHTML=fs.readFileSync(new URL('reader/index.html',root),'utf8').split('<body>')[1].split('</body>')[0];
+ w.document.body.innerHTML=fs.readFileSync(new URL('reader/compatibility.html',root),'utf8').split('<body>')[1].split('</body>')[0];
  Object.defineProperty(w,'crypto',{value:{subtle:{digest:(...args)=>webcrypto.subtle.digest(...args)},randomUUID:()=>webcrypto.randomUUID()}});
  const jobs=['A','B'].map(id=>({id,title:'Job '+id,status:'done',stage:'Ready'})),responses=new Map(),calls=[];
  w.fetch=async url=>{calls.push(url);if(url==='api/health')return json({local_worker:true});if(url==='api/jobs')return json({jobs});const id=/api\/jobs\/([AB])\/result/.exec(url)?.[1];if(!id)throw Error('Unexpected fixture request '+url);return responses.get(id)?.promise||json(source(id));};

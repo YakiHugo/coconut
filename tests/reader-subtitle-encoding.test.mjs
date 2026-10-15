@@ -1,3 +1,4 @@
+// Compatibility renderer regression; this suite is not default React acceptance.
 /** Pure/DOM byte coverage only. Real picker, layout and IndexedDB are CI-only. */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -11,7 +12,7 @@ const C=createRequire(import.meta.url)('../reader/core.js'),root=new URL('../',i
 const fixture=name=>encodingFixtures.find(f=>f.name.startsWith(name));
 const until=async condition=>{for(let i=0;i<100;i++){if(condition())return;await new Promise(resolve=>setTimeout(resolve,1));}assert.ok(condition(),'condition did not settle');};
 function setup(storage={}){
- const w=new Window({url:'https://coconut.example/'});w.document.body.innerHTML=fs.readFileSync(new URL('reader/index.html',root),'utf8').split('<body>')[1].split('</body>')[0];
+ const w=new Window({url:'https://coconut.example/'});w.document.body.innerHTML=fs.readFileSync(new URL('reader/compatibility.html',root),'utf8').split('<body>')[1].split('</body>')[0];
  Object.defineProperty(w,'crypto',{value:webcrypto});for(const [key,value] of Object.entries(storage))w.localStorage.setItem(key,value);
  const network=[];w.fetch=url=>{network.push(url);throw Error('No network permitted');};w.URL.createObjectURL=()=> 'blob:authored';w.URL.revokeObjectURL=()=>{};
  const saves=installSavePipeline(w);

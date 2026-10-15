@@ -1,3 +1,4 @@
+// Compatibility renderer regression; this suite is not default React acceptance.
 /** Authored API fixtures only; no real import jobs, network, media or providers. */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -16,7 +17,7 @@ function deferred(){let resolve;const promise=new Promise(yes=>resolve=yes);retu
 async function until(check){for(let i=0;i<100;i++){if(check())return;await new Promise(r=>setTimeout(r,0));}assert.ok(check(),'asynchronous checkpoint reached');}
 async function setup(stored){
  const w=new Window({url:'http://127.0.0.1:8080/'}),$=id=>w.document.getElementById(id),statuses=new Map([[A,'done'],[B,'done']]),documents=new Map([[A,source(A)],[B,source(B)]]),responses=new Map(),failures=new Set(),calls=[];
- w.document.body.innerHTML=fs.readFileSync(new URL('reader/index.html',root),'utf8').split('<body>')[1].split('</body>')[0];
+ w.document.body.innerHTML=fs.readFileSync(new URL('reader/compatibility.html',root),'utf8').split('<body>')[1].split('</body>')[0];
  Object.defineProperty(w,'crypto',{value:{subtle:{digest:(...args)=>webcrypto.subtle.digest(...args)},randomUUID:()=>webcrypto.randomUUID()}});
  if(stored)w.localStorage.setItem(KEY,stored);
  w.fetch=async(url,options)=>{

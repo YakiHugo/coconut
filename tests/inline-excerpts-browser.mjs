@@ -1,3 +1,4 @@
+// Compatibility renderer regression; this suite does not establish default React acceptance.
 /** CI-only real Chromium acceptance for inline exact-excerpt recall.
  * Sources, paired translations, notes and the local PCM tone are authored
  * fixtures. Only loopback reads are permitted; no model, account, external
@@ -263,7 +264,7 @@ try {
     });
     const page = await context.newPage(); diagnosticPage = page; page.setDefaultTimeout(20000);
     page.on('pageerror', error => errors.push({label, message: error.message, stack: error.stack}));
-    await page.goto(origin); await page.waitForLoadState('networkidle'); await installAudit(page);
+    await page.goto(origin+'/compatibility.html'); await page.waitForLoadState('networkidle'); await installAudit(page);
     const authored = fixture(label, localMediaSource), key = authored.key, pair = authored.exact_excerpts[0];
     await page.locator('#library-file').setInputFiles({name: 'authored-inline-excerpts.json', mimeType: 'application/json',
       buffer: Buffer.from(JSON.stringify({format: 'coconut-library', version: 1, documents: [authored], active: key}))});

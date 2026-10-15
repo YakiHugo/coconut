@@ -493,6 +493,7 @@
   if(input.scope){
    for(const key of ["source_title","source_url","source_language","provider","answer_language"])characters+=input.scope[key].length;
    for(const cue of input.scope.cues)characters+=cue.speaker?.length||0;
+   if(input.scope.exact_selection)characters+=input.scope.exact_selection.text.length+input.scope.exact_selection.separators.reduce((total,s)=>total+s.length,0);
   }
   return characters;
  }
@@ -523,6 +524,13 @@
    scope={kind:"passage",passage_ids:[...v.passage_ids],expanded:v.expanded,
     source_title:v.source_title,source_url:v.source_url,source_language:v.source_language,provider:v.provider,answer_language:v.answer_language,
     cues:v.cues.map(({id,start,end,speaker})=>({id,start,end,speaker}))};
+   if(v.exact_selection!==undefined){
+    const x=v.exact_selection;
+    if(!x||x.version!==1||!Number.isSafeInteger(x.from)||!Number.isSafeInteger(x.to)||x.from<0||x.to<=x.from||!Array.isArray(x.separators)||x.separators.length!==segments.length-1||x.separators.some(s=>typeof s!=='string'||s.length>2||!/^[\r\n ]*$/.test(s)))return undefined;
+    const composed=segments.map((cue,i)=>(i?x.separators[i-1]:'')+cue.text).join('');
+    if(x.to>composed.length||typeof x.text!=='string'||x.text!==composed.slice(x.from,x.to))return undefined;
+    scope.exact_selection={version:1,from:x.from,to:x.to,separators:[...x.separators],text:x.text};
+   }
   }
   const input={version:1,segments,...(scope?{scope}:{})};
   return answerInputCharacters(input)<=ANSWER_INPUT_CHARACTERS?input:undefined;

@@ -1,10 +1,11 @@
+// Compatibility renderer regression; this suite is not default React acceptance.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
 import {webcrypto} from 'node:crypto';
 import {Window} from 'happy-dom';
-const root=new URL('../',import.meta.url),html=fs.readFileSync(new URL('reader/index.html',root),'utf8');
+const root=new URL('../',import.meta.url),html=fs.readFileSync(new URL('reader/compatibility.html',root),'utf8');
 // All behavior scripts in their actual shipped order, including jobs and updates.
 // The asynchronous resource loader itself is covered by storage-bootstrap tests.
 const scripts=[...html.matchAll(/<script src="([^?]+)\?[^\"]+"/g)].map(match=>match[1]).filter(name=>name!=='storage-bootstrap.js');

@@ -1,3 +1,4 @@
+// Compatibility renderer regression; this suite is not default React acceptance.
 import {privateBackendBrowser} from './helpers/private-backend-browser.mjs';
 import {privateClientBrowser} from './helpers/private-client-browser.mjs';
 import {selectionActionsBrowser} from './helpers/selection-actions-browser.mjs';
@@ -57,7 +58,7 @@ try {
  server=createServer(async(req,res)=>{
   if(req.method!=='GET'&&req.method!=='HEAD'){mutations++;res.writeHead(405).end();return;}
   const pathname=new URL(req.url,'http://localhost').pathname;
-  const filename=pathname==='/'?'index.html':pathname.slice(1);
+  const filename=pathname==='/'?'compatibility.html':pathname.slice(1);
   if(!/^[a-z-]+\.(html|js|css|webmanifest|png)$/.test(filename)){res.writeHead(404,{'Content-Type':'application/json'}).end('{"error":"static only"}');return;}
   try{const data=await fs.readFile(path.join(root,'reader',filename));res.writeHead(200,{'Content-Type':filename.endsWith('.js')?'text/javascript':filename.endsWith('.css')?'text/css':filename.endsWith('.png')?'image/png':'text/html'});res.end(data);}catch{res.writeHead(404).end();}
  });
@@ -71,7 +72,7 @@ try {
   if(u.origin===origin||['blob:','data:'].includes(u.protocol))await route.continue();else{external++;await route.abort();}
  });
  const page=await context.newPage();page.on('pageerror',()=>pageErrors++);page.setDefaultTimeout(15000);
- await page.goto(origin);await page.waitForFunction(()=>window.CoconutStorageBootstrap?.phase==='ready');await page.locator('#sample').waitFor({state:'visible'});
+ await page.goto(origin+'/compatibility.html');await page.waitForFunction(()=>window.CoconutStorageBootstrap?.phase==='ready');await page.locator('#sample').waitFor({state:'visible'});
  await page.waitForFunction(()=>!document.getElementById('worker-status').textContent.includes('正在检查'));
  await capture(page,'01-source-entry');
  check('brand_asset_loads',await page.locator('.brand-mark').evaluate(img=>img.complete&&img.naturalWidth>0));

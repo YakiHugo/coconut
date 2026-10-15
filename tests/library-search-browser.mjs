@@ -1,3 +1,4 @@
+// Compatibility renderer regression; this suite is not default React acceptance.
 import {openLibrarySearch,closeLibrarySearch,openLibraryTools} from './helpers/library-tools-browser.mjs';
 /** Real Chromium acceptance of authored cross-document search and keyboard navigation.
  * No model, media, third-party text, or external network calls are used.
@@ -54,7 +55,7 @@ try {
   server = createServer(async (req, res) => {
     if (req.method !== 'GET' && req.method !== 'HEAD') {res.writeHead(405).end(); return;}
     const pathname = new URL(req.url, 'http://localhost').pathname;
-    const name = pathname === '/' ? 'index.html' : pathname.slice(1);
+    const name = pathname === '/' ? 'compatibility.html' : pathname.slice(1);
     if (!/^[a-z-]+\.(html|js|css|webmanifest|png)$/.test(name)) {res.writeHead(404).end(); return;}
     try {
       const bytes = await fs.readFile(path.join(root, 'reader', name));

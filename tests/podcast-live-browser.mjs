@@ -1,3 +1,4 @@
+// Compatibility renderer regression; this suite does not establish default React acceptance.
 import {openCueActions} from './cue-actions-browser.mjs';
 /** Real public sources → production bridge → Coconut UI. No injected source/provider handlers. */
 import assert from 'node:assert/strict';
@@ -25,7 +26,7 @@ try {
   return route.continue();
  });
  page.on('pageerror',()=>errors++);
- await page.goto(origin);await page.locator('#podcast-import').waitFor({state:'visible'});
+ await page.goto(origin+'/compatibility.html');await page.locator('#podcast-import').waitFor({state:'visible'});
  check('fresh_launch_has_no_automatic_source_or_model_request',calls.length===0&&await page.locator('#library .library-open').count()===0);
  async function discover(url){
   stage='discover_public_source';await page.locator('#video-url').fill(url);
@@ -81,7 +82,7 @@ try {
  // A separate blank browser proves exported bytes restore the product state.
  const restored=await browser.newContext({serviceWorkers:'block'}),restoredPage=await restored.newPage();restoredPage.setDefaultTimeout(25000);
  await restored.route('**/*',async route=>{const url=new URL(route.request().url());if(url.origin===origin&&route.request().method()==='GET'&&(!url.pathname.startsWith('/api/')||url.pathname==='/api/health'))return route.continue();unexpected++;return route.abort();});
- await restoredPage.goto(origin);await restoredPage.locator('#file').setInputFiles(backupPath);await restoredPage.locator('#reader-workspace').waitFor({state:'visible'});
+ await restoredPage.goto(origin+'/compatibility.html');await restoredPage.locator('#file').setInputFiles(backupPath);await restoredPage.locator('#reader-workspace').waitFor({state:'visible'});
  await restoredPage.locator('#mode-transcript').click();await restoredPage.locator('#resume').click();await restoredPage.locator('.segment').first().locator('.note-button').click();
  check('downloaded_backup_reopens_in_clean_browser',(await restoredPage.locator('#note').inputValue())===saved.notes[segmentId]&&(await restoredPage.locator('#provenance').textContent()).includes('发布者'));
  await restored.close();
@@ -126,7 +127,7 @@ try {
  const audioRestored=await browser.newContext({serviceWorkers:'block'}),audioRestoredPage=await audioRestored.newPage();audioRestoredPage.setDefaultTimeout(25000);
  audioRestoredPage.on('pageerror',()=>errors++);
  await audioRestored.route('**/*',async route=>{const url=new URL(route.request().url());if(url.origin===origin&&route.request().method()==='GET'&&(!url.pathname.startsWith('/api/')||url.pathname==='/api/health'))return route.continue();unexpected++;return route.abort();});
- await audioRestoredPage.goto(origin);await audioRestoredPage.locator('#file').setInputFiles(audioBackupPath);await audioRestoredPage.locator('#audio-project').waitFor({state:'visible'});
+ await audioRestoredPage.goto(origin+'/compatibility.html');await audioRestoredPage.locator('#file').setInputFiles(audioBackupPath);await audioRestoredPage.locator('#audio-project').waitFor({state:'visible'});
  check('audio_project_backup_recovers_in_clean_browser',await audioRestoredPage.locator('#project-note').inputValue()===audioSaved.project_note&&await audioRestoredPage.locator('#audio-bookmarks textarea').inputValue()===audioSaved.timestamp_bookmarks[0].note&&await audioRestoredPage.locator('#summary-workspace').isHidden()&&await audioRestoredPage.locator('#source-media audio').count()===0);
  await audioRestoredPage.locator('#audio-bookmarks button').first().click();check('restored_audio_bookmark_honestly_requires_media', (await audioRestoredPage.locator('#audio-project-status').textContent()).includes('先单独获取原声'));
  await audioRestored.close();

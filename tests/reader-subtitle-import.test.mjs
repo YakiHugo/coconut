@@ -1,3 +1,4 @@
+// Compatibility renderer regression; this suite is not default React acceptance.
 import {installSavePipeline} from './helpers/save-pipeline.mjs';
 /** DOM integration only; native chooser/download evidence belongs to browser CI. */
 import test from 'node:test';
@@ -9,7 +10,7 @@ import {subtitleFixtures,expectedCues,note,correction,cueSnapshot} from './helpe
 const root=new URL('../',import.meta.url),KEY='coconut-reader-v1';
 function setup(){
  const w=new Window({url:'https://coconut.example/'});
- w.document.body.innerHTML=fs.readFileSync(new URL('reader/index.html',root),'utf8').split('<body>')[1].split('</body>')[0];
+ w.document.body.innerHTML=fs.readFileSync(new URL('reader/compatibility.html',root),'utf8').split('<body>')[1].split('</body>')[0];
  Object.defineProperty(w,'crypto',{value:webcrypto});
  w.fetch=()=>{throw new Error('Local subtitle imports must not contact a server');};
  installSavePipeline(w);

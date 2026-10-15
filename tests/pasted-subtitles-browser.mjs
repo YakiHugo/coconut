@@ -1,3 +1,4 @@
+// Compatibility renderer regression; this suite is not default React acceptance.
 /** Actions-only native keyboard paste, timed-text preview and real IndexedDB receipts.
  * Fixtures are authored here. No workspace browser, external API, account, model,
  * clipboard-read permission, clipboard shim, synthetic paste or DOM mock is used.
@@ -31,7 +32,7 @@ const check=(name,value)=>{assert.ok(value,name);checks.push(name);};
 try{
  server=createServer(async(req,res)=>{
   if(!['GET','HEAD'].includes(req.method)){mutations++;res.writeHead(405).end();return;}
-  const name=new URL(req.url,'http://localhost').pathname.slice(1)||'index.html';
+  const name=new URL(req.url,'http://localhost').pathname.slice(1)||'compatibility.html';
   if(name==='pasted-xss-probe')xssRequests++;
   if(!/^[a-z-]+\.(html|js|css|png|webmanifest)$/.test(name)){res.writeHead(404).end();return;}
   try{res.setHeader('Content-Type',name.endsWith('.js')?'text/javascript':name.endsWith('.css')?'text/css':name.endsWith('.png')?'image/png':'text/html');res.end(await fs.readFile(new URL(name,root)));}catch{res.writeHead(404).end();}

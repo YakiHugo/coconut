@@ -1,3 +1,4 @@
+// Compatibility renderer regression; this suite is not default React acceptance.
 /** Real legacy adapter, deliberately delayed/failing receipts, and authored AI responses only. */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -13,7 +14,7 @@ async function until(check,message='Expected asynchronous checkpoint'){
 }
 function setup(doc=source(),{hold=0,fail=0}={}){
  const w=new Window({url:'http://127.0.0.1:8080/'}),$=id=>w.document.getElementById(id);
- w.document.body.innerHTML=fs.readFileSync(new URL('reader/index.html',root),'utf8').split('<body>')[1].split('</body>')[0];
+ w.document.body.innerHTML=fs.readFileSync(new URL('reader/compatibility.html',root),'utf8').split('<body>')[1].split('</body>')[0];
  Object.defineProperty(w,'crypto',{value:webcrypto});w.localStorage.setItem(KEY,JSON.stringify({documents:[doc]}));w.sessionStorage.setItem('coconut-reader-active-v1',doc.key);
  w.eval(['summary','core','passages','passage-playback','library-store'].map(name=>fs.readFileSync(new URL('reader/'+name+'.js',root),'utf8')).join('\n'));
  const writes=[],requests=[];let release,failAt=fail,holdAt=hold;

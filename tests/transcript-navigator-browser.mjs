@@ -1,3 +1,4 @@
+// Compatibility renderer regression; this suite is not default React acceptance.
 /** Authored fixtures only. Exercises the production bundle and IndexedDB bootstrap. */
 import assert from 'node:assert/strict';
 import {createServer} from 'node:http';
@@ -10,7 +11,7 @@ const root=fileURLToPath(new URL('../reader/',import.meta.url));
 let browser,server,activePage,stage='setup',external=0;const errors=[],geometry=[];
 try{
  server=createServer(async(req,res)=>{
-  const name=new URL(req.url,'http://localhost').pathname.slice(1)||'index.html';
+  const name=new URL(req.url,'http://localhost').pathname.slice(1)||'compatibility.html';
   if(!/^[a-z-]+\.(html|js|css|png)$/.test(name)){res.writeHead(404).end();return;}
   try{res.writeHead(200,{'Content-Type':name.endsWith('.js')?'text/javascript':name.endsWith('.css')?'text/css':name.endsWith('.png')?'image/png':'text/html'});res.end(await fs.readFile(path.join(root,name)));}catch{res.end();}
  });await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));const origin=`http://127.0.0.1:${server.address().port}`;

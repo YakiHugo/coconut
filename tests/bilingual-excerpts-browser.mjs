@@ -1,3 +1,4 @@
+// Compatibility renderer regression; this suite does not establish default React acceptance.
 /** CI-only authored bilingual selections, native audio and real backup recovery. */
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
@@ -47,7 +48,7 @@ try{
   const context=await browser.newContext({viewport,acceptDownloads:true,serviceWorkers:'block'});
   await context.route('**/*',async route=>{const request=route.request(),url=new URL(request.url());if(!['GET','HEAD'].includes(request.method())){mutations++;return route.abort();}if(url.origin===origin||['blob:','data:'].includes(url.protocol))return route.continue();external++;return route.abort();});
   await context.addInitScript(()=>{window.pairedMediaProof={plays:0,seeks:0};document.addEventListener('play',()=>window.pairedMediaProof.plays++,true);document.addEventListener('seeking',()=>window.pairedMediaProof.seeks++,true);});
-  const p=await context.newPage();p.setDefaultTimeout(20000);p.on('pageerror',error=>errors.push({message:error.message,stack:error.stack,url:p.url()}));diagnosticPage=p;await p.goto(origin);return p;
+  const p=await context.newPage();p.setDefaultTimeout(20000);p.on('pageerror',error=>errors.push({message:error.message,stack:error.stack,url:p.url()}));diagnosticPage=p;await p.goto(origin+'/compatibility.html');return p;
  }
  page=await fresh();await importBackup(page,Buffer.from(JSON.stringify({format:'coconut-library',version:1,documents:[fixture],active:key})));
  if(!await page.locator('#attach-reader-media').isVisible())await page.locator('#toggle-reader-media').click();

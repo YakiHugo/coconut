@@ -1,0 +1,41 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+import {createRequire} from 'node:module';
+import {createLibraryStore} from '../desktop/library-store.mjs';
+import {transactionDouble} from './helpers/indexeddb-transaction-double.mjs';
+const require=createRequire(import.meta.url),idb=require('../reader/indexeddb-document-adapter.js'),canonical=require('../reader/canonical-library.js'),provider=require('../reader/storage-provider.js'),legacyModule=require('../reader/library-store.js');
+const compiled=await (await import('esbuild')).build({entryPoints:['frontend/app/storage-controller.ts'],bundle:true,format:'esm',write:false,platform:'node'});
+const {createStorageController,recoveryJSON,rawRecovery}=await import('data:text/javascript;base64,'+Buffer.from(compiled.outputFiles[0].contents).toString('base64'));
+const doc=(key='a')=>({key,title:'Authored '+key,segments:[{id:'cue',start:0,end:1,text:'Authored text'}],notes:{cue:'kept'},unknown:{history:['retained']}});
+async function fixture(t){
+ const directory=await fs.mkdtemp(path.join(os.tmpdir(),'coconut-client-')),server=await createLibraryStore({directory});t.after(async()=>{server.close();await fs.rm(directory,{recursive:true,force:true});});
+ const engine=transactionDouble(),values=new Map([[idb.LEGACY_KEY,JSON.stringify({documents:[doc()]})]]),storage={getItem:k=>values.get(k)??null,setItem:(k,v)=>values.set(k,v)},options={indexedDB:engine.indexedDB,getLegacyStorage:()=>storage,name:'client'};
+ const primitive=idb.create(options);assert.equal((await primitive.ready()).ok,true);const control={};const calls=[];
+ const fetch=async(url,options={})=>{
+  const parsed=new URL(url,'http://localhost'),body=options.body&&JSON.parse(options.body);calls.push({url,body,raw:options.body});
+  if(control.before)await control.before(body,parsed);
+  let value,status=200;
+  try{if(parsed.pathname.endsWith('/migration')){value=body?server.migration.request(body):server.migration.status(parsed.searchParams.get('migrationId'));if(!value){status=404;value={state:'absent',epoch:server.describe().epoch};}}
+   else if(parsed.pathname.endsWith('/batch'))value=server.commitBatch(body);
+   else if(parsed.pathname.endsWith('/catalog'))value=server.list({limit:100,after:parsed.searchParams.get('after')||'',expectedSequence:parsed.searchParams.has('sequence')?Number(parsed.searchParams.get('sequence')):undefined});
+   else if(parsed.pathname.endsWith('/document'))value={record:server.get(parsed.searchParams.get('key'))};else value=server.describe();
+  }catch(e){status=e.status||503;value={code:e.libraryCode,error:e.message};}
+  if(control.after)await control.after(body,value);
+  return {ok:status<400,status,json:async()=>structuredClone(value)};
+ };
+ const client=canonical.create({primitive,fetch});return {server,engine,primitive,client,control,calls,storage,options,fetch};
+}
+function app(){let revision=1,dirty=false,activity=null,held=null;const documents=[doc()];return {getSnapshot:()=>({revision,documents}),closeSnapshot:()=>({safe:!dirty&&!activity,flushable:!dirty&&!activity,reasons:dirty?['draft']:activity?[activity]:[]}),acquireBarrier:id=>held|| (held={id}),barrierActive:token=>held===token,releaseBarrier:token=>{if(token===held)held=null;},flush:async()=>({ok:true}),setActivity:(_,value)=>{activity=value;},change:()=>revision++,dirty:()=>{dirty=true;},held:()=>held};}
+function controller(f,store=app()){let restarts=0;const control=createStorageController({result:{ok:true,backend:'indexeddb',canonical:f.client},store,onRestart:()=>restarts++});return {control,store,restarts:()=>restarts};}
+test('explicit reviewed migration verifies real canonical receipt and retains browser originals',async t=>{const f=await fixture(t),c=controller(f);await c.control.inspect();assert.equal(f.calls.length,0);c.control.review('begin');assert.equal(f.calls.length,0);await c.control.confirm();assert.equal(c.restarts(),1);assert.equal(c.control.getSnapshot().receipt.documents,1);assert.equal(f.server.get('a').document.notes.cue,'kept');assert.equal(f.engine.rows('client').get('documents').get('a').payload.notes.cue,'kept');assert.equal(c.control.getSnapshot().locked,true);});
+test('changed review and unfinished draft never freeze or send migration',async t=>{const f=await fixture(t),c=controller(f);c.control.review('begin');c.store.change();await c.control.confirm();assert.equal(f.calls.length,0);assert.equal(await f.client.marker(),undefined);c.control.review('begin');c.store.dirty();await c.control.confirm();assert.equal(f.calls.length,0);assert.equal(c.control.getSnapshot().locked,false);});
+test('lost finalize acknowledgment locks UI; retry adopts exact receipt without duplicating writes',async t=>{const f=await fixture(t),c=controller(f);let once=true;f.control.after=body=>{if(body?.action==='finalize'&&once){once=false;throw Error('lost response');}};c.control.review('begin');await c.control.confirm();assert.equal(c.restarts(),0);assert.equal(c.control.getSnapshot().marker.state,'frozen');assert.equal(c.control.getSnapshot().locked,true);c.control.review('resume');await c.control.confirm();assert.equal(c.restarts(),1);assert.equal(f.server.describe().sequence,1);});
+test('explicit cancellation requires durable receipt before restoring browser writes',async t=>{const f=await fixture(t),c=controller(f);f.control.before=body=>{if(body?.action==='chunk')throw Error('offline');};c.control.review('begin');await c.control.confirm();f.control.before=()=>{throw Error('offline');};c.control.review('cancel');await c.control.confirm();assert.equal(c.restarts(),0);assert.equal(c.control.getSnapshot().locked,true);f.control.before=null;c.control.review('cancel');await c.control.confirm();assert.equal(c.restarts(),1);assert.equal(await f.client.marker(),undefined);assert.equal(f.engine.rows('client').get('documents').get('a').payload.notes.cue,'kept');});
+test('connection uses real verified binding without remote writes and canonical startup remains unlocked',async t=>{const f=await fixture(t);await f.client.begin();const values=new Map(),fresh={getItem:k=>values.get(k)??null,setItem:(k,v)=>values.set(k,v)};const other=idb.create({...f.options,name:'other',getLegacyStorage:()=>fresh});await other.ready();const client=canonical.create({primitive:other,fetch:f.fetch}),c=controller({...f,client});const sequence=f.server.describe().sequence;await c.control.discover();assert.equal(c.control.getSnapshot().canConnect,true);c.control.review('connect');await c.control.confirm();assert.equal(c.restarts(),1);assert.equal(f.server.describe().sequence,sequence);const restarted=createStorageController({result:{ok:true,backend:'canonical',canonical:client},onRestart:()=>{}});await restarted.inspect();assert.equal(restarted.getSnapshot().locked,false);});
+test('single-flight and disposed UI never issues a newer operation or redirects from late receipt',async t=>{const f=await fixture(t),c=controller(f);let release;f.control.before=body=>body?.action==='chunk'?new Promise(r=>release=r):undefined;c.control.review('begin');const pending=c.control.confirm();while(!release)await new Promise(r=>setTimeout(r,1));c.control.review('cancel');await c.control.confirm();assert.equal(c.control.getSnapshot().review.action,'begin');c.control.dispose();release();await pending;assert.equal(c.restarts(),0);assert.equal(f.server.describe().sequence,1);});
+test('raw corrupt UTF-16 rescues losslessly; structured clone exports reject silent JSON loss',()=>{const raw='broken \ud800';assert.equal(JSON.parse(rawRecovery(raw).text).raw,raw);assert.equal(rawRecovery('{invalid').text,'{invalid');for(const value of [new Map(),NaN,undefined,new Date(),[,],{x:undefined},{x:-0}])assert.throws(()=>recoveryJSON(value));assert.equal(recoveryJSON({a:[1,'x']}),'{"a":[1,"x"]}');});
+
+test('unsent storage review blocks native close and dismiss releases only its guard',async t=>{const f=await fixture(t),c=controller(f);c.control.review('begin');assert.equal(c.store.closeSnapshot().safe,false);c.control.dismiss();assert.equal(c.store.closeSnapshot().safe,true);assert.equal(f.calls.length,0);c.control.review('begin');await c.control.confirm();assert.equal(c.restarts(),1);});

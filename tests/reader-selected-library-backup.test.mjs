@@ -1,3 +1,4 @@
+// Compatibility renderer regression; this suite is not default React acceptance.
 import fs from 'node:fs';
 import {webcrypto} from 'node:crypto';
 import {Window} from 'happy-dom';
@@ -157,7 +158,7 @@ for(const failure of ['serialization','object-url','anchor-click'])test(`${failu
 // the generic save-pipeline test wrapper. It reproduces the native CI boundary.
 function nativeAdapterHarness({installProbe=false}={}) {
  const w=new Window({url:'https://coconut.example/'}),root=new URL('../',import.meta.url);
- w.document.body.innerHTML=fs.readFileSync(new URL('reader/index.html',root),'utf8').split('<body>')[1].split('</body>')[0];
+ w.document.body.innerHTML=fs.readFileSync(new URL('reader/compatibility.html',root),'utf8').split('<body>')[1].split('</body>')[0];
  Object.defineProperty(w,'crypto',{value:webcrypto});w.localStorage.setItem(KEY,JSON.stringify({documents:largeLibraryFixture(3),active:'shelf-0'}));
  w.fetch=async()=>{throw new Error('Unexpected network request');};w.HTMLElement.prototype.scrollIntoView=function(){};
  for(const name of ['summary','core','passages','passage-playback','library-store'])w.eval(fs.readFileSync(new URL('reader/'+name+'.js',root),'utf8'));

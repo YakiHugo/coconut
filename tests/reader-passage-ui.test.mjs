@@ -1,3 +1,4 @@
+// Compatibility renderer regression; this suite is not default React acceptance.
 import {installSavePipeline,settle} from './helpers/save-pipeline.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -8,7 +9,7 @@ import {passageReadingFixture,irregularPassageFixture} from './helpers/passage-r
 const root=new URL('../',import.meta.url),key='coconut-reader-v1';
 function setup(saved){
  const w=new Window({url:'https://coconut.example/'});
- w.document.body.innerHTML=fs.readFileSync(new URL('reader/index.html',root),'utf8').split('<body>')[1].split('</body>')[0];
+ w.document.body.innerHTML=fs.readFileSync(new URL('reader/compatibility.html',root),'utf8').split('<body>')[1].split('</body>')[0];
  Object.defineProperty(w,'crypto',{value:webcrypto});if(saved)w.localStorage.setItem(key,saved);
  const calls=[];w.fetch=async(...args)=>{calls.push(args);throw new Error('Unexpected request');};
  for(const name of ['summary','core','passages','passage-playback'])w.eval(fs.readFileSync(new URL('reader/'+name+'.js',root),'utf8'));

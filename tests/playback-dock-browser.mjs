@@ -1,3 +1,4 @@
+// Compatibility renderer regression; this suite is not default React acceptance.
 import {navigateReadingStop} from './helpers/transcript-navigation-browser.mjs';
 /** Real decoded local audio and authored short-cue captions. No real recording,
  * account, model, third-party transcript, trace or media artifact is used. */
@@ -107,7 +108,7 @@ try{
  directory=await fs.mkdtemp(path.join(os.tmpdir(),'coconut-dock-'));const audio=path.join(directory,'authored-tone.wav');await fs.writeFile(audio,authoredAudioFixture());
  server=createServer(async(req,res)=>{
   if(!['GET','HEAD'].includes(req.method)){mutations++;res.writeHead(405).end();return;}
-  const pathname=new URL(req.url,'http://localhost').pathname,name=pathname==='/'?'index.html':pathname.slice(1);
+  const pathname=new URL(req.url,'http://localhost').pathname,name=pathname==='/'?'compatibility.html':pathname.slice(1);
   if(!/^[a-z-]+\.(html|js|css|png)$/.test(name)){res.writeHead(404,{'Content-Type':'application/json'}).end('{"error":"static fixture server"}');return;}
   try{const bytes=await fs.readFile(path.join(root,'reader',name));res.writeHead(200,{'Content-Type':name.endsWith('.js')?'text/javascript':name.endsWith('.css')?'text/css':name.endsWith('.png')?'image/png':'text/html'}).end(bytes);}catch{res.writeHead(404).end();}
  });await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));const origin='http://127.0.0.1:'+server.address().port;

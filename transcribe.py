@@ -2,7 +2,7 @@
 """Transcribe a YouTube/Bilibili/X URL to a raw markdown transcript with speaker labels."""
 import os, sys
 _venv = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".venv", "bin", "python3")
-if __name__ == "__main__" and os.path.exists(_venv) and os.path.abspath(sys.executable) != os.path.abspath(_venv):
+if __name__ == "__main__" and "--local-files-only" not in sys.argv and os.path.exists(_venv) and os.path.abspath(sys.executable) != os.path.abspath(_venv):
     os.execv(_venv, [_venv] + sys.argv)
 
 import argparse
@@ -15,6 +15,7 @@ import tempfile
 from pathlib import Path
 
 from transcript import make_document, save_document, to_markdown
+from local_asr import OFFLINE_ENVIRONMENT, require_local_model
 from subtitle_import import fetch_subtitle_document, subtitle_document, validate_video_url, validate_media_info, tls_cli_options, source_evidence
 
 
@@ -76,10 +77,20 @@ def download_playback(url: str, directory: Path) -> Path:
     return target
 
 
-def transcribe_fast(audio_path: Path, language: str | None, *, model_name: str, device: str, compute_type: str, batch_size: int = 8) -> dict:
+def transcribe_fast(audio_path: Path, language: str | None, *, model_name: str, device: str, compute_type: str, batch_size: int = 8, local_files_only: bool = False) -> dict:
     """Lightweight base path; precise alignment and diarization remain optional."""
+    if local_files_only:
+        # Establish the offline guard before importing the runtime/Hub modules.
+        # A pinned existing directory and required tokenizer also prevent the
+        # model-name and missing-tokenizer download fallbacks.
+        os.environ.update(OFFLINE_ENVIRONMENT)
+        model_path = require_local_model(model_name)
     from faster_whisper import WhisperModel
-    model = WhisperModel(model_name, device=device, compute_type=compute_type)
+    if local_files_only:
+        model = WhisperModel(str(model_path), device=device, compute_type=compute_type,
+                             local_files_only=True)
+    else:
+        model = WhisperModel(model_name, device=device, compute_type=compute_type)
     segments, info = model.transcribe(str(audio_path), language=language, vad_filter=True, word_timestamps=True)
     output = []
     for segment in segments:
@@ -142,6 +153,7 @@ def main():
     parser.add_argument("--force-transcribe", action="store_true", help="Ignore platform subtitles and recognize audio")
     parser.add_argument("--captions-only", action="store_true", help="Require existing captions; never fall back to ASR or load recognition models (optional playback media is separate)")
     parser.add_argument("--keep-media", action="store_true", help="Keep a bounded local MP4 copy for playback (requires --work-dir)")
+    parser.add_argument("--local-files-only", action="store_true", help="Use only an already cached small model for local media; never download models or use WhisperX")
     parser.add_argument("--no-diarize", action="store_true")
     parser.add_argument("--no-align", action="store_true")
     parser.add_argument("--backend", choices=("faster-whisper", "whisperx"), default="faster-whisper")
@@ -150,6 +162,12 @@ def main():
     parser.add_argument("--compute-type", default="int8")
     parser.add_argument("--batch-size", type=int, default=8)
     args = parser.parse_args()
+    if args.local_files_only:
+        if args.backend != 'faster-whisper' or args.model != 'small':
+            parser.error('local-files-only requires the faster-whisper backend and small model')
+        if args.source.startswith(('http://', 'https://')):
+            parser.error('local-files-only requires an uploaded local file')
+        os.environ.update(OFFLINE_ENVIRONMENT)
     if args.captions_only and args.force_transcribe:
         parser.error('captions-only cannot be combined with force-transcribe')
     if args.keep_media and not args.work_dir:
@@ -163,7 +181,7 @@ def main():
     elif not source.is_file():
         parser.error("Local source file does not exist")
     source_url = args.source if is_url else args.source_url
-    hf_token = None if args.no_diarize else os.environ.get("HF_TOKEN")
+    hf_token = None if args.no_diarize or args.local_files_only else os.environ.get("HF_TOKEN")
     document = None
     workspace = contextlib.nullcontext(str(args.work_dir)) if args.work_dir else tempfile.TemporaryDirectory()
     with workspace as td:
@@ -180,6 +198,8 @@ def main():
         # never reuse an ASR-enabled cache under a captions-only permission.
         if args.captions_only:
             fingerprint['captions_only'] = True
+        if args.local_files_only:
+            fingerprint['local_files_only'] = True
         if not is_url:
             fingerprint['source_size'] = source.stat().st_size
             fingerprint['source_mtime_ns'] = source.stat().st_mtime_ns
@@ -217,7 +237,8 @@ def main():
             if args.backend == 'faster-whisper':
                 result = transcribe_fast(audio_path, args.language, model_name=args.model,
                                          device=args.device, compute_type=args.compute_type,
-                                         batch_size=args.batch_size)
+                                         batch_size=args.batch_size,
+                                         **({'local_files_only': True} if args.local_files_only else {}))
             else:
                 result = transcribe(audio_path, args.language, hf_token, model_name=args.model,
                                     device=args.device, compute_type=args.compute_type,

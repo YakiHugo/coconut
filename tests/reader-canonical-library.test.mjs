@@ -1,3 +1,4 @@
+// Compatibility renderer regression; not default React acceptance.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
@@ -183,7 +184,7 @@ test('newer atomic-group member reconciles unchanged peer receipt without repeat
 
 async function readerUI(f){
  const {Window}=await import('happy-dom'),{webcrypto}=await import('node:crypto'),w=new Window({url:'https://coconut.example/'}),root=new URL('../reader/',import.meta.url);
- w.document.body.innerHTML=(await fs.readFile(new URL('index.html',root),'utf8')).split('<body>')[1].split('</body>')[0];Object.defineProperty(w,'crypto',{value:webcrypto});w.fetch=async()=>{throw Error('No external network in authored UI fixture');};
+ w.document.body.innerHTML=(await fs.readFile(new URL('compatibility.html',root),'utf8')).split('<body>')[1].split('</body>')[0];Object.defineProperty(w,'crypto',{value:webcrypto});w.fetch=async()=>{throw Error('No external network in authored UI fixture');};
  const result=await canonical.create({primitive:f.primitive,fetch:f.fetch,validate:require('../reader/core.js').validate}).initialize(await f.client.marker());// Bridge the authored Node server adapter across the test window realm just as
  // structured-clone messages do; production adapter and reader share one realm.
  const prepare=result.adapter.prepareChanges,estimate=result.adapter.estimateBatchBytes;result.adapter.prepareChanges=changes=>prepare(structuredClone(changes));result.adapter.estimateBatchBytes=changes=>estimate(structuredClone(Array.from(changes,({key,identity,kind,generation})=>({key,identity,kind,generation}))));

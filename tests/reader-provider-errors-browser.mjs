@@ -1,3 +1,4 @@
+// Compatibility renderer regression; this suite does not establish default React acceptance.
 /** Authored errors only: no CLI or model calls, credentials or user sources. */
 import {chromium} from './helpers/browser-storage.mjs';
 import {startBridge} from '../desktop/server.mjs';
@@ -20,7 +21,7 @@ try{
  browser=await chromium.launch({headless:true,...(process.env.COCONUT_CHROMIUM_EXECUTABLE?{executablePath:process.env.COCONUT_CHROMIUM_EXECUTABLE}:{})});
  for(const width of [390,1280]){
   const page=await browser.newPage({viewport:{width,height:900}});
-  await page.goto(origin);
+  await page.goto(origin+'/compatibility.html');
   await page.locator('#file').setInputFiles({name:'fixture.json',mimeType:'application/json',buffer:Buffer.from(JSON.stringify(fixture))});
   await page.waitForFunction(()=>document.getElementById('title').textContent.includes('Authored diagnostic fixture'));
   await page.locator('#mode-transcript').click();

@@ -1,3 +1,4 @@
+// Compatibility renderer regression; this suite is not default React acceptance.
 /** CI-only native Chromium selection and clipboard acceptance. All text,
  * translations, annotations and URLs are authored fixtures. A static loopback
  * server is the only allowed network destination; there is no model or account.
@@ -125,7 +126,7 @@ async function newlineDisclosure(label) {
 try {
   server = createServer(async (req, res) => {
     if (!['GET', 'HEAD'].includes(req.method)) {mutations++; res.writeHead(405).end(); return;}
-    const name = new URL(req.url, 'http://localhost').pathname.slice(1) || 'index.html';
+    const name = new URL(req.url, 'http://localhost').pathname.slice(1) || 'compatibility.html';
     if (!/^[a-z-]+\.(html|js|css|png|webmanifest)$/.test(name)) {
       res.writeHead(404, {'Content-Type': 'application/json'}).end('{"error":"authored static fixture only"}'); return;
     }

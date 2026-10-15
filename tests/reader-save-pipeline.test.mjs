@@ -1,3 +1,4 @@
+// Compatibility renderer regression; this suite is not default React acceptance.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -8,7 +9,7 @@ const root=new URL('../',import.meta.url),KEY='coconut-reader-v1';
 const doc=key=>({schema_version:1,key,title:key,language:'en',segments:[{id:'one',start:0,end:4,text:'Authored source '+key}],notes:{}});
 function setup({documents=[doc('a'),doc('b')],raw=null,held=false,clock=null}={}){
  const w=new Window({url:'https://coconut.example/'});
- w.document.body.innerHTML=fs.readFileSync(new URL('reader/index.html',root),'utf8').split('<body>')[1].split('</body>')[0];
+ w.document.body.innerHTML=fs.readFileSync(new URL('reader/compatibility.html',root),'utf8').split('<body>')[1].split('</body>')[0];
  Object.defineProperty(w,'crypto',{value:webcrypto});w.localStorage.setItem(KEY,raw??JSON.stringify({documents,active:documents[0]?.key}));
  const saves=installSavePipeline(w,{held,clock});
  w.eval(['summary','core','passages','passage-playback','app','language','translation-review','podcasts'].map(file=>fs.readFileSync(new URL('reader/'+file+'.js',root),'utf8')).join('\n')+'\nwindow.saveTest={get documents(){return state.documents;},get active(){return active();},get savedAnswers(){return persistedAIAnswerCounts;},queue:queueDocument,commit:commitDocument,hasDrafts:hasUnsubmittedReaderDrafts};');

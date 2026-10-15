@@ -1,3 +1,4 @@
+// Compatibility renderer regression; this suite does not establish default React acceptance.
 /** Real bridge authorization, SQLite and task ledger in two Chromium contexts.
  * Only HTTPS/Serve transport is simulated; no tailnet, real login or model. */
 import assert from 'node:assert/strict';
@@ -66,7 +67,7 @@ export async function privateBackendBrowser(){
     if(url.pathname.startsWith('/api/'))httpStatus.push({method:req.method(),path:url.pathname,status:response.status});
     await route.fulfill(response);
    });
-   const page=await context.newPage();page.setDefaultTimeout(20000);page.on('pageerror',e=>errors.push(e.message));await page.goto(origin);await page.waitForFunction(()=>CoconutStorageBootstrap.phase==='ready');
+   const page=await context.newPage();page.setDefaultTimeout(20000);page.on('pageerror',e=>errors.push(e.message));await page.goto(origin+'/compatibility.html');await page.waitForFunction(()=>CoconutStorageBootstrap.phase==='ready');
    assert.equal(await page.evaluate(()=>CoconutStorageBootstrap.result.backend),'indexeddb');
    await openLibraryTools(page);await page.locator('.library-backup > summary').click();
    page.once('dialog',dialog=>dialog.accept());await page.getByRole('button',{name:'连接已有电脑书架',exact:true}).click();

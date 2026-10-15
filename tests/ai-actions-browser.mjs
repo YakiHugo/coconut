@@ -1,3 +1,4 @@
+// Compatibility renderer regression; this suite does not establish default React acceptance.
 /** Action-specific consent and scope in real Chromium. Authored source and injected
  * provider responses only: no accounts, CLI, model, public source or media calls. */
 import assert from 'node:assert/strict';
@@ -19,7 +20,7 @@ try{
  browser=await chromium.launch({headless:true});
  const context=await browser.newContext({viewport:{width:1360,height:1000},serviceWorkers:'block'});
  await context.route('**/*',async route=>{const req=route.request(),url=new URL(req.url());if(url.origin===origin){if(req.method()==='POST')posts.push({path:url.pathname,body:req.postDataJSON()});await route.continue();}else if(url.protocol==='blob:')await route.continue();else{external++;await route.abort();}});
- const page=await context.newPage();page.setDefaultTimeout(15000);page.on('pageerror',()=>errors++);await page.goto(origin);await page.waitForFunction(()=>window.CoconutStorageBootstrap?.phase==='ready');
+ const page=await context.newPage();page.setDefaultTimeout(15000);page.on('pageerror',()=>errors++);await page.goto(origin+'/compatibility.html');await page.waitForFunction(()=>window.CoconutStorageBootstrap?.phase==='ready');
  const importFixture=async doc=>{await page.locator('#file').setInputFiles({name:'authored-ai-action.json',mimeType:'application/json',buffer:Buffer.from(JSON.stringify(doc))});await page.locator('#mode-transcript').click();if(!await page.locator('#language-panel').evaluate(n=>n.open))await page.locator('#language-panel > summary').click();};
  const planFor={question:'#question-scope',translation:'#subscription-translation-scope',summary:'#summary-plan'};
  async function planCount(action,segments,requests){const plan=page.locator(planFor[action]);check(action+'_plan_matches_scope_'+segments,await plan.isVisible()&&Number(await plan.getAttribute('data-segment-count'))===segments&&Number(await plan.getAttribute('data-request-count'))===requests);}

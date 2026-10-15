@@ -127,7 +127,7 @@ else {
       }
     }
     ipcMain.handle('coconut:update',async(event,action,value)=>{
-      if(event.sender!==window.webContents||event.senderFrame!==window.webContents.mainFrame||![origin+'/',origin+'/index.html'].includes(event.senderFrame.url.split('#')[0]))throw new Error('更新请求来源无效');
+      if(event.sender!==window.webContents||event.senderFrame!==window.webContents.mainFrame||![origin+'/',origin+'/index.html',origin+'/compatibility.html'].includes(event.senderFrame.url.split('#')[0]))throw new Error('更新请求来源无效');
       if(action==='state')return updater.snapshot();
       if(action==='check')return updater.check({manual:true});
       if(action==='download')return updater.download();
@@ -137,7 +137,7 @@ else {
       throw new Error('不支持的更新操作');
     });
     ipcMain.handle('coconut:local-media',async(event,action,value)=>{
-      if(event.sender!==window.webContents||event.senderFrame!==window.webContents.mainFrame||![origin+'/',origin+'/index.html'].includes(event.senderFrame.url.split('#')[0]))throw new Error('原文件请求来源无效');
+      if(event.sender!==window.webContents||event.senderFrame!==window.webContents.mainFrame||![origin+'/',origin+'/index.html',origin+'/compatibility.html'].includes(event.senderFrame.url.split('#')[0]))throw new Error('原文件请求来源无效');
       if(quitting)return {status:'unavailable'};
       if(action==='remember')return localMediaService.remember(value?.owner,value?.path,value?.identity);
       if(action==='resolve')return localMediaService.resolve(value?.owner);
@@ -147,7 +147,7 @@ else {
       throw new Error('不支持的原文件操作');
     });
     const {bind:bindFileMenu,findItem,...fileMenu}=createFileMenu({window,origin,blocked:()=>quitting||lifecycle.busy()});
-    const applicationMenu=Menu.buildFromTemplate([{label:'Coconut',submenu:[{role:'about'},{label:'检查更新…',click:()=>{void updater.check({manual:true});void window.webContents.executeJavaScript('document.getElementById("app-updates").open=true');}},{type:'separator'},{role:'quit'}]},fileMenu,{id:'coconut-edit-menu',role:'editMenu'},{role:'windowMenu'}]);
+    const applicationMenu=Menu.buildFromTemplate([{label:'Coconut',submenu:[{role:'about'},{label:'检查更新…',click:()=>{void updater.check({manual:true});void window.webContents.executeJavaScript('window.dispatchEvent(new Event("coconut-open-updates"));document.getElementById("app-updates")?.setAttribute("open","")').catch(()=>{});}},{type:'separator'},{role:'quit'}]},fileMenu,{id:'coconut-edit-menu',role:'editMenu'},{role:'windowMenu'}]);
     // Preserve Electron's platform-specific editing roles, then append our one
     // scoped Find command to the actual native Edit menu.
     const editMenu=applicationMenu.getMenuItemById('coconut-edit-menu').submenu;
@@ -160,7 +160,7 @@ else {
     window.webContents.on('render-process-gone',()=>localMediaService.releaseAll());
     window.webContents.on('will-attach-webview',event=>event.preventDefault());
     window.webContents.on('will-navigate',(event,url)=>{
-      if (![origin+'/',origin+'/index.html'].includes(url.split('#')[0])) event.preventDefault();
+      if (![origin+'/',origin+'/index.html',origin+'/compatibility.html'].includes(url.split('#')[0])) event.preventDefault();
     });
     window.webContents.setWindowOpenHandler(({url})=>{
       // Only a normal web link is handed to the system browser. Never custom schemes or file paths.
@@ -175,8 +175,9 @@ else {
     }
     if (process.env.COCONUT_SMOKE_TEST === '1') {
       const result = await window.webContents.executeJavaScript(`(async()=>{
+        await new Promise((resolve,reject)=>{if(window.CoconutReactDesktopReady){resolve();return;}const timer=setTimeout(()=>{cleanup();reject(new Error('React startup did not become ready'));},10000);const ready=()=>{cleanup();resolve();};function cleanup(){clearTimeout(timer);window.removeEventListener('coconut-react-desktop-ready',ready);}window.addEventListener('coconut-react-desktop-ready',ready,{once:true});});
         const health=await (await fetch('/api/health')).json();
-        return {reader:!!document.querySelector('#import'),
+        return {reader:!!document.querySelector('.react-app [data-native-command="open-local-media"]'),
           scripts:typeof Coconut==='object',isolated:typeof require==='undefined'&&typeof process==='undefined',
           bridge:health.runtime==='desktop-bridge'&&health.capabilities.local_agents===true,
           asrDisabled:health.capabilities.media_import===false};
