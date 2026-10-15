@@ -409,7 +409,7 @@ test('real same-origin executor-directory switch isolates old 404 and restores t
  const api={fetch:(url,options={})=>fetch(origin+'/'+url,{...options,headers:{...options.headers,Origin:origin}})};
  const complete=async id=>{let task;for(let i=0;i<100;i++){task=(await(await api.fetch('api/v1/tasks/'+id)).json()).task;if(task.status==='succeeded')return task;await new Promise(r=>setTimeout(r,5));}assert.equal(task?.status,'succeeded');};
  h=setup(api);await h.import();await h.choose();await h.submit();const first=JSON.parse(h.w.localStorage.getItem(journalKey)).entries[0];await complete(first.task.taskId);await h.refresh();let storage=h.snapshot();await h.w.happyDOM.close();h=null;await close();
- ({server}=await startDevelopmentBridge({port,taskDirectory:path.join(directory,'dev'),providers}));
+ ({server}=await startDevelopmentBridge({libraryDirectory:null,port,taskDirectory:path.join(directory,'dev'),providers}));
  const created=await(await api.fetch('api/v1/tasks',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({...first.payload,idempotencyKey:'independent-new-executor-intent'})})).json();await complete(created.task.taskId);
  const absent=await api.fetch('api/v1/tasks/'+first.task.taskId);assert.equal(absent.status,404);assert.equal((await absent.json()).code,'not_found');
  h=setup(api,storage);await h.refresh();await h.choose();assert.match(h.$('background-executor-status').textContent,/已连接/);assert.equal(h.$('ask-ai').disabled,false);assert.match(h.$('background-task-list').textContent,/此执行器找不到/);

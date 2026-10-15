@@ -1,5 +1,6 @@
 import React, {useEffect, useRef, useState} from 'react';
 import {createRoot} from 'react-dom/client';
+import {SelectionActions} from './selection-actions';
 import type {NavigationPage, NavigationSession} from './contracts';
 
 function Navigator() {
@@ -37,4 +38,4 @@ function Navigator() {
  </>;
 }
 const host=document.getElementById('transcript-navigator');
-if(host)createRoot(host).render(<Navigator/>);
+if(host)createRoot(host).render(<><Navigator/><SelectionActions/></>);

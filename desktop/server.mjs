@@ -11,22 +11,23 @@ import { createPodcastSources } from './podcast-sources.mjs';
 import {createTaskStore,TASK_BODY_BYTES} from './tasks.mjs';
 import {createLibraryStore} from './library-store.mjs';
 import {handleLibraryRequest} from './library-api.mjs';
+import {libraryLocation,libraryStartupMessage} from './library-location.mjs';
 
 export const CAPABILITIES = Object.freeze({reader:true,local_agents:true,subscription_ask:true,subscription_translation:true,media_import:false,local_translation:false,podcast_import:true,caption_import:false});
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
-const ASSETS = new Map([['/','index.html'],...['index.html','app.js','summary.js','task-client.js','core.js','background-summary.js','passages.js','passage-playback.js','quotation.js','library-store.js','appearance.js','indexeddb-document-adapter.js','storage-provider.js','storage-bootstrap.js','transcript-navigator.js','jobs.js','language.js','translation-review.js','podcasts.js','updates.js','style.css','coconut-mark.png'].map(name=>['/'+name,name])]);
+const ASSETS = new Map([['/','index.html'],...['index.html','app.js','summary.js','task-client.js','core.js','background-summary.js','passages.js','passage-playback.js','quotation.js','library-store.js','appearance.js','indexeddb-document-adapter.js','canonical-library.js','storage-provider.js','storage-bootstrap.js','transcript-navigator.js','jobs.js','language.js','translation-review.js','podcasts.js','updates.js','style.css','coconut-mark.png'].map(name=>['/'+name,name])]);
 const MIME = {'.png':'image/png','.html':'text/html; charset=utf-8','.js':'text/javascript; charset=utf-8','.css':'text/css; charset=utf-8'};
 const MAX_BODY = 1024 * 1024;
 export const CSP = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self'; img-src 'self' data: blob:; media-src 'self' blob:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'";
 
-export function createBridge({readerDirectory = path.resolve(ROOT,'../reader'), providers = createProviders(), podcastSources = createPodcastSources(), captionService = null, captionStatus = null, localMediaService = null, taskStore = null, taskUnavailable = null, libraryStore = null, libraryUnavailable = null} = {}) {
+export function createBridge({readerDirectory = path.resolve(ROOT,'../reader'), providers = createProviders(), podcastSources = createPodcastSources(), captionService = null, captionStatus = null, localMediaService = null, taskStore = null, taskUnavailable = null, libraryStore = null, libraryUnavailable = null, libraryLocation = null} = {}) {
   const translate = createTranslator(providers);
   const capabilities=Object.freeze({...CAPABILITIES,caption_import:captionService?.available===true,persistent_tasks:!!taskStore,canonical_library:!!libraryStore});
   const captionSources=Object.freeze({available:capabilities.caption_import,mode:captionStatus?.mode||(capabilities.caption_import?'bundled-helper':'disabled'),
     code:capabilities.caption_import?'ready':captionStatus?.code||'CAPTION_UNAVAILABLE',
-    providers:[{id:'x',label:'X / Twitter',available:capabilities.caption_import},{id:'youtube',label:'YouTube',available:false},{id:'bilibili',label:'Bilibili',available:false}],
+    providers:[['x','X / Twitter'],['youtube','YouTube'],['bilibili','Bilibili']].map(([id,label])=>({id,label,available:capabilities.caption_import&&(captionService.providers||['x']).includes(id)})),
     automatic_asr:false,fallback:'import_transcript',
-    message:capabilities.caption_import?'可获取公开 X 原语言字幕；YouTube / Bilibili 尚未接入此服务。':'字幕助手未就绪。可导入或粘贴已有字幕；开发环境可用 COCONUT_CAPTION_PYTHON 指定已安装的兼容 Python。不会自动安装依赖或启动识别。'});
+    message:capabilities.caption_import?'可尝试获取已启用来源的公开原语言字幕；平台访问限制仍可能阻止获取。':'字幕助手未就绪。可导入或粘贴已有字幕；开发环境可用 COCONUT_CAPTION_PYTHON 指定已安装的兼容 Python。不会自动安装依赖或启动识别。'});
   const active = new Set();
   const server = http.createServer(async (req,res) => {
     for (const [key,value] of Object.entries({'X-Content-Type-Options':'nosniff','Referrer-Policy':'no-referrer','Cache-Control':'no-store',
@@ -63,7 +64,7 @@ export function createBridge({readerDirectory = path.resolve(ROOT,'../reader'), 
           return json(200,{protocolVersion:1,task:await taskStore.get(pathname.split('/').at(-1))});
         }
         if (pathname === '/api/captions/status') return json(200,captionSources);
-        if (pathname === '/api/health') return json(200,{local_worker:false,runtime:'desktop-bridge',paid_processing:false,max_upload_bytes:0,capabilities,caption_sources:captionSources});
+        if (pathname === '/api/health') return json(200,{local_worker:false,runtime:'desktop-bridge',paid_processing:false,max_upload_bytes:0,capabilities,caption_sources:captionSources,...(libraryLocation?{library_storage:{...libraryLocation,enabled:!!libraryStore,unavailable:libraryUnavailable}}:{})});
         if (pathname === '/api/language-tools' && req.method === 'GET') return json(200,{translation_models:[],local_translation:false,capabilities,
           ai:{codex:await providers.status('codex',{signal:controller.signal}),claude:await providers.status('claude',{signal:controller.signal})}});
         if (pathname === '/api/jobs') return json(501,{error:'轻量版不提供处理队列，请重新检查本地服务能力'});
@@ -122,11 +123,18 @@ export function createBridge({readerDirectory = path.resolve(ROOT,'../reader'), 
   server.on('close',()=>{ libraryStore?.close(); for (const controller of active) controller.abort(); active.clear();void taskStore?.shutdown().catch(()=>{}); });
   // Abort synchronously before Electron exits: detached CLI process groups must
   // not outlive the app while waiting for a later HTTP close event.
+  let shutdown;
   server.shutdown = callback => {
-    for (const controller of active) controller.abort();
-    active.clear(); const stopping=taskStore?.shutdown()||Promise.resolve();
-    server.close(error=>void stopping.then(()=>callback?.(error),failure=>callback?.(failure))); server.closeAllConnections();
-    return stopping;
+    if(!shutdown){
+      for (const controller of active) controller.abort();
+      active.clear(); const stopping=taskStore?.shutdown()||Promise.resolve();
+      shutdown=new Promise((resolve,reject)=>{
+        server.close(error=>void stopping.then(()=>error?reject(error):resolve(),reject));
+        server.closeAllConnections();
+      });
+    }
+    if(callback)void shutdown.then(()=>callback(),error=>callback(error));
+    return shutdown;
   };
   return server;
 }
@@ -138,7 +146,8 @@ export async function startBridge({port = 8080, taskDirectory = null, libraryDir
     catch(error){options.taskStore=null;options.taskUnavailable={code:error.taskCode||'store_unavailable',message:'持久任务存储不可用，请检查本机任务目录；阅读与现有前台功能仍可使用。'};}
   }
   if(libraryDirectory){
-    try{options.libraryStore=await createLibraryStore({directory:libraryDirectory});}
+    options.libraryLocation={mode:options.startupMode||'embedded',directory:libraryDirectory};
+    try{options.libraryStore=await createLibraryStore({directory:libraryDirectory,exclusiveWriter:true});}
     catch(error){options.libraryStore=null;options.libraryUnavailable={code:error.libraryCode||'library_unavailable',message:'Canonical library could not open; browser storage remains unchanged.'};}
   }
   const server = createBridge(options);
@@ -149,8 +158,10 @@ export async function startBridge({port = 8080, taskDirectory = null, libraryDir
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const args = process.argv.slice(2);
   if (args.length && (args.length !== 2 || args[0] !== '--port')) { console.error('Usage: node desktop/server.mjs [--port 8080]'); process.exit(1); }
-  const server = await startBridge({port:args.length ? Number(args[1]) : 8080,taskDirectory:path.join(homedir(),'.coconut','tasks'),libraryDirectory:process.env.COCONUT_LIBRARY_DIRECTORY||null});
+  const library=libraryLocation({mode:'cli'});
+  const server = await startBridge({port:args.length ? Number(args[1]) : 8080,taskDirectory:path.join(homedir(),'.coconut','tasks'),libraryDirectory:library.directory,startupMode:'cli'});
   console.log(`Coconut 轻量阅读器：http://127.0.0.1:${server.address().port}（不需要 Python；未发起模型请求）`);
+  console.log(libraryStartupMessage(library,await fetch(`http://127.0.0.1:${server.address().port}/api/v1/library`).then(response=>response.json())));
   const stop = () => server.shutdown();
   process.on('SIGINT',stop); process.on('SIGTERM',stop);
 }

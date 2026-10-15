@@ -35,6 +35,22 @@
       primitive = documentModule.create({indexedDB, name, getLegacyStorage: getStorage, validate,
         onLifecycle: publish, ...(openTimeoutMs === undefined ? {} : {openTimeoutMs})});
       onStorage(primitive);
+      const authority = primitive.canonicalStatus ? await primitive.canonicalStatus() : {ok:true};
+      if (!authority.ok) {
+        primitive.close();
+        if (['unavailable','denied'].includes(authority.error?.code) && legacy.ok && legacy.fence === null) return fallback(authority.error.code);
+        return {...authority,legacyRaw:legacy.raw};
+      }
+      const canonical = root.CoconutCanonicalLibrary?.create({primitive,validate});
+      if (authority.value) {
+        const recovery = await primitive.canonicalRecovery();
+        if (!canonical) return {...failure('fenced'),recovery:recovery.ok?recovery:null};
+        if (['canonical','connected'].includes(authority.value.state)) {
+          try { return {...await (authority.value.state === 'connected' ? canonical.initializeBinding(authority.value) : canonical.initialize(authority.value)),canonical}; }
+          catch(error) { return {...failure(error.code||'unavailable',error.message),canonical,recovery:recovery.ok?recovery:null}; }
+        }
+        return {...failure('canonical_pending','书架迁移已冻结原始数据。请继续迁移或确认取消；不会自动切回浏览器写入。'),canonical,recovery:recovery.ok?recovery:null};
+      }
       const ready = await primitive.ready();
       if (signal?.aborted) return failure('cancelled');
       if (!ready.ok) {
@@ -88,7 +104,7 @@
       let active = null;
       try { active = JSON.parse(loaded.legacyRaw)?.active ?? null; } catch {}
       return {ok: true, backend: 'indexeddb', adapter, loaded: {ok: true, documents, active}, legacyRaw: loaded.legacyRaw,
-        migrated: ready.migrated, report: ready.report};
+        migrated: ready.migrated, report: ready.report, canonical};
     } catch (error) {
       primitive?.close();
       return {...failure('unexpected', error.message), legacyRaw: legacy.raw};

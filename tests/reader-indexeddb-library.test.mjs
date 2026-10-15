@@ -86,7 +86,7 @@ async function ui(f,{mobile=false}={}){
  const w=new Window({url:'https://coconut.example/'});w.document.body.innerHTML=fs.readFileSync(new URL('reader/index.html',root),'utf8').split('<body>')[1].split('</body>')[0];Object.defineProperty(w,'crypto',{value:webcrypto});
  if(mobile){w.document.querySelector('.shell').inert=false;w.document.getElementById('storage-startup').hidden=true;const match=w.matchMedia.bind(w);w.matchMedia=query=>query==='(max-width: 650px)'?{matches:true,addEventListener(){}}:match(query);}
  w.CoconutStorageBootstrap={phase:'ready',result:f.result};w.eval(fs.readFileSync(new URL('reader/library-store.js',root),'utf8'));
- w.eval(['summary','core','passages','passage-playback','app','language','translation-review','podcasts'].map(file=>fs.readFileSync(new URL('reader/'+file+'.js',root),'utf8')).join('\n')+'\nwindow.idbUI={get documents(){return state.documents;},get store(){return libraryStore;},get checkpoint(){return persistedAIAnswerCounts;}};');
+ w.eval(['summary','core','passages','passage-playback','app','language','translation-review','podcasts'].map(file=>fs.readFileSync(new URL('reader/'+file+'.js',root),'utf8')).join('\n')+'\nlet sourceSubmitting=false,sourceCaptionRequest=null;\nwindow.idbUI={get documents(){return state.documents;},get store(){return libraryStore;},get checkpoint(){return persistedAIAnswerCounts;}};');
  return {w,f,$:id=>w.document.getElementById(id)};
 }
 test('actual IndexedDB provider feeds the existing reader UI, pending receipt, failure and rescue',async()=>{
@@ -297,5 +297,17 @@ test('combined mobile current-document return preserves note focus while indepen
   assert.equal(rows().get('b').payload.notes.one,note.value);assert.equal(rows().get('a').payload.notes.one,'Remote A');
   assert.equal(w.idbUI.store.status('b').status,'saved');assert.equal(w.idbUI.store.status('a').status,'conflict');assert.equal($('save-status').dataset.state,'failed');
   assert.deepEqual(JSON.parse(JSON.stringify(w.idbUI.store.snapshotForExport().documents.map(d=>[d.key,d.notes.one]))),[['a','Unresolved mobile A']]);
+ }finally{await w.happyDOM.close();}
+});
+
+test('explicit canonical activation rejects drafts and holds ingress until the final save receipt',async()=>{
+ const {w,f,$}=await ui(undefined,{mobile:true});try{
+  $('ai-question').value='Unsubmitted authored question';await assert.rejects(w.coconutAcquireCanonicalMigration(),/草稿/);assert.equal(w.idbUI.store.status().blocked,false);$('ai-question').value='';
+  const document=w.idbUI.documents[0];document.notes.one='Final pre-migration save';w.idbUI.store.queueDocument(document.key,document);f.engine.control.holdNextWrite=true;
+  let settled=false;const acquire=w.coconutAcquireCanonicalMigration().then(release=>{settled=true;return release;});await f.engine.tick();
+  assert.equal(settled,false);assert.equal(w.idbUI.store.status().blocked,true);assert.equal(w.document.querySelector('.shell').inert,true);
+  assert.equal(w.idbUI.store.queueDocument(document.key,document).accepted,false);
+  f.engine.control.held.shift().complete();const release=await acquire;assert.equal(f.engine.rows(provider.NAME).get('documents').get(document.key).payload.notes.one,'Final pre-migration save');assert.equal(w.idbUI.store.status().blocked,true);
+  release();assert.equal(w.idbUI.store.status().blocked,false);assert.equal(w.document.querySelector('.shell').inert,false);
  }finally{await w.happyDOM.close();}
 });

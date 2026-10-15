@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 /** Read-only, bounded loopback diagnostics. No app, provider or storage imports. */
 import http from 'node:http';
+import {captionSetupGuidance,CAPTION_START_GUIDANCE} from './caption-setup-guidance.mjs';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 
@@ -12,7 +13,7 @@ const CAPABILITIES = {
   reader:'阅读', local_agents:'本地 AI 接口', subscription_ask:'订阅问答接口',
   subscription_translation:'订阅翻译接口', podcast_import:'公开播客导入',
   caption_import:'内置字幕获取', media_import:'高级媒体处理',
-  local_translation:'离线翻译接口', persistent_tasks:'持久后台任务',
+  local_translation:'离线翻译接口', persistent_tasks:'持久后台任务', canonical_library:'统一书架',
 };
 const record = value => value !== null && typeof value === 'object' && !Array.isArray(value);
 const validPort = port => Number.isInteger(port) && port >= 1 && port <= 65535;
@@ -118,8 +119,10 @@ export async function diagnoseDevelopment({port = DEFAULT_PORT, nodeVersion = pr
     const value = health.data.capabilities[key];
     report.capabilities[key] = typeof value === 'boolean' ? value : null;
   }
+  const library=health.data.library_storage;
+  if(record(library)&&['desktop','development','cli','embedded'].includes(library.mode)&&typeof library.directory==='string'&&library.directory.length<=4096&&!/[\x00-\x1f\x7f]/.test(library.directory))report.library={mode:library.mode,directory:library.directory,enabled:library.enabled===true,code:typeof library.unavailable?.code==='string'&&/^[a-z_]{1,60}$/.test(library.unavailable.code)?library.unavailable.code:null};
   const captions=health.data.caption_sources;
-  if(record(captions)&&typeof captions.available==='boolean'&&typeof captions.code==='string')report.captions={available:captions.available,code:captions.code.slice(0,80)};
+  if(record(captions)&&typeof captions.available==='boolean'&&typeof captions.code==='string')report.captions={available:captions.available,code:/^(?:ready|CAPTION_[A-Z_]{1,60})$/.test(captions.code)?captions.code:'CAPTION_UNKNOWN',providers:Array.isArray(captions.providers)?captions.providers.filter(p=>record(p)&&['x','youtube','bilibili'].includes(p.id)&&typeof p.available==='boolean').map(p=>({id:p.id,label:{x:'X / Twitter',youtube:'YouTube',bilibili:'Bilibili'}[p.id],available:p.available})):[]};
   const executor = await readDoctorMetadata({port, route:'/api/v1/executor', deadline, request});
   report.executor = executor.kind === 'ok' ? executorStatus(executor.data, report.capabilities.persistent_tasks) : 'metadata_unavailable';
   if (executor.kind !== 'ok') report.executorIssue = executor.kind;
@@ -149,10 +152,11 @@ export function formatDoctorReport(report) {
       '能力：health 声明本地处理 worker、上传上限 200 MiB、无付费处理；其他能力未报告',
       '后台摘要 metadata：此服务不支持 Node 后台摘要 v1 协议，不等于服务离线');
   } else if (report.service === 'desktop-bridge') {
-    lines.push('服务：desktop-bridge 在线（health 无法区分 dev、start:light 与 app，也不验证任务目录）');
+    lines.push(report.library?'服务：desktop-bridge 在线（入口与统一书架目录见下方；不验证任务目录）':'服务：desktop-bridge 在线（旧版 health 未报告启动入口，也不验证任务目录）');
     lines.push('接口能力：' + Object.entries(CAPABILITIES).map(([key, label]) => `${label}=${report.capabilities[key] === true ? '已声明' : report.capabilities[key] === false ? '未启用' : '未报告'}`).join('；'));
-    if(report.captions)lines.push(`字幕获取：${report.captions.available?'公开 X 原语言字幕可用；YouTube / Bilibili 未接入':`未就绪（${report.captions.code}）；可导入或粘贴字幕。开发环境需显式设置 COCONUT_CAPTION_PYTHON 为已有兼容 Python 的绝对路径，详见 docs/development-captions.md；不会自动安装依赖。`}`);
-    if(report.captions&&!report.captions.available)lines.push('字幕启动：COCONUT_CAPTION_PYTHON=/absolute/path/to/venv/bin/python npm run dev；已有环境需 yt-dlp==2026.8.19 和 certifi。不会自动安装或切换现有服务。');
+    if(report.library)lines.push(`统一书架：${report.library.mode} · ${report.library.directory} · ${report.library.enabled?'可用，需在书架工具明确确认迁移':`不可用（${report.library.code||'unknown'}），阅读仍可使用`}`,'桌面、开发、轻量 CLI 默认书架目录不同；切换入口不会自动迁移数据。显式 COCONUT_LIBRARY_DIRECTORY 必须为绝对路径。');
+    if(report.captions)lines.push(`字幕获取：${report.captions.available?`已启用：${report.captions.providers?.filter(p=>p.available).map(p=>p.label).join(' / ')||'公开字幕'}；平台访问限制仍可能阻止获取`:`未就绪（${report.captions.code}）；${captionSetupGuidance(report.captions.code)}`}`);
+    if(report.captions&&!report.captions.available)lines.push(CAPTION_START_GUIDANCE);
     const states = {ready:'就绪（仅 metadata，未读取任务内容）', disabled:'未配置持久任务存储；服务仍在线',
       offline:'执行器报告离线；阅读服务仍在线', storage_unavailable:'任务存储不可用；阅读服务仍在线',
       inconsistent:'health 与 executor 声明不一致', unsupported:'不支持的 executor 协议或字段',

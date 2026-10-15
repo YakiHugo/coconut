@@ -21,7 +21,7 @@ test('development startup reports passive real capabilities and serves edited as
   await fs.cp(new URL('../reader/', import.meta.url), readerDirectory, {recursive:true});
   let calls = 0;
   const providers = {ask:async () => { calls++; throw new Error('Unexpected inference'); }, status:async () => { calls++; throw new Error('Unexpected status probe'); }};
-  const {server, origin, executor, taskDirectory} = await startDevelopmentBridge({port:0, taskDirectory:path.join(directory, 'tasks'), readerDirectory, providers});
+  const {server, origin, executor, taskDirectory} = await startDevelopmentBridge({port:0, libraryDirectory:path.join(directory,'library'), taskDirectory:path.join(directory, 'tasks'), readerDirectory, providers});
   started = server;
   assert.equal(server.address().address, '127.0.0.1');
   assert.equal(executor.enabled, true);
@@ -47,7 +47,7 @@ test('development status reports unavailable task storage while the reader still
     await fs.rm(directory, {recursive:true, force:true});
   });
   await fs.writeFile(path.join(directory, 'tasks.json'), 'authored corrupt fixture');
-  const {server, origin, executor} = await startDevelopmentBridge({port:0, taskDirectory:directory});
+  const {server, origin, executor} = await startDevelopmentBridge({port:0, libraryDirectory:path.join(directory,'library'), taskDirectory:directory});
   started = server;
   assert.equal(executor.enabled, false);
   assert.equal((await fetch(origin + '/')).status, 200);

@@ -2,6 +2,7 @@
 import {mkdir,lstat,open} from 'node:fs/promises';
 import path from 'node:path';
 import {randomUUID,createHash} from 'node:crypto';
+import {createMigrationStore,MIGRATION_BYTES,CHUNK_BYTES} from './library-migration.mjs';
 export const LIBRARY_BODY_BYTES=16*1024*1024;
 export const LIBRARY_DOCUMENT_BYTES=8*1024*1024;
 export const LIBRARY_PAGE_BYTES=256*1024;
@@ -12,11 +13,13 @@ export const libraryError=(code,message,status=400)=>Object.assign(new Error(mes
 const invalid=()=>{throw libraryError('invalid_request','Invalid library request');};
 const encode=value=>{try{return JSON.stringify(value,(_key,item)=>{if(item===undefined||typeof item==='function'||typeof item==='symbol'||typeof item==='bigint'||(typeof item==='number'&&!Number.isFinite(item)))invalid();return item;});}catch{invalid();}};
 export function libraryRuntimeSupported(version=process.versions.node){const [major,minor]=version.split('.').map(Number);return major>22||(major===22&&minor>=13);}
-export async function createLibraryStore({directory}={}){
+export async function createLibraryStore({directory,exclusiveWriter=false}={}){
   if(!libraryRuntimeSupported())throw libraryError('runtime_unsupported',`Canonical library requires Node ${LIBRARY_MIN_NODE} or newer`,503);
   if(typeof directory!=='string'||!path.isAbsolute(directory))invalid();
   // Lazy import keeps the existing reader usable on older Node versions.
-  const {DatabaseSync}=await import('node:sqlite');
+  let DatabaseSync;
+  try{({DatabaseSync}=await import('node:sqlite'));}
+  catch{throw libraryError('runtime_unsupported',`Canonical library requires a runtime with node:sqlite (Node ${LIBRARY_MIN_NODE} or newer)`,503);}
   await mkdir(directory,{recursive:true,mode:0o700});
   const privatePath=async(file,directory=false)=>{
     const stat=await lstat(file);
@@ -34,11 +37,12 @@ export async function createLibraryStore({directory}={}){
     try{await privatePath(filename+suffix);}catch(error){if(error.code!=='ENOENT')throw error;}
   }
   const db=new DatabaseSync(filename);
-  let closed=false;
+  let closed=false,transactionDepth=0;
   const transaction=body=>{
     if(closed)throw libraryError('library_closed','Library is closed',503);
-    db.exec('BEGIN IMMEDIATE');
-    try{const result=body();db.exec('COMMIT');return result;}catch(error){db.exec('ROLLBACK');throw error;}
+    if(transactionDepth)return body();
+    db.exec('BEGIN IMMEDIATE');transactionDepth++;
+    try{const result=body();db.exec('COMMIT');return result;}catch(error){db.exec('ROLLBACK');throw error;}finally{transactionDepth--;}
   };
   let epoch;
   const corrupt=()=>{throw libraryError('library_corrupt','Library records failed integrity checks; preserve the directory for recovery',503);};
@@ -46,8 +50,8 @@ export async function createLibraryStore({directory}={}){
   function validateRow(row,sequence){
     let document;try{document=JSON.parse(row.payload);}catch{corrupt();}
     if(!validKey(row.key)||!Number.isSafeInteger(row.revision)||row.revision<1||row.revision>sequence||
-      ![0,1].includes(row.deleted)||!plain(document)||document.key!==row.key||
-      row.bytes!==Buffer.byteLength(row.payload)||row.bytes>LIBRARY_DOCUMENT_BYTES||row.title!==titleOf(document)||
+      ![0,1].includes(row.deleted)||!(document===null&&row.deleted===1)&&(!plain(document)||document.key!==row.key)||
+      row.bytes!==Buffer.byteLength(row.payload)||row.bytes>LIBRARY_DOCUMENT_BYTES||row.title!==(document?titleOf(document):'')||
       typeof row.updated!=='string'||!Number.isFinite(Date.parse(row.updated)))corrupt();
     return document;
   }
@@ -63,16 +67,18 @@ export async function createLibraryStore({directory}={}){
       receipt.receiptKey!==row.key||!validKey(receipt.key)||!['put','delete','restore'].includes(receipt.action)||
       receipt.token?.epoch!==epoch||!Number.isSafeInteger(receipt.token.revision)||receipt.token.revision<1||
       !Number.isSafeInteger(receipt.sequence)||receipt.sequence<receipt.token.revision||receipt.sequence>sequence||
-      receipt.deleted!==(receipt.action==='delete'))corrupt();
+      receipt.deleted!==(receipt.action==='delete')||receipt.identity&&(!Number.isSafeInteger(receipt.identity.lifetime)||receipt.identity.lifetime<1||!Number.isSafeInteger(receipt.identity.position)||receipt.identity.position<0))corrupt();
     const document=db.prepare('SELECT revision FROM documents WHERE key=?').get(receipt.key);
     if(!document||document.revision<receipt.token.revision)corrupt();
     return receipt;
   }
   try{
     db.exec('PRAGMA busy_timeout=3000');
+    // Service instances retain a SQLite OS lock until close/crash; no stale PID files.
+    if(exclusiveWriter)db.exec('PRAGMA locking_mode=EXCLUSIVE');
     // Reject future/foreign schemas before modifying their contents.
     const version=db.prepare('PRAGMA user_version').get().user_version;
-    if(version!==0&&version!==1)throw libraryError('schema_unsupported','Unsupported library schema',503);
+    if(![0,1,2,3].includes(version))throw libraryError('schema_unsupported','Unsupported library schema',503);
     transaction(()=>{
       if(version===0){
         if(db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'").get())throw libraryError('schema_unsupported','Refusing to initialize an existing foreign database',503);
@@ -89,12 +95,31 @@ export async function createLibraryStore({directory}={}){
       const sequence=metadata().sequence;
       for(const row of db.prepare('SELECT * FROM documents').iterate())validateRow(row,sequence);
       for(const row of db.prepare('SELECT * FROM receipts').iterate())validateReceipt(row,sequence);
+      if(version<2){
+        db.exec(`CREATE TABLE identities (key TEXT PRIMARY KEY, lifetime INTEGER NOT NULL, position INTEGER NOT NULL, source TEXT) STRICT;
+          CREATE TABLE migrations (id TEXT PRIMARY KEY, manifest TEXT, state TEXT NOT NULL CHECK(state IN ('staging','cancelled','committed')), receipt TEXT) STRICT;
+          CREATE TABLE migration_chunks (id TEXT NOT NULL, position INTEGER NOT NULL, data TEXT NOT NULL, PRIMARY KEY(id,position)) STRICT;
+          INSERT INTO identities SELECT key,1,revision,NULL FROM documents;
+          PRAGMA user_version=2;`);
+      }
+      if(version<3){db.exec('CREATE TABLE library_identity (id INTEGER PRIMARY KEY CHECK(id=1), media TEXT NOT NULL) STRICT; PRAGMA user_version=3;');const prior=db.prepare("SELECT id FROM migrations WHERE state='committed' ORDER BY id").all();if(prior.length>1)corrupt();const identity=prior.length?createMigrationStore({db,transaction,epoch,metadata,validateRow,validKey,titleOf,corrupt}).status(prior[0].id).receipt.mediaLibraryIdentity:randomUUID();db.prepare('INSERT INTO library_identity VALUES (1,?)').run(identity);}
+      for(const row of db.prepare('SELECT d.key,i.lifetime,i.position FROM documents d LEFT JOIN identities i ON d.key=i.key').iterate())if(!Number.isSafeInteger(row.lifetime)||row.lifetime<1||!Number.isSafeInteger(row.position)||row.position<0)corrupt();
     });
     db.exec('PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL');
-  }catch(error){db.close();throw error;}
+  }catch(error){db.close();if(exclusiveWriter&&error.errcode===5)throw libraryError('library_in_use','Library is already open in another service',503);throw error;}
   const ensure=()=>{if(closed)throw libraryError('library_closed','Library is closed',503);};
-  const meta=row=>({key:row.key,token:{epoch,revision:row.revision},deleted:!!row.deleted,title:row.title,updatedAt:row.updated,bytes:row.bytes});
-  const describe=()=>{ensure();return {protocolVersion:1,enabled:true,backend:'sqlite',epoch,sequence:metadata().sequence,browserMigration:'not_started',limits:{documentBytes:LIBRARY_DOCUMENT_BYTES,requestBytes:LIBRARY_BODY_BYTES,pageBytes:LIBRARY_PAGE_BYTES,pageSize:100},minimumNode:LIBRARY_MIN_NODE};};
+  const meta=row=>({sha256:createHash('sha256').update(row.payload).digest('hex'),identity:db.prepare('SELECT lifetime,position FROM identities WHERE key=?').get(row.key),key:row.key,token:{epoch,revision:row.revision},deleted:!!row.deleted,title:row.title,updatedAt:row.updated,bytes:row.bytes});
+  const mediaNamespace=()=>{
+    const migrated=db.prepare("SELECT id FROM migrations WHERE state='committed' ORDER BY id").all();
+    if(migrated.length>1)corrupt();
+    const persisted=db.prepare('SELECT media FROM library_identity WHERE id=1').get()?.media;
+    if(typeof persisted!=='string'||! /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(persisted))corrupt();
+    if(migrated.length)migration.status(migrated[0].id);
+    const value=persisted;
+    if(typeof value!=='string'||! /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(value))corrupt();
+    return value;
+  };
+  const describe=()=>{ensure();return {protocolVersion:1,enabled:true,backend:'sqlite',epoch,sequence:metadata().sequence,binding:metadata().sequence>0||db.prepare("SELECT id FROM migrations WHERE state='committed' LIMIT 1").get()?{protocolVersion:1,mediaLibraryIdentity:mediaNamespace()}:null,browserMigration:db.prepare("SELECT id FROM migrations WHERE state='committed' LIMIT 1").get()?'committed':'not_started',migration:{protocolVersion:1,maxBytes:MIGRATION_BYTES,chunkBytes:CHUNK_BYTES,maxNodes:2000000},batchProtocolVersion:2,limits:{documentBytes:LIBRARY_DOCUMENT_BYTES,requestBytes:LIBRARY_BODY_BYTES,pageBytes:LIBRARY_PAGE_BYTES,pageSize:100},minimumNode:LIBRARY_MIN_NODE};};
   const get=key=>{ensure();if(!validKey(key))invalid();const row=db.prepare('SELECT * FROM documents WHERE key=?').get(key);return row?{...meta(row),document:validateRow(row,metadata().sequence)}:null;};
   function list({limit=50,after='',expectedSequence}={}){
     ensure();if(!Number.isInteger(limit)||limit<1||limit>100||(after!==''&&!validKey(after)))invalid();
@@ -109,12 +134,12 @@ export async function createLibraryStore({directory}={}){
       return {epoch,sequence,entries,next:rows.length>entries.length?entries.at(-1).key:null};
     });
   }
-  function commit(input){
+  function commit(input,{allowRestoreDocument=false,allowEmptyDelete=false}={}){
     ensure();
     if(!plain(input)||input.protocolVersion!==1||input.epoch!==epoch||!validKey(input.key)||!validKey(input.receiptKey)||!['put','delete','restore'].includes(input.action)||!Object.hasOwn(input,'expected'))invalid();
     if(input.expected!==null&&(!plain(input.expected)||input.expected.epoch!==epoch||!Number.isSafeInteger(input.expected.revision)||input.expected.revision<1))invalid();
     let payload;
-    if(input.action==='put'){
+    if(input.action==='put'||input.action==='restore'&&allowRestoreDocument){
       if(!plain(input.document)||input.document.key!==input.key)invalid();
       payload=encode(input.document);
       if(Buffer.byteLength(payload)>LIBRARY_DOCUMENT_BYTES)throw libraryError('document_too_large','Document exceeds library byte budget',413);
@@ -128,18 +153,34 @@ export async function createLibraryStore({directory}={}){
       const current=db.prepare('SELECT * FROM documents WHERE key=?').get(input.key);
       if(current)validateRow(current,metadata().sequence);
       if(current?input.expected?.revision!==current.revision:input.expected!==null)throw libraryError('revision_conflict','Document changed; reload before saving',409);
-      if((input.action==='put'&&current?.deleted)||(input.action==='delete'&&(!current||current.deleted))||(input.action==='restore'&&(!current||!current.deleted)))throw libraryError('lifecycle_conflict','Document lifecycle changed',409);
+      if((input.action==='put'&&current?.deleted)||(input.action==='delete'&&(!current&&!allowEmptyDelete||current?.deleted))||(input.action==='restore'&&(!current||!current.deleted)))throw libraryError('lifecycle_conflict','Document lifecycle changed',409);
       const sequence=describe().sequence+1;
       if(!Number.isSafeInteger(sequence)||!Number.isSafeInteger((current?.revision||0)+1))throw libraryError('revision_exhausted','Library revision exhausted',503);
       const revision=(current?.revision||0)+1,deleted=input.action==='delete'?1:0;
-      payload??=current.payload;
-      const parsed=JSON.parse(payload),title=titleOf(parsed),updated=new Date().toISOString(),bytes=Buffer.byteLength(payload);
+      payload??=current?.payload||'null';
+      if(input.action==='restore'&&payload==='null')throw libraryError('missing_restore_payload','Restore requires a complete document',409);
+      const parsed=JSON.parse(payload),title=parsed?titleOf(parsed):'',updated=new Date().toISOString(),bytes=Buffer.byteLength(payload);
       db.prepare('INSERT INTO documents VALUES (?,?,?,?,?,?,?) ON CONFLICT(key) DO UPDATE SET revision=excluded.revision,deleted=excluded.deleted,payload=excluded.payload,title=excluded.title,updated=excluded.updated,bytes=excluded.bytes').run(input.key,revision,deleted,payload,title,updated,bytes);
+      const identity=current?db.prepare('SELECT lifetime,position FROM identities WHERE key=?').get(input.key):{lifetime:1,position:Math.max(sequence,Number(db.prepare('SELECT max(position) AS position FROM identities').get().position??-1)+1)};
+      if(!identity||!Number.isSafeInteger(identity.position))corrupt();
+      if(input.action==='restore')identity.lifetime++;
+      if(!Number.isSafeInteger(identity.lifetime))corrupt();
+      db.prepare('INSERT INTO identities VALUES (?,?,?,NULL) ON CONFLICT(key) DO UPDATE SET lifetime=excluded.lifetime').run(input.key,identity.lifetime,identity.position);
       db.prepare('UPDATE metadata SET sequence=? WHERE id=1').run(sequence);
-      const receipt={protocolVersion:1,receiptKey:input.receiptKey,action:input.action,key:input.key,token:{epoch,revision},deleted:!!deleted,sequence};
+      const receipt={protocolVersion:1,receiptKey:input.receiptKey,action:input.action,key:input.key,token:{epoch,revision},deleted:!!deleted,sequence,identity:{lifetime:identity.lifetime,position:identity.position}};
       db.prepare('INSERT INTO receipts VALUES (?,?,?)').run(input.receiptKey,digest,JSON.stringify(receipt));
       return receipt;
     });
   }
-  return {describe,get,list,commit,close(){if(!closed){db.close();closed=true;}}};
+  const migration=createMigrationStore({db,transaction,epoch,metadata,validateRow,validKey,titleOf,corrupt});
+  function commitBatch(input){
+    if(!plain(input)||input.protocolVersion!==2||input.epoch!==epoch||!Array.isArray(input.commands)||input.commands.length<1||input.commands.length>100||Buffer.byteLength(encode(input))>LIBRARY_BODY_BYTES)invalid();
+    const keys=new Set();for(const command of input.commands){if(!plain(command)||keys.has(command.key)||!Object.hasOwn(command,'expectedIdentity')||command.expected===null&&command.expectedIdentity!==null||command.expected!==null&&(!plain(command.expectedIdentity)||!Number.isSafeInteger(command.expectedIdentity.lifetime)||command.expectedIdentity.lifetime<1||!Number.isSafeInteger(command.expectedIdentity.position)||command.expectedIdentity.position<0))invalid();keys.add(command.key);}
+    return transaction(()=>({protocolVersion:2,epoch,receipts:input.commands.map(command=>{
+      const receipt=commit({...command,protocolVersion:1,epoch},{allowRestoreDocument:command.action==='restore',allowEmptyDelete:true});
+      if(!receipt.identity)throw libraryError('receipt_legacy','Legacy receipt needs explicit reload',409);
+      if(receipt.identity.lifetime!==(command.expectedIdentity?command.expectedIdentity.lifetime+(command.action==='restore'?1:0):1)||command.expectedIdentity&&receipt.identity.position!==command.expectedIdentity.position)throw libraryError('identity_conflict','Document lifetime changed',409);return receipt;
+    })}));
+  }
+  return {describe,get,list,commit,commitBatch,migration,close(){if(!closed){db.close();closed=true;}}};
 }

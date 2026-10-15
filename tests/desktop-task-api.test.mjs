@@ -112,10 +112,10 @@ test('development bridge restart makes completed results independently retrievab
  const {startDevelopmentBridge}=await import('../desktop/dev.mjs'),directory=await fs.mkdtemp(path.join(os.tmpdir(),'coconut-dev-result-rescue-'));let calls=0,server;
  const providers={ask:async()=>{calls++;return {answer:'Persisted development result.',citations:['a']};},status:()=>{throw new Error('No login probes');}};
  t.after(async()=>{if(server)await new Promise(resolve=>server.shutdown(resolve));await fs.rm(directory,{recursive:true,force:true});});
- let running=await startDevelopmentBridge({port:0,taskDirectory:directory,providers});server=running.server;
+ let running=await startDevelopmentBridge({libraryDirectory:null,port:0,taskDirectory:directory,providers});server=running.server;
  const connect=origin=>Tasks.createClient({fetch:(relative,options)=>fetch(origin+'/'+relative,{...options,headers:{...options?.headers,Origin:origin}})});
  let client=connect(running.origin);const submitted=await client.submit(input()),finished=await until(client,submitted.task.taskId,'succeeded');await new Promise(resolve=>server.shutdown(resolve));server=null;
- running=await startDevelopmentBridge({port:0,taskDirectory:directory,providers});server=running.server;client=connect(running.origin);
+ running=await startDevelopmentBridge({libraryDirectory:null,port:0,taskDirectory:directory,providers});server=running.server;client=connect(running.origin);
  const listed=(await client.list()).tasks;assert.equal(listed.length,1);assert.equal(listed[0].result,undefined);const recovered=Tasks.recoveryFor((await client.get(listed[0].taskId)).task);
  assert.equal(recovered.task.taskId,finished.taskId);assert.equal(recovered.task.attemptId,finished.attemptId);assert.equal(recovered.result.answer,'Persisted development result.');assert.deepEqual(recovered.result.input_snapshot,finished.result.input_snapshot);assert.equal(calls,1);assert.equal(recovered.documents,undefined);assert.equal(recovered.background_summary_lifetime,undefined);
 });

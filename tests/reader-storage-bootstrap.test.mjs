@@ -96,3 +96,23 @@ test('non-JSON structured-clone corruption cannot silently become a lossy comple
   finally{await f.w.happyDOM.close();}
  }
 });
+
+test('existing-library discovery is passive until backup tools open and explains unavailable service',async()=>{
+ let calls=0,server={enabled:false};const canonical={request:async()=>{calls++;return server;}};
+ const f=setup(async()=>({ok:true,backend:'indexeddb',loaded:{documents:[]},adapter:{},canonical}));
+ try{
+  await tick();assert.equal(calls,0);const details=f.w.document.querySelector('.library-backup'),button=[...details.querySelectorAll('button')].find(b=>b.textContent==='连接已有电脑书架');assert.equal(button.hidden,true);
+  details.open=true;details.dispatchEvent(new f.w.Event('toggle'));await tick();assert.equal(button.hidden,true);assert.match(details.textContent,/服务未启用/);
+  server={enabled:true,binding:{protocolVersion:1}};details.dispatchEvent(new f.w.Event('toggle'));await tick();assert.equal(button.hidden,false);assert.match(details.textContent,/当前仍使用本浏览器书架/);
+  server={enabled:true,binding:null};details.dispatchEvent(new f.w.Event('toggle'));await tick();assert.equal(button.hidden,true);assert.match(details.textContent,/尚无可连接/);
+ }finally{await f.w.happyDOM.close();}
+});
+test('cancelled connection does not acquire authority and pre-commit failure releases browser barrier',async()=>{
+ let acquired=0,released=0,connected=0;const canonical={request:async()=>({enabled:true,binding:{protocolVersion:1}}),connect:async()=>{connected++;throw Error('offline before binding');},marker:async()=>undefined};
+ const f=setup(async()=>({ok:true,backend:'indexeddb',loaded:{documents:[]},adapter:{},canonical}));
+ try{
+  await tick();f.w.coconutAcquireCanonicalMigration=async()=>{acquired++;return ()=>{released++;};};const details=f.w.document.querySelector('.library-backup');details.open=true;details.dispatchEvent(new f.w.Event('toggle'));await tick();
+  const button=[...details.querySelectorAll('button')].find(b=>b.textContent==='连接已有电脑书架');f.w.confirm=()=>false;button.click();await tick();assert.equal(acquired,0);assert.equal(connected,0);
+  f.w.confirm=()=>true;button.click();await tick();assert.equal(acquired,1);assert.equal(connected,1);assert.equal(released,1);assert.equal(f.w.CoconutStorageBootstrap.phase,'ready');assert.equal(f.w.document.querySelector('.shell').inert,false);
+ }finally{await f.w.happyDOM.close();}
+});

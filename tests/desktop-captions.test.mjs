@@ -84,3 +84,31 @@ test('HTTP caption import carries authoritative loss diagnostics and rejects all
  fixture=captionFixtureResult({onlyInvalid:true});const invalid=await send();assert.equal(invalid.status,400);assert.match((await invalid.json()).error,/必须包含/);
  fixture=captionFixtureResult({complete:true});const normal=await send();assert.equal(normal.status,200);assert.deepEqual((await normal.json()).diagnostics,[]);assert.equal(calls,3);
 });
+
+test('platform URL normalization preserves identity and rejects redirects, collections and unsupported parts',()=>{
+ for(const input of ['https://youtu.be/BaW_jenozKc?t=4','https://m.youtube.com/shorts/BaW_jenozKc','https://youtube.com/watch?v=BaW_jenozKc&list=ignored'])assert.equal(captionSource(input).url,'https://www.youtube.com/watch?v=BaW_jenozKc');
+ assert.equal(captionSource('https://m.bilibili.com/video/BV1xx411c7mD/?share=1').url,'https://www.bilibili.com/video/BV1xx411c7mD');
+ for(const input of ['https://youtu.be/BaW_jenozKc/extra','https://youtube.com/watch?v=BaW_jenozKc&v=different00','https://youtube.com/playlist?list=PL1','https://b23.tv/short','https://www.bilibili.com/video/BV1xx411c7mD?p=2','https://www.bilibili.com/video/av123'])assert.throws(()=>captionSource(input));
+});
+test('platform readiness and media identity are independent',async()=>{
+ const r=result();r.source={...r.source,url:'https://www.youtube.com/watch?v=BaW_jenozKc',id:'BaW_jenozKc',extractor:'youtube',live_status:'not_live'};
+ const captions=createCaptionService({helper:{extractCaptions:async()=>r},enabledProviders:['youtube']});
+ assert.equal(captions.available,true);assert.deepEqual(captions.providers,['youtube']);
+ assert.equal((await captions.importCaption({url:r.source.url})).document.provenance.source_platform,'youtube');
+ await assert.rejects(captions.importCaption({url}),/尚未启用/);
+ r.source.id='different00';await assert.rejects(captions.importCaption({url:r.source.url}),/来源/);
+});
+test('network uncertainty stays distinct from missing or restricted captions',async()=>{
+ const receipt=await service(async()=>({status:'network_unavailable'})).importCaption({url});
+ assert.equal(receipt.status,'network_unavailable');assert.match(receipt.message,/网络/);assert.equal(receipt.document,undefined);
+});
+
+
+test('YouTube completion evidence is required while completed broadcasts stay importable',async()=>{
+ const r=result();r.source={...r.source,url:'https://www.youtube.com/watch?v=BaW_jenozKc',id:'BaW_jenozKc',extractor:'youtube'};
+ const captions=createCaptionService({helper:{extractCaptions:async()=>r},enabledProviders:['youtube']});
+ await assert.rejects(captions.importCaption({url:r.source.url}),/已结束/);
+ r.source.live_status='was_live';assert.equal((await captions.importCaption({url:r.source.url})).status,'ready');
+ const incomplete=await service(async()=>({status:'metadata_incomplete'})).importCaption({url});
+ assert.equal(incomplete.status,'metadata_incomplete');assert.equal(incomplete.document,undefined);
+});

@@ -1,3 +1,4 @@
+import {selectionActionsBrowser} from './helpers/selection-actions-browser.mjs';
 import {navigateReadingStop} from './helpers/transcript-navigation-browser.mjs';
 import {openCueActions} from './cue-actions-browser.mjs';
 import {splitCueFixture} from './helpers/split-cue-fixture.mjs';
@@ -143,6 +144,7 @@ try {
  await page.locator('#passage-body .passage-cue[data-cue-id="resume-900"]').waitFor({state:'visible'});
  check('single_saved_json_resumes_late_passage',await page.locator('#passage-body .passage-cue[data-cue-id="resume-900"]').evaluate(cue=>cue.closest('.passage')===document.activeElement));
  check('single_saved_json_resume_does_not_autoplay',await page.evaluate(()=>[...document.querySelectorAll('audio,video')].every(player=>player.paused)));
+ await selectionActionsBrowser(page,{check,capture});
  await page.locator('#file').setInputFiles(fixturePath);
  await page.waitForFunction(title=>document.getElementById('title').textContent===title,fixture.title);
  await page.locator('#reader-workspace').waitFor({state:'visible'});

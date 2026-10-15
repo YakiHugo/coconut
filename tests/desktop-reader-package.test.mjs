@@ -91,3 +91,13 @@ test('quotation is staged byte-for-byte, loads before app, and corrupt packaged 
  await verifyReaderResources(fixture.reader);await writeFile(path.join(fixture.reader,'quotation.js'),'/* mismatched package */');
  await assert.rejects(verifyReaderResources(fixture.reader),/asset bytes do not match page token: quotation.js/);
 });
+
+test('canonical adapter is staged exactly and missing or corrupted packaged bytes fail closed',async t=>{
+ const fixture=await layout(t,'extracted'),name='canonical-library.js';
+ assert.deepEqual(await readFile(path.join(fixture.reader,name)),await readFile(path.join(root,'reader',name)));
+ await verifyReaderResources(fixture.reader);
+ await writeFile(path.join(fixture.reader,name),'/* corrupted canonical adapter */');
+ await assert.rejects(verifyReaderResources(fixture.reader),/asset bytes do not match page token: canonical-library.js/);
+ await rm(path.join(fixture.reader,name));
+ await assert.rejects(verifyReaderResources(fixture.reader),error=>error.code==='ENOENT'&&error.path.endsWith(name));
+});

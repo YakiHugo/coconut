@@ -236,3 +236,12 @@ test('project publisher read cancelled by Add and Back cannot attach its late re
   assert.equal(h.api.active().project_kind,'audio_only');assert.equal(h.$('audio-project-status').textContent,status);
  }finally{await h.w.happyDOM.close();}
 });
+
+
+test('podcast browser guard permits only an explicitly armed exact local library GET',async()=>{
+ const {isExplicitLibraryDiscovery:allowed}=await import('./helpers/explicit-library-discovery.mjs');
+ const origin='http://127.0.0.1:8123',request={url:origin+'/api/v1/library',method:'GET',body:null};
+ assert.equal(allowed(request,origin,true),true);
+ assert.equal(allowed(request,origin,false),false,'startup, reload and restore have no allowance');
+ for(const change of [{method:'POST'},{method:'HEAD'},{body:'{}'},{url:origin+'/api/v1/library/catalog'}, {url:origin+'/api/v1/library/migration'}, {url:origin+'/api/v1/library?token=authored'}, {url:origin+'/api/v1/library#extra'}, {url:origin+'/api/ask'}, {url:origin+'/api/language-tools'}, {url:origin+'/api/captions/import'}, {url:'https://external.example/api/v1/library'}, {url:'http://user:secret@127.0.0.1:8123/api/v1/library'}])assert.equal(allowed({...request,...change},origin,true),false,JSON.stringify(change));
+});

@@ -95,7 +95,7 @@ test('healthy bridge exposes only allowlisted booleans and passive metadata, wit
   }
   assert.ok(requests.every(req => req.destroyed));
   assert.ok(!JSON.stringify(report).includes(PRIVATE)); assert.ok(!text.includes(PRIVATE));
-  assert.match(text, /无法区分 dev、start:light 与 app/); assert.match(text, /不代表模型可用/);
+  assert.match(text, /旧版 health 未报告启动入口/); assert.match(text, /不代表模型可用/);
 });
 
 test('the full Python legacy health signature is online with unsupported summary metadata, never probed as a bridge', async () => {
@@ -196,7 +196,7 @@ test('real development bridge diagnostics are passive and leave its authored tas
   let providerCalls = 0;
   const providers = {status:async () => { providerCalls++; throw new Error('No authentication probe'); },
     ask:async () => { providerCalls++; throw new Error('No inference'); }};
-  const {server} = await startDevelopmentBridge({port:0, taskDirectory:directory, providers});
+  const {server} = await startDevelopmentBridge({libraryDirectory:null,port:0, taskDirectory:directory, providers});
   t.after(() => new Promise(resolve => server.shutdown(resolve)));
   const paths = []; server.on('request', req => paths.push([req.method, req.url]));
   const snapshot = async () => Object.fromEntries(await Promise.all((await fs.readdir(directory)).map(async name => [name, await fs.readFile(path.join(directory, name), 'utf8')])));

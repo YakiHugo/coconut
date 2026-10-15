@@ -4,6 +4,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { readFile } from 'node:fs/promises';
 import { startBridge } from './server.mjs';
+import {libraryLocation,libraryStartupMessage} from './library-location.mjs';
 import { createCaptionHelper } from './caption-helper.mjs';
 import { createCaptionService } from './caption-service.mjs';
 import { Updater } from './updater.mjs';
@@ -61,9 +62,11 @@ else {
       if(status.ready)captionService=createCaptionService({helper:captionHelper,readerDirectory,enabledProviders:['x']});
     }
     localMediaService=createLocalMediaService({userDataDirectory:app.getPath('userData'),readerDirectory});
-    server = await startBridge({port:PORT,readerDirectory,captionService,localMediaService,taskDirectory:path.join(app.getPath('userData'),'tasks')});
+    const library=libraryLocation({mode:'desktop',userDataDirectory:app.getPath('userData')});
+    server = await startBridge({libraryDirectory:library.directory,startupMode:'desktop',port:PORT,readerDirectory,captionService,localMediaService,taskDirectory:path.join(app.getPath('userData'),'tasks')});
     if(startupAbort.signal.aborted){server.shutdown();return;}
     const origin = `http://127.0.0.1:${PORT}`;
+    console.log(libraryStartupMessage(library,await fetch(origin+'/api/v1/library').then(response=>response.json())));
     window = new BrowserWindow({width:1280,height:880,minWidth:780,minHeight:620,show:process.env.COCONUT_SMOKE_TEST !== '1',title:'Coconut',icon:windowIcon,
       webPreferences:{preload:path.join(ROOT,'update-preload.cjs'),nodeIntegration:false,contextIsolation:true,sandbox:true,webSecurity:true,allowRunningInsecureContent:false,webviewTag:false}});
     const lifecycle=createLifecycleOwnership();

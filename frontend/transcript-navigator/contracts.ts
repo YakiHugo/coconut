@@ -11,3 +11,12 @@ export interface NavigationSession {
 }
 export interface NavigationBridge { open(): NavigationSession | null; available(): boolean }
 declare global { interface Window { CoconutTranscriptNavigation?: NavigationBridge } }
+
+export interface SelectionActionSession {
+ readonly text: string;
+ isCurrent(): boolean;
+ run(intent: 'explain' | 'translate'): boolean;
+ bounds(): {left:number;right:number;top:number;bottom:number} | null;
+}
+export interface SelectionActionBridge { capture(): SelectionActionSession | null; preview(): SelectionActionSession | null }
+declare global { interface Window { CoconutSelectionActions?: SelectionActionBridge } }
