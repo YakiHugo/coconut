@@ -102,21 +102,34 @@ def main():
         return {'status': 'ok', 'protocol': PROTOCOL, 'version': __version__,
                 'python': '.'.join(map(str, sys.version_info[:3])), 'publicExtraction': PUBLIC_EXTRACTION,
                 'guardProtocol': 1, 'tlsRootsVerified': True,
-                'developmentProviders': ['x', 'youtube', 'bilibili']}
+                'developmentProviders': ['x', 'youtube', 'bilibili'], 'developmentProxyProtocol': 1}
     if operation == 'authored-fixture' and set(request) == {'operation', 'endpoint'}:
         if not isinstance(request['endpoint'], str) or len(request['endpoint']) > 200:
             return {'status': 'unavailable'}
         return authored_fixture(request['endpoint'])
-    if operation in ('extract', 'extract-development') and set(request) == {'operation', 'url', 'language'}:
+    extraction_keys = {'operation', 'url', 'language'}
+    development_proxy = operation == 'extract-development' and set(request) == extraction_keys | {'trustedProxy'}
+    if operation in ('extract', 'extract-development') and (set(request) == extraction_keys or development_proxy):
         if not isinstance(request['url'], str) or len(request['url']) > 2048:
             return {'status': 'unavailable'}
         language = request['language']
         if language is not None and (not isinstance(language, str) or len(language) > 30):
             return {'status': 'language_required'}
+        proxy = None
+        if development_proxy:
+            from scripts.caption_proxy_transport import validate_proxy
+            from scripts.public_x_caption_guard import StopProof
+            proxy = request['trustedProxy']
+            try:
+                if proxy is None or validate_proxy(proxy) is None or urllib.parse.urlsplit(request['url']).hostname not in ('www.youtube.com', 'www.bilibili.com'):
+                    raise ValueError('Invalid proxy scope')
+            except (StopProof, ValueError):
+                return {'status': 'guard_stopped', 'diagnostic': {'stage': 'initialization',
+                        'reason': 'proxy_configuration_invalid', 'requests_attempted': 0, 'responses_received': 0}}
         from scripts.public_x_caption_guard import extract_public_captions
         if operation == 'extract-development' and urllib.parse.urlsplit(request['url']).hostname in ('www.youtube.com', 'www.bilibili.com'):
             from scripts.public_video_caption_guard import extract_public_video_captions
-            result = extract_public_video_captions(request['url'], language, ca_file=certifi.where())
+            result = extract_public_video_captions(request['url'], language, ca_file=certifi.where(), proxy=proxy)
         else:
             result = extract_public_captions(request['url'], language, ca_file=certifi.where())
         if result.get('status') in ('access_restricted', 'unavailable', 'language_required', 'network_unavailable', 'metadata_incomplete', 'no_matching_captions', 'extractor_failed', 'caption_file_invalid', 'caption_parse_failed', 'guard_stopped'):

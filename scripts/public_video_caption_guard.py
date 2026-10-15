@@ -22,6 +22,7 @@ from urllib.parse import parse_qs, urlparse
 from unittest.mock import patch
 from scripts.public_x_caption_guard import StopProof, NoRedirect, PINNED_VERSION
 import subtitle_import
+from scripts.caption_proxy_transport import TrustedProxyHTTPSHandler, validate_proxy
 
 MAX_REQUESTS = 32
 MAX_RESPONSE = 4 * 1024 * 1024
@@ -93,21 +94,24 @@ def source_identity(url):
 
 
 class VideoTransport:
-    def __init__(self, url, ca_file=None):
+    def __init__(self, url, ca_file=None, proxy=None):
         self.provider, self.identity = source_identity(url)
         self.count = self.total = self.responses = 0
         self.stage = 'initialization'
         self.youtube_access_verified = False
         self.started = time.monotonic()
-        self.opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect(),
-            PublicHTTPSHandler(context=ssl.create_default_context(cafile=ca_file)))
+        endpoint = validate_proxy(proxy)
+        context = ssl.create_default_context(cafile=ca_file)
+        handler = (TrustedProxyHTTPSHandler(endpoint, context=context) if endpoint else
+                   PublicHTTPSHandler(context=context))
+        self.opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect(), handler)
 
     def kind(self, url, method, data, headers):
         p = urlparse(url)
         q = parse_qs(p.query, keep_blank_values=True)
         if (p.scheme != 'https' or p.username or p.password or p.port not in (None, 443) or p.fragment
                 or any(part in ('.', '..') for part in p.path.split('/'))
-                or any(k.lower() in ('cookie', 'authorization', 'proxy-authorization', 'x-csrf-token') for k in headers)):
+                or any(k.lower() in ('cookie', 'authorization', 'proxy-authorization', 'x-csrf-token', 'host', 'connection', 'proxy-connection') for k in headers)):
             raise StopProof('request_scope_stopped')
         if self.provider == 'youtube' and p.hostname == 'www.youtube.com':
             if method == 'GET' and data is None:
@@ -300,7 +304,7 @@ def guarded_extractors(transport):
         yield
 
 
-def extract_public_video_captions(url, language=None, *, ca_file=None):
+def extract_public_video_captions(url, language=None, *, ca_file=None, proxy=None):
     import tempfile
     language_required = False
     completion = None
@@ -345,7 +349,7 @@ def extract_public_video_captions(url, language=None, *, ca_file=None):
         return selected
 
     try:
-        transport = VideoTransport(url, ca_file)
+        transport = VideoTransport(url, ca_file, proxy=proxy)
         with tempfile.TemporaryDirectory(prefix='coconut-video-captions-') as temporary:
             directory = Path(temporary)
             with guarded_extractors(transport), patch.object(subtitle_import, 'select_track', select), patch.object(subtitle_import, 'subtitle_document', parse):
@@ -372,10 +376,13 @@ def extract_public_video_captions(url, language=None, *, ca_file=None):
                    'request_scope_stopped', 'non_public_address', 'identity_mismatch', 'budget_exceeded',
                    'unexpected_response', 'upstream_error', 'dependency_mismatch',
                    'alternate_extractor_stopped', 'unsupported_request', 'external_execution_stopped',
-                   'duration_unavailable', 'redirect_stopped'}
+                   'duration_unavailable', 'redirect_stopped', 'proxy_configuration_invalid',
+                   'proxy_unavailable', 'proxy_auth_required', 'proxy_connect_rejected', 'origin_tls_failed'}
         reason = stopped.outcome if stopped.outcome in reasons else 'guard_stopped'
         status = {'access_restricted': 'access_restricted', 'transport_unavailable': 'network_unavailable',
-                  'metadata_incomplete': 'metadata_incomplete'}.get(reason, 'guard_stopped')
+                  'metadata_incomplete': 'metadata_incomplete', 'proxy_unavailable': 'network_unavailable',
+                  'proxy_auth_required': 'network_unavailable', 'proxy_connect_rejected': 'network_unavailable',
+                  'origin_tls_failed': 'network_unavailable'}.get(reason, 'guard_stopped')
         return failure(status, reason)
     except Exception:
         if language_required:
