@@ -34,8 +34,5 @@ export function Recovery({ store }: {
             input.current.value = '';
     } };
     return <details className="recovery-entry"><summary>已有文字稿或需要恢复数据？</summary><p>恢复完整 JSON 书架备份会保留当前内容；不同版本分别保存。</p><button disabled={busy} onClick={() => {if(store.closeSnapshot().nonContentReasons.length)return;const captured=store.getSnapshot();picker.controller.begin(input.current,()=>{const value=store.getSnapshot();return value.workspace===captured.workspace&&value.activeKey===captured.activeKey&&value.documents===captured.documents;});}}>恢复书架备份</button><input key={picker.inputKey} ref={input} hidden type="file" accept=".json" onChange={event => {const element=event.currentTarget,file=element.files?.[0];void picker.controller.accept(element,async({current})=>{if(!file||!current())return;owner.current++;if(file.size>50*1024*1024)setReview(file);else await read(file,current);});}}/>{review && <section role="group" aria-label="确认读取大型备份"><p>{review.name} · {(review.size / 1024 / 1024).toFixed(2)} MiB。读取大型备份可能占用较多内存，原文件不会改变。</p><button onClick={() => void read(review)}>确认读取</button><button onClick={() => { setReview(null); if (input.current)
-        input.current.value = ''; }}>取消</button></section>}{busy && <button onClick={() => { owner.current++; setBusy(false); setMessage('已取消后续读取；已开始的保存以实际回执为准。'); }}>取消读取</button>}<p role="status">{message}</p><p>字幕与编码核对在下方完成；原始存储救援也可在书架存储设置中导出。</p><a href="compatibility.html" onClick={event => { if (store.getSnapshot().save.unsaved || store.getSnapshot().dirty) {
-        event.preventDefault();
-        setMessage('请先保存或导出本页修改。');
-    } }}>打开兼容恢复工具</a></details>;
+        input.current.value = ''; }}>取消</button></section>}{busy && <button onClick={() => { owner.current++; setBusy(false); setMessage('已取消后续读取；已开始的保存以实际回执为准。'); }}>取消读取</button>}<p role="status">{message}</p><p>字幕与编码核对在下方完成；原始存储救援也可在书架存储设置中导出。</p></details>;
 }

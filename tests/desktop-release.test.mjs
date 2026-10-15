@@ -68,9 +68,9 @@ test('0.7.9 notes retain three-change scope, recovery and existing v2 refusal bo
  const compatibility=await readFile(new URL('../docs/bilingual-excerpts.md',import.meta.url),'utf8');
  const readme=await readFile(new URL('../README.md',import.meta.url),'utf8');
  const publisher=await readFile(new URL('../scripts/publish_desktop_release.mjs',import.meta.url),'utf8');
- assert.ok(readme.includes('目标版本为 `0.7.9`'));
+ assert.ok(readme.includes('版本号未改变时，不覆盖已经发布的开发包'));
  assert.ok(readme.includes('https://github.com/YakiHugo/coconut/releases'));
- for(const phrase of ['升级前','完整书架 JSON','0.7.6','整个书架','不要清数据绕过'])assert.ok(readme.includes(phrase),phrase);
+ for(const phrase of ['完整 JSON 救援','不要清除站点数据','不含音视频文件或本机文件授权','旧界面、兼容入口和迁移期预览已移除'])assert.ok(readme.includes(phrase),phrase);
  for(const phrase of ["宽幅书架查找", "每页40篇", "返回书架结果", "搜索会话不写入备份或持久存储", "不保证译文语义正确", "直接选择阅读语言", "阅读显示", "缺失或过期译文明示", "未提交笔记与输入法状态", "不修改 AI 任务目标或发送同意", "不抢回已重新选择的显示语言", "「仅原文」的隐藏选择只在本页", "清除旧的双语导出勾选", "浮动原声栏后退10秒", "暂停时仍暂停，播放时继续播放", "后退退出当前片段循环或有边界的段落回听", "后续新的外部跳转仍会解除循环", "不承诺逐采样精度", "不会记住或恢复本地媒体的磁盘访问权", "刷新后仍须重选媒体", "exact_excerpts v2", "本版沿用它，不新增 schema", "包括成果集中的双语摘录", "legacy／IndexedDB", "拒绝打开整个书架", "实际 0.7.6 模块", "保留原数据", "支持版本可重新打开完整记录", "这不代表降级兼容", "不要为了让旧版打开而清数据", "原始 JSON", "不代表所有字体都能显示", "U+20000", "不构成发布或验证完成凭证"])assert.ok(notes.includes(phrase),phrase);
  for(const phrase of ['0.7.6','拒绝 v2','嵌入成果集','拒绝整个书架','保留原数据'])assert.ok(compatibility.includes(phrase),phrase);
  for(const phrase of ['Changes since 0.7.8','same-profile legacy/IndexedDB startup can fail closed','This is not downgrade compatibility','No database or library-backup protocol migration','this release adds no schema'])assert.ok(publisher.includes(phrase),phrase);

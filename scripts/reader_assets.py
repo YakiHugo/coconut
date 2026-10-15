@@ -20,7 +20,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--check', action='store_true')
     args = parser.parse_args()
-    for entry in ('index.html', 'compatibility.html', 'react-preview.html'):
+    for entry in ('index.html',):
         path = ROOT / entry
         html = path.read_text()
         expected = refresh(html)

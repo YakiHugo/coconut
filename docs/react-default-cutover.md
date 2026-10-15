@@ -1,14 +1,21 @@
-# React default-entry cutover candidate
+# React application entry
 
-This isolated candidate replaces `reader/index.html` with the React entry. No legacy DOM renderer is loaded beneath its root. The prior page is retained byte-for-byte as `compatibility.html` (apart from subsequent shared-asset cache-token refreshes). Compatibility is explicitly opened through recovery links and never silently selected on startup failure.
+`reader/index.html` is the application at `/` and `/index.html`. React owns discovery, library, reading, player, AI/tasks, recovery and native controls. There is no alternate legacy renderer or preview document. Startup failures stay in the React recovery view; they do not redirect to an older interface.
+
+## Shared modules
+
+The entry retains the pure domain and persistence modules it actually uses: client capabilities, summary validation, document core, passages/playback, task client, library save pipeline, IndexedDB adapter, canonical library and storage provider. Removing the former DOM interface does not authorize clearing user data, relaxing source validation or presenting queued writes as saved.
 
 ## Evidence boundaries
 
-- `test:react`, `test:react-browser`, and `test:react-matrix` exercise the new default entry. The browser matrix uses authored content, real Node/SQLite persistence, and fake model/native receipts. No live model or remote media inference is required.
-- Legacy DOM unit tests and legacy browser fixtures explicitly use the compatibility document and retain their assertions. Their green status is compatibility regression evidence, not default React acceptance.
-- The existing packaged native reading/media suites explicitly navigate to compatibility after observing the default React application. A separate default packaged acceptance suite must pass before this candidate is releasable.
-- Every HTML dependency graph is cache-token checked and verified during packaging. The same-origin native bridge only admits the explicit root, index and compatibility document URLs.
+- `test:react`, the source-first browser suite, production matrix and palette suite exercise the default application.
+- The production matrix uses authored content with real Node/SQLite persistence. Model and browser-native receipts are explicitly simulated where indicated.
+- The actual packaged macOS suite runs the default React entry, real menu commands/file choosers, durable notes/backups, remembered media and close/restart recovery. Native keep-editing dialog responses are authored.
+- Public source/helper transport checks establish their specific backend behavior. They do not establish live inference quality or every platform-to-React journey.
+- The default HTML dependency graph is checked during building and packaging. Native bridge access is restricted to the trusted root/index document.
 
-## Outstanding release gates
+## Change acceptance
 
-Native File commands and update controls are now connected to React-owned controls. All three file pickers hold synchronous ownership until cancel or accepted asynchronous work settles; stale inputs and newer source intents cannot import old choices. The separate default packaged suite and real theme browser checks are wired into CI. The candidate is not ready to merge until independent review is clear and all relevant CI passes at the final exact commit. Default-feature review and the current preview repair are separate frozen trees.
+Every change still requires independent review and final exact-head CI, including the default browser and actual packaged lifecycle suites. The migration baseline `c2db14c7d30db00c47b3461608f329b514cb8f93` passed those gates. That result does not substitute for the final legacy-removal commit's CI.
+
+No user storage is deleted by removing the legacy frontend. Existing recovery/export controls remain available in React. A local ASR executor is optional and explicitly configured; frontend cleanup does not install or download models.

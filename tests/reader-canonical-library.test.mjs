@@ -1,14 +1,32 @@
-// Compatibility renderer regression; not default React acceptance.
+// Shared reader domain regressions used by the React application.
 import test from 'node:test';
+
 import assert from 'node:assert/strict';
+
 import fs from 'node:fs/promises';
+
 import os from 'node:os';
+
 import path from 'node:path';
+
 import {createRequire} from 'node:module';
+
 import {createLibraryStore} from '../desktop/library-store.mjs';
+
 import {transactionDouble} from './helpers/indexeddb-transaction-double.mjs';
-const require=createRequire(import.meta.url),idb=require('../reader/indexeddb-document-adapter.js'),canonical=require('../reader/canonical-library.js'),provider=require('../reader/storage-provider.js'),legacyModule=require('../reader/library-store.js');
+
+const require=createRequire(import.meta.url);
+
+const idb=require('../reader/indexeddb-document-adapter.js');
+
+const canonical=require('../reader/canonical-library.js');
+
+const provider=require('../reader/storage-provider.js');
+
+const legacyModule=require('../reader/library-store.js');
+
 const doc=(key='a')=>({key,title:'Authored '+key,segments:[{id:'cue',start:0,end:1,text:'Authored text'}],notes:{cue:'kept'},unknown:{history:['retained']}});
+
 async function fixture(t){
  const directory=await fs.mkdtemp(path.join(os.tmpdir(),'coconut-client-')),server=await createLibraryStore({directory});t.after(async()=>{server.close();await fs.rm(directory,{recursive:true,force:true});});
  const engine=transactionDouble(),values=new Map([[idb.LEGACY_KEY,JSON.stringify({documents:[doc()]})]]),storage={getItem:k=>values.get(k)??null,setItem:(k,v)=>values.set(k,v)},options={indexedDB:engine.indexedDB,getLegacyStorage:()=>storage,name:'client'};
@@ -27,6 +45,7 @@ async function fixture(t){
  };
  const client=canonical.create({primitive,fetch});return {server,engine,primitive,client,control,calls,storage,options,fetch};
 }
+
 test('explicit complete transfer preserves raw rows, identity, tombstones and uses canonical writes',async t=>{
  const f=await fixture(t);await f.primitive.commit(f.primitive.prepare([{kind:'remove',key:'gone',expected:null,generation:1,mutationId:'gone'}]));
  assert.equal((await f.client.begin()).state,'canonical');const marker=(await f.primitive.canonicalStatus()).value;
@@ -36,6 +55,7 @@ test('explicit complete transfer preserves raw rows, identity, tombstones and us
  const updated={...doc(),notes:{cue:'New'}};const capture=loaded.adapter.prepareChanges([{key:'a',identity:updated,kind:'update',generation:4}]);updated.notes.cue='Later';
  const saved=await loaded.adapter.write(capture);assert.equal(saved.ok,true);assert.equal(saved.receipts[0].generation,4);assert.equal(f.server.get('a').document.notes.cue,'New');assert.equal(f.engine.rows('client').get('documents').get('a').payload.notes.cue,'kept');
 });
+
 test('freeze fences old tabs; lost finalize response resumes after restart without a second writer',async t=>{
  const f=await fixture(t),old=idb.create(f.options);await old.ready();let once=true;
  f.control.after=(body)=>{if(body?.action==='finalize'&&once){once=false;throw Error('lost acknowledgement');}};
@@ -43,26 +63,31 @@ test('freeze fences old tabs; lost finalize response resumes after restart witho
  const attempt=await old.commit(old.prepare([{kind:'update',key:'a',expected:{epoch:1,revision:1},document:doc(),generation:2,mutationId:'late'}]));assert.equal(attempt.ok,false);
  const restarted=canonical.create({primitive:idb.create(f.options),fetch:f.fetch});assert.equal((await restarted.resume()).state,'canonical');assert.equal(f.server.describe().sequence,1);
 });
+
 test('unknown cancel outcome stays frozen; confirmed cancel restores exact ready state and delayed begin is rejected',async t=>{
  const f=await fixture(t);f.control.before=body=>{if(body?.action==='chunk')throw Error('offline');};await assert.rejects(f.client.begin(),/offline/);const m=await f.client.marker();
  f.control.before=()=>{throw Error('offline');};await assert.rejects(f.client.cancel(),/offline/);assert.equal(f.engine.rows('client').get('meta').get('state').status,'canonical-frozen');
  f.control.before=null;assert.equal((await f.client.cancel()).state,'cancelled');assert.equal(f.engine.rows('client').get('meta').get('state').status,'ready');assert.equal(await f.client.marker(),undefined);
  assert.throws(()=>f.server.migration.request({protocolVersion:1,epoch:m.epoch,migrationId:m.migrationId,action:'begin',manifest:{}}));assert.equal((await idb.create(f.options).ready()).ok,true);
 });
+
 test('cancel after commit adopts instead of rollback; offline and different server block canonical initialization',async t=>{
  const f=await fixture(t);f.control.after=body=>{if(body?.action==='finalize')throw Error('lost');};await assert.rejects(f.client.begin());f.control.after=null;
  assert.equal((await f.client.cancel()).state,'canonical');const m=await f.client.marker();f.control.before=()=>{throw Error('offline');};await assert.rejects(f.client.initialize(m),/offline/);f.control.before=null;
  f.control.after=(body,value)=>{if(value.epoch)value.epoch='other';};await assert.rejects(f.client.initialize(m),e=>e.code==='epoch_conflict');assert.equal(f.engine.rows('client').get('meta').get('state').status,'canonical-frozen');
 });
+
 test('snapshot race aborts freeze with no marker or server staging',async t=>{
  const f=await fixture(t),source=await f.primitive.canonicalSource();const text=canonical.json(source);
  await f.primitive.commit(f.primitive.prepare([{kind:'update',key:'a',expected:{epoch:1,revision:1},document:{...doc(),title:'Changed'},generation:1,mutationId:'race'}]));
  const result=await f.primitive.freezeCanonical({text});assert.equal(result.ok,false);assert.equal(result.error.code,'conflict');assert.equal((await f.primitive.canonicalStatus()).value,undefined);assert.equal(f.engine.rows('client').get('meta').get('state').status,'ready');
 });
+
 test('lossless preflight rejects structured clone values, sparse arrays, accessors and unsafe numbers',()=>{
  for(const value of [undefined,NaN,-0,Infinity,2**53,new Date(),new Map(),{x:undefined},[,,],Object.defineProperty({},'length',{value:2}),Object.defineProperty({},'x',{enumerable:true,get(){return 1;}}),{[Symbol('hidden')]:1}])assert.throws(()=>canonical.json(value));
  assert.equal(canonical.json({text:'\ud800',unknown:[null,true,1.25]}),' {"text":"\\ud800","unknown":[null,true,1.25]}'.trim());
 });
+
 test('ambiguous batch retries exact bytes and receipt keys; corrupt receipt cannot move lifetime',async t=>{
  const f=await fixture(t);await f.client.begin();const {adapter}=await f.client.initialize(await f.client.marker());const change={key:'a',identity:{...doc(),title:'Edited'},kind:'update',generation:1};let lost=true;
  f.control.after=body=>{if(body?.protocolVersion===2&&lost){lost=false;throw Error('lost');}};
@@ -70,12 +95,14 @@ test('ambiguous batch retries exact bytes and receipt keys; corrupt receipt cann
  const batches=f.calls.filter(c=>c.body?.protocolVersion===2);assert.equal(batches[0].raw,batches[1].raw);assert.equal(f.server.get('a').token.revision,2);
  f.control.after=(body,value)=>{if(body?.protocolVersion===2)value.receipts[0].identity.lifetime=99;};const bad=adapter.prepareChanges([{...change,generation:2,identity:{...doc(),title:'Again'}}]);assert.equal((await adapter.write(bad)).error.code,'uncertain');assert.equal(adapter.documentEpoch('a'),1);
 });
+
 test('provider inspects frozen authority before readiness and never falls back while offline',async t=>{
  const f=await fixture(t);f.control.before=body=>{if(body?.action==='chunk')throw Error('offline');};await assert.rejects(f.client.begin());
  globalThis.CoconutCanonicalLibrary={create:()=>f.client};t.after(()=>delete globalThis.CoconutCanonicalLibrary);
  const options={indexedDB:f.engine.indexedDB,name:'client',getStorage:()=>f.storage,validate:d=>d,legacyModule,documentModule:idb};const pending=await provider.initialize(options);assert.equal(pending.error.code,'canonical_pending');assert.equal(pending.adapter,undefined);assert.ok(pending.recovery);
  f.control.before=null;await f.client.resume();f.control.before=()=>{throw Error('offline');};const offline=await provider.initialize(options);assert.equal(offline.ok,false);assert.equal(offline.adapter,undefined);assert.ok(offline.recovery);
 });
+
 test('atomic multi-document adapter failure does not save any member; deletion and restore separate lifetime from transport epoch',async t=>{
  const f=await fixture(t);await f.client.begin();const m=await f.client.marker(),a=(await f.client.initialize(m)).adapter,b=(await f.client.initialize(m)).adapter;
  const changed=(key,generation=1)=>({key,identity:doc(key),kind:'update',generation});
@@ -84,19 +111,23 @@ test('atomic multi-document adapter failure does not save any member; deletion a
  const remove=b.prepareChanges([{key:'a',identity:doc(),kind:'remove',generation:2}]);assert.equal((await b.write(remove)).ok,true);assert.equal(b.documentEpoch('a'),null);
  const restore=b.prepareChanges([changed('a',3)]);assert.equal((await b.write(restore)).ok,true);assert.equal(b.documentEpoch('a'),2);assert.equal(f.server.get('a').token.epoch,m.epoch);assert.equal(f.server.get('a').identity.position,0);
 });
+
 test('preflight rejection and local freeze abort leave browser usable and server untouched',async t=>{
  const f=await fixture(t);f.engine.rows('client').get('documents').get('a').payload.invalid=new Date();await assert.rejects(f.client.begin(),e=>e.code==='lossy_source');
  assert.equal((await f.client.marker()),undefined);assert.equal(f.server.describe().sequence,0);assert.equal(f.engine.rows('client').get('meta').get('state').status,'ready');
 });
+
 test('receipt mismatch before adoption keeps original frozen and authoritative marker unset',async t=>{
  const f=await fixture(t);f.control.after=(body,value)=>{if(body?.action==='finalize')value.receipt.sha256='0'.repeat(64);};await assert.rejects(f.client.begin(),e=>e.code==='receipt_mismatch');
  assert.equal((await f.client.marker()).state,'frozen');assert.equal(f.engine.rows('client').get('meta').get('state').status,'canonical-frozen');f.control.after=null;assert.equal((await f.client.resume()).state,'canonical');
 });
+
 test('provider reads canonical data after restart through the same adapter contract used by the reader save pipeline',async t=>{
  const f=await fixture(t);await f.client.begin();globalThis.CoconutCanonicalLibrary={create:({primitive,validate})=>canonical.create({primitive,validate,fetch:f.fetch})};t.after(()=>delete globalThis.CoconutCanonicalLibrary);
  const result=await provider.initialize({indexedDB:f.engine.indexedDB,name:'client',getStorage:()=>f.storage,validate:d=>d,legacyModule,documentModule:idb});assert.equal(result.backend,'canonical');
  const documents=result.loaded.documents,store=legacyModule.create({adapter:result.adapter,getDocuments:()=>documents});documents[0].notes.cue='Pipeline';store.queueDocument('a',documents[0]);assert.equal((await store.flush()).ok,true);assert.equal(f.server.get('a').document.notes.cue,'Pipeline');assert.equal(store.status().unsaved,0);
 });
+
 test('identical payload with different PC order is rejected before finalize and can cancel back to original browser',async t=>{
  const f=await fixture(t),epoch=f.server.describe().epoch;
  for(const key of ['other','a'])f.server.commit({protocolVersion:1,epoch,key,action:'put',expected:null,receiptKey:'preexisting-'+key,document:doc(key)});
@@ -110,6 +141,7 @@ test('real Coconut validator null-prototype note dictionaries persist through ca
  const documents=result.loaded.documents;assert.equal(Object.getPrototypeOf(documents[0].notes),null);documents[0].notes.cue='Real validator note';
  const store=legacyModule.create({adapter:result.adapter,getDocuments:()=>documents});store.queueDocument('a',documents[0]);assert.equal((await store.flush()).ok,true);assert.equal(f.server.get('a').document.notes.cue,'Real validator note');
 });
+
 test('newer save pipeline generation resolves earlier ambiguous commit before advancing its captured CAS',async t=>{
  const f=await fixture(t);await f.client.begin();const {adapter,loaded}=await f.client.initialize(await f.client.marker()),documents=loaded.documents,store=legacyModule.create({adapter,getDocuments:()=>documents});let once=true;
  f.control.after=body=>{if(body?.protocolVersion===2&&once){once=false;throw Error('lost first receipt');}};
@@ -117,6 +149,7 @@ test('newer save pipeline generation resolves earlier ambiguous commit before ad
  documents[0].title='Newer edit';store.queueDocument('a',documents[0]);assert.equal((await store.flush()).ok,true);assert.equal(f.server.get('a').document.title,'Newer edit');assert.equal(f.server.get('a').token.revision,3);assert.equal(store.status().unsaved,0);
  const calls=f.calls.filter(c=>c.body?.protocolVersion===2);assert.equal(calls[0].raw,calls[1].raw);assert.equal(calls[2].body.commands[0].expected.revision,2);
 });
+
 test('canonical startup rejects altered archive bytes and forged committed receipt',async t=>{
  const f=await fixture(t);await f.client.begin();const marker=await f.client.marker();await assert.rejects(f.client.initialize({...marker,text:'corrupted'}),e=>e.code==='corruption');
  await assert.rejects(f.client.initialize({...marker,receipt:{...marker.receipt,sequence:1000}}),e=>e.code==='corruption');
@@ -129,10 +162,12 @@ test('first canonical note save preserves unknown nested segment and provenance 
  documents[0].notes.cue='New note';const store=legacyModule.create({adapter:result.adapter,getDocuments:()=>documents});store.queueDocument('a',documents[0]);assert.equal((await store.flush()).ok,true);
  assert.deepEqual(f.server.get('a').document.segments[0].unknownCue,raw.segments[0].unknownCue);assert.deepEqual(f.server.get('a').document.provenance.unknownProvenance,raw.provenance.unknownProvenance);
 });
+
 test('new canonical document appends after sparse migrated order while restore retains original position',async t=>{
  const f=await fixture(t);await f.primitive.commit(f.primitive.prepare([{kind:'create',key:'high',expected:null,document:doc('high'),order:50,generation:1,mutationId:'high'}]));await f.client.begin();const {adapter}=await f.client.initialize(await f.client.marker());
  assert.equal((await adapter.write(adapter.prepareChanges([{key:'new',identity:doc('new'),kind:'update',generation:1}]))).ok,true);assert.equal(f.server.get('new').identity.position,51);
 });
+
 test('lost create followed by Remove and lost delete followed by Undo reconcile exact lifecycle receipts',async t=>{
  const f=await fixture(t);await f.client.begin();const {adapter}=await f.client.initialize(await f.client.marker());let lose=true;
  f.control.after=body=>{if(body?.protocolVersion===2&&lose){lose=false;throw Error('lost');}};
@@ -141,6 +176,7 @@ test('lost create followed by Remove and lost delete followed by Undo reconcile 
  lose=true;assert.equal((await adapter.write(adapter.prepareChanges([{key:'a',identity:doc(),kind:'remove',generation:3}]))).ok,false);
  assert.equal((await adapter.write(adapter.prepareChanges([{key:'a',identity:doc(),kind:'restore',generation:4}]))).ok,true);assert.equal(f.server.get('a').deleted,false);assert.equal(adapter.documentEpoch('a'),2);
 });
+
 test('reconciling own unknown receipt cannot overwrite an intervening other-tab edit',async t=>{
  const f=await fixture(t);await f.client.begin();const marker=await f.client.marker(),{adapter}=await f.client.initialize(marker);let once=true;
  f.control.after=body=>{if(body?.protocolVersion===2&&once){once=false;throw Error('lost');}};
@@ -153,12 +189,14 @@ test('unsupported server identities fail preflight before freezing the browser',
  const f=await fixture(t);await f.primitive.commit(f.primitive.prepare([{kind:'create',key:'control\u0001',expected:null,document:doc('control\u0001'),generation:1,mutationId:'unsupported'}]));
  await assert.rejects(f.client.begin(),e=>e.code==='unsupported_key');assert.equal(await f.client.marker(),undefined);assert.equal(f.engine.rows('client').get('meta').get('state').status,'ready');assert.equal(f.server.describe().sequence,0);
 });
+
 test('unrelated adapter write never replays an uncertain structural intent',async t=>{
  const f=await fixture(t);await f.client.begin();const {adapter}=await f.client.initialize(await f.client.marker());let once=true;
  f.control.before=body=>{if(body?.protocolVersion===2&&once){once=false;throw Error('network failed before server');}};
  const uncertain=await adapter.write(adapter.prepareChanges([{key:'a',identity:doc(),kind:'remove',generation:1}]));assert.equal(uncertain.uncertain,true);
  assert.equal((await adapter.write(adapter.prepareChanges([{key:'other',identity:doc('other'),kind:'update',generation:2}]))).ok,true);assert.equal(f.server.get('a').deleted,false);assert.equal(f.calls.filter(c=>c.body?.commands?.some(command=>command.action==='delete')).length,1);
 });
+
 test('generated cue IDs preserve unknown source fields without resurrecting explicitly deleted fields',async t=>{
  const f=await fixture(t),raw=doc();delete raw.segments[0].id;raw.segments[0].unknownCue={keep:'authored'};raw.obsolete='remove deliberately';
  await f.primitive.commit(f.primitive.prepare([{kind:'update',key:'a',expected:{epoch:1,revision:1},document:raw,generation:1,mutationId:'no-id'}]));await f.client.begin();
@@ -171,37 +209,17 @@ for(const boundary of ['chunk','finalize'])test('legacy source changing during '
  f.control.after=body=>{if(body?.action===boundary&&once){once=false;f.storage.setItem(idb.LEGACY_KEY,changed);}};
  await assert.rejects(f.client.begin(),e=>e.code==='source_changed');assert.equal((await f.client.marker()).state,'frozen');const recovery=await f.primitive.canonicalRecovery();assert.equal(recovery.currentLegacyRaw,changed);assert.notEqual(recovery.stores.legacySnapshots[0].value.raw,changed);
 });
+
 test('cancel refuses a corrupted immutable archive before restoring any source state',async t=>{
  const f=await fixture(t);f.control.before=body=>{if(body?.action==='chunk')throw Error('offline');};await assert.rejects(f.client.begin());const row=f.engine.rows('client').get('meta').get('canonical-migration');row.text=row.text.replace('Authored a','Tampered a');f.control.before=null;
  await assert.rejects(f.client.cancel(),e=>e.code==='corruption');assert.equal(f.engine.rows('client').get('meta').get('state').status,'canonical-frozen');
 });
+
 test('newer atomic-group member reconciles unchanged peer receipt without repeating its delete',async t=>{
  const f=await fixture(t);await f.client.begin();const {adapter}=await f.client.initialize(await f.client.marker());let once=true;
  f.control.after=body=>{if(body?.protocolVersion===2&&once){once=false;throw Error('lost group');}};
  const a={key:'a',identity:doc(),kind:'remove',generation:1},b={key:'b',identity:doc('b'),kind:'update',generation:2};assert.equal((await adapter.write(adapter.prepareChanges([a,b]))).uncertain,true);
  const saved=await adapter.write(adapter.prepareChanges([a,{...b,generation:3,identity:{...doc('b'),title:'Newer b'}}]));assert.equal(saved.ok,true);assert.equal(saved.receipts.length,2);assert.equal(f.server.get('a').token.revision,2);assert.equal(f.server.get('a').deleted,true);assert.equal(f.server.get('b').document.title,'Newer b');
-});
-
-async function readerUI(f){
- const {Window}=await import('happy-dom'),{webcrypto}=await import('node:crypto'),w=new Window({url:'https://coconut.example/'}),root=new URL('../reader/',import.meta.url);
- w.document.body.innerHTML=(await fs.readFile(new URL('compatibility.html',root),'utf8')).split('<body>')[1].split('</body>')[0];Object.defineProperty(w,'crypto',{value:webcrypto});w.fetch=async()=>{throw Error('No external network in authored UI fixture');};
- const result=await canonical.create({primitive:f.primitive,fetch:f.fetch,validate:require('../reader/core.js').validate}).initialize(await f.client.marker());// Bridge the authored Node server adapter across the test window realm just as
- // structured-clone messages do; production adapter and reader share one realm.
- const prepare=result.adapter.prepareChanges,estimate=result.adapter.estimateBatchBytes;result.adapter.prepareChanges=changes=>prepare(structuredClone(changes));result.adapter.estimateBatchBytes=changes=>estimate(structuredClone(Array.from(changes,({key,identity,kind,generation})=>({key,identity,kind,generation}))));
- w.CoconutStorageBootstrap={phase:'ready',result};
- w.eval((await Promise.all(['library-store','summary','core','passages','passage-playback','app','language','translation-review','podcasts'].map(file=>fs.readFile(new URL(file+'.js',root),'utf8')))).join('\n')+'\nlet sourceSubmitting=false,sourceCaptionRequest=null;window.canonicalUI={store:libraryStore,get documents(){return state.documents;},get pending(){return pendingLibraryOperation;}};');
- return {w,$:id=>w.document.getElementById(id)};
-}
-for(const boundary of ['before','after'])test('actual reader Remove remains uncertain after lost '+boundary+'-server receipt, exports and retries safely',async t=>{
- const f=await fixture(t);await f.client.begin();const {w,$}=await readerUI(f);try{
-  let once=true;f.control[boundary]=body=>{if(body?.protocolVersion===2&&once){once=false;throw Error('Unknown removal result');}};
-  $('library-options').open=true;$('library-options').dispatchEvent(new w.Event('toggle'));w.document.querySelector('.library-remove').click();let finished=false;
-  const pending=$('confirm-removal').onclick().then(()=>{finished=true;});for(let i=0;i<30;i++)await new Promise(resolve=>setImmediate(resolve));
-  assert.equal(finished,false);assert.ok(w.canonicalUI.pending);assert.equal(w.canonicalUI.store.status('a').error.code,'uncertain');assert.equal(w.canonicalUI.documents.length,0);assert.equal(f.server.get('a').deleted,boundary==='after');assert.match($('notice').textContent,/尚未确认/);
-  assert.deepEqual(Array.from(w.canonicalUI.store.snapshotForExport().pendingRemovals),['a']);assert.equal(w.canonicalUI.store.snapshotForExport().documents[0].key,'a');
-  const barrier=w.canonicalUI.store.acquireBarrier('authored-close');assert.equal((await w.canonicalUI.store.discardPending(barrier)).ok,false);w.canonicalUI.store.releaseBarrier(barrier);
-  f.control[boundary]=null;assert.equal((await w.canonicalUI.store.retry()).ok,true);await pending;assert.equal(finished,true);assert.equal(w.canonicalUI.pending,null);assert.equal(f.server.get('a').deleted,true);assert.equal($('removal-recovery').hidden,false);assert.match($('notice').textContent,/已从保存的书架移除/);
- }finally{await w.happyDOM.close();}
 });
 
 test('real canonical library drains 101 independent changes through bounded batches and reloads every exact document', async t => {
@@ -234,14 +252,7 @@ for(const boundary of ['before','after'])test('uncertain canonical Remove '+boun
  assert.equal((await store.retry(a.key)).ok,true);assert.equal(f.server.get('a').deleted,true);assert.equal(f.server.get('a').token.revision,2);
  assert.equal(rollbacks,0);assert.equal(store.status().unsaved,0);
 });
-for(const [budget,count,size] of [['count',101,0],['bytes',9,2*1024*1024]])test('actual canonical restore rejects oversized '+budget+' atomic group before changing visible state or save tracking',async t=>{
- const f=await fixture(t);await f.client.begin();const {w,$}=await readerUI(f);try{
-  const before=w.canonicalUI.documents,raw=JSON.stringify({format:'coconut-library',version:1,documents:Array.from({length:count},(_,i)=>({...doc('restore-'+i),notes:{cue:'x'.repeat(size)}}))});
-  const input=$('library-file');Object.defineProperty(input,'files',{configurable:true,value:[{name:'authored-large-backup.json',size:raw.length,text:async()=>raw}]});await input.onchange();
-  assert.equal(w.canonicalUI.documents,before);assert.equal(w.canonicalUI.documents.length,1);assert.equal(w.canonicalUI.store.status().unsaved,0);assert.equal(f.server.list().entries.length,1);assert.match($('notice').textContent,/恢复失败，原书架未改变/);
-  assert.equal(f.calls.filter(call=>call.body?.protocolVersion===2).length,0);
- }finally{await w.happyDOM.close();}
-});
+
 test('acknowledged structural peer cannot be rolled back when a newer group member conflicts',async t=>{
  const f=await fixture(t);await f.client.begin();const {adapter}=await f.client.initialize(await f.client.marker());let once=true;
  f.control.after=body=>{if(body?.protocolVersion===2&&once){once=false;throw Error('lost atomic group');}};
@@ -249,17 +260,10 @@ test('acknowledged structural peer cannot be rolled back when a newer group memb
  const current=f.server.get('b');f.server.commit({protocolVersion:1,epoch:current.token.epoch,key:'b',expected:current.token,receiptKey:'external-edit',action:'put',document:{...doc('b'),title:'Other writer'}});
  const result=await adapter.write(adapter.prepareChanges([a,{...b,generation:3,identity:{...doc('b'),title:'Own later'}}]));assert.equal(result.uncertain,true);assert.equal(f.server.get('a').deleted,true);assert.equal(f.server.get('a').token.revision,2);assert.equal(f.server.get('b').document.title,'Other writer');
 });
+
 test('normalized non-string source cue identity retains opaque metadata',async t=>{
  const f=await fixture(t),raw=doc();raw.segments[0].id=123;raw.segments[0].opaque={keep:true};await f.primitive.commit(f.primitive.prepare([{kind:'update',key:'a',expected:{epoch:1,revision:1},document:raw,generation:1,mutationId:'numeric-source-id'}]));await f.client.begin();
  const result=await canonical.create({primitive:f.primitive,fetch:f.fetch,validate:require('../reader/core.js').validate}).initialize(await f.client.marker());assert.equal(result.loaded.documents[0].segments[0].id,'segment-1');assert.deepEqual(result.loaded.documents[0].segments[0].opaque,{keep:true});
-});
-for(const boundary of ['before','after'])test('actual reader Undo retains uncertain restore until exact receipt retry '+boundary+' server',async t=>{
- const f=await fixture(t);await f.client.begin();const {w,$}=await readerUI(f);try{
-  $('library-options').open=true;$('library-options').dispatchEvent(new w.Event('toggle'));w.document.querySelector('.library-remove').click();await $('confirm-removal').onclick();assert.equal(f.server.get('a').deleted,true);
-  let once=true;f.control[boundary]=body=>{if(body?.protocolVersion===2&&once){once=false;throw Error('Unknown Undo result');}};let finished=false;const pending=$('undo-removal').onclick().then(()=>{finished=true;});for(let i=0;i<30;i++)await new Promise(resolve=>setImmediate(resolve));
-  assert.equal(finished,false);assert.ok(w.canonicalUI.pending);assert.equal(w.canonicalUI.store.status('a').error.code,'uncertain');assert.equal(w.canonicalUI.documents.length,1);assert.equal(f.server.get('a').deleted,boundary==='before');
-  f.control[boundary]=null;assert.equal((await w.canonicalUI.store.retry()).ok,true);await pending;assert.equal(finished,true);assert.equal(w.canonicalUI.pending,null);assert.equal(f.server.get('a').deleted,false);assert.equal(f.server.get('a').identity.lifetime,2);assert.equal($('removal-recovery').hidden,true);
- }finally{await w.happyDOM.close();}
 });
 
 test('real canonical byte estimates pack ten 2MiB documents into bounded independent writes', async t => {
@@ -296,6 +300,7 @@ async function secondClient(f, documents=[]) {
  assert.equal((await primitive.ready()).ok,true);
  return {primitive,client:canonical.create({primitive,fetch:f.fetch}),values};
 }
+
 test('independent browser connects existing library without migration and shares CAS writes',async t=>{
  const f=await fixture(t);await f.client.begin();const a=await f.client.initialize(await f.client.marker());
  const b=await secondClient(f,[doc('browser-only')]),original=await b.primitive.readRecovery(),before=f.calls.length;
@@ -309,11 +314,13 @@ test('independent browser connects existing library without migration and shares
  assert.equal((await a.adapter.write(a.adapter.prepareChanges([{...change,identity:{...doc(),title:'Stale A'}}]))).ok,false);
  assert.equal((await b.primitive.commit(b.primitive.prepare([{kind:'create',key:'stale-browser',expected:null,document:doc('stale-browser'),generation:1,mutationId:'stale-browser'}]))).ok,false);
 });
+
 test('connection reads failing before local commit leave browser authority writable',async t=>{
  const f=await fixture(t);await f.client.begin();const b=await secondClient(f,[doc('local')]);
  f.control.before=()=>{throw Error('offline');};await assert.rejects(b.client.connect());assert.equal(await b.client.marker(),undefined);
  assert.equal((await b.primitive.commit(b.primitive.prepare([{kind:'create',key:'still-local',expected:null,document:doc('still-local'),generation:1,mutationId:'still-local'}]))).ok,true);
 });
+
 test('lost local connection acknowledgement resumes binding; missing migration receipts do not revoke binding',async t=>{
  const f=await fixture(t);await f.client.begin();const b=await secondClient(f);
  const client=canonical.create({primitive:{...b.primitive,bindCanonical:async m=>{await b.primitive.bindCanonical(m);throw Error('lost local receipt');}},fetch:f.fetch});
@@ -324,11 +331,13 @@ test('lost local connection acknowledgement resumes binding; missing migration r
  await assert.rejects(b.client.initializeBinding(m),{code:'epoch_conflict'});
  assert.equal((await b.primitive.commit(b.primitive.prepare([{kind:'create',key:'blocked',expected:null,document:doc('blocked'),generation:1,mutationId:'blocked'}]))).ok,false);
 });
+
 test('binding corruption and preserved-source changes fail closed',async t=>{
  const f=await fixture(t);await f.client.begin();const b=await secondClient(f,[doc('original')]);await b.client.connect();const m=await b.client.marker();
  await assert.rejects(b.client.initializeBinding({...m,sha256:'0'.repeat(64)}),{code:'corruption'});
  b.values.set(idb.LEGACY_KEY,'changed');await assert.rejects(b.client.initializeBinding(m),{code:'source_changed'});
 });
+
 test('API-only canonical namespace survives reopen and is separate from library epoch',async t=>{
  const f=await fixture(t);assert.equal(f.server.describe().binding,null);
  const epoch=f.server.describe().epoch;
