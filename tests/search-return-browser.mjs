@@ -1,3 +1,4 @@
+// Compatibility renderer regression; this suite does not establish default React acceptance.
 import {navigateReadingTime} from './helpers/transcript-navigation-browser.mjs';
 /** CI-only real Chromium acceptance for a temporary reading/search session.
  * All source, translations, corrections and notes are authored fixtures. No
@@ -228,7 +229,7 @@ try {
     });
     const page = await context.newPage(); diagnosticPage = page; page.setDefaultTimeout(15000);
     page.on('pageerror', error => errors.push({label, message: error.message}));
-    await page.goto(origin); await page.waitForLoadState('networkidle');
+    await page.goto(origin+'/compatibility.html'); await page.waitForLoadState('networkidle');
     await installAudit(page);
     const fixture = searchReturnFixture(label);
     await importFixture(page, fixture);

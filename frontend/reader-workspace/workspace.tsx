@@ -147,9 +147,27 @@ function WorkspaceSession({ document: doc, revision, media, onSaveDocument, onRe
         dialog?.showModal();close?.focus();
         return()=>{const restore=document.activeElement===close||document.activeElement===dialog||document.activeElement===document.body; if(dialog?.open)dialog.close();if(restore&&previous?.isConnected)previous.focus({preventScroll:true});};
     },[keyboardHelp]);
+    const keyboardPlayAttempt=useRef(0);
+    const PLAY_FAILURE='播放未能开始，请使用播放器按钮。';
     const currentPlayer=()=>scopeRef.current?.querySelector<HTMLMediaElement>('audio,video')||null;
+    useEffect(()=>{
+        const player=currentPlayer();
+        const cancel=()=>{keyboardPlayAttempt.current++;};
+        const playing=()=>{cancel();setStatus(value=>value===PLAY_FAILURE?'':value);};
+        player?.addEventListener('pause',cancel);player?.addEventListener('playing',playing);window.addEventListener('pagehide',cancel);
+        return()=>{cancel();player?.removeEventListener('pause',cancel);player?.removeEventListener('playing',playing);window.removeEventListener('pagehide',cancel);};
+    },[mediaSignature,attachment.current.id]);
+    const toggleKeyboardPlayback=()=>{
+        const player=currentPlayer();if(!player||!Number.isFinite(player.duration)||player.duration<=0)return false;
+        const attempt=++keyboardPlayAttempt.current;
+        if(!player.paused){player.pause();return true;}
+        setStatus(value=>value===PLAY_FAILURE?'':value);
+        const failed=(error:unknown)=>{if(!mounted.current||attempt!==keyboardPlayAttempt.current||currentPlayer()!==player||(error as {name?:string})?.name==='AbortError')return;setStatus(PLAY_FAILURE);};
+        try{void player.play().then(()=>{if(mounted.current&&attempt===keyboardPlayAttempt.current&&currentPlayer()===player)setStatus(value=>value===PLAY_FAILURE?'':value);},failed);}catch(error){failed(error);}
+        return true;
+    };
     const shiftPlayback=(offset:number)=>{const player=currentPlayer();if(!player||!media||!Number.isFinite(player.duration)||player.duration<=0)return false;seekTo(Math.max(0,Math.min(player.duration,player.currentTime+offset)));return true;};
-    useReaderKeyboard({scopeRef,searchRef,enabled:shortcutsEnabled,active:!keyboardHelp,actions:{find:()=>{if(mode==='summary'||!searchRef.current)return false;searchRef.current.focus();searchRef.current.select();return true;},help:()=>{setKeyboardHelp(true);return true;},back:()=>shiftPlayback(-5),forward:()=>shiftPlayback(5),play:()=>{const player=currentPlayer();if(!player||!Number.isFinite(player.duration)||player.duration<=0)return false;if(player.paused)void player.play().catch(()=>setStatus('播放未能开始，请使用播放器按钮。'));else player.pause();return true;},locate:()=>{if(!media||!activeCue)return false;if(mode==='summary')navigateSummary(activeCue.id);else locate(activeCue.id);return true;}}});
+    useReaderKeyboard({scopeRef,searchRef,enabled:shortcutsEnabled,active:!keyboardHelp,actions:{find:()=>{if(mode==='summary'||!searchRef.current)return false;searchRef.current.focus();searchRef.current.select();return true;},help:()=>{setKeyboardHelp(true);return true;},back:()=>shiftPlayback(-5),forward:()=>shiftPlayback(5),play:toggleKeyboardPlayback,locate:()=>{if(!media||!activeCue)return false;if(mode==='summary')navigateSummary(activeCue.id);else locate(activeCue.id);return true;}}});
     const save = async (next: ReaderDocument, expectedRevision = revision) => {
         if (saving.current)
             return false;

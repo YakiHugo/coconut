@@ -1,3 +1,4 @@
+// Compatibility renderer regression; this suite does not establish default React acceptance.
 /** CI-only native chapter journey. Authored text/translations and a tone-only WAV.
  * No external services, models, browser traces, recordings or user material. */
 import assert from 'node:assert/strict';
@@ -111,7 +112,7 @@ try{
   const context=await browser.newContext({viewport,acceptDownloads:true,serviceWorkers:'block'});
   await context.route('**/*',async route=>{const request=route.request(),url=new URL(request.url());if(!['GET','HEAD'].includes(request.method())){mutations++;await route.abort();}else if(url.origin===origin||['blob:','data:'].includes(url.protocol))await route.continue();else{external++;await route.abort();}});
   await context.addInitScript(()=>{window.chapterMediaProof={plays:0};document.addEventListener('play',event=>{if(event.target instanceof HTMLMediaElement)window.chapterMediaProof.plays++;},true);});
-  const p=await context.newPage();p.setDefaultTimeout(20000);p.on('pageerror',error=>errors.push({message:error.message,stack:error.stack,url:p.url()}));diagnosticPage=p;await p.goto(origin);return p;
+  const p=await context.newPage();p.setDefaultTimeout(20000);p.on('pageerror',error=>errors.push({message:error.message,stack:error.stack,url:p.url()}));diagnosticPage=p;await p.goto(origin+'/compatibility.html');return p;
  }
  page=await newPage();await page.locator('#library-file').setInputFiles({name:'authored-chapter-source.json',mimeType:'application/json',buffer:Buffer.from(JSON.stringify({format:'coconut-library',version:1,documents:[fixture],active:key}))});
  await page.waitForFunction(()=>document.getElementById('library-file').value==='');await savedChapters(0);

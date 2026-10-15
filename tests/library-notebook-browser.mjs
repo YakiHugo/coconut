@@ -1,3 +1,4 @@
+// Compatibility renderer regression; this suite does not establish default React acceptance.
 import {openLibraryTools,openLibrarySearch,closeLibrarySearch} from './helpers/library-tools-browser.mjs';
 /** CI-only: authored captures, cooperative typing, downloads and narrow-screen source return. */
 import assert from 'node:assert/strict';
@@ -12,7 +13,7 @@ try{
  async function newPage(viewport={width:390,height:844}){
   const context=await browser.newContext({viewport,acceptDownloads:true,serviceWorkers:'block'});
   await context.route('**/*',async route=>{const request=route.request(),url=new URL(request.url());if(!['GET','HEAD'].includes(request.method())){mutations++;await route.abort();}else if(url.origin===origin||['blob:','data:'].includes(url.protocol))await route.continue();else{external++;await route.abort();}});
-  const page=await context.newPage();page.setDefaultTimeout(20000);page.on('pageerror',error=>errors.push(error.message));await page.goto(origin);return page;
+  const page=await context.newPage();page.setDefaultTimeout(20000);page.on('pageerror',error=>errors.push(error.message));await page.goto(origin+'/compatibility.html');return page;
  }
  const page=await newPage();
  const docs=largeLibraryFixture(2,{cues:65});for(const doc of docs){doc.segments.forEach((cue,i)=>{cue.id='shared-'+i;cue.saved_excerpt=true;});doc.notes={'shared-64':'Final private note '+doc.key};}

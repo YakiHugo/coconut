@@ -72,7 +72,7 @@ try {
   if(u.origin===origin||['blob:','data:'].includes(u.protocol))await route.continue();else{external++;await route.abort();}
  });
  const page=await context.newPage();page.on('pageerror',()=>pageErrors++);page.setDefaultTimeout(15000);
- await page.goto(origin);await page.waitForFunction(()=>window.CoconutStorageBootstrap?.phase==='ready');await page.locator('#sample').waitFor({state:'visible'});
+ await page.goto(origin+'/compatibility.html');await page.waitForFunction(()=>window.CoconutStorageBootstrap?.phase==='ready');await page.locator('#sample').waitFor({state:'visible'});
  await page.waitForFunction(()=>!document.getElementById('worker-status').textContent.includes('正在检查'));
  await capture(page,'01-source-entry');
  check('brand_asset_loads',await page.locator('.brand-mark').evaluate(img=>img.complete&&img.naturalWidth>0));

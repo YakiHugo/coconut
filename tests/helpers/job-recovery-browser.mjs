@@ -1,3 +1,4 @@
+// Compatibility renderer regression; this suite does not establish default React acceptance.
 /** Extends synthetic completed-job browser acceptance with authored recovery API
  * responses and its already-prepared tone/video fixture. No model or download. */
 import assert from 'node:assert/strict';
@@ -33,7 +34,7 @@ export async function verifyJobRecovery(browser,origin,preparedMedia,onCheck=()=
  const open=async()=>{await openJobs();await action('open').click();await page.locator('#reader-workspace').waitFor({state:'visible'});await page.waitForFunction(()=>!document.querySelector('[data-job-action="open"]').disabled);};
  const retry=async()=>{await openJobs();await action('retry').click();await page.waitForFunction(()=>!document.querySelector('[data-job-action="open"]').disabled);};
  try{
-  await page.goto(origin);await action('open').waitFor({state:'visible'});await open();await page.locator('#mode-transcript').click();
+  await page.goto(origin+'/compatibility.html');await action('open').waitFor({state:'visible'});await open();await page.locator('#mode-transcript').click();
   const first=page.locator('[data-segment-id="first"]');await openCueActions(first);await first.locator('.note-button').click();await page.locator('#note').fill('Retain this authored job note');await page.locator('#close-note').click();
   const second=page.locator('[data-segment-id="second"]');await openCueActions(second);await second.locator('.edit-button').click();await page.locator('#edit-segment').fill('Reader-corrected authored second passage.');await page.locator('#save-edit').click();
   const before=(await saved()).documents[0];check('initial_job_is_bound',before.local_job_binding?.id===id);

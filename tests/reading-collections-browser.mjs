@@ -1,3 +1,4 @@
+// Compatibility renderer regression; this suite does not establish default React acceptance.
 /** CI-only: authored sources, real individual picks, durable snapshots and downloads.
  * No external requests, models, media, browser traces or user data. */
 import assert from 'node:assert/strict';
@@ -77,7 +78,7 @@ try{
  async function newPage(viewport={width:1280,height:900}){
   const context=await browser.newContext({viewport,acceptDownloads:true,serviceWorkers:'block'});
   await context.route('**/*',async route=>{const request=route.request(),url=new URL(request.url());if(!['GET','HEAD'].includes(request.method())){mutations++;await route.abort();}else if(url.origin===origin||['blob:','data:'].includes(url.protocol))await route.continue();else{external++;await route.abort();}});
-  const p=await context.newPage();pageContexts.set(p,'context-'+(++contextCount));p.setDefaultTimeout(20000);p.on('pageerror',error=>errors.push({message:error.message,stack:error.stack,url:p.url(),context:pageContexts.get(p)}));diagnosticPage=p;await p.goto(origin);return p;
+  const p=await context.newPage();pageContexts.set(p,'context-'+(++contextCount));p.setDefaultTimeout(20000);p.on('pageerror',error=>errors.push({message:error.message,stack:error.stack,url:p.url(),context:pageContexts.get(p)}));diagnosticPage=p;await p.goto(origin+'/compatibility.html');return p;
  }
  page=await newPage();
  const docs=largeLibraryFixture(2,{cues:65});

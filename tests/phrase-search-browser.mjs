@@ -1,3 +1,4 @@
+// Compatibility renderer regression; this suite does not establish default React acceptance.
 import {openTranscriptTools} from './helpers/reading-tools-browser.mjs';
 import {openLibrarySearch} from './helpers/library-tools-browser.mjs';
 /** Real-browser acceptance, intended for CI or an explicitly approved browser
@@ -62,7 +63,7 @@ try {
       if (url.origin === origin || ['blob:', 'data:'].includes(url.protocol)) await route.continue();
       else {external++;await route.abort();}
     });
-    const page = await context.newPage();page.setDefaultTimeout(15000);page.on('pageerror', error => errors.push(error.message));await page.goto(origin);
+    const page = await context.newPage();page.setDefaultTimeout(15000);page.on('pageerror', error => errors.push(error.message));await page.goto(origin+'/compatibility.html');
     await page.waitForFunction(() => !document.querySelector('#check-ai').disabled);
     const fixture = phraseSearchFixture(1771);fixture.title += ' · ' + label;fixture.segments[0].text = SOURCE_PHRASE + '.';
     await importDocument(page, fixture);const before = await stored(page);await enter(page, SOURCE_PHRASE);

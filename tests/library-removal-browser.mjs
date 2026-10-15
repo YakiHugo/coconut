@@ -1,3 +1,4 @@
+// Compatibility renderer regression; this suite does not establish default React acceptance.
 import {openLibraryTools,openLibrarySearch,closeLibrarySearch} from './helpers/library-tools-browser.mjs';
 /** Real Chromium acceptance for authored local data; run in browser CI only. */
 import assert from 'node:assert/strict';
@@ -13,7 +14,7 @@ try{
  browser=await chromium.launch({headless:true,...(process.env.COCONUT_CHROMIUM_EXECUTABLE?{executablePath:process.env.COCONUT_CHROMIUM_EXECUTABLE}:{})});
  const context=await browser.newContext({viewport:{width:390,height:844},serviceWorkers:'block',acceptDownloads:true});let external=0;const errors=[];
  await context.route('**/*',async route=>{const url=new URL(route.request().url());if(url.origin===origin||url.protocol==='blob:')await route.continue();else{external++;await route.abort();}});
- const page=await context.newPage();page.setDefaultTimeout(15000);page.on('pageerror',error=>errors.push(error.message));await page.goto(origin);await page.waitForFunction(()=>window.CoconutStorageBootstrap?.phase==='ready');
+ const page=await context.newPage();page.setDefaultTimeout(15000);page.on('pageerror',error=>errors.push(error.message));await page.goto(origin+'/compatibility.html');await page.waitForFunction(()=>window.CoconutStorageBootstrap?.phase==='ready');
  const stored=async()=>{await page.evaluate(()=>libraryStore.flush());return page.evaluate(()=>readPersistedLibrary());};
  const importDoc=async doc=>{await page.locator('#file').setInputFiles({name:'authored-removal.json',mimeType:'application/json',buffer:Buffer.from(JSON.stringify(doc))});await waitForPersistedLibrary(page,async title=>(await readPersistedLibrary()).documents.some(d=>d.title===title),doc.title);};
  const openShelf=async()=>{if(await page.locator('#toggle-library').isVisible()&&await page.locator('#toggle-library').getAttribute('aria-expanded')==='false')await page.locator('#toggle-library').click();};

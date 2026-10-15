@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {build} from 'esbuild';
-import {mkdtemp,writeFile,rm} from 'node:fs/promises';
+import {mkdtemp,writeFile,rm,readFile} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {createRequire} from 'node:module';
@@ -31,6 +31,15 @@ test('mounted summary restores reading scope, checks provenance and respects key
  await setMode('summary');await act(async()=>{doc={...doc,segments:doc.segments.map((c,i)=>i===64?{...c,text:'Changed current source'}:c)};revision++;render();});assert.match(host.querySelector('.rw-summary').textContent,/可能过期/);assert.equal(host.querySelector('[aria-label="摘要引用"] button'),null);assert.match(host.querySelector('.rw-summary details').textContent,/Original 64/);await act(async()=>button('返回原阅读状态').click());assert.equal(mode().value,'transcript');assert.equal(search.value,'');
  const player=host.querySelector('audio');Object.defineProperty(player,'duration',{value:200,configurable:true});await act(async()=>player.dispatchEvent(new win.Event('loadedmetadata')));player.currentTime=20;
  const text=host.querySelector('.rw-original');text.focus();assert.equal(await key(text,'l'),true);assert.equal(player.currentTime,25);assert.equal(await key(text,'j'),true);assert.equal(player.currentTime,20);assert.equal(await key(text,'k'),true);assert.equal(plays,1);
+ const nativePlay=player.play;let rejectFirst,rejectLatest;
+ player.play=()=>new Promise((_,reject)=>{rejectFirst=reject;});await key(text,'k');
+ player.play=()=>new Promise((_,reject)=>{rejectLatest=reject;});await key(text,'k');
+ await act(async()=>rejectFirst(new Error('old failed request')));assert.ok(!host.textContent.includes('播放未能开始'),'superseded promise cannot report a stale failure');
+ await act(async()=>rejectLatest(Object.assign(new Error('interrupted'),{name:'AbortError'})));assert.ok(!host.textContent.includes('播放未能开始'),'pause/load AbortError is not a playback failure');
+ player.play=()=>Promise.reject(Object.assign(new Error('denied'),{name:'NotAllowedError'}));await key(text,'k');assert.match(host.textContent,/播放未能开始/,'genuine current playback failure is visible');
+ player.play=()=>Promise.resolve();await key(text,'k');assert.ok(!host.textContent.includes('播放未能开始'),'successful user retry clears only its playback warning');
+ player.play=()=>new Promise((_,reject)=>{rejectLatest=reject;});await key(text,'k');await act(async()=>player.dispatchEvent(new win.Event('pause')));await act(async()=>rejectLatest(new Error('late pause failure')));assert.ok(!host.textContent.includes('播放未能开始'),'pause invalidates pending promise ownership');
+ player.play=()=>Promise.reject(new Error('current failure'));await key(text,'k');assert.match(host.textContent,/播放未能开始/);await act(async()=>player.dispatchEvent(new win.Event('playing')));assert.ok(!host.textContent.includes('播放未能开始'),'native playback success clears the keyboard-only warning');player.play=nativePlay;
  assert.equal(await key(text,'l',{isComposing:true}),false);assert.equal(player.currentTime,20);
  assert.equal(await key(text,'?'),true);const close=host.querySelector('[role=dialog] button');assert.equal(win.document.activeElement,close);assert.equal(host.querySelector('dialog').open,true,'help uses native top-layer modal lifecycle');assert.equal(await key(close,'Tab'),true);assert.equal(win.document.activeElement,close);assert.equal(await key(close,'Tab',{shiftKey:true}),true);assert.equal(win.document.activeElement,close);assert.equal(await key(close,'l'),false);await key(close,'Escape');assert.equal(host.querySelector('[role=dialog]'),null);assert.equal(win.document.activeElement,text);const helpTrigger=button('阅读快捷键');helpTrigger.focus();await act(async()=>helpTrigger.click());const nativeDialog=host.querySelector('dialog');assert.equal(nativeDialog.open,true);await act(async()=>nativeDialog.dispatchEvent(new win.Event('cancel',{cancelable:true})));assert.equal(host.querySelector('dialog'),null);assert.equal(nativeDialog.open,false,'retired modal closes its top-layer ownership');assert.equal(win.document.activeElement,helpTrigger);text.focus();
  assert.equal(await key(text,'/'),true);assert.equal(win.document.activeElement,search);assert.equal(await key(search,'l'),false);
@@ -40,3 +49,5 @@ test('mounted summary restores reading scope, checks provenance and respects key
  await setMode('summary');await act(async()=>{doc={...doc,ai_answers:[]};revision++;render();});assert.match(host.querySelector('.rw-summary').textContent,/还没有保存/);assert.equal(plays,1);assert.equal(opened,1);await act(async()=>button('阅读快捷键').click());const retiringDialog=host.querySelector('dialog');assert.equal(retiringDialog.open,true);await act(async()=>root.unmount());assert.equal(retiringDialog.open,false,'unmount releases modal top-layer state');
  }finally{await act(async()=>root.unmount());for(const name of Object.keys(previous)){if(previous[name])Object.defineProperty(globalThis,name,previous[name]);else delete globalThis[name];}for(const channel of channels){channel.port1.close();channel.port2.close();}globalThis.MessageChannel=savedChannel;delete globalThis.IS_REACT_ACT_ENVIRONMENT;await win.happyDOM.close();await rm(temp,{recursive:true,force:true});}
 });
+
+test('reader player remains in document flow instead of covering later reading content',async()=>{const css=await readFile('frontend/reader-workspace/workspace.css','utf8');const rule=css.match(/\.rw-player\{([^}]+)\}/)[1];assert.match(rule,/position:static/);assert.doesNotMatch(rule,/position:(sticky|fixed)|z-index:/);assert.doesNotMatch(css,/scroll-margin-top:240px/);});

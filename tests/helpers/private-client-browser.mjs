@@ -27,7 +27,7 @@ export async function privateClientBrowser(browser){
   try{return await route.fulfill({status:200,contentType:filename.endsWith('.js')?'text/javascript':filename.endsWith('.css')?'text/css':filename.endsWith('.png')?'image/png':'text/html',body:await fs.readFile(new URL('../../reader/'+filename,import.meta.url))});}catch{return route.fulfill({status:404,body:''});}
  });
  try{
-  await page.goto('https://private-reader.test/');
+  await page.goto('https://private-reader.test/compatibility.html');
   assert.equal(await page.evaluate(()=>CoconutStorageBootstrap.result.backend),'indexeddb');
   assert.equal(libraryRequests,0,'a new mobile origin never automatically connects or imports');
   const fixture={title:'Authored private connection',segments:[{id:'one',start:0,end:2,text:'A synthetic private owner source.'}]};

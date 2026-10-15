@@ -1,3 +1,4 @@
+// Compatibility renderer journey; this is not default React acceptance.
 /**
  * Public original URL → browser submit → real production queue → caption result
  * → native Chromium playback. No seeded jobs, provider mocks, cookies or ASR.
@@ -129,7 +130,7 @@ try {
   const page = await context.newPage();
   page.on('pageerror', () => { errors++; });
   page.setDefaultTimeout(20000);
-  await page.goto(origin, {waitUntil: 'domcontentloaded'});
+  await page.goto(origin+'/compatibility.html', {waitUntil: 'domcontentloaded'});
   await page.locator('#url-form').waitFor({state: 'visible'});
   check('blank_reader_before_real_submission', await page.locator('#library button').count() === 0);
   await page.locator('.import-settings > summary').click();

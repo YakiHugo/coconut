@@ -143,3 +143,16 @@ test('the actual native fixture prints success only after the diagnostic runner 
  assert.match(source,/dialog.showMessageBox=async\(\)=>\(\{response:0\}\)/);
  assert.doesNotMatch(source,/process\.exit\(0\)|SIGKILL|response:1/);
 });
+
+test('migration proof distinguishes the real abort terminal from completion across default React boot',()=>{
+ const source=readFileSync(new URL('./desktop-updates-ui.mjs',import.meta.url),'utf8');
+ for(const [event,expected] of [['abort','aborted'],['complete','completed']]){
+  const body=source.match(new RegExp("transaction\\.addEventListener\\('"+event+"',\\(\\)=>\\{([^}]+)\\}\\);"))?.[1];assert.ok(body,event);
+  const held={active:true,terminal:null},values=new Map();
+  new Function('held','localStorage',body)(held,{setItem:(key,value)=>values.set(key,value)});
+  assert.deepEqual(held,{active:false,terminal:expected});assert.equal(values.get('authored-held-migration-terminal'),expected);
+ }
+ assert.match(source,/assert\.equal\(await page\.evaluate\(\(\)=>localStorage\.getItem\('authored-held-migration-terminal'\)\),'aborted'/);
+ assert.match(source,/assert\.deepEqual\(await page\.evaluate\(\(\)=>window\.readPersistedLibrary\(\)\),migrationExpected/);
+ assert.match(source,/localStorage\.getItem\('coconut-reader-v1'\)\),migrationRaw/);
+});

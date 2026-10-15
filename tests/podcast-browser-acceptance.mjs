@@ -1,3 +1,4 @@
+// Compatibility renderer regression; this suite does not establish default React acceptance.
 /** Synthetic browser flow through the production source HTTP routes. No network sources or models. */
 import {startBridge} from '../desktop/server.mjs';
 import {chromium,waitForPersistedLibrary} from './helpers/browser-storage.mjs';
@@ -21,7 +22,7 @@ try{
  const origin='http://127.0.0.1:'+server.address().port;browser=await chromium.launch({headless:true,...(process.env.COCONUT_CHROMIUM_EXECUTABLE?{executablePath:process.env.COCONUT_CHROMIUM_EXECUTABLE}:{})});
  page=await browser.newPage();let external=0,errors=0;
  await page.route('**/*',async route=>{const u=new URL(route.request().url());if(u.origin===origin||u.protocol==='blob:')await route.continue();else{external++;await route.abort();}});page.on('pageerror',error=>{errors++;pageErrors.push(error.message);});page.setDefaultTimeout(15000);
- await page.goto(origin);await page.locator('#podcast-import').waitFor({state:'visible'});check('no_automatic_source_requests',calls.length===0);
+ await page.goto(origin+'/compatibility.html');await page.locator('#podcast-import').waitFor({state:'visible'});check('no_automatic_source_requests',calls.length===0);
  stage='discover';await page.locator('#video-url').fill(source.feed_url);await page.locator('#process-url').click();await page.locator('.podcast-episode').first().waitFor();
  check('discovery_only',calls.join(',')==='discover');
  stage='filter_discovered_episodes';

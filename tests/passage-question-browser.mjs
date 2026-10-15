@@ -1,3 +1,4 @@
+// Compatibility renderer regression; this suite does not establish default React acceptance.
 /** CI-only real-browser journey. Original authored cues, injected answers and
  * a local bridge only; no account, CLI, quota, external site or media is used.
  * Syntax checks do not count as real-browser evidence. */
@@ -23,7 +24,7 @@ try{
  for(const [label,viewport] of [['desktop',{width:1360,height:1000}],['mobile',{width:390,height:844}]]){
   const context=await browser.newContext({viewport,acceptDownloads:true,serviceWorkers:'block'});
   await context.route('**/*',async route=>{const url=new URL(route.request().url());if(url.origin===origin||url.protocol==='blob:')await route.continue();else{external++;await route.abort();}});
-  const page=await context.newPage();page.setDefaultTimeout(15000);page.on('pageerror',error=>errors.push(error.message));await page.goto(origin);
+  const page=await context.newPage();page.setDefaultTimeout(15000);page.on('pageerror',error=>errors.push(error.message));await page.goto(origin+'/compatibility.html');
   const doc=passageReadingFixture();doc.title='问这一段 · 自写验收 '+label;doc.segments=doc.segments.slice(0,120);await load(page,doc);
   await page.evaluate(()=>scrollTo(0,0));
   check(label+'_source_starts_within_350px',(await page.locator('.passage-original').first().boundingBox()).y<=350);
@@ -63,7 +64,7 @@ try{
   check(label+'_explicit_cancel_does_not_save_late_answer',(await snapshot(page)).ai_answers.length===2);
   check(label+'_modal_has_no_horizontal_overflow',await page.locator('#passage-question-dialog').evaluate(node=>node.scrollWidth<=node.clientWidth&&node.getBoundingClientRect().left>=0&&node.getBoundingClientRect().right<=innerWidth));
   await screenshot(page,label+'-question');await context.close();
-  const restored=await browser.newContext({viewport,serviceWorkers:'block'});await restored.route('**/*',async route=>{const url=new URL(route.request().url());if(url.origin===origin||url.protocol==='blob:')await route.continue();else{external++;await route.abort();}});const recovery=await restored.newPage();recovery.on('pageerror',error=>errors.push(error.message));await recovery.goto(origin);await load(recovery,JSON.parse(bytes));await recovery.locator('#mode-transcript').click();await recovery.locator('#language-panel > summary').click();
+  const restored=await browser.newContext({viewport,serviceWorkers:'block'});await restored.route('**/*',async route=>{const url=new URL(route.request().url());if(url.origin===origin||url.protocol==='blob:')await route.continue();else{external++;await route.abort();}});const recovery=await restored.newPage();recovery.on('pageerror',error=>errors.push(error.message));await recovery.goto(origin+'/compatibility.html');await load(recovery,JSON.parse(bytes));await recovery.locator('#mode-transcript').click();await recovery.locator('#language-panel > summary').click();
   await recovery.locator('#ai-answers .ai-answer button').first().click();await recovery.locator('#return-passage-question').click();check(label+'_fresh_import_returns_exact_historical_scope',(await scopedIds(recovery)).length===6&&!await recovery.locator('#ai-consent').isChecked());await restored.close();
  }
  check('no_external_requests',external===0);check('no_browser_errors',errors.length===0);console.log(JSON.stringify({ok:true,checks,injectedRequests:requests.length,external,errors},null,2));

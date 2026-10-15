@@ -1,3 +1,4 @@
+// Compatibility renderer regression; this suite does not establish default React acceptance.
 /** CI-only real Chromium + production HTTP/task ledger/CLI adapter. Authored
  * sources and injected CLI replies only; no real account or model is contacted.
  * CPU harness contracts can run separately without launching a browser. */
@@ -26,7 +27,7 @@ try{
   else{external++;await route.abort();}
  });
  let page=await context.newPage();page.on('pageerror',()=>pageErrors++);page.setDefaultTimeout(15000);
- await page.goto(bridge.origin);
+ await page.goto(bridge.origin+'/compatibility.html');
  async function importSource(title,source=authoredSource(title)){
   stage='import_authored_source';
   await page.locator('#file').setInputFiles({name:'authored-background.json',mimeType:'application/json',buffer:Buffer.from(JSON.stringify(source))});
@@ -104,7 +105,7 @@ try{
  // page must recover the original durable association from this same origin.
  stage='new_page_recovers_original_submission';await context.setOffline(false);
  page=await context.newPage();page.on('pageerror',()=>pageErrors++);page.setDefaultTimeout(15000);
- await page.goto(bridge.origin);await refresh();await expect(row(first)).toContainText('已完成');
+ await page.goto(bridge.origin+'/compatibility.html');await refresh();await expect(row(first)).toContainText('已完成');
  await answers(original,0);await answers(other,0);
  check('offline_late_completion_does_not_write_any_document',bridge.invocations.length===1);
  check('new_page_recovers_same_task_without_post_or_auto_accept',await row(first).getAttribute('data-submission-key')===firstSubmissionKey&&bridge.posts.filter(path=>path==='/api/v1/tasks').length===1&&bridge.invocations.length===1);
@@ -147,7 +148,7 @@ try{
  stage='fresh_browser_rescues_unassociated_result';
  const rescueContext=await browser.newContext({viewport:{width:390,height:844},serviceWorkers:'block',acceptDownloads:true});
  await rescueContext.route('**/*',async route=>{const url=new URL(route.request().url());if(url.origin===bridge.origin||['blob:','data:'].includes(url.protocol))await route.continue();else{external++;await route.abort();}});
- page=await rescueContext.newPage();page.on('pageerror',()=>pageErrors++);page.setDefaultTimeout(15000);await page.goto(bridge.origin);
+ page=await rescueContext.newPage();page.on('pageerror',()=>pageErrors++);page.setDefaultTimeout(15000);await page.goto(bridge.origin+'/compatibility.html');
  const rescueTitle='Authored unrelated rescue document';await importSource(rescueTitle);await refresh();
  await expect(row(first).locator('[data-action="view-result"]')).toBeVisible();await expect(row(first).locator('[data-action="accept"]')).toHaveCount(0);
  await row(first).locator('[data-action="view-result"]').click();await expect(row(first).locator('.background-result')).toBeVisible();await expect(row(first).locator('.background-result')).toContainText('Authored background result');

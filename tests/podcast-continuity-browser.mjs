@@ -1,3 +1,4 @@
+// Compatibility renderer regression; this suite does not establish default React acceptance.
 import {openLibraryTools} from './helpers/library-tools-browser.mjs';
 /** Run in Browser acceptance CI: discovery → audio project → same-episode transcript.
  * Publisher responses and 40-second PCM media are authored fixtures.
@@ -110,7 +111,7 @@ try {
         window.recordContinuityPlayback({kind: 'play-event', src: event.target.getAttribute('src')});
       }, true);
     });
-    await result.goto(origin);
+    await result.goto(origin+'/compatibility.html');
     await result.locator('#podcast-import').waitFor({state: 'visible'});
     return result;
   }

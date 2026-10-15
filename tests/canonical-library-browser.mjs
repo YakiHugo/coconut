@@ -1,3 +1,4 @@
+// Compatibility renderer regression; this suite does not establish default React acceptance.
 /** Authored-only Chromium + real Node SQLite authority-transfer acceptance.
  * No user profiles, external services, models, real media or private artifacts.
  */
@@ -45,7 +46,7 @@ async function setup(name){
  const origin='http://127.0.0.1:'+server.address().port,context=await browser.newContext({acceptDownloads:true,serviceWorkers:'block',viewport:{width:1280,height:900}});contexts.add(context);
  await context.route('**/*',route=>{const url=new URL(route.request().url());if(url.origin===origin||['blob:','data:'].includes(url.protocol))return route.continue();external++;return route.abort();});
  await context.addInitScript(({original})=>{if(localStorage.getItem('coconut-reader-v1')===null)localStorage.setItem('coconut-reader-v1',original);},{original});
- const page=await context.newPage();page.setDefaultTimeout(20000);page.on('pageerror',error=>errors.push(error.message));await page.goto(origin);await ready(page);assert.equal(await backend(page),'indexeddb');
+ const page=await context.newPage();page.setDefaultTimeout(20000);page.on('pageerror',error=>errors.push(error.message));await page.goto(origin+'/compatibility.html');await ready(page);assert.equal(await backend(page),'indexeddb');
  assert.equal((await records(origin)).length,0);assert.equal(await marker(page),undefined);checks.push('no_automatic_adoption_'+name);
  const source=await page.evaluate(()=>CoconutStorageBootstrap.storage.readRecovery());
  return {page,context,server,origin,source,name};
@@ -108,7 +109,7 @@ try{
   const context=await browser.newContext({acceptDownloads:true,serviceWorkers:'block',viewport:{width:1280,height:900}});contexts.add(context);
   await context.route('**/*',route=>{const url=new URL(route.request().url());if(url.origin===happy.origin||['blob:','data:'].includes(url.protocol))return route.continue();external++;return route.abort();});
   if(localDocument)await context.addInitScript(document=>{if(localStorage.getItem('coconut-reader-v1')===null)localStorage.setItem('coconut-reader-v1',JSON.stringify({documents:[document]}));},localDocument);
-  const page=await context.newPage();page.on('pageerror',error=>errors.push(error.message));await page.goto(happy.origin);await ready(page);
+  const page=await context.newPage();page.on('pageerror',error=>errors.push(error.message));await page.goto(happy.origin+'/compatibility.html');await ready(page);
   assert.equal(await backend(page),'indexeddb');assert.equal(await marker(page),undefined);return {page,context};
  }
  async function clickConnect(page){
@@ -125,7 +126,7 @@ try{
  await happy.page.reload();await ready(happy.page);assert.equal(await happy.page.evaluate(()=>CoconutStorageBootstrap.result.loaded.documents[0].notes.cue),'Independent browser B edit');
  await second.page.reload();await ready(second.page);check('independent_browser_connects_and_both_clients_read_same_sqlite_writes',await backend(second.page)==='canonical');
  const localDocument={...fixture,key:'browser-only',title:'Only in browser C'},third=await newBrowser(localDocument),thirdSource=await third.page.evaluate(()=>CoconutStorageBootstrap.storage.readRecovery());
- const oldThird=await third.context.newPage();await oldThird.goto(happy.origin);await ready(oldThird);
+ const oldThird=await third.context.newPage();await oldThird.goto(happy.origin+'/compatibility.html');await ready(oldThird);
  await third.page.evaluate(()=>{const original=CoconutStorageBootstrap.storage;CoconutStorageBootstrap.result.canonical=CoconutCanonicalLibrary.create({primitive:{...original,bindCanonical:async m=>{await original.bindCanonical(m);throw Error('Connection receipt interrupted');}},validate:Coconut.validate});});
  await clickConnect(third.page);await third.page.waitForFunction(()=>CoconutStorageBootstrap.phase==='migration');assert.equal((await marker(third.page)).state,'connected');
  assert.equal(await third.page.getByRole('button',{name:'继续迁移',exact:true}).isVisible(),false);
@@ -137,7 +138,7 @@ try{
  await second.page.route('**/api/v1/library**',route=>route.abort('failed'));await second.page.reload();await second.page.waitForFunction(()=>CoconutStorageBootstrap.phase==='failed');assert.equal(await second.page.locator('.shell').evaluate(n=>n.inert),true);assert.equal((await marker(second.page)).state,'connected');
  await second.page.unroute('**/api/v1/library**');await second.page.reload();await ready(second.page);check('bound_browser_offline_blocks_writable_fallback_and_recovers_after_refresh',true);
 
- stage='interrupted staging cancellation and old-tab fence';const cancelled=await setup('cancelled'),old=await cancelled.context.newPage();old.on('pageerror',error=>errors.push(error.message));await old.goto(cancelled.origin);await ready(old);
+ stage='interrupted staging cancellation and old-tab fence';const cancelled=await setup('cancelled'),old=await cancelled.context.newPage();old.on('pageerror',error=>errors.push(error.message));await old.goto(cancelled.origin+'/compatibility.html');await ready(old);
  await cancelled.page.route('**/api/v1/library/migration',async route=>{if(route.request().method()==='POST'&&route.request().postDataJSON().action==='chunk')return route.abort('failed');return route.continue();});
  await startMigration(cancelled.page);await cancelled.page.waitForFunction(()=>window.CoconutStorageBootstrap?.phase==='migration');assert.equal((await marker(cancelled.page)).state,'frozen');assert.equal((await records(cancelled.origin)).length,0);
  if(await old.locator('#mode-transcript').isVisible())await old.locator('#mode-transcript').click();await old.locator('.note-button').first().click();await old.locator('#note').fill('Old tab must not overwrite frozen source');const stale=await old.evaluate(()=>libraryStore.flush());assert.equal(stale.ok,false);assert.ok(stale.results.some(result=>result.error?.code==='version'),'old tab must fail the frozen IDB write fence');assert.deepEqual((await frozenSource(cancelled.page)).current.stores.documents,cancelled.source.stores.documents);check('native_idb_transaction_fences_existing_tab',true);
