@@ -5,6 +5,7 @@
  const retry=document.getElementById('storage-startup-retry'),rescue=document.getElementById('storage-startup-export');
  const recovery=document.getElementById('storage-startup-recovery');
  const shell=document.querySelector('.shell'),scripts=[...document.querySelectorAll('script[data-reader-script]')];
+ const access=window.CoconutClientCapabilities;
  const boot={phase:'loading',result:null};window.CoconutStorageBootstrap=boot;
  shell.inert=true;
  const reasons={blocked:'另一个窗口阻止了文档数据库升级。请关闭其他 Coconut 页面后重试。',
@@ -112,7 +113,7 @@
  document.querySelector('.library-backup')?.addEventListener('toggle',async event=>{
   if(!event.currentTarget.open||discoveryBusy||boot.result?.backend!=='indexeddb'||!boot.result.canonical)return;
   discoveryBusy=true;connectionHint.hidden=false;connectionHint.textContent='正在检查此电脑已有书架…';
-  try{const server=await boot.result.canonical.request();connect.hidden=!(server.enabled&&server.binding?.protocolVersion===1);connectionHint.textContent=!connect.hidden?'可连接已有电脑书架；当前仍使用本浏览器书架。连接不会合并两份内容。':server.enabled?'此电脑尚无可连接的已有书架。可先迁移本浏览器书架。':'电脑统一书架服务未启用；当前仍使用本浏览器书架。';}
+  try{await access?.refresh();if(access&&!access.allows('libraryRead'))throw new Error('未连接授权电脑');const server=await boot.result.canonical.request();connect.hidden=!(server.enabled&&server.binding?.protocolVersion===1);connectionHint.textContent=!connect.hidden?'可连接已有电脑书架；当前仍使用本浏览器书架。连接不会合并两份内容。':server.enabled?(access&&!access.allows('libraryMigration')?'此电脑尚无可连接的已有书架，请在电脑本机完成首次迁移。':'此电脑尚无可连接的已有书架。可先迁移本浏览器书架。'):'电脑统一书架服务未启用；当前仍使用本浏览器书架。';}
   catch{connect.hidden=true;connectionHint.textContent='暂时无法检查电脑书架。当前浏览器书架仍可使用；关闭并重新打开备份工具可重试。';}
   finally{discoveryBusy=false;}
  });
@@ -126,6 +127,8 @@
  async function migrateAction(action){
   if(migrationBusy||!boot.result?.canonical)return;migrationBusy=true;let release;
   try{
+   await access?.refresh();
+   if(access&&!access.allows(action==='connect'?'libraryWrite':'libraryMigration'))throw new Error('当前连接不支持此操作；首次迁移和迁移管理请在电脑本机进行。');
    if(['begin','connect'].includes(action))release=await window.coconutAcquireCanonicalMigration();
    resume.disabled=cancel.disabled=migrate.disabled=connect.disabled=true;
    const result=await boot.result.canonical[action]();
@@ -144,10 +147,19 @@
  boot.migrateCanonical=()=>migrateAction('begin');boot.resumeCanonical=()=>migrateAction('resume');boot.cancelCanonical=()=>migrateAction('cancel');
  migrate.onclick=()=>{if(window.confirm('将当前浏览器书架完整迁移到此 PC 的统一数据库？原始数据会保留并停止浏览器写入。请先提交所有草稿。'))void boot.migrateCanonical();};
  resume.onclick=()=>void boot.resumeCanonical();cancel.onclick=()=>void boot.cancelCanonical();
+ function renderConnection(){
+  if(!access)return;
+  const client=access.current;
+  connectionHint.hidden=false;
+  connectionHint.textContent=client?'已连接 '+client.backendLabel+'。'+(client.mode==='private-owner'?'正在通过本人私有连接使用电脑服务。电脑的本地媒体文件和迁移管理不能从此设备操作；可在此设备另选自己的媒体文件。':'')+(client.libraryId?' 书架身份：'+client.libraryId:' 统一书架尚未启用。'):'电脑服务已失联或未授权；已提交后台任务可能仍在电脑运行，恢复连接不会自动新建模型请求。';
+  migrate.hidden=boot.result?.backend!=='indexeddb'||!boot.result?.canonical||!access.allows('libraryMigration');
+ }
+ window.addEventListener('coconut-client-changed',renderConnection);
  let loading=false,scriptsStarted=false,scriptPending=null;
  async function start(){
   if(loading||startupOwner)return;loading=true;boot.controller=new AbortController();boot.storage=null;boot.phase='loading';retry.hidden=true;rescue.hidden=true;recovery.hidden=true;message.textContent='正在打开本机书架并核验原始数据…';
   try{
+   await access?.refresh();
    const result=await CoconutStorageProvider.initialize({validate:Coconut.validate,signal:boot.controller.signal,onStorage:storage=>{boot.storage=storage;},onLifecycle:event=>{
     if(event.state==='open')message.textContent='正在载入书架；首次升级会保留完整原始数据，请稍候…';
    }});
@@ -163,7 +175,8 @@
     '文档分开保存到本机数据库。原始旧书架仍保留，不自动清理；原始数据下载供恢复使用，不能作为普通书架备份直接导入。':'当前使用兼容存储，容量较小；保存失败时请导出完整备份。';
    sourceRecovery.textContent=result.connected?'导出连接前浏览器恢复文件':'导出迁移原始恢复文件';
    connect.hidden=true;
-   mode.hidden=false;sourceRecovery.hidden=result.backend!=='canonical';migrate.hidden=result.backend!=='indexeddb'||!result.canonical;
+   mode.hidden=false;sourceRecovery.hidden=result.backend!=='canonical';migrate.hidden=result.backend!=='indexeddb'||!result.canonical||!!access&&!access.allows('libraryMigration');
+   renderConnection();
    window.dispatchEvent(new CustomEvent('coconut-storage-ready',{detail:{backend:result.backend,migrated:result.migrated===true}}));
   }catch(error){
    if(boot.controller.signal.aborted)return;

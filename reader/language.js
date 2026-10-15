@@ -12,7 +12,7 @@ const providerModels=new Map();
 function selectedAIModel(){return ($('ai-model')?.value||'').trim();}
 function modelFields(model=selectedAIModel()){return model?{model}:{};}
 function validAIModel({background=false}={}){try{const model=CoconutSummary.model(selectedAIModel());if(model&&!(background?window.CoconutBackgroundSummary?.modelSupported($('ai-provider').value):aiStatuses[$('ai-provider').value]?.model_selection?.supported===true))throw new Error('此服务未声明支持指定模型，未发送请求。请更新本机服务，或清空模型以使用 CLI 默认设置。');return true;}catch(error){notice(error.message);$('ai-consent').checked=false;return false;}}
-let languageCheckSequence=0;
+let languageCheckSequence=0,languageAdmission=0;
 let subscriptionSelectionSignature="";
 let languageDocumentLabel=null;
 let glossaryDocumentSignature="";
@@ -47,6 +47,7 @@ function languageAvailability(text){languageAvailabilityMessage=text;$('language
 // A canceled plan stays canceled even if the shared consent control is checked
 // for a reopened panel or another document while its current request finishes.
 function stopLanguageBatches(){
+ languageAdmission++;
  if(summaryScope)summaryScope.stop=true;
  if(translating)stopTranslation=true;
  if(subscriptionTranslating)stopSubscription=true;
@@ -75,7 +76,14 @@ function glossaryDirty(){return $('translation-glossary')&&$('translation-glossa
 let aiStatuses={}, languageReady=false, aiReady=false, translating=false, stopTranslation=false, asking=false, subscriptionTranslating=false, stopSubscription=false, subscriptionScope=null, languageDocument=null;
 for(const [code,name] of Object.entries(languageNames))for(const id of ["translation-source","translation-target"]){const option=document.createElement('option');option.value=code;option.textContent=id==='translation-view'?name+' + 原文':name;document.getElementById(id).append(option);}
 document.getElementById('translation-target').value='zh';
-async function languageApi(path,data){
+async function languageApi(path,data,maySend=()=>true){
+ const access=window.CoconutClientCapabilities;
+ if(data&&!access&&!['localhost','127.0.0.1','[::1]'].includes(location.hostname))throw new Error('连接能力组件未加载，未发送原文；请刷新或修复完整安装。');
+ if(access){
+  const generation=access.generation,admission=languageAdmission;
+  await access.refresh();
+  if(data&&(!access.allows('aiActions')||generation!==access.generation||admission!==languageAdmission||!maySend()))throw new Error('电脑连接、身份或书架已变化，请重新核对范围后再发送。');
+ }
  const response=await fetch('api/'+path,{method:data?'POST':'GET',headers:data?{'Content-Type':'application/json'}:{},body:data?JSON.stringify(data):undefined,signal:AbortSignal.timeout(path==='translate'?600000:200000)});
  const value=await response.json();if(!response.ok)throw new Error(value.error||'请求失败');return value;
 }
@@ -107,6 +115,7 @@ function retirePassageRequest(){
  if(questionScope?.passage){aiProgress(questionScope.key,'本次段落提问已停止接收结果。已发出的请求可能消耗额度；迟到结果不会保存，再次发送需重新确认。');questionScope.retired=true;questionScope=null;questionKey=null;asking=false;}
 }
 function closePassageQuestion({retire=false,restoreFocus=false,detour=false}={}){
+ languageAdmission++;
  const owner=passageQuestion;if(owner?.selectionText!==undefined)owner.selectionInstruction=$('ai-question').value;if(retire)retirePassageRequest();$('ai-consent').checked=false;
  passageQuestion=null;passagePresentationSignature='';passagePreviewSignature='';
  if($('passage-question-dialog').open)$('passage-question-dialog').close();
@@ -435,13 +444,13 @@ async function checkLanguageTools(){
  finally{if(sequence===languageCheckSequence){checkButton.disabled=false;renderLanguage();}}
 }
 $('check-ai').onclick=checkLanguageTools;
-$('ai-filtered').onchange=()=>{
+$('ai-filtered').onchange=()=>{languageAdmission++;
  $('ai-consent').checked=false;
  if(subscriptionTranslating){stopSubscription=true;aiProgress(subscriptionScope?.key,'读取范围已变化，当前订阅批次结束后停止；重新开始前需再次确认范围与额度。');}
  renderLanguage();
 };
 if($('ai-model'))$('ai-model').oninput=()=>{providerModels.set($('ai-provider').value,$('ai-model').value);stopLanguageBatches();renderLanguage();};
-$('ai-provider').onchange=()=>{if($('ai-model'))$('ai-model').value=providerModels.get($('ai-provider').value)||'';if(summaryScope)summaryScope.stop=true;if(subscriptionTranslating)stopSubscription=true;aiReady=aiStatuses[$('ai-provider').value]?.ready===true;$('ai-status').textContent=aiStatuses[$('ai-provider').value]?.reason||'请检查本机订阅连接';$('ai-consent').checked=false;renderLanguage();};
+$('ai-provider').onchange=()=>{languageAdmission++;if($('ai-model'))$('ai-model').value=providerModels.get($('ai-provider').value)||'';if(summaryScope)summaryScope.stop=true;if(subscriptionTranslating)stopSubscription=true;aiReady=aiStatuses[$('ai-provider').value]?.ready===true;$('ai-status').textContent=aiStatuses[$('ai-provider').value]?.reason||'请检查本机订阅连接';$('ai-consent').checked=false;renderLanguage();};
 $('language-setup').onclick=()=>{showWorkspace('add');$('local-setup').open=true;$('local-setup').scrollIntoView({behavior:'smooth'});$('local-setup').querySelector('summary').focus();};
 window.addEventListener('coconut-worker-ready',()=>{
  $('language-prerequisite').textContent='本地连接已就绪。CLI 功能需要官方工具已安装并登录；确认所选文字、匹配术语和已有译文建议及额度后才会发出请求。';
@@ -467,7 +476,7 @@ window.addEventListener('coconut-render',renderLanguage);
 $('note').addEventListener('input',()=>{queueMicrotask(()=>renderLanguage());});
 for(const id of ['translation-source','translation-target'])$(id).onchange=()=>{stopLanguageBatches();renderLanguage();};
 if($('ai-task'))$('ai-task').onchange=()=>{stopLanguageBatches();$('ai-send-details').open=false;renderLanguage();};
-$('ai-question').oninput=()=>{if(!passageQuestion&&passageQuestionReturn?.selectionText!==undefined){passageQuestionReturn=null;$('passage-question-return').hidden=true;}$('ai-consent').checked=false;renderLanguage();};
+$('ai-question').oninput=()=>{languageAdmission++;if(!passageQuestion&&passageQuestionReturn?.selectionText!==undefined){passageQuestionReturn=null;$('passage-question-return').hidden=true;}$('ai-consent').checked=false;renderLanguage();};
 if($('translation-glossary'))$('translation-glossary').oninput=()=>{if(glossaryDirty())glossaryDrafts.set(glossaryDocumentSignature,$('translation-glossary').value);else glossaryDrafts.delete(glossaryDocumentSignature);$('ai-consent').checked=false;if(subscriptionTranslating)stopSubscription=true;};
 if($('save-translation-glossary'))$('save-translation-glossary').onclick=async()=>{
  const doc=active();if(!doc||!contentIngressAllowed(doc))return;
@@ -507,7 +516,7 @@ $('translate-document').onclick=async()=>{
    if(batch.some(c=>{const s=doc.segments.find(s=>s.id===c.id);return s?.translations?.[target]?.manual_review&&Coconut.translationCurrent(s,doc,s.translations[target]);}))throw new Error('本批已有新的人工核对译文，未发送请求；请重新确认剩余范围');
    const targetVersions=new Map(batch.map(c=>[c.id,doc.segments.find(s=>s.id===c.id)?.translations?.[target]]));
    translationProgress(key,`本机翻译中：${completed}/${pending.length} 段；可以停止后续批次，已完成内容会保存。`);
-   const result=await languageApi('translate',{source,target,segments:batch,allow_download:$('download-model').checked});
+   const result=await languageApi('translate',{source,target,segments:batch,allow_download:$('download-model').checked},()=>offlineTranslationScope===owner&&languageOwnerLive(owner)&&!stopTranslation&&active()===doc&&(!watchSurface||translationSurfaceOpen())&&Coconut.sameCueSnapshot(doc,confirmedSource));
    if(!Array.isArray(result.translations)||result.translations.length!==batch.length||new Set(result.translations.map(t=>t.id)).size!==batch.length)throw new Error('翻译批次不完整，未覆盖原文');
    const destination=state.documents.find(d=>d.key===key);if(destination!==doc||!languageOwnerLive(owner))throw new Error('原文字稿已移除或更换，本次结果未保存');
    if(batch.some(c=>destination.segments.find(s=>s.id===c.id)?.translations?.[target]!==targetVersions.get(c.id)))throw new Error('本批译文已被人工修正或替换，返回结果未覆盖，后续请求已停止');
@@ -522,6 +531,7 @@ $('translate-document').onclick=async()=>{
  }catch(error){if(offlineTranslationScope===owner&&languageOwnerLive(owner))translationProgress(key,'翻译暂停：'+error.message+'。已完成译文保留，可重试继续。');}
  finally{if(offlineTranslationScope===owner){translating=false;offlineTranslationScope=null;offlineTranslationKey=null;$('ai-consent').checked=false;$('stop-translation').hidden=true;renderLanguage();}}
 };
+window.addEventListener('coconut-client-changed',()=>{stopLanguageBatches();retireLanguageOwners();});
 window.addEventListener('pagehide',()=>{stopLanguageBatches();closePassageQuestion({retire:true});});
 // Retire owners irreversibly, including an apply→undo cycle with identical text.
 // Already-sent requests cannot be unsent; their late responses are discarded.
@@ -583,7 +593,7 @@ async function runDocumentSummary(doc){
    if(!mayRequest())break;
    const request=CoconutSummary.request(plan,job);
    aiProgress(key,index<plan.chunks.length?`正在整理第 ${index+1}/${plan.chunks.length} 批原文；整篇摘要尚未完成。`:'所有原文批次已保存，正在汇总；汇总成功前不产生整篇摘要。');
-   const response=await languageApi('ask',request);
+   const response=await languageApi('ask',request,mayRequest);
    if(!sourceCurrent())throw new Error('请求期间原文已修改，本批结果未保存；旧进度仅供恢复，不能生成当前整篇摘要');
    finalAnswer=CoconutSummary.accept(plan,job,response);
    if(finalAnswer){
@@ -640,7 +650,7 @@ $('ask-ai').onclick=async()=>{
  const provider=$('ai-provider').value,model=selectedAIModel(),language=$('translation-target').value;
  const key=doc.key,owner={doc,key,retired:false,passage:!!passageQuestion,input:input_snapshot};questionScope=owner;questionKey=key;asking=true;renderLanguage();aiProgress(key,`正在让所选 AI 阅读 ${segments.length} 段；不会切换到付费 API。${owner.passage?'可返回阅读，回答仍会保存在这篇文字稿；修改原文或取消接收会停止保留结果，已发送请求仍可能消耗额度。':''}`);
  try{
-  const answer=await languageApi('ask',{question,language,provider,...modelFields(model),segments,consent:true});
+  const answer=await languageApi('ask',{question,language,provider,...modelFields(model),segments,consent:true},()=>questionScope===owner&&languageOwnerLive(owner)&&active()===doc&&$('ai-consent').checked&&$('ai-provider').value===provider&&selectedAIModel()===model&&aiQuestionText()===question&&Coconut.answerFreshness({purpose,input_snapshot},doc)==='current');
   const destination=state.documents.find(d=>d.key===key);if(destination!==doc||questionScope!==owner||!languageOwnerLive(owner))throw new Error('原文字稿已移除或更换，本次结果未保存');
   if(Coconut.answerFreshness({purpose,input_snapshot},destination)!=='current'||purpose==='summary'&&destination.segments.length!==segments.length)throw new Error('请求期间原文已修改，请按新原文重新提问');
   if(typeof answer.answer!=='string'||!Array.isArray(answer.citations)||answer.citations.some(id=>!segments.some(s=>s.id===id)))throw new Error('回答引用无效');
@@ -685,7 +695,7 @@ $('subscription-translate').onclick=async()=>{
    if(batch.some(c=>{const s=before.segments.find(s=>s.id===c.id);return s?.translations?.[target]?.manual_review&&Coconut.translationCurrent(s,before,s.translations[target]);}))throw new Error('本批已有新的人工核对译文，未发送请求；请重新确认剩余范围');
    const targetVersions=new Map(batch.map(c=>[c.id,before.segments.find(s=>s.id===c.id)?.translations?.[target]]));
    aiProgress(key,`订阅翻译中：${completed}/${plan.total} 段；上下文仅来自确认的筛选，不购买额度，不回退到API。`);
-   const result=await languageApi('translate-subscription',{source,target,provider,...modelFields(model),segments:batch,context:window.context,glossary:window.glossary,memory:window.memory,consent:true});
+   const result=await languageApi('translate-subscription',{source,target,provider,...modelFields(model),segments:batch,context:window.context,glossary:window.glossary,memory:window.memory,consent:true},()=>subscriptionScope===owner&&languageOwnerLive(owner)&&!stopSubscription&&$('ai-consent').checked&&active()===doc&&(!watchSurface||translationSurfaceOpen())&&Coconut.sameCueSnapshot(doc,window.snapshot));
    if(!Array.isArray(result.translations)||result.translations.length!==batch.length||result.translations.some((t,i)=>t.id!==batch[i].id||t.source_text!==batch[i].text||typeof t.text!=='string'||!t.text.trim()||t.text.length>12000))throw new Error('订阅结果与目标片段未完整对应，本批不保存');
    const destination=state.documents.find(d=>d.key===key);if(destination!==doc||subscriptionScope!==owner||!languageOwnerLive(owner))throw new Error('原文字稿已移除或更换，本次结果未保存');
    if(batch.some(c=>destination.segments.find(s=>s.id===c.id)?.translations?.[target]!==targetVersions.get(c.id)))throw new Error('本批译文已被人工修正或替换，返回结果未覆盖，后续请求已停止');

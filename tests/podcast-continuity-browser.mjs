@@ -1,5 +1,4 @@
 import {openLibraryTools} from './helpers/library-tools-browser.mjs';
-import {isExplicitLibraryDiscovery} from './helpers/explicit-library-discovery.mjs';
 /** Run in Browser acceptance CI: discovery → audio project → same-episode transcript.
  * Publisher responses and 40-second PCM media are authored fixtures.
  * No external sources, credentials, real providers or model quota. */
@@ -16,7 +15,6 @@ const ACTIVE_KEY = 'coconut-reader-active-v1';
 const PROJECT_NOTE = 'Authored project note: preserve this exact annotation.';
 const BOOKMARK_NOTE = 'Authored timestamp note: return here after importing words.';
 const checks = [], calls = [], forbiddenRequests = [], providerCalls = [], pageErrors = [], playback = [], explicitLibraryReads = [];
-const discoveryPermissions = new WeakMap();
 let browser, server, directory, page, stage = 'setup', external = 0;
 const check = (name, value) => {assert.ok(value, name); checks.push(name);};
 
@@ -76,16 +74,11 @@ try {
 
   async function newPage() {
     const context = await browser.newContext({acceptDownloads: true, serviceWorkers: 'block'});
-    const permission = {armed: false};
     await context.route('**/*', async route => {
       const url = new URL(route.request().url());
       if (['blob:', 'data:'].includes(url.protocol)) return route.continue();
       if (url.origin !== origin) {external++; return route.abort();}
-      if (isExplicitLibraryDiscovery({url: url.href, method: route.request().method(), body: route.request().postData()}, origin, permission.armed)) {
-        permission.armed = false; // A repeated discovery is still forbidden.
-        explicitLibraryReads.push({method: 'GET', pathname: url.pathname});
-        return route.continue();
-      }
+      if (url.pathname === '/api/v1/library') explicitLibraryReads.push({method: route.request().method(), pathname: url.pathname});
       // Even an attempted model/status/transcription request is a failure. The
       // injected bridge providers are also fail-closed if routing ever changes.
       if (url.pathname.startsWith('/api/') && !['/api/health', '/api/podcasts/discover', '/api/podcasts/import', '/api/podcasts/media'].includes(url.pathname)) {
@@ -95,7 +88,6 @@ try {
       return route.continue();
     });
     const result = await context.newPage();
-    discoveryPermissions.set(result, permission);
     result.setDefaultTimeout(15000);
     result.on('pageerror', error => pageErrors.push(error.message));
     await result.exposeFunction('recordContinuityPlayback', event => playback.push(event));
@@ -158,13 +150,13 @@ try {
     }
     if (!await details.evaluate(node => node.open)) {
       if (id === 'export-library') {
-        const permission = discoveryPermissions.get(target);
-        permission.armed = true;
-        try {
-          const [response] = await Promise.all([target.waitForResponse(response => response.request().method() === 'GET' && response.url() === origin + '/api/v1/library'), details.locator(':scope > summary').click()]);
-          assert.equal(response.status(), 200);
-          assert.equal((await response.json()).enabled, false, 'This podcast fixture has no canonical library; disclosure only discovers capability.');
-        } finally { permission.armed = false; }
+        // This bridge has no libraryDirectory. Its real health declaration must
+        // stop canonical discovery, while browser-only backup remains usable.
+        const [response] = await Promise.all([target.waitForResponse(response => response.request().method() === 'GET' && response.url() === origin + '/api/health'), details.locator(':scope > summary').click()]);
+        assert.equal(response.status(), 200);
+        assert.equal((await response.json()).client.capabilities.libraryRead, false);
+        await target.waitForFunction(() => document.querySelector('.library-backup').textContent.includes('暂时无法检查电脑书架'));
+        assert.equal(explicitLibraryReads.length, 0, 'Disabled library capability must not issue canonical discovery.');
       } else await details.locator(':scope > summary').click();
     }
     const [item] = await Promise.all([target.waitForEvent('download'), target.locator('#' + id).click()]);
@@ -254,7 +246,7 @@ try {
   const projectBackup = await download('export', 'episode-project.coconut.json');
   assert.deepEqual(projectBackup.value, savedTranscript);
   const libraryBackup = await download('export-library', 'episode-library.json');
-  check('explicit_backup_disclosure_permits_exactly_one_local_read_only_capability_request', explicitLibraryReads.length === 1 && forbiddenRequests.length === 0 && providerCalls.length === 0);
+  check('explicit_backup_disclosure_respects_disabled_library_capability_without_discovery', explicitLibraryReads.length === 0 && forbiddenRequests.length === 0 && providerCalls.length === 0);
   assert.equal(libraryBackup.value.format, 'coconut-library');
   assert.equal(libraryBackup.value.active, originalKey);
   assert.deepEqual(libraryBackup.value.documents, [savedTranscript]);
@@ -307,7 +299,7 @@ try {
       await restored.locator('#source-media audio').count() === 0 && mediaCount() === 2 && forbiddenRequests.length === 0 && providerCalls.length === 0);
     await restored.context().close();
   }
-  check('startup_reload_and_clean_restore_never_request_library_discovery', explicitLibraryReads.length === 1);
+  check('disabled_library_startup_backup_reload_and_clean_restore_never_request_library_discovery', explicitLibraryReads.length === 0);
   check('no_autoplay_external_requests_or_browser_errors',
     playback.length === 0 && external === 0 && pageErrors.length === 0 && forbiddenRequests.length === 0 && providerCalls.length === 0);
   console.log(JSON.stringify({suite: 'podcast-discovery-project-continuity', status: 'passed', checks, explicitLibraryReads}));

@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import {libraryHarness} from './helpers/large-library-harness.mjs';
 const fixture=()=>({key:'selection',title:'Authored selection',language:'en',segments:[{id:'a',start:0,end:2,text:'Repeated repeated 🌴',speaker:'A'},{id:'b',start:2,end:4,text:'words 中文。',speaker:'A'}],notes:{a:'Private note must not enter context'}});
-function setup(documents=[fixture()]){return libraryHarness(documents,{probe:true,configureCore(w){w.eval(fs.readFileSync(new URL('../reader/quotation.js',import.meta.url),'utf8'));}});}
+function setup(documents=[fixture()]){return libraryHarness(documents,{localService:true,probe:true,configureCore(w){w.eval(fs.readFileSync(new URL('../reader/quotation.js',import.meta.url),'utf8'));}});}
 function select(w,from=9,to=20){const text=w.document.querySelector('.passage-cue').firstChild,range=w.document.createRange();range.setStart(text,from);range.setEnd(text,to);w.getSelection().removeAllRanges();w.getSelection().addRange(range);return range;}
 const settle=async fn=>{for(let i=0;i<100&&!fn();i++)await new Promise(r=>setTimeout(r,10));assert.ok(fn());};
 
@@ -95,7 +95,7 @@ test('floating React actions respect Escape, IME composition and focused inputs'
 
 test('target trailing whitespace survives request trimming and empty intervening cues remain explicit context',async()=>{
  const doc={key:'spaces',title:'Exact source',segments:[{id:'a',start:0,end:1,text:'one two  '},{id:'empty',start:1,end:2,text:''},{id:'c',start:2,end:3,text:'three'}],notes:{}};
- const {w,$}=libraryHarness([doc],{probe:true,configureCore(w){w.eval(fs.readFileSync(new URL('../reader/quotation.js',import.meta.url),'utf8'));}});
+ const {w,$}=libraryHarness([doc],{localService:true,probe:true,configureCore(w){w.eval(fs.readFileSync(new URL('../reader/quotation.js',import.meta.url),'utf8'));}});
  try{
   const spans=w.document.querySelectorAll('.passage-cue'),range=w.document.createRange();range.setStart(spans[0].firstChild,4);range.setEnd(spans[0].firstChild,9);w.getSelection().addRange(range);
   const action=w.CoconutSelectionActions.capture();assert.equal(action.text,'two  ');action.run('translate');

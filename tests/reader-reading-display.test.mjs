@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import {readingDisplayFixture} from './helpers/reading-display-fixture.mjs';
 import {libraryHarness} from './helpers/large-library-harness.mjs';
 import {displayedTranslationExportsFixture as fixture} from './helpers/displayed-translation-exports-fixture.mjs';
-const setup=(docs=[fixture()])=>libraryHarness(docs,{probe:true});
+const setup=(docs=[fixture()])=>libraryHarness(docs,{localService:true,probe:true});
 const choose=(env,value)=>{env.$('translation-view').value=value;env.$('translation-view').onchange();};
 const values=env=>[...env.$('translation-view').options].map(option=>option.value);
 const visible=node=>{for(let n=node;n;n=n.parentElement)if(n.hidden||n.tagName==='DETAILS'&&!n.open)return false;return true;};

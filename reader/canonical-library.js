@@ -33,11 +33,17 @@
  async function hash(value){return [...new Uint8Array(await root.crypto.subtle.digest('SHA-256',typeof value==='string'?bytes(value):value))].map(n=>n.toString(16).padStart(2,'0')).join('');}
  function base64(data){let value='';for(let i=0;i<data.length;i+=8192)value+=String.fromCharCode(...data.subarray(i,i+8192));return root.btoa(value);}
  function create({primitive,fetch=root.fetch.bind(root),validate=d=>d}={}){
+  const access=root.CoconutClientCapabilities;let connectionIdentity=access?.identity();
   async function request(path='',body){
+   if(!access&&root.location&&!['localhost','127.0.0.1','[::1]'].includes(root.location.hostname))throw issue('unsupported','连接能力组件未加载，未发送书架请求；请刷新或修复完整安装。');
+   if(access?.allows('libraryRead')&&!connectionIdentity)connectionIdentity=access.identity();
+   if(access&&(!access.allows(body?'libraryWrite':'libraryRead')||connectionIdentity!==access.identity()||path.startsWith('/migration')&&!access.allows('libraryMigration')))throw issue('connection_changed','电脑连接、身份或书架已变化，请恢复原连接后重试；未发送旧书架操作。');
+   const generation=access?.generation;
    const controller=new AbortController(),timer=root.setTimeout(()=>controller.abort(),15000);
    try{
     const response=await fetch('/api/v1/library'+path,body?{method:'POST',headers:{'Content-Type':'application/json'},body:typeof body==='string'?body:JSON.stringify(body),cache:'no-store',signal:controller.signal}:{cache:'no-store',signal:controller.signal});
     const data=await response.json();
+    if(access&&(generation!==access.generation||connectionIdentity!==access.identity()))throw issue('connection_changed','连接已变化，未接收旧书架回执；请恢复原连接后核查。');
     if(!response.ok&&!(response.status===404&&data.state==='absent'))throw Object.assign(issue(data.code||'unavailable',data.error||'PC 书架暂时不可用，请重试；不会切回浏览器写入。'),{definitive:response.status>=400&&response.status<500});
     return data;
    }finally{root.clearTimeout(timer);}
@@ -72,6 +78,7 @@
    const saved=await primitive.finishCanonical(m,r);if(!saved.ok)throw issue(saved.error.code);return {ok:true,state:'canonical',receipt:r};
   }
   async function resume(){
+   if(access&&!access.allows('libraryMigration'))throw issue('unsupported','迁移管理只能在有权限的电脑本机进行。');
    const m=await marker();if(!m)throw issue('missing_migration');if(await hash(m.text)!==m.sha256)throw issue('corruption');
    const state=requireEpoch(await request('/migration?'+new URLSearchParams({protocolVersion:'1',migrationId:m.migrationId})),m.epoch);
    if(state.state==='committed')return adopt(m,state);
@@ -88,6 +95,7 @@
    return adopt(m,await request('/migration',{...body,action:'finalize'}));
   }
   async function begin(){
+   if(access&&!access.allows('libraryMigration'))throw issue('unsupported','迁移管理只能在有权限的电脑本机进行。');
    if(await marker())return resume();
    const server=await request();if(!server.enabled||server.migration?.protocolVersion!==1||server.batchProtocolVersion!==2||server.migration.chunkBytes!==CHUNK)throw issue('unsupported','此服务尚未支持安全迁移。');
    const snapshot=await primitive.canonicalSource();if(!snapshot.ok)throw issue(snapshot.error.code,snapshot.error.message);
@@ -101,6 +109,7 @@
    const frozen=await primitive.freezeCanonical(m);if(!frozen.ok)throw issue(frozen.error.code,frozen.error.message);return resume();
   }
   async function cancel(){
+   if(access&&!access.allows('libraryMigration'))throw issue('unsupported','迁移管理只能在有权限的电脑本机进行。');
    const m=await marker();if(!m)return {ok:true,state:'cancelled'};if(await hash(m.text)!==m.sha256)throw issue('corruption');
    // Resolve an unknown prior finalize before requesting cancellation. An absent
    // session still needs a durable cancellation tombstone against delayed begin.

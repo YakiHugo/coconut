@@ -342,10 +342,12 @@ $("media-file").onchange = async () => {
 async function connectWorker() {
  if (connectingWorker) return;
  connectingWorker = true;
+ const access=window.CoconutClientCapabilities,observation=access?.begin();
  clearTimeout(pollTimer);
  $("retry-worker").disabled = true;
 	try {
 		const health = await jobApi("health");
+  if(access&&!access.complete(health.client,observation))return;
 		if (!health.local_worker && health.capabilities?.local_agents !== true) throw new Error("No local worker");
   if (!health.local_worker) {
    const newlyConnected = !localAgents||localWorker||sourcePodcastReady!==(health.capabilities?.podcast_import===true)||sourceCaptionReady!==(health.capabilities?.caption_import===true);
@@ -355,7 +357,7 @@ async function connectWorker() {
    $("local-setup").open=false;$("retry-worker").hidden=true;
    $("url-form").hidden=false;sourcePodcastReady=health.capabilities?.podcast_import===true;sourceCaptionReady=health.capabilities?.caption_import===true;$("caption-language-control").hidden=!sourceCaptionReady;$("advanced-import-options").hidden=true;$("advanced-media-import").hidden=true;$("show-jobs").hidden=true;$("jobs-heading").hidden=true;$("jobs").hidden=true;
    $("process-url").disabled=sourceSubmitting||!!sourceCaptionRequest||!!podcastRequest;$("import-media").disabled=true;
-   $("worker-status").textContent="轻量本地服务已连接 · 无需 Python";
+   $("worker-status").textContent=health.client?.mode==="private-owner"?"已连接 "+health.client.backendLabel+" · 本人私有连接":"轻量本地服务已连接 · 无需 Python";
    $("worker-help").textContent="可导入文字稿、选择本地音视频同步回听，并在确认后调用已登录的本地 CLI。"+(sourcePodcastReady?"可从公开播客源导入文字稿与回听媒体。":"")+(sourceCaptionReady?"可直接读取公开 X 单视频的原语言字幕，无需安装 Python；不下载媒体、不运行识别。":"")+"不含 ASR 或离线翻译模型，不会自动发送原文。";
    updateSourceEntry();
    if(newlyConnected)window.dispatchEvent(new CustomEvent("coconut-worker-ready",{detail:{local_agents:true,media_import:false,podcast_import:sourcePodcastReady,caption_import:sourceCaptionReady}}));
@@ -380,6 +382,7 @@ async function connectWorker() {
 		$("worker-help").textContent =
 			"默认仅使用现成字幕，没有字幕时停止。只有取消「仅使用现成字幕」才会使用本地语音模型，首次可能下载模型。原始结果保存在本机，不会自动调用付费接口。";
  } catch {
+  if(access&&!access.complete(null,observation))return;
   disconnectedWorker();
  } finally {
   connectingWorker = false;

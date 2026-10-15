@@ -44,7 +44,7 @@ try{
   await page.locator('#mode-summary').click();await page.locator('#prepare-summary').click();
   await page.locator('#summary-execution').selectOption('background');
   await expect(page.locator('#ask-ai')).toBeEnabled();
-  await expect(page.locator('#summary-background-status')).toContainText('已连接此电脑');
+  await expect(page.locator('#summary-background-status')).toContainText('已连接 此电脑');
   await expect(page.locator('#ai-consent')).not.toBeChecked();
  }
  async function submit(count,taskCount=count){
@@ -173,7 +173,7 @@ try{
  bridge.invocations[4].release();await bridge.waitTask(oldDirectoryTask,'succeeded');await page.locator('#close-summary-request').click();await refresh();await answers(switchedTitle,0);
  const originBeforeSwitch=bridge.origin;await bridge.switchTaskDirectory('alternate');assert.equal(bridge.origin,originBeforeSwitch);
  const oldLookup=await bridge.request('/api/v1/tasks/'+oldDirectoryTask);assert.equal(oldLookup.status,404);assert.equal(oldLookup.code,'not_found');
- await page.reload();await refresh();await expect(row(oldDirectoryTask)).toContainText('此执行器找不到此任务');await expect(page.locator('#background-executor-status')).toContainText('已连接此电脑');
+ await page.reload();await refresh();await expect(row(oldDirectoryTask)).toContainText('此执行器找不到此任务');await expect(page.locator('#background-executor-status')).toContainText('已连接 此电脑');
  await expect(row(oldDirectoryTask).locator('[data-action="resubmit"]')).toHaveCount(0);await expect(row(oldDirectoryTask).locator('[data-action="accept"]')).toHaveCount(0);
  check('missing_old_task_isolated_without_resending_or_disabling_new_executor',bridge.invocations.length===5&&bridge.posts.filter(path=>path==='/api/v1/tasks').length===5&&(await bridge.tasks()).length===0);
  await page.setViewportSize({width:390,height:844});await openTasks();await row(oldDirectoryTask).scrollIntoViewIfNeeded();

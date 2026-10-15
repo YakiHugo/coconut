@@ -42,3 +42,29 @@ export function observePageFileChoosers(page){
  page.on('filechooser',onChooser);page.once('close',dispose);
  return {count:()=>count,dispose};
 }
+
+/** Invoke the real installed MenuItem once and await its observed renderer receipt.
+ * MenuItem.click discards the async template result; returning from main is not
+ * proof that the target page accepted the command. Never dispatch from the page.
+ */
+export async function invokeObservedNativeMenuCommand(application,page,id,diagnostic){
+ Object.assign(diagnostic,{command:id,menuInvoked:false,rendererReceived:false});
+ const before=await page.evaluate(()=>{const state=window.__coconutNativeMenuObservation;return {sequence:state.sequence,inputClicks:state.inputClicks};});
+ diagnostic.before=before;
+ diagnostic.dispatch=await application.evaluate(({Menu,BrowserWindow},id)=>{
+  const item=Menu.getApplicationMenu().getMenuItemById(id),windows=BrowserWindow.getAllWindows(),window=windows[0];
+  if(!item?.enabled||!window||window.isDestroyed())throw new Error('Native file item unavailable: '+id);
+  const facts={enabled:item.enabled,windowCount:windows.length,windowDestroyed:window.isDestroyed(),loading:window.webContents.isLoadingMainFrame(),
+   trustedURL:['http://127.0.0.1:47831/','http://127.0.0.1:47831/index.html'].includes(window.webContents.getURL().split('#')[0]),
+   visible:window.isVisible(),focused:window.isFocused(),webContentsFocused:window.webContents.isFocused()};
+  const result=item.click(item,window,{});return {...facts,wrapperReturnType:typeof result};
+ },id);
+ diagnostic.menuInvoked=true;
+ await page.waitForFunction(({id,before})=>{
+  const last=window.__coconutNativeMenuObservation?.last;
+  return last?.sequence>before&&last.command===id&&last.completed;
+ },{id,before:before.sequence});
+ Object.assign(diagnostic,await page.evaluate(()=>{const state=window.__coconutNativeMenuObservation;return {receipt:state.last,inputClicks:state.inputClicks,lastInput:state.lastInput};}));
+ diagnostic.rendererReceived=true;
+ return diagnostic.receipt;
+}

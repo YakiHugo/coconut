@@ -7,7 +7,8 @@ import {Window} from 'happy-dom';
 import {splitCueFixture} from './helpers/split-cue-fixture.mjs';
 const root = new URL('../', import.meta.url);
 function setup() {
- const w = new Window({url:'https://coconut.example/'});
+ // Legacy local-service fixture: injected AI responses are not private-owner authorization.
+ const w = new Window({url:'http://localhost/'});
  w.document.body.innerHTML=fs.readFileSync(new URL('reader/index.html',root),'utf8').split('<body>')[1].split('</body>')[0];
  Object.defineProperty(w,'crypto',{value:webcrypto});
  const calls=[];w.fetch=async(...args)=>{calls.push(args);throw new Error('Unexpected network request');};

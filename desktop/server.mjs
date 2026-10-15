@@ -12,15 +12,17 @@ import {createTaskStore,TASK_BODY_BYTES} from './tasks.mjs';
 import {createLibraryStore} from './library-store.mjs';
 import {handleLibraryRequest} from './library-api.mjs';
 import {libraryLocation,libraryStartupMessage} from './library-location.mjs';
+import {privateProxyProfile,privateProxyFromEnvironment,authorizeClient,describeClient,localOnlyRoute,remoteDiagnostic,remoteResponseDiagnostics} from './client-access.mjs';
 
 export const CAPABILITIES = Object.freeze({reader:true,local_agents:true,subscription_ask:true,subscription_translation:true,media_import:false,local_translation:false,podcast_import:true,caption_import:false});
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
-const ASSETS = new Map([['/','index.html'],...['index.html','app.js','summary.js','task-client.js','core.js','background-summary.js','passages.js','passage-playback.js','quotation.js','library-store.js','appearance.js','indexeddb-document-adapter.js','canonical-library.js','storage-provider.js','storage-bootstrap.js','transcript-navigator.js','jobs.js','language.js','translation-review.js','podcasts.js','updates.js','style.css','coconut-mark.png'].map(name=>['/'+name,name])]);
+const ASSETS = new Map([['/','index.html'],...['index.html','app.js','summary.js','task-client.js','core.js','background-summary.js','client-capabilities.js','passages.js','passage-playback.js','quotation.js','library-store.js','appearance.js','indexeddb-document-adapter.js','canonical-library.js','storage-provider.js','storage-bootstrap.js','transcript-navigator.js','jobs.js','language.js','translation-review.js','podcasts.js','updates.js','style.css','coconut-mark.png'].map(name=>['/'+name,name])]);
 const MIME = {'.png':'image/png','.html':'text/html; charset=utf-8','.js':'text/javascript; charset=utf-8','.css':'text/css; charset=utf-8'};
 const MAX_BODY = 1024 * 1024;
 export const CSP = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self'; img-src 'self' data: blob:; media-src 'self' blob:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'";
 
-export function createBridge({readerDirectory = path.resolve(ROOT,'../reader'), providers = createProviders(), podcastSources = createPodcastSources(), captionService = null, captionStatus = null, localMediaService = null, taskStore = null, taskUnavailable = null, libraryStore = null, libraryUnavailable = null, libraryLocation = null} = {}) {
+export function createBridge({readerDirectory = path.resolve(ROOT,'../reader'), providers = createProviders(), podcastSources = createPodcastSources(), captionService = null, captionStatus = null, localMediaService = null, taskStore = null, taskUnavailable = null, libraryStore = null, libraryUnavailable = null, libraryLocation = null, privateProxy = null} = {}) {
+  const profile=privateProxyProfile(privateProxy);
   const translate = createTranslator(providers);
   const capabilities=Object.freeze({...CAPABILITIES,caption_import:captionService?.available===true,persistent_tasks:!!taskStore,canonical_library:!!libraryStore});
   const captionSources=Object.freeze({available:capabilities.caption_import,mode:captionStatus?.mode||(capabilities.caption_import?'bundled-helper':'disabled'),
@@ -32,24 +34,26 @@ export function createBridge({readerDirectory = path.resolve(ROOT,'../reader'), 
   const server = http.createServer(async (req,res) => {
     for (const [key,value] of Object.entries({'X-Content-Type-Options':'nosniff','Referrer-Policy':'no-referrer','Cache-Control':'no-store',
       'Content-Security-Policy':CSP,'X-Frame-Options':'DENY','Cross-Origin-Resource-Policy':'same-origin'})) res.setHeader(key,value);
+    let access=null,pathname="";
     const json = (status,data) => {
+      if(access?.mode==='private-owner')data=remoteResponseDiagnostics(data,pathname);
       if (res.destroyed) return;
       const body = JSON.stringify(data); res.writeHead(status, {'Content-Type':'application/json; charset=utf-8','Content-Length':Buffer.byteLength(body)}); res.end(req.method === 'HEAD' ? undefined : body);
     };
     const port = server.address()?.port;
-    const hosts = new Set([`127.0.0.1:${port}`,`localhost:${port}`]);
-    const origin = `http://${req.headers.host}`;
-    if (!hosts.has(req.headers.host) || (req.headers.origin && req.headers.origin !== origin) ||
-      (req.headers['sec-fetch-site'] && !['same-origin','none'].includes(req.headers['sec-fetch-site']))) return json(403,{error:'仅允许本机同源请求'});
-    let pathname;
+    access=authorizeClient(req,{port,profile});
+    if(!access)return json(403,{code:'client_forbidden',error:'此请求未通过本机或私有本人访问验证'});
+    const origin=access.origin,remote=access.mode==='private-owner';
     try { pathname = new URL(req.url, origin).pathname; } catch { return json(400,{error:'无效路径'}); }
+    if(remote&&localOnlyRoute(pathname))return json(403,{code:'local_only',error:'此操作需要在所连接的电脑上完成'});
+    const client=()=>describeClient(access,{profile,libraryStore,taskStore,localMediaService});
     const controller = new AbortController(); active.add(controller);
     res.on('close',()=>{ if (!res.writableEnded) controller.abort(); active.delete(controller); });
     try {
       if(await handleLibraryRequest({req,pathname,origin,json,store:libraryStore,unavailable:libraryUnavailable}))return;
       if (localMediaService && await localMediaService.handle(req,res,pathname)) return;
       if (req.method === 'GET' || req.method === 'HEAD') {
-        if (pathname === '/api/v1/executor') return json(200,taskStore?.describe()||{protocolVersion:1,executor:{type:'local-node',online:true},supportedTaskKinds:['summary'],enabled:false,...(taskUnavailable?{unavailable:taskUnavailable}:{}),providers:{codex:{supported:true,availability:'not_checked'},claude:{supported:true,availability:'not_checked'}},remoteSubmission:false});
+        if (pathname === '/api/v1/executor') return json(200,{...(taskStore?.describe()||{protocolVersion:1,executor:{type:'local-node',online:true},supportedTaskKinds:['summary'],enabled:false,...(taskUnavailable?{unavailable:taskUnavailable}:{}),providers:{codex:{supported:true,availability:'not_checked'},claude:{supported:true,availability:'not_checked'}},remoteSubmission:false}),remoteSubmission:remote,client:client()});
         if (pathname === '/api/v1/tasks' || /^\/api\/v1\/tasks\/[a-f0-9-]+(?:\/export)?$/.test(pathname)) {
           if(!taskStore)return json(503,{error:taskUnavailable?.message||'此执行器尚未配置持久任务目录',code:taskUnavailable?.code||'tasks_disabled'});
           if(req.method!=='GET')return json(405,{error:'Method not allowed'});
@@ -64,7 +68,7 @@ export function createBridge({readerDirectory = path.resolve(ROOT,'../reader'), 
           return json(200,{protocolVersion:1,task:await taskStore.get(pathname.split('/').at(-1))});
         }
         if (pathname === '/api/captions/status') return json(200,captionSources);
-        if (pathname === '/api/health') return json(200,{local_worker:false,runtime:'desktop-bridge',paid_processing:false,max_upload_bytes:0,capabilities,caption_sources:captionSources,...(libraryLocation?{library_storage:{...libraryLocation,enabled:!!libraryStore,unavailable:libraryUnavailable}}:{})});
+        if (pathname === '/api/health') return json(200,{local_worker:false,runtime:'desktop-bridge',paid_processing:false,max_upload_bytes:0,capabilities,client:client(),caption_sources:captionSources,...(libraryLocation&&!remote?{library_storage:{...libraryLocation,enabled:!!libraryStore,unavailable:libraryUnavailable}}:{})});
         if (pathname === '/api/language-tools' && req.method === 'GET') return json(200,{translation_models:[],local_translation:false,capabilities,
           ai:{codex:await providers.status('codex',{signal:controller.signal}),claude:await providers.status('claude',{signal:controller.signal})}});
         if (pathname === '/api/jobs') return json(501,{error:'轻量版不提供处理队列，请重新检查本地服务能力'});
@@ -116,7 +120,7 @@ export function createBridge({readerDirectory = path.resolve(ROOT,'../reader'), 
       if (pathname === '/api/ask') return json(200,await providers.ask(data,{signal:controller.signal}));
       return json(200,{translations:await translate(data,{signal:controller.signal})});
     } catch (error) {
-      return json(error.status|| (error.code === 'ENOENT' ? 404 : 400),{...(error.taskCode?{code:error.taskCode}:pathname==='/api/captions/import'&&error.code?{code:error.code}:{}),error:error.code === 'ENOENT' ? 'File not found' : String(error.message || '请求未完成').slice(0,300)});
+      return json(error.status|| (error.code === 'ENOENT' ? 404 : 400),{...(remote?{code:error.taskCode||error.code||'request_failed'}:{}),...(error.taskCode?{code:error.taskCode}:pathname==='/api/captions/import'&&error.code?{code:error.code}:{}),error:error.code === 'ENOENT' ? 'File not found' : remote?remoteDiagnostic(error.message):String(error.message || '请求未完成').slice(0,300)});
     }
   });
   server.requestTimeout = 30000; server.headersTimeout = 10000;
@@ -159,7 +163,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
   const args = process.argv.slice(2);
   if (args.length && (args.length !== 2 || args[0] !== '--port')) { console.error('Usage: node desktop/server.mjs [--port 8080]'); process.exit(1); }
   const library=libraryLocation({mode:'cli'});
-  const server = await startBridge({port:args.length ? Number(args[1]) : 8080,taskDirectory:path.join(homedir(),'.coconut','tasks'),libraryDirectory:library.directory,startupMode:'cli'});
+  const server = await startBridge({port:args.length ? Number(args[1]) : 8080,taskDirectory:path.join(homedir(),'.coconut','tasks'),libraryDirectory:library.directory,startupMode:'cli',privateProxy:privateProxyFromEnvironment()});
   console.log(`Coconut 轻量阅读器：http://127.0.0.1:${server.address().port}（不需要 Python；未发起模型请求）`);
   console.log(libraryStartupMessage(library,await fetch(`http://127.0.0.1:${server.address().port}/api/v1/library`).then(response=>response.json())));
   const stop = () => server.shutdown();
