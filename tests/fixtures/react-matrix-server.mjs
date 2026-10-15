@@ -2,7 +2,7 @@
 import {startDevelopmentBridge} from '../../desktop/dev.mjs';
 let mode='answer',pending=null;
 const providers={
- status:async()=>({ready:true,model_selection:{supported:true},reason:'Authored fake provider only'}),
+ status:async()=>({ready:mode!=='unavailable',model_selection:{supported:true},reason:mode==='unavailable'?'Authored fixture: official CLI subscription login is required.':'Authored fake provider only'}),
  ask:async data=>{
   process.send?.({type:'ask',data});
   if(mode==='hold')return new Promise(resolve=>{pending=()=>resolve({answer:'STALE authored answer',citations:[data.segments[0].id],provider:'fixture'});});

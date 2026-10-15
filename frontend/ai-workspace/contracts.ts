@@ -3,12 +3,12 @@ export type Provider = 'codex' | 'claude';
 export type AiPurpose = 'question' | 'summary' | 'translation';
 export interface SourceCue { id: string; text: string; start?: number; end?: number; speaker?: string | null }
 export interface AiSelection { documentKey: string; revision: string; segments: SourceCue[]; scope?: Record<string, unknown>; exactText?: string }
-export interface AiTaskView { key: string; title?:string; binding?:string|null; generation?:number; taskId?: string; attemptId?: string; inputDigest?: string; provider: string; model: string; status: string; accepted: boolean; canAccept: boolean; canResume: boolean; canCancel: boolean; canRetry:boolean; requestCount:number; unknown: boolean; archived: boolean; canArchive: boolean }
+export interface AiTaskView { key: string; title?:string; binding?:string|null; generation?:number; taskId?: string; attemptId?: string; inputDigest?: string; provider: string; model: string; status: string; accepted: boolean; canAccept: boolean; canResume: boolean; canCancel: boolean; canRetry:boolean; retryUnavailableReason?:string; requestCount:number; unknown: boolean; archived: boolean; canArchive: boolean }
 export interface ReviewView { id: string; target: string; source: string; context: string[]; glossary:string[]; original: string; previous: string; text: string; baseline: string; status: string; busy: boolean }
 export interface AiSnapshot {
  documentKey: string | null; revision: string; title: string; purpose: AiPurpose; provider: Provider; model: string; target: string; source: string; question: string;
  execution: 'foreground' | 'background'; consent: boolean; scopeNotice: string; selection: AiSelection | null;
- busy: boolean; connected: boolean; message: string; localErrorAvailable: boolean; localError: string | null;
+ busy: boolean; connected: boolean; readiness: {status:'not_checked'|'unavailable'|'ready';ready:boolean;reason:string}; message: string; localErrorAvailable: boolean; localError: string | null;
  tasks: AiTaskView[]; answers: Array<{answer: string; citations: string[]; question?: string; purpose?: string; requested_model?: string; provider?: string; input_snapshot?:{segments:SourceCue[];scope?:Record<string,unknown>}}>;
  review: ReviewView | null; reviewQueue: Array<{id: string; text: string; status: string; reason: string}>;
  resumeKey: string | null; translationEngine:'subscription'|'offline'; offlineAvailable:boolean; allowDownload:boolean; glossary:string; glossaryDirty:boolean; hasDirtyDrafts:boolean; unsavedContent:boolean; recoveries:Array<{id:string;title:string;canRetry:boolean}>;
