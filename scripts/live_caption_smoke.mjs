@@ -7,13 +7,14 @@ import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {createHash} from 'node:crypto';
 import {spawn, spawnSync} from 'node:child_process';
+import {CAPTION_FAILURE_STATUSES,captionDiagnostic} from '../desktop/caption-service.mjs';
 import {startDevelopmentBridge} from '../desktop/dev.mjs';
 
 export const SAMPLE_ID='QRS8MkLhQmM';
 const SAMPLE_URL=`https://www.youtube.com/watch?v=${SAMPLE_ID}`;
 const ROOT=fileURLToPath(new URL('../',import.meta.url));
 const lock=JSON.parse(await readFile(new URL('../desktop/caption-helper-lock.json',import.meta.url),'utf8'));
-const statuses=new Set(['unavailable','access_restricted','network_unavailable','metadata_incomplete','language_required']);
+const statuses=new Set(CAPTION_FAILURE_STATUSES);
 export function initialReport(){
  const sha=spawnSync('git',['rev-parse','HEAD'],{cwd:ROOT,encoding:'utf8',timeout:2000}).stdout?.trim();
  return {commit:/^[a-f0-9]{40}$/.test(sha||'')?sha:null,time:new Date().toISOString(),runner:process.env.GITHUB_ACTIONS==='true'?'github-actions':'local',provider:'youtube',sample_id:SAMPLE_ID,versions:{node:process.versions.node,extractor_expected:lock.ytDlpVersion,extractor_verified:null},setup_ready:false,import_status:'not_attempted',outcome:'unverified',reason:'unknown',elapsed_ms:0,language:null,method:null,cue_count:0,time_range:null,cue_sha256:null};
@@ -21,14 +22,17 @@ export function initialReport(){
 export function recordReceipt(report,receipt,httpStatus){
  if(httpStatus!==200){
   report.import_status='http_error';
+  if(receipt?.code==='CAPTION_PARSE_FAILED'){report.reason='caption_parse_failed';report.outcome='unverified';report.diagnostic={stage:'reader_parse',reason:'caption_parse_failed',requests_attempted:null,responses_received:null};return;}
   // Only a broken helper protocol is unambiguously internal. Do not guess from prose.
   report.outcome=receipt?.code==='CAPTION_OUTPUT'?'implementation_failure':'unverified';
   report.reason=receipt?.code==='CAPTION_OUTPUT'?'invalid_helper_output':receipt?.code==='CAPTION_TIMEOUT'?'deadline':'unknown';
   return;
  }
  if(statuses.has(receipt?.status)){
-  report.import_status=receipt.status;report.outcome=['access_restricted','network_unavailable'].includes(receipt.status)?'blocked':'unverified';
-  report.reason=['access_restricted','network_unavailable'].includes(receipt.status)?receipt.status:'unknown';return;
+  report.import_status=receipt.status;report.outcome=['access_restricted','network_unavailable','guard_stopped'].includes(receipt.status)?'blocked':'unverified';
+  const diagnostic=captionDiagnostic(receipt.diagnostic);
+  if(diagnostic)report.diagnostic=diagnostic;
+  report.reason=diagnostic?.reason||(['access_restricted','network_unavailable','guard_stopped','no_matching_captions','extractor_failed','caption_file_invalid','caption_parse_failed'].includes(receipt.status)?receipt.status:'unknown');return;
  }
  const doc=receipt?.document,cues=doc?.segments;
  if(receipt?.status!=='ready'||doc?.source_url!==SAMPLE_URL||doc?.language!=='en'||doc?.provenance?.source_platform!=='youtube'||doc?.provenance?.media_id!==SAMPLE_ID||!['platform_provided','automatic'].includes(doc?.provenance?.caption_method)||!Array.isArray(cues)||!cues.length||cues.length>20000||cues.some(c=>!c||typeof c!=='object'||!Number.isFinite(c.start)||!Number.isFinite(c.end)||c.start<0||c.end<=c.start||typeof c.text!=='string'||!c.text.trim())){

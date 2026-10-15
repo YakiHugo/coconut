@@ -7,6 +7,31 @@ const require=createRequire(import.meta.url);
 const MAX_BYTES=8*1024*1024;
 const MAX_DURATION=6*3600;
 
+export const CAPTION_FAILURE_STATUSES=Object.freeze(['unavailable','access_restricted','language_required','network_unavailable','metadata_incomplete','no_matching_captions','extractor_failed','caption_file_invalid','caption_parse_failed','guard_stopped']);
+const diagnosticStages=new Set(['initialization','extractor_setup','metadata','track_selection','caption_download','caption_parse','caption_output','helper_execution','reader_parse']);
+const diagnosticReasons=new Set(['access_restricted','transport_unavailable','metadata_incomplete','request_scope_stopped','non_public_address','identity_mismatch','budget_exceeded','unexpected_response','upstream_error','dependency_mismatch','alternate_extractor_stopped','unsupported_request','external_execution_stopped','duration_unavailable','redirect_stopped','guard_stopped','language_unknown','no_matching_track','invalid_caption_file','caption_parse_failed','caption_download_or_file_failed','extractor_error','helper_error']);
+// Only finite enum/counter observations cross the helper, UI and report boundary.
+// An attempted request is not evidence of reaching the platform.
+export function captionDiagnostic(value){
+ if(!value||typeof value!=='object'||!diagnosticStages.has(value.stage)||!diagnosticReasons.has(value.reason))return null;
+ const counts=[value.requests_attempted,value.responses_received];
+ const unknown=['helper_execution','reader_parse'].includes(value.stage)&&counts.every(n=>n===null);
+ if(!unknown&&(!counts.every(n=>Number.isInteger(n)&&n>=0&&n<=32)||counts[1]>counts[0]))return null;
+ return {stage:value.stage,reason:value.reason,requests_attempted:counts[0],responses_received:counts[1]};
+}
+const failureMessages={
+ metadata_incomplete:'来源未提供足够的访问或视频完成状态，暂不能安全导入；可稍后重试或导入已有字幕。',
+ network_unavailable:'网络或 TLS 连接未完成，无法判断字幕是否可用；请检查网络后重试。',
+ language_required:'无法确认原语言，请选择后重试；未启动识别。',
+ access_restricted:'当前公开入口受限，未尝试登录或绕过限制；可打开原站或导入合法取得的字幕。',
+ no_matching_captions:'已检查来源元数据，未找到匹配原语言的可用字幕轨道；这不代表其他语言也没有字幕。可导入已有 SRT / VTT；未启动识别。',
+ extractor_failed:'字幕提取器未完成，无法判断平台是否有字幕。可导入已有 SRT / VTT；未启动识别。',
+ caption_file_invalid:'字幕下载或文件检查未完成，不能判定为没有字幕。可导入已有 SRT / VTT；未启动识别。',
+ caption_parse_failed:'已取得的字幕无法解析，未导入。可检查或重新导出 SRT / VTT 后导入；未启动识别。',
+ guard_stopped:'公开字幕获取已在边界检查处停止，不能判定为没有字幕；未绕过限制。可导入合法取得的 SRT / VTT。',
+ unavailable:'当前入口未取得可用公开字幕，未启动识别、下载媒体或模型。',
+};
+
 export function captionSource(value){
  if(typeof value!=='string'||value.length>4096)throw new Error('请输入公开单视频链接');
  let url;try{url=new URL(value);}catch{throw new Error('请输入有效的公开单视频链接');}
@@ -48,8 +73,12 @@ export function createCaptionService({helper,readerDirectory=path.resolve(ROOT,'
     if(!result||typeof result!=='object')throw new Error('字幕获取未返回有效结果');
     if(result.status&&result.status!=='ready'){
      // Do not turn retrieval failure or access denial into a claim of absent subtitles.
-     if(!['unavailable','access_restricted','language_required','network_unavailable','metadata_incomplete'].includes(result.status))throw new Error('字幕获取未完成，请重试或导入字幕文件');
-     return {status:result.status,source_url:source.url,message:result.status==='metadata_incomplete'?'来源未提供足够的访问或视频完成状态，暂不能安全导入；可稍后重试或导入已有字幕。':result.status==='network_unavailable'?'网络或 TLS 连接未完成，无法判断字幕是否可用；请检查网络后重试。':result.status==='language_required'?'无法确认原语言，请选择后重试；未启动识别。':result.status==='access_restricted'?'当前公开入口受限，未尝试登录或绕过限制；可打开原站或导入合法取得的字幕。':'当前入口未取得可用公开字幕，未启动识别、下载媒体或模型。'};
+     if(!CAPTION_FAILURE_STATUSES.includes(result.status))throw new Error('字幕获取未完成，请重试或导入字幕文件');
+     const diagnostic=captionDiagnostic(result.diagnostic);
+     const message=result.status==='extractor_failed'&&diagnostic?.requests_attempted===0&&['initialization','extractor_setup'].includes(diagnostic.stage)
+      ?'本机字幕提取器初始化未完成，尚未尝试来源网络请求；无法判断是否有字幕。可导入已有 SRT / VTT。'
+      :failureMessages[result.status];
+     return {status:result.status,source_url:source.url,message,...(diagnostic?{diagnostic}:{})};
     }
     const meta=result.source;
     if(!meta||captionSource(meta.url).url!==source.url||typeof meta.id!=='string'||!(source.provider==='x'?/^\d{1,20}$/.test(meta.id):meta.id===source.mediaId))throw new Error('字幕来源与请求无法核对，未导入');
@@ -64,8 +93,10 @@ export function createCaptionService({helper,readerDirectory=path.resolve(ROOT,'
     if(track.language&&track.language!==meta.language||track.captionMethod&&track.captionMethod!==(meta.automatic?'automatic':'platform_provided'))throw new Error('字幕轨道与来源记录不一致');
     const basis=track.languageBasis||meta.language_basis||'unknown';
     if(!['user_hint','platform_metadata','original_track','single_track','unknown'].includes(basis))throw new Error('字幕语言依据无法核对');
-    const text=new TextDecoder('utf-8',{fatal:true}).decode(result.bytes);
-    const {document,diagnostics}=Coconut.parseWithDiagnostics(text,'captions.'+result.format);
+    let parsed;
+    try{const text=new TextDecoder('utf-8',{fatal:true}).decode(result.bytes);parsed=Coconut.parseWithDiagnostics(text,'captions.'+result.format);}
+    catch(error){error.code='CAPTION_PARSE_FAILED';throw error;}
+    const {document,diagnostics}=parsed;
     if(!document.segments.length||document.segments.length>20000||document.segments.some(cue=>cue.end>meta.duration+1||cue.end>MAX_DURATION))throw new Error('字幕片段范围与视频时长无法核对');
     document.title=typeof meta.title==='string'&&meta.title.trim()?meta.title.trim().slice(0,500):'视频文字稿';
     document.source_url=source.url;document.language=meta.language;

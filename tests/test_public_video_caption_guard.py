@@ -193,10 +193,10 @@ class OfficialExtractorTests(unittest.TestCase):
             if field == 'playabilityStatus': del player[field]
             else: del player['videoDetails'][field]
             result, calls = self.extract(YOUTUBE, player=player)
-            self.assertEqual(result, {'status': 'metadata_incomplete'})
+            self.assertEqual(result['status'], 'metadata_incomplete')
             self.assertFalse(any('/api/timedtext' in url for url in calls))
         player = copy.deepcopy(PLAYER); player['playabilityStatus']['status'] = None
-        self.assertEqual(self.extract(YOUTUBE, player=player)[0], {'status': 'metadata_incomplete'})
+        self.assertEqual(self.extract(YOUTUBE, player=player)[0]['status'], 'metadata_incomplete')
 
     def test_optional_metadata_can_be_missing_and_completed_broadcasts_remain_usable(self):
         player = copy.deepcopy(PLAYER)
@@ -220,7 +220,7 @@ class OfficialExtractorTests(unittest.TestCase):
         self.assertFalse(any('tlang=' in url for url in calls))
         track['baseUrl'] += '&exp=xpe'
         result, calls = self.extract(YOUTUBE, player=player)
-        self.assertEqual(result, {'status': 'access_restricted'})
+        self.assertEqual(result['status'], 'access_restricted')
         self.assertEqual(len(calls), 1)
 
     def test_real_official_bilibili_extractor_and_inline_srt(self):
@@ -234,13 +234,13 @@ class OfficialExtractorTests(unittest.TestCase):
         for source in (YOUTUBE, BILIBILI):
             for key, status in [('denied', 'access_restricted'), ('network', 'network_unavailable')]:
                 result, calls = self.extract(source, **{key: True})
-                self.assertEqual(result, {'status': status}); self.assertEqual(len(calls), 1)
+                self.assertEqual(result['status'], status); self.assertEqual(len(calls), 1)
         player = copy.deepcopy(PLAYER); player['playabilityStatus']['status'] = 'LOGIN_REQUIRED'
         result, calls = self.extract(YOUTUBE, player=player)
-        self.assertEqual(result, {'status': 'access_restricted'}); self.assertEqual(len(calls), 1)
+        self.assertEqual(result['status'], 'access_restricted'); self.assertEqual(len(calls), 1)
         state = copy.deepcopy(STATE); state['videoData']['is_upower_exclusive'] = True
         result, calls = self.extract(BILIBILI, state=state)
-        self.assertEqual(result, {'status': 'access_restricted'}); self.assertEqual(len(calls), 1)
+        self.assertEqual(result['status'], 'access_restricted'); self.assertEqual(len(calls), 1)
 
     def test_language_ambiguity_and_wrong_identity_do_not_download(self):
         player = copy.deepcopy(PLAYER)
@@ -248,8 +248,100 @@ class OfficialExtractorTests(unittest.TestCase):
         track.update(languageCode='fr', vssId='.fr', baseUrl=track['baseUrl'].replace('lang=en', 'lang=fr'))
         player['captions']['playerCaptionsTracklistRenderer']['captionTracks'].append(track)
         result, calls = self.extract(YOUTUBE, player=player)
-        self.assertEqual(result, {'status': 'language_required'})
+        self.assertEqual(result['status'], 'language_required')
         self.assertFalse(any('/api/timedtext' in url for url in calls))
         state = copy.deepcopy(STATE); state['videoData']['bvid'] = 'BV1aaaaaaaaa'
         result, calls = self.extract(BILIBILI, state=state)
-        self.assertEqual(result, {'status': 'unavailable'})
+        self.assertEqual(result['status'], 'guard_stopped')
+        self.assertEqual(result['diagnostic']['reason'], 'identity_mismatch')
+
+
+@unittest.skipUnless(importlib.util.find_spec('yt_dlp'), 'Pinned yt-dlp required')
+class FailureDiagnosticTests(unittest.TestCase):
+    extract = OfficialExtractorTests.extract
+    def test_constructor_failure_is_local_not_absent_captions(self):
+        import yt_dlp
+        with patch.object(yt_dlp.YoutubeDL, '__init__', side_effect=TypeError('PRIVATE_TOKEN /private/path')):
+            result, calls = self.extract(YOUTUBE)
+        self.assertEqual(calls, [])
+        self.assertEqual(result, {'status': 'extractor_failed', 'diagnostic': {
+            'stage': 'extractor_setup', 'reason': 'extractor_error', 'requests_attempted': 0, 'responses_received': 0}})
+        self.assertNotIn('PRIVATE', json.dumps(result))
+
+    def test_parse_failure_preserves_observed_response_counts_without_source_text(self):
+        with patch.object(guard.subtitle_import, 'subtitle_document', side_effect=ValueError('PRIVATE_CAPTION')):
+            result, calls = self.extract(YOUTUBE)
+        self.assertEqual(result, {'status': 'caption_parse_failed', 'diagnostic': {
+            'stage': 'caption_parse', 'reason': 'caption_parse_failed', 'requests_attempted': 2, 'responses_received': 2}})
+        self.assertEqual(len(calls), 2)
+
+    def test_output_file_failure_is_not_absence(self):
+        with patch.object(guard.subtitle_import, 'fetch_subtitle_document', return_value={'provenance': {}}):
+            result = guard.extract_public_video_captions(YOUTUBE)
+        self.assertEqual(result['status'], 'caption_file_invalid')
+        self.assertEqual(result['diagnostic']['stage'], 'caption_output')
+        self.assertEqual(result['diagnostic']['requests_attempted'], 0)
+
+    def test_unknown_missing_document_is_not_evidence_of_no_matching_track(self):
+        with patch.object(guard.subtitle_import, 'fetch_subtitle_document', return_value=None):
+            result = guard.extract_public_video_captions(YOUTUBE)
+        self.assertEqual(result['status'], 'extractor_failed')
+
+    def test_known_guard_and_transport_outcomes_have_distinct_bounded_evidence(self):
+        for name, status, reason, responses in [('denied', 'access_restricted', 'access_restricted', 1),
+                ('network', 'network_unavailable', 'transport_unavailable', 0)]:
+            result, calls = self.extract(YOUTUBE, **{name: True})
+            self.assertEqual(result['status'], status)
+            self.assertEqual(result['diagnostic']['reason'], reason)
+            self.assertEqual(result['diagnostic']['requests_attempted'], 1)
+            self.assertEqual(result['diagnostic']['responses_received'], responses)
+            self.assertEqual(len(calls), 1)
+        with patch.object(guard.VideoTransport, 'kind', side_effect=guard.StopProof('request_scope_stopped')):
+            result, calls = self.extract(YOUTUBE)
+        self.assertEqual(result['status'], 'guard_stopped')
+        self.assertEqual(result['diagnostic']['reason'], 'request_scope_stopped')
+        self.assertEqual(result['diagnostic']['requests_attempted'], 0)
+        self.assertEqual(calls, [])
+
+    def test_no_matching_track_requires_successful_metadata_and_selection(self):
+        # Authored metadata with no warning: the actual shared selector runs.
+        info={'id':'BaW_jenozKc','duration':4,'live_status':'not_live','subtitles':{},'automatic_captions':{}}
+        def extract(downloader, *args, **kwargs):
+            # The fixture models a verified player response; no external request.
+            guard.subtitle_import.select_track(info, 'en')
+            return None
+        @contextlib.contextmanager
+        def local_fixture(transport):
+            transport.youtube_access_verified=True
+            yield
+        with patch.object(guard, 'guarded_extractors', local_fixture), patch.object(guard.subtitle_import, 'fetch_subtitle_document', extract):
+            result=guard.extract_public_video_captions(YOUTUBE, 'en')
+        self.assertEqual(result['status'], 'no_matching_captions')
+        self.assertEqual(result['diagnostic']['stage'], 'track_selection')
+        self.assertEqual(result['diagnostic']['reason'], 'no_matching_track')
+
+@unittest.skipUnless(importlib.util.find_spec('yt_dlp'), 'Pinned yt-dlp required')
+class LauncherDiagnosticTests(unittest.TestCase):
+    def run_launcher(self, result=None, failure=None):
+        import runpy
+        import sys
+        from pathlib import Path
+        request={'operation':'extract-development','url':YOUTUBE,'language':'en'}
+        output=io.StringIO()
+        stdin=SimpleNamespace(buffer=io.BytesIO(json.dumps(request).encode()))
+        with patch.object(sys, 'argv', ['caption-helper', '--protocol=1']), patch.object(sys, 'stdin', stdin), \
+                patch.object(guard, 'extract_public_video_captions', return_value=result, side_effect=failure), \
+                contextlib.redirect_stdout(output):
+            runpy.run_path(str(Path(__file__).parents[1]/'desktop/helper/caption_helper_launcher.py'), run_name='__main__')
+        return json.loads(output.getvalue())
+
+    def test_launcher_preserves_failure_classification_and_observed_stage(self):
+        result={'status':'extractor_failed','diagnostic':{'stage':'extractor_setup',
+                'reason':'extractor_error','requests_attempted':0,'responses_received':0}}
+        self.assertEqual(self.run_launcher(result),result)
+
+    def test_launcher_exception_is_unknown_execution_not_no_captions(self):
+        result=self.run_launcher(failure=ValueError('PRIVATE_TOKEN /private/path'))
+        self.assertEqual(result,{'status':'extractor_failed','diagnostic':{'stage':'helper_execution',
+            'reason':'helper_error','requests_attempted':None,'responses_received':None}})
+        self.assertNotIn('PRIVATE',json.dumps(result))

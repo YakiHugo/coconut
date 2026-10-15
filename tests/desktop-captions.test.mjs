@@ -112,3 +112,21 @@ test('YouTube completion evidence is required while completed broadcasts stay im
  const incomplete=await service(async()=>({status:'metadata_incomplete'})).importCaption({url});
  assert.equal(incomplete.status,'metadata_incomplete');assert.equal(incomplete.document,undefined);
 });
+
+test('caption failure messages distinguish extraction, guards, parsing and matching tracks',async()=>{
+ for(const [status,expected] of [['extractor_failed',/提取器未完成/],['guard_stopped',/边界检查/],['caption_parse_failed',/无法解析/],['caption_file_invalid',/文件检查未完成/],['no_matching_captions',/匹配原语言/]]){
+  const receipt=await service(async()=>({status,diagnostic:{stage:'metadata',reason:'extractor_error',requests_attempted:0,responses_received:0,private:'secret'}})).importCaption({url});
+  assert.equal(receipt.status,status);assert.match(receipt.message,expected);assert.equal(receipt.document,undefined);assert.equal(receipt.diagnostic.private,undefined);
+ }
+});
+test('reader parser failures retain the existing rejected-import contract with a safe error code',async()=>{
+ const r=result();r.bytes=Buffer.from('WEBVTT\n\ninvalid timing and private text');
+ await assert.rejects(service(async()=>r).importCaption({url}),error=>error.code==='CAPTION_PARSE_FAILED');
+});
+
+test('observed pre-request failure gives a local setup message, unknown counters do not',async()=>{
+ const early=await service(async()=>({status:'extractor_failed',diagnostic:{stage:'extractor_setup',reason:'extractor_error',requests_attempted:0,responses_received:0}})).importCaption({url});
+ assert.match(early.message,/初始化未完成.*尚未尝试来源网络请求/);
+ const unknown=await service(async()=>({status:'extractor_failed',diagnostic:{stage:'helper_execution',reason:'helper_error',requests_attempted:null,responses_received:null}})).importCaption({url});
+ assert.doesNotMatch(unknown.message,/尚未尝试/);
+});

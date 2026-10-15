@@ -95,7 +95,8 @@ def source_identity(url):
 class VideoTransport:
     def __init__(self, url, ca_file=None):
         self.provider, self.identity = source_identity(url)
-        self.count = self.total = 0
+        self.count = self.total = self.responses = 0
+        self.stage = 'initialization'
         self.youtube_access_verified = False
         self.started = time.monotonic()
         self.opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect(),
@@ -154,6 +155,7 @@ class VideoTransport:
         req = urllib.request.Request(request.url, data=request.data, headers=headers, method=request.method)
         try:
             with self.opener.open(req, timeout=15) as response:
+                self.responses += 1
                 if response.status != 200 or response.headers.get('Content-Encoding', 'identity') != 'identity':
                     raise StopProof('unexpected_response')
                 limit = MAX_CAPTION if kind == 'caption' else MAX_RESPONSE
@@ -176,6 +178,7 @@ class VideoTransport:
                         self.verify_youtube_player(payload)
                 return body, dict(response.headers), response.status
         except urllib.error.HTTPError as error:
+            self.responses += 1
             code = error.code
             error.close()
             raise StopProof('access_restricted' if code in (401, 403, 412, 429) else 'upstream_error') from None
@@ -250,6 +253,7 @@ def guarded_extractors(transport):
 
     class CaptionsDL(yt_dlp.YoutubeDL):
         def __init__(self, settings):
+            transport.stage = 'extractor_setup'
             settings = dict(settings, cookiefile=None, cookiesfrombrowser=None,
                 username=None, password=None, usenetrc=False, proxy='', cachedir=False,
                 retries=0, extractor_retries=0, fragment_retries=0, file_access_retries=0,
@@ -261,6 +265,10 @@ def guarded_extractors(transport):
                 http_headers={'User-Agent': 'Coconut-public-captions/1.0'})
             super().__init__(settings, auto_init=False)
             self.add_info_extractor(PublicYoutubeIE() if transport.provider == 'youtube' else PublicBiliBiliIE())
+
+        def extract_info(self, *args, **kwargs):
+            transport.stage = 'metadata'
+            return super().extract_info(*args, **kwargs)
 
         def get_info_extractor(self, key):
             if key != ('Youtube' if transport.provider == 'youtube' else 'BiliBili'):
@@ -276,6 +284,8 @@ def guarded_extractors(transport):
             return Response(io.BytesIO(body), request.url, headers, status=status)
 
         def process_ie_result(self, result, *args, **kwargs):
+            if kwargs.get('download', args[0] if args else True):
+                transport.stage = 'caption_download'
             # Always ordinary verified TLS; never retry with TLS impersonation.
             for field in ('subtitles', 'automatic_captions'):
                 for formats in (result.get(field) or {}).values():
@@ -294,10 +304,23 @@ def extract_public_video_captions(url, language=None, *, ca_file=None):
     import tempfile
     language_required = False
     completion = None
+    selection_completed = False
+    transport = None
     original_select = subtitle_import.select_track
+    original_parse = subtitle_import.subtitle_document
+
+    def failure(status, reason):
+        return {'status': status, 'diagnostic': {'stage': transport.stage if transport else 'initialization',
+                'reason': reason, 'requests_attempted': transport.count if transport else 0,
+                'responses_received': transport.responses if transport else 0}}
+
+    def parse(*args, **kwargs):
+        transport.stage = 'caption_parse'
+        return original_parse(*args, **kwargs)
 
     def select(info, hint=None):
-        nonlocal language_required, completion
+        nonlocal language_required, completion, selection_completed
+        transport.stage = 'track_selection'
         provider, identity = source_identity(url)
         subtitle_import.validate_media_info(info)
         if provider == 'youtube':
@@ -315,6 +338,7 @@ def extract_public_video_captions(url, language=None, *, ca_file=None):
         if isinstance(duration, bool) or not isinstance(duration, (int, float)) or not math.isfinite(duration) or not 0 < duration <= 21600:
             raise StopProof('duration_unavailable')
         selected = original_select(info, hint)
+        selection_completed = True
         language_required = selected is None and subtitle_import.preferred_language(info, hint)[0] is None and any(
             key not in ('danmaku', 'live_chat') and subtitle_import.eligible_formats(tracks)
             for field in ('subtitles', 'automatic_captions') for key, tracks in (info.get(field) or {}).items())
@@ -324,13 +348,17 @@ def extract_public_video_captions(url, language=None, *, ca_file=None):
         transport = VideoTransport(url, ca_file)
         with tempfile.TemporaryDirectory(prefix='coconut-video-captions-') as temporary:
             directory = Path(temporary)
-            with guarded_extractors(transport), patch.object(subtitle_import, 'select_track', select):
+            with guarded_extractors(transport), patch.object(subtitle_import, 'select_track', select), patch.object(subtitle_import, 'subtitle_document', parse):
                 document = subtitle_import.fetch_subtitle_document(url, directory, language)
             if not document:
-                return {'status': 'language_required' if language_required else 'unavailable'}
+                if not selection_completed:
+                    return failure('extractor_failed', 'extractor_error')
+                return failure('language_required' if language_required else 'no_matching_captions',
+                               'language_unknown' if language_required else 'no_matching_track')
+            transport.stage = 'caption_output'
             files = list(directory.iterdir())
             if len(files) != 1 or files[0].suffix not in ('.vtt', '.srt') or not 0 < files[0].stat().st_size <= MAX_CAPTION:
-                return {'status': 'unavailable'}
+                return failure('caption_file_invalid', 'invalid_caption_file')
             p = document['provenance']
             return {'source': {'url': url, 'id': p['media_id'], 'title': document['title'],
                 'duration': p['media_duration'], 'language': p['language'],
@@ -340,8 +368,20 @@ def extract_public_video_captions(url, language=None, *, ca_file=None):
                     'languageBasis': p['language_basis'], 'captionTrack': p['caption_track'], 'reviewStatus': 'unreviewed'},
                 'format': files[0].suffix[1:], 'bytes': files[0].read_bytes()}
     except StopProof as stopped:
-        return {'status': 'access_restricted' if stopped.outcome == 'access_restricted' else
-                'network_unavailable' if stopped.outcome == 'transport_unavailable' else
-                'metadata_incomplete' if stopped.outcome == 'metadata_incomplete' else 'unavailable'}
+        reasons = {'access_restricted', 'transport_unavailable', 'metadata_incomplete',
+                   'request_scope_stopped', 'non_public_address', 'identity_mismatch', 'budget_exceeded',
+                   'unexpected_response', 'upstream_error', 'dependency_mismatch',
+                   'alternate_extractor_stopped', 'unsupported_request', 'external_execution_stopped',
+                   'duration_unavailable', 'redirect_stopped'}
+        reason = stopped.outcome if stopped.outcome in reasons else 'guard_stopped'
+        status = {'access_restricted': 'access_restricted', 'transport_unavailable': 'network_unavailable',
+                  'metadata_incomplete': 'metadata_incomplete'}.get(reason, 'guard_stopped')
+        return failure(status, reason)
     except Exception:
-        return {'status': 'language_required' if language_required else 'unavailable'}
+        if language_required:
+            return failure('language_required', 'language_unknown')
+        if transport and transport.stage == 'caption_parse':
+            return failure('caption_parse_failed', 'caption_parse_failed')
+        if transport and transport.stage in ('caption_output', 'caption_download'):
+            return failure('caption_file_invalid', 'caption_download_or_file_failed')
+        return failure('extractor_failed', 'extractor_error')
