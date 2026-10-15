@@ -1537,3 +1537,4 @@ body[data-transcript-navigation="ready"] .transcript-navigation { display:none; 
 
 .caption-recovery { margin: 12px 0 20px; }
 .caption-recovery .hint { margin: 0 0 10px; }
+#local-provider-error-text{white-space:pre-wrap;overflow-wrap:anywhere;font:inherit}

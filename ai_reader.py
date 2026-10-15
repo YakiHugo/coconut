@@ -44,8 +44,21 @@ def subscription_status():
     if not executable:return {'ready':False,'reason':'未安装官方 Claude Code CLI。请先在本机安装并用已有 Claude 订阅登录。'}
     try:
         help_result=subprocess.run([executable,*SAFE_FLAGS,'--help'],capture_output=True,text=True,env=safe_environment(),timeout=15)
-        if help_result.returncode or not set(CLAUDE_REQUIRED_FLAGS)<=set(re.findall(r'--[A-Za-z][A-Za-z0-9-]*',help_result.stdout)):
-            return {'ready':False,'reason':'Claude Code CLI 缺少所需安全、模型选择或结构输出选项，请更新官方 CLI。'}
+        unconfirmed={'ready':False,'reason':'无法通过 Claude Code CLI 帮助检查确认所需选项。帮助信息可能省略选项；Coconut 所需的 --safe-mode 从 2.1.169 起提供，较旧版本需先更新。当前尚未检查登录或额度。'}
+        if help_result.returncode:return unconfirmed
+        flags=set(re.findall(r'--[A-Za-z][A-Za-z0-9-]*',help_result.stdout))
+        if '--safe-mode' not in flags:
+            version=subprocess.run([executable,*SAFE_FLAGS,'--version'],capture_output=True,text=True,env=safe_environment(),timeout=15)
+            match=re.fullmatch(r'(\d+)\.(\d+)\.(\d+) \(Claude Code\)',version.stdout.strip()) if not version.returncode else None
+            if match and tuple(map(int,match.groups())) < (2,1,169):
+                detected='.'.join(match.groups())
+                return {'ready':False,'reason':f'检测到 Claude Code {detected}；Coconut 所需的 --safe-mode 从 2.1.169 起提供，请更新后重新检查。尚未检查登录或额度；升级本身不代表完整兼容。'}
+            return unconfirmed
+        if not (set(CLAUDE_REQUIRED_FLAGS)-{'--max-turns'})<=flags:return unconfirmed
+        if '--max-turns' not in flags:
+            # Missing-value parser probe: help only, no print/prompt/source input.
+            probe=subprocess.run([executable,*SAFE_FLAGS,'--help','--max-turns'],capture_output=True,text=True,env=safe_environment(),timeout=15)
+            if probe.returncode!=1 or probe.stdout.strip() or getattr(probe,'stderr','').strip()!="error: option '--max-turns <turns>' argument missing":return unconfirmed
         result=subprocess.run([executable,*SAFE_FLAGS,'auth','status'],capture_output=True,text=True,env=safe_environment(),timeout=15)
         status=json.loads(result.stdout)
         if result.returncode or not isinstance(status,dict) or status.get('authMethod')!='claude.ai' or status.get('loggedIn') is not True:

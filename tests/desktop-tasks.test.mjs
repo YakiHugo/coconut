@@ -245,3 +245,22 @@ test('default model retains legacy digest while invalid models never start tasks
  for(const model of ['--help','vendor/model',{},'x'.repeat(121)])await assert.rejects(store.submit(submission({idempotencyKey:'bad-model',model})),error=>error.status===400);
  await until(store,first.task.taskId,'succeeded');assert.equal(calls.length,1);assert.equal(Object.hasOwn(calls[0].data,'model'),false);
 });
+test('sanitized provider diagnostics survive failed task persistence and restart',async t=>{
+ const {providerFailure}=await import('../desktop/provider-errors.mjs');
+ const failure=providerFailure('codex',{code:1,stdout:JSON.stringify({type:'turn.failed',error:{message:'Provider unavailable',code:'unavailable',status_code:503}}),stderr:'private raw error'});
+ const {directory,store,calls}=await setup(t,async()=>{throw failure;});
+ const {task}=await store.submit(submission());const failed=await until(store,task.taskId,'failed');
+ assert.equal(failed.error.providerDiagnostics.upstreamCode,'unavailable');assert.equal(failed.error.providerDiagnostics.upstreamStatus,503);
+ assert.ok(!JSON.stringify(failed.error).includes('private raw'));assert.equal(calls.length,1);
+ await store.shutdown();
+ const recovered=await createTaskStore({directory,providers:{ask:async()=>{throw new Error('Must not retry');}}});
+ try{assert.deepEqual((await recovered.get(task.taskId)).error,failed.error);}finally{await recovered.shutdown();}
+});
+test('unknown transient local details never enter persisted or exported task errors',async t=>{
+ const {providerFailure}=await import('../desktop/provider-errors.mjs');
+ const failure=providerFailure('codex',{code:1,stdout:JSON.stringify({type:'error',message:'Transient secret phrase',code:'secret_unknown_code'})});
+ const {store,directory}=await setup(t,async()=>{throw failure;});
+ const {task}=await store.submit(submission());const failed=await until(store,task.taskId,'failed');
+ assert.ok(!JSON.stringify(failed).includes('Transient secret phrase'));assert.ok(!JSON.stringify(failed).includes('secret_unknown_code'));
+ const disk=await fs.readFile(path.join(directory,'tasks.json'),'utf8');assert.ok(!disk.includes('Transient secret phrase'));assert.ok(!disk.includes('secret_unknown_code'));
+});
