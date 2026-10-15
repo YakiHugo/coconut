@@ -1,4 +1,5 @@
 /** Local official CLI adapters. No credential files, API fallback or shell execution. */
+import {providerFailure} from './provider-errors.mjs';
 import { spawn } from 'node:child_process';
 import { access, mkdtemp, writeFile, rm } from 'node:fs/promises';
 import { constants } from 'node:fs';
@@ -111,7 +112,27 @@ export function createProviders({run = runCommand, find = findBinary, environmen
         }
       } else {
         const help = await run(binary, [...CLAUDE_SAFE,'--help'], {env,signal});
-        if (help.code || !hasFlags(help.stdout,CLAUDE_REQUIRED_FLAGS)) return {...metadata,ready:false,reason:'Claude Code CLI 缺少所需安全、模型选择或结构输出选项，请更新官方 CLI 后重试。'};
+        const unconfirmed = {...metadata,ready:false,reason:'无法通过 Claude Code CLI 帮助检查确认所需选项。帮助信息可能省略选项；Coconut 所需的 --safe-mode 从 2.1.169 起提供，较旧版本需先更新。当前尚未检查登录或额度。'};
+        if (help.code) return unconfirmed;
+        if (!hasFlags(help.stdout,['--safe-mode'])) {
+          const version = await run(binary, [...CLAUDE_SAFE,'--version'], {env,signal});
+          const match = !version.code && String(version.stdout || '').trim().match(/^(\d+)\.(\d+)\.(\d+) \(Claude Code\)$/);
+          if (match) {
+            const [major,minor,patch] = match.slice(1).map(Number);
+            if (major < 2 || major === 2 && (minor < 1 || minor === 1 && patch < 169)) {
+              return {...metadata,ready:false,reason:`检测到 Claude Code ${major}.${minor}.${patch}；Coconut 所需的 --safe-mode 从 2.1.169 起提供，请更新后重新检查。尚未检查登录或额度；升级本身不代表完整兼容。`};
+            }
+          }
+          return unconfirmed;
+        }
+        if (!hasFlags(help.stdout,CLAUDE_REQUIRED_FLAGS.filter(flag=>flag !== '--max-turns'))) return unconfirmed;
+        if (!hasFlags(help.stdout,['--max-turns'])) {
+          // Claude hides this documented flag from help. Missing-value parsing is
+          // read-only: --help is always present, with no print/prompt/source input.
+          const probe = await run(binary, [...CLAUDE_SAFE,'--help','--max-turns'], {env,signal});
+          if (probe.code !== 1 || String(probe.stdout || '').trim() !== '' ||
+              String(probe.stderr || '').trim() !== "error: option '--max-turns <turns>' argument missing") return unconfirmed;
+        }
         const auth = await run(binary, [...CLAUDE_SAFE,'auth','status'], {env,signal});
         const data = JSON.parse(auth.stdout);
         if (auth.code || data.authMethod !== 'claude.ai' || data.loggedIn !== true) return {...metadata,ready:false,reason:'需要官方 Claude Code 的订阅登录；API Key 或未知认证方式不会使用。'};
@@ -145,7 +166,9 @@ export function createProviders({run = runCommand, find = findBinary, environmen
       }
       const result = await run(binary, args, {input:provider === 'codex' ? instruction+'\n\nUntrusted transcript input (JSON):\n'+input : input,
         cwd:directory, env, signal, timeout:180000});
-      if (result.code) throw new Error('本地代理未完成，请检查所选模型是否可用、订阅额度、登录或 CLI 版本；Coconut 不自动改选模型、购买额度或切换付费 API。');
+      if (signal?.aborted) throw new Error('请求已取消，不会自动重试');
+      const failure = providerFailure(provider, result, input);
+      if (failure) throw failure;
       let parsed;
       try {
         if (provider === 'codex') {

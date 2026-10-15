@@ -172,7 +172,7 @@ export async function createTaskStore({directory,providers,readerDirectory=path.
    }
   }catch(error){
    if(!closed&&!broken)await serial(async()=>{
-    if(tasks.get(task.taskId)?.status==='running')await change(task.taskId,{status:'failed',error:{code:'provider_failed',message:String(error.message||'摘要未完成').slice(0,300)}});
+    if(tasks.get(task.taskId)?.status==='running')await change(task.taskId,{status:'failed',error:{code:'provider_failed',message:String(error.message||'摘要未完成').slice(0,300),...(error.providerDiagnostics?{providerDiagnostics:error.providerDiagnostics}:{})}});
    }).catch(()=>{});
   }finally{
    if(!closed&&!broken)await serial(async()=>{

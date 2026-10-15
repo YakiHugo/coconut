@@ -182,3 +182,32 @@ for(const change of ['query','notes-filter','excerpts-filter','speaker-filter','
   assert.equal(mock.requests.length,1);assert.equal(translated(storedDocument(w)).length,32);
  }finally{mock?.release();await run;await w.happyDOM.close();}
 });
+test('local provider details require explicit opening and never enter history or persisted state',async()=>{
+ const {w,$}=setup();await importDocument(w,fixture('Diagnostic source',1));
+ const privateDetail='Unknown provider detail with a private source fragment';
+ let failing=true;
+ w.fetch=async url=>url.endsWith('language-tools')?{ok:true,json:async()=>({ai:{codex:{ready:true},claude:{ready:true}}})}:
+  {ok:!failing,json:async()=>failing?{error:'Safe failure summary',localProviderDetails:{message:privateDetail,upstreamCode:'new_provider_code'}}:{answer:'Fixture answer',citations:['cue-0']}};
+ await $('check-ai').onclick();$('ai-question').value='What happened?';$('ai-consent').checked=true;await $('ask-ai').onclick();
+ assert.equal($('local-provider-error').hidden,false);assert.equal($('local-provider-error').open,false);
+ assert.equal($('local-provider-error-text').textContent,'');assert.ok(!$('ai-progress').textContent.includes(privateDetail));
+ assert.match($('local-provider-error').textContent,/可能含任务片段/);
+ $('local-provider-error').open=true;$('local-provider-error').dispatchEvent(new w.Event('toggle'));
+ assert.match($('local-provider-error-text').textContent,/private source fragment/);
+ assert.ok(!w.localStorage.getItem(KEY).includes(privateDetail));
+ assert.ok(!$('ai-history').textContent.includes(privateDetail));
+ failing=false;$('ai-consent').checked=true;await $('ask-ai').onclick();
+ assert.equal($('local-provider-error').hidden,true);assert.equal($('local-provider-error-text').textContent,'');
+ assert.ok(!w.localStorage.getItem(KEY).includes(privateDetail));
+ await w.happyDOM.close();
+});
+test('local details disappear on source change and cannot revive on return or reload',async()=>{
+ const {w,$}=setup();await importDocument(w,fixture('Diagnostic source',1));
+ w.fetch=async url=>url.endsWith('language-tools')?{ok:true,json:async()=>({ai:{codex:{ready:true}}})}:{ok:false,json:async()=>({error:'Safe failure',localProviderDetails:{message:'Transient-only private detail'}})};
+ await $('check-ai').onclick();$('ai-question').value='What happened?';$('ai-consent').checked=true;await $('ask-ai').onclick();
+ assert.equal($('local-provider-error').hidden,false);
+ await importDocument(w,fixture('Another source',1));assert.equal($('local-provider-error').hidden,true);
+ assert.equal($('local-provider-error-text').textContent,'');
+ const reopened=setup(w.localStorage.getItem(KEY));assert.equal(reopened.$('local-provider-error').hidden,true);
+ await reopened.w.happyDOM.close();await w.happyDOM.close();
+});

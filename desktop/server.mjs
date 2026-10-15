@@ -120,7 +120,7 @@ export function createBridge({readerDirectory = path.resolve(ROOT,'../reader'), 
       if (pathname === '/api/ask') return json(200,await providers.ask(data,{signal:controller.signal}));
       return json(200,{translations:await translate(data,{signal:controller.signal})});
     } catch (error) {
-      return json(error.status|| (error.code === 'ENOENT' ? 404 : 400),{...(remote?{code:error.taskCode||error.code||'request_failed'}:{}),...(error.taskCode?{code:error.taskCode}:pathname==='/api/captions/import'&&error.code?{code:error.code}:{}),error:error.code === 'ENOENT' ? 'File not found' : remote?remoteDiagnostic(error.message):String(error.message || '请求未完成').slice(0,300)});
+      return json(error.status|| (error.code === 'ENOENT' ? 404 : 400),{...(remote?{code:error.taskCode||error.code||'request_failed'}:{}),...(error.taskCode?{code:error.taskCode}:pathname==='/api/captions/import'&&error.code?{code:error.code}:{}),...(!remote&&error.localProviderDetails?{localProviderDetails:error.localProviderDetails}:{}),...(error.providerDiagnostics?{code:'provider_failed',localHttpStatus:400,providerDiagnostics:error.providerDiagnostics}:{}),error:error.code === 'ENOENT' ? 'File not found' : remote?remoteDiagnostic(error.message):String(error.message || '请求未完成').slice(0,300)});
     }
   });
   server.requestTimeout = 30000; server.headersTimeout = 10000;

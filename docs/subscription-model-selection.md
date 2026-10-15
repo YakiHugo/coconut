@@ -28,3 +28,13 @@ Managed enterprise policy can still apply to official CLIs. A help/auth probe ca
 ## Verification boundaries
 
 Fake-CLI subprocess tests exercise actual argument/stdin/environment transport without invoking an installed CLI. Unit/contract tests cover both providers, both language backends, invalid model values, default compatibility, unavailable-model no-fallback, Claude capability/result failures, and summary digest/restart/multistage behavior. No real account or model quota is used. Successful contract tests are not evidence of live provider availability or answer quality.
+
+## Claude help-check limits
+
+The [official CLI reference](https://code.claude.com/docs/en/cli-reference#cli-flags) warns that `--help` does not list every supported flag. Coconut requires the safety and output flags to appear in help, except for the documented hidden `--max-turns` option. If only that option is missing, it performs a read-only parser probe with the existing safe prefix followed by `--help --max-turns`. Only exit 1, empty stdout, and the exact missing-argument error for `--max-turns <turns>` confirm recognition. Unknown-option errors, successful help output, unexpected output, timeouts, and other failures do not confirm support. No prompt, print mode, or transcript input is supplied to this probe. The actual inference command still sets `--max-turns 1` and retains every existing safety option.
+
+Mac read-only QA on 2.1.150 established the parser distinction: `--help --max-turns` exits 1 with `error: option '--max-turns <turns>' argument missing`, while `--help --coconut-capability-probe` exits 0 with no stderr. This is evidence for hidden value-option recognition, not proof that a boolean flag is supported.
+
+The [official 2.1.169 changelog](https://github.com/anthropics/claude-code/blob/main/CHANGELOG.md#21169) introduces `--safe-mode`. When that flag is missing from help, Coconut checks `--version` for a strictly formatted official version and gives a specific upgrade diagnosis if it is older than 2.1.169. An unknown or newer version does not override the missing safety capability: readiness stays unconfirmed. This version floor is necessary for that flag, not a claim that every later release passes the full contract. No authentication or inference follows a failed capability check.
+
+The installed Mac 2.1.150 omitted both `--safe-mode` and `--max-turns` and remains unavailable. Coconut does not update it automatically. Fake subprocess and unit tests cover this compatibility logic without using an installed CLI, subscription quota, or credentials; they do not establish live model availability or quality.

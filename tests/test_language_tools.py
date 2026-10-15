@@ -192,12 +192,49 @@ class SubscriptionModelTests(unittest.TestCase):
             with self.assertRaises(ValueError):ai_reader.claude_result(json.dumps(envelope))
         self.assertEqual(ai_reader.claude_result(json.dumps(good)),good['structured_output'])
 
-    def test_claude_incompatible_flags_never_reach_auth_or_inference(self):
+    def test_claude_unconfirmed_help_flags_never_reach_auth_or_inference(self):
         for missing in ai_reader.CLAUDE_REQUIRED_FLAGS:
             stdout=' '.join(flag for flag in ai_reader.CLAUDE_REQUIRED_FLAGS if flag!=missing)
             with patch('ai_reader.shutil.which',return_value='/fake-cli'),patch('ai_reader.subprocess.run',return_value=types.SimpleNamespace(returncode=0,stdout=stdout)) as run:
-                self.assertFalse(ai_reader.subscription_status()['ready'])
-                run.assert_called_once();self.assertIn('--help',run.call_args.args[0])
+                status=ai_reader.subscription_status()
+                self.assertFalse(status['ready'])
+                self.assertIn('帮助信息可能省略选项',status['reason'])
+                self.assertIn('--safe-mode 从 2.1.169 起提供',status['reason'])
+                self.assertIn('尚未检查登录或额度',status['reason'])
+                self.assertNotIn('缺少所需',status['reason'])
+                self.assertEqual(run.call_count,2 if missing in ('--safe-mode','--max-turns') else 1)
+                self.assertTrue(all('--print' not in call.args[0] and 'auth' not in call.args[0] for call in run.call_args_list))
+
+    def test_failed_claude_help_check_stays_closed_without_forwarding_output(self):
+        with patch('ai_reader.shutil.which',return_value='/fake-cli'),patch('ai_reader.subprocess.run',return_value=types.SimpleNamespace(returncode=1,stdout=' '.join(ai_reader.CLAUDE_REQUIRED_FLAGS),stderr='private diagnostic details')) as run:
+            status=ai_reader.subscription_status()
+            self.assertFalse(status['ready'])
+            self.assertIn('无法通过 Claude Code CLI 帮助检查',status['reason'])
+            self.assertNotIn('private diagnostic details',status['reason'])
+            run.assert_called_once();self.assertIn('--help',run.call_args.args[0])
+
+    def test_hidden_max_turns_requires_precise_parser_evidence(self):
+        help_text=' '.join(flag for flag in ai_reader.CLAUDE_REQUIRED_FLAGS if flag!='--max-turns')
+        exact={'returncode':1,'stdout':'','stderr':"error: option '--max-turns <turns>' argument missing"}
+        for probe in [exact,{**exact,'returncode':0},{**exact,'returncode':2},{**exact,'stdout':'unexpected'},{**exact,'stderr':'unknown option --max-turns'},{**exact,'stderr':exact['stderr']+' extra'},{'returncode':0,'stdout':help_text,'stderr':''}]:
+            replies=[types.SimpleNamespace(returncode=0,stdout=help_text),types.SimpleNamespace(**probe),types.SimpleNamespace(returncode=0,stdout=json.dumps({'loggedIn':True,'authMethod':'claude.ai'}))]
+            with patch('ai_reader.shutil.which',return_value='/fake-cli'),patch('ai_reader.subprocess.run',side_effect=replies) as run:
+                self.assertEqual(ai_reader.subscription_status()['ready'],probe is exact)
+                self.assertEqual(run.call_count,3 if probe is exact else 2)
+                self.assertEqual(run.call_args_list[1].args[0][-2:],['--help','--max-turns'])
+                self.assertTrue(all('--print' not in call.args[0] and 'input' not in call.kwargs for call in run.call_args_list))
+
+    def test_missing_safe_mode_does_not_trust_unknown_or_new_version(self):
+        old=['2.1.150 (Claude Code)','2.1.168 (Claude Code)','1.9.999 (Claude Code)']
+        for version in old+['2.1.169 (Claude Code)','3.0.0 (Claude Code)','unknown','2.1.150','2.1.150-beta (Claude Code)']:
+            help_text=' '.join(flag for flag in ai_reader.CLAUDE_REQUIRED_FLAGS if flag not in ('--safe-mode','--max-turns'))
+            with patch('ai_reader.shutil.which',return_value='/fake-cli'),patch('ai_reader.subprocess.run',side_effect=[types.SimpleNamespace(returncode=0,stdout=help_text),types.SimpleNamespace(returncode=0,stdout=version)]) as run:
+                status=ai_reader.subscription_status()
+                self.assertFalse(status['ready'])
+                self.assertIn('检测到 Claude Code' if version in old else '无法通过 Claude Code CLI 帮助检查',status['reason'])
+                self.assertEqual(run.call_count,2)
+                self.assertEqual(run.call_args_list[1].args[0][-1],'--version')
+                self.assertTrue(all('auth' not in call.args[0] and '--print' not in call.args[0] for call in run.call_args_list))
 
     def test_codex_unknown_items_and_incomplete_message_are_never_accepted(self):
         for first in [None,{'type':'item.completed','item':None},{'type':'item.completed','item':{'type':'future_tool'}},{'type':'item.completed','item':{'type':'agent_message'}}]:
