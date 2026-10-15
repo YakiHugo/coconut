@@ -30,9 +30,9 @@ test('development startup reports passive real capabilities and serves edited as
   assert.equal((await fetch(origin + '/')).status, 200);
   assert.deepEqual((await fetch(origin + '/api/v1/tasks').then(response => response.json())).tasks, []);
   const marker = '\n/* authored development reload fixture */\n';
-  const before = await fetch(origin + '/style.css').then(response => response.text());
-  await fs.appendFile(path.join(readerDirectory, 'style.css'), marker);
-  const response = await fetch(origin + '/style.css');
+  const before = await fetch(origin + '/react-app.css').then(response => response.text());
+  await fs.appendFile(path.join(readerDirectory, 'react-app.css'), marker);
+  const response = await fetch(origin + '/react-app.css');
   assert.equal(response.headers.get('cache-control'), 'no-store');
   assert.equal(await response.text(), before + marker);
   assert.equal(calls, 0);

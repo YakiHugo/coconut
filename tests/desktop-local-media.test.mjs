@@ -4,16 +4,15 @@ import * as fs from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
 import http from 'node:http';
-import vm from 'node:vm';
 import {File} from 'node:buffer';
 import {createHash,webcrypto,randomUUID} from 'node:crypto';
 import {createLocalMediaService} from '../desktop/local-media.mjs';
 
-const app=await fs.readFile(new URL('../reader/app.js',import.meta.url),'utf8');
-const start=app.indexOf('async function fingerprintMedia(file){');
-const end=app.indexOf('\n}',start)+2;
-// Run the production candidate algorithm, with no browser or Electron involved.
-const fingerprintMedia=vm.runInNewContext('('+app.slice(start,end)+')',{crypto:webcrypto});
+// Exercise the sole production renderer's bounded identity algorithm.
+const {build}=await import('esbuild');
+const {outputFiles}=await build({entryPoints:['frontend/app/ingestion.ts'],bundle:true,write:false,platform:'node',format:'esm'});
+const {inspectFile}=await import('data:text/javascript;base64,'+Buffer.from(outputFiles[0].text).toString('base64'));
+const fingerprintMedia=async file=>(await inspectFile(file)).identity;
 const digest=bytes=>createHash('sha256').update(bytes).digest('hex');
 const delay=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 async function fixture(t,{size=512*1024,sparse=false}={}){

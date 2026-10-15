@@ -1,22 +1,38 @@
-// Compatibility renderer regression; this suite is not default React acceptance.
+// Shared reader domain regressions used by the React application.
 import test from 'node:test';
+
 import assert from 'node:assert/strict';
-import fs from 'node:fs';
-import {webcrypto} from 'node:crypto';
+
 import {createRequire} from 'node:module';
-import {Window} from 'happy-dom';
+
 import {transactionDouble} from './helpers/indexeddb-transaction-double.mjs';
-const require=createRequire(import.meta.url),provider=require('../reader/storage-provider.js'),legacyModule=require('../reader/library-store.js'),documentModule=require('../reader/indexeddb-document-adapter.js'),Coconut=require('../reader/core.js');
-const root=new URL('../',import.meta.url),KEY=legacyModule.KEY,FENCE=legacyModule.FENCE_KEY;
+
+const require=createRequire(import.meta.url);
+
+const provider=require('../reader/storage-provider.js');
+
+const legacyModule=require('../reader/library-store.js');
+
+const documentModule=require('../reader/indexeddb-document-adapter.js');
+
+const Coconut=require('../reader/core.js');
+
+const KEY=legacyModule.KEY;
+
+const FENCE=legacyModule.FENCE_KEY;
+
 const doc=key=>({schema_version:1,key,title:key,language:'en',segments:[{id:'one',start:0,end:4,text:'Authored source '+key}],notes:{},ai_answers:[]});
+
 function memory(raw=JSON.stringify({documents:[doc('a'),doc('b')],active:'b'})){
  const values=new Map([[KEY,raw]]),writes=[];
  return {values,writes,getItem:key=>values.get(key)??null,setItem(key,value){writes.push({key,value});values.set(key,value);}};
 }
+
 async function fixture({raw,indexedDB=true,engine=transactionDouble(),storage=memory(raw)}={}){
  const result=await provider.initialize({indexedDB:indexedDB===true?engine.indexedDB:indexedDB,getStorage:()=>storage,validate:Coconut.validate,legacyModule,documentModule});
  return {engine,storage,result};
 }
+
 function storeFor(f){let documents=f.result.loaded.documents;const store=legacyModule.create({adapter:f.result.adapter,getDocuments:()=>documents,checkpoint:doc=>({answers:doc.ai_answers?.length||0}),delay:10000});return {store,get documents(){return documents;},set documents(value){documents=value;}};}
 
 test('ready library migrates once without overwriting raw bytes and reload preserves order/selection hint',async()=>{
@@ -82,50 +98,6 @@ test('versionchange is visible even before another edit and cannot produce a fal
  s.documents[0].notes.one='rescue';s.store.queueDocument('a',s.documents[0]);assert.equal((await s.store.flush()).ok,false);assert.equal(s.store.status('a').error.code,'version');assert.equal(s.store.snapshotForExport().documents[0].notes.one,'rescue');
 });
 
-async function ui(f,{mobile=false}={}){
- f??=await fixture();
- const w=new Window({url:'https://coconut.example/'});w.document.body.innerHTML=fs.readFileSync(new URL('reader/compatibility.html',root),'utf8').split('<body>')[1].split('</body>')[0];Object.defineProperty(w,'crypto',{value:webcrypto});
- if(mobile){w.document.querySelector('.shell').inert=false;w.document.getElementById('storage-startup').hidden=true;const match=w.matchMedia.bind(w);w.matchMedia=query=>query==='(max-width: 650px)'?{matches:true,addEventListener(){}}:match(query);}
- w.CoconutStorageBootstrap={phase:'ready',result:f.result};w.eval(fs.readFileSync(new URL('reader/library-store.js',root),'utf8'));
- w.eval(['summary','core','passages','passage-playback','app','language','translation-review','podcasts'].map(file=>fs.readFileSync(new URL('reader/'+file+'.js',root),'utf8')).join('\n')+'\nlet sourceSubmitting=false,sourceCaptionRequest=null;\nwindow.idbUI={get documents(){return state.documents;},get store(){return libraryStore;},get checkpoint(){return persistedAIAnswerCounts;}};');
- return {w,f,$:id=>w.document.getElementById(id)};
-}
-test('actual IndexedDB provider feeds the existing reader UI, pending receipt, failure and rescue',async()=>{
- const {w,f,$}=await ui();try{
-  w.document.querySelector('.note-button').click();$('note').value='UI pending note';$('note').oninput();f.engine.control.holdNextWrite=true;const flushing=w.idbUI.store.flush();await f.engine.tick();assert.equal($('save-status').dataset.state,'pending');
-  f.engine.control.held.shift().complete();assert.equal((await flushing).ok,true);assert.equal($('save-status').dataset.state,'saved');assert.equal(f.engine.rows(provider.NAME).get('documents').get('b').payload.notes.one,'UI pending note');
-  f.engine.versionchange();assert.equal($('save-status').dataset.state,'failed');assert.match($('save-status').textContent,/版本已改变/);
-  $('note').value='UI recovery after versionchange';$('note').oninput();assert.equal((await w.idbUI.store.flush()).ok,false);assert.equal($('export-unsaved-documents').hidden,false);
-  let blob;w.URL.createObjectURL=value=>{blob=value;return 'blob:authored';};w.HTMLAnchorElement.prototype.click=function(){};$('export-unsaved-documents').click();assert.equal(JSON.parse(await blob.text()).documents[0].notes.one,'UI recovery after versionchange');
- }finally{await w.happyDOM.close();}
-});
-
-test('JSON and notebook exports cannot substitute for a committed note/bookmark receipt before reload',async()=>{
- const first=await ui(),{w,f,$}=first;let interrupted,reloaded;
- try{
-  w.document.querySelector('.note-button').click();$('note').value='Authored pending reload note';$('note').oninput();$('close-note').click();
-  w.document.querySelector('.bookmark-button').click();
-  f.engine.control.holdNextWrite=true;const saving=w.idbUI.store.flush();await f.engine.tick();
-  let blob;w.URL.createObjectURL=value=>{blob=value;return 'blob:authored';};w.HTMLAnchorElement.prototype.click=function(){};
-  $('export').click();const exported=JSON.parse(await blob.text());
-  $('export-notebook').click();const notebook=await blob.text();
-  assert.equal(exported.readingPosition,'one');assert.equal(exported.notes.one,'Authored pending reload note');assert.match(notebook,/Authored pending reload note/);
-  assert.equal($('save-status').dataset.state,'pending');
-  const unload=new w.Event('beforeunload',{cancelable:true});w.dispatchEvent(unload);assert.equal(unload.defaultPrevented,true);
-  // Reproduce the storage state if navigation terminates this uncommitted
-  // transaction. Exports succeeded, but the next reader still has no bookmark.
-  f.engine.control.held.shift().abort();assert.equal((await saving).ok,false);
-  interrupted=await ui(await fixture({engine:f.engine,storage:f.storage}));
-  assert.equal(interrupted.$('resume').hidden,true);assert.equal(interrupted.w.idbUI.documents.find(doc=>doc.key==='b').notes.one,undefined);
-  // The required save receipt, followed by an independent provider reload,
-  // proves both the note and reading position actually survive navigation.
-  assert.equal((await w.idbUI.store.retry()).ok,true);assert.equal($('save-status').dataset.state,'saved');
-  reloaded=await ui(await fixture({engine:f.engine,storage:f.storage}));
-  assert.equal(reloaded.$('resume').hidden,false);reloaded.$('resume').click();reloaded.w.document.querySelector('.note-button').click();
-  assert.equal(reloaded.$('note').value,exported.notes.one);assert.equal(reloaded.w.idbUI.documents.find(doc=>doc.key==='b').readingPosition,exported.readingPosition);
- }finally{await w.happyDOM.close();await interrupted?.w.happyDOM.close();await reloaded?.w.happyDOM.close();}
-});
-
 test('an access-denied IndexedDB property getter can use unfenced legacy fallback',async()=>{
  const original=Object.getOwnPropertyDescriptor(globalThis,'indexedDB'),storage=memory();
  Object.defineProperty(globalThis,'indexedDB',{configurable:true,get(){throw new DOMException('Denied getter','SecurityError');}});
@@ -139,6 +111,7 @@ async function conflictedWindows(count=3){
  remote.documents[0].notes.one='Remote A';remote.store.queueDocument('a',remote.documents[0]);assert.equal((await remote.store.flush()).ok,true);
  return {f,second,remote,local,rows:()=>f.engine.rows(provider.NAME).get('documents')};
 }
+
 const writeCount=f=>f.engine.transactions.filter(tx=>tx.mode==='readwrite').length;
 
 test('known A conflict no longer prevents independent B from saving, while global flush remains false',async()=>{
@@ -150,19 +123,6 @@ test('known A conflict no longer prevents independent B from saving, while globa
  assert.equal(local.store.status('a').status,'conflict');assert.equal(local.store.status('b').status,'saved');assert.equal(local.store.status().unsaved,1);
  assert.deepEqual(local.store.snapshotForExport().documents.map(d=>[d.key,d.notes.one]),[['a','Local A']]);
  const after=writeCount(f);assert.equal((await local.store.flush()).ok,false);assert.equal(writeCount(f),after,'a clean independent flush does not implicitly retry A');
-});
-
-test('reader UI saves an unrelated note after conflict but continues warning and exporting the conflicted draft',async()=>{
- const {f,second,rows}=await conflictedWindows(2),{w,$}=await ui(second);
- try{
-  const a=w.idbUI.documents[0];a.notes.one='Local A';w.idbUI.store.queueDocument('a',a);await w.idbUI.store.flush();
-  w.document.querySelector('.note-button').click();$('note').value='Independent B typed in UI';$('note').oninput();assert.equal((await w.idbUI.store.flush()).ok,false);
-  assert.equal(rows().get('b').payload.notes.one,'Independent B typed in UI');assert.equal($('save-status').dataset.state,'failed');assert.match($('save-status').textContent,/另一个页面更新了书架/);
-  let blob;w.URL.createObjectURL=value=>{blob=value;return 'blob:conflict';};w.HTMLAnchorElement.prototype.click=function(){};
-  $('export-unsaved-documents').click();const rescued=JSON.parse(await blob.text()).documents;
-  assert.deepEqual(rescued.map(d=>[d.key,d.notes.one]),[['a','Local A']]);
-  await $('retry-save').onclick();assert.equal(rows().get('a').payload.notes.one,'Remote A');assert.equal(w.idbUI.store.status().unsaved,1);
- }finally{await w.happyDOM.close();}
 });
 
 test('aborted mixed transaction retries only independent groups, waits for actual commit, and captures newer typing',async()=>{
@@ -273,42 +233,4 @@ for(const joinSource of [false,true])for(const throws of [false,true])test(`conf
  assert.equal(local.store.snapshotForExport().documents.find(doc=>doc.key===source.key).notes.one,'New generation inside rollback');
  const before=writeCount(f);d.notes.one='Independent D';const td=local.store.queueDocument('d',d);assert.equal((await local.store.flush()).ok,false);assert.equal((await td.committed).ok,true);assert.equal(writeCount(f),before+1);
  assert.equal(rows().get('d').payload.notes.one,'Independent D');assert.equal(rows().get('a').payload.notes.one,'Remote A');assert.equal(rows().get('b').payload.notes.one,undefined);assert.equal(rollbacks,1);
-});
-
-
-test('combined mobile current-document return preserves note focus while independent receipt leaves conflict warning intact',async()=>{
- const {f,second,rows}=await conflictedWindows(2),{w,$}=await ui(second,{mobile:true});
- try{
-  const a=w.idbUI.documents[0];a.notes.one='Unresolved mobile A';w.idbUI.store.queueDocument('a',a);await w.idbUI.store.flush();
-  $('mode-transcript').click();w.document.querySelector('.note-button').click();const note=$('note');note.value='  Mobile B exact\n note  ';note.oninput();note.focus();note.selectionStart=3;note.selectionEnd=8;
-  f.engine.control.holdNextWrite=true;const flushing=w.idbUI.store.flush();await f.engine.tick();assert.equal(f.engine.control.held.length,1);
-  $('toggle-library').click();assert.equal($('toggle-library').getAttribute('aria-expanded'),'true');
-  const search=$('library-search');search.focus();assert.equal(w.document.activeElement?.id,'library-search','search focus acquired before receipt');f.engine.control.held.shift().complete();assert.equal((await flushing).ok,false);
-  assert.equal(w.document.activeElement?.id,search.id,'durable independent receipt does not steal shelf focus');
-  assert.equal($('library-search-dialog').open,true,'focusing the shelf input opens the search workspace');
-  assert.ok($('note')===note);assert.equal(note.value,'  Mobile B exact\n note  ');assert.equal(note.selectionStart,3);assert.equal(note.selectionEnd,8);
-  // Return to the ordinary shelf before exercising its current-document shortcut.
-  $('close-library-search').click();assert.equal($('library-search-dialog').open,false);
-  assert.equal(w.document.activeElement,search,'cancel restores the entry without reopening search');
-  assert.equal($('toggle-library').getAttribute('aria-expanded'),'true');
-  assert.ok($('note')===note,'cancel keeps the exact note editor');assert.equal(note.value,'  Mobile B exact\n note  ');assert.equal(note.selectionStart,3);assert.equal(note.selectionEnd,8);
-  $('library').querySelector('[data-document-key="b"] .library-open').click();
-  assert.equal($('toggle-library').getAttribute('aria-expanded'),'false');assert.equal(w.document.activeElement?.id,note.id,'current document returns focus to note');assert.ok($('note')===note,'note identity preserved');
-  assert.equal(note.value,'  Mobile B exact\n note  ');assert.equal(note.selectionStart,3);assert.equal(note.selectionEnd,8);
-  assert.equal(rows().get('b').payload.notes.one,note.value);assert.equal(rows().get('a').payload.notes.one,'Remote A');
-  assert.equal(w.idbUI.store.status('b').status,'saved');assert.equal(w.idbUI.store.status('a').status,'conflict');assert.equal($('save-status').dataset.state,'failed');
-  assert.deepEqual(JSON.parse(JSON.stringify(w.idbUI.store.snapshotForExport().documents.map(d=>[d.key,d.notes.one]))),[['a','Unresolved mobile A']]);
- }finally{await w.happyDOM.close();}
-});
-
-test('explicit canonical activation rejects drafts and holds ingress until the final save receipt',async()=>{
- const {w,f,$}=await ui(undefined,{mobile:true});try{
-  $('ai-question').value='Unsubmitted authored question';await assert.rejects(w.coconutAcquireCanonicalMigration(),/草稿/);assert.equal(w.idbUI.store.status().blocked,false);$('ai-question').value='';
-  const document=w.idbUI.documents[0];document.notes.one='Final pre-migration save';w.idbUI.store.queueDocument(document.key,document);f.engine.control.holdNextWrite=true;
-  let settled=false;const acquire=w.coconutAcquireCanonicalMigration().then(release=>{settled=true;return release;});await f.engine.tick();
-  assert.equal(settled,false);assert.equal(w.idbUI.store.status().blocked,true);assert.equal(w.document.querySelector('.shell').inert,true);
-  assert.equal(w.idbUI.store.queueDocument(document.key,document).accepted,false);
-  f.engine.control.held.shift().complete();const release=await acquire;assert.equal(f.engine.rows(provider.NAME).get('documents').get(document.key).payload.notes.one,'Final pre-migration save');assert.equal(w.idbUI.store.status().blocked,true);
-  release();assert.equal(w.idbUI.store.status().blocked,false);assert.equal(w.document.querySelector('.shell').inert,false);
- }finally{await w.happyDOM.close();}
 });

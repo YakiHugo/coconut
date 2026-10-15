@@ -13,8 +13,6 @@
     "skipLibCheck": true
   },
   "include": [
-    "transcript-navigator/**/*.ts",
-    "transcript-navigator/**/*.tsx",
     "app/**/*.ts",
     "app/**/*.tsx",
     "reader-workspace/**/*.ts",

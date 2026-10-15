@@ -1,96 +1,34 @@
-## Default-entry candidate status (2026-10-15)
+# React application contracts
 
-The isolated default candidate now serves the React application at `/` and `/index.html`; the mature DOM renderer is explicitly confined to `/compatibility.html`. See `react-default-cutover.md` for evidence boundaries. The prior preview passed real CI at desktop/390/320 widths, including the complete authored source, canonical, AI, native receipt and recovery matrix. This does not substitute for final default CI.
+The frontend migration is complete. The former preview and compatibility documents are removed. This document records the behavior that the React application must preserve; it is not a promise to support the retired DOM interface.
 
-Saved theme/measure/layout/shortcut preferences, summary reading and scoped keyboard controls are implemented. Startup close/release recovery, actual dark palette and native modal focus ownership passed independent review through `a5ffc56b`. Native File/update integration and synchronous owned-pickers are part of the subsequent default joint-review scope. The default packaged macOS ZIP test is wired separately from explicitly named compatibility packaged regressions. No local Chromium or user Mac success is claimed.
+## Ownership and persistence
 
-The older checklist below records the preview-stage gates; the final default candidate must still pass joint review, actual default browser/packaged CI and screenshot inspection at its exact final commit.
+- The app store owns immutable document identities, revisions and save tickets. Components submit detached changes against an expected key/revision.
+- Storage-only notifications do not advance content revisions. Admission checks run before replacing live content; failed saves remain exportable, and queued writes are not shown as durable success.
+- Canonical adoption, binding, cancellation and unknown receipts use explicit review, authority checks and recoverable frozen states. Original/raw recovery export stays in React.
+- Shared domain validation and lossless unknown-field preservation remain tested. Removing UI compatibility does not remove data integrity checks or erase existing browser/native data.
 
-# React migration acceptance gate
+## Source-first reading
 
-`reader/react-preview.html` is an integration entry, not the completed migration.
-The default mature reader stays available until the gate below passes. This entry
-loads no `app.js`, `language.js`, `jobs.js`, `podcasts.js`, `background-summary.js`,
-`translation-review.js` or `updates.js`. React exclusively owns its DOM. Domain
-validation, canonical storage and save receipts are reused; the existing safe deep projection is also exported for immutable store writes.
+- Podcast discovery, source links and original audio/video are the primary entry paths. Subtitle files/paste and JSON backup restore are secondary recovery tools.
+- Source requests and pickers have cancellation/lifecycle ownership; old results cannot replace newer choices. File object URLs are temporary and never persisted.
+- React owns playback, summaries, source citations, exact selections, annotations and preferences. Playback and remembered-media restoration never start sound automatically.
+- Local ASR jobs require explicit consent and a configured executor. Durable operation identities reconcile lost acknowledgments without filename-only adoption or automatic duplicate submission. Missing dependencies/models are reported rather than downloaded implicitly.
 
-## Accepted integration boundaries
+## AI and desktop lifecycle
 
-- App store owns live immutable document identities, document revisions, and
-  save tickets. Components submit detached changes with expected key/revision.
-- Storage-only notifications do not advance a document revision.
-- Preflight happens before replacing live content. Failed saves remain available
-  for backup; queued is never presented as durable success.
-- Source requests own AbortControllers and cannot apply after cancellation,
-  replacement, or unmount. File object URLs are shell-owned, never persisted.
-- Source entry opens media directly; transcript files are a recovery path.
-- Reader owns playback effects, transcript rendering and selection ranges.
-- AI controller owns single-use consent, exact input snapshots and task receipts.
-  No mount, navigation or source import automatically sends inference.
+- AI requests bind consent to exact source/model/identity snapshots. Navigation, mounting and importing do not automatically infer.
+- Failed or stale results retain appropriate recovery/export paths; task resume and cancellation retain attempt identity and acknowledgment semantics.
+- Native file commands retain real user activation, trusted document ownership and bounded receipts. Pending pickers, drafts and storage work participate in close/update barriers.
+- Remembered media is associated only with a complete authoritative owner catalog. Replacement/removal releases the exact old reference without deleting original files.
 
-## Gate before replacing the default entry
+## Verification
 
-- [x] Root navigation, title-search library, source URL ingestion and cancellation
-- [x] Same storage-provider startup and canonical save pipeline
-- [x] Local file player without uploads or automatic playback
-- [x] React reader/player/selection and React AI/task/review components integrated
-- [x] Mounted React regression: ingestion, save, library reopen, stale cancellation
-- [ ] Real Chromium visual and interrupted/repeated-flow acceptance
-- [ ] Existing full application acceptance and source-first flow matrix
-- [ ] Joint review: implemented publisher catalog and URL/RSS episode selection
-- [ ] Joint review: explicit local ASR upload, durable operation-ID reconciliation,
-  same-operation replay, result/source verification, cancel/retry and playback
-- [ ] Joint review: journal Web Locks, exact prior-value/readback fences and
-  transcript attachment preserving project annotations
-- [ ] Joint review: complete authoritative native owner catalog, token release,
-  failed-retirement retry, close/update barriers and active-ingress retirement
-- [ ] Joint review: JSON atomic restore and subtitle paste/file/encoding recovery
-- [ ] Joint review: library removal/undo, rescue backup, selected backups,
-  historical collections, original/translation/note search and notebook export
-- [ ] Joint review: AI archive/export, glossary/offline, retained failed-save
-  recovery, exact visible scope and document/language-bound translation review
-- [ ] Joint review: explicit identity/duration-checked listening resume and
-  existing reading-view preferences without content-revision writes
-- [ ] Joint review: React canonical migrate/connect/resume/cancel and raw recovery export
-- [ ] Desktop native close/update hooks while storage startup is loading or failed;
-  current hooks begin only after the ready application mounts
-- [ ] Reading appearance/shortcut preferences and saved-summary view restoration
-- [ ] Mobile and desktop accessibility/focus/keyboard layout checks
+The default source-first Chromium suite covers desktop and compact widths. The production matrix covers actual Node/SQLite restart, CAS, lost acknowledgments, storage adoption/recovery, consent-bound authored AI, subtitle encoding, preferences, keyboard/focus and media layout. The packaged macOS suite covers real native menus, chooser, original media, notes/backups and close/restart. Separate offline Node/Python tests cover ASR operation transport without inference.
 
-Do not delete the mature entry or claim full React delivery until each applicable
-item is implemented, tested, and independently reviewed. Preserve the compatibility
-entry only as an explicit recovery path after default cutover, not as hidden DOM
-under the new tree.
+Tests solely for the retired renderer are removed rather than counted as React evidence. Shared domain/backend tests remain where they still protect production behavior. Final CI and inspected screenshots must belong to the exact change being merged; prior migration evidence is historical only.
 
-## Verification available in this environment
+## Podcast catalog
 
-The mechanical integration includes reader `d5b4516`, AI `efeb417`, native
-`47f39ca`, recovery `7ba91a0`, storage setup `440e8c9`, backend `f897ec0`,
-and the root persistence/admission fixes. The storage/browser candidate passed
-166 React/domain/production-mounted tests, including frontend lost-ACK recovery
-through real Node/Python transport with inference disabled. This is not final
-joint review or visual acceptance.
-
-`npm run check:reader-ui`, `tests/react-app-store.test.mjs`,
-`tests/react-app-mounted.test.mjs`, AI and reader component tests pass against the
-integration candidate. `tests/react-app-browser.mjs` is a localhost-only mocked
-browser fixture. The additional `tests/react-production-matrix-browser.mjs`
-uses actual Node/SQLite authority with authored provider/native fixtures and
-explicit React storage controls. Both are wired into CI, with exact authored
-image/JSON artifact allowlists. Chromium could not launch under this executor's socket sandbox;
-escalated launch failed before execution. No visual/browser success is claimed.
-
-## Seed podcast catalog
-
-The React discovery page includes a small searchable publisher catalog, not a
-claim of global directory coverage or current episode/transcript availability.
-Publisher links verified on 2026-10-15:
-
-- TED Talks Daily: https://shows.acast.com/ttd links its RSS at
-  https://feeds.acast.com/public/shows/ttd
-- Lex Fridman Podcast: https://lexfridman.com/category/ai/ identifies its public
-  RSS at https://lexfridman.com/feed/podcast/
-
-No app-source request is made until the user chooses a show. The local acceptance
-fixtures mock ingestion; these source links are not evidence of live app fetching
-or transcription success.
+Discovery provides a small publisher catalog rather than a global directory. TED Talks Daily and Lex Fridman publisher feed links were verified on 2026-10-15. Selection initiates source discovery; catalog presence does not guarantee current transcripts, platform access or transcription success.

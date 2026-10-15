@@ -78,8 +78,6 @@ jobs:
         run: npm ci --ignore-scripts
       - name: Run the real Electron reader without model calls
         run: COCONUT_SMOKE_TEST=1 desktop/node_modules/.bin/electron desktop
-      - name: Verify compatibility update UI, restart guards and note persistence in isolated Electron
-        run: node tests/desktop-updates-ui.mjs
       - name: Package and seal arm64 and x64 development apps without a signing identity
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
@@ -117,32 +115,8 @@ jobs:
             ${{ runner.temp }}/coconut-native-diagnostics/react-packaged-failure.png
           if-no-files-found: ignore
           retention-days: 7
-      - name: Verify compatibility renderer in native ZIP reading, playback, exports and restart
-        env:
-          COCONUT_NATIVE_DIAGNOSTICS: ${{ runner.temp }}/coconut-native-diagnostics
-        run: node tests/desktop-packaged-acceptance.mjs
-      - name: Verify compatibility original-file continuity in the exact native ZIP
-        env:
-          COCONUT_NATIVE_DIAGNOSTICS: ${{ runner.temp }}/coconut-native-diagnostics
-        run: node tests/desktop-local-media-acceptance.mjs
-      - name: Retain authored native failure diagnostics only
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: Coconut-native-authored-failure
-          path: |
-            ${{ runner.temp }}/coconut-native-diagnostics/native-import-failure.json
-            ${{ runner.temp }}/coconut-native-diagnostics/native-import-failure.png
-            ${{ runner.temp }}/coconut-native-diagnostics/native-media-failure.json
-            ${{ runner.temp }}/coconut-native-diagnostics/native-media-failure.png
-          if-no-files-found: ignore
-          retention-days: 7
-      - name: Verify compatibility caption warnings through native UI with authored offline fixtures
-        run: node tests/desktop-caption-ui-proof.mjs --offline-diagnostics
       - name: Verify exact ZIP helper integrity and native public captions
         run: node tests/desktop-caption-helper-packaged-proof.mjs --live
-      - name: Verify real captions through native compatibility journey
-        run: node tests/desktop-caption-ui-proof.mjs
       - name: Upload unsigned developer builds only
         uses: actions/upload-artifact@v4
         with:

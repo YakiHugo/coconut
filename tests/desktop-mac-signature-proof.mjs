@@ -26,7 +26,7 @@ try {
     await execute('/usr/bin/codesign',['--verify','--strict','--verbose=2',path.join(resources,'caption-helper/coconut-caption')]);
     checks.push(arch+'_exact_zip_complete_adhoc_signature');
     checks.push(arch+'_pinned_helper_signature_valid');
-    const stylesheet=path.join(resources,'reader/style.css'),original=await fs.readFile(stylesheet);
+    const stylesheet=path.join(resources,'reader/react-app.css'),original=await fs.readFile(stylesheet);
     await fs.appendFile(stylesheet,'\n/* authored tamper proof */\n');
     await assert.rejects(verifyMacBundle(app));checks.push(arch+'_changed_reader_resource_rejected');
     await fs.writeFile(stylesheet,original);await verifyMacBundle(app);

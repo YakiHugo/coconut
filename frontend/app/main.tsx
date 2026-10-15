@@ -7,7 +7,7 @@ import { Application } from './application';
 import { createAppStore } from './store';
 import type { StoreDependencies } from './contracts';
 import './style.css';
-// Only DOM-free legacy domain/persistence modules cross this boundary.
+// Only shared domain/persistence modules cross this boundary.
 const runtime = window as unknown as {
     CoconutClientCapabilities?:{refresh:()=>Promise<unknown>};
     Coconut: {
@@ -69,7 +69,7 @@ async function start() {
     catch (error) {
         if(startupAbort.signal.aborted)return; // The close/release owner renders only after storage shutdown settles.
         startup?.failed();if(startup&&!startup.canRenderFailure())return;
-        root.render(<main className="startup"><h1>暂时无法打开书架</h1><p role="alert">{error instanceof Error ? error.message : '存储不可用'}</p><p>原始数据仍保留。不要清除浏览器数据。</p><StorageSetup result={result||{ok:false,error:{message:error instanceof Error?error.message:'存储不可用'}}} storage={storage} onBusyChange={startupBusy} onRestart={()=>location.reload()}/><a href="compatibility.html">打开兼容恢复工具</a></main>);
+        root.render(<main className="startup"><h1>暂时无法打开书架</h1><p role="alert">{error instanceof Error ? error.message : '存储不可用'}</p><p>原始数据仍保留。不要清除浏览器数据。</p><StorageSetup result={result||{ok:false,error:{message:error instanceof Error?error.message:'存储不可用'}}} storage={storage} onBusyChange={startupBusy} onRestart={()=>location.reload()}/></main>);
     }finally{finishStartup();}
 }
 void start();

@@ -127,7 +127,7 @@ else {
       }
     }
     ipcMain.handle('coconut:update',async(event,action,value)=>{
-      if(event.sender!==window.webContents||event.senderFrame!==window.webContents.mainFrame||![origin+'/',origin+'/index.html',origin+'/compatibility.html'].includes(event.senderFrame.url.split('#')[0]))throw new Error('更新请求来源无效');
+      if(event.sender!==window.webContents||event.senderFrame!==window.webContents.mainFrame||![origin+'/',origin+'/index.html'].includes(event.senderFrame.url.split('#')[0]))throw new Error('更新请求来源无效');
       if(action==='state')return updater.snapshot();
       if(action==='check')return updater.check({manual:true});
       if(action==='download')return updater.download();
@@ -137,7 +137,7 @@ else {
       throw new Error('不支持的更新操作');
     });
     ipcMain.handle('coconut:local-media',async(event,action,value)=>{
-      if(event.sender!==window.webContents||event.senderFrame!==window.webContents.mainFrame||![origin+'/',origin+'/index.html',origin+'/compatibility.html'].includes(event.senderFrame.url.split('#')[0]))throw new Error('原文件请求来源无效');
+      if(event.sender!==window.webContents||event.senderFrame!==window.webContents.mainFrame||![origin+'/',origin+'/index.html'].includes(event.senderFrame.url.split('#')[0]))throw new Error('原文件请求来源无效');
       if(quitting)return {status:'unavailable'};
       if(action==='remember')return localMediaService.remember(value?.owner,value?.path,value?.identity);
       if(action==='resolve')return localMediaService.resolve(value?.owner);
@@ -160,7 +160,7 @@ else {
     window.webContents.on('render-process-gone',()=>localMediaService.releaseAll());
     window.webContents.on('will-attach-webview',event=>event.preventDefault());
     window.webContents.on('will-navigate',(event,url)=>{
-      if (![origin+'/',origin+'/index.html',origin+'/compatibility.html'].includes(url.split('#')[0])) event.preventDefault();
+      if (![origin+'/',origin+'/index.html'].includes(url.split('#')[0])) event.preventDefault();
     });
     window.webContents.setWindowOpenHandler(({url})=>{
       // Only a normal web link is handed to the system browser. Never custom schemes or file paths.
