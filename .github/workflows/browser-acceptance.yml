@@ -69,6 +69,10 @@ jobs:
             ${{ runner.temp }}/coconut-react-authored/caption-continuity.json
             ${{ runner.temp }}/coconut-react-authored/matrix-canonical-reading-1360.png
             ${{ runner.temp }}/coconut-react-authored/matrix-canonical-reading-390.png
+            ${{ runner.temp }}/coconut-react-authored/matrix-ai-provider-unavailable-1360.png
+            ${{ runner.temp }}/coconut-react-authored/matrix-ai-provider-unavailable-390.png
+            ${{ runner.temp }}/coconut-react-authored/matrix-ai-provider-ready-1360.png
+            ${{ runner.temp }}/coconut-react-authored/matrix-ai-provider-ready-390.png
             ${{ runner.temp }}/coconut-react-authored/matrix-ai-error-details-1360.png
             ${{ runner.temp }}/coconut-react-authored/matrix-ai-error-details-390.png
             ${{ runner.temp }}/coconut-react-authored/matrix-source-first-home-390.png

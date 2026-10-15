@@ -105,7 +105,7 @@ export function Discover({ store }: {
             store.setFile(doc.key, file);
             store.setMedia(doc.key, { url: URL.createObjectURL(file), kind: inspected.kind, name: file.name, identity: inspected.identity, availability: 'local_session' });
             store.select(doc.key);
-            store.setMessage('已打开本地原声。文件未上传，未自动播放；尚未配置语音识别，文字稿不会自动生成。');
+            store.setMessage('已打开本地原声。文件未上传，未自动播放，尚未自动转写；可在文字稿面板查看识别服务状态。');
         }
         catch (error) {
             if (owner.current === controller)

@@ -23,9 +23,10 @@ export function AiWorkspace({snapshot:s, commands:c}:{snapshot:AiSnapshot;comman
   </fieldset>
   {s.selection?.exactText!==undefined&&<div><h3>精确选中的原文</h3><p style={{whiteSpace:'pre-wrap'}}>{s.selection.exactText}</p></div>}
   {s.purpose==='translation'&&<details><summary>本篇术语表</summary><label>每行：原词 = 译法<textarea value={s.glossary} onChange={e=>c.editGlossary(e.target.value)}/></label><button disabled={!s.glossaryDirty||s.busy} onClick={()=>void c.saveGlossary()}>保存术语</button></details>}
+  <p role="status" data-testid="ai-readiness">{s.readiness.reason}</p>
   <p data-testid="ai-scope">{s.scopeNotice}</p>
   <label><input type="checkbox" checked={s.consent} disabled={s.busy||!s.documentKey||(!s.selection&&s.purpose!=='summary')} onChange={e=>c.consent(e.target.checked)}/>{s.purpose==='translation'&&s.translationEngine==='offline'?'我确认上述范围并在本机运行离线粗稿。':'我确认上述范围、提供商与模型；发送原文并使用订阅额度'}{ s.execution==='background'&&s.purpose==='summary'?'，离开页面后继续执行':'' }。</label>
-  <button disabled={s.unsavedContent||!s.consent||s.busy||!s.connected||(!s.selection&&s.purpose!=='summary')} onClick={()=>void c.submit()}>{s.resumeKey?'确认续跑原任务':'执行本次任务'}</button>
+  <button disabled={s.unsavedContent||!s.consent||s.busy||!s.connected||!s.readiness.ready||(!s.selection&&s.purpose!=='summary')} onClick={()=>void c.submit()}>{s.resumeKey?'确认续跑原任务':'执行本次任务'}</button>
   {s.purpose==='summary'&&s.execution==='foreground'&&<button disabled={s.busy} onClick={()=>void c.resetSummary()}>清除分批进度，重新核对全文</button>}
   {s.busy&&<button onClick={c.stop}>停止后续请求</button>}
   <p role="status">{s.message}</p>{s.unsavedContent&&<div><button disabled={s.busy} onClick={()=>void c.retrySave()}>重试保存当前文稿</button><button onClick={c.exportCurrentDocument}>下载当前文稿 JSON 备份</button></div>}
@@ -35,6 +36,7 @@ export function AiWorkspace({snapshot:s, commands:c}:{snapshot:AiSnapshot;comman
    <p>{t.title} · {t.status} · {t.provider} · {t.model||'CLI 默认模型'}</p><small>任务 {t.taskId||'等待确认'} · 执行 {t.attemptId||'等待确认'}</small>
    {t.unknown&&<p>提交结果待确认。只查询原意图，不会自动重试或新建任务。</p>}
    {t.canResume&&<button onClick={()=>c.reviewResume(t.key)}>核对剩余范围并续跑</button>}
+   {t.retryUnavailableReason&&<p>原提交已确认不存在，当前不能重试：{t.retryUnavailableReason}</p>}
    {t.canRetry&&<div><p>已查询确认原提交不存在。重试同一份原文、提供商和模型，计划 {t.requestCount} 次模型请求，会再次使用额度。</p><button onClick={()=>void c.retrySubmission(t.key)}>按原键重试这次提交</button></div>}{t.canCancel&&<button onClick={()=>void c.cancelTask(t.key)}>取消并放弃接收</button>}
    {t.canAccept&&<button onClick={()=>void c.acceptTask(t.key)}>接收此摘要一次</button>}{t.accepted&&<span>已接收</span>}{t.canArchive&&<button onClick={()=>void c.archiveTask(t.key)}>归档此任务</button>}{t.archived&&<button onClick={()=>void c.archiveTask(t.key,true)}>恢复归档任务</button>}{t.status==='succeeded'&&<button onClick={()=>void c.exportTask(t.key)}>下载独立摘要结果</button>}
   </article>)}<button disabled={activeTaskPage===0} onClick={()=>setTaskPage(activeTaskPage-1)}>上一页任务</button><span>{s.tasks.length} 条任务</span><button disabled={(activeTaskPage+1)*20>=s.tasks.length} onClick={()=>setTaskPage(activeTaskPage+1)}>下一页任务</button></section>
