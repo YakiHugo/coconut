@@ -36,6 +36,22 @@ function localClean(value,input) {
   ;
  return remoteDiagnostic(text).slice(0,180);
 }
+// Some official CLI events wrap an HTTP error object in message JSON.
+// Decode once, within a small byte bound; never chase nested strings/objects.
+function messageEnvelope(value) {
+ if(typeof value!=='string'||Buffer.byteLength(value)>16384)return null;
+ let envelope;try{envelope=JSON.parse(value);}catch{return null;}
+ if(!object(envelope))return null;
+ const unsafe=value=>['__proto__','constructor','prototype'].some(key=>Object.hasOwn(value,key));
+ if(unsafe(envelope)|| (envelope.error!=null&&!object(envelope.error)))return null;
+ const detail=envelope.error??envelope;
+ if(unsafe(detail)|| (detail.message!=null&&typeof detail.message!=='string'))return null;
+ if(detail.error!=null)return null;
+ // A JSON-looking nested message is not recursively decoded or treated as prose.
+ if(typeof detail.message==='string'&&/^[\s]*[\[{"]/.test(detail.message))return null;
+ return {message:detail.message,code:detail.code??envelope.code,type:detail.type??envelope.type,
+  status:detail.status_code??detail.http_status??detail.status??envelope.status_code??envelope.http_status??envelope.status};
+}
 export function providerFailure(provider,result,input='') {
  const stdout=typeof result.stdout==='string'?result.stdout:'';
  const events=[];let malformed=0;
@@ -48,17 +64,21 @@ export function providerFailure(provider,result,input='') {
  const event=failures.at(-1);
  const detail=object(event?.error)?event.error:event;
  const earlier=failures.find(item=>typeof item.message==='string'||typeof item.error?.message==='string');
- const rawMessage=detail?.message|| (typeof event?.error==='string'?event.error:'') || earlier?.error?.message || earlier?.message;
+ const eventMessage=detail?.message|| (typeof event?.error==='string'?event.error:'') || earlier?.error?.message || earlier?.message;
+ const envelope=messageEnvelope(eventMessage);
+ const rawMessage=envelope?.message??eventMessage;
  const message=clean(rawMessage,input);
  const details=failures.toReversed().flatMap(item=>object(item.error)?[item.error,item]:[item]);
- const rawCode=details.find(item=>item.code!=null)?.code;
+ const rawCode=details.find(item=>item.code!=null)?.code??envelope?.code;
  const upstreamCode=typeof rawCode==='string'&&SAFE_CODES.has(rawCode)&&!input.includes(JSON.stringify(rawCode))?rawCode:null;
- const rawStatus=details.map(item=>item.status_code??item.http_status??item.status).find(value=>value!=null);
+ const rawStatus=details.map(item=>item.status_code??item.http_status??item.status).find(value=>value!=null)??envelope?.status;
+ const rawType=failures.toReversed().map(item=>object(item.error)?item.error.type:null).find(value=>value!=null)??envelope?.type;
+ const upstreamType=typeof rawType==='string'&&SAFE_CODES.has(rawType)&&!input.includes(JSON.stringify(rawType))?rawType:null;
  const upstreamStatus=Number.isInteger(rawStatus)&&rawStatus>=100&&rawStatus<=599?rawStatus:null;
- const diagnostics={provider,exitCode:Number.isInteger(result.code)?result.code:null,upstreamCode,upstreamStatus,
+ const diagnostics={provider,exitCode:Number.isInteger(result.code)?result.code:null,upstreamCode,upstreamType,upstreamStatus,
   message:message||null,unrecognizedDetailsOmitted:!!failures.length&&(!message|| (rawCode!=null&&!upstreamCode)),eventTypes:events.map(event=>event.type).filter(type=>['turn.started','turn.completed','turn.failed','error','result'].includes(type)).slice(-12),
   malformedLines:Math.min(malformed,10000),stderrBytes:Buffer.byteLength(typeof result.stderr==='string'?result.stderr:''),stderrOmitted:true};
- const summary='本地代理未完成（CLI'+(diagnostics.exitCode===null?'': ' exit '+diagnostics.exitCode)+'；上游 HTTP '+(upstreamStatus??'未知')+'）'+(upstreamCode?' ['+upstreamCode+']':'')+(message?'：'+message:'。没有可安全显示的结构化错误；原始输出未保存。');
+ const summary='本地代理未完成（CLI'+(diagnostics.exitCode===null?'': ' exit '+diagnostics.exitCode)+'；上游 HTTP '+(upstreamStatus??'未知')+'）'+(upstreamCode||upstreamType?' ['+(upstreamCode||upstreamType)+']':'')+(message?'：'+message:'。没有可安全显示的结构化错误；原始输出未保存。');
  const error=Object.assign(new Error(summary.slice(0,300)),{code:'provider_failed',providerDiagnostics:diagnostics});
  // Transient local-owner response only. Never merge this into task records or remote responses.
  const localCode=typeof rawCode==='string'&&/^[A-Za-z][A-Za-z0-9_.-]{0,79}$/.test(rawCode)&&localClean(rawCode,input)===rawCode?rawCode:null;
