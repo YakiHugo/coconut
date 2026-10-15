@@ -25,6 +25,7 @@ export type Ingestion = {
     };
     selection?: {
         feed_url: string;
+        feed_checked_at?: string;
         title?: string;
         episodes?: Episode[];
         feeds?: Array<{

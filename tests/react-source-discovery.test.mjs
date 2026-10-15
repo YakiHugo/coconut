@@ -91,12 +91,46 @@ test('direct-media link reopens existing audio project without duplicating or re
  }finally{await x.w.happyDOM.close();}
 });
 test('refreshing a feed retires a track that the publisher removed rather than sending a hidden selection',async()=>{
- const x=await setup();try{await x.load();x.select(x.episode('Authored multilingual episode').querySelector('select'),unlabelledTrack);await new Promise(r=>setTimeout(r,0));x.fixture.state.onlyFrench=true;x.button('打开链接').click();await wait(()=>x.episode('Authored multilingual episode').querySelectorAll('option').length===2);assert.equal(x.episode('Authored multilingual episode').querySelector('select').value,'');assert.equal(x.episode('Authored multilingual episode').querySelector('button').disabled,true);assert.equal(x.docs().length,0);}finally{await x.w.happyDOM.close();}
+ const x=await setup();try{await x.load();x.select(x.episode('Authored multilingual episode').querySelector('select'),unlabelledTrack);await new Promise(r=>setTimeout(r,0));x.fixture.state.onlyFrench=true;x.button('刷新节目列表').click();await wait(()=>x.episode('Authored multilingual episode').querySelectorAll('option').length===2);assert.equal(x.episode('Authored multilingual episode').querySelector('select').value,'');assert.equal(x.episode('Authored multilingual episode').querySelector('button').disabled,true);assert.equal(x.fixture.counts.feed,2);assert.equal(x.docs().length,0);}finally{await x.w.happyDOM.close();}
+});
+test('feed snapshots reuse only the completed RSS; explicit refresh invalidates failures and recovery preserves source context',async()=>{
+ const x=await setup(),{w,fixture}=x;let release;try{
+  const checked=()=>w.document.querySelector('.feed-refresh p').textContent;
+  await x.load();assert.deepEqual(fixture.counts,{feed:1,transcript:0});assert.match(checked(),/上次来源检查：/);const initialCheck=checked();
+  await x.open('Authored multilingual episode',frenchTrack);await wait(()=>x.docs().length===1);assert.deepEqual(fixture.counts,{feed:1,transcript:1},'opening a publisher track reuses RSS but fetches the actual transcript');
+  const original=structuredClone(x.docs());await x.discover();assert.equal(checked(),initialCheck);assert.equal(x.episode('Authored multilingual episode').querySelector('select').value,frenchTrack);
+  fixture.state.upgrade=true;assert.equal(x.episode('Authored evolving episode').querySelector('select'),null,'publisher changes do not mutate the completed selection');
+  fixture.state.now+=1000;fixture.state.holdFeed=new Promise(resolve=>release=resolve);x.button('刷新节目列表').click();await wait(()=>fixture.counts.feed===2&&x.button('取消读取'));
+  assert.equal(checked(),initialCheck);assert.equal(x.button('刷新节目列表').disabled,true);assert.equal(x.episode('Authored multilingual episode').querySelector('button').disabled,true);assert.equal(w.document.querySelector('#source-url').value,sourceFeed);
+  release();release=null;fixture.state.holdFeed=null;await wait(()=>x.episode('Authored evolving episode').querySelector('select')&&!x.button('刷新节目列表').disabled);
+  const refreshedCheck=checked();assert.notEqual(refreshedCheck,initialCheck);assert.deepEqual(fixture.counts,{feed:2,transcript:1});assert.equal(x.episode('Authored multilingual episode').querySelector('select').value,frenchTrack);
+  fixture.state.failFeed=true;fixture.state.now+=1000;x.button('刷新节目列表').click();await wait(()=>fixture.counts.feed===3&&!x.button('刷新节目列表').disabled&&w.document.querySelector('.source-error').textContent.includes('Authored feed temporarily unavailable'));
+  assert.equal(checked(),refreshedCheck);assert.ok(x.episode('Authored evolving episode').querySelector('select'));assert.equal(w.document.querySelector('#source-url').value,sourceFeed);assert.equal(x.episode('Authored multilingual episode').querySelector('select').value,frenchTrack);assert.deepEqual(x.docs(),original);
+  await x.open('Authored multilingual episode');await wait(()=>fixture.counts.feed===4&&!x.button('刷新节目列表').disabled&&w.document.querySelector('.source-error').textContent.includes('Authored feed temporarily unavailable'));
+  assert.equal(fixture.counts.transcript,1,'an import after failed refresh must fetch and fail RSS, never use the old snapshot');assert.equal(w.document.querySelector('.source-project-choice'),null);assert.deepEqual(x.docs(),original);assert.equal(checked(),refreshedCheck);
+  fixture.state.failFeed=false;fixture.state.now+=1000;x.button('刷新节目列表').click();await wait(()=>fixture.counts.feed===5&&!x.button('刷新节目列表').disabled&&!w.document.querySelector('.source-error').textContent);
+  assert.notEqual(checked(),refreshedCheck);assert.equal(x.episode('Authored multilingual episode').querySelector('select').value,frenchTrack);
+  await x.open('Authored multilingual episode');await wait(()=>w.document.querySelector('.source-project-choice'));assert.deepEqual(fixture.counts,{feed:5,transcript:2});assert.deepEqual(x.docs(),original,'recovery offers the existing project without mutating it');
+ }finally{release?.();fixture.state.holdFeed=null;await w.happyDOM.close();}
+});
+test('cancelled refreshes and navigation never replace the completed episode list or repopulate a newer URL',async()=>{
+ const x=await setup(),{w,fixture}=x;let release;try{
+  const checked=()=>w.document.querySelector('.feed-refresh p').textContent;
+  await x.load();x.select(x.episode('Authored multilingual episode').querySelector('select'),frenchTrack);await new Promise(resolve=>setTimeout(resolve,0));const initialCheck=checked();
+  fixture.state.now+=1000;fixture.state.holdFeed=new Promise(resolve=>release=resolve);x.button('刷新节目列表').click();await wait(()=>fixture.counts.feed===2&&x.button('取消读取'));x.button('取消读取').click();
+  release();release=null;fixture.state.holdFeed=null;await new Promise(resolve=>setTimeout(resolve,25));assert.equal(checked(),initialCheck);assert.match(w.document.querySelector('.source-error').textContent,/读取已取消/);assert.equal(x.episode('Authored multilingual episode').querySelector('select').value,frenchTrack);assert.equal(x.docs().length,0);
+  await x.open('Authored multilingual episode');await wait(()=>x.docs().length===1);assert.deepEqual(fixture.counts,{feed:3,transcript:1},'cancelled explicit refresh retires the previous cached RSS');await x.discover();const importCheck=checked();assert.notEqual(importCheck,initialCheck);
+  fixture.state.now+=1000;fixture.state.holdFeed=new Promise(resolve=>release=resolve);x.button('刷新节目列表').click();await wait(()=>fixture.counts.feed===4&&x.button('取消读取'));x.button('我的内容 1').click();await wait(()=>w.document.querySelector('.library-page'));
+  release();release=null;fixture.state.holdFeed=null;await new Promise(resolve=>setTimeout(resolve,25));await x.discover();assert.equal(checked(),importCheck);assert.match(w.document.querySelector('.source-error').textContent,/读取已暂停/);assert.equal(x.episode('Authored multilingual episode').querySelector('select').value,frenchTrack);
+  fixture.state.holdFeed=new Promise(resolve=>release=resolve);x.button('刷新节目列表').click();await wait(()=>fixture.counts.feed===5&&x.button('取消读取'));x.input(w.document.querySelector('#source-url'),'https://publisher.example.org/new');
+  release();release=null;fixture.state.holdFeed=null;await new Promise(resolve=>setTimeout(resolve,25));assert.equal(w.document.querySelector('#source-url').value,'https://publisher.example.org/new');assert.equal(w.document.querySelector('.episode-list'),null);assert.equal(w.document.querySelector('.source-project-choice'),null);assert.equal(x.docs().length,1);
+ }finally{release?.();fixture.state.holdFeed=null;await w.happyDOM.close();}
 });
 test('durable source attachment refuses opaque original cue containers without deleting or rebinding them; explicit copy preserves original',async()=>{
  const fixture=sourceDiscoveryFixture(),base={protocolVersion:1,source:{kind:'url',url:sourceFeed}},second=(await fixture.service.ingest(base)).ingestion.selection.episodes[1];
  const project=(await fixture.service.ingest({...base,episode:{feed_url:sourceFeed,episode_id:second.id}})).ingestion.project.document;
  project.key='original-project';project.project_note='Keep the original note';project.opaque={keep:true};fixture.state.upgrade=true;
+ await fixture.service.ingest(base); // A publisher change becomes available only after an explicit discovery refresh.
  const incoming=(await fixture.service.ingest({...base,episode:{feed_url:sourceFeed,episode_id:second.id,transcript_url:upgradeTrack}})).ingestion.transcript.document;
  project.notes={[incoming.segments[0].id]:'Retained original note, not about the new cue'};project.translation_glossary={future_record:{meaning:'Retained'}};project.translation_contexts={future_context:{keep:true}};
  const x=await setup(fixture,[project]);try{
@@ -105,5 +139,26 @@ test('durable source attachment refuses opaque original cue containers without d
   x.button('取消接入').click();x.button('另建独立副本').click();await wait(()=>x.docs().length===2);const old=x.docs().find(doc=>doc.key===project.key),copy=x.docs().find(doc=>doc.key!==project.key);
   assert.deepEqual(old,original);assert.equal(copy.segments[0].id,incoming.segments[0].id);assert.deepEqual(copy.notes,{},'opaque old notes never become annotations of the new cue');
   const reopened=await setup(fixture,x.docs());try{assert.deepEqual(reopened.docs().find(doc=>doc.key===project.key),original);assert.equal(reopened.docs().length,2);}finally{await reopened.w.happyDOM.close();}
+ }finally{await x.w.happyDOM.close();}
+});
+
+for(const absent of ['source','check timestamp'])test(`optional feed-check display metadata cannot block a parsed transcript when ${absent} is absent`,async()=>{
+ const fixture=sourceDiscoveryFixture(),ingest=fixture.service.ingest;
+ fixture.service={ingest:async(...args)=>{
+  const value=await ingest(...args);
+  if(args[0].episode){
+   if(absent==='source')delete value.ingestion.source;
+   else{delete value.ingestion.source.feed_checked_at;delete value.ingestion.source.feed_reused;}
+  }
+  return value;
+ }};
+ const x=await setup(fixture);try{
+  await x.load();const checked=x.w.document.querySelector('.feed-refresh p').textContent;
+  await x.open('Authored multilingual episode',frenchTrack);
+  await wait(()=>x.w.document.querySelector('.reader-workspace'));
+  await wait(()=>x.docs().length===1);
+  assert.equal(x.docs()[0].segments[0].text,'Bonjour, cette source reste intacte.');
+  await x.discover();assert.equal(x.w.document.querySelector('.feed-refresh p').textContent,checked);
+  assert.equal(x.w.document.querySelector('.source-error').textContent,'');
  }finally{await x.w.happyDOM.close();}
 });
