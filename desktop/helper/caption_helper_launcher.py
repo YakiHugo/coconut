@@ -119,11 +119,11 @@ def main():
             result = extract_public_video_captions(request['url'], language, ca_file=certifi.where())
         else:
             result = extract_public_captions(request['url'], language, ca_file=certifi.where())
-        if result.get('status') in ('access_restricted', 'unavailable', 'language_required', 'network_unavailable', 'metadata_incomplete'):
-            return {'status': result['status']}
+        if result.get('status') in ('access_restricted', 'unavailable', 'language_required', 'network_unavailable', 'metadata_incomplete', 'no_matching_captions', 'extractor_failed', 'caption_file_invalid', 'caption_parse_failed', 'guard_stopped'):
+            return {key: result[key] for key in ('status', 'diagnostic') if key in result}
         body = result.pop('bytes', None)
         if not isinstance(body, bytes) or not 0 < len(body) <= MAX_CAPTION:
-            return {'status': 'unavailable'}
+            return {'status': 'caption_file_invalid'}
         return {**result, 'status': 'ok', 'captionBase64': base64.b64encode(body).decode('ascii')}
     # No data input can turn on a different route, plugin, shell or downloader.
     return {'status': 'unavailable'}
@@ -137,5 +137,6 @@ if __name__ == '__main__':
         with contextlib.redirect_stdout(QuietOutput()), contextlib.redirect_stderr(QuietOutput()):
             response = main()
     except Exception:
-        response = {'status': 'unavailable'}
+        response = {'status': 'extractor_failed', 'diagnostic': {'stage': 'helper_execution',
+                    'reason': 'helper_error', 'requests_attempted': None, 'responses_received': None}}
     sys.stdout.write(json.dumps(response, ensure_ascii=True, separators=(',', ':')) + '\n')

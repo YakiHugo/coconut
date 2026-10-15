@@ -115,3 +115,40 @@ test('actual CLI cleans its owned helper when only the worker crashes',async t=>
  assert.equal(active,false,'unexpected worker exit must not strand its helper');
  const report=JSON.parse(await readFile(path.join(dir,'live-caption-report.json'),'utf8'));assert.equal(report.outcome,'unverified');safe(report);
 });
+
+test('offline failure stages survive helper, API and smoke without making absence or access claims',async t=>{
+ for(const [status,stage,reason,attempted,received,outcome] of [
+  ['extractor_failed','extractor_setup','extractor_error',0,0,'unverified'],
+  ['caption_parse_failed','caption_parse','caption_parse_failed',2,2,'unverified'],
+  ['caption_file_invalid','caption_output','invalid_caption_file',2,2,'unverified'],
+  ['guard_stopped','metadata','request_scope_stopped',0,0,'blocked'],
+  ['no_matching_captions','track_selection','no_matching_track',1,1,'unverified'],
+  ['access_restricted','metadata','access_restricted',1,1,'blocked'],
+  ['extractor_failed','helper_execution','helper_error',null,null,'unverified'],
+ ]){
+  const diagnostic={stage,reason,requests_attempted:attempted,responses_received:received};
+  const f=await helper(t,{status,diagnostic:{...diagnostic,error:secret,url:'https://signed.invalid/?token=PRIVATE_TOKEN'},error:secret});
+  const report=await runSmoke({python:f.python});
+  assert.equal(report.import_status,status);assert.equal(report.outcome,outcome);assert.equal(report.reason,reason);
+  assert.deepEqual(report.diagnostic,diagnostic);assert.equal(report.cue_count,0);assert.equal(report.cue_sha256,null);safe(report);
+  assert.equal((await readFile(f.log,'utf8')).trim().split('\n').length,2,'one version and one extraction, never retry');
+ }
+});
+test('unknown or malformed diagnostic fields never reach the evidence report',()=>{
+ for(const diagnostic of [
+  {stage:secret,reason:'extractor_error',requests_attempted:0,responses_received:0},
+  {stage:'metadata',reason:secret,requests_attempted:0,responses_received:0},
+  {stage:'metadata',reason:'extractor_error',requests_attempted:1,responses_received:2},
+  {stage:'metadata',reason:'extractor_error',requests_attempted:33,responses_received:1},
+  {stage:'metadata',reason:'extractor_error',requests_attempted:null,responses_received:null},
+ ]){
+  const report=initialReport();recordReceipt(report,{status:'extractor_failed',diagnostic},200);
+  assert.equal(report.diagnostic,undefined);assert.equal(report.reason,'extractor_failed');safe(report);
+ }
+});
+
+test('HTTP reader parse failures retain their stage without exposing parser text',()=>{
+ const report=initialReport();recordReceipt(report,{code:'CAPTION_PARSE_FAILED',error:secret},400);
+ assert.equal(report.import_status,'http_error');assert.equal(report.reason,'caption_parse_failed');
+ assert.equal(report.outcome,'unverified');assert.deepEqual(report.diagnostic,{stage:'reader_parse',reason:'caption_parse_failed',requests_attempted:null,responses_received:null});safe(report);
+});
