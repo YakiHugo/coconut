@@ -79,14 +79,14 @@ export async function inspectCaptionOutputFiles(directory,{listEntries=readdir,r
   }
 }
 
-export function runCaptionProcess(executable,input,{directory,signal,timeoutMs,maxOutputBytes,onSpawn,spawnProcess=spawn,args=['--protocol=1']}) {
+export function runCaptionProcess(executable,input,{directory,signal,timeoutMs,maxOutputBytes,onSpawn,spawnProcess=spawn,args=['--protocol=1'],detached=process.platform!=='win32'}) {
   return new Promise((resolve,reject)=>{
     let child, timer, monitor, reading=false, firstError, closed=false, outputBytes=0;
     const chunks=[];
     const stop=error=>{
       firstError ||= error;
       if (!child || closed) return;
-      try {if(process.platform!=='win32' && child.pid)process.kill(-child.pid,'SIGKILL'); else child.kill('SIGKILL');}
+      try {if(detached && process.platform!=='win32' && child.pid)process.kill(-child.pid,'SIGKILL'); else child.kill('SIGKILL');}
       catch {try{child.kill('SIGKILL');}catch{}}
     };
     const abort=()=>stop(fail('CAPTION_CANCELLED','字幕请求已取消'));
@@ -95,9 +95,10 @@ export function runCaptionProcess(executable,input,{directory,signal,timeoutMs,m
       error?reject(error):resolve(result);
     };
     try {
+      if(typeof detached!=='boolean')throw fail('CAPTION_CONFIGURATION','无效的字幕进程组配置');
       cancelled(signal);
       child=spawnProcess(executable,args,{cwd:directory,env:helperEnvironment(directory),shell:false,
-        stdio:['pipe','pipe','pipe'],detached:process.platform!=='win32'});
+        stdio:['pipe','pipe','pipe'],detached});
     } catch(error) {finish(error instanceof CaptionHelperError?error:fail('CAPTION_START','无法启动字幕助手'));return;}
     child.stdin.on('error',()=>{});child.stdin.end(JSON.stringify(input));
     signal?.addEventListener('abort',abort,{once:true});

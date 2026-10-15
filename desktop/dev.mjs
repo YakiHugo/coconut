@@ -11,12 +11,12 @@ import {captionSetupGuidance,CAPTION_START_GUIDANCE} from './caption-setup-guida
 
 export const DEVELOPMENT_TASK_DIRECTORY = fileURLToPath(new URL('../.coconut/dev/tasks', import.meta.url));
 
-export async function startDevelopmentBridge({port = 8080, taskDirectory = DEVELOPMENT_TASK_DIRECTORY, libraryDirectory = libraryLocation({mode:'development'}).directory, captionPython = process.env.COCONUT_CAPTION_PYTHON, ...options} = {}) {
+export async function startDevelopmentBridge({port = 8080, taskDirectory = DEVELOPMENT_TASK_DIRECTORY, libraryDirectory = libraryLocation({mode:'development'}).directory, captionPython = process.env.COCONUT_CAPTION_PYTHON, captionHelperDetached = process.platform!=='win32', ...options} = {}) {
   if (Number.parseInt(process.versions.node, 10) < 22) throw new Error('Coconut development requires Node.js 22+.');
   let helper=null,captionDiagnostic=null;
   if(captionPython && !options.captionService){
     try{
-      helper=createDevelopmentCaptionHelper({python:captionPython});
+      helper=createDevelopmentCaptionHelper({python:captionPython,detached:captionHelperDetached});
       const status=await helper.status();
       captionDiagnostic=status;
       options.captionStatus={code:status.ready?'ready':status.code,mode:'development-python'};
