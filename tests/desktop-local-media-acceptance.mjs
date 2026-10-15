@@ -12,9 +12,10 @@ import {authoredAudioFixture} from './helpers/authored-audio-fixture.mjs';
 import {installDockViewportObserver} from './helpers/dock-viewport-observer.mjs';
 import {installNativeMediaViewportProof,nativeMediaAnchorIsStable,nativeMediaPhaseDelta,planNativeMediaWindow,evaluateNativeMediaWindow} from './helpers/native-media-viewport.mjs';
 import {installStorageAssertions,readerReady} from './helpers/browser-storage.mjs';
+import {installNativeMenuObservation,observePageFileChoosers,invokeObservedNativeMenuCommand} from './helpers/native-menu-observer.mjs';
 const root=fileURLToPath(new URL('../',import.meta.url)),origin='http://127.0.0.1:47831';
-let temporary,application,page,executable,version,stage='configuration',forbidden=0,pageErrors=0;
-const checks=[],dockReceipts=[],windowReceipts=[];process.umask(0o077);delete process.env.DEBUG;delete process.env.PWDEBUG;
+let temporary,application,page,chooserObservation,executable,version,stage='configuration',forbidden=0,pageErrors=0;
+const checks=[],dockReceipts=[],windowReceipts=[],nativeCommands=[];process.umask(0o077);delete process.env.DEBUG;delete process.env.PWDEBUG;
 function check(name,value){stage=name;assert.ok(value,name);checks.push(name);}
 async function launch(profile){
  stage='launch';await fs.mkdir(profile,{recursive:true});const home=path.join(temporary,'home');await fs.mkdir(home,{recursive:true});
@@ -23,15 +24,16 @@ async function launch(profile){
  const facts=await application.evaluate(({app})=>({packaged:app.isPackaged,version:app.getVersion(),userData:app.getPath('userData'),appPath:app.getAppPath()}));
  check('runs_exact_packaged_asar',facts.packaged&&facts.appPath.endsWith('/app.asar')&&facts.version===version);check('isolated_profile',await fs.realpath(facts.userData)===await fs.realpath(profile));
  await application.context().route('**/*',async route=>{const request=route.request(),url=new URL(request.url());if(['blob:','data:'].includes(url.protocol)||url.origin===origin&&['GET','HEAD'].includes(request.method())&&url.pathname!=='/api/language-tools')await route.continue();else{forbidden++;await route.abort();}});
- page=await application.firstWindow();page.setDefaultTimeout(15000);page.on('pageerror',()=>pageErrors++);
+ page=await application.firstWindow();chooserObservation=observePageFileChoosers(page);page.setDefaultTimeout(15000);page.on('pageerror',()=>pageErrors++);
  await page.waitForURL(origin+'/');await installStorageAssertions(page);await readerReady(page);
- await page.waitForFunction(()=>window.coconutLocalMedia&&window.CoconutStorageBootstrap.phase==='ready'&&nativeMediaReady);
+ await page.waitForFunction(()=>window.coconutLocalMedia&&window.CoconutStorageBootstrap.phase==='ready'&&nativeMediaReady&&typeof window.coconutFileCommand==='function');
+ await page.evaluate(installNativeMenuObservation);
  const preferences=await application.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].webContents.getLastWebPreferences());
  check('native_security_unchanged',preferences.sandbox===true&&preferences.contextIsolation===true&&preferences.nodeIntegration===false&&preferences.webSecurity===true);
 }
 async function quit(){
  stage='quit';if(!application)return;await page.evaluate(()=>libraryStore.flush());
- const closed=application.waitForEvent('close');await application.evaluate(({app})=>{setTimeout(()=>app.quit(),0);});await closed;application=null;
+ const closed=application.waitForEvent('close');await application.evaluate(({app})=>{setTimeout(()=>app.quit(),0);});await closed;chooserObservation?.dispose();application=null;
  await expect.poll(async()=>{try{await fetch(origin+'/api/health',{signal:AbortSignal.timeout(300)});return false;}catch{return true;}},{timeout:5000}).toBe(true);
 }
 async function mediaPanel(){if(!await page.locator('#episode-media').isVisible())await page.locator('#toggle-reader-media').click();}
@@ -41,7 +43,15 @@ async function selectNative(file,{existing=false}={}){
  if(existing){await mediaPanel();[chooser]=await Promise.all([page.waitForEvent('filechooser'),page.locator('#attach-reader-media').click()]);}
  else{
   await expect.poll(()=>application.evaluate(({Menu})=>Menu.getApplicationMenu()?.getMenuItemById('open-local-media')?.enabled)).toBe(true);
-  [chooser]=await Promise.all([page.waitForEvent('filechooser'),application.evaluate(({Menu,BrowserWindow})=>{const item=Menu.getApplicationMenu().getMenuItemById('open-local-media');item.click(item,BrowserWindow.getAllWindows()[0],{});})]);
+  const diagnostic={};nativeCommands.push(diagnostic);
+  [chooser]=await Promise.all([page.waitForEvent('filechooser'),invokeObservedNativeMenuCommand(application,page,'open-local-media',diagnostic).then(receipt=>{
+   assert.equal(diagnostic.dispatch.windowCount,1,'Native media command must target the sole packaged window');
+   assert.equal(receipt.threw,undefined,'Native media command must not throw');
+   assert.equal(receipt.result,true,'Native media command must be accepted by the target renderer');
+   assert.equal(receipt.userActivation,true,'Native media command must retain real user activation');
+   assert.equal(diagnostic.inputClicks,diagnostic.before.inputClicks+1,'Native media command must click its real file input once');
+   assert.deepEqual(diagnostic.lastInput,{id:'local-media-file',userActivation:true});
+  })]);
  }
  check('actual_picker_target',await chooser.element().getAttribute('id')===(existing?'reader-media-file':'local-media-file'));
  await chooser.setFiles(file);await decoded();await page.evaluate(()=>libraryStore.flush());
@@ -79,10 +89,11 @@ async function captureNativeWindowGeometry(phase){
 }
 async function failureEvidence(error){
  const clean=value=>String(value||'').replaceAll(temporary||'\0','<fixture-temp>').replaceAll(root,'<checkout>').replace(/(?:\/Users\/|\/home\/|\/private\/|\/var\/)[^\s)\]}]+/g,'<path>');
- let activeDockEvidence=null;
+ let activeDockEvidence=null,nativeState=null;
  if(application&&page&&!page.isClosed())try{await captureNativeWindowGeometry('failure:'+stage);}catch(geometryError){windowReceipts.push({phase:'failure:'+stage,geometryError:clean(geometryError.message)});}
  if(page&&!page.isClosed())try{activeDockEvidence=await page.evaluate(()=>{const observer=window.__dockViewportObserver;if(!observer)return null;observer.record('native-media-failure');return {snapshot:observer.snapshot(),events:observer.events,calls:observer.calls};});}catch{}
- const report={suite:'packaged-local-media',status:'failed',stage,message:clean(error.message),stack:clean(error.stack),checks,forbidden,pageErrors,dockReceipts,windowReceipts,activeDockEvidence};
+ if(page&&!page.isClosed())try{nativeState=await page.evaluate(()=>{const state=window.__coconutNativeMenuObservation;return state?{receipt:state.last,inputClicks:state.inputClicks,lastInput:state.lastInput}:null;});}catch{}
+ const report={suite:'packaged-local-media',status:'failed',stage,message:clean(error.message),stack:clean(error.stack),checks,forbidden,pageErrors,dockReceipts,windowReceipts,activeDockEvidence,nativeCommands,nativeState,chooserEvents:chooserObservation?.count()??0};
  console.error(JSON.stringify(report));const directory=process.env.COCONUT_NATIVE_DIAGNOSTICS;if(!directory)return;
  await fs.mkdir(directory,{recursive:true});await fs.writeFile(path.join(directory,'native-media-failure.json'),JSON.stringify(report,null,2));
  if(page&&!page.isClosed())await page.screenshot({path:path.join(directory,'native-media-failure.png'),timeout:5000}).catch(()=>{});
@@ -225,10 +236,11 @@ try{
  await launch(path.join(temporary,'fresh-profile'));const [importChooser]=await Promise.all([page.waitForEvent('filechooser'),page.locator('#import').click()]);await importChooser.setFiles(backup);await page.locator('#audio-project').waitFor({state:'visible'});await page.evaluate(()=>libraryStore.flush());await expectNoPlayer();check('fresh_profile_backup_has_no_native_consent',(await saved()).project_note===initial.project_note);
  await quit();await pasteProjectCaptionsAcceptance(moved);await rememberedDockAcceptance(moved);
  check('no_model_upload_or_external_request',forbidden===0);check('no_renderer_errors',pageErrors===0);await quit();
- console.log(JSON.stringify({suite:'packaged-local-media',status:'passed',architecture:process.arch,checks,dockReceipts,windowReceipts,gatekeeper_verified:false}));
+ console.log(JSON.stringify({suite:'packaged-local-media',status:'passed',architecture:process.arch,checks,dockReceipts,windowReceipts,nativeCommands,gatekeeper_verified:false}));
 }catch(error){process.exitCode=1;await failureEvidence(error);}finally{
  // Release only this authored adapter gate after retaining the original failure.
  await releaseHeldNativeDockWrites().catch(()=>{});
  if(application){await application.evaluate(({dialog})=>{dialog.showMessageBox=async()=>({response:1});}).catch(()=>{});await application.close().catch(()=>{});}
+ chooserObservation?.dispose();
  if(temporary)await fs.rm(temporary,{recursive:true,force:true});
 }
