@@ -1,3 +1,4 @@
+// Compatibility renderer regression; this suite is not default React acceptance.
 /** Authored source and injected responses only: lifecycle evidence, not model-quality evidence. */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -9,7 +10,7 @@ const KEY='coconut-reader-v1';
 const fixture=(title='A field guide to careful reading',count=65)=>({title,language:'en',notes:{'cue-0':'A private note that is never model input.'},segments:Array.from({length:count},(_,i)=>({id:'cue-'+i,start:i*4,end:i*4+4,text:`Observation ${i+1}: check the original statement before accepting an interpretation.`}))});
 function setup(stored){
  const w=new Window({url:'http://127.0.0.1:8080/'});
- w.document.body.innerHTML=fs.readFileSync(new URL('reader/index.html',root),'utf8').split('<body>')[1].split('</body>')[0];
+ w.document.body.innerHTML=fs.readFileSync(new URL('reader/compatibility.html',root),'utf8').split('<body>')[1].split('</body>')[0];
  Object.defineProperty(w,'crypto',{value:webcrypto});if(stored)w.localStorage.setItem(KEY,stored);
  w.fetch=async()=>{throw new Error('No automatic request is allowed in this fixture');};
  w.eval(['summary','core','passages','passage-playback','library-store','app','language'].map(name=>fs.readFileSync(new URL('reader/'+name+'.js',root),'utf8')).join('\n'));

@@ -1,3 +1,4 @@
+// Compatibility renderer regression; this suite is not default React acceptance.
 /** DOM contract with authored text and a fake local executor. Never calls a model. */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -40,7 +41,7 @@ function backend(){
 function setup(api=backend(),storage={},options={}){
  const w=new Window({url:options.url||'http://127.0.0.1:8080/'});Object.defineProperty(w,'crypto',{value:webcrypto});
  if(options.mobile){const original=w.matchMedia.bind(w);w.matchMedia=query=>query==='(max-width: 650px)'?{matches:true,addEventListener(){}}:original(query);}
- w.document.body.innerHTML=fs.readFileSync(new URL('reader/index.html',root),'utf8').split('<body>')[1].split('</body>')[0];
+ w.document.body.innerHTML=fs.readFileSync(new URL('reader/compatibility.html',root),'utf8').split('<body>')[1].split('</body>')[0];
  for(const [key,value] of Object.entries(storage))w.localStorage.setItem(key,value);
  if(options.phase)w.CoconutStorageBootstrap={phase:options.phase};
  w.fetch=(...args)=>api.fetch(...args);
@@ -250,7 +251,7 @@ for(const withJournal of [false,true])test('missing task client preserves readin
 test('production HTML dependency graph enables one explicit background submission',async()=>{
  const w=new Window({url:'http://127.0.0.1:8080/'}),api=backend(),context=vm.createContext(w),run=source=>vm.runInContext(source,context),$=id=>w.document.getElementById(id);
  try{
-  const html=fs.readFileSync(new URL('reader/index.html',root),'utf8');w.document.body.innerHTML=html.split('<body>')[1].split('</body>')[0];Object.defineProperty(w,'crypto',{value:webcrypto});
+  const html=fs.readFileSync(new URL('reader/compatibility.html',root),'utf8');w.document.body.innerHTML=html.split('<body>')[1].split('</body>')[0];Object.defineProperty(w,'crypto',{value:webcrypto});
   w.fetch=async(url,options)=>url==='api/health'?{ok:true,json:async()=>({})}:api.fetch(url,options);
   w.document.head.innerHTML=[...html.matchAll(/<script\b[^>]*data-reader-script[^>]*>[\s\S]*?<\/script>/g)].map(match=>match[0]).join('');
   const admitted=[];w.document.head.append=script=>{const name=new URL(script.src).pathname.slice(1);admitted.push(name);try{run(fs.readFileSync(new URL('reader/'+name,root),'utf8'));queueMicrotask(()=>script.onload());}catch(error){script.onerror(error);}};

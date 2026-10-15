@@ -1,3 +1,4 @@
+// Compatibility renderer regression; this suite is not default React acceptance.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createRequire} from 'node:module';
@@ -173,7 +174,7 @@ test('production document provider reports actual atomic failure and durable ret
  const storage={getItem:key=>data.get(key)??null,setItem:(key,value)=>data.set(key,value)};
  const options={indexedDB:engine.indexedDB,getStorage:()=>storage,validate:C.validate,legacyModule,documentModule};
  const result=await provider.initialize(options),w=new Window({url:'https://coconut.example/'}),root=new URL('../',import.meta.url);
- w.document.body.innerHTML=fs.readFileSync(new URL('reader/index.html',root),'utf8').split('<body>')[1].split('</body>')[0];Object.defineProperty(w,'crypto',{value:webcrypto});
+ w.document.body.innerHTML=fs.readFileSync(new URL('reader/compatibility.html',root),'utf8').split('<body>')[1].split('</body>')[0];Object.defineProperty(w,'crypto',{value:webcrypto});
  w.fetch=()=>{throw Error('No network expected');};w.CoconutStorageBootstrap={phase:'ready',result};
  w.eval(['library-store','summary','core','passages','passage-playback','app','language','podcasts'].map(name=>fs.readFileSync(new URL('reader/'+name+'.js',root),'utf8')).join('\n'));
  const $=id=>w.document.getElementById(id);

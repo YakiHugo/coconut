@@ -1,3 +1,4 @@
+// Compatibility renderer regression; this suite is not default React acceptance.
 import {installSavePipeline} from './helpers/save-pipeline.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -9,7 +10,7 @@ import {MiB,annotatedDocument,chineseDocument,oversizedDocument} from './helpers
 const root=new URL('../',import.meta.url),KEY='coconut-reader-v1';
 function setup(){
  const w=new Window({url:'https://coconut.example/'});
- w.document.body.innerHTML=fs.readFileSync(new URL('reader/index.html',root),'utf8').split('<body>')[1].split('</body>')[0];
+ w.document.body.innerHTML=fs.readFileSync(new URL('reader/compatibility.html',root),'utf8').split('<body>')[1].split('</body>')[0];
  Object.defineProperty(w,'crypto',{configurable:true,value:webcrypto});w.fetch=()=>{throw new Error('Backups must stay local');};
  installSavePipeline(w);
  w.eval(['summary','core','passages','passage-playback','app','language','podcasts'].map(name=>fs.readFileSync(new URL('reader/'+name+'.js',root),'utf8')).join('\n')+'\nwindow.replaceActiveForTest=()=>{state.documents=state.documents.map(doc=>doc.key===state.active?{...doc}:doc);};');

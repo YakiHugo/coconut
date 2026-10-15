@@ -1,3 +1,4 @@
+// Compatibility renderer regression; this suite is not default React acceptance.
 /** CI-only native reload, cross-window and IndexedDB isolation proof.
  * Authored fixtures only; do not run in a browser-denied environment. */
 import assert from 'node:assert/strict';
@@ -13,7 +14,7 @@ async function open(page,key){await openLibraryTools(page);await page.locator(`[
 async function sort(page){await openLibraryTools(page);const options=page.locator('#library-options');if(!await options.evaluate(n=>n.open))await options.locator(':scope > summary').click();await page.locator('#library-sort').selectOption('opened');}
 try{
  server=createServer(async(req,res)=>{
-  const name=new URL(req.url,'http://localhost').pathname.slice(1)||'index.html';
+  const name=new URL(req.url,'http://localhost').pathname.slice(1)||'compatibility.html';
   if(req.method!=='GET'||!/^[-a-z]+\.(html|css|js|png)$/.test(name)){res.writeHead(404).end();return;}
   try{const body=await fs.readFile(new URL('../reader/'+name,import.meta.url));res.writeHead(200,{'Content-Type':name.endsWith('.js')?'text/javascript':name.endsWith('.css')?'text/css':name.endsWith('.png')?'image/png':'text/html'}).end(body);}catch{res.writeHead(404).end();}
  });

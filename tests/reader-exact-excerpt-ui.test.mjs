@@ -1,3 +1,4 @@
+// Compatibility renderer regression; this suite is not default React acceptance.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -88,7 +89,7 @@ test('same-dialog reselection can save a new exact range while an older receipt 
 
 
 test('production bootstrap admits separate shipped scripts before exact save, durable receipt and notebook history',async()=>{
- const root=new URL('../',import.meta.url),html=fs.readFileSync(new URL('reader/index.html',root),'utf8');
+ const root=new URL('../',import.meta.url),html=fs.readFileSync(new URL('reader/compatibility.html',root),'utf8');
  const w=new Window({url:'http://127.0.0.1:8080/'}),$=id=>w.document.getElementById(id),context=vm.createContext(w),admitted=[],requests=[];
  const run=source=>vm.runInContext(source,context);
  try{

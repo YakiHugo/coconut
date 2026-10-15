@@ -1,3 +1,4 @@
+// Compatibility renderer regression; this suite is not default React acceptance.
 /** Local four-candidate integration probes. Authored input, Happy DOM, no browser/model. */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -18,7 +19,7 @@ const audio=()=>({...C.validate({project_kind:'audio_only',title:'Authored audio
 const partialPaste='1\n00:00:01,000 --> 00:00:02,000\nAuthored paste cue\n\n2\n00:00:03,000 -> 00:00:04,000\nOnly paste warning';
 async function captionHarness({handler=()=>{throw Error('Unexpected authored request');},disk=null,session=null}={}){
  const w=new Window({url:'http://127.0.0.1:8080/'});
- w.document.body.innerHTML=fs.readFileSync(new URL('reader/index.html',root),'utf8').split('<body>')[1].split('</body>')[0];
+ w.document.body.innerHTML=fs.readFileSync(new URL('reader/compatibility.html',root),'utf8').split('<body>')[1].split('</body>')[0];
  Object.defineProperty(w,'crypto',{value:webcrypto});
  const docs=[audio(),...largeLibraryFixture(1,{cues:220})];
  w.localStorage.setItem(CONTENT,JSON.stringify({documents:docs,active:docs[0].key}));

@@ -1,3 +1,4 @@
+// Compatibility renderer regression; this suite is not default React acceptance.
 /** CI-only real Chromium journey. Authored tone WAV and captions; static HTTP,
  * no backend capabilities, external network, ASR, model, or personal media. */
 import assert from 'node:assert/strict';
@@ -15,7 +16,7 @@ try{
  const audio=path.join(directory,'authored-local.wav');await fs.writeFile(audio,authoredAudioFixture(40));
  const reader=new URL('../reader/',import.meta.url);
  server=createServer(async(req,res)=>{
-  const name=new URL(req.url,'http://localhost').pathname.slice(1)||'index.html';
+  const name=new URL(req.url,'http://localhost').pathname.slice(1)||'compatibility.html';
   if(req.method!=='GET'&&req.method!=='HEAD'){mutations++;res.writeHead(405).end();return;}
   if(name.startsWith('api/'))apiRequests.push(name);
   if(!/^[a-z-]+\.(html|js|css|png)$/.test(name)){res.writeHead(404).end();return;}

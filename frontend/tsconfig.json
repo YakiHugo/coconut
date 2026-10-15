@@ -21,9 +21,13 @@
     "reader-workspace/**/*.tsx",
     "ai-workspace/**/*.ts",
     "ai-workspace/**/*.tsx",
+    "native-shell/**/*.ts",
+    "native-shell/**/*.tsx",
     "native-media/**/*.ts",
     "native-media/**/*.tsx",
     "recovery-import/**/*.ts",
-    "recovery-import/**/*.tsx"
+    "recovery-import/**/*.tsx",
+    "reading-preferences/**/*.ts",
+    "reading-preferences/**/*.tsx"
   ]
 }

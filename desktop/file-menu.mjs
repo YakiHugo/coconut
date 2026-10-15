@@ -2,7 +2,7 @@
 export function createFileMenu({window,origin,blocked=()=>false,now=Date.now}) {
  let generation=0,ready=false;
  const live=()=>!window.isDestroyed()&&!window.webContents.isDestroyed();
- const trusted=()=>live()&&[origin+'/',origin+'/index.html'].includes(window.webContents.getURL().split('#')[0]);
+ const trusted=()=>live()&&[origin+'/',origin+'/index.html',origin+'/compatibility.html'].includes(window.webContents.getURL().split('#')[0]);
  const commands=[['import-transcript','导入文字稿…','CmdOrCtrl+O'],
   ['open-local-media','打开本地音频或视频…','CmdOrCtrl+Shift+O'],
   ['backup-library','导出整个书架的完整备份…','CmdOrCtrl+Shift+S'],
@@ -25,10 +25,10 @@ export function createFileMenu({window,origin,blocked=()=>false,now=Date.now}) {
   const current=generation;if(!trusted())return;
   try{
    const loaded=await window.webContents.executeJavaScript(`new Promise(resolve=>{
-    if(window.CoconutStorageBootstrap?.phase==='ready'){resolve(true);return;}
+    if(window.CoconutReactDesktopReady===true||window.CoconutStorageBootstrap?.phase==='ready'){resolve(true);return;}
     const done=()=>{cleanup();resolve(true);},closed=()=>{cleanup();resolve(false);};
-    function cleanup(){window.removeEventListener('coconut-storage-ready',done);window.removeEventListener('pagehide',closed);}
-    window.addEventListener('coconut-storage-ready',done,{once:true});window.addEventListener('pagehide',closed,{once:true});
+    function cleanup(){window.removeEventListener('coconut-storage-ready',done);window.removeEventListener('coconut-react-desktop-ready',done);window.removeEventListener('pagehide',closed);}
+    window.addEventListener('coconut-storage-ready',done,{once:true});window.addEventListener('coconut-react-desktop-ready',done,{once:true});window.addEventListener('pagehide',closed,{once:true});
    })`);
    if(loaded&&current===generation&&trusted()&&!window.webContents.isLoadingMainFrame())enable(true);
   }catch{} // Failed bootstrap keeps the commands disabled; recovery UI stays available.

@@ -1,3 +1,4 @@
+// Compatibility renderer regression; this suite is not default React acceptance.
 /** Production DOM handlers with authored media and storage only; no browser/model. */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -12,7 +13,7 @@ const vtt='WEBVTT\n\nopening\n00:01.125 --> 00:03.875\n<v Alice>Hello &lt;Team&g
 const clone=value=>JSON.parse(JSON.stringify(value));
 function setup(storage={}){
  const w=new Window({url:'https://coconut.example/'}),network=[],created=[];
- w.document.body.innerHTML=fs.readFileSync(new URL('reader/index.html',root),'utf8').split('<body>')[1].split('</body>')[0];
+ w.document.body.innerHTML=fs.readFileSync(new URL('reader/compatibility.html',root),'utf8').split('<body>')[1].split('</body>')[0];
  for(const [key,value] of Object.entries(storage))w.localStorage.setItem(key,value);
  Object.defineProperty(w,'crypto',{value:webcrypto});w.fetch=url=>{network.push(String(url));throw Error('Offline authored captions only');};
  w.URL.createObjectURL=file=>{const url='blob:project-'+created.length;created.push({url,file});return url;};w.URL.revokeObjectURL=()=>{};w.HTMLAnchorElement.prototype.click=function(){};

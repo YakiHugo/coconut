@@ -1,3 +1,4 @@
+// Compatibility renderer regression; this suite is not default React acceptance.
 /** Pure parser + real Happy DOM handlers. Native layout, picker, and IndexedDB remain browser-CI gates. */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -20,7 +21,7 @@ async function until(condition,message='condition did not settle'){
 }
 function setup({documents=[],storage=null,held=false}={}){
  const w=new Window({url:'https://coconut.example/'});
- w.document.body.innerHTML=fs.readFileSync(new URL('reader/index.html',root),'utf8').split('<body>')[1].split('</body>')[0];
+ w.document.body.innerHTML=fs.readFileSync(new URL('reader/compatibility.html',root),'utf8').split('<body>')[1].split('</body>')[0];
  if(storage)for(const [key,value] of Object.entries(storage))w.localStorage.setItem(key,value);
  else if(documents.length)w.localStorage.setItem(KEY,JSON.stringify({documents,active:documents[0].key}));
  const network=[],downloads=[],digests=[];let holdDigest=false;
@@ -385,7 +386,7 @@ test('pasted retry opens its truly committed IndexedDB target while an independe
  const local=await initialize(),remote=await initialize();assert.equal(local.backend,'indexeddb');assert.equal(remote.backend,'indexeddb');
  const w=new Window({url:'https://coconut.example/'});let reloaded;
  try{
-  w.document.body.innerHTML=fs.readFileSync(new URL('reader/index.html',root),'utf8').split('<body>')[1].split('</body>')[0];
+  w.document.body.innerHTML=fs.readFileSync(new URL('reader/compatibility.html',root),'utf8').split('<body>')[1].split('</body>')[0];
   Object.defineProperty(w,'crypto',{value:webcrypto});const network=[];w.fetch=url=>{network.push(String(url));throw Error('Pasted retry must remain offline');};
   w.CoconutStorageBootstrap={phase:'ready',result:local};w.eval(fs.readFileSync(new URL('reader/library-store.js',root),'utf8'));
   const create=w.CoconutLibraryStore.create,retries=[];

@@ -1,3 +1,4 @@
+// Compatibility renderer regression; this suite is not default React acceptance.
 /** Authored Unicode source, real reader DOM/storage, and a bounded fake offline provider. No model calls. */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -10,7 +11,7 @@ const points=text=>Array.from(text).length;
 const fixture=(count=40,text='A'.repeat(1499)+'.')=>({key:'offline-source',title:'Long offline source',language:'en',notes:{'cue-0':'Private note, never sent'},segments:Array.from({length:count},(_,index)=>({id:'cue-'+index,start:index*60,end:(index+1)*60,text}))});
 function setup(doc=fixture(),{hold=0,fail=0}={}){
  const w=new Window({url:'http://127.0.0.1:8080/'}),$=id=>w.document.getElementById(id);
- w.document.body.innerHTML=fs.readFileSync(new URL('reader/index.html',root),'utf8').split('<body>')[1].split('</body>')[0];
+ w.document.body.innerHTML=fs.readFileSync(new URL('reader/compatibility.html',root),'utf8').split('<body>')[1].split('</body>')[0];
  Object.defineProperty(w,'crypto',{value:webcrypto});w.localStorage.setItem(KEY,JSON.stringify({documents:[{...C.validate(doc),key:doc.key}],active:doc.key}));
  const requests=[];let release,failAt=fail;
  w.fetch=async(url,options)=>{

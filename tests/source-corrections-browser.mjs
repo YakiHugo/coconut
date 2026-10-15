@@ -1,3 +1,4 @@
+// Compatibility renderer regression; this suite is not default React acceptance.
 /** GitHub Actions only: native Chromium, authored source, real IndexedDB receipts.
  * No workspace browser, remote provider, media, model, account, or DOM mock.
  * Failed and delayed writes still use the production save pipeline and adapter.
@@ -234,7 +235,7 @@ async function release() {
 try {
   server = createServer(async (req, res) => {
     if (!['GET', 'HEAD'].includes(req.method)) {mutations++; res.writeHead(405).end(); return;}
-    const name = new URL(req.url, 'http://localhost').pathname.slice(1) || 'index.html';
+    const name = new URL(req.url, 'http://localhost').pathname.slice(1) || 'compatibility.html';
     if (name === 'source-correction-xss') xssRequests++;
     if (!/^[a-z-]+\.(html|js|css|png|webmanifest)$/.test(name)) {res.writeHead(404).end(); return;}
     try {res.setHeader('Content-Type', name.endsWith('.js') ? 'text/javascript' : name.endsWith('.css') ? 'text/css' : name.endsWith('.png') ? 'image/png' : 'text/html'); res.end(await fs.readFile(new URL(name, root)));}

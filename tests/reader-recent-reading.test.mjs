@@ -1,3 +1,4 @@
+// Compatibility renderer regression; this suite is not default React acceptance.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import Coconut from '../reader/core.js';
@@ -11,7 +12,7 @@ function disk(){const map=new Map();return {getItem:key=>map.get(key)??null,setI
 function setup(storage=disk(),{denied=false,mobile=false}={}){
  if(storage.getItem(CONTENT)===null)storage.setItem(CONTENT,JSON.stringify({documents:docs()}));
  const w=new Window({url:'https://coconut.example/'}),root=new URL('../',import.meta.url);
- w.document.body.innerHTML=fs.readFileSync(new URL('reader/index.html',root),'utf8').split('<body>')[1].split('</body>')[0];
+ w.document.body.innerHTML=fs.readFileSync(new URL('reader/compatibility.html',root),'utf8').split('<body>')[1].split('</body>')[0];
  Object.defineProperty(w,'crypto',{value:webcrypto});
  Object.defineProperty(w,'localStorage',{value:{...storage,setItem(key,value){if(denied&&key===KEY)throw Error('Denied');storage.setItem(key,value);}}});
  if(mobile){const match=w.matchMedia.bind(w);w.matchMedia=query=>query==='(max-width: 650px)'?{matches:true,addEventListener(){}}:match(query);}

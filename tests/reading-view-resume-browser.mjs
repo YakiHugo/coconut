@@ -1,3 +1,4 @@
+// Compatibility renderer regression; this suite is not default React acceptance.
 import {navigateReadingStop,navigateReadingTime} from './helpers/transcript-navigation-browser.mjs';
 /** CI-only Chromium acceptance for cue + mode resume. Authored sources only.
  * Native IndexedDB, real viewport geometry and keyboard actions are evidence.
@@ -212,7 +213,7 @@ try {
   // Static files only. Even an accidental provider route cannot reach a CLI.
   server = createServer(async (req, res) => {
     if (!['GET', 'HEAD'].includes(req.method)) {mutations++; res.writeHead(405).end(); return;}
-    const pathname = new URL(req.url, 'http://localhost').pathname, filename = pathname === '/' ? 'index.html' : pathname.slice(1);
+    const pathname = new URL(req.url, 'http://localhost').pathname, filename = pathname === '/' ? 'compatibility.html' : pathname.slice(1);
     if (!/^[a-z-]+\.(html|js|css|webmanifest|png)$/.test(filename)) {res.writeHead(404, {'Content-Type': 'application/json'}).end('{}'); return;}
     try {
       const body = await fs.readFile(new URL(filename, root));

@@ -1,3 +1,4 @@
+// Compatibility renderer regression; this suite is not default React acceptance.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {EventEmitter} from 'node:events';
@@ -37,7 +38,7 @@ test('a renderer execution failure is consumed and never retried',async()=>{
 });
 const root=new URL('../',import.meta.url);
 function renderer(desktop=true){
- const w=new Window({url:'http://127.0.0.1:47831/'});w.document.body.innerHTML=fs.readFileSync(new URL('reader/index.html',root),'utf8').split('<body>')[1].split('</body>')[0];
+ const w=new Window({url:'http://127.0.0.1:47831/'});w.document.body.innerHTML=fs.readFileSync(new URL('reader/compatibility.html',root),'utf8').split('<body>')[1].split('</body>')[0];
  Object.defineProperty(w,'crypto',{configurable:true,value:webcrypto});
  if(desktop)w.coconutUpdates={state:async()=>({status:'idle',version:'test',arch:'arm64'}),subscribe:()=>{}};
  for(const file of ['summary','core','passages','passage-playback','library-store'])w.eval(fs.readFileSync(new URL(`reader/${file}.js`,root),'utf8'));

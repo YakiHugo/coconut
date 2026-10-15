@@ -5,10 +5,11 @@ import { AiWorkspace } from '../ai-workspace/workspace';
 import type { AiSelection } from '../ai-workspace/contracts';
 import type { AppStore } from './store';
 import type { Document } from './contracts';
-export function AiPanel({ store, selection, reviewRequest, onNavigate }: {
+export function AiPanel({ store, selection, reviewRequest, openRequest, onNavigate }: {
     store: AppStore;
     selection: AiSelection | null;
     reviewRequest?:{id:number;cueId:string;documentKey:string;revision:number;target:string}|null;
+    openRequest?:{id:number;documentKey:string;revision:number}|null;
     onNavigate:(cueId:string)=>void;
 }) {
     const navigation=useRef(onNavigate);navigation.current=onNavigate;
@@ -28,6 +29,7 @@ export function AiPanel({ store, selection, reviewRequest, onNavigate }: {
     useEffect(() => { controller.setDocument(document, String(revision), selection); }, [controller, document, revision, selection]);
     useEffect(() => { const changed = () => controller.connectionChanged(), hidden = () => { controller.connectionChanged(); controller.clearTransientError(); }; window.addEventListener('coconut-client-changed', changed); window.addEventListener('offline', changed); window.addEventListener('pagehide', hidden); return () => { window.removeEventListener('coconut-client-changed', changed); window.removeEventListener('offline', changed); window.removeEventListener('pagehide', hidden); controller.dispose(); }; }, [controller]);
     useEffect(()=>{if(reviewRequest&&document?.key===reviewRequest.documentKey&&revision===reviewRequest.revision){controller.commands.configure({target:reviewRequest.target});controller.commands.openReview(reviewRequest.cueId);setOpen(true);}},[controller,reviewRequest]);
+    useEffect(()=>{if(openRequest&&document?.key===openRequest.documentKey&&revision===openRequest.revision)setOpen(true);},[openRequest]);
     useEffect(()=>{if(selection?.exactText)setOpen(true);},[selection?.exactText]);
     const watching = snapshot.connected && snapshot.tasks.some(task => task.unknown || ['queued', 'running', 'cancel_requested'].includes(task.status));
     useEffect(() => { if (!watching)

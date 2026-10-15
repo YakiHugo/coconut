@@ -1,3 +1,4 @@
+// Compatibility renderer regression; this suite is not default React acceptance.
 import {openTranscriptTools} from './helpers/reading-tools-browser.mjs';
 /** CI-only Chromium acceptance. Authored transcript/history, browser-local storage
  * and real downloads only. No provider, CLI, account, media or external requests. */
@@ -26,7 +27,7 @@ try{
  directory=await fs.mkdtemp(path.join(os.tmpdir(),'coconut-ai-history-'));
  server=createServer(async(req,res)=>{
   if(!['GET','HEAD'].includes(req.method)){mutations++;res.writeHead(405).end();return;}
-  const pathname=new URL(req.url,'http://localhost').pathname,filename=pathname==='/'?'index.html':pathname.slice(1);
+  const pathname=new URL(req.url,'http://localhost').pathname,filename=pathname==='/'?'compatibility.html':pathname.slice(1);
   if(!/^[a-z-]+\.(html|js|css|webmanifest|png)$/.test(filename)){res.writeHead(404,{'Content-Type':'application/json'}).end('{"error":"static only"}');return;}
   try{const body=await fs.readFile(new URL(filename,root));res.writeHead(200,{'Content-Type':filename.endsWith('.js')?'text/javascript':filename.endsWith('.css')?'text/css':filename.endsWith('.png')?'image/png':'text/html'}).end(body);}catch{res.writeHead(404).end();}
  });

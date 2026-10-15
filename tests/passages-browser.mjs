@@ -1,3 +1,4 @@
+// Compatibility renderer regression; this suite is not default React acceptance.
 import {navigateReadingTime} from './helpers/transcript-navigation-browser.mjs';
 /** Real Chromium acceptance for skim → continuous reading → listen once.
  * CI runs only authored text, authored translations and a generated tone WAV.
@@ -167,7 +168,7 @@ try {
   await fs.writeFile(audioPath, authoredAudioFixture());
   server = createServer(async (req, res) => {
     if (!['GET', 'HEAD'].includes(req.method)) {mutations++; res.writeHead(405).end(); return;}
-    const pathname = new URL(req.url, 'http://localhost').pathname, name = pathname === '/' ? 'index.html' : pathname.slice(1);
+    const pathname = new URL(req.url, 'http://localhost').pathname, name = pathname === '/' ? 'compatibility.html' : pathname.slice(1);
     if (!/^[a-z-]+\.(html|js|css|png|webmanifest)$/.test(name)) {res.writeHead(404, {'Content-Type': 'application/json'}).end('{"error":"authored static fixture only"}'); return;}
     try {
       const bytes = await fs.readFile(path.join(root, 'reader', name));

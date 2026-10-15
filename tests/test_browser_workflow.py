@@ -43,14 +43,14 @@ class BrowserWorkflowTests(unittest.TestCase):
         job = WORKFLOW.split('\n  react-source-first:', 1)[1].split('\n  browser-smoke:', 1)[0]
         self.assertIn('run: npm run test:react-browser', job)
         self.assertIn('run: npm run test:react-matrix', job)
-        self.assertEqual(job.count("if: ${{ !cancelled() && steps.react_setup.outcome == 'success' }}"), 2)
+        self.assertEqual(job.count("if: ${{ !cancelled() && steps.react_setup.outcome == 'success' }}"), 3)
         self.assertIn('run: npm run check:reader-ui', job)
         self.assertNotIn('continue-on-error', job)
         paths = re.findall(r'^            \$\{\{ runner.temp \}\}/coconut-react-authored/(.+)$', job, re.M)
         self.assertEqual(paths, ['react-discover-1360.png', 'react-reading-1360.png',
                                 'react-discover-390.png', 'react-reading-390.png',
                                 'react-discover-320.png', 'react-reading-320.png',
-                                'react-geometry.json', 'matrix-canonical-reading-1360.png', 'matrix-canonical-reading-390.png', 'matrix-ai-error-details-1360.png', 'matrix-ai-error-details-390.png', 'matrix-source-first-home-390.png', 'matrix-source-first-home-1360.png', 'matrix-attached-subtitle-390.png', 'react-production-matrix.json', 'react-production-matrix-failure.json'])
+                                'react-geometry.json', 'matrix-canonical-reading-1360.png', 'matrix-canonical-reading-390.png', 'matrix-ai-error-details-1360.png', 'matrix-ai-error-details-390.png', 'matrix-source-first-home-390.png', 'matrix-source-first-home-1360.png', 'matrix-attached-subtitle-390.png', 'matrix-summary-preferences-1360.png', 'matrix-summary-preferences-390.png', 'react-production-matrix.json', 'react-production-matrix-failure.json'])
 
     def test_job_budget_covers_measured_full_suite_with_bounded_headroom(self):
         self.assertRegex(SMOKE, r"(?m)^    timeout-minutes: 20$")

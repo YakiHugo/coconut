@@ -1,3 +1,4 @@
+// Compatibility renderer regression; this suite is not default React acceptance.
 /** Real production functions with deterministic IPC/deadline boundaries; no Electron/network. */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -33,7 +34,7 @@ function setup(t,{nativeMedia=false}={}){
  t.mock.timers.enable({apis:['setTimeout','Date'],now:1800000000000});
  const w=new Window({url:'https://coconut.example/'}),trace=[],executions=[],queue=[];
  Object.defineProperty(w,'Date',{value:Date});
- w.document.body.innerHTML=read('reader/index.html').split('<body>')[1].split('</body>')[0];
+ w.document.body.innerHTML=read('reader/compatibility.html').split('<body>')[1].split('</body>')[0];
  Object.defineProperty(w,'crypto',{value:{subtle:{digest:(...args)=>webcrypto.subtle.digest(...args)}}});
  w.coconutUpdates={state:async()=>({status:'idle',version:'test',arch:'arm64'}),subscribe:()=>{}};
  for(const file of ['summary','core','passages','passage-playback','library-store'])w.eval(read(`reader/${file}.js`));

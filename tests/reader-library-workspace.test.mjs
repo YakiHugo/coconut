@@ -1,3 +1,4 @@
+// Compatibility renderer regression; this suite is not default React acceptance.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -123,7 +124,7 @@ test('historical excerpt detail is a one-modal detour and source navigation reti
 });
 
 test('desktop and mobile CSS make the native search pane independently wide, with 44px controls and six-pixel focus clearance',()=>{
- const css=fs.readFileSync(new URL('../reader/style.css',import.meta.url),'utf8'),html=fs.readFileSync(new URL('../reader/index.html',import.meta.url),'utf8');
+ const css=fs.readFileSync(new URL('../reader/style.css',import.meta.url),'utf8'),html=fs.readFileSync(new URL('../reader/compatibility.html',import.meta.url),'utf8');
  assert.match(css,/#library-search-dialog \{ width:min\(960px,calc\(100vw - 48px\)\)/);assert.match(css,/#library-search-dialog \{ width:100vw; height:100dvh;/);assert.match(css,/#library-search-results \{[^}]*overflow:auto/);assert.match(css,/#library-search-dialog :is\(button,select,input,summary\) \{ min-height:44px/);assert.match(css,/#library-search-dialog :is\(button,select,input,summary\):focus-visible \{ outline:3px[^}]*outline-offset:3px/);assert.equal((html.match(/id="library"/g)||[]).length,1);assert.equal((html.match(/id="library-scope"/g)||[]).length,1);
 });
 

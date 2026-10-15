@@ -1,3 +1,4 @@
+// Compatibility renderer regression; this suite is not default React acceptance.
 import {installSavePipeline} from './helpers/save-pipeline.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -9,7 +10,7 @@ const source={feed_url:feed,episode_id:episode,transcript_url:'https://publisher
 const documentFixture={title:'Publisher episode',language:'en',source_url:'https://publisher.example/episode',podcast_source:source,provenance:{kind:'publisher_transcript',caption_method:'publisher_provided',review_status:'unreviewed'},segments:[{id:'one',start:0,end:2,text:'Publisher words'}]};
 const discovery={kind:'feed',title:'Public podcast',feed_url:feed,episodes:[{id:episode,title:'<img src=x> Source episode',source_url:'https://publisher.example/episode',duration:2,media:[{url:media,kind:'audio'}],transcripts:[{url:source.transcript_url,type:'text/vtt',language:'en',supported:true}]}],warnings:[]};
 async function setup(handler,stored){
- const w=new Window({url:'http://127.0.0.1:8080/'});w.document.body.innerHTML=fs.readFileSync(new URL('reader/index.html',root),'utf8').split('<body>')[1].split('</body>')[0];Object.defineProperty(w,'crypto',{value:webcrypto});
+ const w=new Window({url:'http://127.0.0.1:8080/'});w.document.body.innerHTML=fs.readFileSync(new URL('reader/compatibility.html',root),'utf8').split('<body>')[1].split('</body>')[0];Object.defineProperty(w,'crypto',{value:webcrypto});
  if(stored!==undefined)w.localStorage.setItem('coconut-reader-v1',stored);
  const calls=[];w.fetch=async(url,options)=>{calls.push({url,options});return url==='api/health'?{ok:true,json:async()=>({local_worker:false,capabilities:{local_agents:true,podcast_import:true,media_import:false}})}:handler(url,options);};
  installSavePipeline(w);

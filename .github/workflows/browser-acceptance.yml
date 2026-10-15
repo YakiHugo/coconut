@@ -42,6 +42,9 @@ jobs:
         env:
           COCONUT_REACT_ARTIFACTS: ${{ runner.temp }}/coconut-react-authored
         run: npm run test:react-matrix
+      - name: Verify actual reading palette and system theme transitions
+        if: ${{ !cancelled() && steps.react_setup.outcome == 'success' }}
+        run: npm run test:react-palette-browser
       - name: Upload only authored React review images and geometry
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@v4
@@ -63,9 +66,12 @@ jobs:
             ${{ runner.temp }}/coconut-react-authored/matrix-source-first-home-390.png
             ${{ runner.temp }}/coconut-react-authored/matrix-source-first-home-1360.png
             ${{ runner.temp }}/coconut-react-authored/matrix-attached-subtitle-390.png
+            ${{ runner.temp }}/coconut-react-authored/matrix-summary-preferences-1360.png
+            ${{ runner.temp }}/coconut-react-authored/matrix-summary-preferences-390.png
             ${{ runner.temp }}/coconut-react-authored/react-production-matrix.json
             ${{ runner.temp }}/coconut-react-authored/react-production-matrix-failure.json
   browser-smoke:
+    name: Compatibility renderer regression (not React acceptance)
     runs-on: ubuntu-latest
     # Full authored suite measured 918s on hosted CI; allow ~31% setup/runtime headroom.
     # Keep every suite and its own failure/timeout assertions unchanged.

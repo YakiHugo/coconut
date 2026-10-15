@@ -66,9 +66,11 @@ export interface ReaderSnapshot {
     media: ReaderMedia | null;
     saveStatus?: string;
 }
-export interface ReaderView {documentKey:string;cueId:string;mode:'transcript'|'passages'}
+export interface ReaderView {documentKey:string;cueId:string;mode:'transcript'|'passages'|'summary'}
 export interface ReaderResumePosition {identity:string;time:number;duration:number}
 export interface ReaderWorkspaceProps extends ReaderSnapshot {
+    shortcutsEnabled?:boolean;
+    onOpenSummary?:()=>void;
     initialView?:ReaderView|null;
     onViewChange?:(view:ReaderView)=>void;
     resumePosition?:ReaderResumePosition|null;

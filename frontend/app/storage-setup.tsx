@@ -1,10 +1,11 @@
 import {useEffect,useState,useSyncExternalStore} from 'react';
 import type {AppStore} from './store';
 import {createStorageController,rawRecovery,recoveryJSON,type StorageResult,type RecoveryStorage} from './storage-controller';
-export function StorageSetup({result,storage,store,onRestart,onLockChange}:{result:StorageResult;storage?:RecoveryStorage;store?:AppStore;onRestart:()=>void;onLockChange?:(locked:boolean)=>void}){
+export function StorageSetup({result,storage,store,onRestart,onLockChange,onBusyChange}:{result:StorageResult;storage?:RecoveryStorage;store?:AppStore;onRestart:()=>void;onLockChange?:(locked:boolean)=>void;onBusyChange?:(busy:boolean)=>void}){
  const access=(globalThis as any).CoconutClientCapabilities;
  const [controller]=useState(()=>createStorageController({result,store,onRestart,onLockChange,refreshAccess:()=>access?.refresh(),allows:cap=>!access||access.allows(cap)}));
  const state=useSyncExternalStore(controller.subscribe,controller.getSnapshot);const [notice,setNotice]=useState('');
+ useEffect(()=>{onBusyChange?.(state.busy||!!state.review);return()=>onBusyChange?.(false);},[onBusyChange,state.busy,state.review]);
  useEffect(()=>{void controller.inspect();return()=>controller.dispose();},[controller]);
  function download(text:string,name:string){let url:string|undefined;try{url=URL.createObjectURL(new Blob([text],{type:'application/json'}));const a=document.createElement('a');a.href=url;a.download=name;document.body.append(a);a.click();a.remove();setNotice('已发起恢复文件下载，请打开文件确认并妥善保留。这不是普通书架备份，不能直接导入；下载不会修复存储。');}catch{setNotice('下载未能完成，请重试。原始数据仍保留。');}finally{if(url)setTimeout(()=>URL.revokeObjectURL(url!),60000);}}
  async function exportRecovery(){try{const snapshot=storage?.canonicalRecovery?await storage.canonicalRecovery():storage?.readRecovery?await storage.readRecovery():result.recovery;if(!snapshot||(snapshot as any).ok===false)throw Error('完整恢复数据暂时无法读取，请重试。');download(recoveryJSON(snapshot),'coconut-storage-recovery.json');}catch(error){setNotice(error instanceof Error?error.message:'导出失败，请重试。');}}

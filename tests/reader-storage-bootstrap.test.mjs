@@ -1,3 +1,4 @@
+// Compatibility renderer regression; this suite is not default React acceptance.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -5,7 +6,7 @@ import {Window} from 'happy-dom';
 const root=new URL('../',import.meta.url),source=fs.readFileSync(new URL('reader/storage-bootstrap.js',root),'utf8');
 const tick=async()=>{for(let i=0;i<50;i++)await Promise.resolve();};
 function setup(initialize){
- const w=new Window({url:'https://coconut.example/'});w.document.write(fs.readFileSync(new URL('reader/index.html',root),'utf8').replace(/<script\b[^>]*\bdefer[^>]*>[\s\S]*?<\/script>/g,''));w.Coconut={validate:x=>x};w.CoconutStorageProvider={initialize};
+ const w=new Window({url:'https://coconut.example/'});w.document.write(fs.readFileSync(new URL('reader/compatibility.html',root),'utf8').replace(/<script\b[^>]*\bdefer[^>]*>[\s\S]*?<\/script>/g,''));w.Coconut={validate:x=>x};w.CoconutStorageProvider={initialize};
  const admitted=[];w.document.head.append=script=>{admitted.push(script.src);queueMicrotask(()=>script.onload());};w.eval(source);
  return {w,admitted,$:id=>w.document.getElementById(id)};
 }

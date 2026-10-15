@@ -1,3 +1,4 @@
+// Compatibility renderer regression; this suite is not default React acceptance.
 import {installSavePipeline, settle} from './helpers/save-pipeline.mjs';
 /** Exercise the actual reader handlers in HappyDOM. Every fetch is denied unless
  * an individual test injects a local authored response; no real network/model. */
@@ -11,7 +12,7 @@ import {phraseSearchFixture, phraseContributorIds, SOURCE_PHRASE, TRANSLATED_PHR
 const root = new URL('../', import.meta.url), KEY = 'coconut-reader-v1';
 function setup(saved) {
   const w = new Window({url: 'http://127.0.0.1:8080/'});
-  w.document.body.innerHTML = fs.readFileSync(new URL('reader/index.html', root), 'utf8').split('<body>')[1].split('</body>')[0];
+  w.document.body.innerHTML = fs.readFileSync(new URL('reader/compatibility.html', root), 'utf8').split('<body>')[1].split('</body>')[0];
   Object.defineProperty(w, 'crypto', {value: webcrypto});
   if (saved) {w.localStorage.setItem(KEY, saved);w.sessionStorage.setItem('coconut-reader-active-v1', JSON.parse(saved).documents[0].key);}
   const calls = [];

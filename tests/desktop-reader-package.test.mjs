@@ -28,9 +28,10 @@ async function layout(t,kind,{boundary=true}={}) {
   await mkdir(app,{recursive:true});await mkdir(reader,{recursive:true});
   await writeFile(path.join(app,'package.json'),JSON.stringify({type:'module'}));
   for(const name of ['podcast-sources.mjs','public-http.mjs','podcast-xml.mjs','caption-service.mjs','local-media.mjs'])await copyFile(path.join(root,'desktop',name),path.join(app,name));
-  const index=await readFile(path.join(root,'reader/index.html'),'utf8');
+  const entries=['index.html','compatibility.html','react-preview.html'];
+  const index=(await Promise.all(entries.map(entry=>readFile(path.join(root,'reader',entry),'utf8')))).join('\n');
   const scripts=[...index.matchAll(/<(?:script|link|img)\b[^>]*\b(?:src|href)="([^"]+)"/g)].map(match=>match[1].split('?')[0]);
-  for(const name of ['index.html',...new Set(scripts),...(boundary?['package.json']:[])])await copyFile(path.join(root,'reader',name),path.join(reader,name));
+  for(const name of [...entries,...new Set(scripts),...(boundary?['package.json']:[])])await copyFile(path.join(root,'reader',name),path.join(reader,name));
   return {app,reader};
 }
 async function loadReader({app,reader}) {
@@ -85,7 +86,7 @@ test('packager stages the boundary and checks each output before signing; exact 
   assert.match(proof,/reader\/package.json/);
 });
 test('quotation is staged byte-for-byte, loads before app, and corrupt packaged bytes fail verification',async t=>{
- const fixture=await layout(t,'extracted'),index=await readFile(path.join(root,'reader/index.html'),'utf8');
+ const fixture=await layout(t,'extracted'),index=await readFile(path.join(root,'reader/compatibility.html'),'utf8');
  assert.ok(index.indexOf('quotation.js')<index.indexOf('app.js'));assert.match(index,/<script src="quotation\.js\?v=[a-f0-9]{10}" defer><\/script>/);
  assert.deepEqual(await readFile(path.join(fixture.reader,'quotation.js')),await readFile(path.join(root,'reader/quotation.js')));
  await verifyReaderResources(fixture.reader);await writeFile(path.join(fixture.reader,'quotation.js'),'/* mismatched package */');

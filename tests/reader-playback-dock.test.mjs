@@ -1,3 +1,4 @@
+// Compatibility renderer regression; this suite is not default React acceptance.
 import {installSavePipeline,settle} from './helpers/save-pipeline.mjs';
 import {evaluateNativeIMEPointer} from './helpers/native-ime-proof.mjs';
 import {installDockViewportObserver,evaluateDockLoopViewport,installDockLoopPreparationObserver} from './helpers/dock-viewport-observer.mjs';
@@ -9,7 +10,7 @@ import {Window} from 'happy-dom';
 const root=new URL('../',import.meta.url);
 function setup(){
  const w=new Window({url:'https://coconut.example/'});
- w.document.body.innerHTML=fs.readFileSync(new URL('reader/index.html',root),'utf8').split('<body>')[1].split('</body>')[0];
+ w.document.body.innerHTML=fs.readFileSync(new URL('reader/compatibility.html',root),'utf8').split('<body>')[1].split('</body>')[0];
  Object.defineProperty(w,'crypto',{value:webcrypto});
  const calls=[];w.fetch=async(...args)=>{calls.push(args);throw new Error('No source or AI request authorized');};
  const pipeline=installSavePipeline(w);
@@ -319,7 +320,7 @@ test('dock viewport diagnostics observe actual scroll owner, resume mutation and
 });
 
 test('docked native source margins share the measured sticky stack and preserve undocked/context defaults',async()=>{
- const html=fs.readFileSync(new URL('reader/index.html',root),'utf8').split('<body>')[1].split('</body>')[0],css=fs.readFileSync(new URL('reader/style.css',root),'utf8');
+ const html=fs.readFileSync(new URL('reader/compatibility.html',root),'utf8').split('<body>')[1].split('</body>')[0],css=fs.readFileSync(new URL('reader/style.css',root),'utf8');
  for(const docked of [false,true])for(const context of [false,true]){
   const w=new Window();try{
    w.document.body.innerHTML=html;w.document.body.dataset.mediaDocked=String(docked);

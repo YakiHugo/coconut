@@ -1,3 +1,4 @@
+// Compatibility renderer regression; this suite is not default React acceptance.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -25,7 +26,7 @@ function releaseSaves(f){
 }
 function setup({held=false,raw=null,storageResult=null,digestDelay=0}={}){
  const w=new Window({url:'https://coconut.example/'});
- w.document.body.innerHTML=fs.readFileSync(new URL('reader/index.html',root),'utf8').split('<body>')[1].split('</body>')[0];
+ w.document.body.innerHTML=fs.readFileSync(new URL('reader/compatibility.html',root),'utf8').split('<body>')[1].split('</body>')[0];
  Object.defineProperty(w,'crypto',{value:{subtle:{digest:async(...args)=>{if(digestDelay)await new Promise(resolve=>setTimeout(resolve,digestDelay));return webcrypto.subtle.digest(...args);}}}});
  w.fetch=()=>{throw new Error('Transcript file imports must not send network requests');};if(raw)w.localStorage.setItem(KEY,raw);
  if(storageResult)w.CoconutStorageBootstrap={phase:'ready',result:storageResult};

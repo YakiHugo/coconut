@@ -78,7 +78,7 @@ jobs:
         run: npm ci --ignore-scripts
       - name: Run the real Electron reader without model calls
         run: COCONUT_SMOKE_TEST=1 desktop/node_modules/.bin/electron desktop
-      - name: Verify update UI, restart guards and note persistence in isolated Electron
+      - name: Verify compatibility update UI, restart guards and note persistence in isolated Electron
         run: node tests/desktop-updates-ui.mjs
       - name: Package and seal arm64 and x64 development apps without a signing identity
         env:
@@ -101,11 +101,27 @@ jobs:
         run: |
           arch="$(node -p 'process.arch')"
           COCONUT_SMOKE_TEST=1 "desktop/dist/Coconut-darwin-$arch/Coconut.app/Contents/MacOS/Coconut"
-      - name: Verify native release ZIP reading, playback, exports and restart recovery
+      - name: Verify actual packaged default React native menus, persistence and close lifecycle
+        env:
+          COCONUT_NATIVE_DIAGNOSTICS: ${{ runner.temp }}/coconut-native-diagnostics
+        run: node tests/desktop-react-packaged-acceptance.mjs
+      - name: Retain only authored default React native evidence
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: Coconut-React-native-authored
+          path: |
+            ${{ runner.temp }}/coconut-native-diagnostics/react-packaged-report.json
+            ${{ runner.temp }}/coconut-native-diagnostics/react-packaged-home.png
+            ${{ runner.temp }}/coconut-native-diagnostics/react-packaged-reading.png
+            ${{ runner.temp }}/coconut-native-diagnostics/react-packaged-failure.png
+          if-no-files-found: ignore
+          retention-days: 7
+      - name: Verify compatibility renderer in native ZIP reading, playback, exports and restart
         env:
           COCONUT_NATIVE_DIAGNOSTICS: ${{ runner.temp }}/coconut-native-diagnostics
         run: node tests/desktop-packaged-acceptance.mjs
-      - name: Verify opt-in original-file restart continuity in the exact native ZIP
+      - name: Verify compatibility original-file continuity in the exact native ZIP
         env:
           COCONUT_NATIVE_DIAGNOSTICS: ${{ runner.temp }}/coconut-native-diagnostics
         run: node tests/desktop-local-media-acceptance.mjs
@@ -121,11 +137,11 @@ jobs:
             ${{ runner.temp }}/coconut-native-diagnostics/native-media-failure.png
           if-no-files-found: ignore
           retention-days: 7
-      - name: Verify partial caption warnings through the native UI with authored offline fixtures
+      - name: Verify compatibility caption warnings through native UI with authored offline fixtures
         run: node tests/desktop-caption-ui-proof.mjs --offline-diagnostics
       - name: Verify exact ZIP helper integrity and native public captions
         run: node tests/desktop-caption-helper-packaged-proof.mjs --live
-      - name: Verify real captions through the native primary journey
+      - name: Verify real captions through native compatibility journey
         run: node tests/desktop-caption-ui-proof.mjs
       - name: Upload unsigned developer builds only
         uses: actions/upload-artifact@v4

@@ -1,3 +1,4 @@
+// Compatibility renderer regression; this suite is not default React acceptance.
 import {openTranscriptTools} from './helpers/reading-tools-browser.mjs';
 /** CI-only Chromium proof with authored fixtures, native input and real downloads.
  * No external source, AI request, browser installation or local execution needed. */
@@ -12,7 +13,7 @@ function check(name, value) {assert.ok(value, name); checks.push(name);}
 try {
  server = createServer(async (req, res) => {
   if (!['GET', 'HEAD'].includes(req.method)) {mutations++; res.writeHead(405).end(); return;}
-  const pathname = new URL(req.url, 'http://localhost').pathname, filename = pathname === '/' ? 'index.html' : pathname.slice(1);
+  const pathname = new URL(req.url, 'http://localhost').pathname, filename = pathname === '/' ? 'compatibility.html' : pathname.slice(1);
   if (!/^[a-z-]+\.(html|js|css|webmanifest|png)$/.test(filename)) {res.writeHead(404, {'Content-Type': 'application/json'}).end('{"error":"static only"}'); return;}
   try {
    const body = await fs.readFile(new URL(filename, root));

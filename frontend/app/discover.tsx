@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
+import {useOwnedPicker} from '../native-shell/owned-picker-hook';
 import {searchCatalog} from './catalog';
 import {SubtitleRecovery} from '../recovery-import/recovery';
 import { Recovery } from './recovery';
@@ -8,11 +9,17 @@ export function Discover({ store }: {
     store: AppStore;
 }) {
     const [catalogQuery,setCatalogQuery]=useState('');
-    const [candidate,setCandidate]=useState<{file:File;inspected:Awaited<ReturnType<typeof inspectFile>>;keys:string[]}|null>(null);
-    const [url, setUrl] = useState(''), [busy, setBusy] = useState(false), [result, setResult] = useState<Ingestion | null>(null), [error, setError] = useState('');
+    const [candidate,setCandidateState]=useState<{file:File;inspected:Awaited<ReturnType<typeof inspectFile>>;keys:string[]}|null>(null);
+    const [url, setUrl] = useState(''), [busy, setBusyState] = useState(false), [result, setResult] = useState<Ingestion | null>(null), [error, setError] = useState('');
     const owner = useRef<AbortController | null>(null), fileInput = useRef<HTMLInputElement>(null);
-    const cancel = () => { setCandidate(null);store.invalidateMedia(); owner.current?.abort(); owner.current = null; setBusy(false); };
-    useEffect(()=>{store.setActivity('source',busy||candidate?'正在读取来源或核对候选原文件':null);return()=>store.setActivity('source',null);},[store,busy,candidate]);
+    const picker=useOwnedPicker({scope:'raw-media',setActivity:store.setActivity,reason:'正在选择原声文件'});
+    const sourceState=useRef({busy:false,candidate:false});
+    const syncActivity=()=>store.setActivity('source',sourceState.current.busy||sourceState.current.candidate?'正在读取来源或核对候选原文件':null);
+    const setBusy=(value:boolean)=>{sourceState.current.busy=value;syncActivity();setBusyState(value);};
+    const setCandidate=(value:typeof candidate)=>{sourceState.current.candidate=!!value;syncActivity();setCandidateState(value);};
+    const cancelSource = () => { setCandidate(null);store.invalidateMedia(); owner.current?.abort(); owner.current = null; setBusy(false); };
+    const cancel=()=>{picker.controller.retire();cancelSource();};
+    useEffect(()=>()=>store.setActivity('source',null),[store]);
     useEffect(()=>{const retire=()=>{owner.current?.abort();owner.current=null;};window.addEventListener('pagehide',retire);return()=>{window.removeEventListener('pagehide',retire);retire();};},[]);
     const request = async (value: string, episode?: Episode, feed?: string) => {
         cancel();
@@ -48,8 +55,8 @@ export function Discover({ store }: {
             }
         }
     };
-    const openFile = async (file: File) => {
-        cancel();
+    const openFile = async (file: File,current:()=>boolean) => {
+        cancelSource();
         const controller = new AbortController();
         owner.current = controller;
         setBusy(true);
@@ -57,7 +64,7 @@ export function Discover({ store }: {
         setCandidate(null);
         try {
             const inspected = await inspectFile(file);
-            if (owner.current !== controller)
+            if (owner.current !== controller||!current())
                 return;
             const existing = store.getSnapshot().documents.filter(doc => (doc.local_media_source as {
                 fingerprint?: string;
@@ -88,8 +95,7 @@ export function Discover({ store }: {
     return <section className="discover" aria-labelledby="discover-title">
   <p className="kicker">COCONUT / 从声音开始</p><h1 id="discover-title">今天，想听什么？</h1><p className="lede">从一段声音开始，留住值得重读的想法。</p>
   <form onSubmit={event => { event.preventDefault(); void request(url); }}><label htmlFor="source-url">播客或视频链接</label><div className="source-row"><input id="source-url" type="url" required maxLength={4096} value={url} onChange={event => { cancel(); setResult(null); setError(''); setUrl(event.target.value); }} placeholder="粘贴节目、单集或视频链接"/><button disabled={busy} type="submit">{busy ? '正在读取…' : '打开链接'}</button></div></form>
-  <div className="source-actions"><button type="button" disabled={busy} onClick={() => {store.invalidateMedia();fileInput.current?.click();}}>打开音频或视频文件</button><input ref={fileInput} type="file" accept="audio/*,video/*" hidden onChange={event => { const file = event.target.files?.[0]; if (file)
-        void openFile(file); }}/>{busy && <button onClick={cancel}>取消读取</button>}</div>
+  <div className="source-actions"><button data-native-command="open-local-media" type="button" disabled={busy} onClick={() => {if(store.closeSnapshot().nonContentReasons.length)return;store.invalidateMedia();const captured=store.getSnapshot();picker.controller.begin(fileInput.current,()=>{const value=store.getSnapshot();return value.workspace===captured.workspace&&value.activeKey===captured.activeKey&&value.documents===captured.documents;});}}>打开音频或视频文件</button><input key={picker.inputKey} ref={fileInput} type="file" accept="audio/*,video/*" hidden onChange={event => { const input=event.currentTarget,file=input.files?.[0];void picker.controller.accept(input,async({current})=>{if(file&&current())await openFile(file,current);}); }}/>{busy && <button onClick={cancel}>取消读取</button>}</div>
   {candidate&&<section aria-label="核对原声项目"><h2>核对原声来源</h2><p>部分文件采样与已有项目相同，但不能证明是同一原声。请核对文件名与项目后选择。已有笔记不会被覆盖。</p>{candidate.keys.map(key=><button key={key} onClick={()=>chooseCandidate(key)}>关联到 {store.getDocument(key)?.title||key}</button>)}<button onClick={()=>chooseCandidate(null)}>作为新原声项目打开</button><button onClick={()=>setCandidate(null)}>取消关联</button></section>}
   <p className="quiet">优先读取发布者或平台现成文字稿。不会自动调用 AI、运行识别或下载模型。</p>
   <p role="status" className="source-error">{error}</p>

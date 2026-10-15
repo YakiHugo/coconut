@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useMemo, useSyncExternalStore } from 'react';
+import {useOwnedPicker} from '../native-shell/owned-picker-hook';
 import { attachTranscript } from '../app/attach-transcript';
 import type { Document } from '../app/contracts';
 import type { AppStore } from '../app/store';
@@ -31,8 +32,10 @@ export function SubtitleRecovery({ store, targetKey }: { store: AppStore; target
   }, [store, targetKey]);
   const state = useSyncExternalStore(controller.subscribe, controller.getSnapshot);
   const input = useRef<HTMLInputElement>(null);
+  const picker=useOwnedPicker({scope:'subtitle:'+ (targetKey||'standalone'),setActivity:store.setActivity,reason:'正在选择字幕文件'});
+  useEffect(()=>()=>picker.controller.retire(),[targetKey,picker.controller]);
   useEffect(() => { const retire = () => controller.pause(); window.addEventListener('pagehide', retire); return () => { window.removeEventListener('pagehide', retire); retire(); }; }, [controller]);
-  return <details className="subtitle-recovery" onToggle={event => { if (!event.currentTarget.open) controller.pause(); }}>
+  return <details className="subtitle-recovery" onToggle={event => { if (!event.currentTarget.open) {picker.controller.retire();controller.pause();} }}>
     <summary>高级恢复：导入或粘贴 SRT / VTT 字幕</summary>
     <p>适用于已经有字幕的情况。仅在本机解码与核对，不会上传文件。默认新增独立内容；可明确选择为尚无文字稿的原声项目补充字幕。已有正文不会被替换。</p>
     <p>草稿仅保留到本次页面关闭；刷新前请保存原始文件或复制文字。</p>
@@ -47,8 +50,8 @@ export function SubtitleRecovery({ store, targetKey }: { store: AppStore; target
     <label>字幕格式<select value={state.format} onChange={event => controller.edit({ format: event.target.value })}><option value="auto">自动识别</option><option value="srt">SRT</option><option value="vtt">VTT</option></select></label>
     <label>粘贴带完整起止时间的字幕<textarea value={state.text} rows={8} onChange={event => controller.edit({ text: event.target.value })}/></label>
     <button onClick={() => controller.previewPaste()}>预览粘贴字幕</button>
-    <button disabled={state.busy} onClick={() => input.current?.click()}>选择字幕文件（可多选）</button>
-    <input ref={input} hidden type="file" accept=".srt,.vtt" multiple onChange={event => { const files = Array.from(event.target.files || []); event.target.value = ''; void controller.chooseFiles(files); }}/>
+    <button data-native-command="import-transcript" disabled={state.busy} onClick={() => {if(state.busy||state.applying)return;const captured=store.getSnapshot(),scope=controller.getSnapshot(),doc=targetKey?store.getDocument(targetKey):null;picker.controller.begin(input.current,()=>{const value=store.getSnapshot(),current=controller.getSnapshot();return value.workspace===captured.workspace&&value.activeKey===captured.activeKey&&(!targetKey||store.getDocument(targetKey)===doc)&&current.mode===scope.mode&&current.target===scope.target;});}}>选择字幕文件（可多选）</button>
+    <input key={picker.inputKey} ref={input} hidden type="file" accept=".srt,.vtt" multiple onChange={event => {const element=event.currentTarget,files=Array.from(element.files||[]);void picker.controller.accept(element,async({current})=>{if(current())await controller.chooseFiles(files);});}}/>
     <ol>{state.rows.map(row => <li key={row.id}>
       <h3>{row.name}</h3>
       {row.bytes && <label>原始文件编码<select value={row.encoding} onChange={event => controller.encoding(row.id, event.target.value)}>{controller.encodings().map(option => <option key={option.id} value={option.id} disabled={!option.available}>{option.label}{!option.available && '（当前浏览器不支持）'}</option>)}</select></label>}

@@ -1,3 +1,4 @@
+// Compatibility renderer regression; this suite is not default React acceptance.
 /** Authored documents and injected model replies only; no provider, media or browser harness. */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -16,7 +17,7 @@ function fixture(count=245,title='Authored AI history'){
 }
 function setup(stored,full=false){
  const w=new Window({url:'http://127.0.0.1:8080/'});
- w.document.body.innerHTML=fs.readFileSync(new URL('reader/index.html',root),'utf8').split('<body>')[1].split('</body>')[0];
+ w.document.body.innerHTML=fs.readFileSync(new URL('reader/compatibility.html',root),'utf8').split('<body>')[1].split('</body>')[0];
  Object.defineProperty(w,'crypto',{value:webcrypto});if(stored)w.localStorage.setItem(KEY,stored);
  const requests=[];w.fetch=async(url,options)=>{
   if(full&&url==='api/health')return {ok:true,json:async()=>({})};
@@ -293,7 +294,7 @@ test('production bootstrap admits the full reader before historical source brows
  const w=new Window({url:'http://127.0.0.1:8080/'}),$=id=>w.document.getElementById(id),admitted=[],requests=[],context=vm.createContext(w);
  const run=source=>vm.runInContext(source,context);
  try{
-  const html=fs.readFileSync(new URL('reader/index.html',root),'utf8');w.document.body.innerHTML=html.split('<body>')[1].split('</body>')[0];Object.defineProperty(w,'crypto',{value:webcrypto});
+  const html=fs.readFileSync(new URL('reader/compatibility.html',root),'utf8');w.document.body.innerHTML=html.split('<body>')[1].split('</body>')[0];Object.defineProperty(w,'crypto',{value:webcrypto});
   w.fetch=async url=>{if(url==='api/health')return {ok:true,json:async()=>({})};requests.push(url);throw new Error('Unexpected request');};
   w.document.head.innerHTML=[...html.matchAll(/<script\b[^>]*data-reader-script[^>]*>[\s\S]*?<\/script>/g)].map(match=>match[0]).join('');
   // Let the actual bootstrap admit each production classic script separately.

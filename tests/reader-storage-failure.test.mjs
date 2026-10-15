@@ -1,3 +1,4 @@
+// Compatibility renderer regression; this suite is not default React acceptance.
 import {installSavePipeline} from './helpers/save-pipeline.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -7,7 +8,7 @@ import {Window} from 'happy-dom';
 const root=new URL('../',import.meta.url);
 function setup(stored, beforeLoad=null){
   const window=new Window({url:'https://coconut.example/'});
-  window.document.body.innerHTML=fs.readFileSync(new URL('reader/index.html',root),'utf8').split('<body>')[1].split('</body>')[0];
+  window.document.body.innerHTML=fs.readFileSync(new URL('reader/compatibility.html',root),'utf8').split('<body>')[1].split('</body>')[0];
   Object.defineProperty(window,'crypto',{value:webcrypto});
   if(stored!==undefined)window.localStorage.setItem('coconut-reader-v1',stored);
   beforeLoad?.(window);

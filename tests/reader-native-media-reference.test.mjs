@@ -1,3 +1,4 @@
+// Compatibility renderer regression; this suite is not default React acceptance.
 /** Authored IndexedDB/DOM fixtures; no Electron, original user files or network. */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -29,7 +30,7 @@ async function setup({docs=[doc()],service=native(),engine=transactionDouble(),s
  const result=await provider.initialize({indexedDB:legacyMode?null:engine.indexedDB,getStorage,validate:C.validate,legacyModule:legacy,documentModule:documents});assert.equal(result.ok,true);
  if(seedRemembered){const identity=await result.adapter.mediaLibraryIdentity();for(const item of (seedRemembered==='first'?result.loaded.documents.slice(0,1):result.loaded.documents)){const owner={key:item.key,epoch:result.adapter.documentEpoch(item.key),library:identity.identity,source:item.local_media_source};await service.bridge.remember(owner,{},'authored-identity');}service.calls.length=0;}
  const w=new Window({url:'http://127.0.0.1:47831/'}),created=[],revoked=[];
- w.document.body.innerHTML=fs.readFileSync(new URL('reader/index.html',root),'utf8').split('<body>')[1].split('</body>')[0];Object.defineProperty(w,'crypto',{value:webcrypto});
+ w.document.body.innerHTML=fs.readFileSync(new URL('reader/compatibility.html',root),'utf8').split('<body>')[1].split('</body>')[0];Object.defineProperty(w,'crypto',{value:webcrypto});
  w.fetch=async()=>{throw new Error('No network');};if(!staticWeb)w.coconutLocalMedia=service.bridge;w.CoconutStorageBootstrap={phase:'ready',result};
  w.URL.createObjectURL=file=>{const value='blob:fixture-'+created.length;created.push({file,value});return value;};w.URL.revokeObjectURL=value=>revoked.push(value);
  w.eval(fs.readFileSync(new URL('reader/library-store.js',root),'utf8'));

@@ -1,3 +1,4 @@
+// Compatibility renderer regression; this suite is not default React acceptance.
 /** Authored CI-only browser proof. Never run locally where Chromium is denied. */
 import assert from 'node:assert/strict';
 import {createServer} from 'node:http';
@@ -65,7 +66,7 @@ try{
  const audio=path.join(directory,'authored-follow.wav');await fs.writeFile(audio,authoredAudioFixture(700));
  const reader=new URL('../reader/',import.meta.url);
  server=createServer(async(req,res)=>{
-  const name=new URL(req.url,'http://localhost').pathname.slice(1)||'index.html';
+  const name=new URL(req.url,'http://localhost').pathname.slice(1)||'compatibility.html';
   if(req.method!=='GET'||!/^[a-z-]+\.(html|js|css|png)$/.test(name)){res.writeHead(404).end();return;}
   try{res.setHeader('Content-Type',name.endsWith('.js')?'text/javascript':name.endsWith('.css')?'text/css':name.endsWith('.png')?'image/png':'text/html');res.end(await fs.readFile(new URL(name,reader)));}catch{res.writeHead(404).end();}
  });

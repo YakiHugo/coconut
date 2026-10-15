@@ -1,3 +1,4 @@
+// Explicit compatibility renderer acceptance; new default is covered by React matrix.
 import {openCueActions} from './cue-actions-browser.mjs';
 import {verifyJobRecovery} from './helpers/job-recovery-browser.mjs';
 /**
@@ -338,7 +339,7 @@ try {
   let context = await newContext();
   let page = await context.newPage();
   page.setDefaultTimeout(15000);
-  await page.goto(origin, {waitUntil: 'domcontentloaded'});
+  await page.goto(origin+'/compatibility.html', {waitUntil: 'domcontentloaded'});
   stage = 'browser_file_chooser_import';
   await importFile(page, resultFile, source.segments.length);
   let document = await storedDocument(page);
@@ -440,7 +441,7 @@ try {
   context = await newContext();
   page = await context.newPage();
   page.setDefaultTimeout(15000);
-  await page.goto(origin, {waitUntil: 'domcontentloaded'});
+  await page.goto(origin+'/compatibility.html', {waitUntil: 'domcontentloaded'});
   check('fresh_context_empty_library', await storedDocument(page) === null);
   await importFile(page, jsonFile, document.segments.length);
   await verifyRestoration(page, document, indices, 'reimport');

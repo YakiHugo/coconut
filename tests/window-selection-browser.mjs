@@ -1,3 +1,4 @@
+// Compatibility renderer regression; this suite is not default React acceptance.
 import {openLibraryTools} from './helpers/library-tools-browser.mjs';
 /** CI-only Chromium proof with authored fixtures. Do not run in a browser-denied
  * environment. Two real same-origin pages share content, but not selection. */
@@ -122,7 +123,7 @@ try {
  server = createServer(async (req, res) => {
   if (!['GET', 'HEAD'].includes(req.method)) { mutations++; res.writeHead(405).end(); return; }
   const pathname = new URL(req.url, 'http://localhost').pathname;
-  const filename = pathname === '/' ? 'index.html' : pathname.slice(1);
+  const filename = pathname === '/' ? 'compatibility.html' : pathname.slice(1);
   if (!/^[a-z-]+\.(html|js|css|webmanifest|png)$/.test(filename)) {
    res.writeHead(404, {'Content-Type':'application/json'}).end('{"error":"static only"}'); return;
   }

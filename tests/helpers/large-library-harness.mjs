@@ -1,3 +1,4 @@
+// Compatibility renderer regression; this suite is not default React acceptance.
 import fs from 'node:fs';
 import {webcrypto} from 'node:crypto';
 import {Window} from 'happy-dom';
@@ -6,7 +7,7 @@ const root=new URL('../../',import.meta.url);
 export function libraryHarness(documents=[],{probe=false,sourceRoot=root,configureCore=()=>{},localService=false}={}){
  // Legacy local-service fixture: injected AI responses are not private-owner authorization.
  const w=new Window({url:localService?'http://localhost/':'https://coconut.example/'});
- w.document.body.innerHTML=fs.readFileSync(new URL('reader/index.html',sourceRoot),'utf8').split('<body>')[1].split('</body>')[0];
+ w.document.body.innerHTML=fs.readFileSync(new URL('reader/compatibility.html',sourceRoot),'utf8').split('<body>')[1].split('</body>')[0];
  Object.defineProperty(w,'crypto',{value:webcrypto});
  w.localStorage.setItem('coconut-reader-v1',JSON.stringify({documents,active:documents[0]?.key||null}));
  w.fetch=async()=>{throw Error('Unexpected network request');};

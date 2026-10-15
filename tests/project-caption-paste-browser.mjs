@@ -1,3 +1,4 @@
+// Compatibility renderer regression; this suite is not default React acceptance.
 /** CI-only real Chromium acceptance for pasted captions on an original-media project.
  * Native files contain authored PCM tones only; captions are authored below and
  * enter through trusted keyboard paste. Persistence evidence comes from production
@@ -137,7 +138,7 @@ try {
   await fs.writeFile(audio, authoredAudioFixture(40));
   server = createServer(async (req, res) => {
     if (!['GET', 'HEAD'].includes(req.method)) {mutations++; res.writeHead(405).end(); return;}
-    const name = new URL(req.url, 'http://localhost').pathname.slice(1) || 'index.html';
+    const name = new URL(req.url, 'http://localhost').pathname.slice(1) || 'compatibility.html';
     if (name.startsWith('api/')) apiRequests.push(name);
     if (name === 'project-paste-xss-probe') xssRequests++;
     if (!/^[a-z-]+\.(html|js|css|png|webmanifest)$/.test(name)) {res.writeHead(404).end(); return;}

@@ -1,3 +1,4 @@
+// Compatibility renderer regression; not default React acceptance.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -10,7 +11,7 @@ const root=new URL('../',import.meta.url), theme='coconut-reading-theme-v1', mea
 const source=name=>fs.readFileSync(new URL('reader/'+name,root),'utf8');
 function setup({saved={},dark=false,readDenied=false,writeDenied=false,mediaUnavailable=false,legacyMedia=false,app=false}={}) {
  const w=new Window({url:'https://coconut.example/'}),$=id=>w.document.getElementById(id),writes=[],calls=[];
- w.document.write(source('index.html').replace(/<script[\s\S]*?<\/script>/g,'').replace(/<link[^>]+>/g,''));
+ w.document.write(source('compatibility.html').replace(/<script[\s\S]*?<\/script>/g,'').replace(/<link[^>]+>/g,''));
  for (const [key,value] of Object.entries(saved)) w.localStorage.setItem(key,value);
  const backing=w.localStorage;
  Object.defineProperty(w,'localStorage',{configurable:true,value:{getItem(key){if(readDenied)throw Error('blocked');return backing.getItem(key);},setItem(key,value){if(writeDenied)throw Error('blocked');writes.push(key);backing.setItem(key,value);},removeItem:key=>backing.removeItem(key)}});
@@ -99,7 +100,7 @@ test('appearance controls preserve prose, drafts, active media, selection and do
 });
 
 test('head preference script is independent of async library bootstrap and all serving paths include it',()=>{
- const html=source('index.html');assert.ok(html.indexOf('src="appearance.js')<html.indexOf('rel="stylesheet"'));
+ const html=source('compatibility.html');assert.ok(html.indexOf('src="appearance.js')<html.indexOf('rel="stylesheet"'));
  assert.ok(!/<script[^>]+(?:defer|text\/coconut-pending)[^>]+src="appearance/.test(html));
  for(const file of ['serve.py','desktop/server.mjs','desktop/package.mjs'])assert.match(fs.readFileSync(new URL(file,root),'utf8'),/appearance\.js/);
 });

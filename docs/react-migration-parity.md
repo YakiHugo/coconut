@@ -1,3 +1,11 @@
+## Default-entry candidate status (2026-10-15)
+
+The isolated default candidate now serves the React application at `/` and `/index.html`; the mature DOM renderer is explicitly confined to `/compatibility.html`. See `react-default-cutover.md` for evidence boundaries. The prior preview passed real CI at desktop/390/320 widths, including the complete authored source, canonical, AI, native receipt and recovery matrix. This does not substitute for final default CI.
+
+Saved theme/measure/layout/shortcut preferences, summary reading and scoped keyboard controls are implemented. Startup close/release recovery, actual dark palette and native modal focus ownership passed independent review through `a5ffc56b`. Native File/update integration and synchronous owned-pickers are part of the subsequent default joint-review scope. The default packaged macOS ZIP test is wired separately from explicitly named compatibility packaged regressions. No local Chromium or user Mac success is claimed.
+
+The older checklist below records the preview-stage gates; the final default candidate must still pass joint review, actual default browser/packaged CI and screenshot inspection at its exact final commit.
+
 # React migration acceptance gate
 
 `reader/react-preview.html` is an integration entry, not the completed migration.

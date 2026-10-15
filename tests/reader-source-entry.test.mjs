@@ -1,3 +1,4 @@
+// Compatibility renderer regression; this suite is not default React acceptance.
 import {installSavePipeline} from './helpers/save-pipeline.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -9,7 +10,7 @@ const discovery={kind:'feed',title:'Old source results',feed_url:feed,episodes:[
 const documentFixture={title:'Old source document',language:'en',podcast_source:{feed_url:feed,episode_id:'a'.repeat(64)},segments:[{id:'a',start:0,end:2,text:'Original authored source'}]};
 const response=value=>({ok:true,json:async()=>value});
 async function setup(health,handler=()=>{throw new Error('Unexpected request');}){
- const w=new Window({url:'http://127.0.0.1:8080/'});w.document.body.innerHTML=fs.readFileSync(new URL('reader/index.html',root),'utf8').split('<body>')[1].split('</body>')[0];Object.defineProperty(w,'crypto',{value:webcrypto});
+ const w=new Window({url:'http://127.0.0.1:8080/'});w.document.body.innerHTML=fs.readFileSync(new URL('reader/compatibility.html',root),'utf8').split('<body>')[1].split('</body>')[0];Object.defineProperty(w,'crypto',{value:webcrypto});
  const calls=[];w.fetch=async(url,options)=>{calls.push([url,options]);return url==='api/health'?response(typeof health==='function'?health():health):url==='api/jobs'?response({jobs:[]}):handler(url,options);};
  const pipeline=installSavePipeline(w);
  w.eval(['summary','core','passages','passage-playback','app','language','podcasts','jobs'].map(n=>fs.readFileSync(new URL('reader/'+n+'.js',root),'utf8')).join('\n'));await new Promise(r=>setTimeout(r,20));

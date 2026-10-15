@@ -1,3 +1,4 @@
+// Compatibility renderer regression; this suite is not default React acceptance.
 /** Authored sources and injected replies only. No browser, model, CLI or media. */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -9,7 +10,7 @@ import {passageReadingFixture} from './helpers/passage-reading-fixture.mjs';
 const C=createRequire(import.meta.url)('../reader/core.js'),root=new URL('../',import.meta.url),KEY='coconut-reader-v1';
 function fixture(title='Authored passage questions') {const doc=passageReadingFixture();doc.title=title;doc.segments=doc.segments.slice(0,120);return doc;}
 function setup(saved){
- const w=new Window({url:'http://127.0.0.1:8080/'});w.document.body.innerHTML=fs.readFileSync(new URL('reader/index.html',root),'utf8').split('<body>')[1].split('</body>')[0];
+ const w=new Window({url:'http://127.0.0.1:8080/'});w.document.body.innerHTML=fs.readFileSync(new URL('reader/compatibility.html',root),'utf8').split('<body>')[1].split('</body>')[0];
  Object.defineProperty(w,'crypto',{value:webcrypto});if(saved)w.localStorage.setItem(KEY,saved);
  w.coconutUpdates={state:async()=>({status:'idle',version:'test',arch:'arm64'}),subscribe:()=>{}};
  const requests=[],reads=[];let release=null,hold=false,answerOverride=null;

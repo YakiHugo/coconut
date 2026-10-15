@@ -1,3 +1,4 @@
+// Compatibility renderer regression; this suite is not default React acceptance.
 /** GitHub Actions-only native file import and actual SRT/VTT/Markdown downloads.
  * Authored local prose, production IndexedDB and real keyboard/checkbox actions.
  * No model, provider, upload, storage injection, Electron or user browser. */
@@ -53,7 +54,7 @@ async function originalExports(width,label,doc){
 try{
  server=createServer(async(req,res)=>{
   if(!['GET','HEAD'].includes(req.method)){mutations++;res.writeHead(405).end();return;}
-  const pathname=new URL(req.url,'http://localhost').pathname,file=pathname==='/'?'index.html':pathname.slice(1);
+  const pathname=new URL(req.url,'http://localhost').pathname,file=pathname==='/'?'compatibility.html':pathname.slice(1);
   if(!/^[a-z-]+\.(html|js|css|webmanifest|png)$/.test(file)){res.writeHead(404,{'Content-Type':'application/json'}).end('{"error":"static only"}');return;}
   try{const body=await fs.readFile(new URL(file,root));res.writeHead(200,{'Content-Type':file.endsWith('.js')?'text/javascript':file.endsWith('.css')?'text/css':file.endsWith('.png')?'image/png':'text/html'}).end(body);}catch{res.writeHead(404).end();}
  });

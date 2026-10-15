@@ -1,3 +1,4 @@
+// Compatibility renderer regression; this suite is not default React acceptance.
 /** Authored same-origin service fixture in real Chromium. This proves the UI
  * and HTTP contract, NOT a real TLS proxy, owner login, or cross-network phone. */
 import assert from 'node:assert/strict';
@@ -21,7 +22,7 @@ export async function privateClientBrowser(browser){
   }
   if(url.pathname==='/api/v1/tasks/synthetic-task')return json({protocolVersion:1,task});
   if(url.pathname.startsWith('/api/'))return route.fulfill({status:404,contentType:'application/json',body:'{"error":"synthetic unsupported endpoint"}'});
-  const filename=url.pathname==='/'?'index.html':url.pathname.slice(1);
+  const filename=url.pathname==='/'?'compatibility.html':url.pathname.slice(1);
   if(!/^[a-z-]+\.(html|js|css|png)$/.test(filename))return route.abort();
   try{return await route.fulfill({status:200,contentType:filename.endsWith('.js')?'text/javascript':filename.endsWith('.css')?'text/css':filename.endsWith('.png')?'image/png':'text/html',body:await fs.readFile(new URL('../../reader/'+filename,import.meta.url))});}catch{return route.fulfill({status:404,body:''});}
  });

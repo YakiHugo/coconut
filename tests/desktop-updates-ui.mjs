@@ -1,3 +1,4 @@
+// Compatibility update UI regression; React native update controller is tested separately.
 /** Real isolated Electron UI, authored fixtures only; no account/model/network work. */
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
@@ -24,7 +25,7 @@ await runNativeUpdateFixture({getApplication:()=>application,run:async mark=>{
   application=await electron.launch({executablePath:path.join(root,'desktop/node_modules/electron/dist/Electron.app/Contents/MacOS/Electron'),args:[path.join(root,'desktop'),'--user-data-dir='+profile],chromiumSandbox:true,
    env:{HOME:home,TMPDIR:temporary,PATH:'/usr/bin:/bin'},timeout:45000});
   mark(label+':first-window');
-  const page=await application.firstWindow();await page.waitForLoadState('domcontentloaded');
+  const page=await application.firstWindow();await page.waitForLoadState('domcontentloaded');await page.locator('.react-app').waitFor();await page.goto('http://127.0.0.1:47831/compatibility.html');
   mark(label+':storage-ready');
   await installStorageAssertions(page);await nativeReady(page);return page;
  };

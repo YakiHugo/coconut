@@ -1,3 +1,4 @@
+// Compatibility renderer regression; this suite is not default React acceptance.
 /** CI-only real Chromium acceptance for transcript-first local-media association.
  * Native files contain authored SRT and PCM tones only. All persistence evidence
  * is read from production IndexedDB; media/files stay in a temporary directory.
@@ -160,7 +161,7 @@ try {
   await fs.writeFile(subtitles, Array.from({length: 16}, (_, index) => `${index+1}\n00:00:${String(index*2).padStart(2,'0')},000 --> 00:00:${String(index*2+2).padStart(2,'0')},000\nAuthored sentence ${index+1} keeps its original words and source timestamps.\n`).join('\n'));
   const reader = new URL('../reader/', import.meta.url);
   server = createServer(async (req, res) => {
-    const name = new URL(req.url, 'http://localhost').pathname.slice(1) || 'index.html';
+    const name = new URL(req.url, 'http://localhost').pathname.slice(1) || 'compatibility.html';
     if (!['GET','HEAD'].includes(req.method)) {mutations++; res.writeHead(405).end(); return;}
     if (name.startsWith('api/')) apiRequests.push(name);
     if (!/^[a-z-]+\.(html|js|css|png)$/.test(name)) {res.writeHead(404).end(); return;}
