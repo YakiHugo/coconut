@@ -96,6 +96,11 @@ jobs:
         env:
           COCONUT_UI_SCREENSHOTS: ${{ runner.temp }}/coconut-authored-ui
         run: node tests/transcript-navigator-browser.mjs
+      - name: Verify opt-in transient provider error details
+        if: ${{ !cancelled() && steps.browser_setup.outcome == 'success' }}
+        env:
+          COCONUT_UI_SCREENSHOTS: ${{ runner.temp }}/coconut-authored-ui
+        run: node tests/reader-provider-errors-browser.mjs
       - name: Verify short source first viewport and reachable narrow reading controls
         if: ${{ !cancelled() && steps.browser_setup.outcome == 'success' }}
         env:
@@ -359,6 +364,7 @@ jobs:
             ${{ runner.temp }}/coconut-authored-ui/web-browser-acceptance-checks.json
             ${{ runner.temp }}/coconut-authored-ui/caption-recovery-checks.json
             ${{ runner.temp }}/coconut-authored-ui/private-owner-checks.json
+            ${{ runner.temp }}/coconut-authored-ui/provider-errors-checks.json
             ${{ runner.temp }}/coconut-authored-ui/keyboard-escape-composition.json
             ${{ runner.temp }}/coconut-authored-ui/compact-library-failure.png
           if-no-files-found: ignore

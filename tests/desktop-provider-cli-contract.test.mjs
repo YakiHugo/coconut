@@ -13,7 +13,8 @@ test('real process transport preserves explicit model, tool denials and stdin-on
   const binary=path.join(directory,provider),log=path.join(directory,provider+'.jsonl');
   await writeFile(binary,`#!${process.execPath}
 const fs=require('node:fs');const args=process.argv.slice(2);const provider=${JSON.stringify(provider)};
-if(args.includes('--help')){console.log(${JSON.stringify('--ephemeral --ignore-user-config --ignore-rules --output-schema --sandbox --model '+CLAUDE_REQUIRED_FLAGS.join(' '))});}
+if(provider==='claude' && args.at(-1)==='--max-turns' && args.includes('--help')){console.error("error: option '--max-turns <turns>' argument missing");process.exitCode=1;}
+else if(args.includes('--help')){console.log(${JSON.stringify('--ephemeral --ignore-user-config --ignore-rules --output-schema --sandbox --model '+CLAUDE_REQUIRED_FLAGS.filter(flag=>flag!=='--max-turns').join(' '))});}
 else if(args[0]==='features'){console.log(${JSON.stringify(CODEX_DISABLED.join('\n'))});}
 else if(args[0]==='login'){console.error('Logged in using ChatGPT');}
 else if(args.includes('auth')){console.log(JSON.stringify({loggedIn:true,authMethod:'claude.ai'}));}
@@ -30,7 +31,7 @@ else console.log(JSON.stringify({type:'result',subtype:'success',is_error:false,
   assert.equal(request.args.some(arg=>arg.includes('Private authored source')),false);assert.match(request.input,/Private authored source/);
   assert.equal(request.credential,undefined);assert.equal(request.args.includes('--fallback-model'),false);
   if(provider==='codex'){assert.equal(request.args.at(-1),'-');assert.ok(request.args.includes('forced_login_method="chatgpt"'));}
-  else{assert.equal(request.args[request.args.indexOf('--tools')+1],'');assert.ok(request.args.includes('--no-session-persistence'));}
+  else{assert.equal(request.args[request.args.indexOf('--tools')+1],'');assert.ok(request.args.includes('--no-session-persistence'));assert.equal(request.args[request.args.indexOf('--max-turns')+1],'1');}
   await assert.rejects(readFile(path.join(request.cwd,'response.schema.json')),{code:'ENOENT'});
  }
 });

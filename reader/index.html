@@ -8,7 +8,7 @@
 <meta name="theme-color" content="#faf9f7">
 <link rel="icon" type="image/png" href="coconut-mark.png">
 <script src="appearance.js?v=86ea922669"></script>
-<link rel="stylesheet" href="style.css?v=d1138e0ca2">
+<link rel="stylesheet" href="style.css?v=3aaba199d8">
 <script src="summary.js?v=a744b5ed79" defer></script>
 <script src="client-capabilities.js?v=61961bc583" defer></script>
 <script src="task-client.js?v=bb7d5fe9f6" defer></script>
@@ -23,7 +23,7 @@
 <script src="storage-provider.js?v=8e758b7d9f" defer></script>
 <script src="app.js?v=1fecdb182b" type="text/coconut-pending" data-reader-script>
 </script>
-<script src="language.js?v=76f75a1eb2" type="text/coconut-pending" data-reader-script></script>
+<script src="language.js?v=357ce6bdf2" type="text/coconut-pending" data-reader-script></script>
 <script src="background-summary.js?v=d7eef6ba67" type="text/coconut-pending" data-reader-script></script>
 <script src="translation-review.js?v=e8289ebd90" type="text/coconut-pending" data-reader-script></script>
 <script src="podcasts.js?v=d3db57978f" type="text/coconut-pending" data-reader-script></script>
@@ -322,7 +322,7 @@ cd coconut
 <label class="ai-consent"><input id="ai-consent" type="checkbox"><span id="ai-consent-copy">同意将上述原文发送给所选提供商，并使用我的订阅额度；请求可能消耗已启用的额外付费额度，Coconut 无法核验提供商计费。</span></label>
 <div class="ai-submit-actions"><button id="subscription-translate" class="primary" disabled hidden>翻译原文</button><button id="ask-ai" class="primary" disabled>发送问题</button></div>
 <div class="ai-run-controls"><button id="stop-question" type="button" hidden>取消接收本次回答</button><button id="stop-subscription-translation" hidden>停止后续翻译</button><button id="stop-summary" type="button" hidden>停止后续摘要</button><button id="stop-translation" hidden>停止后续离线批次</button></div>
-<p id="ai-progress" role="status"></p><p id="language-status" role="status" class="hint" hidden>连接本地服务后可翻译；现有译文可直接阅读与备份。</p>
+<p id="ai-progress" role="status"></p><details id="local-provider-error" hidden><summary>查看本次本机错误详情</summary><p class="hint">仅本次页面临时保留，可能含任务片段或未识别的私人信息；请勿直接分享。不会写入历史或导出。</p><pre id="local-provider-error-text"></pre></details><p id="language-status" role="status" class="hint" hidden>连接本地服务后可翻译；现有译文可直接阅读与备份。</p>
 </section></div>
 <section id="ai-history" aria-labelledby="ai-history-heading">
 <h3 id="ai-history-heading" tabindex="-1">AI 阅读历史</h3>

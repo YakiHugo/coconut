@@ -108,3 +108,16 @@ test('diagnostic path delimiters include punctuation without stripping ordinary 
  assert.equal(remoteDiagnostic('failed:/root/private/file; retry'),'failed:[本机路径]; retry');
  assert.equal(remoteDiagnostic('See https://example.test/help for instructions'),'See https://example.test/help for instructions');
 });
+test('provider transient unknown details are local-only while safe status reaches private owner',async t=>{
+ const {providerFailure}=await import('../desktop/provider-errors.mjs');
+ const failure=providerFailure('codex',{code:1,stdout:JSON.stringify({type:'turn.failed',error:{message:'Unknown private diagnostic',code:'unknown_provider_code',status_code:503}})});
+ assert.ok(!JSON.stringify(failure).includes('Unknown private diagnostic'));
+ const {post,request,server}=await setup(t,{providers:{ask:async()=>{throw failure;}}});
+ const remote=await post('/api/ask',{consent:true});
+ assert.equal(remote.status,400);assert.ok(!remote.text.includes('Unknown private diagnostic'));assert.equal(remote.data().localProviderDetails,undefined);
+ assert.equal(remote.data().providerDiagnostics.upstreamStatus,503);
+ const local=await request('/api/ask',{method:'POST',remote:false,body:{consent:true},extra:{Origin:'http://127.0.0.1:'+server.address().port}});
+ assert.equal(local.data().localProviderDetails.message,'Unknown private diagnostic');
+ assert.equal(local.data().localProviderDetails.upstreamCode,'unknown_provider_code');
+ assert.ok(!local.data().error.includes('Unknown private diagnostic'));
+});

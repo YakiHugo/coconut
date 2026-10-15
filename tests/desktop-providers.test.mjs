@@ -164,11 +164,14 @@ test('model choice is carried through translation results for both providers',as
     assert.equal(calls.at(-1).args[calls.at(-1).args.indexOf('--model')+1],'authored-model');
   }
 });
-test('unsupported Claude contract fails at read-only preflight before auth or inference',async()=>{
+test('unconfirmed Claude help contract stops before auth or inference without claiming flags are unsupported',async()=>{
   for(const missing of CLAUDE_REQUIRED_FLAGS){
     const calls=[];const providers=createProviders({find:async()=>'/cli/claude',run:async(binary,args)=>{calls.push(args);return {code:0,stdout:CLAUDE_REQUIRED_FLAGS.filter(flag=>flag!==missing).join(' ')};}});
-    assert.equal((await providers.status('claude')).ready,false);
-    assert.equal(calls.length,1);assert.ok(calls[0].includes('--help'));assert.ok(!calls[0].includes('--print'));
+    const status=await providers.status('claude');
+    assert.equal(status.ready,false);
+    assert.match(status.reason,/帮助信息可能省略选项/);assert.match(status.reason,/--safe-mode 从 2\.1\.169 起提供/);
+    assert.match(status.reason,/尚未检查登录或额度/);assert.doesNotMatch(status.reason,/缺少所需/);
+    assert.equal(calls.length,['--safe-mode','--max-turns'].includes(missing)?2:1);assert.ok(calls[0].includes('--help'));assert.ok(calls.every(args=>!args.includes('--print')&&!args.includes('auth')));
   }
 });
 test('Claude rejects incomplete, failed, interrupted and non-result envelopes even with valid answer',async()=>{
@@ -194,4 +197,51 @@ test('Claude invocation requests refusal instead of model switching and clears f
   const {providers,calls}=fixture();await providers.ask({...question,provider:'claude',model:'authored-model'});
   for(const call of calls){const index=call.args.indexOf('--settings');assert.notEqual(index,-1);
     assert.deepEqual(JSON.parse(call.args[index+1]),{disableAllHooks:true,switchModelsOnFlag:false,fallbackModel:[]});}
+});
+test('structured failure reaches caller, while cancellation wins over a late CLI failure',async()=>{
+ const {providers}=fixture(undefined,{invoke:async()=>({code:1,stdout:JSON.stringify({type:'turn.failed',error:{message:'Request failed',code:'request_failed'}})})});
+ await assert.rejects(providers.ask(question),error=>error.code==='provider_failed'&&error.providerDiagnostics.upstreamCode==='request_failed');
+ const controller=new AbortController();
+ const cancelled=fixture(undefined,{invoke:async()=>{controller.abort();return {code:1,stdout:JSON.stringify({type:'error',message:'Late failure'})};}});
+ await assert.rejects(cancelled.providers.ask(question,{signal:controller.signal}),error=>/已取消/.test(error.message)&&!error.providerDiagnostics);
+});
+
+test('failed Claude help check stays closed and never forwards diagnostic output',async()=>{
+  const calls=[];const providers=createProviders({find:async()=>'/cli/claude',run:async(binary,args)=>{
+    calls.push(args);return {code:1,stdout:CLAUDE_REQUIRED_FLAGS.join(' '),stderr:'private diagnostic details'};
+  }});
+  const status=await providers.status('claude');
+  assert.equal(status.ready,false);assert.match(status.reason,/无法通过.*帮助检查/);
+  assert.doesNotMatch(status.reason,/private diagnostic details/);
+  assert.equal(calls.length,1);assert.ok(calls[0].includes('--help'));
+});
+
+test('hidden max-turns requires precise missing-value parser evidence before auth',async()=>{
+ const help=CLAUDE_REQUIRED_FLAGS.filter(flag=>flag!=='--max-turns').join(' ');
+ const exact={code:1,stdout:'',stderr:"error: option '--max-turns <turns>' argument missing"};
+ for(const probe of [exact,{...exact,code:0},{...exact,code:2},{...exact,stdout:'unexpected'},
+   {...exact,stderr:'unknown option --max-turns'},{...exact,stderr:exact.stderr+' extra'},
+   {code:0,stdout:help,stderr:''},{code:1,stdout:'',stderr:''}]){
+  const calls=[];const providers=createProviders({find:async()=>'/cli/claude',run:async(binary,args,options)=>{
+   calls.push({args,options});if(args.includes('auth'))return {code:0,stdout:JSON.stringify({loggedIn:true,authMethod:'claude.ai'})};
+   return args.at(-1)==='--max-turns'?probe:{code:0,stdout:help};
+  }});
+  assert.equal((await providers.status('claude')).ready,probe===exact);
+  assert.equal(calls.length,probe===exact?3:2);
+  assert.deepEqual(calls[1].args.slice(-2),['--help','--max-turns']);
+  assert.ok(calls.every(({args,options})=>!args.includes('--print')&&!options.input));
+ }
+});
+test('missing safe-mode reports known old version but never trusts unknown or newer versions',async()=>{
+ for(const version of ['2.1.150 (Claude Code)','2.1.168 (Claude Code)','1.9.999 (Claude Code)',
+  '2.1.169 (Claude Code)','3.0.0 (Claude Code)','unknown','2.1.150','2.1.150-beta (Claude Code)']){
+  const calls=[];const providers=createProviders({find:async()=>'/cli/claude',run:async(binary,args)=>{
+   calls.push(args);return {code:0,stdout:args.includes('--version')?version:CLAUDE_REQUIRED_FLAGS.filter(flag=>!['--safe-mode','--max-turns'].includes(flag)).join(' ')};
+  }});
+  const status=await providers.status('claude');assert.equal(status.ready,false);
+  assert.equal(calls.length,2);assert.equal(calls[1].at(-1),'--version');
+  if(['2.1.150 (Claude Code)','2.1.168 (Claude Code)','1.9.999 (Claude Code)'].includes(version))assert.match(status.reason,/检测到 Claude Code/);
+  else assert.match(status.reason,/无法通过.*帮助检查/);
+  assert.ok(calls.every(args=>!args.includes('auth')&&!args.includes('--print')));
+ }
 });
