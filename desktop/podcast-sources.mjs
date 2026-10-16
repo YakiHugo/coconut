@@ -340,6 +340,19 @@ export function createPodcastSources({fetchResource=fetchPublic,now=Date.now}={}
       podcast_source:{feed_url:current.feed_url,episode_id:episode.id,transcript_url:transcript.url,...(medium?{media_url:medium.url,media_kind:medium.kind}:{})}};
     return {status:'ready',document,episode,feed_url:current.feed_url,feed_checked_at:current.feed_checked_at,feed_reused:current.feed_reused};
   }
+  async function openEpisodeMedia(data,{signal}={}) {
+    if(data&&Object.hasOwn(data,'transcriptUrl'))throw new Error('仅打开原始媒体时不能指定文字稿');
+    // This explicit choice only resolves publisher metadata. Even an advertised
+    // transcript is untouched, and acquiring media still needs downloadMedia's
+    // separate fresh-feed validation and bounded fetch.
+    const {current,episode}=await chosen(data,signal,true);
+    checkSignal(signal);
+    const medium=episode.media[0];
+    if(!medium)throw new Error('所选单集没有可用的公开音视频 enclosure，请刷新来源后重选');
+    if(episode.duration>PODCAST_LIMITS.duration)throw new Error('此单集时长超过6小时');
+    if(medium.length>PODCAST_LIMITS.mediaBytes)throw new Error('发布者声明的媒体超过下载大小上限（最多200 MiB）');
+    return {status:'needs_transcription',episode,feed_url:current.feed_url,feed_checked_at:current.feed_checked_at,feed_reused:current.feed_reused};
+  }
   async function downloadMedia(data,{signal}={}) {
     const maxBytes=data?.maxBytes??PODCAST_LIMITS.mediaBytes;
     if(!Number.isSafeInteger(maxBytes)||maxBytes<1||maxBytes>PODCAST_LIMITS.mediaBytes)throw new Error('媒体下载大小上限无效');
@@ -369,5 +382,5 @@ export function createPodcastSources({fetchResource=fetchPublic,now=Date.now}={}
     snapshots.clear();
     const ticket=beginRefresh(url);
     return bounded(()=>discover(data,options,ticket));
-  },importEpisode:(...args)=>bounded(()=>importEpisode(...args)),downloadMedia:(...args)=>bounded(()=>downloadMedia(...args))};
+  },importEpisode:(...args)=>bounded(()=>importEpisode(...args)),openEpisodeMedia:(...args)=>bounded(()=>openEpisodeMedia(...args)),downloadMedia:(...args)=>bounded(()=>downloadMedia(...args))};
 }

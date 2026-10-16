@@ -1,7 +1,7 @@
 import type {AppStore} from './store';
 import type {Document} from './contracts';
 import type {Episode, Ingestion} from './ingestion';
-export type SourceAttempt = {url:string; language?:string; episode?:Episode; feed?:string; track?:string};
+export type SourceAttempt = {url:string; language?:string; episode?:Episode; feed?:string; track?:string; intent?:'media_only'};
 export type DiscoverySession = {
     url:string; catalogQuery:string; selection:Ingestion['selection']|null;
     tracks:Record<string,string>; attempt:SourceAttempt|null; error:string;
