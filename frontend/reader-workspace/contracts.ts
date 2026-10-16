@@ -68,6 +68,15 @@ export interface ReaderSnapshot {
 }
 export interface ReaderView {documentKey:string;cueId:string;mode:'transcript'|'passages'|'summary'}
 export interface ReaderResumePosition {identity:string;time:number;duration:number}
+export type ReaderSourceTarget =
+    | {kind:'cue';cueId:string}
+    | {kind:'exact-excerpt';excerptId:string;cueId:string|null;freshness:'current'|'stale'|'missing'}
+    | {kind:'bookmark';bookmarkId:string;time:number}
+    | {kind:'project-note'};
+export type ReaderNavigationRequest = {id:number;documentKey:string;revision:number} & (
+    | {cueId:string;source?:never}
+    | {cueId?:never;source:{document:ReaderDocument;target:ReaderSourceTarget}}
+);
 export interface ReaderWorkspaceProps extends ReaderSnapshot {
     shortcutsEnabled?:boolean;
     onOpenSummary?:()=>void;
@@ -76,7 +85,8 @@ export interface ReaderWorkspaceProps extends ReaderSnapshot {
     resumePosition?:ReaderResumePosition|null;
     onVisibleSelection?:(selection:{key:string;revision:number;cueIds:string[]})=>void;
     onReviewTranslation?:(cueId:string)=>void;
-    navigationRequest?:{id:number;cueId:string;documentKey:string;revision:number}|null;
+    navigationRequest?:ReaderNavigationRequest|null;
+    onNavigationHandled?:(request:ReaderNavigationRequest)=>void;
     onSaveDocument(next: ReaderDocument, expected: {
         key: string;
         revision: number;

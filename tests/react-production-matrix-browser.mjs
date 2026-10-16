@@ -13,6 +13,7 @@ import {tmpdir} from 'node:os';
 import path from 'node:path';
 import {chromium,expect} from '@playwright/test';
 import {encodingFixtures,bytesFor} from './helpers/subtitle-encoding-fixtures.mjs';
+import {notebookSources} from './helpers/notebook-source-fixtures.mjs';
 
 const output=process.env.COCONUT_REACT_ARTIFACTS||'/tmp/coconut-react-authored';
 const root=await mkdtemp(path.join(tmpdir(),'coconut-react-matrix-'));
@@ -195,6 +196,29 @@ try{
  await rp.getByRole('button',{name:'发现与添加',exact:true}).click();const urlInput=rp.getByRole('textbox',{name:'播客或视频链接'});await urlInput.focus();assert.equal(await urlInput.evaluate(node=>{const e=new KeyboardEvent('keydown',{key:'f',ctrlKey:true,bubbles:true,cancelable:true});node.dispatchEvent(e);return e.defaultPrevented;}),false);assert.equal(readingService.asks.length,0);
  pass('Legacy preference keys persist and synchronize; saved summary restores scope/provenance; real keyboard input, IME, modal and focus boundaries',{media:'Authored WAV through explicitly mocked native receipt, actual browser playback'});await reading.context.close();contexts.delete(reading.context);await readingService.close();
 
+
+ stage='Notebook captured source navigation and preserved reading return';
+ for(const width of [1360,390]){
+  const fixtures=notebookSources(core),viewKey='coconut-reading-view-defaults-v1',view=JSON.stringify({version:1,views:fixtures.documents.filter(doc=>doc.segments.length).map(doc=>[doc.key,'cue-3','summary'])});
+  delete fixtures.audio.podcast_source;fixtures.audio.local_media_source={version:1,kind:'audio',name:'Authored native mock',size:wav(150).length,last_modified:1,type:'audio/wav',fingerprint:'b'.repeat(64)};for(const document of fixtures.documents)core.validate(document);
+  const service=await startService('notebook-'+width),notebook=await contextFor(service,{width,bridge:true,remembered:[fixtures.audio.key],preferences:{[viewKey]:view},seed:JSON.stringify({documents:fixtures.documents,active:fixtures.long.key})}),page=notebook.page;
+  const openNotebook=async query=>{await page.getByRole('button',{name:/^我的内容/}).click();await page.getByRole('button',{name:'笔记与摘录',exact:true}).click();await page.getByRole('searchbox',{name:'查找内容',exact:true}).fill(query);await expect(page.getByRole('button',{name:'打开来源',exact:true})).toHaveCount(1);};
+  await openNotebook('Needle cue note');await page.locator('.library-page input[type=checkbox]').check();await page.getByRole('button',{name:'打开来源',exact:true}).click();
+  await expect(page.locator('[data-source-id="cue-80"]')).toBeFocused();await expect(page.locator('.rw-current')).toHaveAttribute('data-cue-id','cue-80');await expect(page.locator('[data-cue-id="cue-80"] details')).toHaveAttribute('open');await expect(page.getByRole('navigation',{name:'片段分页'})).toContainText('第 2 / 2 页');await shot(page,'notebook-source',width);assert.deepEqual(JSON.parse(await page.evaluate(key=>localStorage.getItem(key),viewKey)).views.sort(),JSON.parse(view).views.sort());
+  await page.goBack();await expect(page.getByRole('searchbox',{name:'查找内容',exact:true})).toHaveValue('Needle cue note');await expect(page.locator('.library-page input[type=checkbox]')).toBeChecked();await expect(page.getByRole('button',{name:'打开来源',exact:true})).toBeFocused();await page.getByRole('button',{name:'打开来源',exact:true}).click();await expect(page.locator('[data-source-id="cue-80"]')).toBeFocused();
+  await page.getByRole('textbox',{name:'01:20 的笔记',exact:true}).fill('Unsubmitted notebook draft');await expect(page.getByRole('button',{name:/^我的内容/})).toBeDisabled();await page.goBack();await expect(page.getByRole('textbox',{name:'01:20 的笔记',exact:true})).toHaveValue('Unsubmitted notebook draft');await expect(page).toHaveURL(/#read\/notebook-long$/);await page.getByRole('button',{name:'取消修改',exact:true}).click();
+  await openNotebook('Needle cue note');await page.getByRole('button',{name:'内容',exact:true}).click();await page.getByRole('searchbox',{name:'查找内容',exact:true}).fill(fixtures.long.title);await page.locator('.library-page li button').filter({hasText:fixtures.long.title}).click();await expect(page.locator('.reader-workspace label').filter({hasText:/^阅读方式/}).locator('select')).toHaveValue('summary');assert.deepEqual(JSON.parse(await page.evaluate(key=>localStorage.getItem(key),viewKey)).views.sort(),JSON.parse(view).views.sort());
+  for(const kind of ['current','stale','missing','reordered']){
+   await openNotebook('Needle '+kind+' excerpt');await page.getByRole('button',{name:'打开来源',exact:true}).click();
+   if(kind==='current'||kind==='stale'){await expect(page.locator('[data-source-id="cue-80"]')).toBeFocused();await expect(page.locator('.reader-workspace > p[role=status]')).toContainText(kind==='stale'?'来源已更新':'当前原文');}
+   else {await expect(page.locator('[data-excerpt-id="excerpt-'+kind+'"]')).toBeFocused();await expect(page.locator('.reader-workspace > p[role=status]')).toContainText('未猜测当前原文');}
+   assert.deepEqual((await record(service,'notebook-'+kind)).document.exact_excerpts,fixtures.excerpts.find(doc=>doc.key==='notebook-'+kind).exact_excerpts);
+  }
+  await openNotebook('Needle bookmark');await page.getByRole('button',{name:'打开来源',exact:true}).click();await expect(page.locator('[data-bookmark-id="bookmark-75"] > button').first()).toBeFocused();await expect.poll(()=>page.locator('audio').evaluate(player=>player.duration)).toBe(150);assert.equal(await page.locator('audio').evaluate(player=>player.currentTime),0,'Late media attachment must not inherit a deferred seek');assert.equal(await page.locator('audio').evaluate(player=>player.paused),true);
+  await openNotebook('Needle bookmark');await page.getByRole('button',{name:'打开来源',exact:true}).click();await expect(page.locator('[data-bookmark-id="bookmark-75"] > button').first()).toBeFocused();await expect.poll(()=>page.locator('audio').evaluate(player=>player.currentTime)).toBe(75);assert.equal(await page.locator('audio').evaluate(player=>player.paused),true);await expect(page.locator('.reader-workspace > p[role=status]')).toContainText('未自动播放');
+  await openNotebook('Needle project note');await page.getByRole('button',{name:'打开来源',exact:true}).click();await expect(page.getByRole('textbox',{name:'项目笔记',exact:true})).toBeFocused();assert.equal(await page.locator('audio').evaluate(player=>player.paused),true);assert.deepEqual(JSON.parse(await page.evaluate(key=>localStorage.getItem(key),viewKey)).views.sort(),JSON.parse(view).views.sort());
+  assert.deepEqual(service.asks,[]);pass('Notebook opens owned cue/excerpt/bookmark/project targets, retains query and normal reading return, guards dirty browser Back and never autoplays',{width,source:'authored fixtures',media:'authored WAV with explicit native mock'});await notebook.context.close();contexts.delete(notebook.context);await service.close();
+ }
 
  stage='Large saved-summary evidence is lazy and paged without truncating exports';
  const longDoc={...core.validate({title:'Authored ten-thousand-cue summary',segments:Array.from({length:10000},(_,i)=>({id:'long-summary-'+i,start:i,end:i+1,text:'Historical authored source '+i+'.'}))}),key:'matrix-summary-long'};
