@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { ReaderCue, ReaderDocument, ReaderWorkspaceProps } from './contracts';
+import type { ReaderCue, ReaderDocument, ReaderWorkspaceProps, ReaderSourceTarget } from './contracts';
 import { captureSourceSelection, filterCues, time, type SourceSelection } from './domain';
 import { ReaderPlayer, type SeekIntent } from './player';
 import {ReaderSummary} from './summary';
@@ -38,13 +38,15 @@ const domain = () => (window as unknown as {
 const PAGE = 50;
 const UNCONFIRMED_SAVE = '尚未保存。内容可能已更新或存储暂不可用，请保留草稿后重试。';
 export function ReaderWorkspace(props: ReaderWorkspaceProps) { return <WorkspaceSession key={props.document.key} {...props}/>; }
-function WorkspaceSession({ document: doc, revision, media, onSaveDocument, onReadingPosition, onRequestAi, onDirtyChange, onMediaProgress, saveStatus, onVisibleSelection, onReviewTranslation, navigationRequest, initialView, onViewChange, resumePosition, shortcutsEnabled=false, onOpenSummary }: ReaderWorkspaceProps) {
+function WorkspaceSession({ document: doc, revision, media, onSaveDocument, onReadingPosition, onRequestAi, onDirtyChange, onMediaProgress, saveStatus, onVisibleSelection, onReviewTranslation, navigationRequest, onNavigationHandled, initialView, onViewChange, resumePosition, shortcutsEnabled=false, onOpenSummary }: ReaderWorkspaceProps) {
     const validInitialView=initialView?.documentKey===doc.key&&doc.segments.some(cue=>cue.id===initialView.cueId)?initialView:null;
     const initialCue=validInitialView?.cueId||doc.readingPosition||doc.segments[0]?.id||'';
     const temporaryNavigation=useRef(false),viewCallback=useRef(onViewChange);viewCallback.current=onViewChange;
     const [mode, setMode] = useState<'transcript'|'passages'|'summary'>(validInitialView?.mode||'transcript'), [annotationDirty, setAnnotationDirty] = useState(false), [correctionDirty, setCorrectionDirty] = useState(false), [query, setQuery] = useState(''), [notesOnly, setNotesOnly] = useState(false), [speaker, setSpeaker] = useState<string | null>(null), [page, setPage] = useState(Math.floor(Math.max(0, doc.segments.findIndex(c => c.id === initialCue)) / PAGE)), [position, setPosition] = useState(initialCue), [clock, setClock] = useState(0), [follow, setFollow] = useState(false), [seek, setSeek] = useState<SeekIntent | null>(null), [status, setStatus] = useState(''), [busy, setBusy] = useState(false), [drafts, setDrafts] = useState<Record<string, string>>({}), [projectDraft, setProjectDraft] = useState<string | null>(null), [offset, setOffset] = useState(''), [offsetStarted,setOffsetStarted]=useState(false), [jump, setJump] = useState(''), [selection, setSelection] = useState<(SourceSelection & {
         revision: number;
     }) | null>(null);
+    const handledNavigation=useRef<ReaderWorkspaceProps['navigationRequest']>(null);
+    const [sourceFocus,setSourceFocus]=useState<{id:number;target:ReaderSourceTarget}|null>(null);
     const scopeRef=useRef<HTMLElement|null>(null),searchRef=useRef<HTMLInputElement|null>(null),helpClose=useRef<HTMLButtonElement|null>(null),helpDialog=useRef<HTMLDialogElement|null>(null);
     const [keyboardHelp,setKeyboardHelp]=useState(false);
     const readingReturn=useRef<{revision:number;mode:'transcript'|'passages';query:string;notesOnly:boolean;speaker:string|null;page:number;position:string}|null>(null);
@@ -124,7 +126,45 @@ function WorkspaceSession({ document: doc, revision, media, onSaveDocument, onRe
         setPosition(id);
         onReadingPosition(id);
     };
-    useEffect(()=>{const request=navigationRequest;if(request&&request.documentKey===doc.key&&request.revision===revision&&doc.segments.some(cue=>cue.id===request.cueId)){if(mode==='summary')navigateSummary(request.cueId);else locate(request.cueId,true);}},[navigationRequest?.id,doc.key,revision]);
+    useEffect(()=>{
+        const request=navigationRequest;
+        if(!request||handledNavigation.current===request)return;
+        handledNavigation.current=request;
+        if(request.documentKey!==doc.key||request.revision!==revision||(request.source&&request.source.document!==doc)||anyDirty||busy){
+            if(request.documentKey===doc.key)setStatus(anyDirty||busy?'请先保存或取消编辑，再定位来源。':'记录来源已变化，请返回笔记重新打开。');
+            onNavigationHandled?.(request);return;
+        }
+        if(request.source){
+            const target=request.source.target;
+            temporaryNavigation.current=true;setFollow(false);setSelection(null);
+            if(target.kind==='cue'||target.kind==='exact-excerpt'){
+                if(target.cueId&&doc.segments.some(cue=>cue.id===target.cueId)){
+                    setMode('transcript');setQuery('');setNotesOnly(false);setSpeaker(null);
+                    setPage(Math.floor(doc.segments.findIndex(cue=>cue.id===target.cueId)/PAGE));setPosition(target.cueId);
+                }
+                setStatus(target.kind==='exact-excerpt'?(target.cueId?(target.freshness==='current'?'已定位摘录的当前原文；摘录仍保留选取时快照。':'已定位当前原文；来源已更新，摘录仍是历史快照。'):'原片段已缺失或顺序已变化；已定位历史摘录，未猜测当前原文。'):'已定位笔记与摘录的原文片段。');
+            }else if(target.kind==='bookmark'){
+                if(media){seekTo(target.time);setStatus('已定位时间书签 '+time(target.time)+'，未自动播放。');}
+                else setStatus('已定位时间书签 '+time(target.time)+'。原声尚未载入，载入后请点击此书签定位。');
+            }else setStatus('已定位项目笔记。');
+            setSourceFocus({id:request.id,target});
+        }else if(doc.segments.some(cue=>cue.id===request.cueId)){
+            if(mode==='summary')navigateSummary(request.cueId);else locate(request.cueId,true);
+        }
+        onNavigationHandled?.(request);
+    },[navigationRequest,doc,revision,anyDirty,busy]);
+    useEffect(()=>{
+        const target=sourceFocus?.target;if(!target)return;
+        let element:HTMLElement|null=null;
+        if(target.kind==='cue'||(target.kind==='exact-excerpt'&&target.cueId)){
+            const row=host.current?.querySelector<HTMLElement>('[data-cue-id="'+CSS.escape(target.cueId!)+'"]');
+            if(target.kind==='cue'){const notes=row?.querySelector('details');if(notes)notes.open=true;}
+            element=row?.querySelector<HTMLElement>('.rw-original')||null;
+        }else if(target.kind==='exact-excerpt')element=scopeRef.current?.querySelector<HTMLElement>('[data-excerpt-id="'+CSS.escape(target.excerptId)+'"]')||null;
+        else if(target.kind==='bookmark')element=scopeRef.current?.querySelector<HTMLElement>('[data-bookmark-id="'+CSS.escape(target.bookmarkId)+'"] button')||null;
+        else element=scopeRef.current?.querySelector<HTMLElement>('[aria-label="项目笔记"]')||null;
+        element?.focus({preventScroll:true});element?.scrollIntoView?.({block:'center'});
+    },[sourceFocus]);
     useEffect(()=>{if((mode!=='summary'&&(query.trim()||notesOnly||speaker!==null))||temporaryNavigation.current)return;const cueId=shown.some(cue=>cue.id===position)?position:shown[0]?.id;if(cueId)viewCallback.current?.({documentKey:doc.key,cueId,mode});},[doc.key,position,visiblePage,visibleSignature,mode,query,notesOnly,speaker]);
     useEffect(() => {
         if (follow && activeCue) {
@@ -276,6 +316,6 @@ function WorkspaceSession({ document: doc, revision, media, onSaveDocument, onRe
             }}>复制原话</button><BilingualCapture doc={doc} selection={selection} disabled={busy || anyDirty} save={save} onClose={() => setSelection(null)}/><button onClick={() => setSelection(null)}>关闭</button></aside>}
  <section><h2>项目笔记</h2><textarea disabled={busy} aria-label="项目笔记" value={projectDraft ?? doc.project_note ?? ''} onChange={e => { startDraft(); setProjectDraft(e.target.value); }}/>{dirty && <div className="rw-toolbar"><button disabled={busy} onClick={saveDrafts}>保存笔记</button><button disabled={busy} onClick={() => { setDrafts({}); setProjectDraft(null); originalDraftRevision.current = null; }}>取消修改</button><span>未提交的草稿</span></div>}</section>
  <section><h2>时间书签</h2><button disabled={!media || busy || anyDirty} onClick={() => save({ ...doc, timestamp_bookmarks: [...(doc.timestamp_bookmarks || []), { id: crypto.randomUUID(), time: Math.round(clock * 1000) / 1000, note: '' }] })}>记录当前播放位置 · {time(clock)}</button></section>
- {Boolean(doc.exact_excerpts?.length) && <section><h2>保存的精确摘录</h2>{doc.exact_excerpts!.map(record => <section key={record.id}><p>{record.text}</p>{domain().exactExcerptTranslation(record) && <p>摘录时译文（{domain().exactExcerptTranslation(record)!.language}）：{domain().exactExcerptTranslation(record)!.text} <small>分别选取并确认对应，不等于人工核对译文。</small></p>}<small>原文核对：{{ current: '与当前来源一致', stale: '来源或译文已更新；保留选取时快照', missing: '原片段已不在当前文稿；保留快照' }[domain().exactExcerptFreshness(record, doc)] || '待核对'}</small>{doc.exact_excerpt_notes?.[record.id] && <p>{doc.exact_excerpt_notes[record.id]}</p>}</section>)}</section>}
+ {Boolean(doc.exact_excerpts?.length) && <section><h2>保存的精确摘录</h2>{doc.exact_excerpts!.map(record => <section key={record.id} data-excerpt-id={record.id} tabIndex={-1}><p>{record.text}</p>{domain().exactExcerptTranslation(record) && <p>摘录时译文（{domain().exactExcerptTranslation(record)!.language}）：{domain().exactExcerptTranslation(record)!.text} <small>分别选取并确认对应，不等于人工核对译文。</small></p>}<small>原文核对：{{ current: '与当前来源一致', stale: '来源或译文已更新；保留选取时快照', missing: '原片段已不在当前文稿；保留快照' }[domain().exactExcerptFreshness(record, doc)] || '待核对'}</small>{doc.exact_excerpt_notes?.[record.id] && <p>{doc.exact_excerpt_notes[record.id]}</p>}</section>)}</section>}
  <ReaderAnnotations doc={doc} revision={revision} disabled={busy || dirty || correctionDirty || calibrationDirty} save={save} locate={id=>locate(id,true)} seek={seekTo} position={position} dirty={reportAnnotation}/>{doc.segments.length > 0 && <SourceCorrections doc={doc} revision={revision} disabled={busy || dirty || annotationDirty || calibrationDirty} save={save} position={position} dirty={reportCorrection}/>}<button type="button" onClick={()=>setKeyboardHelp(true)}>阅读快捷键</button>{keyboardHelp&&<dialog ref={helpDialog} role="dialog" aria-modal="true" aria-label="阅读快捷键" onCancel={event=>{event.preventDefault();setKeyboardHelp(false);}} onClose={()=>setKeyboardHelp(false)} onKeyDown={event=>{if(event.key==='Tab'){event.preventDefault();helpClose.current?.focus();}if(event.key==='Escape'){event.preventDefault();event.stopPropagation();setKeyboardHelp(false);}}}><h2>阅读快捷键</h2><p>在阅读正文获得焦点时：/ 查找，J 后退5秒，L 前进5秒，K 播放/暂停，G 定位当前原话，? 显示帮助。Ctrl/⌘+F 在正文中查找。输入框、输入法和对话框中不接管这些键。</p><p>{shortcutsEnabled?'阅读快捷键已开启':'阅读快捷键已关闭；Ctrl/⌘+F 仍可在正文中查找。'}</p><button ref={helpClose} onClick={()=>setKeyboardHelp(false)}>关闭快捷键帮助</button></dialog>}<ReaderExports doc={doc} hasDrafts={anyDirty}/><p role="status" aria-live="polite">{status}</p></article>;
 }
