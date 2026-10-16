@@ -31,3 +31,25 @@ export function sourceDiscoveryFixture(){
     const service=createIngestionService({podcastSources:sources});
     return {state,calls,counts,service,sources};
 }
+
+export const audioFirstTrack='https://publisher.example.org/audio-first.vtt';
+export const audioFirstMedia='https://publisher.example.org/audio-first.wav';
+/** Broken advertised VTT and a valid 40-second WAV, both authored offline. */
+export function audioFirstFixture(){
+    const state={fixed:false,missingMedia:false,failFeed:false,failMedia:false,holdFeed:null,holdMedia:null,now:Date.parse('2026-10-15T12:00:00Z')},calls=[],counts={feed:0,transcript:0,media:0};
+    const wav=Buffer.alloc(44+16000*40);wav.write('RIFF');wav.writeUInt32LE(wav.length-8,4);wav.write('WAVEfmt ',8);wav.writeUInt32LE(16,16);wav.writeUInt16LE(1,20);wav.writeUInt16LE(1,22);wav.writeUInt32LE(8000,24);wav.writeUInt32LE(16000,28);wav.writeUInt16LE(2,32);wav.writeUInt16LE(16,34);wav.write('data',36);wav.writeUInt32LE(wav.length-44,40);
+    const rss=()=>`<rss xmlns:podcast="https://podcastindex.org/namespace/1.0"><channel><title>Authored audio-first show</title><language>en</language>
+    <item><guid>audio-first</guid><title>Authored audio-first episode</title><link>https://publisher.example.org/audio-first</link>${state.missingMedia?'':`<enclosure url="${audioFirstMedia}" type="audio/wav" length="${wav.length}"/>`}<podcast:transcript url="${audioFirstTrack}" type="text/vtt" language="en"/></item>
+    <item><guid>without-media</guid><title>Authored episode without audio</title><podcast:transcript url="${audioFirstTrack}" type="text/vtt" language="en"/></item></channel></rss>`;
+    const sources=createPodcastSources({now:()=>state.now,fetchResource:async(url,options)=>{
+        calls.push({url,signal:options.signal});
+        if(url===sourceFeed){counts.feed++;if(state.holdFeed)await state.holdFeed;}
+        if(url===audioFirstMedia){counts.media++;if(state.holdMedia)await state.holdMedia;}
+        if(options.signal?.aborted)throw new DOMException('Cancelled','AbortError');
+        if(url===sourceFeed){if(state.failFeed)throw Error('Authored feed temporarily unavailable');return {url,type:'application/rss+xml',body:Buffer.from(rss())};}
+        if(url===audioFirstTrack){counts.transcript++;return {url,type:'text/vtt',body:Buffer.from(state.fixed?'WEBVTT\n\n00:05.000 --> 00:08.000\nThe same audio project now has a reviewed transcript.\n':'Advertised transcript is not valid WebVTT.\n')};}
+        if(url===audioFirstMedia){if(state.failMedia)throw Error('Authored media unavailable');return {url,type:'audio/wav',body:wav};}
+        throw Error('Unapproved authored source: '+url);
+    }});
+    return {state,calls,counts,sources,service:createIngestionService({podcastSources:sources})};
+}

@@ -40,7 +40,12 @@ export function createIngestionService({podcastSources,captionService=null}={}){
  async function ingest(data,{signal}={}){
   checkAbort(signal);
   if(data?.protocolVersion!==1)throw new Error('导入协议版本无效');
+  if(data.intent!==undefined&&data.intent!=='media_only')throw new Error('导入意图无效');
   const source=inputSource(data.source);
+  if(data.intent==='media_only'){
+   if(source.kind!=='url'||!data.episode)throw new Error('仅可为明确选择的播客单集打开原始媒体');
+   if(Object.hasOwn(data,'transcript_url')||Object.hasOwn(data.episode,'transcript_url'))throw new Error('仅打开原始媒体时不能指定文字稿');
+  }
   const base={id:randomUUID(),source,media:null,transcript:null,project:null,selection:null,transcription:unavailableTranscription};
   const finish=fields=>{checkAbort(signal);return {protocolVersion:1,ingestion:{...base,...fields}};};
   if(source.kind==='file'){
@@ -60,7 +65,8 @@ export function createIngestionService({podcastSources,captionService=null}={}){
    // The adapter validates selection against its own recently checked RSS snapshot
    // (at most 60 seconds) or a fresh fetch, never client episode metadata.
    if(inputSource({kind:'url',url:episode.feed_url}).url!==source.url)throw new Error('单集来源与当前链接不一致');
-   const result=await podcastSources.importEpisode({feedUrl:episode.feed_url,episodeId:episode.episode_id,...(episode.transcript_url?{transcriptUrl:episode.transcript_url}:{})},{signal});
+   const selection={feedUrl:episode.feed_url,episodeId:episode.episode_id,...(episode.transcript_url?{transcriptUrl:episode.transcript_url}:{})};
+   const result=await (data.intent==='media_only'?podcastSources.openEpisodeMedia(selection,{signal}):podcastSources.importEpisode(selection,{signal}));
    return finish({state:result.status==='ready'?'ready':'needs_transcription',source:{...source,feed_url:result.feed_url,episode_id:result.episode.id,...(result.feed_checked_at?{feed_checked_at:result.feed_checked_at,feed_reused:result.feed_reused}:{})},media:episodeMedia(result),project:result.status==='ready'?null:audioProject(source,episodeMedia(result),result.episode,result.feed_url),transcript:result.status==='ready'?{document:result.document}:null,...(result.status!=='ready'?{message:unavailableTranscription.message}:{})});
   }
   const discovery=await podcastSources.discover({url:source.url},{signal});

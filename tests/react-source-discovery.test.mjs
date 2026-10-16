@@ -4,7 +4,7 @@ import {Window} from 'happy-dom';
 import {webcrypto} from 'node:crypto';
 import {readFile} from 'node:fs/promises';
 import {build} from 'esbuild';
-import {sourceDiscoveryFixture,sourceFeed,frenchTrack,unlabelledTrack,upgradeTrack} from './fixtures/source-discovery.mjs';
+import {sourceDiscoveryFixture,sourceFeed,frenchTrack,unlabelledTrack,upgradeTrack,audioFirstFixture,audioFirstTrack} from './fixtures/source-discovery.mjs';
 const bundle=await readFile('reader/react-app.js','utf8'),page=await readFile('reader/index.html','utf8');
 const scripts=await Promise.all([...page.matchAll(/<script src="([^"]+)"/g)].map(m=>m[1].split('?')[0]).filter(name=>name!=='react-app.js').map(name=>readFile('reader/'+name,'utf8')));
 const wait=async(check)=>{for(let i=0;i<300;i++){if(check())return;await new Promise(r=>setTimeout(r,5));}assert.ok(check(),'UI did not settle');};
@@ -161,4 +161,31 @@ for(const absent of ['source','check timestamp'])test(`optional feed-check displ
   await x.discover();assert.equal(x.w.document.querySelector('.feed-refresh p').textContent,checked);
   assert.equal(x.w.document.querySelector('.source-error').textContent,'');
  }finally{await x.w.happyDOM.close();}
+});
+
+
+test('explicit audio-first bypasses an advertised broken track, preserves selection and never downgrades existing transcript projects',async()=>{
+ const fixture=audioFirstFixture(),x=await setup(fixture);try{
+  await x.load();const action=()=>[...x.episode('Authored audio-first episode').querySelectorAll('button')].find(button=>button.textContent==='先听原声');
+  assert.equal(x.episode('Authored audio-first episode').querySelector('button').disabled,true);assert.equal(action().disabled,false,'audio-first does not require selecting a track');
+  const missing=[...x.episode('Authored episode without audio').querySelectorAll('button')].find(button=>button.textContent==='先听原声');assert.equal(missing.disabled,true);assert.match(x.episode('Authored episode without audio').textContent,/未提供可用的公开原声/);
+  action().click();action().click();await wait(()=>x.docs().length===1);const original=x.docs()[0];assert.equal(original.project_kind,'audio_only');assert.equal(original.segments.length,0);assert.deepEqual(fixture.counts,{feed:1,transcript:0,media:0});assert.equal(x.requests.at(-1).intent,'media_only');assert.equal(x.requests.at(-1).episode.transcript_url,undefined);assert.equal(x.w.document.querySelector('audio'),null);
+  await x.discover();await x.open('Authored audio-first episode',audioFirstTrack);await wait(()=>x.w.document.querySelector('.source-error').textContent.includes('不是 WebVTT'));assert.equal(action().disabled,false);assert.equal(x.docs().length,1);assert.equal(x.docs()[0].segments.length,0);
+  const transcriptCalls=fixture.counts.transcript;action().click();await wait(()=>x.w.document.querySelector('.source-project-choice'));assert.equal(fixture.counts.transcript,transcriptCalls);assert.equal(x.docs().length,1);x.button('继续已有项目 · '+original.key.slice(-8)).click();await wait(()=>x.w.document.querySelector('.reader-workspace'));
+  fixture.state.fixed=true;await x.discover();assert.equal(x.episode('Authored audio-first episode').querySelector('select').value,audioFirstTrack);await x.open('Authored audio-first episode');await wait(()=>x.w.document.querySelector('.source-project-choice'));x.button('核对新文字稿 · '+original.key.slice(-8)).click();await wait(()=>x.button('确认接入此原声项目'));x.button('确认接入此原声项目').click();await wait(()=>x.docs()[0].segments.length===1);await wait(()=>x.w.document.querySelector('.reader-workspace'));const upgraded=structuredClone(x.docs()[0]);
+  await x.discover();action().click();await wait(()=>x.w.document.querySelector('.source-project-choice'));assert.equal(x.buttons('确认接入此原声项目').length,0);x.button('继续已有项目 · '+original.key.slice(-8)).click();await wait(()=>x.w.document.querySelector('.reader-workspace'));assert.deepEqual(x.docs(),[upgraded]);assert.equal(fixture.counts.media,0);
+ }finally{await x.w.happyDOM.close();}
+});
+for(const boundary of ['cancel','new URL','navigation'])test('audio-first retires a delayed source check on '+boundary,async()=>{
+ const fixture=audioFirstFixture(),x=await setup(fixture);let release;try{
+  await x.load();fixture.state.now+=60001;fixture.state.holdFeed=new Promise(resolve=>release=resolve);
+  const action=()=>[...x.episode('Authored audio-first episode').querySelectorAll('button')].find(button=>button.textContent==='先听原声');action().click();await wait(()=>fixture.counts.feed===2&&x.button('取消读取'));assert.equal(action().disabled,true);
+  if(boundary==='cancel')x.button('取消读取').click();
+  if(boundary==='new URL')x.input(x.w.document.querySelector('#source-url'),'https://publisher.example.org/new');
+  if(boundary==='navigation')x.button('我的内容 0').click();
+  release();release=null;fixture.state.holdFeed=null;await new Promise(resolve=>setTimeout(resolve,25));assert.equal(x.docs().length,0);assert.equal(fixture.counts.transcript,0);assert.equal(fixture.counts.media,0);
+  if(boundary==='cancel'){x.button('重试上次读取：Authored audio-first episode').click();await wait(()=>x.docs().length===1);assert.equal(x.requests.at(-1).intent,'media_only');}
+  if(boundary==='new URL')assert.equal(x.w.document.querySelector('.episode-list'),null);
+  if(boundary==='navigation'){await x.discover();assert.match(x.w.document.querySelector('.source-error').textContent,/读取已暂停/);}
+ }finally{release?.();await x.w.happyDOM.close();}
 });

@@ -5,6 +5,7 @@ import path from 'node:path';
 import os from 'node:os';
 import {chromium,expect} from '@playwright/test';
 import {startBridge} from '../desktop/server.mjs';
+import {audioFirstBrowser} from './helpers/audio-first-browser.mjs';
 import {sourceDiscoveryFixture,sourceFeed,frenchTrack,upgradeTrack} from './fixtures/source-discovery.mjs';
 const output=process.env.COCONUT_REACT_ARTIFACTS||'/tmp/coconut-react-authored';
 const fixture=sourceDiscoveryFixture(),forbidden=[],errors=[],checks=[];
@@ -76,5 +77,6 @@ try{
   fixture.state.hold=new Promise(resolve=>release=resolve);await openFirst();await expect(page.getByRole('button',{name:'取消读取',exact:true})).toBeVisible();await page.getByLabel('播客或视频链接').fill('https://publisher.example.org/new');release();release=null;fixture.state.hold=null;await expect(page.locator('.episode-list')).toHaveCount(0);await expect(page.locator('.source-project-choice')).toHaveCount(0);assert.equal((await backup()).length,3);
   checks.push({width,passed:['real HTTP bridge + RSS/VTT parser','completed RSS reuse with fresh transcript bytes','delayed explicit refresh and updated source-check time','failed refresh retains context and forbids stale-cache fallback','recovery refresh restores import','refresh cancellation and navigation retire requests','explicit track and retry','browser back discovery session','exact existing/copy/multiple choice','reviewed in-place transcript upgrade','opaque notes/bookmarks durable reload','cancel and newer URL']});await context.close();await server.shutdown();server=null;
  }
+ for(const width of [1360,600,390])checks.push(await audioFirstBrowser({browser,width,directory,output}));
  assert.deepEqual(forbidden,[]);assert.deepEqual(errors,[]);await writeFile(path.join(output,'source-discovery.json'),JSON.stringify({checks,forbidden,errors},null,2));console.log('PASS production source-discovery continuity with actual authored backend parser; no external/model requests.');
 }finally{release?.();fixture.state.hold=null;fixture.state.holdFeed=null;await browser?.close();await server?.shutdown();await rm(directory,{recursive:true,force:true});}
