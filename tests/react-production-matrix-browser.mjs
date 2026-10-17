@@ -118,8 +118,10 @@ async function selectionViewportProof(page,label){
  const diagnostic=label+' '+JSON.stringify(proof);
  assert.equal(proof.text,'Original phrase',diagnostic);assert.ok(proof.selected.length,diagnostic);
  for(const r of proof.selected){assert.equal(r.inViewport,true,diagnostic);assert.equal(r.hit,true,diagnostic);assert.equal(r.overlap,false,diagnostic);}
- assert.ok(proof.buttons.length>=3,diagnostic);
- for(const button of proof.buttons){assert.equal(button.inViewport,true,diagnostic);assert.equal(button.hit,true,diagnostic);assert.equal(button.disabled,false,diagnostic);}
+ const expectedDisabled={'保存精确摘录':false,'理解选中文字':false,'翻译选中文字':false,'复制原话':false,'保存双语摘录':true,'关闭':false};
+ assert.deepEqual(proof.buttons.map(button=>button.text).sort(),Object.keys(expectedDisabled).sort(),diagnostic);
+ // This authored fixture has no translation, so bilingual capture must stay disabled.
+ for(const button of proof.buttons){assert.equal(button.inViewport,true,diagnostic);assert.equal(button.hit,true,diagnostic);assert.equal(button.disabled,expectedDisabled[button.text],diagnostic);}
  return {label,...proof};
 }
 async function selectVisiblePhrase(page,id){
