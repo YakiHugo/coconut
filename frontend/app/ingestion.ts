@@ -2,6 +2,8 @@ export type Episode = {
     id: string;
     title: string;
     description?: string;
+    published?: string;
+    duration?: number | null;
     media?: Array<{
         url: string;
         kind: 'audio' | 'video';
@@ -27,6 +29,8 @@ export type Ingestion = {
         feed_url: string;
         feed_checked_at?: string;
         title?: string;
+        truncated?: boolean;
+        warnings?: string[];
         episodes?: Episode[];
         feeds?: Array<{
             url: string;

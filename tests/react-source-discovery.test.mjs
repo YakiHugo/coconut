@@ -189,3 +189,31 @@ for(const boundary of ['cancel','new URL','navigation'])test('audio-first retire
   if(boundary==='navigation'){await x.discover();assert.match(x.w.document.querySelector('.source-error').textContent,/读取已暂停/);}
  }finally{release?.();await x.w.happyDOM.close();}
 });
+test('bounded episode browsing preserves import identity and resets search, expansion and source context',async()=>{
+ const fixture=sourceDiscoveryFixture();fixture.state.extraEpisodes=205;
+ const x=await setup(fixture),{w}=x;
+ try{
+  await x.load();const rows=()=>w.document.querySelectorAll('.episode-list article'),search=()=>w.document.querySelector('#episode-query');
+  assert.equal(rows().length,20);assert.match(w.document.querySelector('.episode-warning').textContent,/来源列表不完整/);assert.match(w.document.querySelector('.episode-warnings').textContent,/发布者提供的文字稿/);
+  assert.match(x.episode('Authored multilingual episode').textContent,/时长 1:02:03/);assert.match(x.episode('Authored multilingual episode').textContent,/2026/);
+  x.button('显示更多单集').click();await wait(()=>rows().length===40);
+  x.input(search(),' ARCHIVE episode 190 ');await wait(()=>rows().length===1);assert.ok(x.episode('Archive episode 190'));assert.equal(x.button('显示更多单集'),undefined);
+  x.input(search(),'unfindable');await wait(()=>rows().length===0);assert.match(w.document.body.textContent,/当前列表没有匹配/);
+  x.button('清空单集搜索').click();await wait(()=>rows().length===20);
+  x.button('显示更多单集').click();await wait(()=>rows().length===40);
+  x.input(search(),'Archive');await wait(()=>rows().length===20);x.button('显示更多单集').click();await wait(()=>rows().length===40);
+  x.button('刷新节目列表').click();await wait(()=>fixture.counts.feed===2&&rows().length===20);assert.equal(search().value,'Archive');
+  x.input(search(),'evolving');await wait(()=>rows().length===1);const audio=x.episode('Authored evolving episode');[...audio.querySelectorAll('button')].find(b=>b.textContent==='先听原声').click();await wait(()=>x.docs().length===1);assert.equal(x.docs()[0].title,'Authored evolving episode');assert.equal(x.requests.at(-1).intent,'media_only');
+  await x.discover();assert.equal(search().value,'evolving');assert.equal(rows().length,1);
+  x.button('清空单集搜索').click();await wait(()=>rows().length===20);await x.open('Authored multilingual episode',frenchTrack);await wait(()=>x.docs().length===2);assert.equal(x.docs().find(d=>d.title==='Authored multilingual episode').language,'fr');
+  await x.discover();x.input(search(),'Archive');await wait(()=>search().value==='Archive');x.input(w.document.querySelector('#source-url'),'https://publisher.example.org/new');await wait(()=>!search());await x.load();assert.equal(search().value,'');assert.equal(rows().length,20);
+ }finally{await w.happyDOM.close();}
+});
+test('episode metadata omits absent and invalid values without fabricating dates or durations',async()=>{
+ const output=await build({entryPoints:['frontend/app/episode-browser.ts'],bundle:true,format:'esm',write:false,platform:'node'});
+ const {episodeMetadata}=await import('data:text/javascript;base64,'+Buffer.from(output.outputFiles[0].contents).toString('base64'));
+ assert.equal(episodeMetadata({id:'a',title:'Missing'}),'');
+ assert.equal(episodeMetadata({id:'a',title:'Invalid',published:'nonsense',duration:NaN}),'');
+ assert.equal(episodeMetadata({id:'a',title:'Invalid',duration:-5}),'');
+ assert.equal(episodeMetadata({id:'a',title:'Short',duration:65.7}),'时长 1:05');
+});
