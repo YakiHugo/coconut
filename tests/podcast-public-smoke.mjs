@@ -65,7 +65,7 @@ let stage='public feed discovery';
 try {
  const feed=await sources.discover({url:'https://mp3s.nashownotes.com/pc20rss.xml'},{signal});
  assert.equal(feed.kind,'feed');assert.ok(feed.episodes.length>0);
- const episode=feed.episodes.find(item=>item.transcripts.some(track=>track.supported&&['en','en-us'].includes(track.language)));
+ const episode=feed.episodes.find(item=>item.media.some(media=>media.kind==='audio')&&item.transcripts.some(track=>track.supported&&['en','en-us'].includes(track.language)));
  assert.ok(episode,'The live feed must provide a supported original-language timed transcript');
  stage='publisher transcript import';
  const result=await sources.importEpisode({feedUrl:feed.feed_url,episodeId:episode.id},{signal});
@@ -74,6 +74,13 @@ try {
  assert.ok(result.document.segments.length>10);assert.ok(result.document.segments.at(-1).end>60);
  assert.equal(result.document.podcast_source.episode_id,episode.id);
  console.log(JSON.stringify({check:'native_public_feed_and_transcript',passed:true,episodes:feed.episodes.length,segments:result.document.segments.length,language:result.document.language,kind:result.document.provenance.kind,review_status:result.document.provenance.review_status}));
+ // Existing production inspection closes GET at media headers, with no body download.
+ stage='publisher audio response headers';
+ const audio=episode.media.find(media=>media.kind==='audio');
+ const inspected=await sources.discover({url:audio.url},{signal});
+ assert.equal(inspected.kind,'media');assert.equal(inspected.media.kind,'audio');
+ assert.equal(result.document.podcast_source.media_url,episode.media[0].url);
+ console.log(JSON.stringify({check:'native_public_transcript_audio_headers',passed:true,kind:inspected.media.kind,downloaded:false,playback_verified:false}));
  // Import may reuse the completed list, but an explicit refresh must still
  // exercise the real publisher request and its unchanged transport deadline.
  stage='public feed refresh';

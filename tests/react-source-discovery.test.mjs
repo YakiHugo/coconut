@@ -217,3 +217,24 @@ test('episode metadata omits absent and invalid values without fabricating dates
  assert.equal(episodeMetadata({id:'a',title:'Invalid',duration:-5}),'');
  assert.equal(episodeMetadata({id:'a',title:'Short',duration:65.7}),'时长 1:05');
 });
+
+// Catalog bytes are public URLs, but this UI test uses authored feed/VTT bytes only.
+test('first catalog choice reaches timed reading without typing a source URL or fetching media',async()=>{
+ const built=await build({entryPoints:['frontend/app/catalog.ts'],bundle:true,format:'esm',write:false,platform:'node'});
+ const {podcastCatalog,searchCatalog}=await import('data:text/javascript;base64,'+Buffer.from(built.outputFiles[0].contents).toString('base64'));
+ const show=podcastCatalog.find(show=>show.id==='podcasting-2');assert.ok(show);assert.equal(podcastCatalog[0],show);
+ assert.equal(show.feed,'https://mp3s.nashownotes.com/pc20rss.xml');assert.ok(searchCatalog('文字稿').includes(show));
+ assert.ok((await readFile('tests/podcast-public-smoke.mjs','utf8')).includes(show.feed),'catalog source must stay covered by live acceptance');
+ const fixture=sourceDiscoveryFixture(show.feed),x=await setup(fixture);try{
+  assert.equal(fixture.calls.length,0,'opening discovery never prefetches');
+  const card=[...x.w.document.querySelectorAll('.podcast-catalog li')].find(item=>item.querySelector('h3').textContent===show.title);
+  assert.match(card.textContent,/未校对/);card.querySelector('button').click();await wait(()=>x.w.document.querySelector('.episode-list'));
+  assert.equal(x.w.document.querySelector('#source-url').value,show.feed);
+  assert.equal(x.requests[0].source.url,show.feed);assert.equal(x.docs().length,0);
+  assert.match(x.episode('Authored evolving episode').textContent,/暂无可导入的带时文字稿/);
+  await x.open('Authored multilingual episode',frenchTrack);await wait(()=>x.w.document.querySelector('.reader-workspace'));await wait(()=>x.docs().length===1);
+  const doc=x.docs()[0];assert.equal(doc.podcast_source.feed_url,show.feed);assert.equal(doc.provenance.kind,'publisher_transcript');assert.equal(doc.provenance.review_status,'unreviewed');
+  assert.equal(doc.segments[0].start,0);assert.equal(doc.segments[0].end,2);assert.equal(doc.segments[0].text,'Bonjour, cette source reste intacte.');
+  assert.equal(fixture.calls.filter(call=>call.url.endsWith('.mp3')).length,0);assert.equal(fixture.counts.transcript,1);
+ }finally{await x.w.happyDOM.close();}
+});
