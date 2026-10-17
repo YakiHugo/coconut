@@ -9,6 +9,7 @@ import {audioFirstBrowser} from './helpers/audio-first-browser.mjs';
 import {sourceDiscoveryFixture,sourceFeed,frenchTrack,upgradeTrack} from './fixtures/source-discovery.mjs';
 const output=process.env.COCONUT_REACT_ARTIFACTS||'/tmp/coconut-react-authored';
 const fixture=sourceDiscoveryFixture(),forbidden=[],errors=[],checks=[];
+fixture.state.extraEpisodes=205;
 const forbiddenProvider=async()=>{forbidden.push('provider');throw Error('No inference in authored discovery acceptance');};
 const directory=await mkdtemp(path.join(os.tmpdir(),'coconut-source-sqlite-'));
 let browser,release,server;
@@ -43,6 +44,14 @@ try{
   async function screenshot(name){const size=await page.evaluate(()=>({viewport:innerWidth,document:document.documentElement.scrollWidth}));assert.ok(size.document<=width+1,'Discovery horizontal overflow '+JSON.stringify(size));await page.screenshot({path:path.join(output,`source-${name}-${width}.png`),fullPage:true});}
   const beforeDiscovery={...fixture.counts};await page.goto(origin);await expect(page.getByRole('heading',{name:'今天，想听什么？'})).toBeVisible();
   await page.getByLabel('播客或视频链接').fill(sourceFeed);await page.getByRole('button',{name:'打开链接',exact:true}).click();await expect(multilingual()).toBeVisible();
+  const episodeSearch=page.getByRole('searchbox',{name:'查找当前列表的单集'}),episodeRows=page.locator('.episode-list article');
+  await expect(episodeRows).toHaveCount(20);await expect(page.locator('.episode-warning')).toContainText('来源列表不完整');await expect(multilingual()).toContainText('时长 1:02:03');
+  await page.getByText('来源提示',{exact:true}).click();await expect(page.locator('.episode-warnings')).toContainText('发布者提供的文字稿');
+  await page.getByRole('button',{name:'显示更多单集',exact:true}).click();await expect(episodeRows).toHaveCount(40);
+  await episodeSearch.fill('Archive episode 190');await expect(episodeRows).toHaveCount(1);await expect(episodeRows).toContainText('Archive episode 190');
+  await episodeSearch.fill('No matching episode');await expect(episodeRows).toHaveCount(0);await expect(page.getByText('当前列表没有匹配的单集。可清空搜索，或在上方换用具体单集链接。',{exact:true})).toBeVisible();await screenshot('episode-search-empty');
+  await page.getByRole('button',{name:'清空单集搜索',exact:true}).click();await expect(episodeRows).toHaveCount(20);await screenshot('episode-browsing');
+  await episodeSearch.focus();await episodeSearch.pressSequentially('multilingual');await expect(episodeRows).toHaveCount(1);
   assert.deepEqual(fixture.counts,{feed:beforeDiscovery.feed+1,transcript:beforeDiscovery.transcript});await expect(checked()).toContainText('上次来源检查：');const initialCheck=await checked().textContent();
   await expect(multilingual().getByRole('button',{name:'打开单集',exact:true})).toBeDisabled();await multilingual().getByRole('combobox').selectOption(frenchTrack);
   fixture.state.failTrack=true;await openFirst();await expect(page.locator('.source-error')).toContainText('Authored transcript temporarily unavailable');await expect(multilingual()).toBeVisible();await expect(multilingual().getByRole('combobox')).toHaveValue(frenchTrack);await screenshot('track-retry');
@@ -51,6 +60,7 @@ try{
   await page.getByRole('textbox',{name:'项目笔记',exact:true}).fill('French project note');await page.getByRole('button',{name:'保存笔记',exact:true}).click();await saved();
   let docs=await backup(),first=docs.find(doc=>doc.title==='Authored multilingual episode');assert.equal(first.language,'fr');assert.equal(first.podcast_source.transcript_url,frenchTrack);
   await page.goBack();await expect(page.getByLabel('播客或视频链接')).toHaveValue(sourceFeed);await expect(multilingual()).toBeVisible();await expect(multilingual().getByRole('combobox')).toHaveValue(frenchTrack);
+  await expect(episodeSearch).toHaveValue('multilingual');await episodeSearch.focus();await episodeSearch.press('ControlOrMeta+A');await episodeSearch.press('Backspace');await expect(episodeRows).toHaveCount(20);
   await expect(checked()).toHaveText(initialCheck);assert.equal(fixture.counts.feed,beforeDiscovery.feed+1);
   await openFirst();await expect(page.getByRole('region',{name:'此来源已在书架'})).toBeVisible();await expect(page.getByRole('button',{name:/核对新文字稿/})).toHaveCount(0);await page.getByRole('button',{name:'继续已有项目 · '+first.key.slice(-8),exact:true}).click();await expect(page.getByRole('textbox',{name:'项目笔记',exact:true})).toHaveValue('French project note');assert.equal((await backup()).length,2);
   await discover();await openFirst();await expect(page.getByRole('region',{name:'此来源已在书架'})).toBeVisible();await page.getByRole('button',{name:'另建独立副本',exact:true}).click();await expect(page.locator('.reader-workspace')).toBeVisible();await saved();assert.equal((await backup()).length,3);
