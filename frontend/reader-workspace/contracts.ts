@@ -48,6 +48,7 @@ export interface ReaderMedia {
     availability?: 'remote' | 'local_session';
 }
 export interface ReaderSelection {
+    intent?: 'understand' | 'translate';
     key: string;
     revision: number;
     text: string;
@@ -78,6 +79,7 @@ export type ReaderNavigationRequest = {id:number;documentKey:string;revision:num
     | {cueId?:never;source:{document:ReaderDocument;target:ReaderSourceTarget}}
 );
 export interface ReaderWorkspaceProps extends ReaderSnapshot {
+    aiReturnRequest?:{id:number;documentKey:string};
     shortcutsEnabled?:boolean;
     onOpenSummary?:()=>void;
     initialView?:ReaderView|null;
