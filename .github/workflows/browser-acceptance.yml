@@ -70,6 +70,10 @@ jobs:
             ${{ runner.temp }}/coconut-react-authored/source-audio-first-choice-390.png
             ${{ runner.temp }}/coconut-react-authored/caption-partial-review.png
             ${{ runner.temp }}/coconut-react-authored/caption-continuity.json
+            ${{ runner.temp }}/coconut-react-authored/default-1360.png
+            ${{ runner.temp }}/coconut-react-authored/default-390.png
+            ${{ runner.temp }}/coconut-react-authored/unknown-1360.png
+            ${{ runner.temp }}/coconut-react-authored/unknown-390.png
             ${{ runner.temp }}/coconut-react-authored/matrix-canonical-reading-1360.png
             ${{ runner.temp }}/coconut-react-authored/matrix-canonical-reading-390.png
             ${{ runner.temp }}/coconut-react-authored/matrix-ai-provider-unavailable-1360.png

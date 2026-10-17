@@ -33,7 +33,7 @@ async function setup(fixture=sourceDiscoveryFixture(),seed=[]){
 }
 test('real parser track selection, retry, session return, exact reopen and explicit multiple copies',async()=>{
  const x=await setup();const {w}=x;try{
-  await x.load();const first=x.episode('Authored multilingual episode');assert.equal(first.querySelector('button').disabled,true);assert.match(first.textContent,/en · text\/vtt · 2/);
+  await x.load();const first=x.episode('Authored multilingual episode');assert.equal(first.querySelector('button').disabled,false);assert.match(first.textContent,/按发布者语言 en · text\/vtt · 2/);
   x.fixture.state.failTrack=true;await x.open('Authored multilingual episode',frenchTrack);await wait(()=>w.document.body.textContent.includes('Authored transcript temporarily unavailable'));
   assert.ok(x.episode('Authored multilingual episode'));assert.equal(x.episode('Authored multilingual episode').querySelector('select').value,frenchTrack);assert.equal(x.docs().length,0);
   x.fixture.state.failTrack=false;x.button('重试上次读取：Authored multilingual episode').click();await wait(()=>w.document.querySelector('.reader-workspace'));await wait(()=>x.docs().length===1);
@@ -167,7 +167,7 @@ for(const absent of ['source','check timestamp'])test(`optional feed-check displ
 test('explicit audio-first bypasses an advertised broken track, preserves selection and never downgrades existing transcript projects',async()=>{
  const fixture=audioFirstFixture(),x=await setup(fixture);try{
   await x.load();const action=()=>[...x.episode('Authored audio-first episode').querySelectorAll('button')].find(button=>button.textContent==='先听原声');
-  assert.equal(x.episode('Authored audio-first episode').querySelector('button').disabled,true);assert.equal(action().disabled,false,'audio-first does not require selecting a track');
+  assert.equal(x.episode('Authored audio-first episode').querySelector('button').disabled,false);assert.equal(action().disabled,false,'audio-first does not require selecting a track');
   const missing=[...x.episode('Authored episode without audio').querySelectorAll('button')].find(button=>button.textContent==='先听原声');assert.equal(missing.disabled,true);assert.match(x.episode('Authored episode without audio').textContent,/未提供可用的公开原声/);
   action().click();action().click();await wait(()=>x.docs().length===1);const original=x.docs()[0];assert.equal(original.project_kind,'audio_only');assert.equal(original.segments.length,0);assert.deepEqual(fixture.counts,{feed:1,transcript:0,media:0});assert.equal(x.requests.at(-1).intent,'media_only');assert.equal(x.requests.at(-1).episode.transcript_url,undefined);assert.equal(x.w.document.querySelector('audio'),null);
   await x.discover();await x.open('Authored audio-first episode',audioFirstTrack);await wait(()=>x.w.document.querySelector('.source-error').textContent.includes('不是 WebVTT'));assert.equal(action().disabled,false);assert.equal(x.docs().length,1);assert.equal(x.docs()[0].segments.length,0);
@@ -236,5 +236,28 @@ test('first catalog choice reaches timed reading without typing a source URL or 
   const doc=x.docs()[0];assert.equal(doc.podcast_source.feed_url,show.feed);assert.equal(doc.provenance.kind,'publisher_transcript');assert.equal(doc.provenance.review_status,'unreviewed');
   assert.equal(doc.segments[0].start,0);assert.equal(doc.segments[0].end,2);assert.equal(doc.segments[0].text,'Bonjour, cette source reste intacte.');
   assert.equal(fixture.calls.filter(call=>call.url.endsWith('.mp3')).length,0);assert.equal(fixture.counts.transcript,1);
+ }finally{await x.w.happyDOM.close();}
+});
+
+test('server recommendation opens directly without faking an explicit track; override and refresh preserve intent',async()=>{
+ const {captionDefaultsFixture,trackUrl}=await import('./fixtures/caption-defaults.mjs');const f=captionDefaultsFixture(),x=await setup(f);try{
+  await x.load();let row=x.episode('Publisher choices');assert.equal(row.querySelector('button').disabled,false);assert.equal(row.querySelector('select').value,'');assert.match(row.textContent,/默认：zh-hans · text\/vtt/);
+  await x.open('Publisher choices');await wait(()=>x.docs().length===1);assert.equal(x.requests.at(-1).episode.transcript_url,undefined);assert.equal(x.docs()[0].podcast_source.transcript_url,trackUrl('simplified.vtt'));
+  await x.discover();await x.open('Publisher choices',trackUrl('traditional.vtt'));await wait(()=>x.w.document.querySelector('.source-project-choice'));assert.equal(x.requests.at(-1).episode.transcript_url,trackUrl('traditional.vtt'));
+  x.button('返回单集列表').click();await wait(()=>!x.w.document.querySelector('.source-project-choice'));row=x.episode('Publisher choices');assert.equal(row.querySelector('select').value,trackUrl('traditional.vtt'));
+  x.select(row.querySelector('select'),'');f.state.tracks=f.state.tracks.slice(0,1);x.button('刷新节目列表').click();await wait(()=>x.episode('Publisher choices').querySelectorAll('option').length===2);assert.equal(x.episode('Publisher choices').querySelector('button').disabled,true);
+ }finally{await x.w.happyDOM.close();}
+});
+for(const boundary of ['cancel','navigation'])test('default request retires cleanly on '+boundary,async()=>{
+ const {captionDefaultsFixture}=await import('./fixtures/caption-defaults.mjs');const f=captionDefaultsFixture(),x=await setup(f);let release;try{
+  await x.load();f.state.hold=new Promise(resolve=>release=resolve);await x.open('Publisher choices');await wait(()=>x.button('取消读取'));
+  if(boundary==='cancel')x.button('取消读取').click();else x.button('我的内容 0').click();release();f.state.hold=null;await new Promise(resolve=>setTimeout(resolve,25));assert.equal(x.docs().length,0);
+  if(boundary==='navigation')await x.discover();assert.equal(x.episode('Publisher choices').querySelector('select').value,'');assert.equal(x.episode('Publisher choices').querySelector('button').disabled,false);
+  await x.open('Publisher choices');await wait(()=>x.docs().length===1);assert.equal(x.requests.at(-1).episode.transcript_url,undefined);
+ }finally{release?.();await x.w.happyDOM.close();}
+});
+test('conflicting duplicate URL labels are visibly unavailable rather than a misleading explicit language choice',async()=>{
+ const {captionDefaultsFixture}=await import('./fixtures/caption-defaults.mjs');const f=captionDefaultsFixture();f.state.language='en';f.state.tracks=[['same.vtt','text/vtt','fr'],['same.vtt','text/vtt','en']];const x=await setup(f);try{
+  await x.load();const row=x.episode('Publisher choices');assert.equal(row.querySelector('button').disabled,true);assert.match(row.textContent,/标注不一致，暂不可导入/);assert.match(row.querySelector('option').textContent,/文字稿标注冲突/);assert.ok([...row.querySelectorAll('option')].slice(1).every(option=>option.disabled&&option.textContent.includes('标注冲突')));assert.equal([...row.querySelectorAll('button')].find(button=>button.textContent==='先听原声').disabled,false);
  }finally{await x.w.happyDOM.close();}
 });

@@ -37,7 +37,7 @@ export function parseXml(input,baseUrl) {
     }
     const parts=name.split(':');if(parts.length>2||(parts.length===2&&!ns[parts[0]]))throw new Error('XML 命名空间无效');
     let base=parent.base;try{if(attrs['xml:base'])base=new URL(attrs['xml:base'],base).href;}catch{throw new Error('XML 基础链接无效');}
-    const node={name,local:parts.at(-1),uri:ns[parts.length===2?parts[0]:'']||'',attrs,ns,nsCount,base,language:attrs['xml:lang']||parent.language,children:[],text:''};
+    const node={name,local:parts.at(-1),uri:ns[parts.length===2?parts[0]:'']||'',attrs,ns,nsCount,base,language:Object.hasOwn(attrs,'xml:lang')?attrs['xml:lang']:parent.language,languageSpecified:Object.hasOwn(attrs,'xml:lang')||parent.languageSpecified||false,children:[],text:''};
     if(++nodes>120000||stack.length>40)throw new Error('XML 节点数或嵌套过多');
     parent.children.push(node);if(!selfClosing)stack.push(node);
   }

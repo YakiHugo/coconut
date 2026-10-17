@@ -8,11 +8,15 @@ export type Episode = {
         url: string;
         kind: 'audio' | 'video';
     }>;
+    transcript_selection?: {status:'default'|'choice_required'|'unavailable';transcript_url?:string;language?:string;type?:string;reason?:string};
     transcripts?: Array<{
         supported: boolean;
         url: string;
         type: string;
         language?: string;
+        language_status?: string;
+        language_source?: string;
+        selection_conflict?: boolean;
     }>;
 };
 export type Ingestion = {
