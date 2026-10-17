@@ -21,8 +21,26 @@ const nodeText=node=>node ? node.text+node.children.map(nodeText).join('') : '';
 const child=(node,name,uri=node.uri)=>node.children.find(item=>item.local===name&&item.uri===uri);
 const children=(node,name,uri=node.uri)=>node.children.filter(item=>item.local===name&&item.uri===uri);
 const value=(node,name,uri=node.uri)=>nodeText(child(node,name,uri)).trim();
-const language=value=>/^[a-z]{2,3}(?:-[a-z0-9]{2,8})*$/i.test(value||'') ? value.toLowerCase() : '';
-const primary=value=>language(value).split('-')[0];
+const language=value=>{try{return typeof value==='string'&&value.trim()?Intl.getCanonicalLocales(value.trim())[0].toLowerCase():'';}catch{return '';}};
+const languageMetadata=(raw,source)=>({language:language(raw),language_status:raw===undefined||raw===null?'missing':language(raw)?'valid':'invalid',language_source:source});
+function transcriptLanguage(node,episode) {
+  if(Object.hasOwn(node.attrs,'language'))return languageMetadata(node.attrs.language,'transcript');
+  // https://github.com/Podcastindex-org/podcast-namespace/blob/main/docs/tags/transcript.md
+  // Missing language inherits RSS language. Preserve publisher inheritance
+  // as a declared basis, never treat an explicitly invalid value as missing.
+  return episode.language&&episode.language_status==='valid'?{language:episode.language,language_status:'valid',language_source:'inherited'}:languageMetadata(undefined,'unknown');
+}
+/** One policy for both discovery and import. Format preference never overrides language. */
+export function selectPublisherTranscript(episode) {
+  const available=episode.transcripts.filter(track=>track.supported);
+  if(!available.length)return {status:'unavailable'};
+  if(!episode.language||episode.language_status!=='valid')return {status:'choice_required',reason:'episode_language_unknown'};
+  const matching=available.filter(track=>!track.selection_conflict&&track.language_status==='valid'&&track.language===episode.language);
+  if(!matching.length)return {status:'choice_required',reason:'no_exact_language'};
+  const rank=type=>type==='text/vtt'?0:['application/x-subrip','application/srt','text/srt'].includes(type)?1:2;
+  const selected=[...matching].sort((a,b)=>rank(a.type)-rank(b.type))[0];
+  return {status:'default',transcript_url:selected.url,language:selected.language,type:selected.type,language_source:selected.language_source};
+}
 const isXiaoyuzhou=url=>['xiaoyuzhoufm.com','www.xiaoyuzhoufm.com'].includes(new URL(url).hostname);
 const textBody=resource=>{try{return new TextDecoder('utf-8',{fatal:true}).decode(resource.body);}catch{throw new Error('来源不是有效的 UTF-8 文本');}};
 function safeLink(value,base) {try{return publicUrl(value,base).href;}catch{return '';}}
@@ -46,10 +64,18 @@ export function parsePodcastFeed(text,feedUrl) {
   const feedLanguage=language(atom?root.language:value(channel,'language',''));
   const seen=new Set(),ambiguous=new Set(),mediaOwners=new Map(),ambiguousMedia=new Set(),episodes=[];
   for(const item of items) {
-    const itemLanguage=language(item.language)||feedLanguage;
+    // A scoped episode declaration overrides the channel. Otherwise RSS's
+    // dedicated language element outranks generic ancestor xml:lang metadata.
+    const scoped=Object.hasOwn(item.attrs,'xml:lang'),rssLanguage=!atom?child(channel,'language',''):null;
+    const itemMetadata=scoped?languageMetadata(item.attrs['xml:lang'],'xml'):rssLanguage?languageMetadata(nodeText(rssLanguage).trim(),'feed'):languageMetadata(item.languageSpecified?item.language:undefined,'xml');
     const media=(atom?children(item,'link',ATOM).filter(n=>n.attrs.rel==='enclosure').map(n=>mediaItem(n.attrs.href,n.attrs.type,n.attrs.length,n.base)):
       children(item,'enclosure','').map(n=>mediaItem(n.attrs.url,n.attrs.type,n.attrs.length,n.base))).filter(Boolean);
-    const transcripts=item.children.filter(n=>n.local==='transcript'&&PODCAST_URIS.has(n.uri)).map(n=>({url:safeLink(n.attrs.url,n.base),type:mime(n.attrs.type),language:language(n.attrs.language)||itemLanguage,rel:n.attrs.rel==='captions'?'captions':'',supported:TRANSCRIPT_TYPES.has(mime(n.attrs.type))})).filter(t=>t.url);
+    const transcripts=item.children.filter(n=>n.local==='transcript'&&PODCAST_URIS.has(n.uri)).map(n=>({url:safeLink(n.attrs.url,n.base),type:mime(n.attrs.type),...transcriptLanguage(n,rssLanguage?languageMetadata(nodeText(rssLanguage).trim(),'feed'):itemMetadata),rel:n.attrs.rel==='captions'?'captions':'',supported:TRANSCRIPT_TYPES.has(mime(n.attrs.type))})).filter(t=>t.url);
+    // The public API identifies an explicit selection by URL. Conflicting metadata
+    // for that same identity must never be resolved by whichever tag came first.
+    const identities=new Map(),conflicts=new Set();
+    for(const track of transcripts){const signature=JSON.stringify([track.type,track.language,track.language_status]);if(identities.has(track.url)&&identities.get(track.url)!==signature)conflicts.add(track.url);else identities.set(track.url,signature);}
+    for(const track of transcripts)if(conflicts.has(track.url))track.selection_conflict=true;
     if(!media.length&&!transcripts.length)continue;
     const linkNode=atom?children(item,'link',ATOM).find(n=>!n.attrs.rel||n.attrs.rel==='alternate'):child(item,'link','');
     const sourceUrl=safeLink(atom?linkNode?.attrs.href:nodeText(linkNode).trim(),linkNode?.base||item.base);
@@ -61,10 +87,10 @@ export function parsePodcastFeed(text,feedUrl) {
     // limit: a repeated GUID later in the archive still makes identity unsafe.
     if(episodes.length===PODCAST_LIMITS.episodes)continue;
     episodes.push({id,title:small(value(item,'title',atom?ATOM:''))||'未命名单集',source_url:sourceUrl||feedUrl,
-      language:itemLanguage,duration:seconds(value(item,'duration',ITUNES)),published:small(value(item,atom?'published':'pubDate',atom?ATOM:'')),media,transcripts});
+      ...itemMetadata,duration:seconds(value(item,'duration',ITUNES)),published:small(value(item,atom?'published':'pubDate',atom?ATOM:'')),media,transcripts});
   }
   if(!episodes.length)throw new Error('此源中没有可用的公开音视频 enclosure 或发布者文字稿');
-  for(const episode of episodes)if(ambiguous.has(episode.id)||episode.media.some(item=>ambiguousMedia.has(item.url)))episode.identity_ambiguous=true;
+  for(const episode of episodes){episode.transcript_selection=selectPublisherTranscript(episode);if(ambiguous.has(episode.id)||episode.media.some(item=>ambiguousMedia.has(item.url)))episode.identity_ambiguous=true;}
   const result={kind:'feed',title:small(value(channel,'title',atom?ATOM:''))||'播客',feed_url:feedUrl,language:feedLanguage,episodes,feeds:[],
     truncated:seen.size>episodes.length,warnings:['发布者提供的文字稿不等于人工校对；没有文字稿时不会自动识别。',...(ambiguous.size||ambiguousMedia.size?['发布者源包含重复的单集标识或媒体地址，无法据此精确匹配 Apple 单集；请核对原站后明确选择。']:[])]};
   // Keep all bounded identities for matching, without exposing the non-displayed
@@ -327,16 +353,17 @@ export function createPodcastSources({fetchResource=fetchPublic,now=Date.now}={}
     let transcript;
     if(data.transcriptUrl)transcript=available.find(item=>item.url===data.transcriptUrl);
     else {
-      const matching=available.filter(t=>primary(t.language)===primary(episode.language));
-      if(!matching.length || new Set(matching.map(t=>primary(t.language))).size>1)throw new Error('请明确选择要导入的文字稿语言');
-      transcript=matching.find(t=>t.type==='text/vtt')||matching.find(t=>t.type==='application/x-subrip')||matching[0];
+      const selection=selectPublisherTranscript(episode);
+      if(selection.status!=='default')throw new Error('发布者文字稿语言未知或与单集语言不一致，请明确选择要导入的文字稿语言');
+      transcript=available.find(track=>track.url===selection.transcript_url);
     }
     if(!transcript)throw new Error('所选文字稿不在此单集当前公开源中');
+    if(transcript.selection_conflict)throw new Error('发布者对同一文字稿地址提供了冲突标注，请选择其他文字稿或先听原声');
     const resource=await fetchResource(transcript.url,{signal,maxBytes:PODCAST_LIMITS.transcriptBytes,types:new Set([transcript.type,'text/plain','application/octet-stream'])});
     const segments=parsePublisherTranscript(textBody(resource),transcript.type);
     const medium=episode.media[0];
-    const document={schema_version:1,title:episode.title,source_url:episode.source_url,language:transcript.language||episode.language||null,segments,
-      provenance:{kind:'publisher_transcript',caption_method:'publisher_provided',caption_track:transcript.url,subtitle_check:'found',language_basis:'publisher_metadata',review_status:'unreviewed',source_platform:'podcast_rss',...(medium?{source_medium:medium.kind}:{}),...(episode.duration&&episode.duration<=PODCAST_LIMITS.duration?{media_duration:episode.duration}:{})},
+    const document={schema_version:1,title:episode.title,source_url:episode.source_url,language:transcript.language||null,segments,
+      provenance:{kind:'publisher_transcript',caption_method:'publisher_provided',caption_track:transcript.url,subtitle_check:'found',language_basis:transcript.language?(transcript.language_source==='inherited'?'publisher_metadata_inherited':'publisher_metadata'):'unknown',review_status:'unreviewed',source_platform:'podcast_rss',...(medium?{source_medium:medium.kind}:{}),...(episode.duration&&episode.duration<=PODCAST_LIMITS.duration?{media_duration:episode.duration}:{})},
       podcast_source:{feed_url:current.feed_url,episode_id:episode.id,transcript_url:transcript.url,...(medium?{media_url:medium.url,media_kind:medium.kind}:{})}};
     return {status:'ready',document,episode,feed_url:current.feed_url,feed_checked_at:current.feed_checked_at,feed_reused:current.feed_reused};
   }
