@@ -76,3 +76,33 @@ test('changed note filter cannot falsely report restoration of a now hidden sele
   h.button('返回所选原文').click();await wait(()=>w.document.activeElement===w.document.querySelector('.reader-workspace'));assert.match(w.document.querySelector('.reader-workspace > p[role=status]').textContent,/未恢复旧选区/);assert.equal(w.document.querySelector('.rw-selection'),null);
  }finally{await w.happyDOM.close();}
 });
+
+function key(w,target,name,options={}){target.focus();const event=new w.KeyboardEvent('keydown',{key:name,bubbles:true,cancelable:true,...options});target.dispatchEvent(event);return event;}
+for(const modeName of ['transcript','passages'])test('selection keyboard entry is local, reversible and dismissible in '+modeName,async()=>{
+ const h=await setup(),{w}=h;try{
+  if(modeName==='passages'){const mode=[...w.document.querySelectorAll('.reader-workspace label')].find(l=>l.textContent.startsWith('阅读方式')).querySelector('select');mode.value='passages';mode.dispatchEvent(new w.Event('change',{bubbles:true}));await wait(()=>w.document.querySelector('.rw-passage'));}
+  await h.selectText('cue-0');const source=w.document.querySelector('[data-source-id="cue-0"]').closest('.rw-original');
+  assert.equal(key(w,source,'Tab').defaultPrevented,true);assert.equal(w.document.activeElement,h.button('保存精确摘录'));
+  assert.equal(key(w,h.button('保存精确摘录'),'Tab').defaultPrevented,false,'Normal toolbar Tab remains native');
+  assert.equal(key(w,h.button('保存精确摘录'),'Tab',{shiftKey:true}).defaultPrevented,true);assert.equal(w.document.activeElement,source);
+  assert.equal(key(w,source,'Tab',{shiftKey:true}).defaultPrevented,false,'Reverse Tab can leave the source');
+  key(w,source,'Tab');assert.equal(key(w,h.button('理解选中文字'),'Escape').defaultPrevented,true);await wait(()=>!w.document.querySelector('.rw-selection'));assert.equal(w.document.activeElement,source);assert.equal(w.getSelection().rangeCount,0);
+  source.dispatchEvent(new w.KeyboardEvent('keyup',{key:'Escape',bubbles:true}));assert.equal(key(w,source,'Tab').defaultPrevented,false,'Escape keyup cannot recapture the dismissed range');
+  await h.selectText('cue-0');h.button('理解选中文字').click();await wait(()=>w.document.activeElement===w.document.querySelector('.ai-workspace h2'));h.button('返回所选原文').click();await wait(()=>w.document.activeElement===source);source.dispatchEvent(new w.KeyboardEvent('keyup',{key:'Enter',bubbles:true}));assert.ok(w.document.querySelector('.rw-selection'),'Keyboard activation release after AI return keeps the selection');
+  assert.equal(key(w,source,'Tab').defaultPrevented,true,'Restored selection keeps the local keyboard entry');assert.equal(w.document.activeElement,h.button('保存精确摘录'));
+  key(w,h.button('保存精确摘录'),'Tab',{shiftKey:true});source.dispatchEvent(new w.KeyboardEvent('keyup',{key:'Tab',shiftKey:true,bubbles:true}));source.dispatchEvent(new w.KeyboardEvent('keyup',{key:'Shift',bubbles:true}));assert.ok(w.document.querySelector('.rw-selection'),'Navigation keyup does not recapture a collapsed native range after AI return');
+  const close=[...w.document.querySelectorAll('.rw-selection button')].find(b=>b.textContent==='关闭');close.click();await wait(()=>!w.document.querySelector('.rw-selection'));assert.equal(w.document.activeElement,source);assert.equal(key(w,source,'Tab').defaultPrevented,false);assert.equal(h.calls.length,0);
+ }finally{await w.happyDOM.close();}
+});
+test('selection keyboard does not intercept notes, other sources, modifiers, IME or cleared and revised selections',async()=>{
+ const h=await setup(),{w}=h;try{
+  await h.selectText('cue-0');const source=w.document.querySelector('[data-source-id="cue-0"]'),other=w.document.querySelector('[data-source-id="cue-3"]'),note=w.document.querySelector('[aria-label="00:00 的笔记"]');
+  for(const target of [note,other,w.document.querySelector('input[type=search]')]){assert.equal(key(w,target,'Tab').defaultPrevented,false);assert.equal(key(w,target,'Escape').defaultPrevented,false);}
+  for(const options of [{isComposing:true},{keyCode:229},{ctrlKey:true},{metaKey:true},{altKey:true}]){assert.equal(key(w,source,'Tab',options).defaultPrevented,false);assert.equal(key(w,source,'Escape',options).defaultPrevented,false);}
+  w.getSelection().removeAllRanges();source.dispatchEvent(new w.MouseEvent('mouseup',{bubbles:true}));await wait(()=>!w.document.querySelector('.rw-selection'));assert.equal(key(w,source,'Tab').defaultPrevented,false);
+  await h.selectText('cue-0');Object.getOwnPropertyDescriptor(w.HTMLTextAreaElement.prototype,'value').set.call(note,'Revised note');note.dispatchEvent(new w.Event('input',{bubbles:true}));await wait(()=>h.button('保存笔记'));
+  assert.equal(key(w,source,'Tab').defaultPrevented,true);assert.equal(w.document.activeElement,h.button('复制原话'),'Skip unavailable actions while a note is dirty');
+  h.button('保存笔记').click();await wait(()=>h.saved().notes['cue-0']==='Revised note'&&!w.document.querySelector('.rw-selection'));assert.equal(key(w,source,'Tab').defaultPrevented,false);
+  await h.selectText('cue-0');[...w.document.querySelectorAll('.app-sidebar nav button')].find(b=>b.textContent.startsWith('我的内容')).click();await wait(()=>w.document.querySelector('.library-page'));h.button('继续阅读').click();await wait(()=>w.document.querySelector('.rw-cues'));assert.equal(key(w,w.document.querySelector('[data-source-id="cue-0"]'),'Tab').defaultPrevented,false,'A new reading session never inherits the old entry');
+ }finally{await w.happyDOM.close();}
+});

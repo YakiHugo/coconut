@@ -315,6 +315,10 @@ try{
      assert.equal(keyboardProof.reached,true,JSON.stringify({mode,width,index,tabs,limit:6,...keyboardProof}));
      await expect(understand).toBeFocused();await p.keyboard.press('Enter');await expect(p.locator('.ai-workspace h2')).toBeFocused();
      await p.getByRole('button',{name:'返回所选原文',exact:true}).click();await expect(focusTarget).toBeFocused();
+     await p.keyboard.press('Tab');await expect(p.getByRole('button',{name:'保存精确摘录',exact:true})).toBeFocused();
+     await p.keyboard.press('Shift+Tab');await expect(focusTarget).toBeFocused();await expect(p.locator('.rw-selection')).toHaveCount(1);
+     await p.keyboard.press('Tab');await p.keyboard.press('Escape');await expect(focusTarget).toBeFocused();await expect(p.locator('.rw-selection')).toHaveCount(0);
+     await p.keyboard.press('Shift+Tab');await expect(focusTarget).not.toBeFocused();
     }
     await p.keyboard.press('Escape');await expect(p.locator('.rw-selection')).toHaveCount(0);
    }
