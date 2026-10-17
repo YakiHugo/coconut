@@ -87,6 +87,23 @@ try{
   fixture.state.hold=new Promise(resolve=>release=resolve);await openFirst();await expect(page.getByRole('button',{name:'取消读取',exact:true})).toBeVisible();await page.getByLabel('播客或视频链接').fill('https://publisher.example.org/new');release();release=null;fixture.state.hold=null;await expect(page.locator('.episode-list')).toHaveCount(0);await expect(page.locator('.source-project-choice')).toHaveCount(0);assert.equal((await backup()).length,3);
   checks.push({width,passed:['real HTTP bridge + RSS/VTT parser','completed RSS reuse with fresh transcript bytes','delayed explicit refresh and updated source-check time','failed refresh retains context and forbids stale-cache fallback','recovery refresh restores import','refresh cancellation and navigation retire requests','explicit track and retry','browser back discovery session','exact existing/copy/multiple choice','reviewed in-place transcript upgrade','opaque notes/bookmarks durable reload','cancel and newer URL']});await context.close();await server.shutdown();server=null;
  }
+ // Fresh-library catalog entry, using authored bytes behind the real source parser.
+ for(const width of [1360,390]){
+  const catalogFeed='https://mp3s.nashownotes.com/pc20rss.xml',catalogFixture=sourceDiscoveryFixture(catalogFeed);
+  server=await startBridge({port:0,libraryDirectory:path.join(directory,'catalog-'+width),podcastSources:catalogFixture.sources,providers:{status:async()=>({ready:false}),ask:forbiddenProvider,structured:forbiddenProvider,exclusive:forbiddenProvider}});
+  const origin='http://127.0.0.1:'+server.address().port,context=await browser.newContext({viewport:{width,height:960},serviceWorkers:'block'});
+  await context.route('**/*',route=>{if(new URL(route.request().url()).origin!==origin){forbidden.push('catalog external request');return route.abort();}return route.continue();});
+  const page=await context.newPage();page.on('pageerror',error=>errors.push(error.message));await page.goto(origin);
+  const card=page.locator('.podcast-catalog li').filter({has:page.getByRole('heading',{name:'Podcasting 2.0',exact:true})});
+  await expect(card).toContainText('未校对');assert.equal(catalogFixture.calls.length,0);
+  await card.getByRole('button',{name:'查看单集',exact:true}).click();
+  const episode=page.locator('.episode-list article').filter({has:page.getByRole('heading',{name:'Authored multilingual episode',exact:true})});
+  await expect(page.getByLabel('播客或视频链接')).toHaveValue(catalogFeed);await episode.getByRole('combobox').selectOption(frenchTrack);await episode.getByRole('button',{name:'打开单集',exact:true}).click();
+  await expect(page.locator('.rw-original')).toHaveText('Bonjour, cette source reste intacte.');await expect(page.locator('.app-header').getByText('已保存',{exact:true})).toBeVisible();
+  await page.reload();await expect(page.locator('.rw-original')).toHaveText('Bonjour, cette source reste intacte.');assert.equal(catalogFixture.counts.transcript,1);assert.equal(catalogFixture.calls.some(call=>call.url.endsWith('.mp3')),false);
+  const size=await page.evaluate(()=>({viewport:innerWidth,document:document.documentElement.scrollWidth}));assert.ok(size.document<=width+1);
+  checks.push({width,passed:['catalog click without typing URL','real RSS/VTT parser to reader','SQLite saved transcript survives reload','no media or model request']});await context.close();await server.shutdown();server=null;
+ }
  for(const width of [1360,600,390])checks.push(await audioFirstBrowser({browser,width,directory,output}));
  assert.deepEqual(forbidden,[]);assert.deepEqual(errors,[]);await writeFile(path.join(output,'source-discovery.json'),JSON.stringify({checks,forbidden,errors},null,2));console.log('PASS production source-discovery continuity with actual authored backend parser; no external/model requests.');
 }finally{release?.();fixture.state.hold=null;fixture.state.holdFeed=null;await browser?.close();await server?.shutdown();await rm(directory,{recursive:true,force:true});}
