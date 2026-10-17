@@ -89,3 +89,14 @@ jobs:
             ${{ runner.temp }}/coconut-react-authored/matrix-notebook-source-390.png
             ${{ runner.temp }}/coconut-react-authored/react-production-matrix.json
             ${{ runner.temp }}/coconut-react-authored/react-production-matrix-failure.json
+            ${{ runner.temp }}/coconut-react-authored/react-reading-filtered-1360.png
+            ${{ runner.temp }}/coconut-react-authored/react-reading-filtered-390.png
+            ${{ runner.temp }}/coconut-react-authored/react-reading-filtered-320.png
+            ${{ runner.temp }}/coconut-react-authored/react-reading-records-1360.png
+            ${{ runner.temp }}/coconut-react-authored/react-reading-records-390.png
+            ${{ runner.temp }}/coconut-react-authored/react-reading-records-320.png
+            ${{ runner.temp }}/coconut-react-authored/source-episode-search-empty-1360.png
+            ${{ runner.temp }}/coconut-react-authored/source-episode-search-empty-390.png
+            ${{ runner.temp }}/coconut-react-authored/source-episode-browsing-1360.png
+            ${{ runner.temp }}/coconut-react-authored/source-episode-browsing-390.png
+            ${{ runner.temp }}/coconut-react-authored/matrix-selection-return-1360.png
