@@ -60,7 +60,7 @@ export function providerFailure(provider,result,input='') {
  }
  const failures=provider==='codex'?events.filter(event=>event.type==='error'||event.type==='turn.failed'):
   events.filter(event=>event.type==='result'&&(event.is_error===true||String(event.subtype||'').startsWith('error')));
- if(!result.code&&!failures.length)return null;
+ if(result.code===0&&!result.signal&&!failures.length)return null;
  const event=failures.at(-1);
  const detail=object(event?.error)?event.error:event;
  const earlier=failures.find(item=>typeof item.message==='string'||typeof item.error?.message==='string');

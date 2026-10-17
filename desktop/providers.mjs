@@ -27,6 +27,8 @@ const ENV_KEYS = new Set(['HOME','PATH','USER','LOGNAME','LANG','LC_ALL','TMPDIR
   'HTTPS_PROXY','HTTP_PROXY','ALL_PROXY','NO_PROXY','https_proxy','http_proxy','all_proxy','no_proxy']);
 const hasFlags = (help,flags) => {const known=new Set(String(help || '').match(/--[A-Za-z][A-Za-z0-9-]*/g) || []);return flags.every(flag=>known.has(flag));};
 const isObject = value => !!value && typeof value === 'object' && !Array.isArray(value);
+const cancellationError = () => Object.assign(new Error('请求已取消，不会自动重试'), {name:'AbortError'});
+const checkCancellation = signal => { if (signal?.aborted) throw cancellationError(); };
 
 export function safeEnvironment(source = process.env) {
   const env = Object.fromEntries(Object.entries(source).filter(([key]) => ENV_KEYS.has(key)));
@@ -47,9 +49,9 @@ export async function findBinary(name, env) {
 
 export function runCommand(command, args, {input = '', cwd, env, signal, timeout = 15000, maxBytes = 500000} = {}) {
   return new Promise((resolve, reject) => {
-    if (signal?.aborted) { reject(new Error('请求已取消，不会自动重试')); return; }
+    if (signal?.aborted) { reject(cancellationError()); return; }
     const child = spawn(command, args, {cwd, env, shell:false, stdio:['pipe','pipe','pipe'], detached:process.platform !== 'win32'});
-    let stdout = '', stderr = '', bytes = 0, settled = false;
+    let stdout = '', stderr = '', bytes = 0, settled = false, terminationError = null, exited = false;
     const terminate = () => {
       try { if (process.platform !== 'win32' && child.pid) process.kill(-child.pid, 'SIGKILL'); else child.kill('SIGKILL'); } catch { /* Already exited. */ }
     };
@@ -58,19 +60,35 @@ export function runCommand(command, args, {input = '', cwd, env, signal, timeout
       settled = true; clearTimeout(timer); signal?.removeEventListener('abort', abort);
       error ? reject(error) : resolve(result);
     };
-    const abort = () => { terminate(); finish(new Error('请求已取消，不会自动重试')); };
-    const timer = setTimeout(() => { terminate(); finish(new Error('本地代理响应超时，未保存不完整结果')); }, timeout);
+    // Keep the exclusive request slot and temporary files until the process has
+    // actually exited. Killing it is a request, not proof that it has been reaped.
+    // On failure discard pipes after exit: detached descendants can inherit
+    // them indefinitely, so waiting for close would leave cancellation stuck.
+    // Normal success still waits for close to drain every output byte.
+    const finishTermination = () => {
+      child.stdin.destroy(); child.stdout.destroy(); child.stderr.destroy();
+      finish(terminationError);
+    };
+    const stop = error => {
+      if (settled || terminationError) return;
+      terminationError = error; terminate();
+      if (exited) finishTermination();
+    };
+    const abort = () => stop(cancellationError());
+    const timer = setTimeout(() => stop(new Error('本地代理响应超时，未保存不完整结果')), timeout);
     signal?.addEventListener('abort', abort, {once:true});
     for (const [stream, field] of [[child.stdout,'stdout'], [child.stderr,'stderr']]) {
       stream.setEncoding('utf8');
       stream.on('data', chunk => {
+        if (terminationError || settled) return;
         bytes += Buffer.byteLength(chunk);
-        if (bytes > maxBytes) { terminate(); finish(new Error('本地代理输出超过安全限制，未保存')); return; }
+        if (bytes > maxBytes) { stop(new Error('本地代理输出超过安全限制，未保存')); return; }
         if (field === 'stdout') stdout += chunk; else stderr += chunk;
       });
     }
     child.once('error', () => finish(new Error('无法启动官方 CLI，请检查安装与版本')));
-    child.once('close', code => finish(null, {code, stdout, stderr}));
+    child.once('exit', () => { exited = true; if (terminationError) finishTermination(); });
+    child.once('close', (code, signal) => finish(terminationError, {code, signal, stdout, stderr}));
     child.stdin.on('error', () => { /* Report the process exit rather than leaking input. */ });
     child.stdin.end(input);
   });
@@ -95,28 +113,36 @@ export function createProviders({run = runCommand, find = findBinary, environmen
     automatic_api_fallback:false, model_selection:{supported:true,default:'cli-default',availability:'not-checked'}, available_protocols:[provider === 'codex' ? 'codex-exec-json' : 'claude-print-json']});
   async function status(provider, {signal} = {}) {
     if (!['codex','claude'].includes(provider)) throw new Error('Unsupported local agent');
+    checkCancellation(signal);
+    const probe = async args => {
+      checkCancellation(signal);
+      const result = await run(binary, args, {env,signal});
+      checkCancellation(signal);
+      return result;
+    };
     const metadata = info(provider);
     const binary = await find(provider, env);
+    checkCancellation(signal);
     if (!binary) return {...metadata,ready:false,reason:`未找到官方 ${provider === 'codex' ? 'Codex' : 'Claude Code'} CLI。请先在本机安装并用已有订阅登录。`};
     try {
       if (provider === 'codex') {
-        const help = await run(binary, ['exec','--help'], {env,signal});
-        const features = await run(binary, ['features','list'], {env,signal});
+        const help = await probe(['exec','--help']);
+        const features = await probe(['features','list']);
         const known = new Set(features.stdout.split('\n').filter(line=>line.trim()).map(line=>line.trim().split(/\s+/)[0]));
-        if (help.code || features.code || !hasFlags(help.stdout,['--ephemeral','--ignore-user-config','--ignore-rules','--output-schema','--sandbox','--model']) || !CODEX_DISABLED.every(feature=>known.has(feature))) {
+        if (help.code !== 0 || features.code !== 0 || !hasFlags(help.stdout,['--ephemeral','--ignore-user-config','--ignore-rules','--output-schema','--sandbox','--model']) || !CODEX_DISABLED.every(feature=>known.has(feature))) {
           return {...metadata,ready:false,reason:'Codex CLI 缺少所需安全选项。请更新官方 CLI；当前已验证 0.159.2 命令契约。'};
         }
-        const auth = await run(binary, ['login','status'], {env,signal});
-        if (auth.code || !(auth.stdout+'\n'+auth.stderr).includes('Logged in using ChatGPT')) {
+        const auth = await probe(['login','status']);
+        if (auth.code !== 0 || !(auth.stdout+'\n'+auth.stderr).includes('Logged in using ChatGPT')) {
           return {...metadata,ready:false,reason:'需要官方 Codex CLI 的 ChatGPT 登录；API Key 登录不会用于本连接。'};
         }
       } else {
-        const help = await run(binary, [...CLAUDE_SAFE,'--help'], {env,signal});
+        const help = await probe([...CLAUDE_SAFE,'--help']);
         const unconfirmed = {...metadata,ready:false,reason:'无法通过 Claude Code CLI 帮助检查确认所需选项。帮助信息可能省略选项；Coconut 所需的 --safe-mode 从 2.1.169 起提供，较旧版本需先更新。当前尚未检查登录或额度。'};
-        if (help.code) return unconfirmed;
+        if (help.code !== 0) return unconfirmed;
         if (!hasFlags(help.stdout,['--safe-mode'])) {
-          const version = await run(binary, [...CLAUDE_SAFE,'--version'], {env,signal});
-          const match = !version.code && String(version.stdout || '').trim().match(/^(\d+)\.(\d+)\.(\d+) \(Claude Code\)$/);
+          const version = await probe([...CLAUDE_SAFE,'--version']);
+          const match = version.code === 0 && String(version.stdout || '').trim().match(/^(\d+)\.(\d+)\.(\d+) \(Claude Code\)$/);
           if (match) {
             const [major,minor,patch] = match.slice(1).map(Number);
             if (major < 2 || major === 2 && (minor < 1 || minor === 1 && patch < 169)) {
@@ -129,16 +155,17 @@ export function createProviders({run = runCommand, find = findBinary, environmen
         if (!hasFlags(help.stdout,['--max-turns'])) {
           // Claude hides this documented flag from help. Missing-value parsing is
           // read-only: --help is always present, with no print/prompt/source input.
-          const probe = await run(binary, [...CLAUDE_SAFE,'--help','--max-turns'], {env,signal});
-          if (probe.code !== 1 || String(probe.stdout || '').trim() !== '' ||
-              String(probe.stderr || '').trim() !== "error: option '--max-turns <turns>' argument missing") return unconfirmed;
+          const flagProbe = await probe([...CLAUDE_SAFE,'--help','--max-turns']);
+          if (flagProbe.code !== 1 || String(flagProbe.stdout || '').trim() !== '' ||
+              String(flagProbe.stderr || '').trim() !== "error: option '--max-turns <turns>' argument missing") return unconfirmed;
         }
-        const auth = await run(binary, [...CLAUDE_SAFE,'auth','status'], {env,signal});
+        const auth = await probe([...CLAUDE_SAFE,'auth','status']);
         const data = JSON.parse(auth.stdout);
-        if (auth.code || data.authMethod !== 'claude.ai' || data.loggedIn !== true) return {...metadata,ready:false,reason:'需要官方 Claude Code 的订阅登录；API Key 或未知认证方式不会使用。'};
+        if (auth.code !== 0 || data.authMethod !== 'claude.ai' || data.loggedIn !== true) return {...metadata,ready:false,reason:'需要官方 Claude Code 的订阅登录；API Key 或未知认证方式不会使用。'};
       }
       return {...metadata,ready:true,reason:'已检测到本机订阅登录，未检查可用额度或账单。请求可能使用供应商已启用的额外额度；每次发送需确认。Coconut 不购买额度或改用 API Key。'};
     } catch {
+      checkCancellation(signal);
       return {...metadata,ready:false,reason:'无法确认本机 CLI 的订阅连接，请检查官方 CLI 安装、版本和登录。'};
     }
   }
@@ -148,6 +175,7 @@ export function createProviders({run = runCommand, find = findBinary, environmen
     const connection = await status(provider, {signal});
     if (!connection.ready) throw new Error(connection.reason);
     const binary = await find(provider, env);
+    checkCancellation(signal);
     if (!binary) throw new Error('本地代理已不可用');
     const directory = await mkdtemp(path.join(tmpdir(), 'coconut-agent-'));
     try {
@@ -164,9 +192,10 @@ export function createProviders({run = runCommand, find = findBinary, environmen
           '--no-session-persistence','--permission-mode','dontAsk','--max-turns','1','--output-format','json',
           '--json-schema',JSON.stringify(schema),'--system-prompt',instruction];
       }
+      checkCancellation(signal);
       const result = await run(binary, args, {input:provider === 'codex' ? instruction+'\n\nUntrusted transcript input (JSON):\n'+input : input,
         cwd:directory, env, signal, timeout:180000});
-      if (signal?.aborted) throw new Error('请求已取消，不会自动重试');
+      checkCancellation(signal);
       const failure = providerFailure(provider, result, input);
       if (failure) throw failure;
       let parsed;
