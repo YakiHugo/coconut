@@ -100,6 +100,35 @@ async function assertReaderFlow(page,width){
  }
  await page.evaluate(()=>window.scrollTo(0,0));return {width,targets:evidence};
 }
+// These checks deliberately run before focus/click: Playwright actionability can
+// scroll an offscreen toolbar into view and hide the regression under test.
+async function selectionViewportProof(page,label){
+ const proof=await page.evaluate(()=>{
+  const rect=r=>({left:r.left,top:r.top,right:r.right,bottom:r.bottom,width:r.width,height:r.height});
+  const inViewport=r=>r.width>0&&r.height>0&&r.left>=0&&r.top>=0&&r.right<=innerWidth&&r.bottom<=innerHeight;
+  const selection=getSelection(),range=selection?.rangeCount?selection.getRangeAt(0):null;
+  const source=range?.startContainer.parentElement,bar=document.querySelector('.rw-selection');
+  const selected=range?[...range.getClientRects()].filter(r=>r.width&&r.height):[];
+  const hit=(node,r)=>{const top=document.elementFromPoint(r.left+r.width/2,r.top+r.height/2);return !!top&&(top===node||node.contains(top));};
+  const b=bar?.getBoundingClientRect();
+  return {viewport:{width:innerWidth,height:innerHeight},scroll:{x:scrollX,y:scrollY},text:selection?.toString(),bar:b?rect(b):null,
+   selected:selected.map(r=>({...rect(r),inViewport:inViewport(r),hit:!!source&&hit(source,r),overlap:!!b&&b.left<r.right&&b.right>r.left&&b.top<r.bottom&&b.bottom>r.top})),
+   buttons:bar?[...bar.querySelectorAll('button')].map(node=>{const r=node.getBoundingClientRect();return {text:node.textContent,...rect(r),inViewport:inViewport(r),hit:hit(node,r),disabled:node.disabled};}):[]};
+ });
+ const diagnostic=label+' '+JSON.stringify(proof);
+ assert.equal(proof.text,'Original phrase',diagnostic);assert.ok(proof.selected.length,diagnostic);
+ for(const r of proof.selected){assert.equal(r.inViewport,true,diagnostic);assert.equal(r.hit,true,diagnostic);assert.equal(r.overlap,false,diagnostic);}
+ assert.ok(proof.buttons.length>=3,diagnostic);
+ for(const button of proof.buttons){assert.equal(button.inViewport,true,diagnostic);assert.equal(button.hit,true,diagnostic);assert.equal(button.disabled,false,diagnostic);}
+ return {label,...proof};
+}
+async function selectVisiblePhrase(page,id){
+ const source=page.locator(`[data-source-id="${id}"]`);
+ // Only the source is explicitly positioned, before making the native selection.
+ await source.evaluate(element=>{element.scrollIntoView({block:'center'});(element.closest('.rw-original')||element).focus({preventScroll:true});});
+ await source.evaluate(element=>{const range=document.createRange();range.setStart(element.firstChild,0);range.setEnd(element.firstChild,15);getSelection().removeAllRanges();getSelection().addRange(range);element.dispatchEvent(new MouseEvent('mouseup',{bubbles:true}));});
+ await expect(page.getByRole('complementary',{name:'选中文字操作'})).toBeAttached();
+}
 async function downloadJSON(page,button){await expect(button).toBeVisible();await expect(button).toBeEnabled();const [download]=await Promise.all([page.waitForEvent('download'),button.click()]);assert.equal(await download.failure(),null);const chunks=[];for await(const chunk of await download.createReadStream())chunks.push(chunk);return JSON.parse(Buffer.concat(chunks).toString('utf8'));}
 async function chooseFile(page,button,file){const [chooser]=await Promise.all([page.waitForEvent('filechooser'),button.click()]);await chooser.setFiles(file);}
 async function backup(page){return downloadJSON(page,page.getByRole('button',{name:'导出完整备份',exact:true}));}
@@ -251,6 +280,46 @@ try{
   pass('Provider readiness and one-use consent are visible in real Chromium',{width,unavailableReason:unavailable.ai.codex.reason,modelAndQuotaVerified:false,posts,inferenceRequests:readinessService.asks.length});
   await readiness.context.close();contexts.delete(readiness.context);await readinessService.close();
  }
+ // First and middle sources on a full 50-cue page, never the short final page.
+ // Height resize preserves the chosen short range while exercising sticky reflow.
+ const viewportDoc={key:'selection-viewport',title:'Authored selection viewport',language:'en',segments:Array.from({length:65},(_,i)=>({id:'viewport-'+i,start:i*8,end:i*8+2,text:'Original phrase '+i+'. More authored context for reading.'}))};
+ stage='Selection viewport, pointer hit and keyboard access';
+ const viewportEvidence=[];
+ for(const width of [1360,390]){
+  const viewportService=await startService('selection-viewport-'+width);
+  const testContext=await contextFor(viewportService,{seed:JSON.stringify({documents:[viewportDoc],active:viewportDoc.key}),width}),p=testContext.page;
+  await p.getByRole('button',{name:'继续阅读',exact:true}).click();
+  for(const mode of ['transcript','passages']){
+   await p.locator('.reader-workspace label').filter({hasText:/^阅读方式/}).locator('select').selectOption(mode);
+   for(const index of [0,25]){
+    await p.setViewportSize({width,height:960});await selectVisiblePhrase(p,'viewport-'+index);
+    assert.equal(await p.locator('[data-source-id="viewport-49"]').evaluate(node=>node.getBoundingClientRect().top>innerHeight),true,'Selection must leave unread source below the viewport');
+    viewportEvidence.push(await selectionViewportProof(p,`${mode}/${width}/${index}/selected`));
+    await p.setViewportSize({width,height:800});
+    const proof=await selectionViewportProof(p,`${mode}/${width}/${index}/resized`);viewportEvidence.push(proof);
+    // Raw mouse coordinates cannot scroll the target into view on our behalf.
+    const button=proof.buttons.find(b=>b.text==='理解选中文字');await p.mouse.click(button.left+button.width/2,button.top+button.height/2);
+    await expect(p.locator('.ai-workspace h2')).toBeFocused();assert.equal(viewportService.asks.length,0);
+    await p.getByRole('button',{name:'返回所选原文',exact:true}).click();
+    const source=p.locator(`[data-source-id="viewport-${index}"]`),focusTarget=mode==='passages'?p.locator('.rw-passage .rw-original').filter({has:source}):source;
+    await expect(focusTarget).toBeFocused();
+    if(index===0){
+     await p.keyboard.press('Escape');await selectVisiblePhrase(p,'viewport-'+index);
+     viewportEvidence.push(await selectionViewportProof(p,`${mode}/${width}/${index}/keyboard-entry`));
+     // Start from the focused source, not a programmatically focused action.
+     const understand=p.getByRole('button',{name:'理解选中文字',exact:true});let tabs=0;
+     while(tabs<6&&!await p.evaluate(()=>document.activeElement?.closest('.rw-selection')&&document.activeElement?.textContent==='理解选中文字')){await p.keyboard.press('Tab');tabs++;}
+     const keyboardProof=await p.evaluate(()=>({focus:{tag:document.activeElement?.tagName,text:document.activeElement?.textContent?.slice(0,160),label:document.activeElement?.getAttribute('aria-label')},reached:!!document.activeElement?.closest('.rw-selection')&&document.activeElement?.textContent==='理解选中文字'}));
+     assert.equal(keyboardProof.reached,true,JSON.stringify({mode,width,index,tabs,limit:6,...keyboardProof}));
+     await expect(understand).toBeFocused();await p.keyboard.press('Enter');await expect(p.locator('.ai-workspace h2')).toBeFocused();
+     await p.getByRole('button',{name:'返回所选原文',exact:true}).click();await expect(focusTarget).toBeFocused();
+    }
+    await p.keyboard.press('Escape');await expect(p.locator('.rw-selection')).toHaveCount(0);
+   }
+  }
+  assert.equal(viewportService.asks.length,0);await testContext.context.close();contexts.delete(testContext.context);await viewportService.close();
+ }
+ pass('Long-document selection actions are in viewport and pointer-hit reachable before any action scrolling, across first/middle sources, reading modes and resize',{geometry:viewportEvidence,keyboard:'Native Tab from source then Enter; exact source focus restored; no provider request'});
  stage='Selection understanding and translation retain reading position and cancel transport';
  const selectionDoc={key:'selection-flow',title:'Authored long selection',language:'en',segments:Array.from({length:65},(_,i)=>({id:'cue-'+i,start:i*2,end:i*2+2,text:'Original phrase '+i+'. More context.'}))};
  const selectionService=await startService('selection-flow'),selectionContext=await contextFor(selectionService,{seed:JSON.stringify({documents:[selectionDoc],active:selectionDoc.key})}),selectionPage=selectionContext.page;
