@@ -94,10 +94,42 @@ const saved=page=>expect(page.locator('.app-header [role=status]')).toHaveText('
 async function shot(page,name,width){await page.setViewportSize({width,height:960});const geometry=await page.evaluate(()=>({width:innerWidth,document:document.documentElement.scrollWidth,body:document.body.scrollWidth}));assert.ok(geometry.document<=width+1&&geometry.body<=width+1,JSON.stringify(geometry));await page.screenshot({path:path.join(output,`matrix-${name}-${width}.png`),fullPage:true});return geometry;}
 async function assertReaderFlow(page,width){
  await page.setViewportSize({width,height:960});const player=page.locator('.rw-player');await expect(player).toHaveCSS('position','static');const evidence=[];
+ if(!await page.locator('.rw-project-note').evaluate(node=>node.open))await page.locator('.rw-project-note > summary').click();
  for(const target of [page.getByRole('button',{name:'返回原阅读状态',exact:true}),page.locator('.rw-summary').getByText('Authored saved whole-source summary',{exact:true}),page.getByRole('textbox',{name:'项目笔记',exact:true})]){
   await target.evaluate(node=>node.scrollIntoView({block:'center'}));await expect(target).toBeVisible();const proof=await target.evaluate(node=>{const player=document.querySelector('.rw-player'),p=player.getBoundingClientRect(),r=node.getBoundingClientRect(),x=r.left+r.width/2,y=r.top+r.height/2,hit=document.elementFromPoint(x,y);return {viewport:innerHeight,playerBottom:p.bottom,targetTop:r.top,targetBottom:r.bottom,targetInViewport:r.top>=0&&r.bottom<=innerHeight,hit:!!hit&&(hit===node||node.contains(hit)),overlap:p.left<r.right&&p.right>r.left&&p.top<r.bottom&&p.bottom>r.top};});assert.equal(proof.targetInViewport,true);assert.equal(proof.overlap,false,'Player must not cover reading or editing after scroll');assert.equal(proof.hit,true,'Reading target must receive real pointer hit');evidence.push(proof);
  }
  await page.evaluate(()=>window.scrollTo(0,0));return {width,targets:evidence};
+}
+// These checks deliberately run before focus/click: Playwright actionability can
+// scroll an offscreen toolbar into view and hide the regression under test.
+async function selectionViewportProof(page,label){
+ const proof=await page.evaluate(()=>{
+  const rect=r=>({left:r.left,top:r.top,right:r.right,bottom:r.bottom,width:r.width,height:r.height});
+  const inViewport=r=>r.width>0&&r.height>0&&r.left>=0&&r.top>=0&&r.right<=innerWidth&&r.bottom<=innerHeight;
+  const selection=getSelection(),range=selection?.rangeCount?selection.getRangeAt(0):null;
+  const source=range?.startContainer.parentElement,bar=document.querySelector('.rw-selection');
+  const selected=range?[...range.getClientRects()].filter(r=>r.width&&r.height):[];
+  const hit=(node,r)=>{const top=document.elementFromPoint(r.left+r.width/2,r.top+r.height/2);return !!top&&(top===node||node.contains(top));};
+  const b=bar?.getBoundingClientRect();
+  return {viewport:{width:innerWidth,height:innerHeight},scroll:{x:scrollX,y:scrollY},text:selection?.toString(),bar:b?rect(b):null,
+   selected:selected.map(r=>({...rect(r),inViewport:inViewport(r),hit:!!source&&hit(source,r),overlap:!!b&&b.left<r.right&&b.right>r.left&&b.top<r.bottom&&b.bottom>r.top})),
+   buttons:bar?[...bar.querySelectorAll('button')].map(node=>{const r=node.getBoundingClientRect();return {text:node.textContent,...rect(r),inViewport:inViewport(r),hit:hit(node,r),disabled:node.disabled};}):[]};
+ });
+ const diagnostic=label+' '+JSON.stringify(proof);
+ assert.equal(proof.text,'Original phrase',diagnostic);assert.ok(proof.selected.length,diagnostic);
+ for(const r of proof.selected){assert.equal(r.inViewport,true,diagnostic);assert.equal(r.hit,true,diagnostic);assert.equal(r.overlap,false,diagnostic);}
+ const expectedDisabled={'保存精确摘录':false,'理解选中文字':false,'翻译选中文字':false,'复制原话':false,'保存双语摘录':true,'关闭':false};
+ assert.deepEqual(proof.buttons.map(button=>button.text).sort(),Object.keys(expectedDisabled).sort(),diagnostic);
+ // This authored fixture has no translation, so bilingual capture must stay disabled.
+ for(const button of proof.buttons){assert.equal(button.inViewport,true,diagnostic);assert.equal(button.hit,true,diagnostic);assert.equal(button.disabled,expectedDisabled[button.text],diagnostic);}
+ return {label,...proof};
+}
+async function selectVisiblePhrase(page,id){
+ const source=page.locator(`[data-source-id="${id}"]`);
+ // Only the source is explicitly positioned, before making the native selection.
+ await source.evaluate(element=>{element.scrollIntoView({block:'center'});(element.closest('.rw-original')||element).focus({preventScroll:true});});
+ await source.evaluate(element=>{const range=document.createRange();range.setStart(element.firstChild,0);range.setEnd(element.firstChild,15);getSelection().removeAllRanges();getSelection().addRange(range);element.dispatchEvent(new MouseEvent('mouseup',{bubbles:true}));});
+ await expect(page.getByRole('complementary',{name:'选中文字操作'})).toBeAttached();
 }
 async function downloadJSON(page,button){await expect(button).toBeVisible();await expect(button).toBeEnabled();const [download]=await Promise.all([page.waitForEvent('download'),button.click()]);assert.equal(await download.failure(),null);const chunks=[];for await(const chunk of await download.createReadStream())chunks.push(chunk);return JSON.parse(Buffer.concat(chunks).toString('utf8'));}
 async function chooseFile(page,button,file){const [chooser]=await Promise.all([page.waitForEvent('filechooser'),button.click()]);await chooser.setFiles(file);}
@@ -182,6 +214,8 @@ try{
  await rp.getByRole('button',{name:'继续阅读',exact:true}).click();const mode=rp.locator('.reader-workspace label').filter({hasText:/^阅读方式/}).locator('select'),search=rp.getByRole('searchbox',{name:'搜索原话、译文和笔记'});await expect(mode).toHaveValue('summary');await expect(rp.getByRole('region',{name:'摘要阅读'})).toContainText('覆盖当前整篇原文');assert.equal(readingService.asks.length,0);
  await rp.getByRole('navigation',{name:'摘要引用'}).getByRole('button').last().click();await expect(mode).toHaveValue('transcript');await expect(rp.locator('[data-cue-id="summary-cue-64"]')).toBeVisible();await mode.selectOption('summary');await rp.getByRole('button',{name:'返回原阅读状态',exact:true}).click();await expect(rp.locator('.rw-current')).toHaveAttribute('data-cue-id','summary-cue-64');
  await mode.selectOption('passages');await search.fill('source 6');const filteredPassages=await rp.locator('.rw-passages').innerText();await mode.selectOption('summary');await rp.getByRole('button',{name:'返回原阅读状态',exact:true}).click();await expect(mode).toHaveValue('passages');await expect(search).toHaveValue('source 6');assert.equal(await rp.locator('.rw-passages').innerText(),filteredPassages);
+ const currentParagraph=rp.locator('.rw-original').filter({has:rp.locator('[data-source-id="summary-cue-64"]')});assert.equal(await currentParagraph.evaluate(node=>node!==document.querySelector('.rw-original')),true,'fixture current cue must be in a later passage');await rp.getByRole('button',{name:/^阅读记录/}).click();await rp.getByRole('button',{name:'返回正文',exact:true}).click();await expect(currentParagraph).toBeFocused();await expect(rp.locator('.rw-current')).toHaveAttribute('data-cue-id','summary-cue-64');await search.fill('No authored passage matches this');await expect(rp.locator('.rw-original')).toHaveCount(0);await expect(rp.getByRole('button',{name:'返回正文',exact:true})).toHaveCount(0);await expect(rp.locator('.rw-filter-status')).toContainText('当前显示 0 / 65');
+
  await search.fill('');await mode.selectOption('transcript');await expect.poll(()=>rp.locator('audio').evaluate(player=>player.duration)).toBe(150);assert.equal(await rp.locator('audio').evaluate(player=>player.paused),true);
  const source=rp.locator('.rw-original').first();await source.focus();await source.press('/');await expect(source).toBeFocused();await source.press('Control+f');await expect(search).toBeFocused();await search.press('l');await expect(search).toHaveValue('l');await search.fill('');
  await prefs.locator('summary').click();await prefs.getByLabel('启用单字符阅读快捷键',{exact:true}).check();await prefs.locator('label').filter({hasText:/^阅读排版/}).locator('select').focus();await rp.keyboard.press('Escape');await expect(prefs).not.toHaveAttribute('open');await expect(prefs.locator('summary')).toBeFocused();
@@ -189,7 +223,7 @@ try{
  await source.dispatchEvent('compositionstart');await source.press('l');assert.equal(await rp.locator('audio').evaluate(player=>player.currentTime),20);await source.dispatchEvent('compositionend');
  assert.equal(await source.evaluate(node=>{const event=new KeyboardEvent('keydown',{key:'l',bubbles:true,cancelable:true,isComposing:true});node.dispatchEvent(event);return event.defaultPrevented;}),false);assert.equal(await source.evaluate(node=>{const event=new KeyboardEvent('keydown',{key:'l',bubbles:true,cancelable:true,repeat:true});node.dispatchEvent(event);return event.defaultPrevented;}),false);assert.equal(await rp.locator('audio').evaluate(player=>player.currentTime),20);
  await source.press('?');const help=rp.getByRole('dialog',{name:'阅读快捷键'}),closeHelp=help.getByRole('button',{name:'关闭快捷键帮助'});await expect(closeHelp).toBeFocused();await rp.keyboard.press('Tab');await expect.poll(()=>help.evaluate(node=>node.contains(document.activeElement))).toBe(true);await rp.keyboard.press('Shift+Tab');await expect.poll(()=>help.evaluate(node=>node.contains(document.activeElement))).toBe(true);await closeHelp.press('l');assert.equal(await rp.locator('audio').evaluate(player=>player.currentTime),20);await closeHelp.press('Escape');await expect(help).toHaveCount(0);await expect(source).toBeFocused();await source.press('/');await expect(search).toBeFocused();await search.press('l');await expect(search).toHaveValue('l');assert.equal(await rp.locator('audio').evaluate(player=>player.currentTime),20);await search.fill('');
- await rp.getByRole('textbox',{name:'项目笔记',exact:true}).focus();assert.equal(await rp.getByRole('textbox',{name:'项目笔记',exact:true}).evaluate(node=>{const e=new KeyboardEvent('keydown',{key:'f',ctrlKey:true,bubbles:true,cancelable:true});node.dispatchEvent(e);return e.defaultPrevented;}),false);
+ await rp.locator('.rw-project-note > summary').click();await rp.getByRole('textbox',{name:'项目笔记',exact:true}).focus();assert.equal(await rp.getByRole('textbox',{name:'项目笔记',exact:true}).evaluate(node=>{const e=new KeyboardEvent('keydown',{key:'f',ctrlKey:true,bubbles:true,cancelable:true});node.dispatchEvent(e);return e.defaultPrevented;}),false);
  await source.focus();await source.press('k');await expect.poll(()=>rp.locator('audio').evaluate(player=>player.paused)).toBe(false);await source.press('k');await expect.poll(()=>rp.locator('audio').evaluate(player=>player.paused)).toBe(true);await expect(rp.locator('.reader-workspace > p[role=status]')).not.toContainText('播放未能开始');await source.press('g');await expect(rp.locator('.rw-current')).toBeVisible();
  await mode.selectOption('summary');const readingGeometry=[];for(const width of [1360,390]){readingGeometry.push(await assertReaderFlow(rp,width));await expect(rp.locator('.reader-workspace > p[role=status]')).not.toContainText('播放未能开始');await shot(rp,'summary-preferences',width);}pass('Normal-flow player does not cover summary, return controls or project notes after scrolling',{geometry:readingGeometry});await rp.getByRole('button',{name:'查看 AI 计划与记录',exact:true}).click();await expect(rp.locator('.react-ai-panel')).toHaveAttribute('open');assert.equal(readingService.asks.length,0,'Summary reading and opening plan never run inference');
  for(const stale of [staleSummary,missingSummary]){await rp.getByRole('button',{name:/^我的内容/}).click();await rp.locator('.library-page li button').filter({hasText:stale.title}).first().click();await mode.selectOption('summary');await expect(rp.getByRole('region',{name:'摘要阅读'})).toContainText('可能过期');await expect(rp.getByRole('navigation',{name:'摘要引用'}).getByRole('button')).toHaveCount(0);await rp.locator('.rw-summary details > summary').click();await rp.getByRole('button',{name:'下一页原文依据',exact:true}).click();await expect(rp.locator('.rw-summary details')).toContainText('Original summary source 64');if(stale===missingSummary)await expect(rp.getByRole('navigation',{name:'摘要引用'})).toContainText('原片段已不存在');}
@@ -248,6 +282,50 @@ try{
   pass('Provider readiness and one-use consent are visible in real Chromium',{width,unavailableReason:unavailable.ai.codex.reason,modelAndQuotaVerified:false,posts,inferenceRequests:readinessService.asks.length});
   await readiness.context.close();contexts.delete(readiness.context);await readinessService.close();
  }
+ // First and middle sources on a full 50-cue page, never the short final page.
+ // Height resize preserves the chosen short range while exercising sticky reflow.
+ const viewportDoc={key:'selection-viewport',title:'Authored selection viewport',language:'en',segments:Array.from({length:65},(_,i)=>({id:'viewport-'+i,start:i*8,end:i*8+2,text:'Original phrase '+i+'. More authored context for reading.'}))};
+ stage='Selection viewport, pointer hit and keyboard access';
+ const viewportEvidence=[];
+ for(const width of [1360,390]){
+  const viewportService=await startService('selection-viewport-'+width);
+  const testContext=await contextFor(viewportService,{seed:JSON.stringify({documents:[viewportDoc],active:viewportDoc.key}),width}),p=testContext.page;
+  await p.getByRole('button',{name:'继续阅读',exact:true}).click();
+  for(const mode of ['transcript','passages']){
+   await p.locator('.reader-workspace label').filter({hasText:/^阅读方式/}).locator('select').selectOption(mode);
+   for(const index of [0,25]){
+    await p.setViewportSize({width,height:960});await selectVisiblePhrase(p,'viewport-'+index);
+    assert.equal(await p.locator('[data-source-id="viewport-49"]').evaluate(node=>node.getBoundingClientRect().top>innerHeight),true,'Selection must leave unread source below the viewport');
+    viewportEvidence.push(await selectionViewportProof(p,`${mode}/${width}/${index}/selected`));
+    await p.setViewportSize({width,height:800});
+    const proof=await selectionViewportProof(p,`${mode}/${width}/${index}/resized`);viewportEvidence.push(proof);
+    // Raw mouse coordinates cannot scroll the target into view on our behalf.
+    const button=proof.buttons.find(b=>b.text==='理解选中文字');await p.mouse.click(button.left+button.width/2,button.top+button.height/2);
+    await expect(p.locator('.ai-workspace h2')).toBeFocused();assert.equal(viewportService.asks.length,0);
+    await p.getByRole('button',{name:'返回所选原文',exact:true}).click();
+    const source=p.locator(`[data-source-id="viewport-${index}"]`),focusTarget=mode==='passages'?p.locator('.rw-passage .rw-original').filter({has:source}):source;
+    await expect(focusTarget).toBeFocused();
+    if(index===0){
+     await p.keyboard.press('Escape');await selectVisiblePhrase(p,'viewport-'+index);
+     viewportEvidence.push(await selectionViewportProof(p,`${mode}/${width}/${index}/keyboard-entry`));
+     // Start from the focused source, not a programmatically focused action.
+     const understand=p.getByRole('button',{name:'理解选中文字',exact:true});let tabs=0;
+     while(tabs<6&&!await p.evaluate(()=>document.activeElement?.closest('.rw-selection')&&document.activeElement?.textContent==='理解选中文字')){await p.keyboard.press('Tab');tabs++;}
+     const keyboardProof=await p.evaluate(()=>({focus:{tag:document.activeElement?.tagName,text:document.activeElement?.textContent?.slice(0,160),label:document.activeElement?.getAttribute('aria-label')},reached:!!document.activeElement?.closest('.rw-selection')&&document.activeElement?.textContent==='理解选中文字'}));
+     assert.equal(keyboardProof.reached,true,JSON.stringify({mode,width,index,tabs,limit:6,...keyboardProof}));
+     await expect(understand).toBeFocused();await p.keyboard.press('Enter');await expect(p.locator('.ai-workspace h2')).toBeFocused();
+     await p.getByRole('button',{name:'返回所选原文',exact:true}).click();await expect(focusTarget).toBeFocused();
+     await p.keyboard.press('Tab');await expect(p.getByRole('button',{name:'保存精确摘录',exact:true})).toBeFocused();
+     await p.keyboard.press('Shift+Tab');await expect(focusTarget).toBeFocused();await expect(p.locator('.rw-selection')).toHaveCount(1);
+     await p.keyboard.press('Tab');await p.keyboard.press('Escape');await expect(focusTarget).toBeFocused();await expect(p.locator('.rw-selection')).toHaveCount(0);
+     await p.keyboard.press('Shift+Tab');await expect(focusTarget).not.toBeFocused();
+    }
+    await p.keyboard.press('Escape');await expect(p.locator('.rw-selection')).toHaveCount(0);
+   }
+  }
+  assert.equal(viewportService.asks.length,0);await testContext.context.close();contexts.delete(testContext.context);await viewportService.close();
+ }
+ pass('Long-document selection actions are in viewport and pointer-hit reachable before any action scrolling, across first/middle sources, reading modes and resize',{geometry:viewportEvidence,keyboard:'Native Tab from source then Enter; exact source focus restored; no provider request'});
  stage='Selection understanding and translation retain reading position and cancel transport';
  const selectionDoc={key:'selection-flow',title:'Authored long selection',language:'en',segments:Array.from({length:65},(_,i)=>({id:'cue-'+i,start:i*2,end:i*2+2,text:'Original phrase '+i+'. More context.'}))};
  const selectionService=await startService('selection-flow'),selectionContext=await contextFor(selectionService,{seed:JSON.stringify({documents:[selectionDoc],active:selectionDoc.key})}),selectionPage=selectionContext.page;
@@ -292,7 +370,7 @@ try{
  const [emptyChooser]=await Promise.all([p.waitForEvent('filechooser'),p.getByRole('button',{name:'打开音频或视频文件',exact:true}).click()]);
  const picking=await p.evaluate(()=>coconutPrepareClose('inspect'));assert.equal(picking.safe,false);assert.equal(picking.flushable,false);assert.equal(await p.evaluate(()=>coconutPrepareUpdate()),false);assert.equal(await p.evaluate(()=>coconutPrepareClose('safe',{id:11,kind:'close',expiresAt:Date.now()+10000})),false);
  await emptyChooser.setFiles([]);await expect.poll(()=>p.evaluate(()=>coconutPrepareClose('inspect').safe)).toBe(true);await expect(p.getByRole('heading',{name:'今天，想听什么？'})).toBeVisible();assert.equal(await p.locator('audio,video,.reader-workspace').count(),0);pass('Real picker blocks close/update until an empty selection retires its owner',{limitation:'Empty browser selection, not native OS cancel; native lifecycle bridge is a mock'});
- await chooseFile(p,p.getByRole('button',{name:'打开音频或视频文件',exact:true}),{name:'authored-native.wav',mimeType:'audio/wav',buffer:wav()});await expect(p.getByRole('heading',{name:'authored-native.wav',exact:true})).toBeVisible();await saved(p);assert.equal(await p.locator('audio').evaluate(player=>player.paused),true);assert.equal(await p.locator('.rw-cue').count(),0);await p.getByRole('textbox',{name:'项目笔记',exact:true}).fill('Keep this project note');await p.getByRole('button',{name:'保存笔记',exact:true}).click();await saved(p);
+ await chooseFile(p,p.getByRole('button',{name:'打开音频或视频文件',exact:true}),{name:'authored-native.wav',mimeType:'audio/wav',buffer:wav()});await expect(p.getByRole('heading',{name:'authored-native.wav',exact:true})).toBeVisible();await saved(p);assert.equal(await p.locator('audio').evaluate(player=>player.paused),true);assert.equal(await p.locator('.rw-cue').count(),0);await p.locator('.rw-project-note > summary').click();await p.getByRole('textbox',{name:'项目笔记',exact:true}).fill('Keep this project note');await p.getByRole('button',{name:'保存笔记',exact:true}).click();await saved(p);
  await p.getByRole('checkbox',{name:'在这台电脑记住原文件',exact:true}).check();await expect(p.getByText(/已在这台电脑记住原文件/)).toBeVisible();const nativeBefore=await p.evaluate(()=>authoredNativeCalls);assert.equal(nativeBefore.filter(c=>c.kind==='remember').length,1);const nativeOwner=nativeBefore.find(c=>c.kind==='remember').owner;const nativeStatus=await (await fetch(localService.origin+'/api/v1/library')).json();assert.equal(nativeOwner.library,nativeStatus.binding.mediaLibraryIdentity);assert.equal(nativeOwner.epoch,(await record(localService,(await backup(p)).documents[0].key)).identity.lifetime);await noBrowserPrimary(p);
  const rawBackup=await backup(p),rawDoc=rawBackup.documents[0];assert.equal(rawDoc.project_note,'Keep this project note');assert.ok(!JSON.stringify(rawBackup).includes('authored-native-token'));
  await p.reload();await p.getByRole('button',{name:'继续阅读',exact:true}).click();await expect(p.locator('audio')).toBeVisible();assert.equal(await p.locator('audio').evaluate(player=>player.paused),true);await expect(p.getByText(/已载入本机原文件，未自动播放/)).toBeVisible();await p.getByRole('button',{name:'不再记住',exact:true}).click();await expect(p.getByText(/已不再记住原文件/)).toBeVisible();assert.equal(await p.locator('audio').count(),1,'Forget preserves loaded session');
