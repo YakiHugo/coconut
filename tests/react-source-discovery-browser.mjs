@@ -57,7 +57,7 @@ try{
   fixture.state.failTrack=true;await openFirst();await expect(page.locator('.source-error')).toContainText('Authored transcript temporarily unavailable');await expect(multilingual()).toBeVisible();await expect(multilingual().getByRole('combobox')).toHaveValue(frenchTrack);await screenshot('track-retry');
   fixture.state.failTrack=false;await page.getByRole('button',{name:'重试上次读取：Authored multilingual episode',exact:true}).click();await expect(page.locator('.rw-original')).toHaveText('Bonjour, cette source reste intacte.');await saved();
   assert.deepEqual(fixture.counts,{feed:beforeDiscovery.feed+1,transcript:beforeDiscovery.transcript+2},'track failure and retry both reuse the completed RSS, but fetch publisher transcript bytes');
-  await page.getByRole('textbox',{name:'项目笔记',exact:true}).fill('French project note');await page.getByRole('button',{name:'保存笔记',exact:true}).click();await saved();
+  await page.locator('.rw-project-note > summary').click();await page.getByRole('textbox',{name:'项目笔记',exact:true}).fill('French project note');await page.getByRole('button',{name:'保存笔记',exact:true}).click();await saved();
   let docs=await backup(),first=docs.find(doc=>doc.title==='Authored multilingual episode');assert.equal(first.language,'fr');assert.equal(first.podcast_source.transcript_url,frenchTrack);
   await page.goBack();await expect(page.getByLabel('播客或视频链接')).toHaveValue(sourceFeed);await expect(multilingual()).toBeVisible();await expect(multilingual().getByRole('combobox')).toHaveValue(frenchTrack);
   await expect(episodeSearch).toHaveValue('multilingual');await episodeSearch.focus();await episodeSearch.press('ControlOrMeta+A');await episodeSearch.press('Backspace');await expect(episodeRows).toHaveCount(20);
