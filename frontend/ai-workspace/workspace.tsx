@@ -9,7 +9,7 @@ export function AiWorkspace({snapshot:s, commands:c}:{snapshot:AiSnapshot;comman
  const reviewRows=s.reviewQueue.filter(row=>reviewMode==='all'||row.status!=='current');
  const answers=s.answers.slice(answerPage*10,answerPage*10+10),queue=reviewRows.slice(reviewPage*30,reviewPage*30+30);
  return <section className="ai-workspace" aria-label="AI 阅读与译文核对">
-  <h2>理解与整理</h2>
+  <h2 tabIndex={-1}>理解与整理</h2>
   <p>原文始终保留。AI 结果需要核对，打开此面板不会发送请求。</p>
   <button type="button" onClick={()=>void c.connect()}>检查本地 AI 连接</button>
   <fieldset disabled={s.busy}><legend>本次任务</legend>
@@ -21,14 +21,14 @@ export function AiWorkspace({snapshot:s, commands:c}:{snapshot:AiSnapshot;comman
    {s.purpose==='question'&&<label>问题<textarea value={s.question} onChange={e=>c.configure({question:e.target.value})}/></label>}
    {s.purpose==='summary'&&<label>执行方式<select value={s.execution} onChange={e=>c.configure({execution:e.target.value as AiSnapshot['execution']})}><option value="foreground">保持此页打开，逐批保存</option><option value="background">本机后台执行，关闭页面后继续</option></select></label>}
   </fieldset>
-  {s.selection?.exactText!==undefined&&<div><h3>精确选中的原文</h3><p style={{whiteSpace:'pre-wrap'}}>{s.selection.exactText}</p></div>}
+  {s.selection?.exactText!==undefined&&<div><h3>精确选中的原文</h3><p style={{whiteSpace:'pre-wrap'}}>{s.selection.exactText}</p><p>{s.purpose==='question'?'回答将保存为带原文依据的阅读记录。实际发送还包含所选文字所在的完整片段作为上下文。':s.purpose==='translation'?'上下文翻译会翻译并保存所选文字所在的完整片段，并非只翻译划线部分。':''}</p></div>}
   {s.purpose==='translation'&&<details><summary>本篇术语表</summary><label>每行：原词 = 译法<textarea value={s.glossary} onChange={e=>c.editGlossary(e.target.value)}/></label><button disabled={!s.glossaryDirty||s.busy} onClick={()=>void c.saveGlossary()}>保存术语</button></details>}
   <p role="status" data-testid="ai-readiness">{s.readiness.reason}</p>
   <p data-testid="ai-scope">{s.scopeNotice}</p>
   <label><input type="checkbox" checked={s.consent} disabled={s.busy||!s.documentKey||(!s.selection&&s.purpose!=='summary')} onChange={e=>c.consent(e.target.checked)}/>{s.purpose==='translation'&&s.translationEngine==='offline'?'我确认上述范围并在本机运行离线粗稿。':'我确认上述范围、提供商与模型；发送原文并使用订阅额度'}{ s.execution==='background'&&s.purpose==='summary'?'，离开页面后继续执行':'' }。</label>
   <button disabled={s.unsavedContent||!s.consent||s.busy||!s.connected||!s.readiness.ready||(!s.selection&&s.purpose!=='summary')} onClick={()=>void c.submit()}>{s.resumeKey?'确认续跑原任务':'执行本次任务'}</button>
   {s.purpose==='summary'&&s.execution==='foreground'&&<button disabled={s.busy} onClick={()=>void c.resetSummary()}>清除分批进度，重新核对全文</button>}
-  {s.busy&&<button onClick={c.stop}>停止后续请求</button>}
+  {s.busy&&<button onClick={c.stop}>{s.purpose==='summary'&&s.execution==='background'?'停止本次提交后续步骤':'停止当前请求'}</button>}
   <p role="status">{s.message}</p>{s.unsavedContent&&<div><button disabled={s.busy} onClick={()=>void c.retrySave()}>重试保存当前文稿</button><button onClick={c.exportCurrentDocument}>下载当前文稿 JSON 备份</button></div>}
   {s.recoveries.length>0&&<section aria-label="未保存结果恢复"><h3>保留的未保存结果</h3>{s.recoveries.map(r=><div key={r.id}><p>{r.title}：{r.canRetry?'可重试保存到当前原文':'当前来源已变化，只能导出原结果，不会覆盖新来源'}</p><button onClick={()=>c.exportRecovery(r.id)}>下载这份未保存结果</button><button onClick={()=>{if(window.confirm('放弃这份尚未保存的结果？请先确认已下载需要的备份。'))c.discardRecovery(r.id);}}>放弃这份未保存结果</button></div>)}</section>}
   {s.localErrorAvailable&&<div><button aria-expanded={s.localError!==null} onClick={()=>c.showLocalError(s.localError===null)}>查看本次本机错误详情</button>{s.localError!==null&&<p style={{whiteSpace:'pre-wrap'}}>{s.localError}</p>}</div>}

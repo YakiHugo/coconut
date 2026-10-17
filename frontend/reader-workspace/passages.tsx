@@ -1,5 +1,6 @@
 import type { ReaderCue, ReaderDocument } from './contracts';
 import { time } from './domain';
+import { SourcePlaybackLink } from './source';
 export type Passage = {
     key: string;
     start: number;
@@ -17,16 +18,17 @@ export function passageDomain() {
         };
     }).CoconutPassages;
 }
-export function PassageView({ doc, cues, current, position, onLocate, onListen }: {
+export function PassageView({ doc, cues, current, position, onLocate, onListen, canListen = false }: {
     doc: ReaderDocument;
     cues: ReaderCue[];
     current?: string;
     position: string;
     onLocate: (id: string) => void;
+    canListen?: boolean;
     onListen: (start: number, end: number) => void;
 }) {
     const passages = passageDomain().build(cues, { source: doc.segments });
-    return <div className="rw-passages">{passages.map(passage => <section className="rw-passage" key={passage.key}><div className="rw-cue-meta"><button onClick={() => onLocate(passage.cues[0].id)}>{time(passage.start)}</button><span>{passage.speaker}</span><button onClick={() => onListen(passage.start, passage.end)}>回听整段</button></div><p className="rw-original">{passage.cues.map((cue, i) => <span key={cue.id}>{i ? passageDomain().separator(passage.cues[i - 1].text, cue.text) : ''}<span data-source-id={cue.id} data-cue-id={cue.id} className={(cue.id === current ? 'rw-playing ' : '') + (cue.id === position ? 'rw-current' : '')} onDoubleClick={() => onLocate(cue.id)}>{cue.text}</span></span>)}</p>{doc.translation_view && <p className="rw-translation">{passage.cues.map(cue => cue.translations?.[doc.translation_view!]?.text ? (((window as unknown as {
+    return <div className="rw-passages">{passages.map(passage => <section className="rw-passage" key={passage.key}><div className="rw-cue-meta"><button onClick={() => onLocate(passage.cues[0].id)}>{time(passage.start)}</button><span>{passage.speaker}</span>{canListen ? <button onClick={() => onListen(passage.start, passage.end)}>回听整段</button> : <SourcePlaybackLink sourceUrl={doc.source_url} start={passage.start}/>}</div><p className="rw-original" tabIndex={-1}>{passage.cues.map((cue, i) => <span key={cue.id}>{i ? passageDomain().separator(passage.cues[i - 1].text, cue.text) : ''}<span data-source-id={cue.id} data-cue-id={cue.id} className={(cue.id === current ? 'rw-playing ' : '') + (cue.id === position ? 'rw-current' : '')} onDoubleClick={() => onLocate(cue.id)}>{cue.text}</span></span>)}</p>{doc.translation_view && <p className="rw-translation">{passage.cues.map(cue => cue.translations?.[doc.translation_view!]?.text ? (((window as unknown as {
                     Coconut: {
                         translationCurrent: (cue: ReaderCue, doc: ReaderDocument, item: unknown) => boolean;
                     };

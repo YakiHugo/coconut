@@ -8,7 +8,7 @@ import { ReaderAnnotations, SourceCorrections } from './annotations';
 import { PassageView, passageDomain } from './passages';
 import { BilingualCapture } from './bilingual';
 import { ReaderExports } from './exports';
-import { ReaderSource } from './source';
+import { ReaderSource, SourcePlaybackLink } from './source';
 type Domain = {
     exactExcerptTranslation: (record: unknown) => {
         text: string;
@@ -38,7 +38,7 @@ const domain = () => (window as unknown as {
 const PAGE = 50;
 const UNCONFIRMED_SAVE = '尚未保存。内容可能已更新或存储暂不可用，请保留草稿后重试。';
 export function ReaderWorkspace(props: ReaderWorkspaceProps) { return <WorkspaceSession key={props.document.key} {...props}/>; }
-function WorkspaceSession({ document: doc, revision, media, onSaveDocument, onReadingPosition, onRequestAi, onDirtyChange, onMediaProgress, saveStatus, onVisibleSelection, onReviewTranslation, navigationRequest, onNavigationHandled, initialView, onViewChange, resumePosition, shortcutsEnabled=false, onOpenSummary }: ReaderWorkspaceProps) {
+function WorkspaceSession({ document: doc, revision, media, onSaveDocument, onReadingPosition, onRequestAi, onDirtyChange, onMediaProgress, saveStatus, onVisibleSelection, onReviewTranslation, navigationRequest, onNavigationHandled, initialView, onViewChange, resumePosition, shortcutsEnabled=false, onOpenSummary, aiReturnRequest }: ReaderWorkspaceProps) {
     const validInitialView=initialView?.documentKey===doc.key&&doc.segments.some(cue=>cue.id===initialView.cueId)?initialView:null;
     const initialCue=validInitialView?.cueId||doc.readingPosition||doc.segments[0]?.id||'';
     const temporaryNavigation=useRef(false),viewCallback=useRef(onViewChange);viewCallback.current=onViewChange;
@@ -46,6 +46,27 @@ function WorkspaceSession({ document: doc, revision, media, onSaveDocument, onRe
         revision: number;
     }) | null>(null);
     const handledNavigation=useRef<ReaderWorkspaceProps['navigationRequest']>(null);
+    const aiReturn=useRef<{selection:SourceSelection;cues:{id:string;text:string;speaker:string|null}[];mode:typeof mode;query:string;notesOnly:boolean;speaker:string|null;page:number;position:string}|null>(null);
+    const handledAiReturn=useRef(0),[restoreSelection,setRestoreSelection]=useState<SourceSelection|null>(null);
+    useEffect(()=>{
+        if(!aiReturnRequest||aiReturnRequest.documentKey!==doc.key||handledAiReturn.current===aiReturnRequest.id)return;
+        handledAiReturn.current=aiReturnRequest.id;const saved=aiReturn.current;
+        if(!saved)return;
+        const unavailable=()=>{setSelection(null);scopeRef.current?.focus({preventScroll:true});setStatus('选中的原文或阅读筛选已变化，请重新选择；未恢复旧选区。');};
+        const start=doc.segments.findIndex(cue=>cue.id===saved.cues[0]?.id);
+        if(start<0||!saved.cues.every((cue,index)=>doc.segments[start+index]?.id===cue.id&&doc.segments[start+index]?.text===cue.text&&(doc.segments[start+index]?.speaker||null)===cue.speaker)){unavailable();return;}
+        const visible=filterCues(doc,saved.query,saved.notesOnly,saved.speaker).slice(saved.page*PAGE,(saved.page+1)*PAGE);
+        if(!saved.cues.every(cue=>visible.some(current=>current.id===cue.id))){unavailable();return;}
+        setMode(saved.mode);setQuery(saved.query);setNotesOnly(saved.notesOnly);setSpeaker(saved.speaker);setPage(saved.page);setPosition(saved.position);setFollow(false);
+        setSelection({...saved.selection,revision});setRestoreSelection(saved.selection);
+    },[aiReturnRequest,doc,revision]);
+    useEffect(()=>{
+        if(!restoreSelection)return;
+        const first=host.current?.querySelector<HTMLElement>('[data-source-id="'+CSS.escape(restoreSelection.cueIds[0])+'"]');
+        const focus=first?.closest<HTMLElement>('.rw-original');setRestoreSelection(null);
+        if(!focus){setSelection(null);scopeRef.current?.focus({preventScroll:true});setStatus('所选原文当前不可见，请重新选择；未恢复旧选区。');return;}
+        focus.focus({preventScroll:true});first?.scrollIntoView?.({block:'center'});setStatus('已回到所选原文，可继续阅读或重新选择。');
+    },[restoreSelection]);
     const [sourceFocus,setSourceFocus]=useState<{id:number;target:ReaderSourceTarget}|null>(null);
     const scopeRef=useRef<HTMLElement|null>(null),searchRef=useRef<HTMLInputElement|null>(null),helpClose=useRef<HTMLButtonElement|null>(null),helpDialog=useRef<HTMLDialogElement|null>(null);
     const [keyboardHelp,setKeyboardHelp]=useState(false);
@@ -265,6 +286,11 @@ function WorkspaceSession({ document: doc, revision, media, onSaveDocument, onRe
             setFollow(false);
         setSelection(value ? { ...value, revision } : null);
     };
+    const requestSelectionAi=(intent:'understand'|'translate')=>{
+        if(!selection||selection.revision!==revision||busy||anyDirty)return;
+        aiReturn.current={selection:{...selection},cues:selection.cueIds.map(id=>({id,text:doc.segments.find(cue=>cue.id===id)!.text,speaker:doc.segments.find(cue=>cue.id===id)!.speaker||null})),mode,query,notesOnly,speaker,page,position};
+        onRequestAi({key:doc.key,revision,intent,text:selection.text,cueIds:selection.cueIds,scope:{kind:'exact_source_selection',from:selection.from,to:selection.to,separators:selection.separators,cueIds:selection.cueIds}});
+    };
     const excerpt = async () => {
         if (!selection || selection.revision !== revision)
             return;
@@ -303,9 +329,9 @@ function WorkspaceSession({ document: doc, revision, media, onSaveDocument, onRe
                 }
                 else
                     setStatus('时间超出文字稿范围');
-            }}><label>跳转时间 <input value={jump} placeholder="12:34" onChange={e => setJump(e.target.value)}/></label><button type="submit">跳转</button><button type="button" disabled={busy || anyDirty || !position} onClick={() => save({ ...doc, readingPosition: position })}>读到这里</button>{doc.readingPosition && <button type="button" onClick={() => locate(doc.readingPosition!)}>回到已保存续点</button>}</form><p aria-live="polite">找到 {filtered.length} 个片段</p><div className="rw-cues" ref={host} onWheel={() => setFollow(false)} onTouchMove={() => setFollow(false)} onMouseUp={capture} onKeyUp={capture}>{mode === 'passages' ? <PassageView doc={doc} cues={shown} current={activeCue?.id} position={position} onLocate={locate} onListen={(start, end) => seekTo(start + calibrated, end + calibrated, true)}/> : shown.map(cue => <section key={cue.id} data-cue-id={cue.id} className={'rw-cue' + (cue.id === activeCue?.id ? ' rw-playing' : '') + (cue.id === position ? ' rw-current' : '')}><div className="rw-cue-meta"><button type="button" onClick={() => { locate(cue.id); seekTo(cue.start + calibrated); }}>{time(cue.start)}</button>{cue.speaker && <span>{cue.speaker}</span>}<button type="button" disabled={!media} onClick={() => seekTo(cue.start + calibrated, cue.end + calibrated, true)}>回听此段</button></div><p className="rw-original" tabIndex={0} data-source-id={cue.id}>{cue.text}</p>{doc.translation_view && cue.translations?.[doc.translation_view]?.text && <p className="rw-translation">{!domain().translationCurrent(cue, doc, cue.translations[doc.translation_view]) && <small>旧译文 · 原文已变化，请核对后更新。 </small>}{cue.translations[doc.translation_view].text}</p>}{onReviewTranslation&&doc.translation_view&&cue.translations?.[doc.translation_view]&&<button type="button" onClick={()=>onReviewTranslation(cue.id)}>核对译文</button>}<details open={Object.hasOwn(drafts, cue.id) ? true : undefined}><summary>笔记{doc.notes?.[cue.id] ? ' · 已有记录' : ''}</summary><textarea disabled={busy} aria-label={time(cue.start) + ' 的笔记'} value={drafts[cue.id] ?? doc.notes?.[cue.id] ?? ''} onChange={e => { startDraft(); setDrafts(old => ({ ...old, [cue.id]: e.target.value })); }}/></details></section>)}</div>
+            }}><label>跳转时间 <input value={jump} placeholder="12:34" onChange={e => setJump(e.target.value)}/></label><button type="submit">跳转</button><button type="button" disabled={busy || anyDirty || !position} onClick={() => save({ ...doc, readingPosition: position })}>读到这里</button>{doc.readingPosition && <button type="button" onClick={() => locate(doc.readingPosition!)}>回到已保存续点</button>}</form><p aria-live="polite">找到 {filtered.length} 个片段</p><div className="rw-cues" ref={host} onWheel={() => setFollow(false)} onTouchMove={() => setFollow(false)} onMouseUp={capture} onKeyUp={capture}>{mode === 'passages' ? <PassageView canListen={Boolean(media)} doc={doc} cues={shown} current={activeCue?.id} position={position} onLocate={locate} onListen={(start, end) => seekTo(start + calibrated, end + calibrated, true)}/> : shown.map(cue => <section key={cue.id} data-cue-id={cue.id} className={'rw-cue' + (cue.id === activeCue?.id ? ' rw-playing' : '') + (cue.id === position ? ' rw-current' : '')}><div className="rw-cue-meta"><button type="button" onClick={() => { locate(cue.id); seekTo(cue.start + calibrated); }}>{time(cue.start)}</button>{cue.speaker && <span>{cue.speaker}</span>}{media ? <button type="button" onClick={() => seekTo(cue.start + calibrated, cue.end + calibrated, true)}>回听此段</button> : <SourcePlaybackLink sourceUrl={doc.source_url} start={cue.start}/>}</div><p className="rw-original" tabIndex={0} data-source-id={cue.id}>{cue.text}</p>{doc.translation_view && cue.translations?.[doc.translation_view]?.text && <p className="rw-translation">{!domain().translationCurrent(cue, doc, cue.translations[doc.translation_view]) && <small>旧译文 · 原文已变化，请核对后更新。 </small>}{cue.translations[doc.translation_view].text}</p>}{onReviewTranslation&&doc.translation_view&&cue.translations?.[doc.translation_view]&&<button type="button" onClick={()=>onReviewTranslation(cue.id)}>核对译文</button>}<details open={Object.hasOwn(drafts, cue.id) ? true : undefined}><summary>笔记{doc.notes?.[cue.id] ? ' · 已有记录' : ''}</summary><textarea disabled={busy} aria-label={time(cue.start) + ' 的笔记'} value={drafts[cue.id] ?? doc.notes?.[cue.id] ?? ''} onChange={e => { startDraft(); setDrafts(old => ({ ...old, [cue.id]: e.target.value })); }}/></details></section>)}</div>
  <nav className="rw-toolbar" aria-label="片段分页"><button disabled={visiblePage === 0} onClick={() => {temporaryNavigation.current=false;setPage(visiblePage - 1);}}>上一页</button><span>第 {visiblePage + 1} / {maxPage + 1} 页</span><button disabled={visiblePage === maxPage} onClick={() => {temporaryNavigation.current=false;setPage(visiblePage + 1);}}>下一页</button></nav></div>{mode==='summary'&&<ReaderSummary doc={doc} onNavigate={navigateSummary} onReturn={returnToReading} onOpenSummary={onOpenSummary}/>}</>}
- {selection && <aside className="rw-selection" aria-label="选中文字操作"><p>{selection.text}</p><button disabled={busy || anyDirty} onClick={excerpt}>保存精确摘录</button><button onClick={() => onRequestAi({ key: doc.key, revision, text: selection.text, cueIds: selection.cueIds, scope: { kind: 'exact_source_selection', from: selection.from, to: selection.to, separators: selection.separators, cueIds: selection.cueIds } })}>询问 AI</button><button onClick={async () => {
+ {selection && <aside className="rw-selection" aria-label="选中文字操作"><p>{selection.text}</p><button disabled={busy || anyDirty} onClick={excerpt}>保存精确摘录</button><button disabled={busy||anyDirty} onClick={()=>requestSelectionAi('understand')}>理解选中文字</button><button disabled={busy||anyDirty} onClick={()=>requestSelectionAi('translate')}>翻译选中文字</button><button onClick={async () => {
                 try {
                     await navigator.clipboard.writeText(selection.text);
                     setStatus('已复制选中原话');
