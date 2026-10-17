@@ -62,7 +62,10 @@ npm run dev
 
 ## 开发与验收
 
+修改 React 源码或 reader 静态 JS/CSS 后，运行 `npm run build:reader-ui`：它会生成 bundle，并更新 `reader/index.html` 中全部受支持的本地 JS/CSS 引用的 SHA-256 缓存 token，无需另跑 Python 更新步骤。`check:reader-ui` 只检查、不写文件，同时验证类型、bundle 与缓存 token；引用的资源缺失也会失败。原有 `python scripts/reader_assets.py --check` 仍可独立验证 token。
+
 ```bash
+npm run build:reader-ui
 npm run check:reader-ui
 npm run test:react
 npm run test:desktop
