@@ -88,6 +88,8 @@ test('HTTP caption import carries authoritative loss diagnostics and rejects all
 test('platform URL normalization preserves identity and rejects redirects, collections and unsupported parts',()=>{
  for(const input of ['https://youtu.be/BaW_jenozKc?t=4','https://m.youtube.com/shorts/BaW_jenozKc','https://youtube.com/watch?v=BaW_jenozKc&list=ignored'])assert.equal(captionSource(input).url,'https://www.youtube.com/watch?v=BaW_jenozKc');
  assert.equal(captionSource('https://m.bilibili.com/video/BV1xx411c7mD/?share=1').url,'https://www.bilibili.com/video/BV1xx411c7mD');
+ assert.equal(captionSource('https://www.bilibili.com/video/BV1xx411c7mD?p=1&share=1').url,'https://www.bilibili.com/video/BV1xx411c7mD');
+ for(const query of ['p=1&p=2','p=2&p=1','p=1&p=1','p=1&%70=2','p='])assert.throws(()=>captionSource('https://www.bilibili.com/video/BV1xx411c7mD?'+query),/分 P/);
  for(const input of ['https://youtu.be/BaW_jenozKc/extra','https://youtube.com/watch?v=BaW_jenozKc&v=different00','https://youtube.com/playlist?list=PL1','https://b23.tv/short','https://www.bilibili.com/video/BV1xx411c7mD?p=2','https://www.bilibili.com/video/av123'])assert.throws(()=>captionSource(input));
 });
 test('platform readiness and media identity are independent',async()=>{

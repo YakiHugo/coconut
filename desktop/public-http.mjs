@@ -42,7 +42,7 @@ async function withAbort(promise, signal) {
   } finally { signal.removeEventListener('abort',cancel); }
 }
 export function createPublicFetcher({lookup = dnsLookup, request = (url,options,callback)=>(url.protocol === 'https:' ? https : http).request(url,options,callback)} = {}) {
-  return async function fetchPublic(value,{maxBytes=8*1024*1024,timeoutMs=20000,signal,types,inspectMedia=false,maxMediaBytes=200*1024*1024}={}) {
+  return async function fetchPublic(value,{maxBytes=8*1024*1024,timeoutMs=20000,signal,types,inspectMedia=false,maxMediaBytes=200*1024*1024,redirectOnly=false}={}) {
     const deadline = AbortSignal.timeout(timeoutMs);
     const combined = signal ? AbortSignal.any([signal,deadline]) : deadline;
     let url = publicUrl(value);
@@ -64,6 +64,7 @@ export function createPublicFetcher({lookup = dnsLookup, request = (url,options,
             if ([301,302,303,307,308].includes(res.statusCode)) {
               const location = res.headers.location; done(null,{redirect:location}); res.destroy(); return;
             }
+            if (redirectOnly) return fail('短链接未返回可用重定向');
             if (res.statusCode !== 200) return fail(`公开来源返回 HTTP ${res.statusCode}；未使用登录、Cookie 或识别回退`);
             if (res.headers['content-encoding'] && res.headers['content-encoding'].toLowerCase() !== 'identity') return fail('来源忽略未压缩请求；已停止以避免解压资源失控');
             const type = mime(res.headers['content-type']);
@@ -90,6 +91,8 @@ export function createPublicFetcher({lookup = dnsLookup, request = (url,options,
         if (!response.redirect || redirects===4) throw new Error('来源重定向过多或缺少目标');
         const next = publicUrl(response.redirect,url);
         if (url.protocol==='https:' && next.protocol!=='https:') throw new Error('不允许 HTTPS 降级重定向');
+        // A caller that validates a short-link destination owns any subsequent fetch.
+        if (redirectOnly) return {url:url.href,redirect:next.href};
         url=next;
       }
     } catch(error) {
