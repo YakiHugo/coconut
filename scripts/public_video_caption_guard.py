@@ -6,6 +6,7 @@ providers, external processes, redirects or alternate clients after a denial.
 from __future__ import annotations
 import contextlib
 import io
+import html
 import http.client
 import ipaddress
 import socket
@@ -28,6 +29,8 @@ MAX_REQUESTS = 32
 MAX_RESPONSE = 4 * 1024 * 1024
 MAX_TOTAL = 24 * 1024 * 1024
 MAX_CAPTION = 1024 * 1024
+ACCESS_REASONS = frozenset({'access_restricted', 'login_required', 'subtitle_login_required',
+                            'subtitle_token_required', 'rate_limited', 'http_access_denied'})
 
 
 # Match the bridge's public-network boundary independently of DNS/TLS trust.
@@ -141,7 +144,7 @@ class VideoTransport:
         if status is None:
             raise StopProof('metadata_incomplete')
         if status != 'OK':
-            raise StopProof('access_restricted')
+            raise StopProof('login_required' if status == 'LOGIN_REQUIRED' else 'access_restricted')
         identity = player.get('videoDetails', {}).get('videoId')
         if identity is None:
             raise StopProof('metadata_incomplete')
@@ -173,11 +176,11 @@ class VideoTransport:
                         anonymous_nav = (urlparse(request.url).path == '/x/web-interface/nav' and
                             payload.get('code') == -101 and isinstance(payload.get('data'), dict) and payload['data'].get('wbi_img'))
                         if not anonymous_nav and payload.get('code', 0) in (-101, -403, -352, -412, 401, 403, 429):
-                            raise StopProof('access_restricted')
+                            raise StopProof({-101: 'login_required', 401: 'login_required', 429: 'rate_limited'}.get(payload['code'], 'access_restricted'))
                         if not anonymous_nav and payload.get('code', 0) != 0:
                             raise StopProof('upstream_error')
                         if isinstance(payload.get('data'), dict) and payload['data'].get('need_login_subtitle'):
-                            raise StopProof('access_restricted')
+                            raise StopProof('subtitle_login_required')
                     elif urlparse(request.url).path == '/youtubei/v1/player':
                         self.verify_youtube_player(payload)
                 return body, dict(response.headers), response.status
@@ -185,7 +188,8 @@ class VideoTransport:
             self.responses += 1
             code = error.code
             error.close()
-            raise StopProof('access_restricted' if code in (401, 403, 412, 429) else 'upstream_error') from None
+            raise StopProof({401: 'login_required', 403: 'http_access_denied', 412: 'http_access_denied',
+                             429: 'rate_limited'}.get(code, 'upstream_error')) from None
         except (urllib.error.URLError, OSError):
             raise StopProof('transport_unavailable') from None
 
@@ -223,10 +227,10 @@ def guarded_extractors(transport):
             return webpage
 
         def raise_login_required(self, *args, **kwargs):
-            raise StopProof('access_restricted')
+            raise StopProof('login_required')
 
         def _report_pot_subtitles_skipped(self, *args, **kwargs):
-            raise StopProof('access_restricted')
+            raise StopProof('subtitle_token_required')
 
     class PublicBiliBiliIE(BiliBiliIE):
         @classmethod
@@ -248,12 +252,14 @@ def guarded_extractors(transport):
             if state.get('videoData', {}).get('bvid') not in (None, transport.identity):
                 raise StopProof('identity_mismatch')
             risk = self._search_json(r'\bwindow\._riskdata_\s*=', webpage, 'risk', self._match_id(handle.url), default={})
-            if risk.get('v_voucher') or state.get('error', {}).get('trueCode') in (-403, -404) or state.get('videoData', {}).get('is_upower_exclusive'):
+            if state.get('error', {}).get('trueCode') == -403:
+                raise StopProof('login_required')
+            if risk.get('v_voucher') or state.get('error', {}).get('trueCode') == -404 or state.get('videoData', {}).get('is_upower_exclusive'):
                 raise StopProof('access_restricted')
             return webpage, handle
 
         def raise_login_required(self, *args, **kwargs):
-            raise StopProof('access_restricted')
+            raise StopProof('login_required')
 
     class CaptionsDL(yt_dlp.YoutubeDL):
         def __init__(self, settings):
@@ -304,6 +310,23 @@ def guarded_extractors(transport):
         yield
 
 
+def json3_document_vtt(document):
+    """Serialize validated JSON3 text without interpreting it as VTT markup."""
+    def timestamp(value):
+        milliseconds = round(value * 1000)
+        hours, remainder = divmod(milliseconds, 3600000)
+        minutes, remainder = divmod(remainder, 60000)
+        seconds, milliseconds = divmod(remainder, 1000)
+        return f'{hours:02}:{minutes:02}:{seconds:02}.{milliseconds:03}'
+
+    lines = ['WEBVTT', '']
+    for cue in document['segments']:
+        # Encoded line breaks cannot terminate the cue block during VTT parsing.
+        text = html.escape(cue['text'], quote=False).replace('\r', '&#13;').replace('\n', '&#10;')
+        lines.extend([f"{timestamp(cue['start'])} --> {timestamp(cue['end'])}", text, ''])
+    return '\n'.join(lines).encode('utf-8')
+
+
 def extract_public_video_captions(url, language=None, *, ca_file=None, proxy=None):
     import tempfile
     language_required = False
@@ -344,7 +367,7 @@ def extract_public_video_captions(url, language=None, *, ca_file=None, proxy=Non
             raise StopProof('duration_unavailable')
         selected = original_select(info, hint)
         selection_completed = True
-        languages = subtitle_import.available_caption_languages(info, selector=original_select)
+        languages = subtitle_import.available_caption_languages(info, formats=('vtt', 'srt', 'json3'), selector=original_select)
         language_required = selected is None and subtitle_import.preferred_language(info, hint)[0] is None and any(
             key not in ('danmaku', 'live_chat') and subtitle_import.eligible_formats(tracks)
             for field in ('subtitles', 'automatic_captions') for key, tracks in (info.get(field) or {}).items())
@@ -363,8 +386,17 @@ def extract_public_video_captions(url, language=None, *, ca_file=None, proxy=Non
                                'language_unknown' if language_required else 'no_matching_track')
             transport.stage = 'caption_output'
             files = list(directory.iterdir())
-            if len(files) != 1 or files[0].suffix not in ('.vtt', '.srt') or not 0 < files[0].stat().st_size <= MAX_CAPTION:
+            if len(files) != 1 or files[0].suffix not in ('.vtt', '.srt', '.json3') or not 0 < files[0].stat().st_size <= MAX_CAPTION:
                 return failure('caption_file_invalid', 'invalid_caption_file')
+            caption_format = files[0].suffix[1:]
+            caption_bytes = files[0].read_bytes()
+            if caption_format == 'json3':
+                # The shared parser already validates JSON3 cues. Keep the bridge's
+                # VTT/SRT contract, without rejecting a successfully parsed track.
+                caption_format = 'vtt'
+                caption_bytes = json3_document_vtt(document)
+                if not 0 < len(caption_bytes) <= MAX_CAPTION:
+                    return failure('caption_file_invalid', 'invalid_caption_file')
             p = document['provenance']
             return {'source': {'url': url, 'id': p['media_id'], 'title': document['title'],
                 'duration': p['media_duration'], 'language': p['language'],
@@ -372,7 +404,7 @@ def extract_public_video_captions(url, language=None, *, ca_file=None, proxy=Non
                 'translated': False, 'live': False, 'live_status': completion},
                 'track': {'language': p['language'], 'captionMethod': p['caption_method'],
                     'languageBasis': p['language_basis'], 'captionTrack': p['caption_track'], 'reviewStatus': 'unreviewed'},
-                'format': files[0].suffix[1:], 'bytes': files[0].read_bytes()}
+                'format': caption_format, 'bytes': caption_bytes}
     except StopProof as stopped:
         reasons = {'access_restricted', 'transport_unavailable', 'metadata_incomplete',
                    'request_scope_stopped', 'non_public_address', 'identity_mismatch', 'budget_exceeded',
@@ -380,11 +412,11 @@ def extract_public_video_captions(url, language=None, *, ca_file=None, proxy=Non
                    'alternate_extractor_stopped', 'unsupported_request', 'external_execution_stopped',
                    'duration_unavailable', 'redirect_stopped', 'proxy_configuration_invalid',
                    'proxy_unavailable', 'proxy_auth_required', 'proxy_connect_rejected', 'origin_tls_failed'}
-        reason = stopped.outcome if stopped.outcome in reasons else 'guard_stopped'
+        reason = stopped.outcome if stopped.outcome in reasons | ACCESS_REASONS else 'guard_stopped'
         status = {'access_restricted': 'access_restricted', 'transport_unavailable': 'network_unavailable',
                   'metadata_incomplete': 'metadata_incomplete', 'proxy_unavailable': 'network_unavailable',
                   'proxy_auth_required': 'network_unavailable', 'proxy_connect_rejected': 'network_unavailable',
-                  'origin_tls_failed': 'network_unavailable'}.get(reason, 'guard_stopped')
+                  'origin_tls_failed': 'network_unavailable'}.get(reason, 'access_restricted' if reason in ACCESS_REASONS else 'guard_stopped')
         return failure(status, reason)
     except Exception:
         if language_required:

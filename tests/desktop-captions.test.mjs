@@ -138,3 +138,25 @@ test('language-required receipts expose only bounded actual track codes and expl
  const missing=await service(async()=>({status:'language_required'})).importCaption({url});assert.deepEqual(missing.languages,[]);
  const oversized=await service(async()=>({status:'language_required',languages:Array(129).fill('en')})).importCaption({url});assert.deepEqual(oversized.languages,[]);
 });
+
+
+test('bounded access reasons distinguish observed restrictions without inventing a cause',async()=>{
+ const reasons={login_required:/登录或认证/,subtitle_login_required:/Bilibili 字幕接口明确要求登录/,subtitle_token_required:/PO token/,rate_limited:/限流/,http_access_denied:/HTTP 403 \/ 412/};
+ for(const [reason,message] of Object.entries(reasons)){
+  const diagnostic={stage:'metadata',reason,requests_attempted:1,responses_received:1};
+  const receipt=await service(async()=>({status:'access_restricted',diagnostic})).importCaption({url});
+  assert.deepEqual(receipt.diagnostic,diagnostic);assert.match(receipt.message,message);assert.equal(receipt.document,undefined);
+ }
+ const receipt=await service(async()=>({status:'access_restricted',diagnostic:{stage:'metadata',reason:'PRIVATE_SERVER_TEXT',requests_attempted:1,responses_received:1}})).importCaption({url});
+ assert.equal(receipt.diagnostic,undefined);assert.doesNotMatch(JSON.stringify(receipt),/PRIVATE_SERVER_TEXT/);
+});
+
+
+test('normalized JSON3 VTT keeps literal markup, entities, blank lines and millisecond timing',async()=>{
+ const r=result();
+ r.bytes=Buffer.from('WEBVTT\n\n00:00:00.123 --> 00:00:03.579\nUse &lt;v A&gt;literal&lt;/v&gt; &amp;amp; &lt;T&gt;&#10;&#10;Second line.\n');
+ const receipt=await service(async()=>r).importCaption({url});
+ assert.equal(receipt.status,'ready');
+ assert.equal(receipt.document.segments[0].text,'Use <v A>literal</v> &amp; <T>\n\nSecond line.');
+ assert.equal(receipt.document.segments[0].start,.123);assert.equal(receipt.document.segments[0].end,3.579);
+});

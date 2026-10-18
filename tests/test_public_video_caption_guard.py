@@ -60,7 +60,7 @@ class TransportTests(unittest.TestCase):
             with patch.object(transport.opener, 'open', side_effect=urllib.error.HTTPError(YOUTUBE, code, '', {}, io.BytesIO())) as send:
                 with self.assertRaises(guard.StopProof) as caught:
                     transport.send(SimpleNamespace(url=YOUTUBE, method='GET', data=None, headers={}))
-                self.assertEqual(caught.exception.outcome, 'access_restricted'); self.assertEqual(send.call_count, 1)
+                self.assertEqual(caught.exception.outcome, {401: 'login_required', 403: 'http_access_denied', 412: 'http_access_denied', 429: 'rate_limited'}[code]); self.assertEqual(send.call_count, 1)
         transport = guard.VideoTransport(YOUTUBE)
         with patch.object(transport.opener, 'open', side_effect=urllib.error.URLError('offline')):
             with self.assertRaises(guard.StopProof) as caught:
@@ -72,12 +72,14 @@ class TransportTests(unittest.TestCase):
         send.assert_not_called()
 
     def test_api_denial_and_bounded_payload(self):
-        for payload in [{'code': -403}, {'code': 0, 'data': {'need_login_subtitle': True}}]:
+        for payload, reason in [({'code': -403}, 'access_restricted'), ({'code': -101}, 'login_required'),
+                ({'code': -352}, 'access_restricted'), ({'code': -412}, 'access_restricted'),
+                ({'code': 429}, 'rate_limited'), ({'code': 0, 'data': {'need_login_subtitle': True}}, 'subtitle_login_required')]:
             transport = guard.VideoTransport(BILIBILI)
             with patch.object(transport.opener, 'open', return_value=Response(json.dumps(payload).encode())):
                 with self.assertRaises(guard.StopProof) as caught:
                     transport.send(SimpleNamespace(url='https://api.bilibili.com/x/player/wbi/v2?aid=1&cid=2', method='GET', data=None, headers={}))
-                self.assertEqual(caught.exception.outcome, 'access_restricted')
+                self.assertEqual(caught.exception.outcome, reason)
         transport = guard.VideoTransport(YOUTUBE)
         with patch.object(transport.opener, 'open', return_value=Response(b'x'*(guard.MAX_RESPONSE+1))), self.assertRaises(guard.StopProof):
             transport.send(SimpleNamespace(url=YOUTUBE, method='GET', data=None, headers={}))
@@ -143,7 +145,7 @@ class PinnedConnectionTests(unittest.TestCase):
 
 @unittest.skipUnless(importlib.util.find_spec('yt_dlp'), 'Pinned yt-dlp not installed; CI extractor-contract job installs it')
 class OfficialExtractorTests(unittest.TestCase):
-    def extract(self, source, player=None, state=None, denied=False, network=False):
+    def extract(self, source, player=None, state=None, denied=False, network=False, caption_body=VTT):
         calls = []
         player = copy.deepcopy(PLAYER if player is None else player)
         state = copy.deepcopy(STATE if state is None else state)
@@ -156,7 +158,7 @@ class OfficialExtractorTests(unittest.TestCase):
             url = request.full_url
             if '/watch?' in url:
                 body = ('<script>var ytInitialPlayerResponse = '+json.dumps(player)+';</script>').encode()
-            elif '/api/timedtext?' in url: body = VTT
+            elif '/api/timedtext?' in url: body = caption_body
             elif '/video/' in url:
                 body = ('<script>window.__INITIAL_STATE__='+json.dumps(state)+';</script>').encode()
             elif '/pagelist?' in url: body = json.dumps({'code': 0, 'data': state['videoData']['pages']}).encode()
@@ -186,6 +188,46 @@ class OfficialExtractorTests(unittest.TestCase):
         self.assertEqual(result['track']['languageBasis'], 'single_track')
         self.assertEqual(len(calls), 2)
         self.assertNotIn('has_verified', calls[0])
+
+    def test_json3_only_track_is_normalized_without_losing_text_or_timings(self):
+        text = 'Use <v A>literal</v> &amp; <T>\n\nSecond line.'
+        body = json.dumps({'events': [{'tStartMs': 123, 'dDurationMs': 3456,
+            'segs': [{'utf8': text}]}]}).encode()
+        eligible = guard.subtitle_import.eligible_formats
+        with patch.object(guard.subtitle_import, 'eligible_formats',
+                          side_effect=lambda tracks: [item for item in eligible(tracks) if item['ext'] == 'json3']):
+            result, calls = self.extract(YOUTUBE, caption_body=body)
+        self.assertEqual(result['format'], 'vtt')
+        self.assertTrue(any('fmt=json3' in url for url in calls))
+        self.assertEqual(guard.subtitle_import.parse_subtitles(result['bytes'].decode(), '.vtt'),
+                         [{'start': .123, 'end': 3.579, 'text': text}])
+        self.assertEqual(result['track']['captionTrack'], 'en')
+        self.assertEqual(result['source']['id'], 'BaW_jenozKc')
+
+    def test_json3_only_languages_remain_available_for_explicit_selection(self):
+        player = copy.deepcopy(PLAYER)
+        track = copy.deepcopy(player['captions']['playerCaptionsTracklistRenderer']['captionTracks'][0])
+        track.update(languageCode='fr', vssId='.fr', baseUrl=track['baseUrl'].replace('lang=en', 'lang=fr'))
+        player['captions']['playerCaptionsTracklistRenderer']['captionTracks'].append(track)
+        eligible = guard.subtitle_import.eligible_formats
+        with patch.object(guard.subtitle_import, 'eligible_formats',
+                          side_effect=lambda tracks: [item for item in eligible(tracks) if item['ext'] == 'json3']):
+            result, calls = self.extract(YOUTUBE, player=player)
+        self.assertEqual(result['status'], 'language_required')
+        self.assertEqual(result['languages'], ['en', 'fr'])
+        self.assertFalse(any('/api/timedtext' in url for url in calls))
+
+    def test_json3_parse_and_expanded_output_failures_remain_failures(self):
+        eligible = guard.subtitle_import.eligible_formats
+        with patch.object(guard.subtitle_import, 'eligible_formats',
+                          side_effect=lambda tracks: [item for item in eligible(tracks) if item['ext'] == 'json3']):
+            result, _ = self.extract(YOUTUBE, caption_body=b'{bad json')
+            self.assertEqual(result['status'], 'caption_parse_failed')
+            body = json.dumps({'events': [{'tStartMs': 0, 'dDurationMs': 1000,
+                'segs': [{'utf8': '&' * (guard.MAX_CAPTION // 4)}]}]}).encode()
+            result, _ = self.extract(YOUTUBE, caption_body=body)
+            self.assertEqual(result['status'], 'caption_file_invalid')
+            self.assertEqual(result['diagnostic']['reason'], 'invalid_caption_file')
 
     def test_unknown_necessary_access_or_completion_is_not_ready(self):
         for field in ('isLiveContent', 'playabilityStatus', 'videoId'):
@@ -221,6 +263,7 @@ class OfficialExtractorTests(unittest.TestCase):
         track['baseUrl'] += '&exp=xpe'
         result, calls = self.extract(YOUTUBE, player=player)
         self.assertEqual(result['status'], 'access_restricted')
+        self.assertEqual(result['diagnostic']['reason'], 'subtitle_token_required')
         self.assertEqual(len(calls), 1)
 
     def test_real_official_bilibili_extractor_and_inline_srt(self):
@@ -238,6 +281,7 @@ class OfficialExtractorTests(unittest.TestCase):
         player = copy.deepcopy(PLAYER); player['playabilityStatus']['status'] = 'LOGIN_REQUIRED'
         result, calls = self.extract(YOUTUBE, player=player)
         self.assertEqual(result['status'], 'access_restricted'); self.assertEqual(len(calls), 1)
+        self.assertEqual(result['diagnostic']['reason'], 'login_required')
         state = copy.deepcopy(STATE); state['videoData']['is_upower_exclusive'] = True
         result, calls = self.extract(BILIBILI, state=state)
         self.assertEqual(result['status'], 'access_restricted'); self.assertEqual(len(calls), 1)
@@ -289,7 +333,7 @@ class FailureDiagnosticTests(unittest.TestCase):
         self.assertEqual(result['status'], 'extractor_failed')
 
     def test_known_guard_and_transport_outcomes_have_distinct_bounded_evidence(self):
-        for name, status, reason, responses in [('denied', 'access_restricted', 'access_restricted', 1),
+        for name, status, reason, responses in [('denied', 'access_restricted', 'http_access_denied', 1),
                 ('network', 'network_unavailable', 'transport_unavailable', 0)]:
             result, calls = self.extract(YOUTUBE, **{name: True})
             self.assertEqual(result['status'], status)
