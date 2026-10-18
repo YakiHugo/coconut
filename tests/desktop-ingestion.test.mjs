@@ -3,12 +3,35 @@ import assert from 'node:assert/strict';
 import {createIngestionService} from '../desktop/ingestion-service.mjs';
 import {createIngestionExecutor,normalizeImportJob} from '../desktop/ingestion-executor.mjs';
 import {startBridge} from '../desktop/server.mjs';
+import {createCaptionShortLinkResolver} from '../desktop/caption-short-link.mjs';
 import {Readable} from 'node:stream';
 const url='https://publisher.example/feed',id='a'.repeat(64),jobId='b'.repeat(32);
 const document={schema_version:1,title:'Original',source_media:{job_id:jobId,kind:'audio'},segments:[{id:'original-id',start:0,end:1,text:'Unchanged source'}]};
 const source={kind:'url',url};
 const request={protocolVersion:1,source};
 const episode={id,title:'Episode',media:[{url:'https://publisher.example/audio.mp3',kind:'audio',type:'audio/mpeg'}]};
+test('HTTP Bilibili short-link import passes only resolved canonical identity to caption service',async t=>{
+ const calls=[],canonical='https://www.bilibili.com/video/BV1xx411c7mD';
+ const resolver=createCaptionShortLinkResolver({fetch:async(url,options)=>{calls.push({url,redirectOnly:options.redirectOnly});return {redirect:canonical+'?share_source=copy&p=1'};}});
+ const captionService={available:true,providers:['bilibili'],importCaption:async data=>{calls.push(data);return {status:'network_unavailable',message:'Network unavailable'};}};
+ const server=await startBridge({port:0,captionService,captionShortLinkResolver:resolver,podcastSources:{discover:async()=>assert.fail('No podcast fallback')}});t.after(()=>server.shutdown());
+ const origin=`http://127.0.0.1:${server.address().port}`;
+ const response=await fetch(origin+'/api/v1/ingestions',{method:'POST',headers:{Origin:origin,'Content-Type':'application/json'},body:JSON.stringify({protocolVersion:1,source:{kind:'url',url:'https://b23.tv/Ab12'},language:'zh'})});
+ assert.equal(response.status,200);const {ingestion}=await response.json();assert.equal(ingestion.source.url,canonical);assert.equal(ingestion.source.provider,'bilibili');assert.equal(ingestion.source.media_id,'BV1xx411c7mD');assert.equal(ingestion.error.code,'network_unavailable');
+ assert.deepEqual(calls,[{url:'https://b23.tv/Ab12',redirectOnly:true},{url:canonical,language:'zh'}]);
+});
+test('short-link resolution waits for caption readiness and failures never fall back',async()=>{
+ const forbidden=async()=>assert.fail('No adapter or resolver call');
+ const request={protocolVersion:1,source:{kind:'url',url:'https://b23.tv/Ab12'}};
+ const unavailable=createIngestionService({captionShortLinkResolver:forbidden,podcastSources:{discover:forbidden}});
+ assert.equal((await unavailable.ingest(request)).ingestion.error.code,'captions_unavailable');
+ const xOnly=createIngestionService({captionService:{available:true,providers:['x'],importCaption:forbidden},captionShortLinkResolver:forbidden,podcastSources:{discover:forbidden}});
+ const disabled=await xOnly.ingest(request);assert.equal(disabled.ingestion.error.code,'captions_unavailable');assert.match(disabled.ingestion.error.message,/尚未启用 Bilibili/);assert.equal(disabled.ingestion.source.url,request.source.url);
+ const failed=createIngestionService({captionService:{available:true,importCaption:forbidden},captionShortLinkResolver:async()=>{throw Error('PRIVATE target/token');},podcastSources:{discover:forbidden}});
+ const result=await failed.ingest(request);assert.equal(result.ingestion.state,'blocked');assert.equal(result.ingestion.error.code,'short_link_unresolved');assert.equal(result.ingestion.source.url,request.source.url);assert.doesNotMatch(JSON.stringify(result),/PRIVATE|token/);
+ const controller=new AbortController();const cancelled=createIngestionService({captionService:{available:true,importCaption:forbidden},captionShortLinkResolver:async()=>{controller.abort();throw Error('aborted');}});
+ await assert.rejects(cancelled.ingest(request,{signal:controller.signal}),{name:'AbortError'});
+});
 test('link discovery keeps explicit episode selection and original share source',async()=>{
  const discovery={kind:'feed',feed_url:url,episodes:[episode]};
  const service=createIngestionService({podcastSources:{discover:async()=>discovery}});
@@ -41,6 +64,24 @@ test('abort after adapter completion discards late transcript',async()=>{
  const controller=new AbortController();
  const service=createIngestionService({captionService:{available:true,importCaption:async()=>{controller.abort();return {status:'ready',document};}}});
  await assert.rejects(service.ingest({protocolVersion:1,source:{kind:'url',url:'https://youtu.be/abcdefghijk'}},{signal:controller.signal}),{name:'AbortError'});
+});
+test('HTTP ingestion blocks unsupported Bilibili short forms and rejects ambiguous parts before adapters',async t=>{
+ const calls=[];
+ const forbidden=name=>async()=>{calls.push(name);throw new Error('Unexpected adapter call');};
+ const server=await startBridge({port:0,podcastSources:{discover:forbidden('podcast')},captionService:{available:true,providers:['bilibili'],importCaption:forbidden('caption')},ingestionExecutor:{status:forbidden('transcription')}});
+ t.after(()=>server.shutdown());const origin=`http://127.0.0.1:${server.address().port}`;
+ for(const [input,message] of [
+  ['https://b23.tv/short?share=1','未能安全展开'],
+  ['https://www.b23.tv/short','未能安全展开'],
+  ['https://www.bilibili.com/video/BV1xx411c7mD?p=1&p=2','暂不支持指定分 P'],
+  ['https://www.bilibili.com/video/BV1xx411c7mD?p=2&p=1','暂不支持指定分 P'],
+ ]){
+  const response=await fetch(origin+'/api/v1/ingestions',{method:'POST',headers:{Origin:origin,'Content-Type':'application/json'},body:JSON.stringify({protocolVersion:1,source:{kind:'url',url:input}})});
+  const result=await response.json();
+  if(message==='未能安全展开'){assert.equal(response.status,200);assert.equal(result.ingestion.state,'blocked');assert.equal(result.ingestion.error.code,'short_link_unresolved');assert.ok(result.ingestion.error.message.includes(message));}
+  else{assert.equal(response.status,400);assert.ok(result.error.includes(message));assert.equal(result.ingestion,undefined);}
+ }
+ assert.deepEqual(calls,[]);
 });
 const operation={operation_id:'11111111-1111-4111-8111-111111111111',filename:'audio.mp3',size:3,fingerprint:'f'.repeat(64),last_modified:123,language:''};
 const missingOperation=()=>new Response(JSON.stringify({error:'Operation not found'}),{status:404});

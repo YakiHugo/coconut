@@ -49,7 +49,8 @@ export function captionSource(value){
   if(!/^[A-Za-z0-9_-]{11}$/.test(identity||'')||url.searchParams.getAll('v').length>1)throw new Error('请输入单个 YouTube 视频链接');
   provider='youtube';url.hostname='www.youtube.com';url.pathname='/watch';url.search='?v='+identity;
  }else if(['bilibili.com','www.bilibili.com','m.bilibili.com'].includes(url.hostname)&&/^\/video\/BV[A-Za-z0-9]{10}\/?$/.test(url.pathname)){
-  if(url.searchParams.has('p')&&url.searchParams.get('p')!=='1')throw new Error('请使用单视频 BV 链接；暂不支持指定分 P');
+  const parts=url.searchParams.getAll('p');
+  if(parts.length>1||parts.length===1&&parts[0]!=='1')throw new Error('请使用单视频 BV 链接；暂不支持指定分 P');
   provider='bilibili';identity=url.pathname.split('/')[2];url.hostname='www.bilibili.com';url.pathname='/video/'+identity;url.search='';
  }else throw new Error('请使用公开 X、YouTube 单视频或 Bilibili BV 链接；短跳转链接需先在原站展开');
  url.hash='';return {url:url.href,provider,postId:identity,mediaId:identity};

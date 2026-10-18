@@ -5,8 +5,11 @@ import {randomUUID} from 'node:crypto';
 import {createRequire} from 'node:module';
 const Coconut=createRequire(import.meta.url)('../reader/core.js');
 import {captionSource} from './caption-service.mjs';
+import {resolveCaptionShortLink} from './caption-short-link.mjs';
 
-const VIDEO_HOSTS=new Set(['x.com','www.x.com','twitter.com','www.twitter.com','mobile.twitter.com','youtube.com','www.youtube.com','m.youtube.com','youtu.be','bilibili.com','www.bilibili.com','m.bilibili.com']);
+// Recognized short links must reach caption URL validation, never podcast discovery.
+// Only the dedicated single-hop resolver may expand the exact official short form.
+const VIDEO_HOSTS=new Set(['x.com','www.x.com','twitter.com','www.twitter.com','mobile.twitter.com','youtube.com','www.youtube.com','m.youtube.com','youtu.be','bilibili.com','www.bilibili.com','m.bilibili.com','b23.tv','www.b23.tv']);
 const FILE_TYPES=new Map([['mp3','audio'],['wav','audio'],['m4a','audio'],['ogg','audio'],['flac','audio'],['mp4','video'],['webm','video']]);
 const unavailableTranscription=Object.freeze({available:false,code:'asr_not_configured',automatic:false,model_download:false,message:'当前轻量服务未配置转写引擎。可以先播放媒体；生成文字稿需要另行配置可用的转写服务。'});
 const checkAbort=signal=>{if(signal?.aborted)throw new DOMException('已取消导入','AbortError');};
@@ -35,7 +38,7 @@ function episodeMedia(result){
  const media=result.episode?.media?.[0];
  return media?{kind:media.kind,url:media.url,name:result.episode.title,mimeType:media.type,availability:'remote',download:{endpoint:'/api/podcasts/media',body:{feedUrl:result.feed_url,episodeId:result.episode.id,mediaUrl:media.url}}}:null;
 }
-export function createIngestionService({podcastSources,captionService=null}={}){
+export function createIngestionService({podcastSources,captionService=null,captionShortLinkResolver=resolveCaptionShortLink}={}){
  const capabilities=()=>({protocolVersion:1,request_scoped:true,persistent:false,url:true,local_file:'metadata_only',captions:captionService?.available===true,transcription:unavailableTranscription});
  async function ingest(data,{signal}={}){
   checkAbort(signal);
@@ -54,7 +57,14 @@ export function createIngestionService({podcastSources,captionService=null}={}){
   }
   if(VIDEO_HOSTS.has(new URL(source.url).hostname)){
    if(data.episode)throw new Error('视频链接不能指定播客单集');
-   const canonical=captionSource(source.url);base.source={...source,url:canonical.url,provider:canonical.provider,media_id:canonical.mediaId};
+   let resolved=source.url;
+   if(['b23.tv','www.b23.tv'].includes(new URL(source.url).hostname)){
+    if(!captionService?.available)return finish({state:'blocked',error:{code:'captions_unavailable',message:'字幕获取服务尚未就绪；此链接已保留，可在服务就绪后重试。'}});
+    if(Array.isArray(captionService.providers)&&!captionService.providers.includes('bilibili'))return finish({state:'blocked',error:{code:'captions_unavailable',message:'此版本尚未启用 Bilibili 字幕获取；链接已保留，未展开短链接。可导入已有字幕。'}});
+    try{resolved=await captionShortLinkResolver(data.source.url,{signal});}
+    catch{checkAbort(signal);return finish({state:'blocked',error:{code:'short_link_unresolved',message:'未能安全展开 Bilibili 短链接。请在原站打开后复制完整 BV 视频链接，或稍后重试；未判断字幕是否可用。'}});}
+   }
+   const canonical=captionSource(resolved);base.source={...source,url:canonical.url,provider:canonical.provider,media_id:canonical.mediaId};
    if(!captionService?.available)return finish({state:'blocked',error:{code:'captions_unavailable',message:'字幕获取服务尚未就绪；此链接已保留，可在服务就绪后重试。'}});
    const result=await captionService.importCaption({url:canonical.url,language:data.language},{signal});
    return result.status==='ready'?finish({state:'ready',transcript:{document:result.document},...(result.diagnostics?{diagnostics:result.diagnostics}:{})}):finish({state:'blocked',error:{code:result.status,message:result.message,...(result.status==='language_required'?{languages:result.languages}:{}),...(result.diagnostic?{diagnostic:result.diagnostic}:{})}});

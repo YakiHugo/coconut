@@ -56,7 +56,8 @@ COCONUT_CAPTION_PROXY=http://127.0.0.1:7897 npm run dev
 
 - X / Twitter：公开单视频帖子，继续使用已有受限 guest 路线。
 - YouTube：单视频 watch、youtu.be、shorts 链接统一为 watch URL；只处理该视频。链接中的播放列表、时间和分享参数不跟随。
-- Bilibili：直接 BV 视频链接；不跟随 b23.tv，不处理 av、合集、交互视频或指定分 P。短链可先在原站展开。多 P 返回的媒体身份不匹配时停止，不能把第一 P 冒充整个作品。
+- Bilibili：直接 BV 视频链接，或「发现与添加」中的官方 `https://b23.tv/<字母数字>` 分享短链。不处理 av、合集、交互视频或指定分 P；重复 `p` 参数也拒绝。多 P 返回的媒体身份不匹配时停止，不能把第一 P 冒充整个作品。
+- Bilibili 短链仅在字幕来源已启用时，由导入协调器使用现有公网 DNS 校验、固定 IP 与 TLS 传输展开：最多一次匿名 GET、10 秒，只接受第一个重定向直接指向可校验的 HTTPS Bilibili BV 视频。展开器不请求目标页面，不跟随跳转链，不读取 Cookie、不接受带凭据或签名的目标；目标之后由原字幕助手独立校验获取。仅支持上述精确短链格式；失败保留原链接和重试/完整 BV 链接提示，不转入 RSS 解析。短链展开不继承环境或字幕代理；如果短链直连不可达，可使用完整 BV 链接进入既有字幕网络配置。直接 `/api/captions/import` 仍只接收原有完整视频链接。
 - 复用 `subtitle_import.select_track`：优先有原语言证据的现成轨道，再选未翻译自动字幕。多语言无法判定时返回 `language_required`，用户可给出语言后重试；不会任意挑一种翻译。Bilibili `ai-*` 即使位于 supplied subtitles 中，也标为 automatic。不会把弹幕作为字幕。
 - `ready` 才包含经过来源、语言、时长、时间轴验证的文档。来源保留平台和媒体 ID，平台提供不等于人工校对。与现有导入相同，精确重复 cue 由共享解析逻辑处理，不猜测重复讲话是否冗余；书架去重继续使用原有文档身份规则。
 - `access_restricted`：观察到登录、限流、权限、支持者付费或 token 要求。立即停止，不换身份、客户端或入口重试。
@@ -95,3 +96,18 @@ Node 使用绝对 Python 路径、`-I -B`、固定启动代码和独立临时 HO
 - Bilibili 上游“字幕需登录”测试样本 `https://www.bilibili.com/video/BV12N4y1M7rh`：请求原语言 zh；`network_unavailable`；0.002 秒；0 字节；尚未到达字幕访问判定，不能将上游历史注释当成本次实测结果。
 
 这两项为环境阻塞，不是无字幕结论，也不是实时可用率验收。需在允许访问原站的开发/CI 环境完成真实成功验收。已有环境可显式运行 `python scripts/probe_development_captions.py`；脚本仅输出状态、时延、语言和字节数，不打印字幕、签名下载 URL 或平台令牌。每个样本一次、最多 130 秒，退出码 0 表示两项成功，1 表示部分成功，2 表示两项都未取得字幕。Bilibili 样本本就可能要求登录，测试遇到该状态须停止，不能为了通过而绕过。
+
+### 双平台 HTTP 导入验收与 2026-10-18 云端记录
+
+正式 live smoke 现可按固定样本分别通过 React 使用的真实开发桥接 HTTP `/api/v1/ingestions` 协调器、隔离助手和 Reader 文档校验运行；不会接收任意 URL，也不调用模型、读取 Cookie 或自动重试：
+
+```sh
+COCONUT_CAPTION_PYTHON=/absolute/venv/bin/python node scripts/live_caption_smoke.mjs --live youtube
+COCONUT_CAPTION_PYTHON=/absolute/venv/bin/python node scripts/live_caption_smoke.mjs --live bilibili
+```
+
+省略平台时仍选择 YouTube。YouTube 的元数据回执保存为 `live-caption-report.json`，Bilibili 保存为 `live-caption-report-bilibili.json`，两者不会互相覆盖。退出码 0 只表示所选样本已取得并校验文字稿；阻塞、未知或实现失败均为 1；无显式 `--live` 或平台不受支持为 2。回执保留平台、固定样本身份、版本、状态、已净化的失败阶段/原因/请求计数；成功时仅增加 cue 数量、时间范围和内容摘要，不保存字幕正文、原始错误或带签名的 URL。
+
+手动 GitHub Actions 工作流分别运行两个平台，任一失败不会取消另一项，每项保留独立回执。它不会因 PR、推送或定时任务自动访问平台。Bilibili 样本可能要求登录，遇到访问限制即停止，不能为了使工作流通过换身份或绕过限制。
+
+2026-10-18，在主干 `9d3d6f9` 的云端工作区使用已存在的锁定 yt-dlp `2026.08.19` 和 certifi `2026.07.22`，实际通过 `/api/captions/import` 发起两个样本的 HTTP 导入。两者依赖就绪，均返回 `network_unavailable`，诊断为 `metadata / transport_unavailable`，各尝试 1 个请求、收到 0 个来源响应、取得 0 条 cue。当前执行环境允许的网络域名不包括两平台；未启用代理、换路由或使用账户。该证据说明连接未取得来源响应，不能说明样本无字幕或平台拒绝，也不能宣称实际链接到 React 阅读/播放/翻译端到端已通过。React 离线测试与真实公开来源成功仍分别报告。

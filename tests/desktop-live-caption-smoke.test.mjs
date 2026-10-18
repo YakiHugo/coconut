@@ -6,7 +6,7 @@ import path from 'node:path';
 import {spawn,spawnSync} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
 import {createDevelopmentCaptionHelper} from '../desktop/development-captions.mjs';
-import {runSmoke,recordReceipt,initialReport,SAMPLE_ID} from '../scripts/live_caption_smoke.mjs';
+import {runSmoke,recordReceipt,initialReport,SAMPLE_ID,SAMPLES} from '../scripts/live_caption_smoke.mjs';
 const url=`https://www.youtube.com/watch?v=${SAMPLE_ID}`;
 const secret='PRIVATE_CAPTION_SENTINEL';
 const version={status:'ok',protocol:1,version:'2026.08.19',publicExtraction:true,guardProtocol:1,tlsRootsVerified:true,developmentProviders:['x','youtube','bilibili']};
@@ -45,7 +45,7 @@ test('ready alone or malformed/empty document never constitutes live proof',()=>
 });
 test('workflow is manual-only and artifact contains only the evidence file',async()=>{
  const workflow=await readFile(new URL('../.github/workflows/live-caption-smoke.yml',import.meta.url),'utf8');
- assert.match(workflow,/workflow_dispatch:/);assert.doesNotMatch(workflow,/pull_request:|push:|schedule:|secrets\./);assert.match(workflow,/contents: read/);assert.match(workflow,/retention-days: 3/);assert.match(workflow,/path: live-caption-report.json/);
+ assert.match(workflow,/workflow_dispatch:/);assert.doesNotMatch(workflow,/pull_request:|push:|schedule:|secrets\./);assert.match(workflow,/contents: read/);assert.match(workflow,/retention-days: 3/);assert.match(workflow,/path: live-caption-report\*.json/);
 });
 
 test('CLI requires opt-in and preserves safe reports with truthful exit codes',async t=>{
@@ -152,4 +152,54 @@ test('HTTP reader parse failures retain their stage without exposing parser text
  const report=initialReport();recordReceipt(report,{code:'CAPTION_PARSE_FAILED',error:secret},400);
  assert.equal(report.import_status,'http_error');assert.equal(report.reason,'caption_parse_failed');
  assert.equal(report.outcome,'unverified');assert.deepEqual(report.diagnostic,{stage:'reader_parse',reason:'caption_parse_failed',requests_attempted:null,responses_received:null});safe(report);
+});
+
+
+test('Bilibili crosses the real API and validates its own language and identity',async t=>{
+ const sample=SAMPLES.bilibili;
+ const result={...caption,source:{...caption.source,url:sample.url,id:sample.id,extractor:'bilibili',language:sample.language},track:{...caption.track,language:sample.language}};
+ const f=await helper(t,result);const report=await runSmoke({python:f.python,provider:'bilibili'});
+ assert.equal(report.outcome,'live_pass');assert.equal(report.provider,'bilibili');assert.equal(report.sample_id,sample.id);assert.equal(report.language,'zh');assert.equal(report.cue_count,1);safe(report);
+ const calls=(await readFile(f.log,'utf8')).trim().split('\n').map(JSON.parse);
+ assert.deepEqual(calls.map(c=>c.input),[{operation:'version'},{operation:'extract-development',url:sample.url,language:'zh'}]);
+});
+test('Bilibili receipt rejects wrong identity, URL, language or platform',()=>{
+ const sample=SAMPLES.bilibili;
+ const document={source_url:sample.url,language:'zh',provenance:{source_platform:'bilibili',media_id:sample.id,caption_method:'platform_provided'},segments:[{start:0,end:2,text:secret}]};
+ for(const patch of [{source_url:url},{language:'en'},{provenance:{...document.provenance,source_platform:'youtube'}},{provenance:{...document.provenance,media_id:SAMPLE_ID}}]){
+  const report=initialReport('bilibili');recordReceipt(report,{status:'ready',document:{...document,...patch}},200);assert.equal(report.outcome,'implementation_failure');assert.equal(report.cue_sha256,null);safe(report);
+ }
+});
+test('unknown provider fails before starting a helper or making requests',async()=>{
+ for(const provider of ['other','constructor','__proto__']){
+  assert.throws(()=>initialReport(provider),/Unsupported/);
+  await assert.rejects(runSmoke({python:'/unused/python',provider}),/Unsupported/);
+ }
+});
+test('network evidence survives both provider imports without subtitle absence claims',async t=>{
+ for(const provider of ['youtube','bilibili']){
+  const diagnostic={stage:'metadata',reason:'transport_unavailable',requests_attempted:1,responses_received:0};
+  const f=await helper(t,{status:'network_unavailable',diagnostic:{...diagnostic,error:secret}});
+  const report=await runSmoke({python:f.python,provider});assert.equal(report.outcome,'blocked');assert.deepEqual(report.diagnostic,diagnostic);assert.equal(report.reason,'transport_unavailable');assert.equal(report.cue_sha256,null);safe(report);
+ }
+});
+test('Bilibili CLI preserves a separate evidence file and rejects unlisted samples',async t=>{
+ const f=await helper(t,{status:'network_unavailable',diagnostic:{stage:'metadata',reason:'transport_unavailable',requests_attempted:1,responses_received:0}});
+ const cli=fileURLToPath(new URL('../scripts/live_caption_smoke.mjs',import.meta.url)),cwd=path.dirname(f.python);
+ await writeFile(path.join(cwd,'live-caption-report.json'),'existing youtube evidence');
+ const run=provider=>new Promise((resolve,reject)=>{const child=spawn(process.execPath,[cli,'--live',provider],{cwd,env:{...process.env,COCONUT_CAPTION_PYTHON:f.python},stdio:'ignore'});child.on('error',reject);child.on('close',resolve);});
+ assert.equal(await run('unknown'),2);await assert.rejects(readFile(f.log),{code:'ENOENT'});
+ assert.equal(await run('bilibili'),1);const report=JSON.parse(await readFile(path.join(cwd,'live-caption-report-bilibili.json'),'utf8'));
+ assert.equal(report.provider,'bilibili');assert.equal(report.outcome,'blocked');safe(report);assert.equal(await readFile(path.join(cwd,'live-caption-report.json'),'utf8'),'existing youtube evidence');
+});
+
+test('sample language hint accepts a matching returned regional language without relabeling it',()=>{
+ const sample=SAMPLES.bilibili,report=initialReport('bilibili');
+ recordReceipt(report,{status:'ready',document:{source_url:sample.url,language:'zh-Hans',provenance:{source_platform:'bilibili',media_id:sample.id,caption_method:'automatic'},segments:[{start:0,end:2,text:secret}]}},200);
+ assert.equal(report.outcome,'live_pass');assert.equal(report.language,'zh-Hans');safe(report);
+});
+
+test('ingestion API preserves safe reader-parse failure codes in live evidence',async t=>{
+ const f=await helper(t,{...caption,captionBase64:Buffer.concat([Buffer.from('WEBVTT\n\n'),Buffer.from([255])]).toString('base64')});
+ const report=await runSmoke({python:f.python});assert.equal(report.api_path,'/api/v1/ingestions');assert.equal(report.import_status,'http_error');assert.equal(report.reason,'caption_parse_failed');assert.equal(report.diagnostic.stage,'reader_parse');assert.equal(report.outcome,'unverified');safe(report);
 });

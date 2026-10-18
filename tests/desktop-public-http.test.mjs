@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import { Readable } from 'node:stream';
 import { createPublicFetcher, isPublicAddress, publicUrl } from '../desktop/public-http.mjs';
+import {createCaptionShortLinkResolver} from '../desktop/caption-short-link.mjs';
 const allowed=new Set(['text/plain']);
 function fakeTransport(responses) {
  const calls=[];
@@ -17,6 +18,27 @@ function fakeTransport(responses) {
  return {calls,request};
 }
 const lookup=async()=>[{address:'93.184.216.34',family:4}];
+test('official Bilibili short link checks and pins only its first request, returning canonical identity',async()=>{
+ const target='https://www.bilibili.com/video/BV1xx411c7mD?share=1';
+ const t=fakeTransport([{status:302,headers:{location:target,'set-cookie':'secret=value'}},{body:'MUST NOT FETCH'}]);
+ const names=[];const resolve=createCaptionShortLinkResolver({fetch:createPublicFetcher({lookup:async host=>{names.push(host);return lookup();},request:t.request})});
+ assert.equal(await resolve('https://b23.tv/Ab12'),'https://www.bilibili.com/video/BV1xx411c7mD');
+ assert.deepEqual(names,['b23.tv']);assert.equal(t.calls.length,1);assert.equal(t.calls[0].options.headers.Cookie,undefined);assert.equal(t.calls[0].options.agent,false);
+ t.calls[0].options.lookup('b23.tv',{},(error,address)=>{assert.equal(error,null);assert.equal(address,'93.184.216.34');});
+});
+test('Bilibili short resolver refuses nonofficial input before transport',async()=>{
+ let calls=0;const resolve=createCaptionShortLinkResolver({fetch:async()=>{calls++;throw Error('unexpected');}});
+ for(const url of ['http://b23.tv/Ab12','https://www.b23.tv/Ab12','https://b23.tv.evil.org/Ab12','https://b23.tv/Ab12?share=1','https://b23.tv/Ab12#fragment','https://b23.tv/Ab12/','https://b23.tv/a/b','https://user@b23.tv/Ab12','https://b23.tv:443/Ab12'])await assert.rejects(resolve(url));
+ assert.equal(calls,0);
+});
+test('Bilibili short redirect cannot follow chains, private/signed targets, other providers or downgrade',async()=>{
+ for(const location of ['https://b23.tv/Other','/Other','https://127.0.0.1/video/BV1xx411c7mD','https://www.bilibili.com/video/BV1xx411c7mD?token=PRIVATE','http://www.bilibili.com/video/BV1xx411c7mD','https://youtu.be/BaW_jenozKc','https://evil.org/video/BV1xx411c7mD','https://www.bilibili.com/video/BV1xx411c7mD?p=2','https://www.bilibili.com/video/BV1xx411c7mD?p=1&p=2',undefined]){
+  const t=fakeTransport([{status:302,headers:{location}},{body:'MUST NOT FETCH'}]);
+  const resolve=createCaptionShortLinkResolver({fetch:createPublicFetcher({lookup,request:t.request})});await assert.rejects(resolve('https://b23.tv/Ab12'));assert.equal(t.calls.length,1);
+ }
+ const plain=fakeTransport([{status:200,body:'not a redirect'}]);await assert.rejects(createCaptionShortLinkResolver({fetch:createPublicFetcher({lookup,request:plain.request})})('https://b23.tv/Ab12'));assert.equal(plain.calls.length,1);
+ const privateDNS=fakeTransport([]);await assert.rejects(createCaptionShortLinkResolver({fetch:createPublicFetcher({lookup:async()=>[{address:'127.0.0.1',family:4}],request:privateDNS.request})})('https://b23.tv/Ab12'));assert.equal(privateDNS.calls.length,0);
+});
 test('public IP validation covers IPv4 obfuscation, mapped IPv6, link-local, reserved and transition ranges',()=>{
  for(const ip of ['127.0.0.1','0.0.0.0','10.1.2.3','100.64.0.1','169.254.169.254','172.16.5.1','192.168.1.1','192.0.0.8','192.0.2.1','198.18.0.1','224.0.0.1','255.255.255.255','::1','::ffff:8.8.8.8','fe80::1','fc00::1','2001:db8::1','2002:7f00:1::','2001::1','3fff::1'])assert.equal(isPublicAddress(ip),false,ip);
  for(const ip of ['8.8.8.8','93.184.216.34','2606:4700:4700::1111'])assert.equal(isPublicAddress(ip),true,ip);

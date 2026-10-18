@@ -7,6 +7,10 @@ jobs:
   live-import:
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    strategy:
+      fail-fast: false
+      matrix:
+        provider: [youtube, bilibili]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -19,14 +23,14 @@ jobs:
         run: |
           python -m venv .venv-captions
           .venv-captions/bin/python -m pip install --disable-pip-version-check --no-input --require-hashes --only-binary=:all: --no-deps -r desktop/development-caption-requirements.txt
-      - name: Import one public English subtitle through the development API
+      - name: Import one public subtitle through the development API
         timeout-minutes: 3
-        run: COCONUT_CAPTION_PYTHON="$PWD/.venv-captions/bin/python" node scripts/live_caption_smoke.mjs --live
+        run: COCONUT_CAPTION_PYTHON="$PWD/.venv-captions/bin/python" node scripts/live_caption_smoke.mjs --live "${{ matrix.provider }}"
       - name: Preserve metadata-only evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: live-caption-report
-          path: live-caption-report.json
+          name: live-caption-report-${{ matrix.provider }}
+          path: live-caption-report*.json
           retention-days: 3
           if-no-files-found: warn

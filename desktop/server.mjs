@@ -23,10 +23,10 @@ const MIME = {'.png':'image/png','.html':'text/html; charset=utf-8','.js':'text/
 const MAX_BODY = 1024 * 1024;
 export const CSP = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self'; img-src 'self' data: blob:; media-src 'self' blob:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'";
 
-export function createBridge({readerDirectory = path.resolve(ROOT,'../reader'), providers = createProviders(), podcastSources = createPodcastSources(), captionService = null, captionStatus = null, localMediaService = null, taskStore = null, taskUnavailable = null, libraryStore = null, libraryUnavailable = null, libraryLocation = null, privateProxy = null, ingestionExecutor = createIngestionExecutor()} = {}) {
+export function createBridge({readerDirectory = path.resolve(ROOT,'../reader'), providers = createProviders(), podcastSources = createPodcastSources(), captionService = null, captionStatus = null, captionShortLinkResolver = undefined, localMediaService = null, taskStore = null, taskUnavailable = null, libraryStore = null, libraryUnavailable = null, libraryLocation = null, privateProxy = null, ingestionExecutor = createIngestionExecutor()} = {}) {
   const profile=privateProxyProfile(privateProxy);
   const translate = createTranslator(providers);
-  const ingestionService = createIngestionService({podcastSources,captionService});
+  const ingestionService = createIngestionService({podcastSources,captionService,captionShortLinkResolver});
   const capabilities=Object.freeze({...CAPABILITIES,caption_import:captionService?.available===true,persistent_tasks:!!taskStore,canonical_library:!!libraryStore});
   const captionSources=Object.freeze({available:capabilities.caption_import,mode:captionStatus?.mode||(capabilities.caption_import?'bundled-helper':'disabled'),
     code:capabilities.caption_import?'ready':captionStatus?.code||'CAPTION_UNAVAILABLE',
@@ -143,7 +143,7 @@ export function createBridge({readerDirectory = path.resolve(ROOT,'../reader'), 
       return json(200,{translations:await translate(data,{signal:controller.signal})});
     } catch (error) {
       if(res.headersSent){res.destroy();return;}
-      return json(error.status|| (error.code === 'ENOENT' ? 404 : 400),{...(remote?{code:error.taskCode||error.code||'request_failed'}:{}),...(error.taskCode?{code:error.taskCode}:pathname==='/api/captions/import'&&error.code?{code:error.code}:{}),...(!remote&&error.localProviderDetails?{localProviderDetails:error.localProviderDetails}:{}),...(error.providerDiagnostics?{code:'provider_failed',localHttpStatus:400,providerDiagnostics:error.providerDiagnostics}:{}),error:error.code === 'ENOENT' ? 'File not found' : remote?remoteDiagnostic(error.message):String(error.message || '请求未完成').slice(0,300)});
+      return json(error.status|| (error.code === 'ENOENT' ? 404 : 400),{...(remote?{code:error.taskCode||error.code||'request_failed'}:{}),...(error.taskCode?{code:error.taskCode}:(pathname==='/api/captions/import'||pathname==='/api/v1/ingestions'&&['CAPTION_OUTPUT','CAPTION_PARSE_FAILED','CAPTION_TIMEOUT'].includes(error.code))&&error.code?{code:error.code}:{}),...(!remote&&error.localProviderDetails?{localProviderDetails:error.localProviderDetails}:{}),...(error.providerDiagnostics?{code:'provider_failed',localHttpStatus:400,providerDiagnostics:error.providerDiagnostics}:{}),error:error.code === 'ENOENT' ? 'File not found' : remote?remoteDiagnostic(error.message):String(error.message || '请求未完成').slice(0,300)});
     }
   });
   server.requestTimeout = 30000; server.headersTimeout = 10000;
