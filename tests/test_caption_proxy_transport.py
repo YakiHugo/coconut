@@ -254,7 +254,7 @@ class ConnectTransportTests(unittest.TestCase):
                 transport = guard.VideoTransport(YOUTUBE, ca_file=CERT, proxy=proxy.url)
                 with self.assertRaises(guard.StopProof) as caught:
                     transport.send(request())
-                self.assertEqual(caught.exception.outcome, 'access_restricted')
+                self.assertEqual(caught.exception.outcome, {401: 'login_required', 403: 'http_access_denied', 429: 'rate_limited'}[status])
                 self.assertEqual(proxy.connections, 1)
                 self.assertEqual(len(proxy.origin_requests), 1)
                 self.assertEqual((transport.count, transport.responses, transport.total), (1, 1, 0))

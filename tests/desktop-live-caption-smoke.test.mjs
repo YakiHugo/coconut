@@ -124,6 +124,7 @@ test('offline failure stages survive helper, API and smoke without making absenc
   ['guard_stopped','metadata','request_scope_stopped',0,0,'blocked'],
   ['no_matching_captions','track_selection','no_matching_track',1,1,'unverified'],
   ['access_restricted','metadata','access_restricted',1,1,'blocked'],
+  ...['login_required','subtitle_login_required','subtitle_token_required','rate_limited','http_access_denied'].map(reason=>['access_restricted','metadata',reason,1,1,'blocked']),
   ['extractor_failed','helper_execution','helper_error',null,null,'unverified'],
  ]){
   const diagnostic={stage,reason,requests_attempted:attempted,responses_received:received};

@@ -9,7 +9,7 @@ const MAX_DURATION=6*3600;
 
 export const CAPTION_FAILURE_STATUSES=Object.freeze(['unavailable','access_restricted','language_required','network_unavailable','metadata_incomplete','no_matching_captions','extractor_failed','caption_file_invalid','caption_parse_failed','guard_stopped']);
 const diagnosticStages=new Set(['initialization','extractor_setup','metadata','track_selection','caption_download','caption_parse','caption_output','helper_execution','reader_parse']);
-const diagnosticReasons=new Set(['access_restricted','transport_unavailable','metadata_incomplete','request_scope_stopped','non_public_address','identity_mismatch','budget_exceeded','unexpected_response','upstream_error','dependency_mismatch','alternate_extractor_stopped','unsupported_request','external_execution_stopped','duration_unavailable','redirect_stopped','guard_stopped','language_unknown','no_matching_track','invalid_caption_file','caption_parse_failed','caption_download_or_file_failed','extractor_error','helper_error','proxy_configuration_invalid','proxy_unavailable','proxy_auth_required','proxy_connect_rejected','origin_tls_failed']);
+const diagnosticReasons=new Set(['access_restricted','login_required','subtitle_login_required','subtitle_token_required','rate_limited','http_access_denied','transport_unavailable','metadata_incomplete','request_scope_stopped','non_public_address','identity_mismatch','budget_exceeded','unexpected_response','upstream_error','dependency_mismatch','alternate_extractor_stopped','unsupported_request','external_execution_stopped','duration_unavailable','redirect_stopped','guard_stopped','language_unknown','no_matching_track','invalid_caption_file','caption_parse_failed','caption_download_or_file_failed','extractor_error','helper_error','proxy_configuration_invalid','proxy_unavailable','proxy_auth_required','proxy_connect_rejected','origin_tls_failed']);
 // Only finite enum/counter observations cross the helper, UI and report boundary.
 // An attempted request is not evidence of reaching the platform.
 export function captionDiagnostic(value){
@@ -81,6 +81,11 @@ export function createCaptionService({helper,readerDirectory=path.resolve(ROOT,'
      if(!CAPTION_FAILURE_STATUSES.includes(result.status))throw new Error('字幕获取未完成，请重试或导入字幕文件');
      const diagnostic=captionDiagnostic(result.diagnostic);
      const networkGuidance={
+      login_required:'来源明确要求登录或认证，当前匿名字幕入口无法继续；未尝试登录或切换身份。',
+      subtitle_login_required:'Bilibili 字幕接口明确要求登录后取得字幕；当前匿名入口无法继续。',
+      subtitle_token_required:'YouTube 字幕轨道要求额外的 PO token；当前公开字幕入口不提供该令牌，未下载字幕。',
+      rate_limited:'来源明确返回请求限流；本次已停止，未自动重试。',
+      http_access_denied:'来源返回 HTTP 403 / 412 拒绝请求；不能据此判断是登录要求、限流或没有字幕。',
       non_public_address:'本机 DNS 返回非公网地址，本次未连接来源；若使用本机代理，可由服务所有者显式配置字幕代理。不能据此判断没有字幕。',
       proxy_configuration_invalid:'字幕代理配置无效，请由服务所有者检查本机 HTTP 代理设置；未连接来源。',
       proxy_unavailable:'无法连接已配置的本机字幕代理；未改用直连，无法判断字幕是否可用。',
