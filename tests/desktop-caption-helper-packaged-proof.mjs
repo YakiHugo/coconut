@@ -43,8 +43,9 @@ try {
     const source='https://x.com/VaibhavSisinty/status/2105733670493651236';
     const {createCaptionService}=await import('../desktop/caption-service.mjs');
     const helper=createCaptionHelper({resourcesPath,artifact});
-    assert.equal((await helper.status()).ready,true);
-    const result=await createCaptionService({helper,enabledProviders:['x'],readerDirectory:path.join(resourcesPath,'reader')}).importCaption({url:source,language:'en'});
+    const status=await helper.status();assert.equal(status.ready,true);
+    assert.deepEqual(status.providers,['x','youtube','bilibili']);
+    const result=await createCaptionService({helper,enabledProviders:status.providers,readerDirectory:path.join(resourcesPath,'reader')}).importCaption({url:source,language:'en'});
     assert.equal(result.status,'ready','Verified public source must produce a native packaged transcript');
     assert.equal(result.document.segments.length,1771);
     assert.equal(result.document.language,'en');

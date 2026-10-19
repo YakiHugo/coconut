@@ -45,6 +45,8 @@ jobs:
           python -m pip install --disable-pip-version-check --no-input --require-hashes --only-binary=:all: --no-deps -r desktop/development-caption-requirements.txt
       - name: Exercise official YouTube and Bilibili extractors through guarded response fixtures
         run: python -m unittest discover -s tests -p test_public_video_caption_guard.py -v
+      - name: Verify packaged provider capabilities and guarded extraction routing offline
+        run: python -m unittest discover -s tests -p test_packaged_caption_launcher.py -v
       # Ubuntu supplies OpenSSL; fixture keys exist only in cleaned temporary directories.
       - name: Verify local OpenSSL for ephemeral offline TLS fixtures
         run: openssl version

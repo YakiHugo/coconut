@@ -9,6 +9,7 @@ import { createProviders } from './providers.mjs';
 import { createTranslator } from './translation.mjs';
 import { createPodcastSources } from './podcast-sources.mjs';
 import {createIngestionService} from './ingestion-service.mjs';
+import {packagedCaptionGuidance} from './caption-service.mjs';
 import {createIngestionExecutor} from './ingestion-executor.mjs';
 import {createTaskStore,TASK_BODY_BYTES} from './tasks.mjs';
 import {createLibraryStore} from './library-store.mjs';
@@ -26,14 +27,14 @@ export const CSP = "default-src 'self'; script-src 'self'; style-src 'self' 'uns
 export function createBridge({readerDirectory = path.resolve(ROOT,'../reader'), providers = createProviders(), podcastSources = createPodcastSources(), captionService = null, captionStatus = null, captionShortLinkResolver = undefined, localMediaService = null, taskStore = null, taskUnavailable = null, libraryStore = null, libraryUnavailable = null, libraryLocation = null, privateProxy = null, ingestionExecutor = createIngestionExecutor()} = {}) {
   const profile=privateProxyProfile(privateProxy);
   const translate = createTranslator(providers);
-  const ingestionService = createIngestionService({podcastSources,captionService,captionShortLinkResolver});
   const capabilities=Object.freeze({...CAPABILITIES,caption_import:captionService?.available===true,persistent_tasks:!!taskStore,canonical_library:!!libraryStore});
   const captionSources=Object.freeze({available:capabilities.caption_import,mode:captionStatus?.mode||(capabilities.caption_import?'bundled-helper':'disabled'),
     code:capabilities.caption_import?'ready':captionStatus?.code||'CAPTION_UNAVAILABLE',
     providers:[['x','X / Twitter'],['youtube','YouTube'],['bilibili','Bilibili']].map(([id,label])=>({id,label,available:capabilities.caption_import&&(captionService.providers||['x']).includes(id)})),
     ...(captionStatus?.mode==='development-python'&&['trusted_local_proxy','direct_public'].includes(captionStatus.networkMode)?{networkMode:captionStatus.networkMode==='trusted_local_proxy'?'trusted_local_proxy':'direct_public',proxyProviders:captionStatus.networkMode==='trusted_local_proxy'?['youtube','bilibili']:[]}:{}),
     automatic_asr:false,fallback:'import_transcript',
-    message:capabilities.caption_import?'可尝试获取已启用来源的公开原语言字幕；平台访问限制仍可能阻止获取。':'字幕助手未就绪。可导入或粘贴已有字幕；开发环境可用 COCONUT_CAPTION_PYTHON 指定已安装的兼容 Python。不会自动安装依赖或启动识别。'});
+    message:capabilities.caption_import?'可尝试获取已启用来源的公开原语言字幕；平台访问限制仍可能阻止获取。':captionStatus?.mode==='bundled-helper'?packagedCaptionGuidance(captionStatus.code):'字幕助手未就绪。可导入或粘贴已有字幕；开发环境可用 COCONUT_CAPTION_PYTHON 指定已安装的兼容 Python。不会自动安装依赖或启动识别。'});
+  const ingestionService = createIngestionService({podcastSources,captionService,captionStatus:captionSources,captionShortLinkResolver});
   const active = new Set();
   const server = http.createServer(async (req,res) => {
     for (const [key,value] of Object.entries({'X-Content-Type-Options':'nosniff','Referrer-Policy':'no-referrer','Cache-Control':'no-store',
@@ -143,7 +144,7 @@ export function createBridge({readerDirectory = path.resolve(ROOT,'../reader'), 
       return json(200,{translations:await translate(data,{signal:controller.signal})});
     } catch (error) {
       if(res.headersSent){res.destroy();return;}
-      return json(error.status|| (error.code === 'ENOENT' ? 404 : 400),{...(remote?{code:error.taskCode||error.code||'request_failed'}:{}),...(error.taskCode?{code:error.taskCode}:(pathname==='/api/captions/import'||pathname==='/api/v1/ingestions'&&['CAPTION_OUTPUT','CAPTION_PARSE_FAILED','CAPTION_TIMEOUT'].includes(error.code))&&error.code?{code:error.code}:{}),...(!remote&&error.localProviderDetails?{localProviderDetails:error.localProviderDetails}:{}),...(error.providerDiagnostics?{code:'provider_failed',localHttpStatus:400,providerDiagnostics:error.providerDiagnostics}:{}),error:error.code === 'ENOENT' ? 'File not found' : remote?remoteDiagnostic(error.message):String(error.message || '请求未完成').slice(0,300)});
+      return json(error.status|| (error.code === 'ENOENT' ? 404 : 400),{...(remote?{code:error.taskCode||error.code||'request_failed'}:{}),...(error.taskCode?{code:error.taskCode}:(pathname==='/api/captions/import'||pathname==='/api/v1/ingestions'&&['CAPTION_OUTPUT','CAPTION_PARSE_FAILED','CAPTION_TIMEOUT','CAPTION_UNAVAILABLE','CAPTION_INTEGRITY','CAPTION_VERSION','CAPTION_START','CAPTION_EXIT'].includes(error.code))&&error.code?{code:error.code}:{}),...(!remote&&error.localProviderDetails?{localProviderDetails:error.localProviderDetails}:{}),...(error.providerDiagnostics?{code:'provider_failed',localHttpStatus:400,providerDiagnostics:error.providerDiagnostics}:{}),error:error.code === 'ENOENT' ? 'File not found' : remote?remoteDiagnostic(error.message):String(error.message || '请求未完成').slice(0,300)});
     }
   });
   server.requestTimeout = 30000; server.headersTimeout = 10000;

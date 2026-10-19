@@ -6,10 +6,50 @@ import unittest
 import tempfile
 import types
 from unittest.mock import patch
+from scripts import build_caption_helper as build
 from scripts.build_caption_helper import expand_macho_path, analysis_record, validated_framework_link, audit_frozen, ROOT
 
 
 class CaptionBuildContracts(unittest.TestCase):
+    def helper_version(self):
+        return {'status': 'ok', 'protocol': 1, 'version': build.LOCK['ytDlpVersion'],
+                'python': '3.14.8', 'publicExtraction': True, 'guardProtocol': 1,
+                'tlsRootsVerified': True, 'publicProviders': ['x', 'youtube', 'bilibili']}
+
+    def test_frozen_capability_probe_is_private_and_returns_only_verified_providers(self):
+        result = types.SimpleNamespace(stdout=json.dumps(self.helper_version()), stderr='')
+        with tempfile.TemporaryDirectory() as directory, \
+                patch.dict('os.environ', {'HTTPS_PROXY': 'private-proxy', 'PYTHONPATH': 'private-injection'}), \
+                patch.object(build.subprocess, 'run', return_value=result) as run:
+            root = Path(directory).resolve()
+            self.assertEqual(build.verify_helper_capabilities(root/'binary', root, '3.14.8'),
+                             ['x', 'youtube', 'bilibili'])
+            self.assertEqual(run.call_args.args[0], [str(root/'binary'), '--protocol=1'])
+            self.assertEqual(json.loads(run.call_args.kwargs['input']), {'operation': 'version'})
+            self.assertEqual(run.call_args.kwargs['timeout'], 10)
+            env = run.call_args.kwargs['env']
+            self.assertNotIn('HTTPS_PROXY', env)
+            self.assertNotIn('PYTHONPATH', env)
+            self.assertTrue(Path(run.call_args.kwargs['cwd']).is_relative_to(root))
+            self.assertEqual(list(root.iterdir()), [])
+
+    def test_frozen_capability_probe_rejects_missing_stale_or_malformed_metadata(self):
+        cases = [{}, {'publicProviders': ['x']}, {'publicProviders': ['x', 'youtube', 'unknown']},
+                 {'publicProviders': ['x', 'youtube', 'youtube']}, {'publicExtraction': False},
+                 {'tlsRootsVerified': False}, {'guardProtocol': 2}, {'protocol': True},
+                 {'publicExtraction': 1}, {'python': 'wrong'}]
+        for change in cases:
+            fixture = {**self.helper_version(), **change} if change else {}
+            with self.subTest(change=change), tempfile.TemporaryDirectory() as directory, \
+                    patch.object(build.subprocess, 'run', return_value=types.SimpleNamespace(stdout=json.dumps(fixture), stderr='')):
+                with self.assertRaises(RuntimeError):
+                    build.verify_helper_capabilities(Path(directory)/'binary', Path(directory), '3.14.8')
+        for stdout, stderr in [('not json', ''), ('[]', ''), ('{}'*8192, ''), (json.dumps(self.helper_version()), 'unexpected diagnostics')]:
+            with self.subTest(stdout=stdout[:10], stderr=stderr), tempfile.TemporaryDirectory() as directory, \
+                    patch.object(build.subprocess, 'run', return_value=types.SimpleNamespace(stdout=stdout, stderr=stderr)):
+                with self.assertRaises(RuntimeError):
+                    build.verify_helper_capabilities(Path(directory)/'binary', Path(directory), '3.14.8')
+
     def test_exact_and_nested_loader_tokens(self):
         native=Path('/private/archive/libssl.3.dylib');executable=Path('/private/dist/coconut-caption')
         self.assertEqual(expand_macho_path('@loader_path',native,executable),native.parent)

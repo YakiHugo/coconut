@@ -24,6 +24,18 @@ export function captionLanguages(value){
  if(!Array.isArray(value)||value.length>128)return [];
  return [...new Set(value.filter(code=>typeof code==='string'&&/^[a-z]{2,3}(?:-[A-Za-z0-9]{2,8}){0,2}$/.test(code)))].sort();
 }
+/** Packaged repairs concern the app bundle, never a user's Python installation. */
+export function packagedCaptionGuidance(code){
+ const reasons={
+  CAPTION_UNAVAILABLE:'当前安装包未提供已校验的原生字幕助手。',
+  CAPTION_INTEGRITY:'安装包内的字幕助手完整性校验失败，已停止使用。',
+  CAPTION_VERSION:'安装包内的字幕助手版本、依赖或来源能力不匹配，已停止使用。',
+  CAPTION_START:'安装包内的字幕助手无法启动。',
+  CAPTION_EXIT:'安装包内的字幕助手启动检查未完成，可能缺少所需运行依赖。',
+  CAPTION_TIMEOUT:'安装包内的字幕助手启动检查超时。',
+ };
+ return (Object.hasOwn(reasons,code)?reasons[code]:'安装包内的字幕助手检查未通过。')+'请重新安装包含字幕助手的完整 Coconut 安装包；也可导入或粘贴已有字幕。不会自动安装依赖或启动识别。';
+}
 const failureMessages={
  metadata_incomplete:'来源未提供足够的访问或视频完成状态，暂不能安全导入；可稍后重试或导入已有字幕。',
  network_unavailable:'网络或 TLS 连接未完成，无法判断字幕是否可用；请检查网络后重试。',

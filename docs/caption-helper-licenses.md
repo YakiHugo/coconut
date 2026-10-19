@@ -172,6 +172,25 @@ These gates are the release requirements; the existence of this document and
 its vendored texts does not mean every gate has run. CI and the release's
 inventory report must state which have passed for the final commit and bytes.
 
+### Packaged provider capabilities
+
+The packaged `extract` operation uses the existing guarded X, YouTube and
+Bilibili routes. The frozen helper's no-network version probe imports all three
+official pinned extractor classes and both guard modules, checks its bundled
+TLS roots, and advertises `publicProviders: ["x", "youtube", "bilibili"]`.
+The build probes those exact frozen bytes in a private environment before
+recording the capability list in its receipt; the native and final-ZIP proofs
+must match that list. No new dependencies or native-inventory exceptions are
+introduced, and the existing source, notice and hash gates still apply.
+
+Capabilities establish the available guarded operations, not live anonymous
+platform access or transcription accuracy. Offline authored-response tests
+exercise the packaged operation through the real YouTube and Bilibili
+extractors. Existing recorded live evidence remains X-specific; enabling these
+operations does not turn it into a YouTube or Bilibili live proof. Packaged
+requests cannot supply the development-only trusted proxy, cookies, account
+credentials, an alternate client, media downloads, ASR or model fallbacks.
+
 ## Recipient source-access notice
 
 The certifi component is provided under Mozilla Public License 2.0. Its complete,
