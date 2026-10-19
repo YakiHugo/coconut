@@ -84,6 +84,28 @@ class ServerTests(unittest.TestCase):
                     urlopen(Request(self.base+path,data=b'{}',headers={'Content-Type':'application/json'}))
                 self.assertEqual(raised.exception.code,400);ask.assert_not_called();translate.assert_not_called()
 
+    def test_exact_selection_capability_is_independent_of_provider_readiness(self):
+        with patch('serve.codex_status', return_value={'ready': False}), patch('serve.subscription_status', return_value={'ready': False}), patch.object(self.server.translator, 'available', return_value=[]):
+            with urlopen(self.base+'/api/language-tools') as response:
+                capabilities=json.load(response)
+        self.assertEqual(capabilities['ask_exact_selection'],1)
+        self.assertFalse(capabilities['ai']['codex']['ready'])
+
+    def test_ask_exact_selection_forwarding_and_rejection_before_inference(self):
+        selected='文'*4500
+        selection={'version':1,'cue_ids':['a'],'from':1,'to':4501,'separators':[],'text':selected}
+        payload={'question':'Translate the exact selection','language':'zh','provider':'codex',
+                 'consent':True,'segments':[{'id':'a','text':'['+selected+']'}],'exact_selection':selection}
+        with patch('ai_reader.codex_answer',return_value={'answer':'译文','citations':['a']}) as provider:
+            with urlopen(Request(self.base+'/api/ask',data=json.dumps(payload).encode(),headers={'Content-Type':'application/json'})) as response:
+                self.assertEqual(response.status,200)
+            self.assertEqual(json.loads(provider.call_args.args[0])['exact_selection'],selection)
+            for bad in (None, {**selection,'text':'forged'}, {**selection,'version':2}):
+                provider.reset_mock();payload['exact_selection']=bad
+                with self.assertRaises(HTTPError) as raised:
+                    urlopen(Request(self.base+'/api/ask',data=json.dumps(payload).encode(),headers={'Content-Type':'application/json'}))
+                self.assertEqual(raised.exception.code,400);provider.assert_not_called()
+
     def test_subscription_route_forwards_only_explicit_context_to_fake_provider(self):
         source={'id':'target','text':'until approved','position':1,'start':1,'end':2}
         context={'id':'context','text':'Do not send','position':0,'start':0,'end':1}

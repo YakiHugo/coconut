@@ -202,7 +202,7 @@ class Handler(SimpleHTTPRequestHandler):
             if path == '/api/ingestion-executor/status':
                 return self._json(200, executor_status())
             if path == '/api/language-tools':
-                return self._json(200, {'translation_models': self.server.translator.available(), 'ai': {'codex': codex_status(), 'claude': subscription_status()}})
+                return self._json(200, {'ask_exact_selection': 1, 'translation_models': self.server.translator.available(), 'ai': {'codex': codex_status(), 'claude': subscription_status()}})
             if path == '/api/jobs':
                 return self._json(200, {'jobs': self.jobs.list()})
             match = re.fullmatch(r'/api/ingestion-executor/operations/([^/]+)', path)
@@ -328,7 +328,7 @@ class Handler(SimpleHTTPRequestHandler):
                 return self._json(200, {'translations':subscription_translate(data.get('source'),data.get('target'),data.get('segments'),data.get('provider','codex'),context=data.get('context'),glossary=data.get('glossary'),memory=data.get('memory'),model=data.get('model'))})
             if parsed.path == '/api/ask':
                 if data.get('consent') is not True: raise ValueError('Explicit subscription data/usage consent is required')
-                return self._json(200, ask(data.get('question'), data.get('language'), data.get('segments'), data.get('provider', 'codex'),model=data.get('model')))
+                return self._json(200, ask(data.get('question'), data.get('language'), data.get('segments'), data.get('provider', 'codex'),model=data.get('model'),**({'exact_selection':data['exact_selection']} if 'exact_selection' in data else {})))
             if parsed.path == '/api/jobs':
                 url = data.get('url')
                 if not isinstance(url, str):
