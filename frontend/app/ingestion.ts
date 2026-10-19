@@ -1,3 +1,4 @@
+import {captionFailureDiagnostic, type CaptionFailureDiagnostic} from './caption-failure';
 export type Episode = {
     id: string;
     title: string;
@@ -53,6 +54,7 @@ export type Ingestion = {
     diagnostics?: Array<{category:string;startLine?:number;endLine?:number;cueId?:string;preview?:string}>;
     error?: {
         code: string;
+        diagnostic?: CaptionFailureDiagnostic;
         languages?: string[];
         message: string;
     };
@@ -67,6 +69,11 @@ export async function ingest(body: unknown, signal: AbortSignal): Promise<Ingest
         throw Error(result.error?.message || result.error || '来源读取失败');
     if (result.protocolVersion !== 1 || !result.ingestion || !['ready', 'awaiting_selection', 'needs_transcription', 'blocked'].includes(result.ingestion.state))
         throw Error('来源服务版本不匹配，未导入内容。');
+    if (result.ingestion.error) {
+        const diagnostic = captionFailureDiagnostic(result.ingestion.error.diagnostic);
+        delete result.ingestion.error.diagnostic;
+        if (diagnostic) result.ingestion.error.diagnostic = diagnostic;
+    }
     return result.ingestion;
 }
 /** Same bounded identity protocol as the mature reader; never proof of every byte. */
