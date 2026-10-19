@@ -245,3 +245,50 @@ test('missing safe-mode reports known old version but never trusts unknown or ne
   assert.ok(calls.every(args=>!args.includes('auth')&&!args.includes('--print')));
  }
 });
+
+const exactInput=(text='x'.repeat(4500))=>({...question,segments:[{id:'a',text:'before '+text+' after'}],exact_selection:{version:1,cue_ids:['a'],from:7,to:7+text.length,separators:[],text}});
+test('exact source is separately verified and sent without expanding the question',async()=>{
+ const data=exactInput(),{providers,calls}=fixture();await providers.ask(data);const input=calls.at(-1).settings.input;
+ assert.ok(input.includes('"exact_selection":'));assert.ok(input.includes('"from":7'));assert.ok(input.includes('"question":"What happened?"'));assert.match(input,/transcript.*context|context.*transcript/);
+});
+test('malformed exact anchors, forged text and oversized selections fail before provider discovery',async()=>{
+ const base=exactInput();
+ for(const exact of [null,{}, {...base.exact_selection,version:2},{...base.exact_selection,cue_ids:['other']},{...base.exact_selection,from:8},{...base.exact_selection,to:999999},{...base.exact_selection,from:1.5},{...base.exact_selection,separators:[' ']},{...base.exact_selection,text:'forged'},{...base.exact_selection,private:'secret'},exactInput('x'.repeat(100001)).exact_selection]){
+  const {providers,calls}=fixture();await assert.rejects(providers.ask({...base,exact_selection:exact}),/选文|selection/);assert.equal(calls.length,0);
+ }
+});
+test('exact UTF16 bounds support complete astral characters and reject surrogate cuts',async()=>{
+ const data={...question,segments:[{id:'a',text:'x😀z'}],exact_selection:{version:1,cue_ids:['a'],from:1,to:3,separators:[],text:'😀'}};
+ await fixture().providers.ask(data);
+ for(const [from,to,text] of [[1,2,'\ud83d'],[2,3,'\ude00']]){const {providers,calls}=fixture();await assert.rejects(providers.ask({...data,exact_selection:{...data.exact_selection,from,to,text}}));assert.equal(calls.length,0);}
+});
+test('question and total model input budgets remain enforced with exact selection',async()=>{
+ const maximum=exactInput('x'.repeat(100000));await fixture().providers.ask(maximum);
+ for(const data of [{...exactInput(),question:'q'.repeat(4001)},{...maximum,question:'q'.repeat(4000),segments:[{id:'a',text:'before '+'x'.repeat(100000)+' after'+'c'.repeat(50000)}]}]){const {providers,calls}=fixture();await assert.rejects(providers.ask(data));assert.equal(calls.length,0);}
+});
+
+test('exact selection validates ordered cross-cue composition and its own maximum',async()=>{
+ const data={...question,segments:[{id:'a',text:'start 😀'},{id:'b',text:'second'}],exact_selection:{version:1,cue_ids:['a','b'],from:6,to:12,separators:['\n'],text:'😀\nsec'}};
+ await fixture({answer:'Answer',citations:['a','b']}).providers.ask(data);
+ for(const input of [{...data,exact_selection:{...data.exact_selection,cue_ids:['b','a']}},exactInput('x'.repeat(100001))]){const {providers,calls}=fixture();await assert.rejects(providers.ask(input));assert.equal(calls.length,0);}
+});
+
+test('exact context rejects lone surrogate units even outside selected text',async()=>{
+ for(const text of ['\ud83d','x\ude00']){const {providers,calls}=fixture();const selected=text[0];await assert.rejects(providers.ask({...question,segments:[{id:'a',text}],exact_selection:{version:1,cue_ids:['a'],from:0,to:1,separators:[],text:selected}}));assert.equal(calls.length,0);}
+});
+
+test('exact selection rejects malformed Unicode cue identities before discovery',async()=>{
+ const {providers,calls}=fixture(),id='bad\ud800';await assert.rejects(providers.ask({...question,segments:[{id,text:'source'}],exact_selection:{version:1,cue_ids:[id],from:0,to:6,separators:[],text:'source'}}));assert.equal(calls.length,0);
+});
+
+test('exact model-input budget accepts exactly 250000 UTF16 units and rejects one more',async()=>{
+ const data=exactInput('x'.repeat(100000));const modelInput=value=>JSON.stringify({question:value.question,answer_language:value.language,transcript:value.segments,exact_selection:value.exact_selection});
+ data.segments[0].text+='c'.repeat(250000-modelInput(data).length);assert.equal(modelInput(data).length,250000);await fixture().providers.ask(data);
+ data.segments[0].text+='c';const {providers,calls}=fixture();await assert.rejects(providers.ask(data),/过长/);assert.equal(calls.length,0);
+ await fixture().providers.ask({...exactInput(),question:'q'.repeat(4000)});
+});
+test('exact context segment bound accepts 48 and rejects 49 before discovery',async()=>{
+ for(const size of [48,49]){const segments=Array.from({length:size},(_,index)=>({id:index===0?'a':String(index),text:'context'})),data={...question,segments,exact_selection:{version:1,cue_ids:segments.map(cue=>cue.id),from:0,to:7,separators:Array(size-1).fill('\n'),text:'context'}},{providers,calls}=fixture();
+  if(size===48)await providers.ask(data);else{await assert.rejects(providers.ask(data));assert.equal(calls.length,0);}
+ }
+});

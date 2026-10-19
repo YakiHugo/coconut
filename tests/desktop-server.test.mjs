@@ -39,7 +39,7 @@ test('startup, assets and health are passive; declared capabilities match runtim
 });
 test('only explicit status endpoint probes agent status, no inference',async t=>{
   const {calls,origin} = await setup(t); const status = await (await fetch(origin+'/api/language-tools')).json();
-  assert.equal(status.local_translation,false); assert.equal(status.ai.codex.ready,false);
+  assert.equal(status.ask_exact_selection,1); assert.equal(status.local_translation,false); assert.equal(status.ai.codex.ready,false);
   assert.deepEqual(calls,[['status','codex'],['status','claude']]);
 });
 test('cross-origin, opaque-origin, missing Origin and DNS rebinding cannot start a local agent',async t=>{
@@ -125,4 +125,10 @@ test('caption endpoint has the same origin, type and cancellation boundary witho
  for(const Origin of ['https://attacker.example','null'])assert.equal((await fetch(origin+'/api/captions/import',{method:'POST',headers:{Origin,'Content-Type':'application/json'},body:'{}'})).status,403);
  assert.equal((await fetch(origin+'/api/captions/import',{method:'POST',headers:{Origin:origin,'Content-Type':'text/plain'},body:'{}'})).status,400);assert.equal(calls,0);
  const result=await fetch(origin+'/api/captions/import',{method:'POST',headers:{Origin:origin,'Content-Type':'application/json'},body:JSON.stringify({url:'https://x.com/example/status/123'})});assert.equal(result.status,200);assert.equal(calls,1);
+});
+
+test('HTTP ask keeps exact selection independent from a bounded question',async t=>{
+ const {origin,calls}=await setup(t),text='a'.repeat(4500),exact={version:1,cue_ids:['a'],from:0,to:4500,separators:[],text};
+ const response=await fetch(origin+'/api/ask',{method:'POST',headers:{Origin:origin,'Content-Type':'application/json'},body:JSON.stringify({...body,segments:[{id:'a',text}],exact_selection:exact})});
+ assert.equal(response.status,200);const received=calls.find(call=>call[0]==='ask')[1];assert.equal(received.question,'Q');assert.deepEqual(received.exact_selection,exact);
 });

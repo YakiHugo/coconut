@@ -84,7 +84,7 @@ export function createBridge({readerDirectory = path.resolve(ROOT,'../reader'), 
         if (pathname === '/api/v1/ingestions/capabilities') return json(200,{...ingestionService.capabilities(),transcription:await ingestionExecutor.status({signal:controller.signal})});
         if (pathname === '/api/captions/status') return json(200,captionSources);
         if (pathname === '/api/health') return json(200,{local_worker:false,runtime:'desktop-bridge',paid_processing:false,max_upload_bytes:0,capabilities,client:client(),caption_sources:captionSources,...(libraryLocation&&!remote?{library_storage:{...libraryLocation,enabled:!!libraryStore,unavailable:libraryUnavailable}}:{})});
-        if (pathname === '/api/language-tools' && req.method === 'GET') return json(200,{translation_models:[],local_translation:false,capabilities,
+        if (pathname === '/api/language-tools' && req.method === 'GET') return json(200,{translation_models:[],local_translation:false,ask_exact_selection:1,capabilities,
           ai:{codex:await providers.status('codex',{signal:controller.signal}),claude:await providers.status('claude',{signal:controller.signal})}});
         if (pathname === '/api/jobs') return json(501,{error:'轻量版不提供处理队列，请重新检查本地服务能力'});
         if (!ASSETS.has(pathname)) return json(404,{error:'Not found'});
