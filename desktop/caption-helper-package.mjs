@@ -31,6 +31,7 @@ export async function loadCaptionHelperBuild(directory,{platform,arch,lockBytes}
   const receipt=JSON.parse(await readFile(path.join(directory,'receipt.json'),'utf8')),lock=JSON.parse(lockBytes);
   const bytes=await readFile(path.join(directory,'coconut-caption'));
   if(receipt.name!=='coconut-caption'||receipt.platform!==platform||receipt.arch!==arch||receipt.protocol!==1||
+     !isDeepStrictEqual(receipt.publicProviders,['x','youtube','bilibili'])||
      receipt.python!==lock.python||receipt.pyinstaller!==lock.pyinstaller||receipt.ytDlpVersion!==lock.ytDlpVersion||
      receipt.distribution!=='minimal-permissive-with-certifi-source'||receipt.lockSha256!==digest(lockBytes)||
      receipt.bytes!==bytes.length||receipt.sha256!==digest(bytes))throw new Error('Native caption helper build receipt mismatch');

@@ -28,6 +28,9 @@ export async function proveCaptionHelper({buildDirectory,resourcesPath,artifact}
     process.env.YTDLP_NO_PLUGINS='secret-canary';process.env.PYTHONPATH='secret-canary';process.env._PYI_PARENT_PROCESS_LEVEL='secret-canary';
     const version=await runPinnedCaptionHelper({...options,operation:'version',onSpawn});
     check('native_version_without_python_or_path',version.version==='2026.08.19'&&version.python===artifact.python);await clean();
+    assert.deepEqual(artifact.publicProviders,['x','youtube','bilibili'],'Receipt advertises only the reviewed packaged providers');
+    assert.deepEqual(version.publicProviders,artifact.publicProviders,'Frozen guard and official extractor imports match the receipt');
+    check('native_three_provider_capabilities_without_platform_requests',true);
     server=http.createServer((req,res)=>{
       hits.push(req.url);
       if(req.url==='/slow.vtt'){res.writeHead(200,{'Content-Type':'text/vtt'});res.write('WEBVTT\n');seenSlow?.();return;}

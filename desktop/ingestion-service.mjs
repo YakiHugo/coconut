@@ -38,8 +38,9 @@ function episodeMedia(result){
  const media=result.episode?.media?.[0];
  return media?{kind:media.kind,url:media.url,name:result.episode.title,mimeType:media.type,availability:'remote',download:{endpoint:'/api/podcasts/media',body:{feedUrl:result.feed_url,episodeId:result.episode.id,mediaUrl:media.url}}}:null;
 }
-export function createIngestionService({podcastSources,captionService=null,captionShortLinkResolver=resolveCaptionShortLink}={}){
+export function createIngestionService({podcastSources,captionService=null,captionStatus=null,captionShortLinkResolver=resolveCaptionShortLink}={}){
  const capabilities=()=>({protocolVersion:1,request_scoped:true,persistent:false,url:true,local_file:'metadata_only',captions:captionService?.available===true,transcription:unavailableTranscription});
+ const unavailableCaptions=()=>({state:'blocked',error:{code:'captions_unavailable',...(captionStatus?.mode==='bundled-helper'?{setup_code:captionStatus.code,message:captionStatus.message+'此链接已保留，可修复安装包后重试。'}:{message:'字幕获取服务尚未就绪；此链接已保留，可在服务就绪后重试。'})}});
  async function ingest(data,{signal}={}){
   checkAbort(signal);
   if(data?.protocolVersion!==1)throw new Error('导入协议版本无效');
@@ -59,13 +60,14 @@ export function createIngestionService({podcastSources,captionService=null,capti
    if(data.episode)throw new Error('视频链接不能指定播客单集');
    let resolved=source.url;
    if(['b23.tv','www.b23.tv'].includes(new URL(source.url).hostname)){
-    if(!captionService?.available)return finish({state:'blocked',error:{code:'captions_unavailable',message:'字幕获取服务尚未就绪；此链接已保留，可在服务就绪后重试。'}});
+    if(!captionService?.available)return finish(unavailableCaptions());
     if(Array.isArray(captionService.providers)&&!captionService.providers.includes('bilibili'))return finish({state:'blocked',error:{code:'captions_unavailable',message:'此版本尚未启用 Bilibili 字幕获取；链接已保留，未展开短链接。可导入已有字幕。'}});
     try{resolved=await captionShortLinkResolver(data.source.url,{signal});}
     catch{checkAbort(signal);return finish({state:'blocked',error:{code:'short_link_unresolved',message:'未能安全展开 Bilibili 短链接。请在原站打开后复制完整 BV 视频链接，或稍后重试；未判断字幕是否可用。'}});}
    }
    const canonical=captionSource(resolved);base.source={...source,url:canonical.url,provider:canonical.provider,media_id:canonical.mediaId};
-   if(!captionService?.available)return finish({state:'blocked',error:{code:'captions_unavailable',message:'字幕获取服务尚未就绪；此链接已保留，可在服务就绪后重试。'}});
+   if(!captionService?.available)return finish(unavailableCaptions());
+   if(Array.isArray(captionService.providers)&&!captionService.providers.includes(canonical.provider))return finish({state:'blocked',error:{code:'captions_unavailable',message:'此版本尚未启用该来源的字幕获取；链接已保留，可导入已有字幕。'}});
    const result=await captionService.importCaption({url:canonical.url,language:data.language},{signal});
    return result.status==='ready'?finish({state:'ready',transcript:{document:result.document},...(result.diagnostics?{diagnostics:result.diagnostics}:{})}):finish({state:'blocked',error:{code:result.status,message:result.message,...(result.status==='language_required'?{languages:result.languages}:{}),...(result.diagnostic?{diagnostic:result.diagnostic}:{})}});
   }

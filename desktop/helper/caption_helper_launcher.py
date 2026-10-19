@@ -27,7 +27,9 @@ plugin_ies.value = {}
 plugin_pps.value = {}
 all_plugins_loaded.value = True
 
-PUBLIC_EXTRACTION = True  # Guarded X route verified in CI; other providers stay disabled.
+PUBLIC_EXTRACTION = True
+# Runtime capability, not a claim of anonymous access or a live platform proof.
+PUBLIC_PROVIDERS = ('x', 'youtube', 'bilibili')
 
 
 class QuietOutput(io.TextIOBase):
@@ -96,13 +98,19 @@ def main():
     if operation == 'version' and set(request) == {'operation'}:
         from scripts.public_x_caption_guard import extract_public_captions
         from scripts.public_video_caption_guard import extract_public_video_captions
+        # Probe the real frozen extractor imports, not only their lazy guards.
+        from yt_dlp.extractor.twitter import TwitterIE
+        from yt_dlp.extractor.youtube import YoutubeIE
+        from yt_dlp.extractor.bilibili import BiliBiliIE
         assert callable(extract_public_captions) and callable(extract_public_video_captions)
+        assert all(callable(extractor) for extractor in (TwitterIE, YoutubeIE, BiliBiliIE))
         trust=ssl.create_default_context(cafile=certifi.where())
         assert trust.check_hostname and trust.verify_mode == ssl.CERT_REQUIRED
         return {'status': 'ok', 'protocol': PROTOCOL, 'version': __version__,
                 'python': '.'.join(map(str, sys.version_info[:3])), 'publicExtraction': PUBLIC_EXTRACTION,
                 'guardProtocol': 1, 'tlsRootsVerified': True,
-                'developmentProviders': ['x', 'youtube', 'bilibili'], 'developmentProxyProtocol': 1}
+                'publicProviders': list(PUBLIC_PROVIDERS),
+                'developmentProviders': list(PUBLIC_PROVIDERS), 'developmentProxyProtocol': 1}
     if operation == 'authored-fixture' and set(request) == {'operation', 'endpoint'}:
         if not isinstance(request['endpoint'], str) or len(request['endpoint']) > 200:
             return {'status': 'unavailable'}
@@ -127,7 +135,7 @@ def main():
                 return {'status': 'guard_stopped', 'diagnostic': {'stage': 'initialization',
                         'reason': 'proxy_configuration_invalid', 'requests_attempted': 0, 'responses_received': 0}}
         from scripts.public_x_caption_guard import extract_public_captions
-        if operation == 'extract-development' and urllib.parse.urlsplit(request['url']).hostname in ('www.youtube.com', 'www.bilibili.com'):
+        if urllib.parse.urlsplit(request['url']).hostname in ('www.youtube.com', 'www.bilibili.com'):
             from scripts.public_video_caption_guard import extract_public_video_captions
             result = extract_public_video_captions(request['url'], language, ca_file=certifi.where(), proxy=proxy)
         else:

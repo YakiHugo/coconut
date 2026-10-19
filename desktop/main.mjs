@@ -5,8 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { readFile } from 'node:fs/promises';
 import { startBridge } from './server.mjs';
 import {libraryLocation,libraryStartupMessage} from './library-location.mjs';
-import { createCaptionHelper } from './caption-helper.mjs';
-import { createCaptionService } from './caption-service.mjs';
+import { createCaptionHelper, preparePackagedCaptions } from './caption-helper.mjs';
 import { Updater } from './updater.mjs';
 import { prepareInstall } from './update-install.mjs';
 import { createCloseCoordinator, createLifecycleOwnership } from './close-coordinator.mjs';
@@ -54,16 +53,15 @@ else {
     const windowIcon=app.isPackaged?path.join(process.resourcesPath,'coconut-icon.png'):path.join(readerDirectory,'coconut-mark.png');
     // Packaged macOS uses the signed bundle icon; development has no app bundle.
     if(!app.isPackaged&&process.platform==='darwin')app.dock?.setIcon(windowIcon);
-    let captionService=null;
+    let captionService=null,captionStatus=null;
     if(app.isPackaged){
       captionHelper=createCaptionHelper({resourcesPath:process.resourcesPath});
-      const status=await captionHelper.status({signal:startupAbort.signal});
+      ({captionService,captionStatus}=await preparePackagedCaptions({helper:captionHelper,readerDirectory,signal:startupAbort.signal}));
       if(startupAbort.signal.aborted)return;
-      if(status.ready)captionService=createCaptionService({helper:captionHelper,readerDirectory,enabledProviders:['x']});
     }
     localMediaService=createLocalMediaService({userDataDirectory:app.getPath('userData'),readerDirectory});
     const library=libraryLocation({mode:'desktop',userDataDirectory:app.getPath('userData')});
-    server = await startBridge({libraryDirectory:library.directory,startupMode:'desktop',port:PORT,readerDirectory,captionService,localMediaService,taskDirectory:path.join(app.getPath('userData'),'tasks')});
+    server = await startBridge({libraryDirectory:library.directory,startupMode:'desktop',port:PORT,readerDirectory,captionService,captionStatus,localMediaService,taskDirectory:path.join(app.getPath('userData'),'tasks')});
     if(startupAbort.signal.aborted){server.shutdown();return;}
     const origin = `http://127.0.0.1:${PORT}`;
     console.log(libraryStartupMessage(library,await fetch(origin+'/api/v1/library').then(response=>response.json())));

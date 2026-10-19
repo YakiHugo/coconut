@@ -1,4 +1,4 @@
-import {captionLanguages} from './caption-service.mjs';
+import {captionSource,captionLanguages,CAPTION_FAILURE_STATUSES,captionDiagnostic} from './caption-service.mjs';
 /**
  * Only pinned bytes, fixed protocol operations, no inherited credentials or shell.
  * The authored-fixture operation is an internal CI seam, never a bridge route.
@@ -21,6 +21,13 @@ export class CaptionHelperError extends Error {
   constructor(code,message) { super(message); this.name='CaptionHelperError'; this.code=code; }
 }
 const fail = (code,message) => new CaptionHelperError(code,message);
+const publicProviders=Object.freeze(['x','youtube','bilibili']);
+/** Older, verified artifacts advertise only the original X route. */
+export function captionHelperProviders(value) {
+  if(value===undefined)return ['x'];
+  if(!Array.isArray(value)||!value.length||value.length>publicProviders.length||new Set(value).size!==value.length||value.some(provider=>!publicProviders.includes(provider)))throw fail('CAPTION_VERSION','字幕助手来源能力不匹配');
+  return publicProviders.filter(provider=>value.includes(provider));
+}
 function cancelled(signal) { if (signal?.aborted) throw fail('CAPTION_CANCELLED','字幕请求已取消'); }
 export function helperEnvironment(directory) {
   // Intentionally do not read process.env. No PATH lookup, proxy, netrc, Python,
@@ -37,6 +44,7 @@ export async function verifiedHelperBytes(resourcesPath, artifact) {
       artifact.protocol!==1 || artifact.ytDlpVersion!==lock.ytDlpVersion || artifact.platform!==process.platform || artifact.arch!==process.arch) {
     throw fail('CAPTION_UNAVAILABLE','缺少已固定的应用字幕资源');
   }
+  captionHelperProviders(artifact.publicProviders);
   const directory=path.join(resourcesPath,'caption-helper');let handle;
   try {
     const parent=await lstat(directory);
@@ -134,11 +142,12 @@ export async function runPinnedCaptionHelper({resourcesPath,artifact,operation,f
   if(!['version','authored-fixture','extract'].includes(operation))throw fail('CAPTION_OPERATION','不支持的字幕助手操作');
   if(!Number.isInteger(timeoutMs)||timeoutMs<1||timeoutMs>HELPER_LIMITS.timeoutMs ||
       !Number.isInteger(maxOutputBytes)||maxOutputBytes<1||maxOutputBytes>HELPER_LIMITS.outputBytes)throw fail('CAPTION_LIMIT','无效的字幕助手限制');
-  let input={operation};
+  let input={operation},source;
   if(operation==='authored-fixture')input.endpoint=fixtureEndpoint(fixtureUrl);
   if(operation==='extract') {
-    if(typeof url!=='string' || !/^https:\/\/(?:www\.)?(?:x\.com|twitter\.com)\/(?:[A-Za-z0-9_]{1,30}|i)\/status\/\d{1,20}$/.test(url) ||
-        (language!==null && (typeof language!=='string' || !/^[a-z]{2,3}(?:-[A-Za-z0-9]{2,8}){0,2}$/.test(language))))throw fail('CAPTION_INPUT','仅支持公开 X 单条视频链接和有效原语');
+    try{source=captionSource(url);}catch{throw fail('CAPTION_INPUT','仅支持已启用来源的公开单视频链接和有效原语');}
+    if(source.url!==url || (language!==null && (typeof language!=='string' || !/^[a-z]{2,3}(?:-[A-Za-z0-9]{2,8}){0,2}$/.test(language))))throw fail('CAPTION_INPUT','仅支持规范的公开单视频链接和有效原语');
+    if(!captionHelperProviders(artifact?.publicProviders).includes(source.provider))throw fail('CAPTION_PROVIDER_UNAVAILABLE','此安装包的字幕助手尚未启用该来源');
     input={operation,url,language};
   }
   cancelled(signal);
@@ -155,26 +164,31 @@ export async function runPinnedCaptionHelper({resourcesPath,artifact,operation,f
     cancelled(signal);let result;
     try{result=JSON.parse(stdout);}catch{throw fail('CAPTION_OUTPUT','字幕助手没有返回完整元数据');}
     if(!result || typeof result!=='object' || Array.isArray(result))throw fail('CAPTION_OUTPUT','字幕助手没有返回完整元数据');
-    if(operation==='extract' && ['unavailable','access_restricted','language_required'].includes(result.status))return {status:result.status,...(result.status==='language_required'?{languages:captionLanguages(result.languages)}:{})};
-    if(result.status!=='ok')throw fail('CAPTION_UNAVAILABLE','字幕助手未返回完整原语字幕');
+    if(operation==='extract' && CAPTION_FAILURE_STATUSES.includes(result.status)){
+      const diagnostic=captionDiagnostic(result.diagnostic);
+      return {status:result.status,...(result.status==='language_required'?{languages:captionLanguages(result.languages)}:{}),...(diagnostic?{diagnostic}:{})};
+    }
+    if(result.status!=='ok')throw fail(operation==='version'?'CAPTION_VERSION':'CAPTION_UNAVAILABLE',operation==='version'?'安装包字幕助手的依赖或启动检查未通过':'字幕助手未返回完整原语字幕');
     if(operation==='version') {
       if(result.protocol!==1 || result.version!==lock.ytDlpVersion || result.python!==artifact.python || result.publicExtraction!==true || result.guardProtocol!==1 || result.tlsRootsVerified!==true)throw fail('CAPTION_VERSION','字幕助手版本不匹配');
-      return {version:result.version,python:result.python,protocol:1};
+      const providers=captionHelperProviders(result.publicProviders);
+      if(JSON.stringify(providers)!==JSON.stringify(captionHelperProviders(artifact.publicProviders)))throw fail('CAPTION_VERSION','字幕助手来源能力与安装包记录不匹配');
+      return {version:result.version,python:result.python,protocol:1,publicProviders:providers};
     }
     if(!result.source || typeof result.source.title!=='string' || result.source.title.length>1000 ||
        typeof result.source.url!=='string' || typeof result.source.id!=='string' || result.source.id.length>100 ||
        typeof result.source.language!=='string' || typeof result.source.automatic!=='boolean' ||
        result.source.translated!==false || result.source.live!==false ||
        !Number.isFinite(result.source.duration) || result.source.duration<=0 || result.source.duration>21600 ||
-       result.track?.language!==result.source.language || result.format!=='vtt' ||
+       result.track?.language!==result.source.language || !['vtt','srt'].includes(result.format) ||
        typeof result.captionBase64!=='string' || result.captionBase64.length>Math.ceil(HELPER_LIMITS.captionBytes/3)*4 ||
        !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(result.captionBase64))throw fail('CAPTION_OUTPUT','字幕助手没有返回预期原语字幕');
-    if(operation==='authored-fixture' && (result.source.id!=='coconut-authored-proof' || result.source.language!=='en'))throw fail('CAPTION_OUTPUT','字幕助手没有返回预期证明字幕');
-    if(operation==='extract' && (result.source.url!==url || !/^\d{1,20}$/.test(result.source.id)))throw fail('CAPTION_OUTPUT','字幕助手返回来源不匹配');
+    if(operation==='authored-fixture' && (result.source.id!=='coconut-authored-proof' || result.source.language!=='en' || result.format!=='vtt'))throw fail('CAPTION_OUTPUT','字幕助手没有返回预期证明字幕');
+    if(operation==='extract' && (result.source.url!==url || !(source.provider==='x'?/^\d{1,20}$/.test(result.source.id):result.source.id===source.mediaId)))throw fail('CAPTION_OUTPUT','字幕助手返回来源不匹配');
     const body=Buffer.from(result.captionBase64,'base64');
-    if(!body.length || body.length>HELPER_LIMITS.captionBytes || !/^\uFEFF?WEBVTT(?:[ \t].*)?\r?\n/.test(body.toString('utf8')))throw fail('CAPTION_OUTPUT','字幕文件无效');
+    if(!body.length || body.length>HELPER_LIMITS.captionBytes || result.format==='vtt'&&!/^\uFEFF?WEBVTT(?:[ \t].*)?\r?\n/.test(body.toString('utf8')))throw fail('CAPTION_OUTPUT','字幕文件无效');
     const allowed=new Set(['home','tmp','config','cache','data','empty-bin','bin','caption.en.vtt']);
     if((await readdir(directory)).some(name=>!allowed.has(name)))throw fail('CAPTION_OUTPUT','字幕助手写入了未允许的文件');
-    return {source:result.source,track:result.track,bytes:body,format:'vtt'};
+    return {source:result.source,track:result.track,bytes:body,format:result.format};
   } finally {try{if(directory)await rm(directory,{recursive:true,force:true});}finally{active=false;for(const resolve of idleWaiters)resolve();idleWaiters.clear();}}
 }

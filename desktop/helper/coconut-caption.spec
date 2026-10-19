@@ -12,7 +12,7 @@ excludes = ['mutagen','curl_cffi','yt_dlp_ejs','websockets','requests','urllib3'
             'tkinter','_tkinter','curses','_curses','_curses_panel','lzma','_lzma','decimal','_decimal','compression.zstd','_zstd',
             'pip','setuptools','pkg_resources','packaging','numpy','IPython','pytest','ytdlp_plugins']
 a = Analysis([str(helper / 'caption_helper_launcher.py')], pathex=[str(root),str(helper)],
-             binaries=[],datas=[],hiddenimports=['scripts.public_x_caption_guard','certifi'],
+             binaries=[],datas=[],hiddenimports=['scripts.public_x_caption_guard','scripts.public_video_caption_guard','certifi'],
              hookspath=[str(helper / 'hooks')],excludes=excludes,noarchive=False)
 # Package-name inventory is a failing gate, not a claim inferred from pip freeze.
 allowed = set(sys.stdlib_module_names) | {'yt_dlp','certifi','scripts','subtitle_import','transcript',

@@ -47,6 +47,36 @@ def resource_hashes(output):
     return {str(file.relative_to(output)):digest(file.read_bytes()) for file in sorted(output.rglob('*')) if file.is_file()}
 
 
+def verify_helper_capabilities(binary, directory, python_version):
+    """No-network probe of the exact frozen guard/extractor imports and TLS roots."""
+    with tempfile.TemporaryDirectory(prefix='capability-probe-', dir=directory) as private:
+        private = Path(private)
+        for name in ('home', 'tmp', 'config', 'cache', 'data', 'empty-bin'):
+            (private/name).mkdir(mode=0o700)
+        env = {'HOME': str(private/'home'), 'TMPDIR': str(private/'tmp'),
+               'TMP': str(private/'tmp'), 'TEMP': str(private/'tmp'),
+               'XDG_CONFIG_HOME': str(private/'config'), 'XDG_CACHE_HOME': str(private/'cache'),
+               'XDG_DATA_HOME': str(private/'data'), 'PATH': str(private/'empty-bin'),
+               'LANG': 'en_US.UTF-8', 'LC_ALL': 'en_US.UTF-8',
+               'PYTHONNOUSERSITE': '1', 'PYTHONSAFEPATH': '1'}
+        result = subprocess.run([str(binary.resolve()), '--protocol=1'],
+            input='{"operation":"version"}', text=True, capture_output=True,
+            timeout=10, check=True, cwd=private, env=env)
+    if result.stderr or len(result.stdout) > 8192:
+        raise RuntimeError('Unexpected frozen helper capability output')
+    try:
+        version = json.loads(result.stdout)
+    except ValueError:
+        raise RuntimeError('Invalid frozen helper capability output') from None
+    expected = {'status': 'ok', 'protocol': 1, 'version': LOCK['ytDlpVersion'],
+                'python': python_version, 'publicExtraction': True, 'guardProtocol': 1,
+                'tlsRootsVerified': True, 'publicProviders': ['x', 'youtube', 'bilibili']}
+    if not isinstance(version, dict) or any(type(version.get(key)) is not type(value) or
+            version.get(key) != value for key, value in expected.items()):
+        raise RuntimeError('Frozen helper capability mismatch')
+    return version['publicProviders']
+
+
 def approved_python_inputs():
     metadata=json.loads((DESKTOP/'vendor'/'caption-helper-notices'/'python-runtime-input.json').read_text())
     framework=Path(metadata['nativeInputVerification']['frameworkRoot']).resolve()
@@ -239,6 +269,7 @@ def main():
         binary=work/'dist'/'coconut-caption';data=binary.read_bytes()
         inventory['frozenNative']=audit_frozen(binary,work)
         if not 0<len(data)<=80*1024*1024:raise RuntimeError('Unexpected native helper size')
+        public_providers=verify_helper_capabilities(binary,work,python_version)
         shutil.copyfile(binary,output/'coconut-caption');(output/'coconut-caption').chmod(0o500)
         notices=DESKTOP/'vendor'/'caption-helper-notices'
         if not notices.is_dir():raise RuntimeError('Helper licensing notices are missing')
@@ -269,7 +300,8 @@ def main():
                  'ytDlpVersion':LOCK['ytDlpVersion'],'python':python_version,'pyinstaller':LOCK['pyinstaller'],
                  'bytes':len(data),'sha256':digest(data),'lockSha256':digest((DESKTOP/'caption-helper-lock.json').read_bytes()),
                  'distribution':'minimal-permissive-with-certifi-source' if sys.platform=='darwin' else 'ci-proof-only',
-                 'publicExtraction':True,'inputs':source_inputs,'resources':resource_hashes(output)}
+                 'publicExtraction':True,'publicProviders':public_providers,
+                 'inputs':source_inputs,'resources':resource_hashes(output)}
         (output/'receipt.json').write_text(json.dumps(receipt,indent=2)+'\n')
     print(json.dumps({'target':TARGET,'receipt':str(output/'receipt.json'),'bytes':receipt['bytes'],'sha256':receipt['sha256']}))
 
