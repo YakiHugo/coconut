@@ -8,6 +8,7 @@ import type { AppStore } from './store';
 import {attachTranscript} from './attach-transcript';
 import {discoverySession,saveDiscoverySession,matchingSourceDocuments,exactSourceIdentity,ingestionDocument,type DiscoverySession,type SourceAttempt} from './discovery-session';
 import {captionLanguageChoices,captionDiagnostics,hasCaptionLoss} from './caption-receipt';
+import {captionFailureDiagnostic,captionFailureSummary,captionOriginalURL,type CaptionFailureDiagnostic} from './caption-failure';
 import { ingest, inspectFile, type Ingestion } from './ingestion';
 export function Discover({ store }: {
     store: AppStore;
@@ -19,6 +20,7 @@ export function Discover({ store }: {
     const diagnostics=captionDiagnostics(receipt?.diagnostics),lossPending=!!receipt&&hasCaptionLoss(diagnostics)&&!lossReviewed;
     const [candidate,setCandidateState]=useState<{file:File;inspected:Awaited<ReturnType<typeof inspectFile>>;keys:string[]}|null>(null);
     const [busy,setBusyState]=useState(false),[review,setReview]=useState<{key:string;revision:number}|null>(null),[attaching,setAttaching]=useState(false);
+    const [failure,setFailure]=useState<{diagnostic:CaptionFailureDiagnostic|null;original:string|null}|null>(null);
     const setError=(error:string)=>updateSession({error});
     const choiceHeading=useRef<HTMLHeadingElement|null>(null),reviewHeading=useRef<HTMLHeadingElement|null>(null),lossHeading=useRef<HTMLHeadingElement|null>(null),languageHeading=useRef<HTMLHeadingElement|null>(null);
     useEffect(()=>{const heading=review?reviewHeading.current:lossPending?lossHeading.current:languageRequired?languageHeading.current:receipt?choiceHeading.current:null;if(heading){heading.focus();heading.scrollIntoView?.({block:'nearest'});}},[receipt,review,lossPending,languageRequired]);
@@ -33,7 +35,7 @@ export function Discover({ store }: {
     const syncActivity=()=>store.setActivity('source',sourceState.current.busy||sourceState.current.candidate?'正在读取来源或核对候选原文件':null);
     const setBusy=(value:boolean)=>{sourceState.current.busy=value;syncActivity();setBusyState(value);};
     const setCandidate=(value:typeof candidate)=>{sourceState.current.candidate=!!value;syncActivity();setCandidateState(value);};
-    const cancelSource = () => { setCandidate(null);store.invalidateMedia(); owner.current?.abort(); owner.current = null; setBusy(false); };
+    const cancelSource = () => { setFailure(null); setCandidate(null);store.invalidateMedia(); owner.current?.abort(); owner.current = null; setBusy(false); };
     const cancel=()=>{picker.controller.retire();cancelSource();};
     useEffect(()=>()=>store.setActivity('source',null),[store]);
     useEffect(()=>{const retire=()=>{if(owner.current){owner.current.abort();owner.current=null;const value={...sessionRef.current,error:'读取已暂停。可重试上次读取。'};sessionRef.current=value;saveDiscoverySession(store,value);}};window.addEventListener('pagehide',retire);return()=>{window.removeEventListener('pagehide',retire);retire();};},[store]);
@@ -55,7 +57,10 @@ export function Discover({ store }: {
             const valueResult=await ingest({source:{kind:'url',url:attempt.feed||attempt.url},...(attempt.language?{language:attempt.language}:{}),...(attempt.intent?{intent:attempt.intent}:{}),...(attempt.episode?{episode:{feed_url:attempt.feed,episode_id:attempt.episode.id,...(attempt.track?{transcript_url:attempt.track}:{})}}:{})},controller.signal);
             if(owner.current!==controller)return;
             if(valueResult.state==='awaiting_selection')updateSession({selection:valueResult.selection,receipt:null,attempt:null,episodeLimit:20});
-            else if(valueResult.state==='blocked')updateSession({error:valueResult.error?.message||'暂时无法读取来源。',languageRequired:valueResult.error?.code==='language_required',languageChoices:captionLanguageChoices(valueResult.error?.languages)});
+            else if(valueResult.state==='blocked'){
+                setFailure({diagnostic:captionFailureDiagnostic(valueResult.error?.diagnostic),original:attempt.feed||attempt.episode?null:captionOriginalURL(attempt.url)});
+                updateSession({error:valueResult.error?.message||'暂时无法读取来源。',languageRequired:valueResult.error?.code==='language_required',languageChoices:captionLanguageChoices(valueResult.error?.languages)});
+            }
             else {
                 if(attempt.episode&&typeof valueResult.source?.feed_checked_at==='string'&&sessionRef.current.selection)updateSession({selection:{...sessionRef.current.selection,feed_checked_at:valueResult.source.feed_checked_at}});
                 const content=ingestionDocument(valueResult);
@@ -63,7 +68,7 @@ export function Discover({ store }: {
                 updateSession({receipt:valueResult,attempt:null,languageRequired:false,languageChoices:[]});
                 if(!hasCaptionLoss(captionDiagnostics(valueResult.diagnostics))&&!matchingSourceDocuments(store.getSnapshot().documents,content).length)openReceipt(valueResult);
             }
-        }catch(error){if(owner.current===controller&&!controller.signal.aborted)setError(error instanceof Error?error.message:'来源读取失败');}
+        }catch(error){if(owner.current===controller&&!controller.signal.aborted){setFailure({diagnostic:null,original:attempt.feed||attempt.episode?null:captionOriginalURL(attempt.url)});setError(error instanceof Error?error.message:'来源读取失败');}}
         finally{if(owner.current===controller){owner.current=null;setBusy(false);}}
     };
     const changeURL=(value:string)=>{cancel();setReview(null);updateSession({url:value,episodeQuery:'',episodeLimit:20,selection:null,tracks:{},receipt:null,attempt:null,error:'',language:'',languageChoices:[],languageRequired:false,lossReviewed:false});};
@@ -130,6 +135,11 @@ export function Discover({ store }: {
   {candidate&&<section aria-label="核对原声项目"><h2>核对原声来源</h2><p>部分文件采样与已有项目相同，但不能证明是同一原声。请核对文件名与项目后选择。已有笔记不会被覆盖。</p>{candidate.keys.map(key=><button key={key} onClick={()=>chooseCandidate(key)}>关联到 {store.getDocument(key)?.title||key}</button>)}<button onClick={()=>chooseCandidate(null)}>作为新原声项目打开</button><button onClick={()=>setCandidate(null)}>取消关联</button></section>}
   <p className="quiet">可先听原声，或选择发布者现成文字稿。原声需另行点击载入，不会自动播放、调用 AI、运行识别或下载模型。</p>
   <p role="status" className="source-error">{error}</p>
+  {failure&&error&&!busy&&(failure.diagnostic||failure.original)&&<section className="caption-failure" aria-label="本次字幕读取结果">
+    {failure.diagnostic&&<p data-caption-diagnostic>{captionFailureSummary(failure.diagnostic)}</p>}
+    <p>本次未取得可阅读的文字稿，不能据此判断来源没有字幕。链接已保留，可重试读取。</p>
+    {failure.original&&<a href={failure.original} target="_blank" rel="noopener noreferrer">打开原站</a>}
+  </section>}
   {languageRequired&&<section aria-label="选择视频原语言"><h2 ref={languageHeading} tabIndex={-1}>确认视频原语言</h2><p>以下是来源实际提供且格式可用的字幕语言，并不表示已确认视频原语言。请选择你确认的原语言后重试；不会自动换轨或启动识别。</p>{languageChoices.length>0?<label>视频原语言<select value={language} onChange={event=>{cancel();updateSession({language:event.target.value,error,receipt:null,lossReviewed:false});}}><option value="">请选择原语言</option>{languageChoices.map(code=><option key={code} value={code}>{code}</option>)}</select></label>:<p>当前字幕服务没有返回可选语言，无法在此确认原语言。链接已保留；请更新字幕服务后重试。</p>}{languageChoices.length>0&&<button disabled={busy||!languageChoices.includes(language)} onClick={()=>void request({...session.attempt!,language})}>按所选原语言重试</button>}</section>}
   {session.attempt&&!busy&&error&&!languageRequired&&<button onClick={()=>void request(session.attempt!)}>重试上次读取{session.attempt.episode?'：'+session.attempt.episode.title:''}</button>}
   {selection&&<section className="episode-list" aria-label="选择播客单集"><h2>{selection.title||'选择一集开始'}</h2>{selection.feed_url&&<div className="feed-refresh"><p className="quiet">{checkLabel?'上次来源检查：'+checkLabel+'。一分钟内选择单集可能复用此节目列表；文字稿仍从发布者获取。':'选择单集时检查发布者来源。'} 刷新会重新读取来源，失败时不会使用旧缓存。</p><button disabled={busy||attaching} onClick={()=>void request({url,feed:selection.feed_url})}>刷新节目列表</button></div>}{selection.feeds?.map(feed=><button key={feed.url} disabled={busy||attaching} onClick={()=>{changeURL(feed.url);void request({url:feed.url});}}>{feed.title}</button>)}{selection.truncated&&<p className="episode-warning" role="status">来源列表不完整，仅包含发布者当前返回且服务可读取的部分单集。搜索只查找这些单集，不代表完整节目存档。</p>}{Boolean(selection.warnings?.length)&&<details className="episode-warnings"><summary>来源提示</summary><ul>{selection.warnings!.map((warning,index)=><li key={index}>{warning}</li>)}</ul></details>}{Boolean(selection.episodes?.length)&&<div className="episode-browser"><label htmlFor="episode-query">查找当前列表的单集</label><input id="episode-query" type="search" value={episodeQuery} disabled={attaching} onChange={event=>updateSession({episodeQuery:event.target.value,episodeLimit:20})} placeholder="按单集标题查找"/>{episodeQuery&&<button disabled={attaching} onClick={()=>updateSession({episodeQuery:'',episodeLimit:20})}>清空单集搜索</button>}<p role="status">匹配 {filteredEpisodes.length} 集 · 已显示 {visibleEpisodes.length} 集</p>{!filteredEpisodes.length&&<p>当前列表没有匹配的单集。可清空搜索，或在上方换用具体单集链接。</p>}</div>}{visibleEpisodes.map(episode=>{
