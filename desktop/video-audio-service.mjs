@@ -28,10 +28,11 @@ export function createVideoAudioService({helper}={}){
     throw Object.assign(Error(messages[status]||'字幕或媒体检查未完整完成，未下载原声；可重试读取来源或使用合法原文件。'),{status:409,code:status,diagnostic:captionDiagnostic(result?.diagnostic)});
    }
    const meta=result.source,media=result.media,bytes=result.bytes;
-   if(!meta||meta.url!==source.url||meta.id!==source.mediaId||meta.provider!==source.provider||meta.subtitle_check!=='no_matching_captions'||meta.format!=='m4a'||!Number.isFinite(meta.duration)||meta.duration<=0||meta.duration>21600||typeof meta.title!=='string'||meta.title.length>500||
+   const audioEvidence=source.provider==='youtube'?['platform_original','unambiguous_platform_default'].includes(meta?.audio_language_basis)&&typeof meta?.audio_language==='string'&&/^[a-z]{2,3}(?:-[A-Za-z0-9]{2,8}){0,2}$/.test(meta.audio_language):meta?.audio_language_basis==='provider_single_source'&&meta.audio_language===null;
+   if(!audioEvidence||!meta||meta.url!==source.url||meta.id!==source.mediaId||meta.provider!==source.provider||meta.subtitle_check!=='no_matching_captions'||meta.format!=='m4a'||!Number.isFinite(meta.duration)||meta.duration<=0||meta.duration>21600||typeof meta.title!=='string'||meta.title.length>500||
     media?.type!=='audio/mp4'||media.kind!=='audio'||!Buffer.isBuffer(bytes)||bytes.length<12||bytes.length>200*1024*1024||media.bytes!==bytes.length||bytes.subarray(4,8).toString()!=='ftyp'||createHash('sha256').update(bytes).digest('hex')!==media.sha256)throw Error('公开原声来源或文件校验未通过');
    // Fixed metadata only: never publish transient CDN/signature URLs.
-   return {body:bytes,type:'audio/mp4',source:{url:source.url,provider:source.provider,id:source.mediaId,title:meta.title,duration:meta.duration,subtitle_check:'no_matching_captions',sha256:media.sha256}};
+   return {body:bytes,type:'audio/mp4',source:{url:source.url,provider:source.provider,id:source.mediaId,title:meta.title,duration:meta.duration,subtitle_check:'no_matching_captions',audio_language:meta.audio_language,audio_language_basis:meta.audio_language_basis,sha256:media.sha256}};
   }finally{busy=false;}
  }});
 }

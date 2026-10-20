@@ -13,7 +13,7 @@ from scripts import public_video_caption_guard as guard
 URL='https://www.youtube.com/watch?v=BaW_jenozKc'
 CDN='https://rr1---sn-abcdef.googlevideo.com/videoplayback?expire=2000000000&sig=public-signature'
 BODY=b'\x00\x00\x00\x18ftypM4A '+b'authored container fixture'
-FORMAT={'url':CDN,'ext':'m4a','vcodec':'none','acodec':'mp4a.40.2','protocol':'https','abr':64,'format_id':'140'}
+FORMAT={'url':CDN,'ext':'m4a','vcodec':'none','acodec':'mp4a.40.2','protocol':'https','abr':64,'format_id':'140','language':'en','language_preference':10}
 INFO={'id':'BaW_jenozKc','duration':4,'title':'Authored fixture','live_status':'not_live','formats':[FORMAT],'subtitles':{},'automatic_captions':{}}
 class Response:
     status=200
@@ -36,7 +36,28 @@ class MediaTests(unittest.TestCase):
         for field,value in [('has_drm',True),('protocol','m3u8_native'),('vcodec','h264'),('ext','webm'),('fragments',[{}]),('filesize',media.MAX_MEDIA+1)]:
             item={**FORMAT,field:value}
             self.assertIsNone(media.choose_audio({'formats':[item]},'youtube'))
-        self.assertEqual(media.choose_audio({'formats':[{**FORMAT,'abr':128},FORMAT]},'youtube'),FORMAT)
+        self.assertEqual(media.choose_audio({'formats':[{**FORMAT,'abr':128},FORMAT]},'youtube')['format_id'],FORMAT['format_id'])
+
+    def test_original_audio_wins_over_lower_bitrate_dub_or_description(self):
+        original = {**FORMAT,'abr':128}
+        dubbed = {**FORMAT,'abr':32,'language':'fr','language_preference':5,'format_note':'French dubbed'}
+        descriptive = {**FORMAT,'abr':16,'language':'en-desc','language_preference':-10,'format_note':'English descriptive'}
+        chosen = media.choose_audio({'formats':[dubbed,descriptive,original]},'youtube')
+        self.assertEqual(chosen['abr'],128)
+        self.assertEqual(chosen['_audio_language'],'en')
+        self.assertEqual(chosen['_audio_language_basis'],'platform_original')
+        self.assertIsNone(media.choose_audio({'formats':[original]},'youtube','fr'))
+        self.assertIsNone(media.choose_audio({'formats':[dubbed,descriptive]},'youtube'))
+        # An ineligible original format still establishes the real language;
+        # do not erase that evidence and fall through to a default dubbed M4A.
+        foreign_default={**FORMAT,'language':'fr','language_preference':5}
+        for change in [{'ext':'webm'}, {'has_drm':True}, {'protocol':'m3u8_native'}, {'vcodec':'h264'}]:
+            self.assertIsNone(media.choose_audio({'formats':[{**original,**change},foreign_default]},'youtube'))
+        unknown={**FORMAT,'language':None,'language_preference':-1}
+        self.assertIsNone(media.choose_audio({'formats':[unknown]},'youtube'))
+        default={**FORMAT,'language_preference':5}
+        self.assertEqual(media.choose_audio({'formats':[default]},'youtube')['_audio_language_basis'],'unambiguous_platform_default')
+        self.assertIsNone(media.choose_audio({'formats':[default,{**default,'language':'fr'}]},'youtube'))
 
     def exercise(self, info=None, denial=None, response=None):
         transport=guard.VideoTransport(URL)

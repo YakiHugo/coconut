@@ -8,7 +8,7 @@ test('public media descriptor cannot authorize arbitrary URLs or routes',()=>{
 });
 test('downloaded public audio retains source evidence and truthful file identity',async t=>{
  const body=Buffer.concat([Buffer.from([0,0,0,24]),Buffer.from('ftypM4A authored fixture')]),sha256=createHash('sha256').update(body).digest('hex');
- const metadata={url,provider:'bilibili',id:'BV1xx411c7mD',title:'A/B 原始标题',duration:4,subtitle_check:'no_matching_captions',sha256};
+ const metadata={url,provider:'bilibili',id:'BV1xx411c7mD',title:'A/B 原始标题',duration:4,subtitle_check:'no_matching_captions',audio_language:null,audio_language_basis:'provider_single_source',sha256};
  let calls=0;const old=globalThis.fetch;t.after(()=>globalThis.fetch=old);
  globalThis.fetch=async(route,init)=>{calls++;assert.equal(route,'api/videos/audio');assert.equal(JSON.parse(init.body).consent,true);return new Response(body,{headers:{'Content-Type':'audio/mp4','X-Coconut-Media-Source':Buffer.from(JSON.stringify(metadata)).toString('base64url')}});};
  const result=await downloadVideoAudio(fallback,new AbortController().signal);

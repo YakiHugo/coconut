@@ -105,25 +105,29 @@ def canonical_bilibili_webpage(url, identity):
     return exact + '/' if url == exact else url
 
 
-def bounded_response_body(response, limit):
-    """Bound both wire bytes and gzip expansion; never accept partial/multi gzip."""
+def bounded_response_body(response, limit, on_bytes=lambda size: None):
+    """Bound wire and expansion bytes; retain byte accounting even on failure."""
     encoding = response.headers.get('Content-Encoding', 'identity').strip().lower()
     if encoding not in ('identity', 'gzip'):
         raise StopProof('unexpected_response')
     body = response.read(limit + 1)
-    if len(body) > limit:
-        raise StopProof('budget_exceeded')
-    if encoding == 'gzip':
-        try:
-            decoder = zlib.decompressobj(16 + zlib.MAX_WBITS)
-            body = decoder.decompress(body, limit + 1)
-            if len(body) > limit or decoder.unconsumed_tail:
-                raise StopProof('budget_exceeded')
-            if not decoder.eof or decoder.unused_data:
-                raise StopProof('unexpected_response')
-        except zlib.error:
-            raise StopProof('unexpected_response') from None
-    return body
+    wire_size = len(body)
+    try:
+        if len(body) > limit:
+            raise StopProof('budget_exceeded')
+        if encoding == 'gzip':
+            try:
+                decoder = zlib.decompressobj(16 + zlib.MAX_WBITS)
+                body = decoder.decompress(body, limit + 1)
+                if len(body) > limit or decoder.unconsumed_tail:
+                    raise StopProof('budget_exceeded')
+                if not decoder.eof or decoder.unused_data:
+                    raise StopProof('unexpected_response')
+            except zlib.error:
+                raise StopProof('unexpected_response') from None
+        return body
+    finally:
+        on_bytes(max(wire_size, len(body)))
 
 
 class VideoTransport:
@@ -182,6 +186,9 @@ class VideoTransport:
             raise StopProof('identity_mismatch')
         self.youtube_access_verified = True
 
+    def count_response_bytes(self, size):
+        self.total += size
+
     def send(self, request):
         kind = self.kind(request.url, request.method, request.data, dict(request.headers))
         if self.count >= MAX_REQUESTS or time.monotonic() - self.started > 120:
@@ -196,8 +203,7 @@ class VideoTransport:
                 if response.status != 200:
                     raise StopProof('unexpected_response')
                 limit = MAX_CAPTION if kind == 'caption' else MAX_RESPONSE
-                body = bounded_response_body(response, limit)
-                self.total += len(body)
+                body = bounded_response_body(response, limit, self.count_response_bytes)
                 if len(body) > limit or self.total > MAX_TOTAL:
                     raise StopProof('budget_exceeded')
                 if kind == 'metadata' or self.provider == 'bilibili' and kind == 'caption':
@@ -422,7 +428,7 @@ def extract_public_video_captions(url, language=None, *, ca_file=None, proxy=Non
                     # Explicit separate action only. This same request completed
                     # access, identity, duration and original-caption checks.
                     from scripts.public_video_media import download_verified_audio
-                    return download_verified_audio(verified_info, transport, _media_output, url)
+                    return download_verified_audio(verified_info, transport, _media_output, url, language)
                 return failure('language_required' if language_required else 'no_matching_captions',
                                'language_unknown' if language_required else 'no_matching_track')
             transport.stage = 'caption_output'

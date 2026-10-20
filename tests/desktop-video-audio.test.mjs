@@ -8,7 +8,7 @@ import {startBridge} from '../desktop/server.mjs';
 const url='https://www.youtube.com/watch?v=abcdefghijk';
 const bytes=Buffer.concat([Buffer.from([0,0,0,24]),Buffer.from('ftypM4A authored protocol fixture')]);
 const sha256=createHash('sha256').update(bytes).digest('hex');
-const valid=()=>({status:'media_ready',bytes,media:{type:'audio/mp4',kind:'audio',bytes:bytes.length,sha256},source:{url,id:'abcdefghijk',provider:'youtube',title:'A/B 原始标题',duration:4,subtitle_check:'no_matching_captions',format:'m4a'}});
+const valid=()=>({status:'media_ready',bytes,media:{type:'audio/mp4',kind:'audio',bytes:bytes.length,sha256},source:{url,id:'abcdefghijk',provider:'youtube',title:'A/B 原始标题',duration:4,subtitle_check:'no_matching_captions',audio_language:'en',audio_language_basis:'platform_original',format:'m4a'}});
 test('only positively checked caption absence advertises the explicit media action',async()=>{
  for(const status of ['no_matching_captions','access_restricted','network_unavailable','language_required','metadata_incomplete','extractor_failed','caption_parse_failed','guard_stopped']){
   let calls=0;
@@ -33,7 +33,7 @@ test('explicit audio action rechecks captions and preserves precise terminal fai
  assert.equal(result.source.subtitle_check,'no_matching_captions');assert.equal(result.source.format_id,undefined);
 });
 test('audio receipt must match canonical source, bytes and bounded duration',async()=>{
- for(const mutate of [r=>r.source.id='different',r=>r.source.url='https://evil.example',r=>r.source.subtitle_check='failed',r=>r.source.duration=Infinity,r=>r.media.sha256='a'.repeat(64),r=>r.media.bytes++,r=>r.media.type='video/mp4',r=>r.bytes=Buffer.from('not media')]){
+ for(const mutate of [r=>r.source.id='different',r=>r.source.url='https://evil.example',r=>r.source.subtitle_check='failed',r=>r.source.audio_language_basis='guessed',r=>r.source.audio_language=null,r=>r.source.duration=Infinity,r=>r.media.sha256='a'.repeat(64),r=>r.media.bytes++,r=>r.media.type='video/mp4',r=>r.bytes=Buffer.from('not media')]){
   const result=valid();mutate(result);
   await assert.rejects(createVideoAudioService({helper:{extractAudio:async()=>result}}).download({url,consent:true}),/校验/);
  }

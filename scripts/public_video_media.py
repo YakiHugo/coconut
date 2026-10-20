@@ -41,28 +41,68 @@ def audio_url_allowed(value, provider):
     return False
 
 
-def choose_audio(info, provider):
+def choose_audio(info, provider, language=None):
     candidates = []
-    for item in info.get('formats') or []:
-        if not isinstance(item, dict):
-            continue
+    identity_formats = [item for item in info.get('formats') or []
+                        if isinstance(item, dict) and item.get('acodec') not in (None, 'none')]
+    audio_formats = [item for item in identity_formats if item.get('vcodec') == 'none']
+    def role_allowed(item):
+        return (item.get('language_preference') != -10 and
+                not str(item.get('language') or '').endswith('-desc') and
+                not re.search(r'descriptive|description|dubbed|配音', str(item.get('format_note') or ''), re.I))
+    def language_code(item):
+        value = item.get('language')
+        return value if isinstance(value, str) and re.fullmatch(r'[a-z]{2,3}(?:-[A-Za-z0-9]{2,8}){0,2}', value) else None
+    for item in audio_formats:
         size = item.get('filesize')
-        if (item.get('ext') != 'm4a' or item.get('vcodec') != 'none' or
-                item.get('acodec') in (None, 'none') or item.get('has_drm') or
+        if (not role_allowed(item) or item.get('ext') != 'm4a' or item.get('has_drm') or
                 item.get('protocol') != 'https' or item.get('fragments') or
                 not audio_url_allowed(item.get('url'), provider)):
             continue
         if size is not None and (isinstance(size, bool) or not isinstance(size, (int, float))
                                  or not math.isfinite(size) or not 0 < size <= MAX_MEDIA):
             continue
-        bitrate = item.get('abr')
-        candidates.append((bitrate if isinstance(bitrate, (int, float)) and math.isfinite(bitrate) and bitrate > 0 else float('inf'), item))
-    # Prefer the smallest advertised bitrate; no retries with another candidate.
-    return min(candidates, key=lambda item: item[0])[1] if candidates else None
+        candidates.append(item)
+    if not candidates:
+        return None
+    if provider == 'youtube':
+        # Pinned yt-dlp's documented extractor mapping: 10 original, 5 default,
+        # -10 descriptive. Never prefer a cheaper dubbed/description track.
+        originals = [item for item in identity_formats if item.get('language_preference') == 10]
+        if originals:
+            languages = {language_code(item) for item in originals}
+            if None in languages or len(languages) != 1 or not all(role_allowed(item) for item in originals):
+                return None
+            chosen_language = next(iter(languages))
+            candidates = [item for item in candidates if item.get('language_preference') == 10 and language_code(item) == chosen_language]
+            basis = 'platform_original'
+        else:
+            languages = {language_code(item) for item in identity_formats if role_allowed(item)}
+            if None in languages or len(languages) != 1:
+                return None
+            chosen_language = next(iter(languages))
+            candidates = [item for item in candidates if item.get('language_preference') == 5 and language_code(item) == chosen_language]
+            basis = 'unambiguous_platform_default'
+        if language and chosen_language.split('-')[0] != language.split('-')[0]:
+            return None
+    else:
+        # Bilibili's pinned single-CID DASH extractor publishes bitrate variants,
+        # not a language/role choice. Do not invent language or select annotated
+        # future multi-language tracks without a dedicated contract.
+        if any(item.get('language') or item.get('language_preference') is not None or not role_allowed(item) for item in audio_formats):
+            return None
+        chosen_language, basis = None, 'provider_single_source'
+    if not candidates:
+        return None
+    def bitrate(item):
+        value = item.get('abr', item.get('tbr'))
+        return value if isinstance(value, (int, float)) and math.isfinite(value) and value > 0 else float('inf')
+    selected = min(candidates, key=bitrate)
+    return {**selected, '_audio_language':chosen_language, '_audio_language_basis':basis}
 
 
-def download_verified_audio(info, transport, output, source_url):
-    selected = choose_audio(info, transport.provider)
+def download_verified_audio(info, transport, output, source_url, language=None):
+    selected = choose_audio(info, transport.provider, language)
     if selected is None:
         return {'status': 'media_unavailable'}
     if transport.count >= 32 or time.monotonic() - transport.started > 120:
@@ -115,7 +155,8 @@ def download_verified_audio(info, transport, output, source_url):
         'sha256':digest.hexdigest(),'type':'audio/mp4','kind':'audio'},
         'source':{'url':source_url,'id':transport.identity,'provider':transport.provider,
         'title':str(info.get('title') or 'Video audio')[:500],'duration':info['duration'],
-        'subtitle_check':'no_matching_captions','format':'m4a','format_id':str(selected.get('format_id') or '')[:80]}}
+        'subtitle_check':'no_matching_captions','audio_language':selected['_audio_language'],
+        'audio_language_basis':selected['_audio_language_basis'],'format':'m4a','format_id':str(selected.get('format_id') or '')[:80]}}
 
 
 def extract_public_video_audio(url, language=None, *, output, ca_file=None, proxy=None):

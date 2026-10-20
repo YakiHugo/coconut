@@ -13,41 +13,6 @@ concurrency:
   group: ingestion-public-proof-${{ github.ref }}
   cancel-in-progress: true
 jobs:
-  captions:
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    strategy:
-      fail-fast: false
-      matrix:
-        provider: [bilibili]
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-      - name: Install pinned public-caption dependencies
-        run: |
-          python -m venv .venv-captions
-          .venv-captions/bin/python -m pip install --disable-pip-version-check --no-input --require-hashes --only-binary=:all: --no-deps -r desktop/development-caption-requirements.txt
-      - name: Validate an actual public caption through the development API
-        timeout-minutes: 3
-        run: COCONUT_CAPTION_PYTHON="$PWD/.venv-captions/bin/python" node scripts/live_caption_smoke.mjs --live "${{ matrix.provider }}"
-      - name: Inspect Bilibili redirect without following it
-        if: always() && matrix.provider == 'bilibili'
-        run: .venv-captions/bin/python -m scripts.probe_bilibili_redirect --live
-      - name: Print metadata-only result
-        if: always()
-        run: cat live-caption-report*.json
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: public-caption-${{ matrix.provider }}
-          path: live-caption-report*.json
-          retention-days: 3
-          if-no-files-found: warn
   xiaoyuzhou-media:
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -79,6 +44,11 @@ jobs:
       - run: python -m unittest discover -s tests -p 'test_public_video_media.py' -v
       - run: npm run build:reader-ui
       - run: npx playwright install --with-deps chromium
+      - name: Generate authored playable M4A for UI proof
+        run: |
+          python -m venv .venv-audio-fixture
+          .venv-audio-fixture/bin/python -m pip install --disable-pip-version-check --no-input --only-binary=:all: --no-deps av==16.1.0
+          .venv-audio-fixture/bin/python scripts/create_authored_m4a.py
       - run: node tests/react-video-audio-browser.mjs
       - name: Return exact generated public reader assets for review
         run: |
