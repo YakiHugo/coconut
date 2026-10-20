@@ -74,6 +74,6 @@ npm run test:desktop
 
 CI 还检查共享领域模型、Node/Python 协议、真实 Chromium 默认界面和实际 macOS 打包应用的菜单、文件选择、保存、关闭及重启流程。普通回归使用自写材料和明确标注的模拟模型；通过不代表真实模型质量或所有公开平台可用。
 
-公开来源后端检查与 React 本地端到端检查分别报告，不能把两者合称为已完成真实公开来源到 React 的验证。删除旧界面不会删除用户数据，也不会取消新默认界面的安全、存储或原文件校验。
+公开来源后端检查、模拟界面检查与真实来源到 React 的端到端证据分别报告，不能把独立通过的前两者拼成真实闭环。本次 B站与小宇宙的真实识别、React 接入与刷新恢复证据，以及 YouTube 登录阻塞，见 [验收记录](docs/public-ingestion-evidence.md)。CI 成功不代表用户电脑已安装识别环境或本地代理已验证；具体准备和未配置时的行为见 [运行要求](docs/public-ingestion-evidence.md#running-the-source-app-is-a-separate-setup-step)。删除旧界面不会删除用户数据，也不会取消新默认界面的安全、存储或原文件校验。
 
 源码主干与既有 [GitHub Releases](https://github.com/YakiHugo/coconut/releases) 是不同交付物。版本号未改变时，不覆盖已经发布的开发包。macOS 开发包未获 Developer ID 签名或 Apple 公证，不应绕过系统安全警告。

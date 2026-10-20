@@ -13,6 +13,39 @@ This document records separate capabilities, not a guarantee that every link is 
 
 Current video fallback is deliberately narrower than upstream yt-dlp: direct M4A or narrowly verified single-object MP4 only, not every playable stream or platform format. A combined MP4 is labeled public source media, not necessarily original-language audio. YouTube combined support is restricted to the pinned WEB route's public itag18; Bilibili progressive MP4 requires one exact raw durl object, never a first fragment of a multi-part source. A failed/unsupported public route stays a clear error; users may independently provide a legally obtained local file. The explicit caption-proxy mode remains caption-only: media fallback is not advertised or executed there. Pure static hosting cannot proxy platform sources. Packaged executors do not automatically gain this development-only capability.
 
+## Running the source app is a separate setup step
+
+The CI results below prove this code and those public samples in the disposable runner. They do **not** install or configure an executor on a user's computer, prove that computer's network route, or make `npm run dev` transcribe automatically. No user-computer dependency/model installation or proxy/DNS change was performed by this work.
+
+Prerequisites, prepared explicitly by the process owner:
+
+1. Node.js 22.13+ and the repository's `npm ci` dependencies for the source development bridge.
+2. For YouTube/Bilibili discovery, an explicitly selected absolute Python 3.10+ interpreter with the hash-pinned packages in `desktop/development-caption-requirements.txt`. See [development caption setup](development-captions.md). This environment is separate from ASR and needs no speech model.
+3. For optional recognition, an independently prepared Python environment whose `faster_whisper`, `ctranslate2`, `av`, `tokenizers`, `huggingface_hub`, `onnxruntime` and `numpy` modules import successfully. The real proof used faster-whisper 1.2.1 and PyAV 16.1.0. A complete existing `Systran/faster-whisper-small` Hugging Face cache snapshot must contain nonempty `model.bin`, valid JSON `config.json` and `tokenizer.json`, and `vocabulary.json` or `vocabulary.txt`. The runtime resolves the ordinary Hugging Face cache (`HF_HUB_CACHE`, `HUGGINGFACE_HUB_CACHE`, or `HF_HOME/hub`); it will not fetch missing files.
+4. Enough resources and private durable disk space for the selected media, job database and model. The runner measurements below are evidence for that runner, not a minimum specification or a measurement of another computer. Installing dependencies or preparing a model is a separate owner-authorized operation, not part of opening a link.
+
+Once those prerequisites already exist, start the executor and development bridge from the repository in separate terminals. The following are launch examples with placeholders, **not** commands executed on a user's computer by this PR:
+
+```sh
+# Terminal 1: already prepared ASR interpreter and an owner-chosen private data directory.
+/absolute/path/to/asr-venv/bin/python serve.py --port 8081 --data-dir /absolute/private/coconut-data
+
+# Terminal 2: already prepared caption interpreter; executor must be on this same host.
+COCONUT_CAPTION_PYTHON=/absolute/path/to/caption-venv/bin/python \
+COCONUT_ASR_EXECUTOR_URL=http://127.0.0.1:8081 npm run dev
+```
+
+Open the development URL printed by Node. With a playable source project, explicitly choose “检查本地识别服务”, review the returned state, confirm sending this file, then choose “生成文字稿”. This status check does not run inference. After completion, “将文字稿接入原项目” explicitly commits the result. Downloaded source bytes initially remain only in the current page; canonical project saving does not save those bytes. An acknowledged ASR upload makes the job's media durable in the configured executor.
+
+Unconfigured behavior is intentional:
+- No `COCONUT_ASR_EXECUTOR_URL`: `asr_not_configured`, with the message “尚未连接本地转写执行器”; generation stays disabled.
+- A missing/unreachable/incompatible executor: `asr_executor_unavailable`, without silently starting a server or changing its address.
+- Missing or broken Python imports: `missing_dependencies`; incomplete cached model: `missing_model`. Neither state installs/downloads anything or admits a new upload job.
+- Existing playback and notes remain available without ASR. The server rechecks readiness before a new upload even if a previous UI check passed.
+- The executor address accepts only an HTTP root on numeric `127.0.0.1`, not an arbitrary remote service. Pure static hosting has no development backend; existing packaged applications do not acquire these source-only capabilities.
+
+Network setup is independent. `COCONUT_CAPTION_PROXY` enables the existing explicit trusted-local-proxy **caption-only** route; it disables public video media fallback before helper execution. Direct-mode CI success does not demonstrate a user's proxy or fake-IP route works, and does not authorize changing it. Access denials remain terminal; neither this setup nor ASR turns the YouTube login-blocked samples below into successful imports.
+
 ## Real sample evidence, 2026-10-20
 
 The public GitHub Actions standard runner was checked before optional ASR preparation: 16.7 GB RAM, about 92 GB free disk, four CPUs. The official `Systran/faster-whisper-small` snapshot was explicitly prepared in a disposable directory, then the runtime used offline-only settings. No model was silently installed by Coconut.
