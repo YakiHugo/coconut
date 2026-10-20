@@ -48,6 +48,7 @@ npm run dev
 - [链接、播客与原始媒体任务](docs/link-first-ingestion.md)
 - [开发字幕获取](docs/development-captions.md)
 - [字幕失败诊断](docs/caption-diagnostic-outcomes.md)
+- [三平台导入实现与真实验证证据](docs/public-ingestion-evidence.md)
 - [来源与 ASR 边界](docs/podcast-sources-and-asr.md)
 
 ## AI 与后台任务

@@ -3,6 +3,7 @@ import contextlib
 import copy
 import importlib.util
 import io
+import gzip
 import json
 import socket
 import ssl
@@ -35,6 +36,34 @@ class Response:
 
 
 class TransportTests(unittest.TestCase):
+    def test_gzip_is_bounded_and_normalized_before_upstream_parsing(self):
+        body = b'{"code":0,"data":{}}'
+        response = Response(gzip.compress(body))
+        response.headers = {'Content-Encoding':'gzip','Content-Length':str(len(response.body.getvalue()))}
+        transport = guard.VideoTransport(BILIBILI)
+        with patch.object(transport.opener, 'open', return_value=response):
+            actual, headers, _ = transport.send(SimpleNamespace(url='https://api.bilibili.com/x/player/wbi/v2?aid=1&cid=2',method='GET',data=None,headers={}))
+        self.assertEqual(actual, body)
+        self.assertNotIn('Content-Encoding',headers)
+        self.assertEqual(headers['Content-Length'],str(len(body)))
+
+    def test_gzip_bombs_truncation_checksum_and_extra_members_fail_closed(self):
+        for body, encoding, reason in [
+            (gzip.compress(b'x'*1000),'gzip','budget_exceeded'),
+            (gzip.compress(b'fixture')[:-3],'gzip','unexpected_response'),
+            (gzip.compress(b'fixture')+gzip.compress(b'extra'),'gzip','unexpected_response'),
+            (b'not gzip','gzip','unexpected_response'),
+            (b'fixture','br','unexpected_response'),
+        ]:
+            response=Response(body);response.headers={'Content-Encoding':encoding}
+            with self.subTest(encoding=encoding,reason=reason),self.assertRaises(guard.StopProof) as stopped:
+                guard.bounded_response_body(response,100)
+            self.assertEqual(stopped.exception.outcome,reason)
+        damaged=bytearray(gzip.compress(b'fixture'));damaged[-8]^=1
+        response=Response(bytes(damaged));response.headers={'Content-Encoding':'gzip'}
+        with self.assertRaises(guard.StopProof): guard.bounded_response_body(response,100)
+
+
     def test_canonical_bilibili_path_is_not_redirect_permission(self):
         identity = 'BV1xx411c7mD'
         self.assertEqual(guard.canonical_bilibili_webpage(BILIBILI, identity), BILIBILI + '/')

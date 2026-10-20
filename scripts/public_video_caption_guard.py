@@ -16,6 +16,7 @@ import re
 import ssl
 import subprocess
 import time
+import zlib
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -104,6 +105,27 @@ def canonical_bilibili_webpage(url, identity):
     return exact + '/' if url == exact else url
 
 
+def bounded_response_body(response, limit):
+    """Bound both wire bytes and gzip expansion; never accept partial/multi gzip."""
+    encoding = response.headers.get('Content-Encoding', 'identity').strip().lower()
+    if encoding not in ('identity', 'gzip'):
+        raise StopProof('unexpected_response')
+    body = response.read(limit + 1)
+    if len(body) > limit:
+        raise StopProof('budget_exceeded')
+    if encoding == 'gzip':
+        try:
+            decoder = zlib.decompressobj(16 + zlib.MAX_WBITS)
+            body = decoder.decompress(body, limit + 1)
+            if len(body) > limit or decoder.unconsumed_tail:
+                raise StopProof('budget_exceeded')
+            if not decoder.eof or decoder.unused_data:
+                raise StopProof('unexpected_response')
+        except zlib.error:
+            raise StopProof('unexpected_response') from None
+    return body
+
+
 class VideoTransport:
     def __init__(self, url, ca_file=None, proxy=None):
         self.provider, self.identity = source_identity(url)
@@ -171,10 +193,10 @@ class VideoTransport:
         try:
             with self.opener.open(req, timeout=15) as response:
                 self.responses += 1
-                if response.status != 200 or response.headers.get('Content-Encoding', 'identity') != 'identity':
+                if response.status != 200:
                     raise StopProof('unexpected_response')
                 limit = MAX_CAPTION if kind == 'caption' else MAX_RESPONSE
-                body = response.read(limit + 1)
+                body = bounded_response_body(response, limit)
                 self.total += len(body)
                 if len(body) > limit or self.total > MAX_TOTAL:
                     raise StopProof('budget_exceeded')
@@ -191,7 +213,10 @@ class VideoTransport:
                             raise StopProof('subtitle_login_required')
                     elif urlparse(request.url).path == '/youtubei/v1/player':
                         self.verify_youtube_player(payload)
-                return body, dict(response.headers), response.status
+                headers = {key: value for key, value in response.headers.items()
+                           if key.lower() not in ('content-encoding', 'content-length')}
+                headers['Content-Length'] = str(len(body))
+                return body, headers, response.status
         except urllib.error.HTTPError as error:
             self.responses += 1
             code = error.code
