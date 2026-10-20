@@ -1,0 +1,61 @@
+name: Public ingestion closure evidence
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/ingestion-public-proof.yml'
+      - 'scripts/live_ingestion_proof.mjs'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: ingestion-public-proof-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  captions:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    strategy:
+      fail-fast: false
+      matrix:
+        provider: [youtube, bilibili]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install pinned public-caption dependencies
+        run: |
+          python -m venv .venv-captions
+          .venv-captions/bin/python -m pip install --disable-pip-version-check --no-input --require-hashes --only-binary=:all: --no-deps -r desktop/development-caption-requirements.txt
+      - name: Validate an actual public caption through the development API
+        timeout-minutes: 3
+        run: COCONUT_CAPTION_PYTHON="$PWD/.venv-captions/bin/python" node scripts/live_caption_smoke.mjs --live "${{ matrix.provider }}"
+      - name: Print metadata-only result
+        if: always()
+        run: cat live-caption-report*.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: public-caption-${{ matrix.provider }}
+          path: live-caption-report*.json
+          retention-days: 3
+          if-no-files-found: warn
+  xiaoyuzhou-media:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - run: npx playwright install --with-deps chromium
+      - name: Verify public episode, guarded audio download, decoding and seek
+        run: COCONUT_LIVE_PODCAST_MEDIA=1 node tests/podcast-public-smoke.mjs
+# No account, credentials, paid inference or model download. A media pass is not
+# a transcription pass. Source bodies remain transient; only caption metadata
+# reports may be uploaded. Blocked/unverified source checks fail rather than skip.
