@@ -490,7 +490,9 @@ class MetadataFormatSelectionTests(unittest.TestCase):
               'formats':copy.deepcopy(formats),'subtitles':{},'automatic_captions':{}}
         with guard.guarded_extractors(transport),patch.object(transport,'send',side_effect=AssertionError('metadata processing must not fetch media')):
             with yt_dlp.YoutubeDL({'logger':logger,'quiet':True}) as downloader:
-                if selector:downloader.params['format']=selector
+                if selector:
+                    downloader.params['format']=selector
+                    downloader.format_selector=downloader.build_format_selector(selector)
                 result=downloader.process_ie_result(info,download=False)
         return result,logger.warnings
 
