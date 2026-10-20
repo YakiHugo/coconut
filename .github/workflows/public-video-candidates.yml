@@ -1,0 +1,41 @@
+name: Independent public video candidates
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/public-video-candidates.yml'
+      - 'scripts/live_caption_candidate.mjs'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  candidate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - provider: youtube
+            url: 'https://www.youtube.com/watch?v=p0W_cxbbTQA'
+            language: en
+          - provider: bilibili
+            url: 'https://www.bilibili.com/video/BV1nx411u79K'
+            language: en
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Prepare pinned isolated caption dependencies
+        run: |
+          python -m venv .venv-captions
+          .venv-captions/bin/python -m pip install --disable-pip-version-check --no-input --require-hashes --only-binary=:all: --no-deps -r desktop/development-caption-requirements.txt
+      - name: Check independent public candidate without media or ASR fallback
+        timeout-minutes: 3
+        env:
+          CANDIDATE_URL: ${{ matrix.url }}
+          CANDIDATE_LANGUAGE: ${{ matrix.language }}
+        run: COCONUT_CAPTION_PYTHON="$PWD/.venv-captions/bin/python" node scripts/live_caption_candidate.mjs --live "$CANDIDATE_URL" "$CANDIDATE_LANGUAGE"
