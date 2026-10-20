@@ -10,7 +10,6 @@ import os from 'node:os';
 import path from 'node:path';
 import {spawn} from 'node:child_process';
 import {createHash,randomUUID} from 'node:crypto';
-import {createRequire} from 'node:module';
 import {setTimeout as delay} from 'node:timers/promises';
 import {build} from 'esbuild';
 import {chromium,expect} from '@playwright/test';
@@ -22,12 +21,11 @@ const python=process.env.COCONUT_ASR_PROOF_PYTHON;
 if(!python||!path.isAbsolute(python))throw Error('Provide an explicit absolute COCONUT_ASR_PROOF_PYTHON.');
 const sourceProvider=process.argv[3]||'xiaoyuzhou';
 const sourceUrl=sourceProvider==='bilibili'?'https://www.bilibili.com/video/BV1Bx411E7Hs':'https://www.xiaoyuzhoufm.com/episode/65e7c944d602439838b530aa';
-const require=createRequire(import.meta.url),core=require('../reader/core.js'),canonical=require('../reader/canonical-library.js');
 const temporary=await mkdtemp(path.join(os.tmpdir(),'coconut-public-asr-'));
 let child,bridge,controller,browser,stage='start',result={check:'real_public_ingestion_asr',source_url:sourceUrl,passed:false,paid_calls:0,fixture_transcript:false,model_download:false};
 try{
- const compiled=await build({stdin:{contents:"export * from './frontend/app/ingestion-media';export * from './frontend/app/ingestion-jobs';export * from './frontend/app/ingestion-binding';export * from './frontend/app/attach-transcript';export {inspectFile} from './frontend/app/ingestion';export {downloadVideoAudio,videoAudioFallback} from './frontend/app/video-audio';",resolveDir:process.cwd()},bundle:true,format:'esm',write:false,platform:'node'});
- const {downloadedMediaFile,transcriptionFileIssue,inspectFile,createIngestionJobs,ingestionBinding,rememberIngestionFile,attachTranscript,downloadVideoAudio,videoAudioFallback}=await import('data:text/javascript;base64,'+Buffer.from(compiled.outputFiles[0].contents).toString('base64'));
+ const compiled=await build({stdin:{contents:"export * from './frontend/app/ingestion-media';export * from './frontend/app/ingestion-jobs';export * from './frontend/app/ingestion-binding';export {inspectFile} from './frontend/app/ingestion';export {downloadVideoAudio,videoAudioFallback} from './frontend/app/video-audio';",resolveDir:process.cwd()},bundle:true,format:'esm',write:false,platform:'node'});
+ const {downloadedMediaFile,transcriptionFileIssue,inspectFile,createIngestionJobs,ingestionBinding,rememberIngestionFile,downloadVideoAudio,videoAudioFallback}=await import('data:text/javascript;base64,'+Buffer.from(compiled.outputFiles[0].contents).toString('base64'));
  stage='local_executor_start';
  child=spawn(python,['serve.py','--port','0','--data-dir',path.join(temporary,'executor')],{stdio:['ignore','pipe','pipe'],env:{...process.env,HF_HUB_OFFLINE:'1',TRANSFORMERS_OFFLINE:'1',HF_HUB_DISABLE_IMPLICIT_TOKEN:'1'}});
  // Do not publish subprocess transcript text or private filesystem paths.
@@ -90,7 +88,7 @@ try{
   result.original_duration_seconds=sourceDuration;result.media_bytes=file.size;result.media_type=file.type;result.filename_extension=path.extname(file.name);result.media_provenance=project.media_provenance;
  }
  const original={key:'public-asr-proof',...project,project_note:'Authored proof note',timestamp_bookmarks:[{id:'proof',time:1,note:'Authored proof bookmark'}]};
- let document=original,revision=0,token=null,journal=null,accepted=false,uploads=0;
+ let document=original,revision=0,token=null,journal=null,uploads=0;
  const library=await request('/api/v1/library');assert.equal(library.enabled,true);
  async function save(value){
   const saved=await post('/api/v1/library/commit',{protocolVersion:1,epoch:library.epoch,action:'put',key:original.key,receiptKey:randomUUID(),expected:token,document:value});
@@ -101,11 +99,7 @@ try{
  const dependencies={
   request:async(route,init)=>{if(route.startsWith('api/v1/ingestions/upload?'))uploads++;return request(route,init);},
   binding:(key,expected)=>ingestionBinding(store,key,expected),
-  accept:async(transcript,binding)=>{
-   assert.equal(binding.key,original.key);
-   const next=attachTranscript(document,transcript,core,canonical.project);
-   await save(next);document=next;revision++;accepted=true;return true;
-  },
+  accept:async()=>{throw Error('Proof must use actual React transcript attachment');},
   journal:{read:()=>journal,write:value=>{journal=value;}},uuid:randomUUID,
  };
  controller=createIngestionJobs(dependencies);

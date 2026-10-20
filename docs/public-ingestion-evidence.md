@@ -46,6 +46,16 @@ The pinned public extractor returned 11 formats and only the non-transcript danm
 - Segment SHA-256: cc45c82b27777aa4fb51b34284a461d4e87bff1ac296a841bf8a0f3c23cb1152.
 - Full media/transcript were transient; this is a genuine pipeline positive, not a fixture or quality benchmark. The separate singing-practice empty result remains recorded below.
 
+### Actual React acceptance and reload
+
+The stronger [Bilibili browser proof](https://github.com/YakiHugo/coconut/actions/runs/39481327277/job/118830549728) and [Xiaoyuzhou browser proof](https://github.com/YakiHugo/coconut/actions/runs/39481327277/job/118830549573), at head db82da6, both passed after real offline recognition:
+
+- A fresh Chromium session receives the actual acknowledged single-upload job journal, without retaining its browser File.
+- The real React “attach transcript to original project” action commits the transcript and durable local-job binding, not a proof-specific attachment implementation.
+- A page reload renders actual recognized text; original project key, URL, title, media provenance, note and bookmark remain unchanged. The saved local-job binding matches the real executor job.
+- Explicitly reopening that job's media decodes successfully; playback does not start automatically and no second upload occurs.
+- Only a diagnostic preview of at most 24 Unicode characters is printed. Full third-party media/transcript are not published. The speech output is readable but unreviewed; in particular, proper nouns in the Xiaoyuzhou introduction are imperfect. This is not an accuracy benchmark.
+
 ### YouTube access negative
 
 [Observed source QRS8MkLhQmM](https://github.com/YakiHugo/coconut/actions/runs/39472797430/job/118800931493) returned `login_required` after one request/one response. No caption, media or ASR fallback was attempted. This is not evidence of absent captions or successful YouTube ingestion. No alternate clients, proxy, cookies or token service were used to evade this response.
@@ -64,7 +74,7 @@ The independent upstream Bilibili legacy MP4 sample [BV1nx411u79K](https://www.b
 
 - `npm run test:desktop`, `npm run test:react`, Python unittest discovery and the production browser suite exercise authored failures, identity/mismatch cases, byte limits, cancellation and durable binding. Authored fixtures are never counted as real platform results.
 - `tests/react-video-audio-browser.mjs` renders the real React app/HTTP bridge at 1360 and 390 pixels. It verifies absence-only controls, no automatic download, denied recheck/cancellation/source change with no library write, and a successful authored playable M4A through the real HTTP service, File binding, browser decoder and canonical library. Playback and ASR never start automatically. The two-second sine-wave fixture is authored test data, not a platform result. The MP4 expansion waits for first-sample `loadeddata`/`HAVE_CURRENT_DATA`, not metadata alone. An authored MP4 with intact metadata and deliberately corrupted sample bytes proves that a readable duration/dimensions receipt still creates no project when decoding fails. Projects persist metadata, not media bytes: the UI explicitly says downloaded media remains in this page until an explicit durable ASR upload. Screenshots are authored UI evidence, not live source evidence.
-- `scripts/live_ingestion_proof.mjs --live` uses the real short public episode, actual optional Python executor, actual frontend controller and canonical storage. It needs an explicit absolute `COCONUT_ASR_PROOF_PYTHON`; it neither installs dependencies nor downloads weights.
+- `scripts/live_ingestion_proof.mjs --live` uses the real short public episode, actual optional Python executor, actual frontend controller and canonical storage. It needs an explicit absolute `COCONUT_ASR_PROOF_PYTHON` and an explicitly installed Playwright Chromium; it neither installs dependencies nor downloads weights. Pass `bilibili` or `xiaoyuzhou` after `--live` for the bounded fixed public source.
 - `.github/workflows/ingestion-public-proof.yml` separates explicit ephemeral model preparation from offline inference, records versions and metadata, and removes weights afterward. A public accessibility failure remains a failed/unverified live sample, not a fixture success.
 
 ## Primary upstream references considered

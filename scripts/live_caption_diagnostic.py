@@ -17,11 +17,18 @@ def diagnostic_category(value):
         'Caption availability could not be confirmed because the platform reported a warning. Retry or explicitly choose local ASR.':'warning_prevented_absence',
     }.get(str(value),'other_upstream_diagnostic')
 
+def canonical_source(url):
+    provider,identity=source_identity(url)
+    canonical=('https://www.youtube.com/watch?v='+identity if provider=='youtube'
+               else 'https://www.bilibili.com/video/'+identity)
+    if url!=canonical:raise ValueError('Exact canonical public video URL required')
+    return canonical,provider,identity
+
 def main():
     if len(sys.argv)!=4 or sys.argv[1]!='--live':
         raise SystemExit('Explicit --live CANONICAL_URL LANGUAGE required')
     url,language=sys.argv[2:]
-    provider,identity=source_identity(url)
+    url,provider,identity=canonical_source(url)
     report={'check':'public_caption_diagnostic','source_url':url,'provider':provider,
             'media_attempted':False,'asr_attempted':False,'warning_categories':[]}
     original_logger=subtitle_import.CaptionLogger
