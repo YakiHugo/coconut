@@ -17,8 +17,9 @@ async function fixture(t,{probe=version,result=caption,delay=0}={}){
  return {directory,executable,log};
 }
 test('explicit developer adapter runs real isolated process from URL through HTTP to validated document',async t=>{
- const f=await fixture(t);let server;
- t.after(async()=>{if(server)await server.shutdown();});
+ let server;t.after(async()=>{if(server)await server.shutdown();});
+ // Close the task writer before fixture removal; Node runs after-hooks FIFO.
+ const f=await fixture(t);
  const started=await startDevelopmentBridge({libraryDirectory:null,port:0,taskDirectory:path.join(f.directory,'tasks'),captionPython:f.executable,providers:{status(){throw Error('Unexpected provider probe');}}});server=started.server;
  assert.equal(started.captions.available,true);assert.deepEqual(started.captions.providers.filter(p=>p.available).map(p=>p.id),['x','youtube','bilibili']);
  assert.equal(started.captions.automatic_asr,false);
@@ -177,6 +178,8 @@ test('development process retains bounded actual language choices without diagno
 });
 
 test('caption-only trusted proxy never advertises or executes the direct public media route',async t=>{
+ let server;t.after(async()=>{if(server)await server.shutdown();});
+ // Register shutdown before fixture cleanup so writer.lock remains until close.
  const probe={...version,developmentProxyProtocol:1,developmentAudioProtocol:1};
  const f=await fixture(t,{probe,result:{status:'no_matching_captions'}});
  const helper=createDevelopmentCaptionHelper({python:f.executable,proxy:'http://127.0.0.1:7897'});
@@ -184,7 +187,7 @@ test('caption-only trusted proxy never advertises or executes the direct public 
  await assert.rejects(helper.extractAudio({url:'https://www.bilibili.com/video/BV1xx411c7mD'}),error=>error.code==='CAPTION_UNAVAILABLE');
  await helper.shutdown();assert.equal((await readFile(f.log,'utf8')).trim().split('\n').length,1);
  const started=await startDevelopmentBridge({libraryDirectory:null,port:0,taskDirectory:path.join(f.directory,'tasks'),captionPython:f.executable,captionProxy:'http://127.0.0.1:7897'});
- t.after(()=>started.server.shutdown());assert.equal(started.captions.available,true);
+ server=started.server;assert.equal(started.captions.available,true);
  const response=await fetch(started.origin+'/api/v1/ingestions',{method:'POST',headers:{Origin:started.origin,'Content-Type':'application/json'},body:JSON.stringify({protocolVersion:1,source:{kind:'url',url:'https://www.bilibili.com/video/BV1xx411c7mD'}})});
  assert.equal(response.status,200);assert.equal((await response.json()).ingestion.error.audio_fallback,undefined);
  const media=await fetch(started.origin+'/api/videos/media',{method:'POST',headers:{Origin:started.origin,'Content-Type':'application/json'},body:JSON.stringify({url:'https://www.bilibili.com/video/BV1xx411c7mD',consent:true})});
