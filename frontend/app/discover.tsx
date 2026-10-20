@@ -10,7 +10,7 @@ import {discoverySession,saveDiscoverySession,matchingSourceDocuments,exactSourc
 import {captionLanguageChoices,captionDiagnostics,hasCaptionLoss} from './caption-receipt';
 import {captionFailureDiagnostic,captionFailureSummary,captionOriginalURL,type CaptionFailureDiagnostic} from './caption-failure';
 import { ingest, inspectFile, type Ingestion } from './ingestion';
-import {downloadVideoAudio,videoAudioFallback,type VideoAudioFallback} from './video-audio';
+import {downloadVideoAudio,validateDownloadedVideoMedia,videoAudioFallback,type VideoAudioFallback} from './video-audio';
 export function Discover({ store }: {
     store: AppStore;
 }) {
@@ -77,14 +77,15 @@ export function Discover({ store }: {
         cancel();setReview(null);const controller=new AbortController();owner.current=controller;setBusy(true);setError('');
         try{
             const result=await downloadVideoAudio(fallback,controller.signal);
+            await validateDownloadedVideoMedia(result.file,result.inspected.kind,result.project.media_duration,controller.signal);
             if(owner.current!==controller||controller.signal.aborted)return;
             const doc=store.addDocument(result.project);
-            if(!doc)throw Error('当前项目尚未保存，未创建新原声项目。');
+            if(!doc)throw Error('当前项目尚未保存，未创建新媒体项目。');
             store.setFile(doc.key,result.file);
-            store.setMedia(doc.key,{url:URL.createObjectURL(result.file),kind:'audio',name:doc.title,identity:result.inspected.identity,availability:'local_session'});
+            store.setMedia(doc.key,{url:URL.createObjectURL(result.file),kind:result.inspected.kind,name:doc.title,identity:result.inspected.identity,availability:'local_session'});
             store.select(doc.key);updateSession({receipt:null,attempt:null,error:''});
-            store.setMessage('已创建公开音轨项目并载入音轨，保存状态请查看页首；未自动播放或识别。可检查本机识别服务，再明确生成文字稿。');
-        }catch(error){if(owner.current===controller&&!controller.signal.aborted){setFailure({diagnostic:null,original:fallback.url});setError(error instanceof Error?error.message:'公开原声未完成。');}}
+            store.setMessage('已创建公开媒体项目，项目保存状态请查看页首。媒体仅在本页保留，刷新前若未完成识别上传，需要重新载入；未自动播放或识别。可检查本机识别服务，再明确生成文字稿。');
+        }catch(error){if(owner.current===controller&&!controller.signal.aborted){setFailure({diagnostic:null,original:fallback.url});setError(error instanceof Error?error.message:'公开媒体未完成。');}}
         finally{if(owner.current===controller){owner.current=null;setBusy(false);}}
     };
     const changeURL=(value:string)=>{cancel();setReview(null);updateSession({url:value,episodeQuery:'',episodeLimit:20,selection:null,tracks:{},receipt:null,attempt:null,error:'',language:'',languageChoices:[],languageRequired:false,lossReviewed:false});};
@@ -153,8 +154,8 @@ export function Discover({ store }: {
   <p role="status" className="source-error">{error}</p>
   {failure&&error&&!busy&&(failure.diagnostic||failure.original)&&<section className="caption-failure" aria-label="本次字幕读取结果">
     {failure.diagnostic&&<p data-caption-diagnostic>{captionFailureSummary(failure.diagnostic)}</p>}
-    <p>{failure.audio?'已确认没有匹配原语言的字幕轨道。可明确下载公开音轨并创建新原声项目；下载前会重新核对字幕与访问状态。':'本次未取得可阅读的文字稿，不能据此判断来源没有字幕。链接已保留，可重试读取。'}</p>
-    <div className="source-actions">{failure.audio&&<button disabled={busy||attaching} onClick={()=>void openVideoAudio()}>下载公开音轨并新建项目（最多 200 MiB）</button>}
+    <p>{failure.audio?'已确认没有匹配原语言的字幕轨道。可明确下载公开媒体并创建新项目；可能是视频中的默认音轨，语言及是否原版未必可确认。下载前会重新核对字幕与访问状态。':'本次未取得可阅读的文字稿，不能据此判断来源没有字幕。链接已保留，可重试读取。'}</p>
+    <div className="source-actions">{failure.audio&&<button disabled={busy||attaching} onClick={()=>void openVideoAudio()}>下载公开媒体并新建项目（最多 200 MiB）</button>}
     {failure.original&&<a href={failure.original} target="_blank" rel="noopener noreferrer">打开原站</a>}</div>
   </section>}
   {languageRequired&&<section aria-label="选择视频原语言"><h2 ref={languageHeading} tabIndex={-1}>确认视频原语言</h2><p>以下是来源实际提供且格式可用的字幕语言，并不表示已确认视频原语言。请选择你确认的原语言后重试；不会自动换轨或启动识别。</p>{languageChoices.length>0?<label>视频原语言<select value={language} onChange={event=>{cancel();updateSession({language:event.target.value,error,receipt:null,lossReviewed:false});}}><option value="">请选择原语言</option>{languageChoices.map(code=><option key={code} value={code}>{code}</option>)}</select></label>:<p>当前字幕服务没有返回可选语言，无法在此确认原语言。链接已保留；请更新字幕服务后重试。</p>}{languageChoices.length>0&&<button disabled={busy||!languageChoices.includes(language)} onClick={()=>void request({...session.attempt!,language})}>按所选原语言重试</button>}</section>}

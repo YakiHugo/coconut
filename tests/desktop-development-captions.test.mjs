@@ -175,3 +175,19 @@ test('development process retains bounded actual language choices without diagno
  const f=await fixture(t,{result:{status:'language_required',languages:['fr','en','en','https://private.example'],token:'private'}}),helper=createDevelopmentCaptionHelper({python:f.executable});
  try{assert.equal((await helper.status()).ready,true);assert.deepEqual(await helper.extractCaptions({url}),{status:'language_required',languages:['en','fr']});}finally{await helper.shutdown();}
 });
+
+test('caption-only trusted proxy never advertises or executes the direct public media route',async t=>{
+ const probe={...version,developmentProxyProtocol:1,developmentAudioProtocol:1};
+ const f=await fixture(t,{probe,result:{status:'no_matching_captions'}});
+ const helper=createDevelopmentCaptionHelper({python:f.executable,proxy:'http://127.0.0.1:7897'});
+ const status=await helper.status();assert.equal(status.ready,true);assert.equal(status.audioFallback,false);assert.deepEqual(status.audioProviders,[]);
+ await assert.rejects(helper.extractAudio({url:'https://www.bilibili.com/video/BV1xx411c7mD'}),error=>error.code==='CAPTION_UNAVAILABLE');
+ await helper.shutdown();assert.equal((await readFile(f.log,'utf8')).trim().split('\n').length,1);
+ const started=await startDevelopmentBridge({libraryDirectory:null,port:0,taskDirectory:path.join(f.directory,'tasks'),captionPython:f.executable,captionProxy:'http://127.0.0.1:7897'});
+ t.after(()=>started.server.shutdown());assert.equal(started.captions.available,true);
+ const response=await fetch(started.origin+'/api/v1/ingestions',{method:'POST',headers:{Origin:started.origin,'Content-Type':'application/json'},body:JSON.stringify({protocolVersion:1,source:{kind:'url',url:'https://www.bilibili.com/video/BV1xx411c7mD'}})});
+ assert.equal(response.status,200);assert.equal((await response.json()).ingestion.error.audio_fallback,undefined);
+ const media=await fetch(started.origin+'/api/videos/media',{method:'POST',headers:{Origin:started.origin,'Content-Type':'application/json'},body:JSON.stringify({url:'https://www.bilibili.com/video/BV1xx411c7mD',consent:true})});
+ assert.equal(media.status,503);
+ const calls=(await readFile(f.log,'utf8')).trim().split('\n').map(JSON.parse);assert.equal(calls.some(call=>call.input.operation==='extract-development-audio'),false);
+});

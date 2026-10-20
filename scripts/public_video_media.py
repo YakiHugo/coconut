@@ -1,6 +1,6 @@
 """Explicit anonymous audio fallback after the guarded original-caption check.
 
-Only one direct M4A URL from that same verified extractor result is used.
+Only one direct M4A or combined MP4 URL from that same verified extractor result is used.
 Never follow redirects, obtain tokens, read cookies, resolve manifests, execute
 downloaders, or switch candidates after a denial. CDN URLs are transient.
 """
@@ -35,7 +35,7 @@ def audio_url_allowed(value, provider):
                         and parsed.path == '/videoplayback')
         if provider == 'bilibili':
             return bool(re.fullmatch(r'[a-z0-9.-]+\.(?:bilivideo\.com|bilivideo\.cn|bilivideo\.net)', host)
-                        and re.fullmatch(r'/[A-Za-z0-9_./-]+\.m4s', parsed.path))
+                        and re.fullmatch(r'/[A-Za-z0-9_./-]+\.(?:m4s|mp4)', parsed.path))
     except (ValueError, TypeError):
         pass
     return False
@@ -77,12 +77,9 @@ def choose_audio(info, provider, language=None):
             candidates = [item for item in candidates if item.get('language_preference') == 10 and language_code(item) == chosen_language]
             basis = 'platform_original'
         else:
-            languages = {language_code(item) for item in identity_formats if role_allowed(item)}
-            if None in languages or len(languages) != 1:
-                return None
-            chosen_language = next(iter(languages))
-            candidates = [item for item in candidates if item.get('language_preference') == 5 and language_code(item) == chosen_language]
-            basis = 'unambiguous_platform_default'
+            # yt-dlp can omit encrypted/ineligible originals before info.formats.
+            # A surviving default track is therefore not proof of original audio.
+            return None
         if language and chosen_language.split('-')[0] != language.split('-')[0]:
             return None
     else:
@@ -101,8 +98,61 @@ def choose_audio(info, provider, language=None):
     return {**selected, '_audio_language':chosen_language, '_audio_language_basis':basis}
 
 
+
+def choose_media(info, provider, language=None):
+    audio = choose_audio(info, provider, language)
+    if audio:
+        return {**audio, '_kind':'audio', '_type':'audio/mp4', '_extension':'m4a',
+                '_audio_role':'original' if provider == 'youtube' else 'unknown'}
+    # A combined public source stream is not a claim about original voice.
+    # Do not use another client, a token, DRM, manifest, or separate track merge.
+    formats = [item for item in info.get('formats') or [] if isinstance(item, dict)]
+    candidates = []
+    for item in formats:
+        size = item.get('filesize')
+        if (item.get('ext') != 'mp4' or item.get('has_drm') or item.get('fragments')
+                or item.get('protocol') != 'https' or item.get('vcodec') == 'none'
+                or item.get('acodec') == 'none' or not audio_url_allowed(item.get('url'), provider)):
+            continue
+        if size is not None and (isinstance(size, bool) or not isinstance(size, (int,float))
+                                or not math.isfinite(size) or not 0 < size <= MAX_MEDIA):
+            continue
+        if (item.get('language_preference') == -10 or
+                re.search(r'descriptive|description|dubbed|配音', str(item.get('format_note') or ''), re.I)):
+            continue
+        if provider == 'youtube':
+            # Pinned WEB explicitly exempts public combined itag18 from GVS POT.
+            # Never include missing-POT formats or seek another client.
+            if str(item.get('format_id')) != '18':
+                continue
+            preference = item.get('language_preference')
+            lang = item.get('language')
+            if lang is not None and (not isinstance(lang,str) or not re.fullmatch(r'[a-z]{2,3}(?:-[A-Za-z0-9]{2,8}){0,2}',lang)):
+                continue
+            if lang is not None and preference not in (5,10):
+                continue
+            if language and lang and lang.split('-')[0] != language.split('-')[0]:
+                continue
+            role = {10:'original',5:'default'}.get(preference,'unknown')
+            basis = 'platform_video_stream'
+        else:
+            # Legacy single-CID MP4 may omit codec and language annotations.
+            # Explicit audio/video-only or future labelled alternatives are not
+            # guessed to be equivalent to that source stream.
+            if item.get('_coconut_single_durl') is not True or any(f.get('language') or f.get('language_preference') is not None for f in formats):
+                continue
+            lang, role, basis = None, 'unknown', 'provider_single_source'
+        candidates.append({**item,'_kind':'video','_type':'video/mp4','_extension':'mp4',
+                           '_audio_language':lang,'_audio_role':role,'_audio_language_basis':basis})
+    if not candidates:
+        return None
+    if provider == 'youtube' and len(candidates) != 1:
+        return None
+    return min(candidates, key=lambda item: item.get('filesize') or MAX_MEDIA)
+
+
 def download_verified_audio(info, transport, output, source_url, language=None):
-    selected = choose_audio(info, transport.provider, language)
+    selected = choose_media(info, transport.provider, language)
     if selected is None:
         return {'status': 'media_unavailable'}
     if transport.count >= 32 or time.monotonic() - transport.started > 120:
@@ -151,12 +201,13 @@ def download_verified_audio(info, transport, output, source_url, language=None):
         raise StopProof({401:'login_required',403:'http_access_denied',412:'http_access_denied',429:'rate_limited'}.get(code,'upstream_error')) from None
     except (urllib.error.URLError, OSError):
         raise StopProof('transport_unavailable') from None
-    return {'status':'media_ready','media':{'filename':'public-audio.m4a','bytes':written,
-        'sha256':digest.hexdigest(),'type':'audio/mp4','kind':'audio'},
+    return {'status':'media_ready','media':{'filename':'public-media.bin','bytes':written,
+        'sha256':digest.hexdigest(),'type':selected['_type'],'kind':selected['_kind']},
         'source':{'url':source_url,'id':transport.identity,'provider':transport.provider,
         'title':str(info.get('title') or 'Video audio')[:500],'duration':info['duration'],
         'subtitle_check':'no_matching_captions','audio_language':selected['_audio_language'],
-        'audio_language_basis':selected['_audio_language_basis'],'format':'m4a','format_id':str(selected.get('format_id') or '')[:80]}}
+        'audio_language_basis':selected['_audio_language_basis'],'audio_role':selected['_audio_role'],
+        'format':selected['_extension'],'format_id':str(selected.get('format_id') or '')[:80]}}
 
 
 def extract_public_video_audio(url, language=None, *, output, ca_file=None, proxy=None):

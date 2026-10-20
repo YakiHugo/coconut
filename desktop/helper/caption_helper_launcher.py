@@ -126,7 +126,7 @@ def main():
         if language is not None and (not isinstance(language, str) or len(language) > 30):
             return {'status':'language_required'}
         from scripts.public_video_media import extract_public_video_audio
-        return extract_public_video_audio(request['url'], language, output=Path('public-audio.m4a'),
+        return extract_public_video_audio(request['url'], language, output=Path('public-media.bin'),
             ca_file=certifi.where(), proxy=request.get('trustedProxy'))
     extraction_keys = {'operation', 'url', 'language'}
     development_proxy = operation == 'extract-development' and set(request) == extraction_keys | {'trustedProxy'}

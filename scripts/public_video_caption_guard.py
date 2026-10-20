@@ -107,7 +107,11 @@ def canonical_bilibili_webpage(url, identity):
 
 def bounded_response_body(response, limit, on_bytes=lambda size: None):
     """Bound wire and expansion bytes; retain byte accounting even on failure."""
-    encoding = response.headers.get('Content-Encoding', 'identity').strip().lower()
+    values = (response.headers.get_all('Content-Encoding', []) if hasattr(response.headers, 'get_all')
+              else [response.headers['Content-Encoding']] if 'Content-Encoding' in response.headers else [])
+    if len(values) > 1:
+        raise StopProof('unexpected_response')
+    encoding = (values[0] if values else 'identity').strip().lower()
     if encoding not in ('identity', 'gzip'):
         raise StopProof('unexpected_response')
     body = response.read(limit + 1)
@@ -233,6 +237,20 @@ class VideoTransport:
             raise StopProof('transport_unavailable') from None
 
 
+def mark_single_bilibili_progressive(formats, play_info):
+    """Carry one exact raw durl object, never a first-of-many fragment."""
+    for item in formats:
+        item.pop('_coconut_single_durl', None)
+    durl = play_info.get('durl') if isinstance(play_info, dict) else None
+    if isinstance(durl, list) and len(durl) == 1 and isinstance(durl[0], dict):
+        url = durl[0].get('url')
+        if isinstance(url, str):
+            for item in formats:
+                if item.get('url') == url and not item.get('fragments'):
+                    item['_coconut_single_durl'] = True
+    return formats
+
+
 @contextlib.contextmanager
 def guarded_extractors(transport):
     import yt_dlp
@@ -272,6 +290,9 @@ def guarded_extractors(transport):
             raise StopProof('subtitle_token_required')
 
     class PublicBiliBiliIE(BiliBiliIE):
+        def extract_formats(self, play_info):
+            return mark_single_bilibili_progressive(super().extract_formats(play_info), play_info)
+
         @classmethod
         def ie_key(cls):
             return 'BiliBili'

@@ -61,10 +61,10 @@ export function createDevelopmentCaptionHelper({python,proxy=null,timeoutMs=HELP
     if(!result||typeof result!=='object'||Array.isArray(result))throw fail('CAPTION_OUTPUT','字幕助手没有返回完整元数据');
     if(input.operation==='extract-development-audio'&&result.status==='media_ready'){
      const meta=result.media;
-     if(meta?.filename!=='public-audio.m4a'||meta.type!=='audio/mp4'||meta.kind!=='audio'||!Number.isSafeInteger(meta.bytes)||meta.bytes<12||meta.bytes>200*1024*1024||!/^[a-f0-9]{64}$/.test(meta.sha256||''))throw fail('CAPTION_OUTPUT','公开原声文件身份无效');
+     if(meta?.filename!=='public-media.bin'||!((meta.type==='audio/mp4'&&meta.kind==='audio')||(meta.type==='video/mp4'&&meta.kind==='video'))||!Number.isSafeInteger(meta.bytes)||meta.bytes<12||meta.bytes>200*1024*1024||!/^[a-f0-9]{64}$/.test(meta.sha256||''))throw fail('CAPTION_OUTPUT','公开原声文件身份无效');
      let handle;
      try{
-      handle=await open(path.join(directory,'public-audio.m4a'),constants.O_RDONLY|constants.O_NOFOLLOW|constants.O_NONBLOCK);
+      handle=await open(path.join(directory,'public-media.bin'),constants.O_RDONLY|constants.O_NOFOLLOW|constants.O_NONBLOCK);
       const stat=await handle.stat();
       if(!stat.isFile()||stat.size!==meta.bytes)throw fail('CAPTION_OUTPUT','公开原声文件大小无效');
       const bytes=Buffer.alloc(meta.bytes);let offset=0;
@@ -95,7 +95,7 @@ export function createDevelopmentCaptionHelper({python,proxy=null,timeoutMs=HELP
     if(r.status==='version_mismatch'||r.status==='ok'&&r.version!==lock.ytDlpVersion)return {ready:false,code:'CAPTION_VERSION',expectedVersion:lock.ytDlpVersion,actualVersion:typeof r.version==='string'&&/^\d{4}\.\d{1,2}\.\d{1,2}$/.test(r.version)?r.version:'unknown'};
     if(r.status!=='ok'||r.protocol!==1||r.version!==lock.ytDlpVersion||r.publicExtraction!==true||r.guardProtocol!==1||r.tlsRootsVerified!==true||JSON.stringify(r.developmentProviders)!==JSON.stringify(['x','youtube','bilibili']))throw fail('CAPTION_VERSION','字幕依赖版本或协议不匹配');
     if(trustedProxy&&r.developmentProxyProtocol!==1)throw fail('CAPTION_VERSION','字幕代理协议不匹配');
-    ready=true;audioReady=r.developmentAudioProtocol===1;return {ready:true,audioFallback:audioReady,code:'ready',version:r.version,providers:r.developmentProviders,networkMode:trustedProxy?'trusted_local_proxy':'direct_public'};
+    ready=true;audioReady=r.developmentAudioProtocol===1&&!trustedProxy;return {ready:true,audioFallback:audioReady,audioProviders:audioReady?['youtube','bilibili']:[],code:'ready',version:r.version,providers:r.developmentProviders,networkMode:trustedProxy?'trusted_local_proxy':'direct_public'};
    }catch(error){if(error.code==='CAPTION_CANCELLED')throw error;return {ready:false,code:error.code||'CAPTION_UNAVAILABLE'};}
   },
   async extractCaptions({url,language=null,signal}={}){
@@ -113,9 +113,9 @@ export function createDevelopmentCaptionHelper({python,proxy=null,timeoutMs=HELP
   async extractAudio({url,language=null,signal}={}){
    if(!ready||!audioReady)throw fail('CAPTION_UNAVAILABLE','开发原声助手尚未通过检查');
    const source=captionSource(url);
-   if(!['youtube','bilibili'].includes(source.provider))throw fail('CAPTION_INPUT','此来源不支持公开原声回退');
+   if(!['youtube','bilibili'].includes(source.provider))throw fail('CAPTION_INPUT','此来源不支持公开媒体回退');
    if(language!==null&&(typeof language!=='string'||!/^([a-z]{2,3})(-[A-Za-z0-9]{2,8}){0,2}$/.test(language)))throw fail('CAPTION_INPUT','原语言标记无效');
-   return execute({operation:'extract-development-audio',url:source.url,language,...(trustedProxy?{trustedProxy}:{})},{signal});
+   return execute({operation:'extract-development-audio',url:source.url,language},{signal});
   },
   shutdown(){closing=true;for(const controller of active)controller.abort();return Promise.allSettled([...active].map(controller=>controller.operation));},
  });

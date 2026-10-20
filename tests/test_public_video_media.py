@@ -56,8 +56,42 @@ class MediaTests(unittest.TestCase):
         unknown={**FORMAT,'language':None,'language_preference':-1}
         self.assertIsNone(media.choose_audio({'formats':[unknown]},'youtube'))
         default={**FORMAT,'language_preference':5}
-        self.assertEqual(media.choose_audio({'formats':[default]},'youtube')['_audio_language_basis'],'unambiguous_platform_default')
+        self.assertIsNone(media.choose_audio({'formats':[default]},'youtube'))
+        self.assertIsNone(media.choose_audio({'formats':[foreign_default]},'youtube'))
         self.assertIsNone(media.choose_audio({'formats':[default,{**default,'language':'fr'}]},'youtube'))
+
+    def test_bilibili_single_cid_bitrate_variants_keep_language_unknown(self):
+        item={**FORMAT,'url':'https://upos-sz-mirrorcos.bilivideo.com/upgcxcode/00/audio.m4s?deadline=1','language':None,'language_preference':None}
+        selected=media.choose_audio({'formats':[{**item,'abr':128},item]},'bilibili')
+        self.assertEqual(selected['abr'],64)
+        self.assertIsNone(selected['_audio_language'])
+        self.assertEqual(selected['_audio_language_basis'],'provider_single_source')
+        self.assertIsNone(media.choose_audio({'formats':[{**item,'language':'zh'}]},'bilibili'))
+
+
+    def test_combined_public_mp4_is_source_media_not_invented_original_voice(self):
+        item={**FORMAT,'ext':'mp4','vcodec':'avc1.42001E','format_id':'18','language':None,'language_preference':None}
+        selected=media.choose_media({'formats':[item]},'youtube')
+        self.assertEqual((selected['_kind'],selected['_type']),('video','video/mp4'))
+        self.assertEqual(selected['_audio_role'],'unknown')
+        self.assertIsNone(selected['_audio_language'])
+        self.assertEqual(selected['_audio_language_basis'],'platform_video_stream')
+        default={**item,'language':'en','language_preference':5}
+        self.assertEqual(media.choose_media({'formats':[default]},'youtube')['_audio_role'],'default')
+        for change in [{'format_id':'22'},{'fragments':[{}]},{'has_drm':True},{'protocol':'m3u8_native'},{'acodec':'none'},{'language':'en','language_preference':-1},{'url':CDN+'&pot=token'}]:
+            self.assertIsNone(media.choose_media({'formats':[{**item,**change}]},'youtube'))
+        self.assertIsNone(media.choose_media({'formats':[item,{**item,'url':CDN+'&other=1'}]},'youtube'))
+        self.assertIsNone(media.choose_media({'formats':[default]},'youtube','fr'))
+        legacy={'url':'https://upos-sz-mirrorcos.bilivideo.com/upgcxcode/00/source.mp4?deadline=1','ext':'mp4','protocol':'https','format_id':'16','filesize':1234}
+        self.assertIsNone(media.choose_media({'formats':[legacy]},'bilibili'))
+        marked=guard.mark_single_bilibili_progressive([legacy],{'durl':[{'url':legacy['url']}]})
+        selected=media.choose_media({'formats':marked},'bilibili')
+        self.assertEqual(selected['_kind'],'video')
+        self.assertEqual(selected['_audio_language_basis'],'provider_single_source')
+        self.assertIsNone(selected['_audio_language'])
+        for raw in [[],[{'url':legacy['url']},{'url':legacy['url']+'other'}],[{'url':'https://different.example'}]]:
+            self.assertIsNone(media.choose_media({'formats':guard.mark_single_bilibili_progressive([copy.deepcopy(legacy)],{'durl':raw})},'bilibili'))
+        self.assertIsNone(media.choose_media({'formats':[{**legacy,'_coconut_single_durl':True,'fragments':[{}]}]},'bilibili'))
 
     def exercise(self, info=None, denial=None, response=None):
         transport=guard.VideoTransport(URL)

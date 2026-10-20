@@ -23,7 +23,7 @@ export async function startDevelopmentBridge({port = 8080, taskDirectory = DEVEL
       captionDiagnostic=status;
       options.captionStatus={code:status.ready?'ready':status.code,mode:'development-python',networkMode:status.networkMode};
       if(status.ready)options.captionService=createCaptionService({helper,readerDirectory:options.readerDirectory,enabledProviders:status.providers});
-      if(status.ready&&status.audioFallback)options.videoAudioService=createVideoAudioService({helper});
+      if(status.ready&&status.audioFallback)options.videoAudioService=createVideoAudioService({helper,enabledProviders:status.audioProviders});
     }catch(error){options.captionStatus={code:error.code||'CAPTION_UNAVAILABLE',mode:'development-python'};}
   }
   let server;
@@ -59,6 +59,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
   console.log(`本机后台任务：${executor.enabled ? '可用；提供商尚未检查' : '不可用；请检查开发任务目录，阅读仍可使用'}`);
   console.log(`字幕获取：${captions.available?'公开 X / YouTube / Bilibili 字幕入口已就绪（能否取得字幕取决于来源访问状态）':`${captions.message}（${captions.code}）`}`);
   if(captions.available)console.log(captions.networkMode==='trusted_local_proxy'?'字幕网络：YouTube / Bilibili 使用所有者配置的可信本机代理；X 不变。':'字幕网络：直连公网；未继承系统代理。');
+  if(captions.available)console.log(captionDiagnostic?.audioFallback?'公开媒体：直连 M4A 或单文件 MP4；须先确认无匹配字幕并明确下载。来源限制仍会停止。':'公开音轨：当前不可用；可信本机代理仅用于字幕，不转接媒体。');
   if(!captions.available){console.log(captionSetupGuidance(captions.code,captionDiagnostic));console.log(CAPTION_START_GUIDANCE);}
   console.log('未发起模型请求。reader 修改后刷新页面；desktop 服务修改后 Ctrl+C 再运行 npm run dev。');
   const stop = () => server.shutdown().catch(() => { process.exitCode = 1; });

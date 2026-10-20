@@ -1,9 +1,5 @@
 name: Independent public video candidates
 on:
-  pull_request:
-    paths:
-      - '.github/workflows/public-video-candidates.yml'
-      - 'scripts/live_caption_candidate.mjs'
   workflow_dispatch:
 permissions:
   contents: read

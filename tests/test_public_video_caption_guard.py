@@ -467,3 +467,15 @@ class LauncherDiagnosticTests(unittest.TestCase):
             with patch.object(sys,'argv',['caption-helper','--protocol=1']), patch.object(sys,'stdin',SimpleNamespace(buffer=io.BytesIO(json.dumps(request).encode()))):
                 self.assertEqual(module['main'](),failure)
             self.assertEqual(extract.call_args.kwargs['proxy'],'http://127.0.0.1:7897')
+
+
+class DuplicateEncodingTests(unittest.TestCase):
+    def test_duplicate_or_chained_content_encoding_is_rejected_before_read(self):
+        from email.message import Message
+        for values in [('gzip','br'), ('gzip','gzip'), ('gzip, br',)]:
+            headers=Message()
+            for value in values: headers.add_header('Content-Encoding',value)
+            response=SimpleNamespace(headers=headers,read=lambda _:self.fail('must not consume ambiguous body'))
+            with self.assertRaises(guard.StopProof) as caught:
+                guard.bounded_response_body(response,100)
+            self.assertEqual(caught.exception.outcome,'unexpected_response')
