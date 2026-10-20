@@ -8,12 +8,12 @@ from urllib.parse import urlparse
 import certifi
 from scripts.public_video_caption_guard import PublicHTTPSHandler, StopProof, NoRedirect
 
-URL = 'https://www.bilibili.com/video/BV12N4y1M7rh'
+URL = 'https://www.bilibili.com/video/BV12N4y1M7rh/'
 
 def main():
     if sys.argv[1:] != ['--live']:
         raise SystemExit('Explicit --live required')
-    report = {'check': 'bilibili_redirect_target', 'followed': False, 'requests': 1}
+    report = {'check': 'bilibili_canonical_response', 'followed': False, 'requests': 1}
     class InspectRedirect(NoRedirect):
         def redirect_request(self, req, fp, code, msg, headers, newurl):
             target = urlparse(newurl)
@@ -28,7 +28,8 @@ def main():
     request = urllib.request.Request(URL, headers={'User-Agent': 'Coconut-public-captions/1.0', 'Accept-Encoding': 'identity'})
     try:
         with opener.open(request, timeout=15) as response:
-            report.update(http_status=response.status, target_kind='no_redirect')
+            encoding = response.headers.get('Content-Encoding', 'identity').lower()
+            report.update(http_status=response.status, target_kind='no_redirect', content_encoding=encoding if encoding in ('identity','gzip','br','deflate','zstd') else 'other')
     except StopProof:
         pass
     except urllib.error.HTTPError as error:

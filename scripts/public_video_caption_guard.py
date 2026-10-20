@@ -336,12 +336,13 @@ def json3_document_vtt(document):
     return '\n'.join(lines).encode('utf-8')
 
 
-def extract_public_video_captions(url, language=None, *, ca_file=None, proxy=None):
+def extract_public_video_captions(url, language=None, *, ca_file=None, proxy=None, _media_output=None):
     import tempfile
     language_required = False
     languages = []
     completion = None
     selection_completed = False
+    verified_info = None
     transport = None
     original_select = subtitle_import.select_track
     original_parse = subtitle_import.subtitle_document
@@ -356,7 +357,7 @@ def extract_public_video_captions(url, language=None, *, ca_file=None, proxy=Non
         return original_parse(*args, **kwargs)
 
     def select(info, hint=None):
-        nonlocal language_required, languages, completion, selection_completed
+        nonlocal language_required, languages, completion, selection_completed, verified_info
         transport.stage = 'track_selection'
         provider, identity = source_identity(url)
         subtitle_import.validate_media_info(info)
@@ -376,6 +377,7 @@ def extract_public_video_captions(url, language=None, *, ca_file=None, proxy=Non
             raise StopProof('duration_unavailable')
         selected = original_select(info, hint)
         selection_completed = True
+        verified_info = info
         languages = subtitle_import.available_caption_languages(info, formats=('vtt', 'srt', 'json3'), selector=original_select)
         language_required = selected is None and subtitle_import.preferred_language(info, hint)[0] is None and any(
             key not in ('danmaku', 'live_chat') and subtitle_import.eligible_formats(tracks)
@@ -391,6 +393,11 @@ def extract_public_video_captions(url, language=None, *, ca_file=None, proxy=Non
             if not document:
                 if not selection_completed:
                     return failure('extractor_failed', 'extractor_error')
+                if _media_output is not None and not language_required:
+                    # Explicit separate action only. This same request completed
+                    # access, identity, duration and original-caption checks.
+                    from scripts.public_video_media import download_verified_audio
+                    return download_verified_audio(verified_info, transport, _media_output, url)
                 return failure('language_required' if language_required else 'no_matching_captions',
                                'language_unknown' if language_required else 'no_matching_track')
             transport.stage = 'caption_output'

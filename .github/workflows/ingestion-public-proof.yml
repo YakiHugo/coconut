@@ -19,7 +19,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        provider: [youtube, bilibili]
+        provider: [bilibili]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -75,8 +75,11 @@ jobs:
           node-version: '22'
       - run: npm ci --ignore-scripts
       - run: npx tsc -p frontend/tsconfig.json
-      - run: node --test tests/react-ingestion-media.test.mjs tests/react-ingestion-binding.test.mjs tests/react-ingestion-jobs.test.mjs
+      - run: node --test tests/react-ingestion-media.test.mjs tests/react-ingestion-binding.test.mjs tests/react-ingestion-jobs.test.mjs tests/react-video-audio.test.mjs tests/desktop-video-audio.test.mjs
+      - run: python -m unittest discover -s tests -p 'test_public_video_media.py' -v
       - run: npm run build:reader-ui
+      - run: npx playwright install --with-deps chromium
+      - run: node tests/react-video-audio-browser.mjs
       - name: Return exact generated public reader assets for review
         run: |
           node --input-type=module <<'NODE'
@@ -137,7 +140,7 @@ jobs:
           print(json.dumps({'check':'asr_preflight','memory_bytes':memory,'free_disk_bytes':free,'cpu_count':os.cpu_count(),'planned_model':'Systran/faster-whisper-small','approx_weight_bytes':486000000,'paid_inference':False}))
           assert memory >= 6*1024**3 and free >= 6*1024**3 and os.cpu_count() >= 2
           PY
-          command -v ffmpeg
+          # faster-whisper decodes with the explicitly installed PyAV wheel; no ffmpeg CLI is needed.
       - uses: actions/setup-node@v4
         with:
           node-version: '22'

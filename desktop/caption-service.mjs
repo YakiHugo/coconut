@@ -8,7 +8,7 @@ const MAX_BYTES=8*1024*1024;
 const MAX_DURATION=6*3600;
 
 export const CAPTION_FAILURE_STATUSES=Object.freeze(['unavailable','access_restricted','language_required','network_unavailable','metadata_incomplete','no_matching_captions','extractor_failed','caption_file_invalid','caption_parse_failed','guard_stopped']);
-const diagnosticStages=new Set(['initialization','extractor_setup','metadata','track_selection','caption_download','caption_parse','caption_output','helper_execution','reader_parse']);
+const diagnosticStages=new Set(['initialization','extractor_setup','metadata','track_selection','caption_download','caption_parse','caption_output','helper_execution','reader_parse','media_download']);
 const diagnosticReasons=new Set(['access_restricted','login_required','subtitle_login_required','subtitle_token_required','rate_limited','http_access_denied','transport_unavailable','metadata_incomplete','request_scope_stopped','non_public_address','identity_mismatch','budget_exceeded','unexpected_response','upstream_error','dependency_mismatch','alternate_extractor_stopped','unsupported_request','external_execution_stopped','duration_unavailable','redirect_stopped','guard_stopped','language_unknown','no_matching_track','invalid_caption_file','caption_parse_failed','caption_download_or_file_failed','extractor_error','helper_error','proxy_configuration_invalid','proxy_unavailable','proxy_auth_required','proxy_connect_rejected','origin_tls_failed']);
 // Only finite enum/counter observations cross the helper, UI and report boundary.
 // An attempted request is not evidence of reaching the platform.

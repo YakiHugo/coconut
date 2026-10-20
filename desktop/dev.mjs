@@ -8,6 +8,7 @@ import {libraryLocation,libraryStartupMessage,DEVELOPMENT_LIBRARY_DIRECTORY} fro
 export {DEVELOPMENT_LIBRARY_DIRECTORY};
 import {createDevelopmentCaptionHelper} from './development-captions.mjs';
 import {createCaptionService} from './caption-service.mjs';
+import {createVideoAudioService} from './video-audio-service.mjs';
 import {captionSetupGuidance,CAPTION_START_GUIDANCE} from './caption-setup-guidance.mjs';
 
 export const DEVELOPMENT_TASK_DIRECTORY = fileURLToPath(new URL('../.coconut/dev/tasks', import.meta.url));
@@ -22,6 +23,7 @@ export async function startDevelopmentBridge({port = 8080, taskDirectory = DEVEL
       captionDiagnostic=status;
       options.captionStatus={code:status.ready?'ready':status.code,mode:'development-python',networkMode:status.networkMode};
       if(status.ready)options.captionService=createCaptionService({helper,readerDirectory:options.readerDirectory,enabledProviders:status.providers});
+      if(status.ready&&status.audioFallback)options.videoAudioService=createVideoAudioService({helper});
     }catch(error){options.captionStatus={code:error.code||'CAPTION_UNAVAILABLE',mode:'development-python'};}
   }
   let server;

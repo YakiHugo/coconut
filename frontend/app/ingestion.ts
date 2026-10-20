@@ -55,6 +55,7 @@ export type Ingestion = {
     error?: {
         code: string;
         diagnostic?: CaptionFailureDiagnostic;
+        audio_fallback?: unknown;
         languages?: string[];
         message: string;
     };
