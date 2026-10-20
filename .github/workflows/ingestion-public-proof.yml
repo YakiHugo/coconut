@@ -4,6 +4,8 @@ on:
     paths:
       - '.github/workflows/ingestion-public-proof.yml'
       - 'scripts/live_ingestion_proof.mjs'
+      - 'scripts/public_video_caption_guard.py'
+      - 'tests/test_public_video_caption_guard.py'
   workflow_dispatch:
 permissions:
   contents: read
@@ -116,3 +118,62 @@ jobs:
             }catch{console.log(JSON.stringify({check:'short_xiaoyuzhou_candidate',id,public_gates_passed:false}));}
           }
           NODE
+
+  xiaoyuzhou-local-asr:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      HF_HUB_DISABLE_IMPLICIT_TOKEN: '1'
+      HF_HUB_DISABLE_TELEMETRY: '1'
+      HF_HUB_CACHE: ${{ runner.temp }}/coconut-proof-hf
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check disposable standard runner resources before installing or downloading
+        run: |
+          python - <<'PY'
+          import json, os, shutil
+          memory = os.sysconf('SC_PAGE_SIZE') * os.sysconf('SC_PHYS_PAGES')
+          free = shutil.disk_usage('.').free
+          print(json.dumps({'check':'asr_preflight','memory_bytes':memory,'free_disk_bytes':free,'cpu_count':os.cpu_count(),'planned_model':'Systran/faster-whisper-small','approx_weight_bytes':486000000,'paid_inference':False}))
+          assert memory >= 6*1024**3 and free >= 6*1024**3 and os.cpu_count() >= 2
+          PY
+          command -v ffmpeg
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Prepare explicitly approved ephemeral optional ASR environment
+        run: |
+          npm ci --ignore-scripts
+          python -m venv .venv-proof
+          .venv-proof/bin/python -m pip install --disable-pip-version-check --no-input --only-binary=:all: faster-whisper==1.2.1 av==16.1.0
+      - name: Prepare official small open weights, pinned to the resolved public revision
+        timeout-minutes: 5
+        run: |
+          .venv-proof/bin/python - <<'PY'
+          import importlib.metadata, json, os, re
+          from huggingface_hub import model_info, snapshot_download
+          repository = 'Systran/faster-whisper-small'
+          revision = model_info(repository, token=False).sha
+          assert re.fullmatch(r'[0-9a-f]{40}', revision)
+          location = snapshot_download(repository, revision=revision, token=False, allow_patterns=['config.json','model.bin','tokenizer.json','vocabulary.json','vocabulary.txt'])
+          from local_asr import cached_model_path, executor_status
+          assert str(cached_model_path()) == location
+          status = executor_status()
+          assert status['available'] and not status['model_download'] and status['local_only']
+          versions = {name:importlib.metadata.version(name) for name in ['faster-whisper','ctranslate2','av','huggingface-hub']}
+          print(json.dumps({'check':'explicit_ephemeral_model_preparation','repository':repository,'revision':revision,'versions':versions,'status':status}))
+          with open(os.environ['GITHUB_ENV'],'a') as output:
+              output.write('COCONUT_PROOF_MODEL_REVISION='+revision+'\n')
+          PY
+      - name: Exercise real public media, offline ASR, frontend controller and durable original project
+        timeout-minutes: 12
+        env:
+          HF_HUB_OFFLINE: '1'
+          TRANSFORMERS_OFFLINE: '1'
+        run: COCONUT_ASR_PROOF_PYTHON="$PWD/.venv-proof/bin/python" node scripts/live_ingestion_proof.mjs --live
+      - name: Remove temporary weights and optional environment
+        if: always()
+        run: rm -rf -- "$HF_HUB_CACHE" .venv-proof

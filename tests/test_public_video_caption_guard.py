@@ -35,6 +35,27 @@ class Response:
 
 
 class TransportTests(unittest.TestCase):
+    def test_canonical_bilibili_path_is_not_redirect_permission(self):
+        identity = 'BV1xx411c7mD'
+        self.assertEqual(guard.canonical_bilibili_webpage(BILIBILI, identity), BILIBILI + '/')
+        targets = [
+            BILIBILI + '/', BILIBILI + '?p=2', BILIBILI + '/?login=1',
+            'https://www.bilibili.com/video/BV1yyyyyyyyy/',
+            'https://www.bilibili.com/login', 'https://passport.bilibili.com/login',
+            'https://external.example/video/' + identity,
+            'https://www.bilibili.com.evil.test/video/' + identity,
+        ]
+        for target in targets:
+            with self.subTest(target=target):
+                self.assertEqual(guard.canonical_bilibili_webpage(target, identity), target)
+                with self.assertRaises(guard.StopProof) as stopped:
+                    guard.NoRedirect().redirect_request(None, None, 301, '', {}, target)
+                self.assertEqual(stopped.exception.outcome, 'redirect_stopped')
+        # Even a canonical redirect is never followed. Only the initial exact
+        # upstream webpage request is rewritten before any network response.
+        with self.assertRaises(guard.StopProof):
+            guard.NoRedirect().redirect_request(None, None, 301, '', {}, BILIBILI + '/')
+
     def test_media_credentials_redirects_translations_and_other_origins_stop(self):
         for source, urls in [(YOUTUBE, ['https://www.youtube.com/api/timedtext?v=wrong&fmt=vtt',
             'https://www.youtube.com/api/timedtext?v=BaW_jenozKc&fmt=vtt&tlang=fr',
@@ -270,6 +291,7 @@ class OfficialExtractorTests(unittest.TestCase):
         result, calls = self.extract(BILIBILI)
         self.assertEqual(result['format'], 'srt'); self.assertIn(b'Authored original fixture.', result['bytes'])
         self.assertEqual(result['source']['id'], 'BV1xx411c7mD')
+        self.assertEqual(calls[0], BILIBILI + '/')
         self.assertTrue(any('/wbi/v2?' in url for url in calls))
         self.assertFalse(any('videoplayback' in url or '.mp4' in url for url in calls))
 

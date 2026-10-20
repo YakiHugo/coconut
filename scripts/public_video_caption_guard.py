@@ -96,6 +96,14 @@ def source_identity(url):
     raise ValueError('Canonical public video URL required')
 
 
+def canonical_bilibili_webpage(url, identity):
+    """Request the known same-video canonical path, without following redirects."""
+    # Do not normalize a query, different BV, credentials, or another origin.
+    # The transport and NoRedirect continue to reject all redirect responses.
+    exact = 'https://www.bilibili.com/video/' + identity
+    return exact + '/' if url == exact else url
+
+
 class VideoTransport:
     def __init__(self, url, ca_file=None, proxy=None):
         self.provider, self.identity = source_identity(url)
@@ -244,8 +252,9 @@ def guarded_extractors(transport):
                 url = 'https:' + url
             return super()._download_json(url, *args, **kwargs)
 
-        def _download_webpage_handle(self, *args, **kwargs):
-            webpage, handle = super()._download_webpage_handle(*args, **kwargs)
+        def _download_webpage_handle(self, url, *args, **kwargs):
+            url = canonical_bilibili_webpage(url, transport.identity)
+            webpage, handle = super()._download_webpage_handle(url, *args, **kwargs)
             if not self._match_valid_url(handle.url):
                 return webpage, handle
             state = self._search_json(r'window\.__INITIAL_STATE__\s*=', webpage, 'initial state', self._match_id(handle.url), default={})
