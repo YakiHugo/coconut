@@ -44,11 +44,6 @@ jobs:
       - run: python -m unittest discover -s tests -p 'test_public_video_media.py' -v
       - run: npm run build:reader-ui
       - run: npx playwright install --with-deps chromium
-      - name: Generate authored playable M4A for UI proof
-        run: |
-          python -m venv .venv-audio-fixture
-          .venv-audio-fixture/bin/python -m pip install --disable-pip-version-check --no-input --only-binary=:all: --no-deps av==16.1.0
-          .venv-audio-fixture/bin/python scripts/create_authored_m4a.py
       - run: node tests/react-video-audio-browser.mjs
       - name: Return exact generated public reader assets for review
         run: |
