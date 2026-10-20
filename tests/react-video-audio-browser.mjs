@@ -1,4 +1,4 @@
-/** Real React/HTTP/M4A decoding; authored bytes only, not platform evidence. */
+/** Real React/HTTP/M4A/MP4 decoding; authored bytes only, not platform evidence. */
 import assert from 'node:assert/strict';
 import {mkdtemp,rm,readFile} from 'node:fs/promises';
 import {createHash} from 'node:crypto';
@@ -8,11 +8,22 @@ import {startBridge} from '../desktop/server.mjs';
 import {createVideoAudioService} from '../desktop/video-audio-service.mjs';
 const url='https://www.youtube.com/watch?v=abcdefghijk',errors=[],forbidden=[],asrRequests=[];
 const audioBytes=await readFile(new URL('./fixtures/authored-video-audio.m4a',import.meta.url)),videoBytes=await readFile(new URL('./fixtures/authored-source-video.mp4',import.meta.url)),sha256=createHash('sha256').update(audioBytes).digest('hex');
+// Keep the complete metadata boxes and corrupt only encoded samples. This
+// catches metadata-only admission that can create an unusable project.
+const brokenVideo=Buffer.from(videoBytes);let mediaBoxes=0,metadataBoxes=0;
+for(let offset=0;offset<brokenVideo.length;){
+ const size=brokenVideo.readUInt32BE(offset),type=brokenVideo.toString('ascii',offset+4,offset+8);
+ assert.ok(size>=8&&offset+size<=brokenVideo.length);
+ if(type==='mdat'){brokenVideo.fill(0,offset+8,offset+size);mediaBoxes++;}
+ if(type==='moov')metadataBoxes++;
+ offset+=size;
+}
+assert.equal(mediaBoxes,1);assert.equal(metadataBoxes,1);
 let status='no_matching_captions',mediaCalls=0,completed=0,browser,hold,release,mode='denied';
 const helper={extractAudio:async()=>{
  mediaCalls++;if(hold)await hold;completed++;
  if(mode==='denied')return {status:'access_restricted'};
- const video=mode==='video'||mode==='invalid',bytes=mode==='invalid'?Buffer.concat([Buffer.from([0,0,0,24]),Buffer.from('ftypisom invalid authored container')]):video?videoBytes:audioBytes;
+ const video=mode==='video'||mode==='invalid'||mode==='broken_samples',bytes=mode==='invalid'?Buffer.concat([Buffer.from([0,0,0,24]),Buffer.from('ftypisom invalid authored container')]):mode==='broken_samples'?brokenVideo:video?videoBytes:audioBytes;
  return {status:'media_ready',bytes,media:{bytes:bytes.length,sha256:createHash('sha256').update(bytes).digest('hex'),type:video?'video/mp4':'audio/mp4',kind:video?'video':'audio'},source:{url,id:'abcdefghijk',provider:'youtube',title:video?'Authored source video':'Authored A/B tone',duration:2,subtitle_check:'no_matching_captions',audio_language:video?null:'en',audio_language_basis:video?'platform_video_stream':'platform_original',audio_role:video?'unknown':'original',format:video?'mp4':'m4a',format_id:video?'18':'140'}};
 }};
 const directory=await mkdtemp(path.join(os.tmpdir(),'coconut-video-audio-ui-'));
@@ -64,6 +75,22 @@ try{
  // A valid protocol receipt with undecodable media must not create a project.
  await page.getByRole('button',{name:'发现与添加',exact:true}).click();mode='invalid';await read();await button.click();
  await expect(page.locator('.source-error')).toContainText('无法解码');assert.equal((await fetch(origin+'/api/v1/library/catalog?protocolVersion=1').then(r=>r.json())).entries.length,1);
+ // The browser can read intact duration/dimensions before discovering broken
+ // sample payloads. That metadata alone must never authorize a project.
+ const metadataOnly=await page.evaluate(async base64=>{
+  const video=document.createElement('video'),bytes=Uint8Array.from(atob(base64),value=>value.charCodeAt(0)),url=URL.createObjectURL(new Blob([bytes],{type:'video/mp4'}));
+  video.preload='metadata';video.muted=true;
+  try{return await new Promise((resolve,reject)=>{
+   const timer=setTimeout(()=>reject(Error('Broken-sample metadata probe timed out')),5000);
+   video.addEventListener('loadedmetadata',()=>{clearTimeout(timer);resolve({duration:video.duration,width:video.videoWidth});},{once:true});
+   video.addEventListener('error',()=>{clearTimeout(timer);reject(Error('Broken sample did not preserve readable metadata'));},{once:true});
+   video.src=url;video.load();
+  });}finally{video.removeAttribute('src');video.load();URL.revokeObjectURL(url);}
+ },brokenVideo.toString('base64'));
+ assert.equal(metadataOnly.width,160);assert.ok(metadataOnly.duration>1.9);
+ mode='broken_samples';await read();await button.click();
+ await expect(page.locator('.source-error')).toContainText(/无法解码|解码超时/,{timeout:15000});
+ assert.equal((await fetch(origin+'/api/v1/library/catalog?protocolVersion=1').then(r=>r.json())).entries.length,1);
  // Combined MP4 stays a video player/File, not a mislabeled audio-only file.
  mode='video';await read();await button.click();await expect(page.locator('video')).toBeVisible();
  await expect(page.locator('.app-header').getByText('已保存',{exact:true})).toBeVisible();
@@ -81,5 +108,5 @@ try{
   for(let offset=0;offset<base64.length;offset+=8000)console.log('COCONUT_VIDEO_SUCCESS_IMAGE '+JSON.stringify({width,offset,total:base64.length,data:base64.slice(offset,offset+8000)}));
  }
  assert.deepEqual(asrRequests,[]);assert.deepEqual(errors,[]);assert.deepEqual(forbidden,[]);
- console.log('PASS authored video fallback UI: absence-only action, denial/cancel/source-change create no project, successful M4A and combined MP4 decoder/File/canonical binding; invalid decoder creates no project, no automatic playback or ASR, wide/narrow layout.');
+ console.log('PASS authored video fallback UI: absence-only action, denial/cancel/source-change create no project, successful M4A and combined MP4 decoder/File/canonical binding; invalid container and metadata-valid broken samples create no project, no automatic playback or ASR, wide/narrow layout.');
 }finally{release?.();await browser?.close();await server.shutdown();await rm(directory,{recursive:true,force:true});}

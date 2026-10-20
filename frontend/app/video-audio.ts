@@ -40,14 +40,14 @@ export async function downloadVideoAudio(value:VideoAudioFallback,signal:AbortSi
 export async function validateDownloadedVideoMedia(file:File,kind:'audio'|'video',duration:number,signal:AbortSignal){
  if(signal.aborted)throw Error('媒体读取已取消。');
  const player=document.createElement(kind),url=URL.createObjectURL(file);
- player.preload='metadata';player.autoplay=false;player.muted=true;
+ player.preload='auto';player.autoplay=false;player.muted=true;
  try{
   await new Promise<void>((resolve,reject)=>{
-   const done=(error?:Error)=>{clearTimeout(timer);signal.removeEventListener('abort',cancel);player.removeEventListener('loadedmetadata',ready);player.removeEventListener('error',failed);error?reject(error):resolve();};
+   const done=(error?:Error)=>{clearTimeout(timer);signal.removeEventListener('abort',cancel);player.removeEventListener('loadeddata',ready);player.removeEventListener('error',failed);error?reject(error):resolve();};
    const cancel=()=>done(Error('媒体读取已取消。')),failed=()=>done(Error('公开媒体无法解码，未创建项目。'));
-   const ready=()=>{const value=player.duration;if(!Number.isFinite(value)||value<=0||Math.abs(value-duration)>Math.max(5,duration*0.05)||(kind==='video'&&(!(player as HTMLVideoElement).videoWidth||!(player as HTMLVideoElement).videoHeight)))failed();else done();};
+   const ready=()=>{if(player.readyState<HTMLMediaElement.HAVE_CURRENT_DATA)return;const value=player.duration;if(!Number.isFinite(value)||value<=0||Math.abs(value-duration)>Math.max(5,duration*0.05)||(kind==='video'&&(!(player as HTMLVideoElement).videoWidth||!(player as HTMLVideoElement).videoHeight)))failed();else done();};
    const timer=setTimeout(()=>done(Error('公开媒体解码超时，未创建项目。')),10000);
-   player.addEventListener('loadedmetadata',ready);player.addEventListener('error',failed);signal.addEventListener('abort',cancel,{once:true});
+   player.addEventListener('loadeddata',ready);player.addEventListener('error',failed);signal.addEventListener('abort',cancel,{once:true});
    player.src=url;player.load();
   });
  }finally{player.removeAttribute('src');player.load();URL.revokeObjectURL(url);}

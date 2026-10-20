@@ -124,7 +124,7 @@ try{
  while(Date.now()<deadline){
   await controller.commands.refresh(operation);entry=controller.getSnapshot().entries[0];
   if(entry?.job?.state==='ready')break;
-  if(['failed','interrupted','cancelled'].includes(entry?.job?.state)){result.executor_state=entry.job.state;throw Error('asr_terminal_failure');}
+  if(['failed','interrupted','cancelled'].includes(entry?.job?.state)){result.executor_state=entry.job.state;result.executor_error_code=entry.job.error?.code||null;result.executor_error=String(entry.job.error?.message||'').replace(/https?:\/\/\S+/g,'[url]').replace(/(?:\/[A-Za-z0-9_.-]+){2,}/g,'[path]').slice(0,500);throw Error('asr_terminal_failure');}
   await delay(1000);
  }
  assert.equal(entry?.job?.state,'ready');
