@@ -128,7 +128,8 @@ jobs:
           .venv-proof/bin/python -m pip install --disable-pip-version-check --no-input --only-binary=:all: faster-whisper==1.2.1 av==16.1.0
       - name: Prepare pinned caption dependencies for public video proof
         if: matrix.provider == 'bilibili'
-        run: .venv-proof/bin/python -m pip install --disable-pip-version-check --no-input --require-hashes --only-binary=:all: --no-deps -r desktop/development-caption-requirements.txt
+        run: |
+          .venv-proof/bin/python -m pip install --disable-pip-version-check --no-input --require-hashes --only-binary=:all: --no-deps -r desktop/development-caption-requirements.txt
       - name: Prepare official small open weights, pinned to the resolved public revision
         timeout-minutes: 5
         run: |
