@@ -125,7 +125,7 @@ jobs:
     env:
       HF_HUB_DISABLE_IMPLICIT_TOKEN: '1'
       HF_HUB_DISABLE_TELEMETRY: '1'
-      HF_HUB_CACHE: ${{ runner.temp }}/coconut-proof-hf
+      HF_HUB_CACHE: /tmp/coconut-proof-hf-${{ github.run_id }}
     steps:
       - uses: actions/checkout@v4
       - name: Check disposable standard runner resources before installing or downloading
