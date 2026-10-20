@@ -20,7 +20,7 @@ if(![3,4].includes(process.argv.length)||process.argv[2]!=='--live'||process.arg
 const python=process.env.COCONUT_ASR_PROOF_PYTHON;
 if(!python||!path.isAbsolute(python))throw Error('Provide an explicit absolute COCONUT_ASR_PROOF_PYTHON.');
 const sourceProvider=process.argv[3]||'xiaoyuzhou';
-const sourceUrl=sourceProvider==='bilibili'?'https://www.bilibili.com/video/BV1nx411u79K':'https://www.xiaoyuzhoufm.com/episode/65e7c944d602439838b530aa';
+const sourceUrl=sourceProvider==='bilibili'?'https://www.bilibili.com/video/BV1Bx411E7Hs':'https://www.xiaoyuzhoufm.com/episode/65e7c944d602439838b530aa';
 const require=createRequire(import.meta.url),core=require('../reader/core.js'),canonical=require('../reader/canonical-library.js');
 const temporary=await mkdtemp(path.join(os.tmpdir(),'coconut-public-asr-'));
 let child,bridge,controller,stage='start',result={check:'real_public_ingestion_asr',source_url:sourceUrl,passed:false,paid_calls:0,fixture_transcript:false,model_download:false};
@@ -71,7 +71,7 @@ try{
  sourceDuration=episode.duration;project=receipt.project.document;
  result.media_bytes=size;result.media_type=file.type;result.filename_extension=path.extname(file.name);
  }else{
-  const receipt=(await post('/api/v1/ingestions',{protocolVersion:1,source:{kind:'url',url:sourceUrl},language:'en'})).ingestion;
+  const receipt=(await post('/api/v1/ingestions',{protocolVersion:1,source:{kind:'url',url:sourceUrl},language:'zh'})).ingestion;
   result.caption_status=receipt.error?.code;result.caption_diagnostic=receipt.error?.diagnostic;
   assert.equal(receipt.state,'blocked');assert.equal(receipt.error.code,'no_matching_captions');
   const descriptor=videoAudioFallback(receipt.error.audio_fallback);assert.ok(descriptor);
@@ -84,8 +84,8 @@ try{
    rememberIngestionFile(file,downloaded.inspected.source.fingerprint);
   }finally{globalThis.fetch=actualFetch;}
   assert.equal(transcriptionFileIssue(file),null);assert.ok(sourceDuration>0&&sourceDuration<=180);
-  assert.equal(file.type,'video/mp4');assert.ok(file.name.endsWith('.mp4'));
-  assert.equal(project.local_media_source.kind,'video');assert.equal(project.media_provenance.audio_language,null);
+  assert.ok(['audio/mp4','video/mp4'].includes(file.type));assert.ok(file.name.endsWith(file.type==='audio/mp4'?'.m4a':'.mp4'));
+  assert.equal(project.local_media_source.kind,file.type==='audio/mp4'?'audio':'video');assert.equal(project.media_provenance.audio_language,null);
   result.original_duration_seconds=sourceDuration;result.media_bytes=file.size;result.media_type=file.type;result.filename_extension=path.extname(file.name);result.media_provenance=project.media_provenance;
  }
  const original={key:'public-asr-proof',...project,project_note:'Authored proof note',timestamp_bookmarks:[{id:'proof',time:1,note:'Authored proof bookmark'}]};

@@ -479,3 +479,34 @@ class DuplicateEncodingTests(unittest.TestCase):
             with self.assertRaises(guard.StopProof) as caught:
                 guard.bounded_response_body(response,100)
             self.assertEqual(caught.exception.outcome,'unexpected_response')
+
+@unittest.skipUnless(importlib.util.find_spec('yt_dlp'), 'Pinned yt-dlp required')
+class MetadataFormatSelectionTests(unittest.TestCase):
+    def process(self, formats, selector=None):
+        import yt_dlp
+        logger=guard.subtitle_import.CaptionLogger()
+        transport=guard.VideoTransport(BILIBILI)
+        info={'id':'BV1xx411c7mD','title':'Authored DASH metadata','duration':4,
+              'formats':copy.deepcopy(formats),'subtitles':{},'automatic_captions':{}}
+        with guard.guarded_extractors(transport),patch.object(transport,'send',side_effect=AssertionError('metadata processing must not fetch media')):
+            with yt_dlp.YoutubeDL({'logger':logger,'quiet':True}) as downloader:
+                if selector:downloader.params['format']=selector
+                result=downloader.process_ie_result(info,download=False)
+        return result,logger.warnings
+
+    def test_dash_metadata_does_not_require_a_combined_media_format(self):
+        formats=[
+            {'format_id':'video','url':'https://public.bilivideo.com/source.mp4','ext':'mp4','vcodec':'avc1','acodec':'none','height':360},
+            {'format_id':'audio','url':'https://public.bilivideo.com/source.m4s','ext':'m4a','vcodec':'none','acodec':'mp4a','abr':64}]
+        _,old_warnings=self.process(formats,'best')
+        self.assertTrue(any('Requested format is not available' in value for value in old_warnings))
+        result,warnings=self.process(formats)
+        self.assertEqual(warnings,[])
+        self.assertEqual({item['format_id'] for item in result['formats']},{'video','audio'})
+        self.assertEqual(result['format_id'],'audio')
+
+    def test_combined_media_still_works_and_missing_formats_still_warn(self):
+        result,warnings=self.process([{'format_id':'combined','url':'https://public.bilivideo.com/source.mp4','ext':'mp4','vcodec':'avc1','acodec':'mp4a'}])
+        self.assertEqual(warnings,[]);self.assertEqual(result['format_id'],'combined')
+        _,warnings=self.process([])
+        self.assertTrue(warnings)

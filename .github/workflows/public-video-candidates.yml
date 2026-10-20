@@ -1,8 +1,5 @@
 name: Independent public video candidates
 on:
-  push:
-    branches: ['dot/close-public-ingestion']
-    paths: ['.github/workflows/public-video-candidates.yml']
   workflow_dispatch:
 permissions:
   contents: read

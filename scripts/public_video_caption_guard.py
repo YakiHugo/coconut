@@ -329,7 +329,11 @@ def guarded_extractors(transport):
                 username=None, password=None, usenetrc=False, proxy='', cachedir=False,
                 retries=0, extractor_retries=0, fragment_retries=0, file_access_retries=0,
                 socket_timeout=15, skip_download=True, check_formats=False,
-                ignore_no_formats_error=True, fixup='never', format='best',
+                ignore_no_formats_error=True, fixup='never',
+                # Caption inspection must accept DASH-only metadata too. This
+                # selects an existing format; skip_download still forbids media,
+                # and the explicit media action reselects through its own guard.
+                format='best/bestaudio/bestvideo',
                 external_downloader={}, postprocessors=[], js_runtimes={}, remote_components=[],
                 extractor_args={'youtube': {'player_client': ['web'], 'fetch_pot': ['never'],
                     'player_skip': ['js', 'configs', 'initial_data'], 'skip': ['hls', 'dash', 'translated_subs']}},
