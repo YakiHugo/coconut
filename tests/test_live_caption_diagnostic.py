@@ -1,15 +1,14 @@
-"""Public diagnostics must redact signed URLs, not just filesystem paths."""
+"""Public diagnostics expose finite categories, never upstream free text."""
 import unittest
-from scripts.live_caption_diagnostic import safe
+from scripts.live_caption_diagnostic import diagnostic_category
 
 class CaptionDiagnosticTests(unittest.TestCase):
-    def test_signed_urls_are_removed_with_the_complete_query(self):
-        for value in ('https://cdn.example/audio.m4s?sig=shortsecret&expires=42',
-                      'http://cdn.example/caption?token=shortsecret'):
-            result=safe('Request failed: '+value+' after one attempt')
-            self.assertEqual(result,'Request failed: [url] after one attempt')
-            self.assertNotIn('shortsecret',result)
-    def test_paths_identifiers_and_output_size_are_bounded(self):
-        self.assertNotIn('/private/cache/source.mp4',safe('/private/cache/source.mp4'))
-        self.assertEqual(safe('x'*40),'[identifier]')
-        self.assertLessEqual(len(safe('a '*300)),300)
+    def test_signed_urls_and_credentials_never_enter_diagnostics(self):
+        for value in ('https://cdn.example/a?sig=shortsecret','HTTP://cdn.example/a?sig=shortsecret',
+                      '//cdn.example/a?sig=shortsecret','token=shortsecret','Cookie: session=shortsecret',
+                      '/private/cache/source.mp4','x'*1000):
+            self.assertEqual(diagnostic_category('Request failed: '+value),'other_upstream_diagnostic')
+    def test_known_diagnostics_have_only_finite_categories(self):
+        self.assertEqual(diagnostic_category('Requested format is not available'),'requested_format_unavailable')
+        self.assertEqual(diagnostic_category('No video formats found!'),'no_formats')
+        self.assertEqual(diagnostic_category('Requested format is not available https://cdn.example/?sig=secret'),'other_upstream_diagnostic')
