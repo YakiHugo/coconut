@@ -119,6 +119,7 @@ jobs:
       - name: Prepare explicitly approved ephemeral optional ASR environment
         run: |
           npm ci --ignore-scripts
+          npx playwright install --with-deps chromium
           python -m venv .venv-proof
           .venv-proof/bin/python -m pip install --disable-pip-version-check --no-input --only-binary=:all: faster-whisper==1.2.1 av==16.1.0
       - name: Prepare pinned caption dependencies for public video proof

@@ -32,6 +32,20 @@ Source: https://www.xiaoyuzhoufm.com/episode/65e7c944d602439838b530aa
 
 Separate [real media/playback proof](https://github.com/YakiHugo/coconut/actions/runs/39473881990/job/118804702764) downloaded an 87,157,198-byte public Xiaoyuzhou episode and checked Chromium decoding/seek. That 5,389-second episode was **not** claimed to have been transcribed.
 
+### Bilibili no-caption spoken positive
+
+Source: https://www.bilibili.com/video/BV1Bx411E7Hs
+
+The pinned public extractor returned 11 formats and only the non-transcript danmaku track. A real compatibility bug was discovered: requiring combined A/V during caption inspection produced a synthetic “Requested format is not available” warning for DASH-only sources. The metadata selector now accepts an already-returned combined, audio-only or video-only format without fetching media. Actual media selection and all warning/access gates remain separate and unchanged; the regression reproduces the old warning.
+
+[Actual spoken-source proof, head a38a197](https://github.com/YakiHugo/coconut/actions/runs/39480599283/job/118827824634):
+- Complete source duration: 76.586 seconds; truthful public audio/mp4 M4A: 646,402 bytes.
+- Fresh original-caption check positively completed with no matching captions before downloading.
+- Offline faster-whisper small CPU/int8 generated 26 Chinese segments, 8.53–59.55 seconds; queue/inference elapsed 20.2 seconds.
+- One upload, controller reload without its File, explicit attachment into the original project, preserved original source/title/media provenance/notes/bookmark and canonical SQLite reload.
+- Segment SHA-256: cc45c82b27777aa4fb51b34284a461d4e87bff1ac296a841bf8a0f3c23cb1152.
+- Full media/transcript were transient; this is a genuine pipeline positive, not a fixture or quality benchmark. The separate singing-practice empty result remains recorded below.
+
 ### YouTube access negative
 
 [Observed source QRS8MkLhQmM](https://github.com/YakiHugo/coconut/actions/runs/39472797430/job/118800931493) returned `login_required` after one request/one response. No caption, media or ASR fallback was attempted. This is not evidence of absent captions or successful YouTube ingestion. No alternate clients, proxy, cookies or token service were used to evade this response.

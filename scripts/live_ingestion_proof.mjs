@@ -13,6 +13,7 @@ import {createHash,randomUUID} from 'node:crypto';
 import {createRequire} from 'node:module';
 import {setTimeout as delay} from 'node:timers/promises';
 import {build} from 'esbuild';
+import {chromium,expect} from '@playwright/test';
 import {startDevelopmentBridge} from '../desktop/dev.mjs';
 import {createIngestionExecutor} from '../desktop/ingestion-executor.mjs';
 
@@ -23,7 +24,7 @@ const sourceProvider=process.argv[3]||'xiaoyuzhou';
 const sourceUrl=sourceProvider==='bilibili'?'https://www.bilibili.com/video/BV1Bx411E7Hs':'https://www.xiaoyuzhoufm.com/episode/65e7c944d602439838b530aa';
 const require=createRequire(import.meta.url),core=require('../reader/core.js'),canonical=require('../reader/canonical-library.js');
 const temporary=await mkdtemp(path.join(os.tmpdir(),'coconut-public-asr-'));
-let child,bridge,controller,stage='start',result={check:'real_public_ingestion_asr',source_url:sourceUrl,passed:false,paid_calls:0,fixture_transcript:false,model_download:false};
+let child,bridge,controller,browser,stage='start',result={check:'real_public_ingestion_asr',source_url:sourceUrl,passed:false,paid_calls:0,fixture_transcript:false,model_download:false};
 try{
  const compiled=await build({stdin:{contents:"export * from './frontend/app/ingestion-media';export * from './frontend/app/ingestion-jobs';export * from './frontend/app/ingestion-binding';export * from './frontend/app/attach-transcript';export {inspectFile} from './frontend/app/ingestion';export {downloadVideoAudio,videoAudioFallback} from './frontend/app/video-audio';",resolveDir:process.cwd()},bundle:true,format:'esm',write:false,platform:'node'});
  const {downloadedMediaFile,transcriptionFileIssue,inspectFile,createIngestionJobs,ingestionBinding,rememberIngestionFile,attachTranscript,downloadVideoAudio,videoAudioFallback}=await import('data:text/javascript;base64,'+Buffer.from(compiled.outputFiles[0].contents).toString('base64'));
@@ -37,7 +38,7 @@ try{
   child.once('exit',()=>{clearTimeout(timer);reject(Error('executor_exited'));});
   child.stdout.on('data',chunk=>{stdout=(stdout+chunk.toString()).slice(-4096);const match=/Coconut is ready at (http:\/\/127\.0\.0\.1:\d+)/.exec(stdout);if(match){clearTimeout(timer);resolve(match[1]);}});
  });
- bridge=await startDevelopmentBridge({port:0,libraryDirectory:path.join(temporary,'library'),taskDirectory:path.join(temporary,'tasks'),captionPython:sourceProvider==='bilibili'?python:null,captionProxy:null,ingestionExecutor:createIngestionExecutor({url:pythonOrigin}),providers:{status(){throw Error('No external model provider may be probed');}}});
+ bridge=await startDevelopmentBridge({port:0,libraryDirectory:path.join(temporary,'library'),taskDirectory:path.join(temporary,'tasks'),captionPython:sourceProvider==='bilibili'?python:null,captionProxy:null,ingestionExecutor:createIngestionExecutor({url:pythonOrigin}),providers:{status:async()=>({ready:false}),ask(){throw Error('No external model provider calls');}}});
  const request=async(route,init={})=>{
   const response=await fetch(new URL(route,bridge.origin+'/'),{...init,headers:{Origin:bridge.origin,...init.headers},signal:AbortSignal.timeout(60000)});
   const body=await response.json();
@@ -129,9 +130,46 @@ try{
  }
  assert.equal(entry?.job?.state,'ready');
  result.inference_elapsed_seconds=Math.round((performance.now()-inferenceStart)/100)/10;
- stage='accept_into_original_project';
- await controller.commands.accept(operation);assert.equal(accepted,true);assert.equal(uploads,1);
- const reloaded=(await request('/api/v1/library/document?protocolVersion=1&key='+original.key)).record.document;
+ stage='real_react_accept_into_original_project';
+ // Carry the actual acknowledged job journal into a fresh browser, without its
+ // File. The real React acceptance path, not a proof-specific callback, commits
+ // the transcript and durable local_job_binding to the original project.
+ controller.dispose();controller=null;
+ browser=await chromium.launch({headless:true});
+ const context=await browser.newContext({serviceWorkers:'block'}),external=[],pageErrors=[];
+ let browserUploads=0;
+ await context.route('**/*',route=>{
+  const target=new URL(route.request().url());
+  if(target.origin!==bridge.origin){external.push(target.origin);return route.abort();}
+  if(target.pathname.startsWith('/api/v1/ingestions/upload'))browserUploads++;
+  return route.continue();
+ });
+ await context.addInitScript(({origin,journal})=>{
+  if(location.origin===origin&&!localStorage.getItem('coconut-react-ingestion-jobs-v1'))localStorage.setItem('coconut-react-ingestion-jobs-v1',journal);
+ },{origin:bridge.origin,journal});
+ const page=await context.newPage();page.on('pageerror',error=>pageErrors.push(error.name));
+ await page.goto(bridge.origin);
+ await page.getByRole('button',{name:/^我的内容/}).click();
+ await page.locator('.library-page li > button').filter({hasText:original.title}).first().click();
+ await page.getByRole('button',{name:'将文字稿接入原项目',exact:true}).click();
+ const readCanonical=async()=>(await request('/api/v1/library/document?protocolVersion=1&key='+original.key)).record.document;
+ await expect.poll(async()=>(await readCanonical()).segments.length,{timeout:15000}).toBeGreaterThan(0);
+ const reloaded=await readCanonical();
+ assert.equal(reloaded.local_job_binding.id,entry.job.id);
+ await expect(page.getByText(reloaded.segments[0].text,{exact:true}).first()).toBeVisible();
+ await page.reload();
+ await page.getByRole('button',{name:/^我的内容/}).click();
+ await page.locator('.library-page li > button').filter({hasText:original.title}).first().click();
+ await expect(page.getByText(reloaded.segments[0].text,{exact:true}).first()).toBeVisible();
+ await page.getByRole('button',{name:'重新打开任务原声',exact:true}).click();
+ const player=page.locator('audio,video');
+ await expect(player).toBeVisible();
+ await expect.poll(()=>player.evaluate(element=>element.readyState),{timeout:15000}).toBeGreaterThanOrEqual(2);
+ assert.equal(await player.evaluate(element=>element.paused),true);
+ assert.deepEqual(external,[]);assert.deepEqual(pageErrors,[]);assert.equal(browserUploads,0);assert.equal(uploads,1);
+ result.browser_accept=true;result.browser_reload=true;result.browser_media_decoded=true;
+ result.transcript_preview=Array.from(reloaded.segments[0].text).slice(0,24).join('');
+ result.preview_is_partial=true;
  assert.equal(reloaded.key,original.key);assert.equal(reloaded.source_url,original.source_url);assert.equal(reloaded.title,original.title);
  assert.deepEqual(reloaded.podcast_source,original.podcast_source);assert.deepEqual(reloaded.media_provenance,original.media_provenance);assert.equal(reloaded.project_note,original.project_note);assert.deepEqual(reloaded.timestamp_bookmarks,original.timestamp_bookmarks);
  assert.equal(reloaded.provenance.kind,'local_asr');assert.equal(reloaded.provenance.backend,'faster-whisper');assert.equal(reloaded.provenance.model,'small');assert.equal(reloaded.provenance.review_status,'unreviewed');
@@ -142,6 +180,7 @@ try{
 }catch(error){result={...result,stage,error_code:typeof error.code==='string'?error.code.slice(0,80):error.name||'proof_failed',...(Number.isInteger(error.status)?{http_status:error.status}:{})};process.exitCode=1;}
 finally{
  controller?.dispose();
+ await browser?.close();
  if(bridge)await new Promise(resolve=>bridge.server.shutdown(resolve));
  if(child&&child.exitCode===null){child.kill('SIGTERM');await Promise.race([new Promise(resolve=>child.once('exit',resolve)),delay(5000)]);if(child.exitCode===null)child.kill('SIGKILL');}
  await rm(temporary,{recursive:true,force:true});
