@@ -16,6 +16,7 @@ import re
 import ssl
 import subprocess
 import time
+import zlib
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -96,6 +97,43 @@ def source_identity(url):
     raise ValueError('Canonical public video URL required')
 
 
+def canonical_bilibili_webpage(url, identity):
+    """Request the known same-video canonical path, without following redirects."""
+    # Do not normalize a query, different BV, credentials, or another origin.
+    # The transport and NoRedirect continue to reject all redirect responses.
+    exact = 'https://www.bilibili.com/video/' + identity
+    return exact + '/' if url == exact else url
+
+
+def bounded_response_body(response, limit, on_bytes=lambda size: None):
+    """Bound wire and expansion bytes; retain byte accounting even on failure."""
+    values = (response.headers.get_all('Content-Encoding', []) if hasattr(response.headers, 'get_all')
+              else [response.headers['Content-Encoding']] if 'Content-Encoding' in response.headers else [])
+    if len(values) > 1:
+        raise StopProof('unexpected_response')
+    encoding = (values[0] if values else 'identity').strip().lower()
+    if encoding not in ('identity', 'gzip'):
+        raise StopProof('unexpected_response')
+    body = response.read(limit + 1)
+    wire_size = len(body)
+    try:
+        if len(body) > limit:
+            raise StopProof('budget_exceeded')
+        if encoding == 'gzip':
+            try:
+                decoder = zlib.decompressobj(16 + zlib.MAX_WBITS)
+                body = decoder.decompress(body, limit + 1)
+                if len(body) > limit or decoder.unconsumed_tail:
+                    raise StopProof('budget_exceeded')
+                if not decoder.eof or decoder.unused_data:
+                    raise StopProof('unexpected_response')
+            except zlib.error:
+                raise StopProof('unexpected_response') from None
+        return body
+    finally:
+        on_bytes(max(wire_size, len(body)))
+
+
 class VideoTransport:
     def __init__(self, url, ca_file=None, proxy=None):
         self.provider, self.identity = source_identity(url)
@@ -152,6 +190,9 @@ class VideoTransport:
             raise StopProof('identity_mismatch')
         self.youtube_access_verified = True
 
+    def count_response_bytes(self, size):
+        self.total += size
+
     def send(self, request):
         kind = self.kind(request.url, request.method, request.data, dict(request.headers))
         if self.count >= MAX_REQUESTS or time.monotonic() - self.started > 120:
@@ -163,11 +204,10 @@ class VideoTransport:
         try:
             with self.opener.open(req, timeout=15) as response:
                 self.responses += 1
-                if response.status != 200 or response.headers.get('Content-Encoding', 'identity') != 'identity':
+                if response.status != 200:
                     raise StopProof('unexpected_response')
                 limit = MAX_CAPTION if kind == 'caption' else MAX_RESPONSE
-                body = response.read(limit + 1)
-                self.total += len(body)
+                body = bounded_response_body(response, limit, self.count_response_bytes)
                 if len(body) > limit or self.total > MAX_TOTAL:
                     raise StopProof('budget_exceeded')
                 if kind == 'metadata' or self.provider == 'bilibili' and kind == 'caption':
@@ -183,7 +223,10 @@ class VideoTransport:
                             raise StopProof('subtitle_login_required')
                     elif urlparse(request.url).path == '/youtubei/v1/player':
                         self.verify_youtube_player(payload)
-                return body, dict(response.headers), response.status
+                headers = {key: value for key, value in response.headers.items()
+                           if key.lower() not in ('content-encoding', 'content-length')}
+                headers['Content-Length'] = str(len(body))
+                return body, headers, response.status
         except urllib.error.HTTPError as error:
             self.responses += 1
             code = error.code
@@ -192,6 +235,20 @@ class VideoTransport:
                              429: 'rate_limited'}.get(code, 'upstream_error')) from None
         except (urllib.error.URLError, OSError):
             raise StopProof('transport_unavailable') from None
+
+
+def mark_single_bilibili_progressive(formats, play_info):
+    """Carry one exact raw durl object, never a first-of-many fragment."""
+    for item in formats:
+        item.pop('_coconut_single_durl', None)
+    durl = play_info.get('durl') if isinstance(play_info, dict) else None
+    if isinstance(durl, list) and len(durl) == 1 and isinstance(durl[0], dict):
+        url = durl[0].get('url')
+        if isinstance(url, str):
+            for item in formats:
+                if item.get('url') == url and not item.get('fragments'):
+                    item['_coconut_single_durl'] = True
+    return formats
 
 
 @contextlib.contextmanager
@@ -233,6 +290,9 @@ def guarded_extractors(transport):
             raise StopProof('subtitle_token_required')
 
     class PublicBiliBiliIE(BiliBiliIE):
+        def extract_formats(self, play_info):
+            return mark_single_bilibili_progressive(super().extract_formats(play_info), play_info)
+
         @classmethod
         def ie_key(cls):
             return 'BiliBili'
@@ -244,8 +304,9 @@ def guarded_extractors(transport):
                 url = 'https:' + url
             return super()._download_json(url, *args, **kwargs)
 
-        def _download_webpage_handle(self, *args, **kwargs):
-            webpage, handle = super()._download_webpage_handle(*args, **kwargs)
+        def _download_webpage_handle(self, url, *args, **kwargs):
+            url = canonical_bilibili_webpage(url, transport.identity)
+            webpage, handle = super()._download_webpage_handle(url, *args, **kwargs)
             if not self._match_valid_url(handle.url):
                 return webpage, handle
             state = self._search_json(r'window\.__INITIAL_STATE__\s*=', webpage, 'initial state', self._match_id(handle.url), default={})
@@ -268,7 +329,11 @@ def guarded_extractors(transport):
                 username=None, password=None, usenetrc=False, proxy='', cachedir=False,
                 retries=0, extractor_retries=0, fragment_retries=0, file_access_retries=0,
                 socket_timeout=15, skip_download=True, check_formats=False,
-                ignore_no_formats_error=True, fixup='never', format='best',
+                ignore_no_formats_error=True, fixup='never',
+                # Caption inspection must accept DASH-only metadata too. This
+                # selects an existing format; skip_download still forbids media,
+                # and the explicit media action reselects through its own guard.
+                format='best/bestaudio/bestvideo',
                 external_downloader={}, postprocessors=[], js_runtimes={}, remote_components=[],
                 extractor_args={'youtube': {'player_client': ['web'], 'fetch_pot': ['never'],
                     'player_skip': ['js', 'configs', 'initial_data'], 'skip': ['hls', 'dash', 'translated_subs']}},
@@ -327,12 +392,13 @@ def json3_document_vtt(document):
     return '\n'.join(lines).encode('utf-8')
 
 
-def extract_public_video_captions(url, language=None, *, ca_file=None, proxy=None):
+def extract_public_video_captions(url, language=None, *, ca_file=None, proxy=None, _media_output=None):
     import tempfile
     language_required = False
     languages = []
     completion = None
     selection_completed = False
+    verified_info = None
     transport = None
     original_select = subtitle_import.select_track
     original_parse = subtitle_import.subtitle_document
@@ -347,7 +413,7 @@ def extract_public_video_captions(url, language=None, *, ca_file=None, proxy=Non
         return original_parse(*args, **kwargs)
 
     def select(info, hint=None):
-        nonlocal language_required, languages, completion, selection_completed
+        nonlocal language_required, languages, completion, selection_completed, verified_info
         transport.stage = 'track_selection'
         provider, identity = source_identity(url)
         subtitle_import.validate_media_info(info)
@@ -367,6 +433,7 @@ def extract_public_video_captions(url, language=None, *, ca_file=None, proxy=Non
             raise StopProof('duration_unavailable')
         selected = original_select(info, hint)
         selection_completed = True
+        verified_info = info
         languages = subtitle_import.available_caption_languages(info, formats=('vtt', 'srt', 'json3'), selector=original_select)
         language_required = selected is None and subtitle_import.preferred_language(info, hint)[0] is None and any(
             key not in ('danmaku', 'live_chat') and subtitle_import.eligible_formats(tracks)
@@ -382,6 +449,11 @@ def extract_public_video_captions(url, language=None, *, ca_file=None, proxy=Non
             if not document:
                 if not selection_completed:
                     return failure('extractor_failed', 'extractor_error')
+                if _media_output is not None and not language_required:
+                    # Explicit separate action only. This same request completed
+                    # access, identity, duration and original-caption checks.
+                    from scripts.public_video_media import download_verified_audio
+                    return download_verified_audio(verified_info, transport, _media_output, url, language)
                 return failure('language_required' if language_required else 'no_matching_captions',
                                'language_unknown' if language_required else 'no_matching_track')
             transport.stage = 'caption_output'

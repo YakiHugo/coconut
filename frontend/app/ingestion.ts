@@ -55,6 +55,7 @@ export type Ingestion = {
     error?: {
         code: string;
         diagnostic?: CaptionFailureDiagnostic;
+        audio_fallback?: unknown;
         languages?: string[];
         message: string;
     };
@@ -79,7 +80,7 @@ export async function ingest(body: unknown, signal: AbortSignal): Promise<Ingest
 /** Same bounded identity protocol as the mature reader; never proof of every byte. */
 export async function inspectFile(file: File) {
     const extension = file.name.split('.').pop()?.toLowerCase(), type = file.type.toLowerCase();
-    const supported = new Set(['audio/mpeg', 'audio/mp3', 'audio/mp4', 'audio/x-m4a', 'audio/wav', 'audio/x-wav', 'audio/ogg', 'audio/flac', 'audio/x-flac', 'audio/aac', 'audio/opus', 'video/mp4', 'video/webm', 'audio/webm', 'video/quicktime', 'video/x-m4v', 'application/octet-stream']);
+    const supported = new Set(['audio/mpeg', 'audio/mp3', 'audio/mp4', 'audio/x-m4a', 'audio/wav', 'audio/x-wav', 'audio/ogg', 'audio/flac', 'audio/x-flac', 'audio/aac', 'audio/opus', 'video/mp4', 'video/webm', 'video/ogg', 'audio/webm', 'video/quicktime', 'video/x-m4v', 'application/octet-stream']);
     if (type && !supported.has(type))
         throw Error('请选择实际音频或视频文件。');
     const kind = type.startsWith('video/') ? 'video' : type.startsWith('audio/') ? 'audio' : ['mp4', 'webm', 'mov', 'm4v'].includes(extension || '') ? 'video' : ['mp3', 'm4a', 'wav', 'ogg', 'flac', 'aac', 'opus'].includes(extension || '') ? 'audio' : null;

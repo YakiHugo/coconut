@@ -38,7 +38,7 @@ function episodeMedia(result){
  const media=result.episode?.media?.[0];
  return media?{kind:media.kind,url:media.url,name:result.episode.title,mimeType:media.type,availability:'remote',download:{endpoint:'/api/podcasts/media',body:{feedUrl:result.feed_url,episodeId:result.episode.id,mediaUrl:media.url}}}:null;
 }
-export function createIngestionService({podcastSources,captionService=null,captionStatus=null,captionShortLinkResolver=resolveCaptionShortLink}={}){
+export function createIngestionService({podcastSources,captionService=null,captionStatus=null,captionShortLinkResolver=resolveCaptionShortLink,videoAudioProviders=[]}={}){
  const capabilities=()=>({protocolVersion:1,request_scoped:true,persistent:false,url:true,local_file:'metadata_only',captions:captionService?.available===true,transcription:unavailableTranscription});
  const unavailableCaptions=()=>({state:'blocked',error:{code:'captions_unavailable',...(captionStatus?.mode==='bundled-helper'?{setup_code:captionStatus.code,message:captionStatus.message+'此链接已保留，可修复安装包后重试。'}:{message:'字幕获取服务尚未就绪；此链接已保留，可在服务就绪后重试。'})}});
  async function ingest(data,{signal}={}){
@@ -69,7 +69,7 @@ export function createIngestionService({podcastSources,captionService=null,capti
    if(!captionService?.available)return finish(unavailableCaptions());
    if(Array.isArray(captionService.providers)&&!captionService.providers.includes(canonical.provider))return finish({state:'blocked',error:{code:'captions_unavailable',message:'此版本尚未启用该来源的字幕获取；链接已保留，可导入已有字幕。'}});
    const result=await captionService.importCaption({url:canonical.url,language:data.language},{signal});
-   return result.status==='ready'?finish({state:'ready',transcript:{document:result.document},...(result.diagnostics?{diagnostics:result.diagnostics}:{})}):finish({state:'blocked',error:{code:result.status,message:result.message,...(result.status==='language_required'?{languages:result.languages}:{}),...(result.diagnostic?{diagnostic:result.diagnostic}:{})}});
+   return result.status==='ready'?finish({state:'ready',transcript:{document:result.document},...(result.diagnostics?{diagnostics:result.diagnostics}:{})}):finish({state:'blocked',error:{code:result.status,message:result.message,...(result.status==='language_required'?{languages:result.languages}:{}),...(result.diagnostic?{diagnostic:result.diagnostic}:{}),...(result.status==='no_matching_captions'&&videoAudioProviders.includes(canonical.provider)?{audio_fallback:{endpoint:'/api/videos/media',url:canonical.url,language:data.language||null}}:{})}});
   }
   if(data.episode){
    const episode=data.episode;

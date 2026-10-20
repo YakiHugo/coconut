@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {inspectFile} from './ingestion';
+import {downloadedMediaFile} from './ingestion-media';
 import {rememberIngestionFile} from './ingestion-binding';
 import type { AppStore } from './store';
 /** Remote descriptors are never direct playable URLs: download is explicit. */
@@ -44,8 +45,7 @@ export function MediaSource({ store, documentKey }: {
             }
             if (owner.current !== controller)
                 return;
-            const type=(response.headers.get('content-type')||'').split(';')[0],extension=remote.kind==='video'?'mp4':'mp3';
-            const file=new File(chunks,(remote.name||'原声')+'.'+extension,{type:type.startsWith('audio/')||type.startsWith('video/')?type:remote.kind==='video'?'video/mp4':'audio/mpeg',lastModified:0});
+            const file=downloadedMediaFile(chunks,{name:remote.name,contentType:response.headers.get('content-type')||'',kind:remote.kind});
             const inspected=await inspectFile(file);
             if(owner.current!==controller||controller.signal.aborted||store.getDocument(documentKey)!==sourceOwner)return;
             rememberIngestionFile(file,inspected.source.fingerprint);store.setFile(documentKey,file);
@@ -62,5 +62,5 @@ export function MediaSource({ store, documentKey }: {
             }
         }
     };
-    return <section className="remote-media"><button disabled={busy} onClick={() => void download()}>{busy ? '正在读取原声…' : '载入原声（最多 200 MiB）'}</button>{busy && <button onClick={() => { owner.current?.abort(); owner.current = null; setBusy(false); }}>取消</button>}<p>只在点击后下载，本页保留；不会自动播放。</p><p role="status">{error}</p></section>;
+    return <section className="remote-media"><button disabled={busy} onClick={() => void download()}>{busy ? '正在读取原声…' : '载入原声（最多 200 MiB）'}</button>{busy && <button onClick={() => { owner.current?.abort(); owner.current = null; setBusy(false); }}>取消</button>}<p>只在点击后下载，本页保留；不会自动播放。载入后可检查本地识别服务，再明确生成文字稿。</p><p role="status">{error}</p></section>;
 }

@@ -3,6 +3,7 @@ import contextlib
 import copy
 import importlib.util
 import io
+import gzip
 import json
 import socket
 import ssl
@@ -35,6 +36,55 @@ class Response:
 
 
 class TransportTests(unittest.TestCase):
+    def test_gzip_is_bounded_and_normalized_before_upstream_parsing(self):
+        body = b'{"code":0,"data":{}}'
+        response = Response(gzip.compress(body))
+        response.headers = {'Content-Encoding':'gzip','Content-Length':str(len(response.body.getvalue()))}
+        transport = guard.VideoTransport(BILIBILI)
+        with patch.object(transport.opener, 'open', return_value=response):
+            actual, headers, _ = transport.send(SimpleNamespace(url='https://api.bilibili.com/x/player/wbi/v2?aid=1&cid=2',method='GET',data=None,headers={}))
+        self.assertEqual(actual, body)
+        self.assertNotIn('Content-Encoding',headers)
+        self.assertEqual(headers['Content-Length'],str(len(body)))
+
+    def test_gzip_bombs_truncation_checksum_and_extra_members_fail_closed(self):
+        for body, encoding, reason in [
+            (gzip.compress(b'x'*1000),'gzip','budget_exceeded'),
+            (gzip.compress(b'fixture')[:-3],'gzip','unexpected_response'),
+            (gzip.compress(b'fixture')+gzip.compress(b'extra'),'gzip','unexpected_response'),
+            (b'not gzip','gzip','unexpected_response'),
+            (b'fixture','br','unexpected_response'),
+        ]:
+            response=Response(body);response.headers={'Content-Encoding':encoding}
+            with self.subTest(encoding=encoding,reason=reason),self.assertRaises(guard.StopProof) as stopped:
+                guard.bounded_response_body(response,100)
+            self.assertEqual(stopped.exception.outcome,reason)
+        damaged=bytearray(gzip.compress(b'fixture'));damaged[-8]^=1
+        response=Response(bytes(damaged));response.headers={'Content-Encoding':'gzip'}
+        with self.assertRaises(guard.StopProof): guard.bounded_response_body(response,100)
+
+
+    def test_canonical_bilibili_path_is_not_redirect_permission(self):
+        identity = 'BV1xx411c7mD'
+        self.assertEqual(guard.canonical_bilibili_webpage(BILIBILI, identity), BILIBILI + '/')
+        targets = [
+            BILIBILI + '/', BILIBILI + '?p=2', BILIBILI + '/?login=1',
+            'https://www.bilibili.com/video/BV1yyyyyyyyy/',
+            'https://www.bilibili.com/login', 'https://passport.bilibili.com/login',
+            'https://external.example/video/' + identity,
+            'https://www.bilibili.com.evil.test/video/' + identity,
+        ]
+        for target in targets:
+            with self.subTest(target=target):
+                self.assertEqual(guard.canonical_bilibili_webpage(target, identity), target)
+                with self.assertRaises(guard.StopProof) as stopped:
+                    guard.NoRedirect().redirect_request(None, None, 301, '', {}, target)
+                self.assertEqual(stopped.exception.outcome, 'redirect_stopped')
+        # Even a canonical redirect is never followed. Only the initial exact
+        # upstream webpage request is rewritten before any network response.
+        with self.assertRaises(guard.StopProof):
+            guard.NoRedirect().redirect_request(None, None, 301, '', {}, BILIBILI + '/')
+
     def test_media_credentials_redirects_translations_and_other_origins_stop(self):
         for source, urls in [(YOUTUBE, ['https://www.youtube.com/api/timedtext?v=wrong&fmt=vtt',
             'https://www.youtube.com/api/timedtext?v=BaW_jenozKc&fmt=vtt&tlang=fr',
@@ -270,6 +320,7 @@ class OfficialExtractorTests(unittest.TestCase):
         result, calls = self.extract(BILIBILI)
         self.assertEqual(result['format'], 'srt'); self.assertIn(b'Authored original fixture.', result['bytes'])
         self.assertEqual(result['source']['id'], 'BV1xx411c7mD')
+        self.assertEqual(calls[0], BILIBILI + '/')
         self.assertTrue(any('/wbi/v2?' in url for url in calls))
         self.assertFalse(any('videoplayback' in url or '.mp4' in url for url in calls))
 
@@ -416,3 +467,48 @@ class LauncherDiagnosticTests(unittest.TestCase):
             with patch.object(sys,'argv',['caption-helper','--protocol=1']), patch.object(sys,'stdin',SimpleNamespace(buffer=io.BytesIO(json.dumps(request).encode()))):
                 self.assertEqual(module['main'](),failure)
             self.assertEqual(extract.call_args.kwargs['proxy'],'http://127.0.0.1:7897')
+
+
+class DuplicateEncodingTests(unittest.TestCase):
+    def test_duplicate_or_chained_content_encoding_is_rejected_before_read(self):
+        from email.message import Message
+        for values in [('gzip','br'), ('gzip','gzip'), ('gzip, br',)]:
+            headers=Message()
+            for value in values: headers.add_header('Content-Encoding',value)
+            response=SimpleNamespace(headers=headers,read=lambda _:self.fail('must not consume ambiguous body'))
+            with self.assertRaises(guard.StopProof) as caught:
+                guard.bounded_response_body(response,100)
+            self.assertEqual(caught.exception.outcome,'unexpected_response')
+
+@unittest.skipUnless(importlib.util.find_spec('yt_dlp'), 'Pinned yt-dlp required')
+class MetadataFormatSelectionTests(unittest.TestCase):
+    def process(self, formats, selector=None):
+        import yt_dlp
+        logger=guard.subtitle_import.CaptionLogger()
+        transport=guard.VideoTransport(BILIBILI)
+        info={'id':'BV1xx411c7mD','title':'Authored DASH metadata','duration':4,
+              'formats':copy.deepcopy(formats),'subtitles':{},'automatic_captions':{}}
+        with guard.guarded_extractors(transport),patch.object(transport,'send',side_effect=AssertionError('metadata processing must not fetch media')):
+            with yt_dlp.YoutubeDL({'logger':logger,'quiet':True}) as downloader:
+                if selector:
+                    downloader.params['format']=selector
+                    downloader.format_selector=downloader.build_format_selector(selector)
+                result=downloader.process_ie_result(info,download=False)
+        return result,logger.warnings
+
+    def test_dash_metadata_does_not_require_a_combined_media_format(self):
+        formats=[
+            {'format_id':'video','url':'https://public.bilivideo.com/source.mp4','ext':'mp4','vcodec':'avc1','acodec':'none','height':360},
+            {'format_id':'audio','url':'https://public.bilivideo.com/source.m4s','ext':'m4a','vcodec':'none','acodec':'mp4a','abr':64}]
+        _,old_warnings=self.process(formats,'best')
+        self.assertTrue(any('Requested format is not available' in value for value in old_warnings))
+        result,warnings=self.process(formats)
+        self.assertEqual(warnings,[])
+        self.assertEqual({item['format_id'] for item in result['formats']},{'video','audio'})
+        self.assertEqual(result['format_id'],'audio')
+
+    def test_combined_media_still_works_and_missing_formats_still_warn(self):
+        result,warnings=self.process([{'format_id':'combined','url':'https://public.bilivideo.com/source.mp4','ext':'mp4','vcodec':'avc1','acodec':'mp4a'}])
+        self.assertEqual(warnings,[]);self.assertEqual(result['format_id'],'combined')
+        _,warnings=self.process([])
+        self.assertTrue(warnings)
