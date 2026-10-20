@@ -1,3 +1,4 @@
+import {transcriptionFileIssue} from './ingestion-media';
 /** Explicit ASR operations. A lost upload receipt is never permission to resend. */
 export type IngestionJobState='queued'|'running'|'ready'|'failed'|'interrupted'|'cancelled';
 export type IngestionJob={id:string;state:IngestionJobState;persistent:true;source:{kind:'file';name:string;operation_id:string;fingerprint:string;size:number;last_modified:number;language:string};media?:{url:string;kind:'audio'|'video';name:string};stage?:string;error?:{message:string};transcript?:{document:unknown}};
@@ -29,7 +30,7 @@ export function createIngestionJobs(deps:{request:(path:string,init?:RequestInit
  const commands={
  async capabilities(){try{const result=await deps.request('api/v1/ingestions/capabilities') as {protocolVersion?:number;transcription?:{available?:boolean;message?:string;model_download?:boolean}};if(disposed)return;state.available=result.protocolVersion===1&&result.transcription?.available===true&&result.transcription.model_download===false;state.capabilityMessage=result.transcription?.message||'本地文字稿服务不可用。';emit();}catch(error){if(!disposed){state.available=false;state.capabilityMessage=String(error);emit();}}},
  async upload(key:string,file:File){if(disposed||state.busy)return;if(!state.available){state.message='请先检查本地文字稿服务是否就绪。';emit();return;}const binding=deps.binding(key);if(!binding||entries.some(entry=>entry.binding.key===key&&(entry.unknown||entry.job&&['queued','running','ready'].includes(entry.job.state))))return;
-  if(file.size>200*1024*1024||file.size<=0){state.message='生成文字稿支持不超过 200 MiB 的原音视频文件。';emit();return;}
+  const inputIssue=transcriptionFileIssue(file);if(inputIssue){state.message=inputIssue;emit();return;}
   const entry:JobEntry={operation:deps.uuid(),binding:{...binding},name:file.name,size:file.size,lastModified:file.lastModified,language:'',job:null,unknown:true,message:'上传回执尚未确认；不要重复上传。'};
   if(entries.length>=128){state.message='任务关联记录已满，请先处理原任务。';emit();return;}
   entries=[...entries,entry];try{save();}catch{entries=entries.filter(item=>item!==entry);state.message='无法持久保存上传意图，未发送文件。';emit();return;}
