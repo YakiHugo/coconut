@@ -1,5 +1,8 @@
 name: Independent public video candidates
 on:
+  push:
+    branches: ['dot/close-public-ingestion']
+    paths: ['.github/workflows/public-video-candidates.yml']
   workflow_dispatch:
 permissions:
   contents: read
@@ -11,12 +14,12 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - provider: youtube
-            url: 'https://www.youtube.com/watch?v=p0W_cxbbTQA'
-            language: en
-          - provider: bilibili
-            url: 'https://www.bilibili.com/video/BV1nx411u79K'
-            language: en
+          - provider: bilibili-vision
+            url: 'https://www.bilibili.com/video/BV1Bx411E7Hs'
+            language: zh
+          - provider: bilibili-ai
+            url: 'https://www.bilibili.com/video/BV1DW411v7TF'
+            language: zh
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4

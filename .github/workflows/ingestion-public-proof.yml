@@ -91,7 +91,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        provider: [xiaoyuzhou, bilibili]
+        provider: [xiaoyuzhou]
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
