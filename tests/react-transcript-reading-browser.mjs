@@ -48,6 +48,12 @@ try {
  assert.deepEqual(actual,expected,'Pagination must never cut an already formed paragraph or omit a cue');
  assert.equal(actual.flat().length,120);await expect(page.locator('.rw-speaker-label').first()).toHaveText('说话人 1');
  await page.getByRole('button',{name:'上一页',exact:true}).click();await expect(page.locator('.rw-speaker-label').filter({hasText:'未标注'}).first()).toBeVisible();
+ const anchor=await page.locator('[data-source-id]').first().getAttribute('data-source-id');
+ await page.locator('.rw-reading-controls select').first().selectOption('transcript');
+ await expect(page.locator('[data-source-id="'+anchor+'"]')).toBeVisible();
+ await expect(page.locator('.rw-current')).toHaveAttribute('data-cue-id',anchor);
+ await page.locator('.rw-reading-controls select').first().selectOption('passages');
+ await expect(page.locator('[data-source-id="'+anchor+'"]')).toBeVisible();
  await page.locator('.rw-inspect-passage').first().click();
  await expect(page.locator('.rw-reading-controls select').first()).toHaveValue('transcript');
  await expect(page.locator('.rw-cue').first()).toBeVisible();
