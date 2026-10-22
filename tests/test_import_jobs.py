@@ -58,7 +58,7 @@ class PlaybackCacheTests(unittest.TestCase):
             cache=Path(td)/job['id']/'cache';cache.mkdir(parents=True);media=cache/'playback.mp4';media.write_bytes(b'fixture')
             with self.assertRaises(KeyError):jobs.media(job['id'])
             (cache/'playback.json').write_text(json.dumps({'file':'playback.mp4','size':7}))
-            self.assertEqual(jobs.media(job['id']),(media,'video','video/mp4'))
+            self.assertEqual(jobs.media(job['id']),(media.resolve(),'video','video/mp4'))
             media.write_bytes(b'changed size')
             with self.assertRaises(KeyError):jobs.media(job['id'])
 

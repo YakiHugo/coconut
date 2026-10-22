@@ -33,6 +33,34 @@ Development video fallback: when the original-caption check positively finishes 
 
 ## One user-visible task, existing Python execution backend
 
+For source development with an existing prepared Python environment, start the
+local executor and bridge in separate terminals (adjust ports if occupied):
+
+```sh
+.venv/bin/python serve.py --port 8083 --data-dir .coconut/dev/asr
+COCONUT_ASR_EXECUTOR_URL=http://127.0.0.1:8083 \
+COCONUT_CAPTION_PYTHON="$PWD/.venv-captions/bin/python" \
+COCONUT_CAPTION_PROXY=http://127.0.0.1:7897 npm run dev
+```
+
+The Python environment needs the existing core requirements and cached `small`
+model before it can report ready. These commands do not install packages or
+download a model. The proxy must be the owner's existing trusted loopback HTTP
+proxy; omit it for direct public access. A helper advertising
+`developmentProxyAudioProtocol: 1` can use that same proxy for its verified media
+download. After `no_matching_captions`, choose the media action, then check local
+recognition readiness and generate the transcript in the original-media panel.
+The durable job continues after page close; accept its completed transcript into
+the original project. Platform captions and `local_asr` results retain distinct
+provenance.
+
+The faster-whisper path now honors the existing CLI `--batch-size` option
+(default 8) with `BatchedInferencePipeline`, using the same cached model, VAD and
+word timestamps. Timestamp-token decoding remains enabled so the resulting SRT
+keeps timed cues rather than one text block per speech batch. A batch size of 1
+uses the sequential decoder. This changes execution strategy, not the model or
+the `local_asr` / unreviewed provenance of generated text.
+
 The process owner may explicitly set `COCONUT_ASR_EXECUTOR_URL=http://127.0.0.1:<existing-python-port>` before starting the Node bridge. Only numeric 127.0.0.1 HTTP roots are accepted; localhost/DNS targets are rejected. This does not start Python, install dependencies, download models, or enable a proxy. Browser requests cannot configure an executor address. The UI never needs a different port or a direct Python API URL.
 
 `GET /api/v1/ingestions/capabilities` reports preparation properties and actual read-only `transcription` status. Missing configuration, unavailable/incompatible executor, missing dependencies, and missing cached model have distinct codes/messages. Presence checks are **not inference validation**. The optional Python backend exposes `/api/ingestion-executor/status`; its local-only path uses the existing small faster-whisper cache, never WhisperX/diarization/alignment fallback. Preparation receipts needing transcription also include this current status.

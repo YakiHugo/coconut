@@ -11,6 +11,7 @@ async function setup(){
  const scrolled=[];w.HTMLElement.prototype.scrollIntoView=function(){scrolled.push(this);};
  const doc={key:'selection',title:'Authored source',language:'en',notes:{'cue-0':'Initial note'},segments:Array.from({length:65},(_,i)=>({id:'cue-'+i,start:i*2,end:i*2+2,text:'Original phrase '+i+'. More context.'}))};
  w.localStorage.setItem('coconut-reader-v1',JSON.stringify({documents:[doc],active:doc.key}));
+ w.sessionStorage.setItem('coconut-reading-view-v1',JSON.stringify({version:1,views:[[doc.key,doc.segments[0].id,'transcript']]}));
  const calls=[];let held=false,observed,aborts=0;
  w.fetch=async(path,options={})=>{
   if(path==='api/health')return {ok:true,json:async()=>({})};
@@ -65,7 +66,7 @@ test('passage return target is explicitly focusable in real browsers and retains
  const h=await setup(),{w}=h;try{
   const mode=[...w.document.querySelectorAll('.reader-workspace label')].find(l=>l.textContent.startsWith('阅读方式')).querySelector('select');mode.value='passages';mode.dispatchEvent(new w.Event('change',{bubbles:true}));await wait(()=>w.document.querySelector('.rw-passage'));
   await h.selectText('cue-0');h.button('理解选中文字').click();await wait(()=>w.document.activeElement===w.document.querySelector('.ai-workspace h2'));h.button('返回所选原文').click();await wait(()=>w.document.activeElement?.className==='rw-original');
-  assert.equal(w.document.activeElement.getAttribute('tabindex'),'-1');assert.equal(mode.value,'passages');assert.equal(w.document.activeElement.contains(w.document.querySelector('[data-source-id="cue-0"]')),true);
+  assert.equal(w.document.activeElement.getAttribute('tabindex'),'0');assert.equal(mode.value,'passages');assert.equal(w.document.activeElement.contains(w.document.querySelector('[data-source-id="cue-0"]')),true);
  }finally{await w.happyDOM.close();}
 });
 test('changed note filter cannot falsely report restoration of a now hidden selection',async()=>{

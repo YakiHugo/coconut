@@ -9,7 +9,7 @@ import { createProviders } from './providers.mjs';
 import { createTranslator } from './translation.mjs';
 import { createPodcastSources } from './podcast-sources.mjs';
 import {createIngestionService} from './ingestion-service.mjs';
-import {packagedCaptionGuidance} from './caption-service.mjs';
+import {packagedCaptionGuidance,captionDiagnostic} from './caption-service.mjs';
 import {createIngestionExecutor} from './ingestion-executor.mjs';
 import {createTaskStore,TASK_BODY_BYTES} from './tasks.mjs';
 import {createLibraryStore} from './library-store.mjs';
@@ -150,6 +150,12 @@ export function createBridge({readerDirectory = path.resolve(ROOT,'../reader'), 
       return json(200,{translations:await translate(data,{signal:controller.signal})});
     } catch (error) {
       if(res.headersSent){res.destroy();return;}
+      if(pathname==='/api/videos/media'){
+        const diagnostic=captionDiagnostic(error.diagnostic);
+        return json(error.status||400,{...(typeof error.code==='string'?{code:error.code}:{}),
+          error:remote?remoteDiagnostic(error.message):String(error.message||'媒体读取未完成').slice(0,300),
+          ...(diagnostic?{diagnostic}:{})});
+      }
       return json(error.status|| (error.code === 'ENOENT' ? 404 : 400),{...(remote?{code:error.taskCode||error.code||'request_failed'}:{}),...(pathname==='/api/videos/media'&&typeof error.code==='string'?{code:error.code}:{}),...(error.taskCode?{code:error.taskCode}:(pathname==='/api/captions/import'||pathname==='/api/v1/ingestions'&&['CAPTION_OUTPUT','CAPTION_PARSE_FAILED','CAPTION_TIMEOUT','CAPTION_UNAVAILABLE','CAPTION_INTEGRITY','CAPTION_VERSION','CAPTION_START','CAPTION_EXIT'].includes(error.code))&&error.code?{code:error.code}:{}),...(!remote&&error.localProviderDetails?{localProviderDetails:error.localProviderDetails}:{}),...(error.providerDiagnostics?{code:'provider_failed',localHttpStatus:400,providerDiagnostics:error.providerDiagnostics}:{}),error:error.code === 'ENOENT' ? 'File not found' : remote?remoteDiagnostic(error.message):String(error.message || '请求未完成').slice(0,300)});
     }
   });

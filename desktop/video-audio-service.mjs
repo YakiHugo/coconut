@@ -26,7 +26,11 @@ export function createVideoAudioService({helper,enabledProviders=['youtube','bil
    if(signal?.aborted)throw Error('媒体请求已取消');
    if(result?.status!=='media_ready'){
     const status=[...CAPTION_FAILURE_STATUSES,'media_unavailable','captions_available'].includes(result?.status)?result.status:'extractor_failed';
-    throw Object.assign(Error(messages[status]||'字幕或媒体检查未完整完成，未下载媒体；可重试读取来源或使用合法原文件。'),{status:409,code:status,diagnostic:captionDiagnostic(result?.diagnostic)});
+    const diagnostic=captionDiagnostic(result?.diagnostic);
+    const message=diagnostic?.stage==='media_download'&&diagnostic.reason==='budget_exceeded'
+     ?'媒体下载超过 15 分钟或 200 MiB 限制，未保留不完整文件；可检查网络后重试，或提供原文件。'
+     :messages[status]||'字幕或媒体检查未完整完成，未下载媒体；可重试读取来源或使用合法原文件。';
+    throw Object.assign(Error(message),{status:409,code:status,diagnostic});
    }
    const meta=result.source,media=result.media,bytes=result.bytes;
    const shape=(media?.type==='audio/mp4'&&media.kind==='audio'&&meta?.format==='m4a')||(media?.type==='video/mp4'&&media.kind==='video'&&meta?.format==='mp4');

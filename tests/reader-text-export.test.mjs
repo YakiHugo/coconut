@@ -36,3 +36,12 @@ test('source labels are truthful and raw local names, whitespace, newlines and s
  value.podcast_source={kind:'direct_media',media_kind:'audio',media_url:'https://media.example/authored.mp3'};assert.match(C.transcriptText(value).text,/来源：https:\/\/media\.example\/authored\.mp3/);
  value.provenance={kind:'authored_demo'};value.source_url='https://www.youtube.com/watch?v=fake';assert.match(C.transcriptText(value).text,/来源：自写演示内容/);assert.doesNotMatch(C.transcriptText(value).text,/youtube/);
 });
+
+test('continuous reading export repeats labels only at turns and marks unknown speakers explicitly',()=>{
+ const value=C.validate({title:'自写材料',segments:Array.from({length:43},(_,i)=>({id:'c'+i,start:i*2,end:i*2+2,text:'这是完整的原句。',speaker:i===40?null:'A'}))});
+ const before=JSON.stringify(value),result=C.transcriptText(value,'',{layout:'reading'});
+ assert.equal((result.text.match(/说话人：A/g)||[]).length,2);
+ assert.equal((result.text.match(/说话人：未标注/g)||[]).length,1);
+ assert.equal((result.text.match(/这是完整的原句。/g)||[]).length,43);
+ assert.equal(JSON.stringify(value),before);
+});

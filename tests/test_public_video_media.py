@@ -2,7 +2,9 @@
 import contextlib
 import copy
 import io
+import importlib.util
 import tempfile
+import time
 import unittest
 import urllib.error
 from pathlib import Path
@@ -67,6 +69,36 @@ class MediaTests(unittest.TestCase):
         self.assertIsNone(selected['_audio_language'])
         self.assertEqual(selected['_audio_language_basis'],'provider_single_source')
         self.assertIsNone(media.choose_audio({'formats':[{**item,'language':'zh'}]},'bilibili'))
+
+    def test_bilibili_preselects_standard_https_backup_from_exact_audio_object(self):
+        primary='https://xy1x2x3x4xy.mcdn.bilivideo.cn:8082/upgcxcode/audio.m4s?sign=fixture'
+        backup='https://upos-sz-mirrorcos.bilivideo.com/upgcxcode/audio.m4s?deadline=1'
+        item={**FORMAT,'url':primary,'format_id':'30216','language':None,'language_preference':None}
+        raw={'id':30216,'baseUrl':primary,'backupUrl':['https://evil.test/audio.m4s',backup]}
+        chosen=media.select_bilibili_audio_urls([item],{'dash':{'audio':[raw]}})
+        self.assertEqual(chosen[0]['url'],backup)
+        self.assertEqual(item['url'],primary)
+        self.assertEqual(media.choose_audio({'formats':chosen},'bilibili')['url'],backup)
+        for source in [{**raw,'id':30280},{**raw,'baseUrl':primary+'other'},
+                       {**raw,'backupUrl':backup},{**raw,'backupUrl':['https://127.0.0.1/audio.m4s']}]:
+            unchanged=media.select_bilibili_audio_urls([item],{'dash':{'audio':[source]}})
+            self.assertIsNone(media.choose_audio({'formats':unchanged},'bilibili'))
+        self.assertEqual(media.select_bilibili_audio_urls([item],{'dash':{'audio':[raw,raw]}}),[item])
+        existing={**item,'url':backup}
+        self.assertEqual(media.select_bilibili_audio_urls([existing],{'dash':{'audio':[raw]}}),[existing])
+
+    @unittest.skipUnless(importlib.util.find_spec('yt_dlp'), 'Pinned yt-dlp required')
+    def test_pinned_bilibili_extractor_retains_verified_backup_for_audio_selection(self):
+        import yt_dlp
+        primary='https://xy1x2x3x4xy.mcdn.bilivideo.cn:8082/upgcxcode/audio.m4s'
+        backup='https://upos-sz-mirrorcos.bilivideo.com/upgcxcode/audio.m4s'
+        play={'dash':{'video':[],'audio':[{'id':30216,'baseUrl':primary,'backup_url':[backup],
+                                        'mimeType':'audio/mp4','codecs':'mp4a.40.2','bandwidth':64000}]}}
+        transport=guard.VideoTransport('https://www.bilibili.com/video/BV1xx411c7mD')
+        with guard.guarded_extractors(transport), yt_dlp.YoutubeDL({'quiet':True}) as downloader:
+            formats=downloader.get_info_extractor('BiliBili').extract_formats(play)
+        self.assertEqual(formats[0]['url'],backup)
+        self.assertEqual(formats[0]['format_id'],'30216')
 
 
     def test_combined_public_mp4_is_source_media_not_invented_original_voice(self):
@@ -147,5 +179,62 @@ class MediaTests(unittest.TestCase):
             with self.assertRaises(guard.StopProof) as stopped:
                 media.download_verified_audio(info,transport,Path(td)/'public-audio.m4a',URL)
             self.assertEqual(stopped.exception.outcome,'http_access_denied');self.assertEqual(opened.call_count,1)
+
+    def test_media_transfer_outlives_caption_budget_but_still_has_a_deadline(self):
+        transport=guard.VideoTransport(URL)
+        transport.started=time.monotonic()-150
+        with tempfile.TemporaryDirectory() as td,patch.object(transport.opener,'open',return_value=Response()) as opened:
+            result=media.download_verified_audio(INFO,transport,Path(td)/'audio.m4a',URL)
+            self.assertEqual(result['status'],'media_ready')
+            self.assertEqual(opened.call_count,1)
+        transport.started=time.monotonic()-media.MAX_MEDIA_SECONDS-1
+        with tempfile.TemporaryDirectory() as td,patch.object(transport.opener,'open') as opened:
+            with self.assertRaises(guard.StopProof) as stopped:
+                media.download_verified_audio(INFO,transport,Path(td)/'audio.m4a',URL)
+            self.assertEqual(stopped.exception.outcome,'budget_exceeded')
+            opened.assert_not_called()
+
+    def test_same_object_ranges_validate_offsets_and_assemble_complete_media(self):
+        transport=guard.VideoTransport(URL)
+        requests=[]
+        def piece(request,timeout=None):
+            requests.append(request)
+            start=int(request.get_header('Range').split('=')[1].split('-')[0])
+            end=min(start+16,len(BODY))-1
+            response=Response(BODY[start:end+1],{'Content-Range':f'bytes {start}-{end}/{len(BODY)}','ETag':'"same-object"'})
+            if start:self.assertEqual(request.get_header('If-range'),'"same-object"')
+            response.status=206
+            return response
+        with tempfile.TemporaryDirectory() as td,patch.object(media,'MEDIA_RANGE_BYTES',16),patch.object(transport.opener,'open',side_effect=piece):
+            output=Path(td)/'audio.m4a'
+            result=media.download_verified_audio(INFO,transport,output,URL)
+            self.assertEqual(output.read_bytes(),BODY)
+            self.assertEqual(result['media']['bytes'],len(BODY))
+            self.assertEqual(len(requests),(len(BODY)+15)//16)
+            self.assertTrue(all(request.full_url==CDN for request in requests))
+            self.assertEqual(transport.responses,len(requests))
+
+    def test_inconsistent_range_or_ignored_later_range_stops_without_retry(self):
+        for bad in ['offset','total','length','ignored','changed_object']:
+            transport=guard.VideoTransport(URL)
+            calls=[]
+            def piece(request,timeout=None):
+                calls.append(request)
+                start=0 if len(calls)==1 else 16
+                end=min(start+16,len(BODY))-1
+                header=f'bytes {start}-{end}/{len(BODY)}'
+                if len(calls)>1:
+                    if bad=='offset':header=f'bytes 0-{end}/{len(BODY)}'
+                    if bad=='total':header=f'bytes {start}-{end}/{len(BODY)+1}'
+                response=Response(BODY[start:end+1],{'Content-Range':header,'ETag':'"same-object"'})
+                response.status=206
+                if len(calls)>1 and bad=='length':response.headers['Content-Length']='1'
+                if len(calls)>1 and bad=='ignored':response.status=200
+                if len(calls)>1 and bad=='changed_object':response.headers['ETag']='"different-object"'
+                return response
+            with self.subTest(bad=bad),tempfile.TemporaryDirectory() as td,patch.object(media,'MEDIA_RANGE_BYTES',16),patch.object(transport.opener,'open',side_effect=piece):
+                with self.assertRaises(guard.StopProof):
+                    media.download_verified_audio(INFO,transport,Path(td)/'audio.m4a',URL)
+                self.assertEqual(len(calls),2)
 
 if __name__=='__main__': unittest.main()

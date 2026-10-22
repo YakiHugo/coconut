@@ -29,7 +29,7 @@ def temporary_certificates():
         cert, key, config = root/'cert.pem', root/'key.pem', root/'openssl.cnf'
         config.write_text('[req]\ndistinguished_name=dn\nx509_extensions=ext\nprompt=no\n'
                           '[dn]\nCN=www.youtube.com\nO=Offline caption proxy test only\n'
-                          '[ext]\nsubjectAltName=DNS:www.youtube.com\nbasicConstraints=critical,CA:TRUE\n')
+                          '[ext]\nsubjectAltName=DNS:www.youtube.com,DNS:rr1---sn-abcdef.googlevideo.com\nbasicConstraints=critical,CA:TRUE\n')
         subprocess.run([openssl, 'req', '-x509', '-newkey', 'rsa:2048', '-nodes',
                         '-days', '1', '-sha256', '-config', str(config),
                         '-keyout', str(key), '-out', str(cert)],
@@ -68,8 +68,9 @@ def read_headers(connection):
 
 class ConnectFixture:
     """Loopback-only proxy: accepts CONNECT, then serves fixture origin TLS."""
-    def __init__(self, connect_status=200, origin_status=200, location=None, body=BODY):
+    def __init__(self, connect_status=200, origin_status=200, location=None, body=BODY, content_type='text/vtt'):
         self.body = body
+        self.content_type = content_type
         self.connect_status = connect_status
         self.origin_status = origin_status
         self.location = location
@@ -108,7 +109,7 @@ class ConnectFixture:
                 connection = self.context.wrap_socket(connection, server_side=True)
                 self.origin_requests.append(read_headers(connection))
                 extra = ('Location: %s\r\n' % self.location) if self.location else ''
-                connection.sendall(('HTTP/1.1 %d Fixture\r\nContent-Type: text/vtt\r\nContent-Length: %d\r\n%sConnection: close\r\n\r\n' % (self.origin_status, len(self.body), extra)).encode() + self.body)
+                connection.sendall(('HTTP/1.1 %d Fixture\r\nContent-Type: %s\r\nContent-Length: %d\r\n%sConnection: close\r\n\r\n' % (self.origin_status, self.content_type, len(self.body), extra)).encode() + self.body)
             except (ssl.SSLError, EOFError, ConnectionResetError):
                 # Expected when the client rejects this fixture's certificate.
                 pass
@@ -358,6 +359,66 @@ class ConnectTransportTests(unittest.TestCase):
                 transport.send(request())
             self.assertEqual(caught.exception.outcome, 'non_public_address')
             create.assert_not_called()
+
+
+class MediaProxyTests(unittest.TestCase):
+    CDN = 'https://rr1---sn-abcdef.googlevideo.com/videoplayback?expire=2000000000&sig=fixture'
+    MEDIA = b'\x00\x00\x00\x18ftypM4A ' + b'offline authored media'
+
+    def download(self, proxy, output):
+        from scripts.public_video_media import extract_public_video_audio
+        transport = guard.VideoTransport(YOUTUBE, ca_file=CERT, proxy=proxy.url)
+        transport.youtube_access_verified = True
+        info = {'id': 'BaW_jenozKc', 'duration': 4, 'title': 'Authored fixture',
+                'live_status': 'not_live', 'subtitles': {}, 'automatic_captions': {},
+                'formats': [{'url': self.CDN, 'ext': 'm4a', 'vcodec': 'none',
+                             'acodec': 'mp4a.40.2', 'protocol': 'https', 'abr': 64,
+                             'format_id': '140', 'language': 'en', 'language_preference': 10}]}
+        def metadata(*args):
+            guard.subtitle_import.select_track(info, 'en')
+            return None
+        with patch.object(guard, 'VideoTransport', return_value=transport), \
+                patch.object(guard, 'guarded_extractors', side_effect=lambda _: contextlib.nullcontext()), \
+                patch.object(guard.subtitle_import, 'fetch_subtitle_document', side_effect=metadata):
+            return extract_public_video_audio(YOUTUBE, 'en', output=output), transport
+
+    def test_verified_no_caption_source_downloads_over_connect_without_origin_dns(self):
+        with tempfile.TemporaryDirectory() as td, \
+                ConnectFixture(body=self.MEDIA, content_type='audio/mp4') as proxy, no_origin_dns():
+            output = Path(td) / 'media.m4a'
+            result, transport = self.download(proxy, output)
+            self.assertEqual(result['status'], 'media_ready')
+            self.assertEqual(output.read_bytes(), self.MEDIA)
+            self.assertEqual((transport.count, transport.responses), (1, 1))
+            self.assertEqual(proxy.sni, ['rr1---sn-abcdef.googlevideo.com'])
+            self.assertTrue(proxy.connect_requests[0].startswith(b'CONNECT rr1---sn-abcdef.googlevideo.com:443 '))
+            self.assertNotIn(b'Cookie:', proxy.origin_requests[0])
+            self.assertNotIn('url', result['media'])
+
+    def test_denial_and_redirect_never_try_direct_or_leave_partial_media(self):
+        for status, location, reason in [(403, None, 'http_access_denied'),
+                                         (302, self.CDN + '&other=1', 'redirect_stopped')]:
+            with self.subTest(status=status), tempfile.TemporaryDirectory() as td, \
+                    ConnectFixture(origin_status=status, location=location) as proxy, no_origin_dns():
+                output = Path(td) / 'media.m4a'
+                result, _ = self.download(proxy, output)
+                self.assertEqual(result['diagnostic']['reason'], reason)
+                self.assertEqual(proxy.connections, 1)
+                self.assertFalse(output.exists())
+
+    def test_media_permission_is_exact_and_does_not_broaden_caption_transport(self):
+        with ConnectFixture() as proxy, no_origin_dns():
+            transport = guard.VideoTransport(YOUTUBE, ca_file=CERT, proxy=proxy.url)
+            with self.assertRaises(guard.StopProof):
+                transport.send(request(self.CDN))
+            opener = transport.media_opener(self.CDN)
+            for url in [self.CDN + '&other=1', CAPTION, 'https://127.0.0.1/videoplayback']:
+                with self.subTest(url=url), self.assertRaises(guard.StopProof):
+                    opener.open(url, timeout=1)
+            for url in ['https://127.0.0.1/media.mp4', self.CDN + '&pot=private']:
+                with self.subTest(url=url), self.assertRaises(guard.StopProof):
+                    transport.media_opener(url)
+            self.assertEqual(proxy.connections, 0)
 
 
 if __name__ == '__main__':

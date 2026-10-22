@@ -119,3 +119,55 @@ The independent upstream Bilibili legacy MP4 sample [BV1nx411u79K](https://www.b
 - [Podcasting 2.0 transcript specification](https://github.com/Podcastindex-org/podcast-namespace/blob/main/docs/tags/transcript.md): prefer publisher-declared timed text; show notes are not full transcript evidence.
 
 No paid model comparison, account setup, private subscription source, user-Mac installation or release upload is part of this proof.
+
+## 2026-10-22 local development: complete long-interview transcription
+
+The user-selected public interview
+[BV1wgpy69Ekz](https://www.bilibili.com/video/BV1wgpy69Ekz) was verified in the
+local source checkout with the explicitly configured loopback HTTP proxy. This
+is a local working-tree observation, separate from the earlier CI samples.
+
+- The normal anonymous caption path completed six requests/responses. The
+  player returned `code: 0`, `need_login_subtitle: false`, and an empty subtitle
+  list; yt-dlp exposed only the excluded danmaku track. Adding WBI signing and
+  checking the alternate dm/view metadata did not produce an anonymous track.
+- The same verified audio representation supplied standard HTTPS backup URLs
+  alongside its unsupported mcdn `:8082` primary. Preselection and bounded
+  same-URL Range transfer obtained the complete 84,400,350-byte M4A, duration
+  10,278.328 seconds. Media SHA-256:
+  `8f94caf04e28d59682170e33b904c6bb77d9b60ad3f4932bcc4cfc889c50d888`.
+- The existing local executor consumed the complete file using the already
+  cached small model, faster-whisper 1.2.1, CPU/int8, batch size 8, and timestamp
+  decoding. No browser credentials, model download or external AI call was used.
+- The durable task returned 3,749 Chinese cues, first start 0.14 seconds and last
+  end 10,271.84 seconds. The actual React acceptance action committed the result
+  to the original source project; a page reload read the saved transcript.
+- SRT export reparsed to the same 3,749 cues with no parser diagnostics. Cue
+  ordering and bounds were checked against the source duration. The original
+  source URL and durable job binding were retained in the canonical project.
+
+The result is `local_asr` / `unreviewed`, not a platform subtitle or a claim of
+word-for-word accuracy. Full media, transcript, screenshot and local receipt
+remain in ignored `.coconut/dev/`; no signed CDN URL or full transcript is added
+to this repository. This sample does not establish universal platform access or
+installed-release support for the development proxy.
+
+### 2026-10-22：长访谈的可读文字稿（本地开发）
+
+同一条 `BV1wgpy69Ekz` 的现有完整 ASR 结果进一步经过本地 CT-Transformer 标点恢复与 pyannote / 3D-Speaker 声纹聚类。没有重新下载或重新识别原视频音频，没有调用云端 AI。首次准备了可选 sherpa-onnx 1.13.8 和独立的标点、segmentation、embedding 模型文件；以后的处理只读取这些本地文件。
+
+- 最终 3,749 个原始 cue 的 ID、起止时间和顺序保持不变；3,120 个 cue 增加标点或修整中文排版空格，修改前的文字保留为 `original_text`。最终逐字校验无拒收段；一次混合简繁上下文截断通过缩小上下文、重新严格校验解决。
+- 自动声纹结果经支持时长筛选后显示 3 个声音编号：3,391 个 cue 带编号，358 个仍未标注。编号不代表已经核实有且只有三位真人，也不识别真实姓名。初次过细的聚类结果未采用，低支持小组没有被猜测合并进其他人。
+- 连续阅读得到 1,012 个显示段落；边界参考句末标点、停顿、声音切换和长度预算，不宣称做了语义话题分段或人工编辑。页面默认连续阅读，保留逐句校对；原有偏好仍恢复。
+- 通过真实 canonical SQLite 的版本校验保存回原篇目，保留笔记和原 ASR job 绑定。刷新后实际 React 页面显示新文字和标签；首段 B站时间链接为 `?t=0`。导出 SRT 重新解析仍为 3,749 段、无解析诊断。原始备份另存，新的 JSON/TXT/SRT 单独导出。
+- 实际长标题访谈在 1360px 与 390px 页面检查并截图。修复了长标题使手机 grid 轨道扩宽的问题；390px 下文档宽度为 390px、正文行宽 316px。自写材料的浏览器回归另外覆盖完整段落分页、跨 cue 选区、复制、摘录保存、校对入口、刷新恢复和长标题手机布局。
+
+本机模型 SHA-256：
+
+| 模型 | 字节 | SHA-256 |
+| --- | ---: | --- |
+| CT-Transformer 中英 int8 | 75,519,198 | `65a3fb9f5ad7bfb96bf69e0dc4481df97f6ee60513c1d94ce981ba6effd524b1` |
+| pyannote segmentation 3.0 int8 | 1,540,506 | `d582f4b4c6b48205de7e0643c57df0df5615a3c176189be3fc461e9d18827b5d` |
+| 3D-Speaker ERes2Net | 39,593,761 | `1a331345f04805badbb495c775a6ddffcdd1a732567d5ec8b3d5749e3c7a5e4b` |
+
+这是当前工作区单一真实来源的本地开发证据。自动标点、分组和识别措辞仍未经过全文人工校对；未修正「长毫」等疑似错词，也没有承诺所有录音的说话人分组质量。未构建或发布新的原生安装包。配置与处理边界见 [文字稿可读性](transcript-readability.md)。

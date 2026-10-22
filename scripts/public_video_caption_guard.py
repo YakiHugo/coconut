@@ -143,9 +143,21 @@ class VideoTransport:
         self.started = time.monotonic()
         endpoint = validate_proxy(proxy)
         context = ssl.create_default_context(cafile=ca_file)
+        self.proxy_endpoint = endpoint
+        self.tls_context = context
         handler = (TrustedProxyHTTPSHandler(endpoint, context=context) if endpoint else
                    PublicHTTPSHandler(context=context))
         self.opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect(), handler)
+
+    def media_opener(self, url):
+        from scripts.public_video_media import audio_url_allowed
+        if not audio_url_allowed(url, self.provider):
+            raise StopProof('request_scope_stopped')
+        if self.proxy_endpoint is None:
+            return self.opener
+        handler = TrustedProxyHTTPSHandler(self.proxy_endpoint, context=self.tls_context,
+                                           media_url=url, media_provider=self.provider)
+        return urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect(), handler)
 
     def kind(self, url, method, data, headers):
         p = urlparse(url)
@@ -291,7 +303,9 @@ def guarded_extractors(transport):
 
     class PublicBiliBiliIE(BiliBiliIE):
         def extract_formats(self, play_info):
-            return mark_single_bilibili_progressive(super().extract_formats(play_info), play_info)
+            from scripts.public_video_media import select_bilibili_audio_urls
+            formats = select_bilibili_audio_urls(super().extract_formats(play_info), play_info)
+            return mark_single_bilibili_progressive(formats, play_info)
 
         @classmethod
         def ie_key(cls):

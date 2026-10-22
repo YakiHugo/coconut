@@ -58,6 +58,17 @@ test('provider capabilities are explicit rather than a global promise',async()=>
  let calls=0;const media=createVideoAudioService({enabledProviders:['bilibili'],helper:{extractAudio:async()=>{calls++;return valid();}}});
  await assert.rejects(media.download({url,consent:true}));assert.equal(calls,0);
 });
+
+test('media timeout reports bounded transfer evidence through HTTP',async t=>{
+ const diagnostic={stage:'media_download',reason:'budget_exceeded',requests_attempted:7,responses_received:7};
+ const helper={extractAudio:async()=>({status:'guard_stopped',diagnostic:{...diagnostic,url:'https://private.example/signed'}})};
+ const server=await startBridge({port:0,videoAudioService:createVideoAudioService({helper})});t.after(()=>server.shutdown());
+ const origin='http://127.0.0.1:'+server.address().port;
+ const response=await fetch(origin+'/api/videos/media',{method:'POST',headers:{Origin:origin,'Content-Type':'application/json'},body:JSON.stringify({url,consent:true})});
+ assert.equal(response.status,409);const result=await response.json();
+ assert.deepEqual(result.diagnostic,diagnostic);assert.match(result.error,/15 分钟/);
+ assert.doesNotMatch(JSON.stringify(result),/private\.example/);
+});
 test('combined source MP4 stays video with bounded default or unknown language provenance',async()=>{
  for(const role of ['default','unknown']){
   const result=valid();Object.assign(result.media,{kind:'video',type:'video/mp4'});Object.assign(result.source,{format:'mp4',format_id:'18',audio_role:role,audio_language:role==='unknown'?null:'en',audio_language_basis:'platform_video_stream'});

@@ -220,3 +220,14 @@ test('seeded irregular and filtered transcripts preserve coverage, adjacency, bo
   }
  }
 });
+
+test('reading layout keeps complete sentences together across many short ASR cues',()=>{
+ const source=Array.from({length:32},(_,i)=>cue('r'+i,i*2,(i+1)*2,i===17?'这是完整表达的结尾。':'这是表达的一部分'));
+ const before=JSON.stringify(source),passages=P.build(source,{layout:'reading'});
+ assert.equal(passages[0].cues.at(-1).id,'r17');
+ assert.deepEqual(passages.flatMap(p=>p.cues),source);
+ assert.equal(JSON.stringify(source),before);
+ source[19].speaker='说话人 2';
+ const separated=P.build(source,{layout:'reading'});
+ assert.ok(separated.some(p=>p.cues.length===1&&p.cues[0]===source[19]));
+});

@@ -16,6 +16,7 @@ from pathlib import Path
 
 from transcript import make_document, save_document, to_markdown
 from local_asr import OFFLINE_ENVIRONMENT, require_local_model
+from transcript_readability import enhance_from_environment
 from subtitle_import import fetch_subtitle_document, subtitle_document, validate_video_url, validate_media_info, tls_cli_options, source_evidence
 
 
@@ -85,13 +86,19 @@ def transcribe_fast(audio_path: Path, language: str | None, *, model_name: str, 
         # model-name and missing-tokenizer download fallbacks.
         os.environ.update(OFFLINE_ENVIRONMENT)
         model_path = require_local_model(model_name)
-    from faster_whisper import WhisperModel
+    from faster_whisper import WhisperModel, BatchedInferencePipeline
     if local_files_only:
         model = WhisperModel(str(model_path), device=device, compute_type=compute_type,
                              local_files_only=True)
     else:
         model = WhisperModel(model_name, device=device, compute_type=compute_type)
-    segments, info = model.transcribe(str(audio_path), language=language, vad_filter=True, word_timestamps=True)
+    # Use the requested batch size for long recordings as well as WhisperX.
+    # A size of one retains the sequential decoder; both use the same already
+    # constructed model, offline guard, VAD and word-timestamp output contract.
+    recognizer = BatchedInferencePipeline(model=model) if batch_size > 1 else model
+    segments, info = recognizer.transcribe(str(audio_path), language=language, vad_filter=True,
+                                          word_timestamps=True,
+                                          **({'batch_size': batch_size, 'without_timestamps': False} if batch_size > 1 else {}))
     output = []
     for segment in segments:
         output.append({'start': segment.start, 'end': segment.end, 'text': segment.text,
@@ -251,6 +258,18 @@ def main():
                                       "language_basis": "user_hint" if args.language else "asr_detected",
                                       "subtitle_check": ("skipped" if args.force_transcribe else "no_eligible_track") if is_url else "not_applicable",
                                       **source_evidence(source_url)}
+        # Run only explicitly provisioned local reading models. A failure must
+        # leave the completed ASR result available, with an honest status.
+        if document.get('provenance', {}).get('kind') == 'local_asr':
+            save_document(document, cached_document)
+            print('[reading] preparing readable transcript', file=sys.stderr)
+            try:
+                reading_audio = source if not is_url else locals().get('audio_path')
+                document = enhance_from_environment(document, reading_audio)
+                document.get('provenance', {}).pop('readability_warning', None)
+            except (ImportError, OSError, RuntimeError, ValueError):
+                document.setdefault('provenance', {})['readability_warning'] = 'Local reading models unavailable; original ASR transcript retained'
+                print('[reading] local enhancement unavailable; original transcript retained', file=sys.stderr)
         # Commit completed caption/ASR work before the optional media stage.
         # A stop or crash during a large download must not discard the transcript.
         save_document(document, cached_document)
