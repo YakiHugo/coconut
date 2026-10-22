@@ -15,6 +15,8 @@ from urllib.parse import urlparse, parse_qs
 from scripts.public_x_caption_guard import StopProof
 
 MAX_MEDIA = 200 * 1024 * 1024
+MAX_MEDIA_SECONDS = 15 * 60
+MEDIA_RANGE_BYTES = 8 * 1024 * 1024
 MIME_TYPES = frozenset(('audio/mp4', 'video/mp4', 'application/octet-stream'))
 
 
@@ -39,6 +41,37 @@ def audio_url_allowed(value, provider):
     except (ValueError, TypeError):
         pass
     return False
+
+
+def select_bilibili_audio_urls(formats, play_info):
+    """Choose one permitted URL from the same DASH audio object before fetching.
+
+    Bilibili can put an mcdn :8082 URL first and standard HTTPS URLs in
+    backupUrl. Keep the existing port/host policy; never retry another URL after
+    a failed request or borrow a URL from a different audio representation.
+    """
+    dash = play_info.get('dash') if isinstance(play_info, dict) else None
+    audio = dash.get('audio') if isinstance(dash, dict) else None
+    if not isinstance(audio, list):
+        return formats
+    result = []
+    for item in formats:
+        source_url = item.get('url')
+        if item.get('vcodec') != 'none' or audio_url_allowed(source_url, 'bilibili'):
+            result.append(item)
+            continue
+        matches = [raw for raw in audio if isinstance(raw, dict)
+                   and str(raw.get('id')) == str(item.get('format_id'))
+                   and source_url == (raw.get('baseUrl') or raw.get('base_url') or raw.get('url'))]
+        if len(matches) == 1:
+            raw = matches[0]
+            backups = raw.get('backupUrl') or raw.get('backup_url') or []
+            if isinstance(backups, list):
+                chosen = next((url for url in backups if audio_url_allowed(url, 'bilibili')), None)
+                if chosen is not None:
+                    item = {**item, 'url': chosen}
+        result.append(item)
+    return result
 
 
 def choose_audio(info, provider, language=None):
@@ -155,45 +188,80 @@ def download_verified_audio(info, transport, output, source_url, language=None):
     selected = choose_media(info, transport.provider, language)
     if selected is None:
         return {'status': 'media_unavailable'}
-    if transport.count >= 32 or time.monotonic() - transport.started > 120:
+    if transport.count >= 32 or time.monotonic() - transport.started > MAX_MEDIA_SECONDS:
         raise StopProof('budget_exceeded')
     transport.stage = 'media_download'
-    transport.count += 1
-    request = urllib.request.Request(selected['url'], headers={
-        'User-Agent': 'Coconut-public-captions/1.0', 'Accept-Encoding': 'identity',
-        'Referer': source_url}, method='GET')
-    written = 0
+    opener = transport.media_opener(selected['url'])
+    written, total, validator = 0, None, None
+    digest = hashlib.sha256()
     try:
-        with transport.opener.open(request, timeout=15) as response:
-            transport.responses += 1
-            if response.status != 200 or response.headers.get('Content-Encoding', 'identity') != 'identity':
-                raise StopProof('unexpected_response')
-            if response.headers.get('Content-Type', '').split(';')[0].strip().lower() not in MIME_TYPES:
-                raise StopProof('unexpected_response')
-            length = response.headers.get('Content-Length')
-            if length is not None and (not re.fullmatch(r'[0-9]+', length) or not 12 <= int(length) <= MAX_MEDIA):
-                raise StopProof('budget_exceeded')
-            digest = hashlib.sha256()
-            with output.open('xb') as stream:
-                first = True
-                while True:
-                    if time.monotonic() - transport.started > 120:
+        with output.open('xb') as stream:
+            while True:
+                if transport.count >= 32 or time.monotonic() - transport.started > MAX_MEDIA_SECONDS:
+                    raise StopProof('budget_exceeded')
+                start = written
+                end = min(start + MEDIA_RANGE_BYTES, total or MAX_MEDIA) - 1
+                headers = {
+                    'User-Agent': 'Coconut-public-captions/1.0', 'Accept-Encoding': 'identity',
+                    'Referer': source_url, 'Range': f'bytes={start}-{end}'}
+                if validator is not None:
+                    headers['If-Range'] = validator[1]
+                request = urllib.request.Request(selected['url'], headers=headers, method='GET')
+                transport.count += 1
+                with opener.open(request, timeout=15) as response:
+                    transport.responses += 1
+                    if response.status not in (200, 206) or response.headers.get('Content-Encoding', 'identity') != 'identity':
+                        raise StopProof('unexpected_response')
+                    if response.headers.get('Content-Type', '').split(';')[0].strip().lower() not in MIME_TYPES:
+                        raise StopProof('unexpected_response')
+                    length = response.headers.get('Content-Length')
+                    if length is not None and (not re.fullmatch(r'[0-9]+', length) or not 1 <= int(length) <= MAX_MEDIA):
                         raise StopProof('budget_exceeded')
-                    chunk = response.read(64 * 1024)
-                    if not chunk:
-                        break
-                    written += len(chunk)
-                    if written > MAX_MEDIA:
-                        raise StopProof('budget_exceeded')
-                    if first:
-                        # M4A's ISO-BMFF header; never accept an HTML/login body.
-                        if len(chunk) < 12 or chunk[4:8] != b'ftyp':
+                    expected = int(length) if length is not None else None
+                    if response.status == 206:
+                        if start == 0:
+                            for name in ('ETag', 'Last-Modified'):
+                                value = response.headers.get(name)
+                                if value and not value.startswith('W/'):
+                                    validator = (name, value)
+                                    break
+                        elif validator is not None and response.headers.get(validator[0]) != validator[1]:
                             raise StopProof('unexpected_response')
-                        first = False
-                    digest.update(chunk)
-                    stream.write(chunk)
-            if written < 12 or length is not None and written != int(length):
-                raise StopProof('unexpected_response')
+                        match = re.fullmatch(r'bytes (\d+)-(\d+)/(\d+)', response.headers.get('Content-Range', ''))
+                        if not match:
+                            raise StopProof('unexpected_response')
+                        first, last, size = map(int, match.groups())
+                        if not 12 <= size <= MAX_MEDIA:
+                            raise StopProof('budget_exceeded')
+                        if first != start or last != min(end, size - 1) or last < first or total is not None and size != total:
+                            raise StopProof('unexpected_response')
+                        total = size
+                        if expected is not None and expected != last - first + 1:
+                            raise StopProof('unexpected_response')
+                        expected = last - first + 1
+                    elif start != 0 or response.headers.get('Content-Range') is not None:
+                        # A server may ignore the first Range and send the whole
+                        # object. It must never restart a later piece at byte 0.
+                        raise StopProof('unexpected_response')
+                    while True:
+                        if time.monotonic() - transport.started > MAX_MEDIA_SECONDS:
+                            raise StopProof('budget_exceeded')
+                        chunk = response.read(64 * 1024)
+                        if not chunk:
+                            break
+                        if written == 0 and (len(chunk) < 12 or chunk[4:8] != b'ftyp'):
+                            raise StopProof('unexpected_response')
+                        written += len(chunk)
+                        if written > MAX_MEDIA:
+                            raise StopProof('budget_exceeded')
+                        if expected is not None and written - start > expected:
+                            raise StopProof('unexpected_response')
+                        digest.update(chunk)
+                        stream.write(chunk)
+                    if written < 12 or expected is not None and written - start != expected:
+                        raise StopProof('unexpected_response')
+                    if response.status == 200 or written == total:
+                        break
     except urllib.error.HTTPError as error:
         transport.responses += 1
         code = error.code

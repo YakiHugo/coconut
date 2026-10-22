@@ -328,9 +328,10 @@ class LocalOnlyJobTests(unittest.TestCase):
 
 class LocalTranscriptionTests(unittest.TestCase):
     def fake_runtime(self):
-        runtime = SimpleNamespace(WhisperModel=Mock())
+        runtime = SimpleNamespace(WhisperModel=Mock(), BatchedInferencePipeline=Mock())
         segment = SimpleNamespace(start=0, end=1, text='Offline fixture', words=[])
         runtime.WhisperModel.return_value.transcribe.return_value = ([segment], SimpleNamespace(language='en'))
+        runtime.BatchedInferencePipeline.return_value.transcribe.return_value = ([segment], SimpleNamespace(language='en'))
         return runtime
 
     def test_local_constructor_uses_existing_absolute_directory_and_local_files_flag(self):
@@ -355,6 +356,24 @@ class LocalTranscriptionTests(unittest.TestCase):
                                 device='cpu', compute_type='int8', local_files_only=True)
         runtime.WhisperModel.assert_not_called()
         whisperx.assert_not_called()
+
+    def test_batch_size_uses_existing_offline_model_and_preserves_sequential_option(self):
+        for size in (1,8):
+            runtime=self.fake_runtime()
+            with self.subTest(size=size),patch.dict(sys.modules,{'faster_whisper':runtime}), \
+                    patch('transcribe.require_local_model',return_value=Path('/existing/snapshot')):
+                result=transcribe_fast(Path('/fixture.wav'),'zh',model_name='small',device='cpu',
+                                       compute_type='int8',batch_size=size,local_files_only=True)
+            self.assertEqual(result['segments'][0]['text'],'Offline fixture')
+            if size==1:
+                runtime.BatchedInferencePipeline.assert_not_called()
+                runtime.WhisperModel.return_value.transcribe.assert_called_once_with(
+                    '/fixture.wav',language='zh',vad_filter=True,word_timestamps=True)
+            else:
+                runtime.BatchedInferencePipeline.assert_called_once_with(model=runtime.WhisperModel.return_value)
+                runtime.WhisperModel.return_value.transcribe.assert_not_called()
+                runtime.BatchedInferencePipeline.return_value.transcribe.assert_called_once_with(
+                    '/fixture.wav',language='zh',vad_filter=True,word_timestamps=True,batch_size=8,without_timestamps=False)
 
     def test_ordinary_constructor_keeps_existing_advanced_behavior(self):
         runtime = self.fake_runtime()

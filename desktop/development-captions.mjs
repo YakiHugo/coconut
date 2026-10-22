@@ -41,10 +41,11 @@ export function validateCaptionProxy(value){
  if(!match||Number(match[2])>65535)throw fail('CAPTION_PROXY_CONFIGURATION','字幕代理仅支持显式本机 HTTP 端口，不能包含凭据');
  return `http://${match[1]}:${match[2]}`;
 }
-export function createDevelopmentCaptionHelper({python,proxy=null,timeoutMs=HELPER_LIMITS.timeoutMs,tempRoot=tmpdir(),onSpawn,detached=process.platform!=='win32'}={}){
+export function createDevelopmentCaptionHelper({python,proxy=null,timeoutMs=HELPER_LIMITS.timeoutMs,mediaTimeoutMs=910000,tempRoot=tmpdir(),onSpawn,detached=process.platform!=='win32'}={}){
  if(typeof detached!=='boolean')throw fail('CAPTION_CONFIGURATION','无效的字幕进程组配置');
  if(typeof python!=='string'||!path.isAbsolute(python))throw fail('CAPTION_CONFIGURATION','字幕 Python 必须是已安装解释器的绝对路径');
  if(!Number.isInteger(timeoutMs)||timeoutMs<1||timeoutMs>HELPER_LIMITS.timeoutMs)throw fail('CAPTION_LIMIT','无效的字幕助手限制');
+ if(!Number.isInteger(mediaTimeoutMs)||mediaTimeoutMs<1||mediaTimeoutMs>910000)throw fail('CAPTION_LIMIT','无效的媒体助手限制');
  const trustedProxy=validateCaptionProxy(proxy);
  const active=new Set();let closing=false;
  async function execute(input,{signal}={}){
@@ -56,7 +57,7 @@ export function createDevelopmentCaptionHelper({python,proxy=null,timeoutMs=HELP
     directory=await mkdtemp(path.join(tempRoot,'coconut-dev-caption-'));
     for(const name of ['home','tmp','config','cache','data','empty-bin'])await mkdir(path.join(directory,name),{mode:0o700});
     const output=await runCaptionProcess(python,input,{directory,signal:signal?AbortSignal.any([signal,controller.signal]):controller.signal,
-     timeoutMs:input.operation==='version'?Math.min(timeoutMs,10000):timeoutMs,maxOutputBytes:HELPER_LIMITS.outputBytes,onSpawn,detached,args:['-I','-B','-c',launcher]});
+     timeoutMs:input.operation==='version'?Math.min(timeoutMs,10000):input.operation==='extract-development-audio'?mediaTimeoutMs:timeoutMs,maxOutputBytes:HELPER_LIMITS.outputBytes,onSpawn,detached,args:['-I','-B','-c',launcher]});
     let result;try{result=JSON.parse(output);}catch{throw fail('CAPTION_OUTPUT','字幕助手没有返回完整元数据');}
     if(!result||typeof result!=='object'||Array.isArray(result))throw fail('CAPTION_OUTPUT','字幕助手没有返回完整元数据');
     if(input.operation==='extract-development-audio'&&result.status==='media_ready'){
@@ -95,7 +96,7 @@ export function createDevelopmentCaptionHelper({python,proxy=null,timeoutMs=HELP
     if(r.status==='version_mismatch'||r.status==='ok'&&r.version!==lock.ytDlpVersion)return {ready:false,code:'CAPTION_VERSION',expectedVersion:lock.ytDlpVersion,actualVersion:typeof r.version==='string'&&/^\d{4}\.\d{1,2}\.\d{1,2}$/.test(r.version)?r.version:'unknown'};
     if(r.status!=='ok'||r.protocol!==1||r.version!==lock.ytDlpVersion||r.publicExtraction!==true||r.guardProtocol!==1||r.tlsRootsVerified!==true||JSON.stringify(r.developmentProviders)!==JSON.stringify(['x','youtube','bilibili']))throw fail('CAPTION_VERSION','字幕依赖版本或协议不匹配');
     if(trustedProxy&&r.developmentProxyProtocol!==1)throw fail('CAPTION_VERSION','字幕代理协议不匹配');
-    ready=true;audioReady=r.developmentAudioProtocol===1&&!trustedProxy;return {ready:true,audioFallback:audioReady,audioProviders:audioReady?['youtube','bilibili']:[],code:'ready',version:r.version,providers:r.developmentProviders,networkMode:trustedProxy?'trusted_local_proxy':'direct_public'};
+    ready=true;audioReady=r.developmentAudioProtocol===1&&(!trustedProxy||r.developmentProxyAudioProtocol===1);return {ready:true,audioFallback:audioReady,audioProviders:audioReady?['youtube','bilibili']:[],code:'ready',version:r.version,providers:r.developmentProviders,networkMode:trustedProxy?'trusted_local_proxy':'direct_public'};
    }catch(error){if(error.code==='CAPTION_CANCELLED')throw error;return {ready:false,code:error.code||'CAPTION_UNAVAILABLE'};}
   },
   async extractCaptions({url,language=null,signal}={}){
@@ -115,7 +116,7 @@ export function createDevelopmentCaptionHelper({python,proxy=null,timeoutMs=HELP
    const source=captionSource(url);
    if(!['youtube','bilibili'].includes(source.provider))throw fail('CAPTION_INPUT','此来源不支持公开媒体回退');
    if(language!==null&&(typeof language!=='string'||!/^([a-z]{2,3})(-[A-Za-z0-9]{2,8}){0,2}$/.test(language)))throw fail('CAPTION_INPUT','原语言标记无效');
-   return execute({operation:'extract-development-audio',url:source.url,language},{signal});
+   return execute({operation:'extract-development-audio',url:source.url,language,...(trustedProxy?{trustedProxy}:{})},{signal});
   },
   shutdown(){closing=true;for(const controller of active)controller.abort();return Promise.allSettled([...active].map(controller=>controller.operation));},
  });

@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { ReaderDocument } from './contracts';
 type ExportKind = 'json' | 'txt' | 'srt' | 'vtt' | 'md';
 type Core = {
-    transcriptText: (doc: ReaderDocument, target: string) => {
+    transcriptText: (doc: ReaderDocument, target: string, options?: {layout: 'reading'}) => {
         text: string;
         translated: number;
         missing: number;
@@ -41,7 +41,7 @@ export function ReaderExports({ doc, hasDrafts }: {
                 detail = '完整项目数据，不包含媒体文件';
             }
             else if (kind === 'txt') {
-                const result = core.transcriptText(doc, target);
+                const result = core.transcriptText(doc, target, {layout: 'reading'});
                 text = result.text;
                 detail = target ? `有效译文 ${result.translated} 段，缺失 ${result.missing} 段，过期 ${result.stale} 段` : '整篇原文，不受当前筛选影响';
             }

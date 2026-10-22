@@ -44,7 +44,11 @@ COCONUT_CAPTION_PROXY=http://127.0.0.1:7897 npm run dev
 
 这是手动启用示例，不会自动修改 macOS、VPN、系统代理或 DNS。只有确认信任该本机代理后才启用；修改后需重启服务。未设置时仍为原有直连模式。仅接受 `http://127.0.0.1:端口` 或 `http://[::1]:端口`，端口 1–65535，可带结尾 `/`；不接受用户名/密码、主机别名、远程代理、SOCKS、查询或其他路径。空字符串和错误配置失败关闭，不自动回退直连。`CAPTION_PROXY_CONFIGURATION` 表示启动配置无效。
 
-该设置只作用于开发模式 YouTube/Bilibili 现成字幕获取，不改变 X、模型、播客或其他请求；安装包没有新增可配置代理入口。HTTP/Web/Harness 请求不能设置或覆盖代理地址。配置由启动进程固定，在隔离助手内部协议传递；不继承 `HTTP_PROXY`、`HTTPS_PROXY`、`ALL_PROXY`、`NO_PROXY` 或系统自动代理配置。`/api/captions/status` 仅报告 `networkMode`（`direct_public` 或 `trusted_local_proxy`）和 `proxyProviders`，不暴露代理地址。依赖就绪检查仍不发起平台/代理连接。
+该设置作用于开发模式 YouTube/Bilibili 现成字幕获取，以及用户明确选择、通过相同来源校验后的公开音频或单文件视频下载；不改变 X、模型、播客或其他请求。安装包没有新增可配置代理入口。HTTP/Web/Harness 请求不能设置或覆盖代理地址。配置由启动进程固定，在隔离助手内部协议传递；不继承 `HTTP_PROXY`、`HTTPS_PROXY`、`ALL_PROXY`、`NO_PROXY` 或系统自动代理配置。`/api/captions/status` 仅报告 `networkMode`（`direct_public` 或 `trusted_local_proxy`）和 `proxyProviders`，不暴露代理地址。依赖就绪检查仍不发起平台/代理连接。
+
+代理音频获取需要助手单独声明 `developmentProxyAudioProtocol: 1`；旧的仅字幕协议不会自动获得媒体能力。元数据传输仍拒绝 CDN 媒体请求。下载阶段为同一次提取中已选择的精确 HTTPS 媒体 URL 建立独立代理传输，保留主机、443 端口、路径、TLS、大小、取消和不跟随重定向限制，不将 CDN 签名 URL 写入文档。Bilibili 的默认音频地址可能使用不支持的 mcdn 端口；此时仅在同一 DASH 音轨对象中预先选择符合既有规则的 `backupUrl` / `backup_url`。不会在连接失败或被拒绝后切换地址。
+
+字幕查询仍为最多 130 秒；明确选择的媒体下载有独立的 15 分钟总预算、15 秒单次网络等待和 200 MiB 上限。通过同一精确 URL 的连续 8 MiB Range 请求取得完整文件，逐段验证 Content-Range、总长以及来源提供的 ETag / Last-Modified；仍共用最多 32 次请求的预算。不支持 Range 的来源可在首次请求返回完整的 200 响应，后续请求则不能重新从零开始。媒体请求失败不会自动启动转写。要生成文字稿，还需连接已有本地 ASR 执行器，见[来源与转写流程](link-first-ingestion.md)。
 
 **信任边界：** HTTP CONNECT 只连接选定的数值回环端口，向代理提交允许的来源主机名及 443 端口，由代理处理来源 DNS/路由；Coconut 不再验证代理最终连接的 IP 是否公网。所有者因此信任该代理做正确的路由。Coconut 继续使用原始主机名进行 SNI 和 certifi TLS 证书校验，并限制来源域名、路径、视频身份、请求与字节预算。代理能观察目标主机、连接时间和流量大小；正常 TLS 隧道不会向代理明文提供 HTTPS 路径、字幕或视频 ID。不会为了连接成功添加代理证书、关闭 TLS 校验或开放任意私网 URL。
 

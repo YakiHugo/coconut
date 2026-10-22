@@ -111,7 +111,7 @@ def main():
                 'guardProtocol': 1, 'tlsRootsVerified': True,
                 'publicProviders': list(PUBLIC_PROVIDERS),
                 'developmentProviders': list(PUBLIC_PROVIDERS), 'developmentProxyProtocol': 1,
-                'developmentAudioProtocol': 1}
+                'developmentAudioProtocol': 1, 'developmentProxyAudioProtocol': 1}
     if operation == 'authored-fixture' and set(request) == {'operation', 'endpoint'}:
         if not isinstance(request['endpoint'], str) or len(request['endpoint']) > 200:
             return {'status': 'unavailable'}

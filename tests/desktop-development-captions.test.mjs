@@ -41,7 +41,7 @@ test('missing or mismatched Python fails closed with actionable status and no so
  const f=await fixture(t);const {server,captions}=await startDevelopmentBridge({libraryDirectory:null,port:0,taskDirectory:path.join(f.directory,'missing-tasks'),captionPython:path.join(f.directory,'missing')});try{assert.equal(captions.available,false);assert.equal(captions.code,'CAPTION_START');}finally{await server.shutdown();}
 });
 test('adapter cancellation, busy protection, timeout and cleanup bound real child processes',async t=>{
- const f=await fixture(t,{delay:5000});const helper=createDevelopmentCaptionHelper({python:f.executable,tempRoot:f.directory,timeoutMs:500});
+ const f=await fixture(t,{delay:10000});const helper=createDevelopmentCaptionHelper({python:f.executable,tempRoot:f.directory,timeoutMs:3000});
  assert.equal((await helper.status()).ready,true);
  const controller=new AbortController();const pending=helper.extractCaptions({url,signal:controller.signal});
  await assert.rejects(helper.extractCaptions({url}),e=>e.code==='CAPTION_BUSY');controller.abort();await assert.rejects(pending,e=>e.code==='CAPTION_CANCELLED');
@@ -177,7 +177,7 @@ test('development process retains bounded actual language choices without diagno
  try{assert.equal((await helper.status()).ready,true);assert.deepEqual(await helper.extractCaptions({url}),{status:'language_required',languages:['en','fr']});}finally{await helper.shutdown();}
 });
 
-test('caption-only trusted proxy never advertises or executes the direct public media route',async t=>{
+test('older caption-only proxy protocol cannot silently enable media',async t=>{
  let server;t.after(async()=>{if(server)await server.shutdown();});
  // Register shutdown before fixture cleanup so writer.lock remains until close.
  const probe={...version,developmentProxyProtocol:1,developmentAudioProtocol:1};
@@ -193,4 +193,33 @@ test('caption-only trusted proxy never advertises or executes the direct public 
  const media=await fetch(started.origin+'/api/videos/media',{method:'POST',headers:{Origin:started.origin,'Content-Type':'application/json'},body:JSON.stringify({url:'https://www.bilibili.com/video/BV1xx411c7mD',consent:true})});
  assert.equal(media.status,503);
  const calls=(await readFile(f.log,'utf8')).trim().split('\n').map(JSON.parse);assert.equal(calls.some(call=>call.input.operation==='extract-development-audio'),false);
+});
+
+test('verified proxy media protocol offers audio after no captions and keeps owner proxy fixed',async t=>{
+ let server;t.after(async()=>{if(server)await server.shutdown();});
+ const publicUrl='https://www.bilibili.com/video/BV1xx411c7mD';
+ const probe={...version,developmentProxyProtocol:1,developmentAudioProtocol:1,developmentProxyAudioProtocol:1};
+ const f=await fixture(t,{probe,result:{status:'no_matching_captions'}});
+ const started=await startDevelopmentBridge({libraryDirectory:null,port:0,taskDirectory:path.join(f.directory,'tasks'),captionPython:f.executable,captionProxy:'http://127.0.0.1:7897'});
+ server=started.server;
+ const post=(route,data)=>fetch(started.origin+route,{method:'POST',headers:{Origin:started.origin,'Content-Type':'application/json'},body:JSON.stringify(data)});
+ const response=await post('/api/v1/ingestions',{protocolVersion:1,source:{kind:'url',url:publicUrl}});
+ assert.equal(response.status,200);
+ assert.deepEqual((await response.json()).ingestion.error.audio_fallback,{endpoint:'/api/videos/media',url:publicUrl,language:null});
+ const media=await post('/api/videos/media',{url:publicUrl,consent:true,trustedProxy:'http://127.0.0.1:9999'});
+ assert.equal(media.status,409);
+ const calls=(await readFile(f.log,'utf8')).trim().split('\n').map(JSON.parse);
+ assert.deepEqual(calls.at(-1).input,{operation:'extract-development-audio',url:publicUrl,language:null,trustedProxy:'http://127.0.0.1:7897'});
+ assert.equal(calls.filter(call=>call.input.operation==='extract-development-audio').length,1);
+});
+
+test('media process has its own bounded timeout and cleans partial work',async t=>{
+ const f=await fixture(t,{probe:{...version,developmentAudioProtocol:1},result:{status:'no_matching_captions'},delay:5000});
+ const helper=createDevelopmentCaptionHelper({python:f.executable,tempRoot:f.directory,timeoutMs:1000,mediaTimeoutMs:80});
+ try{
+  assert.equal((await helper.status()).audioFallback,true);
+  await assert.rejects(helper.extractAudio({url:'https://www.bilibili.com/video/BV1xx411c7mD'}),error=>error.code==='CAPTION_TIMEOUT');
+  assert.equal((await readdir(f.directory)).some(name=>name.startsWith('coconut-dev-caption-')),false);
+ }finally{await helper.shutdown();}
+ for(const mediaTimeoutMs of [0,-1,Infinity,910001])assert.throws(()=>createDevelopmentCaptionHelper({python:f.executable,mediaTimeoutMs}),error=>error.code==='CAPTION_LIMIT');
 });

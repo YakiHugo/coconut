@@ -1,0 +1,4 @@
+# Optional local punctuation and acoustic speaker grouping.
+# Install explicitly in the same Python environment as the ASR executor.
+# Model files are provisioned separately; imports never download them.
+sherpa-onnx==1.13.8

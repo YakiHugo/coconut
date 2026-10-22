@@ -3,6 +3,7 @@
  'use strict';
 
  const LIMITS=Object.freeze({characters:800,cues:16,seconds:45,targetCharacters:280,targetCues:8,targetSeconds:22});
+ const READING_LIMITS=Object.freeze({characters:650,cues:32,seconds:75,targetCharacters:180,targetCues:14,targetSeconds:30});
  const sentenceEnd=/[.!?。！？…][\s"'”’）)\]】」』〉》»]*$/u;
 
  function validCue(cue) {
@@ -71,6 +72,7 @@
  function continuous(previous,cue){return speaker(previous)===speaker(cue)&&cue.start>=previous.start&&cue.start-previous.end<=2;}
  function adjacent(previous,entry){return entry.inputPosition===previous.inputPosition+1&&entry.position===previous.position+1&&continuous(previous.cue,entry.cue);}
  function build(segments,options={}){
+  const limits=options.layout==='reading'?READING_LIMITS:LIMITS;
   const entries=sourceEntries(segments,options),passages=[];
   for(let first=0;first<entries.length;){
    const initial=entries[first].cue;
@@ -80,7 +82,7 @@
     const count=next-first+1,nextEnd=Math.max(end,cue.end);
     if(next>first){
      if(!adjacent(previous,entry))break;
-     if(characters+cue.text.length>LIMITS.characters||count>LIMITS.cues||nextEnd-initial.start>LIMITS.seconds){
+     if(characters+cue.text.length>limits.characters||count>limits.cues||nextEnd-initial.start>limits.seconds){
       // Prefer the last substantial sentence instead of stranding its trailing
       // fragment at a hard limit. The bounded look-back never revises a cue.
       if(lastSentence>first&&(sentenceCharacters>=characters/2||lastSentence-first+1>=(next-first)/2))next=lastSentence+1;
@@ -90,8 +92,8 @@
     characters+=cue.text.length;end=nextEnd;next++;
     const atSentenceEnd=sentenceEnd.test(cue.text);
     if(atSentenceEnd){lastSentence=next-1;sentenceCharacters=characters;}
-    const target=characters>=LIMITS.targetCharacters||count>=LIMITS.targetCues||end-initial.start>=LIMITS.targetSeconds;
-    if((atSentenceEnd&&target)||characters>=LIMITS.characters||count>=LIMITS.cues||end-initial.start>=LIMITS.seconds)break;
+    const target=characters>=limits.targetCharacters||count>=limits.targetCues||end-initial.start>=limits.targetSeconds;
+    if((atSentenceEnd&&target)||characters>=limits.characters||count>=limits.cues||end-initial.start>=limits.seconds)break;
    }
    const cues=entries.slice(first,next).map(entry=>entry.cue);
    passages.push({key:'passage:'+initial.id,start:initial.start,end:Math.max(...cues.map(cue=>cue.end)),speaker:speaker(initial),cues});

@@ -1,4 +1,4 @@
-"""Explicit development-caption HTTP CONNECT transport; no ambient proxy discovery.
+"""Explicit development HTTP CONNECT for captions and selected source media.
 
 The owner trusts the selected loopback proxy to resolve and route permitted origin
 hostnames. Unlike direct mode, this cannot attest the proxy's destination IP.
@@ -9,6 +9,7 @@ import re
 import socket
 import ssl
 import urllib.request
+from urllib.parse import urlsplit
 
 from scripts.public_x_caption_guard import StopProof
 
@@ -25,7 +26,7 @@ def validate_proxy(value):
 
 
 class TrustedProxyHTTPSHandler(urllib.request.HTTPSHandler):
-    def __init__(self, proxy, *, context):
+    def __init__(self, proxy, *, context, media_url=None, media_provider=None):
         # Revalidate even internal normalized input; no arbitrary socket targets.
         host, port = proxy
         endpoint = validate_proxy(f'http://{"[::1]" if host == "::1" else host}:{port}')
@@ -33,20 +34,33 @@ class TrustedProxyHTTPSHandler(urllib.request.HTTPSHandler):
             raise StopProof('proxy_configuration_invalid')
         super().__init__(context=context)
         self.endpoint = endpoint
+        self.media_url = media_url
+        if media_url is not None:
+            # A separate, exact URL capability for the already selected source
+            # stream. Metadata/caption handlers never acquire CDN access.
+            from scripts.public_video_media import audio_url_allowed
+            if not audio_url_allowed(media_url, media_provider):
+                raise StopProof('request_scope_stopped')
+            self.origin_hosts = (urlsplit(media_url).hostname,)
+        else:
+            self.origin_hosts = (
+                'www.youtube.com', 'www.bilibili.com', 'api.bilibili.com',
+                'aisubtitle.hdslb.com', 'subtitle.bilibili.com', 'subtitle.hdslb.com',
+                'i0.hdslb.com', 'i1.hdslb.com', 'i2.hdslb.com',
+            )
 
     def https_open(self, request):
         endpoint = self.endpoint
+        origin_hosts = self.origin_hosts
+        if self.media_url is not None and request.full_url != self.media_url:
+            raise StopProof('request_scope_stopped')
 
         class TunnelConnection(http.client.HTTPSConnection):
             def __init__(self, origin, **kwargs):
                 # urllib passes a validated origin authority, never a proxy URL.
                 super().__init__(origin, **kwargs)
                 target, port = self.host, self.port
-                if port != 443 or target not in (
-                    'www.youtube.com', 'www.bilibili.com', 'api.bilibili.com',
-                    'aisubtitle.hdslb.com', 'subtitle.bilibili.com', 'subtitle.hdslb.com',
-                    'i0.hdslb.com', 'i1.hdslb.com', 'i2.hdslb.com',
-                ):
+                if port != 443 or target not in origin_hosts:
                     raise StopProof('request_scope_stopped')
                 self.host, self.port = endpoint
                 self.set_tunnel(target, 443)

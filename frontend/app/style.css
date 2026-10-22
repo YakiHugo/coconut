@@ -13,3 +13,8 @@
 .episode-list article>.episode-actions{display:flex;flex-direction:column;gap:8px;flex:0 0 auto}.episode-actions button{white-space:nowrap}
 
 .episode-browser{margin:24px 0}.episode-browser input{width:100%;max-width:520px}.episode-browser button{margin:8px 0 8px 12px}.episode-browser p,.episode-warning,.episode-warnings{font-size:13px;color:#646b5c}.episode-warning{padding:12px 0}.episode-warnings{margin:16px 0;overflow-wrap:anywhere}.episode-warnings summary{cursor:pointer}.episode-more{margin-top:24px}
+/* Long episode titles and source names must not widen the mobile grid track. */
+.react-app>main,.app-sidebar{min-width:0}
+.reader-workspace{width:100%;min-width:0}
+.reader-workspace h1,.rw-source{overflow-wrap:anywhere}
+@media(max-width:760px){.react-app{grid-template-columns:minmax(0,1fr)}}

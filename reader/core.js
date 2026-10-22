@@ -1372,7 +1372,7 @@
 		const provenance =
 			data.provenance && typeof data.provenance === "object"
 				? Object.fromEntries(
-						["kind", "model", "backend", "language", "alignment_warning", "playback_warning", "media_id", "caption_method", "caption_track", "subtitle_check", "language_basis", "review_status", "source_platform", "source_medium"]
+						["kind", "model", "backend", "language", "alignment_warning", "playback_warning", "media_id", "caption_method", "caption_track", "subtitle_check", "language_basis", "review_status", "source_platform", "source_medium", "punctuation_method", "punctuation_backend", "punctuation_model", "punctuation_status", "speaker_method", "speaker_backend", "speaker_model", "speaker_status", "readability_warning"]
 							.filter((k) => typeof data.provenance[k] === "string")
 							.map((k) => [k, data.provenance[k]]),
 					)
@@ -1513,17 +1513,22 @@
   return doc.segments.findLast(s=>s.start<=seconds && s.end>=seconds) || doc.segments.find(s=>s.start>=seconds) || null;
  }
  // Reading export uses the same display-only paragraphs as the reader, not subtitle syntax.
- function transcriptText(doc, target='') {
+ function transcriptText(doc, target='', options={}) {
   if(isReadingCollection(doc))throw new Error('成果集不是文字稿，请导出成果集 Markdown。');
   if(isAudioProject(doc)||!doc.segments.length)throw new Error('尚未导入文字稿，不能导出整篇文字');
   const passages=typeof module!=='undefined'&&module.exports?require('./passages.js'):root.CoconutPassages;
   const origin=doc.provenance?.kind==='authored_demo'?'自写演示内容（无对应音视频）':
    podcastURL(doc.source_url)||podcastOrigin(doc)||(doc.podcast_source?.kind==='direct_media'?podcastURL(doc.podcast_source.media_url):'')||(doc.local_media_source?'本地媒体：'+doc.local_media_source.name:doc.source_media?'本地原始媒体（无原站链接）':'未关联来源');
   const lines=[doc.title,'来源：'+origin],counts={translated:0,missing:0,stale:0},blocks=[];
+  let previousSpeaker;
+  const labeledReading=options.layout==='reading'&&doc.segments.some(cue=>cue.speaker);
   const join=values=>values.reduce((text,value,index)=>text+(index?passages.separator(values[index-1],value):'')+value,'');
-  for(const passage of passages.build(doc.segments)){
+  for(const passage of passages.build(doc.segments,options)){
    const block=[];
-   if(passage.speaker!==null&&passage.speaker!=='')block.push('说话人：'+passage.speaker);
+   if(labeledReading){
+    if(passage.speaker!==previousSpeaker)block.push('说话人：'+(passage.speaker||'未标注'));
+    previousSpeaker=passage.speaker;
+   }else if(passage.speaker!==null&&passage.speaker!=='')block.push('说话人：'+passage.speaker);
    block.push((target?'原文：\n':'')+join(passage.cues.map(cue=>cue.text)));
    if(target){
     const parts=[];let run=[];
