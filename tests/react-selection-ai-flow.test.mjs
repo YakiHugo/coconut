@@ -28,9 +28,9 @@ async function setup(){
  const consent=()=>[...w.document.querySelectorAll('.ai-workspace input[type=checkbox]')].find(el=>el.parentElement.textContent.startsWith('我确认'));
  return {w,doc,calls,scrolled,button,selectText,consent,hold:()=>held=true,get observed(){return observed;},get aborts(){return aborts;},saved:()=>JSON.parse(w.localStorage.getItem('coconut-reader-v1')).documents[0]};
 }
-test('production selection actions reset stale task intent, focus the panel, preserve exact evidence and return to page two',async()=>{
+test('production selection actions reset stale task intent, focus the panel, preserve exact evidence and return to the continuous source',async()=>{
  const h=await setup(),{w}=h;try{
-  h.button('下一页').click();await wait(()=>w.document.querySelector('[data-source-id="cue-55"]'));
+  await wait(()=>w.document.querySelector('[data-source-id="cue-55"]'));
   w.document.querySelector('.react-ai-panel').open=true;const task=w.document.querySelector('.ai-workspace select');task.value='summary';task.dispatchEvent(new w.Event('change',{bubbles:true}));await wait(()=>task.value==='summary');w.document.querySelector('.react-ai-panel').open=false;
   await h.selectText('cue-55');h.button('理解选中文字').click();await wait(()=>w.document.activeElement===w.document.querySelector('.ai-workspace h2'));
   assert.equal(task.value,'question');assert.match(w.document.querySelector('.ai-workspace textarea').value,/解释所选原文/);assert.equal(h.calls.length,0);assert.equal(h.consent().checked,false);
@@ -64,9 +64,9 @@ test('leaving the reading session retires old selection intent and its return af
 });
 test('passage return target is explicitly focusable in real browsers and retains passage mode',async()=>{
  const h=await setup(),{w}=h;try{
-  const mode=[...w.document.querySelectorAll('.reader-workspace label')].find(l=>l.textContent.startsWith('阅读方式')).querySelector('select');mode.value='passages';mode.dispatchEvent(new w.Event('change',{bubbles:true}));await wait(()=>w.document.querySelector('.rw-passage'));
+  w.document.querySelector('[role=tab][data-mode=passages]').click();await wait(()=>w.document.querySelector('.rw-passage'));
   await h.selectText('cue-0');h.button('理解选中文字').click();await wait(()=>w.document.activeElement===w.document.querySelector('.ai-workspace h2'));h.button('返回所选原文').click();await wait(()=>w.document.activeElement?.className==='rw-original');
-  assert.equal(w.document.activeElement.getAttribute('tabindex'),'0');assert.equal(mode.value,'passages');assert.equal(w.document.activeElement.contains(w.document.querySelector('[data-source-id="cue-0"]')),true);
+  assert.equal(w.document.activeElement.getAttribute('tabindex'),'0');assert.equal(w.document.querySelector('[role=tab][aria-selected=true]').dataset.mode,'passages');assert.equal(w.document.activeElement.contains(w.document.querySelector('[data-source-id="cue-0"]')),true);
  }finally{await w.happyDOM.close();}
 });
 test('changed note filter cannot falsely report restoration of a now hidden selection',async()=>{
@@ -81,7 +81,7 @@ test('changed note filter cannot falsely report restoration of a now hidden sele
 function key(w,target,name,options={}){target.focus();const event=new w.KeyboardEvent('keydown',{key:name,bubbles:true,cancelable:true,...options});target.dispatchEvent(event);return event;}
 for(const modeName of ['transcript','passages'])test('selection keyboard entry is local, reversible and dismissible in '+modeName,async()=>{
  const h=await setup(),{w}=h;try{
-  if(modeName==='passages'){const mode=[...w.document.querySelectorAll('.reader-workspace label')].find(l=>l.textContent.startsWith('阅读方式')).querySelector('select');mode.value='passages';mode.dispatchEvent(new w.Event('change',{bubbles:true}));await wait(()=>w.document.querySelector('.rw-passage'));}
+  if(modeName==='passages'){w.document.querySelector('[role=tab][data-mode=passages]').click();await wait(()=>w.document.querySelector('.rw-passage'));}
   await h.selectText('cue-0');const source=w.document.querySelector('[data-source-id="cue-0"]').closest('.rw-original');
   assert.equal(key(w,source,'Tab').defaultPrevented,true);assert.equal(w.document.activeElement,h.button('保存精确摘录'));
   assert.equal(key(w,h.button('保存精确摘录'),'Tab').defaultPrevented,false,'Normal toolbar Tab remains native');

@@ -40,7 +40,7 @@ test('mounted reader offers explicit source links in cues and passages without a
   const sourceLink=host.querySelector('.rw-source > p a');assert.ok(sourceLink,'source is visible outside collapsed details');
   let cueLink=host.querySelector('.rw-cue-meta a');assert.match(cueLink.textContent,/YouTube.*02:03/);assert.equal(new URL(cueLink.href).searchParams.get('t'),'123s');assert.equal(cueLink.target,'_blank');assert.equal(cueLink.rel,'noopener noreferrer');
   await act(async()=>host.querySelector('.rw-cue-meta button').click());assert.equal(win.location.href,'http://localhost/','reading navigation never opens the source automatically');
-  const mode=[...host.querySelectorAll('select')].find(node=>node.parentElement.textContent.includes('阅读方式'));await act(async()=>{mode.value='passages';mode.dispatchEvent(new win.Event('change',{bubbles:true}));});assert.equal(host.querySelector('.rw-passage a').href,cueLink.href);
+  await act(async()=>host.querySelector('[role=tab][data-mode=passages]').click());assert.equal(host.querySelector('.rw-passage a').href,cueLink.href);
   await act(async()=>{source='https://example.test/episode';render();});assert.equal(host.querySelector('.rw-passage a').textContent,'打开原站 ↗');assert.match(host.querySelector('.rw-passage a').title,/不支持按段定位/);
   await act(async()=>{source='javascript:alert(1)';render();});assert.equal(host.querySelector('.rw-passage a'),null);
   await act(async()=>{media={url:'blob:audio',kind:'audio',name:'original',identity:'audio'};render();});assert.ok([...host.querySelectorAll('button')].some(button=>button.getAttribute('aria-label')?.startsWith('回听整段')));assert.equal(host.querySelector('.rw-passage a'),null);
