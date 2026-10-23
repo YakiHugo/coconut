@@ -13,7 +13,7 @@ export function NativeShell({store}:{store:AppStore}){
   if(command==='open-local-media'||command==='import-transcript')flushSync(()=>store.navigate('discover'));
   const target=window.document.querySelector<HTMLInputElement|HTMLButtonElement>('.react-app [data-native-command="'+command+'"]');
   if(!target||target.disabled||target.matches(':disabled')||target.closest('[inert]'))return false;
-  if(command==='find-transcript'){target.focus();if(target instanceof HTMLInputElement)target.select();return window.document.activeElement===target;}
+  if(command==='find-transcript'){if(target instanceof HTMLButtonElement)flushSync(()=>target.click());const search=window.document.querySelector<HTMLInputElement>('.reader-workspace input[type=search]');if(!search||search.closest('[hidden],[inert]'))return false;search.focus();search.select();return window.document.activeElement===search;}
   for(const details of [...window.document.querySelectorAll<HTMLDetailsElement>('.react-app details')].filter(node=>node.contains(target)&&!node.open))details.querySelector<HTMLElement>('summary')?.click();
   target.click();return command==='open-local-media'||command==='import-transcript'?store.closeSnapshot().nonContentReasons.length>0:true;
  }},!!bridge);
