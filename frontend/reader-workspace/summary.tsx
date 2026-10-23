@@ -9,11 +9,11 @@ export function ReaderSummary({doc,onNavigate,onReturn,onOpenSummary,selectedCue
  const cues=useMemo(()=>new Map(doc.segments.map(cue=>[cue.id,cue])),[doc.segments]);
  useEffect(()=>{if(!download)return;link.current?.click();return()=>{const url=download.url;window.setTimeout(()=>URL.revokeObjectURL(url),60000);};},[download]);
  return <section className="rw-summary" aria-label="摘要阅读">
-  <header className="rw-summary-heading"><span className="rw-eyebrow">理解与回看</span><h2>{answer?'这篇的主要内容':'还没有保存的整篇摘要'}</h2><div><button onClick={onReturn}>返回原阅读状态</button>{onOpenSummary&&<button onClick={onOpenSummary}>{doc.summary_job?'查看分批进度与 AI 记录':'查看 AI 计划与记录'}</button>}</div></header>
+  <header className="rw-summary-heading"><span className="rw-eyebrow">内容摘要</span><h2>{answer?'先了解这段内容':'还没有保存的整篇摘要'}</h2><div><button onClick={onReturn}>继续阅读全文</button>{onOpenSummary&&<button onClick={onOpenSummary}>{doc.summary_job?'查看分批进度与 AI 记录':'查看 AI 计划与记录'}</button>}</div></header>
   {answer?<>
    <p className="rw-summary-freshness" role="status">{freshness==='current'?'覆盖当前整篇原文，模型结论仍需核对。':freshness==='stale'?'原文或整篇范围已经变化，这份历史摘要可能过期。':'缺少完整的原文依据，无法确认摘要覆盖范围。'}</p>
    <div className="rw-summary-body" tabIndex={0}><SummaryText text={answer.answer} citations={new Set(freshness==='current'?answer.citations:[])} onNavigate={onNavigate}/></div>
-   <nav className="rw-summary-citations" aria-label="摘要引用"><h3>回到原话</h3><p>对照原文，留下自己的理解。</p>{[...new Set(answer.citations||[])].map(id=>{
+   <nav className="rw-summary-citations" aria-label="摘要引用"><h3>回到原话</h3><p>点击时间，前往文字稿中的对应位置。</p>{[...new Set(answer.citations||[])].map(id=>{
     const cue=cues.get(id);
     return cue&&freshness==='current'?<section key={id} className={'rw-summary-citation'+(selectedCueId===id?' rw-citation-current':'')} data-citation-id={id}>
      <div><button aria-current={selectedCueId===id?'location':undefined} onClick={()=>onNavigate(id)}>{time(cue.start)} · 核对原文</button>{canListen&&onListen&&<button className="rw-citation-listen" aria-label={'回听摘要引用 · '+time(cue.start)} onClick={()=>{onNavigate(id);onListen(cue);}}>▷ 回听</button>}</div>

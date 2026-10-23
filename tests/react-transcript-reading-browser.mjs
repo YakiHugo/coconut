@@ -43,10 +43,10 @@ try {
  await page.keyboard.press('Home');await expect(readingTab).toBeFocused();
  assert.equal(await page.locator('[role=tab][tabindex="0"]').count(),1);
  await expect(page.getByRole('tabpanel')).toHaveAttribute('aria-labelledby',await readingTab.getAttribute('id'));
- // Same-speaker paragraphs share one identity; a continuation carries only its time/rail.
- await expect(page.locator('.rw-passage').first().locator('.rw-speaker-avatar')).toHaveCount(1);
+ // Speaker changes have a quiet identity; continuations retain their timestamp.
+ await expect(page.locator('.rw-speaker-avatar')).toHaveCount(0);await expect(page.locator('.rw-passage').first().locator('.rw-speaker-label')).toHaveCount(1);
  await expect(page.locator('.rw-passage').nth(1).locator('.rw-speaker-label')).toHaveCount(0);
- assert.equal(await page.locator('.rw-turn-continuation .rw-passage-heading').first().evaluate(node=>getComputedStyle(node,'::before').width),'4px');
+ assert.equal(await page.locator('.rw-turn-continuation .rw-passage-heading').first().evaluate(node=>getComputedStyle(node,'::before').content),'none');
  // The timestamp starts continuous playback, while explicit range listening still stops.
  await page.getByRole('button',{name:'载入原声（最多 200 MiB）',exact:true}).click();
  const audio=page.locator('audio');await expect.poll(()=>audio.evaluate(player=>player.duration)).toBe(260);
@@ -103,24 +103,23 @@ try {
  await page.locator('.rw-passages').scrollIntoViewIfNeeded();await page.screenshot({path:path.join(output,'transcript-mobile.png')});
  await page.reload();await page.getByRole('button',{name:'继续阅读',exact:true}).click();await expect(page.locator('.rw-mode-tabs [aria-selected=true]')).toHaveAttribute('data-mode','passages');
  assert.equal((await saved()).segments.length,120);assert.deepEqual(errors,[]);
- // A citation opens the continuous source beside the summary, keeping one
- // real player alive. Clicking it again must relocate after manual scrolling.
+ // A citation switches to the full transcript, keeping one real player alive. Clicking it again must relocate after manual scrolling.
  await page.setViewportSize({width:1360,height:900});
  await page.getByRole('button',{name:'载入原声（最多 200 MiB）',exact:true}).click();
  await expect.poll(()=>audio.evaluate(player=>player.duration)).toBe(260);
  await page.getByRole('tab',{name:'摘要',exact:true}).click();
  const originalPlayer=await audio.elementHandle();
  await page.getByRole('button',{name:'03:58 · 核对原文',exact:true}).click();
- await expect(page.locator('.rw-reading-layout-compare')).toBeVisible();
- await expect(page.locator('.rw-summary')).toBeVisible();
+ await expect(page.locator('.rw-reading-layout-compare')).toHaveCount(0);
+ await expect(page.locator('.rw-summary')).toHaveCount(0);await expect(readingTab).toHaveAttribute('aria-selected','true');
  await expect(page.locator('[data-source-id="cue-119"]')).toBeInViewport();
  assert.equal(await audio.evaluate((node,original)=>node===original,originalPlayer),true,'view changes retain the same media owner');
  assert.equal(await audio.evaluate(node=>node.paused),true,'source navigation never starts playback');
- await page.locator('.rw-reading-pane').evaluate(node=>{node.scrollTop=0;});
+ await page.getByRole('button',{name:'返回摘要 ↑',exact:true}).click();
  await page.getByRole('button',{name:'03:58 · 核对原文',exact:true}).click();
  await expect(page.locator('[data-source-id="cue-119"]')).toBeInViewport();
- await page.screenshot({path:path.join(output,'summary-compare-desktop.png')});
- await page.getByRole('button',{name:'回听摘要引用 · 03:58',exact:true}).click();
+ await page.screenshot({path:path.join(output,'citation-desktop.png')});
+ await page.getByRole('button',{name:'返回摘要 ↑',exact:true}).click();await page.getByRole('button',{name:'回听摘要引用 · 03:58',exact:true}).click();
  await expect.poll(()=>audio.evaluate(node=>node.paused)).toBe(false);
  await audio.evaluate(node=>{node.currentTime=241;node.dispatchEvent(new Event('timeupdate'));});
  await expect.poll(()=>audio.evaluate(node=>node.paused)).toBe(true);
@@ -139,8 +138,8 @@ try {
 
  await page.setViewportSize({width:390,height:844});
  assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1));
- await page.screenshot({path:path.join(output,'summary-compare-mobile.png')});
- await page.getByRole('button',{name:'返回原阅读状态',exact:true}).click();
+ await page.screenshot({path:path.join(output,'citation-mobile.png')});
+ await page.getByRole('button',{name:'返回摘要 ↑',exact:true}).click();await page.getByRole('button',{name:'继续阅读全文',exact:true}).click();
  await expect(page.locator('.rw-reading-layout-compare')).toHaveCount(0);
  // Short, self-authored dialogue makes the speaker/continuation layout reviewable.
  const visual={...fixture,key:'reading-visual',title:'让对话，成为可以重读的文字 · 交互演示',notes:{},segments:[
@@ -160,8 +159,11 @@ try {
   assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1));
   await page.screenshot({path:path.join(output,name+'.png')});
  }
- await page.setViewportSize({width:1360,height:1000});await page.getByRole('button',{name:'并排核对',exact:true}).click();await page.getByRole('button',{name:'01:34 · 核对原文',exact:true}).click();await page.locator('.rw-summary-pane').evaluate(node=>{node.scrollTop=0;});await page.screenshot({path:path.join(output,'summary-compare-desktop.png')});
- await page.setViewportSize({width:390,height:844});await expect(page.locator('[data-source-id="visual-5"]')).toBeInViewport();await page.screenshot({path:path.join(output,'summary-compare-mobile.png')});
+ await page.setViewportSize({width:1360,height:1000});await page.getByRole('tab',{name:'摘要',exact:true}).click();await expect(page.getByRole('searchbox')).toHaveCount(0);await expect(page.locator('.rw-summary-heading')).toBeInViewport();await page.screenshot({path:path.join(output,'summary-desktop.png')});
+ await page.setViewportSize({width:390,height:844});await page.screenshot({path:path.join(output,'summary-mobile.png')});
+ await page.getByRole('button',{name:'01:34 · 核对原文',exact:true}).click();await expect(page.locator('[data-source-id="visual-5"]')).toBeInViewport();
+ await expect(page.getByRole('searchbox')).toHaveCount(0);await page.locator('.rw-original').last().focus();await page.keyboard.press('Control+f');const find=page.getByRole('searchbox',{name:'搜索原话、译文和笔记'});await expect(find).toBeFocused();await find.fill('不存在的关键词');await expect(page.locator('.rw-search-empty')).toBeVisible();await find.press('Escape');await expect(find).toHaveCount(0);await expect(page.locator('[data-source-id="visual-5"]')).toBeVisible();
+ await page.setViewportSize({width:1360,height:1000});await page.getByRole('button',{name:'搜索文字稿',exact:true}).click();await find.fill('文字');await page.screenshot({path:path.join(output,'search-desktop.png')});await find.press('Escape');
  assert.deepEqual(errors,[]);
  console.log(JSON.stringify({passed:true,paragraphs:actual.length,cues:120,tabs_keyboard:true,continuous_playback:true,bounded_replay:true,exact_selection:true,clipboard:true,sqlite_reload:true,mobile:true,screenshots:output}));
 }finally{await browser?.close();await server?.shutdown();await rm(directory,{recursive:true,force:true});}

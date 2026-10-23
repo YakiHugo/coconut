@@ -27,9 +27,8 @@ export function PassageView({ doc, cues, passages: supplied, current, position, 
         const notes = passage.cues.filter(cue => doc.notes?.[cue.id]?.trim());
         const playing = passage.cues.some(cue => cue.id === current);
         return <section className={'rw-passage' + (turnStart ? ' rw-turn-start' : ' rw-turn-continuation') + (!passage.speaker ? ' rw-speaker-unknown' : '') + (playing ? ' rw-passage-playing' : '')}
-            key={passage.key} style={{ '--speaker-hue': [46, 345, 168, 210, 275][speakerIndex % 5] } as CSSProperties}>
+            key={passage.key} style={{ '--speaker-hue': [86, 30, 150, 205, 65][speakerIndex % 5] } as CSSProperties}>
             <div className="rw-passage-heading">
-                {turnStart && <span className="rw-speaker-avatar" aria-hidden="true">{passage.speaker ? <svg viewBox="0 0 40 40"><circle cx="20" cy="20" r="18" fill="currentColor"/><g fill="none" stroke="#383529" strokeWidth="1.6" strokeLinecap="round"><path d="M14 17v1 M25 17v1 M16 25q4 3 8-1"/></g></svg> : '?'}</span>}
                 <div className="rw-passage-identity">
                 <div className="rw-cue-meta">
                     {canListen ? <button type="button" className="rw-time-link" aria-label={'从 ' + time(passage.start) + ' 开始播放'} aria-current={playing ? 'time' : undefined} onClick={() => { onLocate(passage.cues[0].id); onPlayFrom(passage.start); }}>▷ {time(passage.start)}</button>
