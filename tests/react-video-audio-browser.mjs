@@ -65,7 +65,7 @@ try{
  // canonical library and browser decoder. It must not start playback or ASR.
  await read();await button.click();await expect(page.getByRole('heading',{name:'先播放原文件',exact:true})).toBeVisible();
  await expect(page.locator('.app-header').getByText('已保存',{exact:true})).toBeVisible();
- await expect(page.locator('audio')).toBeVisible();await expect.poll(()=>page.locator('audio').evaluate(player=>player.duration)).toBeGreaterThan(1.9);
+ await expect(page.locator('audio')).toHaveCount(1);await expect(page.getByRole('button',{name:'播放原声',exact:true})).toBeVisible();await expect.poll(()=>page.locator('audio').evaluate(player=>player.duration)).toBeGreaterThan(1.9);
  assert.equal(await page.locator('audio').evaluate(player=>player.paused),true);assert.equal(await page.evaluate(()=>window.__authoredPlays),0);
  await expect(page.getByRole('button',{name:'生成文字稿',exact:true})).toBeVisible();await expect(page.getByRole('button',{name:'生成文字稿',exact:true})).toBeDisabled();
  const catalog=await fetch(origin+'/api/v1/library/catalog?protocolVersion=1').then(r=>r.json());assert.equal(catalog.entries.length,1);
@@ -92,7 +92,7 @@ try{
  await expect(page.locator('.source-error')).toContainText(/无法解码|解码超时/,{timeout:15000});
  assert.equal((await fetch(origin+'/api/v1/library/catalog?protocolVersion=1').then(r=>r.json())).entries.length,1);
  // Combined MP4 stays a video player/File, not a mislabeled audio-only file.
- mode='video';await read();await button.click();await expect(page.locator('video')).toBeVisible();
+ mode='video';await read();await button.click();await page.locator('.rw-player-video>summary').click();await expect(page.locator('video')).toBeVisible();
  await expect(page.locator('.app-header').getByText('已保存',{exact:true})).toBeVisible();
  await expect.poll(()=>page.locator('video').evaluate(player=>player.videoWidth)).toBe(160);
  await expect.poll(()=>page.locator('video').evaluate(player=>player.duration)).toBeGreaterThan(1.9);

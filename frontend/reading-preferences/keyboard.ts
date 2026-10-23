@@ -27,7 +27,7 @@ export function useReaderKeyboard(options: ReadingKeyboardOptions) {
           if (current.isContentEditable || (current.hasAttribute('contenteditable') && current.getAttribute('contenteditable') !== 'false')) return false;
         }
         if (node.shadowRoot?.activeElement) return false;
-        const controls = find ? 'textarea,select,audio,video,iframe,object,embed,[inert],[role]:not([role="group"])' : 'input,textarea,select,button,a,summary,audio,video,iframe,object,embed,[inert],[role]';
+        const controls = find ? 'textarea,select,audio,video,iframe,object,embed,[inert],[role]:not([role="group"]):not([role="tabpanel"])' : 'input,textarea,select,button,a,summary,audio,video,iframe,object,embed,[inert],[role]:not([role="tabpanel"])';
         return !node.closest(controls) && !(find && node.closest('input') && node !== searchRef?.current);
       };
       if (![document.activeElement, event.target, event.composedPath()[0]].every(allowed)) return;
