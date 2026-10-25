@@ -401,7 +401,10 @@ class LocalTranscriptionTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
             source = root / 'fixture.wav'
-            source.write_bytes(b'never decoded')
+            import wave
+            with wave.open(str(source), 'wb') as stream:
+                stream.setparams((1, 2, 16000, 0, 'NONE', 'not compressed'))
+                stream.writeframes(b'\0' * 32000)
             output = root / 'result.md'
             cache = root / 'cache'
             runtime = self.fake_runtime()

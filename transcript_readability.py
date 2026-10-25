@@ -183,32 +183,23 @@ def enhance_document(document: dict, audio: Path | None = None, *, punctuation: 
     import sherpa_onnx
 
     cues = result['segments']
-    if segmentation and embedding and audio and provenance.get('speaker_method') != VERSION:
-        from faster_whisper.audio import decode_audio
+    if segmentation and embedding and audio and provenance.get('speaker_method') != 'recording-acoustic-v1':
+        from audio_pipeline import CallableBackend, run_audio_pipeline
+        from audio_speakers import SherpaSpeakerBackend, label_segments
         segmentation_path, embedding_path = _model(segmentation), _model(embedding)
-        config = sherpa_onnx.OfflineSpeakerDiarizationConfig(
-            segmentation=sherpa_onnx.OfflineSpeakerSegmentationModelConfig(
-                pyannote=sherpa_onnx.OfflineSpeakerSegmentationPyannoteModelConfig(model=str(segmentation_path), window_shift_ratio=.5),
-                num_threads=2),
-            embedding=sherpa_onnx.SpeakerEmbeddingExtractorConfig(model=str(embedding_path), num_threads=2),
-            clustering=sherpa_onnx.FastClusteringConfig(num_clusters=-1, threshold=.8),
-            min_duration_on=.3, min_duration_off=.5)
-        if not config.validate():
-            raise ValueError('Invalid local speaker models')
-        engine = sherpa_onnx.OfflineSpeakerDiarization(config)
-        samples = decode_audio(str(audio), sampling_rate=engine.sample_rate)
         print('[speakers] grouping voices locally', file=sys.stderr, flush=True)
-        def progress(done, total):
-            if done % 100 == 0 or done == total:
-                print(f'[speakers] {done}/{total}', file=sys.stderr, flush=True)
-            return 0
-        turns = engine.process(samples, callback=progress).sort_by_start_time()
-        eligible = {cue['id'] for cue in cues if not cue.get('speaker')}
-        assign_speakers(cues, [{'start': t.start, 'end': t.end, 'speaker': t.speaker} for t in turns])
-        count, fragmented = stabilize_speaker_labels(cues, eligible)
-        provenance.update(speaker_method=VERSION, speaker_backend='sherpa-onnx',
+        grouped = run_audio_pipeline(audio,
+            CallableBackend({'backend': 'speaker-only'}, lambda _: {'segments': []}),
+            speaker_backend=SherpaSpeakerBackend(segmentation_path, embedding_path),
+            local_only=True)
+        turns = grouped['speaker_turns']
+        automatic = [cue for cue in cues if not cue.get('speaker')]
+        decisions = {turn['speaker']: {'speaker_id': turn['speaker']} for turn in turns}
+        label_segments(automatic, turns, decisions)
+        count = sum(bool(cue.get('speaker_id')) for cue in automatic)
+        provenance.update(speaker_method='recording-acoustic-v1', speaker_backend='sherpa-onnx',
                           speaker_model='pyannote-segmentation-3.0 + 3dspeaker-eres2net',
-                          speaker_status='needs_review:fragmented_clusters' if fragmented else f'automatic_unreviewed:{count}/{len(cues)}')
+                          speaker_status=f'automatic_unreviewed:{count}/{len(cues)}')
     if punctuation and provenance.get('punctuation_method') != VERSION:
         model = _model(punctuation)
         config = sherpa_onnx.OfflinePunctuationConfig(model=sherpa_onnx.OfflinePunctuationModelConfig(

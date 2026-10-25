@@ -1340,6 +1340,15 @@
 			)
 				throw new Error("第 " + (i + 1) + " 段内容或时间戳无效");
 			if(Object.hasOwn(s,'original_speaker'))speakerCorrectionOrigin(s);
+            if(s.speaker_id!==undefined&&s.speaker_id!==null&&
+               (typeof s.speaker_id!=='string'||!/^speaker-[0-9]{4,6}$/.test(s.speaker_id)))throw new Error('全局说话人标识无效');
+            if(s.words!==undefined&&(!Array.isArray(s.words)||s.words.length>10000))throw new Error('逐词时间无效');
+            let priorWord=s.start;
+            const words=s.words?.map(w=>{
+             if(!w||typeof w.word!=='string'||!Number.isFinite(w.start)||!Number.isFinite(w.end)||
+                w.start<s.start-.05||w.start<priorWord-.05||w.end<w.start||w.end>s.end+.05)throw new Error('逐词时间无效');
+             priorWord=w.start;return {word:w.word,start:w.start,end:w.end};
+            });
 			prior = s.start;
 			const id = typeof s.id === "string" ? s.id : "segment-" + (i + 1);
 			if (ids.has(id)) throw new Error("片段标识重复");
@@ -1354,6 +1363,12 @@
 					? { original_text: s.original_text }
 					: {}),
 				speaker: typeof s.speaker === "string" ? s.speaker : null,
+                ...(s.speaker_id!==undefined?{speaker_id:s.speaker_id}:{}),
+                ...(typeof s.speaker_status==='string'?{speaker_status:s.speaker_status.slice(0,100)}:{}),
+                ...(Number.isSafeInteger(s.chunk_index)&&s.chunk_index>=0?{chunk_index:s.chunk_index}:{}),
+                ...(typeof s.provider_speaker==='string'?{provider_speaker:s.provider_speaker.slice(0,200)}:{}),
+                ...(typeof s.boundary_status==='string'?{boundary_status:s.boundary_status.slice(0,100)}:{}),
+                ...(words?{words}:{}),
                 ...(Object.hasOwn(s,'original_speaker')?{original_speaker:s.original_speaker}:{}),
 				translations: cleanTranslations(s.translations),
 			};
@@ -1372,7 +1387,7 @@
 		const provenance =
 			data.provenance && typeof data.provenance === "object"
 				? Object.fromEntries(
-						["kind", "model", "backend", "language", "alignment_warning", "playback_warning", "media_id", "caption_method", "caption_track", "subtitle_check", "language_basis", "review_status", "source_platform", "source_medium", "punctuation_method", "punctuation_backend", "punctuation_model", "punctuation_status", "speaker_method", "speaker_backend", "speaker_model", "speaker_status", "readability_warning"]
+						["kind", "model", "backend", "language", "alignment_warning", "playback_warning", "media_id", "caption_method", "caption_track", "subtitle_check", "language_basis", "review_status", "source_platform", "source_medium", "punctuation_method", "punctuation_backend", "punctuation_model", "punctuation_status", "speaker_method", "speaker_backend", "speaker_model", "speaker_status", "readability_warning", "audio_pipeline", "audio_chunks"]
 							.filter((k) => typeof data.provenance[k] === "string")
 							.map((k) => [k, data.provenance[k]]),
 					)
