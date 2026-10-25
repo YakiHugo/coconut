@@ -194,7 +194,8 @@ def enhance_document(document: dict, audio: Path | None = None, *, punctuation: 
             local_only=True)
         turns = grouped['speaker_turns']
         automatic = [cue for cue in cues if not cue.get('speaker')]
-        decisions = {turn['speaker']: {'speaker_id': turn['speaker']} for turn in turns}
+        decisions = {turn['speaker']: {'speaker_id': turn['speaker_id'],
+                                      'status': turn['speaker_status']} for turn in turns}
         label_segments(automatic, turns, decisions)
         count = sum(bool(cue.get('speaker_id')) for cue in automatic)
         provenance.update(speaker_method='recording-acoustic-v1', speaker_backend='sherpa-onnx',

@@ -121,6 +121,54 @@ class PipelineTests(unittest.TestCase):
         label_segments([segment], [{'start': 3600, 'end': 3602, 'speaker': 'guest'}], ids)
         self.assertEqual(segment['speaker_id'], 'speaker-0002')
 
+    def test_unknown_competing_voices_survive_turn_export_and_readability_replay(self):
+        class Voices:
+            cache_key = {'fixture': 'known-and-unresolved-overlap'}
+            local_only = True
+
+            def analyze(inner, path):
+                return {'embedding_model': 'v1', 'evidence': {'known': evidence([1, 0])},
+                        'turns': [{'start': 0, 'end': 10, 'speaker': 'known'},
+                                  {'start': 0, 'end': 10, 'speaker': 'short'}]}
+
+        backend = CallableBackend({'fixture': 'overlap'}, lambda _: {'segments': [
+            {'start': 2, 'end': 4, 'text': 'Overlapping voices'}]})
+        result = run_audio_pipeline(self.audio, backend, speaker_backend=Voices(),
+                                    chunk_seconds=10, context_seconds=0, local_only=True)
+        self.assertEqual([s['speaker_id'] for s in result['segments']], [None, None])
+        self.assertEqual([s['speaker_status'] for s in result['segments']],
+                         ['overlap_or_boundary'] * 2)
+
+        turns = result['speaker_turns']
+        known = [turn for turn in turns if turn['speaker_id']]
+        unresolved = [turn for turn in turns if turn['speaker_id'] is None]
+        self.assertEqual([turn['speaker_id'] for turn in known], ['speaker-0001'] * 2)
+        self.assertEqual([turn['speaker'] for turn in unresolved],
+                         ['unresolved:0:short', 'unresolved:1:short'])
+        decisions = {turn['speaker']: {'speaker_id': turn['speaker_id'],
+                                      'status': turn['speaker_status']} for turn in turns}
+        source = {'segments': [{'id': str(index), 'start': start, 'end': start + 2,
+                                'text': 'Overlapping voices', 'speaker': None}
+                               for index, start in enumerate((2, 12))]}
+        replayed = copy.deepcopy(source['segments'])
+        label_segments(replayed, turns, decisions)
+        self.assertEqual([s['speaker_id'] for s in replayed], [None, None])
+        self.assertEqual([s['speaker_status'] for s in replayed], ['overlap_or_boundary'] * 2)
+
+        # The standalone enhancement path consumes exported turns, without any
+        # model runtime or downloads in this regression test.
+        from transcript_readability import enhance_document
+        before = copy.deepcopy(source)
+        with patch.dict(sys.modules, {'sherpa_onnx': object()}), \
+                patch('audio_pipeline.run_audio_pipeline', return_value=result), \
+                patch('audio_speakers.SherpaSpeakerBackend', return_value=object()):
+            enhanced = enhance_document(source, self.audio,
+                                        segmentation=str(self.audio), embedding=str(self.audio))
+        self.assertEqual(source, before)
+        self.assertEqual([s['speaker_id'] for s in enhanced['segments']], [None, None])
+        self.assertEqual([s['speaker_status'] for s in enhanced['segments']],
+                         ['overlap_or_boundary'] * 2)
+
     def test_boundary_decoder_jitter_is_deduplicated_but_a_real_repetition_is_kept(self):
         def segment(chunk, start, end, text):
             return {'start': start, 'end': end, 'text': text, 'chunk_index': chunk,

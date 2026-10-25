@@ -368,11 +368,17 @@ def run_audio_pipeline(source: Path, backend: ASRBackend, *, work_dir=None, spea
                     decisions = registry.resolve(voices['evidence'], voices['embedding_model'])
                     label_segments(segments, turns, decisions)
                     for turn in turns:
-                        identifier = decisions.get(turn['speaker'], {}).get('speaker_id')
+                        decision = decisions.get(turn['speaker'], {})
+                        identifier = decision.get('speaker_id')
                         start = max(turn['start'], chunk.core_start_frame / SAMPLE_RATE)
                         end = min(turn['end'], chunk.core_end_frame / SAMPLE_RATE)
-                        if identifier and end > start:
-                            speaker_turns.append({'start': start, 'end': end, 'speaker': identifier})
+                        if end > start:
+                            # Unknown competing speech must survive speaker-only
+                            # replay too; otherwise overlap becomes false certainty.
+                            speaker_turns.append({'start': start, 'end': end,
+                                'speaker': identifier or f'unresolved:{chunk.index}:{turn["speaker"]}',
+                                'speaker_id': identifier,
+                                'speaker_status': decision.get('status', 'insufficient_audio')})
                     save_document({'chunk': asdict(chunk), 'decisions': decisions},
                                   directory / f'identity-{identity_key}-{chunk.index:05d}.json')
                 output.extend(segments)
