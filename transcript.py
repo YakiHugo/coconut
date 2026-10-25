@@ -47,6 +47,9 @@ def make_document(result: dict, title: str, source_url: str) -> dict:
         speaker = segment.get('speaker')
         segments.append({'id': f'segment-{index + 1}', 'start': start, 'end': end,
                          'text': text.strip(), 'speaker': speaker if isinstance(speaker, str) else None})
+        for key in ('speaker_id', 'speaker_status', 'chunk_index', 'provider_speaker', 'boundary_status', 'words'):
+            if key in segment:
+                segments[-1][key] = segment[key]
     if not segments:
         raise ValueError('The transcript contains no text segments')
     return {'schema_version': 1, 'title': title, 'source_url': source_url,

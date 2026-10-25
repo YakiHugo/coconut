@@ -17,6 +17,7 @@ from pathlib import Path
 from transcript import make_document, save_document, to_markdown
 from local_asr import OFFLINE_ENVIRONMENT, require_local_model
 from transcript_readability import enhance_from_environment
+from audio_pipeline import CallableBackend, JsonCommandBackend, VERSION as AUDIO_PIPELINE_VERSION, run_audio_pipeline
 from subtitle_import import fetch_subtitle_document, subtitle_document, validate_video_url, validate_media_info, tls_cli_options, source_evidence
 
 
@@ -78,7 +79,7 @@ def download_playback(url: str, directory: Path) -> Path:
     return target
 
 
-def transcribe_fast(audio_path: Path, language: str | None, *, model_name: str, device: str, compute_type: str, batch_size: int = 8, local_files_only: bool = False) -> dict:
+def transcribe_fast(audio_path: Path, language: str | None, *, model_name: str, device: str, compute_type: str, batch_size: int = 8, local_files_only: bool = False, pipeline_options: dict | None = None) -> dict:
     """Lightweight base path; precise alignment and diarization remain optional."""
     if local_files_only:
         # Establish the offline guard before importing the runtime/Hub modules.
@@ -96,24 +97,59 @@ def transcribe_fast(audio_path: Path, language: str | None, *, model_name: str, 
     # A size of one retains the sequential decoder; both use the same already
     # constructed model, offline guard, VAD and word-timestamp output contract.
     recognizer = BatchedInferencePipeline(model=model) if batch_size > 1 else model
-    segments, info = recognizer.transcribe(str(audio_path), language=language, vad_filter=True,
+    def recognize(path):
+        segments, info = recognizer.transcribe(str(path), language=language, vad_filter=True,
                                           word_timestamps=True,
                                           **({'batch_size': batch_size, 'without_timestamps': False} if batch_size > 1 else {}))
-    output = []
-    for segment in segments:
-        output.append({'start': segment.start, 'end': segment.end, 'text': segment.text,
+        output = []
+        for segment in segments:
+            output.append({'start': segment.start, 'end': segment.end, 'text': segment.text,
                        'words': [{'start': word.start, 'end': word.end, 'word': word.word} for word in (segment.words or [])]})
-        print(f"[transcribe] processed through {segment.end:.1f}s", file=sys.stderr)
-    return {'language': info.language, 'segments': output}
+            print(f"[transcribe] processed through chunk {segment.end:.1f}s", file=sys.stderr)
+        return {'language': info.language, 'segments': output}
+    if pipeline_options is None:
+        return recognize(audio_path)
+    backend = CallableBackend({'backend': 'faster-whisper', 'model': model_name,
+                               'device': device, 'compute_type': compute_type,
+                               'batch_size': batch_size, 'language': language}, recognize)
+    return run_audio_pipeline(audio_path, backend, local_only=local_files_only, **pipeline_options)
 
 
-def transcribe(audio_path: Path, language: str | None, hf_token: str | None, *, model_name: str = "large-v3", device: str = "cpu", compute_type: str = "int8", batch_size: int = 8, align: bool = True) -> dict:
+def transcribe(audio_path: Path, language: str | None, hf_token: str | None, *, model_name: str = "large-v3", device: str = "cpu", compute_type: str = "int8", batch_size: int = 8, align: bool = True, pipeline_options: dict | None = None) -> dict:
     import whisperx
 
     print(f"  loading whisper {model_name} on {device}...", file=sys.stderr)
     model = whisperx.load_model(
         model_name, device, compute_type=compute_type, language=language
     )
+    if pipeline_options is not None:
+        aligners = {}
+        def recognize(path):
+            audio = whisperx.load_audio(str(path))
+            result = model.transcribe(audio, batch_size=batch_size)
+            detected = result.get('language') or language
+            if align:
+                try:
+                    if detected not in aligners:
+                        aligners[detected] = whisperx.load_align_model(language_code=detected, device=device)
+                    align_model, metadata = aligners[detected]
+                    result = whisperx.align(result['segments'], align_model, metadata, audio, device,
+                                            return_char_alignments=False)
+                except Exception:
+                    result['alignment_warning'] = 'Alignment failed; original segment timestamps retained'
+            result['language'] = detected
+            for segment in result.get('segments', []):
+                if any(word.get('start') is None or word.get('end') is None
+                       for word in segment.get('words', [])):
+                    segment.pop('words', None)
+                    result['alignment_warning'] = 'Incomplete word alignment; segment timestamps retained'
+            return result
+        # Chunk-local WhisperX diarizer labels cannot identify people across
+        # chunks. Recording identities use the independent acoustic backend.
+        backend = CallableBackend({'backend': 'whisperx', 'model': model_name, 'language': language,
+                                   'device': device, 'compute_type': compute_type,
+                                   'batch_size': batch_size, 'align': align}, recognize)
+        return run_audio_pipeline(audio_path, backend, **pipeline_options)
     audio = whisperx.load_audio(str(audio_path))
     result = model.transcribe(audio, batch_size=batch_size)
     detected_lang = result["language"]
@@ -161,14 +197,33 @@ def main():
     parser.add_argument("--captions-only", action="store_true", help="Require existing captions; never fall back to ASR or load recognition models (optional playback media is separate)")
     parser.add_argument("--keep-media", action="store_true", help="Keep a bounded local MP4 copy for playback (requires --work-dir)")
     parser.add_argument("--local-files-only", action="store_true", help="Use only an already cached small model for local media; never download models or use WhisperX")
-    parser.add_argument("--no-diarize", action="store_true")
+    parser.add_argument("--no-diarize", action="store_true", help='Disable legacy WhisperX/HF diarization; explicitly configured local acoustic models are independent')
     parser.add_argument("--no-align", action="store_true")
-    parser.add_argument("--backend", choices=("faster-whisper", "whisperx"), default="faster-whisper")
+    parser.add_argument("--backend", choices=("faster-whisper", "whisperx", "json-command"), default="faster-whisper")
+    parser.add_argument('--provider-command', help='JSON array of trusted executable arguments; explicit cloud/provider bridge')
+    parser.add_argument('--provider-id', help='Versioned provider/model identity for chunk recovery')
+    parser.add_argument('--chunk-seconds', type=float, default=600, help='Owned audio seconds per chunk (plus context)')
+    parser.add_argument('--chunk-context', type=float, default=5, help='Audio context on each side of a chunk')
     parser.add_argument("--model", default="small", help="Initial conservative resource default, not a quality benchmark winner")
     parser.add_argument("--device", choices=("cpu", "cuda"), default="cpu")
     parser.add_argument("--compute-type", default="int8")
     parser.add_argument("--batch-size", type=int, default=8)
     args = parser.parse_args()
+    import math
+    if not math.isfinite(args.chunk_seconds) or not math.isfinite(args.chunk_context) or (
+            args.chunk_seconds <= 0 or args.chunk_context < 0 or args.chunk_context * 2 >= args.chunk_seconds):
+        parser.error('chunk-seconds must be positive and exceed twice chunk-context')
+    provider_command = None
+    if args.backend == 'json-command':
+        try:
+            provider_command = json.loads(args.provider_command or '')
+            if not isinstance(provider_command, list) or not provider_command or not all(
+                    isinstance(item, str) and item for item in provider_command) or not args.provider_id:
+                raise ValueError()
+        except ValueError:
+            parser.error('json-command requires --provider-command as a JSON argument array and --provider-id')
+    elif args.provider_command or args.provider_id:
+        parser.error('provider options require the json-command backend')
     if args.local_files_only:
         if args.backend != 'faster-whisper' or args.model != 'small':
             parser.error('local-files-only requires the faster-whisper backend and small model')
@@ -199,6 +254,10 @@ def main():
                        "backend": args.backend, "model": args.model,
                        "source_url": source_url, "align": not args.no_align,
                        "diarize": bool(hf_token), "device": args.device, "compute_type": args.compute_type}
+        fingerprint.update(audio_pipeline=AUDIO_PIPELINE_VERSION, chunk_seconds=args.chunk_seconds,
+                           chunk_context=args.chunk_context, batch_size=args.batch_size)
+        if provider_command:
+            fingerprint['provider'] = JsonCommandBackend(provider_command, identity=args.provider_id, language=args.language).cache_key
         if args.keep_media:
             fingerprint['keep_media'] = True
         # Keep old work directories compatible when the option is absent, but
@@ -241,30 +300,60 @@ def main():
             else:
                 audio_path, title = source, source.stem
             print("[transcribe] recognizing speech", file=sys.stderr)
+            speaker_backend = None
+            segmentation = os.environ.get('COCONUT_SPEAKER_SEGMENTATION_MODEL', '')
+            embedding = os.environ.get('COCONUT_SPEAKER_EMBEDDING_MODEL', '')
+            if segmentation or embedding:
+                if not segmentation or not embedding:
+                    raise ValueError('Both speaker segmentation and embedding models are required')
+                from audio_speakers import SherpaSpeakerBackend
+                speaker_backend = SherpaSpeakerBackend(segmentation, embedding)
+            elif args.backend == 'whisperx' and hf_token:
+                print('[speakers] chunked WhisperX uses the independent acoustic stage; '
+                      'configure local speaker models for recording-wide identities', file=sys.stderr)
+            pipeline_options = {'work_dir': tmp / 'speech', 'speaker_backend': speaker_backend,
+                                'chunk_seconds': args.chunk_seconds, 'context_seconds': args.chunk_context,
+                                'progress': lambda index, total: print(
+                                    f'[transcribe] chunk {index + 1}/{total}', file=sys.stderr, flush=True)}
             if args.backend == 'faster-whisper':
                 result = transcribe_fast(audio_path, args.language, model_name=args.model,
                                          device=args.device, compute_type=args.compute_type,
                                          batch_size=args.batch_size,
+                                         pipeline_options=pipeline_options,
                                          **({'local_files_only': True} if args.local_files_only else {}))
-            else:
+            elif args.backend == 'whisperx':
                 result = transcribe(audio_path, args.language, hf_token, model_name=args.model,
                                     device=args.device, compute_type=args.compute_type,
-                                    batch_size=args.batch_size, align=not args.no_align)
+                                    batch_size=args.batch_size, align=not args.no_align,
+                                    pipeline_options=pipeline_options)
+            else:
+                result = run_audio_pipeline(audio_path,
+                    JsonCommandBackend(provider_command, identity=args.provider_id, language=args.language), **pipeline_options)
             document = make_document(result, title, source_url)
-            document["provenance"] = {"kind": "local_asr", "model": args.model, "backend": args.backend,
+            document["provenance"] = {"kind": "provider_asr" if provider_command else "local_asr",
+                                      "model": args.provider_id if provider_command else args.model, "backend": args.backend,
                                       "language": result.get("language"),
                                       "alignment_warning": result.get("alignment_warning"),
                                       "caption_method": "asr", "review_status": "unreviewed",
                                       "language_basis": "user_hint" if args.language else "asr_detected",
                                       "subtitle_check": ("skipped" if args.force_transcribe else "no_eligible_track") if is_url else "not_applicable",
                                       **source_evidence(source_url)}
+            if result.get('pipeline'):
+                pipeline = result['pipeline']
+                document['provenance'].update(audio_pipeline=pipeline['version'],
+                    audio_chunks=str(pipeline['chunks']), speaker_method=pipeline['speaker_method'],
+                    speaker_backend='sherpa-onnx' if speaker_backend else 'unavailable',
+                    speaker_status=f"automatic_unreviewed:{pipeline['speaker_count']} voices" if speaker_backend else 'unavailable',
+                    media_duration=pipeline['duration'])
         # Run only explicitly provisioned local reading models. A failure must
         # leave the completed ASR result available, with an honest status.
-        if document.get('provenance', {}).get('kind') == 'local_asr':
+        if document.get('provenance', {}).get('kind') in ('local_asr', 'provider_asr'):
             save_document(document, cached_document)
             print('[reading] preparing readable transcript', file=sys.stderr)
             try:
                 reading_audio = source if not is_url else locals().get('audio_path')
+                if reading_audio is None and (tmp / 'audio.json').is_file():
+                    reading_audio = tmp / json.loads((tmp / 'audio.json').read_text())['file']
                 document = enhance_from_environment(document, reading_audio)
                 document.get('provenance', {}).pop('readability_warning', None)
             except (ImportError, OSError, RuntimeError, ValueError):
