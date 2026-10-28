@@ -45,6 +45,7 @@ test('pasting share text extracts without fetching; submit reads the extracted l
         assert.equal(x.w.document.querySelector('.source-diagnostics').open, false);
         assert.match(x.w.document.querySelector('.source-feedback h2').textContent, /登录/);
         assert.match(x.w.document.querySelector('[data-caption-diagnostic]').textContent, /尝试请求 2 次/);
+        await wait(() => x.w.document.querySelector('.app-toast [role=alert]')?.textContent.includes('登录'));
         x.w.document.querySelector('.app-toast button').click();
         await wait(() => !x.w.document.querySelector('.app-toast'));
         assert.ok(x.button('重试上次读取'), 'recovery remains available after dismissing the toast');
