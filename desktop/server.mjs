@@ -24,7 +24,7 @@ const MIME = {'.png':'image/png','.html':'text/html; charset=utf-8','.js':'text/
 const MAX_BODY = 1024 * 1024;
 export const CSP = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self'; img-src 'self' data: blob:; media-src 'self' blob:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'";
 
-export function createBridge({readerDirectory = path.resolve(ROOT,'../reader'), providers = createProviders(), podcastSources = createPodcastSources(), captionService = null, captionStatus = null, captionShortLinkResolver = undefined, localMediaService = null, videoAudioService = null, taskStore = null, taskUnavailable = null, libraryStore = null, libraryUnavailable = null, libraryLocation = null, privateProxy = null, ingestionExecutor = createIngestionExecutor()} = {}) {
+export function createBridge({readerDirectory = path.resolve(ROOT,'../reader'), providers = createProviders(), podcastSources = createPodcastSources(), captionService = null, captionStatus = null, captionShortLinkResolver = undefined, bilibiliSession = null, localMediaService = null, videoAudioService = null, taskStore = null, taskUnavailable = null, libraryStore = null, libraryUnavailable = null, libraryLocation = null, privateProxy = null, ingestionExecutor = createIngestionExecutor()} = {}) {
   const profile=privateProxyProfile(privateProxy);
   const translate = createTranslator(providers);
   const capabilities=Object.freeze({...CAPABILITIES,caption_import:captionService?.available===true,persistent_tasks:!!taskStore,canonical_library:!!libraryStore});
@@ -84,6 +84,7 @@ export function createBridge({readerDirectory = path.resolve(ROOT,'../reader'), 
         }
         if (pathname === '/api/v1/ingestions/capabilities') return json(200,{...ingestionService.capabilities(),transcription:await ingestionExecutor.status({signal:controller.signal})});
         if (pathname === '/api/captions/status') return json(200,captionSources);
+        if (pathname === '/api/captions/session') return json(200,bilibiliSession&&capabilities.caption_import?await bilibiliSession.status():{supported:false,browser:'edge',connected:false,profile:null,profiles:[]});
         if (pathname === '/api/health') return json(200,{local_worker:false,runtime:'desktop-bridge',paid_processing:false,max_upload_bytes:0,capabilities,client:client(),caption_sources:captionSources,...(libraryLocation&&!remote?{library_storage:{...libraryLocation,enabled:!!libraryStore,unavailable:libraryUnavailable}}:{})});
         if (pathname === '/api/language-tools' && req.method === 'GET') return json(200,{translation_models:[],local_translation:false,ask_exact_selection:1,capabilities,
           ai:{codex:await providers.status('codex',{signal:controller.signal}),claude:await providers.status('claude',{signal:controller.signal})}});
@@ -102,7 +103,7 @@ export function createBridge({readerDirectory = path.resolve(ROOT,'../reader'), 
       const ingestionAction=ingestionJob&&['cancel','retry'].includes(ingestionJob[2]);
       const taskRoute=pathname==='/api/v1/tasks'||/^\/api\/v1\/tasks\/[a-f0-9-]+\/(?:cancel|archive|restore|resume)$/.test(pathname);
       if (taskRoute&&!taskStore)return json(503,{error:taskUnavailable?.message||'此执行器尚未配置持久任务目录',code:taskUnavailable?.code||'tasks_disabled'});
-      if (!taskRoute&&!ingestionAction&&!['/api/v1/ingestions','/api/ask','/api/translate-subscription','/api/podcasts/discover','/api/podcasts/import','/api/podcasts/media','/api/videos/media','/api/captions/import'].includes(pathname)) return json(501,{error:'轻量版未启用视频站下载、ASR 或离线翻译。可使用公开播客源、字幕或本地音视频；完整本地处理服务为可选高级功能。'});
+      if (!taskRoute&&!ingestionAction&&!['/api/v1/ingestions','/api/ask','/api/translate-subscription','/api/podcasts/discover','/api/podcasts/import','/api/podcasts/media','/api/videos/media','/api/captions/import','/api/captions/session'].includes(pathname)) return json(501,{error:'轻量版未启用视频站下载、ASR 或离线翻译。可使用公开播客源、字幕或本地音视频；完整本地处理服务为可选高级功能。'});
       if (req.headers['content-type']?.split(';')[0] !== 'application/json') return json(400,{error:'Use application/json'});
       const limit=taskRoute?TASK_BODY_BYTES:MAX_BODY;
       const declared = req.headers['content-length'];
@@ -116,6 +117,13 @@ export function createBridge({readerDirectory = path.resolve(ROOT,'../reader'), 
       let data;
       try { data = JSON.parse(Buffer.concat(chunks).toString('utf8')); } catch { return json(400,{error:'请求 JSON 无效'}); }
       if (!data || typeof data !== 'object' || Array.isArray(data)) return json(400,{error:'请求 JSON 无效'});
+      if(pathname==='/api/captions/session'){
+        if(!bilibiliSession||!capabilities.caption_import)return json(503,{error:'当前服务未提供浏览器连接。'});
+        const keys=Object.keys(data).sort().join(',');
+        if(data.action==='connect'&&keys==='action,browser,profile'&&data.browser==='edge')return json(200,await bilibiliSession.connect(data.profile,{signal:controller.signal}));
+        if(data.action==='disconnect'&&keys==='action')return json(200,await bilibiliSession.disconnect());
+        return json(400,{error:'浏览器连接请求无效。'});
+      }
       if(ingestionAction){if(data.protocolVersion!==1)return json(400,{error:'导入协议版本无效'});return json(200,{protocolVersion:1,ingestion:await ingestionExecutor.action(ingestionJob[1],ingestionJob[2],{signal:controller.signal})});}
       if(taskRoute){
         const action=pathname.split('/').at(-1),guardedMutation=['archive','cancel'].includes(action)&&data.protocolVersion===2;

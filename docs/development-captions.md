@@ -2,6 +2,14 @@
 
 `npm run dev` 默认不运行 Python。显式配置可信 Python 后，Node 开发入口可获取公开 X、YouTube、Bilibili 原语言现成字幕。这里的“就绪”表示依赖和协议可用，不保证平台允许此次公开访问。`npm run start:light` 和已发布安装包不因源码配置而改变。
 
+### 在 macOS 开发服务中复用 Edge 的 B 站登录
+
+按下文启用 Python 字幕助手后，在「发现与添加」展开「B 站账号 · 连接 Edge 登录态」，选择已登录 B 站的 Edge 配置，再点击连接。系统可能要求授权访问 `Microsoft Edge Safe Storage` 钥匙串项目。连接后重试视频链接；账号失效时，在同一个 Edge 配置中重新登录即可。点击「断开 Edge」恢复匿名读取。
+
+连接只保存浏览器和配置标识（开发任务目录旁的 `caption-browser.json`），服务重启后仍记住选择；不会保存 Cookie。每次 B 站字幕请求前，以只读 SQLite 查询获取所选 Edge 配置中 `bilibili.com` / `.bilibili.com`、根路径下的 `SESSDATA`、`bili_jct`、`DedeUserID`，只解密这些行。没有遍历或导出其他网站 Cookie。此首版支持 macOS Edge，不改变安装包或其他平台的匿名行为。
+
+连接状态接口 `/api/captions/session` 只允许本机访问；连接和断开要求来自阅读器同源的 JSON POST，不接受 Cookie、任意浏览器路径或解释器。页面只接收配置列表和连接状态。凭据通过受限子进程的私有管道传递，仅在已验证的 `www.bilibili.com` 网页和 `api.bilibili.com` 元数据 GET 请求中注入，不发送到字幕 CDN、媒体 CDN、YouTube 或 X。连接不会自动更换账号，也不会在拒绝后换入口；登录态过期或读取失败会显示可处理的错误。
+
 ## 启用和检查
 
 已有 Python 环境必须为 **Python 3.10+**，并需要固定版本 `yt-dlp==2026.8.19`（运行时 `2026.08.19`）和 `certifi`。Coconut 不安装、更改或自动寻找解释器。不要使用未知下载程序充当 Python，也不必安装完整 ASR requirements、ffmpeg、Whisper 或模型。
@@ -52,7 +60,7 @@ COCONUT_CAPTION_PROXY=http://127.0.0.1:7897 npm run dev
 
 **信任边界：** HTTP CONNECT 只连接选定的数值回环端口，向代理提交允许的来源主机名及 443 端口，由代理处理来源 DNS/路由；Coconut 不再验证代理最终连接的 IP 是否公网。所有者因此信任该代理做正确的路由。Coconut 继续使用原始主机名进行 SNI 和 certifi TLS 证书校验，并限制来源域名、路径、视频身份、请求与字节预算。代理能观察目标主机、连接时间和流量大小；正常 TLS 隧道不会向代理明文提供 HTTPS 路径、字幕或视频 ID。不会为了连接成功添加代理证书、关闭 TLS 校验或开放任意私网 URL。
 
-不跟随重定向、不自动更换网络路线，不传递账号 Cookie 或代理凭据。代理返回 407 时停止，不能在网页或环境变量中填密码绕过此限制。结构化诊断区分 `proxy_configuration_invalid`、`proxy_unavailable`、`proxy_auth_required`、`proxy_connect_rejected` 和 `origin_tls_failed`；均不表示来源没有字幕。CONNECT 成功不计为来源响应。平台访问拒绝仍立即停止。
+不跟随重定向、不自动更换网络路线，不传递代理凭据。默认不传递账号 Cookie；显式连接 Edge 后的 B 站字幕请求按上文的范围携带账号 Cookie。代理返回 407 时停止，不能在网页或环境变量中填密码绕过此限制。结构化诊断区分 `proxy_configuration_invalid`、`proxy_unavailable`、`proxy_auth_required`、`proxy_connect_rejected` 和 `origin_tls_failed`；均不表示来源没有字幕。CONNECT 成功不计为来源响应。平台访问拒绝仍立即停止。
 
 离线测试 `test_caption_proxy_transport.py` 使用现有 OpenSSL 在私有临时目录生成一天有效的专用测试证书与密钥（测试结束或失败后清理），配合本机 CONNECT 服务器，验证真实隧道、SNI、证书失败、无来源 DNS、无直连回退和请求边界；不安装系统证书、不访问平台。它与固定版官方 extractor 合同测试共同运行于 CI。离线通过不代表真实平台可访问；本机启用、平台实时测试和持久化验收仍需在被授权的运行环境完成。
 
@@ -74,11 +82,11 @@ COCONUT_CAPTION_PROXY=http://127.0.0.1:7897 npm run dev
 
 新开发操作 `extract-development` 复用固定版本官方 `YoutubeIE` / `BiliBiliIE` 的元数据、轨道和格式解析，以及既有 `subtitle_import.fetch_subtitle_document`。没有重写一个平台提取器。官方实现仍可能读取播放器/视频格式元数据；读取这些元数据不下载音视频。Bilibili 官方实现会在元数据阶段获取字幕 JSON，生成内联 SRT；所有请求也受同一预算限制。
 
-`public_video_caption_guard.py` 只注册请求平台的 extractor，限制 HTTPS 主机和路径、字幕格式、请求次数及字节数。每次连接只解析一次 DNS；任何混入的非公有/保留地址均阻止连接，直接连接已校验数值地址以防 DNS 重绑定，TLS 仍用原始主机名作 SNI 和证书校验。使用独立无 Cookie 的 urllib 传输，不跟随重定向，默认直连不继承代理或私有凭据；显式本机代理模式的不同信任边界见上节。YouTube 仅 web 客户端，关闭 JS、远程组件、token 提供者、翻译字幕和媒体 manifests；不发送默认上游网页或 player API 的年龄/内容确认参数。字幕上的可选 TLS impersonation 标记在下载前移除，始终用同一正常 TLS 路线。HTTP/API/页面中的访问拒绝立即终止；不会在拒绝后回退。
+`public_video_caption_guard.py` 只注册请求平台的 extractor，限制 HTTPS 主机和路径、字幕格式、请求次数及字节数。每次连接只解析一次 DNS；任何混入的非公有/保留地址均阻止连接，直接连接已校验数值地址以防 DNS 重绑定，TLS 仍用原始主机名作 SNI 和证书校验。使用独立 urllib 传输，默认无 Cookie；显式连接 Edge 时仅为 B 站的两个来源主机注入上述凭据，不跟随重定向，默认直连不继承代理或其他私有凭据；显式本机代理模式的不同信任边界见上节。YouTube 仅 web 客户端，关闭 JS、远程组件、token 提供者、翻译字幕和媒体 manifests；不发送默认上游网页或 player API 的年龄/内容确认参数。字幕上的可选 TLS impersonation 标记在下载前移除，始终用同一正常 TLS 路线。HTTP/API/页面中的访问拒绝立即终止；不会在拒绝后回退。
 
 限制：最多 32 次请求，每个元数据响应 4 MiB、字幕响应和最终文件 1 MiB、合计 24 MiB、单次网络等待 15 秒；父进程获取超时 130 秒。只接受六小时内、最多 20,000 条 cue 的完成视频。允许表可能随官方 extractor 变化而需要更新；版本固定、离线真实 extractor 合同测试和失败关闭用于让变化可见，不能证明未来平台可用率。
 
-Node 使用绝对 Python 路径、`-I -B`、固定启动代码和独立临时 HOME/配置/缓存，不经 shell，不继承 Python 注入、令牌或外部程序搜索路径。取消和退出终止进程组并清理。整个过程是显式信任源码环境，不是 OS 沙箱。新构建的打包版使用相同的公开 X / YouTube / Bilibili guard，但通过独立的原生 `extract` 契约与哈希校验运行。版本探测返回 `publicProviders`，应用只启用助手实际声明的来源；没有该字段的旧助手仍仅声明 X，不会因前端升级被当作支持新平台。安装包不接受开发代理配置，也不依赖用户安装 Python。源码修改不改变已经下载的旧安装包，必须重新构建并验收对应原生包。
+字幕提取进程使用绝对 Python 路径、`-I -B`、固定启动代码和独立临时 HOME/配置/缓存，不经 shell，不继承 Python 注入、令牌或外部程序搜索路径。显式连接 Edge 时，独立凭据读取进程仅执行固定的只读浏览器查询及 macOS 钥匙串命令，提取进程通过私有管道接收限于 B 站的 Cookie。取消和退出终止进程组并清理。整个过程是显式信任源码环境，不是 OS 沙箱。新构建的打包版使用相同的公开 X / YouTube / Bilibili guard，但通过独立的原生 `extract` 契约与哈希校验运行。版本探测返回 `publicProviders`，应用只启用助手实际声明的来源；没有该字段的旧助手仍仅声明 X，不会因前端升级被当作支持新平台。安装包不接受开发代理配置，也不依赖用户安装 Python。源码修改不改变已经下载的旧安装包，必须重新构建并验收对应原生包。
 
 ## 验证与证据
 

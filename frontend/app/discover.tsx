@@ -11,6 +11,7 @@ import {captionLanguageChoices,captionDiagnostics,hasCaptionLoss} from './captio
 import {captionFailureDiagnostic,captionFailureSummary,captionOriginalURL,type CaptionFailureDiagnostic} from './caption-failure';
 import { ingest, inspectFile, type Ingestion } from './ingestion';
 import {downloadVideoAudio,validateDownloadedVideoMedia,videoAudioFallback,type VideoAudioFallback} from './video-audio';
+import {BilibiliSession} from './bilibili-session';
 export function Discover({ store }: {
     store: AppStore;
 }) {
@@ -149,6 +150,7 @@ export function Discover({ store }: {
   <p className="kicker">COCONUT / 从声音开始</p><h1 id="discover-title">今天，想听什么？</h1><p className="lede">从一段声音开始，留住值得重读的想法。</p>
   <form onSubmit={event => { event.preventDefault(); void request({url,...(language?{language}:{})}); }}><label htmlFor="source-url">播客或视频链接</label><div className="source-row"><input id="source-url" disabled={attaching} type="url" required maxLength={4096} value={url} onChange={event=>changeURL(event.target.value)} placeholder="粘贴节目、单集或视频链接"/><button disabled={busy||attaching} type="submit">{busy ? '正在读取…' : '打开链接'}</button></div></form>
   <div className="source-actions"><button data-native-command="open-local-media" type="button" disabled={busy||attaching} onClick={() => {if(store.closeSnapshot().nonContentReasons.length)return;store.invalidateMedia();const captured=store.getSnapshot();picker.controller.begin(fileInput.current,()=>{const value=store.getSnapshot();return value.workspace===captured.workspace&&value.activeKey===captured.activeKey&&value.documents===captured.documents;});}}>打开音频或视频文件</button><input key={picker.inputKey} ref={fileInput} type="file" accept="audio/*,video/*" hidden onChange={event => { const input=event.currentTarget,file=input.files?.[0];void picker.controller.accept(input,async({current})=>{if(file&&current())await openFile(file,current);}); }}/>{busy && <button onClick={()=>{cancel();setError('读取已取消。可重试上次读取。');}}>取消读取</button>}</div>
+  <BilibiliSession disabled={busy||attaching}/>
   {candidate&&<section aria-label="核对原声项目"><h2>核对原声来源</h2><p>部分文件采样与已有项目相同，但不能证明是同一原声。请核对文件名与项目后选择。已有笔记不会被覆盖。</p>{candidate.keys.map(key=><button key={key} onClick={()=>chooseCandidate(key)}>关联到 {store.getDocument(key)?.title||key}</button>)}<button onClick={()=>chooseCandidate(null)}>作为新原声项目打开</button><button onClick={()=>setCandidate(null)}>取消关联</button></section>}
   <p className="quiet">可先听原声，或选择发布者现成文字稿。原声需另行点击载入，不会自动播放、调用 AI、运行识别或下载模型。</p>
   <p role="status" className="source-error">{error}</p>

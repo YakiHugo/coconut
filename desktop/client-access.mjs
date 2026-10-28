@@ -42,7 +42,7 @@ export function describeClient(access,{profile,libraryStore,taskStore,localMedia
     capabilities:{libraryRead:!!libraryStore,libraryWrite:!!libraryStore,aiActions:true,backgroundTasks:taskStore?.describe().enabled===true,
       localMedia:access.mode==='local'&&!!localMediaService,libraryMigration:false}};
 }
-export function localOnlyRoute(pathname){return pathname==='/api/v1/library/migration'||pathname==='/api/local-media'||pathname.startsWith('/api/local-media/');}
+export function localOnlyRoute(pathname){return pathname==='/api/captions/session'||pathname==='/api/v1/library/migration'||pathname==='/api/local-media'||pathname.startsWith('/api/local-media/');}
 // Only diagnostic text is sanitized, never document content or model answers.
 export function remoteDiagnostic(message){
   // A path can have an arbitrary root and contain spaces. Diagnostics are not

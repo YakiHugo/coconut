@@ -141,7 +141,7 @@ class PackagedLauncherTests(unittest.TestCase):
                 twitter.assert_not_called()
 
     def test_packaged_route_cannot_accept_development_proxy_or_extra_inputs(self):
-        for extra in [{'trustedProxy': 'http://127.0.0.1:7897'}, {'cookiefile': '/private/cookies'},
+        for extra in [{'trustedProxy': 'http://127.0.0.1:7897'}, {'bilibiliCookies': {'SESSDATA':'fixture'}}, {'cookiefile': '/private/cookies'},
                       {'client': 'android'}, {'operation': 'extract-arbitrary'}]:
             with self.subTest(extra=extra), \
                     patch.object(video_guard, 'extract_public_video_captions') as video, \
@@ -157,6 +157,18 @@ class PackagedLauncherTests(unittest.TestCase):
             self.assertEqual(self.invoke({'operation': 'extract-development', 'url': YOUTUBE,
                 'language': 'en', 'trustedProxy': 'http://127.0.0.1:7897'}), fixture)
             self.assertEqual(video.call_args.kwargs['proxy'], 'http://127.0.0.1:7897')
+
+    def test_development_session_is_bilibili_only_and_remains_a_private_input(self):
+        session = {'SESSDATA':'fixture-session'}
+        for url in (YOUTUBE, X):
+            with patch.object(video_guard, 'extract_public_video_captions') as video, patch.object(x_guard, 'extract_public_captions') as twitter:
+                self.assertEqual(self.invoke({'operation':'extract-development','url':url,'language':None,'bilibiliCookies':session}), {'status':'guard_stopped'})
+                video.assert_not_called();twitter.assert_not_called()
+        with patch.object(video_guard, 'extract_public_video_captions', return_value={'status':'no_matching_captions'}) as video:
+            result = self.invoke({'operation':'extract-development','url':BILIBILI,'language':None,'bilibiliCookies':session,'trustedProxy':'http://127.0.0.1:7897'})
+            self.assertEqual(result, {'status':'no_matching_captions'})
+            self.assertEqual(video.call_args.kwargs['bilibili_cookies'], session)
+            self.assertNotIn('fixture-session', repr(result))
 
     def test_packaged_real_guard_rejects_invalid_inputs_before_any_socket(self):
         for url in ['https://www.youtube.com/watch?v=invalid', 'http://www.youtube.com/watch?v=BaW_jenozKc',
