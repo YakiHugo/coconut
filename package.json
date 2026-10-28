@@ -13,7 +13,7 @@
     "build:reader-ui": "node scripts/build-reader-ui.mjs",
     "check:reader-ui": "tsc -p frontend/tsconfig.json && node scripts/build-reader-ui.mjs --check",
     "test:react": "node --test --test-concurrency=1 tests/react-*.test.mjs",
-    "test:react-browser": "node tests/react-app-browser.mjs && node tests/react-source-discovery-browser.mjs && node tests/react-caption-continuity-browser.mjs && node tests/react-caption-defaults-browser.mjs && node tests/react-caption-failure-browser.mjs && node tests/react-video-audio-browser.mjs && node tests/react-transcript-reading-browser.mjs",
+    "test:react-browser": "node tests/react-app-browser.mjs && node tests/react-source-discovery-browser.mjs && node tests/react-caption-continuity-browser.mjs && node tests/react-caption-defaults-browser.mjs && node tests/react-caption-failure-browser.mjs && node tests/react-video-audio-browser.mjs && node tests/react-transcript-reading-browser.mjs && node tests/react-bilibili-session-browser.mjs",
     "test:react-matrix": "node tests/react-production-matrix-browser.mjs",
     "test:react-palette-browser": "node --test tests/react-reading-palette-browser.mjs"
   },

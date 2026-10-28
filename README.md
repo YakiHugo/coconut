@@ -22,6 +22,8 @@ npm run dev
 
 打开命令输出的本机地址；`npm run doctor` 可检查服务能力。默认不安装或下载 ASR 模型。识别服务的配置、就绪状态和任务协议见 [来源与原始媒体](docs/link-first-ingestion.md)。
 
+macOS 开发服务启用字幕助手后，可在「发现与添加」连接 Edge 中已有的 B 站登录，之后自动复用所选配置的登录态。设置和凭据范围见 [开发字幕获取](docs/development-captions.md#在-macos-开发服务中复用-edge-的-b-站登录)。
+
 默认 React 与实际原生验收边界见 [应用入口](docs/react-default-cutover.md) 和 [应用行为合同](docs/react-migration-parity.md)。公共静态页面无法自行提供本机 AI、平台获取或 ASR 后端。
 
 ## 阅读与保存

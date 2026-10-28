@@ -10,6 +10,7 @@ import {createDevelopmentCaptionHelper} from './development-captions.mjs';
 import {createCaptionService} from './caption-service.mjs';
 import {createVideoAudioService} from './video-audio-service.mjs';
 import {captionSetupGuidance,CAPTION_START_GUIDANCE} from './caption-setup-guidance.mjs';
+import {createBilibiliBrowserSession} from './bilibili-browser-session.mjs';
 
 export const DEVELOPMENT_TASK_DIRECTORY = fileURLToPath(new URL('../.coconut/dev/tasks', import.meta.url));
 
@@ -18,7 +19,8 @@ export async function startDevelopmentBridge({port = 8080, taskDirectory = DEVEL
   let helper=null,captionDiagnostic=null;
   if(captionPython && !options.captionService){
     try{
-      helper=createDevelopmentCaptionHelper({python:captionPython,proxy:captionProxy,detached:captionHelperDetached});
+      options.bilibiliSession??=await createBilibiliBrowserSession({python:captionPython,configuration:taskDirectory?path.join(path.dirname(taskDirectory),'caption-browser.json'):null});
+      helper=createDevelopmentCaptionHelper({python:captionPython,proxy:captionProxy,bilibiliSession:options.bilibiliSession,detached:captionHelperDetached});
       const status=await helper.status();
       captionDiagnostic=status;
       options.captionStatus={code:status.ready?'ready':status.code,mode:'development-python',networkMode:status.networkMode};

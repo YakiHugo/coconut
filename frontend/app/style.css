@@ -18,3 +18,5 @@
 .reader-workspace{width:100%;min-width:0}
 .reader-workspace h1,.rw-source{overflow-wrap:anywhere}
 @media(max-width:760px){.react-app{grid-template-columns:minmax(0,1fr)}}
+
+.bilibili-session{margin:16px 0 28px;font-size:13px;color:var(--muted)}.bilibili-session summary{cursor:pointer}.bilibili-session p{max-width:60ch}.bilibili-session select{display:block;margin-top:8px;max-width:100%;padding:8px;border:1px solid var(--reading-edge);border-radius:6px;background:var(--surface);color:var(--text)}.bilibili-session button{font-size:13px;max-width:100%;white-space:normal}

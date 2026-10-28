@@ -1,13 +1,14 @@
 """Development-only captions: pinned official extractors, bounded public transport.
 
-Site parsing stays upstream. No login, ambient cookies, media bytes, token
-providers, external processes, redirects or alternate clients after a denial.
+Site parsing stays upstream. Explicit development Bilibili sessions are confined
+to the two Bilibili origins. No ambient cookies, redirects or alternate clients.
 """
 from __future__ import annotations
 import contextlib
 import io
 import html
 import http.client
+import http.cookiejar
 import ipaddress
 import socket
 import json
@@ -134,9 +135,23 @@ def bounded_response_body(response, limit, on_bytes=lambda size: None):
         on_bytes(max(wire_size, len(body)))
 
 
+def validate_bilibili_cookies(cookies, provider):
+    if cookies is None:
+        return {}
+    if (provider != 'bilibili' or not isinstance(cookies, dict) or not cookies.get('SESSDATA')
+            or any(name not in ('SESSDATA', 'bili_jct', 'DedeUserID') or not isinstance(value, str)
+                   or not value or len(value) > 4096
+                   or any(not 0x21 <= ord(c) <= 0x7e or c in ';,"\\' for c in value)
+                   for name, value in cookies.items())
+            or sum(len(value) for value in cookies.values()) > 6000):
+        raise StopProof('request_scope_stopped')
+    return dict(cookies)
+
+
 class VideoTransport:
-    def __init__(self, url, ca_file=None, proxy=None):
+    def __init__(self, url, ca_file=None, proxy=None, bilibili_cookies=None):
         self.provider, self.identity = source_identity(url)
+        self.bilibili_cookies = validate_bilibili_cookies(bilibili_cookies, self.provider)
         self.count = self.total = self.responses = 0
         self.stage = 'initialization'
         self.youtube_access_verified = False
@@ -185,7 +200,7 @@ class VideoTransport:
                     '/x/player/pagelist', '/x/player/wbi/playurl', '/x/player/wbi/v2'):
                 return 'metadata'
             if (p.hostname in ('aisubtitle.hdslb.com', 'subtitle.bilibili.com', 'subtitle.hdslb.com', 'i0.hdslb.com', 'i1.hdslb.com', 'i2.hdslb.com')
-                    and re.fullmatch(r'/bfs/(?:ai_subtitle|subtitle)/[A-Za-z0-9_./-]+\.json', p.path)):
+                    and re.fullmatch(r'/bfs/(?:ai_subtitle|subtitle)/(?:[A-Za-z0-9_-]+/)*[A-Za-z0-9_-]+(?:\.json)?', p.path)):
                 return 'caption'
         raise StopProof('request_scope_stopped')
 
@@ -212,6 +227,11 @@ class VideoTransport:
         self.count += 1
         headers = dict(request.headers)
         headers.update({'User-Agent': 'Coconut-public-captions/1.0', 'Accept-Encoding': 'identity'})
+        # Inject only after URL/method/header validation, never on subtitle CDNs,
+        # media, YouTube or redirects. Extractor-supplied Cookie remains denied.
+        if (self.bilibili_cookies and kind in ('webpage', 'metadata')
+                and urlparse(request.url).hostname in ('www.bilibili.com', 'api.bilibili.com')):
+            headers['Cookie'] = '; '.join(f'{name}={value}' for name, value in self.bilibili_cookies.items())
         req = urllib.request.Request(request.url, data=request.data, headers=headers, method=request.method)
         try:
             with self.opener.open(req, timeout=15) as response:
@@ -353,6 +373,10 @@ def guarded_extractors(transport):
                     'player_skip': ['js', 'configs', 'initial_data'], 'skip': ['hls', 'dash', 'translated_subs']}},
                 http_headers={'User-Agent': 'Coconut-public-captions/1.0'})
             super().__init__(settings, auto_init=False)
+            for name, value in transport.bilibili_cookies.items():
+                self.cookiejar.set_cookie(http.cookiejar.Cookie(
+                    0, name, value, None, False, '.bilibili.com', True, True,
+                    '/', True, True, None, True, None, None, {}))
             self.add_info_extractor(PublicYoutubeIE() if transport.provider == 'youtube' else PublicBiliBiliIE())
 
         def extract_info(self, *args, **kwargs):
@@ -406,7 +430,7 @@ def json3_document_vtt(document):
     return '\n'.join(lines).encode('utf-8')
 
 
-def extract_public_video_captions(url, language=None, *, ca_file=None, proxy=None, _media_output=None):
+def extract_public_video_captions(url, language=None, *, ca_file=None, proxy=None, bilibili_cookies=None, _media_output=None):
     import tempfile
     language_required = False
     languages = []
@@ -455,7 +479,7 @@ def extract_public_video_captions(url, language=None, *, ca_file=None, proxy=Non
         return selected
 
     try:
-        transport = VideoTransport(url, ca_file, proxy=proxy)
+        transport = VideoTransport(url, ca_file, proxy=proxy, bilibili_cookies=bilibili_cookies)
         with tempfile.TemporaryDirectory(prefix='coconut-video-captions-') as temporary:
             directory = Path(temporary)
             with guarded_extractors(transport), patch.object(subtitle_import, 'select_track', select), patch.object(subtitle_import, 'subtitle_document', parse):

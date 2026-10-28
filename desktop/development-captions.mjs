@@ -41,7 +41,7 @@ export function validateCaptionProxy(value){
  if(!match||Number(match[2])>65535)throw fail('CAPTION_PROXY_CONFIGURATION','字幕代理仅支持显式本机 HTTP 端口，不能包含凭据');
  return `http://${match[1]}:${match[2]}`;
 }
-export function createDevelopmentCaptionHelper({python,proxy=null,timeoutMs=HELPER_LIMITS.timeoutMs,mediaTimeoutMs=910000,tempRoot=tmpdir(),onSpawn,detached=process.platform!=='win32'}={}){
+export function createDevelopmentCaptionHelper({python,proxy=null,bilibiliSession=null,timeoutMs=HELPER_LIMITS.timeoutMs,mediaTimeoutMs=910000,tempRoot=tmpdir(),onSpawn,detached=process.platform!=='win32'}={}){
  if(typeof detached!=='boolean')throw fail('CAPTION_CONFIGURATION','无效的字幕进程组配置');
  if(typeof python!=='string'||!path.isAbsolute(python))throw fail('CAPTION_CONFIGURATION','字幕 Python 必须是已安装解释器的绝对路径');
  if(!Number.isInteger(timeoutMs)||timeoutMs<1||timeoutMs>HELPER_LIMITS.timeoutMs)throw fail('CAPTION_LIMIT','无效的字幕助手限制');
@@ -103,7 +103,8 @@ export function createDevelopmentCaptionHelper({python,proxy=null,timeoutMs=HELP
    if(!ready)throw fail('CAPTION_UNAVAILABLE','开发字幕助手尚未通过检查');
    const source=captionSource(url);
    if(language!==null&&(typeof language!=='string'||!/^([a-z]{2,3})(-[A-Za-z0-9]{2,8}){0,2}$/.test(language)))throw fail('CAPTION_INPUT','原语言标记无效');
-   const r=await execute({operation:'extract-development',url:source.url,language,...(trustedProxy&&['youtube','bilibili'].includes(source.provider)?{trustedProxy}:{})},{signal});
+   const cookies=source.provider==='bilibili'?await bilibiliSession?.cookies({signal}):null;
+   const r=await execute({operation:'extract-development',url:source.url,language,...(cookies?{bilibiliCookies:cookies}:{}),...(trustedProxy&&['youtube','bilibili'].includes(source.provider)?{trustedProxy}:{})},{signal});
    if(CAPTION_FAILURE_STATUSES.includes(r.status)){const diagnostic=captionDiagnostic(r.diagnostic);return {status:r.status,...(r.status==='language_required'?{languages:captionLanguages(r.languages)}:{}),...(diagnostic?{diagnostic}:{})};}
    if(r.status!=='ok'||!['vtt','srt'].includes(r.format)||typeof r.captionBase64!=='string'||r.captionBase64.length>Math.ceil(HELPER_LIMITS.captionBytes/3)*4||
     !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(r.captionBase64))throw fail('CAPTION_OUTPUT','字幕助手输出格式无效');

@@ -129,15 +129,17 @@ def main():
         return extract_public_video_audio(request['url'], language, output=Path('public-media.bin'),
             ca_file=certifi.where(), proxy=request.get('trustedProxy'))
     extraction_keys = {'operation', 'url', 'language'}
-    development_proxy = operation == 'extract-development' and set(request) == extraction_keys | {'trustedProxy'}
-    if operation in ('extract', 'extract-development') and (set(request) == extraction_keys or development_proxy):
+    development_options = operation == 'extract-development' and extraction_keys <= set(request) <= extraction_keys | {'trustedProxy', 'bilibiliCookies'}
+    if operation in ('extract', 'extract-development') and (set(request) == extraction_keys or development_options):
         if not isinstance(request['url'], str) or len(request['url']) > 2048:
             return {'status': 'unavailable'}
         language = request['language']
         if language is not None and (not isinstance(language, str) or len(language) > 30):
             return {'status': 'language_required'}
         proxy = None
-        if development_proxy:
+        if 'bilibiliCookies' in request and urllib.parse.urlsplit(request['url']).hostname != 'www.bilibili.com':
+            return {'status': 'guard_stopped'}
+        if 'trustedProxy' in request:
             from scripts.caption_proxy_transport import validate_proxy
             from scripts.public_x_caption_guard import StopProof
             proxy = request['trustedProxy']
@@ -150,7 +152,8 @@ def main():
         from scripts.public_x_caption_guard import extract_public_captions
         if urllib.parse.urlsplit(request['url']).hostname in ('www.youtube.com', 'www.bilibili.com'):
             from scripts.public_video_caption_guard import extract_public_video_captions
-            result = extract_public_video_captions(request['url'], language, ca_file=certifi.where(), proxy=proxy)
+            result = extract_public_video_captions(request['url'], language, ca_file=certifi.where(), proxy=proxy,
+                                                  bilibili_cookies=request.get('bilibiliCookies'))
         else:
             result = extract_public_captions(request['url'], language, ca_file=certifi.where())
         if result.get('status') in ('access_restricted', 'unavailable', 'language_required', 'network_unavailable', 'metadata_incomplete', 'no_matching_captions', 'extractor_failed', 'caption_file_invalid', 'caption_parse_failed', 'guard_stopped'):

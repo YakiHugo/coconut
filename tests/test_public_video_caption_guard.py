@@ -195,14 +195,16 @@ class PinnedConnectionTests(unittest.TestCase):
 
 @unittest.skipUnless(importlib.util.find_spec('yt_dlp'), 'Pinned yt-dlp not installed; CI extractor-contract job installs it')
 class OfficialExtractorTests(unittest.TestCase):
-    def extract(self, source, player=None, state=None, denied=False, network=False, caption_body=VTT):
+    def extract(self, source, player=None, state=None, denied=False, network=False, caption_body=VTT, bilibili_cookies=None, extensionless=False):
         calls = []
         player = copy.deepcopy(PLAYER if player is None else player)
         state = copy.deepcopy(STATE if state is None else state)
         def open_request(request, timeout=None):
             calls.append(request.full_url)
             self.assertEqual(request.get_header('User-agent'), 'Coconut-public-captions/1.0')
-            self.assertIsNone(request.get_header('Cookie'))
+            expected_cookie = ('SESSDATA=fixture-session' if bilibili_cookies and
+                request.full_url.startswith(('https://www.bilibili.com/', 'https://api.bilibili.com/')) else None)
+            self.assertEqual(request.get_header('Cookie'), expected_cookie)
             if network: raise urllib.error.URLError('offline')
             if denied: raise urllib.error.HTTPError(request.full_url, 403, '', {}, io.BytesIO())
             url = request.full_url
@@ -217,12 +219,14 @@ class OfficialExtractorTests(unittest.TestCase):
                     'img_url': 'https://i0.hdslb.com/bfs/wbi/7cd084941338484aae1ad9425b84077c.png',
                     'sub_url': 'https://i0.hdslb.com/bfs/wbi/4932caff0ff746eab6f01bf08b70ac45.png'}}}).encode()
             elif '/playurl?' in url: body = b'{"code":0,"data":{"dash":{"video":[],"audio":[]},"timelength":4000}}'
-            elif '/wbi/v2?' in url: body = b'{"code":0,"data":{"subtitle":{"subtitles":[{"lan":"en","subtitle_url":"//aisubtitle.hdslb.com/bfs/subtitle/fixture.json"}]}}}'
+            elif '/wbi/v2?' in url:
+                subtitle_url = '//aisubtitle.hdslb.com/bfs/subtitle/fixture' + ('' if extensionless else '.json')
+                body = json.dumps({'code':0,'data':{'subtitle':{'subtitles':[{'lan':'en','subtitle_url':subtitle_url}]}}}).encode()
             elif '/bfs/subtitle/' in url: body = b'{"body":[{"from":0,"to":4,"content":"Authored original fixture."}]}'
             else: self.fail('Unexpected network request: '+url)
             return Response(body)
         with patch.object(guard.urllib.request.OpenerDirector, 'open', side_effect=open_request), contextlib.redirect_stderr(io.StringIO()):
-            result = guard.extract_public_video_captions(source)
+            result = guard.extract_public_video_captions(source, bilibili_cookies=bilibili_cookies)
         return result, calls
 
     def test_player_api_does_not_claim_age_or_content_acknowledgement(self):
@@ -323,6 +327,13 @@ class OfficialExtractorTests(unittest.TestCase):
         self.assertEqual(calls[0], BILIBILI + '/')
         self.assertTrue(any('/wbi/v2?' in url for url in calls))
         self.assertFalse(any('videoplayback' in url or '.mp4' in url for url in calls))
+
+    def test_connected_bilibili_session_reads_extensionless_subtitles_without_cdn_credentials(self):
+        result, calls = self.extract(BILIBILI, bilibili_cookies={'SESSDATA':'fixture-session'}, extensionless=True)
+        self.assertEqual(result['format'], 'srt')
+        self.assertIn(b'Authored original fixture.', result['bytes'])
+        self.assertIn('https://aisubtitle.hdslb.com/bfs/subtitle/fixture', calls)
+        self.assertNotIn('fixture-session', repr(result))
 
     def test_no_fallback_after_access_denial_or_network_failure(self):
         for source in (YOUTUBE, BILIBILI):
