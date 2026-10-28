@@ -8,12 +8,15 @@ import type { AppStore } from './store';
 import {attachTranscript} from './attach-transcript';
 import {discoverySession,saveDiscoverySession,matchingSourceDocuments,exactSourceIdentity,ingestionDocument,type DiscoverySession,type SourceAttempt} from './discovery-session';
 import {captionLanguageChoices,captionDiagnostics,hasCaptionLoss} from './caption-receipt';
-import {captionFailureDiagnostic,captionFailureSummary,captionOriginalURL,type CaptionFailureDiagnostic} from './caption-failure';
+import {captionFailureDiagnostic,captionFailureSummary,captionFailureTitle,captionOriginalURL,type CaptionFailureDiagnostic} from './caption-failure';
+import {parseSourceLink} from './source-link';
+import {useToast} from './toast';
 import { ingest, inspectFile, type Ingestion } from './ingestion';
 import {downloadVideoAudio,validateDownloadedVideoMedia,videoAudioFallback,type VideoAudioFallback} from './video-audio';
 export function Discover({ store }: {
     store: AppStore;
 }) {
+    const notify = useToast();
     const [session,setSessionState]=useState(()=>discoverySession(store)),sessionRef=useRef(session);
     const updateSession=(patch:Partial<DiscoverySession>)=>{const next={...sessionRef.current,...patch};sessionRef.current=next;saveDiscoverySession(store,next);setSessionState(next);};
     const {url,catalogQuery,episodeQuery,episodeLimit,selection,receipt,tracks,error,language,languageChoices,languageRequired,lossReviewed}=session;
@@ -22,6 +25,9 @@ export function Discover({ store }: {
     const [candidate,setCandidateState]=useState<{file:File;inspected:Awaited<ReturnType<typeof inspectFile>>;keys:string[]}|null>(null);
     const [busy,setBusyState]=useState(false),[review,setReview]=useState<{key:string;revision:number}|null>(null),[attaching,setAttaching]=useState(false);
     const [failure,setFailure]=useState<{diagnostic:CaptionFailureDiagnostic|null;original:string|null;audio?:VideoAudioFallback|null}|null>(null);
+    const parsedLink = parseSourceLink(url);
+    const interrupted = /^读取已(?:取消|暂停)/.test(error);
+    useEffect(() => {if (error) notify({message: failure?.diagnostic ? captionFailureTitle(failure.diagnostic) + '。链接已保留，可重试。' : error, tone: interrupted ? 'info' : 'error'});}, [error, failure, interrupted, notify]);
     const setError=(error:string)=>updateSession({error});
     const choiceHeading=useRef<HTMLHeadingElement|null>(null),reviewHeading=useRef<HTMLHeadingElement|null>(null),lossHeading=useRef<HTMLHeadingElement|null>(null),languageHeading=useRef<HTMLHeadingElement|null>(null);
     useEffect(()=>{const heading=review?reviewHeading.current:lossPending?lossHeading.current:languageRequired?languageHeading.current:receipt?choiceHeading.current:null;if(heading){heading.focus();heading.scrollIntoView?.({block:'nearest'});}},[receipt,review,lossPending,languageRequired]);
@@ -51,6 +57,7 @@ export function Discover({ store }: {
         }catch(error){setError(error instanceof Error?error.message:'内容无法添加');}
     };
     const request = async (attempt:SourceAttempt) => {
+        if (sourceState.current.busy || attaching) return;
         cancel();setReview(null);
         const controller=new AbortController();owner.current=controller;setBusy(true);
         updateSession({attempt,error:'',receipt:null,lossReviewed:false});
@@ -89,6 +96,12 @@ export function Discover({ store }: {
         finally{if(owner.current===controller){owner.current=null;setBusy(false);}}
     };
     const changeURL=(value:string)=>{cancel();setReview(null);updateSession({url:value,episodeQuery:'',episodeLimit:20,selection:null,tracks:{},receipt:null,attempt:null,error:'',language:'',languageChoices:[],languageRequired:false,lossReviewed:false});};
+    const submitLink=()=>{
+        const parsed=parseSourceLink(sessionRef.current.url);
+        if(!parsed){notify({message:'请粘贴一个有效的播客或视频链接，一次读取一个来源。',tone:'error'});return;}
+        if(parsed.url!==sessionRef.current.url)updateSession({url:parsed.url});
+        void request({url:parsed.url,...(language?{language}:{})});
+    };
     const reopen=(key:string)=>{
         if(!content||!matchingSourceDocuments(store.getSnapshot().documents,content).some(doc=>doc.key===key)){setError('已有项目已变化，请重新读取来源。');return;}
         if(store.select(key))updateSession({receipt:null,error:''});
@@ -147,19 +160,26 @@ export function Discover({ store }: {
     const chooseCandidate=(key:string|null)=>{if(!candidate)return;const {file,inspected}=candidate;const existing=key?store.getDocument(key):null;if(key&&(!existing||(existing.local_media_source as {fingerprint?:string})?.fingerprint!==inspected.source.fingerprint)){setError('候选项目已变化，请重新打开文件。');setCandidate(null);return;}if(store.getSnapshot().dirty)return;const doc=existing||store.addDocument({project_kind:'audio_only',title:file.name,local_media_source:inspected.source,segments:[]});if(!doc)return;store.setFile(doc.key,file);store.setMedia(doc.key,{url:URL.createObjectURL(file),kind:inspected.kind,name:file.name,identity:inspected.identity,availability:'local_session'});setCandidate(null);store.select(doc.key);};
     return <section className="discover" aria-labelledby="discover-title">
   <p className="kicker">COCONUT / 从声音开始</p><h1 id="discover-title">今天，想听什么？</h1><p className="lede">从一段声音开始，留住值得重读的想法。</p>
-  <form onSubmit={event => { event.preventDefault(); void request({url,...(language?{language}:{})}); }}><label htmlFor="source-url">播客或视频链接</label><div className="source-row"><input id="source-url" disabled={attaching} type="url" required maxLength={4096} value={url} onChange={event=>changeURL(event.target.value)} placeholder="粘贴节目、单集或视频链接"/><button disabled={busy||attaching} type="submit">{busy ? '正在读取…' : '打开链接'}</button></div></form>
-  <div className="source-actions"><button data-native-command="open-local-media" type="button" disabled={busy||attaching} onClick={() => {if(store.closeSnapshot().nonContentReasons.length)return;store.invalidateMedia();const captured=store.getSnapshot();picker.controller.begin(fileInput.current,()=>{const value=store.getSnapshot();return value.workspace===captured.workspace&&value.activeKey===captured.activeKey&&value.documents===captured.documents;});}}>打开音频或视频文件</button><input key={picker.inputKey} ref={fileInput} type="file" accept="audio/*,video/*" hidden onChange={event => { const input=event.currentTarget,file=input.files?.[0];void picker.controller.accept(input,async({current})=>{if(file&&current())await openFile(file,current);}); }}/>{busy && <button onClick={()=>{cancel();setError('读取已取消。可重试上次读取。');}}>取消读取</button>}</div>
+  <form className="source-composer" onSubmit={event => {event.preventDefault();submitLink();}} aria-busy={busy}>
+    <label className="visually-hidden" htmlFor="source-url">播客或视频链接</label>
+    <div className="source-row">
+      <button className="source-add" aria-label="打开音频或视频文件" title="打开音频或视频文件" data-native-command="open-local-media" type="button" disabled={busy||attaching} onClick={() => {if(store.closeSnapshot().nonContentReasons.length)return;store.invalidateMedia();const captured=store.getSnapshot();picker.controller.begin(fileInput.current,()=>{const value=store.getSnapshot();return value.workspace===captured.workspace&&value.activeKey===captured.activeKey&&value.documents===captured.documents;});}}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg><span className="visually-hidden">打开音频或视频文件</span></button>
+      <input id="source-url" disabled={attaching} type="text" inputMode="url" autoComplete="off" spellCheck={false} maxLength={8192} value={url} onChange={event=>changeURL(event.target.value)} onPaste={event=>{const text=event.clipboardData.getData('text'),parsed=parseSourceLink(text);if(parsed){event.preventDefault();changeURL(parsed.url);if(parsed.url!==text.trim())notify({message:'已识别 '+parsed.label+' 链接，按 Enter 开始读取。'});}}} aria-describedby="source-hint" placeholder="粘贴播客或视频链接…"/>
+      {parsedLink&&<span className="source-kind">{parsedLink.label}</span>}
+      {busy?<button className="source-submit source-stop" type="button" aria-label="取消读取" title="取消读取" onClick={()=>{cancel();setError('读取已取消。可重试上次读取。');}}><span aria-hidden="true"/><span className="visually-hidden">取消读取</span></button>:<button className="source-submit" disabled={!url.trim()||attaching} type="submit" aria-label="打开链接" title="打开链接 · Enter"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true"><path d="M12 19V5m-6 6 6-6 6 6"/></svg><span className="visually-hidden">打开链接</span></button>}
+    </div>
+    <input key={picker.inputKey} ref={fileInput} type="file" accept="audio/*,video/*" hidden onChange={event => {const input=event.currentTarget,file=input.files?.[0];void picker.controller.accept(input,async({current})=>{if(file&&current())await openFile(file,current);});}}/>
+    <div className="source-hint" id="source-hint">{busy?<span role="status" className="source-progress"><span aria-hidden="true"/>正在读取来源…</span>:<span>粘贴链接，或点 <span aria-hidden="true">＋</span> 打开本地音视频</span>}<span className="source-enter" aria-hidden="true">Enter ↵</span></div>
+  </form>
   {candidate&&<section aria-label="核对原声项目"><h2>核对原声来源</h2><p>部分文件采样与已有项目相同，但不能证明是同一原声。请核对文件名与项目后选择。已有笔记不会被覆盖。</p>{candidate.keys.map(key=><button key={key} onClick={()=>chooseCandidate(key)}>关联到 {store.getDocument(key)?.title||key}</button>)}<button onClick={()=>chooseCandidate(null)}>作为新原声项目打开</button><button onClick={()=>setCandidate(null)}>取消关联</button></section>}
-  <p className="quiet">可先听原声，或选择发布者现成文字稿。原声需另行点击载入，不会自动播放、调用 AI、运行识别或下载模型。</p>
-  <p role="status" className="source-error">{error}</p>
-  {failure&&error&&!busy&&(failure.diagnostic||failure.original)&&<section className="caption-failure" aria-label="本次字幕读取结果">
-    {failure.diagnostic&&<p data-caption-diagnostic>{captionFailureSummary(failure.diagnostic)}</p>}
-    <p>{failure.audio?'已确认没有匹配原语言的字幕轨道。可明确下载公开媒体并创建新项目；可能是视频中的默认音轨，语言及是否原版未必可确认。下载前会重新核对字幕与访问状态。':'本次未取得可阅读的文字稿，不能据此判断来源没有字幕。链接已保留，可重试读取。'}</p>
-    <div className="source-actions">{failure.audio&&<button disabled={busy||attaching} onClick={()=>void openVideoAudio()}>下载公开媒体并新建项目（最多 200 MiB）</button>}
-    {failure.original&&<a href={failure.original} target="_blank" rel="noopener noreferrer">打开原站</a>}</div>
+  {error&&!busy&&!languageRequired&&<section className="source-feedback caption-failure" data-tone={interrupted?'info':'error'} aria-label={failure&&(failure.diagnostic||failure.original)?'本次字幕读取结果':'来源读取结果'}>
+    <div className="source-feedback-heading"><span className="source-feedback-icon" aria-hidden="true">{interrupted?'·':'!'}</span><div><h2>{interrupted?error.split('。')[0]:captionFailureTitle(failure?.diagnostic||null)}</h2><p>{failure?.audio?'可下载公开媒体，先听原声。':failure?.original?'链接已保留，可以重试或前往原站查看。':'来源已保留，可以稍后重试。'}</p></div></div>
+    <div className="source-actions">{session.attempt&&<button type="button" onClick={()=>void request(session.attempt!)}>重试上次读取{session.attempt.episode?'：'+session.attempt.episode.title:''}</button>}{failure?.original&&<a href={failure.original} target="_blank" rel="noopener noreferrer">打开原站</a>}</div>
+    {failure?.audio&&<button className="source-audio-fallback" disabled={busy||attaching} onClick={()=>void openVideoAudio()}>下载公开媒体并新建项目（最多 200 MiB）</button>}
+    <details className="source-diagnostics"><summary>查看读取详情</summary><p className="source-error">{error}</p>{failure?.diagnostic&&<p data-caption-diagnostic>{captionFailureSummary(failure.diagnostic)}</p>}<p>{failure?.audio?'已确认没有匹配原语言的字幕轨道。公开媒体可能是视频中的默认音轨，语言及是否原版未必可确认；下载前会重新核对字幕与访问状态。':'本次未取得可阅读的文字稿，不能据此判断来源没有字幕。'}</p></details>
   </section>}
+  {(!error||busy||languageRequired)&&<p className="source-error" hidden>{error}</p>}
   {languageRequired&&<section aria-label="选择视频原语言"><h2 ref={languageHeading} tabIndex={-1}>确认视频原语言</h2><p>以下是来源实际提供且格式可用的字幕语言，并不表示已确认视频原语言。请选择你确认的原语言后重试；不会自动换轨或启动识别。</p>{languageChoices.length>0?<label>视频原语言<select value={language} onChange={event=>{cancel();updateSession({language:event.target.value,error,receipt:null,lossReviewed:false});}}><option value="">请选择原语言</option>{languageChoices.map(code=><option key={code} value={code}>{code}</option>)}</select></label>:<p>当前字幕服务没有返回可选语言，无法在此确认原语言。链接已保留；请更新字幕服务后重试。</p>}{languageChoices.length>0&&<button disabled={busy||!languageChoices.includes(language)} onClick={()=>void request({...session.attempt!,language})}>按所选原语言重试</button>}</section>}
-  {session.attempt&&!busy&&error&&!languageRequired&&<button onClick={()=>void request(session.attempt!)}>重试上次读取{session.attempt.episode?'：'+session.attempt.episode.title:''}</button>}
   {selection&&<section className="episode-list" aria-label="选择播客单集"><h2>{selection.title||'选择一集开始'}</h2>{selection.feed_url&&<div className="feed-refresh"><p className="quiet">{checkLabel?'上次来源检查：'+checkLabel+'。一分钟内选择单集可能复用此节目列表；文字稿仍从发布者获取。':'选择单集时检查发布者来源。'} 刷新会重新读取来源，失败时不会使用旧缓存。</p><button disabled={busy||attaching} onClick={()=>void request({url,feed:selection.feed_url})}>刷新节目列表</button></div>}{selection.feeds?.map(feed=><button key={feed.url} disabled={busy||attaching} onClick={()=>{changeURL(feed.url);void request({url:feed.url});}}>{feed.title}</button>)}{selection.truncated&&<p className="episode-warning" role="status">来源列表不完整，仅包含发布者当前返回且服务可读取的部分单集。搜索只查找这些单集，不代表完整节目存档。</p>}{Boolean(selection.warnings?.length)&&<details className="episode-warnings"><summary>来源提示</summary><ul>{selection.warnings!.map((warning,index)=><li key={index}>{warning}</li>)}</ul></details>}{Boolean(selection.episodes?.length)&&<div className="episode-browser"><label htmlFor="episode-query">查找当前列表的单集</label><input id="episode-query" type="search" value={episodeQuery} disabled={attaching} onChange={event=>updateSession({episodeQuery:event.target.value,episodeLimit:20})} placeholder="按单集标题查找"/>{episodeQuery&&<button disabled={attaching} onClick={()=>updateSession({episodeQuery:'',episodeLimit:20})}>清空单集搜索</button>}<p role="status">匹配 {filteredEpisodes.length} 集 · 已显示 {visibleEpisodes.length} 集</p>{!filteredEpisodes.length&&<p>当前列表没有匹配的单集。可清空搜索，或在上方换用具体单集链接。</p>}</div>}{visibleEpisodes.map(episode=>{
       const supported=(episode.transcripts||[]).filter(track=>track.supported&&track.url),selectedTrack=supported.some(track=>!track.selection_conflict&&track.url===tracks[episode.id])?tracks[episode.id]:'',metadata=episodeMetadata(episode),allConflicting=supported.length>0&&supported.every(track=>track.selection_conflict),suggestion=episode.transcript_selection,recommended=suggestion?.status==='default'?supported.find(track=>track.url===suggestion.transcript_url):undefined;
       return <article key={episode.id}><div><h3>{episode.title}</h3>{metadata&&<p className="episode-metadata">{metadata}</p>}<p>{supported.length?'发布者提供带时文字稿 · 未经人工校对':'此单集暂无可导入的带时文字稿'}</p>{allConflicting&&<p className="episode-warning">发布者对同一文字稿地址的标注不一致，暂不可导入。可刷新来源，或先听原声。</p>}{supported.length>0&&<label>文字稿语言与格式 · {episode.title}<select aria-label={'文字稿语言与格式 · '+episode.title} value={selectedTrack} disabled={attaching} onChange={event=>{cancel();setReview(null);updateSession({tracks:{...sessionRef.current.tracks,[episode.id]:event.target.value},receipt:null,attempt:null,error:''});}}><option value="">{recommended?`默认：${recommended.language_source==='inherited'?'按发布者语言 ':''}${recommended.language} · ${recommended.type}（可切换）`:allConflicting?'文字稿标注冲突，暂不可导入':'请选择发布者文字稿语言'}</option>{supported.map((track,index)=><option key={track.url+':'+index} value={track.url} disabled={track.selection_conflict}>{track.selection_conflict?'标注冲突 · ':''}{track.language_source==='inherited'?'按发布者语言 ':''}{track.language||(track.language_status==='invalid'?'语言标注无效':'语言未标明')} · {track.type} · {index+1}</option>)}</select></label>}{!episode.media?.length&&<p className="quiet">此单集未提供可用的公开原声链接。</p>}</div><div className="episode-actions"><button disabled={busy||attaching||supported.length>0&&!selectedTrack&&!recommended} onClick={()=>void request({url,episode,feed:selection.feed_url,track:selectedTrack||undefined})}>打开单集</button><button disabled={busy||attaching||!episode.media?.length} onClick={()=>void request({url,episode,feed:selection.feed_url,intent:'media_only'})}>先听原声</button></div></article>;
