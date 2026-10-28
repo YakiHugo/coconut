@@ -87,6 +87,9 @@ try {
  await expect(page.locator('.rw-speaker-label').first()).toHaveText('说话人 1');
  await page.locator('.rw-speaker-label').filter({hasText:'未标注'}).first().scrollIntoViewIfNeeded();
  await expect(page.locator('.rw-speaker-label').filter({hasText:'未标注'}).first()).toBeVisible();
+ // Set the reading position explicitly: scrolling can leave the prior playback cue visible on Linux fonts.
+ await page.locator('.rw-inspect-passage').first().click();
+ await page.locator('.rw-mode-tabs [data-mode="passages"]').click();
  await page.locator('[data-source-id]').first().scrollIntoViewIfNeeded();
  const anchor=await page.locator('[data-source-id]').first().getAttribute('data-source-id');
  await page.locator('.rw-mode-tabs [data-mode="transcript"]').click();
