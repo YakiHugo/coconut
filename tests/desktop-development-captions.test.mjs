@@ -33,6 +33,20 @@ test('explicit developer adapter runs real isolated process from URL through HTT
  for(const call of calls){assert.deepEqual(call.args.slice(0,3),['-I','-B','-c']);assert.equal(call.env.PYTHONPATH,undefined);assert.equal(call.env.HTTP_PROXY,undefined);assert.equal(call.env.OPENAI_API_KEY,undefined);assert.notEqual(call.env.HOME,process.env.HOME);await assert.rejects(stat(call.cwd),{code:'ENOENT'});}
  const report=await diagnoseDevelopment({port:server.address().port});assert.equal(report.captions.available,true);assert.match(formatDoctorReport(report),/YouTube/);
 });
+test('connected Edge credentials travel only through the Bilibili helper pipe, ignoring Web credential fields',async t=>{
+ let reads=0,server;t.after(async()=>{await server?.shutdown();});
+ const f=await fixture(t,{result:{status:'no_matching_captions'}});
+ const bilibiliSession={async status(){return {supported:true,connected:true,browser:'edge',profiles:[]};},async cookies(){reads++;return {SESSDATA:'AUTHORED_SESSION_FIXTURE'};}};
+ const started=await startDevelopmentBridge({port:0,taskDirectory:null,libraryDirectory:null,captionPython:f.executable,bilibiliSession});server=started.server;
+ const send=body=>fetch(started.origin+'/api/captions/import',{method:'POST',headers:{Origin:started.origin,'Content-Type':'application/json'},body:JSON.stringify(body)});
+ for(const source of ['https://www.bilibili.com/video/BV1xx411c7mD','https://www.youtube.com/watch?v=BaW_jenozKc',url]){
+  const response=await send({url:source,bilibiliCookies:{SESSDATA:'WEB_INJECTION'}});assert.equal(response.status,200);assert.ok(!(await response.text()).includes('AUTHORED_SESSION_FIXTURE'));
+ }
+ assert.equal(reads,1);
+ const calls=(await readFile(f.log,'utf8')).trim().split('\n').map(JSON.parse).filter(call=>call.input.operation==='extract-development');
+ assert.deepEqual(calls[0].input.bilibiliCookies,{SESSDATA:'AUTHORED_SESSION_FIXTURE'});
+ assert.equal(calls[1].input.bilibiliCookies,undefined);assert.equal(calls[2].input.bilibiliCookies,undefined);
+});
 test('missing or mismatched Python fails closed with actionable status and no source extraction',async t=>{
  for(const probe of [{...version,version:'wrong'},{status:'version_mismatch',version:'2025.1.1'},{...version,tlsRootsVerified:false}]){
   const f=await fixture(t,{probe});const {server,origin,captions}=await startDevelopmentBridge({libraryDirectory:null,port:0,taskDirectory:path.join(f.directory,'tasks'),captionPython:f.executable});

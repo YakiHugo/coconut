@@ -13,6 +13,7 @@ import {parseSourceLink} from './source-link';
 import {useToast} from './toast';
 import { ingest, inspectFile, type Ingestion } from './ingestion';
 import {downloadVideoAudio,validateDownloadedVideoMedia,videoAudioFallback,type VideoAudioFallback} from './video-audio';
+import {BilibiliSession} from './bilibili-session';
 export function Discover({ store }: {
     store: AppStore;
 }) {
@@ -171,6 +172,7 @@ export function Discover({ store }: {
     <input key={picker.inputKey} ref={fileInput} type="file" accept="audio/*,video/*" hidden onChange={event => {const input=event.currentTarget,file=input.files?.[0];void picker.controller.accept(input,async({current})=>{if(file&&current())await openFile(file,current);});}}/>
     <div className="source-hint" id="source-hint">{busy?<span role="status" className="source-progress"><span aria-hidden="true"/>正在读取来源…</span>:<span>粘贴链接，或点 <span aria-hidden="true">＋</span> 打开本地音视频</span>}<span className="source-enter" aria-hidden="true">Enter ↵</span></div>
   </form>
+  <BilibiliSession disabled={busy||attaching}/>
   {candidate&&<section aria-label="核对原声项目"><h2>核对原声来源</h2><p>部分文件采样与已有项目相同，但不能证明是同一原声。请核对文件名与项目后选择。已有笔记不会被覆盖。</p>{candidate.keys.map(key=><button key={key} onClick={()=>chooseCandidate(key)}>关联到 {store.getDocument(key)?.title||key}</button>)}<button onClick={()=>chooseCandidate(null)}>作为新原声项目打开</button><button onClick={()=>setCandidate(null)}>取消关联</button></section>}
   {error&&!busy&&!languageRequired&&<section className="source-feedback caption-failure" data-tone={interrupted?'info':'error'} aria-label={failure&&(failure.diagnostic||failure.original)?'本次字幕读取结果':'来源读取结果'}>
     <div className="source-feedback-heading"><span className="source-feedback-icon" aria-hidden="true">{interrupted?'·':'!'}</span><div><h2>{interrupted?error.split('。')[0]:captionFailureTitle(failure?.diagnostic||null)}</h2><p>{failure?.audio?'可下载公开媒体，先听原声。':failure?.original?'链接已保留，可以重试或前往原站查看。':'来源已保留，可以稍后重试。'}</p></div></div>

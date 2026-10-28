@@ -41,7 +41,7 @@ test('passive owner discovery exposes request capabilities and same library with
  assert.equal(remote.client.libraryId,local.client.libraryId);assert.notEqual(remote.client.id,local.client.id);assert.equal(remote.library_storage,undefined);assert.ok(!JSON.stringify(remote).includes(directory));
  assert.equal((await request('/api/v1/executor')).data().remoteSubmission,true);assert.equal((await request('/api/v1/executor',{remote:false})).data().remoteSubmission,false);
  assert.equal((await request('/')).status,200);assert.equal((await request('/api/v1/library')).status,200);assert.equal((await request('/api/v1/tasks')).status,200);assert.equal(calls.length,0);
- for(const url of ['/api/local-media','/api/local-media/opaque-token','/api/v1/library/migration?protocolVersion=1'])assert.equal((await request(url)).status,403);
+ for(const url of ['/api/captions/session','/api/local-media','/api/local-media/opaque-token','/api/v1/library/migration?protocolVersion=1'])assert.equal((await request(url)).status,403);
 });
 test('owner library writes keep explicit Origin, CAS receipts and same shared library',async t=>{
  const {request,post,calls}=await setup(t),epoch=(await request('/api/v1/library')).data().epoch;

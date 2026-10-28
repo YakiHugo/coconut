@@ -94,8 +94,8 @@ export function createCaptionService({helper,readerDirectory=path.resolve(ROOT,'
      if(!CAPTION_FAILURE_STATUSES.includes(result.status))throw new Error('字幕获取未完成，请重试或导入字幕文件');
      const diagnostic=captionDiagnostic(result.diagnostic);
      const networkGuidance={
-      login_required:'来源明确要求登录或认证，当前匿名字幕入口无法继续；未尝试登录或切换身份。',
-      subtitle_login_required:'Bilibili 字幕接口明确要求登录后取得字幕；当前匿名入口无法继续。',
+      login_required:'来源明确要求登录或认证；请检查来源账号的登录状态后重试。',
+      subtitle_login_required:'Bilibili 字幕接口明确要求登录后取得字幕；当前登录状态未满足要求，请检查账号登录状态后重试。',
       subtitle_token_required:'YouTube 字幕轨道要求额外的 PO token；当前公开字幕入口不提供该令牌，未下载字幕。',
       rate_limited:'来源明确返回请求限流；本次已停止，未自动重试。',
       http_access_denied:'来源返回 HTTP 403 / 412 拒绝请求；不能据此判断是登录要求、限流或没有字幕。',
