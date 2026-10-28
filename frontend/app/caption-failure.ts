@@ -34,6 +34,12 @@ export function captionFailureSummary(d: CaptionFailureDiagnostic): string {
     const counts = d.requests_attempted === null ? '请求与响应次数未知' : `尝试请求 ${d.requests_attempted} 次，收到响应 ${d.responses_received} 次`;
     return `停在「${stages[d.stage]}」：${reasons[d.reason]}。${counts}。请求次数不证明已连接到视频平台，收到响应也不代表取得字幕。`;
 }
+export function captionFailureTitle(d: CaptionFailureDiagnostic | null): string {
+    if (!d) return '暂时无法读取此来源';
+    if (['login_required', 'subtitle_login_required', 'subtitle_token_required'].includes(d.reason)) return '字幕需要登录后才能读取';
+    if (d.reason === 'no_matching_track') return '没有匹配原语言的字幕';
+    return reasons[d.reason];
+}
 /** Only recognized HTTPS single-video paths; strip unrelated query data, never use receipt-provided URLs. */
 export function captionOriginalURL(value: unknown): string | null {
     if (typeof value !== 'string' || value.length > 4096) return null;

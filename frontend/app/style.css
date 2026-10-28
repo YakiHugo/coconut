@@ -19,4 +19,49 @@
 .reader-workspace h1,.rw-source{overflow-wrap:anywhere}
 @media(max-width:760px){.react-app{grid-template-columns:minmax(0,1fr)}}
 
+/* A single quiet surface for links and local media. Focus never paints a second input box. */
+.visually-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap;border:0}
+.source-composer{margin:0 0 28px}
+.source-composer .source-row{display:flex;flex-direction:row;align-items:center;gap:12px;min-height:66px;padding:9px;border:1px solid var(--reading-edge);border-radius:36px;background:var(--surface);box-shadow:0 2px 8px #28292403}
+.source-composer .source-row input{flex:1;min-width:0;width:100%;padding:10px 0;border:0;border-radius:0;background:transparent;color:var(--text);font-size:15px;line-height:1.5;box-shadow:none}
+.source-composer .source-row input:is(:focus,:focus-visible,:active){outline:none;border:0;background:transparent;box-shadow:none}
+.source-composer input::placeholder{color:var(--muted);opacity:.8}
+.source-composer .source-row button{display:inline-flex;align-items:center;justify-content:center;flex:0 0 44px;width:44px;height:44px;min-height:44px;padding:0;border:0;border-radius:50%;transition:background .15s}
+.source-composer .source-add{background:var(--reading-raised);color:var(--muted)}
+.source-composer .source-add:hover{background:var(--reading-selected);color:var(--text)}
+.source-composer svg{width:22px;height:22px}
+.source-composer .source-submit{background:var(--text);color:var(--surface)}
+.source-composer .source-submit:hover{background:var(--accent)}
+.source-composer .source-submit:disabled{opacity:.28}
+.source-composer .source-stop>span:first-child{width:12px;height:12px;border-radius:3px;background:currentColor}
+.source-kind{flex-shrink:0;font-size:12px;color:var(--muted);padding:0 6px;white-space:nowrap}
+.source-hint{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:12px 17px 0;color:var(--muted);font-size:12px;line-height:1.6}
+.source-enter{font-size:11px;white-space:nowrap;opacity:.7}
+.source-progress{display:inline-flex;align-items:center;gap:8px}
+.source-progress>span{width:11px;height:11px;border:1.5px solid var(--reading-edge);border-top-color:var(--accent);border-radius:50%;animation:source-spin 1s linear infinite}
+@keyframes source-spin{to{transform:rotate(360deg)}}
+.source-feedback{margin:24px 0 32px;padding:20px 22px;border:1px solid var(--reading-edge);border-radius:16px;background:var(--reading-raised);font-size:13px}
+.source-feedback-heading{display:flex;align-items:flex-start;gap:12px}
+.source-feedback-icon{display:flex;align-items:center;justify-content:center;flex:0 0 20px;height:20px;margin-top:2px;border:1px solid var(--muted);border-radius:50%;font-size:12px;color:var(--muted)}
+.source-feedback h2{margin:0;font-family:inherit;font-size:14px;font-weight:500;line-height:1.7}
+.source-feedback-heading p{margin:4px 0 0;color:var(--muted);font-size:12px}
+.source-feedback .source-actions{align-items:center;flex-wrap:wrap;gap:18px;margin:16px 0 0 32px}
+.source-feedback .source-actions button{padding:7px 12px;border-color:var(--reading-edge);border-radius:8px;font-size:12px}
+.source-feedback a{font-size:12px;text-decoration:none;color:var(--muted)}
+.source-feedback a::after{content:' ↗'}
+.source-feedback a:hover{color:var(--text)}
+.source-diagnostics{margin-top:18px;padding-top:12px;border-top:1px solid var(--reading-edge);font-size:12px;color:var(--muted);overflow-wrap:anywhere}
+.source-diagnostics summary{cursor:pointer;width:fit-content;font-size:11px}
+.source-diagnostics p{margin:10px 0 0;line-height:1.8}
+.source-feedback .source-error{color:var(--muted)}
+.source-audio-fallback{margin-top:16px;font-size:12px;max-width:100%}
+.toast-region{position:fixed;right:28px;bottom:28px;z-index:100;max-width:calc(100vw - 40px);pointer-events:none}
+.app-toast{display:flex;align-items:flex-start;gap:12px;width:max-content;max-width:min(420px,calc(100vw - 40px));padding:16px;border:1px solid var(--reading-edge);border-radius:14px;background:var(--surface);box-shadow:0 8px 32px #28292414;pointer-events:auto;animation:toast-in .18s ease-out}
+.app-toast p{flex:1;margin:0;font-size:13px;line-height:1.7;overflow-wrap:anywhere;max-height:30vh;overflow:auto}
+.toast-icon{display:inline-flex;align-items:center;justify-content:center;flex:0 0 19px;height:19px;margin-top:2px;border-radius:50%;background:var(--reading-selected);color:var(--accent);font-size:12px}
+.app-toast[data-tone=error] .toast-icon{background:#b5633814;color:#a05a36}
+.app-toast button{flex-shrink:0;display:flex;align-items:center;justify-content:center;width:28px;height:28px;margin:-3px -4px -3px 0;padding:0;border:0;color:var(--muted);font-size:20px}
+@keyframes toast-in{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}
+@media(max-width:480px){.source-composer .source-row{gap:9px;min-height:60px;padding:7px}.source-composer .source-row button{flex-basis:40px;width:40px;height:40px;min-height:40px}.source-composer .source-row input{font-size:14px}.source-kind,.source-enter{display:none}.source-hint{padding-inline:10px;font-size:11px}.source-feedback{padding:16px}.source-feedback .source-actions{margin-left:0}.toast-region{right:20px;bottom:20px}}
+@media(prefers-reduced-motion:reduce){.source-progress>span,.app-toast{animation:none}.source-composer .source-row button{transition:none}}
 .bilibili-session{margin:16px 0 28px;font-size:13px;color:var(--muted)}.bilibili-session summary{cursor:pointer}.bilibili-session p{max-width:60ch}.bilibili-session select{display:block;margin-top:8px;max-width:100%;padding:8px;border:1px solid var(--reading-edge);border-radius:6px;background:var(--surface);color:var(--text)}.bilibili-session button{font-size:13px;max-width:100%;white-space:normal}
