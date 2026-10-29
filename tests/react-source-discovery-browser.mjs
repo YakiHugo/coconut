@@ -1,3 +1,4 @@
+import {backupLibrary,openSettings,closeSettings} from './helpers/settings-browser.mjs';
 /** Production React + actual HTTP bridge/coordinator/RSS/VTT parser; authored bytes only. */
 import assert from 'node:assert/strict';
 import {mkdir,mkdtemp,readFile,writeFile,rm} from 'node:fs/promises';
@@ -36,8 +37,8 @@ try{
   const episode=title=>page.locator('.episode-list article').filter({has:page.getByRole('heading',{name:title,exact:true})});
   const multilingual=()=>episode('Authored multilingual episode'),evolving=()=>episode('Authored evolving episode');
   async function saved(){await expect(page.locator('.app-header').getByText('已保存',{exact:true})).toBeVisible();}
-  async function backup(){const [download]=await Promise.all([page.waitForEvent('download'),page.getByRole('button',{name:'导出完整备份',exact:true}).click()]);return JSON.parse(await readFile(await download.path(),'utf8')).documents;}
-  async function discover(){await page.getByRole('button',{name:'发现与添加',exact:true}).click();await expect(page.getByLabel('播客或视频链接')).toBeVisible();}
+  async function backup(){return (await backupLibrary(page)).documents;}
+  async function discover(){await page.getByRole('button',{name:'添加内容',exact:true}).click();await expect(page.getByLabel('播客或视频链接')).toBeVisible();}
   async function openFirst(){await multilingual().getByRole('button',{name:'打开单集',exact:true}).click();}
   const refresh=()=>page.getByRole('button',{name:'刷新节目列表',exact:true}),checked=()=>page.locator('.feed-refresh p');
   async function feedAborted(){await expect.poll(()=>fixture.calls.findLast(call=>call.url===sourceFeed)?.signal?.aborted).toBe(true);}
@@ -94,15 +95,14 @@ try{
   const origin='http://127.0.0.1:'+server.address().port,context=await browser.newContext({viewport:{width,height:960},serviceWorkers:'block'});
   await context.route('**/*',route=>{if(new URL(route.request().url()).origin!==origin){forbidden.push('catalog external request');return route.abort();}return route.continue();});
   const page=await context.newPage();page.on('pageerror',error=>errors.push(error.message));await page.goto(origin);
-  const card=page.locator('.podcast-catalog li').filter({has:page.getByRole('heading',{name:'Podcasting 2.0',exact:true})});
-  await expect(card).toContainText('未校对');assert.equal(catalogFixture.calls.length,0);
-  await card.getByRole('button',{name:'查看单集',exact:true}).click();
+  await expect(page.getByLabel('播客或视频链接')).toBeVisible();assert.equal(catalogFixture.calls.length,0);
+  await page.getByLabel('播客或视频链接').fill(catalogFeed);await page.getByRole('button',{name:'打开链接',exact:true}).click();
   const episode=page.locator('.episode-list article').filter({has:page.getByRole('heading',{name:'Authored multilingual episode',exact:true})});
   await expect(page.getByLabel('播客或视频链接')).toHaveValue(catalogFeed);await episode.getByRole('combobox').selectOption(frenchTrack);await episode.getByRole('button',{name:'打开单集',exact:true}).click();
   await expect(page.locator('.rw-original')).toHaveText('Bonjour, cette source reste intacte.');await expect(page.locator('.app-header').getByText('已保存',{exact:true})).toBeVisible();
   await page.reload();await expect(page.locator('.rw-original')).toHaveText('Bonjour, cette source reste intacte.');assert.equal(catalogFixture.counts.transcript,1);assert.equal(catalogFixture.calls.some(call=>call.url.endsWith('.mp3')),false);
   const size=await page.evaluate(()=>({viewport:innerWidth,document:document.documentElement.scrollWidth}));assert.ok(size.document<=width+1);
-  checks.push({width,passed:['catalog click without typing URL','real RSS/VTT parser to reader','SQLite saved transcript survives reload','no media or model request']});await context.close();await server.shutdown();server=null;
+  checks.push({width,passed:['direct RSS link entry','real RSS/VTT parser to reader','SQLite saved transcript survives reload','no media or model request']});await context.close();await server.shutdown();server=null;
  }
  for(const width of [1360,600,390])checks.push(await audioFirstBrowser({browser,width,directory,output}));
  assert.deepEqual(forbidden,[]);assert.deepEqual(errors,[]);await writeFile(path.join(output,'source-discovery.json'),JSON.stringify({checks,forbidden,errors},null,2));console.log('PASS production source-discovery continuity with actual authored backend parser; no external/model requests.');

@@ -73,7 +73,7 @@ try{
  assert.equal(document.source_url,url);assert.equal(document.title,'Authored A/B tone');assert.equal(document.project_kind,'audio_only');assert.equal(document.local_media_source.type,'audio/mp4');assert.equal(document.local_media_source.name,'coconut-Authored A_B tone.m4a');assert.equal(document.media_provenance.sha256,sha256);assert.equal(document.media_provenance.audio_language_basis,'platform_original');
 
  // A valid protocol receipt with undecodable media must not create a project.
- await page.getByRole('button',{name:'发现与添加',exact:true}).click();mode='invalid';await read();await button.click();
+ await page.getByRole('button',{name:'添加内容',exact:true}).click();mode='invalid';await read();await button.click();
  await expect(page.locator('.source-error')).toContainText('无法解码');assert.equal((await fetch(origin+'/api/v1/library/catalog?protocolVersion=1').then(r=>r.json())).entries.length,1);
  // The browser can read intact duration/dimensions before discovering broken
  // sample payloads. That metadata alone must never authorize a project.

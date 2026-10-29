@@ -40,7 +40,7 @@ async function renderPausedStartup(){
 const startupBusy=(busy:boolean)=>startup?.setBusy(busy);
 function ReadyApplication({store,result,storage}:{store:ReturnType<typeof createAppStore>;result:StorageResult;storage?:RecoveryStorage}){
     const [locked,setLocked]=useState(false);
-    return <><div inert={locked}><Application store={store}/></div><details className="storage-settings"><summary>书架存储与恢复</summary><StorageSetup result={result} storage={storage} store={store} onRestart={()=>location.reload()} onLockChange={setLocked}/></details></>;
+    return <><div inert={locked}><Application store={store} storageSettings={<details className="storage-settings"><summary>书架存储与恢复</summary><StorageSetup result={result} storage={storage} store={store} onRestart={()=>location.reload()} onLockChange={setLocked}/></details>}/></div></>;
 }
 async function start() {
     let result:any=null,storage:RecoveryStorage|undefined;

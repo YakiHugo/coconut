@@ -6,7 +6,7 @@ import type { AppStore } from '../app/store';
 import { createRecoveryController, type Domain, type AttachScope, type RecoveryController } from './controller';
 // Session lifetime only. Closing this panel or navigating never erases a paste draft.
 const sessions = new WeakMap<AppStore, Map<string, RecoveryController>>();
-export function SubtitleRecovery({ store, targetKey }: { store: AppStore; targetKey?: string }) {
+export function SubtitleRecovery({ store, targetKey,label }: { store: AppStore; targetKey?: string;label?:string }) {
   const controller = useMemo(() => {
     let group = sessions.get(store);
     if (!group) { group = new Map(); sessions.set(store, group); }
@@ -36,7 +36,7 @@ export function SubtitleRecovery({ store, targetKey }: { store: AppStore; target
   useEffect(()=>()=>picker.controller.retire(),[targetKey,picker.controller]);
   useEffect(() => { const retire = () => controller.pause(); window.addEventListener('pagehide', retire); return () => { window.removeEventListener('pagehide', retire); retire(); }; }, [controller]);
   return <details className="subtitle-recovery" onToggle={event => { if (!event.currentTarget.open) {picker.controller.retire();controller.pause();} }}>
-    <summary>高级恢复：导入或粘贴 SRT / VTT 字幕</summary>
+    <summary>{label||'高级恢复：导入或粘贴 SRT / VTT 字幕'}</summary>
     <p>适用于已经有字幕的情况。仅在本机解码与核对，不会上传文件。默认新增独立内容；可明确选择为尚无文字稿的原声项目补充字幕。已有正文不会被替换。</p>
     <p>草稿仅保留到本次页面关闭；刷新前请保存原始文件或复制文字。</p>
     {state.paused && <button onClick={() => controller.resume()}>继续核对保留的草稿</button>}

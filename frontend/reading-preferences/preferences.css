@@ -2,9 +2,8 @@
 :root[data-reading-measure="narrow"] .reader-workspace :is(.rw-original,.rw-translation,.rw-summary){max-width:39rem}
 :root[data-reading-layout="large"] .reader-workspace :is(.rw-original,.rw-translation,.rw-summary){font-size:21px;line-height:1.9}
 :root[data-reading-layout="spacious"] .reader-workspace :is(.rw-original,.rw-translation,.rw-summary){font-size:21px;line-height:2.2}
-/* React surfaces do not load the legacy reader stylesheet. Keep this palette
-   scoped to the explicit preference so the existing light design is unchanged. */
-:root[data-reader-theme="dark"]{color-scheme:dark;--text:#e9e6df;--muted:#bbbfb3;--surface:#211f1d;--accent:#b5ca9e;--reading-raised:#2a2b25;--reading-selected:#363d2f;--reading-edge:#51564a;color:var(--text);background:var(--surface)}
+/* Neutral dark edition uses the same functional blue and editorial hierarchy. */
+:root[data-reader-theme="dark"]{color-scheme:dark;--text:#ededee;--muted:#a4a5ad;--surface:#191a1d;--accent:#91a7ff;--reading-raised:#24252a;--reading-selected:#2a3352;--reading-edge:#414249;--danger:#f08c82;color:var(--text);background:var(--surface)}
 :root[data-reader-theme="dark"] body{color:var(--text);background:var(--surface)}
 :root[data-reader-theme="dark"] :is(.app-sidebar,dialog){color:var(--text);background:var(--reading-raised);border-color:var(--reading-edge)}
 :root[data-reader-theme="dark"] :is(input,select,textarea),
@@ -14,7 +13,7 @@
 :root[data-reader-theme="dark"] button:hover,
 :root[data-reader-theme="dark"] .app-sidebar nav button[aria-current=page],
 :root[data-reader-theme="dark"] :is(.rw-playing,.rw-selection,.rw-empty,.rw-annotations>div){background:var(--reading-selected)}
-:root[data-reader-theme="dark"] .source-row button{color:#211f1d;background:var(--accent)}
+:root[data-reader-theme="dark"] .source-composer .source-submit{color:#191a1d;background:var(--accent)}
 :root[data-reader-theme="dark"] :is(.rw-player,.selection-actions){color:var(--text);background:var(--surface)}
 :root[data-reader-theme="dark"] :is(.app-brand span,.sidebar-foot,.app-header,.kicker,.lede,.quiet,.recovery-entry,.library-page small,.podcast-catalog li p,.podcast-catalog a,.react-ai-panel p,.remote-media p,.ingestion-panel p,.ingestion-panel label,.rw-eyebrow,.rw-player p,.rw-media-unavailable,.rw-translation){color:var(--muted)}
 :root[data-reader-theme="dark"] .source-error{color:#efb395}

@@ -15,7 +15,7 @@ try{
   const context=await browser.newContext({viewport:{width,height:960},serviceWorkers:'block'});await context.route('**/*',route=>{const r=route.request();if(new URL(r.url()).origin!==origin){errors.push(r.url());return route.abort();}if(r.url().endsWith('/api/v1/ingestions')&&r.method()==='POST')requests.push(r.postDataJSON());return route.continue();});
   const page=await context.newPage();page.on('pageerror',e=>errors.push(e.message));page.setDefaultTimeout(15000);
   const row=()=>page.locator('.episode-list article').filter({has:page.getByRole('heading',{name:'Publisher choices',exact:true})}),open=()=>row().getByRole('button',{name:'打开单集',exact:true}),select=()=>row().getByRole('combobox');
-  const discover=async()=>{await page.getByRole('button',{name:'发现与添加',exact:true}).click();await expect(row()).toBeVisible();};
+  const discover=async()=>{await page.getByRole('button',{name:'添加内容',exact:true}).click();await expect(row()).toBeVisible();};
   await page.goto(origin);await page.getByLabel('播客或视频链接').fill(feedUrl);await page.getByRole('button',{name:'打开链接',exact:true}).click();await expect(open()).toBeEnabled();await expect(select()).toHaveValue('');await expect(select()).toContainText('默认：zh-hans · text/vtt');
   await page.screenshot({path:path.join(output,`default-${width}.png`),fullPage:true});assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1));
   // Default has no transcript_url override and imports the server's exact language recommendation.
