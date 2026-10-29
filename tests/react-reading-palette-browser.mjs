@@ -21,11 +21,11 @@ test('React saved and system themes change the actual shell, reader and control 
   await page.addScriptTag({content:bundle.outputFiles[0].text});
   await page.waitForFunction(()=>document.documentElement.dataset.readerTheme==='dark');
   const palette=()=>page.evaluate(()=>Object.fromEntries(['html','body','.app-sidebar','.sidebar-foot','.rw-original','.rw-translation','.rw-player','.rw-selection','textarea','.react-ai-panel select','dialog','dialog input'].map(selector=>{const style=getComputedStyle(document.querySelector(selector));return [selector,{color:style.color,background:style.backgroundColor}];})));
-  const dark=await palette();assert.equal(dark.html.background,'rgb(33, 31, 29)');assert.equal(dark.html.color,'rgb(233, 230, 223)');
-  for(const selector of ['.app-sidebar','textarea','.react-ai-panel select','dialog','dialog input'])assert.equal(dark[selector].background,'rgb(42, 43, 37)',selector);
-  assert.equal(dark['.rw-original'].color,dark.html.color);assert.equal(dark['.rw-translation'].color,'rgb(187, 191, 179)');assert.equal(dark['.rw-player'].background,dark.html.background);assert.equal(dark['.rw-selection'].background,'rgb(54, 61, 47)');
+  const dark=await palette();assert.equal(dark.html.background,'rgb(25, 26, 29)');assert.equal(dark.html.color,'rgb(237, 237, 238)');
+  for(const selector of ['.app-sidebar','textarea','.react-ai-panel select','dialog','dialog input'])assert.equal(dark[selector].background,'rgb(36, 37, 42)',selector);
+  assert.equal(dark['.rw-original'].color,dark.html.color);assert.equal(dark['.rw-translation'].color,'rgb(164, 165, 173)');assert.equal(dark['.rw-player'].background,dark.html.background);assert.equal(dark['.rw-selection'].background,'rgb(42, 51, 82)');
   await page.locator('.reading-preferences > summary').click();await page.locator('.reading-preferences label').filter({hasText:/^主题/}).locator('select').selectOption('light');
-  const light=await palette();assert.equal(light.html.background,'rgb(248, 247, 243)');assert.notDeepEqual(light,dark);assert.equal(light['.app-sidebar'].background,'rgb(240, 240, 232)');
+  const light=await palette();assert.equal(light.html.background,'rgb(250, 250, 249)');assert.notDeepEqual(light,dark);assert.equal(light['.app-sidebar'].background,'rgb(250, 250, 249)');
   await page.locator('.reading-preferences label').filter({hasText:/^主题/}).locator('select').selectOption('system');await page.waitForFunction(()=>document.documentElement.dataset.readerTheme==='dark');assert.deepEqual(await palette(),dark);
   await page.emulateMedia({colorScheme:'light'});await page.waitForFunction(()=>document.documentElement.dataset.readerTheme==='light');assert.deepEqual(await palette(),light);
   assert.equal(await page.evaluate(()=>localStorage.getItem('coconut-reading-theme-v1')),'system');

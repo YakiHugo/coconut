@@ -25,8 +25,8 @@ async function setup(fixture=sourceDiscoveryFixture(),seed=[]){
  const input=(node,value)=>{Object.getOwnPropertyDescriptor(w.HTMLInputElement.prototype,'value').set.call(node,value);node.dispatchEvent(new w.Event('input',{bubbles:true}));};
  const select=(node,value)=>{node.value=value;node.dispatchEvent(new w.Event('change',{bubbles:true}));};
  const docs=()=>JSON.parse(w.localStorage.getItem('coconut-reader-v1')||'{"documents":[]}').documents;
- const discover=async()=>{button('发现与添加').click();await wait(()=>w.document.querySelector('#source-url'));};
- const load=async()=>{input(w.document.querySelector('#source-url'),sourceFeed);w.document.querySelector('#source-url').closest('form').dispatchEvent(new w.Event('submit',{bubbles:true,cancelable:true}));await wait(()=>w.document.querySelector('.episode-list'));};
+ const discover=async()=>{button('添加内容').click();await wait(()=>w.document.querySelector('#source-url'));};
+ const load=async(url=sourceFeed)=>{input(w.document.querySelector('#source-url'),url);w.document.querySelector('#source-url').closest('form').dispatchEvent(new w.Event('submit',{bubbles:true,cancelable:true}));await wait(()=>w.document.querySelector('.episode-list'));};
  const episode=title=>[...w.document.querySelectorAll('.episode-list article')].find(node=>node.querySelector('h3').textContent===title);
  const open=async(title,track)=>{const article=episode(title);if(track){select(article.querySelector('select'),track);await wait(()=>!article.querySelector('button').disabled);}article.querySelector('button').click();await new Promise(r=>setTimeout(r,0));};
  return {w,fixture,requests,button,buttons,input,select,docs,discover,load,episode,open};
@@ -218,17 +218,11 @@ test('episode metadata omits absent and invalid values without fabricating dates
  assert.equal(episodeMetadata({id:'a',title:'Short',duration:65.7}),'时长 1:05');
 });
 
-// Catalog bytes are public URLs, but this UI test uses authored feed/VTT bytes only.
-test('first catalog choice reaches timed reading without typing a source URL or fetching media',async()=>{
- const built=await build({entryPoints:['frontend/app/catalog.ts'],bundle:true,format:'esm',write:false,platform:'node'});
- const {podcastCatalog,searchCatalog}=await import('data:text/javascript;base64,'+Buffer.from(built.outputFiles[0].contents).toString('base64'));
- const show=podcastCatalog.find(show=>show.id==='podcasting-2');assert.ok(show);assert.equal(podcastCatalog[0],show);
- assert.equal(show.feed,'https://mp3s.nashownotes.com/pc20rss.xml');assert.ok(searchCatalog('文字稿').includes(show));
- assert.ok((await readFile('tests/podcast-public-smoke.mjs','utf8')).includes(show.feed),'catalog source must stay covered by live acceptance');
+test('an explicit RSS link reaches timed reading without fetching media',async()=>{
+ const show={feed:'https://mp3s.nashownotes.com/pc20rss.xml'};
  const fixture=sourceDiscoveryFixture(show.feed),x=await setup(fixture);try{
   assert.equal(fixture.calls.length,0,'opening discovery never prefetches');
-  const card=[...x.w.document.querySelectorAll('.podcast-catalog li')].find(item=>item.querySelector('h3').textContent===show.title);
-  assert.match(card.textContent,/未校对/);card.querySelector('button').click();await wait(()=>x.w.document.querySelector('.episode-list'));
+  assert.equal(x.w.document.querySelector('.podcast-catalog'),null);await x.load(show.feed);
   assert.equal(x.w.document.querySelector('#source-url').value,show.feed);
   assert.equal(x.requests[0].source.url,show.feed);assert.equal(x.docs().length,0);
   assert.match(x.episode('Authored evolving episode').textContent,/暂无可导入的带时文字稿/);

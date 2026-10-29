@@ -1,3 +1,4 @@
+import {backupLibrary,openSettings,closeSettings} from './helpers/settings-browser.mjs';
 /** Production UI + real HTTP ingestion/caption services and parser. Authored offline bytes only. */
 import assert from 'node:assert/strict';
 import {mkdir,mkdtemp,writeFile,readFile,rm} from 'node:fs/promises';
@@ -19,8 +20,8 @@ try{
  const page=await context.newPage();page.setDefaultTimeout(15000);page.on('pageerror',error=>errors.push(error.message));
  const review=page.getByRole('region',{name:'字幕解析检查'}),language=page.getByRole('region',{name:'选择视频原语言'});
  const open=async()=>{await page.getByLabel('播客或视频链接').fill(url);await page.getByRole('button',{name:'打开链接',exact:true}).click();};
- const discover=async()=>{await page.getByRole('button',{name:'发现与添加',exact:true}).click();await expect(page.getByLabel('播客或视频链接')).toBeVisible();};
- const backup=async()=>{const [download]=await Promise.all([page.waitForEvent('download'),page.getByRole('button',{name:'导出完整备份',exact:true}).click()]);return JSON.parse(await readFile(await download.path(),'utf8')).documents;};
+ const discover=async()=>{await page.getByRole('button',{name:'添加内容',exact:true}).click();await expect(page.getByLabel('播客或视频链接')).toBeVisible();};
+ const backup=async()=>{return (await backupLibrary(page)).documents;};
  await page.goto(origin);await open();await expect(language).toBeVisible();assert.equal((await backup()).length,0);await expect(page.getByRole('button',{name:'按所选原语言重试'})).toBeDisabled();assert.deepEqual(fixture.requests.map(r=>r.language),[null]);
  assert.deepEqual(await language.locator('option').evaluateAll(items=>items.map(item=>item.value)),['','en','fr']);await language.getByRole('combobox').selectOption('en');await page.getByRole('button',{name:'按所选原语言重试'}).click();await expect(page.locator('[data-source-id]')).toHaveCount(2);await expect(page.locator('.app-header').getByText('已保存',{exact:true})).toBeVisible();assert.deepEqual(fixture.requests.map(r=>r.language),[null,'en']);
  const original=(await backup())[0];assert.equal(original.source_url,url);await discover();await expect(page.getByLabel('播客或视频链接')).toHaveValue(url);

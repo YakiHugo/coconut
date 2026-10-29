@@ -1,3 +1,4 @@
+import {backupLibrary,openSettings,closeSettings} from './settings-browser.mjs';
 /** Authored-only HTTP bridge, real RSS/VTT parsers, WAV decoding and SQLite. */
 import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
@@ -28,8 +29,8 @@ export async function audioFirstBrowser({browser,width,directory,output}){
   const sourceError=()=>page.locator('.source-error');
   const loadMedia=()=>page.getByRole('button',{name:'载入原声（最多 200 MiB）',exact:true});
   const saved=()=>expect(page.locator('.app-header').getByText('已保存',{exact:true})).toBeVisible();
-  async function backup(){const [download]=await Promise.all([page.waitForEvent('download'),page.getByRole('button',{name:'导出完整备份',exact:true}).click()]);return JSON.parse(await readFile(await download.path(),'utf8')).documents;}
-  async function discover(){await page.getByRole('button',{name:'发现与添加',exact:true}).click();await expect(page.getByLabel('播客或视频链接')).toBeVisible();}
+  async function backup(){return (await backupLibrary(page)).documents;}
+  async function discover(){await page.getByRole('button',{name:'添加内容',exact:true}).click();await expect(page.getByLabel('播客或视频链接')).toBeVisible();}
   async function loadFeed(){await page.getByLabel('播客或视频链接').fill(sourceFeed);await page.getByRole('button',{name:'打开链接',exact:true}).click();await expect(episode()).toBeVisible();}
   async function noPlayback(){assert.equal(await page.evaluate(()=>window.__authoredPlays),expectedPlays);for(const player of await page.locator('audio,video').all())assert.equal(await player.evaluate(element=>element.paused),true);}
   async function screenshot(name){const geometry=await page.evaluate(()=>({viewport:innerWidth,document:document.documentElement.scrollWidth}));assert.ok(geometry.document<=width+1,'Audio-first horizontal overflow '+JSON.stringify(geometry));await page.screenshot({path:path.join(output,`source-audio-first-${name}-${width}.png`),fullPage:true});}

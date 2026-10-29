@@ -71,9 +71,9 @@ export function useReadingPreferences() {
   return { values, status, change };
 }
 export type ReadingPreferencesController = ReturnType<typeof useReadingPreferences>;
-export function ReadingPreferences({ controller }: { controller: ReadingPreferencesController }) {
+export function ReadingPreferences({ controller,expanded=false }: { controller: ReadingPreferencesController;expanded?:boolean }) {
   const { values, status, change } = controller;
-  return <details className="reading-preferences" onKeyDown={event => {
+  return <details className="reading-preferences" open={expanded||undefined} onKeyDown={event => {
     if (event.key !== 'Escape' || event.defaultPrevented || event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229 || event.ctrlKey || event.altKey || event.metaKey) return;
     const target = event.target as HTMLElement;
     try { if (target.closest('select')?.matches(':open')) return; } catch { /* Older browsers have no :open support. */ }

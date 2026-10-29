@@ -1,9 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {useOwnedPicker} from '../native-shell/owned-picker-hook';
-import {searchCatalog} from './catalog';
 import {episodeMetadata,filterEpisodes} from './episode-browser';
-import {SubtitleRecovery} from '../recovery-import/recovery';
-import { Recovery } from './recovery';
 import type { AppStore } from './store';
 import {attachTranscript} from './attach-transcript';
 import {discoverySession,saveDiscoverySession,matchingSourceDocuments,exactSourceIdentity,ingestionDocument,type DiscoverySession,type SourceAttempt} from './discovery-session';
@@ -13,14 +10,13 @@ import {parseSourceLink} from './source-link';
 import {useToast} from './toast';
 import { ingest, inspectFile, type Ingestion } from './ingestion';
 import {downloadVideoAudio,validateDownloadedVideoMedia,videoAudioFallback,type VideoAudioFallback} from './video-audio';
-import {BilibiliSession} from './bilibili-session';
 export function Discover({ store }: {
     store: AppStore;
 }) {
     const notify = useToast();
     const [session,setSessionState]=useState(()=>discoverySession(store)),sessionRef=useRef(session);
     const updateSession=(patch:Partial<DiscoverySession>)=>{const next={...sessionRef.current,...patch};sessionRef.current=next;saveDiscoverySession(store,next);setSessionState(next);};
-    const {url,catalogQuery,episodeQuery,episodeLimit,selection,receipt,tracks,error,language,languageChoices,languageRequired,lossReviewed}=session;
+    const {url,episodeQuery,episodeLimit,selection,receipt,tracks,error,language,languageChoices,languageRequired,lossReviewed}=session;
     const filteredEpisodes=filterEpisodes(selection?.episodes||[],episodeQuery),visibleEpisodes=filteredEpisodes.slice(0,episodeLimit);
     const diagnostics=captionDiagnostics(receipt?.diagnostics),lossPending=!!receipt&&hasCaptionLoss(diagnostics)&&!lossReviewed;
     const [candidate,setCandidateState]=useState<{file:File;inspected:Awaited<ReturnType<typeof inspectFile>>;keys:string[]}|null>(null);
@@ -160,7 +156,7 @@ export function Discover({ store }: {
     };
     const chooseCandidate=(key:string|null)=>{if(!candidate)return;const {file,inspected}=candidate;const existing=key?store.getDocument(key):null;if(key&&(!existing||(existing.local_media_source as {fingerprint?:string})?.fingerprint!==inspected.source.fingerprint)){setError('候选项目已变化，请重新打开文件。');setCandidate(null);return;}if(store.getSnapshot().dirty)return;const doc=existing||store.addDocument({project_kind:'audio_only',title:file.name,local_media_source:inspected.source,segments:[]});if(!doc)return;store.setFile(doc.key,file);store.setMedia(doc.key,{url:URL.createObjectURL(file),kind:inspected.kind,name:file.name,identity:inspected.identity,availability:'local_session'});setCandidate(null);store.select(doc.key);};
     return <section className="discover" aria-labelledby="discover-title">
-  <p className="kicker">COCONUT / 从声音开始</p><h1 id="discover-title">今天，想听什么？</h1><p className="lede">从一段声音开始，留住值得重读的想法。</p>
+  <header className="discover-intro"><p className="kicker"><span>01 / ADD CONTENT</span><span>声音资料库</span></p><h1 id="discover-title">今天，想听什么？</h1><p className="lede">听见，读懂，留下。<br/>添加一段声音，整理成自己的阅读材料。</p></header>
   <form className="source-composer" onSubmit={event => {event.preventDefault();submitLink();}} aria-busy={busy}>
     <label className="visually-hidden" htmlFor="source-url">播客或视频链接</label>
     <div className="source-row">
@@ -172,7 +168,6 @@ export function Discover({ store }: {
     <input key={picker.inputKey} ref={fileInput} type="file" accept="audio/*,video/*" hidden onChange={event => {const input=event.currentTarget,file=input.files?.[0];void picker.controller.accept(input,async({current})=>{if(file&&current())await openFile(file,current);});}}/>
     <div className="source-hint" id="source-hint">{busy?<span role="status" className="source-progress"><span aria-hidden="true"/>正在读取来源…</span>:<span>粘贴链接，或点 <span aria-hidden="true">＋</span> 打开本地音视频</span>}<span className="source-enter" aria-hidden="true">Enter ↵</span></div>
   </form>
-  <BilibiliSession disabled={busy||attaching}/>
   {candidate&&<section aria-label="核对原声项目"><h2>核对原声来源</h2><p>部分文件采样与已有项目相同，但不能证明是同一原声。请核对文件名与项目后选择。已有笔记不会被覆盖。</p>{candidate.keys.map(key=><button key={key} onClick={()=>chooseCandidate(key)}>关联到 {store.getDocument(key)?.title||key}</button>)}<button onClick={()=>chooseCandidate(null)}>作为新原声项目打开</button><button onClick={()=>setCandidate(null)}>取消关联</button></section>}
   {error&&!busy&&!languageRequired&&<section className="source-feedback caption-failure" data-tone={interrupted?'info':'error'} aria-label={failure&&(failure.diagnostic||failure.original)?'本次字幕读取结果':'来源读取结果'}>
     <div className="source-feedback-heading"><span className="source-feedback-icon" aria-hidden="true">{interrupted?'·':'!'}</span><div><h2>{interrupted?error.split('。')[0]:captionFailureTitle(failure?.diagnostic||null)}</h2><p>{failure?.audio?'可下载公开媒体，先听原声。':failure?.original?'链接已保留，可以重试或前往原站查看。':'来源已保留，可以稍后重试。'}</p></div></div>
@@ -189,7 +184,5 @@ export function Discover({ store }: {
   {receipt&&Boolean(content)&&diagnostics.length>0&&<section className="caption-review" aria-label="字幕解析检查"><h2 ref={lossHeading} tabIndex={-1}>{hasCaptionLoss(diagnostics)?'部分字幕未导入':'字幕解析提示'}</h2><p>本次保留 {(content as any).segments?.length||0} 个片段，解析报告 {diagnostics.length} 项提示。请核对原文后决定是否保存剩余文字稿。</p><ul>{diagnostics.slice(0,100).map((item,index)=><li key={index}><p>{item.category==='malformed_timing'?'时间格式无效，片段未导入':item.category==='empty_cue'?'片段无可读文字，未导入':item.category} · 原文行 {item.startLine??'?'}–{item.endLine??'?'}</p>{item.cueId&&<p>片段：{item.cueId}</p>}{item.preview&&<pre>{item.preview}</pre>}</li>)}</ul>{diagnostics.length>100&&<p>仅展示前 100 项；其余仍计入上述数量，请核对来源。</p>}{lossPending&&<><button disabled={attaching} onClick={()=>{updateSession({lossReviewed:true});if(!matches.length)openReceipt(receipt);}}>保留剩余文字稿，继续</button><button disabled={attaching} onClick={()=>{setReview(null);updateSession({receipt:null,lossReviewed:false,error:''});}}>取消本次导入</button></>}</section>}
   {receipt&&Boolean(content)&&!lossPending&&<section className="source-project-choice" aria-label={matches.length?'此来源已在书架':'来源等待加入书架'}><h2 ref={choiceHeading} tabIndex={-1}>{matches.length?'此来源已在书架':'来源已就绪，尚未加入书架'}</h2>{matches.length>0&&<p>选择已有项目继续阅读，或明确创建独立副本。已有文字稿和笔记不会自动替换。</p>}{matches.map(doc=><article key={doc.key}><h3>{doc.title}</h3><p>{doc.segments.length?`${doc.segments.length} 段文字`:'原声 · 尚无文字稿'} · 项目标识 {doc.key.slice(-8)}</p><button disabled={attaching} onClick={()=>reopen(doc.key)}>继续已有项目 · {doc.key.slice(-8)}</button>{receipt.state==='ready'&&doc.project_kind==='audio_only'&&!doc.segments.length&&<button disabled={attaching} onClick={()=>setReview({key:doc.key,revision:store.getRevision(doc.key)})}>核对新文字稿 · {doc.key.slice(-8)}</button>}</article>)}{!matches.length&&<p>当前没有相同来源的项目。请确认保存状态后加入书架。</p>}<button disabled={attaching} onClick={()=>{setReview(null);openReceipt(receipt);}}>{matches.length?'另建独立副本':'加入书架'}</button><button disabled={attaching} onClick={()=>{setReview(null);updateSession({receipt:null,error:''});}}>返回单集列表</button></section>}
   {review&&!lossPending&&receipt?.state==='ready'&&Boolean(content)&&<section aria-label="核对并接入文字稿"><h2 ref={reviewHeading} tabIndex={-1}>核对后接入原项目</h2><p>目标：{store.getDocument(review.key)?.title} · {review.key.slice(-8)}</p><p>来源身份相同。发布者可能更新音轨，请核对文字稿语言、内容与原声；接入后保留原项目标识、原声关联、项目笔记和时间书签。</p><p>文字稿语言：{String((content as any).language||'未标明')} · {(content as any).segments?.length||0} 个片段</p><p>{(content as any).segments?.slice(0,3).map((cue:any)=>cue.text).join(' ')}</p><button disabled={attaching} onClick={()=>void confirmAttach()}>{attaching?'正在保存…':'确认接入此原声项目'}</button><button disabled={attaching} onClick={()=>setReview(null)}>取消接入</button></section>}
-  {!selection&&!receipt&&<section className="podcast-catalog" aria-labelledby="catalog-title"><div><h2 id="catalog-title">从一个节目开始</h2><p className="quiet">内置公开节目目录。点击后读取最新单集；字幕可用性以发布者来源为准。</p></div><label htmlFor="catalog-query">查找内置节目</label><input id="catalog-query" type="search" value={catalogQuery} onChange={event=>updateSession({catalogQuery:event.target.value})} placeholder="节目名称或主题"/><ul>{searchCatalog(catalogQuery).map(show=><li key={show.id}><div><h3>{show.title}</h3><p>{show.description}</p><a href={show.source} target="_blank" rel="noopener noreferrer">发布者网站</a></div><button disabled={busy||attaching} onClick={()=>{changeURL(show.feed);void request({url:show.feed});}}>查看单集</button></li>)}</ul>{!searchCatalog(catalogQuery).length&&<p>内置目录暂无匹配。也可以在上方粘贴发布者 RSS 或节目链接。</p>}</section>}
-  <Recovery store={store}/><SubtitleRecovery store={store}/>
  </section>;
 }
