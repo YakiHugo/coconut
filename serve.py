@@ -219,7 +219,7 @@ class Handler(SimpleHTTPRequestHandler):
             match = re.fullmatch(r'/api/jobs/([a-f0-9]{32})(/result)?', path)
             if match:
                 return self._json(200, self.jobs.result(match[1]) if match[2] else self.jobs.get(match[1]))
-            if path not in ('/', '/index.html', '/summary.js', '/task-client.js', '/client-capabilities.js', '/core.js', '/passages.js', '/passage-playback.js', '/library-store.js', '/indexeddb-document-adapter.js', '/canonical-library.js', '/storage-provider.js', '/react-app.js', '/react-app.css', '/coconut-mark.png'):
+            if path not in ('/', '/index.html', '/summary.js', '/editions.js', '/task-client.js', '/client-capabilities.js', '/core.js', '/passages.js', '/passage-playback.js', '/library-store.js', '/indexeddb-document-adapter.js', '/canonical-library.js', '/storage-provider.js', '/react-app.js', '/react-app.css', '/coconut-mark.png'):
                 return self._json(404, {'error': 'Not found'})
             if self.command == 'HEAD':
                 super().do_HEAD()

@@ -22,4 +22,8 @@ test('an entirely unlabelled transcript still displays its unknown speaker expli
  globalThis.window={CoconutPassages:require('../reader/passages.js')};
  try{const html=render(h(PassageView,{doc,cues:doc.segments,position:'one',onLocate(){},onListen(){},onPlayFrom(){}}));assert.match(html,/rw-speaker-label[^>]*>未标注/);assert.ok(html.includes('data-source-id="one"'));}finally{if(previous===undefined)delete globalThis.window;else globalThis.window=previous;}
 });
+test('partially labelled audio shows coverage and actionable acoustic uncertainty reasons',()=>{
+ const mixed={...doc,segments:[{...doc.segments[0],speaker:'说话人 1'},{id:'two',start:2,end:3,text:'嗯',speaker:null,speaker_status:'ambiguous_match'},{id:'three',start:3,end:4,text:'对',speaker:null,speaker_status:'insufficient_audio'}],provenance:{speaker_method:'recording-acoustic-v1'}};
+ const html=render(h(ReaderSource,{doc:mixed}));assert.match(html,/已有 1\/3/);assert.match(html,/声音匹配含糊 1 个/);assert.match(html,/声音样本不足 1 个/);
+});
 test.after(()=>rm(directory,{recursive:true,force:true}));

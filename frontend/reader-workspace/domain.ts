@@ -1,4 +1,5 @@
 import type { ReaderCue, ReaderDocument } from './contracts';
+import {blockText, type Block} from '../../reader/editions.js';
 export function time(seconds: number) { const n = Math.max(0, Math.floor(seconds)); return [n >= 3600 ? String(Math.floor(n / 3600)).padStart(2, '0') : null, String(Math.floor(n / 60) % 60).padStart(2, '0'), String(n % 60).padStart(2, '0')].filter(v => v !== null).join(':'); }
 export function currentCue(cues: ReaderCue[], seconds: number): ReaderCue | undefined {
     let lo = 0, hi = cues.length;
@@ -51,8 +52,12 @@ export function captureSourceSelection(host: HTMLElement, doc: ReaderDocument, s
     if (fromIndex < 0 || toIndex < fromIndex)
         return null;
     const cues = doc.segments.slice(fromIndex, toIndex + 1);
-    if (cues.some(c => ![...host.querySelectorAll<HTMLElement>('[data-source-id]')].some(node => node.dataset.sourceId === c.id)))
-        return null;
+    const sourceNodes=new Map<string,HTMLElement>();
+    for(const node of host.querySelectorAll<HTMLElement>('[data-source-id]')){
+        if(sourceNodes.has(node.dataset.sourceId!))return null;
+        sourceNodes.set(node.dataset.sourceId!,node);
+    }
+    if(cues.some(c=>sourceNodes.get(c.id)?.textContent!==c.text))return null;
     const start = range.cloneRange();
     start.selectNodeContents(first);
     start.setEnd(range.startContainer, range.startOffset);
@@ -64,7 +69,23 @@ export function captureSourceSelection(host: HTMLElement, doc: ReaderDocument, s
     const from = start.toString().length, to = composed.length - last.textContent!.length + end.toString().length;
     if (to <= from)
         return null;
-    return { cueIds: cues.map(c => c.id), from, to, text: composed.slice(from, to), separators };
+    const text=composed.slice(from,to);
+    // A renderer must never label edited prose as a verbatim source node.
+    if(first.textContent!==cues[0].text||last.textContent!==cues.at(-1)!.text)return null;
+    return { cueIds: cues.map(c => c.id), from, to, text, separators };
+}
+
+export function captureEditionSelection(host:HTMLElement,blocks:Block[],selection:Selection|null):{blockId:string;from:number;to:number;text:string;blockText:string}|null{
+ if(!selection||selection.isCollapsed||selection.rangeCount!==1)return null;
+ const range=selection.getRangeAt(0),element=(node:Node)=>node.nodeType===1?node as Element:node.parentElement;
+ const first=element(range.startContainer)?.closest<HTMLElement>('[data-edition-block-id]'),last=element(range.endContainer)?.closest<HTMLElement>('[data-edition-block-id]');
+ if(!first||first!==last||!host.contains(first))return null;
+ const block=blocks.find(block=>block.id===first.dataset.editionBlockId);if(!block)return null;
+ const text=blockText(block);if(first.textContent!==text)return null;
+ const before=range.cloneRange();before.selectNodeContents(first);before.setEnd(range.startContainer,range.startOffset);
+ const from=before.toString().length,to=from+range.toString().length;
+ if(to<=from||text.slice(from,to)!==range.toString())return null;
+ return {blockId:block.id,from,to,text:text.slice(from,to),blockText:text};
 }
 
 // The domain removal result uses undefined as a deletion instruction. Apply only

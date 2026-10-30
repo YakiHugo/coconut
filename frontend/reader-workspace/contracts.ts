@@ -15,6 +15,7 @@ export interface ReaderDocument {
     title: string;
     segments: ReaderCue[];
     notes: Record<string, string>;
+    reading_editions?: import('../../reader/editions.js').EditionState;
     readingPosition?: string;
     translation_view?: string;
     project_note?: string;

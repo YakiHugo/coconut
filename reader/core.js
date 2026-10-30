@@ -28,6 +28,7 @@
   if(text.includes('\0'))return {ok:false,encoding,error:'解码后包含异常空字符（NUL），可能是未标记的 UTF-16 或损坏文件。请选择正确编码；未导入或替换原文。'};
   return {ok:true,encoding,text};
  }
+ const Editions=typeof module!=="undefined"&&module.exports?require("./editions.js"):root.CoconutEditions;
  const Summaries=typeof module!=="undefined"&&module.exports?require("./summary.js"):root.CoconutSummary;
  // Calibration is a local playback mapping; source cue timestamps are immutable.
  function mediaTiming(value) {
@@ -1317,6 +1318,8 @@
  }
 
 	function validate(data) {
+  const readingEditions=data?.reading_editions===undefined?undefined:Editions.validate(data.reading_editions);
+  if(readingEditions&&(isReadingCollection(data)||isAudioProject(data)))throw new Error("阅读版本需要带时间的来源稿");
   if(isReadingCollection(data))return normalizeReadingCollection(data);
   if(isAudioProject(data))return validateAudioProject(data);
 		if (
@@ -1401,6 +1404,7 @@
   const excerpts=exactExcerpts(data),excerptNotes=exactExcerptNotes(data,excerpts);
 		return {
 			notes,
+   ...(readingEditions?{reading_editions:readingEditions}:{}),
    ...(chapters!==undefined?{reading_chapters:chapters}:{}),
    ...(excerpts?.length?{exact_excerpts:excerpts}:{}),
    ...(excerptNotes?{exact_excerpt_notes:excerptNotes}:{}),
