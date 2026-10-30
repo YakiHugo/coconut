@@ -56,7 +56,7 @@ test('actual desktop entry passes stable userData library and unchanged task/por
 });
 
 test('actual development CLI keeps repository directory and fixed origin across launches',async t=>{
- const dir=await fixture(t);await fs.cp(path.join(root,'desktop'),path.join(dir,'desktop'),{recursive:true,filter:source=>!source.includes('node_modules')&&!source.includes('/dist')});await fs.cp(path.join(root,'reader'),path.join(dir,'reader'),{recursive:true});
+ const dir=await fixture(t);await fs.cp(path.join(root,'desktop'),path.join(dir,'desktop'),{recursive:true,filter:source=>!source.includes('node_modules')&&!source.includes('/dist')});await fs.cp(path.join(root,'reader'),path.join(dir,'reader'),{recursive:true});await fs.cp(path.join(root,'shared'),path.join(dir,'shared'),{recursive:true});
  const first=await child(t,dir,{entry:'dev',entryRoot:dir,library:''});assert.equal(first.origin,'http://127.0.0.1:8080');
  const read=()=>fetch(first.origin+'/api/v1/library').then(r=>r.json());const initial=await read();assert.equal(initial.enabled,true);
  const health=await fetch(first.origin+'/api/health').then(r=>r.json());assert.equal(health.library_storage.directory,path.join(dir,'.coconut/dev/library'));

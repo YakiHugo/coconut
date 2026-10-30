@@ -27,6 +27,25 @@ class Response:
     def __exit__(self,*args): self.body.close()
 
 class MediaTests(unittest.TestCase):
+    def test_explicit_existing_transcript_media_retains_caption_presence(self):
+        transport = guard.VideoTransport(URL)
+        transport.youtube_access_verified = True
+        info = copy.deepcopy(INFO)
+        info['subtitles'] = {'en': [{'ext': 'vtt', 'url': 'https://example.com/captions.vtt'}]}
+        def fetch(*args, **kwargs):
+            self.assertIsNone(guard.subtitle_import.select_track(info, 'en'))
+            return None
+        with tempfile.TemporaryDirectory() as td:
+            output = Path(td) / 'audio.m4a'
+            with patch.object(guard, 'VideoTransport', return_value=transport), \
+                    patch.object(guard, 'guarded_extractors', side_effect=lambda _: contextlib.nullcontext()), \
+                    patch.object(guard.subtitle_import, 'fetch_subtitle_document', side_effect=fetch), \
+                    patch.object(transport.opener, 'open', return_value=Response()):
+                result = media.extract_public_video_audio(URL, 'en', output=output, purpose='source')
+            self.assertEqual(result['status'], 'media_ready')
+            self.assertEqual(result['source']['subtitle_check'], 'found')
+            self.assertEqual(result['source']['purpose'], 'source')
+
     def test_exact_public_cdn_and_no_token_or_manifest_scope(self):
         self.assertTrue(media.audio_url_allowed(CDN,'youtube'))
         self.assertTrue(media.audio_url_allowed('https://upos-sz-mirrorcos.bilivideo.com/upgcxcode/00/01/audio.m4s?deadline=1&upsig=public','bilibili'))

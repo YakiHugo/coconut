@@ -231,3 +231,11 @@ test('reading layout keeps complete sentences together across many short ASR cue
  const separated=P.build(source,{layout:'reading'});
  assert.ok(separated.some(p=>p.cues.length===1&&p.cues[0]===source[19]));
 });
+
+test('raw Chinese captions break at reading targets instead of growing to the hard cap',()=>{
+ const cues=Array.from({length:80},(_,i)=>({id:'raw-'+i,start:i*2,end:i*2+2,text:'这是一段没有标点的自动字幕内容',speaker:null}));
+ const original=JSON.stringify(cues),passages=P.build(cues,{layout:'reading'});
+ assert.ok(passages.length>=6);
+ assert.ok(passages.every(p=>p.cues.length<=14&&p.end-p.start<=30));
+ assert.deepEqual(passages.flatMap(p=>p.cues),cues);assert.equal(JSON.stringify(cues),original);
+});

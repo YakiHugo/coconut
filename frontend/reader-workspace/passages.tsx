@@ -20,8 +20,8 @@ export function PassageView({ doc, cues, passages: supplied, current, position, 
     const sourcePositions = useMemo(() => new Map(doc.segments.map((cue, index) => [cue, index])), [doc.segments]);
     return <div className="rw-passages">{passages.map((passage, index) => {
         const previous = passages[index - 1];
-        const turnStart = speakers.length > 0 && (!previous || previous.speaker !== passage.speaker ||
-            (sourcePositions.get(previous.cues.at(-1)!) ?? -2) + 1 !== sourcePositions.get(passage.cues[0]));
+        const turnStart = !previous || previous.speaker !== passage.speaker ||
+            (sourcePositions.get(previous.cues.at(-1)!) ?? -2) + 1 !== sourcePositions.get(passage.cues[0]);
         const speakerIndex = Math.max(0, speakers.indexOf(passage.speaker));
         const hasSource = typeof doc.source_url === 'string' && /^https?:/.test(doc.source_url);
         const notes = passage.cues.filter(cue => doc.notes?.[cue.id]?.trim());

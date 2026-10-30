@@ -92,7 +92,18 @@ def punctuate(cues: list[dict], engine) -> tuple[int, int]:
                 cue['text'] = text
                 changed += 1
     for chunk in punctuation_chunks(cues):
-        apply(chunk)
+        # A manually corrected cue carries its own original-text history.
+        # Isolate it rather than using model output to touch that correction.
+        pending = []
+        for cue in chunk:
+            if 'original_text' in cue:
+                if pending:
+                    apply(pending)
+                    pending = []
+            else:
+                pending.append(cue)
+        if pending:
+            apply(pending)
     return changed, rejected
 
 
@@ -174,7 +185,7 @@ def _model(path: str) -> Path:
 
 
 def enhance_document(document: dict, audio: Path | None = None, *, punctuation: str = '',
-                     segmentation: str = '', embedding: str = '') -> dict:
+                     segmentation: str = '', embedding: str = '', work_dir: Path | None = None) -> dict:
     """Return a copy; failures cannot leave a half-edited source document."""
     result = copy.deepcopy(document)
     provenance = result.setdefault('provenance', {})
@@ -191,7 +202,10 @@ def enhance_document(document: dict, audio: Path | None = None, *, punctuation: 
         grouped = run_audio_pipeline(audio,
             CallableBackend({'backend': 'speaker-only'}, lambda _: {'segments': []}),
             speaker_backend=SherpaSpeakerBackend(segmentation_path, embedding_path),
-            local_only=True)
+            local_only=True, work_dir=work_dir,
+            expected_duration=document.get('media_duration'),
+            minimum_duration=max((cue['end'] for cue in cues), default=0),
+            progress=lambda index, total: print(f'[speakers] chunk {index + 1}/{total}', file=sys.stderr, flush=True))
         turns = grouped['speaker_turns']
         automatic = [cue for cue in cues if not cue.get('speaker')]
         decisions = {turn['speaker']: {'speaker_id': turn['speaker_id'],
@@ -202,6 +216,7 @@ def enhance_document(document: dict, audio: Path | None = None, *, punctuation: 
                           speaker_model='pyannote-segmentation-3.0 + 3dspeaker-eres2net',
                           speaker_status=f'automatic_unreviewed:{count}/{len(cues)}')
     if punctuation and provenance.get('punctuation_method') != VERSION:
+        print('[punctuation] restoring punctuation locally', file=sys.stderr, flush=True)
         model = _model(punctuation)
         config = sherpa_onnx.OfflinePunctuationConfig(model=sherpa_onnx.OfflinePunctuationModelConfig(
             ct_transformer=str(model), num_threads=2, provider='cpu'))
@@ -222,16 +237,42 @@ def enhance_from_environment(document: dict, audio: Path | None = None) -> dict:
 
 
 def main():
+    # The local job runner uses Python's isolated mode. Add only this trusted
+    # source directory, never cwd or user-controlled PYTHONPATH.
+    if sys.flags.isolated:
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('document', type=Path)
+    parser.add_argument('document', type=Path, nargs='?')
     parser.add_argument('--audio', type=Path)
-    parser.add_argument('-o', '--output', type=Path, required=True)
+    parser.add_argument('-o', '--output', type=Path)
+    parser.add_argument('--stdio', action='store_true', help='Punctuate a JSON document from stdin; never acquire audio')
+    parser.add_argument('--punctuation-model', default='')
+    parser.add_argument('--segmentation-model', default='')
+    parser.add_argument('--embedding-model', default='')
+    parser.add_argument('--work-dir', type=Path)
     args = parser.parse_args()
+    if args.stdio:
+        if args.document or args.output or args.audio or args.segmentation_model or args.embedding_model or args.work_dir or not args.punctuation_model:
+            parser.error('stdio requires only --punctuation-model')
+        payload = sys.stdin.buffer.read(8 * 1024 * 1024 + 1)
+        if len(payload) > 8 * 1024 * 1024:
+            parser.error('Transcript exceeds the input limit')
+        result = enhance_document(json.loads(payload), punctuation=args.punctuation_model)
+        print(json.dumps(result, ensure_ascii=False))
+        return
+    if not args.document or not args.output:
+        parser.error('document and --output are required')
     from transcript import save_document
     if args.document.resolve() == args.output.resolve():
         parser.error('Keep the source transcript; choose a separate output')
     original = json.loads(args.document.read_text())
-    result = enhance_from_environment(original, args.audio)
+    explicit = bool(args.punctuation_model or args.segmentation_model or args.embedding_model)
+    if bool(args.segmentation_model) != bool(args.embedding_model):
+        parser.error('Both speaker model paths are required')
+    result = (enhance_document(original, args.audio, punctuation=args.punctuation_model,
+                              segmentation=args.segmentation_model, embedding=args.embedding_model,
+                              work_dir=args.work_dir)
+              if explicit else enhance_from_environment(original, args.audio))
     save_document(result, args.output)
     print(json.dumps(result.get('provenance'), ensure_ascii=False))
 

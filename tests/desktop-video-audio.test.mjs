@@ -9,6 +9,15 @@ const url='https://www.youtube.com/watch?v=abcdefghijk';
 const bytes=Buffer.concat([Buffer.from([0,0,0,24]),Buffer.from('ftypM4A authored protocol fixture')]);
 const sha256=createHash('sha256').update(bytes).digest('hex');
 const valid=()=>({status:'media_ready',bytes,media:{type:'audio/mp4',kind:'audio',bytes:bytes.length,sha256},source:{url,id:'abcdefghijk',provider:'youtube',title:'A/B 原始标题',duration:4,subtitle_check:'no_matching_captions',audio_language:'en',audio_language_basis:'platform_original',audio_role:'original',format:'m4a',format_id:'140'}});
+test('existing captions can explicitly load source audio without claiming caption absence or invoking ASR',async t=>{
+ let called;const result=valid();result.source.subtitle_check='found';result.source.purpose='source';
+ const service=createVideoAudioService({sourceMedia:true,helper:{extractAudio:async request=>{called=request;return result;}}});
+ const server=await startBridge({port:0,videoAudioService:service});t.after(()=>server.shutdown());const origin='http://127.0.0.1:'+server.address().port;
+ const response=await fetch(origin+'/api/videos/source-media',{method:'POST',headers:{Origin:origin,'Content-Type':'application/json'},body:JSON.stringify({url,consent:true})});assert.equal(response.status,200);assert.equal(called.purpose,'source');
+ const source=JSON.parse(Buffer.from(response.headers.get('X-Coconut-Media-Source'),'base64url'));assert.equal(source.subtitle_check,'found');assert.equal(source.purpose,'source');assert.equal((await response.arrayBuffer()).byteLength,bytes.length);
+ await assert.rejects(service.download({url,consent:true}),/校验/);
+ await assert.rejects(createVideoAudioService({helper:{extractAudio:()=>assert.fail('Old helper must not run')}}).download({url,consent:true},{purpose:'source'}),/不支持/);
+});
 test('only positively checked caption absence advertises the explicit media action',async()=>{
  for(const status of ['no_matching_captions','access_restricted','network_unavailable','language_required','metadata_incomplete','extractor_failed','caption_parse_failed','guard_stopped']){
   let calls=0;

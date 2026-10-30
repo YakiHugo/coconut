@@ -68,7 +68,7 @@ export function captionSource(value){
  url.hash='';return {url:url.href,provider,postId:identity,mediaId:identity};
 }
 
-export function createCaptionService({helper,readerDirectory=path.resolve(ROOT,'../reader'),enabledProviders=[]}={}){
+export function createCaptionService({helper,readerDirectory=path.resolve(ROOT,'../reader'),enabledProviders=[],enhanceDocument=null}={}){
  const enabled=new Set(enabledProviders);
  const Coconut=require(path.join(readerDirectory,'core.js'));
  let busy=false;
@@ -133,7 +133,16 @@ export function createCaptionService({helper,readerDirectory=path.resolve(ROOT,'
     document.source_url=source.url;document.language=meta.language;
     document.provenance={kind:meta.automatic?'automatic_subtitles':'platform_subtitles',caption_method:meta.automatic?'automatic':'platform_provided',review_status:'unreviewed',language:meta.language,caption_track:String(track.captionTrack||meta.caption_track||meta.language).slice(0,100),language_basis:basis,subtitle_check:'found',source_platform:source.provider,source_medium:'video',media_id:meta.id,media_duration:meta.duration};
     // Keep parse loss on this import receipt, outside document identity and provenance.
-    return {status:'ready',document:Coconut.validate(document),diagnostics};
+    let readable=Coconut.validate(document);
+    if(meta.automatic&&enhanceDocument){
+     try{readable=Coconut.validate(await enhanceDocument(structuredClone(readable),{signal}));}
+     catch(error){
+      if(signal?.aborted||error.code==='READABILITY_CANCELLED')throw error;
+      readable.provenance.readability_warning='Local punctuation unavailable; original captions retained';
+     }
+    }
+    if(signal?.aborted)throw new Error('已取消获取字幕');
+    return {status:'ready',document:readable,diagnostics};
    }finally{busy=false;}
   }
  });

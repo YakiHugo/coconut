@@ -79,6 +79,7 @@ export type ReaderNavigationRequest = {id:number;documentKey:string;revision:num
     | {cueId?:never;source:{document:ReaderDocument;target:ReaderSourceTarget}}
 );
 export interface ReaderWorkspaceProps extends ReaderSnapshot {
+    resourcePanel?: import('react').ReactNode;
     aiReturnRequest?:{id:number;documentKey:string};
     shortcutsEnabled?:boolean;
     onOpenSummary?:()=>void;

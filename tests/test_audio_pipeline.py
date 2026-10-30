@@ -78,6 +78,15 @@ class RegistryTests(unittest.TestCase):
 
 
 class PipelineTests(unittest.TestCase):
+    def test_wrong_duration_is_rejected_before_asr_or_voice_inference(self):
+        with tempfile.TemporaryDirectory() as td:
+            source = Path(td) / 'source.wav'
+            wav(source, 2)
+            backend = CallableBackend({'backend': 'must-not-run'}, lambda _: self.fail('No ASR'))
+            for options in ({'expected_duration': 50}, {'minimum_duration': 50}):
+                with self.subTest(options=options), self.assertRaisesRegex(ValueError, 'duration|timing'):
+                    run_audio_pipeline(source, backend, **options)
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.root = Path(self.temp.name)

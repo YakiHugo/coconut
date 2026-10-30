@@ -116,3 +116,6 @@
 
 .rw-player-options-body .rw-player-follow-options{display:none}
 @media(max-width:1100px){.rw-player-options-body .rw-player-follow-options{display:flex}}
+
+.rw-resource-processing{max-width:860px;margin:20px auto;padding:16px;border:1px solid var(--border,#dce4df);border-radius:8px;color:var(--text,#25322f)}
+.rw-resource-processing summary{cursor:pointer;font-weight:600}.rw-resource-processing p{color:var(--muted,#68746d);font-size:14px;line-height:1.65}.rw-resource-processing dl>div{display:grid;grid-template-columns:100px minmax(0,1fr);gap:12px;margin:10px 0;font-size:14px}.rw-resource-processing dd{margin:0;overflow-wrap:anywhere}.rw-resource-processing button{margin:8px 10px 0 0}.rw-resource-file{display:block;font-size:14px;margin:12px 0}.rw-resource-file input{display:block;max-width:100%;margin-top:8px}

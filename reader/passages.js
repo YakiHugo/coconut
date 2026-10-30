@@ -74,6 +74,10 @@
  function build(segments,options={}){
   const limits=options.layout==='reading'?READING_LIMITS:LIMITS;
   const entries=sourceEntries(segments,options),passages=[];
+  const sentenceAhead=new Uint8Array(entries.length);
+  if(options.layout==='reading')for(let i=entries.length-1;i>=0;i--){
+   sentenceAhead[i]=sentenceEnd.test(entries[i].cue.text)||(i+1<entries.length&&adjacent(entries[i],entries[i+1])&&sentenceAhead[i+1])?1:0;
+  }
   for(let first=0;first<entries.length;){
    const initial=entries[first].cue;
    let next=first,characters=0,end=initial.end,lastSentence=-1,sentenceCharacters=0;
@@ -93,7 +97,10 @@
     const atSentenceEnd=sentenceEnd.test(cue.text);
     if(atSentenceEnd){lastSentence=next-1;sentenceCharacters=characters;}
     const target=characters>=limits.targetCharacters||count>=limits.targetCues||end-initial.start>=limits.targetSeconds;
-    if((atSentenceEnd&&target)||characters>=limits.characters||count>=limits.cues||end-initial.start>=limits.seconds)break;
+    // Raw automatic captions often contain no sentence marks at all. Keep
+    // those runs readable at the normal target while preserving every cue.
+    const unpunctuatedTarget=options.layout==='reading'&&target&&!sentenceAhead[first];
+    if((atSentenceEnd&&target)||unpunctuatedTarget||characters>=limits.characters||count>=limits.cues||end-initial.start>=limits.seconds)break;
    }
    const cues=entries.slice(first,next).map(entry=>entry.cue);
    passages.push({key:'passage:'+initial.id,start:initial.start,end:Math.max(...cues.map(cue=>cue.end)),speaker:speaker(initial),cues});

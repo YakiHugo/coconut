@@ -1,5 +1,6 @@
 """Caption-only permission gates never need network, models, or paid inference."""
 import contextlib
+import copy
 import io
 import json
 import tempfile
@@ -19,6 +20,30 @@ DOCUMENT = {'schema_version': 1, 'title': 'Caption fixture', 'source_url': URL,
 
 
 class CaptionsOnlyTests(unittest.TestCase):
+    def test_automatic_captions_run_readability_without_acquiring_audio(self):
+        original = copy.deepcopy(DOCUMENT)
+        original['provenance']['kind'] = 'automatic_subtitles'
+        def enhance(document, audio):
+            self.assertIsNone(audio)
+            document = copy.deepcopy(document)
+            document['segments'][0].update(text='Original caption.', original_text='Original caption')
+            return document
+        with tempfile.TemporaryDirectory() as td:
+            output = Path(td) / 'result.md'
+            args = ['transcribe.py', URL, '--captions-only', '-o', str(output)]
+            with patch('sys.argv', args), patch('transcribe.fetch_subtitle_document', return_value=original), \
+                    patch('transcribe.enhance_from_environment', side_effect=enhance) as reading, \
+                    patch('transcribe.download_audio') as audio, patch('transcribe.transcribe_fast') as asr, \
+                    contextlib.redirect_stdout(io.StringIO()):
+                main()
+            reading.assert_called_once()
+            audio.assert_not_called()
+            asr.assert_not_called()
+            saved = json.loads(output.with_suffix('.json').read_text())
+            self.assertEqual(saved['segments'][0]['text'], 'Original caption.')
+            self.assertEqual(saved['segments'][0]['id'], original['segments'][0]['id'])
+            self.assertEqual(saved['segments'][0]['start'], 0)
+
     def test_no_captions_never_download_audio_media_or_initialize_either_asr(self):
         for backend in ('faster-whisper', 'whisperx'):
             with self.subTest(backend=backend), tempfile.TemporaryDirectory() as td:

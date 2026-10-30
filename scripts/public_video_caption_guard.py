@@ -430,13 +430,14 @@ def json3_document_vtt(document):
     return '\n'.join(lines).encode('utf-8')
 
 
-def extract_public_video_captions(url, language=None, *, ca_file=None, proxy=None, bilibili_cookies=None, _media_output=None):
+def extract_public_video_captions(url, language=None, *, ca_file=None, proxy=None, bilibili_cookies=None, _media_output=None, _source_media=False):
     import tempfile
     language_required = False
     languages = []
     completion = None
     selection_completed = False
     verified_info = None
+    source_subtitle_check = 'no_matching_captions'
     transport = None
     original_select = subtitle_import.select_track
     original_parse = subtitle_import.subtitle_document
@@ -451,7 +452,7 @@ def extract_public_video_captions(url, language=None, *, ca_file=None, proxy=Non
         return original_parse(*args, **kwargs)
 
     def select(info, hint=None):
-        nonlocal language_required, languages, completion, selection_completed, verified_info
+        nonlocal language_required, languages, completion, selection_completed, verified_info, source_subtitle_check
         transport.stage = 'track_selection'
         provider, identity = source_identity(url)
         subtitle_import.validate_media_info(info)
@@ -476,6 +477,11 @@ def extract_public_video_captions(url, language=None, *, ca_file=None, proxy=Non
         language_required = selected is None and subtitle_import.preferred_language(info, hint)[0] is None and any(
             key not in ('danmaku', 'live_chat') and subtitle_import.eligible_formats(tracks)
             for field in ('subtitles', 'automatic_captions') for key, tracks in (info.get(field) or {}).items())
+        if _source_media:
+            # A separate user action requests original media for an existing
+            # transcript. Caption presence is retained, never relabelled absent.
+            source_subtitle_check = 'found' if selected else 'no_matching_captions'
+            return None
         return selected
 
     try:
@@ -491,7 +497,11 @@ def extract_public_video_captions(url, language=None, *, ca_file=None, proxy=Non
                     # Explicit separate action only. This same request completed
                     # access, identity, duration and original-caption checks.
                     from scripts.public_video_media import download_verified_audio
-                    return download_verified_audio(verified_info, transport, _media_output, url, language)
+                    result = download_verified_audio(verified_info, transport, _media_output, url, language)
+                    if _source_media and result.get('status') == 'media_ready':
+                        result['source']['subtitle_check'] = source_subtitle_check
+                        result['source']['purpose'] = 'source'
+                    return result
                 return failure('language_required' if language_required else 'no_matching_captions',
                                'language_unknown' if language_required else 'no_matching_track')
             transport.stage = 'caption_output'

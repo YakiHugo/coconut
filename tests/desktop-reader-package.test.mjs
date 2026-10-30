@@ -101,3 +101,15 @@ test('canonical adapter is staged exactly and missing or corrupted packaged byte
  await rm(path.join(fixture.reader,name));
  await assert.rejects(verifyReaderResources(fixture.reader),error=>error.code==='ENOENT'&&error.path.endsWith(name));
 });
+
+test('readability worker and shared planner retain their module boundary in packaged layouts',async t=>{
+ for(const kind of ['source','direct','extracted']){
+  const {app}=await layout(t,kind),shared=path.resolve(app,'../shared');await mkdir(shared,{recursive:true});
+  for(const name of ['package.json','transcript-resources.js'])await copyFile(path.join(root,'shared',name),path.join(shared,name));
+  await copyFile(path.join(root,'desktop/readability-jobs.mjs'),path.join(app,'readability-jobs.mjs'));
+  const code=`import assert from 'node:assert/strict';import {createReadabilityJobs} from ${JSON.stringify(pathToFileURL(path.join(app,'readability-jobs.mjs')).href)};assert.equal(typeof createReadabilityJobs,'function');`;
+  await execute(process.execPath,['--input-type=module','-e',code]);
+ }
+ const packaging=await readFile(path.join(root,'desktop/package.mjs'),'utf8');
+ for(const name of ['readability-jobs.mjs','transcript-resources.js','transcript_readability.py','audio_pipeline.py','audio_speakers.py'])assert.ok(packaging.includes("'"+name+"'"),name+' must be staged');
+});

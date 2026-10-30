@@ -9,6 +9,15 @@ def cue(text, start=0, speaker=None):
 
 
 class ReadabilityTests(unittest.TestCase):
+    def test_manual_corrections_are_isolated_from_automatic_punctuation(self):
+        cues = [cue('第一句'), cue('已人工校正的原话', 2), cue('第三句', 4)]
+        cues[1]['original_text'] = '识别错误的旧稿'
+        engine = Mock()
+        engine.add_punctuation.side_effect = lambda text: text + '。'
+        self.assertEqual(punctuate(cues, engine), (2, 0))
+        self.assertEqual(cues[1]['text'], '已人工校正的原话')
+        self.assertEqual([call.args[0] for call in engine.add_punctuation.call_args_list], ['第一句', '第三句'])
+
     def test_punctuation_maps_to_original_cues_without_moving_timing_or_words(self):
         cues = [cue('Hello 大家好 我是小俊'), cue('今天聊 Dyna Robotics', 2)]
         original = copy.deepcopy(cues)

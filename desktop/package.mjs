@@ -27,11 +27,13 @@ try {
   const icons=path.join(work,'icons');
   await generateAppIcons({directory:icons});
   await generateAppIcons({directory:icons,check:true});
-  const app = path.join(work,'app'), resources = path.join(work,'resources'), reader = path.join(resources,'reader');
-  await mkdir(app); await mkdir(reader,{recursive:true});
-  for (const name of ['main.mjs','close-coordinator.mjs','local-media.mjs','file-menu.mjs','update-preload.cjs','updater.mjs','update-http.mjs','update-install.mjs','providers.mjs','provider-errors.mjs','tasks.mjs','library-store.mjs','library-location.mjs','library-migration.mjs','library-api.mjs','server.mjs','ingestion-service.mjs','ingestion-executor.mjs','client-access.mjs','translation.mjs','podcast-sources.mjs','podcast-xml.mjs','public-http.mjs','caption-service.mjs','caption-short-link.mjs','caption-helper.mjs','caption-helper-process.mjs','caption-helper-lock.json']) await copyFile(path.join(ROOT,name),path.join(app,name));
+  const app = path.join(work,'app'), resources = path.join(work,'resources'), reader = path.join(resources,'reader'), shared = path.join(resources,'shared');
+  await mkdir(app); await mkdir(reader,{recursive:true}); await mkdir(shared,{recursive:true});
+  for (const name of ['main.mjs','close-coordinator.mjs','local-media.mjs','file-menu.mjs','update-preload.cjs','updater.mjs','update-http.mjs','update-install.mjs','providers.mjs','provider-errors.mjs','tasks.mjs','library-store.mjs','library-location.mjs','library-migration.mjs','library-api.mjs','server.mjs','readability-jobs.mjs','ingestion-service.mjs','ingestion-executor.mjs','client-access.mjs','translation.mjs','podcast-sources.mjs','podcast-xml.mjs','public-http.mjs','caption-service.mjs','caption-short-link.mjs','caption-helper.mjs','caption-helper-process.mjs','caption-helper-lock.json']) await copyFile(path.join(ROOT,name),path.join(app,name));
   await writeFile(path.join(app,'caption-helper-artifacts.json'),JSON.stringify({schemaVersion:1,artifacts:helperArtifacts}));
   for (const name of ['package.json','index.html','summary.js','task-client.js','core.js','client-capabilities.js','passages.js','passage-playback.js','library-store.js','indexeddb-document-adapter.js','canonical-library.js','storage-provider.js','react-app.js','react-app.css','coconut-mark.png']) await copyFile(path.join(ROOT,'../reader',name),path.join(reader,name));
+  for(const name of ['package.json','transcript-resources.js'])await copyFile(path.join(ROOT,'../shared',name),path.join(shared,name));
+  for(const name of ['transcript_readability.py','transcript.py','audio_pipeline.py','audio_speakers.py'])await copyFile(path.join(ROOT,'..',name),path.join(resources,name));
   await verifyReaderResources(reader);
   const license = path.join(resources,'LICENSE.coconut'); await copyFile(path.join(ROOT,'../LICENSE'),license);
   const windowIcon=path.join(resources,WINDOW_ICON_FILE);
@@ -44,7 +46,7 @@ try {
     appBundleId:'io.github.yakihugo.coconut',appCategoryType:'public.app-category.productivity',
     icon:platform==='darwin'?path.join(icons,MAC_ICON_FILE):platform==='win32'?path.join(icons,'coconut.ico'):undefined,
     extendInfo:{CFBundleIconFile:MAC_ICON_FILE},
-    osxSign:false,osxNotarize:false,extraResource:[reader,license,windowIcon],
+    osxSign:false,osxNotarize:false,extraResource:[reader,shared,...['transcript_readability.py','transcript.py','audio_pipeline.py','audio_speakers.py'].map(name=>path.join(resources,name)),license,windowIcon],
     download:{cacheRoot:process.env.electron_config_cache || path.join(tmpdir(),'coconut-electron-cache')}});
   for (const directory of paths) {
     const readerResources=path.join(directory,platform==='darwin'?'Coconut.app/Contents/Resources/reader':'resources/reader');

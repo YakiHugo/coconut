@@ -88,6 +88,7 @@ for(const entry of ['server.mjs','dev.mjs'])test('actual '+entry+' entry reads e
  const directory=await fs.mkdtemp(path.join(os.tmpdir(),'coconut-private-entry-'));
  await fs.cp(new URL('../desktop/',import.meta.url),path.join(directory,'desktop'),{recursive:true,filter:source=>!source.includes('node_modules')&&!source.includes('/dist')&&!source.includes('/helper-build')});
  await fs.cp(new URL('../reader/',import.meta.url),path.join(directory,'reader'),{recursive:true});
+ await fs.cp(new URL('../shared/',import.meta.url),path.join(directory,'shared'),{recursive:true});
  const child=spawn(process.execPath,[path.join(directory,'desktop',entry),...(entry==='server.mjs'?['--port','0']:[])],{env:{HOME:directory,PATH:'/no-provider-fixture',COCONUT_PRIVATE_PROXY:profile.type,COCONUT_PRIVATE_ORIGIN:profile.origin,COCONUT_PRIVATE_OWNER:profile.ownerLogin,COCONUT_BACKEND_LABEL:profile.backendLabel},stdio:['ignore','pipe','pipe']});
  let exited=false;const exit=new Promise(resolve=>child.once('exit',()=>{exited=true;resolve();}));
  t.after(async()=>{if(!exited){child.kill('SIGTERM');await exit;}await fs.rm(directory,{recursive:true,force:true});});
