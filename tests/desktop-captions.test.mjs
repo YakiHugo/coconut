@@ -4,6 +4,20 @@ import {captionSource,createCaptionService} from '../desktop/caption-service.mjs
 const url='https://x.com/example/status/123456';
 const result=()=>({source:{url,id:'1234567890',title:'A public video',extractor:'twitter',language:'en',automatic:true,duration:4},format:'vtt',bytes:Buffer.from('WEBVTT\n\n00:00.000 --> 00:02.000\n<v A>Use List<T> &amp; preserve source.</v>\n\n00:02.000 --> 00:04.000\nSecond original sentence.\n')});
 const service=extract=>createCaptionService({helper:{extractCaptions:extract},enabledProviders:['x']});
+test('automatic captions pass through offline readability; failure keeps the entire source and cancellation discards output',async()=>{
+ const make=enhanceDocument=>createCaptionService({helper:{extractCaptions:async()=>result()},enabledProviders:['x'],enhanceDocument});
+ let calls=0;
+ const enhanced=await make(async doc=>{calls++;doc.segments[0].original_text=doc.segments[0].text;doc.segments[0].text+='!';doc.provenance.punctuation_method='local-reading-v1';return doc;}).importCaption({url});
+ assert.equal(calls,1);assert.equal(enhanced.document.provenance.kind,'automatic_subtitles');assert.equal(enhanced.document.provenance.punctuation_method,'local-reading-v1');
+ assert.equal(enhanced.document.segments[0].start,0);assert.equal(enhanced.document.segments[0].speaker,'A');assert.equal(enhanced.document.segments[0].original_text,'Use List<T> & preserve source.');
+ const original=(await service(async()=>result()).importCaption({url})).document;
+ const fallback=(await make(async doc=>{doc.segments.length=0;throw Error('Unavailable');}).importCaption({url})).document;
+ assert.deepEqual(fallback.segments,original.segments);assert.match(fallback.provenance.readability_warning,/original captions retained/);
+ const controller=new AbortController();
+ await assert.rejects(make(async doc=>{controller.abort();return doc;}).importCaption({url},{signal:controller.signal}),/取消/);
+ const provided=result();provided.source.automatic=false;
+ await createCaptionService({helper:{extractCaptions:async()=>provided},enabledProviders:['x'],enhanceDocument:async()=>{throw Error('Must not run on authored captions');}}).importCaption({url});
+});
 test('video source normalization rejects credentials, other sites, posts and unsupported routes',()=>{
  assert.equal(captionSource('https://mobile.twitter.com/example/status/123456?s=20#x').url,url);
  for(const value of ['http://x.com/example/status/123456','https://a:b@x.com/example/status/123456','https://x.com:8443/example/status/123456','https://x.com/example','https://x.com/search?q=a','https://youtube.com/watch?v=123456'])assert.throws(()=>captionSource(value));

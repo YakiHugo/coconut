@@ -347,11 +347,12 @@ def main():
                     media_duration=pipeline['duration'])
         # Run only explicitly provisioned local reading models. A failure must
         # leave the completed ASR result available, with an honest status.
-        if document.get('provenance', {}).get('kind') in ('local_asr', 'provider_asr'):
+        if document.get('provenance', {}).get('kind') in ('local_asr', 'provider_asr', 'automatic_subtitles'):
             save_document(document, cached_document)
             print('[reading] preparing readable transcript', file=sys.stderr)
             try:
-                reading_audio = source if not is_url else locals().get('audio_path')
+                reading_audio = (source if not is_url and document['provenance']['kind'] in
+                                 ('local_asr', 'provider_asr') else locals().get('audio_path'))
                 if reading_audio is None and (tmp / 'audio.json').is_file():
                     reading_audio = tmp / json.loads((tmp / 'audio.json').read_text())['file']
                 document = enhance_from_environment(document, reading_audio)

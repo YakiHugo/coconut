@@ -306,7 +306,8 @@ def _words_text(words):
 
 def run_audio_pipeline(source: Path, backend: ASRBackend, *, work_dir=None, speaker_backend=None,
                        chunk_seconds=600, context_seconds=5, local_only=False,
-                       speaker_threshold=.72, speaker_margin=.08, progress=None):
+                       speaker_threshold=.72, speaker_margin=.08, progress=None,
+                       expected_duration=None, minimum_duration=None):
     """Run/resume either local ASR or an explicitly selected cloud adapter.
 
     Atomic ASR and acoustic checkpoints are separate. Completed paid chunks are
@@ -327,6 +328,11 @@ def run_audio_pipeline(source: Path, backend: ASRBackend, *, work_dir=None, spea
         save_document(manifest, marker)
         audio = prepare_audio(source, directory)
         frames = _wav_frames(audio)
+        duration = frames / SAMPLE_RATE
+        if expected_duration is not None and abs(duration - expected_duration) > max(3, expected_duration * .005):
+            raise ValueError('Audio duration does not match the transcript source')
+        if minimum_duration is not None and duration + 1 < minimum_duration:
+            raise ValueError('Transcript timing extends beyond the supplied audio')
         chunks = plan_chunks(frames, chunk_seconds, context_seconds)
         output, languages, warnings, speaker_turns = [], [], [], []
         voice_key = _digest(speaker_backend.cache_key)[:16] if speaker_backend else ''

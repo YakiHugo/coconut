@@ -147,7 +147,7 @@ test('packaging verifies approved icons before final signing and keeps runtime s
   assert.match(source,/const icons=path\.join\(work,'icons'\)/);
   assert.match(source,/extendInfo:\{CFBundleIconFile:MAC_ICON_FILE\}/);
   assert.match(source,/icon:platform==='darwin'\?path\.join\(icons,MAC_ICON_FILE\)/);
-  assert.match(source,/extraResource:\[reader,license,windowIcon\]/);
+  assert.match(source,/extraResource:\[reader,shared,.*license,windowIcon\]/);
   assert.match(source,/await verifyWindowIcon\(path\.join\(directory,'resources'\)\)/);
   const main=await readFile(path.join(ROOT,'desktop/main.mjs'),'utf8');
   assert.match(main,/app\.isPackaged\?path\.join\(process\.resourcesPath,'coconut-icon.png'\):path\.join\(readerDirectory,'coconut-mark.png'\)/);

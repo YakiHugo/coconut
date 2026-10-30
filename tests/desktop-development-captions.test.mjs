@@ -237,3 +237,13 @@ test('media process has its own bounded timeout and cleans partial work',async t
  }finally{await helper.shutdown();}
  for(const mediaTimeoutMs of [0,-1,Infinity,910001])assert.throws(()=>createDevelopmentCaptionHelper({python:f.executable,mediaTimeoutMs}),error=>error.code==='CAPTION_LIMIT');
 });
+
+test('existing-transcript source media is a distinct capability and uses only the connected Bilibili session',async t=>{
+ const f=await fixture(t,{probe:{...version,developmentAudioProtocol:1,developmentProxyAudioProtocol:1,developmentSourceMediaProtocol:1},result:{status:'access_restricted'}});
+ let reads=0;const helper=createDevelopmentCaptionHelper({python:f.executable,bilibiliSession:{cookies:async()=>{reads++;return {SESSDATA:'AUTHORED_SOURCE_SESSION'};}}});t.after(()=>helper.shutdown());
+ assert.equal((await helper.status()).sourceMedia,true);
+ await helper.extractAudio({url:'https://www.bilibili.com/video/BV1xx411c7mD',purpose:'source'});await helper.extractAudio({url:'https://www.youtube.com/watch?v=BaW_jenozKc',purpose:'source'});
+ const calls=(await readFile(f.log,'utf8')).trim().split('\n').map(JSON.parse).filter(call=>call.input.operation==='extract-development-audio');
+ assert.equal(reads,1);assert.equal(calls[0].input.purpose,'source');assert.deepEqual(calls[0].input.bilibiliCookies,{SESSDATA:'AUTHORED_SOURCE_SESSION'});assert.equal(calls[1].input.bilibiliCookies,undefined);
+ const old=await fixture(t,{probe:{...version,developmentAudioProtocol:1}}),legacy=createDevelopmentCaptionHelper({python:old.executable});t.after(()=>legacy.shutdown());assert.equal((await legacy.status()).sourceMedia,false);await assert.rejects(legacy.extractAudio({url:'https://www.bilibili.com/video/BV1xx411c7mD',purpose:'source'}),error=>error.code==='CAPTION_UNAVAILABLE');
+});

@@ -8,13 +8,14 @@ import {libraryLocation,libraryStartupMessage,DEVELOPMENT_LIBRARY_DIRECTORY} fro
 export {DEVELOPMENT_LIBRARY_DIRECTORY};
 import {createDevelopmentCaptionHelper} from './development-captions.mjs';
 import {createCaptionService} from './caption-service.mjs';
+import {createCaptionReadability} from './transcript-readability.mjs';
 import {createVideoAudioService} from './video-audio-service.mjs';
 import {captionSetupGuidance,CAPTION_START_GUIDANCE} from './caption-setup-guidance.mjs';
 import {createBilibiliBrowserSession} from './bilibili-browser-session.mjs';
 
 export const DEVELOPMENT_TASK_DIRECTORY = fileURLToPath(new URL('../.coconut/dev/tasks', import.meta.url));
 
-export async function startDevelopmentBridge({port = 8080, taskDirectory = DEVELOPMENT_TASK_DIRECTORY, libraryDirectory = libraryLocation({mode:'development'}).directory, captionPython = process.env.COCONUT_CAPTION_PYTHON, captionProxy = process.env.COCONUT_CAPTION_PROXY, captionHelperDetached = process.platform!=='win32', ...options} = {}) {
+export async function startDevelopmentBridge({port = 8080, taskDirectory = DEVELOPMENT_TASK_DIRECTORY, libraryDirectory = libraryLocation({mode:'development'}).directory, captionPython = process.env.COCONUT_CAPTION_PYTHON, captionProxy = process.env.COCONUT_CAPTION_PROXY, captionHelperDetached = process.platform!=='win32', readingPython = process.env.COCONUT_READING_PYTHON, punctuationModel = process.env.COCONUT_PUNCTUATION_MODEL, segmentationModel = process.env.COCONUT_SPEAKER_SEGMENTATION_MODEL, embeddingModel = process.env.COCONUT_SPEAKER_EMBEDDING_MODEL, ...options} = {}) {
   if (Number.parseInt(process.versions.node, 10) < 22) throw new Error('Coconut development requires Node.js 22+.');
   let helper=null,captionDiagnostic=null;
   if(captionPython && !options.captionService){
@@ -24,12 +25,12 @@ export async function startDevelopmentBridge({port = 8080, taskDirectory = DEVEL
       const status=await helper.status();
       captionDiagnostic=status;
       options.captionStatus={code:status.ready?'ready':status.code,mode:'development-python',networkMode:status.networkMode};
-      if(status.ready)options.captionService=createCaptionService({helper,readerDirectory:options.readerDirectory,enabledProviders:status.providers});
-      if(status.ready&&status.audioFallback)options.videoAudioService=createVideoAudioService({helper,enabledProviders:status.audioProviders});
+      if(status.ready)options.captionService=createCaptionService({helper,readerDirectory:options.readerDirectory,enabledProviders:status.providers,enhanceDocument:createCaptionReadability({python:readingPython,model:punctuationModel})});
+      if(status.ready&&status.audioFallback)options.videoAudioService=createVideoAudioService({helper,enabledProviders:status.audioProviders,sourceMedia:status.sourceMedia===true});
     }catch(error){options.captionStatus={code:error.code||'CAPTION_UNAVAILABLE',mode:'development-python'};}
   }
   let server;
-  try{server=await startBridge({...options, port, taskDirectory, libraryDirectory,startupMode:'development'});}
+  try{server=await startBridge({...options, readingPython,punctuationModel,segmentationModel,embeddingModel,port, taskDirectory, libraryDirectory,startupMode:'development'});}
   catch(error){await helper?.shutdown();throw error;}
   if(helper){
     const shutdown=server.shutdown.bind(server);

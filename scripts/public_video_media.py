@@ -278,9 +278,10 @@ def download_verified_audio(info, transport, output, source_url, language=None):
         'format':selected['_extension'],'format_id':str(selected.get('format_id') or '')[:80]}}
 
 
-def extract_public_video_audio(url, language=None, *, output, ca_file=None, proxy=None):
+def extract_public_video_audio(url, language=None, *, output, ca_file=None, proxy=None, bilibili_cookies=None, purpose=None):
     from scripts.public_video_caption_guard import extract_public_video_captions
-    result = extract_public_video_captions(url, language, ca_file=ca_file, proxy=proxy, _media_output=output)
+    result = extract_public_video_captions(url, language, ca_file=ca_file, proxy=proxy,
+        bilibili_cookies=bilibili_cookies, _media_output=output, _source_media=purpose == 'source')
     if isinstance(result.get('bytes'), bytes):
         # Captions appeared since the user's initial check. Prefer them, but do
         # not silently substitute this separate audio action with an import.

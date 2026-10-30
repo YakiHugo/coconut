@@ -11,9 +11,9 @@ export function videoAudioFallback(value:unknown):VideoAudioFallback|null{
  const item=value as VideoAudioFallback;
  return item?.endpoint==='/api/videos/media'&&source(item.url)&&(item.language===null||typeof item.language==='string'&&/^[a-z]{2,3}(?:-[A-Za-z0-9]{2,8}){0,2}$/.test(item.language))?{endpoint:item.endpoint,url:item.url,language:item.language}:null;
 }
-export async function downloadVideoAudio(value:VideoAudioFallback,signal:AbortSignal){
+export async function downloadVideoAudio(value:VideoAudioFallback,signal:AbortSignal,purpose?:'source'){
  const fallback=videoAudioFallback(value);if(!fallback)throw Error('公开媒体操作身份无效。');
- const response=await fetch('api/videos/media',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({url:fallback.url,language:fallback.language,consent:true}),signal});
+ const response=await fetch(purpose==='source'?'api/videos/source-media':'api/videos/media',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({url:fallback.url,language:fallback.language,consent:true}),signal});
  if(!response.ok){const error=await response.json();throw Error(typeof error.error==='string'?error.error:'公开媒体检查未完成，未创建项目。');}
  const encoded=response.headers.get('X-Coconut-Media-Source')||'';
  if(!encoded||encoded.length>8192||!/^[A-Za-z0-9_-]+$/.test(encoded))throw Error('媒体来源记录无效。');
@@ -25,7 +25,7 @@ export async function downloadVideoAudio(value:VideoAudioFallback,signal:AbortSi
   (metadata.kind==='audio'?metadata.audio_language_basis==='platform_original'&&metadata.audio_role==='original'&&validLang:
    metadata.audio_language_basis==='platform_video_stream'&&['original','default','unknown'].includes(metadata.audio_role)&&(lang===null||validLang)&&(metadata.audio_role!=='unknown'||lang===null)&&metadata.format_id==='18'):
   metadata.audio_language_basis==='provider_single_source'&&lang===null&&metadata.audio_role==='unknown';
- if(!shape||!audioEvidence||metadata.url!==fallback.url||metadata.provider!==identity.provider||metadata.id!==identity.id||metadata.subtitle_check!=='no_matching_captions'||typeof metadata.title!=='string'||metadata.title.length>500||!Number.isFinite(metadata.duration)||metadata.duration<=0||metadata.duration>21600||typeof metadata.format_id!=='string'||!/^[A-Za-z0-9_.-]{1,80}$/.test(metadata.format_id)||!/^[a-f0-9]{64}$/.test(metadata.sha256||'')||response.headers.get('Content-Type')!==metadata.type)throw Error('媒体来源与请求不一致。');
+ if(!shape||!audioEvidence||metadata.url!==fallback.url||metadata.provider!==identity.provider||metadata.id!==identity.id||(purpose==='source'?metadata.purpose!=='source'||!['found','no_matching_captions'].includes(metadata.subtitle_check):metadata.subtitle_check!=='no_matching_captions')||typeof metadata.title!=='string'||metadata.title.length>500||!Number.isFinite(metadata.duration)||metadata.duration<=0||metadata.duration>21600||typeof metadata.format_id!=='string'||!/^[A-Za-z0-9_.-]{1,80}$/.test(metadata.format_id)||!/^[a-f0-9]{64}$/.test(metadata.sha256||'')||response.headers.get('Content-Type')!==metadata.type)throw Error('媒体来源与请求不一致。');
  const reader=response.body?.getReader();if(!reader)throw Error('浏览器无法读取媒体。');
  const chunks:Uint8Array<ArrayBuffer>[]=[];let size=0;
  try{while(true){const item=await reader.read();if(item.done)break;size+=item.value.byteLength;if(size>200*1024*1024)throw Error('媒体超过 200 MiB。');chunks.push(new Uint8Array(item.value));}}catch(error){await reader.cancel().catch(()=>{});throw error;}
@@ -33,7 +33,7 @@ export async function downloadVideoAudio(value:VideoAudioFallback,signal:AbortSi
  const digest=await crypto.subtle.digest('SHA-256',await file.arrayBuffer()),sha256=Array.from(new Uint8Array(digest),b=>b.toString(16).padStart(2,'0')).join('');
  if(sha256!==metadata.sha256)throw Error('媒体内容与来源记录不一致。');
  const inspected=await inspectFile(file);
- return {file,inspected,project:{project_kind:'audio_only',title:metadata.title,source_url:fallback.url,media_duration:metadata.duration,local_media_source:inspected.source,segments:[],media_provenance:{method:'public_video_media',source_platform:identity.provider,media_id:identity.id,subtitle_check:'no_matching_captions',audio_language:metadata.audio_language,audio_language_basis:metadata.audio_language_basis,audio_role:metadata.audio_role,media_kind:metadata.kind,container:metadata.format,format_id:metadata.format_id,sha256}}};
+ return {file,inspected,project:{project_kind:'audio_only',title:metadata.title,source_url:fallback.url,media_duration:metadata.duration,local_media_source:inspected.source,segments:[],media_provenance:{method:'public_video_media',source_platform:identity.provider,media_id:identity.id,subtitle_check:metadata.subtitle_check,audio_language:metadata.audio_language,audio_language_basis:metadata.audio_language_basis,audio_role:metadata.audio_role,media_kind:metadata.kind,container:metadata.format,format_id:metadata.format_id,sha256}}};
 }
 
 /** Decode before creating a project; never call play or infer original voice. */

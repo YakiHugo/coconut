@@ -11,6 +11,7 @@ import { createPodcastSources } from './podcast-sources.mjs';
 import {createIngestionService} from './ingestion-service.mjs';
 import {packagedCaptionGuidance,captionDiagnostic} from './caption-service.mjs';
 import {createIngestionExecutor} from './ingestion-executor.mjs';
+import {createReadabilityJobs} from './readability-jobs.mjs';
 import {createTaskStore,TASK_BODY_BYTES} from './tasks.mjs';
 import {createLibraryStore} from './library-store.mjs';
 import {handleLibraryRequest} from './library-api.mjs';
@@ -24,7 +25,7 @@ const MIME = {'.png':'image/png','.html':'text/html; charset=utf-8','.js':'text/
 const MAX_BODY = 1024 * 1024;
 export const CSP = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self'; img-src 'self' data: blob:; media-src 'self' blob:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'";
 
-export function createBridge({readerDirectory = path.resolve(ROOT,'../reader'), providers = createProviders(), podcastSources = createPodcastSources(), captionService = null, captionStatus = null, captionShortLinkResolver = undefined, bilibiliSession = null, localMediaService = null, videoAudioService = null, taskStore = null, taskUnavailable = null, libraryStore = null, libraryUnavailable = null, libraryLocation = null, privateProxy = null, ingestionExecutor = createIngestionExecutor()} = {}) {
+export function createBridge({readerDirectory = path.resolve(ROOT,'../reader'), providers = createProviders(), podcastSources = createPodcastSources(), captionService = null, captionStatus = null, captionShortLinkResolver = undefined, bilibiliSession = null, localMediaService = null, videoAudioService = null, taskStore = null, taskUnavailable = null, libraryStore = null, libraryUnavailable = null, libraryLocation = null, privateProxy = null, ingestionExecutor = createIngestionExecutor(),readabilityJobs = null} = {}) {
   const profile=privateProxyProfile(privateProxy);
   const translate = createTranslator(providers);
   const capabilities=Object.freeze({...CAPABILITIES,caption_import:captionService?.available===true,persistent_tasks:!!taskStore,canonical_library:!!libraryStore});
@@ -57,6 +58,26 @@ export function createBridge({readerDirectory = path.resolve(ROOT,'../reader'), 
     try {
       if(await handleLibraryRequest({req,pathname,origin,json,store:libraryStore,unavailable:libraryUnavailable}))return;
       if (localMediaService && await localMediaService.handle(req,res,pathname)) return;
+      if(pathname.startsWith('/api/v1/readability')){
+        if(remote)return json(403,{error:'请在本机阅读器中整理原声与文字稿'});
+        if(!readabilityJobs)return json(503,{error:'本地整理服务未配置',code:'readability_unavailable'});
+        const match=pathname.match(/^\/api\/v1\/readability\/jobs\/([a-f0-9-]+)(?:\/(result|media|cancel|retry))?$/);
+        if(req.method==='GET'||req.method==='HEAD'){
+          if(pathname==='/api/v1/readability/capabilities')return json(200,{...await readabilityJobs.capabilities(),sourceMedia:videoAudioService?.sourceAvailable===true});
+          if(pathname==='/api/v1/readability/jobs')return json(200,{jobs:readabilityJobs.list(new URL(req.url,origin).searchParams.get('key'))});
+          if(match?.[2]==='media')return await readabilityJobs.streamMedia(match[1],req,res);
+          if(match&&!['media','cancel','retry'].includes(match[2]))return json(200,{job:await readabilityJobs[match[2]==='result'?'result':'get'](match[1])});
+          return json(404,{error:'整理请求不存在'});
+        }
+        if(req.method!=='POST')return json(405,{error:'Method not allowed'});
+        if(req.headers.origin!==origin)return json(403,{error:'整理请求必须来自本机阅读器'});
+        if(match?.[2]==='media')return json(200,{job:await readabilityJobs.upload(match[1],req,{signal:controller.signal})});
+        if(match&&['cancel','retry'].includes(match[2]))return json(200,{job:await readabilityJobs.action(match[1],match[2])});
+        if(pathname!=='/api/v1/readability/jobs')return json(404,{error:'整理请求不存在'});
+        if(req.headers['content-type']?.split(';')[0]!=='application/json')return json(400,{error:'Use application/json'});
+        let size=0;const chunks=[];for await(const chunk of req){size+=chunk.length;if(size>8*1024*1024)return json(413,{error:'文字稿过大'});chunks.push(chunk);}
+        return json(201,{job:await readabilityJobs.create(JSON.parse(Buffer.concat(chunks).toString('utf8')))});
+      }
       const ingestionJob=pathname.match(/^\/api\/v1\/ingestions\/jobs\/([a-f0-9]{32})(?:\/(result|media|cancel|retry))?$/);
       if (req.method === 'GET' || req.method === 'HEAD') {
         const operationMatch=pathname.match(/^\/api\/v1\/ingestions\/operations\/([a-f0-9-]+)$/);
@@ -103,7 +124,7 @@ export function createBridge({readerDirectory = path.resolve(ROOT,'../reader'), 
       const ingestionAction=ingestionJob&&['cancel','retry'].includes(ingestionJob[2]);
       const taskRoute=pathname==='/api/v1/tasks'||/^\/api\/v1\/tasks\/[a-f0-9-]+\/(?:cancel|archive|restore|resume)$/.test(pathname);
       if (taskRoute&&!taskStore)return json(503,{error:taskUnavailable?.message||'此执行器尚未配置持久任务目录',code:taskUnavailable?.code||'tasks_disabled'});
-      if (!taskRoute&&!ingestionAction&&!['/api/v1/ingestions','/api/ask','/api/translate-subscription','/api/podcasts/discover','/api/podcasts/import','/api/podcasts/media','/api/videos/media','/api/captions/import','/api/captions/session'].includes(pathname)) return json(501,{error:'轻量版未启用视频站下载、ASR 或离线翻译。可使用公开播客源、字幕或本地音视频；完整本地处理服务为可选高级功能。'});
+      if (!taskRoute&&!ingestionAction&&!['/api/v1/ingestions','/api/ask','/api/translate-subscription','/api/podcasts/discover','/api/podcasts/import','/api/podcasts/media','/api/videos/media','/api/videos/source-media','/api/captions/import','/api/captions/session'].includes(pathname)) return json(501,{error:'轻量版未启用视频站下载、ASR 或离线翻译。可使用公开播客源、字幕或本地音视频；完整本地处理服务为可选高级功能。'});
       if (req.headers['content-type']?.split(';')[0] !== 'application/json') return json(400,{error:'Use application/json'});
       const limit=taskRoute?TASK_BODY_BYTES:MAX_BODY;
       const declared = req.headers['content-length'];
@@ -141,9 +162,9 @@ export function createBridge({readerDirectory = path.resolve(ROOT,'../reader'), 
       }
       if(pathname === '/api/podcasts/discover') return json(200,await podcastSources.discover(data,{signal:controller.signal}));
       if(pathname === '/api/podcasts/import') return json(200,await podcastSources.importEpisode(data,{signal:controller.signal}));
-      if(pathname === '/api/videos/media') {
+      if(['/api/videos/media','/api/videos/source-media'].includes(pathname)) {
         if(!videoAudioService?.available)return json(503,{code:'video_media_unavailable',error:'此开发服务未配置公开媒体助手；不会自动安装依赖。'});
-        const media=await videoAudioService.download(data,{signal:controller.signal});
+        const media=await videoAudioService.download(data,{signal:controller.signal,...(pathname==='/api/videos/source-media'?{purpose:'source'}:{})});
         res.writeHead(200,{'Content-Type':media.type,'Content-Length':media.body.length,'Content-Disposition':'attachment; filename="'+media.filename+'"','X-Coconut-Media-Source':Buffer.from(JSON.stringify(media.source)).toString('base64url')});
         res.end(media.body);return;
       }
@@ -158,7 +179,7 @@ export function createBridge({readerDirectory = path.resolve(ROOT,'../reader'), 
       return json(200,{translations:await translate(data,{signal:controller.signal})});
     } catch (error) {
       if(res.headersSent){res.destroy();return;}
-      if(pathname==='/api/videos/media'){
+      if(['/api/videos/media','/api/videos/source-media'].includes(pathname)){
         const diagnostic=captionDiagnostic(error.diagnostic);
         return json(error.status||400,{...(typeof error.code==='string'?{code:error.code}:{}),
           error:remote?remoteDiagnostic(error.message):String(error.message||'媒体读取未完成').slice(0,300),
@@ -168,14 +189,14 @@ export function createBridge({readerDirectory = path.resolve(ROOT,'../reader'), 
     }
   });
   server.requestTimeout = 30000; server.headersTimeout = 10000;
-  server.on('close',()=>{ libraryStore?.close(); for (const controller of active) controller.abort(); active.clear();void taskStore?.shutdown().catch(()=>{}); });
+  server.on('close',()=>{ libraryStore?.close(); for (const controller of active) controller.abort(); active.clear();void taskStore?.shutdown().catch(()=>{});void readabilityJobs?.shutdown().catch(()=>{}); });
   // Abort synchronously before Electron exits: detached CLI process groups must
   // not outlive the app while waiting for a later HTTP close event.
   let shutdown;
   server.shutdown = callback => {
     if(!shutdown){
       for (const controller of active) controller.abort();
-      active.clear(); const stopping=taskStore?.shutdown()||Promise.resolve();
+      active.clear(); const stopping=Promise.all([taskStore?.shutdown(),readabilityJobs?.shutdown()]);
       shutdown=new Promise((resolve,reject)=>{
         server.close(error=>void stopping.then(()=>error?reject(error):resolve(),reject));
         server.closeAllConnections();
@@ -198,9 +219,13 @@ export async function startBridge({port = 8080, taskDirectory = null, libraryDir
     try{options.libraryStore=await createLibraryStore({directory:libraryDirectory,exclusiveWriter:true});}
     catch(error){options.libraryStore=null;options.libraryUnavailable={code:error.libraryCode||'library_unavailable',message:'Canonical library could not open; browser storage remains unchanged.'};}
   }
+  if(!options.readabilityJobs&&options.libraryStore&&libraryDirectory&&(options.readingPython||process.env.COCONUT_READING_PYTHON)){
+    try{options.readabilityJobs=await createReadabilityJobs({directory:path.join(libraryDirectory,'readability'),python:options.readingPython||process.env.COCONUT_READING_PYTHON,punctuationModel:options.punctuationModel,segmentationModel:options.segmentationModel,embeddingModel:options.embeddingModel});}
+    catch(error){options.libraryStore?.close();await options.taskStore?.shutdown();throw error;}
+  }
   const server = createBridge(options);
   try{await new Promise((resolve,reject)=>{server.once('error',reject);server.listen(port,'127.0.0.1',resolve);});}
-  catch(error){options.libraryStore?.close();await options.taskStore?.shutdown();throw error;}
+  catch(error){options.libraryStore?.close();await options.taskStore?.shutdown();await options.readabilityJobs?.shutdown();throw error;}
   return server;
 }
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

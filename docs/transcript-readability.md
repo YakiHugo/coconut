@@ -45,12 +45,41 @@ ASR 完成后自动执行已配置的整理阶段。已有文字稿可单独处�
 
 声学人物处理已移到[长音频共用流程](long-audio-pipeline.md)：每块局部分组，使用干净声纹与整份录音的全局人物注册表匹配，不拼接各块的局部编号，也不再按全文 3% 时长丢弃嘉宾。cue 被单一声音覆盖至少 60%，且次高声音覆盖不超过最高的一半时才标注。相似度含糊时保留未知；全局 ID 按首次可信出现生成，保留已有人工标签。新增的声音编号作为可校对的原始结构化标签；后续人工重命名沿用现有 `original_speaker` 历史。身份、口音、配乐、重叠说话和边界误差仍需回听核对。自动标点和自动说话人 provenance 经过项目校验、持久保存和导出，不能当作人工校对结果。
 
+## 平台自动字幕
+
+CLI 的自动字幕导入也运行已配置的标点阶段；没有已取得的音频时不会执行声纹分组或为此下载原声。开发阅读器的字幕入口可显式配置独立的本地整理解释器，字幕助手的轻量环境不必安装推理依赖：
+
+```bash
+COCONUT_CAPTION_PYTHON="$PWD/.venv-captions/bin/python" \
+COCONUT_READING_PYTHON="$PWD/.venv/bin/python" \
+COCONUT_PUNCTUATION_MODEL=/absolute/path/model.int8.onnx npm run dev
+```
+
+仅平台自动字幕经过此导入阶段，发布者提供的字幕保留原样。标点处理复用同一逐字校验，并有子进程大小、超时和取消限制；失败时保留完整字幕并记录提示。此设置不启用模型下载、ASR、音频获取或远程服务。阅读器的后续整理按下面的资源检查规则接续，保存前核对原稿。
+
+没有句末标点的连续稿在正常阅读长度处分段，已有完整句子继续优先保持整句。说话人缺失时显示「未标注」和原声依据提示；`speaker_method: unavailable` 不再显示已完成声音分组。
+
+## 按资源接续整理
+
+`shared/transcript-resources.js` 同时供服务端与 React 使用，分别检查带时间的文字稿、标点、原声、说话人和已有章节。已有时间戳字幕不进入 ASR；已有作者稿、标点、人工说话人标签和章节保留。缺少原声或模型时显示具体状态；声学处理已结束但归属不清的片段保留「未标注」，不会循环自动重试。
+
+开发入口在书架目录下创建独立的 `readability/readability.sqlite`，串行运行本地整理任务。配置 `COCONUT_READING_PYTHON`、标点及两份声纹模型路径后，打开文字稿会检查缺失阶段；已载入原声的项目可继续分组。`文字稿整理` 位于来源信息之后，可补充对应原声、查看状态、取消或重试。无时间戳的纯文字稿对齐尚未提供可执行后端，不宣称已支持该入口；现有纯音频项目继续使用原有明确启动的本地转写流程。
+
+媒体获取与处理分开。`/api/videos/source-media` 是为已有字幕载入对应原声的独立操作，保持实际字幕存在状态；原 `/api/videos/media` 的无字幕回退规则不变。新版开发助手单独声明此能力，旧助手不会误用新操作。Bilibili 仅使用已连接的会话，凭据仍限定在原有来源请求中；CDN、字节、音轨、时长等检查沿用原流程。获取限制不会被解释成「没有字幕」。
+
+整理任务保存裁剪过的原稿快照、操作身份、原声完整 SHA-256、输出及可恢复的声音检查点；私人笔记、译文和 AI 历史不进入模型输入。重试复用原任务和检查点，不重复上传已确认的原声。服务重启把运行中任务标为中断；刷新页面可找到任务与结果，并重新载入任务原声。处理进程不因页面关闭而消失，服务关闭会终止其进程组并保留中断状态。
+
+保存结果只更新自动整理字段，核对所有 cue 的 ID、顺序、时间、文字和原有说话人。处理期间新增笔记、译文、章节或修改标题会保留；原文或归属已变时拒绝旧结果。未提交编辑会阻止结果接入，保存或取消后继续。语音分组先检查音频时长，避免把明显不同剪辑版本套到原稿；相同长度仍不能证明同一版本，用户补入文件时需选择对应原声。
+
+自动声音编号不等于真实人物身份。界面显示声音分组与待核对片段数量，模型完成不代表人工质量验收。真实 Bilibili 字幕的集成证据保存在本机任务和 `.coconut/dev/readability-repair/`，其中的未确定片段仍需核对。
+
 ## 验证
 
 ```bash
 .venv/bin/python -m unittest tests.test_transcript_readability tests.test_local_asr tests.test_transcript
 node --test --test-concurrency=1 tests/reader-passages.test.cjs tests/react-reader-workspace.test.mjs tests/react-reader-summary-keyboard.test.mjs tests/react-source-playback.test.mjs
 node tests/react-transcript-reading-browser.mjs
+node --test tests/transcript-resources.test.cjs tests/desktop-readability-jobs.test.mjs tests/react-readability-controller.test.mjs tests/desktop-video-audio.test.mjs
 npm run check:reader-ui
 ```
 

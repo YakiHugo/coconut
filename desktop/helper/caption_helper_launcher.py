@@ -111,23 +111,26 @@ def main():
                 'guardProtocol': 1, 'tlsRootsVerified': True,
                 'publicProviders': list(PUBLIC_PROVIDERS),
                 'developmentProviders': list(PUBLIC_PROVIDERS), 'developmentProxyProtocol': 1,
-                'developmentAudioProtocol': 1, 'developmentProxyAudioProtocol': 1}
+                'developmentAudioProtocol': 1, 'developmentProxyAudioProtocol': 1,
+                'developmentSourceMediaProtocol': 1}
     if operation == 'authored-fixture' and set(request) == {'operation', 'endpoint'}:
         if not isinstance(request['endpoint'], str) or len(request['endpoint']) > 200:
             return {'status': 'unavailable'}
         return authored_fixture(request['endpoint'])
-    if operation == 'extract-development-audio' and set(request) in (
-            {'operation', 'url', 'language'}, {'operation', 'url', 'language', 'trustedProxy'}):
+    if operation == 'extract-development-audio' and {'operation', 'url', 'language'} <= set(request) <= {'operation', 'url', 'language', 'trustedProxy', 'bilibiliCookies', 'purpose'}:
         if not isinstance(request['url'], str) or len(request['url']) > 2048:
             return {'status':'unavailable'}
         if urllib.parse.urlsplit(request['url']).hostname not in ('www.youtube.com', 'www.bilibili.com'):
+            return {'status':'unavailable'}
+        if request.get('purpose') not in (None, 'source') or ('bilibiliCookies' in request and urllib.parse.urlsplit(request['url']).hostname != 'www.bilibili.com'):
             return {'status':'unavailable'}
         language = request['language']
         if language is not None and (not isinstance(language, str) or len(language) > 30):
             return {'status':'language_required'}
         from scripts.public_video_media import extract_public_video_audio
         return extract_public_video_audio(request['url'], language, output=Path('public-media.bin'),
-            ca_file=certifi.where(), proxy=request.get('trustedProxy'))
+            ca_file=certifi.where(), proxy=request.get('trustedProxy'),
+            bilibili_cookies=request.get('bilibiliCookies'), purpose=request.get('purpose'))
     extraction_keys = {'operation', 'url', 'language'}
     development_options = operation == 'extract-development' and extraction_keys <= set(request) <= extraction_keys | {'trustedProxy', 'bilibiliCookies'}
     if operation in ('extract', 'extract-development') and (set(request) == extraction_keys or development_options):

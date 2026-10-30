@@ -81,10 +81,10 @@ export function createDevelopmentCaptionHelper({python,proxy=null,bilibiliSessio
   active.add(controller);controller.operation=operation;
   try{return await operation;}finally{active.delete(controller);}
  }
- let ready=false,audioReady=false;
+ let ready=false,audioReady=false,sourceMediaReady=false;
  return Object.freeze({
   async status({signal}={}){
-   ready=false;audioReady=false;
+   ready=false;audioReady=false;sourceMediaReady=false;
    try{
     const r=await execute({operation:'version'},{signal});
     if(r.status==='python_unsupported')return {ready:false,code:'CAPTION_PYTHON_VERSION'};
@@ -96,7 +96,7 @@ export function createDevelopmentCaptionHelper({python,proxy=null,bilibiliSessio
     if(r.status==='version_mismatch'||r.status==='ok'&&r.version!==lock.ytDlpVersion)return {ready:false,code:'CAPTION_VERSION',expectedVersion:lock.ytDlpVersion,actualVersion:typeof r.version==='string'&&/^\d{4}\.\d{1,2}\.\d{1,2}$/.test(r.version)?r.version:'unknown'};
     if(r.status!=='ok'||r.protocol!==1||r.version!==lock.ytDlpVersion||r.publicExtraction!==true||r.guardProtocol!==1||r.tlsRootsVerified!==true||JSON.stringify(r.developmentProviders)!==JSON.stringify(['x','youtube','bilibili']))throw fail('CAPTION_VERSION','字幕依赖版本或协议不匹配');
     if(trustedProxy&&r.developmentProxyProtocol!==1)throw fail('CAPTION_VERSION','字幕代理协议不匹配');
-    ready=true;audioReady=r.developmentAudioProtocol===1&&(!trustedProxy||r.developmentProxyAudioProtocol===1);return {ready:true,audioFallback:audioReady,audioProviders:audioReady?['youtube','bilibili']:[],code:'ready',version:r.version,providers:r.developmentProviders,networkMode:trustedProxy?'trusted_local_proxy':'direct_public'};
+    ready=true;audioReady=r.developmentAudioProtocol===1&&(!trustedProxy||r.developmentProxyAudioProtocol===1);sourceMediaReady=audioReady&&r.developmentSourceMediaProtocol===1;return {ready:true,sourceMedia:sourceMediaReady,audioFallback:audioReady,audioProviders:audioReady?['youtube','bilibili']:[],code:'ready',version:r.version,providers:r.developmentProviders,networkMode:trustedProxy?'trusted_local_proxy':'direct_public'};
    }catch(error){if(error.code==='CAPTION_CANCELLED')throw error;return {ready:false,code:error.code||'CAPTION_UNAVAILABLE'};}
   },
   async extractCaptions({url,language=null,signal}={}){
@@ -112,12 +112,14 @@ export function createDevelopmentCaptionHelper({python,proxy=null,bilibiliSessio
    if(!bytes.length||bytes.length>HELPER_LIMITS.captionBytes||r.format==='vtt'&&!/^\uFEFF?WEBVTT(?:[ \t].*)?\r?\n/.test(bytes.toString('utf8')))throw fail('CAPTION_OUTPUT','字幕文件无效');
    return {source:r.source,track:r.track,format:r.format,bytes};
   },
-  async extractAudio({url,language=null,signal}={}){
+  async extractAudio({url,language=null,purpose=null,signal}={}){
    if(!ready||!audioReady)throw fail('CAPTION_UNAVAILABLE','开发原声助手尚未通过检查');
    const source=captionSource(url);
    if(!['youtube','bilibili'].includes(source.provider))throw fail('CAPTION_INPUT','此来源不支持公开媒体回退');
    if(language!==null&&(typeof language!=='string'||!/^([a-z]{2,3})(-[A-Za-z0-9]{2,8}){0,2}$/.test(language)))throw fail('CAPTION_INPUT','原语言标记无效');
-   return execute({operation:'extract-development-audio',url:source.url,language,...(trustedProxy?{trustedProxy}:{})},{signal});
+   if(purpose!==null&&(purpose!=='source'||!sourceMediaReady))throw fail('CAPTION_UNAVAILABLE','当前助手不支持为已有字幕载入原声');
+   const cookies=source.provider==='bilibili'?await bilibiliSession?.cookies({signal}):null;
+   return execute({operation:'extract-development-audio',url:source.url,language,...(purpose?{purpose}:{}),...(cookies?{bilibiliCookies:cookies}:{}),...(trustedProxy?{trustedProxy}:{})},{signal});
   },
   shutdown(){closing=true;for(const controller of active)controller.abort();return Promise.allSettled([...active].map(controller=>controller.operation));},
  });

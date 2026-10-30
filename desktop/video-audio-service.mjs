@@ -8,12 +8,13 @@ const messages={
  language_required:'语言选择尚未确认，请先选择原语言并重新检查字幕。',
  network_unavailable:'公开来源连接未完成，无法确认媒体可用；未尝试其他路线。',
 };
-export function createVideoAudioService({helper,enabledProviders=['youtube','bilibili']}={}){
+export function createVideoAudioService({helper,enabledProviders=['youtube','bilibili'],sourceMedia=false}={}){
  const providers=Object.freeze([...new Set(enabledProviders)].filter(value=>['youtube','bilibili'].includes(value)));
  const available=typeof helper?.extractAudio==='function'&&providers.length>0;
  let busy=false;
- return Object.freeze({available,providers,async download(data,{signal}={}){
+ return Object.freeze({available,providers,sourceAvailable:available&&sourceMedia,async download(data,{signal,purpose=null}={}){
   if(!available)throw Object.assign(Error('公开媒体助手未配置'),{status:503,code:'video_media_unavailable'});
+  if(purpose==='source'&&!sourceMedia)throw Object.assign(Error('当前助手不支持已有字幕的原声载入'),{status:503});
   if(data?.consent!==true)throw Error('下载公开媒体需要明确操作');
   const source=captionSource(data.url);
   if(!providers.includes(source.provider))throw Error('此来源不支持公开媒体回退');
@@ -22,7 +23,7 @@ export function createVideoAudioService({helper,enabledProviders=['youtube','bil
   if(busy)throw Object.assign(Error('已有公开媒体请求正在进行'),{status:409});
   busy=true;
   try{
-   const result=await helper.extractAudio({url:source.url,language,signal});
+   const result=await helper.extractAudio({url:source.url,language,signal,...(purpose?{purpose}:{})});
    if(signal?.aborted)throw Error('媒体请求已取消');
    if(result?.status!=='media_ready'){
     const status=[...CAPTION_FAILURE_STATUSES,'media_unavailable','captions_available'].includes(result?.status)?result.status:'extractor_failed';
@@ -39,10 +40,10 @@ export function createVideoAudioService({helper,enabledProviders=['youtube','bil
     (media?.kind==='audio'?meta?.audio_language_basis==='platform_original'&&meta.audio_role==='original'&&validLang:
      meta?.audio_language_basis==='platform_video_stream'&&['original','default','unknown'].includes(meta.audio_role)&&(lang===null||validLang)&&(meta.audio_role!=='unknown'||lang===null)&&meta.format_id==='18'):
     meta?.audio_language_basis==='provider_single_source'&&lang===null&&meta.audio_role==='unknown';
-   if(!shape||!audioEvidence||!meta||meta.url!==source.url||meta.id!==source.mediaId||meta.provider!==source.provider||meta.subtitle_check!=='no_matching_captions'||!Number.isFinite(meta.duration)||meta.duration<=0||meta.duration>21600||typeof meta.title!=='string'||meta.title.length>500||typeof meta.format_id!=='string'||!/^[A-Za-z0-9_.-]{1,80}$/.test(meta.format_id)||
+   if(!shape||!audioEvidence||!meta||meta.url!==source.url||meta.id!==source.mediaId||meta.provider!==source.provider||(purpose==='source'?meta.purpose!=='source'||!['found','no_matching_captions'].includes(meta.subtitle_check):meta.subtitle_check!=='no_matching_captions')||!Number.isFinite(meta.duration)||meta.duration<=0||meta.duration>21600||typeof meta.title!=='string'||meta.title.length>500||typeof meta.format_id!=='string'||!/^[A-Za-z0-9_.-]{1,80}$/.test(meta.format_id)||
     !Buffer.isBuffer(bytes)||bytes.length<12||bytes.length>200*1024*1024||media.bytes!==bytes.length||bytes.subarray(4,8).toString()!=='ftyp'||createHash('sha256').update(bytes).digest('hex')!==media.sha256)throw Error('公开媒体来源或文件校验未通过');
    // Fixed metadata only: never publish transient CDN/signature URLs.
-   return {body:bytes,type:media.type,kind:media.kind,filename:'public-source.'+meta.format,source:{url:source.url,provider:source.provider,id:source.mediaId,title:meta.title,duration:meta.duration,subtitle_check:'no_matching_captions',audio_language:lang,audio_language_basis:meta.audio_language_basis,audio_role:meta.audio_role,format:meta.format,format_id:meta.format_id,kind:media.kind,type:media.type,sha256:media.sha256}};
+   return {body:bytes,type:media.type,kind:media.kind,filename:'public-source.'+meta.format,source:{url:source.url,provider:source.provider,id:source.mediaId,title:meta.title,duration:meta.duration,subtitle_check:meta.subtitle_check,...(purpose?{purpose}:{}),audio_language:lang,audio_language_basis:meta.audio_language_basis,audio_role:meta.audio_role,format:meta.format,format_id:meta.format_id,kind:media.kind,type:media.type,sha256:media.sha256}};
   }finally{busy=false;}
  }});
 }
