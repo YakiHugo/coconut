@@ -30,7 +30,7 @@ reading_editions: {
   jobs?: [{id, source_snapshot_id, created_at, provider, model?, binding,
            media_identity?, cancel_requested?, resume?: {key, attempt_id, input_digest}}],
   answers?: [{id, edition_id, block_id, source_snapshot_id, created_at,
-              question, provider, language, from, to, text, block_text,
+              question, provider, model?, language, from, to, text, block_text,
               source_refs, answer, citations}],
   position?: {edition_id, block_id}
 }
@@ -70,7 +70,7 @@ reading_editions: {
 
 `edition-ai.tsx` 使用独立 `edited_selection` 请求，包含实际编辑正文及精确 offsets；`transcript` 只携带本段冻结原话。服务明确声明 `ask_edited_selection: 1` 才启用。提供商校验选区，提示词区分整理表达和逐字原话，回答引用只能指向提交原片段。请求、选择、正文或连接变化会终止旧前台请求。保存失败的回答保留在本页，可重试或下载救援记录；它不进入来源稿 `ai_answers`。
 
-编辑稿 AI 记录冻结当时正文、选文、问题、语言、提供商和引用。后续编辑不改写历史记录，展示正文一致性与来源状态。书架的“编辑访谈稿”范围独立于原文全文搜索，协作式分批扫描正文、标题、摘录与 AI 记录，结果带文档/版本/段落身份；打开前复核当前文档身份，定位对应块，不伪造 cue ID。
+编辑稿 AI 记录冻结当时正文、选文、问题、语言、提供商、请求模型和引用。后续编辑不改写历史记录，展示正文一致性与来源状态。书架的“编辑访谈稿”范围独立于原文全文搜索，协作式分批扫描正文、标题、摘录与 AI 记录，结果带文档/版本/段落身份；打开前复核当前文档身份，定位对应块，不伪造 cue ID。
 
 Markdown 和纯文本面向阅读；来源对照导出在正文后附原片段 ID、时间、人物及原话。原有 SRT/VTT 仍仅输出来源稿。JSON 备份保留生成关联、版本、原文快照、摘录和回答；老版本客户端不认识新 method 时会拒绝导入，不会悄悄降级为来源稿。
 

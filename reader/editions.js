@@ -61,7 +61,7 @@
   if(value.answers!==undefined){
    if(!Array.isArray(value.answers)||value.answers.length>200)fail();const ids=new Set();
    for(const a of value.answers){const edition=editions.get(a?.edition_id),source=sources.get(a?.source_snapshot_id);
-    if(!object(a)||!id(a.id)||ids.has(a.id)||!edition||!edition.blocks.some(b=>b.id===a.block_id)||edition.source_snapshot_id!==a.source_snapshot_id||!source||!stamp(a.created_at)||!string(a.answer,100000)||!a.answer.trim()||!string(a.question,4000)||!['codex','claude'].includes(a.provider)||!string(a.language,20)||!string(a.block_text,1000000)||!boundary(a.block_text,a.from)||!boundary(a.block_text,a.to)||a.to<=a.from||a.text!==a.block_text.slice(a.from,a.to)||!a.text.trim())fail();
+    if(!object(a)||!id(a.id)||ids.has(a.id)||!edition||!edition.blocks.some(b=>b.id===a.block_id)||edition.source_snapshot_id!==a.source_snapshot_id||!source||!stamp(a.created_at)||!string(a.answer,100000)||!a.answer.trim()||!string(a.question,4000)||!['codex','claude'].includes(a.provider)||a.model!==undefined&&!modelId(a.model)||!string(a.language,20)||!string(a.block_text,1000000)||!boundary(a.block_text,a.from)||!boundary(a.block_text,a.to)||a.to<=a.from||a.text!==a.block_text.slice(a.from,a.to)||!a.text.trim())fail();
     checkRefs(a.source_refs,source,indexes.get(a.source_snapshot_id));if(!Array.isArray(a.citations)||!a.citations.length||a.citations.some(ref=>!a.source_refs.includes(ref)))fail();ids.add(a.id);total+=a.block_text.length+a.answer.length;
    }
   }
@@ -144,10 +144,10 @@
   const edition={id:j.id,kind:'interview',title:'编辑访谈稿',source_snapshot_id:j.source_snapshot_id,created_at:createdAt,revision:1,method:'model',coverage:'full',generation:{task_id:task.taskId,provider:j.provider,...(j.model?{model:j.model}:{})},blocks:clone(task.result.blocks),...(j.media_identity?{media_identity:j.media_identity}:{} )};
   return {...doc,reading_editions:validate({...before,editions:[...before.editions,edition]})};
  }
- function answer(doc,editionId,selection,response,{id:answerId,createdAt,question,provider,language}){
+ function answer(doc,editionId,selection,response,{id:answerId,createdAt,question,provider,model,language}){
   const before=validate(state(doc)),e=before.editions.find(e=>e.id===editionId),b=e?.blocks.find(b=>b.id===selection.blockId);
   if(!b||blockText(b)!==selection.blockText||selection.text!==selection.blockText.slice(selection.from,selection.to))throw Error('所选编辑稿已变化，未保存回答');
-  const a={id:answerId,edition_id:e.id,block_id:b.id,source_snapshot_id:e.source_snapshot_id,created_at:createdAt,question,provider,language,block_text:selection.blockText,text:selection.text,from:selection.from,to:selection.to,source_refs:[...b.source_refs],answer:response.answer,citations:response.citations};
+  const a={id:answerId,edition_id:e.id,block_id:b.id,source_snapshot_id:e.source_snapshot_id,created_at:createdAt,question,provider,...(model?{model}:{}),language,block_text:selection.blockText,text:selection.text,from:selection.from,to:selection.to,source_refs:[...b.source_refs],answer:response.answer,citations:response.citations};
   return {...doc,reading_editions:validate({...before,answers:[...(before.answers||[]),a]})};
  }
  function plainText(doc,editionId){return markdown(doc,editionId).replace(/^#{1,2} /gm,'');}

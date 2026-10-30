@@ -18,7 +18,7 @@ test('source and task-bound generated version is accepted once; historical editi
 });
 test('edited AI answers own edited offsets and frozen original evidence; future edits retain historical answer',()=>{
  let d=E.create(doc(),{id:'manual',snapshotId:'snap',createdAt:stamp});const b=d.reading_editions.editions[0].blocks[1],selection={blockId:b.id,blockText:E.blockText(b),from:0,to:3,text:E.blockText(b).slice(0,3)};
- d=E.answer(d,'manual',selection,{answer:'依据不足，请核对原声',citations:['b']},{id:'answer-1',createdAt:stamp,question:'解释',provider:'codex',language:'zh'});assert.deepEqual(d.ai_answers,[]);assert.equal(d.reading_editions.answers[0].text,selection.text);
+ d=E.answer(d,'manual',selection,{answer:'依据不足，请核对原声',citations:['b']},{id:'answer-1',createdAt:stamp,question:'解释',provider:'codex',model:'chosen-model',language:'zh'});assert.deepEqual(d.ai_answers,[]);assert.equal(d.reading_editions.answers[0].text,selection.text);assert.equal(d.reading_editions.answers[0].model,'chosen-model');
  assert.throws(()=>E.answer(d,'manual',selection,{answer:'伪引用',citations:['a']},{id:'answer-2',createdAt:stamp,question:'解释',provider:'codex',language:'zh'}));
  d=E.edit(d,'manual',b.id,{heading:'新标题',text:'修改后的整理正文'},1);assert.deepEqual(C.validate(d).reading_editions.answers[0].block_text,selection.blockText);assert.throws(()=>E.answer(d,'manual',selection,{answer:'迟到结果',citations:['b']},{id:'answer-3',createdAt:stamp,question:'解释',provider:'codex',language:'zh'}));
 });

@@ -22,10 +22,10 @@ export function excerpt<T extends Document>(doc:T,editionId:string,blockId:strin
 export function markdown(doc:Document,editionId:string):string;
 
 export type EditionJob={id:string;source_snapshot_id:string;created_at:string;provider:'codex'|'claude';model?:string;binding:string;media_identity?:string;cancel_requested?:boolean;resume?:{key:string;attempt_id:string;input_digest:string}};
-export type EditionAnswer={id:string;edition_id:string;block_id:string;source_snapshot_id:string;created_at:string;question:string;provider:string;language:string;block_text:string;text:string;from:number;to:number;source_refs:string[];answer:string;citations:string[]};
+export type EditionAnswer={id:string;edition_id:string;block_id:string;source_snapshot_id:string;created_at:string;question:string;provider:string;model?:string;language:string;block_text:string;text:string;from:number;to:number;source_refs:string[];answer:string;citations:string[]};
 export function job<T extends Document>(doc:T,options:{id:string;snapshotId:string;createdAt:string;provider:'codex'|'claude';model?:string;binding:string;mediaIdentity?:string}):T;
 export function jobUpdate<T extends Document>(doc:T,id:string,patch:{resume?:EditionJob['resume'];cancel_requested?:boolean}):T;
 export function receive<T extends Document>(doc:T,id:string,task:unknown,options:{createdAt:string;mediaIdentity?:string}):T;
-export function answer<T extends Document>(doc:T,editionId:string,selection:{blockId:string;blockText:string;text:string;from:number;to:number},response:unknown,options:{id:string;createdAt:string;question:string;provider:string;language:string}):T;
+export function answer<T extends Document>(doc:T,editionId:string,selection:{blockId:string;blockText:string;text:string;from:number;to:number},response:unknown,options:{id:string;createdAt:string;question:string;provider:string;model?:string;language:string}):T;
 export function plainText(doc:Document,editionId:string):string;
 export function evidenceMarkdown(doc:Document,editionId:string):string;
