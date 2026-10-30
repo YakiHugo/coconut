@@ -292,3 +292,12 @@ test('exact context segment bound accepts 48 and rejects 49 before discovery',as
   if(size===48)await providers.ask(data);else{await assert.rejects(providers.ask(data));assert.equal(calls.length,0);}
  }
 });
+
+test('edited selection stays distinct from exact speech and carries the actual selected prose with frozen source context',async()=>{
+ const f=fixture();const edited_selection={version:1,block_text:'Edited wording for reading.',text:'Edited wording',from:0,to:14};await f.providers.ask({...question,edited_selection});const input=f.calls.find(c=>c.args[0]==='exec'&&c.args.includes('--json')).settings.input;assert.match(input,/selected EDITED prose/);const data=JSON.parse(input.split('Untrusted transcript input (JSON):\n')[1]);assert.deepEqual(data.edited_selection,edited_selection);assert.equal(data.exact_selection,undefined);assert.equal(data.transcript[0].text,'Quoted source');
+ const before=f.calls.length;await assert.rejects(f.providers.ask({...question,edited_selection:{...edited_selection,text:'fabricated'}}),/选文无效/);assert.equal(f.calls.length,before);
+});
+
+test('interview generation uses native structured blocks and denies malformed admission before any provider call',async()=>{
+ const blocks=[{heading:'Topic',paragraphs:['Edited answer'],source_refs:['a']}],f=fixture({blocks});const result=await f.providers.interview(question);assert.deepEqual(result.blocks,blocks);const call=f.calls.find(c=>c.args[0]==='exec'&&c.args.includes('--json'));assert.match(call.settings.input,/Preserve source language, order, speaker boundaries/);assert.equal(JSON.parse(call.settings.input.split('Untrusted transcript input (JSON):\n')[1]).transcript[0].id,'a');const before=f.calls.length;await assert.rejects(f.providers.interview({...question,consent:false}));assert.equal(f.calls.length,before);
+});

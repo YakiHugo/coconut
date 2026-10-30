@@ -53,6 +53,8 @@ jobs:
             ${{ runner.temp }}/coconut-react-authored/react-reading-390.png
             ${{ runner.temp }}/coconut-react-authored/edition-interview-1360.png
             ${{ runner.temp }}/coconut-react-authored/edition-interview-390.png
+            ${{ runner.temp }}/coconut-react-authored/interview-workflow-1360.png
+            ${{ runner.temp }}/coconut-react-authored/interview-workflow-390.png
             ${{ runner.temp }}/coconut-react-authored/react-discover-320.png
             ${{ runner.temp }}/coconut-react-authored/react-reading-320.png
             ${{ runner.temp }}/coconut-react-authored/react-geometry.json
