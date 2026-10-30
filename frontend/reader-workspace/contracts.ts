@@ -76,8 +76,9 @@ export type ReaderSourceTarget =
     | {kind:'bookmark';bookmarkId:string;time:number}
     | {kind:'project-note'};
 export type ReaderNavigationRequest = {id:number;documentKey:string;revision:number} & (
-    | {cueId:string;source?:never}
-    | {cueId?:never;source:{document:ReaderDocument;target:ReaderSourceTarget}}
+    | {cueId:string;source?:never;edition?:never}
+    | {cueId?:never;source?:never;edition:{editionId:string;blockId:string}}
+    | {cueId?:never;edition?:never;source:{document:ReaderDocument;target:ReaderSourceTarget}}
 );
 export interface ReaderWorkspaceProps extends ReaderSnapshot {
     resourcePanel?: import('react').ReactNode;

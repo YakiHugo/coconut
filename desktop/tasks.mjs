@@ -56,17 +56,19 @@ export async function createTaskStore({directory,providers,readerDirectory=path.
  if(!Number.isSafeInteger(maxLedgerBytes)||maxLedgerBytes<1||maxLedgerBytes>MAX_LEDGER_BYTES)throw new Error('Invalid ledger byte limit');
  if(typeof providers?.ask!=='function')throw new Error('A summary provider is required');
  const Summary=require(path.join(readerDirectory,'summary.js'));
+ const engine=kind=>kind==='interview'?require(path.join(readerDirectory,'interview.js')):Summary;
+ const keepNotes=(kind,plan)=>kind==='interview'||plan.chunks.length>1;
  const release=await acquire(directory),filename=path.join(directory,'tasks.json');
  let tasks=new Map(),ledgerFields={},queue=Promise.resolve(),closed=false,broken=false,draining=false;
  const controllers=new Map();
  function normalize(value){
-  if(!value||value.protocolVersion!==1||value.kind!=='summary'||value.consent!==true)throw fail('仅支持明确同意的 v1 整篇摘要任务');
+  if(!value||value.protocolVersion!==1||!['summary','interview'].includes(value.kind)||value.consent!==true)throw fail('仅支持明确同意的 v1 摘要或编辑访谈任务');
   if(typeof value.idempotencyKey!=='string'||! /^[a-zA-Z0-9_-]{1,128}$/.test(value.idempotencyKey))throw fail('提交幂等键无效');
   if(!value.document||typeof value.document.key!=='string'||!value.document.key||value.document.key.length>1000||typeof value.document.revision!=='string'||!value.document.revision||value.document.revision.length>200)throw fail('文稿标识或 revision 无效');
   if(!['codex','claude'].includes(value.provider))throw fail('请选择支持的本地 AI 工具');
   let model;try{model=normalizeModel(value.model);}catch(error){throw fail(error.message);}
-  const plan=Summary.plan({segments:value.segments});
-  const input={kind:'summary',document:{key:value.document.key,revision:value.document.revision},provider:value.provider,snapshot:plan.source,...(model?{model}:{})};
+  const plan=engine(value.kind).plan({segments:value.segments});
+  const input={kind:value.kind,document:{key:value.document.key,revision:value.document.revision},provider:value.provider,snapshot:plan.source,...(model?{model}:{})};
   return {input,plan,inputDigest:hash(input),idempotencyKey:value.idempotencyKey};
  }
  function publicTask(task,{result=true}={}){
@@ -74,7 +76,7 @@ export async function createTaskStore({directory,providers,readerDirectory=path.
   if(value.checkpoint)value.checkpoint={version:1,completed:task.checkpoint.notes.length,inFlight:task.checkpoint.inFlight};
   if(value.result&&result)value.result.input_snapshot={version:1,segments:clone(task.snapshot)};
   else delete value.result;
-  value.resume={eligible:['interrupted','failed'].includes(task.status)&&!archived(task)&&(task.resumeReceipts?.length||0)<64,completedBatches:task.checkpoint?.notes.length||0,remainingRequests:task.status==='succeeded'?0:task.progress.total-(task.checkpoint?.notes.length||0),outcomeUnknown:task.checkpoint?task.checkpoint.inFlight!==null:['interrupted','failed'].includes(task.status),notice:'只复用已校验且已落盘的分批摘要；上次在途请求的结果及额度可能未知，明确续跑可能再次消耗额度。'};
+  value.resume={eligible:['interrupted','failed'].includes(task.status)&&!archived(task)&&(task.resumeReceipts?.length||0)<64,completedBatches:task.checkpoint?.notes.length||0,remainingRequests:task.status==='succeeded'?0:task.progress.total-(task.checkpoint?.notes.length||0),outcomeUnknown:task.checkpoint?task.checkpoint.inFlight!==null:['interrupted','failed'].includes(task.status),notice:'只复用已校验且已落盘的分批结果；上次在途请求的结果及额度可能未知，明确续跑可能再次消耗额度。'};
   return value;
  }
  function serial(action){const work=queue.then(action);queue=work.catch(()=>{});return work;}
@@ -87,7 +89,7 @@ export async function createTaskStore({directory,providers,readerDirectory=path.
   for(const task of next.values())if(ACTIVE.has(task.status)){
    const {taskId,attemptId,idempotencyKey,inputDigest,kind,document,provider,snapshot,model}=task;
    const fixed=JSON.stringify({taskId,attemptId,idempotencyKey,inputDigest,kind,document,provider,snapshot,model});
-   budget+=Math.max(0,Buffer.byteLength(fixed)+TERMINAL_RESERVE_BYTES+(task.progress.total>1?512*1024:0)-Buffer.byteLength(JSON.stringify(task)));
+   budget+=Math.max(0,Buffer.byteLength(fixed)+(task.kind==='interview'?12*engine(task.kind).plan({segments:snapshot}).chunks.reduce((n,c)=>n+c.outputLimit,0)+65536:TERMINAL_RESERVE_BYTES+(task.progress.total>1?512*1024:0))-Buffer.byteLength(JSON.stringify(task)));
   }
   const archivedCount=[...next.values()].filter(archived).length;
   if(next.size-archivedCount>MAX_TASKS)throw fail('未归档任务已达 128 条，请显式归档已收尾任务后继续；未发起新的模型请求',507,'active_tasks_full');
@@ -124,8 +126,8 @@ export async function createTaskStore({directory,providers,readerDirectory=path.
     if(task.checkpoint!==undefined){
      const cp=task.checkpoint;
      if(ledger.version<3||!cp||cp.version!==1||cp.planDigest!==hash(checked.plan)||!Array.isArray(cp.notes)||!(cp.inFlight===null||Number.isInteger(cp.inFlight)&&cp.inFlight===cp.notes.length&&cp.inFlight<checked.plan.requests))throw new Error('Invalid checkpoint');
-     const restored=Summary.clean({version:1,provider:task.provider,model:task.model,snapshot:task.snapshot,status:'paused',results:cp.notes,in_flight:cp.inFlight});
-     if(task.status==='succeeded'&&(cp.inFlight!==null||cp.notes.length!==(checked.plan.chunks.length>1?checked.plan.chunks.length:0)))throw new Error('Invalid completed checkpoint');
+     const restored=engine(task.kind).clean({version:1,provider:task.provider,model:task.model,snapshot:task.snapshot,status:'paused',results:cp.notes,in_flight:cp.inFlight});
+     if(task.status==='succeeded'&&(cp.inFlight!==null||cp.notes.length!==(keepNotes(task.kind,checked.plan)?checked.plan.chunks.length:0)))throw new Error('Invalid completed checkpoint');
      if(!restored||JSON.stringify(restored.results)!==JSON.stringify(cp.notes)||task.progress.completed!==(task.status==='succeeded'?checked.plan.requests:cp.notes.length))throw new Error('Invalid checkpoint notes');
     }
     if(task.resumeReceipts!==undefined){
@@ -139,8 +141,9 @@ export async function createTaskStore({directory,providers,readerDirectory=path.
      delete task.result;changed=true;
     }
     if(task.status==='succeeded'){
-     if(!Summary.cleanFinal(checked.plan,task.result,task.provider,task.model,{legacy:task.checkpoint===undefined}))throw new Error('Invalid task result');
-     if(task.checkpoint&&checked.plan.chunks.length>1){const acceptedIds=new Set(task.checkpoint.notes.flatMap(note=>note.citations));if(task.result.citations.some(id=>!acceptedIds.has(id)))throw new Error('Invalid aggregate sources');}
+     if(!engine(task.kind).cleanFinal(checked.plan,task.result,task.provider,task.model,{legacy:task.checkpoint===undefined}))throw new Error('Invalid task result');
+     if(task.kind==='interview'&&(!task.checkpoint||JSON.stringify(task.checkpoint.notes.flatMap(r=>r.blocks))!==JSON.stringify(task.result.blocks.map(({id,...block})=>block))))throw new Error('Invalid interview checkpoint result');
+     if(task.kind==='summary'&&task.checkpoint&&checked.plan.chunks.length>1){const acceptedIds=new Set(task.checkpoint.notes.flatMap(note=>note.citations));if(task.result.citations.some(id=>!acceptedIds.has(id)))throw new Error('Invalid aggregate sources');}
     }else if(task.result)throw new Error('Unexpected result');
     tasks.set(task.taskId,task);
    }
@@ -149,22 +152,22 @@ export async function createTaskStore({directory,providers,readerDirectory=path.
   finally{await handle?.close();}
  }
  async function run(task,controller){
-  const plan=Summary.plan({segments:task.snapshot}),job=Summary.create(plan,task.provider,task.model);
+  const Engine=engine(task.kind),plan=Engine.plan({segments:task.snapshot}),job=Engine.create(plan,task.provider,task.model);
   job.results=clone(task.checkpoint?.notes||[]);let first=true;
   try{
    while(!closed&&!broken&&!controller.signal.aborted){
-    const data={...Summary.request(plan,job),...(task.model?{model:task.model}:{})};
+    const data={...Engine.request(plan,job),...(task.model?{model:task.model}:{})};
     const ready=first||await serial(async()=>{
      if(closed||broken||controller.signal.aborted||tasks.get(task.taskId)?.status!=='running')return false;
      await change(task.taskId,{checkpoint:{version:1,planDigest:hash(plan),notes:clone(job.results),inFlight:job.results.length}});return true;
     });
     first=false;if(!ready)break;
-    const response=await providers.ask(data,{signal:controller.signal});
+    const response=await (task.kind==='interview'&&typeof providers.interview==='function'?providers.interview(data,{signal:controller.signal}):providers.ask(data,{signal:controller.signal}));
     if(closed||broken||controller.signal.aborted)break;
-    const result=Summary.accept(plan,job,response);
+    const result=Engine.accept(plan,job,response);
     const continued=await serial(async()=>{
      if(closed||broken||tasks.get(task.taskId)?.status!=='running')return false;
-     const update={progress:{completed:result?plan.requests:job.results.length,total:plan.requests},checkpoint:{version:1,planDigest:hash(plan),notes:plan.chunks.length>1?clone(job.results):[],inFlight:null}};
+     const update={progress:{completed:result?plan.requests:job.results.length,total:plan.requests},checkpoint:{version:1,planDigest:hash(plan),notes:keepNotes(task.kind,plan)?clone(job.results):[],inFlight:null}};
      if(result){const {input_snapshot,...small}=result;update.status='succeeded';update.result={...small,...(task.model?{requested_model:task.model}:{})};}
      await change(task.taskId,update);return !result;
     });
@@ -190,7 +193,7 @@ export async function createTaskStore({directory,providers,readerDirectory=path.
      if(closed||broken)return null;
      const task=[...tasks.values()].find(value=>value.status==='queued');if(!task)return null;
      controller=new AbortController();controllers.set(task.taskId,controller);
-     const plan=Summary.plan({segments:task.snapshot}),notes=task.checkpoint?.notes||[];
+     const plan=engine(task.kind).plan({segments:task.snapshot}),notes=task.checkpoint?.notes||[];
      return change(task.taskId,{status:'running',checkpoint:{version:1,planDigest:hash(plan),notes,inFlight:notes.length},progress:{completed:notes.length,total:plan.requests}});
     });
     if(!task)break;
@@ -200,7 +203,7 @@ export async function createTaskStore({directory,providers,readerDirectory=path.
  }
  try{await recover();}catch(error){await release();throw error;}
  return Object.freeze({
-  describe(){return {protocolVersion:1,executor:{type:'local-node',online:!closed&&!broken},supportedTaskKinds:['summary'],enabled:!closed&&!broken,execution:{concurrency:1,disconnect:'continue',restart:'interrupt_without_retry',resume:'explicit_checkpoint_with_identity',cancel:'request_then_settle'},providers:{codex:{supported:true,availability:'not_checked',model_selection:{supported:true}},claude:{supported:true,availability:'not_checked',model_selection:{supported:true}}},archive:{supported:true,identityPrecondition:true,restore:'original_identity_without_execution',automaticDeletion:false},limits:{tasks:MAX_TASKS,archivedTasks:MAX_ARCHIVED_TASKS,archivePage:50,pending:MAX_PENDING,bodyBytes:TASK_BODY_BYTES,ledgerBytes:maxLedgerBytes},remoteSubmission:false};},
+  describe(){return {protocolVersion:1,executor:{type:'local-node',online:!closed&&!broken},supportedTaskKinds:['summary','interview'],enabled:!closed&&!broken,execution:{concurrency:1,disconnect:'continue',restart:'interrupt_without_retry',resume:'explicit_checkpoint_with_identity',cancel:'request_then_settle'},providers:{codex:{supported:true,availability:'not_checked',model_selection:{supported:true}},claude:{supported:true,availability:'not_checked',model_selection:{supported:true}}},archive:{supported:true,identityPrecondition:true,restore:'original_identity_without_execution',automaticDeletion:false},limits:{tasks:MAX_TASKS,archivedTasks:MAX_ARCHIVED_TASKS,archivePage:50,pending:MAX_PENDING,bodyBytes:TASK_BODY_BYTES,ledgerBytes:maxLedgerBytes},remoteSubmission:false};},
   submit(value){
    let normalized;try{normalized=normalize(value);}catch(error){return Promise.reject(error);}
    return serial(async()=>{
@@ -222,7 +225,7 @@ export async function createTaskStore({directory,providers,readerDirectory=path.
    if(!['interrupted','failed'].includes(task.status)||archived(task))throw fail('仅可明确续跑未归档的中断或失败任务',409,'task_not_resumable');
    if((task.resumeReceipts?.length||0)>=64)throw fail('此任务已达 64 次显式续跑上限，请保留记录',409,'resume_limit');
    if([...tasks.values()].filter(item=>ACTIVE.has(item.status)).length>=MAX_PENDING)throw fail('本机待处理任务已满',429,'queue_full');
-   const plan=Summary.plan({segments:task.snapshot}),attemptId=randomUUID();
+   const plan=engine(task.kind).plan({segments:task.snapshot}),attemptId=randomUUID();
    const checkpoint=task.checkpoint||{version:1,planDigest:hash(plan),notes:[],inFlight:null};
    const resumeReceipt={key:value.resumeKey,fromAttemptId:task.attemptId,attemptId,completedBatches:checkpoint.notes.length,outcomeUnknown:task.checkpoint?task.checkpoint.inFlight!==null:true};
    const resumed=await change(id,{attemptId,status:'queued',error:null,cancellation:null,checkpoint,progress:{completed:checkpoint.notes.length,total:plan.requests},resumeReceipts:[...(task.resumeReceipts||[]),resumeReceipt]});

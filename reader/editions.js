@@ -6,6 +6,7 @@
  const fail=()=>{throw Error('阅读版本或来源依据无效，请保留原始文件。');};
  const id=value=>typeof value==='string'&&value.length>0&&value.length<=200&&!/[\u0000-\u001f]/.test(value);
  const string=(value,max)=>typeof value==='string'&&value.length<=max;
+ const modelId=value=>typeof value==='string'&&/^[A-Za-z0-9][A-Za-z0-9._-]{0,119}$/.test(value);
  const clone=value=>JSON.parse(JSON.stringify(value));
  const stamp=value=>typeof value==='string'&&/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/.test(value)&&Number.isFinite(Date.parse(value));
  const boundary=(text,n)=>Number.isSafeInteger(n)&&n>=0&&n<=text.length&&!(n>0&&n<text.length&&/[\uD800-\uDBFF]/.test(text[n-1])&&/[\uDC00-\uDFFF]/.test(text[n]));
@@ -29,12 +30,12 @@
  function blockText(block){return block.paragraphs.join('\n\n');}
  function validate(value){
   if(value===undefined)return undefined;
-  if(!object(value)||value.version!==1||!Array.isArray(value.snapshots)||!Array.isArray(value.editions)||!Array.isArray(value.excerpts)||value.editions.length>LIMITS.editions||value.snapshots.length>LIMITS.editions||value.excerpts.length>LIMITS.excerpts)fail();
+  if(!object(value)||value.version!==1||!Array.isArray(value.snapshots)||!Array.isArray(value.editions)||!Array.isArray(value.excerpts)||value.editions.length>LIMITS.editions||value.snapshots.length>LIMITS.editions+24||value.excerpts.length>LIMITS.excerpts)fail();
   const sources=new Map(),indexes=new Map(),editions=new Map();let total=0;
   for(const entry of value.snapshots){if(!object(entry)||!id(entry.id)||sources.has(entry.id))fail();checkSnapshot(entry.source);sources.set(entry.id,entry.source);indexes.set(entry.id,new Map(entry.source.cues.map((cue,index)=>[cue.id,index])));total+=entry.source.cues.reduce((n,c)=>n+c.text.length,0);}
   for(const edition of value.editions){
    const source=sources.get(edition?.source_snapshot_id);
-   if(!object(edition)||!id(edition.id)||editions.has(edition.id)||edition.kind!=='interview'||!string(edition.title,500)||!edition.title.trim()||!source||!stamp(edition.created_at)||!Number.isSafeInteger(edition.revision)||edition.revision<1||edition.method!=='manual'||edition.coverage!=='full'||!Array.isArray(edition.blocks)||!edition.blocks.length||edition.blocks.length>LIMITS.cues)fail();
+   if(!object(edition)||!id(edition.id)||editions.has(edition.id)||edition.kind!=='interview'||!string(edition.title,500)||!edition.title.trim()||!source||!stamp(edition.created_at)||!Number.isSafeInteger(edition.revision)||edition.revision<1||!['manual','model'].includes(edition.method)||edition.coverage!=='full'||!Array.isArray(edition.blocks)||!edition.blocks.length||edition.blocks.length>LIMITS.cues)fail();
    const ids=new Set(),refs=[];
    for(const block of edition.blocks){
     if(!object(block)||!id(block.id)||ids.has(block.id)||!string(block.heading,500)||!Array.isArray(block.paragraphs)||!block.paragraphs.length||block.paragraphs.length>10000||block.paragraphs.some(text=>!string(text,100000)||!text.trim()))fail();
@@ -44,6 +45,7 @@
    // References prove provenance, not the semantic faithfulness of edited prose.
    if(refs.length!==source.cues.length||refs.some((ref,index)=>ref!==source.cues[index].id))fail();
    if(edition.media_identity!==undefined&&(!string(edition.media_identity,16384)||!edition.media_identity))fail();
+   if(edition.method==='model'&&(!object(edition.generation)||!id(edition.generation.task_id)||!['codex','claude'].includes(edition.generation.provider)||edition.generation.model!==undefined&&!modelId(edition.generation.model)))fail();
    editions.set(edition.id,edition);
   }
   const excerptIds=new Set();
@@ -51,6 +53,17 @@
    const source=sources.get(item?.source_snapshot_id),edition=editions.get(item?.edition_id);
    if(!object(item)||!id(item.id)||excerptIds.has(item.id)||!edition||edition.source_snapshot_id!==item.source_snapshot_id||!source||!id(item.block_id)||!edition.blocks.some(block=>block.id===item.block_id)||!stamp(item.created_at)||!string(item.block_text,1000000)||!boundary(item.block_text,item.from)||!boundary(item.block_text,item.to)||item.to<=item.from||typeof item.text!=='string'||!item.text.trim()||item.text!==item.block_text.slice(item.from,item.to))fail();
    checkRefs(item.source_refs,source,indexes.get(item.source_snapshot_id));excerptIds.add(item.id);total+=item.block_text.length;
+  }
+  if(value.jobs!==undefined){
+   if(!Array.isArray(value.jobs)||value.jobs.length>24)fail();const jobs=new Set();
+   for(const job of value.jobs){if(!object(job)||!id(job.id)||jobs.has(job.id)||!sources.has(job.source_snapshot_id)||!['codex','claude'].includes(job.provider)||!stamp(job.created_at)||!string(job.binding,4000)||!job.binding||job.model!==undefined&&!modelId(job.model)||job.cancel_requested!==undefined&&typeof job.cancel_requested!=='boolean'||job.media_identity!==undefined&&(!string(job.media_identity,16384)||!job.media_identity))fail();if(job.resume!==undefined&&(!object(job.resume)||!id(job.resume.key)||!id(job.resume.attempt_id)||!string(job.resume.input_digest,64)||!/^[a-f0-9]{64}$/.test(job.resume.input_digest)))fail();jobs.add(job.id);}
+  }
+  if(value.answers!==undefined){
+   if(!Array.isArray(value.answers)||value.answers.length>200)fail();const ids=new Set();
+   for(const a of value.answers){const edition=editions.get(a?.edition_id),source=sources.get(a?.source_snapshot_id);
+    if(!object(a)||!id(a.id)||ids.has(a.id)||!edition||!edition.blocks.some(b=>b.id===a.block_id)||edition.source_snapshot_id!==a.source_snapshot_id||!source||!stamp(a.created_at)||!string(a.answer,100000)||!a.answer.trim()||!string(a.question,4000)||!['codex','claude'].includes(a.provider)||!string(a.language,20)||!string(a.block_text,1000000)||!boundary(a.block_text,a.from)||!boundary(a.block_text,a.to)||a.to<=a.from||a.text!==a.block_text.slice(a.from,a.to)||!a.text.trim())fail();
+    checkRefs(a.source_refs,source,indexes.get(a.source_snapshot_id));if(!Array.isArray(a.citations)||!a.citations.length||a.citations.some(ref=>!a.source_refs.includes(ref)))fail();ids.add(a.id);total+=a.block_text.length+a.answer.length;
+   }
   }
   if(value.position!==undefined){const edition=editions.get(value.position?.edition_id);if(!edition||!edition.blocks.some(block=>block.id===value.position.block_id))fail();}
   if(total>LIMITS.characters*4)fail();
@@ -115,11 +128,35 @@
   before.excerpts.push({id:excerptId,edition_id:editionId,block_id:blockId,source_snapshot_id:edition.source_snapshot_id,created_at:createdAt,from,to,text:text.slice(from,to),block_text:text,source_refs:[...block.source_refs]});
   return {...doc,reading_editions:validate(before)};
  }
+ function job(doc,{id:jobId,snapshotId,createdAt,provider,model,binding,mediaIdentity}){
+  const before=validate(state(doc)),source=snapshot(doc);checkSnapshot(source);
+  const existing=before.snapshots.find(s=>JSON.stringify(s.source)===JSON.stringify(source));
+  if(before.jobs?.some(j=>j.id===jobId)||!id(snapshotId)||before.snapshots.some(s=>s.id===snapshotId))fail();
+  const next={...before,snapshots:existing?before.snapshots:[...before.snapshots,{id:snapshotId,source}],jobs:[...(before.jobs||[]),{id:jobId,source_snapshot_id:existing?.id||snapshotId,created_at:createdAt,provider,...(model?{model}:{}),binding,...(mediaIdentity?{media_identity:mediaIdentity}:{})}]};
+  return {...doc,reading_editions:validate(next)};
+ }
+ function jobUpdate(doc,jobId,patch){const before=validate(state(doc)),j=before.jobs?.find(j=>j.id===jobId);if(!j)fail();if(Object.keys(patch).some(k=>!['resume','cancel_requested'].includes(k)))fail();Object.assign(j,patch);return {...doc,reading_editions:validate(before)};}
+ function receive(doc,jobId,task,{createdAt,mediaIdentity}){
+  const before=validate(state(doc)),j=before.jobs?.find(j=>j.id===jobId),source=before.snapshots.find(s=>s.id===j?.source_snapshot_id)?.source;
+  const engine=typeof module!=='undefined'&&module.exports?require('./interview.js'):root.CoconutInterview;
+  if(!j||!source||task?.kind!=='interview'||task.status!=='succeeded'||task.document?.key!==doc.key||task.document?.revision!==j.id||task.provider!==j.provider||(task.model||'')!==(j.model||'')||JSON.stringify(task.result?.input_snapshot?.segments)!==JSON.stringify(engine.plan({segments:source.cues}).source)||!engine.cleanFinal(engine.plan({segments:source.cues}),task.result,j.provider,j.model))throw Error('编辑任务与冻结来源不一致，未接收');
+  if(before.editions.some(e=>e.generation?.task_id===task.taskId))return doc;
+  const edition={id:j.id,kind:'interview',title:'编辑访谈稿',source_snapshot_id:j.source_snapshot_id,created_at:createdAt,revision:1,method:'model',coverage:'full',generation:{task_id:task.taskId,provider:j.provider,...(j.model?{model:j.model}:{})},blocks:clone(task.result.blocks),...(j.media_identity?{media_identity:j.media_identity}:{} )};
+  return {...doc,reading_editions:validate({...before,editions:[...before.editions,edition]})};
+ }
+ function answer(doc,editionId,selection,response,{id:answerId,createdAt,question,provider,language}){
+  const before=validate(state(doc)),e=before.editions.find(e=>e.id===editionId),b=e?.blocks.find(b=>b.id===selection.blockId);
+  if(!b||blockText(b)!==selection.blockText||selection.text!==selection.blockText.slice(selection.from,selection.to))throw Error('所选编辑稿已变化，未保存回答');
+  const a={id:answerId,edition_id:e.id,block_id:b.id,source_snapshot_id:e.source_snapshot_id,created_at:createdAt,question,provider,language,block_text:selection.blockText,text:selection.text,from:selection.from,to:selection.to,source_refs:[...b.source_refs],answer:response.answer,citations:response.citations};
+  return {...doc,reading_editions:validate({...before,answers:[...(before.answers||[]),a]})};
+ }
+ function plainText(doc,editionId){return markdown(doc,editionId).replace(/^#{1,2} /gm,'');}
+ function evidenceMarkdown(doc,editionId){const e=state(doc).editions.find(e=>e.id===editionId);if(!e)fail();const resolve=resolver(doc,e);return markdown(doc,editionId)+'\n\n## 来源对照\n\n'+e.blocks.map((b,i)=>'### 段落 '+(i+1)+'\n\n'+resolve(b).cues.map(c=>'['+c.id+'] '+c.start+'–'+c.end+' '+(c.speaker||'未标注')+'：'+c.text).join('\n\n')).join('\n\n');}
  function markdown(doc,editionId){
   const edition=state(doc).editions.find(item=>item.id===editionId);if(!edition)fail();
   const get=resolver(doc,edition);
-  return ['# '+doc.title,'','编辑访谈稿 · 人工整理 · '+(freshness(doc,edition)==='current'?'来源依据一致':'历史版本，来源已变化'),'','来源：'+sourceFor(doc,edition).source_url,'',...edition.blocks.flatMap(block=>{const resolved=get(block);return [...(block.heading?['## '+block.heading,'']:[]),(resolved.speaker||'未标注')+'：',...block.paragraphs.flatMap(text=>[text,''])];})].join('\n');
+  return ['# '+doc.title,'','编辑访谈稿 · '+(edition.method==='model'?'AI 整理，待核对':'人工整理')+' · '+(freshness(doc,edition)==='current'?'来源依据一致':'历史版本，来源已变化'),'','来源：'+sourceFor(doc,edition).source_url,'',...edition.blocks.flatMap(block=>{const resolved=get(block);return [...(block.heading?['## '+block.heading,'']:[]),(resolved.speaker||'未标注')+'：',...block.paragraphs.flatMap(text=>[text,''])];})].join('\n');
  }
- const api={LIMITS,validate,snapshot,state,freshness,sourceFor,turns,create,edit,resolver,resolve,bookmark,blockText,excerpt,markdown};
+ const api={LIMITS,validate,snapshot,state,freshness,sourceFor,turns,create,edit,resolver,resolve,bookmark,blockText,excerpt,markdown,plainText,evidenceMarkdown,job,jobUpdate,receive,answer};
  if(typeof module!=='undefined'&&module.exports)module.exports=api;else root.CoconutEditions=api;
 })(typeof window!=='undefined'?window:globalThis);

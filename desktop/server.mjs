@@ -20,7 +20,7 @@ import {privateProxyProfile,privateProxyFromEnvironment,authorizeClient,describe
 
 export const CAPABILITIES = Object.freeze({reader:true,local_agents:true,subscription_ask:true,subscription_translation:true,media_import:false,local_translation:false,podcast_import:true,caption_import:false});
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
-const ASSETS = new Map([['/','index.html'],...['index.html','summary.js','editions.js','task-client.js','core.js','client-capabilities.js','passages.js','passage-playback.js','library-store.js','indexeddb-document-adapter.js','canonical-library.js','storage-provider.js','react-app.js','react-app.css','coconut-mark.png'].map(name=>['/'+name,name])]);
+const ASSETS = new Map([['/','index.html'],...['index.html','summary.js','interview.js','editions.js','task-client.js','core.js','client-capabilities.js','passages.js','passage-playback.js','library-store.js','indexeddb-document-adapter.js','canonical-library.js','storage-provider.js','react-app.js','react-app.css','coconut-mark.png'].map(name=>['/'+name,name])]);
 const MIME = {'.png':'image/png','.html':'text/html; charset=utf-8','.js':'text/javascript; charset=utf-8','.css':'text/css; charset=utf-8'};
 const MAX_BODY = 1024 * 1024;
 export const CSP = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self'; img-src 'self' data: blob:; media-src 'self' blob:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'";
@@ -107,7 +107,7 @@ export function createBridge({readerDirectory = path.resolve(ROOT,'../reader'), 
         if (pathname === '/api/captions/status') return json(200,captionSources);
         if (pathname === '/api/captions/session') return json(200,bilibiliSession&&capabilities.caption_import?await bilibiliSession.status():{supported:false,browser:'edge',connected:false,profile:null,profiles:[]});
         if (pathname === '/api/health') return json(200,{local_worker:false,runtime:'desktop-bridge',paid_processing:false,max_upload_bytes:0,capabilities,client:client(),caption_sources:captionSources,...(libraryLocation&&!remote?{library_storage:{...libraryLocation,enabled:!!libraryStore,unavailable:libraryUnavailable}}:{})});
-        if (pathname === '/api/language-tools' && req.method === 'GET') return json(200,{translation_models:[],local_translation:false,ask_exact_selection:1,capabilities,
+        if (pathname === '/api/language-tools' && req.method === 'GET') return json(200,{translation_models:[],local_translation:false,ask_exact_selection:1,ask_edited_selection:1,capabilities,
           ai:{codex:await providers.status('codex',{signal:controller.signal}),claude:await providers.status('claude',{signal:controller.signal})}});
         if (pathname === '/api/jobs') return json(501,{error:'轻量版不提供处理队列，请重新检查本地服务能力'});
         if (!ASSETS.has(pathname)) return json(404,{error:'Not found'});

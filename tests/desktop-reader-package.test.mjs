@@ -75,7 +75,7 @@ test('verification rejects a missing page-declared save coordinator before packa
 });
 test('packager stages the boundary and checks each output before signing; exact ZIP proof also verifies it',async()=>{
   const source=await readFile(path.join(root,'desktop/package.mjs'),'utf8');
-  assert.match(source,/\['package.json','index.html','summary.js','editions.js','task-client.js','core.js'/);
+  assert.match(source,/\['package.json','index.html','summary.js','interview.js','editions.js','task-client.js','core.js'/);
   const index=await readFile(path.join(root,'reader/index.html'),'utf8');
   const stagedNames=source.match(/for \(const name of (\['package.json','index.html'[^\]]+\])/)[1];
   for(const [,src] of index.matchAll(/<(?:script|link|img)\b[^>]*\b(?:src|href)="([^"]+)"/g))assert.ok(stagedNames.includes("'"+src.split('?')[0]+"'"),'packager stages '+src);

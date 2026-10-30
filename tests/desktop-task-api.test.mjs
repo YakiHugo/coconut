@@ -23,7 +23,7 @@ async function until(client,id,status){for(let i=0;i<100;i++){const {task}=await
 
 test('executor capability describes support separately from unchecked provider availability without inference',async t=>{
  const {client,calls,origin}=await setup(t);const capability=await client.describe();
- assert.equal(capability.protocolVersion,1);assert.equal(capability.enabled,true);assert.equal(capability.executor.online,true);assert.deepEqual(capability.supportedTaskKinds,['summary']);
+ assert.equal(capability.protocolVersion,1);assert.equal(capability.enabled,true);assert.equal(capability.executor.online,true);assert.deepEqual(capability.supportedTaskKinds,['summary','interview']);
  assert.equal(capability.providers.codex.availability,'not_checked');assert.equal(capability.remoteSubmission,false);assert.equal(calls.length,0);
  assert.equal((await fetch(origin+'/task-client.js')).status,200);
  assert.equal((await fetch(origin+'/background-summary.js')).status,404);

@@ -138,3 +138,11 @@
 .rw-edition-selection p,.rw-edition-excerpts p{overflow-wrap:anywhere;white-space:pre-wrap}
 .rw-edition-excerpts section{padding:12px 0;border-bottom:1px solid var(--reading-edge,#daddd0)}
 @media(max-width:600px){.rw-edition-picker{align-items:stretch;flex-direction:column}.rw-edition-picker select{flex:1;width:1px}.rw-edition-text p{font-size:17px}.rw-edition-block h2{font-size:21px}}
+.rw-interview-generation,.rw-edition-ai{padding:18px 0;border-top:1px solid var(--reading-edge,#daddd0);line-height:1.7;overflow-wrap:anywhere}
+.rw-interview-generation label,.rw-edition-ai label{display:block;margin:10px 0}
+.rw-interview-generation .rw-toolbar{align-items:end;flex-wrap:wrap}
+.rw-edition-ai textarea{width:100%;box-sizing:border-box;min-height:90px;font:inherit}
+.rw-edition-ai p{white-space:pre-wrap}
+.rw-interview-generation input:not([type=checkbox]),.rw-interview-generation select,.rw-edition-ai input:not([type=checkbox]),.rw-edition-ai select{max-width:100%;box-sizing:border-box}
+.edition-library-search li{padding:16px 0;overflow-wrap:anywhere}
+@media(max-width:600px){.rw-interview-generation .rw-toolbar{display:block}.rw-interview-generation button,.rw-edition-ai button{margin:4px 0;max-width:100%;white-space:normal}.rw-edition-ai blockquote{margin-inline:12px}}
