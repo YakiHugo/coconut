@@ -165,7 +165,8 @@ try{
  await page.locator('.activity-center > summary').click();
  await page.getByRole('button',{name:'重新打开任务原声',exact:true}).click();
  const player=page.locator('audio,video');
- await expect(player).toBeVisible();
+ await expect(player).toBeAttached();
+ await expect(page.getByRole('button',{name:'播放原声',exact:true})).toBeVisible();
  await expect.poll(()=>player.evaluate(element=>element.readyState),{timeout:15000}).toBeGreaterThanOrEqual(2);
  assert.equal(await player.evaluate(element=>element.paused),true);assert.equal(await page.evaluate(()=>window.__proofPlays),0);
  assert.deepEqual(external,[]);assert.deepEqual(pageErrors,[]);assert.equal(browserUploads,0);assert.equal(uploads,1);
