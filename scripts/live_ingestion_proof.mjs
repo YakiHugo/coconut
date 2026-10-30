@@ -148,6 +148,7 @@ try{
  await page.getByRole('button',{name:/^我的内容/}).click();
  await page.locator('.library-page li > button').filter({hasText:original.title}).first().click();
  stage='browser_accept_ready_job';
+ await page.locator('.activity-center > summary').click();
  await page.getByRole('button',{name:'将文字稿接入原项目',exact:true}).click();
  const readCanonical=async()=>(await request('/api/v1/library/document?protocolVersion=1&key='+original.key)).record.document;
  await expect.poll(async()=>(await readCanonical()).segments.length,{timeout:15000}).toBeGreaterThan(0);
@@ -161,6 +162,7 @@ try{
  await expect(page.getByText(reloaded.segments[0].text,{exact:true}).first()).toBeVisible();
  const afterReload=await readCanonical();assert.deepEqual(afterReload.local_job_binding,reloaded.local_job_binding);reloaded=afterReload;
  stage='browser_restore_executor_media';
+ await page.locator('.activity-center > summary').click();
  await page.getByRole('button',{name:'重新打开任务原声',exact:true}).click();
  const player=page.locator('audio,video');
  await expect(player).toBeVisible();
