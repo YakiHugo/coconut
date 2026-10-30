@@ -14,14 +14,20 @@ export function ReaderSource({ doc }: {
 }) {
     const provenance = (doc.provenance || {}) as Record<string, unknown>, url = safeSourceURL(doc.source_url);
     const kinds: Record<string, string> = { authored_demo: '自写演示内容，不是节目字幕或模型结果', publisher_transcript: '发布者提供的文字稿，未人工核对', platform_subtitles: '平台字幕', automatic_subtitles: '平台自动字幕', imported_subtitles: '导入字幕', local_asr: '本地语音识别' };
-    const missingSpeakers = doc.segments.length > 0 && !doc.segments.some(cue => cue.speaker);
+    const labelled = doc.segments.filter(cue=>typeof cue.speaker==='string'&&cue.speaker.trim()).length;
+    const missingCount = doc.segments.length-labelled;
+    const missingSpeakers = doc.segments.length > 0 && labelled===0;
+    const reasonLabels:Record<string,string>={ambiguous_match:'声音匹配含糊',overlap_or_boundary:'重叠发言或边界不清',insufficient_audio:'声音样本不足',no_speech_evidence:'没有语音证据',speaker_limit:'超出声音分组上限'};
+    const reasons=new Map<string,number>();
+    for(const cue of doc.segments)if(!cue.speaker&&typeof cue.speaker_status==='string'){const label=reasonLabels[cue.speaker_status]||'归属待核对';reasons.set(label,(reasons.get(label)||0)+1);}
     const rawCaptions = provenance.kind === 'automatic_subtitles' && !provenance.punctuation_method;
     const grouped = provenance.speaker_method && provenance.speaker_method !== 'unavailable' && !missingSpeakers;
     return <div className="rw-source">
         {url && <p><a href={url} target="_blank" rel="noopener noreferrer">打开原始来源 ↗</a> <small>在新标签页打开</small></p>}
-        {(rawCaptions || missingSpeakers) && <p className="rw-readability-notice" role="note">
+        {(rawCaptions || missingCount>0) && <p className="rw-readability-notice" role="note">
             {rawCaptions && '平台自动字幕尚未进行标点整理。'}
             {missingSpeakers && '说话人尚未标注，需结合原声区分。'}
+            {!missingSpeakers&&missingCount>0&&`已有 ${labelled}/${doc.segments.length} 个片段标注说话人，其余 ${missingCount} 个需回听核对。`}
         </p>}
         <details>
             <summary>来源与文字稿依据</summary>
@@ -31,6 +37,7 @@ export function ReaderSource({ doc }: {
             {typeof provenance.alignment_warning === 'string' && <p>时间对齐提示：{provenance.alignment_warning}</p>}
             {typeof provenance.punctuation_method === 'string' && <p>标点：本地模型自动恢复，保留识别原文，可在逐句校对中核对。</p>}
             {!!grouped && <p>{String(provenance.speaker_status || '').startsWith('needs_review:') ? '声音分组不稳定，未采用自动标签；可在逐句校对中手工标注。' : '说话人：按声音自动分组，编号不代表真实身份，尚未人工核对。'}</p>}
+            {reasons.size>0&&<p>未确定归属的原因：{[...reasons].map(([label,count])=>`${label} ${count} 个`).join('；')}。</p>}
             {typeof provenance.readability_warning === 'string' && <p>文字整理尚未完成，当前保留原始文字稿。</p>}
             {doc.segments.length > 0 && <p>原文可能有识别错误，请回听核对专有名词与重要信息。校准只影响播放映射，导出继续保留原始时间。</p>}
         </details>

@@ -94,6 +94,7 @@ test('completed saved previews require no record-text reads on cached page rende
 test('browser classic script order loads lazy passage helper without a circular dependency',()=>{
  const context=vm.createContext({console,Intl,performance,setTimeout});context.window=context;
  vm.runInContext(readFileSync(new URL('../reader/summary.js',import.meta.url),'utf8'),context);
+ vm.runInContext(readFileSync(new URL('../reader/editions.js',import.meta.url),'utf8'),context);
  vm.runInContext(readFileSync(new URL('../reader/core.js',import.meta.url),'utf8'),context);
  vm.runInContext(readFileSync(new URL('../reader/passages.js',import.meta.url),'utf8'),context);
  const doc=fixture();assert.equal(context.Coconut.librarySavedHits(doc,'needle','text').total,1);

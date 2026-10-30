@@ -119,3 +119,22 @@
 
 .rw-resource-processing{max-width:860px;margin:20px auto;padding:16px;border:1px solid var(--border,#dce4df);border-radius:8px;color:var(--text,#25322f)}
 .rw-resource-processing summary{cursor:pointer;font-weight:600}.rw-resource-processing p{color:var(--muted,#68746d);font-size:14px;line-height:1.65}.rw-resource-processing dl>div{display:grid;grid-template-columns:100px minmax(0,1fr);gap:12px;margin:10px 0;font-size:14px}.rw-resource-processing dd{margin:0;overflow-wrap:anywhere}.rw-resource-processing button{margin:8px 10px 0 0}.rw-resource-file{display:block;font-size:14px;margin:12px 0}.rw-resource-file input{display:block;max-width:100%;margin-top:8px}
+.rw-edition-picker{display:flex;align-items:center;flex-wrap:wrap;gap:12px;margin:24px 0 16px;padding:14px 0;border-top:1px solid var(--reading-edge,#daddd0);border-bottom:1px solid var(--reading-edge,#daddd0)}
+.rw-edition-picker label{display:flex;align-items:center;gap:8px;min-width:0}
+.rw-edition-picker select{max-width:100%;min-width:0}
+.rw-edition-reader{max-width:760px;margin:0 auto}
+.rw-edition-notice,.rw-edition-freshness{font-size:13px;line-height:1.7;color:var(--muted)}
+.rw-edition-block{padding:24px 0;border-bottom:1px solid var(--reading-edge,#daddd0);scroll-margin-top:24px}
+.rw-edition-block h2{font-size:23px;line-height:1.5;margin:0 0 24px;overflow-wrap:anywhere}
+.rw-edition-text p{font-size:18px;line-height:1.95;overflow-wrap:anywhere;margin:16px 0;white-space:pre-wrap}
+.rw-edition-edit label{display:block;margin:12px 0}
+.rw-edition-edit input,.rw-edition-edit textarea{display:block;width:100%;box-sizing:border-box;margin-top:8px}
+.rw-edition-edit textarea{min-height:220px;font:inherit;line-height:1.8}
+.rw-edition-evidence{margin-top:14px;color:var(--muted);font-size:14px;line-height:1.8;overflow-wrap:anywhere}
+.rw-edition-evidence summary{cursor:pointer}
+.rw-edition-evidence small{font-size:12px}
+.rw-edition-chapters{display:flex;gap:10px;flex-wrap:wrap;margin:18px 0}
+.rw-edition-selection{padding:16px;border:1px solid var(--reading-edge,#daddd0);border-radius:12px;margin:20px 0}
+.rw-edition-selection p,.rw-edition-excerpts p{overflow-wrap:anywhere;white-space:pre-wrap}
+.rw-edition-excerpts section{padding:12px 0;border-bottom:1px solid var(--reading-edge,#daddd0)}
+@media(max-width:600px){.rw-edition-picker{align-items:stretch;flex-direction:column}.rw-edition-picker select{flex:1;width:1px}.rw-edition-text p{font-size:17px}.rw-edition-block h2{font-size:21px}}

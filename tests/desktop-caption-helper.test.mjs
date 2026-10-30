@@ -212,7 +212,7 @@ async function packagedBridge(t,s,{version={...validVersion,publicProviders},res
 test('isolated packaged resources import YouTube VTT and Bilibili SRT through the real bridge and reader',async t=>{
  const s=await fixture(t);s.artifact.publicProviders=publicProviders;
  const readerDirectory=path.join(s.resourcesPath,'reader');await mkdir(readerDirectory);
- for(const filename of ['package.json','core.js','summary.js','passages.js'])await writeFile(path.join(readerDirectory,filename),await readFile(new URL('../reader/'+filename,import.meta.url)));
+ for(const filename of ['package.json','core.js','summary.js','editions.js','passages.js'])await writeFile(path.join(readerDirectory,filename),await readFile(new URL('../reader/'+filename,import.meta.url)));
  const bridge=await packagedBridge(t,s,{readerDirectory,respond:({url})=>providerResult(providerSamples.find(sample=>sample.url===url))});
  const status=await fetch(bridge.origin+'/api/captions/status').then(r=>r.json());
  assert.equal(status.mode,'bundled-helper');assert.equal(status.available,true);assert.deepEqual(status.providers.filter(p=>p.available).map(p=>p.id),publicProviders);assert.equal(status.networkMode,undefined);
