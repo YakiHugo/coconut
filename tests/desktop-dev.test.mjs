@@ -10,6 +10,17 @@ test('development defaults anchor task data to the repository, independently of 
   assert.equal(DEVELOPMENT_TASK_DIRECTORY, fileURLToPath(new URL('../.coconut/dev/tasks', import.meta.url)));
 });
 
+test('development podcast proxy is owner-only startup configuration and remains passive', async t => {
+  let server;
+  t.after(async()=>{await server?.shutdown();});
+  const started=await startDevelopmentBridge({port:0,taskDirectory:null,libraryDirectory:null,podcastProxy:'http://127.0.0.1:1'});
+  server=started.server;
+  assert.equal(started.podcastNetworkMode,'xiaoyuzhou_trusted_local_proxy');
+  assert.equal((await fetch(started.origin+'/')).status,200);
+  // Invalid configuration fails startup instead of silently falling back.
+  await assert.rejects(startDevelopmentBridge({port:0,taskDirectory:null,libraryDirectory:null,podcastProxy:'http://remote.example:7897'}),/COCONUT_PODCAST_PROXY/);
+});
+
 test('development startup reports passive real capabilities and serves edited assets without restart', async t => {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'coconut-dev-'));
   let started;

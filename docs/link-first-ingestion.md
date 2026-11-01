@@ -40,6 +40,7 @@ local executor and bridge in separate terminals (adjust ports if occupied):
 .venv/bin/python serve.py --port 8083 --data-dir .coconut/dev/asr
 COCONUT_ASR_EXECUTOR_URL=http://127.0.0.1:8083 \
 COCONUT_CAPTION_PYTHON="$PWD/.venv-captions/bin/python" \
+COCONUT_PODCAST_PROXY=http://127.0.0.1:7897 \
 COCONUT_CAPTION_PROXY=http://127.0.0.1:7897 npm run dev
 ```
 
@@ -53,6 +54,17 @@ recognition readiness and generate the transcript in the original-media panel.
 The durable job continues after page close; accept its completed transcript into
 the original project. Platform captions and `local_asr` results retain distinct
 provenance.
+
+`COCONUT_PODCAST_PROXY` separately enables the scoped Xiaoyuzhou HTTPS path
+through an explicitly trusted loopback HTTP proxy. It covers the official page
+hosts and `media.xyzcdn.net`, delegating their DNS/routing to that proxy while
+retaining origin TLS verification and download limits. Other sources keep direct
+public-DNS pinning. Omit this setting for direct access; it is not inferred from
+`COCONUT_CAPTION_PROXY` or system proxy settings. See the [network boundaries](podcast-source-import.md#网络和资源边界).
+For a Xiaoyuzhou episode with no publisher transcript, open the episode, choose
+“载入原声”, check the local recognition service, explicitly generate a transcript,
+then use “将文字稿接入原项目” when its persistent task is ready. A ready executor
+alone does not start transcription.
 
 The faster-whisper path now honors the existing CLI `--batch-size` option
 (default 8) with `BatchedInferencePipeline`, using the same cached model, VAD and
