@@ -1,6 +1,7 @@
 /** Bounded, anonymous public HTTP. Never use an ambient proxy, cookie jar or credentials. */
 import http from 'node:http';
 import https from 'node:https';
+import tls from 'node:tls';
 import { lookup as dnsLookup } from 'node:dns/promises';
 import { isIP, BlockList } from 'node:net';
 
@@ -41,25 +42,77 @@ async function withAbort(promise, signal) {
     })]);
   } finally { signal.removeEventListener('abort',cancel); }
 }
-export function createPublicFetcher({lookup = dnsLookup, request = (url,options,callback)=>(url.protocol === 'https:' ? https : http).request(url,options,callback)} = {}) {
+// Owner startup configuration only. The selected proxy resolves these exact
+// origins; this mode cannot attest its destination IP. Other origins retain
+// direct DNS/IP pinning. Never accept a proxy from an import/HTTP request.
+export function validatePodcastProxy(value) {
+  if (value === null || value === undefined) return null;
+  const match = typeof value === 'string' && /^http:\/\/(127\.0\.0\.1|\[::1\]):([1-9][0-9]{0,4})\/?$/.exec(value);
+  if (!match || match[0] !== value)
+    throw new Error('COCONUT_PODCAST_PROXY 仅接受无凭据的本机 HTTP 代理地址');
+  if (Number(match[2]) > 65535) throw new Error('COCONUT_PODCAST_PROXY 端口无效');
+  return `http://${match[1]}:${Number(match[2])}`;
+}
+const proxyOriginAllowed = url => url.protocol === 'https:' &&
+  ['www.xiaoyuzhoufm.com','xiaoyuzhoufm.com','media.xyzcdn.net'].includes(url.hostname);
+function proxyRequest(proxy, url, options, callback) {
+  const agent = new https.Agent({keepAlive:false,maxSockets:1});
+  agent.createConnection = (_options, done) => {
+    let settled = false, socket;
+    const finish = (error, connection) => {
+      if (settled) return;
+      settled = true;
+      if (error) {socket?.destroy();tunnel.destroy();}
+      done(error,connection);
+    };
+    const tunnel = http.request(proxy,{method:'CONNECT',path:url.host+':443',
+      headers:{Host:url.host+':443'},agent:false,signal:options.signal,maxHeaderSize:16384});
+    tunnel.once('error',error=>finish(error));
+    tunnel.once('response',response=>{response.destroy();finish(new Error('本机代理未建立 HTTPS 隧道'));});
+    tunnel.once('connect',(response,connection,head)=>{
+      socket = connection;
+      if (options.signal.aborted || response.statusCode !== 200 || head.length) {
+        finish(new Error('本机代理未建立 HTTPS 隧道'));return;
+      }
+      const secure = tls.connect({socket:connection,servername:url.hostname,
+        rejectUnauthorized:true,checkServerIdentity:tls.checkServerIdentity,minVersion:'TLSv1.2'});
+      socket = secure;
+      const abort = ()=>{secure.destroy();finish(new Error('本机代理请求已取消'));};
+      options.signal.addEventListener('abort',abort,{once:true});
+      secure.once('close',()=>options.signal.removeEventListener('abort',abort));
+      secure.once('error',error=>finish(error));
+      secure.once('secureConnect',()=>finish(null,secure));
+    });
+    tunnel.end();
+  };
+  const req = https.request(url,{...options,agent},callback);
+  req.once('close',()=>agent.destroy());
+  return req;
+}
+export function createPublicFetcher({lookup = dnsLookup, request = (url,options,callback)=>(url.protocol === 'https:' ? https : http).request(url,options,callback), xiaoyuzhouProxy = null} = {}) {
+  const proxy = validatePodcastProxy(xiaoyuzhouProxy);
   return async function fetchPublic(value,{maxBytes=8*1024*1024,timeoutMs=20000,signal,types,inspectMedia=false,maxMediaBytes=200*1024*1024,redirectOnly=false}={}) {
     const deadline = AbortSignal.timeout(timeoutMs);
     const combined = signal ? AbortSignal.any([signal,deadline]) : deadline;
     let url = publicUrl(value);
+    const viaProxy = !!proxy && proxyOriginAllowed(url);
     try {
       for (let redirects=0;redirects<=4;redirects++) {
         aborted(combined);
         const hostname = url.hostname.replace(/^\[|\]$/g,'');
-        const records = isIP(hostname) ? [{address:hostname,family:isIP(hostname)}] : await withAbort(lookup(hostname,{all:true,verbatim:true}),combined);
-        if (!records.length || records.some(record=>!isPublicAddress(record.address))) throw new Error('来源域名解析到非公开地址，已停止请求');
-        const pinned = records[0];
+        if (viaProxy && !proxyOriginAllowed(url)) throw new Error('小宇宙代理重定向超出允许的来源范围');
+        const records = viaProxy ? null : isIP(hostname) ? [{address:hostname,family:isIP(hostname)}] : await withAbort(lookup(hostname,{all:true,verbatim:true}),combined);
+        if (records && (!records.length || records.some(record=>!isPublicAddress(record.address)))) throw new Error('来源域名解析到非公开地址，已停止请求');
+        const pinned = records?.[0];
         const response = await new Promise((resolve,reject)=>{
           let settled = false;
           const done = (error,result)=>{ if (settled) return; settled=true; error ? reject(error) : resolve(result); };
-          const req = request(url,{method:'GET',agent:false,signal:combined,maxHeaderSize:16384,
+          const send = viaProxy ? (url,options,callback)=>proxyRequest(proxy,url,options,callback) : request;
+          const req = send(url,{method:'GET',agent:false,signal:combined,maxHeaderSize:16384,
             headers:{'User-Agent':'Coconut/0.1 public-podcast-reader','Accept':'*/*','Accept-Encoding':'identity'},
-            // The exact checked address is supplied to the socket; no second DNS lookup/rebinding window.
-            lookup:(_host,options,callback)=>options.all ? callback(null,[pinned]) : callback(null,pinned.address,pinned.family)},res=>{
+            // Direct sockets use the checked IP; tunneled sockets must never
+            // perform local origin DNS or fall back outside the proxy.
+            lookup:(_host,options,callback)=>pinned ? options.all ? callback(null,[pinned]) : callback(null,pinned.address,pinned.family) : callback(new Error('代理模式不能回退到来源 DNS'))},res=>{
             const fail = message=>{done(new Error(message));res.destroy();};
             if ([301,302,303,307,308].includes(res.statusCode)) {
               const location = res.headers.location; done(null,{redirect:location}); res.destroy(); return;

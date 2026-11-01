@@ -12,11 +12,18 @@ import {createCaptionReadability} from './transcript-readability.mjs';
 import {createVideoAudioService} from './video-audio-service.mjs';
 import {captionSetupGuidance,CAPTION_START_GUIDANCE} from './caption-setup-guidance.mjs';
 import {createBilibiliBrowserSession} from './bilibili-browser-session.mjs';
+import {createPodcastSources} from './podcast-sources.mjs';
+import {createPublicFetcher,validatePodcastProxy} from './public-http.mjs';
 
 export const DEVELOPMENT_TASK_DIRECTORY = fileURLToPath(new URL('../.coconut/dev/tasks', import.meta.url));
 
-export async function startDevelopmentBridge({port = 8080, taskDirectory = DEVELOPMENT_TASK_DIRECTORY, libraryDirectory = libraryLocation({mode:'development'}).directory, captionPython = process.env.COCONUT_CAPTION_PYTHON, captionProxy = process.env.COCONUT_CAPTION_PROXY, captionHelperDetached = process.platform!=='win32', readingPython = process.env.COCONUT_READING_PYTHON, punctuationModel = process.env.COCONUT_PUNCTUATION_MODEL, segmentationModel = process.env.COCONUT_SPEAKER_SEGMENTATION_MODEL, embeddingModel = process.env.COCONUT_SPEAKER_EMBEDDING_MODEL, ...options} = {}) {
+export async function startDevelopmentBridge({port = 8080, taskDirectory = DEVELOPMENT_TASK_DIRECTORY, libraryDirectory = libraryLocation({mode:'development'}).directory, captionPython = process.env.COCONUT_CAPTION_PYTHON, captionProxy = process.env.COCONUT_CAPTION_PROXY, podcastProxy = process.env.COCONUT_PODCAST_PROXY, captionHelperDetached = process.platform!=='win32', readingPython = process.env.COCONUT_READING_PYTHON, punctuationModel = process.env.COCONUT_PUNCTUATION_MODEL, segmentationModel = process.env.COCONUT_SPEAKER_SEGMENTATION_MODEL, embeddingModel = process.env.COCONUT_SPEAKER_EMBEDDING_MODEL, ...options} = {}) {
   if (Number.parseInt(process.versions.node, 10) < 22) throw new Error('Coconut development requires Node.js 22+.');
+  const trustedPodcastProxy=validatePodcastProxy(podcastProxy);
+  if(trustedPodcastProxy){
+    if(options.podcastSources)throw new Error('不能同时覆盖播客来源和配置播客代理');
+    options.podcastSources=createPodcastSources({fetchResource:createPublicFetcher({xiaoyuzhouProxy:trustedPodcastProxy})});
+  }
   let helper=null,captionDiagnostic=null;
   if(captionPython && !options.captionService){
     try{
@@ -46,7 +53,7 @@ export async function startDevelopmentBridge({port = 8080, taskDirectory = DEVEL
     const executor = await fetch(`${origin}/api/v1/executor`).then(response => response.json());
     const captions=await fetch(`${origin}/api/captions/status`).then(response=>response.json());
     const library=await fetch(`${origin}/api/v1/library`).then(response=>response.json());
-    return {server, origin, taskDirectory, libraryDirectory, library, executor, captions, captionDiagnostic};
+    return {server, origin, taskDirectory, libraryDirectory, library, executor, captions, captionDiagnostic,podcastNetworkMode:trustedPodcastProxy?'xiaoyuzhou_trusted_local_proxy':'direct_public'};
   } catch (error) {
     await new Promise(resolve => server.shutdown(resolve));
     throw error;
@@ -55,9 +62,10 @@ export async function startDevelopmentBridge({port = 8080, taskDirectory = DEVEL
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   if (process.argv.length > 2) throw new Error('Usage: npm run dev (fixed development port 8080)');
-  const {server, origin, taskDirectory, libraryDirectory, library, executor, captions, captionDiagnostic} = await startDevelopmentBridge({privateProxy:privateProxyFromEnvironment()});
+  const {server, origin, taskDirectory, libraryDirectory, library, executor, captions, captionDiagnostic,podcastNetworkMode} = await startDevelopmentBridge({privateProxy:privateProxyFromEnvironment()});
   console.log(`Coconut 开发阅读器：${origin}`);
   console.log(`开发任务目录：${taskDirectory}`);
+  console.log(podcastNetworkMode==='xiaoyuzhou_trusted_local_proxy'?'播客网络：小宇宙及其公开音频使用所有者配置的本机代理；其他来源保持直连。':'播客网络：直连公网；未继承系统代理。');
   console.log(libraryStartupMessage({mode:'development',directory:libraryDirectory},library));
   console.log(`本机后台任务：${executor.enabled ? '可用；提供商尚未检查' : '不可用；请检查开发任务目录，阅读仍可使用'}`);
   console.log(`字幕获取：${captions.available?'公开 X / YouTube / Bilibili 字幕入口已就绪（能否取得字幕取决于来源访问状态）':`${captions.message}（${captions.code}）`}`);
