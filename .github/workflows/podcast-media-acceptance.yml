@@ -1,0 +1,52 @@
+name: Optional public podcast media acceptance
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - .github/workflows/podcast-media-acceptance.yml
+      - tests/podcast-public-smoke.mjs
+permissions:
+  contents: read
+concurrency:
+  group: podcast-media-live-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  public-media-playback:
+    # External publishers may change or be unavailable. This evidence-only job
+    # must not turn ordinary code validation into a public-site availability gate.
+    continue-on-error: true
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - run: npx playwright install --with-deps chromium
+      - name: Verify bounded public audio download, decode, playback and seek
+        id: live
+        env:
+          COCONUT_LIVE_PODCAST_MEDIA: '1'
+        run: node tests/podcast-public-smoke.mjs
+      - name: Record the actual media acceptance outcome
+        if: always()
+        env:
+          LIVE_OUTCOME: ${{ steps.live.outcome }}
+        run: |
+          case "$LIVE_OUTCOME" in
+            success)
+              echo "Public media download, Chromium decoding, playback and seek: PASS." >> "$GITHUB_STEP_SUMMARY"
+              ;;
+            failure)
+              echo "Public media acceptance: FAILED. This optional job is non-blocking; its allowed-failure conclusion is not proof that playback passed. Inspect the live step receipt." >> "$GITHUB_STEP_SUMMARY"
+              echo "::warning::Optional public podcast media acceptance failed; playback is not verified."
+              ;;
+            *)
+              echo "Public media acceptance: NOT COMPLETED (step outcome: $LIVE_OUTCOME). No playback pass is claimed." >> "$GITHUB_STEP_SUMMARY"
+              echo "::warning::Optional public podcast media acceptance did not complete."
+              ;;
+          esac
+# The existing smoke limits the explicit media branch to one public file <=100 MiB.
+# Never upload source bodies, transcripts, audio, browser profiles or screenshots.
