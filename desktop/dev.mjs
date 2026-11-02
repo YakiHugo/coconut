@@ -6,6 +6,7 @@ import {startBridge} from './server.mjs';
 import {privateProxyFromEnvironment} from './client-access.mjs';
 import {libraryLocation,libraryStartupMessage,DEVELOPMENT_LIBRARY_DIRECTORY} from './library-location.mjs';
 export {DEVELOPMENT_LIBRARY_DIRECTORY};
+import {sourceNetworkFromEnvironment} from './source-network.mjs';
 import {createDevelopmentCaptionHelper} from './development-captions.mjs';
 import {createCaptionService} from './caption-service.mjs';
 import {createCaptionReadability} from './transcript-readability.mjs';
@@ -17,18 +18,19 @@ import {createPublicFetcher,validatePodcastProxy} from './public-http.mjs';
 
 export const DEVELOPMENT_TASK_DIRECTORY = fileURLToPath(new URL('../.coconut/dev/tasks', import.meta.url));
 
-export async function startDevelopmentBridge({port = 8080, taskDirectory = DEVELOPMENT_TASK_DIRECTORY, libraryDirectory = libraryLocation({mode:'development'}).directory, captionPython = process.env.COCONUT_CAPTION_PYTHON, captionProxy = process.env.COCONUT_CAPTION_PROXY, podcastProxy = process.env.COCONUT_PODCAST_PROXY, captionHelperDetached = process.platform!=='win32', readingPython = process.env.COCONUT_READING_PYTHON, punctuationModel = process.env.COCONUT_PUNCTUATION_MODEL, segmentationModel = process.env.COCONUT_SPEAKER_SEGMENTATION_MODEL, embeddingModel = process.env.COCONUT_SPEAKER_EMBEDDING_MODEL, ...options} = {}) {
+export async function startDevelopmentBridge({port = 8080, taskDirectory = DEVELOPMENT_TASK_DIRECTORY, libraryDirectory = libraryLocation({mode:'development'}).directory, captionPython = process.env.COCONUT_CAPTION_PYTHON, captionProxy = process.env.COCONUT_CAPTION_PROXY, sourceNetwork = undefined, podcastProxy = process.env.COCONUT_PODCAST_PROXY, captionHelperDetached = process.platform!=='win32', readingPython = process.env.COCONUT_READING_PYTHON, punctuationModel = process.env.COCONUT_PUNCTUATION_MODEL, segmentationModel = process.env.COCONUT_SPEAKER_SEGMENTATION_MODEL, embeddingModel = process.env.COCONUT_SPEAKER_EMBEDDING_MODEL, ...options} = {}) {
   if (Number.parseInt(process.versions.node, 10) < 22) throw new Error('Coconut development requires Node.js 22+.');
   const trustedPodcastProxy=validatePodcastProxy(podcastProxy);
   if(trustedPodcastProxy){
     if(options.podcastSources)throw new Error('不能同时覆盖播客来源和配置播客代理');
     options.podcastSources=createPodcastSources({fetchResource:createPublicFetcher({xiaoyuzhouProxy:trustedPodcastProxy})});
   }
+  const network=sourceNetwork??(captionProxy===null?{mode:'direct'}:sourceNetworkFromEnvironment({...process.env,...(captionProxy===undefined?{}:{COCONUT_CAPTION_PROXY:captionProxy})}));
   let helper=null,captionDiagnostic=null;
   if(captionPython && !options.captionService){
     try{
       options.bilibiliSession??=await createBilibiliBrowserSession({python:captionPython,configuration:taskDirectory?path.join(path.dirname(taskDirectory),'caption-browser.json'):null});
-      helper=createDevelopmentCaptionHelper({python:captionPython,proxy:captionProxy,bilibiliSession:options.bilibiliSession,detached:captionHelperDetached});
+      helper=createDevelopmentCaptionHelper({python:captionPython,network,bilibiliSession:options.bilibiliSession,detached:captionHelperDetached});
       const status=await helper.status();
       captionDiagnostic=status;
       options.captionStatus={code:status.ready?'ready':status.code,mode:'development-python',networkMode:status.networkMode};
@@ -69,8 +71,8 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
   console.log(libraryStartupMessage({mode:'development',directory:libraryDirectory},library));
   console.log(`本机后台任务：${executor.enabled ? '可用；提供商尚未检查' : '不可用；请检查开发任务目录，阅读仍可使用'}`);
   console.log(`字幕获取：${captions.available?'公开 X / YouTube / Bilibili 字幕入口已就绪（能否取得字幕取决于来源访问状态）':`${captions.message}（${captions.code}）`}`);
-  if(captions.available)console.log(captions.networkMode==='trusted_local_proxy'?'字幕网络：YouTube / Bilibili 使用所有者配置的可信本机代理；X 不变。':'字幕网络：直连公网；未继承系统代理。');
-  if(captions.available)console.log(captionDiagnostic?.audioFallback?`公开媒体：${captions.networkMode==='trusted_local_proxy'?'通过已配置本机代理获取':'直连'} M4A 或单文件 MP4；须先确认无匹配字幕并明确下载。来源限制仍会停止。`:'公开音轨：当前助手未提供可用的媒体获取协议。');
+  if(captions.available)console.log(captions.networkMode==='environment_proxy'?'视频来源网络：显式使用启动环境代理与 NO_PROXY；不是系统 / PAC 自动发现，X 不变。':captions.networkMode==='trusted_local_proxy'?'字幕网络：YouTube / Bilibili 使用所有者配置的可信本机代理；X 不变。':'字幕网络：直连公网；未继承系统代理。');
+  if(captions.available)console.log(captionDiagnostic?.audioFallback?`公开媒体：${captions.networkMode==='environment_proxy'?'通过启动环境代理配置获取':captions.networkMode==='trusted_local_proxy'?'通过已配置本机代理获取':'直连'} M4A 或单文件 MP4；须先确认无匹配字幕并明确下载。来源限制仍会停止。`:'公开音轨：当前助手未提供可用的媒体获取协议。');
   if(!captions.available){console.log(captionSetupGuidance(captions.code,captionDiagnostic));console.log(CAPTION_START_GUIDANCE);}
   console.log('未发起模型请求。reader 修改后刷新页面；desktop 服务修改后 Ctrl+C 再运行 npm run dev。');
   const stop = () => server.shutdown().catch(() => { process.exitCode = 1; });

@@ -7,7 +7,7 @@ import {createDevelopmentCaptionHelper} from '../desktop/development-captions.mj
 import {startDevelopmentBridge} from '../desktop/dev.mjs';
 import {diagnoseDevelopment,formatDoctorReport} from '../desktop/doctor.mjs';
 const url='https://x.com/example/status/123456';
-const version={status:'ok',protocol:1,version:'2026.08.19',publicExtraction:true,guardProtocol:1,tlsRootsVerified:true,developmentProviders:['x','youtube','bilibili']};
+const version={status:'ok',protocol:1,version:'2026.08.19',publicExtraction:true,guardProtocol:1,tlsRootsVerified:true,ownerLocalVideoProtocol:1,developmentProviders:['x','youtube','bilibili']};
 const caption={status:'ok',source:{url,id:'123456',title:'Authored protocol fixture',extractor:'twitter',language:'en',automatic:false,translated:false,live:false,duration:2},track:{language:'en',captionMethod:'platform_provided',languageBasis:'single_track'},format:'vtt',captionBase64:Buffer.from('WEBVTT\n\n00:00.000 --> 00:02.000\nAn authored original sentence.\n').toString('base64')};
 async function fixture(t,{probe=version,result=caption,delay=0}={}){
  const directory=await mkdtemp(path.join(tmpdir(),'coconut-dev-caption-test-'));
@@ -170,9 +170,9 @@ test('owner-only caption proxy crosses isolated protocol, never Web overrides or
  await send({url});
  const calls=(await readFile(f.log,'utf8')).trim().split('\n').map(JSON.parse);
  assert.deepEqual(calls[0].input,{operation:'version'});
- assert.deepEqual(calls[1].input,{operation:'extract-development',url:publicUrl,language:null,trustedProxy:'http://127.0.0.1:7897'});
+ assert.deepEqual(calls[1].input,{operation:'extract-development',url:publicUrl,language:null,network:{mode:'custom',proxy:'http://127.0.0.1:7897'}});
  assert.deepEqual(calls[2].input,{operation:'extract-development',url,language:null});
- for(const call of calls)assert.equal(Object.keys(call.env).some(k=>/proxy/i.test(k)),false);
+ for(const call of calls){const expected=call.input.network?.mode==='custom'?{all_proxy:call.input.network.proxy}:{};assert.deepEqual(Object.fromEntries(Object.entries(call.env).filter(([key])=>/proxy/i.test(key))),expected);}
 });
 
 test('invalid proxy configuration fails closed before spawning and missing protocol cannot silently go direct',async t=>{
@@ -223,7 +223,7 @@ test('verified proxy media protocol offers audio after no captions and keeps own
  const media=await post('/api/videos/media',{url:publicUrl,consent:true,trustedProxy:'http://127.0.0.1:9999'});
  assert.equal(media.status,409);
  const calls=(await readFile(f.log,'utf8')).trim().split('\n').map(JSON.parse);
- assert.deepEqual(calls.at(-1).input,{operation:'extract-development-audio',url:publicUrl,language:null,trustedProxy:'http://127.0.0.1:7897'});
+ assert.deepEqual(calls.at(-1).input,{operation:'extract-development-audio',url:publicUrl,language:null,network:{mode:'custom',proxy:'http://127.0.0.1:7897'}});
  assert.equal(calls.filter(call=>call.input.operation==='extract-development-audio').length,1);
 });
 

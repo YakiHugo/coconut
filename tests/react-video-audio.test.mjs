@@ -25,3 +25,13 @@ test('combined MP4 receipt creates a truthful video File and unknown-language pr
  assert.equal(result.file.type,'video/mp4');assert.equal(result.file.name,'coconut-Authored video.mp4');assert.equal(result.inspected.kind,'video');assert.equal(result.project.local_media_source.kind,'video');assert.equal(result.project.media_provenance.audio_role,'unknown');assert.equal(result.project.media_provenance.audio_language,null);
  metadata.kind='audio';await assert.rejects(downloadVideoAudio({endpoint:'/api/videos/media',url:source,language:null},new AbortController().signal),/不一致/);
 });
+
+test('separate source action never turns omitted subtitle requests into absence',async t=>{
+ const body=Buffer.concat([Buffer.from([0,0,0,24]),Buffer.from('ftypM4A authored fixture')]),sha256=createHash('sha256').update(body).digest('hex');
+ const metadata={url,provider:'bilibili',id:'BV1xx411c7mD',title:'Authored source',duration:4,purpose:'source',subtitle_check:'not_requested',audio_language:null,audio_language_basis:'provider_single_source',audio_role:'unknown',format:'m4a',format_id:'30216',kind:'audio',type:'audio/mp4',sha256};
+ const old=globalThis.fetch;t.after(()=>globalThis.fetch=old);
+ globalThis.fetch=async route=>{assert.equal(route,'api/videos/source-media');return new Response(body,{headers:{'Content-Type':'audio/mp4','X-Coconut-Media-Source':Buffer.from(JSON.stringify(metadata)).toString('base64url')}});};
+ const result=await downloadVideoAudio({...fallback,purpose:'source'},new AbortController().signal);
+ assert.equal(result.project.media_provenance.subtitle_check,'not_requested');
+ assert.equal(videoAudioFallback({...fallback,purpose:'bypass'}),null);
+});

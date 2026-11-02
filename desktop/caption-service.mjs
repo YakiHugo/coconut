@@ -9,7 +9,7 @@ const MAX_DURATION=6*3600;
 
 export const CAPTION_FAILURE_STATUSES=Object.freeze(['unavailable','access_restricted','language_required','network_unavailable','metadata_incomplete','no_matching_captions','extractor_failed','caption_file_invalid','caption_parse_failed','guard_stopped']);
 const diagnosticStages=new Set(['initialization','extractor_setup','metadata','track_selection','caption_download','caption_parse','caption_output','helper_execution','reader_parse','media_download']);
-const diagnosticReasons=new Set(['access_restricted','login_required','subtitle_login_required','subtitle_token_required','rate_limited','http_access_denied','transport_unavailable','metadata_incomplete','request_scope_stopped','non_public_address','identity_mismatch','budget_exceeded','unexpected_response','upstream_error','dependency_mismatch','alternate_extractor_stopped','unsupported_request','external_execution_stopped','duration_unavailable','redirect_stopped','guard_stopped','language_unknown','no_matching_track','invalid_caption_file','caption_parse_failed','caption_download_or_file_failed','extractor_error','helper_error','proxy_configuration_invalid','proxy_unavailable','proxy_auth_required','proxy_connect_rejected','origin_tls_failed']);
+const diagnosticReasons=new Set(['access_restricted','login_required','subtitle_login_required','subtitle_token_required','rate_limited','http_access_denied','transport_unavailable','metadata_incomplete','request_scope_stopped','non_public_address','identity_mismatch','budget_exceeded','encoded_response_rejected','unexpected_response','upstream_error','dependency_mismatch','alternate_extractor_stopped','unsupported_request','external_execution_stopped','duration_unavailable','redirect_stopped','guard_stopped','language_unknown','no_matching_track','invalid_caption_file','caption_parse_failed','caption_download_or_file_failed','extractor_error','helper_error','proxy_configuration_invalid','proxy_unavailable','proxy_auth_required','proxy_connect_rejected','origin_tls_failed']);
 // Only finite enum/counter observations cross the helper, UI and report boundary.
 // An attempted request is not evidence of reaching the platform.
 export function captionDiagnostic(value){
@@ -75,7 +75,7 @@ export function createCaptionService({helper,readerDirectory=path.resolve(ROOT,'
  const providers=Object.freeze(['x','youtube','bilibili'].filter(provider=>helper&&enabled.has(provider)));
  const available=providers.length>0;
  return Object.freeze({
-  available,providers,
+  available,providers,ownerLocalOnly:helper?.ownerLocalOnly===true,
   async importCaption(data,{signal}={}){
    if(!available)throw new Error('此版本尚未启用内置视频字幕获取，可导入已有字幕；不会启动识别或下载模型');
    const source=captionSource(data?.url);

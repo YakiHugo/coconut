@@ -33,10 +33,10 @@ export function createBridge({readerDirectory = path.resolve(ROOT,'../reader'), 
   const captionSources=Object.freeze({available:capabilities.caption_import,mode:captionStatus?.mode||(capabilities.caption_import?'bundled-helper':'disabled'),
     code:capabilities.caption_import?'ready':captionStatus?.code||'CAPTION_UNAVAILABLE',
     providers:[['x','X / Twitter'],['youtube','YouTube'],['bilibili','Bilibili']].map(([id,label])=>({id,label,available:capabilities.caption_import&&(captionService.providers||['x']).includes(id)})),
-    ...(captionStatus?.mode==='development-python'&&['trusted_local_proxy','direct_public'].includes(captionStatus.networkMode)?{networkMode:captionStatus.networkMode==='trusted_local_proxy'?'trusted_local_proxy':'direct_public',proxyProviders:captionStatus.networkMode==='trusted_local_proxy'?['youtube','bilibili']:[]}:{}),
+    ...(['development-python','bundled-helper'].includes(captionStatus?.mode)&&['trusted_local_proxy','direct_public','environment_proxy'].includes(captionStatus.networkMode)?{networkMode:captionStatus.networkMode,proxyProviders:captionStatus.networkMode!=='direct_public'?['youtube','bilibili']:[]}:{}),
     automatic_asr:false,fallback:'import_transcript',
     message:capabilities.caption_import?'可尝试获取已启用来源的公开原语言字幕；平台访问限制仍可能阻止获取。':captionStatus?.mode==='bundled-helper'?packagedCaptionGuidance(captionStatus.code):'字幕助手未就绪。可导入或粘贴已有字幕；开发环境可用 COCONUT_CAPTION_PYTHON 指定已安装的兼容 Python。不会自动安装依赖或启动识别。'});
-  const ingestionService = createIngestionService({podcastSources,captionService,captionStatus:captionSources,captionShortLinkResolver,videoAudioProviders:videoAudioService?.available===true?videoAudioService.providers||[]:[]});
+  const ingestionService = createIngestionService({podcastSources,captionService,captionStatus:captionSources,captionShortLinkResolver,videoAudioProviders:videoAudioService?.available===true?videoAudioService.providers||[]:[],videoSourceMedia:videoAudioService?.sourceAvailable===true});
   const active = new Set();
   const server = http.createServer(async (req,res) => {
     for (const [key,value] of Object.entries({'X-Content-Type-Options':'nosniff','Referrer-Policy':'no-referrer','Cache-Control':'no-store',
@@ -157,14 +157,16 @@ export function createBridge({readerDirectory = path.resolve(ROOT,'../reader'), 
         if(['cancel','archive','restore'].includes(action))return json(200,{protocolVersion:1,task:await taskStore[action](pathname.split('/').at(-2),guardedMutation?data.expected:undefined)});
         const receipt=await taskStore.submit(data);return json(receipt.created?202:200,{protocolVersion:1,...receipt});
       }
-      if(pathname === '/api/v1/ingestions'){const receipt=await ingestionService.ingest(data,{signal:controller.signal});if(receipt.ingestion.state==='needs_transcription')receipt.ingestion.transcription=await ingestionExecutor.status({signal:controller.signal});return json(200,receipt);}
+      if(pathname === '/api/v1/ingestions'){const receipt=await ingestionService.ingest(data,{signal:controller.signal,ownerLocal:access.mode==='local'});if(receipt.ingestion.state==='needs_transcription')receipt.ingestion.transcription=await ingestionExecutor.status({signal:controller.signal});return json(200,receipt);}
       if(pathname === '/api/captions/import'){
+        if(remote&&captionService?.ownerLocalOnly)return json(403,{code:'owner_local_required',error:'视频来源获取仅允许本机界面。'});
         if(!capabilities.caption_import)return json(501,{code:captionSources.code,error:captionSources.message});
         return json(200,await captionService.importCaption(data,{signal:controller.signal}));
       }
       if(pathname === '/api/podcasts/discover') return json(200,await podcastSources.discover(data,{signal:controller.signal}));
       if(pathname === '/api/podcasts/import') return json(200,await podcastSources.importEpisode(data,{signal:controller.signal}));
       if(['/api/videos/media','/api/videos/source-media'].includes(pathname)) {
+        if(remote&&videoAudioService?.ownerLocalOnly)return json(403,{code:'owner_local_required',error:'视频来源获取仅允许本机界面。'});
         if(!videoAudioService?.available)return json(503,{code:'video_media_unavailable',error:'此开发服务未配置公开媒体助手；不会自动安装依赖。'});
         const media=await videoAudioService.download(data,{signal:controller.signal,...(pathname==='/api/videos/source-media'?{purpose:'source'}:{})});
         res.writeHead(200,{'Content-Type':media.type,'Content-Length':media.body.length,'Content-Disposition':'attachment; filename="'+media.filename+'"','X-Coconut-Media-Source':Buffer.from(JSON.stringify(media.source)).toString('base64url')});

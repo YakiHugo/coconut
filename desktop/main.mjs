@@ -53,15 +53,15 @@ else {
     const windowIcon=app.isPackaged?path.join(process.resourcesPath,'coconut-icon.png'):path.join(readerDirectory,'coconut-mark.png');
     // Packaged macOS uses the signed bundle icon; development has no app bundle.
     if(!app.isPackaged&&process.platform==='darwin')app.dock?.setIcon(windowIcon);
-    let captionService=null,captionStatus=null;
+    let captionService=null,captionStatus=null,videoAudioService=null;
     if(app.isPackaged){
       captionHelper=createCaptionHelper({resourcesPath:process.resourcesPath});
-      ({captionService,captionStatus}=await preparePackagedCaptions({helper:captionHelper,readerDirectory,signal:startupAbort.signal}));
+      ({captionService,captionStatus,videoAudioService}=await preparePackagedCaptions({helper:captionHelper,readerDirectory,signal:startupAbort.signal}));
       if(startupAbort.signal.aborted)return;
     }
     localMediaService=createLocalMediaService({userDataDirectory:app.getPath('userData'),readerDirectory});
     const library=libraryLocation({mode:'desktop',userDataDirectory:app.getPath('userData')});
-    server = await startBridge({libraryDirectory:library.directory,startupMode:'desktop',port:PORT,readerDirectory,captionService,captionStatus,localMediaService,taskDirectory:path.join(app.getPath('userData'),'tasks')});
+    server = await startBridge({libraryDirectory:library.directory,startupMode:'desktop',port:PORT,readerDirectory,captionService,captionStatus,videoAudioService,localMediaService,taskDirectory:path.join(app.getPath('userData'),'tasks')});
     if(startupAbort.signal.aborted){server.shutdown();return;}
     const origin = `http://127.0.0.1:${PORT}`;
     console.log(libraryStartupMessage(library,await fetch(origin+'/api/v1/library').then(response=>response.json())));

@@ -122,3 +122,28 @@ test('provider transient unknown details are local-only while safe status reache
  assert.equal(local.data().localProviderDetails.upstreamCode,'unknown_provider_code');
  assert.ok(!local.data().error.includes('Unknown private diagnostic'));
 });
+
+test('native owner-local video acquisition is fenced by real request authorization, never body flags',async t=>{
+ let captions=0,media=0,shortLinks=0;
+ const {post,request,server}=await setup(t,{
+  captionService:{available:true,providers:['youtube','bilibili'],ownerLocalOnly:true,importCaption:async()=>{captions++;return {status:'no_matching_captions',message:'Authored absence'};}},
+  videoAudioService:{available:true,ownerLocalOnly:true,providers:['youtube','bilibili'],download:async()=>{media++;throw Error('Authored media unavailable');}},
+  captionShortLinkResolver:async()=>{shortLinks++;return 'https://www.bilibili.com/video/BV1xx411c7mD';}
+ });
+ const video='https://www.youtube.com/watch?v=BaW_jenozKc';
+ for(const route of ['/api/captions/import','/api/videos/media','/api/videos/source-media']){
+  assert.equal((await post(route,{url:video,consent:true,ownerLocal:true,network:{mode:'direct'}})).status,403);
+ }
+ for(const url of [video,'https://youtu.be/BaW_jenozKc','https://b23.tv/Ab12']){
+  const response=await post('/api/v1/ingestions',{protocolVersion:1,source:{kind:'url',url},ownerLocal:true});
+  assert.equal(response.data().ingestion.error.code,'owner_local_required');
+ }
+ assert.equal(captions+media+shortLinks,0);
+ const localOrigin='http://127.0.0.1:'+server.address().port;
+ for(const extra of [{Origin:'https://evil.example'},{Origin:localOrigin,'Sec-Fetch-Site':'cross-site'},{Origin:'null'},{Origin:localOrigin,Forwarded:'for=127.0.0.1'}]){
+  assert.equal((await request('/api/captions/import',{method:'POST',remote:false,extra,body:{url:video}})).status,403);
+ }
+ assert.equal(captions,0);
+ assert.equal((await request('/api/captions/import',{method:'POST',remote:false,extra:{Origin:localOrigin},body:{url:video}})).status,200);
+ assert.equal(captions,1);
+});

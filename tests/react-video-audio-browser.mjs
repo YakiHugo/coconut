@@ -33,7 +33,7 @@ const server=await startBridge({port:0,libraryDirectory:directory,
 const origin='http://127.0.0.1:'+server.address().port;
 const state=()=>fetch(origin+'/api/v1/library').then(r=>r.json());
 try{
- browser=await chromium.launch({headless:true});
+ browser=await chromium.launch({headless:true,...(process.env.COCONUT_CHROMIUM_EXECUTABLE?{executablePath:process.env.COCONUT_CHROMIUM_EXECUTABLE}:{})});
  const context=await browser.newContext({viewport:{width:1360,height:960},serviceWorkers:'block'});
  await context.addInitScript(()=>{window.__authoredPlays=0;document.addEventListener('play',()=>window.__authoredPlays++,true);});
  await context.route('**/*',route=>{const target=new URL(route.request().url());if(target.origin!==origin){forbidden.push(target.origin);return route.abort();}if(target.pathname.includes('/ingestions/upload')||target.pathname.includes('/ingestions/capabilities'))asrRequests.push(target.pathname);return route.continue();});
@@ -71,6 +71,12 @@ try{
  const catalog=await fetch(origin+'/api/v1/library/catalog?protocolVersion=1').then(r=>r.json());assert.equal(catalog.entries.length,1);
  const key=catalog.entries[0].key,document=(await fetch(origin+'/api/v1/library/document?protocolVersion=1&key='+encodeURIComponent(key)).then(r=>r.json())).record.document;
  assert.equal(document.source_url,url);assert.equal(document.title,'Authored A/B tone');assert.equal(document.project_kind,'audio_only');assert.equal(document.local_media_source.type,'audio/mp4');assert.equal(document.local_media_source.name,'coconut-Authored A_B tone.m4a');assert.equal(document.media_provenance.sha256,sha256);assert.equal(document.media_provenance.audio_language_basis,'platform_original');
+
+ // A fresh renderer must recover the durable asset without another provider fetch.
+ const callsBeforeReload=mediaCalls;await page.reload();
+ await expect(page.locator('audio')).toHaveCount(1);await expect.poll(()=>page.locator('audio').evaluate(player=>player.duration)).toBeGreaterThan(1.9);
+ assert.equal(mediaCalls,callsBeforeReload);assert.equal(await page.locator('audio').evaluate(player=>player.paused),true);
+ assert.match(await page.locator('audio').getAttribute('src'),/api\/v1\/source-media\/content/);
 
  // A valid protocol receipt with undecodable media must not create a project.
  await page.getByRole('button',{name:'添加内容',exact:true}).click();mode='invalid';await read();await button.click();

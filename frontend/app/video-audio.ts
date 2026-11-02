@@ -1,6 +1,6 @@
 import {downloadedMediaFile} from './ingestion-media';
 import {inspectFile} from './ingestion';
-export type VideoAudioFallback={endpoint:'/api/videos/media';url:string;language:string|null};
+export type VideoAudioFallback={endpoint:'/api/videos/media';url:string;language:string|null;purpose?:'source'};
 function source(value:unknown){
  if(typeof value!=='string')return null;
  const youtube=/^https:\/\/www\.youtube\.com\/watch\?v=([A-Za-z0-9_-]{11})$/.exec(value);
@@ -9,10 +9,11 @@ function source(value:unknown){
 }
 export function videoAudioFallback(value:unknown):VideoAudioFallback|null{
  const item=value as VideoAudioFallback;
- return item?.endpoint==='/api/videos/media'&&source(item.url)&&(item.language===null||typeof item.language==='string'&&/^[a-z]{2,3}(?:-[A-Za-z0-9]{2,8}){0,2}$/.test(item.language))?{endpoint:item.endpoint,url:item.url,language:item.language}:null;
+ return item?.endpoint==='/api/videos/media'&&(item.purpose===undefined||item.purpose==='source')&&source(item.url)&&(item.language===null||typeof item.language==='string'&&/^[a-z]{2,3}(?:-[A-Za-z0-9]{2,8}){0,2}$/.test(item.language))?{endpoint:item.endpoint,url:item.url,language:item.language,...(item.purpose?{purpose:item.purpose}:{})}:null;
 }
 export async function downloadVideoAudio(value:VideoAudioFallback,signal:AbortSignal,purpose?:'source'){
  const fallback=videoAudioFallback(value);if(!fallback)throw Error('公开媒体操作身份无效。');
+ purpose=purpose||fallback.purpose;
  const response=await fetch(purpose==='source'?'api/videos/source-media':'api/videos/media',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({url:fallback.url,language:fallback.language,consent:true}),signal});
  if(!response.ok){const error=await response.json();throw Error(typeof error.error==='string'?error.error:'公开媒体检查未完成，未创建项目。');}
  const encoded=response.headers.get('X-Coconut-Media-Source')||'';
@@ -25,7 +26,7 @@ export async function downloadVideoAudio(value:VideoAudioFallback,signal:AbortSi
   (metadata.kind==='audio'?metadata.audio_language_basis==='platform_original'&&metadata.audio_role==='original'&&validLang:
    metadata.audio_language_basis==='platform_video_stream'&&['original','default','unknown'].includes(metadata.audio_role)&&(lang===null||validLang)&&(metadata.audio_role!=='unknown'||lang===null)&&metadata.format_id==='18'):
   metadata.audio_language_basis==='provider_single_source'&&lang===null&&metadata.audio_role==='unknown';
- if(!shape||!audioEvidence||metadata.url!==fallback.url||metadata.provider!==identity.provider||metadata.id!==identity.id||(purpose==='source'?metadata.purpose!=='source'||!['found','no_matching_captions'].includes(metadata.subtitle_check):metadata.subtitle_check!=='no_matching_captions')||typeof metadata.title!=='string'||metadata.title.length>500||!Number.isFinite(metadata.duration)||metadata.duration<=0||metadata.duration>21600||typeof metadata.format_id!=='string'||!/^[A-Za-z0-9_.-]{1,80}$/.test(metadata.format_id)||!/^[a-f0-9]{64}$/.test(metadata.sha256||'')||response.headers.get('Content-Type')!==metadata.type)throw Error('媒体来源与请求不一致。');
+ if(!shape||!audioEvidence||metadata.url!==fallback.url||metadata.provider!==identity.provider||metadata.id!==identity.id||(purpose==='source'?metadata.purpose!=='source'||!['found','no_matching_captions','not_requested'].includes(metadata.subtitle_check):metadata.subtitle_check!=='no_matching_captions')||typeof metadata.title!=='string'||metadata.title.length>500||!Number.isFinite(metadata.duration)||metadata.duration<=0||metadata.duration>21600||typeof metadata.format_id!=='string'||!/^[A-Za-z0-9_.-]{1,80}$/.test(metadata.format_id)||!/^[a-f0-9]{64}$/.test(metadata.sha256||'')||response.headers.get('Content-Type')!==metadata.type)throw Error('媒体来源与请求不一致。');
  const reader=response.body?.getReader();if(!reader)throw Error('浏览器无法读取媒体。');
  const chunks:Uint8Array<ArrayBuffer>[]=[];let size=0;
  try{while(true){const item=await reader.read();if(item.done)break;size+=item.value.byteLength;if(size>200*1024*1024)throw Error('媒体超过 200 MiB。');chunks.push(new Uint8Array(item.value));}}catch(error){await reader.cancel().catch(()=>{});throw error;}

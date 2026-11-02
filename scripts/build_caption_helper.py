@@ -31,7 +31,7 @@ def digest(data): return hashlib.sha256(data).hexdigest()
 INPUT_FILES = ['desktop/caption-helper-lock.json','desktop/caption-helper-requirements.txt',
                'desktop/helper/caption_helper_launcher.py','desktop/helper/coconut-caption.spec',
                'desktop/helper/hooks/hook-yt_dlp.py','scripts/build_caption_helper.py',
-               'scripts/public_x_caption_guard.py','scripts/public_video_caption_guard.py','scripts/public_video_media.py','scripts/caption_proxy_transport.py','subtitle_import.py','transcript.py','LICENSE']
+               'scripts/public_x_caption_guard.py','scripts/public_video_caption_guard.py','scripts/public_video_media.py','scripts/owner_video_source.py','scripts/caption_proxy_transport.py','subtitle_import.py','transcript.py','LICENSE']
 
 def input_hashes():
     files=[ROOT/name for name in INPUT_FILES]

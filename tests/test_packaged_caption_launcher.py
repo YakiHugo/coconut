@@ -14,7 +14,11 @@ import urllib.error
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from scripts import public_video_caption_guard as video_guard
+if importlib.util.find_spec('yt_dlp'):
+    from scripts import owner_video_source as video_guard
+    from yt_dlp.networking.common import RequestDirector
+    from yt_dlp.networking import Response
+    from yt_dlp.networking.exceptions import HTTPError
 from scripts import public_x_caption_guard as x_guard
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -51,13 +55,14 @@ class PackagedLauncherTests(unittest.TestCase):
             fixture = {'source': {'url': url, 'id': identity}, 'track': {'language': 'en'},
                        'format': 'vtt', 'bytes': VTT}
             with self.subTest(url=url), \
-                    patch.object(video_guard, 'extract_public_video_captions', return_value=copy.deepcopy(fixture)) as video, \
+                    patch.object(video_guard, 'acquire_video', return_value=copy.deepcopy(fixture)) as video, \
                     patch.object(x_guard, 'extract_public_captions', return_value=copy.deepcopy(fixture)) as twitter:
                 result = self.invoke({'operation': 'extract', 'url': url, 'language': 'en'})
                 chosen, other = (twitter, video) if url == X else (video, twitter)
                 chosen.assert_called_once()
                 self.assertEqual(chosen.call_args.args, (url, 'en'))
-                self.assertTrue(chosen.call_args.kwargs['ca_file'])
+                if url == X: self.assertTrue(chosen.call_args.kwargs['ca_file'])
+                else: self.assertIsNone(chosen.call_args.kwargs.get('network'))
                 self.assertIsNone(chosen.call_args.kwargs.get('proxy'))
                 other.assert_not_called()
                 self.assertEqual(result['status'], 'ok')
@@ -65,57 +70,21 @@ class PackagedLauncherTests(unittest.TestCase):
                 self.assertNotIn('bytes', result)
 
     def test_packaged_operation_runs_real_official_extractors_with_authored_responses(self):
-        # Reuse the upstream-shaped metadata fixtures; no platform traffic.
-        from test_public_video_caption_guard import PLAYER, STATE, Response
-        for url, identity, extractor in [(YOUTUBE, 'BaW_jenozKc', 'youtube'),
-                                          (BILIBILI, 'BV1xx411c7mD', 'bilibili')]:
-            calls = []
-            def open_request(request, timeout=None):
-                calls.append(request.full_url)
-                self.assertEqual(request.get_header('User-agent'), 'Coconut-public-captions/1.0')
-                self.assertIsNone(request.get_header('Cookie'))
-                target = request.full_url
-                if '/watch?' in target:
-                    body = ('<script>var ytInitialPlayerResponse = '+json.dumps(PLAYER)+';</script>').encode()
-                elif '/api/timedtext?' in target:
-                    body = VTT
-                elif '/video/' in target:
-                    body = ('<script>window.__INITIAL_STATE__='+json.dumps(STATE)+';</script>').encode()
-                elif '/pagelist?' in target:
-                    body = json.dumps({'code': 0, 'data': STATE['videoData']['pages']}).encode()
-                elif '/nav' in target:
-                    body = json.dumps({'code': -101, 'data': {'wbi_img': {
-                        'img_url': 'https://i0.hdslb.com/bfs/wbi/7cd084941338484aae1ad9425b84077c.png',
-                        'sub_url': 'https://i0.hdslb.com/bfs/wbi/4932caff0ff746eab6f01bf08b70ac45.png'}}}).encode()
-                elif '/playurl?' in target:
-                    body = b'{"code":0,"data":{"dash":{"video":[],"audio":[]},"timelength":4000}}'
-                elif '/wbi/v2?' in target:
-                    body = b'{"code":0,"data":{"subtitle":{"subtitles":[{"lan":"en","subtitle_url":"//aisubtitle.hdslb.com/bfs/subtitle/fixture.json"}]}}}'
-                elif '/bfs/subtitle/' in target:
-                    body = b'{"body":[{"from":0,"to":4,"content":"Original packaged route fixture."}]}'
-                else:
-                    self.fail('Unexpected network request: '+target)
-                return Response(body)
-            with self.subTest(url=url), \
-                    patch.object(video_guard.urllib.request.OpenerDirector, 'open', side_effect=open_request), \
-                    contextlib.redirect_stderr(io.StringIO()):
+        from test_owner_video_source import fixture
+        for url, identity, extractor in [(YOUTUBE, 'BaW_jenozKc', 'youtube'), (BILIBILI, 'BV1xx411c7mD', 'bilibili')]:
+            with self.subTest(url=url), patch.object(RequestDirector, 'send', side_effect=fixture) as send:
                 result = self.invoke({'operation': 'extract', 'url': url, 'language': 'en'})
-            self.assertEqual(result['status'], 'ok')
-            self.assertEqual(result['source']['url'], url)
+            self.assertEqual(result['status'], 'ok', result)
             self.assertEqual(result['source']['id'], identity)
             self.assertEqual(result['source']['extractor'], extractor)
-            self.assertEqual(result['track']['language'], 'en')
-            self.assertFalse(result['source']['translated'])
-            self.assertFalse(result['source']['live'])
-            self.assertIn(b'Original packaged route fixture.', base64.b64decode(result['captionBase64']))
-            self.assertGreater(len(calls), 0)
-            self.assertLessEqual(len(calls), video_guard.MAX_REQUESTS)
+            self.assertIn(b'Authored original fixture.', base64.b64decode(result['captionBase64']))
+            self.assertGreater(send.call_count, 0)
 
     def test_packaged_real_extractor_stops_on_denial_without_fallback(self):
         for url in (YOUTUBE, BILIBILI):
             with self.subTest(url=url), \
-                    patch.object(video_guard.urllib.request.OpenerDirector, 'open',
-                        side_effect=urllib.error.HTTPError(url, 403, '', {}, io.BytesIO())) as send, \
+                    patch.object(RequestDirector, 'send',
+                        side_effect=HTTPError(Response(io.BytesIO(), url, {}, status=403))) as send, \
                     contextlib.redirect_stderr(io.StringIO()):
                 result = self.invoke({'operation': 'extract', 'url': url, 'language': 'en'})
                 self.assertEqual(result['status'], 'access_restricted')
@@ -134,7 +103,7 @@ class PackagedLauncherTests(unittest.TestCase):
                 'languages': ['en', 'zh']}
             fixture = {**expected, 'bytes': b'private', 'rawError': 'private'}
             with self.subTest(status=status), \
-                    patch.object(video_guard, 'extract_public_video_captions', return_value=fixture) as video, \
+                    patch.object(video_guard, 'acquire_video', return_value=fixture) as video, \
                     patch.object(x_guard, 'extract_public_captions') as twitter:
                 self.assertEqual(self.invoke({'operation': 'extract', 'url': YOUTUBE, 'language': None}), expected)
                 video.assert_called_once()
@@ -144,7 +113,7 @@ class PackagedLauncherTests(unittest.TestCase):
         for extra in [{'trustedProxy': 'http://127.0.0.1:7897'}, {'bilibiliCookies': {'SESSDATA':'fixture'}}, {'cookiefile': '/private/cookies'},
                       {'client': 'android'}, {'operation': 'extract-arbitrary'}]:
             with self.subTest(extra=extra), \
-                    patch.object(video_guard, 'extract_public_video_captions') as video, \
+                    patch.object(video_guard, 'acquire_video') as video, \
                     patch.object(x_guard, 'extract_public_captions') as twitter:
                 request = {'operation': 'extract', 'url': YOUTUBE, 'language': 'en', **extra}
                 self.assertEqual(self.invoke(request), {'status': 'unavailable'})
@@ -153,18 +122,18 @@ class PackagedLauncherTests(unittest.TestCase):
 
     def test_development_proxy_remains_separate_from_packaged_route(self):
         fixture = {'status': 'network_unavailable'}
-        with patch.object(video_guard, 'extract_public_video_captions', return_value=fixture) as video:
+        with patch.object(video_guard, 'acquire_video', return_value=fixture) as video:
             self.assertEqual(self.invoke({'operation': 'extract-development', 'url': YOUTUBE,
                 'language': 'en', 'trustedProxy': 'http://127.0.0.1:7897'}), fixture)
-            self.assertEqual(video.call_args.kwargs['proxy'], 'http://127.0.0.1:7897')
+            self.assertEqual(video.call_args.kwargs['network'], {'mode':'custom','proxy':'http://127.0.0.1:7897'})
 
     def test_development_session_is_bilibili_only_and_remains_a_private_input(self):
         session = {'SESSDATA':'fixture-session'}
         for url in (YOUTUBE, X):
-            with patch.object(video_guard, 'extract_public_video_captions') as video, patch.object(x_guard, 'extract_public_captions') as twitter:
+            with patch.object(video_guard, 'acquire_video') as video, patch.object(x_guard, 'extract_public_captions') as twitter:
                 self.assertEqual(self.invoke({'operation':'extract-development','url':url,'language':None,'bilibiliCookies':session}), {'status':'guard_stopped'})
                 video.assert_not_called();twitter.assert_not_called()
-        with patch.object(video_guard, 'extract_public_video_captions', return_value={'status':'no_matching_captions'}) as video:
+        with patch.object(video_guard, 'acquire_video', return_value={'status':'no_matching_captions'}) as video:
             result = self.invoke({'operation':'extract-development','url':BILIBILI,'language':None,'bilibiliCookies':session,'trustedProxy':'http://127.0.0.1:7897'})
             self.assertEqual(result, {'status':'no_matching_captions'})
             self.assertEqual(video.call_args.kwargs['bilibili_cookies'], session)

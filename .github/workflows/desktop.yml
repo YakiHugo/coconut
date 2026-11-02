@@ -44,6 +44,8 @@ jobs:
         run: |
           python -m venv "$RUNNER_TEMP/coconut-helper-venv"
           "$RUNNER_TEMP/coconut-helper-venv/bin/python" -m pip install --no-deps --only-binary=:all: --require-hashes -r desktop/caption-helper-requirements.txt
+      - name: Verify native source response budgets and proxy semantics on the target Python
+        run: '"$RUNNER_TEMP/coconut-helper-venv/bin/python" -m unittest discover -s tests -p "test_owner_video_source*.py" -v'
       - name: Freeze native helper and audit bundled runtime
         run: '"$RUNNER_TEMP/coconut-helper-venv/bin/python" scripts/build_caption_helper.py'
       - name: Prove native helper offline without user Python
