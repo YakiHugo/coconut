@@ -1,0 +1,46 @@
+name: Optional podcast source closure
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - '.github/workflows/podcast-source-closure.yml'
+      - 'scripts/live_podcast_source_closure.mjs'
+permissions:
+  contents: read
+concurrency:
+  group: podcast-source-closure-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  live-source:
+    # Public publishers are outside regular offline/build CI. Inspect the live
+    # receipt/summary, not this optional job's allowed-failure workflow color.
+    continue-on-error: true
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        source: [xiaoyuzhou, rss]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm ci --ignore-scripts
+      - name: Verify real source, owned bytes and restart without any transcription
+        id: live
+        run: node scripts/live_podcast_source_closure.mjs --live '${{ matrix.source }}'
+      - name: Record actual source acceptance outcome
+        if: always()
+        env:
+          LIVE_OUTCOME: ${{ steps.live.outcome }}
+          SOURCE: ${{ matrix.source }}
+        run: |
+          if [ "$LIVE_OUTCOME" = success ]; then
+            printf '## %s source closure: PASS\n' "$SOURCE" >> "$GITHUB_STEP_SUMMARY"
+          elif [ "$LIVE_OUTCOME" = failure ]; then
+            printf '## %s source closure: FAILED (not a pass)\n' "$SOURCE" >> "$GITHUB_STEP_SUMMARY"
+          else
+            printf '## %s source closure: NOT COMPLETED\n' "$SOURCE" >> "$GITHUB_STEP_SUMMARY"
+          fi
+          echo 'No ASR, paid provider, browser playback or media decoding is claimed. Raw source bodies and media are transient; no source artifacts are uploaded.' >> "$GITHUB_STEP_SUMMARY"
