@@ -16,6 +16,7 @@ import subprocess
 import tempfile
 import threading
 import unittest
+import zlib
 from unittest.mock import Mock, patch
 
 AVAILABLE = importlib.util.find_spec('yt_dlp') is not None
@@ -35,13 +36,26 @@ class Origin(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
         self.server.requests.append(self.path)
         self.server.encodings.append(self.headers.get('Accept-Encoding'))
-        body=gzip.compress(b'x'*65536) if self.path.startswith('/compressed') else BODY
-        targets={'/redirect-big':'/must-not-follow','/downgrade':'http://127.0.0.1/must-not-connect','/ftp-redirect':'ftp://fixture.invalid/must-not-connect','/data-redirect':'data:text/plain,authored','/file-redirect':'file:///tmp/authored-never-read','/userinfo-redirect':'https://authored:credential@fixture.invalid/must-not-connect'}
+        body = BODY
+        encoding = None
+        if self.path.startswith('/compressed'):
+            encoding = 'gzip'
+            body = gzip.compress(b'x' * 65536 if self.path == '/compressed-bomb' else BODY)
+            if self.path == '/compressed-deflate': encoding, body = 'deflate', zlib.compress(BODY)
+            if self.path == '/compressed-raw-deflate': encoding, body = 'deflate', zlib.compress(BODY)[2:-4]
+            if self.path == '/compressed-truncated': body = body[:-5]
+            if self.path == '/compressed-crc': body = body[:-8] + b'00000000'
+            if self.path == '/compressed-trailing': body += b'trailing'
+            if self.path == '/compressed-concatenated': body += gzip.compress(BODY)
+            if self.path == '/compressed-stack': encoding = 'gzip, deflate'
+            if self.path == '/compressed-unsupported': encoding = 'br'
+            if self.path == '/compressed-raw-limit': body = gzip.compress(bytes(range(256))*4)
+        targets={'/compressed-redirect':'/must-not-follow','/redirect-big':'/must-not-follow','/downgrade':'http://127.0.0.1/must-not-connect','/ftp-redirect':'ftp://fixture.invalid/must-not-connect','/data-redirect':'data:text/plain,authored','/file-redirect':'file:///tmp/authored-never-read','/userinfo-redirect':'https://authored:credential@fixture.invalid/must-not-connect'}
         redirect=self.path in targets
-        self.send_response(302 if redirect else 200)
+        self.send_response(403 if self.path == '/compressed-denied' else 302 if redirect else 200)
         if redirect:self.send_header('Location',targets[self.path])
         if self.path=='/compressed-duplicate':self.send_header('Content-Encoding','identity')
-        if self.path.startswith('/compressed'):self.send_header('Content-Encoding','deflate' if self.path=='/compressed-deflate' else 'gzip')
+        if encoding:self.send_header('Content-Encoding',encoding)
         self.send_header('Content-Type', 'audio/mp4')
         if self.path not in ('/unknown-length','/redirect-big'):
             self.send_header('Content-Length', str(len(body)))
@@ -305,19 +319,61 @@ class OwnerNativeTransportTests(unittest.TestCase):
             self.assertEqual(len(proxy.requests),2)
             system_bypass.assert_not_called()
 
-    def test_unsolicited_compression_is_rejected_before_native_eager_decoder(self):
+    def test_bounded_gzip_and_zlib_text_bypass_unbounded_native_decoder(self):
         from yt_dlp.networking._urllib import HTTPHandler
-        for stage in ('metadata','media_download'):
-            for path in ('/compressed','/compressed-duplicate','/compressed-deflate'):
-                with self.subTest(stage=stage,path=path),self.downloader() as owner,patch.object(HTTPHandler,'gz',side_effect=AssertionError('Must reject before eager decoding')) as gzip_decode,patch.object(HTTPHandler,'deflate',side_effect=AssertionError('Must reject before eager decoding')) as deflate_decode:
-                    owner.stage=stage;owner.media_url=self.origin_url+path
-                    with self.assertRaises(source.StopProof) as stopped:
-                        owner.urlopen(owner.media_url)
-                    self.assertEqual(stopped.exception.outcome,'encoded_response_rejected')
-                    self.assertEqual((owner.raw_metadata_bytes,owner.raw_media_bytes),(0,0))
-                    self.assertEqual((owner.count,owner.responses),(1,1))
-                    gzip_decode.assert_not_called();deflate_decode.assert_not_called()
-                self.assertEqual(self.origin.encodings[-1],'identity')
+        for stage in ('metadata', 'caption_download'):
+            for path in ('/compressed', '/compressed-deflate'):
+                with self.subTest(stage=stage, path=path), self.downloader() as owner, patch.object(HTTPHandler, 'gz', side_effect=AssertionError('Native decoder must not run')) as gz, patch.object(HTTPHandler, 'deflate', side_effect=AssertionError('Native decoder must not run')) as df:
+                    owner.stage = stage
+                    with owner.urlopen(self.origin_url + path) as response:
+                        self.assertEqual(response.read(), BODY)
+                        self.assertIsNone(response.headers.get('Content-Encoding'))
+                        self.assertEqual(int(response.headers.get('Content-Length')), len(BODY))
+                    self.assertGreater(owner.raw_metadata_bytes, 0)
+                    self.assertEqual(owner.raw_metadata_bytes + owner.expanded_metadata_bytes, len(BODY))
+                    gz.assert_not_called(); df.assert_not_called()
+                self.assertEqual(self.origin.encodings[-1], 'identity')
+
+    def test_compressed_media_and_ambiguous_encodings_are_rejected_before_body_read(self):
+        for stage, path in [('media_download', '/compressed'), ('media_download', '/compressed-deflate'),
+                            ('metadata', '/compressed-duplicate'), ('metadata', '/compressed-stack'), ('metadata', '/compressed-unsupported')]:
+            with self.subTest(stage=stage, path=path), self.downloader() as owner:
+                owner.stage = stage; owner.media_url = self.origin_url + path
+                with self.assertRaises(source.StopProof) as stopped: owner.urlopen(owner.media_url)
+                self.assertEqual(stopped.exception.outcome, 'encoded_response_rejected')
+                self.assertEqual((owner.raw_metadata_bytes, owner.raw_media_bytes), (0, 0))
+
+    def test_compressed_text_must_have_complete_single_standard_member(self):
+        for path in ('/compressed-truncated', '/compressed-crc', '/compressed-trailing', '/compressed-concatenated', '/compressed-raw-deflate'):
+            with self.subTest(path=path), self.downloader() as owner:
+                with self.assertRaises(source.StopProof) as stopped: owner.urlopen(self.origin_url + path)
+                self.assertEqual(stopped.exception.outcome, 'encoded_response_rejected')
+
+    def test_both_compressed_raw_bytes_and_expansion_are_bounded(self):
+        for path, raw_limit in (('/compressed-bomb', False), ('/compressed-raw-limit', True)):
+            with self.subTest(path=path), self.downloader() as owner, patch.object(source, 'MAX_METADATA', 128):
+                with self.assertRaises(source.StopProof) as stopped: owner.urlopen(self.origin_url + path)
+                self.assertEqual(stopped.exception.outcome, 'budget_exceeded')
+                self.assertLessEqual(owner.raw_metadata_bytes, 129)
+                if raw_limit: self.assertEqual(owner.raw_metadata_bytes, 129)
+        with self.downloader() as owner, patch.object(source, 'MAX_CAPTION', 128):
+            owner.stage = 'caption_download'
+            with self.assertRaises(source.StopProof) as stopped: owner.urlopen(self.origin_url + '/compressed-bomb')
+            self.assertEqual(stopped.exception.outcome, 'budget_exceeded')
+
+    def test_expanded_redirect_bodies_and_later_responses_share_aggregate_budget(self):
+        with self.downloader() as owner, patch.object(source, 'MAX_TOTAL', len(BODY) + 16):
+            before = len(self.origin.requests)
+            with self.assertRaises(source.StopProof) as stopped: owner.urlopen(self.origin_url + '/compressed-redirect')
+            self.assertEqual(stopped.exception.outcome, 'budget_exceeded')
+            self.assertEqual(self.origin.requests[before:], ['/compressed-redirect', '/must-not-follow'])
+            self.assertEqual(owner.raw_metadata_bytes + owner.expanded_metadata_bytes, len(BODY) + 17)
+
+    def test_denial_is_terminal_before_any_compressed_body_decode(self):
+        with self.downloader() as owner, patch.object(source.zlib, 'decompressobj', side_effect=AssertionError('No denial decoding')) as decode:
+            with self.assertRaises(source.StopProof) as stopped: owner.urlopen(self.origin_url + '/compressed-denied')
+            self.assertEqual(stopped.exception.outcome, 'http_access_denied')
+            self.assertEqual(owner.raw_metadata_bytes, 0); decode.assert_not_called()
 
     def test_unknown_length_metadata_and_internal_redirect_reads_are_bounded(self):
         for path in ('/unknown-length','/redirect-big'):

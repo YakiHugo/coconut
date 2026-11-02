@@ -5,6 +5,7 @@ Upstream handles DNS, redirects, proxies and TLS; Coconut owns source identity,
 credential policy, bounded resources and the stable result contract. No ASR.
 """
 from __future__ import annotations
+import copy
 import hashlib
 import http.cookiejar
 import io
@@ -17,6 +18,7 @@ import tempfile
 import time
 import urllib.request
 import urllib.response
+import zlib
 from urllib.parse import urlparse
 
 import yt_dlp
@@ -106,7 +108,7 @@ class RawResponseBudget(io.IOBase):
     def read(self, amount=-1):
         try:
             self.owner.check_budget()
-            total = self.owner.raw_media_bytes if self.media else self.owner.raw_metadata_bytes
+            total = self.owner.raw_media_bytes if self.media else self.owner.raw_metadata_bytes + self.owner.expanded_metadata_bytes
             remaining = min(self.limit - self.read_bytes, (MAX_MEDIA if self.media else MAX_TOTAL) - total)
             body = self.response.read(min(amount if amount is not None and amount >= 0 else remaining + 1, remaining + 1))
             self.read_bytes += len(body)
@@ -138,12 +140,42 @@ class NativeResponsePolicy(urllib.request.BaseHandler):
         self.owner.observed_response()
         reason = {401:'login_required',403:'http_access_denied',412:'http_access_denied',429:'rate_limited'}.get(response.code)
         encodings = response.headers.get_all('Content-Encoding', [])
-        # Identity is a standard upstream request setting, but a server can ignore
-        # it. Reject such a response before native eager decompression, not after.
-        if reason or any(value.strip().lower() not in ('', 'identity') for value in encodings):
+        encoding = encodings[0].strip().lower() if len(encodings) == 1 else ''
+        media = self.owner.stage == 'media_download'
+        # Text endpoints may ignore identity. Decode only a single standard gzip
+        # or zlib-deflate member, with both raw and expanded body limits. Media
+        # must remain identity so upstream Range offsets always describe bytes.
+        if (reason or len(encodings) > 1 or encoding not in ('', 'identity', 'gzip', 'deflate')
+                or media and encoding not in ('', 'identity')):
             response.close()
             raise StopProof(reason or 'encoded_response_rejected')
-        wrapped = urllib.response.addinfourl(RawResponseBudget(response, self.owner), response.headers, response.url, response.code)
+        bounded = RawResponseBudget(response, self.owner)
+        headers = response.headers
+        if encoding in ('gzip', 'deflate'):
+            try:
+                raw = bounded.read()  # At most the stage limit, plus one overflow byte.
+                self.owner.check_budget()
+                remaining = min(bounded.limit, MAX_TOTAL - self.owner.raw_metadata_bytes
+                                - self.owner.expanded_metadata_bytes + len(raw))
+                decoder = zlib.decompressobj(31 if encoding == 'gzip' else zlib.MAX_WBITS)
+                body = decoder.decompress(raw, remaining + 1)
+                self.owner.check_budget()
+                if len(body) > remaining: raise StopProof('budget_exceeded')
+                # Never silently admit truncated data, extra members, trailing
+                # bytes, raw-deflate or an unbounded flush/decompression call.
+                if not decoder.eof or decoder.unconsumed_tail or decoder.unused_data:
+                    raise StopProof('encoded_response_rejected')
+                self.owner.expanded_metadata_bytes += max(0, len(body) - len(raw))
+                headers = copy.copy(response.headers)
+                del headers['Content-Encoding']
+                del headers['Content-Length']
+                headers['Content-Length'] = str(len(body))
+                bounded = io.BytesIO(body)
+            except zlib.error:
+                raise StopProof('encoded_response_rejected') from None
+            finally:
+                response.close()
+        wrapped = urllib.response.addinfourl(bounded, headers, response.url, response.code)
         wrapped.msg = response.msg
         return wrapped
     https_response = http_response
@@ -175,7 +207,7 @@ class OwnerVideoDL(yt_dlp.YoutubeDL):
         self.expected_duration = None
         self.stage = 'extractor_setup'
         self.count = self.responses = self.total = self.media_bytes = 0
-        self.raw_media_bytes = self.raw_metadata_bytes = 0
+        self.raw_media_bytes = self.raw_metadata_bytes = self.expanded_metadata_bytes = 0
         self.current_response_observed = False
         self.started = time.monotonic()
         self.media_url = None

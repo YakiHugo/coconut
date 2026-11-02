@@ -22,17 +22,18 @@ jobs:
   source-acquisition:
     # Maintainer opt-in only. A later commit requires relabel/dispatch on that SHA.
     # Public availability is not a required merge gate and never becomes a fake pass.
-    if: github.event_name == 'workflow_dispatch' || github.event.label.name == 'live-source-check'
+    if: github.event_name == 'workflow_dispatch' || github.event.label.name == 'live-source-check' || github.event.label.name == 'live-source-bilibili'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
-        include: ${{ github.event_name == 'workflow_dispatch' && fromJSON('[{"name":"manual"}]') || fromJSON('[{"name":"bilibili","url":"https://www.bilibili.com/video/BV1XNtJ6UEmm","language":"zh"},{"name":"youtube","url":"https://www.youtube.com/watch?v=S6l3aRsecuE","language":"en"}]') }}
+        include: ${{ github.event_name == 'workflow_dispatch' && fromJSON('[{"name":"manual"}]') || github.event.label.name == 'live-source-bilibili' && fromJSON('[{"name":"bilibili","url":"https://www.bilibili.com/video/BV1XNtJ6UEmm","language":"zh"}]') || fromJSON('[{"name":"bilibili","url":"https://www.bilibili.com/video/BV1XNtJ6UEmm","language":"zh"},{"name":"youtube","url":"https://www.youtube.com/watch?v=S6l3aRsecuE","language":"en"}]') }}
     steps:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
@@ -41,8 +42,8 @@ jobs:
           python-version: '3.12'
       - name: Prepare only hash-locked caption dependencies, no ASR model
         run: |
-          python -m venv .venv-captions
-          .venv-captions/bin/python -m pip install --disable-pip-version-check --no-input --require-hashes --only-binary=:all: --no-deps -r desktop/development-caption-requirements.txt
+          python -m venv "$RUNNER_TEMP/coconut-source-python"
+          "$RUNNER_TEMP/coconut-source-python/bin/python" -m pip install --disable-pip-version-check --no-input --require-hashes --only-binary=:all: --no-deps -r desktop/development-caption-requirements.txt
       - name: Owner same-origin direct acquisition and durable reopen
         env:
           SOURCE_URL: ${{ inputs.source_url || matrix.url }}
@@ -51,7 +52,7 @@ jobs:
         run: |
           args=(--live "$SOURCE_URL" "$SOURCE_LANGUAGE")
           if [ "$SOURCE_MEDIA" = "true" ]; then args+=(--media); fi
-          COCONUT_CAPTION_PYTHON="$PWD/.venv-captions/bin/python" node scripts/live_source_acceptance.mjs "${args[@]}"
+          COCONUT_CAPTION_PYTHON="$RUNNER_TEMP/coconut-source-python/bin/python" node scripts/live_source_acceptance.mjs "${args[@]}"
       - name: Preserve metadata-only observations, including blocked stages
         if: always()
         uses: actions/upload-artifact@v4

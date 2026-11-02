@@ -32,12 +32,14 @@ const server=await startBridge({port:0,libraryDirectory:directory,
  videoAudioService:createVideoAudioService({helper}),providers:{status:async()=>({ready:false}),ask:()=>assert.fail('No model calls')}});
 const origin='http://127.0.0.1:'+server.address().port;
 const state=()=>fetch(origin+'/api/v1/library').then(r=>r.json());
+let stage='startup';const localResponses=[];
 try{
  browser=await chromium.launch({headless:true,...(process.env.COCONUT_CHROMIUM_EXECUTABLE?{executablePath:process.env.COCONUT_CHROMIUM_EXECUTABLE}:{})});
  const context=await browser.newContext({viewport:{width:1360,height:960},serviceWorkers:'block'});
  await context.addInitScript(()=>{window.__authoredPlays=0;document.addEventListener('play',()=>window.__authoredPlays++,true);});
  await context.route('**/*',route=>{const target=new URL(route.request().url());if(target.origin!==origin){forbidden.push(target.origin);return route.abort();}if(target.pathname.includes('/ingestions/upload')||target.pathname.includes('/ingestions/capabilities'))asrRequests.push(target.pathname);return route.continue();});
  const page=await context.newPage();page.on('pageerror',error=>errors.push(error.message));
+ page.on('response',response=>{const u=new URL(response.url());if(u.origin===origin&&u.pathname.startsWith('/api/')){localResponses.push({path:u.pathname,status:response.status()});if(localResponses.length>40)localResponses.shift();}});
  const button=page.getByRole('button',{name:'下载公开媒体并新建项目（最多 200 MiB）',exact:true});
  const read=async()=>{await page.getByLabel('播客或视频链接').fill(url);await page.getByRole('button',{name:'打开链接',exact:true}).click();};
  await page.goto(origin);await read();await expect(button).toBeVisible();assert.equal(mediaCalls,0);
@@ -63,7 +65,7 @@ try{
  await page.getByLabel('播客或视频链接').fill('https://www.youtube.com/watch?v=zzzzzzzzzzz');release();hold=null;await expect.poll(()=>completed).toBe(3);await expect(button).toHaveCount(0);assert.equal((await state()).sequence,0);
  // Successful authored audio uses the actual endpoint, File fingerprint, store,
  // canonical library and browser decoder. It must not start playback or ASR.
- await read();await button.click();await expect(page.getByRole('heading',{name:'先播放原文件',exact:true})).toBeVisible();
+ stage='initial-audio-save';await read();await button.click();await expect(page.getByRole('heading',{name:'先播放原文件',exact:true})).toBeVisible();
  await expect(page.locator('.app-header').getByText('已保存',{exact:true})).toBeVisible();
  await expect(page.locator('audio')).toHaveCount(1);await expect(page.getByRole('button',{name:'播放原声',exact:true})).toBeVisible();await expect.poll(()=>page.locator('audio').evaluate(player=>player.duration)).toBeGreaterThan(1.9);
  assert.equal(await page.locator('audio').evaluate(player=>player.paused),true);assert.equal(await page.evaluate(()=>window.__authoredPlays),0);
@@ -73,6 +75,7 @@ try{
  assert.equal(document.source_url,url);assert.equal(document.title,'Authored A/B tone');assert.equal(document.project_kind,'audio_only');assert.equal(document.local_media_source.type,'audio/mp4');assert.equal(document.local_media_source.name,'coconut-Authored A_B tone.m4a');assert.equal(document.media_provenance.sha256,sha256);assert.equal(document.media_provenance.audio_language_basis,'platform_original');
 
  // A fresh renderer must recover the durable asset without another provider fetch.
+ stage='durable-audio-reload';await expect(page).toHaveURL(new RegExp('#read/'+encodeURIComponent(key)+'$'));
  const callsBeforeReload=mediaCalls;await page.reload();
  await expect(page.locator('audio')).toHaveCount(1);await expect.poll(()=>page.locator('audio').evaluate(player=>player.duration)).toBeGreaterThan(1.9);
  assert.equal(mediaCalls,callsBeforeReload);assert.equal(await page.locator('audio').evaluate(player=>player.paused),true);
@@ -98,7 +101,7 @@ try{
  await expect(page.locator('.source-error')).toContainText(/无法解码|解码超时/,{timeout:15000});
  assert.equal((await fetch(origin+'/api/v1/library/catalog?protocolVersion=1').then(r=>r.json())).entries.length,1);
  // Combined MP4 stays a video player/File, not a mislabeled audio-only file.
- mode='video';await read();await button.click();await page.locator('.rw-player-video>summary').click();await expect(page.locator('video')).toBeVisible();
+ stage='combined-video-save';mode='video';await read();await button.click();await page.locator('.rw-player-video>summary').click();await expect(page.locator('video')).toBeVisible();
  await expect(page.locator('.app-header').getByText('已保存',{exact:true})).toBeVisible();
  await expect.poll(()=>page.locator('video').evaluate(player=>player.videoWidth)).toBe(160);
  await expect.poll(()=>page.locator('video').evaluate(player=>player.duration)).toBeGreaterThan(1.9);
@@ -115,4 +118,8 @@ try{
  }
  assert.deepEqual(asrRequests,[]);assert.deepEqual(errors,[]);assert.deepEqual(forbidden,[]);
  console.log('PASS authored video fallback UI: absence-only action, denial/cancel/source-change create no project, successful M4A and combined MP4 decoder/File/canonical binding; invalid container and metadata-valid broken samples create no project, no automatic playback or ASR, wide/narrow layout.');
+}catch(error){
+ const page=browser?.contexts()[0]?.pages()[0];
+ const renderer=page?await page.evaluate(()=>({route:location.hash.split('/')[0],audio:document.querySelectorAll('audio').length,video:document.querySelectorAll('video').length,reader:!!document.querySelector('.reader-workspace'),discover:!!document.querySelector('#source-url'),pendingMedia:!!document.querySelector('[aria-label="原声保存待完成"]'),saveState:document.querySelector('.save-indicator')?.getAttribute('data-state'),sourceMediaAllowed:window.CoconutClientCapabilities?.allows('sourceMedia')===true})).catch(()=>({unavailable:true})):null;
+ console.error('COCONUT_VIDEO_UI_FAILURE '+JSON.stringify({stage,renderer,mediaCalls,completed,pageErrors:errors.length,forbiddenRequests:forbidden.length,asrRequests:asrRequests.length,localResponses}));throw error;
 }finally{release?.();await browser?.close();await server.shutdown();await rm(directory,{recursive:true,force:true});}

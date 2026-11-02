@@ -15,13 +15,17 @@ original-track selection, a 1 MiB caption budget, 200 MiB media budget (enforced
 before each write), bounded time/process/output and explicit failure receipts.
 The pinned native urllib handler eagerly decompresses encoded responses before
 returning them. Coconut therefore requests `Accept-Encoding: identity` and adds
-a small opener response policy **before** that decoder: unsolicited compression
-is rejected before body consumption (`encoded_response_rejected`); raw body reads (including upstream redirect
-body draining) are bounded. DNS, proxy matching/CONNECT, TLS and HttpFD remain
-upstream implementations. HTTPS redirects cannot downgrade to HTTP/FTP. These are
-response/body and file-write limits, **not** an OS memory sandbox or a claim that
-TCP/TLS/header buffers and total process memory have a hard bound. Public-source
-compatibility of the identity response requirement remains part of live CI.
+a small opener response policy **before** that decoder. Metadata/captions accept
+one standard gzip or zlib-deflate member with bounded raw reads and bounded
+`decompressobj.decompress(..., max_length)` output; malformed/truncated/stacked
+or unsupported encodings fail. Compressed media remains rejected so Range offsets
+stay byte-exact. Raw and expanded bytes (including redirect bodies) share the
+24 MiB metadata budget; per-response limits are 4 MiB metadata / 1 MiB captions.
+DNS, proxy matching/CONNECT, TLS and HttpFD remain upstream implementations.
+HTTPS redirects cannot downgrade to HTTP/FTP. These are response/body and
+file-write limits, **not** an OS memory sandbox or a claim that TCP/TLS/header
+buffers and total process memory have a hard bound. No unbounded decoder/flush
+is used; a small compressed text body is held only within the response limits.
 
 Only direct original M4A or supported single MP4 is accepted. This is not general
 HLS/DASH merging, ffmpeg conversion, JS challenges, PO-token provisioning or ASR.

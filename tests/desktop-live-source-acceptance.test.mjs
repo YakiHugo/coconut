@@ -148,6 +148,8 @@ test('live worker strips ambient proxies, sessions and model execution settings'
 test('workflow is opt-in, hash-pinned, quoted and records two independent PR sources',async()=>{
  const workflow=await readFile(new URL('../.github/workflows/source-acceptance.yml',import.meta.url),'utf8');
  assert.match(workflow,/types: \[labeled\]/);assert.match(workflow,/live-source-check/);
+ assert.match(workflow,/live-source-bilibili/);assert.match(workflow,/ref: \$\{\{ github.event.pull_request.head.sha \|\| github.sha \}\}/);
+ assert.match(workflow,/RUNNER_TEMP\/coconut-source-python/);
  assert.match(workflow,/BV1XNtJ6UEmm/);assert.match(workflow,/S6l3aRsecuE/);
  assert.match(workflow,/persist-credentials: false/);assert.match(workflow,/--require-hashes/);
  assert.match(workflow,/fail-fast: false/);assert.match(workflow,/if: always\(\)/);

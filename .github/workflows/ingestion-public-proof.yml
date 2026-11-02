@@ -7,6 +7,11 @@ on:
       - 'scripts/public_video_caption_guard.py'
       - 'tests/test_public_video_caption_guard.py'
   workflow_dispatch:
+    inputs:
+      run_asr:
+        description: Explicitly authorize optional public ASR proof and model download (not source acceptance)
+        type: boolean
+        default: false
 permissions:
   contents: read
 concurrency:
@@ -56,6 +61,7 @@ jobs:
           }
           NODE
   source-preflight:
+    if: github.event_name == 'workflow_dispatch' && inputs.run_asr == true
     runs-on: ubuntu-latest
     timeout-minutes: 3
     steps:
@@ -87,7 +93,9 @@ jobs:
           }
           NODE
 
+  # Never run transcription or download weights on PR/push events.
   public-local-asr:
+    if: github.event_name == 'workflow_dispatch' && inputs.run_asr == true
     strategy:
       fail-fast: false
       matrix:
