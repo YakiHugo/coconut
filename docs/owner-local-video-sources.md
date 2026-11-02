@@ -104,3 +104,26 @@ helper artifacts remain on their older supported contract. Packaged media is
 only enabled when a freshly built, integrity-checked helper advertises
 `ownerLocalVideoProtocol=1`; this source change does not update an already
 installed Mac application or publish release artifacts.
+
+## Subtitle PO-token observations are not whole-video access denials
+
+The pinned yt-dlp extractor can detect a subtitle PO-token requirement while
+parsing a player response, before requesting any subtitle bytes. Coconut keeps
+that immediate stop (including an explicit media action whose extraction reaches
+this observation), but reports `subtitle_token_required`, not `access_restricted`.
+The owner API emits only these conservative availability observations:
+
+```json
+{"metadata":"unverified","captions":"token_required","media":"unknown"}
+```
+
+This is not proof that all metadata was validated, that the video needs account
+login, that captions are absent, or that its media can or cannot be downloaded.
+A login/HTTP denial still retains its separate access-restricted status. No
+subtitle request, media fallback, token generation, alternate client, or automatic
+retry is enabled by this status. The reader offers the original site and existing
+subtitle-file import rather than login or repeated-request advice. Reports remain
+failed/blocked with persistence and restart unattempted. Authored `xpe`/`xpv`
+fixtures cover human/automatic subtitles and caption/media actions; they are not
+live-source availability evidence. This state-only fix does not retry any earlier
+restricted sample or change the opt-in live-source / manual-ASR workflow gates.

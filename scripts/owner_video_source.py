@@ -479,8 +479,10 @@ def acquire_video(url, language=None, *, network=None, bilibili_cookies=None, ou
                     'format': extension, 'bytes': body}
     except StopProof as stopped:
         reason = stopped.outcome
-        access = reason in ('access_restricted', 'login_required', 'subtitle_login_required', 'subtitle_token_required', 'rate_limited', 'http_access_denied')
-        status = 'access_restricted' if access else 'network_unavailable' if reason == 'transport_unavailable' else 'metadata_incomplete' if reason == 'metadata_incomplete' else 'guard_stopped'
+        access = reason in ('access_restricted', 'login_required', 'subtitle_login_required', 'rate_limited', 'http_access_denied')
+        # A local upstream subtitle-policy observation is not a whole-video denial.
+        # Keep the stop: no subtitle/media request or token acquisition follows.
+        status = 'subtitle_token_required' if reason == 'subtitle_token_required' else 'access_restricted' if access else 'network_unavailable' if reason == 'transport_unavailable' else 'metadata_incomplete' if reason == 'metadata_incomplete' else 'guard_stopped'
         return {'status': status, 'diagnostic': {'stage': downloader.stage if downloader else 'initialization', 'reason': reason,
             'requests_attempted': downloader.count if downloader else 0, 'responses_received': downloader.responses if downloader else 0}}
     except Exception:

@@ -9,7 +9,7 @@ import { createProviders } from './providers.mjs';
 import { createTranslator } from './translation.mjs';
 import { createPodcastSources } from './podcast-sources.mjs';
 import {createIngestionService} from './ingestion-service.mjs';
-import {packagedCaptionGuidance,captionDiagnostic} from './caption-service.mjs';
+import {packagedCaptionGuidance,captionDiagnostic,captionFailureAvailability} from './caption-service.mjs';
 import {createIngestionExecutor} from './ingestion-executor.mjs';
 import {createReadabilityJobs} from './readability-jobs.mjs';
 import {createTaskStore,TASK_BODY_BYTES} from './tasks.mjs';
@@ -184,10 +184,10 @@ export function createBridge({readerDirectory = path.resolve(ROOT,'../reader'), 
     } catch (error) {
       if(res.headersSent){res.destroy();return;}
       if(['/api/videos/media','/api/videos/source-media'].includes(pathname)){
-        const diagnostic=captionDiagnostic(error.diagnostic);
+        const diagnostic=captionDiagnostic(error.diagnostic),availability=captionFailureAvailability(error.code);
         return json(error.status||400,{...(typeof error.code==='string'?{code:error.code}:{}),
           error:remote?remoteDiagnostic(error.message):String(error.message||'媒体读取未完成').slice(0,300),
-          ...(diagnostic?{diagnostic}:{})});
+          ...(diagnostic?{diagnostic}:{}),...(availability?{availability}:{})});
       }
       return json(error.status|| (error.code === 'ENOENT' ? 404 : 400),{...(remote?{code:error.taskCode||error.code||'request_failed'}:{}),...(pathname==='/api/videos/media'&&typeof error.code==='string'?{code:error.code}:{}),...(error.taskCode?{code:error.taskCode}:(pathname==='/api/captions/import'||pathname==='/api/v1/ingestions'&&['CAPTION_OUTPUT','CAPTION_PARSE_FAILED','CAPTION_TIMEOUT','CAPTION_UNAVAILABLE','CAPTION_INTEGRITY','CAPTION_VERSION','CAPTION_START','CAPTION_EXIT'].includes(error.code))&&error.code?{code:error.code}:{}),...(!remote&&error.localProviderDetails?{localProviderDetails:error.localProviderDetails}:{}),...(error.providerDiagnostics?{code:'provider_failed',localHttpStatus:400,providerDiagnostics:error.providerDiagnostics}:{}),error:error.code === 'ENOENT' ? 'File not found' : remote?remoteDiagnostic(error.message):String(error.message || '请求未完成').slice(0,300)});
     }

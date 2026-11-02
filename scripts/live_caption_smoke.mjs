@@ -37,10 +37,10 @@ export function recordReceipt(report,receipt,httpStatus){
   return;
  }
  if(statuses.has(receipt?.status)){
-  report.import_status=receipt.status;report.outcome=['access_restricted','network_unavailable','guard_stopped'].includes(receipt.status)?'blocked':'unverified';
+  report.import_status=receipt.status;report.outcome=['subtitle_token_required','access_restricted','network_unavailable','guard_stopped'].includes(receipt.status)?'blocked':'unverified';
   const diagnostic=captionDiagnostic(receipt.diagnostic);
   if(diagnostic)report.diagnostic=diagnostic;
-  report.reason=diagnostic?.reason||(['access_restricted','network_unavailable','guard_stopped','no_matching_captions','extractor_failed','caption_file_invalid','caption_parse_failed'].includes(receipt.status)?receipt.status:'unknown');return;
+  report.reason=diagnostic?.reason||(['subtitle_token_required','access_restricted','network_unavailable','guard_stopped','no_matching_captions','extractor_failed','caption_file_invalid','caption_parse_failed'].includes(receipt.status)?receipt.status:'unknown');return;
  }
  const sample=sampleFor(report.provider);
  const doc=receipt?.document,cues=doc?.segments;

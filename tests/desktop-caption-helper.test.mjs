@@ -283,3 +283,16 @@ test('new packaged helper capability wires bounded native media, legacy capabili
  const limited=await preparePackagedCaptions({helper:{ownerLocalOnly:true,status:async()=>({ready:true,audioFallback:true,providers:['x']}),extractAudio:async()=>assert.fail('Unavailable provider must not run')}});
  assert.equal(limited.videoAudioService.available,false);
 });
+
+test('packaged helper retains subtitle-only token requirement without inferring media access',async t=>{
+ const s=await fixture(t);s.artifact.publicProviders=publicProviders;
+ const diagnostic={stage:'metadata',reason:'subtitle_token_required',requests_attempted:1,responses_received:1};
+ const bridge=await packagedBridge(t,s,{respond:()=>({status:'subtitle_token_required',diagnostic:{...diagnostic,raw:'PRIVATE'},availability:{media:'available'}})});
+ const response=await bridge.ingest(providerSamples.find(sample=>sample.url.includes('youtube')).url);
+ const {ingestion}=await response.json();
+ assert.equal(ingestion.state,'blocked');assert.equal(ingestion.error.code,'subtitle_token_required');
+ assert.deepEqual(ingestion.error.availability,{metadata:'unverified',captions:'token_required',media:'unknown'});
+ assert.deepEqual(ingestion.error.diagnostic,diagnostic);assert.equal(ingestion.error.audio_fallback,undefined);
+ assert.equal(ingestion.transcript,null);assert.doesNotMatch(JSON.stringify(ingestion),/PRIVATE/);
+ assert.deepEqual(bridge.requests.map(r=>r.operation),['version','extract']);
+});
