@@ -49,6 +49,32 @@ class NativeSourceTests(unittest.TestCase):
                 self.assertIn(b'Authored original fixture.',result['bytes'])
                 self.assertGreater(send.call_count,0)
 
+    def test_subtitle_po_requirement_stops_locally_without_asserting_video_or_media_denial(self):
+        for marker in ('xpe', 'xpv'):
+            for automatic in (False, True):
+                for action in ('captions', 'fallback', 'source'):
+                    player = copy.deepcopy(PLAYER)
+                    track = player['captions']['playerCaptionsTracklistRenderer']['captionTracks'][0]
+                    track['baseUrl'] += '&exp=' + marker
+                    if automatic:
+                        track.update(kind='asr', vssId='a.en')
+                    with self.subTest(marker=marker, automatic=automatic, action=action), tempfile.TemporaryDirectory() as tmp, patch.dict(globals(), {'PLAYER': player}), patch.object(RequestDirector, 'send', side_effect=fixture) as send, patch.object(source, 'download_media', side_effect=AssertionError('media must not start')) as media:
+                        output = Path(tmp) / 'public-media.bin'
+                        result = source.acquire_video(YOUTUBE, 'en', **({} if action == 'captions' else {'output': output, 'purpose': 'source' if action == 'source' else None}))
+                        self.assertEqual(result, {'status': 'subtitle_token_required', 'diagnostic': {'stage': 'metadata', 'reason': 'subtitle_token_required', 'requests_attempted': 1, 'responses_received': 1}})
+                        self.assertEqual([call.args[0].url for call in send.call_args_list], [YOUTUBE])
+                        media.assert_not_called()
+                        self.assertEqual(list(Path(tmp).iterdir()), [])
+
+    def test_player_login_remains_distinct_from_subtitle_po_requirement(self):
+        player = copy.deepcopy(PLAYER)
+        player['playabilityStatus'] = {'status': 'LOGIN_REQUIRED'}
+        with patch.dict(globals(), {'PLAYER': player}), patch.object(RequestDirector, 'send', side_effect=fixture) as send:
+            result = source.acquire_video(YOUTUBE, 'en')
+            self.assertEqual(result['status'], 'access_restricted')
+            self.assertEqual(result['diagnostic']['reason'], 'login_required')
+            self.assertEqual(send.call_count, 1)
+
     def test_native_network_does_not_use_legacy_transport(self):
         from scripts import public_video_caption_guard as legacy
         with patch.object(legacy.VideoTransport,'send',side_effect=AssertionError('legacy transport used')),patch.object(RequestDirector,'send',side_effect=fixture):

@@ -43,3 +43,16 @@ test('transport failures keep a safe original action; unrelated sources never re
   x.input(x.w.document.querySelector('#source-url'),'https://publisher.example/feed');await wait(()=>!panel(x));x.open('https://publisher.example/feed');await wait(()=>x.requests.length===2&&x.w.document.querySelector('.source-error').textContent==='来源服务未响应');assert.equal(panel(x),null);
  }finally{await x.w.happyDOM.close();}
 });
+
+test('subtitle PO requirement is not a login instruction, absent captions, or a media fallback',async()=>{
+ const d={stage:'metadata',reason:'subtitle_token_required',requests_attempted:1,responses_received:1};
+ const x=await mountedSourceApp(fixture(()=>d));try{
+  x.open(url);await wait(()=>panel(x));
+  assert.match(panel(x).querySelector('h2').textContent,/PO token.*媒体可用性未知/);
+  assert.doesNotMatch(panel(x).querySelector('h2').textContent,/登录|没有字幕|视频受限/);
+  assert.match(panel(x).textContent,/未检查媒体/);
+  assert.equal([...panel(x).querySelectorAll('button')].some(b=>/重试|下载/.test(b.textContent)),false);
+  assert.equal(panel(x).querySelector('a').href,url);
+  await new Promise(r=>setTimeout(r,30));assert.equal(x.requests.length,1);assert.equal(x.docs().length,0);
+ }finally{await x.w.happyDOM.close();}
+});

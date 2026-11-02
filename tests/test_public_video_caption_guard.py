@@ -316,7 +316,7 @@ class OfficialExtractorTests(unittest.TestCase):
         self.assertFalse(any('tlang=' in url for url in calls))
         track['baseUrl'] += '&exp=xpe'
         result, calls = self.extract(YOUTUBE, player=player)
-        self.assertEqual(result['status'], 'access_restricted')
+        self.assertEqual(result['status'], 'subtitle_token_required')
         self.assertEqual(result['diagnostic']['reason'], 'subtitle_token_required')
         self.assertEqual(len(calls), 1)
 

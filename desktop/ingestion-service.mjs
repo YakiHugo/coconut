@@ -73,7 +73,7 @@ export function createIngestionService({podcastSources,captionService=null,capti
    // This specific flag restricts only Bilibili subtitles, not the public media.
    // Offer a separate, user-initiated media check; no automatic retry or bypass.
    const independentMedia=videoSourceMedia&&canonical.provider==='bilibili'&&result.status==='access_restricted'&&result.diagnostic?.reason==='subtitle_login_required';
-   return result.status==='ready'?finish({state:'ready',transcript:{document:result.document},...(result.diagnostics?{diagnostics:result.diagnostics}:{})}):finish({state:'blocked',error:{code:result.status,message:result.message,...(result.status==='language_required'?{languages:result.languages}:{}),...(result.diagnostic?{diagnostic:result.diagnostic}:{}),...((result.status==='no_matching_captions'||independentMedia)&&videoAudioProviders.includes(canonical.provider)?{audio_fallback:{endpoint:'/api/videos/media',url:canonical.url,language:data.language||null,...(independentMedia?{purpose:'source'}:{})}}:{})}});
+   return result.status==='ready'?finish({state:'ready',transcript:{document:result.document},...(result.diagnostics?{diagnostics:result.diagnostics}:{})}):finish({state:'blocked',error:{code:result.status,message:result.message,...(result.availability?{availability:result.availability}:{}),...(result.status==='language_required'?{languages:result.languages}:{}),...(result.diagnostic?{diagnostic:result.diagnostic}:{}),...((result.status==='no_matching_captions'||independentMedia)&&videoAudioProviders.includes(canonical.provider)?{audio_fallback:{endpoint:'/api/videos/media',url:canonical.url,language:data.language||null,...(independentMedia?{purpose:'source'}:{})}}:{})}});
   }
   if(data.episode){
    const episode=data.episode;

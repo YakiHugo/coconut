@@ -9,7 +9,7 @@ import {createHash,randomUUID} from 'node:crypto';
 import {createRequire} from 'node:module';
 const require=createRequire(import.meta.url);
 import {spawn, spawnSync} from 'node:child_process';
-import {captionSource, captionDiagnostic, CAPTION_FAILURE_STATUSES} from '../desktop/caption-service.mjs';
+import {captionSource, captionDiagnostic, CAPTION_FAILURE_STATUSES, captionFailureAvailability} from '../desktop/caption-service.mjs';
 import {createIngestionExecutor} from '../desktop/ingestion-executor.mjs';
 import {startDevelopmentBridge} from '../desktop/dev.mjs';
 
@@ -60,6 +60,7 @@ export function recordSourceReceipt(report,input,payload,httpStatus){
  if(receipt.state==='blocked'){
   const status=safeFailure(receipt.error?.code),diagnostic=captionDiagnostic(receipt.error?.diagnostic);
   report.metadata={state:status==='no_matching_captions'?'validated':'unverified'};
+  const availability=captionFailureAvailability(status);if(availability)report.availability=availability;
   report.captions={state:status==='no_matching_captions'?'not_available':'blocked',status,...(diagnostic?{diagnostic}:{})};
   // Explicit owner media is a separate request, never an automatic fallback.
   // Only a subtitle-specific login gate may pass an access-restricted caption result.

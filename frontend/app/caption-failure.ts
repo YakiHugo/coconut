@@ -6,7 +6,7 @@ const stages = {
 } as const;
 const reasons = {
     access_restricted: '公开入口受限', login_required: '来源要求登录', subtitle_login_required: '字幕要求登录',
-    subtitle_token_required: '字幕需要访问凭据', rate_limited: '来源限制了请求频率', http_access_denied: '来源拒绝访问',
+    subtitle_token_required: '字幕需要 PO token，媒体可用性未知', rate_limited: '来源限制了请求频率', http_access_denied: '来源拒绝访问',
     transport_unavailable: '网络连接未完成', metadata_incomplete: '视频信息不完整', request_scope_stopped: '请求已停止',
     non_public_address: '来源地址不符合公开访问要求', identity_mismatch: '来源身份无法核对', budget_exceeded: '已达到本次读取上限',
     encoded_response_rejected: '来源返回未请求的压缩响应，已在解码前停止', unexpected_response: '来源响应不符合预期', upstream_error: '来源服务返回错误', dependency_mismatch: '字幕组件版本不匹配',
@@ -36,7 +36,7 @@ export function captionFailureSummary(d: CaptionFailureDiagnostic): string {
 }
 export function captionFailureTitle(d: CaptionFailureDiagnostic | null): string {
     if (!d) return '暂时无法读取此来源';
-    if (['login_required', 'subtitle_login_required', 'subtitle_token_required'].includes(d.reason)) return '字幕需要登录后才能读取';
+    if (['login_required', 'subtitle_login_required'].includes(d.reason)) return '字幕需要登录后才能读取';
     if (d.reason === 'no_matching_track') return '没有匹配原语言的字幕';
     return reasons[d.reason];
 }

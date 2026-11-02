@@ -7,7 +7,7 @@ const require=createRequire(import.meta.url);
 const MAX_BYTES=8*1024*1024;
 const MAX_DURATION=6*3600;
 
-export const CAPTION_FAILURE_STATUSES=Object.freeze(['unavailable','access_restricted','language_required','network_unavailable','metadata_incomplete','no_matching_captions','extractor_failed','caption_file_invalid','caption_parse_failed','guard_stopped']);
+export const CAPTION_FAILURE_STATUSES=Object.freeze(['unavailable','subtitle_token_required','access_restricted','language_required','network_unavailable','metadata_incomplete','no_matching_captions','extractor_failed','caption_file_invalid','caption_parse_failed','guard_stopped']);
 const diagnosticStages=new Set(['initialization','extractor_setup','metadata','track_selection','caption_download','caption_parse','caption_output','helper_execution','reader_parse','media_download']);
 const diagnosticReasons=new Set(['access_restricted','login_required','subtitle_login_required','subtitle_token_required','rate_limited','http_access_denied','transport_unavailable','metadata_incomplete','request_scope_stopped','non_public_address','identity_mismatch','budget_exceeded','encoded_response_rejected','unexpected_response','upstream_error','dependency_mismatch','alternate_extractor_stopped','unsupported_request','external_execution_stopped','duration_unavailable','redirect_stopped','guard_stopped','language_unknown','no_matching_track','invalid_caption_file','caption_parse_failed','caption_download_or_file_failed','extractor_error','helper_error','proxy_configuration_invalid','proxy_unavailable','proxy_auth_required','proxy_connect_rejected','origin_tls_failed']);
 // Only finite enum/counter observations cross the helper, UI and report boundary.
@@ -19,6 +19,12 @@ export function captionDiagnostic(value){
  if(!unknown&&(!counts.every(n=>Number.isInteger(n)&&n>=0&&n<=32)||counts[1]>counts[0]))return null;
  return {stage:value.stage,reason:value.reason,requests_attempted:counts[0],responses_received:counts[1]};
 }
+/** A blocked subtitle requirement proves neither a playable video nor media denial.
+ * Derive only negative/unknown observations; never forward helper-supplied claims. */
+export function captionFailureAvailability(status){
+ return status==='subtitle_token_required'?{metadata:'unverified',captions:'token_required',media:'unknown'}:null;
+}
+export const SUBTITLE_TOKEN_GUIDANCE='提取器从来源响应检测到字幕需要 PO token（客户端来源证明，不等于账号登录）。当前入口未提供令牌，已停止且未请求字幕或媒体；媒体是否可取得尚未知。这不代表没有字幕或整个视频被拒绝访问。可前往原站查看，或导入合法取得的 SRT / VTT；不会自动生成令牌或重试。';
 /** Metadata-only choices: never URLs, titles, or an invented language list. */
 export function captionLanguages(value){
  if(!Array.isArray(value)||value.length>128)return [];
@@ -37,6 +43,7 @@ export function packagedCaptionGuidance(code){
  return (Object.hasOwn(reasons,code)?reasons[code]:'安装包内的字幕助手检查未通过。')+'请重新安装包含字幕助手的完整 Coconut 安装包；也可导入或粘贴已有字幕。不会自动安装依赖或启动识别。';
 }
 const failureMessages={
+ subtitle_token_required:SUBTITLE_TOKEN_GUIDANCE,
  metadata_incomplete:'来源未提供足够的访问或视频完成状态，暂不能安全导入；可稍后重试或导入已有字幕。',
  network_unavailable:'网络或 TLS 连接未完成，无法判断字幕是否可用；请检查网络后重试。',
  language_required:'无法确认原语言，请选择后重试；未启动识别。',
@@ -96,7 +103,7 @@ export function createCaptionService({helper,readerDirectory=path.resolve(ROOT,'
      const networkGuidance={
       login_required:'来源明确要求登录或认证；请检查来源账号的登录状态后重试。',
       subtitle_login_required:'Bilibili 字幕接口明确要求登录后取得字幕；当前登录状态未满足要求，请检查账号登录状态后重试。',
-      subtitle_token_required:'YouTube 字幕轨道要求额外的 PO token；当前公开字幕入口不提供该令牌，未下载字幕。',
+      subtitle_token_required:SUBTITLE_TOKEN_GUIDANCE,
       rate_limited:'来源明确返回请求限流；本次已停止，未自动重试。',
       http_access_denied:'来源返回 HTTP 403 / 412 拒绝请求；不能据此判断是登录要求、限流或没有字幕。',
       non_public_address:'本机 DNS 返回非公网地址，本次未连接来源；若使用本机代理，可由服务所有者显式配置字幕代理。不能据此判断没有字幕。',
@@ -109,7 +116,8 @@ export function createCaptionService({helper,readerDirectory=path.resolve(ROOT,'
      const message=networkGuidance[diagnostic?.reason]||(result.status==='extractor_failed'&&diagnostic?.requests_attempted===0&&['initialization','extractor_setup'].includes(diagnostic.stage)
       ?'本机字幕提取器初始化未完成，尚未尝试来源网络请求；无法判断是否有字幕。可导入已有 SRT / VTT。'
       :failureMessages[result.status]);
-     return {status:result.status,source_url:source.url,message,...(result.status==='language_required'?{languages:captionLanguages(result.languages)}:{}),...(diagnostic?{diagnostic}:{})};
+     const availability=captionFailureAvailability(result.status);
+     return {status:result.status,source_url:source.url,message,...(availability?{availability}:{}),...(result.status==='language_required'?{languages:captionLanguages(result.languages)}:{}),...(diagnostic?{diagnostic}:{})};
     }
     const meta=result.source;
     if(!meta||captionSource(meta.url).url!==source.url||typeof meta.id!=='string'||!(source.provider==='x'?/^\d{1,20}$/.test(meta.id):meta.id===source.mediaId))throw new Error('字幕来源与请求无法核对，未导入');

@@ -93,6 +93,18 @@ class PackagedLauncherTests(unittest.TestCase):
                 self.assertEqual(result['diagnostic']['responses_received'], 1)
                 send.assert_called_once()
 
+    def test_real_native_subtitle_token_stop_survives_both_launcher_caption_operations(self):
+        from test_public_video_caption_guard import PLAYER
+        player = copy.deepcopy(PLAYER)
+        player['captions']['playerCaptionsTracklistRenderer']['captionTracks'][0]['baseUrl'] += '&exp=xpe'
+        body = ('<script>var ytInitialPlayerResponse = ' + json.dumps(player) + ';</script>').encode()
+        expected = {'status': 'subtitle_token_required', 'diagnostic': {'stage': 'metadata', 'reason': 'subtitle_token_required', 'requests_attempted': 1, 'responses_received': 1}}
+        for operation in ('extract', 'extract-development'):
+            with self.subTest(operation=operation), patch.object(RequestDirector, 'send', return_value=Response(io.BytesIO(body), YOUTUBE, {'Content-Length': str(len(body))})) as send, patch.object(video_guard, 'download_media', side_effect=AssertionError('No media action')) as media:
+                self.assertEqual(self.invoke({'operation': operation, 'url': YOUTUBE, 'language': 'en'}), expected)
+                self.assertEqual([call.args[0].url for call in send.call_args_list], [YOUTUBE])
+                media.assert_not_called()
+
     def test_packaged_failures_keep_only_bounded_status_diagnostics_and_languages(self):
         statuses = ['access_restricted', 'unavailable', 'language_required', 'network_unavailable',
                     'metadata_incomplete', 'no_matching_captions', 'extractor_failed',

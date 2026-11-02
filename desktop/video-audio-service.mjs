@@ -1,7 +1,8 @@
 /** Explicit development-only public media; no paid or automatic ASR. */
 import {createHash} from 'node:crypto';
-import {captionSource,CAPTION_FAILURE_STATUSES,captionDiagnostic} from './caption-service.mjs';
+import {captionSource,CAPTION_FAILURE_STATUSES,captionDiagnostic,SUBTITLE_TOKEN_GUIDANCE} from './caption-service.mjs';
 const messages={
+ subtitle_token_required:SUBTITLE_TOKEN_GUIDANCE,
  captions_available:'现在已有可用字幕，请重新读取链接以优先导入字幕；未下载媒体。',
  media_unavailable:'已确认没有匹配字幕，但未找到可直接取得的公开 M4A 音轨或单文件 MP4。未尝试播放列表、登录或其他下载方式；可提供合法取得的原文件。',
  access_restricted:'来源明确限制访问，已停止；未切换客户端、登录或绕过限制。',

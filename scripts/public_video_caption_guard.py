@@ -32,7 +32,7 @@ MAX_RESPONSE = 4 * 1024 * 1024
 MAX_TOTAL = 24 * 1024 * 1024
 MAX_CAPTION = 1024 * 1024
 ACCESS_REASONS = frozenset({'access_restricted', 'login_required', 'subtitle_login_required',
-                            'subtitle_token_required', 'rate_limited', 'http_access_denied'})
+                            'rate_limited', 'http_access_denied'})
 
 
 # Match the bridge's public-network boundary independently of DNS/TLS trust.
@@ -526,14 +526,14 @@ def extract_public_video_captions(url, language=None, *, ca_file=None, proxy=Non
                     'languageBasis': p['language_basis'], 'captionTrack': p['caption_track'], 'reviewStatus': 'unreviewed'},
                 'format': caption_format, 'bytes': caption_bytes}
     except StopProof as stopped:
-        reasons = {'access_restricted', 'transport_unavailable', 'metadata_incomplete',
+        reasons = {'subtitle_token_required', 'access_restricted', 'transport_unavailable', 'metadata_incomplete',
                    'request_scope_stopped', 'non_public_address', 'identity_mismatch', 'budget_exceeded',
                    'unexpected_response', 'upstream_error', 'dependency_mismatch',
                    'alternate_extractor_stopped', 'unsupported_request', 'external_execution_stopped',
                    'duration_unavailable', 'redirect_stopped', 'proxy_configuration_invalid',
                    'proxy_unavailable', 'proxy_auth_required', 'proxy_connect_rejected', 'origin_tls_failed'}
         reason = stopped.outcome if stopped.outcome in reasons | ACCESS_REASONS else 'guard_stopped'
-        status = {'access_restricted': 'access_restricted', 'transport_unavailable': 'network_unavailable',
+        status = {'subtitle_token_required': 'subtitle_token_required', 'access_restricted': 'access_restricted', 'transport_unavailable': 'network_unavailable',
                   'metadata_incomplete': 'metadata_incomplete', 'proxy_unavailable': 'network_unavailable',
                   'proxy_auth_required': 'network_unavailable', 'proxy_connect_rejected': 'network_unavailable',
                   'origin_tls_failed': 'network_unavailable'}.get(reason, 'access_restricted' if reason in ACCESS_REASONS else 'guard_stopped')

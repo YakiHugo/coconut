@@ -7,9 +7,10 @@ import {chromium,expect} from '@playwright/test';
 import {startBridge} from '../desktop/server.mjs';
 import {createCaptionService} from '../desktop/caption-service.mjs';
 const url='https://www.youtube.com/watch?v=abcdefghijk',requests=[],forbidden=[],errors=[];
-let hold,release;
+let hold,release,tokenRequired=false;
 const captions=createCaptionService({enabledProviders:['youtube'],helper:{extractCaptions:async request=>{
  requests.push(request);if(hold)await hold;
+ if(tokenRequired)return {status:'subtitle_token_required',diagnostic:{stage:'metadata',reason:'subtitle_token_required',requests_attempted:1,responses_received:1}};
  return {status:'network_unavailable',diagnostic:{stage:'metadata',reason:'transport_unavailable',requests_attempted:2,responses_received:0,raw:'PRIVATE_RAW_ERROR'}};
 }}});
 const directory=await mkdtemp(path.join(os.tmpdir(),'coconut-caption-failure-'));
@@ -27,6 +28,13 @@ try{
  await mkdir(output,{recursive:true});await page.screenshot({path:path.join(output,'caption-failure-wide.png'),fullPage:true});
  await page.setViewportSize({width:390,height:844});await expect(panel.getByRole('link')).toBeVisible();assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);await page.screenshot({path:path.join(output,'caption-failure-narrow.png'),fullPage:true});
  hold=new Promise(resolve=>release=resolve);await page.getByRole('button',{name:'重试上次读取',exact:true}).click();await expect(panel).toHaveCount(0);await page.getByRole('button',{name:'取消读取',exact:true}).click();release();hold=null;await expect(page.locator('.source-error')).toContainText('读取已取消');await expect(panel).toHaveCount(0);
+ tokenRequired=true;await page.getByLabel('播客或视频链接').fill(url);await page.getByRole('button',{name:'打开链接',exact:true}).click();
+ await expect(panel.getByRole('heading')).toHaveText('字幕需要 PO token，媒体可用性未知');
+ await expect(panel).toContainText('未检查媒体');await expect(panel.getByRole('button')).toHaveCount(0);
+ await panel.getByText('查看读取详情',{exact:true}).click();await expect(panel).toContainText('不等于账号登录');
+ await expect(panel).toContainText('媒体是否可取得尚未知');assert.equal(requests.length,3);
+ assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
+ await page.screenshot({path:path.join(output,'caption-token-required-narrow.png'),fullPage:true});
  await page.getByLabel('播客或视频链接').fill('https://publisher.example/feed');await expect(panel).toHaveCount(0);assert.deepEqual(forbidden,[]);assert.deepEqual(errors,[]);assert.equal((await fetch(origin+'/api/v1/library').then(r=>r.json())).sequence,0);
- console.log('PASS caption failure browser: localized bounded evidence, safe explicit original action, narrow layout, retry/cancel, unchanged library, no external/model requests.');
+ console.log('PASS caption failure browser: localized bounded evidence, subtitle-only PO requirement and unknown media, safe explicit original action, narrow layout, retry/cancel, unchanged library, no external/model requests.');
 }finally{release?.();await browser?.close();await server.shutdown();await rm(directory,{recursive:true,force:true});}
