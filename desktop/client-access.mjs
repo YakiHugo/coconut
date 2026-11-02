@@ -37,10 +37,10 @@ export function authorizeClient(req,{port,profile=null}={}){
     (h.origin&&h.origin!==profile.origin))return null;
   return {mode:'private-owner',origin:profile.origin,id:profile.id};
 }
-export function describeClient(access,{profile,libraryStore,taskStore,localMediaService}={}){
+export function describeClient(access,{profile,libraryStore,taskStore,localMediaService,sourceMediaStore}={}){
   return {id:access.id,mode:access.mode,backendLabel:profile?.backendLabel||'此电脑',online:true,libraryId:libraryStore?.describe().epoch||null,
     capabilities:{libraryRead:!!libraryStore,libraryWrite:!!libraryStore,aiActions:true,backgroundTasks:taskStore?.describe().enabled===true,
-      localMedia:access.mode==='local'&&!!localMediaService,libraryMigration:false}};
+      sourceMedia:!!sourceMediaStore,localMedia:access.mode==='local'&&!!localMediaService,libraryMigration:false}};
 }
 export function localOnlyRoute(pathname){return pathname==='/api/captions/session'||pathname==='/api/v1/library/migration'||pathname==='/api/local-media'||pathname.startsWith('/api/local-media/');}
 // Only diagnostic text is sanitized, never document content or model answers.
