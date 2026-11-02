@@ -14,6 +14,7 @@ import {createIngestionExecutor} from './ingestion-executor.mjs';
 import {createReadabilityJobs} from './readability-jobs.mjs';
 import {createTaskStore,TASK_BODY_BYTES} from './tasks.mjs';
 import {createLibraryStore} from './library-store.mjs';
+import {createSourceMediaStore,handleSourceMediaRequest} from './source-media.mjs';
 import {handleLibraryRequest} from './library-api.mjs';
 import {libraryLocation,libraryStartupMessage} from './library-location.mjs';
 import {privateProxyProfile,privateProxyFromEnvironment,authorizeClient,describeClient,localOnlyRoute,remoteDiagnostic,remoteResponseDiagnostics} from './client-access.mjs';
@@ -25,7 +26,7 @@ const MIME = {'.png':'image/png','.html':'text/html; charset=utf-8','.js':'text/
 const MAX_BODY = 1024 * 1024;
 export const CSP = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self'; img-src 'self' data: blob:; media-src 'self' blob:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'";
 
-export function createBridge({readerDirectory = path.resolve(ROOT,'../reader'), providers = createProviders(), podcastSources = createPodcastSources(), captionService = null, captionStatus = null, captionShortLinkResolver = undefined, bilibiliSession = null, localMediaService = null, videoAudioService = null, taskStore = null, taskUnavailable = null, libraryStore = null, libraryUnavailable = null, libraryLocation = null, privateProxy = null, ingestionExecutor = createIngestionExecutor(),readabilityJobs = null} = {}) {
+export function createBridge({readerDirectory = path.resolve(ROOT,'../reader'), providers = createProviders(), podcastSources = createPodcastSources(), captionService = null, captionStatus = null, captionShortLinkResolver = undefined, bilibiliSession = null, localMediaService = null, videoAudioService = null, taskStore = null, taskUnavailable = null, libraryStore = null, sourceMediaStore = null, libraryUnavailable = null, libraryLocation = null, privateProxy = null, ingestionExecutor = createIngestionExecutor(),readabilityJobs = null} = {}) {
   const profile=privateProxyProfile(privateProxy);
   const translate = createTranslator(providers);
   const capabilities=Object.freeze({...CAPABILITIES,caption_import:captionService?.available===true,persistent_tasks:!!taskStore,canonical_library:!!libraryStore});
@@ -52,11 +53,12 @@ export function createBridge({readerDirectory = path.resolve(ROOT,'../reader'), 
     const origin=access.origin,remote=access.mode==='private-owner';
     try { pathname = new URL(req.url, origin).pathname; } catch { return json(400,{error:'无效路径'}); }
     if(remote&&localOnlyRoute(pathname))return json(403,{code:'local_only',error:'此操作需要在所连接的电脑上完成'});
-    const client=()=>describeClient(access,{profile,libraryStore,taskStore,localMediaService});
+    const client=()=>describeClient(access,{profile,libraryStore,taskStore,localMediaService,sourceMediaStore});
     const controller = new AbortController(); active.add(controller);
     res.on('close',()=>{ if (!res.writableEnded) controller.abort(); active.delete(controller); });
     try {
       if(await handleLibraryRequest({req,pathname,origin,json,store:libraryStore,unavailable:libraryUnavailable}))return;
+      if(await handleSourceMediaRequest({req,res,pathname,origin,json,store:sourceMediaStore,signal:controller.signal}))return;
       if (localMediaService && await localMediaService.handle(req,res,pathname)) return;
       if(pathname.startsWith('/api/v1/readability')){
         if(remote)return json(403,{error:'请在本机阅读器中整理原声与文字稿'});
@@ -189,14 +191,14 @@ export function createBridge({readerDirectory = path.resolve(ROOT,'../reader'), 
     }
   });
   server.requestTimeout = 30000; server.headersTimeout = 10000;
-  server.on('close',()=>{ libraryStore?.close(); for (const controller of active) controller.abort(); active.clear();void taskStore?.shutdown().catch(()=>{});void readabilityJobs?.shutdown().catch(()=>{}); });
+  server.on('close',()=>{ void sourceMediaStore?.shutdown();libraryStore?.close(); for (const controller of active) controller.abort(); active.clear();void taskStore?.shutdown().catch(()=>{});void readabilityJobs?.shutdown().catch(()=>{}); });
   // Abort synchronously before Electron exits: detached CLI process groups must
   // not outlive the app while waiting for a later HTTP close event.
   let shutdown;
   server.shutdown = callback => {
     if(!shutdown){
       for (const controller of active) controller.abort();
-      active.clear(); const stopping=Promise.all([taskStore?.shutdown(),readabilityJobs?.shutdown()]);
+      active.clear(); const stopping=Promise.all([taskStore?.shutdown(),readabilityJobs?.shutdown(),sourceMediaStore?.shutdown()]);
       shutdown=new Promise((resolve,reject)=>{
         server.close(error=>void stopping.then(()=>error?reject(error):resolve(),reject));
         server.closeAllConnections();
@@ -222,6 +224,10 @@ export async function startBridge({port = 8080, taskDirectory = null, libraryDir
   if(!options.readabilityJobs&&options.libraryStore&&libraryDirectory&&(options.readingPython||process.env.COCONUT_READING_PYTHON)){
     try{options.readabilityJobs=await createReadabilityJobs({directory:path.join(libraryDirectory,'readability'),python:options.readingPython||process.env.COCONUT_READING_PYTHON,punctuationModel:options.punctuationModel,segmentationModel:options.segmentationModel,embeddingModel:options.embeddingModel});}
     catch(error){options.libraryStore?.close();await options.taskStore?.shutdown();throw error;}
+  }
+  if(options.libraryStore&&libraryDirectory&&!options.sourceMediaStore){
+    try{options.sourceMediaStore=await createSourceMediaStore({directory:path.join(libraryDirectory,'source-media'),libraryStore:options.libraryStore});}
+    catch{options.sourceMediaStore=null;} // Fail closed; never mislabel page blobs as saved.
   }
   const server = createBridge(options);
   try{await new Promise((resolve,reject)=>{server.once('error',reject);server.listen(port,'127.0.0.1',resolve);});}

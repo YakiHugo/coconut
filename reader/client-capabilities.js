@@ -2,11 +2,11 @@
  * They are UI admission only; every server route still authorizes the caller. */
 (function(root){
  'use strict';
- const names=['libraryRead','libraryWrite','aiActions','backgroundTasks','localMedia','libraryMigration'];
+ const names=['libraryRead','libraryWrite','aiActions','backgroundTasks','localMedia','libraryMigration','sourceMedia'];
  const local=()=>['localhost','127.0.0.1','[::1]'].includes(root.location.hostname);
  let current=null,generation=0,epoch=0,request=0,applied=0;
  function normalize(value){
-  if(value===undefined&&local())return {mode:'local',id:'legacy-local',backendLabel:'此电脑',online:true,libraryId:null,capabilities:Object.fromEntries(names.map(name=>[name,true]))};
+  if(value===undefined&&local())return {mode:'local',id:'legacy-local',backendLabel:'此电脑',online:true,libraryId:null,capabilities:Object.fromEntries(names.map(name=>[name,name!=='sourceMedia']))};
   if(!value||!['local','private-owner'].includes(value.mode)||value.mode==='local'&&!local()||value.online!==true||typeof value.id!=='string'||!value.id||typeof value.backendLabel!=='string'||!value.backendLabel||!(value.libraryId===null||typeof value.libraryId==='string'))return null;
   if(value.mode==='private-owner'&&root.location.protocol!=='https:')return null;
   return {mode:value.mode,id:value.id,backendLabel:value.mode==='private-owner'&&value.backendLabel==='此电脑'?'已连接的电脑':value.backendLabel,online:true,libraryId:value.libraryId,capabilities:Object.fromEntries(names.map(name=>[name,value.capabilities?.[name]===true&&!(value.mode==='private-owner'&&['localMedia','libraryMigration'].includes(name))]))};
