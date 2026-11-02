@@ -18,7 +18,7 @@ import certifi
 from yt_dlp.version import __version__
 
 PROTOCOL = 1
-MAX_INPUT = 8192
+MAX_INPUT = 32768
 MAX_CAPTION = 1024 * 1024
 # Pin Python API plugin state before any downloader is constructed.
 from yt_dlp.globals import plugin_dirs, plugin_ies, plugin_pps, all_plugins_loaded
@@ -97,12 +97,12 @@ def main():
     operation = request.get('operation')
     if operation == 'version' and set(request) == {'operation'}:
         from scripts.public_x_caption_guard import extract_public_captions
-        from scripts.public_video_caption_guard import extract_public_video_captions
+        from scripts.owner_video_source import acquire_video
         # Probe the real frozen extractor imports, not only their lazy guards.
         from yt_dlp.extractor.twitter import TwitterIE
         from yt_dlp.extractor.youtube import YoutubeIE
         from yt_dlp.extractor.bilibili import BiliBiliIE
-        assert callable(extract_public_captions) and callable(extract_public_video_captions)
+        assert callable(extract_public_captions) and callable(acquire_video)
         assert all(callable(extractor) for extractor in (TwitterIE, YoutubeIE, BiliBiliIE))
         trust=ssl.create_default_context(cafile=certifi.where())
         assert trust.check_hostname and trust.verify_mode == ssl.CERT_REQUIRED
@@ -112,12 +112,12 @@ def main():
                 'publicProviders': list(PUBLIC_PROVIDERS),
                 'developmentProviders': list(PUBLIC_PROVIDERS), 'developmentProxyProtocol': 1,
                 'developmentAudioProtocol': 1, 'developmentProxyAudioProtocol': 1,
-                'developmentSourceMediaProtocol': 1}
+                'developmentSourceMediaProtocol': 1, 'ownerLocalVideoProtocol': 1}
     if operation == 'authored-fixture' and set(request) == {'operation', 'endpoint'}:
         if not isinstance(request['endpoint'], str) or len(request['endpoint']) > 200:
             return {'status': 'unavailable'}
         return authored_fixture(request['endpoint'])
-    if operation == 'extract-development-audio' and {'operation', 'url', 'language'} <= set(request) <= {'operation', 'url', 'language', 'trustedProxy', 'bilibiliCookies', 'purpose'}:
+    if operation in ('extract-development-audio', 'extract-audio') and {'operation', 'url', 'language'} <= set(request) <= {'operation', 'url', 'language', 'network', 'trustedProxy', 'bilibiliCookies', 'purpose'}:
         if not isinstance(request['url'], str) or len(request['url']) > 2048:
             return {'status':'unavailable'}
         if urllib.parse.urlsplit(request['url']).hostname not in ('www.youtube.com', 'www.bilibili.com'):
@@ -127,13 +127,13 @@ def main():
         language = request['language']
         if language is not None and (not isinstance(language, str) or len(language) > 30):
             return {'status':'language_required'}
-        from scripts.public_video_media import extract_public_video_audio
-        return extract_public_video_audio(request['url'], language, output=Path('public-media.bin'),
-            ca_file=certifi.where(), proxy=request.get('trustedProxy'),
-            bilibili_cookies=request.get('bilibiliCookies'), purpose=request.get('purpose'))
+        from scripts.owner_video_source import acquire_video
+        network = request.get('network', {'mode':'custom', 'proxy':request['trustedProxy']} if request.get('trustedProxy') else None)
+        return acquire_video(request['url'], language, output=Path('public-media.bin'),
+            network=network, bilibili_cookies=request.get('bilibiliCookies'), purpose=request.get('purpose'))
     extraction_keys = {'operation', 'url', 'language'}
-    development_options = operation == 'extract-development' and extraction_keys <= set(request) <= extraction_keys | {'trustedProxy', 'bilibiliCookies'}
-    if operation in ('extract', 'extract-development') and (set(request) == extraction_keys or development_options):
+    development_options = operation == 'extract-development' and extraction_keys <= set(request) <= extraction_keys | {'network', 'trustedProxy', 'bilibiliCookies'}
+    if operation in ('extract', 'extract-development') and (set(request) in (extraction_keys, extraction_keys | {'network'}) or development_options):
         if not isinstance(request['url'], str) or len(request['url']) > 2048:
             return {'status': 'unavailable'}
         language = request['language']
@@ -154,9 +154,9 @@ def main():
                         'reason': 'proxy_configuration_invalid', 'requests_attempted': 0, 'responses_received': 0}}
         from scripts.public_x_caption_guard import extract_public_captions
         if urllib.parse.urlsplit(request['url']).hostname in ('www.youtube.com', 'www.bilibili.com'):
-            from scripts.public_video_caption_guard import extract_public_video_captions
-            result = extract_public_video_captions(request['url'], language, ca_file=certifi.where(), proxy=proxy,
-                                                  bilibili_cookies=request.get('bilibiliCookies'))
+            from scripts.owner_video_source import acquire_video
+            network = request.get('network', {'mode':'custom', 'proxy':proxy} if proxy else None)
+            result = acquire_video(request['url'], language, network=network, bilibili_cookies=request.get('bilibiliCookies'))
         else:
             result = extract_public_captions(request['url'], language, ca_file=certifi.where())
         if result.get('status') in ('access_restricted', 'unavailable', 'language_required', 'network_unavailable', 'metadata_incomplete', 'no_matching_captions', 'extractor_failed', 'caption_file_invalid', 'caption_parse_failed', 'guard_stopped'):

@@ -9,7 +9,7 @@ import {createDevelopmentCaptionHelper} from '../desktop/development-captions.mj
 import {runSmoke,recordReceipt,initialReport,SAMPLE_ID,SAMPLES} from '../scripts/live_caption_smoke.mjs';
 const url=`https://www.youtube.com/watch?v=${SAMPLE_ID}`;
 const secret='PRIVATE_CAPTION_SENTINEL';
-const version={status:'ok',protocol:1,version:'2026.08.19',publicExtraction:true,guardProtocol:1,tlsRootsVerified:true,developmentProviders:['x','youtube','bilibili']};
+const version={status:'ok',protocol:1,version:'2026.08.19',publicExtraction:true,guardProtocol:1,tlsRootsVerified:true,ownerLocalVideoProtocol:1,developmentProviders:['x','youtube','bilibili']};
 const caption={status:'ok',source:{url,id:SAMPLE_ID,title:secret,extractor:'youtube',language:'en',automatic:false,translated:false,live:false,live_status:'not_live',duration:2},track:{language:'en',captionMethod:'platform_provided',languageBasis:'user_hint'},format:'vtt',captionBase64:Buffer.from(`WEBVTT\n\n00:00.000 --> 00:02.000\n${secret}\n`).toString('base64')};
 async function helper(t,result,{delay=0,probe=version}={}){
  const dir=await mkdtemp(path.join(tmpdir(),'coconut-smoke-test-'));t.after(()=>rm(dir,{recursive:true,force:true}));
@@ -22,7 +22,7 @@ test('offline harness crosses real localhost API and isolated helper, validates 
  const f=await helper(t,caption);const report=await runSmoke({python:f.python});
  assert.equal(report.outcome,'live_pass');assert.equal(report.setup_ready,true);assert.equal(report.cue_count,1);assert.equal(report.language,'en');assert.deepEqual(report.time_range,{start:0,end:2});assert.match(report.cue_sha256,/^[a-f0-9]{64}$/);safe(report);
  const calls=(await readFile(f.log,'utf8')).trim().split('\n').map(JSON.parse);
- assert.deepEqual(calls.map(c=>c.input),[{operation:'version'},{operation:'extract-development',url,language:'en'}]);
+ assert.deepEqual(calls.map(c=>c.input),[{operation:'version'},{operation:'extract-development',url,language:'en',network:{mode:'direct'}}]);
  assert.deepEqual(calls[1].args.slice(0,3),['-I','-B','-c']);assert.equal(calls[1].env.HTTP_PROXY,undefined);assert.equal(calls[1].env.OPENAI_API_KEY,undefined);
 });
 test('blocked and unknown are not skip/pass and do not disclose helper diagnostics',async t=>{
@@ -161,7 +161,7 @@ test('Bilibili crosses the real API and validates its own language and identity'
  const f=await helper(t,result);const report=await runSmoke({python:f.python,provider:'bilibili'});
  assert.equal(report.outcome,'live_pass');assert.equal(report.provider,'bilibili');assert.equal(report.sample_id,sample.id);assert.equal(report.language,'zh');assert.equal(report.cue_count,1);safe(report);
  const calls=(await readFile(f.log,'utf8')).trim().split('\n').map(JSON.parse);
- assert.deepEqual(calls.map(c=>c.input),[{operation:'version'},{operation:'extract-development',url:sample.url,language:'zh'}]);
+ assert.deepEqual(calls.map(c=>c.input),[{operation:'version'},{operation:'extract-development',url:sample.url,language:'zh',network:{mode:'direct'}}]);
 });
 test('Bilibili receipt rejects wrong identity, URL, language or platform',()=>{
  const sample=SAMPLES.bilibili;

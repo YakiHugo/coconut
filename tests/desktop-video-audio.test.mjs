@@ -86,3 +86,20 @@ test('combined source MP4 stays video with bounded default or unknown language p
   result.source.audio_language_basis='platform_original';await assert.rejects(createVideoAudioService({helper:{extractAudio:async()=>result}}).download({url,consent:true}),/校验/);
  }
 });
+
+test('only Bilibili subtitle-specific restriction offers a distinct source action',async()=>{
+ const bilibili='https://www.bilibili.com/video/BV1xx411c7mD';
+ for(const [target,reason,enabled,expected] of [[bilibili,'subtitle_login_required',true,true],[bilibili,'login_required',true,false],[bilibili,'http_access_denied',true,false],[url,'subtitle_login_required',true,false],[bilibili,'subtitle_login_required',false,false]]){
+  const service=createIngestionService({videoSourceMedia:enabled,videoAudioProviders:['bilibili','youtube'],captionService:{available:true,importCaption:async()=>({status:'access_restricted',diagnostic:{reason},message:'Subtitles restricted'})}});
+  const receipt=(await service.ingest({protocolVersion:1,source:{kind:'url',url:target}})).ingestion;
+  assert.equal(receipt.error.code,'access_restricted');assert.equal(Boolean(receipt.error.audio_fallback),expected);
+  if(expected)assert.equal(receipt.error.audio_fallback.purpose,'source');
+ }
+});
+
+test('independent source action can truthfully report subtitles not requested',async()=>{
+ const result=valid();result.source.purpose='source';result.source.subtitle_check='not_requested';
+ const service=createVideoAudioService({sourceMedia:true,helper:{extractAudio:async()=>result}});
+ assert.equal((await service.download({url,consent:true},{purpose:'source'})).source.subtitle_check,'not_requested');
+ await assert.rejects(service.download({url,consent:true}),/校验/);
+});

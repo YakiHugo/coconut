@@ -1,3 +1,4 @@
+import {saveSourceMedia} from './source-media';
 import {useEffect,useRef,useState,useSyncExternalStore} from 'react';
 import type {AppStore} from './store';
 import {createReadabilityController} from './readability-controller';
@@ -30,13 +31,13 @@ export function ReadabilityPanel({store,documentKey}:{store:AppStore;documentKey
  }
  async function loadSource(){
   if(!doc||!documentKey||attaching)return;const owner=new AbortController();attachment.current=owner;setAttaching(true);setAttachmentError('');
-  const key=documentKey,before=sourceSignature(doc);
+  const key=documentKey,before=sourceSignature(doc),previousFile=store.getFile(key),previousMedia=store.getMedia(key);
   try{
    const url=String(doc.source_url||''),language=typeof doc.language==='string'?doc.language:null;
    const result=await downloadVideoAudio({endpoint:'/api/videos/media',url,language},owner.signal,'source');
    await validateDownloadedVideoMedia(result.file,result.inspected.kind,result.project.media_duration,owner.signal);
-   if(owner.signal.aborted||!store.getDocument(key)||sourceSignature(store.getDocument(key)!)!==before)throw Error('原稿已变化，原声未关联');
-   store.setFile(key,result.file);store.setMedia(key,{url:URL.createObjectURL(result.file),kind:result.inspected.kind,name:result.file.name,identity:result.inspected.identity,availability:'local_session'});
+   if(owner.signal.aborted||!store.getDocument(key)||sourceSignature(store.getDocument(key)!)!==before||store.getFile(key)!==previousFile||store.getMedia(key)!==previousMedia)throw Error('原稿或对应原声已变化，下载未覆盖新内容');
+   await saveSourceMedia(store,key,result.file,owner.signal);
   }catch(error){if(!owner.signal.aborted)setAttachmentError(error instanceof Error?error.message:String(error));}
   finally{if(attachment.current===owner){attachment.current=null;setAttaching(false);}}
  }

@@ -268,3 +268,18 @@ test('new package builds require the complete public-provider receipt',async t=>
   await assert.rejects(loadCaptionHelperBuild(directory,{platform:process.platform,arch:process.arch,lockBytes}),/Native caption helper build receipt mismatch/);
  }
 });
+
+test('new packaged helper capability wires bounded native media, legacy capability never claims it',async t=>{
+ const {preparePackagedCaptions}=await import('../desktop/caption-helper.mjs');const {writeFileSync}=await import('node:fs');
+ const s=await fixture(t);s.artifact.publicProviders=publicProviders;
+ const bytes=Buffer.concat([Buffer.from([0,0,0,24]),Buffer.from('ftypM4A authored native file')]),sha256=createHash('sha256').update(bytes).digest('hex');
+ const url='https://www.youtube.com/watch?v=BaW_jenozKc',calls=[];
+ const result={status:'media_ready',media:{filename:'public-media.bin',bytes:bytes.length,sha256,type:'audio/mp4',kind:'audio'},source:{url,id:'BaW_jenozKc',provider:'youtube',title:'Authored',duration:4,subtitle_check:'not_requested',purpose:'source',audio_language:'en',audio_language_basis:'platform_original',audio_role:'original',format:'m4a',format_id:'140'}};
+ const helper=createCaptionHelper({...s,network:{mode:'direct'},run:options=>runPinnedCaptionHelper({...options,tempRoot:s.tempRoot,spawnProcess:fakeSpawn(options.operation==='version'?{...validVersion,publicProviders,ownerLocalVideoProtocol:1}:result,({input,options})=>{calls.push(input);if(input.operation==='extract-audio')writeFileSync(path.join(options.cwd,'public-media.bin'),bytes);})})});
+ t.after(()=>helper.shutdown());const prepared=await preparePackagedCaptions({helper});
+ assert.equal(prepared.captionStatus.networkMode,'direct_public');assert.equal(prepared.captionService.ownerLocalOnly,true);assert.equal(prepared.videoAudioService.ownerLocalOnly,true);assert.equal(prepared.videoAudioService.sourceAvailable,true);
+ const media=await prepared.videoAudioService.download({url,language:'en',consent:true},{purpose:'source'});assert.deepEqual(media.body,bytes);
+ assert.deepEqual(calls,[{operation:'version'},{operation:'extract-audio',url,language:'en',network:{mode:'direct'},purpose:'source'}]);assert.deepEqual(await readdir(s.tempRoot),[]);
+ const limited=await preparePackagedCaptions({helper:{ownerLocalOnly:true,status:async()=>({ready:true,audioFallback:true,providers:['x']}),extractAudio:async()=>assert.fail('Unavailable provider must not run')}});
+ assert.equal(limited.videoAudioService.available,false);
+});

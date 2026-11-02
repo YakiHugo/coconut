@@ -64,7 +64,7 @@ export function createAppStore(deps: StoreDependencies) {
         }
         return result.ok;
     }
-    function addDocument(value: unknown) {
+    function addDocument(value: unknown, {select: open = true}: {select?: boolean} = {}) {
         if (!writable() || dirty)
             return null;
         const validated = deps.project(structuredClone(value),deps.validate(structuredClone(value)));
@@ -75,8 +75,7 @@ export function createAppStore(deps: StoreDependencies) {
         const previousDocuments = documents, previousActive = activeKey, previousWorkspace = workspace;
         documents = [...documents, doc];
         versions.set(doc.key, 0);
-        nativeLifecycle?.invalidate();activeKey = doc.key;
-        workspace = 'read';
+        if(open){nativeLifecycle?.invalidate();activeKey = doc.key;workspace = 'read';}
         const ticket = pipeline.queueDocument(doc.key, doc);
         if (ticket.accepted === false) {
             documents = previousDocuments;

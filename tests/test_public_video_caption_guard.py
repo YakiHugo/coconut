@@ -437,7 +437,7 @@ class LauncherDiagnosticTests(unittest.TestCase):
         output=io.StringIO()
         stdin=SimpleNamespace(buffer=io.BytesIO(json.dumps(request).encode()))
         with patch.object(sys, 'argv', ['caption-helper', '--protocol=1']), patch.object(sys, 'stdin', stdin), \
-                patch.object(guard, 'extract_public_video_captions', return_value=result, side_effect=failure), \
+                patch('scripts.owner_video_source.acquire_video', return_value=result, side_effect=failure), \
                 contextlib.redirect_stdout(output):
             runpy.run_path(str(Path(__file__).parents[1]/'desktop/helper/caption_helper_launcher.py'), run_name='__main__')
         return json.loads(output.getvalue())
@@ -468,7 +468,7 @@ class LauncherDiagnosticTests(unittest.TestCase):
     def test_launcher_passes_only_validated_development_proxy(self):
         failure={'status':'network_unavailable','diagnostic':{'stage':'metadata','reason':'proxy_unavailable',
                  'requests_attempted':1,'responses_received':0}}
-        with patch.object(guard, 'extract_public_video_captions') as extract:
+        with patch('scripts.owner_video_source.acquire_video') as extract:
             # Use main directly so its extraction call can be inspected.
             import runpy, sys
             from pathlib import Path
@@ -477,7 +477,7 @@ class LauncherDiagnosticTests(unittest.TestCase):
             request={'operation':'extract-development','url':YOUTUBE,'language':'en','trustedProxy':'http://127.0.0.1:7897'}
             with patch.object(sys,'argv',['caption-helper','--protocol=1']), patch.object(sys,'stdin',SimpleNamespace(buffer=io.BytesIO(json.dumps(request).encode()))):
                 self.assertEqual(module['main'](),failure)
-            self.assertEqual(extract.call_args.kwargs['proxy'],'http://127.0.0.1:7897')
+            self.assertEqual(extract.call_args.kwargs['network'],{'mode':'custom','proxy':'http://127.0.0.1:7897'})
 
 
 class DuplicateEncodingTests(unittest.TestCase):

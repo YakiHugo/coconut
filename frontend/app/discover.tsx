@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
+import {saveSourceMedia} from './source-media';
 import {useOwnedPicker} from '../native-shell/owned-picker-hook';
 import {episodeMetadata,filterEpisodes} from './episode-browser';
 import type { AppStore } from './store';
@@ -21,6 +22,7 @@ export function Discover({ store }: {
     const diagnostics=captionDiagnostics(receipt?.diagnostics),lossPending=!!receipt&&hasCaptionLoss(diagnostics)&&!lossReviewed;
     const [candidate,setCandidateState]=useState<{file:File;inspected:Awaited<ReturnType<typeof inspectFile>>;keys:string[]}|null>(null);
     const [busy,setBusyState]=useState(false),[review,setReview]=useState<{key:string;revision:number}|null>(null),[attaching,setAttaching]=useState(false);
+    const [pendingMedia,setPendingMedia]=useState<{document:NonNullable<ReturnType<AppStore['getDocument']>>;file:File}|null>(null);
     const [failure,setFailure]=useState<{diagnostic:CaptionFailureDiagnostic|null;original:string|null;audio?:VideoAudioFallback|null}|null>(null);
     const parsedLink = parseSourceLink(url);
     const interrupted = /^读取已(?:取消|暂停)/.test(error);
@@ -63,7 +65,7 @@ export function Discover({ store }: {
             if(owner.current!==controller)return;
             if(valueResult.state==='awaiting_selection')updateSession({selection:valueResult.selection,receipt:null,attempt:null,episodeLimit:20});
             else if(valueResult.state==='blocked'){
-                setFailure({diagnostic:captionFailureDiagnostic(valueResult.error?.diagnostic),original:attempt.feed||attempt.episode?null:captionOriginalURL(attempt.url),audio:valueResult.error?.code==='no_matching_captions'?videoAudioFallback(valueResult.error?.audio_fallback):null});
+                setFailure({diagnostic:captionFailureDiagnostic(valueResult.error?.diagnostic),original:attempt.feed||attempt.episode?null:captionOriginalURL(attempt.url),audio:videoAudioFallback(valueResult.error?.audio_fallback)});
                 updateSession({error:valueResult.error?.message||'暂时无法读取来源。',languageRequired:valueResult.error?.code==='language_required',languageChoices:captionLanguageChoices(valueResult.error?.languages)});
             }
             else {
@@ -83,13 +85,24 @@ export function Discover({ store }: {
             const result=await downloadVideoAudio(fallback,controller.signal);
             await validateDownloadedVideoMedia(result.file,result.inspected.kind,result.project.media_duration,controller.signal);
             if(owner.current!==controller||controller.signal.aborted)return;
-            const doc=store.addDocument(result.project);
+            const doc=store.addDocument(result.project,{select:false});
             if(!doc)throw Error('当前项目尚未保存，未创建新媒体项目。');
-            store.setFile(doc.key,result.file);
-            store.setMedia(doc.key,{url:URL.createObjectURL(result.file),kind:result.inspected.kind,name:doc.title,identity:result.inspected.identity,availability:'local_session'});
-            store.select(doc.key);updateSession({receipt:null,attempt:null,error:''});
-            store.setMessage('已创建公开媒体项目，项目保存状态请查看页首。媒体仅在本页保留，刷新前若未完成识别上传，需要重新载入；未自动播放或识别。可检查本机识别服务，再明确生成文字稿。');
+            setPendingMedia({document:doc,file:result.file});
+            await saveSourceMedia(store,doc.key,result.file,controller.signal);
+            if(owner.current!==controller||controller.signal.aborted)return;
+            setPendingMedia(null);owner.current=null;setBusy(false);updateSession({receipt:null,attempt:null,error:''});store.select(doc.key);
+            store.setMessage('来源项目与原声已保存到本机书架，重新打开可直接读取，不必重复下载；未自动播放或转录。');
         }catch(error){if(owner.current===controller&&!controller.signal.aborted){setFailure({diagnostic:null,original:fallback.url});setError(error instanceof Error?error.message:'公开媒体未完成。');}}
+        finally{if(owner.current===controller){owner.current=null;setBusy(false);}}
+    };
+    const retryMedia=async()=>{
+        if(!pendingMedia||busy||attaching)return;
+        const {document:doc,file}=pendingMedia;
+        if(store.getDocument(doc.key)!==doc||store.getFile(doc.key)||store.getMedia(doc.key)){setError('项目或原声已变化，旧下载未覆盖；请打开项目核对。');return;}
+        cancel();const controller=new AbortController();owner.current=controller;setBusy(true);setError('');
+        try{await saveSourceMedia(store,doc.key,file,controller.signal);if(owner.current!==controller||controller.signal.aborted)return;
+            setPendingMedia(null);owner.current=null;setBusy(false);updateSession({receipt:null,attempt:null,error:''});store.select(doc.key);
+        }catch(error){if(owner.current===controller&&!controller.signal.aborted)setError(error instanceof Error?error.message:'原声尚未保存。');}
         finally{if(owner.current===controller){owner.current=null;setBusy(false);}}
     };
     const changeURL=(value:string)=>{cancel();setReview(null);updateSession({url:value,episodeQuery:'',episodeLimit:20,selection:null,tracks:{},receipt:null,attempt:null,error:'',language:'',languageChoices:[],languageRequired:false,lossReviewed:false});};
@@ -168,12 +181,13 @@ export function Discover({ store }: {
     <input key={picker.inputKey} ref={fileInput} type="file" accept="audio/*,video/*" hidden onChange={event => {const input=event.currentTarget,file=input.files?.[0];void picker.controller.accept(input,async({current})=>{if(file&&current())await openFile(file,current);});}}/>
     <div className="source-hint" id="source-hint">{busy?<span role="status" className="source-progress"><span aria-hidden="true"/>正在读取来源…</span>:<span>粘贴链接，或点 <span aria-hidden="true">＋</span> 打开本地音视频</span>}<span className="source-enter" aria-hidden="true">Enter ↵</span></div>
   </form>
+  {pendingMedia&&<section aria-label="原声保存待完成"><p>已创建来源项目，但原声尚未确认保存。可重试保存本页下载，不会重复下载或另建项目；离开本页后可在书架打开项目并重新关联原文件。</p><button disabled={busy||attaching} onClick={()=>void retryMedia()}>重试保存已下载原声</button><button disabled={busy||attaching} onClick={()=>{cancel();store.select(pendingMedia.document.key);}}>打开已创建的项目</button></section>}
   {candidate&&<section aria-label="核对原声项目"><h2>核对原声来源</h2><p>部分文件采样与已有项目相同，但不能证明是同一原声。请核对文件名与项目后选择。已有笔记不会被覆盖。</p>{candidate.keys.map(key=><button key={key} onClick={()=>chooseCandidate(key)}>关联到 {store.getDocument(key)?.title||key}</button>)}<button onClick={()=>chooseCandidate(null)}>作为新原声项目打开</button><button onClick={()=>setCandidate(null)}>取消关联</button></section>}
   {error&&!busy&&!languageRequired&&<section className="source-feedback caption-failure" data-tone={interrupted?'info':'error'} aria-label={failure&&(failure.diagnostic||failure.original)?'本次字幕读取结果':'来源读取结果'}>
     <div className="source-feedback-heading"><span className="source-feedback-icon" aria-hidden="true">{interrupted?'·':'!'}</span><div><h2>{interrupted?error.split('。')[0]:captionFailureTitle(failure?.diagnostic||null)}</h2><p>{failure?.audio?'可下载公开媒体，先听原声。':failure?.original?'链接已保留，可以重试或前往原站查看。':'来源已保留，可以稍后重试。'}</p></div></div>
     <div className="source-actions">{session.attempt&&<button type="button" onClick={()=>void request(session.attempt!)}>重试上次读取{session.attempt.episode?'：'+session.attempt.episode.title:''}</button>}{failure?.original&&<a href={failure.original} target="_blank" rel="noopener noreferrer">打开原站</a>}</div>
     {failure?.audio&&<button className="source-audio-fallback" disabled={busy||attaching} onClick={()=>void openVideoAudio()}>下载公开媒体并新建项目（最多 200 MiB）</button>}
-    <details className="source-diagnostics"><summary>查看读取详情</summary><p className="source-error">{error}</p>{failure?.diagnostic&&<p data-caption-diagnostic>{captionFailureSummary(failure.diagnostic)}</p>}<p>{failure?.audio?'已确认没有匹配原语言的字幕轨道。公开媒体可能是视频中的默认音轨，语言及是否原版未必可确认；下载前会重新核对字幕与访问状态。':'本次未取得可阅读的文字稿，不能据此判断来源没有字幕。'}</p></details>
+    <details className="source-diagnostics"><summary>查看读取详情</summary><p className="source-error">{error}</p>{failure?.diagnostic&&<p data-caption-diagnostic>{captionFailureSummary(failure.diagnostic)}</p>}<p>{failure?.audio?.purpose==='source'?'该来源限制的是字幕。可以单独检查公开媒体；不会重试受限字幕，媒体本身若需登录、付费或拒绝访问仍会停止。':failure?.audio?'已确认没有匹配原语言的字幕轨道。公开媒体可能是视频中的默认音轨，语言及是否原版未必可确认；下载前会重新核对字幕与访问状态。':'本次未取得可阅读的文字稿，不能据此判断来源没有字幕。'}</p></details>
   </section>}
   {(!error||busy||languageRequired)&&<p className="source-error" hidden>{error}</p>}
   {languageRequired&&<section aria-label="选择视频原语言"><h2 ref={languageHeading} tabIndex={-1}>确认视频原语言</h2><p>以下是来源实际提供且格式可用的字幕语言，并不表示已确认视频原语言。请选择你确认的原语言后重试；不会自动换轨或启动识别。</p>{languageChoices.length>0?<label>视频原语言<select value={language} onChange={event=>{cancel();updateSession({language:event.target.value,error,receipt:null,lossReviewed:false});}}><option value="">请选择原语言</option>{languageChoices.map(code=><option key={code} value={code}>{code}</option>)}</select></label>:<p>当前字幕服务没有返回可选语言，无法在此确认原语言。链接已保留；请更新字幕服务后重试。</p>}{languageChoices.length>0&&<button disabled={busy||!languageChoices.includes(language)} onClick={()=>void request({...session.attempt!,language})}>按所选原语言重试</button>}</section>}

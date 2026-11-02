@@ -9,7 +9,7 @@ const reasons = {
     subtitle_token_required: '字幕需要访问凭据', rate_limited: '来源限制了请求频率', http_access_denied: '来源拒绝访问',
     transport_unavailable: '网络连接未完成', metadata_incomplete: '视频信息不完整', request_scope_stopped: '请求已停止',
     non_public_address: '来源地址不符合公开访问要求', identity_mismatch: '来源身份无法核对', budget_exceeded: '已达到本次读取上限',
-    unexpected_response: '来源响应不符合预期', upstream_error: '来源服务返回错误', dependency_mismatch: '字幕组件版本不匹配',
+    encoded_response_rejected: '来源返回未请求的压缩响应，已在解码前停止', unexpected_response: '来源响应不符合预期', upstream_error: '来源服务返回错误', dependency_mismatch: '字幕组件版本不匹配',
     alternate_extractor_stopped: '已停止切换其他提取器', unsupported_request: '不支持此类读取请求', external_execution_stopped: '已停止外部执行',
     duration_unavailable: '无法确认视频时长', redirect_stopped: '跳转未通过检查', guard_stopped: '安全检查未通过',
     language_unknown: '尚未确认原语言', no_matching_track: '未找到匹配原语言的字幕轨道', invalid_caption_file: '字幕文件未通过检查',

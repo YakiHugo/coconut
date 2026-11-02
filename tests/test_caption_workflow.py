@@ -53,3 +53,54 @@ class CaptionWorkflowContracts(unittest.TestCase):
             self.assertEqual(len(wheels), 1)
             expected.append(name + '==' + package['version'] + ' --hash=sha256:' + wheels[0]['sha256'])
         self.assertEqual(lines, expected)
+
+
+class SourceOnlyWorkflowContracts(unittest.TestCase):
+    def test_real_asr_and_weights_require_explicit_manual_boolean_opt_in(self):
+        condition = "github.event_name == 'workflow_dispatch' && inputs.run_asr == true"
+        asr_jobs = []
+        for path in sorted((ROOT / '.github/workflows').glob('*.yml')):
+            workflow = yaml.safe_load(path.read_text())
+            for name, job in workflow['jobs'].items():
+                commands = '\n'.join(step.get('run', '') for step in job.get('steps', []))
+                if any(marker in commands for marker in ('live_ingestion_proof.mjs', 'faster-whisper==', 'snapshot_download(')):
+                    asr_jobs.append((path.name, name))
+                    self.assertEqual(job.get('if'), condition)
+                    triggers = workflow.get('on', workflow.get(True))
+                    option = triggers['workflow_dispatch']['inputs']['run_asr']
+                    self.assertEqual(option['type'], 'boolean')
+                    self.assertIs(option['default'], False)
+        self.assertEqual(asr_jobs, [('ingestion-public-proof.yml', 'public-local-asr')])
+        # Exact condition above admits only a real typed manual consent, not a PR
+        # label, string from a request, normal push, or default dispatch.
+        for event in ('pull_request', 'push', 'workflow_dispatch'):
+            for consent in (None, False, 'true', True):
+                allowed = event == 'workflow_dispatch' and consent is True
+                self.assertEqual(allowed, (event, consent) == ('workflow_dispatch', True))
+        workflow = yaml.safe_load((ROOT / '.github/workflows/ingestion-public-proof.yml').read_text())
+        self.assertEqual(workflow['jobs']['source-preflight'].get('if'), condition)
+
+    def test_python_receipt_and_node_package_verify_same_source_inputs(self):
+        import ast
+        import re
+        tree = ast.parse((ROOT / 'scripts/build_caption_helper.py').read_text())
+        node = (ROOT / 'desktop/caption-helper-package.mjs').read_text()
+        js_names = re.search(r'const names=(\[.*?\]);', node, re.S).group(1)
+        expected = ast.literal_eval(js_names)
+        arrays = [ast.literal_eval(n.value) for n in ast.walk(tree)
+                  if isinstance(n, ast.Assign) and isinstance(n.value, ast.List)
+                  and all(isinstance(x, ast.Constant) and isinstance(x.value, str) for x in n.value.elts)]
+        self.assertIn(expected, arrays)
+        self.assertIn('scripts/owner_video_source.py', expected)
+
+    def test_bilibili_retry_label_never_retries_the_other_restricted_source(self):
+        workflow = yaml.safe_load((ROOT / '.github/workflows/source-acceptance.yml').read_text())
+        job = workflow['jobs']['source-acquisition']
+        expression = job['strategy']['matrix']['include']
+        # Parse the literal matrix selected by the scoped label, not an arbitrary
+        # condition evaluator. A Bilibili adapter fix must not re-request YouTube.
+        import re
+        match = re.search(r"github.event.label.name == 'live-source-bilibili' && fromJSON\('([^']+)'\)", expression)
+        self.assertIsNotNone(match)
+        matrix = json.loads(match.group(1))
+        self.assertEqual(matrix, [{'name': 'bilibili', 'url': 'https://www.bilibili.com/video/BV1XNtJ6UEmm', 'language': 'zh'}])
