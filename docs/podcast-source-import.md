@@ -51,7 +51,39 @@ HTTPS 来源。原有 MIME、字节、取消、时间上限及每次下载的免
 - `document` 使用 schema_version=1。新 `podcast_source` 保存 `feed_url`、`episode_id`、`transcript_url`、可选 `media_url` / `media_kind`；`provenance.kind=publisher_transcript`、`caption_method=publisher_provided`、`review_status=unreviewed`
 - `downloadMedia({feedUrl,episodeId,mediaUrl})` 返回 `{body:Buffer,type,kind,filename}`。直链用 `{url}`；可选 `maxBytes` 只能降低200 MiB上限；不能把未验证用户路径当文件名。需传递取消信号；服务器响应必须保留同源检查，不记录完整链接或源内容
 
-小宇宙的 `feed_url` 是官方公开页面 URL，而非假造 RSS；`source_type=xiaoyuzhou_public_page` 区分来源。恢复旧备份不自动发出网络请求，媒体需要重新选择下载。
+小宇宙的 `feed_url` 是官方公开页面 URL，而非假造 RSS；`source_type=xiaoyuzhou_public_page` 区分来源。恢复旧备份不自动发出来源网络请求；备份只含项目与来源描述，不携带媒体字节。
+
+### 下载与持久资源交接
+
+播客的「载入原声」先重新核验当前单集及公开 enclosure，再下载受限的实际字节。
+前端校验容器 MIME、大小、文件身份及非播放列表内容后，调用统一的
+`saveSourceMedia(store, documentKey, file, signal)`，而不是把 Blob URL 当作持久资源。
+保存未确认时显示「正在保存原声」，保留取消；磁盘、协议或书架身份失败会明确报错，
+不会宣称原声已保存或先挂接一个刷新即失效的播放器。
+
+保存成功后由统一资源服务挂接本机资产。重新打开同一书架时恢复的是已保存资源，
+不是自动再请求发布者/CDN，也不会自动播放或转录。只有项目仍存在、文档来源与
+保存时一致时才能交接；离开页面、取消、切换项目或选择了较新的本地媒体后，
+迟到下载不能覆盖当前资源。
+JSON 备份不包含这些本机字节，不能把“项目已备份”说成“音频也已备份”。
+
+手动选择的 `local_session` 文件仍是本次页面的临时附件，不等于替换了持久来源。
+较晚到达的下载/保存回执不能覆盖这个新选择；但若旧来源已经保存，不能把取消
+误称为服务端回滚，也不会因为选择临时文件就删除已保存音频。重启仍按已保存
+来源恢复，界面须明确提示这一点；新的持久来源需要正常更新项目来源身份。
+
+### 成熟解析库评估（2026-11-02）
+
+评估了 MIT 的 [rss-parser](https://github.com/rbren/rss-parser)：它提供
+`parseString` / `parseURL`、RSS / Atom 及自定义字段，适合通用订阅摘要。
+但本次已复现的缺口是下载后的媒体只存在于会话 Blob，而非 RSS 解析失败。
+换解析器不能解决持久化；小宇宙公开页面也不是 RSS。
+
+本轮不为换库而换库。以后若实际来源暴露 XML 兼容问题，可在现有受限取数之后
+采用上游 `parseString`，并用同一合同测试比较结果；不能直接以其 `parseURL`
+替换网络与资源边界。迁移仍须保留 namespace URI（含已验证历史别名）、
+`xml:base`、多字幕及语言选择、GUID/enclosure 冲突、DTD/实体拒绝与资源上限。
+该判断针对本次闭环，不表示成熟库不适用，也不承诺手写解析器永远不替换。
 
 ## 验证证据与限制
 
@@ -67,6 +99,33 @@ HTTPS 来源。原有 MIME、字节、取消、时间上限及每次下载的免
 公开响应通过当前执行环境已授权的网络代理读取并原样交给新解析器；新应用的 DNS 绑定原生连接在此受限环境无法解析/连接，未声称现场完成原生公共网络全链路或用户 Mac 回放验收。网络安全测试使用注入式传输，不修改生产限制。完整页面、字幕和媒体不提交公开测试夹具，不上传 CI artifact。真实公共媒体播放需要在具备普通网络的本地应用或独立 CI 中另验。
 
 正式使用仍取决于发布者当前响应、公开权限、设备可解码格式与网络；支持解析不等于逐字准确或每个平台全量可用。
+
+### 持久资源闭环验收（2026-11-02）
+
+仅数据源、不转录的独立命令：
+
+```sh
+node scripts/live_podcast_source_closure.mjs --live xiaoyuzhou
+node scripts/live_podcast_source_closure.mjs --live rss
+```
+
+默认分别核查用户指定的单集 `6ae06b84c96c8942ec130784` 和 Podcasting 2.0 当前公开 RSS。
+脚本使用生产来源适配器与 HTTP/SQLite/资源服务，明确下载上限 100 MiB；
+保存后关闭服务，再用禁止上游来源读取的服务重启，核对原项目、媒体完整 SHA256、
+HEAD 和 Range。临时书架与媒体在退出时删除，不上传源内容、字幕或音频 artifact。
+失败只输出阶段及错误类别，不把断言的原文差异写入日志。
+
+开发集成验证中，小宇宙原声为 87,039,906 字节、无可导入发布者字幕；
+RSS 样本取得 1,324 段既有字幕及 65,977,986 字节原声。两者均完成持久保存和
+重启完整哈希/Range 读回，恢复时上游请求为零。这次使用执行环境授权的注入式
+传输，因此标记 `injected_test_transport`，不是生产默认网络已通过的证明。
+CLI 与独立 GitHub workflow 不注入传输，使用 `production_default`，须另看实际结果。
+这些检查均不声称浏览器播放、媒体解码、用户 Mac 验收或新转录。
+
+`.github/workflows/podcast-source-closure.yml` 支持手动运行，也只在自身或验收脚本
+变更的 PR 上自动运行；公网波动不阻塞常规离线构建。它是允许失败的独立任务，
+必须查看 **live 步骤实际 outcome** 与报告，不能将整个 workflow 的绿色当作来源成功。
+普通离线测试另用原创元数据、字幕和媒体字节运行同一闭环脚本，不混称公网实测。
 
 ### 一手依据
 

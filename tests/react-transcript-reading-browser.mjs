@@ -25,9 +25,9 @@ try {
  const library=await request('/api/v1/library');
  await request('/api/v1/library/commit',{protocolVersion:1,epoch:library.epoch,action:'put',key:fixture.key,receiptKey:'reading-seed',expected:null,document:fixture});
  browser=await chromium.launch({headless:true,...(process.env.COCONUT_CHROMIUM_EXECUTABLE?{executablePath:process.env.COCONUT_CHROMIUM_EXECUTABLE}:{})});
- const context=await browser.newContext({viewport:{width:1360,height:900},permissions:['clipboard-read','clipboard-write']}),page=await context.newPage(),errors=[];
+ const context=await browser.newContext({viewport:{width:1360,height:900},permissions:['clipboard-read','clipboard-write']}),page=await context.newPage(),errors=[];let sourceMediaRequests=0;
  page.on('pageerror',error=>errors.push(error.message));
- await page.route('**/*',route=>new URL(route.request().url()).origin!==origin?route.abort():new URL(route.request().url()).pathname==='/api/podcasts/media'?route.fulfill({status:200,contentType:'audio/wav',body:wav(260)}):route.continue());
+ await page.route('**/*',route=>{const url=new URL(route.request().url());if(url.origin!==origin)return route.abort();if(url.pathname==='/api/podcasts/media'){sourceMediaRequests++;return route.fulfill({status:200,contentType:'audio/wav',body:wav(260)});}return route.continue();});
  await page.goto(origin);await page.getByRole('button',{name:/^我的内容/}).click();await page.locator('.library-page li > button').filter({hasText:fixture.title}).click();
  await expect(page.locator('.rw-mode-tabs [aria-selected=true]')).toHaveAttribute('data-mode','passages');
  await expect(page.locator('.rw-cue')).toHaveCount(0);await expect(page.locator('.rw-passage').first()).toBeVisible();
@@ -49,7 +49,7 @@ try {
  assert.equal(await page.locator('.rw-turn-continuation .rw-passage-heading').first().evaluate(node=>getComputedStyle(node,'::before').content),'none');
  // The timestamp starts continuous playback, while explicit range listening still stops.
  await page.getByRole('button',{name:'载入原声（最多 200 MiB）',exact:true}).click();
- const audio=page.locator('audio');await expect.poll(()=>audio.evaluate(player=>player.duration)).toBe(260);
+ const audio=page.locator('audio');await expect.poll(()=>audio.evaluate(player=>player.duration)).toBe(260);const ownedMediaUrl=await audio.evaluate(player=>player.currentSrc||player.src);assert.equal(new URL(ownedMediaUrl).pathname,'/api/v1/source-media/content');assert.equal(sourceMediaRequests,1);
  assert.equal(await audio.evaluate(player=>player.paused),true,'Loading never starts playback');
  const firstPassage=P.build(fixture.segments,{layout:'reading'})[0];
  await page.getByRole('button',{name:'从 00:00 开始播放',exact:true}).click();
@@ -106,10 +106,10 @@ try {
  await page.locator('.rw-passages').scrollIntoViewIfNeeded();await page.screenshot({path:path.join(output,'transcript-mobile.png')});
  await page.reload();await page.getByRole('button',{name:'继续阅读',exact:true}).click();await expect(page.locator('.rw-mode-tabs [aria-selected=true]')).toHaveAttribute('data-mode','passages');
  assert.equal((await saved()).segments.length,120);assert.deepEqual(errors,[]);
- // A citation switches to the full transcript, keeping one real player alive. Clicking it again must relocate after manual scrolling.
+ // A citation switches to the full transcript, keeping the restored owned player alive. Clicking it again must relocate after manual scrolling.
  await page.setViewportSize({width:1360,height:900});
- await page.getByRole('button',{name:'载入原声（最多 200 MiB）',exact:true}).click();
- await expect.poll(()=>audio.evaluate(player=>player.duration)).toBe(260);
+ await expect(page.getByRole('button',{name:'载入原声（最多 200 MiB）',exact:true})).toHaveCount(0);
+ await expect.poll(()=>audio.evaluate(player=>player.duration)).toBe(260);assert.equal(await audio.evaluate(player=>player.currentSrc||player.src),ownedMediaUrl);assert.equal(await audio.evaluate(player=>player.paused),true);assert.equal(sourceMediaRequests,1,'reload never re-fetches publisher media');
  await page.getByRole('tab',{name:'摘要',exact:true}).click();
  const originalPlayer=await audio.elementHandle();
  await page.getByRole('button',{name:'03:58 · 核对原文',exact:true}).click();
