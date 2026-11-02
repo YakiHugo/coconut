@@ -98,6 +98,7 @@ jobs:
             unzip -l "$archive" | grep 'Coconut.app/Contents/Resources/caption-helper/sources/certifi-2026.7.22.tar.gz'
           done
       - name: Start the packaged app on the native runner architecture
+        timeout-minutes: 2
         run: |
           arch="$(node -p 'process.arch')"
           COCONUT_SMOKE_TEST=1 "desktop/dist/Coconut-darwin-$arch/Coconut.app/Contents/MacOS/Coconut"
