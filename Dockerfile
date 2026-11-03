@@ -19,7 +19,7 @@ COPY *.py ./
 RUN mkdir /data /models && chown node:node /data /models && chmod 700 /data
 USER node
 ENV COCONUT_HOST=0.0.0.0 COCONUT_PORT=8080 COCONUT_DATA_DIRECTORY=/data \
-    COCONUT_ASR_PYTHON=/opt/coconut-python/bin/python COCONUT_MODEL_DIRECTORY=/models \
+    COCONUT_ASR_PYTHON=/opt/coconut-python/bin/python COCONUT_ASR_BACKEND=faster-whisper COCONUT_MODEL_DIRECTORY=/models \
     COCONUT_CAPTION_PYTHON=/opt/coconut-python/bin/python
 EXPOSE 8080
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s CMD node -e "fetch('http://127.0.0.1:'+process.env.COCONUT_PORT+'/healthz').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"

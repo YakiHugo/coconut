@@ -191,9 +191,40 @@ def validate_result(result, duration):
             if word['start'] < word_start - .05 or word['end'] > segment['end'] + .05 or not isinstance(word.get('word'), str):
                 raise ValueError('Invalid ASR word timestamps')
             word_start = word['start']
+        if segment.get('words'):
+            # Timing is evidence about the text, never an alternative transcript.
+            # Incomplete aligners must not make boundary cropping delete words.
+            if not bind_word_spans(segment):
+                segment.pop('words', None)
+                segment['alignment_status'] = 'partial_text_preserved'
+                value['alignment_warning'] = 'Incomplete word alignment; original text retained with segment timing'
     if value.get('language') is not None and not isinstance(value['language'], str):
         raise ValueError('Invalid ASR language')
     return value
+
+
+def bind_word_spans(segment):
+    """Bind complete lexical alignment to exact source slices, including punctuation."""
+    text, words = segment['text'], segment.get('words', [])
+    source = [(i, folded) for i, char in enumerate(text) if char.isalnum() for folded in char.casefold()]
+    tokens = [''.join(c.casefold() for c in word['word'] if c.isalnum()) for word in words]
+    if not source or not tokens or any(not token for token in tokens):
+        return False
+    if ''.join(char for _, char in source) != ''.join(tokens):
+        return False
+    cursor, starts = 0, []
+    for token in tokens:
+        starts.append(source[cursor][0])
+        cursor += len(token)
+    if len(set(starts)) != len(starts):
+        return False
+    starts[0] = 0
+    for i, word in enumerate(words):
+        start, end = starts[i], starts[i + 1] if i + 1 < len(starts) else len(text)
+        word.update(word=text[start:end], text_start=start, text_end=end)
+    segment['alignment_status'] = 'complete'
+    segment['timing_basis'] = 'word'
+    return True
 
 
 def validate_voices(result, duration):
@@ -237,7 +268,7 @@ def owned_segments(result, chunk, total_frames):
             if not selected:
                 continue
             if len(selected) != len(words):
-                segment['text'] = _words_text(selected)
+                segment['text'] = raw['text'][selected[0]['text_start']:selected[-1]['text_end']].strip()
                 segment['start'], segment['end'] = selected[0]['start'], selected[-1]['end']
             segment['words'] = [{**word, 'start': word['start'] + chunk.start,
                                  'end': word['end'] + chunk.start} for word in selected]
@@ -299,6 +330,8 @@ def stitch_segments(segments):
 
 def _words_text(words):
     import re
+    if all('text_start' in word for word in words):
+        return ''.join(word['word'] for word in words).strip()
     if any(word['word'].startswith(' ') for word in words):
         return ''.join(word['word'] for word in words).strip()
     return re.sub(r'(?<=[\u3400-\u9fff]) (?=[\u3400-\u9fff])', '', ' '.join(word['word'] for word in words)).strip()

@@ -261,7 +261,7 @@ export async function startBridge({port = 8080, host = '127.0.0.1', taskDirector
     catch{options.sourceMediaStore=null;} // Fail closed; never mislabel page blobs as saved.
   }
   if(options.enableSourceJobs){
-    try{const {createSourceJobs}=await import('./source-jobs.mjs');options.sourceJobs=await createSourceJobs({directory:path.join(libraryDirectory,'source-jobs'),libraryStore:options.libraryStore,mediaStore:options.sourceMediaStore,podcastSources:options.podcastSources,executor:options.ingestionExecutor});}
+    try{const {createSourceJobs}=await import('./source-jobs.mjs');options.sourceJobs=await createSourceJobs({directory:path.join(libraryDirectory,'source-jobs'),libraryStore:options.libraryStore,mediaStore:options.sourceMediaStore,podcastSources:options.podcastSources,transcriber:options.transcriber});}
     catch(error){await options.sourceJobs?.shutdown();await Promise.allSettled([options.sourceMediaStore?.shutdown(),options.taskStore?.shutdown(),options.readabilityJobs?.shutdown()]);options.libraryStore?.close();throw error;}
   }
   const server = createBridge(options);

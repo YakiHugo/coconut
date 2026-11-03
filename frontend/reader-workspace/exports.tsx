@@ -14,7 +14,8 @@ type Core = {
     };
     notebookMarkdown: (doc: ReaderDocument, target: string) => string;
 };
-export function ReaderExports({ doc, hasDrafts }: {
+export function ReaderExports({ doc, hasDrafts, displayText=(text:string)=>text }: {
+    displayText?:(text:string)=>string;
     doc: ReaderDocument;
     hasDrafts: boolean;
 }) {
@@ -54,6 +55,7 @@ export function ReaderExports({ doc, hasDrafts }: {
                 text = result.text;
                 detail = `原始时间戳${target ? `；附加 ${result.translated} 段有效译文，缺失或过期译文未导出` : ''}`;
             }
+            if(['txt','srt','vtt'].includes(kind))text=displayText(text);
             const type = kind === 'json' ? 'application/json' : kind === 'vtt' ? 'text/vtt' : kind === 'md' ? 'text/markdown' : 'text/plain';
             setArtifact({ url: URL.createObjectURL(new Blob([text], { type: type + ';charset=utf-8' })), name: doc.title.replace(/[\\/:*?"<>|\x00-\x1f\x7f]/g, '_') + '.' + kind });
             setStatus('已发起下载：' + detail + '。请确认文件已保存。');
@@ -62,5 +64,5 @@ export function ReaderExports({ doc, hasDrafts }: {
             setStatus('导出失败：' + String(e instanceof Error ? e.message : e));
         }
     };
-    return <details className="rw-exports"><summary>导出本篇内容</summary><p>导出当前项目，不上传。JSON 保留完整恢复数据；其他格式用于阅读，不包含原媒体。</p><label>文件格式<select value={kind} onChange={e => setKind(e.target.value as ExportKind)}><option value="json">Coconut JSON 完整项目</option><option value="txt" disabled={!doc.segments.length}>TXT 整篇文字</option><option value="srt" disabled={!doc.segments.length}>SRT 字幕</option><option value="vtt" disabled={!doc.segments.length}>VTT 字幕</option><option value="md">Markdown 阅读笔记</option></select></label>{kind !== 'json' && <label><input type="checkbox" disabled={!doc.translation_view} checked={bilingual} onChange={e => setBilingual(e.target.checked)}/> 包含当前所选语言的有效译文</label>}<button disabled={hasDrafts || (!doc.segments.length && ['txt', 'srt', 'vtt'].includes(kind))} onClick={download}>下载本篇</button>{hasDrafts && <p>请先提交或取消草稿，再导出完整内容。</p>}<a ref={link} hidden href={artifact?.url} download={artifact?.name}>下载文件</a><p role="status">{status}</p></details>;
+    return <details className="rw-exports"><summary>导出本篇内容</summary><p>导出当前项目，不上传。JSON 保留完整恢复数据；TXT 与字幕采用当前中文字形；JSON 保留转录原文，笔记保留记录内容。不包含原媒体。</p><label>文件格式<select value={kind} onChange={e => setKind(e.target.value as ExportKind)}><option value="json">Coconut JSON 完整项目</option><option value="txt" disabled={!doc.segments.length}>TXT 整篇文字</option><option value="srt" disabled={!doc.segments.length}>SRT 字幕</option><option value="vtt" disabled={!doc.segments.length}>VTT 字幕</option><option value="md">Markdown 阅读笔记</option></select></label>{kind !== 'json' && <label><input type="checkbox" disabled={!doc.translation_view} checked={bilingual} onChange={e => setBilingual(e.target.checked)}/> 包含当前所选语言的有效译文</label>}<button disabled={hasDrafts || (!doc.segments.length && ['txt', 'srt', 'vtt'].includes(kind))} onClick={download}>下载本篇</button>{hasDrafts && <p>请先提交或取消草稿，再导出完整内容。</p>}<a ref={link} hidden href={artifact?.url} download={artifact?.name}>下载文件</a><p role="status">{status}</p></details>;
 }

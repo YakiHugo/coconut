@@ -1,3 +1,9 @@
+> `npm start` now uses the direct Node-owned pipeline in
+> [transcription-pipeline.md](transcription-pipeline.md). The legacy CLI below
+> remains available independently. Both share the bounded audio/timing helpers.
+> Complete word coverage is checked before cropping; incomplete alignment keeps
+> the source text with coarse segment timing instead of reconstructing it.
+
 # 长音频共用处理流程
 
 `audio_pipeline.py` 统一管理本地和显式选择的云端转写后端。`transcribe.py` 的默认 CLI / 导入任务已使用该流程；模型选择和音频去向仍由现有选项明确决定，不会自动尝试付费服务。
