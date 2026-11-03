@@ -20,6 +20,10 @@ test('generic RSS and legacy callers keep the original destination policy',async
 test('standalone SOCKS settings fail configuration instead of silently bypassing the proxy',()=>{
  for(const name of ['HTTPS_PROXY','https_proxy','ALL_PROXY','all_proxy'])assert.throws(()=>createPublicFetcher({ownerSources:true,ownerNetwork:{mode:'environment',environment:{[name]:'socks5://127.0.0.1:7897'}}}),/SOCKS proxies are not supported/);
 });
+test('lowercase empty protocol and bypass settings clear uppercase values before agent construction',async()=>{
+ const f=fixture([{}]);await createPublicFetcher({ownerSources:true,request:f.request,ownerNetwork:{mode:'environment',environment:{HTTPS_PROXY:'http://127.0.0.1:7897',https_proxy:'',NO_PROXY:'*',no_proxy:''}}})(url);
+ assert.deepEqual(f.calls[0].options.agent.options.proxyEnv,{http_proxy:'',https_proxy:'',no_proxy:''});
+});
 test('owner redirects remain HTTPS and inside the exact platform origins',async()=>{
  for(const target of ['https://127.0.0.1/private','https://evil.example/media','http://media.xyzcdn.net/audio','https://www.xiaoyuzhoufm.com.evil.example/audio']){
   const f=fixture([{status:302,headers:{location:target}}]);await assert.rejects(createPublicFetcher({ownerSources:true,request:f.request})(url));assert.equal(f.calls.length,1);

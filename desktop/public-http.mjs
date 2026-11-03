@@ -102,10 +102,16 @@ export function createPublicFetcher({lookup = dnsLookup, request = (url,options,
     // Node's standard Agent does not read ALL_PROXY or support SOCKS. Translate
     // HTTP ALL_PROXY explicitly and reject unsupported settings before startup;
     // an ignored proxy must never become an accidental direct connection.
-    const all=Object.hasOwn(proxyEnv,'all_proxy')?proxyEnv.all_proxy:proxyEnv.ALL_PROXY;
-    for(const name of ['http_proxy','https_proxy'])if(!Object.hasOwn(proxyEnv,name)&&!Object.hasOwn(proxyEnv,name.toUpperCase())&&all!==undefined)proxyEnv[name]=all;
-    for(const name of ['http_proxy','HTTP_PROXY','https_proxy','HTTPS_PROXY','all_proxy','ALL_PROXY'])if(proxyEnv[name]&&new URL(proxyEnv[name]).protocol!=='http:')throw Error('Standalone source networking requires HTTP proxy URLs; SOCKS proxies are not supported.');
-    delete proxyEnv.ALL_PROXY;delete proxyEnv.all_proxy;
+    const selected=name=>Object.hasOwn(proxyEnv,name)?proxyEnv[name]:proxyEnv[name.toUpperCase()];
+    const all=selected('all_proxy')||'',effective={no_proxy:selected('no_proxy')||''};
+    for(const name of ['http_proxy','https_proxy']){
+      effective[name]=selected(name)||all;
+      if(effective[name]&&new URL(effective[name]).protocol!=='http:')throw Error('Standalone source networking requires HTTP proxy URLs; SOCKS proxies are not supported.');
+    }
+    // Python/yt-dlp gives present lowercase values precedence, including empty
+    // values that clear uppercase settings. Node otherwise uses truthy fallback.
+    for(const name of Object.keys(proxyEnv))delete proxyEnv[name];
+    Object.assign(proxyEnv,effective);
   }
   let ownerAgent;
   return async function fetchPublic(value,{maxBytes=8*1024*1024,timeoutMs=20000,signal,types,inspectMedia=false,maxMediaBytes=200*1024*1024,redirectOnly=false}={}) {
