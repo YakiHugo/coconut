@@ -1,0 +1,23 @@
+name: Standalone service deployment
+on:
+  pull_request:
+  push:
+    branches: [main]
+permissions:
+  contents: read
+concurrency:
+  group: service-deployment-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  container-lifecycle:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Build the service without downloading models
+        run: docker build -t coconut-service:review .
+      - name: Verify login, offline worker and durable restart
+        run: node tests/service-container.mjs

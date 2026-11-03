@@ -47,6 +47,7 @@ export function createBridge({readerDirectory = path.resolve(ROOT,'../reader'), 
       if (res.destroyed) return;
       const body = JSON.stringify(data); res.writeHead(status, {'Content-Type':'application/json; charset=utf-8','Content-Length':Buffer.byteLength(body)}); res.end(req.method === 'HEAD' ? undefined : body);
     };
+    if(req.url==='/healthz'&&['GET','HEAD'].includes(req.method))return json(200,{status:'ok'});
     const port = server.address()?.port;
     try { if(ownerAccess&&await ownerAccess.handle(req,res))return; }
     catch { return json(400,{code:'invalid_login_request',error:'登录请求未完成。'}); }

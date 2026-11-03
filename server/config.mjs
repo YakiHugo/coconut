@@ -19,6 +19,10 @@ export function serviceConfig(env=process.env){
   else if(env.COCONUT_PODCAST_PROXY)network=validateSourceNetwork({mode:'custom',proxy:env.COCONUT_PODCAST_PROXY});
   else {const environment=Object.fromEntries(['HTTP_PROXY','http_proxy','HTTPS_PROXY','https_proxy','ALL_PROXY','all_proxy','NO_PROXY','no_proxy'].filter(key=>env[key]!==undefined).map(key=>[key,env[key]]));network=Object.keys(environment).length?validateSourceNetwork({mode:'environment',environment}):validateSourceNetwork();}
   if(env.COCONUT_PODCAST_PROXY&&(network.mode!=='custom'||network.proxy!==env.COCONUT_PODCAST_PROXY.replace(/\/$/,'')))throw Error('Conflicting source and podcast proxy settings.');
+  const asrPython=env.COCONUT_ASR_PYTHON||null,asrExecutorUrl=env.COCONUT_ASR_EXECUTOR_URL||null,modelDirectory=env.COCONUT_MODEL_DIRECTORY||null;
+  if(asrPython&&!path.isAbsolute(asrPython))throw Error('COCONUT_ASR_PYTHON must be an absolute executable path.');
+  if(modelDirectory&&!path.isAbsolute(modelDirectory))throw Error('COCONUT_MODEL_DIRECTORY must be absolute.');
+  if(asrPython&&asrExecutorUrl)throw Error('Select either a managed ASR Python or an existing ASR executor URL.');
   return Object.freeze({host,port:Number(portText),dataDirectory,publicOrigin,ownerToken,backendLabel:env.COCONUT_BACKEND_LABEL||'Coconut',network,
-    captionPython:env.COCONUT_CAPTION_PYTHON||null,readingPython:env.COCONUT_READING_PYTHON||null});
+    captionPython:env.COCONUT_CAPTION_PYTHON||null,readingPython:env.COCONUT_READING_PYTHON||null,asrPython,asrExecutorUrl,modelDirectory});
 }

@@ -1,0 +1,16 @@
+services:
+  coconut:
+    build: .
+    init: true
+    restart: unless-stopped
+    environment:
+      COCONUT_PUBLIC_ORIGIN: ${COCONUT_PUBLIC_ORIGIN:?Set the public HTTPS origin}
+      COCONUT_OWNER_TOKEN: ${COCONUT_OWNER_TOKEN:?Set a private random owner token}
+      COCONUT_BACKEND_LABEL: ${COCONUT_BACKEND_LABEL:-Coconut}
+    ports:
+      - "127.0.0.1:${COCONUT_PORT:-8080}:8080"
+    volumes:
+      - coconut-data:/data
+      - ${COCONUT_MODEL_DIRECTORY:-./models}:/models:ro
+volumes:
+  coconut-data:
