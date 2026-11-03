@@ -78,6 +78,11 @@ test('standalone HTTP ALL_PROXY aliases use the real tunnel instead of silently 
  for(const environment of [{ALL_PROXY:proxy.url},{all_proxy:proxy.url},{ALL_PROXY:'http://127.0.0.1:1',all_proxy:proxy.url}])assert.equal((await run(proxy.url,{owner:true,environment})).ok,true);
  assert.equal(proxy.connects.length,3);assert.ok(proxy.connects.every(connection=>connection.url==='www.xiaoyuzhoufm.com:443'));
 });
+test('standalone proxy casing, empty values and NO_PROXY match the isolated video environment',async t=>{
+ const proxy=await fixture(t);
+ for(const environment of [{ALL_PROXY:proxy.url,https_proxy:''},{HTTPS_PROXY:'',ALL_PROXY:proxy.url},{HTTPS_PROXY:proxy.url,NO_PROXY:'*',no_proxy:''}])assert.equal((await run(proxy.url,{owner:true,environment})).ok,true);
+ assert.equal(proxy.connects.length,3);
+});
 test('untrusted certificates and mismatched origin names fail before an origin GET',async t=>{
  const proxy=await fixture(t);
  assert.equal((await run(proxy.url,{trust:false})).ok,false);
