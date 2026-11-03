@@ -40,6 +40,9 @@ jobs:
       - name: Verify actual reading palette and system theme transitions
         if: ${{ !cancelled() && steps.react_setup.outcome == 'success' }}
         run: npm run test:react-palette-browser
+      - name: Verify standalone owner login and the actual React entry
+        if: ${{ !cancelled() && steps.react_setup.outcome == 'success' }}
+        run: npm run test:service-browser
       - name: Upload only authored React review images and geometry
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@v4

@@ -15,6 +15,8 @@
 
 开发时使用 Node.js 22.13+：
 
+通过浏览器长期使用，可运行独立服务：Node.js 22.21+ 或 24.5+，`npm ci --ignore-scripts` 后执行 `npm start`。同一服务可部署在 Mac、独立主机或 HTTPS 反向代理之后；数据目录、端口、访问密钥和来源网络统一配置在 `.env`。见[独立服务部署](docs/standalone-service.md)。
+
 ```bash
 npm ci
 npm run dev

@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 /** Source-only development entry. Never installs dependencies or starts a model. */
 import path from 'node:path';
+import {realpath} from 'node:fs/promises';
+import http from 'node:http';
 import {fileURLToPath} from 'node:url';
 import {startBridge} from './server.mjs';
 import {privateProxyFromEnvironment} from './client-access.mjs';
@@ -39,7 +41,7 @@ export async function startDevelopmentBridge({port = 8080, taskDirectory = DEVEL
     }catch(error){options.captionStatus={code:error.code||'CAPTION_UNAVAILABLE',mode:'development-python'};}
   }
   let server;
-  try{server=await startBridge({...options, readingPython,punctuationModel,segmentationModel,embeddingModel,port, taskDirectory, libraryDirectory,startupMode:'development'});}
+  try{server=await startBridge({...options, readingPython,punctuationModel,segmentationModel,embeddingModel,port, taskDirectory, libraryDirectory,startupMode:options.startupMode||'development'});}
   catch(error){await helper?.shutdown();throw error;}
   if(helper){
     const shutdown=server.shutdown.bind(server);
@@ -51,10 +53,18 @@ export async function startDevelopmentBridge({port = 8080, taskDirectory = DEVEL
   }
   const origin = `http://127.0.0.1:${server.address().port}`;
   try {
+    // fetch intentionally ignores a supplied Host header. Authenticated service
+    // discovery uses the same exact public Host/cookie contract as its browsers.
+    const discover=options.ownerAccess?route=>new Promise((resolve,reject)=>{
+      const req=http.get(origin+route,{headers:options.ownerAccess.discoveryHeaders(),timeout:5000},res=>{
+        const chunks=[];let size=0;res.on('data',chunk=>{size+=chunk.length;if(size>1024*1024)res.destroy(Error('Discovery response too large'));else chunks.push(chunk);});
+        res.on('error',reject);res.on('end',()=>{try{if(res.statusCode!==200)throw Error('Service discovery was not authorized');resolve(JSON.parse(Buffer.concat(chunks).toString('utf8')));}catch(error){reject(error);}});
+      });req.on('timeout',()=>req.destroy(Error('Service discovery timed out')));req.on('error',reject);
+    }):route=>fetch(origin+route).then(response=>response.json());
     // Passive capability read: does not probe authentication or invoke a provider.
-    const executor = await fetch(`${origin}/api/v1/executor`).then(response => response.json());
-    const captions=await fetch(`${origin}/api/captions/status`).then(response=>response.json());
-    const library=await fetch(`${origin}/api/v1/library`).then(response=>response.json());
+    const executor = await discover('/api/v1/executor');
+    const captions=await discover('/api/captions/status');
+    const library=await discover('/api/v1/library');
     return {server, origin, taskDirectory, libraryDirectory, library, executor, captions, captionDiagnostic,podcastNetworkMode:trustedPodcastProxy?'xiaoyuzhou_trusted_local_proxy':'direct_public'};
   } catch (error) {
     await new Promise(resolve => server.shutdown(resolve));
@@ -62,7 +72,7 @@ export async function startDevelopmentBridge({port = 8080, taskDirectory = DEVEL
   }
 }
 
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+if (process.argv[1] && await realpath(process.argv[1]).catch(()=>null) === fileURLToPath(import.meta.url)) {
   if (process.argv.length > 2) throw new Error('Usage: npm run dev (fixed development port 8080)');
   const {server, origin, taskDirectory, libraryDirectory, library, executor, captions, captionDiagnostic,podcastNetworkMode} = await startDevelopmentBridge({privateProxy:privateProxyFromEnvironment()});
   console.log(`Coconut 开发阅读器：${origin}`);

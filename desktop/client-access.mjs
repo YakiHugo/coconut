@@ -18,13 +18,14 @@ export function privateProxyFromEnvironment(env=process.env){
   if(!type){if(env.COCONUT_PRIVATE_ORIGIN||env.COCONUT_PRIVATE_OWNER)throw new Error('Set COCONUT_PRIVATE_PROXY explicitly before configuring private access');return null;}
   return privateProxyProfile({type,origin:env.COCONUT_PRIVATE_ORIGIN,ownerLogin:env.COCONUT_PRIVATE_OWNER,backendLabel:env.COCONUT_BACKEND_LABEL});
 }
-export function authorizeClient(req,{port,profile=null}={}){
+export function authorizeClient(req,{port,profile=null,ownerAccess=null}={}){
   const h=req.headers;
-  if(!loopback(req.socket?.remoteAddress))return null;
   // Reject ambiguous security headers rather than relying on Node's combining/discarding rules.
   const counts=new Map();for(let i=0;i<(req.rawHeaders?.length||0);i+=2){const key=req.rawHeaders[i].toLowerCase();counts.set(key,(counts.get(key)||0)+1);}
   if([...counts].some(([key,count])=>count>1&&(proxyHeader(key)||['host','origin','sec-fetch-site'].includes(key))))return null;
   if(h['sec-fetch-site']&&!['same-origin','none'].includes(h['sec-fetch-site']))return null;
+  if(ownerAccess)return ownerAccess.authorize(req);
+  if(!loopback(req.socket?.remoteAddress))return null;
   const marked=Object.keys(h).some(proxyHeader);
   const localHost=[`127.0.0.1:${port}`,`localhost:${port}`].includes(h.host);
   if(localHost&&!marked){const origin=`http://${h.host}`;if(h.origin&&h.origin!==origin)return null;return {mode:'local',origin,id:'local'};}
@@ -38,7 +39,7 @@ export function authorizeClient(req,{port,profile=null}={}){
   return {mode:'private-owner',origin:profile.origin,id:profile.id};
 }
 export function describeClient(access,{profile,libraryStore,taskStore,localMediaService,sourceMediaStore}={}){
-  return {id:access.id,mode:access.mode,backendLabel:profile?.backendLabel||'此电脑',online:true,libraryId:libraryStore?.describe().epoch||null,
+  return {id:access.id,mode:access.mode,backendLabel:access.backendLabel||profile?.backendLabel||'此电脑',online:true,libraryId:libraryStore?.describe().epoch||null,
     capabilities:{libraryRead:!!libraryStore,libraryWrite:!!libraryStore,aiActions:true,backgroundTasks:taskStore?.describe().enabled===true,
       sourceMedia:!!sourceMediaStore,localMedia:access.mode==='local'&&!!localMediaService,libraryMigration:false}};
 }
