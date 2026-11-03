@@ -22,7 +22,7 @@ async function fixture(t,{download,executor}={}){
  executor??={status:async()=>({available:true}),recover:async()=>{throw missing();}};
  const options={directory:path.join(directory,'jobs'),libraryStore:library,mediaStore:media,podcastSources,executor};let jobs=await createSourceJobs(options);
  t.after(async()=>{await jobs.shutdown();await media.shutdown();library.close();await rm(directory,{recursive:true,force:true});});
- const create=kind=>jobs.create({protocolVersion:1,operation_id:randomUUID(),key:doc.key,source:media.owner(doc.key).source,kind,consent:true});
+ const create=kind=>jobs.create({protocolVersion:1,operation_id:randomUUID(),libraryId:library.describe().epoch,key:doc.key,source:media.owner(doc.key).source,kind,consent:true});
  return {directory,library,media,create,executor,options,get jobs(){return jobs;},get calls(){return calls;},async restart(){await jobs.shutdown();jobs=await createSourceJobs(options);}};
 }
 test('download persists directly on the server, deduplicates concurrent browsers and survives restart',async t=>{
@@ -55,10 +55,31 @@ test('corrupt saved bytes are rejected before ASR upload and unknown operations 
  const f=await fixture(t,{executor}),source=f.media.owner(doc.key).source,receipt=await f.media.save(doc.key,source,Readable.from(['original']),{type:'audio/mpeg',name:'source.mp3'});
  await writeFile(path.join(f.directory,'media',receipt.sha256+'.media'),'changed!');await assert.rejects(f.create('transcribe'),/changed|integrity/);assert.equal(uploads,0);
 });
+test('explicit retry repairs a completed download while ordinary status reads never reacquire bytes',async t=>{
+ const f=await fixture(t),job=await f.create('download');await until(()=>f.jobs.get(job.id),j=>j.state==='ready');const receipt=await f.media.read(doc.key);
+ await writeFile(path.join(f.directory,'media',receipt.sha256+'.media'),Buffer.alloc(receipt.size));await assert.rejects(f.media.read(doc.key),/integrity/);
+ assert.equal((await f.create('download')).id,job.id);assert.equal(f.calls,1);
+ await f.jobs.action(job.id,'retry');await until(()=>f.jobs.get(job.id),j=>j.state==='ready');assert.equal(f.calls,2);assert.deepEqual(await f.media.read(doc.key),receipt);
+});
+test('replaced asset bytes cannot accept an old transcript and require a distinct explicit ASR operation',async t=>{
+ const operations=new Map();let uploads=0;
+ const executor={status:async()=>({available:true}),recover:async value=>{const job=operations.get(value.operation_id);if(!job)throw missing();return job;},upload:async(body,value)=>{for await(const _ of body){}uploads++;const job={id:String(uploads).repeat(32),state:'ready'};operations.set(value.operation_id,job);return job;},result:async id=>({id,state:'ready',transcript:{document:{schema_version:1,segments:[]}}})};
+ const f=await fixture(t,{executor}),source=f.media.owner(doc.key).source;
+ await f.media.save(doc.key,source,Readable.from(['first audio']),{type:'audio/mpeg',name:'first.mp3'});const first=await f.create('transcribe');await until(()=>f.jobs.get(first.id),j=>j.state==='ready');
+ await f.media.save(doc.key,source,Readable.from(['second audio']),{type:'audio/mpeg',name:'second.mp3'});await assert.rejects(f.jobs.result(first.id),/原声已经替换/);
+ const second=await f.create('transcribe');assert.notEqual(second.id,first.id);await until(()=>f.jobs.get(second.id),j=>j.state==='ready');assert.equal(uploads,2);assert.equal((await f.create('transcribe')).id,second.id);
+});
 test('missing consent, conflicting operation identity and stale source fail before any fetch',async t=>{
- const f=await fixture(t),base={protocolVersion:1,operation_id:randomUUID(),key:doc.key,source:f.media.owner(doc.key).source,kind:'download'};
+ const f=await fixture(t),base={protocolVersion:1,operation_id:randomUUID(),libraryId:f.library.describe().epoch,key:doc.key,source:f.media.owner(doc.key).source,kind:'download'};
  await assert.rejects(f.jobs.create(base));await assert.rejects(f.jobs.create({...base,consent:true,source:'0'.repeat(64)}));assert.equal(f.calls,0);
  await f.jobs.create({...base,consent:true});await assert.rejects(f.jobs.create({...base,consent:true,kind:'transcribe'}),/另一份来源/);
+});
+test('a queued transcription can be cancelled before its upload while another source occupies acquisition',async t=>{
+ let uploads=0;const f=await fixture(t,{download:async(_,{signal})=>{await delay(10000,null,{signal});return {body:Buffer.from('late'),type:'audio/mpeg'};},executor:{status:async()=>({available:true}),recover:async()=>{throw missing();},upload:async()=>{uploads++;throw Error('cancelled task must not upload');}}});
+ const first=await f.create('download');await until(async()=>f.calls,n=>n===1);
+ const second={...doc,key:'second-source'};commit(f.library,second);const source=f.media.owner(second.key).source;await f.media.save(second.key,source,Readable.from(['ID3 second']),{type:'audio/mpeg',name:'source.mp3'});
+ const job=await f.jobs.create({protocolVersion:1,libraryId:f.library.describe().epoch,operation_id:randomUUID(),key:second.key,source,kind:'transcribe',consent:true});assert.equal(job.state,'queued');
+ assert.equal((await f.jobs.action(job.id,'cancel')).state,'cancelled');await f.jobs.action(first.id,'cancel');await delay(30);assert.equal(uploads,0);assert.equal((await f.jobs.get(job.id)).state,'cancelled');
 });
 test('real authenticated HTTP accepts a source task independently of the response connection',async t=>{
  const directory=await mkdtemp(path.join(tmpdir(),'coconut-source-task-http-'));let release;const gate=new Promise(resolve=>release=resolve);
@@ -67,7 +88,7 @@ test('real authenticated HTTP accepts a source task independently of the respons
  const epoch=(await(await fetch(origin+'/api/v1/library')).json()).epoch;await post('/api/v1/library/commit',{protocolVersion:1,epoch,key:doc.key,receiptKey:randomUUID(),expected:null,action:'put',document:doc});
  const {createHash}=await import('node:crypto'),{sourceMediaIdentity}=await import('../shared/source-media.js');const source=createHash('sha256').update(sourceMediaIdentity(doc)).digest('hex');
  assert.equal((await fetch(origin+'/api/health').then(r=>r.json())).client.capabilities.sourceJobs,true);
- const {job}=await post('/api/v1/source-jobs',{protocolVersion:1,operation_id:randomUUID(),key:doc.key,source,kind:'download',consent:true});release();
+ const {job}=await post('/api/v1/source-jobs',{protocolVersion:1,operation_id:randomUUID(),libraryId:epoch,key:doc.key,source,kind:'download',consent:true});release();
  await until(async()=>fetch(origin+'/api/v1/source-jobs/'+job.id).then(r=>r.json()),value=>value.job.state==='ready');
  const receipt=await fetch(origin+'/api/v1/source-media?'+new URLSearchParams({key:doc.key,source})).then(r=>r.json());assert.ok(receipt.media.sha256);
  assert.equal((await fetch(origin+'/api/v1/source-jobs',{method:'POST',headers:{Origin:'https://evil.example','Content-Type':'application/json'},body:'{}'})).status,403);

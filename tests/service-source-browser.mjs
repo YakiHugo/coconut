@@ -23,7 +23,13 @@ try{
  ({context,page}=await login(390));await page.goto(origin+'/#read/'+doc.key);await expect(page.locator('audio')).toHaveAttribute('src',/api\/v1\/source-media\/content/,{timeout:15000});
  await page.getByLabel('确认使用服务中已有的模型识别原声').check();await page.getByRole('button',{name:'生成文字稿',exact:true}).click();await expect.poll(()=>uploads).toBe(1);await context.close();
  upstream={...upstream,state:'ready'};await server.shutdown();await start();
- ({context,page}=await login());await page.goto(origin+'/#read/'+doc.key);await page.locator('.activity-center > summary').click();await expect(page.getByRole('button',{name:'将文字稿接入原项目',exact:true})).toBeVisible();await page.getByRole('button',{name:'将文字稿接入原项目',exact:true}).click();
+ ({context,page}=await login());await page.goto(origin+'/#read/'+doc.key);await page.locator('.activity-center > summary').click();await expect(page.getByRole('button',{name:'将文字稿接入原项目',exact:true})).toBeVisible();let releaseResult,resultReceived;const resultGate=new Promise(resolve=>releaseResult=resolve),received=new Promise(resolve=>resultReceived=resolve);
+ await page.route('**/api/v1/source-jobs/*/result',async route=>{const response=await route.fetch();resultReceived();await resultGate;await route.fulfill({response});});
+ await page.getByRole('button',{name:'将文字稿接入原项目',exact:true}).click();await received;
+ await page.evaluate(()=>{const client=window.CoconutClientCapabilities;client.observe({...client.current,id:'authored-different-connection',libraryId:'authored-different-library'});});releaseResult();
+ await expect(page.getByText('Authored speech for browser acceptance',{exact:true})).toHaveCount(0);
+ assert.equal(await page.evaluate(async key=>(await fetch('api/v1/library/document?protocolVersion=1&key='+key).then(r=>r.json())).record.document.segments.length,doc.key),0);
+ await page.reload();await page.locator('.activity-center > summary').click();await page.getByRole('button',{name:'将文字稿接入原项目',exact:true}).click();
  await expect(page.getByText('Authored speech for browser acceptance',{exact:true}).first()).toBeVisible();
  await expect.poll(()=>page.evaluate(async key=>(await fetch('api/v1/library/document?protocolVersion=1&key='+key).then(r=>r.json())).record.document.segments.length,doc.key)).toBe(1);
  const stored=await page.evaluate(async key=>(await fetch('api/v1/library/document?protocolVersion=1&key='+key).then(r=>r.json())).record.document,doc.key);assert.equal(stored.project_note,doc.project_note);assert.deepEqual(stored.timestamp_bookmarks,doc.timestamp_bookmarks);assert.equal(stored.segments.length,1);
