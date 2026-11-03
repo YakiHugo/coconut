@@ -44,9 +44,9 @@ async function fixture(t,{connectStatus=200,stall=false,respond}={}){
  t.after(async()=>{for(const socket of sockets)socket.destroy();await Promise.all([new Promise(resolve=>proxy.close(resolve)),new Promise(resolve=>origin.close(resolve))]);});
  return {url:`http://127.0.0.1:${proxy.address().port}`,connects,requests,sni};
 }
-async function run(proxy,{url='https://www.xiaoyuzhoufm.com/episode/authored',trust=true,options={}}={}){
+async function run(proxy,{url='https://www.xiaoyuzhoufm.com/episode/authored',trust=true,options={},owner=false,environment=null}={}){
  const code=`import {createPublicFetcher} from ${JSON.stringify(moduleUrl)};
- const fetch=createPublicFetcher({xiaoyuzhouProxy:${JSON.stringify(proxy)},lookup:async()=>{throw Error('Unexpected origin DNS');},request:()=>{throw Error('Unexpected direct fallback');}});
+ const fetch=createPublicFetcher(${owner?`{ownerSources:true,ownerNetwork:${JSON.stringify(environment?{mode:'environment',environment}:{mode:'custom',proxy})},lookup:async()=>{throw Error('Unexpected preflight DNS');}}`:`{xiaoyuzhouProxy:${JSON.stringify(proxy)},lookup:async()=>{throw Error('Unexpected origin DNS');},request:()=>{throw Error('Unexpected direct fallback');}}`});
  try {const r=await fetch(${JSON.stringify(url)},${JSON.stringify(options)});console.log(JSON.stringify({ok:true,body:r.body.toString(),length:r.length}));}
  catch(error){console.log(JSON.stringify({ok:false,error:error.message}));}`;
  const env={...process.env};delete env.NODE_EXTRA_CA_CERTS;delete env.NODE_TLS_REJECT_UNAUTHORIZED;
@@ -67,6 +67,21 @@ test('real CONNECT keeps origin SNI and TLS verification, without local origin D
  assert.equal(proxy.requests[0].headers.host,'www.xiaoyuzhoufm.com');
  assert.equal(proxy.requests[0].headers['accept-encoding'],'identity');
  for(const {headers} of [...proxy.connects,...proxy.requests])for(const name of ['cookie','authorization','proxy-authorization'])assert.equal(headers[name],undefined);
+});
+test('standalone owner sources use the native Node proxy agent with real CONNECT and verified TLS',async t=>{
+ const proxy=await fixture(t);assert.deepEqual(await run(proxy.url,{owner:true}),{ok:true,body:'fixture',length:7});
+ assert.equal(proxy.connects[0].url,'www.xiaoyuzhoufm.com:443');assert.equal(proxy.sni[0],'www.xiaoyuzhoufm.com');
+ assert.equal((await run(proxy.url,{owner:true,trust:false})).ok,false);
+});
+test('standalone HTTP ALL_PROXY aliases use the real tunnel instead of silently connecting directly',async t=>{
+ const proxy=await fixture(t);
+ for(const environment of [{ALL_PROXY:proxy.url},{all_proxy:proxy.url},{ALL_PROXY:'http://127.0.0.1:1',all_proxy:proxy.url}])assert.equal((await run(proxy.url,{owner:true,environment})).ok,true);
+ assert.equal(proxy.connects.length,3);assert.ok(proxy.connects.every(connection=>connection.url==='www.xiaoyuzhoufm.com:443'));
+});
+test('standalone proxy casing, empty values and NO_PROXY match the isolated video environment',async t=>{
+ const proxy=await fixture(t);
+ for(const environment of [{ALL_PROXY:proxy.url,https_proxy:''},{HTTPS_PROXY:'',ALL_PROXY:proxy.url},{HTTPS_PROXY:proxy.url,NO_PROXY:'*',no_proxy:''}])assert.equal((await run(proxy.url,{owner:true,environment})).ok,true);
+ assert.equal(proxy.connects.length,3);
 });
 test('untrusted certificates and mismatched origin names fail before an origin GET',async t=>{
  const proxy=await fixture(t);

@@ -27,7 +27,7 @@ async function layout(t,kind,{boundary=true}={}) {
   }
   await mkdir(app,{recursive:true});await mkdir(reader,{recursive:true});
   await writeFile(path.join(app,'package.json'),JSON.stringify({type:'module'}));
-  for(const name of ['podcast-sources.mjs','public-http.mjs','podcast-xml.mjs','caption-service.mjs','local-media.mjs'])await copyFile(path.join(root,'desktop',name),path.join(app,name));
+  for(const name of ['podcast-sources.mjs','public-http.mjs','source-network.mjs','podcast-xml.mjs','caption-service.mjs','local-media.mjs'])await copyFile(path.join(root,'desktop',name),path.join(app,name));
   const entries=['index.html'];
   const index=(await Promise.all(entries.map(entry=>readFile(path.join(root,'reader',entry),'utf8')))).join('\n');
   const scripts=[...index.matchAll(/<(?:script|link|img)\b[^>]*\b(?:src|href)="([^"]+)"/g)].map(match=>match[1].split('?')[0]);

@@ -4,6 +4,7 @@ import https from 'node:https';
 import tls from 'node:tls';
 import { lookup as dnsLookup } from 'node:dns/promises';
 import { isIP, BlockList } from 'node:net';
+import {validateSourceNetwork} from './source-network.mjs';
 
 const blocked = new BlockList();
 for (const [network, prefix] of [['0.0.0.0',8],['10.0.0.0',8],['100.64.0.0',10],['127.0.0.0',8],['169.254.0.0',16],['172.16.0.0',12],['192.0.0.0',24],['192.0.2.0',24],['192.88.99.0',24],['192.168.0.0',16],['198.18.0.0',15],['198.51.100.0',24],['203.0.113.0',24],['224.0.0.0',4],['240.0.0.0',4]]) blocked.addSubnet(network,prefix,'ipv4');
@@ -89,30 +90,54 @@ function proxyRequest(proxy, url, options, callback) {
   req.once('close',()=>agent.destroy());
   return req;
 }
-export function createPublicFetcher({lookup = dnsLookup, request = (url,options,callback)=>(url.protocol === 'https:' ? https : http).request(url,options,callback), xiaoyuzhouProxy = null} = {}) {
+export function createPublicFetcher({lookup = dnsLookup, request = (url,options,callback)=>(url.protocol === 'https:' ? https : http).request(url,options,callback), xiaoyuzhouProxy = null, ownerSources = false, ownerNetwork = null} = {}) {
   const proxy = validatePodcastProxy(xiaoyuzhouProxy);
+  // A process-owner policy for identified HTTPS providers. It trusts the owner's
+  // network (including TUN/Fake-IP); it is not an arbitrary-URL SSRF boundary.
+  // Every redirect remains in the identified provider set. Other URLs keep the
+  // original DNS/pinned-socket policy, including URLs supplied by generic RSS.
+  const network=validateSourceNetwork(ownerNetwork);
+  const proxyEnv=network.mode==='custom'?{https_proxy:network.proxy}:network.mode==='environment'?{...network.environment}:{};
+  if(ownerSources){
+    // Node's standard Agent does not read ALL_PROXY or support SOCKS. Translate
+    // HTTP ALL_PROXY explicitly and reject unsupported settings before startup;
+    // an ignored proxy must never become an accidental direct connection.
+    const selected=name=>Object.hasOwn(proxyEnv,name)?proxyEnv[name]:proxyEnv[name.toUpperCase()];
+    const all=selected('all_proxy')||'',effective={no_proxy:selected('no_proxy')||''};
+    for(const name of ['http_proxy','https_proxy']){
+      effective[name]=selected(name)||all;
+      if(effective[name]&&new URL(effective[name]).protocol!=='http:')throw Error('Standalone source networking requires HTTP proxy URLs; SOCKS proxies are not supported.');
+    }
+    // Python/yt-dlp gives present lowercase values precedence, including empty
+    // values that clear uppercase settings. Node otherwise uses truthy fallback.
+    for(const name of Object.keys(proxyEnv))delete proxyEnv[name];
+    Object.assign(proxyEnv,effective);
+  }
+  let ownerAgent;
   return async function fetchPublic(value,{maxBytes=8*1024*1024,timeoutMs=20000,signal,types,inspectMedia=false,maxMediaBytes=200*1024*1024,redirectOnly=false}={}) {
     const deadline = AbortSignal.timeout(timeoutMs);
     const combined = signal ? AbortSignal.any([signal,deadline]) : deadline;
     let url = publicUrl(value);
     const viaProxy = !!proxy && proxyOriginAllowed(url);
+    const viaOwner=ownerSources===true&&proxyOriginAllowed(url);
     try {
       for (let redirects=0;redirects<=4;redirects++) {
         aborted(combined);
         const hostname = url.hostname.replace(/^\[|\]$/g,'');
         if (viaProxy && !proxyOriginAllowed(url)) throw new Error('小宇宙代理重定向超出允许的来源范围');
-        const records = viaProxy ? null : isIP(hostname) ? [{address:hostname,family:isIP(hostname)}] : await withAbort(lookup(hostname,{all:true,verbatim:true}),combined);
+        if (viaOwner && !proxyOriginAllowed(url)) throw new Error('来源重定向超出允许的平台范围');
+        const records = viaProxy || viaOwner ? null : isIP(hostname) ? [{address:hostname,family:isIP(hostname)}] : await withAbort(lookup(hostname,{all:true,verbatim:true}),combined);
         if (records && (!records.length || records.some(record=>!isPublicAddress(record.address)))) throw new Error('来源域名解析到非公开地址，已停止请求');
         const pinned = records?.[0];
         const response = await new Promise((resolve,reject)=>{
           let settled = false;
           const done = (error,result)=>{ if (settled) return; settled=true; error ? reject(error) : resolve(result); };
           const send = viaProxy ? (url,options,callback)=>proxyRequest(proxy,url,options,callback) : request;
-          const req = send(url,{method:'GET',agent:false,signal:combined,maxHeaderSize:16384,
+          const req = send(url,{method:'GET',agent:viaOwner&&!viaProxy?(ownerAgent??=new https.Agent({keepAlive:false,proxyEnv})):false,signal:combined,maxHeaderSize:16384,
             headers:{'User-Agent':'Coconut/0.1 public-podcast-reader','Accept':'*/*','Accept-Encoding':'identity'},
             // Direct sockets use the checked IP; tunneled sockets must never
             // perform local origin DNS or fall back outside the proxy.
-            lookup:(_host,options,callback)=>pinned ? options.all ? callback(null,[pinned]) : callback(null,pinned.address,pinned.family) : callback(new Error('代理模式不能回退到来源 DNS'))},res=>{
+            ...(!viaOwner?{lookup:(_host,options,callback)=>pinned ? options.all ? callback(null,[pinned]) : callback(null,pinned.address,pinned.family) : callback(new Error('代理模式不能回退到来源 DNS'))}: {})},res=>{
             const fail = message=>{done(new Error(message));res.destroy();};
             if ([301,302,303,307,308].includes(res.statusCode)) {
               const location = res.headers.location; done(null,{redirect:location}); res.destroy(); return;

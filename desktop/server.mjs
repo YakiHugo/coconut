@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /** Zero-Python loopback reader. Starting this service never starts an agent or a model. */
 import http from 'node:http';
-import { readFile } from 'node:fs/promises';
+import { readFile,realpath } from 'node:fs/promises';
 import path from 'node:path';
 import {homedir} from 'node:os';
 import { fileURLToPath } from 'node:url';
@@ -26,7 +26,7 @@ const MIME = {'.png':'image/png','.html':'text/html; charset=utf-8','.js':'text/
 const MAX_BODY = 1024 * 1024;
 export const CSP = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self'; img-src 'self' data: blob:; media-src 'self' blob:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'";
 
-export function createBridge({readerDirectory = path.resolve(ROOT,'../reader'), providers = createProviders(), podcastSources = createPodcastSources(), captionService = null, captionStatus = null, captionShortLinkResolver = undefined, bilibiliSession = null, localMediaService = null, videoAudioService = null, taskStore = null, taskUnavailable = null, libraryStore = null, sourceMediaStore = null, libraryUnavailable = null, libraryLocation = null, privateProxy = null, ingestionExecutor = createIngestionExecutor(),readabilityJobs = null} = {}) {
+export function createBridge({readerDirectory = path.resolve(ROOT,'../reader'), providers = createProviders(), podcastSources = createPodcastSources(), captionService = null, captionStatus = null, captionShortLinkResolver = undefined, bilibiliSession = null, localMediaService = null, videoAudioService = null, taskStore = null, taskUnavailable = null, libraryStore = null, sourceMediaStore = null, libraryUnavailable = null, libraryLocation = null, privateProxy = null, ownerAccess = null, ingestionExecutor = createIngestionExecutor(),readabilityJobs = null} = {}) {
   const profile=privateProxyProfile(privateProxy);
   const translate = createTranslator(providers);
   const capabilities=Object.freeze({...CAPABILITIES,caption_import:captionService?.available===true,persistent_tasks:!!taskStore,canonical_library:!!libraryStore});
@@ -48,9 +48,12 @@ export function createBridge({readerDirectory = path.resolve(ROOT,'../reader'), 
       const body = JSON.stringify(data); res.writeHead(status, {'Content-Type':'application/json; charset=utf-8','Content-Length':Buffer.byteLength(body)}); res.end(req.method === 'HEAD' ? undefined : body);
     };
     const port = server.address()?.port;
-    access=authorizeClient(req,{port,profile});
-    if(!access)return json(403,{code:'client_forbidden',error:'此请求未通过本机或私有本人访问验证'});
-    const origin=access.origin,remote=access.mode==='private-owner';
+    try { if(ownerAccess&&await ownerAccess.handle(req,res))return; }
+    catch { return json(400,{code:'invalid_login_request',error:'登录请求未完成。'}); }
+    access=authorizeClient(req,{port,profile,ownerAccess});
+    if(!access&&ownerAccess?.challenge(req,res))return;
+    if(!access)return json(ownerAccess?.envelope(req)?401:403,{code:'client_forbidden',error:'此请求未通过本机或私有本人访问验证'});
+    const origin=access.origin,remote=access.mode==='private-owner',canAcquire=access.mode==='local'||access.sourceAcquisition===true;
     try { pathname = new URL(req.url, origin).pathname; } catch { return json(400,{error:'无效路径'}); }
     if(remote&&localOnlyRoute(pathname))return json(403,{code:'local_only',error:'此操作需要在所连接的电脑上完成'});
     const client=()=>describeClient(access,{profile,libraryStore,taskStore,localMediaService,sourceMediaStore});
@@ -61,7 +64,7 @@ export function createBridge({readerDirectory = path.resolve(ROOT,'../reader'), 
       if(await handleSourceMediaRequest({req,res,pathname,origin,json,store:sourceMediaStore,signal:controller.signal}))return;
       if (localMediaService && await localMediaService.handle(req,res,pathname)) return;
       if(pathname.startsWith('/api/v1/readability')){
-        if(remote)return json(403,{error:'请在本机阅读器中整理原声与文字稿'});
+        if(remote&&!canAcquire)return json(403,{error:'此连接未获准使用服务端整理能力'});
         if(!readabilityJobs)return json(503,{error:'本地整理服务未配置',code:'readability_unavailable'});
         const match=pathname.match(/^\/api\/v1\/readability\/jobs\/([a-f0-9-]+)(?:\/(result|media|cancel|retry))?$/);
         if(req.method==='GET'||req.method==='HEAD'){
@@ -157,16 +160,16 @@ export function createBridge({readerDirectory = path.resolve(ROOT,'../reader'), 
         if(['cancel','archive','restore'].includes(action))return json(200,{protocolVersion:1,task:await taskStore[action](pathname.split('/').at(-2),guardedMutation?data.expected:undefined)});
         const receipt=await taskStore.submit(data);return json(receipt.created?202:200,{protocolVersion:1,...receipt});
       }
-      if(pathname === '/api/v1/ingestions'){const receipt=await ingestionService.ingest(data,{signal:controller.signal,ownerLocal:access.mode==='local'});if(receipt.ingestion.state==='needs_transcription')receipt.ingestion.transcription=await ingestionExecutor.status({signal:controller.signal});return json(200,receipt);}
+      if(pathname === '/api/v1/ingestions'){const receipt=await ingestionService.ingest(data,{signal:controller.signal,ownerLocal:canAcquire});if(receipt.ingestion.state==='needs_transcription')receipt.ingestion.transcription=await ingestionExecutor.status({signal:controller.signal});return json(200,receipt);}
       if(pathname === '/api/captions/import'){
-        if(remote&&captionService?.ownerLocalOnly)return json(403,{code:'owner_local_required',error:'视频来源获取仅允许本机界面。'});
+        if(!canAcquire&&captionService?.ownerLocalOnly)return json(403,{code:'owner_local_required',error:'视频来源获取仅允许本机界面。'});
         if(!capabilities.caption_import)return json(501,{code:captionSources.code,error:captionSources.message});
         return json(200,await captionService.importCaption(data,{signal:controller.signal}));
       }
       if(pathname === '/api/podcasts/discover') return json(200,await podcastSources.discover(data,{signal:controller.signal}));
       if(pathname === '/api/podcasts/import') return json(200,await podcastSources.importEpisode(data,{signal:controller.signal}));
       if(['/api/videos/media','/api/videos/source-media'].includes(pathname)) {
-        if(remote&&videoAudioService?.ownerLocalOnly)return json(403,{code:'owner_local_required',error:'视频来源获取仅允许本机界面。'});
+        if(!canAcquire&&videoAudioService?.ownerLocalOnly)return json(403,{code:'owner_local_required',error:'视频来源获取仅允许本机界面。'});
         if(!videoAudioService?.available)return json(503,{code:'video_media_unavailable',error:'此开发服务未配置公开媒体助手；不会自动安装依赖。'});
         const media=await videoAudioService.download(data,{signal:controller.signal,...(pathname==='/api/videos/source-media'?{purpose:'source'}:{})});
         res.writeHead(200,{'Content-Type':media.type,'Content-Length':media.body.length,'Content-Disposition':'attachment; filename="'+media.filename+'"','X-Coconut-Media-Source':Buffer.from(JSON.stringify(media.source)).toString('base64url')});
@@ -211,7 +214,8 @@ export function createBridge({readerDirectory = path.resolve(ROOT,'../reader'), 
   };
   return server;
 }
-export async function startBridge({port = 8080, taskDirectory = null, libraryDirectory = null, ...options} = {}) {
+export async function startBridge({port = 8080, host = '127.0.0.1', taskDirectory = null, libraryDirectory = null, ...options} = {}) {
+  if(!['127.0.0.1','0.0.0.0'].includes(host)||host!=='127.0.0.1'&&!options.ownerAccess)throw new Error('A public listener requires configured owner authentication');
   if (!Number.isInteger(port) || port < 0 || port > 65535) throw new Error('Invalid port');
   if(taskDirectory){
     options.providers??=createProviders();
@@ -232,11 +236,11 @@ export async function startBridge({port = 8080, taskDirectory = null, libraryDir
     catch{options.sourceMediaStore=null;} // Fail closed; never mislabel page blobs as saved.
   }
   const server = createBridge(options);
-  try{await new Promise((resolve,reject)=>{server.once('error',reject);server.listen(port,'127.0.0.1',resolve);});}
-  catch(error){options.libraryStore?.close();await options.taskStore?.shutdown();await options.readabilityJobs?.shutdown();throw error;}
+  try{await new Promise((resolve,reject)=>{server.once('error',reject);server.listen(port,host,resolve);});}
+  catch(error){await Promise.allSettled([options.sourceMediaStore?.shutdown(),options.taskStore?.shutdown(),options.readabilityJobs?.shutdown()]);options.libraryStore?.close();throw error;}
   return server;
 }
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+if (process.argv[1] && await realpath(process.argv[1]).catch(()=>null) === fileURLToPath(import.meta.url)) {
   const args = process.argv.slice(2);
   if (args.length && (args.length !== 2 || args[0] !== '--port')) { console.error('Usage: node desktop/server.mjs [--port 8080]'); process.exit(1); }
   const library=libraryLocation({mode:'cli'});

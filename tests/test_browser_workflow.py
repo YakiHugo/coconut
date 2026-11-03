@@ -11,7 +11,7 @@ class BrowserWorkflowTests(unittest.TestCase):
         job = WORKFLOW.split('\n  react-source-first:', 1)[1]
         self.assertIn('run: npm run test:react-browser', job)
         self.assertIn('run: npm run test:react-matrix', job)
-        self.assertEqual(job.count("if: ${{ !cancelled() && steps.react_setup.outcome == 'success' }}"), 3)
+        self.assertEqual(job.count("if: ${{ !cancelled() && steps.react_setup.outcome == 'success' }}"), 4)
         self.assertIn('run: npm run check:reader-ui', job)
         self.assertNotIn('continue-on-error', job)
         paths = re.findall(r'^            \$\{\{ runner.temp \}\}/coconut-react-authored/(.+)$', job, re.M)
@@ -44,7 +44,7 @@ class BrowserWorkflowTests(unittest.TestCase):
             self.assertNotIn('if', step)
         suites = [step for step in steps if step.get('run', '').startswith('npm run test:')]
         self.assertEqual([step['run'] for step in suites], [
-            'npm run test:react-browser', 'npm run test:react-matrix', 'npm run test:react-palette-browser'])
+            'npm run test:react-browser', 'npm run test:react-matrix', 'npm run test:react-palette-browser', 'npm run test:service-browser'])
         for step in suites:
             self.assertEqual(step['if'], "${{ !cancelled() && steps.react_setup.outcome == 'success' }}")
         for step in steps:
