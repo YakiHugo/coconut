@@ -52,7 +52,8 @@ export async function createSourceMediaStore({directory,libraryStore}){
  return {record,body:handle.createReadStream({autoClose:false,start:0}),close:()=>handle.close()};
  }catch(error){await handle.close();throw error;}}
  function exclusive(operation){const next=queue.then(operation);queue=next.catch(()=>{});return next;}
- return {owner,read,save,stream,input,exclusive,setCommitGuard(guard){commitGuard=guard;},async shutdown(){closed=true;await Promise.allSettled([...active]);await queue;}};
+ async function localInput(key,binding,sha256){const record=await read(key,binding);if(!record||record.sha256!==sha256)throw fail('Saved media was replaced',409);return {record,path:filename(record.sha256+'.media')};}
+ return {owner,read,save,stream,input,localInput,exclusive,setCommitGuard(guard){commitGuard=guard;},async shutdown(){closed=true;await Promise.allSettled([...active]);await queue;}};
 }
 /** Called only after the bridge validates host, origin and Fetch Metadata. */
 export async function handleSourceMediaRequest({req,res,pathname,origin,json,store,signal}){

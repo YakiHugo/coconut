@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 
 export const preferenceSettings = {
+  chineseScript: { key: 'coconut-reading-chinese-script-v1', values: ['system', 'zh-Hans', 'zh-Hant', 'source'], fallback: 'system' },
   theme: { key: 'coconut-reading-theme-v1', values: ['light', 'dark', 'system'], fallback: 'light' },
   measure: { key: 'coconut-reading-measure-v1', values: ['full', 'narrow'], fallback: 'full' },
   layout: { key: 'coconut-reading-layout-v1', values: ['standard', 'large', 'spacious'], fallback: 'standard' },
@@ -56,6 +57,7 @@ export function useReadingPreferences() {
     window.addEventListener('storage', sync);
     return () => window.removeEventListener('storage', sync);
   }, []);
+  useEffect(()=>{const update=()=>setValues(previous=>({...previous}));window.addEventListener('languagechange',update);return()=>window.removeEventListener('languagechange',update);},[]);
   function change(name: PreferenceName, raw: string) {
     const value = normalize(name, raw);
     setValues(previous => ({ ...previous, [name]: value }));
@@ -82,6 +84,7 @@ export function ReadingPreferences({ controller,expanded=false }: { controller: 
   }}>
     <summary>阅读偏好</summary>
     <div className="reading-preferences-options">
+      <label>中文显示<select value={values.chineseScript} onChange={event=>change('chineseScript',event.target.value)}><option value="system">跟随系统语言</option><option value="zh-Hans">简体中文</option><option value="zh-Hant">繁體中文</option><option value="source">保留原文字形</option></select></label>
       <label>主题<select value={values.theme} onChange={event => change('theme', event.target.value)}><option value="light">浅色</option><option value="dark">深色</option><option value="system">跟随系统</option></select></label>
       <label>行宽<select value={values.measure} onChange={event => change('measure', event.target.value)}><option value="full">完整宽度</option><option value="narrow">窄行</option></select></label>
       <label>阅读排版<select value={values.layout} onChange={event => change('layout', event.target.value)}><option value="standard">标准</option><option value="large">大字</option><option value="spacious">大字 · 宽松行距</option></select></label>

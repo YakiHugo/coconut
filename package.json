@@ -30,6 +30,7 @@
     "typescript": "7.0.2"
   },
   "dependencies": {
+    "opencc-js": "^1.0.5",
     "react": "19.3.0",
     "react-dom": "19.3.0"
   }

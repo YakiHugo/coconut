@@ -47,7 +47,7 @@ macOS 开发服务启用字幕助手后，可在「发现与添加」连接 Edge
 
 公开链接和字幕获取有来源、大小、时长与请求预算限制。受信任代理支持所有者显式配置的字幕获取，以及明确选择并通过来源校验的原始媒体下载；默认关闭，不是任意地址转发。
 
-原始媒体无需先有文字稿即可播放。ASR 是可选执行器能力，必须明确配置、确认输入并取得本地就绪状态；正常应用流程不会静默安装依赖或下载权重。没有可用模型时仍可播放和记录笔记。
+原始媒体无需先有文字稿即可播放。ASR 是可选能力；独立服务由 Node 直接启动 Python 转录任务，必须配置本地模型、确认输入并取得就绪状态；正常应用流程不会静默安装依赖或下载权重。没有可用模型时仍可播放和记录笔记。
 
 来源未返回现成字幕时，开发模式可先获取原声，再用已配置的本地识别服务生成带时间轴的文字稿，并接入原项目。平台字幕和自动转写保留不同的来源标记；具体启动配置见[来源与本地转写](docs/link-first-ingestion.md#one-user-visible-task-existing-python-execution-backend)。
 
@@ -55,6 +55,7 @@ macOS 开发服务启用字幕助手后，可在「发现与添加」连接 Edge
 - [开发字幕获取](docs/development-captions.md)
 - [字幕失败诊断](docs/caption-diagnostic-outcomes.md)
 - [三平台导入实现与真实验证证据](docs/public-ingestion-evidence.md)
+- [本地转录管线与 Qwen 接入](docs/transcription-pipeline.md)
 - [来源与 ASR 边界](docs/podcast-sources-and-asr.md)
 
 ## AI 与后台任务
