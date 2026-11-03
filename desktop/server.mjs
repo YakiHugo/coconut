@@ -26,7 +26,7 @@ const MIME = {'.png':'image/png','.html':'text/html; charset=utf-8','.js':'text/
 const MAX_BODY = 1024 * 1024;
 export const CSP = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self'; img-src 'self' data: blob:; media-src 'self' blob:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'";
 
-export function createBridge({readerDirectory = path.resolve(ROOT,'../reader'), providers = createProviders(), podcastSources = createPodcastSources(), captionService = null, captionStatus = null, captionShortLinkResolver = undefined, bilibiliSession = null, localMediaService = null, videoAudioService = null, taskStore = null, taskUnavailable = null, libraryStore = null, sourceMediaStore = null, libraryUnavailable = null, libraryLocation = null, privateProxy = null, ownerAccess = null, ingestionExecutor = createIngestionExecutor(),readabilityJobs = null} = {}) {
+export function createBridge({readerDirectory = path.resolve(ROOT,'../reader'), providers = createProviders(), podcastSources = createPodcastSources(), captionService = null, captionStatus = null, captionShortLinkResolver = undefined, bilibiliSession = null, localMediaService = null, videoAudioService = null, taskStore = null, taskUnavailable = null, libraryStore = null, sourceMediaStore = null, sourceJobs = null, libraryUnavailable = null, libraryLocation = null, privateProxy = null, ownerAccess = null, ingestionExecutor = createIngestionExecutor(),readabilityJobs = null} = {}) {
   const profile=privateProxyProfile(privateProxy);
   const translate = createTranslator(providers);
   const capabilities=Object.freeze({...CAPABILITIES,caption_import:captionService?.available===true,persistent_tasks:!!taskStore,canonical_library:!!libraryStore});
@@ -57,12 +57,30 @@ export function createBridge({readerDirectory = path.resolve(ROOT,'../reader'), 
     const origin=access.origin,remote=access.mode==='private-owner',canAcquire=access.mode==='local'||access.sourceAcquisition===true;
     try { pathname = new URL(req.url, origin).pathname; } catch { return json(400,{error:'无效路径'}); }
     if(remote&&localOnlyRoute(pathname))return json(403,{code:'local_only',error:'此操作需要在所连接的电脑上完成'});
-    const client=()=>describeClient(access,{profile,libraryStore,taskStore,localMediaService,sourceMediaStore});
+    const client=()=>describeClient(access,{profile,libraryStore,taskStore,localMediaService,sourceMediaStore,sourceJobs});
     const controller = new AbortController(); active.add(controller);
     res.on('close',()=>{ if (!res.writableEnded) controller.abort(); active.delete(controller); });
     try {
       if(await handleLibraryRequest({req,pathname,origin,json,store:libraryStore,unavailable:libraryUnavailable}))return;
       if(await handleSourceMediaRequest({req,res,pathname,origin,json,store:sourceMediaStore,signal:controller.signal}))return;
+      if(pathname.startsWith('/api/v1/source-jobs')){
+        if(!canAcquire)return json(403,{error:'此连接未获准执行来源任务'});
+        if(!sourceJobs)return json(503,{error:'来源任务未启用'});
+        const match=pathname.match(/^\/api\/v1\/source-jobs\/([a-f0-9-]+)(?:\/(result|cancel|retry))?$/);
+        if(req.method==='GET'){
+          if(pathname==='/api/v1/source-jobs')return json(200,{jobs:await sourceJobs.list(new URL(req.url,origin).searchParams.get('key'))});
+          if(match&&(!match[2]||match[2]==='result'))return json(200,match[2]?await sourceJobs.result(match[1]):{job:await sourceJobs.get(match[1])});
+          return json(404,{error:'任务不存在'});
+        }
+        if(req.method!=='POST')return json(405,{error:'Method not allowed'});
+        if(req.headers.origin!==origin)return json(403,{error:'Same-origin request required'});
+        if(req.headers['content-type']?.split(';')[0]!=='application/json')return json(400,{error:'Use application/json'});
+        let size=0;const chunks=[];for await(const chunk of req){size+=chunk.length;if(size>4096)return json(413,{error:'请求过大'});chunks.push(chunk);}
+        const data=JSON.parse(Buffer.concat(chunks).toString('utf8'));
+        if(match&&['cancel','retry'].includes(match[2])){if(data?.protocolVersion!==1)return json(400,{error:'协议版本无效'});return json(200,{job:await sourceJobs.action(match[1],match[2])});}
+        if(pathname==='/api/v1/source-jobs')return json(202,{job:await sourceJobs.create(data)});
+        return json(404,{error:'任务不存在'});
+      }
       if (localMediaService && await localMediaService.handle(req,res,pathname)) return;
       if(pathname.startsWith('/api/v1/readability')){
         if(remote&&!canAcquire)return json(403,{error:'此连接未获准使用服务端整理能力'});
@@ -197,14 +215,20 @@ export function createBridge({readerDirectory = path.resolve(ROOT,'../reader'), 
     }
   });
   server.requestTimeout = 30000; server.headersTimeout = 10000;
-  server.on('close',()=>{ void sourceMediaStore?.shutdown();libraryStore?.close(); for (const controller of active) controller.abort(); active.clear();void taskStore?.shutdown().catch(()=>{});void readabilityJobs?.shutdown().catch(()=>{}); });
+  let resources;
+  const stopResources=()=>resources??=(async()=>{
+    await sourceJobs?.shutdown();
+    await Promise.all([taskStore?.shutdown(),readabilityJobs?.shutdown(),sourceMediaStore?.shutdown()]);
+    libraryStore?.close();
+  })();
+  server.on('close',()=>{for(const controller of active)controller.abort();active.clear();void stopResources().catch(()=>{});});
   // Abort synchronously before Electron exits: detached CLI process groups must
   // not outlive the app while waiting for a later HTTP close event.
   let shutdown;
   server.shutdown = callback => {
     if(!shutdown){
       for (const controller of active) controller.abort();
-      active.clear(); const stopping=Promise.all([taskStore?.shutdown(),readabilityJobs?.shutdown(),sourceMediaStore?.shutdown()]);
+      active.clear(); const stopping=stopResources();
       shutdown=new Promise((resolve,reject)=>{
         server.close(error=>void stopping.then(()=>error?reject(error):resolve(),reject));
         server.closeAllConnections();
@@ -236,9 +260,13 @@ export async function startBridge({port = 8080, host = '127.0.0.1', taskDirector
     try{options.sourceMediaStore=await createSourceMediaStore({directory:path.join(libraryDirectory,'source-media'),libraryStore:options.libraryStore});}
     catch{options.sourceMediaStore=null;} // Fail closed; never mislabel page blobs as saved.
   }
+  if(options.enableSourceJobs){
+    try{const {createSourceJobs}=await import('./source-jobs.mjs');options.sourceJobs=await createSourceJobs({directory:path.join(libraryDirectory,'source-jobs'),libraryStore:options.libraryStore,mediaStore:options.sourceMediaStore,podcastSources:options.podcastSources,executor:options.ingestionExecutor});}
+    catch(error){await options.sourceJobs?.shutdown();await Promise.allSettled([options.sourceMediaStore?.shutdown(),options.taskStore?.shutdown(),options.readabilityJobs?.shutdown()]);options.libraryStore?.close();throw error;}
+  }
   const server = createBridge(options);
   try{await new Promise((resolve,reject)=>{server.once('error',reject);server.listen(port,host,resolve);});}
-  catch(error){await Promise.allSettled([options.sourceMediaStore?.shutdown(),options.taskStore?.shutdown(),options.readabilityJobs?.shutdown()]);options.libraryStore?.close();throw error;}
+  catch(error){await options.sourceJobs?.shutdown();await Promise.allSettled([options.sourceMediaStore?.shutdown(),options.taskStore?.shutdown(),options.readabilityJobs?.shutdown()]);options.libraryStore?.close();throw error;}
   return server;
 }
 if (process.argv[1] && await realpath(process.argv[1]).catch(()=>null) === fileURLToPath(import.meta.url)) {
