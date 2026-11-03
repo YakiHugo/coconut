@@ -16,6 +16,11 @@ export async function createSourceJobs({directory,libraryStore,mediaStore,podcas
  const {DatabaseSync}=await import('node:sqlite'),db=new DatabaseSync(filename);
  try{db.exec("PRAGMA busy_timeout=1000; PRAGMA locking_mode=EXCLUSIVE; CREATE TABLE IF NOT EXISTS jobs (id TEXT PRIMARY KEY, document_key TEXT NOT NULL, binding TEXT NOT NULL, source TEXT NOT NULL, kind TEXT NOT NULL, state TEXT NOT NULL, request TEXT NOT NULL, operation TEXT, ingestion_id TEXT, error TEXT, created INTEGER NOT NULL, updated INTEGER NOT NULL); UPDATE jobs SET state='interrupted' WHERE state='running';");}catch(error){db.close();throw error;}
  let closing=false,running=null,runningId=null,controller=null,creation=Promise.resolve(),shutdownPromise;
+ mediaStore.setCommitGuard(record=>{
+  if(closing)throw fail('来源任务服务正在停止',503);
+  const tasks=db.prepare("SELECT operation FROM jobs WHERE binding=? AND kind='transcribe'").all(record.binding);
+  if(tasks.some(value=>JSON.parse(value.operation).fingerprint!==record.sha256))throw fail('此项目已有绑定原声的转写任务。来源返回了不同音频，未替换旧原声；请另建项目核对新版本。',409);
+ });
  const row=id=>{if(!uuid(id))throw fail('任务标识无效');const value=db.prepare('SELECT * FROM jobs WHERE id=?').get(id);if(!value)throw fail('任务不存在',404);return value;};
  function owned(value){if(mediaStore.owner(value.document_key).binding!==value.binding)throw fail('原项目来源已变化，旧任务不能接入此项目',409);return value;}
  function describe(value){return {id:value.id,documentKey:value.document_key,binding:value.binding,source:value.source,kind:value.kind,state:value.state,assetSha256:value.operation?JSON.parse(value.operation).fingerprint:null,ingestionId:value.ingestion_id||null,error:value.error,created:value.created,updated:value.updated};}
@@ -68,7 +73,8 @@ export async function createSourceJobs({directory,libraryStore,mediaStore,podcas
    const status=await executor.status();if(!status.available)throw fail(status.message||'转写执行器尚未就绪',503);
   }
   if(closing)throw fail('服务正在停止',503);if(mediaStore.owner(data.key).binding!==owner.binding)throw fail('原项目来源已变化',409);
-  const now=Date.now();db.prepare('INSERT INTO jobs (id,document_key,binding,source,kind,state,request,operation,created,updated) VALUES (?,?,?,?,?,?,?,?,?,?)').run(data.operation_id,data.key,owner.binding,owner.source,data.kind,'queued',request,operation,now,now);
+  const insert=()=>{const now=Date.now();db.prepare('INSERT INTO jobs (id,document_key,binding,source,kind,state,request,operation,created,updated) VALUES (?,?,?,?,?,?,?,?,?,?)').run(data.operation_id,data.key,owner.binding,owner.source,data.kind,'queued',request,operation,now,now);};
+  if(operation)await mediaStore.exclusive(async()=>{if(closing)throw fail('服务正在停止',503);const current=await mediaStore.read(data.key,owner.binding);if(!current||current.sha256!==JSON.parse(operation).fingerprint)throw fail('原声已变化，请重新确认',409);insert();});else insert();
   const receipt=describe(row(data.operation_id));pump();return receipt;
  }
  function create(data){const next=creation.then(()=>createOne(data));creation=next.catch(()=>{});return next;}

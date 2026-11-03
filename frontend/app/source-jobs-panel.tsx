@@ -7,7 +7,7 @@ import {attachTranscript} from './attach-transcript';
 import {restoreSourceMedia} from './source-media';
 // @ts-expect-error Shared source ownership contract also runs on the server.
 import {sourceMediaIdentity} from '../../shared/source-media.js';
-type Job={id:string;documentKey:string;source:string;binding:string;kind:'download'|'transcribe';assetSha256:string|null;state:string;ingestionId:string|null;error:string|null};
+type Job={id:string;documentKey:string;source:string;binding:string;kind:'download'|'transcribe';assetSha256:string|null;state:string;updated:number;ingestionId:string|null;error:string|null};
 const labels:Record<string,string>={queued:'等待中',running:'进行中',ready:'已完成',failed:'失败',interrupted:'已中断，等待核对',cancelled:'已取消'};
 async function request(path:string,body?:unknown){const response=await fetch(path,{...(body?{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}:{})});const data=await response.json();if(!response.ok)throw Error(typeof data.error==='string'?data.error:'来源任务请求未完成');return data;}
 async function digest(text:string){return Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(text))),b=>b.toString(16).padStart(2,'0')).join('');}
@@ -19,20 +19,21 @@ export function SourceJobsPanel({store,currentKey,taskHost,onTasksChange}:{store
  useEffect(()=>{const changed=()=>{generation.current++;setClient(connection());};window.addEventListener('coconut-client-changed',changed);return()=>window.removeEventListener('coconut-client-changed',changed);},[]);
  useEffect(()=>{
   const version=++generation.current;setJobs([]);setConsent(false);setAvailable(false);setMessage('');setBusy(false);if(!enabled||!currentKey)return;
-  let active=true,timer:ReturnType<typeof setTimeout>;
+  let active=true,timer:ReturnType<typeof setTimeout>,completedDownload='';const attachment=new AbortController();
   const refresh=async()=>{
    if(!active||refreshing.current){if(active)timer=setTimeout(()=>void refresh(),1000);return;}refreshing.current=true;
    try{
     const data=await request('api/v1/source-jobs?'+new URLSearchParams({key:currentKey}));
     if(!Array.isArray(data.jobs)||data.jobs.some((job:Job)=>job.documentKey!==currentKey||!['download','transcribe'].includes(job.kind)||!Object.hasOwn(labels,job.state)))throw Error('来源任务回执无效');
     if(!active||generation.current!==version)return;setJobs(data.jobs);
-    if(data.jobs.some((job:Job)=>job.kind==='download'&&job.state==='ready')&&!store.getMedia(currentKey))await restoreSourceMedia(store,currentKey,new AbortController().signal);
+    const download=data.jobs.find((job:Job)=>job.kind==='download'&&job.state==='ready'),receipt=download?download.id+':'+download.updated:'';
+    if(receipt&&receipt!==completedDownload){completedDownload=receipt;const current=store.getMedia(currentKey);if(!current||current.identity?.startsWith('source-media-sha256:'))await restoreSourceMedia(store,currentKey,attachment.signal,current?.identity);}
    }catch(error){if(active&&generation.current===version)setMessage(error instanceof Error?error.message:String(error));}
    finally{refreshing.current=false;if(active)timer=setTimeout(()=>void refresh(),3000);}
   };
   void refresh();
   void request('api/v1/ingestions/capabilities').then(data=>{if(active&&generation.current===version){setAvailable(data.transcription?.available===true);if(data.transcription?.available!==true)setMessage(data.transcription?.message||'转写执行器尚未就绪');}}).catch(()=>{});
-  return()=>{active=false;clearTimeout(timer);generation.current++;};
+  return()=>{active=false;attachment.abort();clearTimeout(timer);generation.current++;};
  },[enabled,client.generation,client.identity,currentKey,source,store]);
  useEffect(()=>{onTasksChange({total:jobs.length,running:jobs.filter(job=>['queued','running'].includes(job.state)).length,attention:jobs.filter(job=>['ready','failed','interrupted'].includes(job.state)).length});},[jobs,onTasksChange]);
  if(!enabled||!doc||!currentKey)return null;

@@ -16,7 +16,7 @@ export async function createSourceMediaStore({directory,libraryStore}){
  // The canonical library exclusive writer owns this directory. Interrupted
  // uploads have no receipt; remove only our private, generated staging names.
  for(const item of await fs.readdir(directory))if(/^[a-f0-9]{40}\.tmp$/.test(item)){const file=path.join(directory,item);await privatePath(file);await fs.unlink(file);}
- let pending=0,queue=Promise.resolve(),closed=false;const active=new Set();
+ let pending=0,queue=Promise.resolve(),closed=false,commitGuard=null;const active=new Set();
  function owner(key){const record=libraryStore.get(key);if(!record||record.deleted)throw fail('Source document is unavailable',404);const library=libraryStore.describe().binding.mediaLibraryIdentity,source=hash(identity.sourceMediaIdentity(record.document));return {binding:hash(JSON.stringify([library,key,record.identity.lifetime,source])),source};}
  const filename=(name)=>path.join(directory,name);
  async function read(key,expected,{verify=true}={}){const current=owner(key);if(expected&&current.binding!==expected)throw fail('Source document changed',409);let record;try{const file=filename(current.binding+'.json');const stat=await privatePath(file);if(stat.size>4096)throw fail('Invalid media receipt');record=JSON.parse(await fs.readFile(file,'utf8'));}catch(error){if(error.code==='ENOENT')return null;throw error;}
@@ -35,7 +35,7 @@ export async function createSourceMediaStore({directory,libraryStore}){
  const operation=queue.then(async()=>{if(closed||signal?.aborted||owner(key).binding!==before.binding)throw fail('Source document changed',409);
  const blob=filename(sha256+'.media');let exists=false;try{const stat=await privatePath(blob);const digest=createHash('sha256');const existing=await fs.open(blob,fs.constants.O_RDONLY|fs.constants.O_NOFOLLOW);try{for await(const chunk of existing.createReadStream({autoClose:false}))digest.update(chunk);}finally{await existing.close();}if(stat.size!==size||digest.digest('hex')!==sha256)await fs.rename(temporary,blob);exists=true;}catch(error){if(error.code!=='ENOENT')throw error;}
  if(!exists){let used=0;for(const item of await fs.readdir(directory))if(/^[a-f0-9]{64}\.media$/.test(item))used+=(await privatePath(filename(item))).size;if(used+size>BUDGET)throw fail('Source media storage exceeds 2 GiB; preserve or move the library before retrying',413);await fs.rename(temporary,blob);}
- await atomic(filename(before.binding+'.json'),JSON.stringify(record));if(signal?.aborted||owner(key).binding!==before.binding)throw fail('Source document changed',409);return record;});queue=operation.catch(()=>{});return await operation;
+ commitGuard?.(record);await atomic(filename(before.binding+'.json'),JSON.stringify(record));if(signal?.aborted||owner(key).binding!==before.binding)throw fail('Source document changed',409);return record;});queue=operation.catch(()=>{});return await operation;
  }finally{pending--;await handle?.close();await fs.unlink(temporary).catch(()=>{});}}
  async function stream(key,binding,expectedDigest,req,res){const record=await read(key,binding,{verify:false});if(!record)throw fail('Saved media is unavailable',404);if(record.sha256!==expectedDigest)throw fail('Saved media was replaced',409);const file=filename(record.sha256+'.media');await privatePath(file);const handle=await fs.open(file,fs.constants.O_RDONLY|fs.constants.O_NOFOLLOW);try{const stat=await handle.stat();if(stat.size!==record.size)throw fail('Saved media changed',409);const digest=createHash('sha256');for await(const chunk of handle.createReadStream({autoClose:false,start:0}))digest.update(chunk);if(digest.digest('hex')!==record.sha256)throw fail('Saved media failed integrity check',409);
  if(owner(key).binding!==binding)throw fail('Source document changed',409);
@@ -51,7 +51,8 @@ export async function createSourceMediaStore({directory,libraryStore}){
  if(digest.digest('hex')!==sha256||owner(key).binding!==binding)throw fail('Saved media or source changed',409);
  return {record,body:handle.createReadStream({autoClose:false,start:0}),close:()=>handle.close()};
  }catch(error){await handle.close();throw error;}}
- return {owner,read,save,stream,input,async shutdown(){closed=true;await Promise.allSettled([...active]);await queue;}};
+ function exclusive(operation){const next=queue.then(operation);queue=next.catch(()=>{});return next;}
+ return {owner,read,save,stream,input,exclusive,setCommitGuard(guard){commitGuard=guard;},async shutdown(){closed=true;await Promise.allSettled([...active]);await queue;}};
 }
 /** Called only after the bridge validates host, origin and Fetch Metadata. */
 export async function handleSourceMediaRequest({req,res,pathname,origin,json,store,signal}){

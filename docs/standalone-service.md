@@ -136,6 +136,10 @@ receipt is reconciled against the original upload operation before any explicit
 retry; reading status never resubmits a model job. Closing a browser does not
 cancel accepted work. During an uncertain upload, cancellation waits for an
 executor receipt rather than claiming a job was cancelled without evidence.
+Explicitly re-fetching a completed download can repair missing/corrupt bytes.
+Once a transcription operation owns the asset, different audio bytes cannot
+replace it in that project; create a separate project to review a changed source.
+This also closes the result-to-library-save race across browsers.
 Each source task store is bounded to 256 records; existing asset size/storage
 quotas remain enforced. This is a single-owner deployment with one writer.
 

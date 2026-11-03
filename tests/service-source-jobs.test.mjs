@@ -61,13 +61,18 @@ test('explicit retry repairs a completed download while ordinary status reads ne
  assert.equal((await f.create('download')).id,job.id);assert.equal(f.calls,1);
  await f.jobs.action(job.id,'retry');await until(()=>f.jobs.get(job.id),j=>j.state==='ready');assert.equal(f.calls,2);assert.deepEqual(await f.media.read(doc.key),receipt);
 });
-test('replaced asset bytes cannot accept an old transcript and require a distinct explicit ASR operation',async t=>{
+test('once ASR owns an asset, a different download cannot replace it during transcript acceptance',async t=>{
  const operations=new Map();let uploads=0;
  const executor={status:async()=>({available:true}),recover:async value=>{const job=operations.get(value.operation_id);if(!job)throw missing();return job;},upload:async(body,value)=>{for await(const _ of body){}uploads++;const job={id:String(uploads).repeat(32),state:'ready'};operations.set(value.operation_id,job);return job;},result:async id=>({id,state:'ready',transcript:{document:{schema_version:1,segments:[]}}})};
  const f=await fixture(t,{executor}),source=f.media.owner(doc.key).source;
- await f.media.save(doc.key,source,Readable.from(['first audio']),{type:'audio/mpeg',name:'first.mp3'});const first=await f.create('transcribe');await until(()=>f.jobs.get(first.id),j=>j.state==='ready');
- await f.media.save(doc.key,source,Readable.from(['second audio']),{type:'audio/mpeg',name:'second.mp3'});await assert.rejects(f.jobs.result(first.id),/原声已经替换/);
- const second=await f.create('transcribe');assert.notEqual(second.id,first.id);await until(()=>f.jobs.get(second.id),j=>j.state==='ready');assert.equal(uploads,2);assert.equal((await f.create('transcribe')).id,second.id);
+ const media=await f.media.save(doc.key,source,Readable.from(['first audio']),{type:'audio/mpeg',name:'first.mp3'});const first=await f.create('transcribe');await until(()=>f.jobs.get(first.id),j=>j.state==='ready');
+ await assert.rejects(f.media.save(doc.key,source,Readable.from(['second audio']),{type:'audio/mpeg',name:'second.mp3'}),/未替换旧原声/);assert.deepEqual(await f.media.read(doc.key),media);assert.equal((await f.jobs.result(first.id)).job.id,first.id);assert.equal(uploads,1);
+ await f.media.save(doc.key,source,Readable.from(['first audio']),{type:'audio/mpeg',name:'first.mp3'});assert.equal((await f.create('transcribe')).id,first.id);
+});
+test('asset replacement during ASR readiness cannot reserve an upload for the previous bytes',async t=>{
+ let release,checking=false;const gate=new Promise(resolve=>release=resolve),f=await fixture(t,{executor:{status:async()=>{checking=true;await gate;return {available:true};},recover:async()=>{throw Error('no upload should be reserved');}}}),source=f.media.owner(doc.key).source;
+ await f.media.save(doc.key,source,Readable.from(['old audio']),{type:'audio/mpeg',name:'old.mp3'});const creation=f.create('transcribe');const rejected=assert.rejects(creation,/原声已变化/);await until(async()=>checking,Boolean);
+ await f.media.save(doc.key,source,Readable.from(['new audio']),{type:'audio/mpeg',name:'new.mp3'});release();await rejected;assert.deepEqual(await f.jobs.list(doc.key),[]);
 });
 test('missing consent, conflicting operation identity and stale source fail before any fetch',async t=>{
  const f=await fixture(t),base={protocolVersion:1,operation_id:randomUUID(),libraryId:f.library.describe().epoch,key:doc.key,source:f.media.owner(doc.key).source,kind:'download'};
