@@ -36,7 +36,7 @@ export function SourceJobsPanel({store,currentKey,taskHost,onTasksChange}:{store
   return()=>{active=false;attachment.abort();clearTimeout(timer);generation.current++;};
  },[enabled,client.generation,client.identity,currentKey,source,store]);
  useEffect(()=>{onTasksChange({total:jobs.length,running:jobs.filter(job=>['queued','running'].includes(job.state)).length,attention:jobs.filter(job=>['ready','failed','interrupted'].includes(job.state)).length});},[jobs,onTasksChange]);
- if(!enabled||!doc||!currentKey)return null;
+ if(!enabled||!doc||!currentKey||!doc.podcast_source&&!media?.identity?.startsWith('source-media-sha256:')&&!jobs.length)return null;
  async function run(action:()=>Promise<void>){if(busy)return;const version=generation.current;setBusy(true);setMessage('');try{await action();}catch(error){if(generation.current===version)setMessage(error instanceof Error?error.message:String(error));}finally{if(generation.current===version)setBusy(false);}}
  const create=(kind:'download'|'transcribe')=>run(async()=>{
   const key=currentKey!,original=store.getDocument(key),version=generation.current;
