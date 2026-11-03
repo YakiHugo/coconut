@@ -65,6 +65,44 @@ non-public results remain rejected. It is not safe to globally allow reserved
 addresses or silently downgrade after a denied request. An untrusted multi-user
 URL-fetching service needs a separately controlled/isolated egress boundary.
 
+## Managed ASR and container deployment
+
+Set `COCONUT_ASR_PYTHON` to an existing prepared Python executable and optionally
+`COCONUT_MODEL_DIRECTORY` to the Hugging Face cache root (the directory containing
+`hub/`). `npm start` then owns an internal loopback Python worker, chooses its
+port, connects the existing ASR API and closes it on shutdown. A killed parent
+also closes its control pipe so the worker settles its owned transcriber and
+releases storage. Interrupted inference retains the existing explicit retry
+contract. Do not also set `COCONUT_ASR_EXECUTOR_URL`; that setting is for a
+separately managed existing worker. Neither mode installs packages or downloads
+weights. Missing cached models are reported by the existing capability endpoint;
+reading remains usable.
+
+The container builds the Python dependencies and ffmpeg in the image. Provision
+the existing `small` model cache separately and mount it read-only at `/models`.
+No model is fetched at build or startup. In `.env`, set the public HTTPS origin,
+owner token, and host model directory, then run:
+
+```sh
+docker compose up --build -d
+```
+
+The sample publishes only `127.0.0.1:8080` on the host; put your HTTPS reverse
+proxy in front and preserve Host. For example, a host Caddy site can use:
+
+```caddyfile
+reader.example.com {
+    reverse_proxy 127.0.0.1:8080
+}
+```
+
+The named `/data` volume retains SQLite, assets, tasks and ASR work over container
+replacement. Preserve the complete volume for backup with the writer stopped.
+The container uses the `node` user; bind-mounted data must be privately owned by
+that UID. `/healthz` is public process liveness only and exposes no library,
+execution, model, path or provider details. Authenticated capability endpoints
+remain the authority for reading/writing and processing availability.
+
 ## Verification
 
 `npm run test:service` uses authored local HTTP and storage fixtures. Normal CI
