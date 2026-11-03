@@ -18,7 +18,7 @@ export function MediaSource({ store, documentKey }: {
         return()=>{window.removeEventListener('pagehide',pagehide);retire();};
     },[documentKey]);
     useEffect(()=>{store.setActivity('media-download',busy?'原声下载或保存仍在进行':null);return()=>store.setActivity('media-download',null);},[store,busy]);
-    if (!remote?.download || store.getMedia(documentKey))
+    if ((window as any).CoconutClientCapabilities?.allows('sourceJobs') || !remote?.download || store.getMedia(documentKey))
         return null;
     const download = async () => {
         if (busy || owner.current)

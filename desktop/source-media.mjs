@@ -43,7 +43,15 @@ export async function createSourceMediaStore({directory,libraryStore}){
  const headers={'Content-Type':record.type,'Content-Length':end-start+1,'Accept-Ranges':'bytes','Cache-Control':'no-store','X-Content-Type-Options':'nosniff'};if(partial)headers['Content-Range']=`bytes ${start}-${end}/${record.size}`;res.writeHead(partial?206:200,headers);if(req.method==='HEAD')res.end();else await pipeline(handle.createReadStream({autoClose:false,start,end}),res);
  }catch(error){if(error.status===416)res.setHeader('Content-Range','bytes */'+record.size);throw error;}finally{await handle.close();}}
  function save(...args){const operation=saveInternal(...args);active.add(operation);void operation.finally(()=>active.delete(operation)).catch(()=>{});return operation;}
- return {owner,read,save,stream,async shutdown(){closed=true;await Promise.allSettled([...active]);await queue;}};
+ async function input(key,binding,sha256){
+ const record=await read(key,binding,{verify:false});if(!record||record.sha256!==sha256)throw fail('Saved media was replaced',409);
+ const handle=await fs.open(filename(sha256+'.media'),fs.constants.O_RDONLY|fs.constants.O_NOFOLLOW);
+ try{const digest=createHash('sha256'),info=await handle.stat();if(info.size!==record.size)throw fail('Saved media changed',409);
+ for await(const chunk of handle.createReadStream({autoClose:false,start:0}))digest.update(chunk);
+ if(digest.digest('hex')!==sha256||owner(key).binding!==binding)throw fail('Saved media or source changed',409);
+ return {record,body:handle.createReadStream({autoClose:false,start:0}),close:()=>handle.close()};
+ }catch(error){await handle.close();throw error;}}
+ return {owner,read,save,stream,input,async shutdown(){closed=true;await Promise.allSettled([...active]);await queue;}};
 }
 /** Called only after the bridge validates host, origin and Fetch Metadata. */
 export async function handleSourceMediaRequest({req,res,pathname,origin,json,store,signal}){

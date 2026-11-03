@@ -20,7 +20,7 @@ export async function startService({env=process.env,config=serviceConfig(env),..
   try{
   if(config.asrPython)worker=await startAsrWorker({python:config.asrPython,directory:path.join(config.dataDirectory,'asr'),modelDirectory:config.modelDirectory});
   const ingestionExecutor=options.ingestionExecutor||createIngestionExecutor({url:worker?.origin||config.asrExecutorUrl||null});
-  const started=await startDevelopmentBridge({...options,ingestionExecutor,host:config.host,port:config.port,ownerAccess,podcastSources,podcastProxy:null,
+  const started=await startDevelopmentBridge({...options,enableSourceJobs:true,ingestionExecutor,host:config.host,port:config.port,ownerAccess,podcastSources,podcastProxy:null,
     taskDirectory:path.join(config.dataDirectory,'tasks'),libraryDirectory:path.join(config.dataDirectory,'library'),
     captionPython:config.captionPython,readingPython:config.readingPython,sourceNetwork:config.network,startupMode:'service'});
   if(!started.library.enabled||!started.executor.enabled){await started.server.shutdown();throw Error('The service cannot open its library or task storage; existing data was preserved.');}

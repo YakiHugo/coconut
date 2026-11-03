@@ -108,3 +108,63 @@ remain the authority for reading/writing and processing availability.
 `npm run test:service` uses authored local HTTP and storage fixtures. Normal CI
 also checks existing browser and actual packaged Electron lifecycle contracts.
 These tests never install a model or claim public-platform availability.
+
+## Persistent source tasks
+
+The standalone service advertises `client.capabilities.sourceJobs`. Its React
+reader submits an explicit download or transcription command to
+`/api/v1/source-jobs`; accepted work is owned by the service, not the HTTP
+connection or a browser's localStorage. Other legacy entries retain their
+existing source/media behavior.
+
+For podcast projects, the service reads the current canonical source descriptor,
+revalidates the RSS enclosure when applicable, and saves the acquired bytes
+directly in the owned asset store. Media does not round-trip through the browser.
+Transcription streams a verified owned asset into the existing Python import
+queue using a durable upload operation identity. This adds no second inference
+queue. Stored source tasks remain discoverable by project in a fresh browser.
+
+Source hashes, library namespace and document lifetime bind each task to its
+project. Changing a source, deleting/restoring a project, or corrupting a stored
+asset cannot silently attach old bytes/results. Notes and title edits retain the
+same source authority. A completed transcript is only attached by an explicit
+user action using the library's revision-checked save, preserving project notes
+and bookmarks. Existing transcript content is not automatically replaced.
+
+On service restart an interrupted download requires explicit retry. A lost ASR
+receipt is reconciled against the original upload operation before any explicit
+retry; reading status never resubmits a model job. Closing a browser does not
+cancel accepted work. During an uncertain upload, cancellation waits for an
+executor receipt rather than claiming a job was cancelled without evidence.
+Each source task store is bounded to 256 records; existing asset size/storage
+quotas remain enforced. This is a single-owner deployment with one writer.
+
+```mermaid
+flowchart TB
+  Browser["Web browser / optional Electron shell"]
+  Proxy["Optional HTTPS reverse proxy\nPreserves public Host"]
+  HTTP["Node service\nOwner session · same-origin APIs · React assets"]
+  Library["Canonical library SQLite\nDocuments · revisions · lifetimes · save receipts"]
+  Jobs["Source task SQLite\nDownload intents · upload operation IDs · recovery"]
+  Sources["Source adapters\nRSS / Xiaoyuzhou / enabled captions"]
+  Assets["Owned asset directory\nSource binding · size quota · SHA-256 · byte ranges"]
+  Python["Optional managed Python worker\nLoopback · existing durable import queue"]
+  Models["Provisioned offline models / ffmpeg"]
+  AI["Existing AI task service\nConfigured Codex / Claude credentials"]
+  Browser --> Proxy --> HTTP
+  Browser -->|Local deployment| HTTP
+  HTTP <-->|Revision checked writes| Library
+  HTTP <-->|Submit / list / explicit retry| Jobs
+  Jobs -->|Validated canonical source| Sources
+  Sources -->|Direct server-side save| Assets
+  Jobs -->|Verified stored bytes + durable operation| Python
+  Python --> Models
+  HTTP -->|Authenticated byte ranges| Assets
+  HTTP --> AI
+  Python -->|Result only; user confirms attachment| HTTP
+```
+
+`npm run test:service-browser` includes real Chromium, SQLite and authored WAV
+coverage across independent browser contexts and service restart. Only the ASR
+receipts in that browser test are simulated; it does not establish live model
+quality or universal public-source access.
