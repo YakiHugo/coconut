@@ -17,6 +17,9 @@ test('generic RSS and legacy callers keep the original destination policy',async
   await assert.rejects(fetch(options.ownerSources?'https://arbitrary.example/feed':url),/非公开/);assert.equal(fixtureResult.calls.length,0);
  }
 });
+test('standalone SOCKS settings fail configuration instead of silently bypassing the proxy',()=>{
+ for(const name of ['HTTPS_PROXY','https_proxy','ALL_PROXY','all_proxy'])assert.throws(()=>createPublicFetcher({ownerSources:true,ownerNetwork:{mode:'environment',environment:{[name]:'socks5://127.0.0.1:7897'}}}),/SOCKS proxies are not supported/);
+});
 test('owner redirects remain HTTPS and inside the exact platform origins',async()=>{
  for(const target of ['https://127.0.0.1/private','https://evil.example/media','http://media.xyzcdn.net/audio','https://www.xiaoyuzhoufm.com.evil.example/audio']){
   const f=fixture([{status:302,headers:{location:target}}]);await assert.rejects(createPublicFetcher({ownerSources:true,request:f.request})(url));assert.equal(f.calls.length,1);

@@ -97,7 +97,16 @@ export function createPublicFetcher({lookup = dnsLookup, request = (url,options,
   // Every redirect remains in the identified provider set. Other URLs keep the
   // original DNS/pinned-socket policy, including URLs supplied by generic RSS.
   const network=validateSourceNetwork(ownerNetwork);
-  const proxyEnv=network.mode==='custom'?{https_proxy:network.proxy}:network.mode==='environment'?network.environment:{};
+  const proxyEnv=network.mode==='custom'?{https_proxy:network.proxy}:network.mode==='environment'?{...network.environment}:{};
+  if(ownerSources){
+    // Node's standard Agent does not read ALL_PROXY or support SOCKS. Translate
+    // HTTP ALL_PROXY explicitly and reject unsupported settings before startup;
+    // an ignored proxy must never become an accidental direct connection.
+    const all=Object.hasOwn(proxyEnv,'all_proxy')?proxyEnv.all_proxy:proxyEnv.ALL_PROXY;
+    for(const name of ['http_proxy','https_proxy'])if(!Object.hasOwn(proxyEnv,name)&&!Object.hasOwn(proxyEnv,name.toUpperCase())&&all!==undefined)proxyEnv[name]=all;
+    for(const name of ['http_proxy','HTTP_PROXY','https_proxy','HTTPS_PROXY','all_proxy','ALL_PROXY'])if(proxyEnv[name]&&new URL(proxyEnv[name]).protocol!=='http:')throw Error('Standalone source networking requires HTTP proxy URLs; SOCKS proxies are not supported.');
+    delete proxyEnv.ALL_PROXY;delete proxyEnv.all_proxy;
+  }
   let ownerAgent;
   return async function fetchPublic(value,{maxBytes=8*1024*1024,timeoutMs=20000,signal,types,inspectMedia=false,maxMediaBytes=200*1024*1024,redirectOnly=false}={}) {
     const deadline = AbortSignal.timeout(timeoutMs);

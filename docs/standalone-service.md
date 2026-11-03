@@ -49,7 +49,10 @@ environment variables when present; otherwise it uses ordinary networking,
 including transparent TUN. `COCONUT_SOURCE_NETWORK=direct` ignores environment
 proxies. `environment` snapshots supported proxy/NO_PROXY variables; `custom`
 uses `COCONUT_SOURCE_PROXY`. The old podcast/caption proxy settings are accepted
-only when unambiguous. Node's built-in proxy agents own the HTTPS tunnel; Coconut
+only when unambiguous. HTTP `ALL_PROXY` aliases are normalized for Node's agent;
+SOCKS settings fail startup explicitly for this service entry, rather than
+silently connecting directly. Legacy video-only entrypoints retain their own
+supported proxy schemes. Node's built-in proxy agents own the HTTPS tunnel; Coconut
 does not implement another tunnel for this service path. macOS system HTTP/PAC
 settings alone are not automatically read by standalone Node.
 
