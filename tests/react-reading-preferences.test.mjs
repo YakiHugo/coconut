@@ -16,7 +16,7 @@ test('React preferences preserve saved keys, report failed writes, sync windows 
  let root,act;
  try {
   const backing=win.localStorage,writes=[];let blocked=false;
-  const keys={theme:'coconut-reading-theme-v1',measure:'coconut-reading-measure-v1',layout:'coconut-reading-layout-v1',shortcuts:'coconut-reading-shortcuts-v1'};
+  const keys={chineseScript:'coconut-reading-chinese-script-v1',theme:'coconut-reading-theme-v1',measure:'coconut-reading-measure-v1',layout:'coconut-reading-layout-v1',shortcuts:'coconut-reading-shortcuts-v1'};
   for(const [key,value] of Object.entries({theme:'dark',measure:'narrow',layout:'spacious',shortcuts:'off'}))backing.setItem(keys[key],value);
   Object.defineProperty(win,'localStorage',{value:{getItem:key=>backing.getItem(key),setItem:(key,value)=>{if(blocked)throw Error('denied');writes.push(key);backing.setItem(key,value);}},configurable:true});
   let system;let removals=0;const media={matches:false,addEventListener:(_,fn)=>{system=fn;},removeEventListener:()=>{removals++;}};win.matchMedia=()=>media;
@@ -35,10 +35,16 @@ test('React preferences preserve saved keys, report failed writes, sync windows 
   await act(async()=>render());
   assert.deepEqual(writes,[],'mount must not reset or rewrite saved preferences');
   assert.equal(win.document.documentElement.dataset.readerTheme,'dark');assert.equal(win.document.documentElement.dataset.readingLayout,'spacious');assert.equal(win.document.documentElement.dataset.readingMeasure,'narrow');
-  const select=label=>[...host.querySelectorAll('label')].find(node=>node.textContent.startsWith(label)).querySelector('select');
-  const change=async(label,value)=>act(async()=>{const node=select(label);node.value=value;node.dispatchEvent(new win.Event('change',{bubbles:true}));});
+  assert.equal(host.querySelector('.reading-preferences').tagName,'SECTION');
+  assert.equal(host.querySelector('.reading-preferences select,.reading-preferences details'),null);
+  const optionLabels={system:{'中文显示':'跟随系统语言','主题':'跟随系统'},'zh-Hans':'简体中文','zh-Hant':'繁體中文',source:'保留原文字形',light:'浅色',dark:'深色',full:'完整宽度',narrow:'窄行',standard:'标准',large:'大字',spacious:'大字 · 宽松行距'};
+  const picker=label=>[...host.querySelectorAll('.rw-choice')].find(node=>node.querySelector('.rw-choice-label').textContent===label);
+  const select=label=>picker(label).querySelector('[role=combobox]');
+  const selected=label=>select(label).querySelector('span').textContent;
+  const change=async(label,value)=>{await act(async()=>select(label).click());await act(async()=>{const expected=typeof optionLabels[value]==='string'?optionLabels[value]:optionLabels[value][label];const node=[...picker(label).querySelectorAll('[role=option]')].find(node=>node.textContent.replace('✓','')===expected);assert.ok(node,'choice exists: '+label+' '+value);node.click();});};
   const source=host.querySelector('[data-text]');
   const key=async(value,options={},target=source)=>{let event;await act(async()=>{target.focus();event=new win.KeyboardEvent('keydown',{key:value,bubbles:true,cancelable:true,...options});target.dispatchEvent(event);});return event;};
+  await change('中文显示','zh-Hant');assert.equal(backing.getItem(keys.chineseScript),'zh-Hant');assert.equal(selected('中文显示'),'繁體中文');
   assert.equal((await key('k')).defaultPrevented,false);assert.deepEqual(calls,[]);
   assert.equal((await key('f',{ctrlKey:true})).defaultPrevented,true);assert.deepEqual(calls,['find']);
   await act(async()=>host.querySelector('input[type=checkbox]').click());assert.equal(backing.getItem(keys.shortcuts),'on');
@@ -55,13 +61,13 @@ test('React preferences preserve saved keys, report failed writes, sync windows 
   blocked=true;await change('主题','light');assert.match(host.textContent,/未能保存/);assert.equal(win.document.documentElement.dataset.readerTheme,'light');assert.equal(backing.getItem(keys.theme),'dark');
   blocked=false;await change('行宽','full');assert.match(host.textContent,/部分偏好/);await change('主题','system');assert.equal(backing.getItem(keys.theme),'system');
   await act(async()=>{media.matches=true;system();});assert.equal(win.document.documentElement.dataset.readerTheme,'dark');
-  const beforeSync=writes.length;await act(async()=>win.dispatchEvent(new win.StorageEvent('storage',{key:keys.layout,newValue:'large'})));assert.equal(select('阅读排版').value,'large');assert.equal(writes.length,beforeSync);
-  const details=host.querySelector('details');details.open=true;await key('Escape',{isComposing:true},select('主题'));assert.equal(details.open,true);await key('Escape',{},select('主题'));assert.equal(details.open,false);assert.equal(win.document.activeElement,host.querySelector('summary'));
+  const beforeSync=writes.length;await act(async()=>win.dispatchEvent(new win.StorageEvent('storage',{key:keys.layout,newValue:'large'})));assert.equal(selected('阅读排版'),'大字');assert.equal(writes.length,beforeSync);
+  await key('ArrowDown',{},select('主题'));assert.equal(select('主题').getAttribute('aria-expanded'),'true');await key('Escape',{isComposing:true},select('主题'));assert.equal(select('主题').getAttribute('aria-expanded'),'true');await key('Escape',{},select('主题'));assert.equal(select('主题').getAttribute('aria-expanded'),'false');assert.equal(win.document.activeElement,select('主题'));
   await act(async()=>root.unmount());root=null;assert.equal(removals,1);const afterUnmount=calls.length;source.dispatchEvent(new win.KeyboardEvent('keydown',{key:'k',bubbles:true}));assert.equal(calls.length,afterUnmount);
-  root=ui.createRoot(host);active=true;const beforeRemount=writes.length;await act(async()=>render());assert.equal(writes.length,beforeRemount);assert.equal(select('主题').value,'system');assert.equal(select('行宽').value,'full');assert.equal(select('阅读排版').value,'spacious','storage event without an actual backing write does not alter reload source');
-  await act(async()=>win.dispatchEvent(new win.StorageEvent('storage',{key:null})));assert.equal(select('主题').value,'light');assert.equal(select('阅读排版').value,'standard');assert.equal(writes.length,beforeRemount,'cross-window clear is read-only');
+  root=ui.createRoot(host);active=true;const beforeRemount=writes.length;await act(async()=>render());assert.equal(writes.length,beforeRemount);assert.equal(selected('主题'),'跟随系统');assert.equal(selected('行宽'),'完整宽度');assert.equal(selected('阅读排版'),'大字 · 宽松行距','storage event without an actual backing write does not alter reload source');assert.equal(selected('中文显示'),'繁體中文');
+  await act(async()=>win.dispatchEvent(new win.StorageEvent('storage',{key:null})));assert.equal(selected('主题'),'浅色');assert.equal(selected('阅读排版'),'标准');assert.equal(selected('中文显示'),'跟随系统语言');assert.equal(writes.length,beforeRemount,'cross-window clear is read-only');
   await act(async()=>root.unmount());root=null;
-  Object.defineProperty(win,'localStorage',{value:{getItem(){throw Error('blocked');},setItem(){throw Error('blocked');}},configurable:true});root=ui.createRoot(host);await act(async()=>render());assert.equal(select('主题').value,'light');assert.match(host.textContent,/未能读取/);await change('阅读排版','large');assert.equal(win.document.documentElement.dataset.readingLayout,'large');assert.match(host.textContent,/未能保存/);
+  Object.defineProperty(win,'localStorage',{value:{getItem(){throw Error('blocked');},setItem(){throw Error('blocked');}},configurable:true});root=ui.createRoot(host);await act(async()=>render());assert.equal(selected('主题'),'浅色');assert.match(host.textContent,/未能读取/);await change('阅读排版','large');assert.equal(win.document.documentElement.dataset.readingLayout,'large');assert.match(host.textContent,/未能保存/);
 
  } finally {
   if(root)await act(async()=>root.unmount());

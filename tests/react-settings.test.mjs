@@ -12,11 +12,12 @@ test('the add surface contains only ingestion; preferences and recovery have one
   assert.ok(settings.querySelector('.subtitle-recovery'));
   assert.ok(settings.querySelector('[data-native-command="backup-library"]'));
   settings.querySelector(':scope>summary').click();await wait(()=>settings.open&&main.inert);
-  const theme=[...settings.querySelectorAll('label')].find(node=>node.textContent.startsWith('主题')).querySelector('select');
-  x.select(theme,'dark');await wait(()=>x.w.document.documentElement.dataset.readerTheme==='dark');
+  const theme=[...settings.querySelectorAll('.rw-choice')].find(node=>node.querySelector('.rw-choice-label')?.textContent==='主题');
+  theme.querySelector('[role=combobox]').click();await wait(()=>theme.querySelector('[role=option]'));
+  [...theme.querySelectorAll('[role=option]')].find(node=>node.textContent.startsWith('深色')).click();await wait(()=>x.w.document.documentElement.dataset.readerTheme==='dark');
   x.button('×').click();await wait(()=>!settings.open&&!main.inert);
   settings.querySelector(':scope>summary').click();await wait(()=>settings.open);
-  assert.equal(theme.value,'dark');assert.equal(x.requests.length,0);
+  assert.match(theme.querySelector('[role=combobox]').textContent,/深色/);assert.equal(x.requests.length,0);
  }finally{await x.w.happyDOM.close();}
 });
 

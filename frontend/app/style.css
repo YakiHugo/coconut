@@ -277,7 +277,8 @@ p{line-height:1.7}
 .settings-panel .reading-preferences-options{display:grid;gap:18px;padding:16px 0}
 .settings-panel .reading-preferences-options label{display:flex;align-items:center;justify-content:space-between;gap:20px;font-size:12px}
 .settings-panel .reading-preferences-options label:last-child{justify-content:flex-start}
-.settings-panel .reading-preferences-options select{width:180px;flex:0 0 180px;min-width:0;min-height:36px;padding:8px;font-size:12px}
+.settings-panel .reading-preferences-options .rw-choice{display:flex;justify-content:space-between;gap:20px;width:100%;flex-wrap:nowrap}
+.settings-panel .reading-preferences-options .rw-choice>button{width:180px;flex:0 0 180px;min-width:0;min-height:36px;padding:8px;font-size:12px}
 .settings-panel .reading-preferences p:empty{display:none}
 .settings-backup{display:flex;justify-content:space-between;align-items:center;width:100%;padding:0 0 18px!important;border:0;text-align:left;font-size:12px!important;border-radius:0}
 .settings-backup span{color:var(--accent)}
@@ -305,4 +306,4 @@ p{line-height:1.7}
  .discover{padding-top:48px}
 }
 
-@media(max-width:480px){.settings-panel .reading-preferences-options select{width:170px;flex-basis:170px}.settings-panel .reading-preferences-options label{gap:12px}}
+@media(max-width:480px){.settings-panel .reading-preferences-options .rw-choice>button{width:170px;flex-basis:170px}.settings-panel .reading-preferences-options :is(label,.rw-choice){gap:12px}}

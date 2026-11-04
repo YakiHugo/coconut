@@ -41,6 +41,12 @@ test('cancellation prevents a late response from publishing and retry reuses the
  await f.jobs.action(job.id,'cancel');release();await delay(20);assert.equal(f.jobs.get(job.id).state,'cancelled');
  await f.jobs.action(job.id,'retry');await until(()=>f.jobs.get(job.id).state==='ready');assert.equal(calls,2);
 });
+test('cancelling before queue dispatch skips the model and lets the next task run',async t=>{
+ let calls=0;const f=await fixture(t,async()=>{calls++;return output;}),cancelled=f.jobs.create(f.input());
+ assert.equal(cancelled.state,'queued');assert.equal((await f.jobs.action(cancelled.id,'cancel')).state,'cancelled');
+ const next=f.jobs.create(f.input());await until(()=>f.jobs.get(next.id).state==='ready');
+ assert.equal(f.jobs.get(cancelled.id).state,'cancelled');assert.equal(calls,1);
+});
 test('HTTP review enforces same origin and explicit submission without request-bound cancellation',async t=>{
  const f=await fixture(t),server=await startBridge({port:0,reviewJobs:f.jobs});t.after(()=>server.shutdown());const origin='http://127.0.0.1:'+server.address().port;
  const send=(route,body,headers={})=>fetch(origin+'/api/v1/transcript-review/'+route,{method:'POST',headers:{Origin:origin,'Content-Type':'application/json',...headers},body:JSON.stringify(body)});
