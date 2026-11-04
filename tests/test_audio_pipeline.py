@@ -195,6 +195,28 @@ class AlignedSpeakerTests(unittest.TestCase):
         self.assertEqual(result[0]['speaker_id'], 'speaker-0001')
         self.assertEqual(result[0]['text'], '好我们言归正传吧')
 
+    def test_unresolved_word_evidence_clears_a_coarse_speaker_label_across_pauses(self):
+        for overlap in (False, True):
+            known_turns = ([dict(start=0, end=10, speaker='a')] if overlap else
+                           [dict(start=0, end=4, speaker='a'), dict(start=5, end=10, speaker='a')])
+            turns = known_turns + [dict(start=4, end=5, speaker='unknown')]
+            for known_word in (False, True):
+                words = ([dict(word='ok', start=0, end=1)] if known_word else [])
+                words.append(dict(word='hello', start=4, end=5))
+                original = dict(id='one', start=0, end=10, text=''.join(w['word'] for w in words), words=words)
+                coarse = copy.deepcopy(original)
+                label_segments([coarse], turns, self.decisions)
+                self.assertEqual(coarse['speaker_id'], 'speaker-0001')
+                for split in (False, True):
+                    with self.subTest(overlap=overlap, known_word=known_word, split=split):
+                        result = label_aligned_segments([copy.deepcopy(original)], turns, self.decisions, split=split)
+                        self.assertEqual(len(result), 1)
+                        self.assertIsNone(result[0]['speaker_id'])
+                        self.assertIsNone(result[0]['speaker'])
+                        self.assertEqual(result[0]['speaker_status'], 'overlap_or_boundary')
+                        for field in ('id', 'text', 'start', 'end', 'words'):
+                            self.assertEqual(result[0][field], original[field])
+
     def test_mixed_local_cluster_is_recovered_per_utterance_without_inventing_a_voice(self):
         import numpy as np
         from types import SimpleNamespace

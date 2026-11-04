@@ -223,6 +223,14 @@ def label_aligned_segments(segments, turns, decisions, *, split=False):
                        speaker=f'说话人 {int(identifier.split("-")[-1])}')
         elif len(votes) > 1:
             cue.update(speaker_id=None, speaker=None, speaker_status='speaker_change_within_cue')
+        elif any(not match.get('speaker_id') and match.get('speaker_status') not in
+                 ('automatic_unreviewed', 'no_speech_evidence') for match in matches):
+            # Coarse cue coverage can hide a competing voice in the actual
+            # words when the cue includes long pauses. Do not retain that
+            # fallback after aligned evidence fails the confidence threshold.
+            # Suppressed boundary slivers and empty acoustic gaps still keep
+            # their existing tolerance above.
+            cue.update(speaker_id=None, speaker=None, speaker_status='overlap_or_boundary')
         if not split or len(votes) < 2:
             output.append(cue)
             continue
