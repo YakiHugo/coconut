@@ -4,12 +4,15 @@ import {createHash} from 'node:crypto';
 import path from 'node:path';
 import {createRequire} from 'node:module';
 import {createReviewProviders} from './review-providers.mjs';
+import {identifySpeakers,prepareContext} from './speaker-identity.mjs';
 const R=createRequire(import.meta.url)('../shared/transcript-review.js');
 const hash=value=>createHash('sha256').update(JSON.stringify(value)).digest('hex');
 async function atomic(file,value){await writeFile(file+'.tmp',JSON.stringify(value),{mode:0o600});await rename(file+'.tmp',file);}
 export function createTranscriptReviewer({providers=createReviewProviders()}={}){
  return {
   status:providers.status,
+  prepareContext:(document,options)=>prepareContext(document,{...options,providers}),
+  identifySpeakers:(document,options)=>identifySpeakers(document,{...options,providers}),
   async review(document,{directory,provider='codex',model='',signal,onProgress=()=>{},jobId=''}={}){
    if(!['codex','kimi'].includes(provider)||!path.isAbsolute(directory||''))throw Error('校对提供商或目录无效');
    const plan=R.plan(document),identity=hash({version:1,input:plan.input,provider,model});

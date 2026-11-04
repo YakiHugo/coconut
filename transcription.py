@@ -275,6 +275,9 @@ def run(request):
     work.mkdir(parents=True, exist_ok=True)
     if _file_digest(source) != request['sha256']:
         raise ValueError('Source media changed')
+    speaker_count = request.get('speaker_count')
+    if speaker_count is not None and (type(speaker_count) is not int or not 1 <= speaker_count <= 32):
+        raise ValueError('Invalid verified speaker count')
     emit(phase='prepare')
     speaker_backend = None
     if profile.get('segmentation') or profile.get('embedding'):
@@ -311,7 +314,7 @@ def run(request):
         emit(phase='speakers')
         document = enhance_document(document, source, segmentation=profile['segmentation'],
                                     embedding=profile['embedding'], work_dir=work / 'speakers',
-                                    split_speakers=True)
+                                    split_speakers=True, speaker_count=speaker_count)
     document = correct_verified_names(document, request.get('name_corrections'))
     emit(phase='save')
     save_document(document, work / 'result.json')

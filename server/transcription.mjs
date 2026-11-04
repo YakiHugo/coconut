@@ -36,6 +36,6 @@ export function createTranscriber({python,profile,scriptPath=script}={}){
  return {
   profile,
   async status(){const base={local_only:true,model_download:false,automatic:false,backend:profile?.backend||'qwen-mlx',upload_operations:0};if(!configured)return {...base,available:false,code:'asr_not_configured',message:'请配置本地转录 Python 与模型目录；不会自动下载模型。'};try{return {...base,...await execute({}, {probe:true})};}catch{return {...base,available:false,code:'asr_executor_unavailable',message:'本地转录环境检查失败；阅读仍可使用。'};}},
-  run({inputPath,sha256,workDirectory,title,hotwords,nameCorrections,signal,onProgress}){if(!path.isAbsolute(inputPath)||!path.isAbsolute(workDirectory))throw Error('转录只接受服务已保存的音频');return execute({input:inputPath,sha256,work:workDirectory,title,hotwords,name_corrections:nameCorrections},{signal,onProgress});},
+  run({inputPath,sha256,workDirectory,title,hotwords,nameCorrections,speakerCount,signal,onProgress}){if(!path.isAbsolute(inputPath)||!path.isAbsolute(workDirectory))throw Error('转录只接受服务已保存的音频');return execute({input:inputPath,sha256,work:workDirectory,title,hotwords,name_corrections:nameCorrections,speaker_count:speakerCount},{signal,onProgress});},
  };
 }

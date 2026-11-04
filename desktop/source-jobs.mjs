@@ -48,7 +48,11 @@ export async function createSourceJobs({directory,libraryStore,mediaStore,podcas
    if(JSON.stringify(operation.profile)!==JSON.stringify(transcriber?.profile))throw fail('模型配置已变化，请为当前配置创建新任务',409);
    const input=await mediaStore.localInput(value.document_key,value.binding,operation.fingerprint);
    const workDirectory=path.join(directory,value.id);await mkdir(workDirectory,{recursive:true,mode:0o700});
-   const ownerDocument=libraryStore.get(value.document_key).document;
+   let ownerDocument=libraryStore.get(value.document_key).document;
+   if(operation.review&&reviewer?.prepareContext){
+    try{ownerDocument=await reviewer.prepareContext(ownerDocument,{directory:path.join(workDirectory,'context'),...operation.review,signal,onProgress:p=>{if(!closing&&!signal.aborted)db.prepare('UPDATE jobs SET phase=?,updated=? WHERE id=?').run(JSON.stringify(p),Date.now(),value.id);}});}
+    catch(error){if(signal.aborted||closing)throw error;ownerDocument={...ownerDocument,transcription_context_status:'pending'};}
+   }
    const participants=Array.isArray(ownerDocument.speaker_identity_evidence?.speakers)?ownerDocument.speaker_identity_evidence.speakers.filter(s=>typeof s?.name==='string'&&s.name.trim()&&s.name.length<=80).slice(0,64):[];
    const terms=Array.isArray(ownerDocument.transcription_glossary)?ownerDocument.transcription_glossary.filter(t=>typeof t?.term==='string'&&t.term.trim()&&t.term.length<=80&&typeof t.source==='string'&&t.source.trim()).map(t=>t.term):[];
    const hotwords=[...new Set([...participants.map(s=>s.name),...terms])].slice(0,64),aliases=new Map();
@@ -58,7 +62,7 @@ export async function createSourceJobs({directory,libraryStore,mediaStore,podcas
     aliases.set(alias,aliases.has(alias)&&aliases.get(alias)!==participant.name?null:participant.name);
    }
    const nameCorrections=Object.fromEntries([...aliases].filter(([alias,name])=>name&&!hotwords.includes(alias)));
-   await transcriber.run({inputPath:input.path,sha256:operation.fingerprint,workDirectory,title:ownerDocument.title,hotwords,nameCorrections,signal,
+   await transcriber.run({inputPath:input.path,sha256:operation.fingerprint,workDirectory,title:ownerDocument.title,hotwords,nameCorrections,speakerCount:ownerDocument.speaker_identity_evidence?.expected_speakers,signal,
     onProgress:progress=>{if(!closing&&!signal.aborted)db.prepare("UPDATE jobs SET phase=?,updated=? WHERE id=? AND state='running'").run(JSON.stringify(progress),Date.now(),value.id);}});
    owned(value);await mediaStore.localInput(value.document_key,value.binding,operation.fingerprint);
    let raw=JSON.parse(await readFile(path.join(workDirectory,'result.json'),'utf8'));
@@ -68,6 +72,7 @@ export async function createSourceJobs({directory,libraryStore,mediaStore,podcas
     await writeFile(path.join(workDirectory,'original-asr.json'),JSON.stringify(raw),{mode:0o600});
     raw={...raw,title:ownerDocument.title,source_url:ownerDocument.source_url||raw.source_url||'',...(ownerDocument.speaker_identity_evidence?{speaker_identity_evidence:ownerDocument.speaker_identity_evidence}:{}),...(ownerDocument.transcription_glossary?{transcription_glossary:ownerDocument.transcription_glossary}:{}),...(ownerDocument.podcast_source?{podcast_source:ownerDocument.podcast_source}:{})};
     try{
+     if(reviewer.identifySpeakers)raw=await reviewer.identifySpeakers(raw,{directory:path.join(workDirectory,'speaker-identity'),...operation.review,signal,onProgress:p=>{if(!closing&&!signal.aborted)db.prepare('UPDATE jobs SET phase=?,updated=? WHERE id=?').run(JSON.stringify(p),Date.now(),value.id);}});
      const output=await reviewer.review(raw,{directory:path.join(workDirectory,'review'),...operation.review,signal,jobId:value.id,onProgress:p=>{if(!closing&&!signal.aborted)db.prepare('UPDATE jobs SET phase=?,updated=? WHERE id=?').run(JSON.stringify(p),Date.now(),value.id);}});
      raw=output.result;
     }catch(error){
