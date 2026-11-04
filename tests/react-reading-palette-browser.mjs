@@ -24,9 +24,9 @@ test('React saved and system themes change the actual shell, reader and control 
   const dark=await palette();assert.equal(dark.html.background,'rgb(25, 26, 29)');assert.equal(dark.html.color,'rgb(237, 237, 238)');
   for(const selector of ['.app-sidebar','textarea','.react-ai-panel select','dialog','dialog input'])assert.equal(dark[selector].background,'rgb(36, 37, 42)',selector);
   assert.equal(dark['.rw-original'].color,dark.html.color);assert.equal(dark['.rw-translation'].color,'rgb(164, 165, 173)');assert.equal(dark['.rw-player'].background,dark.html.background);assert.equal(dark['.rw-selection'].background,'rgb(42, 51, 82)');
-  await page.locator('.reading-preferences > summary').click();await page.locator('.reading-preferences label').filter({hasText:/^主题/}).locator('select').selectOption('light');
+  const theme=page.getByRole('combobox',{name:'主题',exact:true});await theme.press('Home');await theme.press('Enter');
   const light=await palette();assert.equal(light.html.background,'rgb(250, 250, 249)');assert.notDeepEqual(light,dark);assert.equal(light['.app-sidebar'].background,'rgb(250, 250, 249)');
-  await page.locator('.reading-preferences label').filter({hasText:/^主题/}).locator('select').selectOption('system');await page.waitForFunction(()=>document.documentElement.dataset.readerTheme==='dark');assert.deepEqual(await palette(),dark);
+  await theme.press('End');await theme.press('Enter');await page.waitForFunction(()=>document.documentElement.dataset.readerTheme==='dark');assert.deepEqual(await palette(),dark);
   await page.emulateMedia({colorScheme:'light'});await page.waitForFunction(()=>document.documentElement.dataset.readerTheme==='light');assert.deepEqual(await palette(),light);
   assert.equal(await page.evaluate(()=>localStorage.getItem('coconut-reading-theme-v1')),'system');
  } finally {await browser.close();}

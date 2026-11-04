@@ -16,7 +16,7 @@ export function currentCue(cues: ReaderCue[], seconds: number): ReaderCue | unde
     }
     return undefined;
 }
-export function filterCues(doc: ReaderDocument, query: string, notesOnly: boolean, speaker: string | null) { const q = query.trim().toLocaleLowerCase(); return doc.segments.filter(cue => (!notesOnly || Boolean(doc.notes?.[cue.id]?.trim())) && (speaker === null || (cue.speaker || '') === speaker) && (!q || [cue.text, doc.notes?.[cue.id] || '', cue.speaker || '', cue.translations?.[doc.translation_view || '']?.text || ''].some(text => text.toLocaleLowerCase().includes(q)))); }
+export function filterCues(doc: ReaderDocument, query: string, notesOnly: boolean, speaker: string | null, displayText:(text:string)=>string=text=>text) { const q = displayText(query).trim().toLocaleLowerCase(); return doc.segments.filter(cue => (!notesOnly || Boolean(doc.notes?.[cue.id]?.trim())) && (speaker === null || (cue.speaker || '') === speaker) && (!q || [cue.text, doc.notes?.[cue.id] || '', cue.speaker || '', cue.translations?.[doc.translation_view || '']?.text || ''].some(text => displayText(text).toLocaleLowerCase().includes(q)))); }
 export function selectionOffsets(root: HTMLElement, selection: Selection | null): {
     from: number;
     to: number;
@@ -40,7 +40,7 @@ export interface SourceSelection {
     text: string;
     separators: string[];
 }
-export function captureSourceSelection(host: HTMLElement, doc: ReaderDocument, selection: Selection | null, separator: (left: string, right: string) => string): SourceSelection | null {
+export function captureSourceSelection(host: HTMLElement, doc: ReaderDocument, selection: Selection | null, separator: (left: string, right: string) => string, displayText:(text:string)=>string=text=>text): SourceSelection | null {
     if (!selection || selection.isCollapsed || selection.rangeCount !== 1)
         return null;
     const range = selection.getRangeAt(0);
@@ -57,7 +57,7 @@ export function captureSourceSelection(host: HTMLElement, doc: ReaderDocument, s
         if(sourceNodes.has(node.dataset.sourceId!))return null;
         sourceNodes.set(node.dataset.sourceId!,node);
     }
-    if(cues.some(c=>sourceNodes.get(c.id)?.textContent!==c.text))return null;
+    if(cues.some(c=>sourceNodes.get(c.id)?.textContent!==displayText(c.text)||displayText(c.text).length!==c.text.length))return null;
     const start = range.cloneRange();
     start.selectNodeContents(first);
     start.setEnd(range.startContainer, range.startOffset);
@@ -71,7 +71,7 @@ export function captureSourceSelection(host: HTMLElement, doc: ReaderDocument, s
         return null;
     const text=composed.slice(from,to);
     // A renderer must never label edited prose as a verbatim source node.
-    if(first.textContent!==cues[0].text||last.textContent!==cues.at(-1)!.text)return null;
+    if(first.textContent!==displayText(cues[0].text)||last.textContent!==displayText(cues.at(-1)!.text))return null;
     return { cueIds: cues.map(c => c.id), from, to, text, separators };
 }
 

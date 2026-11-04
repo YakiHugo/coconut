@@ -1,6 +1,8 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import {ChoicePicker} from '../reader-workspace/controls';
 
 export const preferenceSettings = {
+  chineseScript: { key: 'coconut-reading-chinese-script-v1', values: ['system', 'zh-Hans', 'zh-Hant', 'source'], fallback: 'system' },
   theme: { key: 'coconut-reading-theme-v1', values: ['light', 'dark', 'system'], fallback: 'light' },
   measure: { key: 'coconut-reading-measure-v1', values: ['full', 'narrow'], fallback: 'full' },
   layout: { key: 'coconut-reading-layout-v1', values: ['standard', 'large', 'spacious'], fallback: 'standard' },
@@ -56,6 +58,7 @@ export function useReadingPreferences() {
     window.addEventListener('storage', sync);
     return () => window.removeEventListener('storage', sync);
   }, []);
+  useEffect(()=>{const update=()=>setValues(previous=>({...previous}));window.addEventListener('languagechange',update);return()=>window.removeEventListener('languagechange',update);},[]);
   function change(name: PreferenceName, raw: string) {
     const value = normalize(name, raw);
     setValues(previous => ({ ...previous, [name]: value }));
@@ -73,20 +76,15 @@ export function useReadingPreferences() {
 export type ReadingPreferencesController = ReturnType<typeof useReadingPreferences>;
 export function ReadingPreferences({ controller,expanded=false }: { controller: ReadingPreferencesController;expanded?:boolean }) {
   const { values, status, change } = controller;
-  return <details className="reading-preferences" open={expanded||undefined} onKeyDown={event => {
-    if (event.key !== 'Escape' || event.defaultPrevented || event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229 || event.ctrlKey || event.altKey || event.metaKey) return;
-    const target = event.target as HTMLElement;
-    try { if (target.closest('select')?.matches(':open')) return; } catch { /* Older browsers have no :open support. */ }
-    event.preventDefault(); event.currentTarget.open = false;
-    event.currentTarget.querySelector('summary')?.focus({ preventScroll: true });
-  }}>
-    <summary>阅读偏好</summary>
+  return <section className="reading-preferences" aria-label="阅读偏好">
+    {!expanded&&<h3>阅读偏好</h3>}
     <div className="reading-preferences-options">
-      <label>主题<select value={values.theme} onChange={event => change('theme', event.target.value)}><option value="light">浅色</option><option value="dark">深色</option><option value="system">跟随系统</option></select></label>
-      <label>行宽<select value={values.measure} onChange={event => change('measure', event.target.value)}><option value="full">完整宽度</option><option value="narrow">窄行</option></select></label>
-      <label>阅读排版<select value={values.layout} onChange={event => change('layout', event.target.value)}><option value="standard">标准</option><option value="large">大字</option><option value="spacious">大字 · 宽松行距</option></select></label>
+      <ChoicePicker label="中文显示" value={values.chineseScript} onChange={value=>change('chineseScript',value)} options={[{value:'system',label:'跟随系统语言'},{value:'zh-Hans',label:'简体中文'},{value:'zh-Hant',label:'繁體中文'},{value:'source',label:'保留原文字形'}]}/>
+      <ChoicePicker label="主题" value={values.theme} onChange={value=>change('theme',value)} options={[{value:'light',label:'浅色'},{value:'dark',label:'深色'},{value:'system',label:'跟随系统'}]}/>
+      <ChoicePicker label="行宽" value={values.measure} onChange={value=>change('measure',value)} options={[{value:'full',label:'完整宽度'},{value:'narrow',label:'窄行'}]}/>
+      <ChoicePicker label="阅读排版" value={values.layout} onChange={value=>change('layout',value)} options={[{value:'standard',label:'标准'},{value:'large',label:'大字'},{value:'spacious',label:'大字 · 宽松行距'}]}/>
       <label><input type="checkbox" checked={values.shortcuts !== 'off'} onChange={event => change('shortcuts', event.target.checked ? 'on' : 'off')} />启用单字符阅读快捷键</label>
     </div>
     <p role="status">{status}</p>
-  </details>;
+  </section>;
 }

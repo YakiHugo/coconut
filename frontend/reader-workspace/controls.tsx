@@ -21,6 +21,7 @@ export function ChoicePicker({label,value,options,disabled=false,onChange}:{labe
         <span id={id+'-label'} className="rw-choice-label">{label}</span>
         <button ref={trigger} type="button" role="combobox" aria-labelledby={id+'-label'} aria-expanded={open} aria-controls={id+'-list'} aria-haspopup="listbox" aria-activedescendant={open?id+'-option-'+active:undefined} disabled={disabled}
             onClick={()=>open?setOpen(false):show()} onKeyDown={event=>{
+                if(event.nativeEvent.isComposing||event.nativeEvent.keyCode===229)return;
                 if(['ArrowDown','ArrowUp','Home','End'].includes(event.key)){
                     event.preventDefault();
                     const next=event.key==='Home'?0:event.key==='End'?options.length-1:open?(active+(event.key==='ArrowDown'?1:-1)+options.length)%options.length:selected;
