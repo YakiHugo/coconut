@@ -50,7 +50,8 @@ export async function createSourceJobs({directory,libraryStore,mediaStore,podcas
    const workDirectory=path.join(directory,value.id);await mkdir(workDirectory,{recursive:true,mode:0o700});
    const ownerDocument=libraryStore.get(value.document_key).document;
    const participants=Array.isArray(ownerDocument.speaker_identity_evidence?.speakers)?ownerDocument.speaker_identity_evidence.speakers.filter(s=>typeof s?.name==='string'&&s.name.trim()&&s.name.length<=80).slice(0,64):[];
-   const hotwords=[...new Set(participants.map(s=>s.name))],aliases=new Map();
+   const terms=Array.isArray(ownerDocument.transcription_glossary)?ownerDocument.transcription_glossary.filter(t=>typeof t?.term==='string'&&t.term.trim()&&t.term.length<=80&&typeof t.source==='string'&&t.source.trim()).map(t=>t.term):[];
+   const hotwords=[...new Set([...participants.map(s=>s.name),...terms])].slice(0,64),aliases=new Map();
    for(const participant of participants)for(const alias of Array.isArray(participant.verified_asr_aliases)?participant.verified_asr_aliases:[]){
     if(typeof alias!=='string'||alias===participant.name||alias.length<2||alias.length!==participant.name.length)continue;
     if(aliases.size>=64&&!aliases.has(alias))continue;

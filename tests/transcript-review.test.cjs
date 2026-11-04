@@ -14,7 +14,7 @@ test('grounded names and punctuation project across word boundaries while retain
  assert.deepEqual(result.notes,d.notes);assert.deepEqual(d,original);assert.equal(result.transcript_review.changes.length,2);
 });
 test('unfounded entities, changed numbers and negations, and inserted words stay as review issues',()=>{
- for(const [text,proposal] of [['刘源来了',edit('刘源','张元')],['投资12万',edit('12','20','typo')],['不能去',edit('不能','可以','typo')],['刘源来了',edit('来了','已经来了','typo')]]){
+ for(const [text,proposal] of [['刘源来了',edit('刘源','张元')],['投资12万',edit('12','20','typo')],['不能去',edit('不能','可以','typo')],['我参加',edit('我','你','typo')],['投资三万',edit('三','五','typo')],['刘源来了',edit('来了','已经来了','typo')]]){
   const d=doc();d.segments[0].text=text;delete d.segments[0].words;const result=merge(d,[proposal]);assert.equal(result.segments[0].text,text);assert.equal(result.transcript_review.issues.length,1);
  }
 });

@@ -55,6 +55,7 @@ function merge(current,input,results,{provider,model='',jobId=''}={}){
  const grounded=term=>known.includes(term)||input.context.title.includes(term)||input.context.description.includes(term);
  const proposals=new Map();for(const e of checked.flatMap(r=>r.edits)){if(!proposals.has(e.cue_id))proposals.set(e.cue_id,[]);proposals.get(e.cue_id).push(e);}
  const numberTokens=t=>JSON.stringify(t.match(/[+-]?\d+(?:[.,]\d+)*%?|[零〇一二两三四五六七八九十百千万亿兆]+/g)||[]);
+ const pronouns=t=>JSON.stringify(t.match(/[我你您他她它咱俺]|\b(?:I|we|you|he|she|they|his|her|my|our|your|their)\b/gi)||[]);
  const negations=t=>JSON.stringify(t.match(/不是|不能|没有|不|没|无|未|not\b|never\b|n't\b/gi)||[]);
  const segments=current.segments.map(cue=>{
   const edits=proposals.get(cue.id)||[];const accepted=[];
@@ -67,6 +68,7 @@ function merge(current,input,results,{provider,model='',jobId=''}={}){
    else if(e.category!=='punctuation'&&lexical(e.original).length!==lexical(e.replacement).length)reason='增删实词需回听原声并重新对齐';
    else if(e.category==='typo'&&(e.original.length>8||e.original.length!==e.replacement.length))reason='普通错字修改范围过大';
    else if(numberTokens(e.original)!==numberTokens(e.replacement)||negations(e.original)!==negations(e.replacement))reason='修改涉及数字或否定，需回听';
+   else if(pronouns(e.original)!==pronouns(e.replacement))reason='修改涉及人称，需回听';
    if(reason){issues.push({cue_id:cue.id,reason,proposal:e});continue;}accepted.push({...e,at,to});
   }
   if(!accepted.length)return cue;

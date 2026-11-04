@@ -59,10 +59,10 @@ test('transcription receives episode title and participant names from source ide
  const f=await fixture(t,{transcriber:{profile:{backend:'authored'},status:async()=>({available:true}),run:async request=>{
   captured=request;await writeFile(path.join(request.workDirectory,'result.json'),JSON.stringify({schema_version:1,title:'Authored',segments:[{id:'a',start:0,end:1,text:'Authored'}]}));
  }}});
- commit(f.library,{...doc,title:'对话张元',speaker_identity_evidence:{speakers:[{name:'张元',verified_asr_aliases:['张源','张晶','陈旌']},{name:'陈旌',verified_asr_aliases:['陈晶','张晶']},{name:'张元'},{name:42}]}});
+ commit(f.library,{...doc,title:'对话张元',transcription_glossary:[{term:'Manus',source:'节目简介'}],speaker_identity_evidence:{speakers:[{name:'张元',verified_asr_aliases:['张源','张晶','陈旌']},{name:'陈旌',verified_asr_aliases:['陈晶','张晶']},{name:'张元'},{name:42}]}});
  await f.media.save(doc.key,f.media.owner(doc.key).source,Readable.from(['authored']),{type:'audio/mpeg',name:'source.mp3'});
  const job=await f.create('transcribe');await until(()=>f.jobs.get(job.id),j=>j.state==='ready');
- assert.equal(captured.title,'对话张元');assert.deepEqual(captured.hotwords,['张元','陈旌']);
+ assert.equal(captured.title,'对话张元');assert.deepEqual(captured.hotwords,['张元','陈旌','Manus']);
  assert.deepEqual(captured.nameCorrections,{'张源':'张元','陈晶':'陈旌'});
 });
 test('configured post-ASR review runs after recognition and retains usable original output on model failure',async t=>{
