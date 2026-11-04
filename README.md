@@ -92,6 +92,7 @@ CI 还检查共享领域模型、Node/Python 协议、真实 Chromium 默认界�
 源码主干与既有 [GitHub Releases](https://github.com/YakiHugo/coconut/releases) 是不同交付物。版本号未改变时，不覆盖已经发布的开发包。macOS 开发包未获 Developer ID 签名或 Apple 公证，不应绕过系统安全警告。
 
 长音频的本地/云端共用切块、时间还原、跨块声纹匹配和断点恢复，见 [长音频处理架构](docs/long-audio-pipeline.md)。
+
 ## 转录校对
 
-新转录可接续本机 Codex CLI 或 Kimi CLI 做错字、人名、术语和标点校对；已有文字稿也可从阅读页「AI 校对文字稿」独立处理。原始识别、时间定位与修改记录保留，支持分批恢复和待核对项。配置及边界见[转录后的 AI 校对](docs/transcript-review.md)。
+新转录可接续本机 Codex CLI 或 Kimi CLI 做错字、人名、术语和标点校对；已有文字稿也可从阅读页「来源与整理 → 文字整理」独立处理。原始识别、时间定位与修改记录保留，支持分批恢复和待核对项。配置及边界见[转录后的 AI 校对](docs/transcript-review.md)。
