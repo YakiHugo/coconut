@@ -1,14 +1,15 @@
 import {EditionAi} from './edition-ai';
+import {ChoicePicker} from './controls';
 import {Fragment,useEffect,useMemo,useRef,useState} from 'react';
 import * as Editions from '../../reader/editions.js';
 import type {ReaderDocument,ReaderMedia} from './contracts';
 import {captureEditionSelection,time} from './domain';
 
-export function EditionPicker({doc,value,disabled,onChange,onCreate}:{doc:ReaderDocument;value:string;disabled:boolean;onChange:(value:string)=>void;onCreate:()=>void}){
+export function EditionPicker({doc,value,disabled,onChange}:{doc:ReaderDocument;value:string;disabled:boolean;onChange:(value:string)=>void}){
  const versions=Editions.state(doc).editions;
+ if(!versions.length)return null;
  return <div className="rw-edition-picker" aria-label="阅读版本">
-  <label>阅读版本 <select value={value} disabled={disabled} onChange={event=>onChange(event.target.value)}><option value="source">连续文字稿</option>{versions.map((edition,index)=><option key={edition.id} value={edition.id}>{edition.title} · {index+1}</option>)}</select></label>
-  <button type="button" disabled={disabled||versions.length>=Editions.LIMITS.editions} onClick={onCreate}>创建编辑访谈稿</button>
+  <ChoicePicker label="阅读版本" value={value} disabled={disabled} onChange={onChange} options={[{value:'source',label:'连续文字稿'},...versions.map((edition,index)=>({value:edition.id,label:edition.title+' · '+(index+1)}))]}/>
  </div>;
 }
 

@@ -42,8 +42,8 @@ export function ReadabilityPanel({store,documentKey}:{store:AppStore;documentKey
   finally{if(attachment.current===owner){attachment.current=null;setAttaching(false);}}
  }
  const active=state.key===documentKey?state.job:null;
- return <details className="rw-resource-processing" aria-label="文字稿资源与整理">
-  <summary>文字稿整理{active&&['queued','running','awaiting_media'].includes(active.state)?' · '+phaseLabel(active.phase):''}</summary>
+ return <section className="rw-resource-processing" aria-label="文字稿资源与整理">
+  <h3>文字稿整理{active&&['queued','running','awaiting_media'].includes(active.state)?' · '+phaseLabel(active.phase):''}</h3>
   <p>复用已有字幕，按资源补齐标点与说话人；原文、笔记和时间定位保留。</p>
   <dl>{state.key===documentKey&&state.rows.map(row=><div key={row.kind} data-resource={row.kind} data-state={row.state}><dt>{labels[row.kind]}</dt><dd>{row.message}</dd></div>)}</dl>
   {active&&<p role="status">{phaseLabel(active.phase)}{active.error?'：'+active.error:''}</p>}
@@ -53,5 +53,5 @@ export function ReadabilityPanel({store,documentKey}:{store:AppStore;documentKey
   {!file&&!active?.media&&<label className="rw-resource-file">{attaching?'正在核对原声…':'为这份文字稿补充对应原声'}<input type="file" accept="audio/*,video/*" disabled={attaching||state.busy} onChange={event=>{const file=event.target.files?.[0];event.target.value='';if(file)void attach(file);}}/></label>}
   <button type="button" disabled={state.busy||attaching} onClick={()=>void controller.refresh(doc.key,{run:true})}>{active&&['failed','interrupted','cancelled'].includes(active.state)?'重试整理':'检查并继续整理'}</button>
   {active&&['queued','running','awaiting_media'].includes(active.state)&&<button type="button" disabled={state.busy} onClick={()=>void controller.cancel()}>取消整理</button>}
- </details>;
+ </section>;
 }

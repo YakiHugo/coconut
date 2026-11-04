@@ -199,7 +199,6 @@ p{line-height:1.7}
 .rw-empty,.rw-annotations>div{background:var(--reading-raised);border-radius:3px}
 .rw-translation,.rw-player p,.rw-media-unavailable{color:var(--muted)}
 .rw-passage,.rw-corrections{border-color:var(--reading-edge)}
-.reader-workspace :focus-visible{outline:2px solid var(--accent);outline-offset:3px}
 .rw-summary-heading h2{font-family:var(--ui-font);font-size:28px;font-weight:550;letter-spacing:-.035em}
 .react-ai-panel,.remote-media,.ingestion-panel,.native-media-panel{max-width:872px;margin:20px auto 50px;padding:24px 0;border-top:1px solid var(--reading-edge)}
 .react-ai-panel summary{cursor:pointer;font-size:14px}

@@ -29,9 +29,9 @@ export function ReaderSource({ doc }: {
             {missingSpeakers && '说话人尚未标注，需结合原声区分。'}
             {!missingSpeakers&&missingCount>0&&`已有 ${labelled}/${doc.segments.length} 个片段标注说话人，其余 ${missingCount} 个需回听核对。`}
         </p>}
-        <details>
-            <summary>来源与文字稿依据</summary>
-            <p>{doc.local_media_source ? '本地原文件：' + doc.local_media_source.name : url ? <a href={url} target="_blank" rel="noopener noreferrer">查看原始来源</a> : '未关联公开来源链接'}</p>
+        <section aria-label="来源与文字稿依据">
+            <h3>文字稿依据</h3>
+            {(doc.local_media_source||!url)&&<p>{doc.local_media_source ? '本地原文件：' + doc.local_media_source.name : '未关联公开来源链接'}</p>}
             <p>{typeof provenance.kind === 'string' ? kinds[provenance.kind] || '文字稿来源类型：' + provenance.kind : '文字稿来源未标明'}</p>
             {typeof provenance.model === 'string' && <p>识别模型：{provenance.model}</p>}
             {typeof provenance.alignment_warning === 'string' && <p>时间对齐提示：{provenance.alignment_warning}</p>}
@@ -40,6 +40,6 @@ export function ReaderSource({ doc }: {
             {reasons.size>0&&<p>未确定归属的原因：{[...reasons].map(([label,count])=>`${label} ${count} 个`).join('；')}。</p>}
             {typeof provenance.readability_warning === 'string' && <p>文字整理尚未完成，当前保留原始文字稿。</p>}
             {doc.segments.length > 0 && <p>原文可能有识别错误，请回听核对专有名词与重要信息。校准只影响播放映射，导出继续保留原始时间。</p>}
-        </details>
+        </section>
     </div>;
 }
