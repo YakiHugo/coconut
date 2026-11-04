@@ -185,7 +185,8 @@ def _model(path: str) -> Path:
 
 
 def enhance_document(document: dict, audio: Path | None = None, *, punctuation: str = '',
-                     segmentation: str = '', embedding: str = '', work_dir: Path | None = None) -> dict:
+                     segmentation: str = '', embedding: str = '', work_dir: Path | None = None,
+                     speaker_count: int | None = None, split_speakers: bool = False) -> dict:
     """Return a copy; failures cannot leave a half-edited source document."""
     result = copy.deepcopy(document)
     provenance = result.setdefault('provenance', {})
@@ -196,13 +197,14 @@ def enhance_document(document: dict, audio: Path | None = None, *, punctuation: 
     cues = result['segments']
     if segmentation and embedding and audio and provenance.get('speaker_method') != 'recording-acoustic-v1':
         from audio_pipeline import CallableBackend, run_audio_pipeline
-        from audio_speakers import SherpaSpeakerBackend, label_segments
+        from audio_speakers import SherpaSpeakerBackend, label_aligned_segments
         segmentation_path, embedding_path = _model(segmentation), _model(embedding)
         print('[speakers] grouping voices locally', file=sys.stderr, flush=True)
         grouped = run_audio_pipeline(audio,
             CallableBackend({'backend': 'speaker-only'}, lambda _: {'segments': []}),
             speaker_backend=SherpaSpeakerBackend(segmentation_path, embedding_path),
             local_only=True, work_dir=work_dir,
+            reconcile_speakers=True, expected_speakers=speaker_count,
             expected_duration=document.get('media_duration'),
             minimum_duration=max((cue['end'] for cue in cues), default=0),
             progress=lambda index, total: print(f'[speakers] chunk {index + 1}/{total}', file=sys.stderr, flush=True))
@@ -210,10 +212,15 @@ def enhance_document(document: dict, audio: Path | None = None, *, punctuation: 
         automatic = [cue for cue in cues if not cue.get('speaker')]
         decisions = {turn['speaker']: {'speaker_id': turn['speaker_id'],
                                       'status': turn['speaker_status']} for turn in turns}
-        label_segments(automatic, turns, decisions)
-        count = sum(bool(cue.get('speaker_id')) for cue in automatic)
+        # Existing subtitle/annotation jobs retain their original cue contract.
+        # Fresh ASR can split before notes, translations or excerpts exist.
+        if split_speakers and len(automatic) == len(cues):
+            cues[:] = label_aligned_segments(automatic, turns, decisions, split=True)
+        else:
+            label_aligned_segments(automatic, turns, decisions)
+        count = sum(bool(cue.get('speaker_id')) for cue in cues)
         provenance.update(speaker_method='recording-acoustic-v1', speaker_backend='sherpa-onnx',
-                          speaker_model='pyannote-segmentation-3.0 + 3dspeaker-eres2net',
+                          speaker_model='pyannote-segmentation-3.0 + 3dspeaker-eres2net + word-turn-v2',
                           speaker_status=f'automatic_unreviewed:{count}/{len(cues)}')
     if punctuation and provenance.get('punctuation_method') != VERSION:
         print('[punctuation] restoring punctuation locally', file=sys.stderr, flush=True)
@@ -249,10 +256,11 @@ def main():
     parser.add_argument('--punctuation-model', default='')
     parser.add_argument('--segmentation-model', default='')
     parser.add_argument('--embedding-model', default='')
+    parser.add_argument('--speaker-count', type=int, help='Verified participant count for this recording only')
     parser.add_argument('--work-dir', type=Path)
     args = parser.parse_args()
     if args.stdio:
-        if args.document or args.output or args.audio or args.segmentation_model or args.embedding_model or args.work_dir or not args.punctuation_model:
+        if args.document or args.output or args.audio or args.segmentation_model or args.embedding_model or args.work_dir or args.speaker_count is not None or not args.punctuation_model:
             parser.error('stdio requires only --punctuation-model')
         payload = sys.stdin.buffer.read(8 * 1024 * 1024 + 1)
         if len(payload) > 8 * 1024 * 1024:
@@ -269,9 +277,11 @@ def main():
     explicit = bool(args.punctuation_model or args.segmentation_model or args.embedding_model)
     if bool(args.segmentation_model) != bool(args.embedding_model):
         parser.error('Both speaker model paths are required')
+    if args.speaker_count is not None and (not args.segmentation_model or not 1 <= args.speaker_count <= 32):
+        parser.error('speaker-count requires both explicit speaker models and a count between 1 and 32')
     result = (enhance_document(original, args.audio, punctuation=args.punctuation_model,
                               segmentation=args.segmentation_model, embedding=args.embedding_model,
-                              work_dir=args.work_dir)
+                              work_dir=args.work_dir, speaker_count=args.speaker_count)
               if explicit else enhance_from_environment(original, args.audio))
     save_document(result, args.output)
     print(json.dumps(result.get('provenance'), ensure_ascii=False))

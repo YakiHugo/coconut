@@ -1,47 +1,48 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {execFileSync,spawn} from 'node:child_process';
-import {mkdtemp,rm,writeFile} from 'node:fs/promises';
+import {mkdtemp,rm,writeFile,readFile} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import path from 'node:path';
 import {setTimeout as delay} from 'node:timers/promises';
-import {startAsrWorker} from '../server/worker.mjs';
+import {createTranscriber} from '../server/transcription.mjs';
 import {serviceConfig} from '../server/config.mjs';
 import {startService} from '../server/main.mjs';
 const python=execFileSync('python3',['-c','import sys;print(sys.executable)'],{encoding:'utf8'}).trim();
 async function directory(t){const value=await mkdtemp(path.join(tmpdir(),'coconut-worker-'));t.after(()=>rm(value,{recursive:true,force:true}));return value;}
-test('managed worker configuration is explicit and rejects conflicting or relative paths',()=>{
- for(const env of [{COCONUT_ASR_PYTHON:'relative'},{COCONUT_MODEL_DIRECTORY:'relative'},{COCONUT_ASR_PYTHON:python,COCONUT_ASR_EXECUTOR_URL:'http://127.0.0.1:1234'}])assert.throws(()=>serviceConfig(env));
- assert.equal(serviceConfig({COCONUT_ASR_PYTHON:python}).asrPython,python);
+test('direct transcription rejects executor URLs, unknown backends and non-local model paths',()=>{
+ for(const env of [{COCONUT_ASR_PYTHON:'relative'},{COCONUT_MODEL_DIRECTORY:'relative'},{COCONUT_ASR_EXECUTOR_URL:'http://127.0.0.1:1234'},{COCONUT_ASR_BACKEND:'unknown'},{COCONUT_ASR_MODEL:'Qwen/model'}])assert.throws(()=>serviceConfig(env));
+ assert.equal(serviceConfig({COCONUT_ASR_PYTHON:python}).asrProfile.backend,'qwen-mlx');
 });
-test('real managed Python transport stays offline, closes its listener and can reopen the same storage',async t=>{
- const data=await directory(t),worker=await startAsrWorker({python,directory:data,modelDirectory:path.join(data,'no-models')});t.after(()=>worker.shutdown());
- assert.equal(worker.online,true);
- const response=await fetch(worker.origin+'/api/ingestion-executor/status');const status=await response.json();
- assert.equal(status.model_download,false);assert.equal(status.available,false);assert.equal(status.upload_operations,1);
- await worker.shutdown();assert.equal(worker.online,false);await assert.rejects(fetch(worker.origin+'/api/ingestion-executor/status'));
- const restarted=await startAsrWorker({python,directory:data});await restarted.shutdown();
-});
-test('service owns worker startup and shutdown, while health probe discloses no library state',async t=>{
+test('real offline probe needs no model or listener and service remains usable',async t=>{
  const data=await directory(t),config=serviceConfig({COCONUT_PORT:'0',COCONUT_DATA_DIRECTORY:data,COCONUT_ASR_PYTHON:python,COCONUT_MODEL_DIRECTORY:path.join(data,'missing')});
- const started=await startService({config});t.after(()=>started.server.shutdown());
- assert.deepEqual(await (await fetch(started.origin+'/healthz')).json(),{status:'ok'});
- const status=await (await fetch(started.origin+'/api/v1/ingestions/capabilities')).json();assert.equal(status.transcription.available,false);
- await started.server.shutdown();
- const reopened=await startService({config});await reopened.server.shutdown();
+ const runner=createTranscriber({python,profile:config.asrProfile});const status=await runner.status();assert.equal(status.available,false);assert.equal(status.model_download,false);assert.equal(status.upload_operations,0);
+ const started=await startService({config});t.after(()=>started.server.shutdown());assert.deepEqual(await (await fetch(started.origin+'/healthz')).json(),{status:'ok'});
+ assert.equal((await (await fetch(started.origin+'/api/v1/ingestions/capabilities')).json()).transcription.available,false);
+ await started.server.shutdown();const reopened=await startService({config});await reopened.server.shutdown();
 });
-test('invalid worker readiness and missing Python fail closed without hanging startup',async t=>{
- const data=await directory(t),invalid=path.join(data,'invalid.py');await writeFile(invalid,"print('invalid receipt', flush=True)\n");
- await assert.rejects(startAsrWorker({python,directory:data,scriptPath:invalid}),/Invalid ASR worker/);
- await assert.rejects(startAsrWorker({python:path.join(data,'not-python'),directory:data}),/could not be started/);
+test('one task streams bounded JSON progress, remains offline and cancellation settles the process',async t=>{
+ const data=await directory(t),script=path.join(data,'authored.py');await writeFile(script,`import sys,json,time,os\nr=json.loads(sys.stdin.readline())\nassert os.environ['HF_HUB_OFFLINE']=='1'\nprint(json.dumps({'phase':'recognize','chunk':1,'chunks':2}),flush=True)\ntime.sleep(20)\n`);
+ const runner=createTranscriber({python,profile:{backend:'authored'},scriptPath:script}),controller=new AbortController(),events=[];
+ const pending=runner.run({inputPath:path.join(data,'audio'),sha256:'a'.repeat(64),workDirectory:data,signal:controller.signal,onProgress:value=>{events.push(value);controller.abort();}});
+ await assert.rejects(pending);assert.equal(events[0].phase,'recognize');
 });
-test('parent process death closes the real worker and releases its storage lock',async t=>{
- const data=await directory(t),module=new URL('../server/worker.mjs',import.meta.url).href;
- const child=spawn(process.execPath,['--input-type=module','-e',`import {startAsrWorker} from ${JSON.stringify(module)};const worker=await startAsrWorker(${JSON.stringify({python,directory:data})});console.log(worker.origin);setInterval(()=>{},1000);`],{stdio:['ignore','pipe','pipe']});
- t.after(()=>child.kill('SIGKILL'));
- const origin=await new Promise((resolve,reject)=>{let output='';child.stdout.on('data',value=>{output+=value;if(output.includes('\n'))resolve(output.trim());});child.on('error',reject);child.on('exit',()=>reject(Error('Parent exited before readiness')));});
- assert.equal((await fetch(origin+'/api/ingestion-executor/status')).status,200);child.kill('SIGKILL');
- let closed=false;for(let attempt=0;attempt<50;attempt++){await delay(100);try{await fetch(origin+'/api/ingestion-executor/status',{signal:AbortSignal.timeout(500)});}catch{closed=true;break;}}
- assert.equal(closed,true,'orphan worker must not keep listening');
- const restarted=await startAsrWorker({python,directory:data});await restarted.shutdown();
+test('malformed worker output and missing Python are explicit failures',async t=>{
+ const data=await directory(t),script=path.join(data,'invalid.py');await writeFile(script,"print('invalid receipt',flush=True)\n");
+ const runner=createTranscriber({python,profile:{},scriptPath:script});assert.equal((await runner.status()).available,false);
+ assert.equal((await createTranscriber({python:path.join(data,'missing'),profile:{}}).status()).available,false);
+});
+test('parent death terminates the real task parent-control path without an orphan',async t=>{
+ const data=await directory(t),script=path.join(data,'held.py'),pidFile=path.join(data,'pid');
+ await writeFile(script,`import sys,time,os\nsys.path.insert(0,${JSON.stringify(process.cwd())})\nimport transcription\ntranscription.probe=lambda _: {'available':True}\ndef held(request):\n open(${JSON.stringify(pidFile)},'w').write(str(os.getpid()))\n transcription.emit(phase='recognize')\n time.sleep(30)\ntranscription.run=held\ntranscription.main()\n`);
+ const module=new URL('../server/transcription.mjs',import.meta.url).href;
+ const child=spawn(process.execPath,['--input-type=module','-e',`import {createTranscriber} from ${JSON.stringify(module)};await createTranscriber(${JSON.stringify({python,profile:{backend:'authored'},scriptPath:script})}).run(${JSON.stringify({inputPath:path.join(data,'audio'),workDirectory:data,sha256:'a'.repeat(64)})});`],{stdio:['ignore','ignore','ignore']});t.after(()=>child.kill('SIGKILL'));
+ let pid;for(let i=0;i<100;i++){try{pid=Number(await readFile(pidFile,'utf8'));if(pid)break;}catch{}await delay(20);}assert.ok(pid);child.kill('SIGKILL');
+ let gone=false;for(let i=0;i<100;i++){try{process.kill(pid,0);}catch{gone=true;break;}await delay(20);}assert.equal(gone,true);
+});
+test('normal completion exits cleanly while the production parent watcher is waiting',async t=>{
+ const data=await directory(t),script=path.join(data,'completed.py');
+ await writeFile(script,`import sys\nsys.path.insert(0,${JSON.stringify(process.cwd())})\nimport transcription\ntranscription.run=lambda _: transcription.emit(phase='done')\ntranscription.main()\n`);
+ const phases=[];await createTranscriber({python,profile:{backend:'authored'},scriptPath:script}).run({inputPath:path.join(data,'audio'),sha256:'a'.repeat(64),workDirectory:data,onProgress:value=>phases.push(value.phase)});
+ assert.deepEqual(phases,['done']);
 });

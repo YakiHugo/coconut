@@ -1390,7 +1390,7 @@
 		const provenance =
 			data.provenance && typeof data.provenance === "object"
 				? Object.fromEntries(
-						["kind", "model", "backend", "language", "alignment_warning", "playback_warning", "media_id", "caption_method", "caption_track", "subtitle_check", "language_basis", "review_status", "source_platform", "source_medium", "punctuation_method", "punctuation_backend", "punctuation_model", "punctuation_status", "speaker_method", "speaker_backend", "speaker_model", "speaker_status", "readability_warning", "audio_pipeline", "audio_chunks"]
+						["kind", "model", "backend", "language", "alignment_warning", "playback_warning", "media_id", "caption_method", "caption_track", "subtitle_check", "language_basis", "review_status", "source_platform", "source_medium", "punctuation_method", "punctuation_backend", "punctuation_model", "punctuation_status", "speaker_method", "speaker_backend", "speaker_model", "speaker_status", "readability_warning", "review_method", "review_provider", "review_model", "audio_pipeline", "audio_chunks"]
 							.filter((k) => typeof data.provenance[k] === "string")
 							.map((k) => [k, data.provenance[k]]),
 					)

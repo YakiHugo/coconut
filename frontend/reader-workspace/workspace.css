@@ -207,3 +207,4 @@
  .rw-edition-picker .rw-choice{flex:1}.rw-edition-picker .rw-choice-label{display:none}
  .rw-edition-picker .rw-choice>button{width:100%;min-width:0}
 }
+.rw-review-panel{margin-block:20px;padding-block:16px;border-top:1px solid var(--reading-edge)}.rw-review-panel p{font-size:14px;line-height:1.65;color:var(--muted)}.rw-review-panel button{margin:8px 10px 0 0}.rw-review-panel fieldset{display:flex;flex-wrap:wrap;gap:16px;margin:12px 0}.rw-review-panel input[type=text]{max-width:100%;box-sizing:border-box}.rw-review-panel li{overflow-wrap:anywhere;margin-block:12px}

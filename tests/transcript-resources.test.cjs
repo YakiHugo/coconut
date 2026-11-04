@@ -26,3 +26,13 @@ test('manual source edits, reordered timing, changed names and model rewrites ca
  for(const mutate of [d=>d.segments.pop(),d=>d.segments[0].text='我们改聊投资吧',d=>d.segments[0].end=5]){const d=doc(),input=R.processingSnapshot(d),result=structuredClone(input);mutate(result);assert.throws(()=>R.mergeProcessingResult(d,input,result));}
  const d=doc();d.segments[0].speaker='人工标注';const input=R.processingSnapshot(d),result=structuredClone(input);result.segments[0].speaker='说话人 1';assert.throws(()=>R.mergeProcessingResult(d,input,result),/已有说话人/);
 });
+test('word clocks reach the speaker stage and cannot be rewritten by its result',()=>{
+ const d=doc();d.segments[0].words=[{word:'我们开始吧',start:1,end:4}];
+ const input=R.processingSnapshot(d);assert.deepEqual(input.segments[0].words,d.segments[0].words);
+ const result=structuredClone(input);result.segments[0].speaker='说话人 1';
+ assert.deepEqual(R.mergeProcessingResult(d,input,result).segments[0].words,d.segments[0].words);
+ result.segments[0].words[0].end=3;assert.throws(()=>R.mergeProcessingResult(d,input,result),/逐词时间/);
+ const current=structuredClone(d);current.segments[0].words[0].start=2;
+ assert.throws(()=>R.mergeProcessingResult(current,input,input),/已变化/);
+ d.segments[0].words[0].start=2;assert.equal(input.segments[0].words[0].start,1,'snapshot must not share mutable word objects');
+});

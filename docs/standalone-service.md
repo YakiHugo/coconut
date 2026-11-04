@@ -65,18 +65,31 @@ non-public results remain rejected. It is not safe to globally allow reserved
 addresses or silently downgrade after a denied request. An untrusted multi-user
 URL-fetching service needs a separately controlled/isolated egress boundary.
 
-## Managed ASR and container deployment
+## Direct local transcription
 
-Set `COCONUT_ASR_PYTHON` to an existing prepared Python executable and optionally
-`COCONUT_MODEL_DIRECTORY` to the Hugging Face cache root (the directory containing
-`hub/`). `npm start` then owns an internal loopback Python worker, chooses its
-port, connects the existing ASR API and closes it on shutdown. A killed parent
-also closes its control pipe so the worker settles its owned transcriber and
-releases storage. Interrupted inference retains the existing explicit retry
-contract. Do not also set `COCONUT_ASR_EXECUTOR_URL`; that setting is for a
-separately managed existing worker. Neither mode installs packages or downloads
-weights. Missing cached models are reported by the existing capability endpoint;
-reading remains usable.
+Set `COCONUT_ASR_PYTHON` to an existing prepared Python executable. Node now owns
+one durable source/transcription queue and launches `transcription.py` per task.
+There is no internal Python HTTP listener, second ASR database, or localhost
+media upload. The worker receives an owned, SHA-256-verified local asset path,
+writes stage checkpoints/results and emits bounded JSON progress over stdout.
+Node owns cancellation, shutdown and retry; parent death closes the control pipe
+and terminates the Python task. Models load only during a task and are released
+when its process exits. Reading/startup/probes do not load or download models.
+
+The default Apple Silicon transcription profile is `COCONUT_ASR_BACKEND=qwen-mlx`,
+using Qwen3-ASR-1.7B-8bit and Qwen3-ForcedAligner-0.6B-8bit from the prepared local
+`COCONUT_ASR_MODEL` and `COCONUT_ALIGN_MODEL` directories. See
+[the transcription pipeline](transcription-pipeline.md) for configuration and
+verification boundaries. `COCONUT_ASR_BACKEND=faster-whisper` explicitly selects
+the existing CPU/int8 small baseline and reads its already prepared HF cache.
+The Linux container uses that baseline; it does not provide Apple MLX/Metal.
+
+`COCONUT_ASR_EXECUTOR_URL` is no longer accepted by `npm start`. Existing legacy
+Python CLI/desktop entries remain separate tools. Prior source-job rows are kept
+as legacy records, never silently re-executed. Completed old Python results stay
+in their original data directory; export/import them through the old tool.
+Interrupted old jobs require explicit retry to move to direct execution. Library
+transcripts, notes and stored audio are not migrated or overwritten.
 
 The container builds the Python dependencies and ffmpeg in the image. Provision
 the existing `small` model cache separately and mount it read-only at `/models`.
@@ -120,9 +133,9 @@ existing source/media behavior.
 For podcast projects, the service reads the current canonical source descriptor,
 revalidates the RSS enclosure when applicable, and saves the acquired bytes
 directly in the owned asset store. Media does not round-trip through the browser.
-Transcription streams a verified owned asset into the existing Python import
-queue using a durable upload operation identity. This adds no second inference
-queue. Stored source tasks remain discoverable by project in a fresh browser.
+Transcription launches the Python task with the verified stored asset path.
+Its source-job row is the only transcription queue and retains processing phases.
+Missing models disable new transcription while downloads/playback remain usable. Stored source tasks remain discoverable by project in a fresh browser.
 
 Source hashes, library namespace and document lifetime bind each task to its
 project. Changing a source, deleting/restoring a project, or corrupting a stored
@@ -131,11 +144,9 @@ same source authority. A completed transcript is only attached by an explicit
 user action using the library's revision-checked save, preserving project notes
 and bookmarks. Existing transcript content is not automatically replaced.
 
-On service restart an interrupted download requires explicit retry. A lost ASR
-receipt is reconciled against the original upload operation before any explicit
-retry; reading status never resubmits a model job. Closing a browser does not
-cancel accepted work. During an uncertain upload, cancellation waits for an
-executor receipt rather than claiming a job was cancelled without evidence.
+On service restart interrupted work requires explicit retry. Reading status never
+resubmits a model job. Closing a browser does not cancel accepted work. Node
+cancels the owned process directly; retry reuses its stage checkpoints.
 Explicitly re-fetching a completed download can repair missing/corrupt bytes.
 Once a transcription operation owns the asset, different audio bytes cannot
 replace it in that project; create a separate project to review a changed source.
@@ -152,7 +163,7 @@ flowchart TB
   Jobs["Source task SQLite\nDownload intents · upload operation IDs · recovery"]
   Sources["Source adapters\nRSS / Xiaoyuzhou / enabled captions"]
   Assets["Owned asset directory\nSource binding · size quota · SHA-256 · byte ranges"]
-  Python["Optional managed Python worker\nLoopback · existing durable import queue"]
+  Python["Per-task Python process\nOffline models · stage checkpoints"]
   Models["Provisioned offline models / ffmpeg"]
   AI["Existing AI task service\nConfigured Codex / Claude credentials"]
   Browser --> Proxy --> HTTP
@@ -161,7 +172,7 @@ flowchart TB
   HTTP <-->|Submit / list / explicit retry| Jobs
   Jobs -->|Validated canonical source| Sources
   Sources -->|Direct server-side save| Assets
-  Jobs -->|Verified stored bytes + durable operation| Python
+  Jobs -->|Verified local asset path| Python
   Python --> Models
   HTTP -->|Authenticated byte ranges| Assets
   HTTP --> AI

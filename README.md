@@ -47,7 +47,11 @@ macOS 开发服务启用字幕助手后，可在「发现与添加」连接 Edge
 
 公开链接和字幕获取有来源、大小、时长与请求预算限制。受信任代理支持所有者显式配置的字幕获取，以及明确选择并通过来源校验的原始媒体下载；默认关闭，不是任意地址转发。
 
-原始媒体无需先有文字稿即可播放。ASR 是可选执行器能力，必须明确配置、确认输入并取得本地就绪状态；正常应用流程不会静默安装依赖或下载权重。没有可用模型时仍可播放和记录笔记。
+原始媒体无需先有文字稿即可播放。ASR 是可选能力；独立服务由 Node 直接启动 Python 转录任务，必须配置本地模型、确认输入并取得就绪状态；正常应用流程不会静默安装依赖或下载权重。没有可用模型时仍可播放和记录笔记。
+
+Apple Silicon 本地转录默认使用 **Qwen3-ASR-1.7B-8bit + Qwen3-ForcedAligner-0.6B-8bit**，通过 MLX 运行。Whisper 保留为显式选择的备用后端；Qwen 未就绪时不会自动切换。模型准备、整集运行记录及验证范围见[本地转录管线](docs/transcription-pipeline.md)。
+
+说话人分组由独立的本地声音模型完成。配置两份 `COCONUT_SPEAKER_*_MODEL` 后，Qwen 转录会在切句后自动执行声音分组；已有稿可单独补标签，无须重新识别。自动声音编号需要回听核对，不代表真实姓名；不确定的片段保留未标注。
 
 来源未返回现成字幕时，开发模式可先获取原声，再用已配置的本地识别服务生成带时间轴的文字稿，并接入原项目。平台字幕和自动转写保留不同的来源标记；具体启动配置见[来源与本地转写](docs/link-first-ingestion.md#one-user-visible-task-existing-python-execution-backend)。
 
@@ -55,6 +59,7 @@ macOS 开发服务启用字幕助手后，可在「发现与添加」连接 Edge
 - [开发字幕获取](docs/development-captions.md)
 - [字幕失败诊断](docs/caption-diagnostic-outcomes.md)
 - [三平台导入实现与真实验证证据](docs/public-ingestion-evidence.md)
+- [本地转录管线与 Qwen 接入](docs/transcription-pipeline.md)
 - [来源与 ASR 边界](docs/podcast-sources-and-asr.md)
 
 ## AI 与后台任务
@@ -87,3 +92,7 @@ CI 还检查共享领域模型、Node/Python 协议、真实 Chromium 默认界�
 源码主干与既有 [GitHub Releases](https://github.com/YakiHugo/coconut/releases) 是不同交付物。版本号未改变时，不覆盖已经发布的开发包。macOS 开发包未获 Developer ID 签名或 Apple 公证，不应绕过系统安全警告。
 
 长音频的本地/云端共用切块、时间还原、跨块声纹匹配和断点恢复，见 [长音频处理架构](docs/long-audio-pipeline.md)。
+
+## 转录校对
+
+新转录可接续本机 Codex CLI 或 Kimi CLI 做错字、人名、术语和标点校对；已有文字稿也可从阅读页「来源与整理 → 文字整理」独立处理。原始识别、时间定位与修改记录保留，支持分批恢复和待核对项。配置及边界见[转录后的 AI 校对](docs/transcript-review.md)。

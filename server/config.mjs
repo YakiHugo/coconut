@@ -19,10 +19,19 @@ export function serviceConfig(env=process.env){
   else if(env.COCONUT_PODCAST_PROXY)network=validateSourceNetwork({mode:'custom',proxy:env.COCONUT_PODCAST_PROXY});
   else {const environment=Object.fromEntries(['HTTP_PROXY','http_proxy','HTTPS_PROXY','https_proxy','ALL_PROXY','all_proxy','NO_PROXY','no_proxy'].filter(key=>env[key]!==undefined).map(key=>[key,env[key]]));network=Object.keys(environment).length?validateSourceNetwork({mode:'environment',environment}):validateSourceNetwork();}
   if(env.COCONUT_PODCAST_PROXY&&(network.mode!=='custom'||network.proxy!==env.COCONUT_PODCAST_PROXY.replace(/\/$/,'')))throw Error('Conflicting source and podcast proxy settings.');
-  const asrPython=env.COCONUT_ASR_PYTHON||null,asrExecutorUrl=env.COCONUT_ASR_EXECUTOR_URL||null,modelDirectory=env.COCONUT_MODEL_DIRECTORY||null;
+  const asrPython=env.COCONUT_ASR_PYTHON||null,modelDirectory=env.COCONUT_MODEL_DIRECTORY||null;
   if(asrPython&&!path.isAbsolute(asrPython))throw Error('COCONUT_ASR_PYTHON must be an absolute executable path.');
   if(modelDirectory&&!path.isAbsolute(modelDirectory))throw Error('COCONUT_MODEL_DIRECTORY must be absolute.');
-  if(asrPython&&asrExecutorUrl)throw Error('Select either a managed ASR Python or an existing ASR executor URL.');
+  if(env.COCONUT_ASR_EXECUTOR_URL)throw Error('Standalone transcription now runs directly; configure COCONUT_ASR_PYTHON instead of COCONUT_ASR_EXECUTOR_URL.');
+  const backend=env.COCONUT_ASR_BACKEND||'qwen-mlx';
+  if(!['qwen-mlx','faster-whisper'].includes(backend))throw Error('Unsupported COCONUT_ASR_BACKEND');
+  const root=modelDirectory||path.join(homedir(),'.coconut','models');
+  const asrProfile={backend,model_cache:modelDirectory||undefined,asr_model:env.COCONUT_ASR_MODEL||path.join(root,'Qwen3-ASR-1.7B-8bit'),align_model:env.COCONUT_ALIGN_MODEL||path.join(root,'Qwen3-ForcedAligner-0.6B-8bit'),
+    segmentation:env.COCONUT_SPEAKER_SEGMENTATION_MODEL||'',embedding:env.COCONUT_SPEAKER_EMBEDDING_MODEL||''};
+  for(const value of [asrProfile.asr_model,asrProfile.align_model,asrProfile.segmentation,asrProfile.embedding])if(value&&!path.isAbsolute(value))throw Error('Transcription models require absolute local paths.');
+  const reviewProvider=env.COCONUT_TRANSCRIPT_REVIEW_PROVIDER||'',reviewModel=env.COCONUT_TRANSCRIPT_REVIEW_MODEL||'';
+  if(reviewProvider&&!['codex','kimi'].includes(reviewProvider))throw Error('Unsupported transcript review provider');
+  if(reviewModel&&!/^[A-Za-z0-9][A-Za-z0-9._/-]{0,119}$/.test(reviewModel))throw Error('Invalid transcript review model');
   return Object.freeze({host,port:Number(portText),dataDirectory,publicOrigin,ownerToken,backendLabel:env.COCONUT_BACKEND_LABEL||'Coconut',network,
-    captionPython:env.COCONUT_CAPTION_PYTHON||null,readingPython:env.COCONUT_READING_PYTHON||null,asrPython,asrExecutorUrl,modelDirectory});
+    captionPython:env.COCONUT_CAPTION_PYTHON||null,readingPython:env.COCONUT_READING_PYTHON||null,asrPython,asrProfile,modelDirectory,reviewProvider,reviewModel});
 }
