@@ -191,6 +191,12 @@ class AdapterTests(unittest.TestCase):
         with patch('importlib.util.find_spec', side_effect=lambda name: None if name == 'sherpa_onnx' else object()):
             self.assertEqual(probe(profile)['code'], 'missing_dependencies')
 
+    def test_invalid_verified_speaker_count_is_rejected(self):
+        for count in (True, 0, 33, '2'):
+            with patch('transcription.probe', return_value={'available': True}), self.assertRaisesRegex(ValueError, 'speaker count'):
+                from audio_pipeline import _file_digest
+                run(dict(profile=self.profile, input=str(self.audio), work=str(self.root / 'work'), sha256=_file_digest(self.audio), speaker_count=count))
+
     def test_qwen_speaker_stage_reuses_recognition_and_acoustic_checkpoints(self):
         calls = {'asr': 0, 'voices': 0, 'refinement': 0}
         backend = self.backend()

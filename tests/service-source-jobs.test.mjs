@@ -129,3 +129,14 @@ test('a changed model profile creates a new task without adopting previous resul
  f.transcriber.profile={backend:'authored-v2'};assert.equal((await f.jobs.get(first.id)).currentProfile,false);
  const second=await f.create('transcribe');assert.notEqual(second.id,first.id);await until(()=>f.jobs.get(second.id),j=>j.state==='ready');assert.equal((await f.jobs.list(doc.key)).length,2);
 });
+test('metadata precedes ASR and identity follows acoustic grouping; metadata failure does not discard ASR',async t=>{
+ for(const unavailable of [false,true]){
+  const steps=[];
+  const reviewer={prepareContext:async d=>{steps.push('context');if(unavailable)throw Error('CLI unavailable');return {...d,speaker_identity_evidence:{expected_speakers:2,speakers:[{name:'张元'}]},transcription_glossary:[{term:'Manus',source:'publisher'}]};},identifySpeakers:async d=>{steps.push('identity');return {...d,segments:d.segments.map(s=>({...s,speaker:'张元（嘉宾）'}))};},review:async d=>{steps.push('review');return {result:d};}};
+  const f=await fixture(t,{reviewer,reviewProvider:'codex',transcriber:{profile:{backend:'authored'},status:async()=>({available:true}),run:async request=>{steps.push('asr');assert.deepEqual(request.hotwords,unavailable?[]:['张元','Manus']);assert.equal(request.speakerCount,unavailable?undefined:2);await writeFile(path.join(request.workDirectory,'result.json'),JSON.stringify({schema_version:1,title:'Authored',segments:[{id:'a',start:0,end:1,text:'原识别',speaker_id:'speaker-0001'}]}));}}});
+  await f.media.save(doc.key,f.media.owner(doc.key).source,Readable.from(['ID3 authored']),{type:'audio/mpeg',name:'source.mp3'});const job=await f.create('transcribe');await until(()=>f.jobs.get(job.id),j=>j.state==='ready');
+  const result=(await f.jobs.result(job.id)).ingestion.transcript.document;
+  assert.deepEqual(steps,['context','asr','identity','review']);assert.equal(result.segments[0].speaker,'张元（嘉宾）');
+  const original=JSON.parse(await readFile(path.join(f.directory,'jobs',job.id,'original-asr.json'),'utf8'));assert.equal(original.segments[0].speaker,undefined);
+ }
+});
