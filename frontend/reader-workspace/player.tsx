@@ -83,11 +83,13 @@ export function ReaderPlayer({ media, seek, onTime, onProgress, resumePosition, 
         void controller.current?.listen({ id: String(intent.id), start: intent.seconds, end: intent.end, label: '所选原声' });
     }
     else {
+        repeatRef.current=false;setRepeat(false);
         controller.current?.cancel();
         engaged.current=true;
+        const attempt=++playAttempt.current;
         player.currentTime = intent.seconds;
         if (intent.play)
-            void player.play().catch(() => setError('播放未能开始，请使用播放器播放按钮。'));
+            void player.play().catch(reason => {if(ref.current===player&&playAttempt.current===attempt&&reason?.name!=='AbortError')setError('播放未能开始，请使用播放器播放按钮。');});
     } };
     useEffect(() => { if (seek)
         apply(seek); }, [seek]);

@@ -114,14 +114,14 @@ async function selectionViewportProof(page,label){
   const b=bar?.getBoundingClientRect();
   return {viewport:{width:innerWidth,height:innerHeight},scroll:{x:scrollX,y:scrollY},text:selection?.toString(),bar:b?rect(b):null,
    selected:selected.map(r=>({...rect(r),inViewport:inViewport(r),hit:!!source&&hit(source,r),overlap:!!b&&b.left<r.right&&b.right>r.left&&b.top<r.bottom&&b.bottom>r.top})),
-   buttons:bar?[...bar.querySelectorAll('button')].map(node=>{const r=node.getBoundingClientRect();return {text:node.textContent,...rect(r),inViewport:inViewport(r),hit:hit(node,r),disabled:node.disabled};}):[]};
+   buttons:bar?[...bar.querySelectorAll('button')].map(node=>{const r=node.getBoundingClientRect();return {text:node.getAttribute('aria-label')||node.textContent,...rect(r),inViewport:inViewport(r),hit:hit(node,r),disabled:node.disabled};}):[]};
  });
  const diagnostic=label+' '+JSON.stringify(proof);
  assert.equal(proof.text,'Original phrase',diagnostic);assert.ok(proof.selected.length,diagnostic);
  for(const r of proof.selected){assert.equal(r.inViewport,true,diagnostic);assert.equal(r.hit,true,diagnostic);assert.equal(r.overlap,false,diagnostic);}
- const expectedDisabled={'保存精确摘录':false,'理解选中文字':false,'翻译选中文字':false,'复制原话':false,'保存双语摘录':true,'关闭':false};
+ const expectedDisabled={'保存精确摘录':false,'理解选中文字':false,'翻译选中文字':false,'复制原话':false,'关闭选文操作':false};
  assert.deepEqual(proof.buttons.map(button=>button.text).sort(),Object.keys(expectedDisabled).sort(),diagnostic);
- // This authored fixture has no translation, so bilingual capture must stay disabled.
+ // This authored fixture has no translation, so bilingual capture is omitted.
  for(const button of proof.buttons){assert.equal(button.inViewport,true,diagnostic);assert.equal(button.hit,true,diagnostic);assert.equal(button.disabled,expectedDisabled[button.text],diagnostic);}
  return {label,...proof};
 }
@@ -312,12 +312,12 @@ try{
      viewportEvidence.push(await selectionViewportProof(p,`${mode}/${width}/${index}/keyboard-entry`));
      // Start from the focused source, not a programmatically focused action.
      const understand=p.getByRole('button',{name:'理解选中文字',exact:true});let tabs=0;
-     while(tabs<6&&!await p.evaluate(()=>document.activeElement?.closest('.rw-selection')&&document.activeElement?.textContent==='理解选中文字')){await p.keyboard.press('Tab');tabs++;}
-     const keyboardProof=await p.evaluate(()=>({focus:{tag:document.activeElement?.tagName,text:document.activeElement?.textContent?.slice(0,160),label:document.activeElement?.getAttribute('aria-label')},reached:!!document.activeElement?.closest('.rw-selection')&&document.activeElement?.textContent==='理解选中文字'}));
+     while(tabs<6&&!await p.evaluate(()=>document.activeElement?.closest('.rw-selection')&&document.activeElement?.getAttribute('aria-label')==='理解选中文字')){await p.keyboard.press('Tab');tabs++;}
+     const keyboardProof=await p.evaluate(()=>({focus:{tag:document.activeElement?.tagName,text:document.activeElement?.textContent?.slice(0,160),label:document.activeElement?.getAttribute('aria-label')},reached:!!document.activeElement?.closest('.rw-selection')&&document.activeElement?.getAttribute('aria-label')==='理解选中文字'}));
      assert.equal(keyboardProof.reached,true,JSON.stringify({mode,width,index,tabs,limit:6,...keyboardProof}));
      await expect(understand).toBeFocused();await p.keyboard.press('Enter');await expect(p.locator('.ai-workspace h2')).toBeFocused();
      await p.getByRole('button',{name:'返回所选原文',exact:true}).click();await expect(focusTarget).toBeFocused();
-     await p.keyboard.press('Tab');await expect(p.getByRole('button',{name:'保存精确摘录',exact:true})).toBeFocused();
+     await p.keyboard.press('Tab');await expect(p.getByRole('button',{name:'复制原话',exact:true})).toBeFocused();
      await p.keyboard.press('Shift+Tab');await expect(focusTarget).toBeFocused();await expect(p.locator('.rw-selection')).toHaveCount(1);
      await p.keyboard.press('Tab');await p.keyboard.press('Escape');await expect(focusTarget).toBeFocused();await expect(p.locator('.rw-selection')).toHaveCount(0);
      await p.keyboard.press('Shift+Tab');await expect(focusTarget).not.toBeFocused();

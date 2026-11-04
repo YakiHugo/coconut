@@ -43,7 +43,7 @@ test('mounted reader offers explicit source links in cues and passages without a
   await act(async()=>host.querySelector('[role=tab][data-mode=passages]').click());assert.equal(host.querySelector('.rw-passage a').href,cueLink.href);
   await act(async()=>{source='https://example.test/episode';render();});assert.equal(host.querySelector('.rw-passage a').textContent,'打开原站 ↗');assert.match(host.querySelector('.rw-passage a').title,/不支持按段定位/);
   await act(async()=>{source='javascript:alert(1)';render();});assert.equal(host.querySelector('.rw-passage a'),null);
-  await act(async()=>{media={url:'blob:audio',kind:'audio',name:'original',identity:'audio'};render();});assert.ok([...host.querySelectorAll('button')].some(button=>button.getAttribute('aria-label')?.startsWith('回听整段')));assert.equal(host.querySelector('.rw-passage a'),null);
+  await act(async()=>{media={url:'blob:audio',kind:'audio',name:'original',identity:'audio'};render();});assert.ok(host.querySelector('.rw-passage .rw-time-link'),'available audio exposes continuous playback from the passage timestamp');assert.equal(host.querySelector('.rw-passage a'),null);assert.equal(host.querySelector('.rw-replay-passage'),null);
  }finally{await act(async()=>root.unmount());for(const name of Object.keys(previous)){if(previous[name])Object.defineProperty(globalThis,name,previous[name]);else delete globalThis[name];}for(const c of channels){c.port1.close();c.port2.close();}globalThis.MessageChannel=savedChannel;delete globalThis.IS_REACT_ACT_ENVIRONMENT;await win.happyDOM.close();}
 });
 test.after(async()=>rm(temp,{recursive:true,force:true}));

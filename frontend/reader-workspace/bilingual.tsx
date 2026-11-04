@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import type { ReaderDocument } from './contracts';
 import type { SourceSelection } from './domain';
+import {ChoicePicker,ReaderDialog} from './controls';
 type Model = {
     text: string;
     language: string;
@@ -33,7 +34,8 @@ export function BilingualCapture({ doc, selection, disabled, save, onClose }: {
         to: number;
     } | null>(null), [confirmed, setConfirmed] = useState(false), [error, setError] = useState('');
     const model = models[index];
-    return <div><button disabled={disabled || !models.length} onClick={() => setOpen(!open)}>保存双语摘录</button>{open && model && <section><p>原文选区：{selection.text}</p><label>已保存的译文片段<select value={index} onChange={e => { setIndex(Number(e.target.value)); setRange(null); setConfirmed(false); }}>{models.map((m, i) => <option key={i} value={i}>{m.language} · {m.text.slice(0, 50)}</option>)}</select></label><label>在下方选取对应译文<textarea readOnly value={model.text} onSelect={e => { const input = e.currentTarget; setRange(input.selectionEnd > input.selectionStart ? { from: input.selectionStart, to: input.selectionEnd } : null); setConfirmed(false); }}/></label><p>译文来源：{model.providers.join('、')}；{model.reviewStates.join('、')}</p>{model.qualityWarnings.length > 0 && <p>{model.qualityWarnings.join('；')}</p>}<label><input type="checkbox" checked={confirmed} onChange={e => setConfirmed(e.target.checked)}/> 我确认两处选区表达相应内容；这不等于译文已经人工校对。</label><button disabled={disabled || !range || !confirmed} onClick={async () => {
+    if(!models.length)return null;
+    return <><button type="button" aria-label="保存双语摘录" disabled={disabled} onClick={() => setOpen(true)}>双语摘录</button><ReaderDialog open={open} title="保存双语摘录" onClose={()=>setOpen(false)}>{model&&<section><p>原文选区：{selection.text}</p><ChoicePicker label="已保存的译文片段" value={String(index)} onChange={value=>{setIndex(Number(value));setRange(null);setConfirmed(false);}} options={models.map((m,i)=>({value:String(i),label:m.language+" · "+m.text.slice(0,50)}))}/><label>在下方选取对应译文<textarea readOnly value={model.text} onSelect={e => { const input = e.currentTarget; setRange(input.selectionEnd > input.selectionStart ? { from: input.selectionStart, to: input.selectionEnd } : null); setConfirmed(false); }}/></label><p>译文来源：{model.providers.join('、')}；{model.reviewStates.join('、')}</p>{model.qualityWarnings.length > 0 && <p>{model.qualityWarnings.join('；')}</p>}<label><input type="checkbox" checked={confirmed} onChange={e => setConfirmed(e.target.checked)}/> 我确认两处选区表达相应内容；这不等于译文已经人工校对。</label><button disabled={disabled || !range || !confirmed} onClick={async () => {
                 try {
                     const stamp = new Date().toISOString();
                     const record = core.pairedExactExcerptSnapshot(doc, cues, selection.separators, selection.from, selection.to, model, range!.from, range!.to, { id: crypto.randomUUID(), createdAt: stamp, confirmedAt: stamp });
@@ -47,5 +49,5 @@ export function BilingualCapture({ doc, selection, disabled, save, onClose }: {
                 catch (e) {
                     setError(String(e instanceof Error ? e.message : e));
                 }
-            }}>确认保存双语摘录</button><button onClick={() => setOpen(false)}>取消双语选取</button>{error && <p role="alert">{error}</p>}</section>}</div>;
+            }}>确认保存双语摘录</button><button onClick={() => setOpen(false)}>取消双语选取</button>{error && <p role="alert">{error}</p>}</section>}</ReaderDialog></>;
 }

@@ -7,6 +7,20 @@ test('interview plans send direct original speech and acoustic attribution; no c
  const d=doc(),p=I.plan(d),j=I.create(p,'codex','chosen'),request=I.request(p,j);assert.equal(p.requests,p.chunks.length);assert.equal(request.model,'chosen');assert.equal(JSON.parse(request.segments[1].text).speech,d.segments[1].text);
  const result=I.accept(p,j,response(p.source));assert.equal(result.purpose,'interview');assert.equal(result.interview_process.basis,'direct_source');assert.equal(result.blocks[1].paragraphs[0],'我觉得值得试试。');assert.ok(I.cleanFinal(p,result,'codex','chosen'));assert.equal(I.cleanFinal(p,result,'claude','chosen'),null);assert.throws(()=>I.request(p,j));
 });
+test('reading editions accept a monologue and meaningful short replies without question-answer pairing',()=>{
+ const segments=[
+  {id:'a',start:0,end:40,text:'这是一个人的完整讲述。'.repeat(30),speaker:'讲述者'},
+  {id:'b',start:40,end:41,text:'不是。',speaker:'讨论者'},
+  {id:'c',start:41,end:42,text:'嗯，你继续。',speaker:'讲述者'},
+  {id:'d',start:42,end:70,text:'我补充的是另一种情况。'.repeat(20),speaker:'讨论者'}
+ ];
+ const p=I.plan({segments}),job=I.create(p,'codex'),request=I.request(p,job);
+ assert.deepEqual(request.segments.map(c=>JSON.parse(c.text).speech),segments.map(c=>c.text));
+ const result=I.accept(p,job,response(p.source));
+ assert.deepEqual(result.blocks.map(b=>b.paragraphs.join('\n')),segments.map(c=>c.text));
+ assert.deepEqual(result.blocks.flatMap(b=>b.source_refs),segments.map(c=>c.id));
+ assert.ok(I.cleanFinal(p,result,'codex'));
+});
 for(const damage of ['omit','reorder','repeat','mix-speakers','merge-unknown','extra','malformed'])test('interview rejects '+damage+' before a reusable batch exists',()=>{
  const d=doc();if(damage==='merge-unknown')d.segments.push({id:'e',start:11,end:12,text:'好。',speaker:null});const p=I.plan(d),j=I.create(p,'codex'),value=response(p.source),data=JSON.parse(value.answer);
  if(damage==='omit')data.blocks.pop();if(damage==='reorder')data.blocks.reverse();if(damage==='repeat')data.blocks.push(data.blocks[0]);if(damage==='mix-speakers'){data.blocks[0].source_refs.push('b');data.blocks.splice(1,1);}if(damage==='merge-unknown'){data.blocks[3].source_refs.push('e');data.blocks.pop();}if(damage==='extra')data.blocks[0].source_refs=['invented'];value.answer=damage==='malformed'?'{':JSON.stringify(data);assert.throws(()=>I.accept(p,j,value));assert.equal(j.results.length,0);

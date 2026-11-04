@@ -22,7 +22,7 @@ async function setup(){
   return {ok:true,json:async()=>({answer:'Authored translation',citations:body.segments.map(c=>c.id)})};
  };
  for(const code of sources)w.eval(code);const adapter=w.CoconutLibraryStore.createLegacyAdapter({getStorage:()=>w.localStorage,validate:w.Coconut.validate});w.CoconutStorageProvider={initialize:async()=>({ok:true,adapter,loaded:adapter.load()})};w.eval(script);
- const button=text=>[...w.document.querySelectorAll('button')].find(b=>b.textContent===text);
+ const button=text=>[...w.document.querySelectorAll('button')].find(b=>(b.getAttribute('aria-label')||b.textContent)===text);
  await wait(()=>button('继续阅读'));button('继续阅读').click();await wait(()=>w.document.querySelector('.rw-cues'));
  const selectText=async(id,from=0,to=15)=>{const el=w.document.querySelector(`[data-source-id="${id}"]`),range=w.document.createRange();range.setStart(el.firstChild,from);range.setEnd(el.firstChild,to);w.getSelection().removeAllRanges();w.getSelection().addRange(range);el.dispatchEvent(new w.MouseEvent('mouseup',{bubbles:true}));await wait(()=>button('理解选中文字'));};
  const consent=()=>[...w.document.querySelectorAll('.ai-workspace input[type=checkbox]')].find(el=>el.parentElement.textContent.startsWith('我确认'));
@@ -39,7 +39,7 @@ test('production selection actions reset stale task intent, focus the panel, pre
   h.button('检查本地 AI 连接').click();await wait(()=>w.document.querySelector('[data-testid=ai-readiness]').textContent.includes('已检测到'));
   h.consent().click();await wait(()=>!h.button('执行本次任务').disabled);h.button('执行本次任务').click();await wait(()=>h.saved().ai_answers?.length===1);
   assert.equal(h.calls.length,1);assert.deepEqual(h.calls[0].segments.map(c=>c.id),['cue-55']);assert.match(h.calls[0].question,/只将所选原文翻译/);assert.equal(h.saved().ai_answers[0].input_snapshot.scope.exact_selection.text,'Original phrase');assert.deepEqual(h.saved().segments[55].translations,{});
-  h.button('返回所选原文').click();await wait(()=>w.document.activeElement?.dataset.sourceId==='cue-55');assert.match(w.document.querySelector('.rw-selection').textContent,/Original phrase/);
+  h.button('返回所选原文').click();await wait(()=>w.document.activeElement?.dataset.sourceId==='cue-55');assert.ok(h.button('理解选中文字'));assert.equal(w.document.querySelector('.rw-selection>p'),null);
   h.button('理解选中文字').click();await wait(()=>w.document.activeElement===w.document.querySelector('.ai-workspace h2'));assert.match(w.document.querySelector('.ai-workspace textarea').value,/解释所选原文/);assert.equal(h.consent().checked,false);assert.equal(h.calls.length,1);
  }finally{await w.happyDOM.close();}
 });
@@ -83,16 +83,16 @@ for(const modeName of ['transcript','passages'])test('selection keyboard entry i
  const h=await setup(),{w}=h;try{
   if(modeName==='passages'){w.document.querySelector('[role=tab][data-mode=passages]').click();await wait(()=>w.document.querySelector('.rw-passage'));}
   await h.selectText('cue-0');const source=w.document.querySelector('[data-source-id="cue-0"]').closest('.rw-original');
-  assert.equal(key(w,source,'Tab').defaultPrevented,true);assert.equal(w.document.activeElement,h.button('保存精确摘录'));
-  assert.equal(key(w,h.button('保存精确摘录'),'Tab').defaultPrevented,false,'Normal toolbar Tab remains native');
-  assert.equal(key(w,h.button('保存精确摘录'),'Tab',{shiftKey:true}).defaultPrevented,true);assert.equal(w.document.activeElement,source);
+  assert.equal(key(w,source,'Tab').defaultPrevented,true);assert.equal(w.document.activeElement,h.button('复制原话'));
+  assert.equal(key(w,h.button('复制原话'),'Tab').defaultPrevented,false,'Normal toolbar Tab remains native');
+  assert.equal(key(w,h.button('复制原话'),'Tab',{shiftKey:true}).defaultPrevented,true);assert.equal(w.document.activeElement,source);
   assert.equal(key(w,source,'Tab',{shiftKey:true}).defaultPrevented,false,'Reverse Tab can leave the source');
   key(w,source,'Tab');assert.equal(key(w,h.button('理解选中文字'),'Escape').defaultPrevented,true);await wait(()=>!w.document.querySelector('.rw-selection'));assert.equal(w.document.activeElement,source);assert.equal(w.getSelection().rangeCount,0);
   source.dispatchEvent(new w.KeyboardEvent('keyup',{key:'Escape',bubbles:true}));assert.equal(key(w,source,'Tab').defaultPrevented,false,'Escape keyup cannot recapture the dismissed range');
   await h.selectText('cue-0');h.button('理解选中文字').click();await wait(()=>w.document.activeElement===w.document.querySelector('.ai-workspace h2'));h.button('返回所选原文').click();await wait(()=>w.document.activeElement===source);source.dispatchEvent(new w.KeyboardEvent('keyup',{key:'Enter',bubbles:true}));await new Promise(resolve=>setTimeout(resolve,20));assert.ok(w.document.querySelector('.rw-selection'),'Keyboard activation release after AI return keeps the selection');
-  assert.equal(key(w,source,'Tab').defaultPrevented,true,'Restored selection keeps the local keyboard entry');assert.equal(w.document.activeElement,h.button('保存精确摘录'));
-  key(w,h.button('保存精确摘录'),'Tab',{shiftKey:true});source.dispatchEvent(new w.KeyboardEvent('keyup',{key:'Tab',shiftKey:true,bubbles:true}));source.dispatchEvent(new w.KeyboardEvent('keyup',{key:'Shift',bubbles:true}));await new Promise(resolve=>setTimeout(resolve,20));assert.ok(w.document.querySelector('.rw-selection'),'Navigation keyup does not recapture a collapsed native range after AI return');
-  const close=[...w.document.querySelectorAll('.rw-selection button')].find(b=>b.textContent==='关闭');close.click();await wait(()=>!w.document.querySelector('.rw-selection'));assert.equal(w.document.activeElement,source);assert.equal(key(w,source,'Tab').defaultPrevented,false);assert.equal(h.calls.length,0);
+  assert.equal(key(w,source,'Tab').defaultPrevented,true,'Restored selection keeps the local keyboard entry');assert.equal(w.document.activeElement,h.button('复制原话'));
+  key(w,h.button('复制原话'),'Tab',{shiftKey:true});source.dispatchEvent(new w.KeyboardEvent('keyup',{key:'Tab',shiftKey:true,bubbles:true}));source.dispatchEvent(new w.KeyboardEvent('keyup',{key:'Shift',bubbles:true}));await new Promise(resolve=>setTimeout(resolve,20));assert.ok(w.document.querySelector('.rw-selection'),'Navigation keyup does not recapture a collapsed native range after AI return');
+  const close=[...w.document.querySelectorAll('.rw-selection button')].find(b=>b.getAttribute('aria-label')==='关闭选文操作');close.click();await wait(()=>!w.document.querySelector('.rw-selection'));assert.equal(w.document.activeElement,source);assert.equal(key(w,source,'Tab').defaultPrevented,false);assert.equal(h.calls.length,0);
  }finally{await w.happyDOM.close();}
 });
 test('selection keyboard does not intercept notes, other sources, modifiers, IME or cleared and revised selections',async()=>{
