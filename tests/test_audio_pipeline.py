@@ -11,7 +11,8 @@ from unittest.mock import patch
 
 from audio_pipeline import (CallableBackend, JsonCommandBackend, SAMPLE_RATE, owned_segments, stitch_segments,
                             plan_chunks, run_audio_pipeline, validate_result)
-from audio_speakers import SpeakerRegistry, label_segments
+from audio_speakers import (SpeakerRegistry, label_segments, label_aligned_segments,
+                            reconcile_recording_speakers, SherpaSpeakerBackend)
 from transcript import make_document
 
 
@@ -75,6 +76,159 @@ class RegistryTests(unittest.TestCase):
         label_segments(segments, [{'start': 0, 'end': 10, 'speaker': 'a'},
                                   {'start': 0, 'end': 10, 'speaker': 'unknown'}], decisions)
         self.assertIsNone(segments[0]['speaker_id'], 'an unresolved competing voice must not disappear')
+
+
+class RecordingSpeakerTests(unittest.TestCase):
+    def block(self, evidence, turns, *, start=0, end=10, model='authored-v1'):
+        return dict(start=start, core_start=start, core_end=end,
+                    voices=dict(evidence=evidence, turns=turns, embedding_model=model))
+
+    def test_split_local_clusters_merge_without_a_short_mixed_intro_becoming_a_person(self):
+        blocks = [self.block({'intro': evidence([0, 0, 1], 2),
+                             'a': evidence([1, 0, 0], 20),
+                             'a-split': evidence([1, .03, 0], 15),
+                             'b': evidence([0, 1, 0], 20)},
+                    [dict(start=0, end=1, speaker='intro'), dict(start=1, end=3, speaker='a'),
+                     dict(start=3, end=5, speaker='a-split'), dict(start=5, end=10, speaker='b')]),
+                  self.block({'swapped': evidence([0, 1, .02], 20),
+                              'other': evidence([1, 0, .02], 20)},
+                    [dict(start=0, end=5, speaker='swapped'), dict(start=5, end=10, speaker='other')],
+                    start=10, end=20)]
+        before = copy.deepcopy(blocks)
+        turns, count = reconcile_recording_speakers(blocks)
+        self.assertEqual(count, 2)
+        self.assertEqual([t['speaker_id'] for t in turns],
+                         [None, 'speaker-0001', 'speaker-0001', 'speaker-0002', 'speaker-0002', 'speaker-0001'])
+        self.assertEqual(blocks, before)
+        self.assertEqual((turns[-1]['start'], turns[-1]['end']), (15, 20))
+
+    def test_participant_count_does_not_force_unrelated_vectors_into_confident_labels(self):
+        block = self.block({'a': evidence([1, 0, 0], 20), 'b': evidence([0, 1, 0], 20),
+                            'c': evidence([0, 0, 1], 20)},
+                           [dict(start=i, end=i+1, speaker=label) for i, label in enumerate('abc')])
+        turns, count = reconcile_recording_speakers([block], expected_speakers=2)
+        self.assertLessEqual(count, 2)
+        self.assertTrue(any(t['speaker_id'] is None for t in turns))
+        self.assertEqual(len(turns), 3, 'Unresolved speech is retained')
+        for bad in (0, -1, True, 33):
+            with self.assertRaises(ValueError):
+                reconcile_recording_speakers([block], expected_speakers=bad)
+        opposite = self.block({'a': evidence([1, 0], 20), 'b': evidence([-1, 0], 20)},
+                              [dict(start=0, end=1, speaker='a'), dict(start=1, end=2, speaker='b')])
+        turns, count = reconcile_recording_speakers([opposite], expected_speakers=1)
+        self.assertEqual(count, 0)
+        self.assertTrue(all(turn['speaker_id'] is None for turn in turns))
+
+    def test_global_reconciliation_preserves_unknown_competing_speech_and_checks_models(self):
+        block = self.block({'a': evidence([1, 0], 20)},
+                           [dict(start=0, end=10, speaker='a'), dict(start=0, end=10, speaker='unknown')])
+        turns, count = reconcile_recording_speakers([block])
+        segments = [dict(start=0, end=10, text='Both voices remain')]
+        decisions = {t['speaker']: dict(speaker_id=t['speaker_id'], status=t['speaker_status']) for t in turns}
+        label_segments(segments, turns, decisions)
+        self.assertIsNone(segments[0]['speaker_id'])
+        self.assertEqual(segments[0]['speaker_status'], 'overlap_or_boundary')
+        with self.assertRaisesRegex(ValueError, 'model'):
+            reconcile_recording_speakers([block, self.block({'a': evidence([1, 0], 20)}, [], model='other-model')])
+
+
+class AlignedSpeakerTests(unittest.TestCase):
+    decisions = {'a': {'speaker_id': 'speaker-0001'}, 'b': {'speaker_id': 'speaker-0002'}}
+
+    def test_pauses_do_not_dilute_word_evidence_or_move_original_clocks(self):
+        cue = dict(id='one', start=0, end=10, text='你好世界', words=[
+            dict(word='你好', start=0, end=1), dict(word='世界', start=9, end=10)])
+        before = copy.deepcopy(cue)
+        result = label_aligned_segments([cue], [dict(start=0, end=1, speaker='a'),
+                                               dict(start=9, end=10, speaker='a')], self.decisions)
+        self.assertEqual(result[0]['speaker_id'], 'speaker-0001')
+        for field in ('id', 'text', 'start', 'end', 'words'):
+            self.assertEqual(result[0][field], before[field])
+
+    def test_zero_duration_tokens_use_local_audio_and_boundary_competitors_remain_unknown(self):
+        cues = [dict(id=str(t), start=t, end=t, text='嗯', words=[dict(word='嗯', start=t, end=t)])
+                for t in (1, 2)]
+        before = copy.deepcopy(cues)
+        turns = [dict(start=0, end=2, speaker='a'), dict(start=2, end=3, speaker='b')]
+        result = label_aligned_segments(cues, turns, self.decisions)
+        self.assertEqual(result[0]['speaker_id'], 'speaker-0001')
+        self.assertIsNone(result[1]['speaker_id'])
+        self.assertEqual([c['words'] for c in result], [c['words'] for c in before])
+
+    def test_fresh_asr_splits_on_voice_changes_with_lossless_text_words_and_stable_first_id(self):
+        cue = dict(id='one', start=0, end=4, text='你好，再见。', words=[
+            dict(word='你好，', start=0, end=2, text_start=0, text_end=3),
+            dict(word='再见。', start=2, end=4, text_start=3, text_end=6)])
+        before = copy.deepcopy(cue)
+        turns = [dict(start=0, end=2, speaker='a'), dict(start=2, end=4, speaker='b')]
+        unsplit = label_aligned_segments([copy.deepcopy(cue)], turns, self.decisions)
+        self.assertIsNone(unsplit[0]['speaker_id'])
+        self.assertEqual(unsplit[0]['speaker_status'], 'speaker_change_within_cue')
+        split = label_aligned_segments([cue], turns, self.decisions, split=True)
+        self.assertEqual([c['id'] for c in split], ['one', 'one-voice-2'])
+        self.assertEqual([c['speaker_id'] for c in split], ['speaker-0001', 'speaker-0002'])
+        self.assertEqual(''.join(c['text'] for c in split), before['text'])
+        self.assertEqual([(w['word'], w['start'], w['end']) for c in split for w in c['words']],
+                         [(w['word'], w['start'], w['end']) for w in before['words']])
+        self.assertEqual(split[1]['words'][0]['text_start'], 0)
+        self.assertEqual((split[0]['start'], split[-1]['end']), (before['start'], before['end']))
+
+    def test_word_stage_keeps_unknown_overlaps_and_partial_alignment_intact(self):
+        cue = dict(id='one', start=0, end=4, text='不要猜测', words=[dict(word='不要猜测', start=0, end=4)])
+        turns = [dict(start=0, end=4, speaker='a'), dict(start=0, end=4, speaker='unknown')]
+        result = label_aligned_segments([cue], turns, self.decisions, split=True)
+        self.assertEqual(len(result), 1)
+        self.assertIsNone(result[0]['speaker_id'])
+        self.assertEqual(result[0]['speaker_status'], 'overlap_or_boundary')
+        cue['words'][0]['word'] = '不要'
+        result = label_aligned_segments([cue], turns, self.decisions, split=True)
+        self.assertEqual(result[0]['text'], '不要猜测')
+
+    def test_boundary_slivers_and_zero_length_sentence_tokens_do_not_invent_voice_changes(self):
+        cue = dict(id='one', start=0, end=4, text='好我们言归正传吧', words=[
+            dict(word='好', start=0, end=.3), dict(word='我们言归正传', start=.3, end=3.9),
+            dict(word='吧', start=4, end=4)])
+        turns = [dict(start=0, end=.3, speaker='b'), dict(start=.3, end=3.9, speaker='a'),
+                 dict(start=3.9, end=5, speaker='b')]
+        result = label_aligned_segments([cue], turns, self.decisions, split=True)
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0]['speaker_id'], 'speaker-0001')
+        self.assertEqual(result[0]['text'], '好我们言归正传吧')
+
+    def test_mixed_local_cluster_is_recovered_per_utterance_without_inventing_a_voice(self):
+        import numpy as np
+        from types import SimpleNamespace
+        class Extractor:
+            def create_stream(self):
+                class Stream:
+                    def accept_waveform(self, rate, values):
+                        self.values = values
+                    def input_finished(self):
+                        pass
+                return Stream()
+            def is_ready(self, stream):
+                return True
+            def compute(self, stream):
+                return [1, 0] if np.mean(stream.values) > 0 else [0, 1]
+        backend = object.__new__(SherpaSpeakerBackend)
+        backend.engine, backend.extractor = SimpleNamespace(sample_rate=SAMPLE_RATE), Extractor()
+        turns, audio = [], []
+        # Two independent reference utterances per identity, then a rejected
+        # local cluster that actually merged utterances from both speakers.
+        for i, (voice, sign) in enumerate([('speaker-0001', 1), ('speaker-0001', 1),
+                                         ('speaker-0002', -1), ('speaker-0002', -1),
+                                         (None, 1), (None, -1)]):
+            audio.append(np.full(SAMPLE_RATE * 4, sign * 1000, dtype='<i2'))
+            turns.append(dict(start=i*4, end=(i+1)*4, speaker=voice or 'unresolved:merged', speaker_id=voice))
+        before = copy.deepcopy(turns)
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'authored.wav'
+            with wave.open(str(path), 'wb') as stream:
+                stream.setparams((1, 2, SAMPLE_RATE, 0, 'NONE', 'not compressed'))
+                stream.writeframes(np.concatenate(audio).tobytes())
+            result = backend.refine_turns(path, turns)
+        self.assertEqual([t['speaker_id'] for t in result[-2:]], ['speaker-0001', 'speaker-0002'])
+        self.assertEqual(turns, before)
 
 
 class PipelineTests(unittest.TestCase):

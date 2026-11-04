@@ -1,11 +1,15 @@
 'use strict';
 // Pure resource planning and conservative merge; no fetching, models or storage.
-const CUE_FIELDS=['id','start','end','text','speaker','original_text','original_speaker','speaker_id','speaker_status'];
+const CUE_FIELDS=['id','start','end','text','speaker','original_text','original_speaker','speaker_id','speaker_status','words'];
 const PROVENANCE_FIELDS=['kind','language','caption_method','caption_track','media_id','source_platform','punctuation_method','punctuation_backend','punctuation_model','punctuation_status','speaker_method','speaker_backend','speaker_model','speaker_status'];
 const RESULT_FIELDS=PROVENANCE_FIELDS.filter(key=>key.startsWith('punctuation_')||key.startsWith('speaker_'));
 const select=(value,fields)=>Object.fromEntries(fields.filter(key=>Object.hasOwn(value||{},key)).map(key=>[key,value[key]]));
 function processingSnapshot(doc){
- const result={schema_version:1,key:doc.key,title:doc.title||'',language:doc.language||'',source_url:doc.source_url||'',provenance:select(doc.provenance,PROVENANCE_FIELDS),segments:doc.segments.map(cue=>({...select(cue,CUE_FIELDS),speaker:cue.speaker??null}))};
+ const result={schema_version:1,key:doc.key,title:doc.title||'',language:doc.language||'',source_url:doc.source_url||'',provenance:select(doc.provenance,PROVENANCE_FIELDS),segments:doc.segments.map(cue=>{
+  const snapshot={...select(cue,CUE_FIELDS),speaker:cue.speaker??null};
+  if(Array.isArray(snapshot.words))snapshot.words=snapshot.words.map(word=>({...word}));
+  return snapshot;
+ })};
  const duration=doc.media_duration||doc.provenance?.media_duration;
  if(Number.isFinite(duration)&&duration>0)result.media_duration=duration;
  return result;
@@ -43,6 +47,7 @@ function mergeProcessingResult(current,input,result){
   if(!after||['id','start','end'].some(key=>after[key]!==before[key])||typeof after.text!=='string'||!wordingPreserved(before.text,after.text))throw Error('整理结果改变了原文内容或时间，未接收。');
   if(before.speaker&&after.speaker!==before.speaker)throw Error('整理结果改变了已有说话人标签。');
   if(before.original_text!==undefined&&after.original_text!==before.original_text)throw Error('整理结果改变了原始文字记录。');
+  if(JSON.stringify(before.words??null)!==JSON.stringify(after.words??null))throw Error('整理结果改变了逐词时间，未接收。');
   const next={...cue};
   for(const field of CUE_FIELDS.slice(3))if(Object.hasOwn(after,field))next[field]=after[field];
   if(after.text!==before.text&&!Object.hasOwn(next,'original_text'))next.original_text=before.text;

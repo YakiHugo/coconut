@@ -16,7 +16,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Protocol
 
-from audio_speakers import SpeakerRegistry, label_segments, unit_vector
+from audio_speakers import SpeakerRegistry, label_segments, unit_vector, reconcile_recording_speakers
 from transcript import save_document
 
 VERSION = 'audio-pipeline-v1'
@@ -191,9 +191,40 @@ def validate_result(result, duration):
             if word['start'] < word_start - .05 or word['end'] > segment['end'] + .05 or not isinstance(word.get('word'), str):
                 raise ValueError('Invalid ASR word timestamps')
             word_start = word['start']
+        if segment.get('words'):
+            # Timing is evidence about the text, never an alternative transcript.
+            # Incomplete aligners must not make boundary cropping delete words.
+            if not bind_word_spans(segment):
+                segment.pop('words', None)
+                segment['alignment_status'] = 'partial_text_preserved'
+                value['alignment_warning'] = 'Incomplete word alignment; original text retained with segment timing'
     if value.get('language') is not None and not isinstance(value['language'], str):
         raise ValueError('Invalid ASR language')
     return value
+
+
+def bind_word_spans(segment):
+    """Bind complete lexical alignment to exact source slices, including punctuation."""
+    text, words = segment['text'], segment.get('words', [])
+    source = [(i, folded) for i, char in enumerate(text) if char.isalnum() for folded in char.casefold()]
+    tokens = [''.join(c.casefold() for c in word['word'] if c.isalnum()) for word in words]
+    if not source or not tokens or any(not token for token in tokens):
+        return False
+    if ''.join(char for _, char in source) != ''.join(tokens):
+        return False
+    cursor, starts = 0, []
+    for token in tokens:
+        starts.append(source[cursor][0])
+        cursor += len(token)
+    if len(set(starts)) != len(starts):
+        return False
+    starts[0] = 0
+    for i, word in enumerate(words):
+        start, end = starts[i], starts[i + 1] if i + 1 < len(starts) else len(text)
+        word.update(word=text[start:end], text_start=start, text_end=end)
+    segment['alignment_status'] = 'complete'
+    segment['timing_basis'] = 'word'
+    return True
 
 
 def validate_voices(result, duration):
@@ -237,7 +268,7 @@ def owned_segments(result, chunk, total_frames):
             if not selected:
                 continue
             if len(selected) != len(words):
-                segment['text'] = _words_text(selected)
+                segment['text'] = raw['text'][selected[0]['text_start']:selected[-1]['text_end']].strip()
                 segment['start'], segment['end'] = selected[0]['start'], selected[-1]['end']
             segment['words'] = [{**word, 'start': word['start'] + chunk.start,
                                  'end': word['end'] + chunk.start} for word in selected]
@@ -299,6 +330,8 @@ def stitch_segments(segments):
 
 def _words_text(words):
     import re
+    if all('text_start' in word for word in words):
+        return ''.join(word['word'] for word in words).strip()
     if any(word['word'].startswith(' ') for word in words):
         return ''.join(word['word'] for word in words).strip()
     return re.sub(r'(?<=[\u3400-\u9fff]) (?=[\u3400-\u9fff])', '', ' '.join(word['word'] for word in words)).strip()
@@ -307,7 +340,8 @@ def _words_text(words):
 def run_audio_pipeline(source: Path, backend: ASRBackend, *, work_dir=None, speaker_backend=None,
                        chunk_seconds=600, context_seconds=5, local_only=False,
                        speaker_threshold=.72, speaker_margin=.08, progress=None,
-                       expected_duration=None, minimum_duration=None):
+                       expected_duration=None, minimum_duration=None,
+                       reconcile_speakers=False, expected_speakers=None):
     """Run/resume either local ASR or an explicitly selected cloud adapter.
 
     Atomic ASR and acoustic checkpoints are separate. Completed paid chunks are
@@ -334,7 +368,7 @@ def run_audio_pipeline(source: Path, backend: ASRBackend, *, work_dir=None, spea
         if minimum_duration is not None and duration + 1 < minimum_duration:
             raise ValueError('Transcript timing extends beyond the supplied audio')
         chunks = plan_chunks(frames, chunk_seconds, context_seconds)
-        output, languages, warnings, speaker_turns = [], [], [], []
+        output, languages, warnings, speaker_turns, speaker_blocks = [], [], [], [], []
         voice_key = _digest(speaker_backend.cache_key)[:16] if speaker_backend else ''
         identity_key = _digest({'voice_key': voice_key, 'threshold': speaker_threshold,
                                 'margin': speaker_margin})[:16]
@@ -367,6 +401,10 @@ def run_audio_pipeline(source: Path, backend: ASRBackend, *, work_dir=None, spea
                         voices = validate_voices(speaker_backend.analyze(path), chunk.duration)
                         save_document(voices, voice_cache)
                     turns = []
+                    if reconcile_speakers:
+                        speaker_blocks.append(dict(start=chunk.start,
+                            core_start=chunk.core_start_frame / SAMPLE_RATE,
+                            core_end=chunk.core_end_frame / SAMPLE_RATE, voices=voices))
                     for turn in voices['turns']:
                         a, b = _time_range(turn, chunk.duration)
                         turns.append({**turn, 'speaker': str(turn['speaker']),
@@ -391,12 +429,30 @@ def run_audio_pipeline(source: Path, backend: ASRBackend, *, work_dir=None, spea
             finally:
                 path.unlink(missing_ok=True)
         output = stitch_segments(output)
+        speaker_count = len(registry.voices)
+        if speaker_backend and reconcile_speakers:
+            speaker_turns, speaker_count = reconcile_recording_speakers(speaker_blocks,
+                expected_speakers=expected_speakers, threshold=speaker_threshold, margin=speaker_margin)
+            if hasattr(speaker_backend, 'refine_turns'):
+                # Separate from raw acoustic checkpoints: assignment upgrades
+                # reuse expensive segmentation and invalidate only this pass.
+                refinement_key = _digest({'version': 'turn-refinement-v2', 'voices': voice_key,
+                                          'turns': speaker_turns})[:16]
+                refined_path = directory / f'refined-{refinement_key}.json'
+                if refined_path.exists():
+                    speaker_turns = json.loads(refined_path.read_text())['turns']
+                else:
+                    speaker_turns = speaker_backend.refine_turns(audio, speaker_turns)
+                    save_document({'turns': speaker_turns}, refined_path)
+            decisions = {turn['speaker']: dict(speaker_id=turn['speaker_id'], status=turn['speaker_status'])
+                         for turn in speaker_turns}
+            label_segments(output, speaker_turns, decisions)
         languages = list(dict.fromkeys(languages))
         return {'language': languages[0] if len(languages) == 1 else None, 'languages': languages,
                 'segments': output, 'speaker_turns': speaker_turns,
                 'alignment_warning': '; '.join(dict.fromkeys(warnings)) or None,
                 'pipeline': {'version': VERSION, 'chunks': len(chunks), 'duration': frames / SAMPLE_RATE,
-                             'speaker_count': len(registry.voices),
+                             'speaker_count': speaker_count,
                              'speaker_method': 'recording-acoustic-v1' if speaker_backend else 'unavailable'}}
 
 
