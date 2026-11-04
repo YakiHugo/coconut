@@ -40,7 +40,17 @@ export function AiPanel({ store, selection, reviewRequest, openRequest, onNaviga
         controller.commands.configure({purpose:'question',execution:'foreground',question:request.intent==='translate'?'请只将所选原文翻译为目标语言。其余原文只作上下文，不要翻译未选中的内容。':'请结合上下文解释所选原文的意思，说明关键概念；若依据不足，请明确指出。'});
         setOpen(true);setFocusRequest(request.id);
     },[selectionRequest,selection,document,revision,controller]);
-    useEffect(()=>{if(!open||!focusRequest)return;const heading=panel.current?.querySelector<HTMLElement>('.ai-workspace h2');heading?.focus({preventScroll:true});panel.current?.scrollIntoView?.({block:'start'});},[open,focusRequest]);
+    useEffect(()=>{
+        if(!open||!focusRequest)return;
+        // Let the native details content become visible after the source toolbar
+        // retires; focusing during that commit can leave keyboard focus on body.
+        const frame=window.requestAnimationFrame(()=>{
+            if(!panel.current?.open)return;
+            panel.current.scrollIntoView?.({block:'start'});
+            panel.current.querySelector<HTMLElement>('.ai-workspace h2')?.focus({preventScroll:true});
+        });
+        return()=>window.cancelAnimationFrame(frame);
+    },[open,focusRequest]);
     const watching = snapshot.connected && snapshot.tasks.some(task => task.unknown || ['queued', 'running', 'cancel_requested'].includes(task.status));
     useEffect(() => { if (!watching)
         return; let active = true, timer: ReturnType<typeof setTimeout>; const poll = async () => { await controller.commands.refreshTasks(); if (active)

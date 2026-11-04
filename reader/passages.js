@@ -3,7 +3,7 @@
  'use strict';
 
  const LIMITS=Object.freeze({characters:800,cues:16,seconds:45,targetCharacters:280,targetCues:8,targetSeconds:22});
- const READING_LIMITS=Object.freeze({characters:650,cues:32,seconds:75,targetCharacters:180,targetCues:14,targetSeconds:30});
+ const READING_LIMITS=Object.freeze({characters:350,words:200,targetCharacters:240,targetWords:140});
  const sentenceEnd=/[.!?。！？…][\s"'”’）)\]】」』〉》»]*$/u;
 
  function validCue(cue) {
@@ -12,6 +12,11 @@
    (cue.speaker==null||typeof cue.speaker==='string');
  }
  function speaker(cue) {return cue.speaker??null;}
+ // A display name is only a legacy fallback; distinct acoustic IDs never merge.
+ function speakerIdentity(cue) {
+  if(typeof cue.speaker_id==='string'&&cue.speaker_id)return 'voice:'+cue.speaker_id;
+  return cue.speaker?.trim()?'name:'+cue.speaker:null;
+ }
 
  /**
   * build(segments[, {source}]) -> [{key, start, end, speaker, cues}]
@@ -30,7 +35,8 @@
   * not necessarily its last cue's end. Prefer a sentence end after reaching a
   * readable target; never split on every short sentence. A hard cap can fall
   * mid-sentence, but never inside a cue. One oversized cue stays whole and alone.
-  * Character budgets count the ORIGINAL UTF-16 text, including all whitespace.
+  * Legacy budgets count ORIGINAL UTF-16 text. Reading uses CJK characters and
+  * other-language words, not playback duration or the number of subtitle cues.
   * No joining/spacing, translation, summary, semantic heading, or model work is
   * performed. `cues` contains the exact input references in the original order.
   */
@@ -69,15 +75,49 @@
 
   return entries;
  }
- function continuous(previous,cue){return speaker(previous)===speaker(cue)&&cue.start>=previous.start&&cue.start-previous.end<=2;}
+ function continuous(previous,cue){return speakerIdentity(previous)===speakerIdentity(cue)&&cue.start>=previous.start&&cue.start-previous.end<=2;}
  function adjacent(previous,entry){return entry.inputPosition===previous.inputPosition+1&&entry.position===previous.position+1&&continuous(previous.cue,entry.cue);}
- function build(segments,options={}){
-  const limits=options.layout==='reading'?READING_LIMITS:LIMITS;
-  const entries=sourceEntries(segments,options),passages=[];
-  const sentenceAhead=new Uint8Array(entries.length);
-  if(options.layout==='reading')for(let i=entries.length-1;i>=0;i--){
+ function readingSize(text){
+  let characters=0,words=0;
+  // Count mixed-language text in one budget. Long identifiers and symbol-only
+  // subtitles also consume space; whitespace does not make an empty paragraph.
+  let rest=text.replace(/[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/gu,()=>{characters++;return ' ';});
+  rest=rest.replace(/[\p{L}\p{N}]+(?:['’_-][\p{L}\p{N}]+)*/gu,word=>{words+=Math.max(1,word.length/24);return ' ';});
+  characters+=Array.from(rest.replace(/\s/gu,'')).length;
+  return {target:characters/READING_LIMITS.targetCharacters+words/READING_LIMITS.targetWords,
+   maximum:characters/READING_LIMITS.characters+words/READING_LIMITS.words};
+ }
+ function readingPassages(entries){
+  const passages=[],sizes=entries.map(({cue})=>readingSize(cue.text)),sentenceAhead=new Uint8Array(entries.length);
+  for(let i=entries.length-1;i>=0;i--){
    sentenceAhead[i]=sentenceEnd.test(entries[i].cue.text)||(i+1<entries.length&&adjacent(entries[i],entries[i+1])&&sentenceAhead[i+1])?1:0;
   }
+  for(let first=0;first<entries.length;){
+   let next=first,target=0,maximum=0,lastSentence=-1,sentenceSize=0;
+   while(next<entries.length){
+    if(next>first){
+     if(!adjacent(entries[next-1],entries[next]))break;
+     if(maximum+sizes[next].maximum>1){
+      // Prefer a substantial complete sentence over a trailing fragment.
+      if(lastSentence>first&&sentenceSize>=.6)next=lastSentence;
+      break;
+     }
+    }
+    target+=sizes[next].target;maximum+=sizes[next].maximum;
+    const atSentenceEnd=sentenceEnd.test(entries[next].cue.text);next++;
+    if(atSentenceEnd){lastSentence=next;sentenceSize=target;}
+    if(maximum>=1||target>=1&&(atSentenceEnd||!sentenceAhead[first]))break;
+   }
+   const cues=entries.slice(first,next).map(entry=>entry.cue),initial=cues[0];
+   passages.push({key:'passage:'+initial.id,start:initial.start,end:cues.reduce((end,cue)=>Math.max(end,cue.end),initial.end),speaker:speaker(initial),cues});
+   first=next;
+  }
+  return passages;
+ }
+ function build(segments,options={}){
+  const limits=LIMITS;
+  const entries=sourceEntries(segments,options),passages=[];
+  if(options.layout==='reading')return readingPassages(entries);
   for(let first=0;first<entries.length;){
    const initial=entries[first].cue;
    let next=first,characters=0,end=initial.end,lastSentence=-1,sentenceCharacters=0;
@@ -97,10 +137,7 @@
     const atSentenceEnd=sentenceEnd.test(cue.text);
     if(atSentenceEnd){lastSentence=next-1;sentenceCharacters=characters;}
     const target=characters>=limits.targetCharacters||count>=limits.targetCues||end-initial.start>=limits.targetSeconds;
-    // Raw automatic captions often contain no sentence marks at all. Keep
-    // those runs readable at the normal target while preserving every cue.
-    const unpunctuatedTarget=options.layout==='reading'&&target&&!sentenceAhead[first];
-    if((atSentenceEnd&&target)||unpunctuatedTarget||characters>=limits.characters||count>=limits.cues||end-initial.start>=limits.seconds)break;
+    if((atSentenceEnd&&target)||characters>=limits.characters||count>=limits.cues||end-initial.start>=limits.seconds)break;
    }
    const cues=entries.slice(first,next).map(entry=>entry.cue);
    passages.push({key:'passage:'+initial.id,start:initial.start,end:Math.max(...cues.map(cue=>cue.end)),speaker:speaker(initial),cues});
@@ -291,7 +328,7 @@
   return {before:(start>before.length?'…':'')+before,match:match+(end-start>match.length?'…':''),after:after+(end+after.length<text.length?'…':'')};
  }
 
- const api=Object.freeze({LIMITS,build,locate,atTime,separator,continuous,searchIndex,searchIndexSteps,searchSnippetSteps,rangeSnippet});
+ const api=Object.freeze({LIMITS,READING_LIMITS,build,locate,atTime,separator,continuous,speakerIdentity,searchIndex,searchIndexSteps,searchSnippetSteps,rangeSnippet});
  if(typeof module!=='undefined'&&module.exports)module.exports=api;
  else root.CoconutPassages=api;
 })(typeof window!=='undefined'?window:globalThis);

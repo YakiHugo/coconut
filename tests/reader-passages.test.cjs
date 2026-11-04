@@ -222,7 +222,7 @@ test('seeded irregular and filtered transcripts preserve coverage, adjacency, bo
 });
 
 test('reading layout keeps complete sentences together across many short ASR cues',()=>{
- const source=Array.from({length:32},(_,i)=>cue('r'+i,i*2,(i+1)*2,i===17?'这是完整表达的结尾。':'这是表达的一部分'));
+ const source=Array.from({length:32},(_,i)=>cue('r'+i,i*2,(i+1)*2,i===17?'这是完整表达的结尾。':'这是表达的一部分'.repeat(2)));
  const before=JSON.stringify(source),passages=P.build(source,{layout:'reading'});
  assert.equal(passages[0].cues.at(-1).id,'r17');
  assert.deepEqual(passages.flatMap(p=>p.cues),source);
@@ -235,7 +235,57 @@ test('reading layout keeps complete sentences together across many short ASR cue
 test('raw Chinese captions break at reading targets instead of growing to the hard cap',()=>{
  const cues=Array.from({length:80},(_,i)=>({id:'raw-'+i,start:i*2,end:i*2+2,text:'这是一段没有标点的自动字幕内容',speaker:null}));
  const original=JSON.stringify(cues),passages=P.build(cues,{layout:'reading'});
- assert.ok(passages.length>=6);
- assert.ok(passages.every(p=>p.cues.length<=14&&p.end-p.start<=30));
+ assert.ok(passages.length>=4);
+ assert.ok(passages.slice(0,-1).every(p=>{const length=p.cues.reduce((n,c)=>n+c.text.length,0);return length>=200&&length<=350;}));
  assert.deepEqual(passages.flatMap(p=>p.cues),cues);assert.equal(JSON.stringify(cues),original);
+});
+
+test('reading paragraphs depend on text length, not speech speed or subtitle count',()=>{
+ const text='完整表达需要按照文字长度分成可以阅读的段落。';
+ const fast=Array.from({length:48},(_,i)=>cue('r'+i,i*.1,(i+1)*.1,text,'讲述者'));
+ const slow=fast.map((c,i)=>({...c,start:i*10,end:(i+1)*10}));
+ assert.deepEqual(ids(P.build(fast,{layout:'reading'})),ids(P.build(slow,{layout:'reading'})));
+ const fragments=Array.from({length:120},(_,i)=>cue('tiny-'+i,i,i+1,'字','讲述者'));
+ const paragraphs=P.build(fragments,{layout:'reading'});
+ assert.equal(paragraphs.length,1,'120 characters remain one paragraph even across 120 seconds and cues');
+ assert.deepEqual(paragraphs[0].cues,fragments);
+});
+
+test('English reading uses word budgets and mixed-language passages remain bounded',()=>{
+ const sentence='We keep the full explanation and the concrete example together.';
+ const source=Array.from({length:60},(_,i)=>cue('en-'+i,i,i+1,sentence,'Speaker'));
+ const paragraphs=P.build(source,{layout:'reading'});
+ for(const p of paragraphs.slice(0,-1)){
+  const words=p.cues.map(c=>c.text).join(' ').split(/\s+/).length;
+  assert.ok(words>=120&&words<=200,String(words));
+ }
+ assert.deepEqual(paragraphs.flatMap(p=>p.cues),source);
+ const mixed=Array.from({length:100},(_,i)=>cue('mixed-'+i,i,i+1,'我们用 GPU explain this example。','Speaker'));
+ assert.ok(P.build(mixed,{layout:'reading'}).length>1);
+ assert.deepEqual(P.build(mixed,{layout:'reading'}).flatMap(p=>p.cues),mixed);
+});
+
+test('reading hard caps prefer a nearby full sentence and keep oversized source cues intact',()=>{
+ const source=[cue('a',0,1,'字'.repeat(200)+'。','A'),cue('b',1,2,'字'.repeat(120),'A'),cue('c',2,3,'字'.repeat(60),'A'),cue('large',3,4,'原话。'.repeat(200),'A')];
+ const before=JSON.stringify(source),paragraphs=P.build(source,{layout:'reading'});
+ assert.deepEqual(ids(paragraphs),[['a'],['b','c'],['large']]);
+ assert.equal(JSON.stringify(source),before);
+ assert.equal(paragraphs.at(-1).cues[0],source.at(-1));
+});
+
+test('voice identity separates same-name speakers, unnamed voices and one-sided IDs',()=>{
+ const source=[
+  {...cue('a',0,1,'第一位的原话。','参与者'),speaker_id:'speaker-0001'},
+  {...cue('b',1,2,'另一位的原话。','参与者'),speaker_id:'speaker-0002'},
+  cue('c',2,3,'缺少声音 ID 的旧标签。','参与者'),
+  {...cue('d',3,4,'没有姓名的声音。'),speaker_id:'speaker-0003'},
+  {...cue('e',4,5,'同一声音继续说。'),speaker_id:'speaker-0003'},
+  cue('f',5,6,'身份未知。'),cue('g',6,7,'仍没有身份依据。')
+ ];
+ assert.deepEqual(ids(P.build(source,{layout:'reading'})),[['a'],['b'],['c'],['d','e'],['f','g']]);
+ assert.equal(P.speakerIdentity(source[5]),null,'unknown text can be laid out together without claiming an identity');
+ assert.equal(P.continuous(source[0],source[1]),false);
+ assert.deepEqual(P.searchIndex(source).search('第一位的原话。另一位的原话。').previews.size,0);
+ const filtered=[source[3],source[5]];
+ assert.deepEqual(ids(P.build(filtered,{source,layout:'reading'})),[['d'],['f']]);
 });

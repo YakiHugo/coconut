@@ -74,6 +74,15 @@ test('long uninterrupted speakers stay editable in bounded blocks without droppi
  assert.deepEqual(blocks.flatMap(block=>block.source_refs),doc.segments.map(cue=>cue.id));
  assert.doesNotThrow(()=>E.edit(next,'edition-1',blocks[0].id,{heading:'',text:E.blockText(blocks[0])},1));
 });
+test('manual editions preserve distinct voices even when their display names match',()=>{
+ const doc=fixture();doc.segments=[
+  {id:'a',start:0,end:1,text:'第一位参与者。',speaker:'参与者',speaker_id:'speaker-0001'},
+  {id:'b',start:1,end:2,text:'另一位参与者。',speaker:'参与者',speaker_id:'speaker-0002'}
+ ];
+ const next=create(doc);
+ assert.deepEqual(next.reading_editions.editions[0].blocks.map(b=>b.source_refs),[['a'],['b']]);
+ assert.deepEqual(doc.segments.map(c=>c.speaker_id),['speaker-0001','speaker-0002']);
+});
 const output=await build({entryPoints:['frontend/reader-workspace/domain.ts'],bundle:true,write:false,format:'esm',platform:'node'});
 const D=await import('data:text/javascript;base64,'+Buffer.from(output.outputFiles[0].text).toString('base64'));
 test('source selections reject edited DOM; edition selections use the actual edited text and reject cross-block selections',async()=>{

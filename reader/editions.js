@@ -77,11 +77,13 @@
  function sourceFor(doc,edition){const source=state(doc).snapshots.find(item=>item.id===edition.source_snapshot_id)?.source;if(!source)fail();return source;}
  function passages(cues){return (typeof module!=='undefined'&&module.exports?require('./passages.js'):root.CoconutPassages).build(cues,{source:cues,layout:'reading'});}
  function turns(doc){
-  const result=[];
+  const result=[],domain=typeof module!=='undefined'&&module.exports?require('./passages.js'):root.CoconutPassages;
+  let previousCue=null;
   for(const passage of passages(doc.segments)){
    const previous=result.at(-1),text=passage.cues.reduce((text,cue,i)=>text+(i?(typeof module!=='undefined'&&module.exports?require('./passages.js'):root.CoconutPassages).separator(passage.cues[i-1].text,cue.text):'')+cue.text,'');
-   if(previous&&passage.speaker&&previous.speaker===passage.speaker&&passage.start-previous.end<=2&&previous.characters+text.length+2<=60000){previous.paragraphs.push(text);previous.source_refs.push(...passage.cues.map(cue=>cue.id));previous.end=Math.max(previous.end,passage.end);previous.characters+=text.length+2;}
+   if(previous&&domain.speakerIdentity(passage.cues[0])&&domain.continuous(previousCue,passage.cues[0])&&previous.characters+text.length+2<=60000){previous.paragraphs.push(text);previous.source_refs.push(...passage.cues.map(cue=>cue.id));previous.end=Math.max(previous.end,passage.end);previous.characters+=text.length+2;}
    else result.push({speaker:passage.speaker,start:passage.start,end:passage.end,characters:text.length,paragraphs:[text],source_refs:passage.cues.map(cue=>cue.id)});
+   previousCue=passage.cues.at(-1);
   }
   return result;
  }
