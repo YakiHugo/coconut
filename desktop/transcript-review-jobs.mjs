@@ -23,7 +23,9 @@ export async function createTranscriptReviewJobs({directory,libraryStore,reviewe
  const describe=value=>{const request=JSON.parse(value.request);return {id:value.id,documentKey:value.document_key,state:value.state,phase:value.phase,error:value.error,provider:request.provider,model:request.model,created:value.created};};
  const update=(id,state,phase=state,error=null)=>db.prepare('UPDATE jobs SET state=?,phase=?,error=? WHERE id=?').run(state,phase,error,id);
  async function perform(value){
-  if(closing)return;
+  // The queue dispatches in a microtask. Cancellation can happen before this
+  // callback starts, when there is no controller to abort yet.
+  if(closing||row(value.id).state!=='queued')return;
   controller=new AbortController();runningId=value.id;update(value.id,'running','review');
   try{
    owned(value);const request=JSON.parse(value.request);
