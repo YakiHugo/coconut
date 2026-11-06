@@ -16,6 +16,7 @@ import {scriptConverter} from '../reading-preferences/chinese-script';
 import * as Editions from '@coconut/reader/editions.js';
 import {SelectionToolbar} from './selection-toolbar';
 import {selectionPlaybackStart} from './speech';
+import {usePlaybackFollow,useReadingScroller} from './playback-follow';
 type Domain = {
     exactExcerptTranslation: (record: unknown) => {
         text: string;
@@ -100,6 +101,10 @@ function WorkspaceSession({ document: doc, revision, media, onSaveDocument, onRe
     const dirtyCallback = useRef(onDirtyChange);
     dirtyCallback.current = onDirtyChange;
     const host = useRef<HTMLDivElement>(null), seekId = useRef(0), saving = useRef(false), mounted = useRef(true), originalDraftRevision = useRef<number | null>(null);
+    const readingScroller=useReadingScroller(host);
+    const handledLocation=useRef(0);
+    const suspendFollow=useCallback(()=>setFollow(false),[]);
+    useEffect(()=>{setFollow(false);setClock(0);},[mediaSignature]);
     const scrollSource=(element:HTMLElement|null|undefined)=>element?.scrollIntoView?.({block:'nearest'});
     const dirty = Object.keys(drafts).length > 0 || projectDraft !== null;
     // A failed durable receipt may already have applied this edit to the live store.
@@ -175,6 +180,7 @@ function WorkspaceSession({ document: doc, revision, media, onSaveDocument, onRe
     const speakers = [...new Set(doc.segments.map(c => c.speaker || ''))];
     const locate = (id: string,temporary=false) => {
         if(editionDirty)return;setEditionId('source');
+        setFollow(false);
         temporaryNavigation.current=temporary;
         const index = filtered.findIndex(c => c.id === id);
         if (index < 0) {
@@ -235,16 +241,26 @@ function WorkspaceSession({ document: doc, revision, media, onSaveDocument, onRe
         scrollSource(source||element);
     },[sourceFocus]);
     useEffect(()=>{if((mode!=='summary'&&(query.trim()||notesOnly||speaker!==null))||temporaryNavigation.current)return;const cueId=shown.some(cue=>cue.id===position)?position:shown[0]?.id;if(cueId)viewCallback.current?.({documentKey:doc.key,cueId,mode});},[doc.key,position,visibleSignature,mode,query,notesOnly,speaker]);
+    const following=follow&&!!media&&mode!=='summary'&&!edition&&!anyDirty&&!toolsOpen&&!filtersOpen&&!keyboardHelp;
+    usePlaybackFollow({scroller:readingScroller,enabled:following,cueId:activeCue?.id,clock,onSuspend:suspendFollow});
     useEffect(() => {
-        if (follow && activeCue) {
-            locate(activeCue.id);
+        // Following never clears filters or switches the chosen reading edition.
+        if(following&&activeCue&&shown.some(cue=>cue.id===activeCue.id)){
+            setPosition(activeCue.id);
+            onReadingPosition(activeCue.id);
         }
-    }, [follow, activeCue?.id]);
+    }, [following, activeCue?.id, visibleSignature]);
     useEffect(() => {
-        if (!position)
+        const requested=handledLocation.current!==locationTick;
+        handledLocation.current=locationTick;
+        if (follow&&!requested)
             return;
         const element = host.current?.querySelector<HTMLElement>(`[data-cue-id="${CSS.escape(position)}"]`);
-        scrollSource(element);
+        if(requested){
+            readingScroller.locate(position);
+        }else{
+            readingScroller.cancel();scrollSource(element);
+        }
     }, [position, locationTick, mode, query, notesOnly, speaker]);
     const readingAnchor=()=>{
         if(selection?.revision===revision)return selection.cueIds[0];
@@ -264,7 +280,7 @@ function WorkspaceSession({ document: doc, revision, media, onSaveDocument, onRe
         const source=host.current?.querySelector<HTMLElement>('[data-source-id="'+CSS.escape(summaryCitation)+'"]');
         source?.closest<HTMLElement>('.rw-original')?.focus({preventScroll:true});
         // Focus expands content-visibility paragraphs before measuring the target.
-        const frame=window.requestAnimationFrame(()=>source?.scrollIntoView?.({block:'center'}));
+        const frame=window.requestAnimationFrame(()=>readingScroller.locate(summaryCitation));
         return()=>window.cancelAnimationFrame(frame);
     },[summaryCitation,locationTick]);
     useEffect(()=>{
@@ -386,6 +402,16 @@ function WorkspaceSession({ document: doc, revision, media, onSaveDocument, onRe
         }
         setSeek({ id: ++seekId.current, owner: media.identity, attachmentURL:media.url, attachmentId:attachment.current.id, seconds, end, play });
     };
+    const playFrom=(seconds:number)=>{
+        // Start following the requested time, not the previous media clock while
+        // the browser is still delivering its asynchronous seek events.
+        setClock(seconds+calibrated);setFollow(true);
+        // Explicit playback always brings its source to the reading anchor,
+        // including when the selected speech is already somewhere on screen.
+        const cue=playbackIndex.find(seconds);
+        if(cue){setPosition(cue.id);setLocationTick(value=>value+1);}
+        seekTo(seconds+calibrated,undefined,true);
+    };
     const capture = () => {
         if (!host.current)
             return;
@@ -418,7 +444,7 @@ function WorkspaceSession({ document: doc, revision, media, onSaveDocument, onRe
     const playSelection=()=>{
         if(!selection||selection.revision!==revision)return;
         const start=selectionPlaybackStart(doc,selection);if(!start)return;
-        setPosition(selection.cueIds[0]);setFollow(true);seekTo(start.seconds+calibrated,undefined,true);
+        playFrom(start.seconds);
         window.getSelection()?.removeAllRanges();setSelection(null);
         setStatus(start.wordAligned?'':'已从所选文字所在原片段开始连续播放。');
     };
@@ -497,7 +523,7 @@ function WorkspaceSession({ document: doc, revision, media, onSaveDocument, onRe
                 }
                 else
                     setStatus('时间超出文字稿范围');
-            }}><label>跳转时间 <input value={jump} placeholder="12:34" onChange={e => setJump(e.target.value)}/></label><button type="submit">跳转</button></form><p role="status">{status}</p></ReaderDialog><div className="rw-toolbar rw-reading-position"><button type="button" disabled={busy || anyDirty || !position} onClick={() => save({ ...doc, readingPosition: readingAnchor() })}>读到这里</button>{doc.readingPosition && <button type="button" onClick={() => locate(doc.readingPosition!)}>回到已保存续点</button>}</div>{filtersActive&&<p className="rw-filter-status" role="status">当前显示 {filtered.length} / {doc.segments.length} 个片段{query.trim()?` · 搜索：${query}`:''}{notesOnly?' · 只看笔记':''}{speaker!==null?` · 说话人：${speaker||'未标注'}`:''}</p>}{filtersActive&&shown.length===0&&<p className="rw-search-empty">没有找到匹配的片段，试试其他关键词或清除筛选。</p>}<div className="rw-cues" ref={host} onWheel={() => setFollow(false)} onTouchMove={() => setFollow(false)} onMouseUp={capture} onClick={event=>{
+            }}><label>跳转时间 <input value={jump} placeholder="12:34" onChange={e => setJump(e.target.value)}/></label><button type="submit">跳转</button></form><p role="status">{status}</p></ReaderDialog><div className="rw-toolbar rw-reading-position"><button type="button" disabled={busy || anyDirty || !position} onClick={() => save({ ...doc, readingPosition: readingAnchor() })}>读到这里</button>{doc.readingPosition && <button type="button" onClick={() => locate(doc.readingPosition!)}>回到已保存续点</button>}</div>{filtersActive&&<p className="rw-filter-status" role="status">当前显示 {filtered.length} / {doc.segments.length} 个片段{query.trim()?` · 搜索：${query}`:''}{notesOnly?' · 只看笔记':''}{speaker!==null?` · 说话人：${speaker||'未标注'}`:''}</p>}{filtersActive&&shown.length===0&&<p className="rw-search-empty">没有找到匹配的片段，试试其他关键词或清除筛选。</p>}<div className="rw-cues" ref={host} onMouseUp={capture} onClick={event=>{
                 if(event.button!==0||event.detail!==1||!window.getSelection()?.isCollapsed)return;
                 const speech=(event.target as HTMLElement).closest<HTMLElement>('.rw-speech');
                 if(speech&&host.current?.contains(speech))selectSpeech(speech);
@@ -507,7 +533,7 @@ function WorkspaceSession({ document: doc, revision, media, onSaveDocument, onRe
                 if(!paragraph.matches('.rw-original')||!window.getSelection()?.isCollapsed)return;
                 const speech=paragraph.querySelector<HTMLElement>('.rw-speech.rw-playing')||paragraph.querySelector<HTMLElement>('.rw-speech');
                 if(speech){event.preventDefault();selectSpeech(speech);}
-            }} onKeyUp={event=>{if(!event.nativeEvent.isComposing&&(['ArrowLeft','ArrowRight','ArrowUp','ArrowDown','Home','End','PageUp','PageDown'].includes(event.key)||((event.ctrlKey||event.metaKey)&&event.key.toLowerCase()==='a')))capture();}}>{mode !== 'transcript' ? <PassageView selected={selection?.revision===revision&&selection.fragment?selection:null} displayText={displayText} canListen={Boolean(media)} doc={doc} cues={shown} passages={passages} current={activeCue?.id} seconds={clock-calibrated} position={position} onLocate={locate} onPlayFrom={start => { setFollow(true); seekTo(start + calibrated, undefined, true); }}/> : shown.map(cue => <section key={cue.id} data-cue-id={cue.id} className={'rw-cue' + (cue.id === activeCue?.id ? ' rw-playing' : '') + (cue.id === position ? ' rw-current' : '')}><div className="rw-cue-meta"><button type="button" onClick={() => { locate(cue.id); seekTo(cue.start + calibrated); }}>{time(cue.start)}</button>{cue.speaker && <span>{cue.speaker}</span>}{media ? <button type="button" onClick={() => seekTo(cue.start + calibrated, cue.end + calibrated, true)}>回听此段</button> : <SourcePlaybackLink sourceUrl={doc.source_url} start={cue.start}/>}</div><p className="rw-original" tabIndex={0} data-source-id={cue.id}>{displayText(cue.text)}</p>{displayText(cue.text)!==cue.text&&<section className="rw-transcription-source" aria-label="转录原文"><h3>转录原文</h3><p>{cue.text}</p></section>}{doc.translation_view && cue.translations?.[doc.translation_view]?.text && <p className="rw-translation">{!domain().translationCurrent(cue, doc, cue.translations[doc.translation_view]) && <small>旧译文 · 原文已变化，请核对后更新。 </small>}{displayText(cue.translations[doc.translation_view].text||'')}</p>}{onReviewTranslation&&doc.translation_view&&cue.translations?.[doc.translation_view]&&<button type="button" onClick={()=>onReviewTranslation(cue.id)}>核对译文</button>}<>{typeof cue.original_text==='string' && cue.original_text!==cue.text && <details className="rw-original-history"><summary>识别原文</summary><p>{cue.original_text}</p></details>}</><details open={Object.hasOwn(drafts, cue.id) ? true : undefined}><summary>笔记{doc.notes?.[cue.id] ? ' · 已有记录' : ''}</summary><textarea disabled={busy} aria-label={time(cue.start) + ' 的笔记'} value={drafts[cue.id] ?? doc.notes?.[cue.id] ?? ''} onChange={e => { startDraft(); setDrafts(old => ({ ...old, [cue.id]: e.target.value })); }}/></details></section>)}</div>
+            }} onKeyUp={event=>{if(!event.nativeEvent.isComposing&&(['ArrowLeft','ArrowRight','ArrowUp','ArrowDown','Home','End','PageUp','PageDown'].includes(event.key)||((event.ctrlKey||event.metaKey)&&event.key.toLowerCase()==='a')))capture();}}>{mode !== 'transcript' ? <PassageView selected={selection?.revision===revision&&selection.fragment?selection:null} displayText={displayText} canListen={Boolean(media)} doc={doc} cues={shown} passages={passages} current={activeCue?.id} seconds={clock-calibrated} position={position} onLocate={locate} onPlayFrom={playFrom}/> : shown.map(cue => <section key={cue.id} data-cue-id={cue.id} className={'rw-cue' + (cue.id === activeCue?.id ? ' rw-playing' : '') + (cue.id === position ? ' rw-current' : '')}><div className="rw-cue-meta"><button type="button" onClick={() => { locate(cue.id); seekTo(cue.start + calibrated); }}>{time(cue.start)}</button>{cue.speaker && <span>{cue.speaker}</span>}{media ? <button type="button" onClick={() => seekTo(cue.start + calibrated, cue.end + calibrated, true)}>回听此段</button> : <SourcePlaybackLink sourceUrl={doc.source_url} start={cue.start}/>}</div><p className="rw-original" tabIndex={0} data-source-id={cue.id}>{displayText(cue.text)}</p>{displayText(cue.text)!==cue.text&&<section className="rw-transcription-source" aria-label="转录原文"><h3>转录原文</h3><p>{cue.text}</p></section>}{doc.translation_view && cue.translations?.[doc.translation_view]?.text && <p className="rw-translation">{!domain().translationCurrent(cue, doc, cue.translations[doc.translation_view]) && <small>旧译文 · 原文已变化，请核对后更新。 </small>}{displayText(cue.translations[doc.translation_view].text||'')}</p>}{onReviewTranslation&&doc.translation_view&&cue.translations?.[doc.translation_view]&&<button type="button" onClick={()=>onReviewTranslation(cue.id)}>核对译文</button>}<>{typeof cue.original_text==='string' && cue.original_text!==cue.text && <details className="rw-original-history"><summary>识别原文</summary><p>{cue.original_text}</p></details>}</><details open={Object.hasOwn(drafts, cue.id) ? true : undefined}><summary>笔记{doc.notes?.[cue.id] ? ' · 已有记录' : ''}</summary><textarea disabled={busy} aria-label={time(cue.start) + ' 的笔记'} value={drafts[cue.id] ?? doc.notes?.[cue.id] ?? ''} onChange={e => { startDraft(); setDrafts(old => ({ ...old, [cue.id]: e.target.value })); }}/></details></section>)}</div>
  </div>{mode==='summary'&&<div className="rw-summary-pane"><ReaderSummary doc={doc} selectedCueId={position} canListen={Boolean(media)} onListen={cue=>seekTo(cue.start+calibrated,cue.end+calibrated,true)} onNavigate={navigateSummary} onReturn={returnToReading} onOpenSummary={onOpenSummary}/></div>}</div></div></>}</>}
  {selection?.revision===revision && <SelectionToolbar source={host} doc={doc} selection={selection} onDismiss={()=>setSelection(null)}>
     {media&&<button type="button" aria-label="从所选位置播放" title="从所选原话的可用时间位置开始，继续播放后文" onClick={playSelection}><span aria-hidden="true">▷</span> 播放</button>}

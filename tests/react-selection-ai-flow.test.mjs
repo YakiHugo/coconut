@@ -74,7 +74,7 @@ test('changed note filter cannot falsely report restoration of a now hidden sele
   [...w.document.querySelectorAll('.reader-workspace label')].find(l=>l.textContent.includes('只看笔记')).querySelector('input').click();await wait(()=>w.document.querySelectorAll('[data-source-id]').length===1);
   await h.selectText('cue-0');h.button('理解选中文字').click();await wait(()=>w.document.querySelector('.react-ai-panel').open);
   const note=w.document.querySelector('[aria-label="00:00 的笔记"]');Object.getOwnPropertyDescriptor(w.HTMLTextAreaElement.prototype,'value').set.call(note,'');note.dispatchEvent(new w.Event('input',{bubbles:true}));await wait(()=>h.button('保存笔记'));h.button('保存笔记').click();await wait(()=>!w.document.querySelector('[data-source-id="cue-0"]'));
-  h.button('返回所选原文').click();await wait(()=>w.document.activeElement===w.document.querySelector('.reader-workspace'));assert.match(w.document.querySelector('.reader-workspace > p[role=status]').textContent,/未恢复旧选区/);assert.equal(w.document.querySelector('.rw-selection'),null);
+  h.button('返回所选原文').click();await wait(()=>w.document.querySelector('.reader-workspace > p[role=status]').textContent.includes('未恢复旧选区'));assert.equal(w.document.activeElement,w.document.querySelector('.reader-workspace'));assert.equal(w.document.querySelector('.rw-selection'),null);
  }finally{await w.happyDOM.close();}
 });
 
