@@ -31,7 +31,11 @@ class BrowserWorkflowTests(unittest.TestCase):
                                 'source-episode-search-empty-390.png',
                                 'source-episode-browsing-1360.png',
                                 'source-episode-browsing-390.png',
-                                'matrix-selection-return-1360.png'])
+                                'matrix-selection-return-1360.png',
+                                'short-listening-selection.png',
+                                'review-passage-1360.png',
+                                'review-passage-390.png',
+                                'review-passage-320.png'])
 
     def test_only_current_renderer_runs_and_sibling_failure_does_not_mask_checks(self):
         workflow = yaml.safe_load(WORKFLOW)

@@ -37,7 +37,7 @@ test('Chinese display preserves source offsets, searchable fields and canonical 
    await search('');await render(doc,'source');assert.equal(host.querySelector('[data-source-id="a"]').textContent,raw);assert.equal(JSON.stringify(doc),before);
   });
 
-  await t.test('rare Hanzi preserve each source offset, sentence endings and word playback',async()=>{
+  await t.test('rare Hanzi preserve each source offset through timed listening fragments and word playback',async()=>{
    for(const raw of ['二噁英。','㑮。下一句。','𡞵。下一句。','㑮𡞵。下一句。']){
     const display=convert(raw);assert.deepEqual(Array.from(display,character=>character.length),Array.from(raw,character=>character.length));assert.equal(display,raw);
    }

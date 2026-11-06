@@ -70,7 +70,7 @@ try {
   await page.getByRole('button',{name:'从所选位置播放',exact:true}).click();
   await expect(page.getByRole('button',{name:'暂停播放',exact:true})).toBeVisible();
   await page.getByRole('button',{name:'暂停播放',exact:true}).click();
-  // Set a stable clock before measuring the following geometry.
+  // These geometry checks inspect the selected cue, past its new half-second lead-in.
   const cue=fixture.segments.find(cue=>cue.id===cueId);
   await audio.evaluate((player,time)=>{player.currentTime=time;player.dispatchEvent(new Event('timeupdate'));},cue.start+.25);
  };
@@ -132,8 +132,7 @@ try {
   // Selection Play must align even a visible source, with follow switched off.
   const selectedSource=page.locator('[data-source-id="cue-70"]');
   await selectedSource.evaluate(node=>node.scrollIntoView({block:'center'}));await settleScroll();
-  if(mode==='passages')await selectedSource.click();
-  else await selectedSource.evaluate(node=>{
+  await selectedSource.evaluate(node=>{
    const range=document.createRange();range.setStart(node.firstChild,2);range.setEnd(node.firstChild,8);
    getSelection().removeAllRanges();getSelection().addRange(range);node.dispatchEvent(new MouseEvent('mouseup',{bubbles:true}));
   });
@@ -207,7 +206,7 @@ try {
  assert.ok(Math.min(Math.abs(geometry.bar.top-geometry.selection.bottom),Math.abs(geometry.bar.bottom-geometry.selection.top))<80,'desktop actions sit beside the selection');
  await mkdir(output,{recursive:true});await page.screenshot({path:path.join(output,'context-selection-desktop.png')});
  await page.getByRole('button',{name:'从所选位置播放',exact:true}).click();
- await expect.poll(()=>audio.evaluate(player=>player.currentTime>=2&&player.currentTime<4&&!player.paused)).toBe(true);
+ await expect.poll(()=>audio.evaluate(player=>player.currentTime>=1.5&&player.currentTime<3.5&&!player.paused)).toBe(true);
  await expect(contextual).toHaveCount(0);
  await audio.evaluate((player,end)=>{player.currentTime=end+.25;player.dispatchEvent(new Event('timeupdate'));},firstPassage.end);
  assert.equal(await audio.evaluate(player=>player.paused),false,'selection Play continues past the selected cue and paragraph');
@@ -289,7 +288,6 @@ try {
  await expect.poll(()=>audio.evaluate(node=>node.paused)).toBe(false);
  await page.keyboard.press('Space');
  await expect.poll(()=>audio.evaluate(node=>node.paused)).toBe(true);
- await expect(page.locator('.rw-player-main button:not([role=combobox])')).toHaveCount(1);
  await page.getByRole('slider',{name:'播放进度',exact:true}).focus();await page.keyboard.press('Home');
  await expect.poll(()=>audio.evaluate(node=>node.currentTime)).toBe(0);
 
@@ -380,37 +378,42 @@ try {
  await touchBar.getByRole('button',{name:'保存精确摘录',exact:true}).tap();
  await expect.poll(async()=>(await request('/api/v1/library/document?protocolVersion=1&key='+mixed.key)).record.document.exact_excerpts?.[0]?.text).toBe('对。');
  await touchContext.close();
- // Word-aligned sentences remain inside one source node and one reading block.
+ // Short word-aligned listening fragments remain inside their original source node.
  await page.setViewportSize({width:1360,height:900});
- const followSentence='用于验证连续播放时高亮位置固定。';
+ const longListeningText='这里故意不按句子断开用于检查听不清时能否只选附近几秒原声'.repeat(5);
  const timed={...fixture,key:'reading-timed',title:'自写样例：段内句子与原声位置',notes:{},ai_answers:[],segments:[
   {id:'timed-0',speaker:'讲述者',start:10,end:20,text:'第一句话。第二句话。第三句话。',words:[
    {word:'第一句话。',start:10,end:12},{word:'第二句话。',start:14,end:16},{word:'第三句话。',start:18,end:20}]},
   {id:'timed-1',speaker:'讲述者',start:20,end:25,text:'接下来的原声继续播放。'},
-  {id:'timed-long',speaker:'讲述者',start:26,end:50,text:followSentence.repeat(12),
-   words:Array.from({length:12},(_,i)=>({word:followSentence,start:26+i*2,end:28+i*2}))}
+  {id:'timed-long',speaker:'讲述者',start:26,end:26+longListeningText.length*.2,text:longListeningText,
+   words:[...longListeningText].map((word,i)=>({word,start:26+i*.2,end:26+(i+1)*.2}))},
+  {id:'timed-point',speaker:'讲述者',start:80,end:82,text:'甲也采访 founder founder 🥥',words:[
+   {word:'甲',start:80,end:80.16},{word:'也',start:80.16,end:80.16},{word:'采',start:80.16,end:80.32},
+   {word:'访 ',start:80.32,end:80.56},{word:'founder ',start:80.56,end:81.12},
+   {word:'founder ',start:81.2,end:81.76},{word:'🥥',start:81.76,end:82}]}
  ]};
  await request('/api/v1/library/commit',{protocolVersion:1,epoch:library.epoch,action:'put',key:timed.key,receiptKey:'reading-timed',expected:null,document:timed});
  await page.reload();await page.getByRole('button',{name:/^我的内容/}).click();await page.locator('.library-page li > button').filter({hasText:timed.title}).click();await expect(page.locator('[data-source-id="timed-0"]')).toBeVisible();
  await page.getByRole('button',{name:'载入原声（最多 200 MiB）',exact:true}).click();
  await expect.poll(()=>page.locator('audio').evaluate(player=>player.duration)).toBe(260);
  const sentences=page.locator('[data-source-id="timed-0"] .rw-speech');await expect(sentences).toHaveCount(3);
+ const selectedWord=()=>page.evaluate(()=>getSelection().toString()||[...(CSS.highlights.get('coconut-word-selection')||[])].map(range=>range.toString()).join(''));
  // A normal left click opens the selected fragment's controls underneath it, without playing.
  await sentences.nth(1).click();
  await expect(contextual).toBeVisible();
- await expect(sentences.nth(1)).toHaveClass(/rw-selected-speech/);
+ assert.equal(await selectedWord(),'第二句话。');
  assert.equal(await audio.evaluate(player=>player.paused),true,'Clicking a fragment only opens actions');
- const clickedGeometry=await page.evaluate(()=>({bar:document.querySelector('.rw-selection').getBoundingClientRect().toJSON(),text:document.querySelector('.rw-selected-speech').getBoundingClientRect().toJSON()}));
+ const clickedGeometry=await page.evaluate(()=>({bar:document.querySelector('.rw-selection').getBoundingClientRect().toJSON(),text:(getSelection().isCollapsed?[...CSS.highlights.get('coconut-word-selection')][0]:getSelection().getRangeAt(0)).getBoundingClientRect().toJSON()}));
  assert.ok(clickedGeometry.bar.top>=clickedGeometry.text.bottom&&clickedGeometry.bar.top-clickedGeometry.text.bottom<20,'left-click actions are directly below the clicked highlight');
  await page.getByRole('button',{name:'复制原话',exact:true}).click();assert.equal(await page.evaluate(()=>navigator.clipboard.readText()),'第二句话。');
  await sentences.nth(2).click();await expect(contextual).toBeVisible();
- await expect(sentences.nth(2)).toHaveClass(/rw-selected-speech/);await expect(sentences.nth(1)).not.toHaveClass(/rw-selected-speech/);
+ assert.equal(await selectedWord(),'第三句话。');
  await page.screenshot({path:path.join(output,'click-highlight-controls.png')});
  await page.getByRole('button',{name:'关闭选文操作',exact:true}).click();await expect(contextual).toHaveCount(0);
  // Paragraphs stay one Tab stop; Enter opens the active/first fragment, Tab reaches actions.
  await page.locator('.rw-original').first().focus();await page.keyboard.press('Enter');
- await expect(contextual).toBeVisible();await expect(sentences.first()).toHaveClass(/rw-selected-speech/);
- await page.keyboard.press('Tab');await expect(page.getByRole('button',{name:'从所选位置播放',exact:true})).toBeFocused();
+ await expect(contextual).toBeVisible();assert.equal(await selectedWord(),'第一句话。');
+ await page.keyboard.press('Tab');await expect(page.getByRole('button',{name:'回听所选片段',exact:true})).toBeFocused();
  await page.keyboard.press('Escape');await expect(contextual).toHaveCount(0);
  // Double-click keeps the browser's smaller word selection instead of expanding to a sentence.
  await sentences.nth(1).dblclick();await expect(contextual).toBeVisible();
@@ -425,13 +428,13 @@ try {
  await page.getByRole('button',{name:'关闭选文操作',exact:true}).click();
  // Narrow app panes also place the controls underneath a single-click highlight.
  await page.setViewportSize({width:515,height:900});await sentences.nth(1).click();await expect(contextual).toBeVisible();
- const narrowGeometry=await page.evaluate(()=>({bar:document.querySelector('.rw-selection').getBoundingClientRect().toJSON(),text:document.querySelector('.rw-selected-speech').getBoundingClientRect().toJSON()}));
+ const narrowGeometry=await page.evaluate(()=>({bar:document.querySelector('.rw-selection').getBoundingClientRect().toJSON(),text:(getSelection().isCollapsed?[...CSS.highlights.get('coconut-word-selection')][0]:getSelection().getRangeAt(0)).getBoundingClientRect().toJSON()}));
  assert.ok(narrowGeometry.bar.top>=narrowGeometry.text.bottom&&narrowGeometry.bar.top-narrowGeometry.text.bottom<20);
  await page.screenshot({path:path.join(output,'click-highlight-controls-narrow.png')});
  await page.getByRole('button',{name:'关闭选文操作',exact:true}).click();await page.setViewportSize({width:1360,height:900});
  await sentences.nth(1).evaluate(node=>{const range=document.createRange();range.setStart(node.firstChild,1);range.setEnd(node.firstChild,4);getSelection().removeAllRanges();getSelection().addRange(range);node.dispatchEvent(new MouseEvent('mouseup',{bubbles:true}));});
  await page.getByRole('button',{name:'从所选位置播放',exact:true}).click();
- await expect.poll(()=>page.locator('audio').evaluate(player=>player.currentTime>=14&&player.currentTime<16&&!player.paused)).toBe(true);
+ await expect.poll(()=>page.locator('audio').evaluate(player=>player.currentTime>=13.5&&player.currentTime<15.5&&!player.paused)).toBe(true);
  await page.locator('audio').evaluate(player=>{player.currentTime=15;player.dispatchEvent(new Event('timeupdate'));});
  await expect(sentences.nth(1)).toHaveClass(/rw-playing/);await expect(sentences.first()).not.toHaveClass(/rw-playing/);
  await sentences.nth(1).evaluate(node=>{const range=document.createRange();range.setStart(node.firstChild,1);range.setEnd(node.firstChild,4);getSelection().removeAllRanges();getSelection().addRange(range);node.dispatchEvent(new MouseEvent('mouseup',{bubbles:true}));});
@@ -448,11 +451,41 @@ try {
  assert.equal(await page.locator('[data-source-id="timed-0"]').textContent(),timed.segments[0].text);
  await page.getByRole('button',{name:'暂停播放',exact:true}).click();
  const listening=page.locator('[data-source-id="timed-long"] .rw-speech');
- const fragments=await listening.evaluateAll(nodes=>nodes.map(node=>({start:Number(node.dataset.speechStart)})));
+ const fragments=await listening.evaluateAll(nodes=>nodes.map(node=>({from:Number(node.dataset.speechFrom),to:Number(node.dataset.speechTo),start:Number(node.dataset.speechStart),text:node.textContent})));
+ assert.ok(fragments.length>=7,'long speech is partitioned into bounded, stable units without needing punctuation');
+ assert.equal(fragments.map(part=>part.text).join(''),longListeningText);
+ assert.ok(fragments.every(part=>part.text.length<=36));
+ await listening.nth(4).scrollIntoViewIfNeeded();
+ const hitPoints=await listening.nth(4).evaluate(node=>[0,node.textContent.length-1].map(offset=>{
+  const range=document.createRange();range.setStart(node.firstChild,offset);range.setEnd(node.firstChild,offset+1);const rect=range.getBoundingClientRect();
+  return {x:rect.left+rect.width*.5,y:rect.top+rect.height*.5};
+ }));
+ for(const point of hitPoints){
+  await page.mouse.move(point.x,point.y);
+  const hovered=await page.evaluate(({x,y})=>{const node=document.elementFromPoint(x,y).closest('.rw-speech');return {text:node.textContent,from:Number(node.dataset.speechFrom),to:Number(node.dataset.speechTo),hover:node.matches(':hover')};},point);
+  assert.deepEqual(hovered,{text:fragments[4].text,from:fragments[4].from,to:fragments[4].to,hover:true});
+  await page.mouse.click(point.x,point.y);await expect(contextual).toBeVisible();
+  assert.equal(await selectedWord(),hovered.text,'clicking either end selects exactly the hovered unit');
+ }
+ const clickedWord=await page.evaluate(()=>{const selected=getSelection().isCollapsed?[...CSS.highlights.get('coconut-word-selection')][0]:getSelection().getRangeAt(0);const before=document.createRange();before.selectNodeContents(document.querySelector('[data-source-id="timed-long"]'));before.setEnd(selected.startContainer,selected.startOffset);return {text:selected.toString(),from:before.toString().length};});assert.ok(clickedWord.text.length>1&&clickedWord.text.length<=36,'single click selects a short review passage rather than one character');
+ await page.screenshot({path:path.join(output,'short-listening-selection.png')});
+ await page.getByRole('button',{name:'复制原话',exact:true}).click();
+ assert.equal(await page.evaluate(()=>navigator.clipboard.readText()),clickedWord.text);
+ await page.getByRole('button',{name:'回听所选片段',exact:true}).click();
+ await expect.poll(()=>audio.evaluate((player,start)=>player.currentTime>=start&&player.currentTime<start+1&&!player.paused,26+clickedWord.from*.2-.5)).toBe(true);
+ await expect(contextual).toBeVisible();
+ const reviewEnd=26+(clickedWord.from+clickedWord.text.length)*.2+.35;
+ await audio.evaluate((player,end)=>{player.currentTime=end+.05;player.dispatchEvent(new Event('timeupdate'));},reviewEnd);
+ await expect.poll(()=>audio.evaluate(player=>player.paused)).toBe(true);
+ assert.ok(Math.abs(await audio.evaluate(player=>player.currentTime)-reviewEnd)<.02);
+ await expect(page.getByRole('button',{name:'回听所选片段',exact:true})).toHaveText('▷ 再听一遍');
+ await page.getByRole('button',{name:'关闭选文操作',exact:true}).click();
+ await audio.evaluate((player,start)=>{player.currentTime=start+.1;player.dispatchEvent(new Event('timeupdate'));},fragments[5].start);
+ await expect(listening.nth(5)).toHaveClass(/rw-playing/);await expect(listening.nth(4)).not.toHaveClass(/rw-playing/);
  // Highlight changes inside one long cue share the same position as cue changes.
  for(const width of [1360,390]){
   await page.setViewportSize({width,height:900});
-  await listening.nth(4).click();await page.getByRole('button',{name:'从所选位置播放',exact:true}).click();await settleScroll();
+  await listening.nth(4).evaluate(node=>{const range=document.createRange();range.selectNodeContents(node);getSelection().removeAllRanges();getSelection().addRange(range);node.dispatchEvent(new MouseEvent('mouseup',{bubbles:true}));});await page.getByRole('button',{name:'从所选位置播放',exact:true}).click();await settleScroll();
   for(const next of [5,6,7]){
    await audio.evaluate((player,start)=>{player.currentTime=start+.1;player.dispatchEvent(new Event('timeupdate'));},fragments[next].start);
    await settleScroll();const fragmentPosition=await followGeometry('timed-long');
@@ -460,6 +493,53 @@ try {
   }
   await page.getByRole('button',{name:'暂停播放',exact:true}).click();
  }
+ // A suspect phrase is selected with context and can be reviewed repeatedly in place.
+ const pointSource=page.locator('[data-source-id="timed-point"]');
+ const clickGlyph=async(from,to=from+1)=>{
+  await pointSource.scrollIntoViewIfNeeded();await settleScroll();
+  const point=await pointSource.evaluate((root,{from,to})=>{
+   const point=offset=>{const walker=document.createTreeWalker(root,NodeFilter.SHOW_TEXT);for(let node=walker.nextNode();node;node=walker.nextNode()){if(offset<=node.textContent.length)return [node,offset];offset-=node.textContent.length;}};
+   const range=document.createRange();range.setStart(...point(from));range.setEnd(...point(to));const rect=range.getBoundingClientRect();
+   return {x:rect.left+rect.width*.8,y:rect.top+rect.height*.5};
+  },{from,to});await page.mouse.click(point.x,point.y);await expect(contextual).toBeVisible();
+ };
+ for(const width of [1360,390,320]){
+  await page.setViewportSize({width,height:900});
+  await clickGlyph(1);const reviewText=await selectedWord();
+  assert.ok(reviewText.includes('甲也采访')&&reviewText.length>1,'a zero-duration suspect word has audible context');
+  assert.equal(await audio.evaluate(player=>player.paused),true,'selection alone does not play');
+  const review=page.getByRole('button',{name:'回听所选片段',exact:true});await review.click();
+  await expect.poll(()=>audio.evaluate(player=>!player.paused&&player.currentTime>=79.5&&player.currentTime<80.5)).toBe(true);
+  await expect(workspace).toHaveAttribute('data-following','false');
+  await audio.evaluate(player=>{player.currentTime=82.4;player.dispatchEvent(new Event('timeupdate'));});
+  await expect.poll(()=>audio.evaluate(player=>player.paused)).toBe(true);
+  assert.ok(Math.abs(await audio.evaluate(player=>player.currentTime)-82.35)<.02);
+  assert.equal(await selectedWord(),reviewText,'the highlighted comparison text remains after stopping');
+  await expect(review).toHaveText('▷ 再听一遍');await review.click();
+  await expect.poll(()=>audio.evaluate(player=>!player.paused&&player.currentTime>=79.5&&player.currentTime<80.5)).toBe(true);
+  await page.getByRole('button',{name:'暂停播放',exact:true}).click();
+  await expect.poll(()=>audio.evaluate(player=>player.paused)).toBe(true);
+  await page.screenshot({path:path.join(output,'review-passage-'+width+'.png')});
+  await clickGlyph(18);const contextText=await selectedWord();assert.ok(contextText.includes('founder founder'));
+  await page.keyboard.press(process.platform==='darwin'?'Meta+c':'Control+c');
+  assert.equal(await page.evaluate(()=>navigator.clipboard.readText()),contextText,'keyboard copy uses the highlighted passage');
+  await page.getByRole('button',{name:'复制原话',exact:true}).click();assert.equal(await page.evaluate(()=>navigator.clipboard.readText()),contextText);
+  await review.focus();await page.keyboard.press('Enter');
+  await expect.poll(()=>audio.evaluate(player=>!player.paused)).toBe(true);
+  await page.getByRole('button',{name:'暂停播放',exact:true}).click();
+  await expect.poll(()=>audio.evaluate(player=>player.paused)).toBe(true);
+  await expect(page.getByRole('button',{name:'播放原声',exact:true})).toBeVisible();
+  await page.getByRole('button',{name:'关闭选文操作',exact:true}).click();
+  const overflow=await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth);assert.equal(overflow,false,'review actions fit the narrow viewport');
+  await clickGlyph(21,23);const emojiContext=await selectedWord();assert.ok(emojiContext.includes('🥥')&&emojiContext.length>2,'surrogate pairs stay inside the full review context');
+  await page.getByRole('button',{name:'关闭选文操作',exact:true}).click();
+ }
+ await page.getByRole('tab',{name:'逐句校对',exact:true}).click();
+ await clickGlyph(2);assert.ok((await selectedWord()).includes('采访'),'cue review selects context around the suspect character');
+ await page.getByRole('button',{name:'保存精确摘录',exact:true}).click();
+ await expect(contextual).toHaveCount(0);
+ // Source updates retire the old local preview, without adding transport controls.
+ await expect(page.getByRole('button',{name:'重听刚才所选',exact:true})).toHaveCount(0);
  assert.deepEqual(errors,[]);
  console.log(JSON.stringify({passed:true,paragraphs:actual.length,cues:120,tabs_keyboard:true,continuous_playback:true,contextual_selection:true,continuous_selection_play:true,selection_play_always_locates:true,continuous_playback_keeps_anchor:true,exact_selection:true,clipboard:true,sqlite_reload:true,mobile:true,shared_reading_anchor:true,smooth_location:true,interruptible_location:true,reduced_motion:true,screenshots:output}));
 }finally{await browser?.close();await server?.shutdown();await rm(directory,{recursive:true,force:true});}

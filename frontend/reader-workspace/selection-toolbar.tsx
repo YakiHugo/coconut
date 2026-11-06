@@ -1,13 +1,7 @@
 import {useLayoutEffect,useRef,useState,type CSSProperties,type ReactNode,type RefObject} from 'react';
 import type {ReaderDocument} from './contracts';
 import type {SourceSelection} from './domain';
-
-function textPoint(node:HTMLElement,offset:number):{node:Node;offset:number} | null {
-    if(!Number.isSafeInteger(offset)||offset<0)return null;
-    const walker=document.createTreeWalker(node,4 /* SHOW_TEXT */);let text=walker.nextNode();
-    while(text){if(offset<=text.textContent!.length)return {node:text,offset};offset-=text.textContent!.length;text=walker.nextNode();}
-    return null;
-}
+import {supportsTextHighlight,textRange} from './text-range';
 
 function sourceRange(host:HTMLElement,doc:ReaderDocument,selection:SourceSelection):Range | null {
     const sourceNodes=new Map(Array.from(host.querySelectorAll<HTMLElement>('[data-source-id]'),node=>[node.dataset.sourceId!,node]));
@@ -16,18 +10,21 @@ function sourceRange(host:HTMLElement,doc:ReaderDocument,selection:SourceSelecti
     if(nodes.some(node=>!node))return null;
     let end=selection.to;
     for(let i=0;i<selection.cueIds.length-1;i++)end-=(lengths.get(selection.cueIds[i])??0)+selection.separators[i].length;
-    const first=textPoint(nodes[0]!,selection.from),last=textPoint(nodes.at(-1)!,end);
+    if(nodes.length===1)return textRange(nodes[0]!,selection.from,end);
+    const first=textRange(nodes[0]!,selection.from,nodes[0]!.textContent!.length),last=textRange(nodes.at(-1)!,0,end);
     if(!first||!last)return null;
-    const range=document.createRange();range.setStart(first.node,first.offset);range.setEnd(last.node,last.offset);return range;
+    first.setEnd(last.endContainer,last.endOffset);return first;
 }
 
 /** Keep actions next to the source, including inside a narrow app side panel. */
-export function SelectionToolbar({source,doc,selection,onDismiss,children}:{source:RefObject<HTMLDivElement|null>;doc:ReaderDocument;selection:SourceSelection;onDismiss:()=>void;children:ReactNode}) {
+export function SelectionToolbar({source,doc,selection,highlightSelection=false,onDismiss,children}:{source:RefObject<HTMLDivElement|null>;doc:ReaderDocument;selection:SourceSelection;highlightSelection?:boolean;onDismiss:()=>void;children:ReactNode}) {
     const bar=useRef<HTMLElement>(null),dismiss=useRef(onDismiss);dismiss.current=onDismiss;
     const [placement,setPlacement]=useState({left:12,top:80,width:600,height:48,barWidth:240});
     useLayoutEffect(()=>{
         const node=bar.current,host=source.current;if(!node||!host)return;
         const range=sourceRange(host,doc,selection);
+        const highlight=range&&highlightSelection&&supportsTextHighlight()?new window.Highlight(range):null;
+        if(highlight)window.CSS.highlights.set('coconut-word-selection',highlight);
         let frame=0;
         const measure=()=>{
             const viewport=window.visualViewport,left=viewport?.offsetLeft??0,top=viewport?.offsetTop??0;
@@ -44,16 +41,23 @@ export function SelectionToolbar({source,doc,selection,onDismiss,children}:{sour
             setPlacement(old=>JSON.stringify(old)===JSON.stringify(next)?old:next);
         };
         const schedule=()=>{window.cancelAnimationFrame(frame);frame=window.requestAnimationFrame(measure);};
-        const outside=(event:PointerEvent)=>{if(!node.contains(event.target as Node))dismiss.current();};
+        const outside=(event:PointerEvent)=>{
+            const target=event.target as Node;
+            // Pausing, seeking or changing speed should keep a local review
+            // available, so the user can listen to that same passage again.
+            const player=highlightSelection?host.closest('.reader-workspace')?.querySelector('.rw-player'):null;
+            if(!node.contains(target)&&!player?.contains(target))dismiss.current();
+        };
         measure();
         const observer=typeof window.ResizeObserver==='undefined'?null:new window.ResizeObserver(schedule);observer?.observe(node);
         window.addEventListener('scroll',schedule,true);window.addEventListener('resize',schedule);
         window.visualViewport?.addEventListener('resize',schedule);window.visualViewport?.addEventListener('scroll',schedule);
         document.addEventListener('pointerdown',outside);
         return()=>{window.cancelAnimationFrame(frame);observer?.disconnect();window.removeEventListener('scroll',schedule,true);window.removeEventListener('resize',schedule);
+            if(highlight&&window.CSS.highlights.get('coconut-word-selection')===highlight)window.CSS.highlights.delete('coconut-word-selection');
             window.visualViewport?.removeEventListener('resize',schedule);window.visualViewport?.removeEventListener('scroll',schedule);document.removeEventListener('pointerdown',outside);};
-    },[source,doc,selection]);
-    return <aside ref={bar} className="rw-selection" aria-label="选中文字操作"
+    },[source,doc,selection,highlightSelection]);
+    return <aside ref={bar} className="rw-selection" aria-label="选中文字操作" aria-description={'所选原话：'+selection.text}
         style={{'--selection-left':placement.left+'px','--selection-top':placement.top+'px','--selection-height':placement.height+'px','--selection-width':placement.barWidth+'px',maxWidth:`min(${placement.width}px, calc(100dvw - 24px))`} as CSSProperties}
         onMouseDown={event=>{if(event.button===0&&(event.target as HTMLElement).closest('button')&&!(event.target as HTMLElement).closest('dialog'))event.preventDefault();}}>
         {children}
