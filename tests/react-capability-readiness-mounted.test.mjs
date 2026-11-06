@@ -49,7 +49,7 @@ test('local import does not claim ASR is unconfigured when actual Node API repor
  const h=await setup({ingestionExecutor:{status:async()=>({available:true,model_download:false,message:'本地识别服务已就绪。'})}});try{
   h.w.URL.createObjectURL=()=> 'blob:local-fixture';h.w.URL.revokeObjectURL=()=>{};h.w.HTMLInputElement.prototype.click=function(){};
   h.button('打开音频或视频文件').click();const input=h.w.document.querySelector('input[accept="audio/*,video/*"]');Object.defineProperty(input,'files',{value:[new h.w.File(['RIFF local fixture'],'fixture.wav',{type:'audio/wav'})]});input.dispatchEvent(new h.w.Event('change',{bubbles:true}));
-  await wait(()=>h.button('检查本地识别服务'));assert.match(h.w.document.body.textContent,/可在文字稿面板查看识别服务状态/);assert.ok(!h.w.document.body.textContent.includes('尚未配置语音识别'));
+  await wait(()=>h.button('检查本地识别服务'));assert.ok(h.w.document.querySelector('.reader-workspace'));assert.ok(!h.w.document.body.textContent.includes('尚未配置语音识别'));
   h.button('检查本地识别服务').click();await wait(()=>h.w.document.body.textContent.includes('本地识别服务已就绪。'));assert.ok(!h.w.document.body.textContent.includes('尚未配置语音识别'));
   assert.ok(h.calls.every(call=>call.method==='GET'));
  }finally{await h.close();}

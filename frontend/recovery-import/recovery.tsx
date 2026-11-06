@@ -36,14 +36,14 @@ export function SubtitleRecovery({ store, targetKey,label }: { store: AppStore; 
   useEffect(()=>()=>picker.controller.retire(),[targetKey,picker.controller]);
   useEffect(() => { const retire = () => controller.pause(); window.addEventListener('pagehide', retire); return () => { window.removeEventListener('pagehide', retire); retire(); }; }, [controller]);
   return <details className="subtitle-recovery" onToggle={event => { if (!event.currentTarget.open) {picker.controller.retire();controller.pause();} }}>
-    <summary>{label||'高级恢复：导入或粘贴 SRT / VTT 字幕'}</summary>
-    <p>适用于已经有字幕的情况。仅在本机解码与核对，不会上传文件。默认新增独立内容；可明确选择为尚无文字稿的原声项目补充字幕。已有正文不会被替换。</p>
-    <p>草稿仅保留到本次页面关闭；刷新前请保存原始文件或复制文字。</p>
+    <summary>{label||'导入 SRT / VTT 字幕'}</summary>
+    <p>字幕仅在本机读取，不上传。</p>
+    <p>关闭或刷新页面会丢失未导入的草稿。</p>
     {state.paused && <button onClick={() => controller.resume()}>继续核对保留的草稿</button>}
     {targetKey && <section aria-label="选择字幕恢复目标">
       <button disabled={state.applying} aria-pressed={state.mode === 'new'} onClick={() => controller.chooseMode('new')}>新增独立内容</button>
       <button disabled={state.applying} aria-pressed={state.mode === 'attach'} onClick={() => controller.chooseMode('attach')}>补充到当前原声项目（重新核对）</button>
-      {state.mode === 'attach' && <p>{state.target ? `附加目标：${state.target.title}。只接收一份已核对字幕，保留原媒体、项目笔记和书签。` : '附加目标尚未确认，请重新选择。'}</p>}
+      {state.mode === 'attach' && <p>{state.target ? `附加到：${state.target.title}` : '附加目标尚未确认，请重新选择。'}</p>}
     </section>}
     <fieldset disabled={state.applying}><legend>字幕预览与核对</legend>
     <label>字幕标题<input value={state.title} maxLength={200} onChange={event => controller.edit({ title: event.target.value })}/></label>
@@ -65,6 +65,6 @@ export function SubtitleRecovery({ store, targetKey,label }: { store: AppStore; 
     </fieldset>
     <button disabled={state.applying || state.busy || state.paused || !state.rows.some(row => row.parsed && row.reviewed)} onClick={() => void controller.apply()}>{state.mode === 'attach' ? '将已核对字幕附加到目标项目' : '加入已核对的字幕'}</button>
     <button onClick={() => controller.pause()}>取消读取 / 保留草稿</button>
-    <p role="status">{state.busy ? '正在按选择顺序读取；核对前不会加入书架。' : state.message}</p>
+    <p role="status">{state.busy ? '正在读取字幕…' : state.message}</p>
   </details>;
 }

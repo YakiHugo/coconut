@@ -60,11 +60,11 @@ export function ReaderExports({ doc, hasDrafts, displayText=(text:string)=>text 
             if(['txt','srt','vtt'].includes(kind))text=displayText(text);
             const type = kind === 'json' ? 'application/json' : kind === 'vtt' ? 'text/vtt' : kind === 'md' ? 'text/markdown' : 'text/plain';
             setArtifact({ url: URL.createObjectURL(new Blob([text], { type: type + ';charset=utf-8' })), name: doc.title.replace(/[\\/:*?"<>|\x00-\x1f\x7f]/g, '_') + '.' + kind });
-            setStatus('已发起下载：' + detail + '。请确认文件已保存。');
+            setStatus('已发起下载：' + detail + '。');
         }
         catch (e) {
             setStatus('导出失败：' + String(e instanceof Error ? e.message : e));
         }
     };
-    return <section className="rw-exports" aria-label="导出本篇内容"><h3>导出本篇内容</h3><p>导出当前项目，不上传。TXT 与字幕采用当前中文字形；JSON 保留完整项目与转录原文，Markdown 保留笔记与摘录内容。不包含原媒体。</p><ChoicePicker label="文件格式" value={kind} onChange={value=>setKind(value as ExportKind)} options={[{value:'json',label:'Coconut JSON 完整项目'},...(doc.segments.length?[{value:'txt',label:'TXT 整篇文字'},{value:'srt',label:'SRT 字幕'},{value:'vtt',label:'VTT 字幕'}]:[]),{value:'md',label:'Markdown 阅读笔记'}]}/>{kind !== 'json' && <label><input type="checkbox" disabled={!doc.translation_view} checked={bilingual} onChange={e => setBilingual(e.target.checked)}/> 包含当前所选语言的有效译文</label>}<button disabled={hasDrafts || (!doc.segments.length && ['txt', 'srt', 'vtt'].includes(kind))} onClick={download}>下载本篇</button>{hasDrafts && <p>请先提交或取消草稿，再导出完整内容。</p>}<a ref={link} hidden href={artifact?.url} download={artifact?.name}>下载文件</a><p role="status">{status}</p></section>;
+    return <section className="rw-exports" aria-label="导出本篇内容"><h3>导出本篇内容</h3><p>不含原媒体。TXT 与字幕采用当前中文字形。</p><ChoicePicker label="文件格式" value={kind} onChange={value=>setKind(value as ExportKind)} options={[{value:'json',label:'Coconut JSON 完整项目'},...(doc.segments.length?[{value:'txt',label:'TXT 整篇文字'},{value:'srt',label:'SRT 字幕'},{value:'vtt',label:'VTT 字幕'}]:[]),{value:'md',label:'Markdown 阅读笔记'}]}/>{kind !== 'json' && <label><input type="checkbox" disabled={!doc.translation_view} checked={bilingual} onChange={e => setBilingual(e.target.checked)}/> 包含当前所选语言的有效译文</label>}<button disabled={hasDrafts || (!doc.segments.length && ['txt', 'srt', 'vtt'].includes(kind))} onClick={download}>下载本篇</button>{hasDrafts && <p>请先提交或取消草稿，再导出完整内容。</p>}<a ref={link} hidden href={artifact?.url} download={artifact?.name}>下载文件</a><p role="status">{status}</p></section>;
 }

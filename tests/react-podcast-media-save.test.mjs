@@ -23,7 +23,7 @@ async function mount({download,save}={}){
 }
 test('podcast download waits for durable storage, preserves file MIME and never creates a transient player',async()=>{
  const pending=deferred(),h=await mount({save:()=>pending.promise});try{
-  assert.match(h.w.document.body.textContent,/本机书架.*重启/);assert.doesNotMatch(h.w.document.body.textContent,/本页保留/);
+  assert.equal(h.calls(),0);assert.doesNotMatch(h.w.document.body.textContent,/本页保留/);
   const button=h.w.document.querySelector('button');button.click();button.click();await wait(()=>h.saves.length===1&&button.textContent.includes('正在保存'));
   assert.equal(h.calls(),1);assert.match(button.textContent,/正在保存/);assert.equal(button.disabled,true);
   const [store,key,file,signal]=h.saves[0];assert.equal(store,h.store);assert.equal(key,'episode');assert.equal(file.type,'audio/mp4');assert.match(file.name,/\.m4a$/);assert.equal(await file.text(),'authored media bytes');assert.equal(signal.aborted,false);

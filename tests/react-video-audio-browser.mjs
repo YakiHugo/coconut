@@ -66,7 +66,7 @@ try{
  // Successful authored audio uses the actual endpoint, File fingerprint, store,
  // canonical library and browser decoder. It must not start playback or ASR.
  stage='initial-audio-save';await read();await button.click();await expect(page.getByRole('heading',{name:'先播放原文件',exact:true})).toBeVisible();
- await expect(page.locator('.app-header').getByText('已保存',{exact:true})).toBeVisible();
+ await expect(page.locator('.save-indicator')).toHaveAttribute('data-state','saved');
  await expect(page.locator('audio')).toHaveCount(1);await expect(page.getByRole('button',{name:'播放原声',exact:true})).toBeVisible();await expect.poll(()=>page.locator('audio').evaluate(player=>player.duration)).toBeGreaterThan(1.9);
  assert.equal(await page.locator('audio').evaluate(player=>player.paused),true);assert.equal(await page.evaluate(()=>window.__authoredPlays),0);
  await expect(page.getByRole('button',{name:'生成文字稿',exact:true})).toBeVisible();await expect(page.getByRole('button',{name:'生成文字稿',exact:true})).toBeDisabled();
@@ -102,7 +102,7 @@ try{
  assert.equal((await fetch(origin+'/api/v1/library/catalog?protocolVersion=1').then(r=>r.json())).entries.length,1);
  // Combined MP4 stays a video player/File, not a mislabeled audio-only file.
  stage='combined-video-save';mode='video';await read();await button.click();await expect(page.locator('video')).toBeVisible();
- await expect(page.locator('.app-header').getByText('已保存',{exact:true})).toBeVisible();
+ await expect(page.locator('.save-indicator')).toHaveAttribute('data-state','saved');
  await expect.poll(()=>page.locator('video').evaluate(player=>player.videoWidth)).toBe(160);
  await expect.poll(()=>page.locator('video').evaluate(player=>player.duration)).toBeGreaterThan(1.9);
  assert.equal(await page.locator('video').evaluate(player=>player.paused),true);assert.equal(await page.evaluate(()=>window.__authoredPlays),0);

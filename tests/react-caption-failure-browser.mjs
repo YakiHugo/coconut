@@ -30,7 +30,7 @@ try{
  hold=new Promise(resolve=>release=resolve);await page.getByRole('button',{name:'重试上次读取',exact:true}).click();await expect(panel).toHaveCount(0);await expect.poll(()=>requests.length).toBe(2);await page.getByRole('button',{name:'取消读取',exact:true}).click();release();hold=null;await expect(page.locator('.source-error')).toContainText('读取已取消');await expect(panel).toHaveCount(0);
  tokenRequired=true;await page.getByLabel('播客或视频链接').fill(url);await page.getByRole('button',{name:'打开链接',exact:true}).click();
  await expect(panel.getByRole('heading')).toHaveText('字幕需要 PO token，媒体可用性未知');
- await expect(panel).toContainText('未检查媒体');await expect(panel.getByRole('button')).toHaveCount(0);
+ await expect(panel).toContainText('可前往原站查看或导入已有字幕');await expect(panel.getByRole('button')).toHaveCount(0);
  await panel.getByText('查看读取详情',{exact:true}).click();await expect(panel).toContainText('不等于账号登录');
  await expect(panel).toContainText('媒体是否可取得尚未知');assert.equal(requests.length,3);
  assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);

@@ -28,7 +28,7 @@ export async function audioFirstBrowser({browser,width,directory,output}){
   const audioFirst=()=>episode().getByRole('button',{name:'先听原声',exact:true});
   const sourceError=()=>page.locator('.source-error');
   const loadMedia=()=>page.getByRole('button',{name:'载入原声（最多 200 MiB）',exact:true});
-  const saved=()=>expect(page.locator('.app-header').getByText('已保存',{exact:true})).toBeVisible();
+  const saved=()=>expect(page.locator('.save-indicator')).toHaveAttribute('data-state','saved');
   async function backup(){return (await backupLibrary(page)).documents;}
   async function discover(){await page.getByRole('button',{name:'添加内容',exact:true}).click();await expect(page.getByLabel('播客或视频链接')).toBeVisible();}
   async function loadFeed(){await page.getByLabel('播客或视频链接').fill(sourceFeed);await page.getByRole('button',{name:'打开链接',exact:true}).click();await expect(episode()).toBeVisible();}
@@ -39,7 +39,7 @@ export async function audioFirstBrowser({browser,width,directory,output}){
   // Valid same-language publisher metadata recommends this track even though
   // its bytes are deliberately broken. Audio-first must still bypass fetching it.
   await expect(episode().getByRole('button',{name:'打开单集',exact:true})).toBeEnabled();
-  const trackChoice=episode().getByRole('combobox');await expect(trackChoice).toHaveValue('');await expect(trackChoice.locator('option:checked')).toHaveText('默认：en · text/vtt（可切换）');await expect(trackChoice.locator(`option[value="${audioFirstTrack}"]`)).toHaveText('en · text/vtt · 1');await expect(audioFirst()).toBeEnabled();
+  const trackChoice=episode().getByRole('combobox');await expect(trackChoice).toHaveValue('');await expect(trackChoice.locator('option:checked')).toHaveText('默认：en · text/vtt');await expect(trackChoice.locator(`option[value="${audioFirstTrack}"]`)).toHaveText('en · text/vtt · 1');await expect(audioFirst()).toBeEnabled();
   const missing=page.locator('.episode-list article').filter({has:page.getByRole('heading',{name:'Authored episode without audio',exact:true})});await expect(missing.getByRole('button',{name:'先听原声',exact:true})).toBeDisabled();await expect(missing).toContainText('未提供可用的公开原声');await screenshot('choice');
   // Selecting a known-bad track does not make audio-first fetch that track.
   await episode().getByRole('combobox').selectOption(audioFirstTrack);await audioFirst().click();await expect(page.getByRole('heading',{name:'先播放原文件',exact:true})).toBeVisible();await saved();

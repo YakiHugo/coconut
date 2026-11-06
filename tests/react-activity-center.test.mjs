@@ -12,7 +12,9 @@ test('restored task receipts stay in the activity center across navigation witho
   const center=x.w.document.querySelector('.activity-center'),task=center.querySelector('.ingestion-task-list article');
   assert.match(task.textContent,/original-audio.mp3/);
   assert.match(task.textContent,/回执未确认/);
-  assert.equal(center.open,false);
+  assert.equal(center.querySelector('dialog').open,false);
+  assert.equal(x.w.document.querySelector('.app-header,.app-breadcrumb'),null);
+  assert.ok(x.w.document.querySelector('.sidebar-foot .activity-trigger'));
   assert.equal(x.w.document.querySelector('main>.ingestion-panel'),null);
   assert.equal(x.w.document.querySelectorAll('.ingestion-task-list article').length,1);
   [...x.w.document.querySelectorAll('nav button')].find(node=>node.textContent.startsWith('我的内容')).click();
@@ -25,17 +27,19 @@ test('restored task receipts stay in the activity center across navigation witho
  }finally{await x.w.happyDOM.close();}
 });
 
-test('activity disclosure closes with Escape and outside pointer while keeping recovery reachable',async()=>{
+test('task dialog closes with Escape and outside pointer, restores focus and keeps recovery reachable',async()=>{
  const x=await mountedSourceApp({service:{ingest:async()=>{throw Error('No source request expected');}}});
  try{
-  const center=x.w.document.querySelector('.activity-center'),summary=center.querySelector(':scope>summary');
-  center.open=true;center.querySelector('[aria-label="关闭任务与状态"]').focus();
-  x.w.document.dispatchEvent(new x.w.KeyboardEvent('keydown',{key:'Escape',bubbles:true,cancelable:true}));
-  assert.equal(center.open,false);assert.equal(x.w.document.activeElement,summary);
-  center.open=true;x.w.document.querySelector('.discover').dispatchEvent(new x.w.PointerEvent('pointerdown',{bubbles:true}));
-  assert.equal(center.open,false);
+  const center=x.w.document.querySelector('.activity-center'),trigger=center.querySelector('.activity-trigger'),dialog=center.querySelector('dialog');
+  trigger.click();await wait(()=>dialog.open);
+  assert.equal(trigger.getAttribute('aria-expanded'),'true');
+  assert.equal(x.w.document.activeElement,center.querySelector('[aria-label="关闭任务与状态"]'));
+  dialog.dispatchEvent(new x.w.KeyboardEvent('keydown',{key:'Escape',bubbles:true,cancelable:true}));
+  await wait(()=>!dialog.open);assert.equal(x.w.document.activeElement,trigger);
+  trigger.click();await wait(()=>dialog.open);x.w.document.querySelector('.discover').dispatchEvent(new x.w.PointerEvent('pointerdown',{bubbles:true}));
+  await wait(()=>!dialog.open);
   assert.equal(center.querySelector('.storage-settings'),null,'Tasks do not contain settings');assert.ok(x.w.document.querySelector('.app-settings .storage-settings [data-testid="storage-setup"]'),'Recovery lives in settings');
-  center.open=true;center.querySelector('[aria-label="关闭任务与状态"]').click();
-  assert.equal(center.open,false);assert.equal(x.w.document.activeElement,summary);
+  trigger.click();await wait(()=>dialog.open);center.querySelector('[aria-label="关闭任务与状态"]').click();
+  await wait(()=>!dialog.open);assert.equal(x.w.document.activeElement,trigger);
  }finally{await x.w.happyDOM.close();}
 });

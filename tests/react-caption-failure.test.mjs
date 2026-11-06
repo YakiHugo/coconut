@@ -8,7 +8,7 @@ const panel=x=>x.w.document.querySelector('[aria-label="本次字幕读取结果
 const fixture=(get=()=>diagnostic)=>({service:{ingest:async()=>({protocolVersion:1,ingestion:{id:'failure',state:'blocked',source:{},error:{code:'network_unavailable',message:'字幕读取未完成',diagnostic:await get()}}})}});
 test('blocked captions show request-scoped evidence and safe original action, preserve link and explicit retry',async()=>{
  const x=await mountedSourceApp(fixture(()=>({...diagnostic,raw:'secret https://private.invalid/token'})));try{
-  x.open(url);await wait(()=>panel(x));assert.match(panel(x).textContent,/读取视频信息/);assert.match(panel(x).textContent,/尝试请求 2 次.*收到响应 0 次/s);assert.match(panel(x).textContent,/不能据此判断.*字幕/s);assert.doesNotMatch(panel(x).textContent,/secret|private.invalid|transport_unavailable/);
+  x.open(url);await wait(()=>panel(x));assert.match(panel(x).textContent,/读取视频信息/);assert.match(panel(x).textContent,/尝试请求 2 次.*收到响应 0 次/s);assert.doesNotMatch(panel(x).textContent,/没有字幕/);assert.doesNotMatch(panel(x).textContent,/secret|private.invalid|transport_unavailable/);
   const link=panel(x).querySelector('a');assert.equal(link.textContent,'打开原站');assert.equal(link.href,url);assert.equal(link.target,'_blank');assert.equal(link.rel,'noopener noreferrer');assert.equal(x.requests.length,1);assert.equal(x.docs().length,0);assert.equal(x.w.document.querySelector('#source-url').value,url);
   x.button('重试上次读取').click();await wait(()=>x.requests.length===2&&panel(x));assert.equal(x.requests.length,2);
   x.input(x.w.document.querySelector('#source-url'),'https://publisher.example/feed');await wait(()=>!panel(x));assert.equal(x.docs().length,0);
@@ -50,7 +50,7 @@ test('subtitle PO requirement is not a login instruction, absent captions, or a 
   x.open(url);await wait(()=>panel(x));
   assert.match(panel(x).querySelector('h2').textContent,/PO token.*媒体可用性未知/);
   assert.doesNotMatch(panel(x).querySelector('h2').textContent,/登录|没有字幕|视频受限/);
-  assert.match(panel(x).textContent,/未检查媒体/);
+  assert.match(panel(x).textContent,/可前往原站查看或导入已有字幕/);
   assert.equal([...panel(x).querySelectorAll('button')].some(b=>/重试|下载/.test(b.textContent)),false);
   assert.equal(panel(x).querySelector('a').href,url);
   await new Promise(r=>setTimeout(r,30));assert.equal(x.requests.length,1);assert.equal(x.docs().length,0);

@@ -96,7 +96,7 @@ test('refreshing a feed retires a track that the publisher removed rather than s
 test('feed snapshots reuse only the completed RSS; explicit refresh invalidates failures and recovery preserves source context',async()=>{
  const x=await setup(),{w,fixture}=x;let release;try{
   const checked=()=>w.document.querySelector('.feed-refresh p').textContent;
-  await x.load();assert.deepEqual(fixture.counts,{feed:1,transcript:0});assert.match(checked(),/上次来源检查：/);const initialCheck=checked();
+  await x.load();assert.deepEqual(fixture.counts,{feed:1,transcript:0});assert.match(checked(),/上次检查：/);const initialCheck=checked();
   await x.open('Authored multilingual episode',frenchTrack);await wait(()=>x.docs().length===1);assert.deepEqual(fixture.counts,{feed:1,transcript:1},'opening a publisher track reuses RSS but fetches the actual transcript');
   const original=structuredClone(x.docs());await x.discover();assert.equal(checked(),initialCheck);assert.equal(x.episode('Authored multilingual episode').querySelector('select').value,frenchTrack);
   fixture.state.upgrade=true;assert.equal(x.episode('Authored evolving episode').querySelector('select'),null,'publisher changes do not mutate the completed selection');
@@ -167,7 +167,7 @@ for(const absent of ['source','check timestamp'])test(`optional feed-check displ
 test('explicit audio-first bypasses an advertised broken track, preserves selection and never downgrades existing transcript projects',async()=>{
  const fixture=audioFirstFixture(),x=await setup(fixture);try{
   await x.load();const action=()=>[...x.episode('Authored audio-first episode').querySelectorAll('button')].find(button=>button.textContent==='先听原声');
-  assert.equal(x.episode('Authored audio-first episode').querySelector('button').disabled,false);assert.equal(x.episode('Authored audio-first episode').querySelector('select').value,'');assert.equal(x.episode('Authored audio-first episode').querySelector('option').textContent,'默认：en · text/vtt（可切换）');assert.equal(action().disabled,false,'audio-first does not require selecting a track');
+  assert.equal(x.episode('Authored audio-first episode').querySelector('button').disabled,false);assert.equal(x.episode('Authored audio-first episode').querySelector('select').value,'');assert.equal(x.episode('Authored audio-first episode').querySelector('option').textContent,'默认：en · text/vtt');assert.equal(action().disabled,false,'audio-first does not require selecting a track');
   const missing=[...x.episode('Authored episode without audio').querySelectorAll('button')].find(button=>button.textContent==='先听原声');assert.equal(missing.disabled,true);assert.match(x.episode('Authored episode without audio').textContent,/未提供可用的公开原声/);
   action().click();action().click();await wait(()=>x.docs().length===1);const original=x.docs()[0];assert.equal(original.project_kind,'audio_only');assert.equal(original.segments.length,0);assert.deepEqual(fixture.counts,{feed:1,transcript:0,media:0});assert.equal(x.requests.at(-1).intent,'media_only');assert.equal(x.requests.at(-1).episode.transcript_url,undefined);assert.equal(x.w.document.querySelector('audio'),null);
   await x.discover();await x.open('Authored audio-first episode',audioFirstTrack);await wait(()=>x.w.document.querySelector('.source-error').textContent.includes('不是 WebVTT'));assert.equal(action().disabled,false);assert.equal(x.docs().length,1);assert.equal(x.docs()[0].segments.length,0);
@@ -198,7 +198,7 @@ test('bounded episode browsing preserves import identity and resets search, expa
   assert.match(x.episode('Authored multilingual episode').textContent,/时长 1:02:03/);assert.match(x.episode('Authored multilingual episode').textContent,/2026/);
   x.button('显示更多单集').click();await wait(()=>rows().length===40);
   x.input(search(),' ARCHIVE episode 190 ');await wait(()=>rows().length===1);assert.ok(x.episode('Archive episode 190'));assert.equal(x.button('显示更多单集'),undefined);
-  x.input(search(),'unfindable');await wait(()=>rows().length===0);assert.match(w.document.body.textContent,/当前列表没有匹配/);
+  x.input(search(),'unfindable');await wait(()=>rows().length===0);assert.match(w.document.body.textContent,/没有匹配的单集/);
   x.button('清空单集搜索').click();await wait(()=>rows().length===20);
   x.button('显示更多单集').click();await wait(()=>rows().length===40);
   x.input(search(),'Archive');await wait(()=>rows().length===20);x.button('显示更多单集').click();await wait(()=>rows().length===40);
@@ -252,6 +252,6 @@ for(const boundary of ['cancel','navigation'])test('default request retires clea
 });
 test('conflicting duplicate URL labels are visibly unavailable rather than a misleading explicit language choice',async()=>{
  const {captionDefaultsFixture}=await import('./fixtures/caption-defaults.mjs');const f=captionDefaultsFixture();f.state.language='en';f.state.tracks=[['same.vtt','text/vtt','fr'],['same.vtt','text/vtt','en']];const x=await setup(f);try{
-  await x.load();const row=x.episode('Publisher choices');assert.equal(row.querySelector('button').disabled,true);assert.match(row.textContent,/标注不一致，暂不可导入/);assert.match(row.querySelector('option').textContent,/文字稿标注冲突/);assert.ok([...row.querySelectorAll('option')].slice(1).every(option=>option.disabled&&option.textContent.includes('标注冲突')));assert.equal([...row.querySelectorAll('button')].find(button=>button.textContent==='先听原声').disabled,false);
+  await x.load();const row=x.episode('Publisher choices');assert.equal(row.querySelector('button').disabled,true);assert.match(row.textContent,/标注冲突，暂不可导入/);assert.match(row.querySelector('option').textContent,/文字稿标注冲突/);assert.ok([...row.querySelectorAll('option')].slice(1).every(option=>option.disabled&&option.textContent.includes('标注冲突')));assert.equal([...row.querySelectorAll('button')].find(button=>button.textContent==='先听原声').disabled,false);
  }finally{await x.w.happyDOM.close();}
 });

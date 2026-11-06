@@ -18,11 +18,11 @@ try{
  await page.route('**/*',route=>new URL(route.request().url()).origin===origin?route.continue():route.abort());
  await page.goto(origin);await page.locator('.app-settings > summary').click();const panel=page.locator('.bilibili-session');
  await expect(panel).toBeVisible();assert.equal(connections,0);
- await panel.locator('summary').click();await expect(page.getByLabel('Edge 配置')).toBeVisible();
+ await expect(page.getByLabel('Edge 配置')).toBeVisible();
  await page.getByRole('button',{name:'连接 Edge 中的 B 站账号'}).click();
  await expect(panel).toContainText('已连接。现在可以重试');assert.equal(connections,1);
- await page.reload();await page.locator('.app-settings > summary').click();await expect(panel.locator('summary')).toContainText('已连接 Edge');assert.equal(connections,1);
- await panel.locator('summary').click();await page.getByRole('button',{name:'断开 Edge',exact:true}).click();
+ await page.reload();await page.locator('.app-settings > summary').click();await expect(panel.locator('h3')).toContainText('已连接 Edge');assert.equal(connections,1);
+ await page.getByRole('button',{name:'断开 Edge',exact:true}).click();
  await expect(panel).toContainText('已断开 Edge');assert.equal(connected,false);
  deny=true;await page.getByRole('button',{name:'连接 Edge 中的 B 站账号'}).click();
  await expect(panel).toContainText('没有有效的 B 站登录态');await expect(page.getByRole('button',{name:'连接 Edge 中的 B 站账号'})).toBeEnabled();

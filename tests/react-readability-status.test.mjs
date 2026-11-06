@@ -11,11 +11,11 @@ await writeFile(path.join(directory,'ui.cjs'),built.outputFiles[0].contents);
 const {ReaderSource,PassageView,createElement:h,renderToStaticMarkup:render}=require(path.join(directory,'ui.cjs'));
 const doc={key:'raw',segments:[{id:'one',start:0,end:2,text:'你好世界',speaker:null}],notes:{},provenance:{kind:'automatic_subtitles',speaker_method:'unavailable'}};
 test('raw captions disclose absent punctuation and voices, unavailable is never a completed acoustic stage',()=>{
- const raw=render(h(ReaderSource,{doc}));assert.match(raw,/尚未进行标点整理/);assert.match(raw,/说话人尚未标注/);assert.ok(!raw.includes('按声音自动分组'));
+ const raw=render(h(ReaderSource,{doc}));assert.match(raw,/尚未进行标点整理/);assert.match(raw,/说话人尚未标注/);assert.ok(!raw.includes('声音分组未经人工核对'));
  const punctuated=render(h(ReaderSource,{doc:{...doc,provenance:{...doc.provenance,punctuation_method:'local-reading-v1'}}}));
  assert.ok(!punctuated.includes('尚未进行标点整理'));assert.match(punctuated,/说话人尚未标注/);
  const grouped=render(h(ReaderSource,{doc:{...doc,segments:[{...doc.segments[0],speaker:'说话人 1'}],provenance:{punctuation_method:'local-reading-v1',speaker_method:'recording-acoustic-v1'}}}));
- assert.match(grouped,/按声音自动分组/);assert.ok(!grouped.includes('说话人尚未标注'));
+ assert.match(grouped,/声音分组未经人工核对/);assert.ok(!grouped.includes('说话人尚未标注'));
 });
 test('an entirely unlabelled transcript still displays its unknown speaker explicitly',()=>{
  const previous=globalThis.window;

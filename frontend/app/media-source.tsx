@@ -82,5 +82,5 @@ export function MediaSource({ store, documentKey }: {
             }
         }
     };
-    return <section className="remote-media"><button disabled={busy} onClick={() => void download()}>{busy ? saving ? '正在保存原声…' : '正在读取原声…' : '载入原声（最多 200 MiB）'}</button>{busy && <button onClick={() => { owner.current?.abort(); owner.current = null; setBusy(false); setSaving(false); }}>取消</button>}<p>只在点击后下载并保存到本机书架，重启后可继续读取原声；不会自动播放或转录。保存失败会明确提示，不将临时播放地址当成已保存。</p><p role="status">{error}</p></section>;
+    return <section className="remote-media"><button disabled={busy} onClick={() => void download()}>{busy ? saving ? '正在保存原声…' : '正在读取原声…' : '载入原声（最多 200 MiB）'}</button>{busy && <button onClick={() => { owner.current?.abort(); owner.current = null; setBusy(false); setSaving(false); }}>取消</button>}<p role="status">{error}</p></section>;
 }
