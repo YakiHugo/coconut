@@ -34,3 +34,21 @@ test('long recordings use context-only neighbours and each cue is a target exact
  assert.ok(batches[1].cues.some(c=>!batches[1].target_ids.includes(c.id)));
  assert.throws(()=>R.validateBatch(batches[1],{edits:[{...edit('连续','继续','typo'),cue_id:batches[1].cues[0].id}],issues:[]}),/越界/);
 });
+
+test('review of native segment timing preserves scope and identities without fabricating words',()=>{
+ const d=doc();delete d.segments[0].words;Object.assign(d.segments[0],{speaker_id:'speaker-0001',speaker_scope:'chunk',chunk_index:0,
+  provider_speaker:'0:S01',timing_basis:'native_segment',alignment_status:'unavailable',boundary_status:'nonoverlapping_chunk'});
+ const input=R.snapshot(d),result=R.merge(d,input,[{edits:[edit('刘源','刘元'),edit('来了','来了。','punctuation')],issues:[]}],{provider:'codex'});
+ assert.equal(result.segments[0].text,'刘元来了。');assert.equal(Object.hasOwn(result.segments[0],'words'),false);
+ for(const field of ['start','end','speaker_id','speaker_scope','chunk_index','provider_speaker','timing_basis','alignment_status','boundary_status'])assert.equal(result.segments[0][field],d.segments[0][field]);
+ for(const field of ['speaker_scope','timing_basis','alignment_status','chunk_index']){
+  const changed=structuredClone(d);changed.segments[0][field]=field==='chunk_index'?1:'changed';
+  assert.throws(()=>R.merge(changed,input,[{edits:[],issues:[]}],{}),/已变化/);
+ }
+});
+
+test('legacy review snapshots retain their exact shape when optional evidence is absent',()=>{
+ const d=doc();
+ assert.deepEqual(R.snapshot(d),{key:d.key,context:{title:d.title,source_url:d.source_url,description:'',participants:[],terms:[]},
+  segments:d.segments.map(c=>({id:c.id,start:c.start,end:c.end,text:c.text,speaker:c.speaker,speaker_id:null,words:structuredClone(c.words)}))});
+});

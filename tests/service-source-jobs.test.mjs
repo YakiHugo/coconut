@@ -50,6 +50,26 @@ test('transcription reads the owned file directly, persists progress and attache
  commit(f.library,{...doc,project_note:'keep notes',title:'Edit title'});assert.equal((await f.jobs.result(job.id)).job.id,job.id);
  commit(f.library,doc,'delete');commit(f.library,doc,'restore');assert.deepEqual(await f.jobs.list(doc.key),[]);await assert.rejects(f.jobs.result(job.id),/来源已变化/);
 });
+test('MOSS native timing and chunk-scoped speakers survive the service queue and result round trip',async t=>{
+ let runs=0;
+ const native={schema_version:1,title:'Authored MOSS episode',language:'zh',provenance:{kind:'local_asr',backend:'moss-mlx',model:'authored-moss',caption_method:'asr',review_status:'unreviewed'},segments:[
+  {id:'moss-first',start:1.25,end:3.5,text:'第一块的原生句段',speaker:'说话人 1',speaker_id:'speaker-0001',speaker_status:'native_chunk_local',speaker_scope:'chunk',provider_speaker:'0:S01',chunk_index:0,timing_basis:'native_segment',alignment_status:'unavailable'},
+  {id:'moss-second',start:1801.5,end:1804.75,text:'第二块的原生句段',speaker:'说话人 2',speaker_id:'speaker-0002',speaker_status:'native_chunk_local',speaker_scope:'chunk',provider_speaker:'1:S01',chunk_index:1,timing_basis:'native_segment',alignment_status:'unavailable'},
+ ]};
+ const f=await fixture(t,{transcriber:{profile:{backend:'moss-mlx',asr_model:'/authored/moss',align_model:'',segmentation:'',embedding:''},status:async()=>({available:true}),run:async({workDirectory,onProgress})=>{
+  runs++;onProgress({phase:'recognize',chunk:2,chunks:2});await writeFile(path.join(workDirectory,'result.json'),JSON.stringify(native));
+ }}});
+ await f.media.save(doc.key,f.media.owner(doc.key).source,Readable.from(['ID3 authored MOSS audio']),{type:'audio/mpeg',name:'source.mp3'});
+ const job=await f.create('transcribe');await until(()=>f.jobs.get(job.id),j=>j.state==='ready');await f.restart();
+ const output=(await f.jobs.result(job.id)).ingestion.transcript.document;
+ assert.equal(output.provenance.backend,'moss-mlx');assert.equal(output.provenance.model,'authored-moss');assert.equal(runs,1);
+ for(const [index,cue] of output.segments.entries()){
+  for(const field of ['id','start','end','text','speaker','speaker_id','speaker_status','speaker_scope','provider_speaker','chunk_index','timing_basis','alignment_status'])assert.deepEqual(cue[field],native.segments[index][field],field);
+  assert.equal(Object.hasOwn(cue,'words'),false);
+ }
+ assert.notEqual(output.segments[0].speaker_id,output.segments[1].speaker_id);
+ assert.notEqual(output.segments[0].speaker,output.segments[1].speaker);
+});
 test('corrupt saved bytes are rejected before a Python task starts',async t=>{
  const f=await fixture(t),source=f.media.owner(doc.key).source,receipt=await f.media.save(doc.key,source,Readable.from(['original']),{type:'audio/mpeg',name:'source.mp3'});
  await writeFile(path.join(f.directory,'media',receipt.sha256+'.media'),'changed!');await assert.rejects(f.create('transcribe'),/changed|integrity/);
@@ -123,11 +143,24 @@ test('real authenticated HTTP accepts a source task independently of the respons
  const receipt=await fetch(origin+'/api/v1/source-media?'+new URLSearchParams({key:doc.key,source})).then(r=>r.json());assert.ok(receipt.media.sha256);
  assert.equal((await fetch(origin+'/api/v1/source-jobs',{method:'POST',headers:{Origin:'https://evil.example','Content-Type':'application/json'},body:'{}'})).status,403);
 });
-test('a changed model profile creates a new task without adopting previous results or checkpoints',async t=>{
- const f=await fixture(t);await f.media.save(doc.key,f.media.owner(doc.key).source,Readable.from(['original']),{type:'audio/mpeg',name:'source.mp3'});
- const first=await f.create('transcribe');await until(()=>f.jobs.get(first.id),j=>j.state==='ready');assert.equal((await f.jobs.get(first.id)).currentProfile,true);
- f.transcriber.profile={backend:'authored-v2'};assert.equal((await f.jobs.get(first.id)).currentProfile,false);
+test('switching Qwen to MOSS creates a new task and cannot retry the old profile or adopt its checkpoints',async t=>{
+ const work=[];
+ const transcriber={profile:{backend:'qwen-mlx',asr_model:'/authored/qwen'},status:async()=>({available:true}),run:async({workDirectory})=>{
+  work.push(workDirectory);
+  if(transcriber.profile.backend==='qwen-mlx'){
+   await writeFile(path.join(workDirectory,'authored-qwen-checkpoint.json'),JSON.stringify({backend:'qwen-mlx'}));throw Error('authored interrupted Qwen stage');
+  }
+  await assert.rejects(readFile(path.join(workDirectory,'authored-qwen-checkpoint.json')),{code:'ENOENT'});
+  await writeFile(path.join(workDirectory,'result.json'),JSON.stringify({schema_version:1,title:'MOSS result',provenance:{kind:'local_asr',backend:'moss-mlx'},segments:[{id:'moss',start:0,end:1,text:'MOSS新任务'}]}));
+ }};
+ const f=await fixture(t,{transcriber});await f.media.save(doc.key,f.media.owner(doc.key).source,Readable.from(['original']),{type:'audio/mpeg',name:'source.mp3'});
+ const first=await f.create('transcribe');await until(()=>f.jobs.get(first.id),j=>j.state==='failed');assert.equal((await f.jobs.get(first.id)).currentProfile,true);
+ f.transcriber.profile={backend:'moss-mlx',asr_model:'/authored/moss'};assert.equal((await f.jobs.get(first.id)).currentProfile,false);
+ await assert.rejects(f.jobs.action(first.id,'retry'),/模型配置已变化/);assert.equal(work.length,1);
  const second=await f.create('transcribe');assert.notEqual(second.id,first.id);await until(()=>f.jobs.get(second.id),j=>j.state==='ready');assert.equal((await f.jobs.list(doc.key)).length,2);
+ assert.equal(work.length,2);assert.notEqual(work[0],work[1]);assert.equal((await f.jobs.get(first.id)).state,'failed');
+ assert.equal((await f.jobs.result(second.id)).ingestion.transcript.document.provenance.backend,'moss-mlx');
+ assert.deepEqual(JSON.parse(await readFile(path.join(work[0],'authored-qwen-checkpoint.json'),'utf8')),{backend:'qwen-mlx'});
 });
 test('metadata precedes ASR and identity follows acoustic grouping; metadata failure does not discard ASR',async t=>{
  for(const unavailable of [false,true]){

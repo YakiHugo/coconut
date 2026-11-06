@@ -24,10 +24,13 @@ export function serviceConfig(env=process.env){
   if(modelDirectory&&!path.isAbsolute(modelDirectory))throw Error('COCONUT_MODEL_DIRECTORY must be absolute.');
   if(env.COCONUT_ASR_EXECUTOR_URL)throw Error('Standalone transcription now runs directly; configure COCONUT_ASR_PYTHON instead of COCONUT_ASR_EXECUTOR_URL.');
   const backend=env.COCONUT_ASR_BACKEND||'qwen-mlx';
-  if(!['qwen-mlx','faster-whisper'].includes(backend))throw Error('Unsupported COCONUT_ASR_BACKEND');
+  if(!['qwen-mlx','moss-mlx','faster-whisper'].includes(backend))throw Error('Unsupported COCONUT_ASR_BACKEND');
   const root=modelDirectory||path.join(homedir(),'.coconut','models');
-  const asrProfile={backend,model_cache:modelDirectory||undefined,asr_model:env.COCONUT_ASR_MODEL||path.join(root,'Qwen3-ASR-1.7B-8bit'),align_model:env.COCONUT_ALIGN_MODEL||path.join(root,'Qwen3-ForcedAligner-0.6B-8bit'),
-    segmentation:env.COCONUT_SPEAKER_SEGMENTATION_MODEL||'',embedding:env.COCONUT_SPEAKER_EMBEDDING_MODEL||''};
+  // Each backend is a complete recipe. Inactive Qwen/acoustic settings must
+  // neither make MOSS unavailable nor change the identity of its cached work.
+  const moss=backend==='moss-mlx';
+  const asrProfile={backend,model_cache:modelDirectory||undefined,asr_model:env.COCONUT_ASR_MODEL||path.join(root,moss?'MOSS-Transcribe-Diarize-MLX-8bit':'Qwen3-ASR-1.7B-8bit'),align_model:moss?'':env.COCONUT_ALIGN_MODEL||path.join(root,'Qwen3-ForcedAligner-0.6B-8bit'),
+    segmentation:moss?'':env.COCONUT_SPEAKER_SEGMENTATION_MODEL||'',embedding:moss?'':env.COCONUT_SPEAKER_EMBEDDING_MODEL||''};
   for(const value of [asrProfile.asr_model,asrProfile.align_model,asrProfile.segmentation,asrProfile.embedding])if(value&&!path.isAbsolute(value))throw Error('Transcription models require absolute local paths.');
   const reviewProvider=env.COCONUT_TRANSCRIPT_REVIEW_PROVIDER||'',reviewModel=env.COCONUT_TRANSCRIPT_REVIEW_MODEL||'';
   if(reviewProvider&&!['codex','kimi'].includes(reviewProvider))throw Error('Unsupported transcript review provider');

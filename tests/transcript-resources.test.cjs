@@ -36,3 +36,24 @@ test('word clocks reach the speaker stage and cannot be rewritten by its result'
  assert.throws(()=>R.mergeProcessingResult(current,input,input),/已变化/);
  d.segments[0].words[0].start=2;assert.equal(input.segments[0].words[0].start,1,'snapshot must not share mutable word objects');
 });
+
+test('native scope and time evidence survive processing and cannot be upgraded by a model result',()=>{
+ const d=doc();Object.assign(d.segments[0],{speaker:'第1块 · S01',speaker_id:'speaker-0001',speaker_scope:'chunk',chunk_index:0,
+  provider_speaker:'0:S01',timing_basis:'native_segment',alignment_status:'unavailable',boundary_status:'nonoverlapping_chunk'});
+ const input=R.processingSnapshot(d),result=structuredClone(input);result.segments[0].text+='。';
+ const merged=R.mergeProcessingResult(d,input,result);
+ for(const field of ['speaker_scope','chunk_index','provider_speaker','timing_basis','alignment_status','boundary_status']){
+  assert.equal(input.segments[0][field],d.segments[0][field]);assert.equal(merged.segments[0][field],d.segments[0][field]);
+  const changed=structuredClone(result);changed.segments[0][field]=field==='chunk_index'?1:'changed';
+  assert.throws(()=>R.mergeProcessingResult(d,input,changed),/作用域或时间依据/);
+  const current=structuredClone(d);current.segments[0][field]=field==='chunk_index'?1:'changed';
+  assert.throws(()=>R.mergeProcessingResult(current,input,result),/已变化/);
+ }
+ assert.equal(Object.hasOwn(merged.segments[0],'words'),false);
+});
+
+test('legacy resource signatures do not gain absent native metadata fields',()=>{
+ const d=doc();
+ assert.equal(R.sourceSignature(d),JSON.stringify({key:d.key,language:d.language,source_url:d.source_url,media_duration:10,
+  provenance:{kind:'automatic_subtitles'},segments:d.segments.map(({id,start,end,text,speaker})=>({id,start,end,text,speaker}))}));
+});

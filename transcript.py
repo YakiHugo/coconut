@@ -45,9 +45,11 @@ def make_document(result: dict, title: str, source_url: str) -> dict:
         if not text.strip():
             continue
         speaker = segment.get('speaker')
+        if 'speaker_scope' in segment and segment['speaker_scope'] not in ('chunk', 'recording'):
+            raise ValueError(f'Invalid speaker scope in segment {index + 1}')
         segments.append({'id': f'segment-{index + 1}', 'start': start, 'end': end,
                          'text': text.strip(), 'speaker': speaker if isinstance(speaker, str) else None})
-        for key in ('speaker_id', 'speaker_status', 'chunk_index', 'provider_speaker', 'boundary_status', 'alignment_status', 'timing_basis', 'words'):
+        for key in ('speaker_id', 'speaker_scope', 'speaker_status', 'chunk_index', 'provider_speaker', 'boundary_status', 'alignment_status', 'timing_basis', 'words'):
             if key in segment:
                 segments[-1][key] = segment[key]
     if not segments:

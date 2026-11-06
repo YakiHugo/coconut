@@ -51,6 +51,64 @@ class AdapterTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             model_files('model/name')
 
+    def test_moss_probe_needs_its_own_model_but_not_qwen_or_sherpa(self):
+        directory = Path(self.profile['asr_model'])
+        (directory / 'config.json').write_text(json.dumps({'model_type': 'moss_transcribe_diarize'}))
+        profile = {**self.profile, 'backend': 'moss-mlx', 'align_model': '/absent/qwen',
+                   'segmentation': '/absent/segmentation', 'embedding': '/absent/embedding'}
+        with patch('importlib.util.find_spec', side_effect=lambda name: None if name == 'sherpa_onnx' else object()):
+            status = probe(profile)
+            self.assertTrue(status['available'])
+            self.assertTrue(status['speakers'])
+            (directory / 'config.json').write_text('{}')
+            self.assertFalse(probe(profile)['available'])
+
+    def test_moss_probe_missing_runtime_does_not_select_another_engine(self):
+        with patch('importlib.util.find_spec', return_value=None):
+            status = probe({**self.profile, 'backend': 'moss-mlx'})
+        self.assertFalse(status['available'])
+        self.assertEqual(status['code'], 'missing_dependencies')
+        self.assertIn('MOSS', status['message'])
+
+    def test_moss_worker_uses_native_recipe_without_qwen_alignment_or_acoustic_overwrite(self):
+        from audio_pipeline import _file_digest
+        calls = []
+        native = dict(language=None, segments=[dict(start=.1, end=1.8, text='刘源你好。',
+            speaker='第1块 · S01', speaker_id='speaker-0001', provider_speaker='0:S01',
+            speaker_scope='chunk', speaker_status='native_chunk_local',
+            timing_basis='native_segment', alignment_status='unavailable', chunk_index=0)],
+            pipeline=dict(version='moss-native-v1', chunks=2, duration=2,
+                          speaker_count=2, speaker_method='moss-native-v1'))
+        def recognize(source, **options):
+            calls.append((source, options))
+            options['progress'](0, 2)
+            return copy.deepcopy(native)
+        profile = {**self.profile, 'backend': 'moss-mlx',
+                   'segmentation': '/unused/sherpa', 'embedding': '/unused/embedding'}
+        work = self.root / 'moss-worker'
+        with patch('transcription.probe', return_value={'available': True}), \
+                patch.dict('sys.modules', {'moss_asr': types.SimpleNamespace(run_moss_pipeline=recognize)}), \
+                patch('transcription.QwenBackend', side_effect=AssertionError('Qwen must not run')), \
+                patch('audio_speakers.SherpaSpeakerBackend', side_effect=AssertionError('Sherpa must not run')), \
+                contextlib.redirect_stdout(io.StringIO()):
+            run(dict(profile=profile, input=str(self.audio), work=str(work),
+                     sha256=_file_digest(self.audio), title='对话刘元', hotwords=['刘元'],
+                     name_corrections={'刘源': '刘元'}))
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(calls[0][1]['model_path'], profile['asr_model'])
+        self.assertEqual(calls[0][1]['hotwords'], ['刘元'])
+        document = json.loads((work / 'result.json').read_text())
+        cue = document['segments'][0]
+        self.assertEqual(cue['text'], '刘元你好。')
+        self.assertEqual(cue['original_text'], '刘源你好。')
+        self.assertEqual(cue['speaker_scope'], 'chunk')
+        self.assertEqual(cue['timing_basis'], 'native_segment')
+        self.assertNotIn('words', cue)
+        self.assertEqual((cue['start'], cue['end']), (.1, 1.8))
+        self.assertEqual(document['provenance']['backend'], 'moss-mlx')
+        self.assertEqual(document['provenance']['speaker_method'], 'moss-native-v1')
+        self.assertEqual(document['provenance']['language_basis'], 'unknown')
+
     def test_title_and_names_reach_qwen_and_changed_context_uses_separate_checkpoints(self):
         calls = []
         def recognize(*args, **kwargs):
