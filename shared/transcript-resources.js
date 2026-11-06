@@ -1,6 +1,7 @@
 'use strict';
 // Pure resource planning and conservative merge; no fetching, models or storage.
-const CUE_FIELDS=['id','start','end','text','speaker','original_text','original_speaker','speaker_id','speaker_status','words'];
+const EVIDENCE_FIELDS=['speaker_scope','chunk_index','provider_speaker','timing_basis','alignment_status','boundary_status'];
+const CUE_FIELDS=['id','start','end','text','speaker','original_text','original_speaker','speaker_id','speaker_status','words',...EVIDENCE_FIELDS];
 const PROVENANCE_FIELDS=['kind','language','caption_method','caption_track','media_id','source_platform','punctuation_method','punctuation_backend','punctuation_model','punctuation_status','speaker_method','speaker_backend','speaker_model','speaker_status'];
 const RESULT_FIELDS=PROVENANCE_FIELDS.filter(key=>key.startsWith('punctuation_')||key.startsWith('speaker_'));
 const select=(value,fields)=>Object.fromEntries(fields.filter(key=>Object.hasOwn(value||{},key)).map(key=>[key,value[key]]));
@@ -48,6 +49,7 @@ function mergeProcessingResult(current,input,result){
   if(before.speaker&&after.speaker!==before.speaker)throw Error('整理结果改变了已有说话人标签。');
   if(before.original_text!==undefined&&after.original_text!==before.original_text)throw Error('整理结果改变了原始文字记录。');
   if(JSON.stringify(before.words??null)!==JSON.stringify(after.words??null))throw Error('整理结果改变了逐词时间，未接收。');
+  if(EVIDENCE_FIELDS.some(field=>Object.hasOwn(before,field)&&after[field]!==before[field]))throw Error('整理结果改变了人物作用域或时间依据，未接收。');
   const next={...cue};
   for(const field of CUE_FIELDS.slice(3))if(Object.hasOwn(after,field))next[field]=after[field];
   if(after.text!==before.text&&!Object.hasOwn(next,'original_text'))next.original_text=before.text;

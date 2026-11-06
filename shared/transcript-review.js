@@ -12,7 +12,8 @@ function context(document){
  const terms=supplied.filter(t=>object(t)&&typeof t.term==='string'&&t.term.trim()&&typeof t.source==='string'&&t.source.trim()).slice(0,100).map(t=>({term:t.term.slice(0,120),source:t.source.slice(0,1000)}));
  return {title:String(document.title||'').slice(0,1000),source_url:String(document.source_url||'').slice(0,2000),description:String(document.podcast_source?.description||'').slice(0,6000),participants,terms};
 }
-function snapshot(document){return {key:document.key||'',context:context(document),segments:document.segments.map(c=>({id:c.id,start:c.start,end:c.end,text:c.text,speaker:c.speaker??null,speaker_id:c.speaker_id??null,...(c.original_text!==undefined?{original_text:c.original_text}:{}),...(c.words?{words:c.words.map(w=>({...w}))}:{})}))};}
+const EVIDENCE_FIELDS=['speaker_scope','chunk_index','provider_speaker','timing_basis','alignment_status','boundary_status'];
+function snapshot(document){return {key:document.key||'',context:context(document),segments:document.segments.map(c=>({id:c.id,start:c.start,end:c.end,text:c.text,speaker:c.speaker??null,speaker_id:c.speaker_id??null,...(c.original_text!==undefined?{original_text:c.original_text}:{}),...(c.words?{words:c.words.map(w=>({...w}))}:{}),...Object.fromEntries(EVIDENCE_FIELDS.filter(field=>Object.hasOwn(c,field)).map(field=>[field,c[field]]))}))};}
 const signature=document=>JSON.stringify(snapshot(document));
 function plan(document){
  const input=snapshot(document);

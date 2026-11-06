@@ -48,8 +48,9 @@ def model_files(directory):
 def probe(profile):
     backend = profile.get('backend')
     try:
-        speakers = bool(profile.get('segmentation') or profile.get('embedding'))
-        if speakers:
+        acoustic_speakers = backend != 'moss-mlx' and bool(profile.get('segmentation') or profile.get('embedding'))
+        speakers = backend == 'moss-mlx' or acoustic_speakers
+        if acoustic_speakers:
             if not profile.get('segmentation') or not profile.get('embedding'):
                 raise ValueError('Both speaker models are required')
             if importlib.util.find_spec('sherpa_onnx') is None:
@@ -58,12 +59,16 @@ def probe(profile):
                 file = Path(profile[name])
                 if not file.is_absolute() or not file.is_file() or file.stat().st_size == 0:
                     raise ValueError('Missing local speaker model')
-        if backend == 'qwen-mlx':
+        if backend in ('qwen-mlx', 'moss-mlx'):
             for package in ('mlx', 'mlx_audio', 'av'):
                 if importlib.util.find_spec(package) is None:
-                    return dict(available=False, code='missing_dependencies', message='本地 Qwen / MLX 环境未准备；不会自动安装或下载模型。')
+                    name = 'MOSS' if backend == 'moss-mlx' else 'Qwen'
+                    return dict(available=False, code='missing_dependencies', message=f'本地 {name} / MLX 环境未准备；不会自动安装或下载模型。')
             model_files(profile.get('asr_model', ''))
-            model_files(profile.get('align_model', ''))
+            if backend == 'qwen-mlx':
+                model_files(profile.get('align_model', ''))
+            elif json.loads((Path(profile['asr_model']) / 'config.json').read_text()).get('model_type') != 'moss_transcribe_diarize':
+                raise ValueError('Expected a local MOSS transcription model')
         elif backend == 'faster-whisper':
             from local_asr import executor_status
             status = executor_status()
@@ -280,7 +285,7 @@ def run(request):
         raise ValueError('Invalid verified speaker count')
     emit(phase='prepare')
     speaker_backend = None
-    if profile.get('segmentation') or profile.get('embedding'):
+    if profile['backend'] != 'moss-mlx' and (profile.get('segmentation') or profile.get('embedding')):
         from audio_speakers import SherpaSpeakerBackend
         if not profile.get('segmentation') or not profile.get('embedding'):
             raise ValueError('Both acoustic models are required')
@@ -299,6 +304,13 @@ def run(request):
         result = run_audio_pipeline(source, backend, local_only=True, **options)
         result['segments'] = sentence_segments(result['segments'])
         model = Path(profile['asr_model']).name
+    elif profile['backend'] == 'moss-mlx':
+        from moss_asr import run_moss_pipeline
+        result = run_moss_pipeline(source, model_path=profile['asr_model'],
+                                   work_dir=work / 'moss', title=request.get('title', ''),
+                                   hotwords=request.get('hotwords'),
+                                   progress=lambda index, total: emit(phase='recognize', chunk=index + 1, chunks=total))
+        model = Path(profile['asr_model']).name
     else:
         from transcribe import transcribe_fast
         result = transcribe_fast(source, None, model_name='small', device='cpu', compute_type='int8',
@@ -306,7 +318,7 @@ def run(request):
         model = 'small'
     document = make_document(result, request.get('title', '文字稿'), '')
     document['provenance'] = dict(kind='local_asr', backend=profile['backend'], model=model,
-        caption_method='asr', review_status='unreviewed', language_basis='asr_detected',
+        caption_method='asr', review_status='unreviewed', language_basis='asr_detected' if result.get('language') else 'unknown',
         alignment_warning=result.get('alignment_warning'), source_sha256=request['sha256'],
         speaker_method=result['pipeline']['speaker_method'], audio_pipeline=result['pipeline']['version'])
     if profile['backend'] == 'qwen-mlx' and profile.get('segmentation'):

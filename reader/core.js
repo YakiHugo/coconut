@@ -1132,8 +1132,14 @@
   if(!doc||!Array.isArray(doc.segments)||!['cue','speaker'].includes(scope))throw new Error('说话人修正范围无效');
   const selected=doc.segments.find(cue=>cue.id===cueId);
   if(!selected||typeof selected.speaker!=='string'||!selected.speaker.trim())throw new Error('此片段没有可修正的结构化说话人标签');
+  const sameSpeaker=cue=>{
+   if(cue.speaker!==selected.speaker)return false;
+   if(selected.speaker_scope!=='chunk')return cue.speaker_scope!=='chunk';
+   return cue.speaker_scope==='chunk'&&cue.chunk_index===selected.chunk_index&&
+    (selected.speaker_id?cue.speaker_id===selected.speaker_id:cue.id===selected.id);
+  };
   return {selected,targets:doc.segments.flatMap((cue,position)=>
-   (scope==='cue'?cue.id===cueId:cue.speaker===selected.speaker)?[{cue,position}]:[])};
+   (scope==='cue'?cue.id===cueId:sameSpeaker(cue))?[{cue,position}]:[])};
  }
  function speakerCorrectionOrigin(cue){
   if(Object.hasOwn(cue,'original_speaker')){
@@ -1153,6 +1159,7 @@
    // Retain only displayed fields and restoration provenance by value. Large
    // translations/history are unrelated, and strings need no serialized copy.
    return {id:cue.id,position,start:cue.start,end:cue.end,text:cue.text,fromSpeaker:cue.speaker,
+    speakerId:cue.speaker_id,speakerScope:cue.speaker_scope,chunkIndex:cue.chunk_index,
     hasOriginalSpeaker:Object.hasOwn(cue,'original_speaker'),originalSpeaker:cue.original_speaker,
     toSpeaker,changed:cue.speaker!==toSpeaker};
   });
@@ -1173,6 +1180,7 @@
     const saved=plan.changes[i];
     return position!==saved.position||cue.id!==saved.id||cue.start!==saved.start||cue.end!==saved.end||
      cue.text!==saved.text||cue.speaker!==saved.fromSpeaker||Object.hasOwn(cue,'original_speaker')!==saved.hasOriginalSpeaker||
+     cue.speaker_id!==saved.speakerId||cue.speaker_scope!==saved.speakerScope||cue.chunk_index!==saved.chunkIndex||
      cue.original_speaker!==saved.originalSpeaker;
    }))return conflict();
   // Build everything before the single synchronous document assignment. Unrelated
@@ -1345,6 +1353,7 @@
 			if(Object.hasOwn(s,'original_speaker'))speakerCorrectionOrigin(s);
             if(s.speaker_id!==undefined&&s.speaker_id!==null&&
                (typeof s.speaker_id!=='string'||!/^speaker-[0-9]{4,6}$/.test(s.speaker_id)))throw new Error('全局说话人标识无效');
+            if(s.speaker_scope!==undefined&&!['chunk','recording'].includes(s.speaker_scope))throw new Error('说话人作用域无效');
             if(s.words!==undefined&&(!Array.isArray(s.words)||s.words.length>10000))throw new Error('逐词时间无效');
             let priorWord=s.start;
             const words=s.words?.map(w=>{
@@ -1367,10 +1376,13 @@
 					: {}),
 				speaker: typeof s.speaker === "string" ? s.speaker : null,
                 ...(s.speaker_id!==undefined?{speaker_id:s.speaker_id}:{}),
+                ...(s.speaker_scope!==undefined?{speaker_scope:s.speaker_scope}:{}),
                 ...(typeof s.speaker_status==='string'?{speaker_status:s.speaker_status.slice(0,100)}:{}),
                 ...(Number.isSafeInteger(s.chunk_index)&&s.chunk_index>=0?{chunk_index:s.chunk_index}:{}),
                 ...(typeof s.provider_speaker==='string'?{provider_speaker:s.provider_speaker.slice(0,200)}:{}),
                 ...(typeof s.boundary_status==='string'?{boundary_status:s.boundary_status.slice(0,100)}:{}),
+                ...(typeof s.timing_basis==='string'?{timing_basis:s.timing_basis.slice(0,100)}:{}),
+                ...(typeof s.alignment_status==='string'?{alignment_status:s.alignment_status.slice(0,100)}:{}),
                 ...(words?{words}:{}),
                 ...(Object.hasOwn(s,'original_speaker')?{original_speaker:s.original_speaker}:{}),
 				translations: cleanTranslations(s.translations),

@@ -3,6 +3,11 @@
 > remains available independently. Both share the bounded audio/timing helpers.
 > Complete word coverage is checked before cropping; incomplete alignment keeps
 > the source text with coarse segment timing instead of reconstructing it.
+> The service defaults to Qwen. Select the independent MOSS recipe with
+> `COCONUT_ASR_BACKEND=moss-mlx`; its native segment times, bounded non-overlapping
+> chunks and chunk-scoped speakers are described in
+> [transcription-engines.md](transcription-engines.md). The context/ownership and
+> acoustic registry rules below describe the shared legacy pipeline, not MOSS.
 
 # 长音频共用处理流程
 
