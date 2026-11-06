@@ -15,11 +15,12 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
       - name: Install deterministic renderer test dependencies
-        run: npm ci --ignore-scripts
+        run: pnpm --filter . install --frozen-lockfile --ignore-scripts
       - run: node --test tests/desktop-*.test.mjs
   caption-helper:
     name: Native caption helper (${{ matrix.arch }})
@@ -33,6 +34,7 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
@@ -62,11 +64,12 @@ jobs:
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-          cache: npm
-          cache-dependency-path: desktop/package-lock.json
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
       - uses: actions/download-artifact@v4
         with:
           name: caption-helper-darwin-arm64
@@ -75,15 +78,15 @@ jobs:
         with:
           name: caption-helper-darwin-x64
           path: desktop/helper-build/darwin-x64
-      - run: npm ci --prefix desktop
+      - run: pnpm install --frozen-lockfile
       - name: Install packaged-app acceptance tools without browser downloads
-        run: npm ci --ignore-scripts
+        run: pnpm --filter . install --frozen-lockfile --ignore-scripts
       - name: Run the real Electron reader without model calls
         run: COCONUT_SMOKE_TEST=1 desktop/node_modules/.bin/electron desktop
       - name: Package and seal arm64 and x64 development apps without a signing identity
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
-        run: npm run package:mac --prefix desktop
+        run: pnpm --dir desktop run package:mac
       - name: Gate exact ZIPs on strict code signatures and reject resource tampering
         run: node tests/desktop-mac-signature-proof.mjs
       - name: Verify package contents

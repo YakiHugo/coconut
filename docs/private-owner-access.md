@@ -45,7 +45,7 @@ COCONUT_BACKEND_LABEL='My computer' \
 node desktop/server.mjs --port 8080
 ```
 
-The same variables work with `npm run dev`. Both real entrypoints validate the
+The same variables work with `pnpm run dev:bridge`. Both real entrypoints validate the
 profile before starting. Partial settings fail closed. The default development
 port is 8080. The optional backend label is a short human-readable name, not a
 filesystem path. The desktop packaged app does not automatically inherit/enable
@@ -97,7 +97,7 @@ from a hostname or interpret an old capability response as permanent authority.
 
 ## Verification before use
 
-Run `node --test tests/desktop-private-client.test.mjs` and `npm run test:desktop`.
+Run `node --test tests/desktop-private-client.test.mjs` and `pnpm run test:desktop`.
 The private-profile suite uses only temporary loopback servers, fictional owner
 identities and fake providers. It covers real CLI/development entrypoints,
 unauthorized requests, proxy-localhost downgrade, Funnel, duplicate headers,

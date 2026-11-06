@@ -9,10 +9,10 @@ WORKFLOW = (ROOT / '.github/workflows/browser-acceptance.yml').read_text()
 class BrowserWorkflowTests(unittest.TestCase):
     def test_react_job_is_separate_and_uploads_only_authored_allowlist(self):
         job = WORKFLOW.split('\n  react-source-first:', 1)[1]
-        self.assertIn('run: npm run test:react-browser', job)
-        self.assertIn('run: npm run test:react-matrix', job)
+        self.assertIn('run: pnpm run test:react-browser', job)
+        self.assertIn('run: pnpm run test:react-matrix', job)
         self.assertEqual(job.count("if: ${{ !cancelled() && steps.react_setup.outcome == 'success' }}"), 4)
-        self.assertIn('run: npm run check:reader-ui', job)
+        self.assertIn('run: pnpm run check:reader-ui', job)
         self.assertNotIn('continue-on-error', job)
         paths = re.findall(r'^            \$\{\{ runner.temp \}\}/coconut-react-authored/(.+)$', job, re.M)
         self.assertEqual(paths, ['react-discover-1360.png', 'react-reading-1360.png',
@@ -42,10 +42,12 @@ class BrowserWorkflowTests(unittest.TestCase):
         setup = next(i for i, step in enumerate(steps) if step.get('id') == 'react_setup')
         for step in steps[:setup + 1]:
             self.assertNotIn('if', step)
-        suites = [step for step in steps if step.get('run', '').startswith('npm run test:')]
+        suites = [step for step in steps if step.get('run', '').startswith('pnpm run test:')]
         self.assertEqual([step['run'] for step in suites], [
-            'npm run test:react-browser', 'npm run test:react-matrix', 'npm run test:react-palette-browser', 'npm run test:service-browser'])
+            'pnpm run test:dev', 'pnpm run test:react-browser', 'pnpm run test:react-matrix', 'pnpm run test:react-palette-browser', 'pnpm run test:service-browser'])
         for step in suites:
+            if step['run'] == 'pnpm run test:dev':
+                continue
             self.assertEqual(step['if'], "${{ !cancelled() && steps.react_setup.outcome == 'success' }}")
         for step in steps:
             self.assertNotIn('continue-on-error', step)

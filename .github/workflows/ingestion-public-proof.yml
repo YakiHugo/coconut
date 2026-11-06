@@ -23,12 +23,13 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-          cache: npm
-      - run: npm ci --ignore-scripts
-      - run: npx playwright install --with-deps chromium
+          cache: pnpm
+      - run: pnpm --filter . install --frozen-lockfile --ignore-scripts
+      - run: pnpm exec playwright install --with-deps chromium
       - name: Verify public episode, guarded audio download, decoding and seek
         run: COCONUT_LIVE_PODCAST_MEDIA=1 node tests/podcast-public-smoke.mjs
 # No account, credentials, paid inference or model download. A media pass is not
@@ -40,15 +41,16 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - run: npm ci --ignore-scripts
-      - run: npx tsc -p frontend/tsconfig.json
+      - run: pnpm --filter . install --frozen-lockfile --ignore-scripts
+      - run: pnpm exec tsc -p frontend/tsconfig.json
       - run: node --test tests/react-ingestion-media.test.mjs tests/react-ingestion-binding.test.mjs tests/react-ingestion-jobs.test.mjs tests/react-video-audio.test.mjs tests/desktop-video-audio.test.mjs
       - run: python -m unittest discover -s tests -p 'test_public_video_media.py' -v
-      - run: npm run build:reader-ui
-      - run: npx playwright install --with-deps chromium
+      - run: pnpm run build:reader-ui
+      - run: pnpm exec playwright install --with-deps chromium
       - run: node tests/react-video-audio-browser.mjs
       - name: Return exact generated public reader assets for review
         run: |
@@ -66,6 +68,7 @@ jobs:
     timeout-minutes: 3
     steps:
       - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
@@ -118,6 +121,7 @@ jobs:
           assert memory >= 6*1024**3 and free >= 6*1024**3 and os.cpu_count() >= 2
           PY
           # faster-whisper decodes with the explicitly installed PyAV wheel; no ffmpeg CLI is needed.
+      - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
@@ -126,8 +130,8 @@ jobs:
           python-version: '3.12'
       - name: Prepare explicitly approved ephemeral optional ASR environment
         run: |
-          npm ci --ignore-scripts
-          npx playwright install --with-deps chromium
+          pnpm --filter . install --frozen-lockfile --ignore-scripts
+          pnpm exec playwright install --with-deps chromium
           python -m venv .venv-proof
           .venv-proof/bin/python -m pip install --disable-pip-version-check --no-input --only-binary=:all: faster-whisper==1.2.1 av==16.1.0
       - name: Prepare pinned caption dependencies for public video proof

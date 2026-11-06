@@ -1,6 +1,8 @@
+> 完整本地开发入口为 `pnpm dev`，字幕环境等配置可放入 `.env`。下文 `pnpm dev:bridge` 是保留的轻量助手诊断入口。
+
 # 开发模式获取现成字幕
 
-`npm run dev` 默认不运行 Python。显式配置可信 Python 后，Node 开发入口可获取公开 X、YouTube、Bilibili 原语言现成字幕。这里的“就绪”表示依赖和协议可用，不保证平台允许此次公开访问。`npm run start:light` 和已发布安装包不因源码配置而改变。
+`pnpm run dev:bridge` 默认不运行 Python。显式配置可信 Python 后，Node 开发入口可获取公开 X、YouTube、Bilibili 原语言现成字幕。这里的“就绪”表示依赖和协议可用，不保证平台允许此次公开访问。`pnpm run start:light` 和已发布安装包不因源码配置而改变。
 
 ### 在 macOS 开发服务中复用 Edge 的 B 站登录
 
@@ -20,16 +22,16 @@
 python3 --version  # 必须为 3.10+；否则用已有可信 Python 3.10+ 的绝对路径替换下面的 python3
 python3 -m venv .venv-captions
 .venv-captions/bin/python -m pip install --require-hashes --only-binary=:all: --no-deps -r desktop/development-caption-requirements.txt
-COCONUT_CAPTION_PYTHON="$PWD/.venv-captions/bin/python" npm run dev
+COCONUT_CAPTION_PYTHON="$PWD/.venv-captions/bin/python" pnpm run dev:bridge
 ```
 
 或直接复用已有可信解释器的绝对路径：
 
 ```sh
-COCONUT_CAPTION_PYTHON=/absolute/path/to/venv/bin/python npm run dev
+COCONUT_CAPTION_PYTHON=/absolute/path/to/venv/bin/python pnpm run dev:bridge
 ```
 
-先确认服务端口未被占用。另一个终端运行 `npm run doctor`，或查看 `GET /api/captions/status`。每个平台分别报告是否启用。未配置、依赖缺失或校验失败不会妨碍阅读；修改环境后需自行重启服务。HTTP/页面不能更改解释器或执行命令。
+先确认服务端口未被占用。另一个终端运行 `pnpm run doctor`，或查看 `GET /api/captions/status`。每个平台分别报告是否启用。未配置、依赖缺失或校验失败不会妨碍阅读；修改环境后需自行重启服务。HTTP/页面不能更改解释器或执行命令。
 
 - `CAPTION_PYTHON_VERSION`：指定解释器低于 Python 3.10；先选择已有可信 3.10+ 解释器并重新创建独立环境，不要在旧环境反复安装依赖。
 - `CAPTION_CONFIGURATION`：解释器不是绝对路径
@@ -47,7 +49,7 @@ COCONUT_CAPTION_PYTHON=/absolute/path/to/venv/bin/python npm run dev
 
 ```sh
 COCONUT_CAPTION_PYTHON=/absolute/path/to/venv/bin/python \
-COCONUT_CAPTION_PROXY=http://127.0.0.1:7897 npm run dev
+COCONUT_CAPTION_PROXY=http://127.0.0.1:7897 pnpm run dev:bridge
 ```
 
 这是手动启用示例，不会自动修改 macOS、VPN、系统代理或 DNS。只有确认信任该本机代理后才启用；修改后需重启服务。未设置时仍为原有直连模式。仅接受 `http://127.0.0.1:端口` 或 `http://[::1]:端口`，端口 1–65535，可带结尾 `/`；不接受用户名/密码、主机别名、远程代理、SOCKS、查询或其他路径。空字符串和错误配置失败关闭，不自动回退直连。`CAPTION_PROXY_CONFIGURATION` 表示启动配置无效。

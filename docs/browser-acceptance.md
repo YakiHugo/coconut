@@ -27,14 +27,14 @@
 
 ## 本地复现
 
-在允许运行 Chromium 的开发环境安装 npm 开发依赖、官方 Playwright Chromium 和 ffmpeg 后：
+在允许运行 Chromium 的开发环境安装 pnpm 开发依赖、官方 Playwright Chromium 和 ffmpeg 后：
 
 ```bash
 work=$(mktemp -d)
 python scripts/prepare_browser_acceptance.py --mode synthetic --directory "$work"
 COCONUT_ACCEPTANCE_MODE=synthetic \
 COCONUT_ACCEPTANCE_DATA_DIR="$work" \
-COCONUT_ACCEPTANCE_RESULT="$work/acceptance-result.json" npm run test:browser
+COCONUT_ACCEPTANCE_RESULT="$work/acceptance-result.json" pnpm run test:browser
 rm -rf -- "$work"
 ```
 

@@ -73,7 +73,7 @@ export async function startDevelopmentBridge({port = 8080, taskDirectory = DEVEL
 }
 
 if (process.argv[1] && await realpath(process.argv[1]).catch(()=>null) === fileURLToPath(import.meta.url)) {
-  if (process.argv.length > 2) throw new Error('Usage: npm run dev (fixed development port 8080)');
+  if (process.argv.length > 2) throw new Error('Usage: pnpm run dev:bridge (fixed development port 8080)');
   const {server, origin, taskDirectory, libraryDirectory, library, executor, captions, captionDiagnostic,podcastNetworkMode} = await startDevelopmentBridge({privateProxy:privateProxyFromEnvironment()});
   console.log(`Coconut 开发阅读器：${origin}`);
   console.log(`开发任务目录：${taskDirectory}`);
@@ -84,7 +84,7 @@ if (process.argv[1] && await realpath(process.argv[1]).catch(()=>null) === fileU
   if(captions.available)console.log(captions.networkMode==='environment_proxy'?'视频来源网络：显式使用启动环境代理与 NO_PROXY；不是系统 / PAC 自动发现，X 不变。':captions.networkMode==='trusted_local_proxy'?'字幕网络：YouTube / Bilibili 使用所有者配置的可信本机代理；X 不变。':'字幕网络：直连公网；未继承系统代理。');
   if(captions.available)console.log(captionDiagnostic?.audioFallback?`公开媒体：${captions.networkMode==='environment_proxy'?'通过启动环境代理配置获取':captions.networkMode==='trusted_local_proxy'?'通过已配置本机代理获取':'直连'} M4A 或单文件 MP4；须先确认无匹配字幕并明确下载。来源限制仍会停止。`:'公开音轨：当前助手未提供可用的媒体获取协议。');
   if(!captions.available){console.log(captionSetupGuidance(captions.code,captionDiagnostic));console.log(CAPTION_START_GUIDANCE);}
-  console.log('未发起模型请求。reader 修改后刷新页面；desktop 服务修改后 Ctrl+C 再运行 npm run dev。');
+  console.log('未发起模型请求。reader 修改后刷新页面；desktop 服务修改后 Ctrl+C 再运行 pnpm run dev:bridge。');
   const stop = () => server.shutdown().catch(() => { process.exitCode = 1; });
   process.on('SIGINT', stop);
   process.on('SIGTERM', stop);

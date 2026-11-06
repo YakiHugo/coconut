@@ -1,4 +1,4 @@
-import {processingSnapshot,sourceSignature,inspectResources,mergeProcessingResult,type ResourceDocument,type ResourceRow} from '../../shared/transcript-resources.js';
+import {processingSnapshot,sourceSignature,inspectResources,mergeProcessingResult,type ResourceDocument,type ResourceRow} from '@coconut/shared/transcript-resources.js';
 import type {Document,Media} from './contracts';
 import {downloadedMediaFile,transcriptionFileIssue} from './ingestion-media';
 export type ReadabilityCapabilities={available:boolean;punctuation:boolean;speakers:boolean;sourceMedia?:boolean;message:string};

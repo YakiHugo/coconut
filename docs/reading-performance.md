@@ -57,7 +57,7 @@ At every size, first-render passage builds fall from 9 to 1; twenty control refr
 
 ### Verification
 
-- `npm test`: 418 passed, no failures or skips, including five new deterministic regressions. A seeded oracle comparison covers arbitrary cue order, overlap, exact endpoints and zero-duration cues; app tests cover index reuse/invalidation and replacement passage-button bounds.
+- `pnpm test`: 418 passed, no failures or skips, including five new deterministic regressions. A seeded oracle comparison covers arbitrary cue order, overlap, exact endpoints and zero-duration cues; app tests cover index reuse/invalidation and replacement passage-button bounds.
 - `python -m unittest discover -s tests -v`: 139 tests, passed with 3 existing pinned-extractor live-proof skips.
 - `python scripts/reader_assets.py --check`, JavaScript syntax checks, and `git diff --check`: passed. Only the affected script cache tokens changed in `reader/index.html`.
 - No browser or real-media performance claim is made; this is a production-module/DOM-harness measurement. Remote CI remains a separate check on the published commit.

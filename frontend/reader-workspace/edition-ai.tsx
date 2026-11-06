@@ -1,5 +1,5 @@
 import {useEffect,useRef,useState} from 'react';
-import * as Editions from '../../reader/editions.js';
+import * as Editions from '@coconut/reader/editions.js';
 import type {ReaderDocument} from './contracts';
 import type {captureEditionSelection} from './domain';
 type Selection=NonNullable<ReturnType<typeof captureEditionSelection>>;

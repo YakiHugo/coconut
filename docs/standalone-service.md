@@ -4,9 +4,11 @@ The same React application and Node service run on a Mac, a private host or a
 server behind HTTPS. Electron is optional. Use Node 22.21+ or 24.5+, then:
 
 ```sh
-npm ci --ignore-scripts
-cp .env.example .env
-npm start
+corepack enable
+pnpm --filter . install --frozen-lockfile --ignore-scripts
+# Only for a new checkout; preserve an existing .env.
+cp -n .env.example .env
+pnpm start
 ```
 
 The listener defaults to `127.0.0.1:8080`. Set `COCONUT_PORT` if that port is
@@ -15,6 +17,20 @@ to `~/.coconut/service`, containing `library/` and `tasks/`. This is deliberatel
 separate from legacy desktop/development libraries; explicitly select/copy the
 intended complete library with all writers stopped. Never run two writers over
 one directory or place a live SQLite database in cloud-sync/network storage.
+
+## Local development with hot updates
+
+Run `pnpm dev` instead of `pnpm start` to serve the React source through Vite.
+Both commands read `.env`, use the same configured port and data directory, and
+run the full Node service with direct Python tasks. React/CSS edits update in the
+browser; restart for backend or environment edits. Only one of these commands
+can run against a given library at a time. Development is loopback-only; remote
+owner deployments use `pnpm start`.
+
+Production and Electron keep the checked-in IIFE/CSS reader assets. Run
+`pnpm build:reader-ui` before committing frontend changes and
+`pnpm check:reader-ui` to verify them. This deterministic esbuild packaging
+step is separate from Vite development and needs no runtime Vite dependency.
 
 ## Browser access from other devices
 
@@ -84,7 +100,7 @@ verification boundaries. `COCONUT_ASR_BACKEND=faster-whisper` explicitly selects
 the existing CPU/int8 small baseline and reads its already prepared HF cache.
 The Linux container uses that baseline; it does not provide Apple MLX/Metal.
 
-`COCONUT_ASR_EXECUTOR_URL` is no longer accepted by `npm start`. Existing legacy
+`COCONUT_ASR_EXECUTOR_URL` is no longer accepted by `pnpm start`. Existing legacy
 Python CLI/desktop entries remain separate tools. Prior source-job rows are kept
 as legacy records, never silently re-executed. Completed old Python results stay
 in their original data directory; export/import them through the old tool.
@@ -118,7 +134,7 @@ remain the authority for reading/writing and processing availability.
 
 ## Verification
 
-`npm run test:service` uses authored local HTTP and storage fixtures. Normal CI
+`pnpm run test:service` uses authored local HTTP and storage fixtures. Normal CI
 also checks existing browser and actual packaged Electron lifecycle contracts.
 These tests never install a model or claim public-platform availability.
 
@@ -179,7 +195,7 @@ flowchart TB
   Python -->|Result only; user confirms attachment| HTTP
 ```
 
-`npm run test:service-browser` includes real Chromium, SQLite and authored WAV
+`pnpm run test:service-browser` includes real Chromium, SQLite and authored WAV
 coverage across independent browser contexts and service restart. Only the ASR
 receipts in that browser test are simulated; it does not establish live model
 quality or universal public-source access.

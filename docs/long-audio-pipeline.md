@@ -1,4 +1,4 @@
-> `npm start` now uses the direct Node-owned pipeline in
+> `pnpm start` now uses the direct Node-owned pipeline in
 > [transcription-pipeline.md](transcription-pipeline.md). The legacy CLI below
 > remains available independently. Both share the bounded audio/timing helpers.
 > Complete word coverage is checked before cropping; incomplete alignment keeps
@@ -111,7 +111,7 @@ API 密钥由 SDK 进程从环境读取，不写命令参数、文档或检查�
 ```bash
 .venv/bin/python -m unittest tests.test_audio_pipeline tests.test_transcript_readability tests.test_local_asr
 node --test tests/reader-audio-pipeline.test.mjs tests/reader-speaker-correction.test.mjs
-npm run check:reader-ui
+pnpm run check:reader-ui
 python3 scripts/reader_assets.py --check
 ```
 

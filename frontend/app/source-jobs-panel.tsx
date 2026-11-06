@@ -6,7 +6,7 @@ import type {Document} from './contracts';
 import {attachTranscript} from './attach-transcript';
 import {restoreSourceMedia} from './source-media';
 // @ts-expect-error Shared source ownership contract also runs on the server.
-import {sourceMediaIdentity} from '../../shared/source-media.js';
+import {sourceMediaIdentity} from '@coconut/shared/source-media.js';
 type Job={id:string;documentKey:string;source:string;binding:string;kind:'download'|'transcribe';assetSha256:string|null;state:string;updated:number;ingestionId:string|null;phase?:string;currentProfile?:boolean;resultAvailable?:boolean;error:string|null};
 const labels:Record<string,string>={queued:'等待中',running:'进行中',ready:'已完成',failed:'失败',interrupted:'已中断，等待核对',cancelled:'已取消'};
 function phaseLabel(phase?:string){if(!phase)return '';try{const value=JSON.parse(phase),labels:Record<string,string>={context:'整理节目人物与术语',prepare:'准备音频',recognize:'识别文字',align:'对齐时间',speakers:'区分说话人',identity:'对应人物姓名',review:'AI 校对文字稿',save:'保存结果',done:'已完成'};return (labels[value.phase]||'')+(value.chunk?' '+value.chunk+'/'+value.chunks:'');}catch{return '';}}

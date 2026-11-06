@@ -17,8 +17,8 @@ export function captionSetupGuidance(code, diagnostic) {
   const version = code === 'CAPTION_VERSION' && diagnostic?.actualVersion && /^\d{4}\.\d{1,2}\.\d{1,2}$/.test(diagnostic.actualVersion)
     ? `当前 yt-dlp=${diagnostic.actualVersion}；需要 2026.08.19。` : '';
   let commands = '';
-  if(code === 'CAPTION_UNAVAILABLE') commands = '\n先运行 python3 --version，确认是 Python 3.10+；否则先选择已有可信 Python 3.10+ 的绝对路径替换 python3。\n手动创建独立环境（仓库根目录）：python3 -m venv .venv-captions\n手动安装锁定依赖：.venv-captions/bin/python -m pip install --require-hashes --only-binary=:all: --no-deps -r desktop/development-caption-requirements.txt\n启用：COCONUT_CAPTION_PYTHON="$PWD/.venv-captions/bin/python" npm run dev';
+  if(code === 'CAPTION_UNAVAILABLE') commands = '\n先运行 python3 --version，确认是 Python 3.10+；否则先选择已有可信 Python 3.10+ 的绝对路径替换 python3。\n手动创建独立环境（仓库根目录）：python3 -m venv .venv-captions\n手动安装锁定依赖：.venv-captions/bin/python -m pip install --require-hashes --only-binary=:all: --no-deps -r desktop/development-caption-requirements.txt\n启用：COCONUT_CAPTION_PYTHON="$PWD/.venv-captions/bin/python" pnpm run dev:bridge';
   else if(['CAPTION_MISSING_YT_DLP','CAPTION_MISSING_CERTIFI','CAPTION_MISSING_DEPENDENCIES','CAPTION_VERSION'].includes(code)) commands = '\n手动安装命令（将占位路径替换为启动时指定的同一 Python）："/absolute/path/to/venv/bin/python" -m pip install --require-hashes --only-binary=:all: --no-deps -r desktop/development-caption-requirements.txt';
   return `${version}${detail} 可继续导入或粘贴字幕。详见 docs/development-captions.md；不会自动安装依赖。${commands}`;
 }
-export const CAPTION_START_GUIDANCE = '字幕启动：COCONUT_CAPTION_PYTHON=/absolute/path/to/venv/bin/python npm run dev。先确认并手动停止占用端口的旧服务；修改环境后需手动重启，再运行 npm run doctor。';
+export const CAPTION_START_GUIDANCE = '字幕启动：COCONUT_CAPTION_PYTHON=/absolute/path/to/venv/bin/python pnpm run dev:bridge。先确认并手动停止占用端口的旧服务；修改环境后需手动重启，再运行 pnpm run doctor。';
