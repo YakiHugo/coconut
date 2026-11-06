@@ -1,5 +1,5 @@
 import { useEffect, useRef, type RefObject } from 'react';
-export type ReadingKeyboardActions = Partial<Record<'find' | 'help' | 'back' | 'forward' | 'play' | 'locate', () => boolean | void>>;
+export type ReadingKeyboardActions = Partial<Record<'find' | 'help' | 'back' | 'forward' | 'play' | 'locate' | 'slower' | 'faster', () => boolean | void>>;
 export interface ReadingKeyboardOptions {
   scopeRef: RefObject<HTMLElement | null>;
   enabled: boolean;
@@ -33,7 +33,7 @@ export function useReaderKeyboard(options: ReadingKeyboardOptions) {
       if (![document.activeElement, event.target, event.composedPath()[0]].every(allowed)) return;
       const key = event.key.toLowerCase();
       if (!find && event.shiftKey && key !== '?') return;
-      const commands: Record<string, keyof ReadingKeyboardActions> = { '/': 'find', '?': 'help', j: 'back', l: 'forward', k: 'play', g: 'locate' };
+      const commands: Record<string, keyof ReadingKeyboardActions> = { '/': 'find', '?': 'help', j: 'back', l: 'forward', k: 'play', ' ': 'play', arrowleft: 'back', arrowright: 'forward', '[': 'slower', ']': 'faster', g: 'locate' };
       const command = find ? 'find' : commands[key];
       const action = command && actions[command];
       if (action && action() !== false) event.preventDefault();

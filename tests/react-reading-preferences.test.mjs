@@ -49,6 +49,10 @@ test('React preferences preserve saved keys, report failed writes, sync windows 
   assert.equal((await key('f',{ctrlKey:true})).defaultPrevented,true);assert.deepEqual(calls,['find']);
   await act(async()=>host.querySelector('input[type=checkbox]').click());assert.equal(backing.getItem(keys.shortcuts),'on');
   await key('k');assert.equal(calls.at(-1),'play');
+  for(const [keyName,command] of [[' ','play'],['ArrowLeft','back'],['ArrowRight','forward'],['[','slower'],[']','faster']]){
+    actions={...actions,[command]:()=>calls.push(command)};await act(async()=>render());
+    assert.equal((await key(keyName)).defaultPrevented,true);assert.equal(calls.at(-1),command);
+  }
   const count=calls.length;
   for(const target of [host.querySelector('textarea'),host.querySelector('button'),host.querySelector('[data-editor]')])await key('k',{},target);
   for(const options of [{repeat:true},{isComposing:true},{altKey:true},{ctrlKey:true},{shiftKey:true}])await key('k',options);

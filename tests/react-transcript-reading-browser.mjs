@@ -64,7 +64,17 @@ try {
  await page.locator('.library-page li > button').filter({hasText:fixture.title}).click();
  if(await page.getByRole('button',{name:'载入原声（最多 200 MiB）',exact:true}).count())await page.getByRole('button',{name:'载入原声（最多 200 MiB）',exact:true}).click();
  await expect.poll(()=>audio.evaluate(player=>player.duration)).toBe(260);
- const followInput=page.locator('.rw-player-follow input');
+ const workspace=page.locator('.reader-workspace');
+ const startFollowing=async(cueId='cue-70')=>{
+  await page.locator('[data-source-id="'+cueId+'"]').evaluate(node=>{const range=document.createRange();range.setStart(node.firstChild,2);range.setEnd(node.firstChild,8);getSelection().removeAllRanges();getSelection().addRange(range);node.dispatchEvent(new MouseEvent('mouseup',{bubbles:true}));});
+  await page.getByRole('button',{name:'从所选位置播放',exact:true}).click();
+  await expect(page.getByRole('button',{name:'暂停播放',exact:true})).toBeVisible();
+  await page.getByRole('button',{name:'暂停播放',exact:true}).click();
+  // Set a stable clock before measuring the following geometry.
+  const cue=fixture.segments.find(cue=>cue.id===cueId);
+  await audio.evaluate((player,time)=>{player.currentTime=time;player.dispatchEvent(new Event('timeupdate'));},cue.start+.25);
+ };
+ const locateCurrent=()=>workspace.evaluate(scope=>{scope.focus({preventScroll:true});scope.dispatchEvent(new KeyboardEvent('keydown',{key:'g',bubbles:true,cancelable:true}));});
  const settleScroll=()=>page.evaluate(()=>new Promise(resolve=>{
   let last=scrollY,stable=0;const started=performance.now();
   const sample=()=>{stable=Math.abs(scrollY-last)<1?stable+1:0;last=scrollY;if(stable>=6||performance.now()-started>2000)resolve();else requestAnimationFrame(sample);};
@@ -81,14 +91,14 @@ try {
  },cueId);
  for(const width of [1360,390])for(const mode of ['passages','transcript']){
   await page.setViewportSize({width,height:900});
-  await followInput.evaluate(input=>{if(input.checked)input.click();});
   await page.locator('.rw-mode-tabs [data-mode="'+mode+'"]').click();
   await audio.evaluate(player=>{player.pause();player.currentTime=140.25;player.dispatchEvent(new Event('timeupdate'));});
   await page.evaluate(()=>window.scrollTo({top:0,behavior:'instant'}));await settleScroll();
-  await followInput.evaluate(input=>{
-   input.click();const player=document.querySelector('audio');let ticks=0;
+  await startFollowing();await page.evaluate(()=>window.scrollTo({top:0,behavior:'instant'}));await settleScroll();
+  await audio.evaluate(player=>{
+   let ticks=0;
    const timer=setInterval(()=>{player.currentTime+=.01;player.dispatchEvent(new Event('timeupdate'));if(++ticks===8)clearInterval(timer);},60);
-  });await expect(followInput).toBeChecked();await settleScroll();
+  });await expect(workspace).toHaveAttribute('data-following','true');await settleScroll();
   const initial=await followGeometry();
   assert.ok(Math.abs(initial.top-initial.anchor)<4,JSON.stringify({width,mode,initial}));
   assert.ok(initial.bottom<initial.limit,'Speech clears the persistent player');
@@ -99,28 +109,27 @@ try {
   assert.ok(Math.abs(stationary.top-initial.top)<2,'Visible speech stays still across time updates '+JSON.stringify({width,mode,initial,stationary}));
   // Real wheel input outside .rw-cues must suspend follow and keep the chosen view.
   await page.mouse.move(width-25,120);await page.mouse.wheel(0,250);
-  await expect(followInput).not.toBeChecked();await settleScroll();const manual=await page.evaluate(()=>scrollY);
+  await expect(workspace).toHaveAttribute('data-following','false');await settleScroll();const manual=await page.evaluate(()=>scrollY);
   await audio.evaluate(player=>{player.currentTime=220.25;player.dispatchEvent(new Event('timeupdate'));});await settleScroll();
   assert.ok(Math.abs(await page.evaluate(()=>scrollY)-manual)<2,'Playback does not pull manual reading back');
   await expect(page.locator('.rw-mode-tabs [aria-selected=true]')).toHaveAttribute('data-mode',mode);
   // Explicit location uses the same anchor, even for an already-visible source.
   await audio.evaluate(player=>{player.currentTime=140.25;player.dispatchEvent(new Event('timeupdate'));});
   await page.evaluate(()=>window.scrollTo({top:0,behavior:'instant'}));await settleScroll();
-  const samples=await page.getByTitle('定位当前原话',{exact:true}).evaluate(button=>new Promise(resolve=>{
-   const positions=[],started=performance.now();button.click();
+  const samples=await workspace.evaluate(scope=>new Promise(resolve=>{
+   const positions=[],started=performance.now();scope.focus({preventScroll:true});scope.dispatchEvent(new KeyboardEvent('keydown',{key:'g',bubbles:true,cancelable:true}));
    const sample=()=>{positions.push(scrollY);if(performance.now()-started>=600)resolve(positions);else requestAnimationFrame(sample);};requestAnimationFrame(sample);
   }));
   assert.ok(new Set(samples.map(Math.round)).size>5,'Location moves through intermediate positions instead of flashing');
   await settleScroll();const located=await followGeometry();
   assert.ok(Math.abs(located.top-located.anchor)<4,JSON.stringify({width,mode,located}));
   await page.evaluate(()=>window.scrollBy({top:60,behavior:'instant'}));await settleScroll();
-  await page.getByTitle('定位当前原话',{exact:true}).click();await settleScroll();
+  await locateCurrent();await settleScroll();
   const repeated=await followGeometry();
   assert.ok(Math.abs(repeated.top-repeated.anchor)<4,'Visible speech is also aligned on explicit location');
   await audio.evaluate(player=>{player.currentTime=220.25;player.dispatchEvent(new Event('timeupdate'));});
   await settleScroll();
   // Selection Play must align even a visible source, with follow switched off.
-  await followInput.evaluate(input=>{if(input.checked)input.click();});
   const selectedSource=page.locator('[data-source-id="cue-70"]');
   await selectedSource.evaluate(node=>node.scrollIntoView({block:'center'}));await settleScroll();
   if(mode==='passages')await selectedSource.click();
@@ -128,7 +137,7 @@ try {
    const range=document.createRange();range.setStart(node.firstChild,2);range.setEnd(node.firstChild,8);
    getSelection().removeAllRanges();getSelection().addRange(range);node.dispatchEvent(new MouseEvent('mouseup',{bubbles:true}));
   });
-  await expect(followInput).not.toBeChecked();
+  await expect(workspace).toHaveAttribute('data-following','false');
   const beforeSelectionPlay=await followGeometry();
   assert.ok(Math.abs(beforeSelectionPlay.top-beforeSelectionPlay.anchor)>30,'Selection begins away from the reading anchor');
   await page.getByRole('button',{name:'从所选位置播放',exact:true}).click();
@@ -151,7 +160,8 @@ try {
   await expect(page.getByRole('button',{name:'从所选位置播放',exact:true})).toBeVisible();
   await page.evaluate(()=>window.scrollTo({top:0,behavior:'instant'}));await settleScroll();
   await expect(selectedSource).not.toBeInViewport();
-  await page.getByRole('button',{name:'从所选位置播放',exact:true}).click();await settleScroll();
+  await page.getByRole('button',{name:'从所选位置播放',exact:true}).click();
+  await expect.poll(()=>audio.evaluate(player=>player.currentTime>=140&&player.currentTime<142)).toBe(true);await settleScroll();
   const returnedSelection=await followGeometry();
   assert.ok(Math.abs(returnedSelection.top-returnedSelection.anchor)<4,JSON.stringify({width,mode,returnedSelection}));
   await page.getByRole('button',{name:'暂停播放',exact:true}).click();
@@ -162,12 +172,12 @@ try {
  // Reduced motion keeps the same destination without an animated transition.
  await page.emulateMedia({reducedMotion:'reduce'});
  await page.evaluate(()=>window.scrollTo({top:0,behavior:'instant'}));await settleScroll();
- await page.getByTitle('定位当前原话',{exact:true}).click();await settleScroll();
+ await locateCurrent();await settleScroll();
  const reduced=await followGeometry();assert.ok(Math.abs(reduced.top-reduced.anchor)<4);
  await page.emulateMedia({reducedMotion:'no-preference'});
  // Wheel input also cancels an explicit location while its animation is running.
  await page.evaluate(()=>window.scrollTo({top:0,behavior:'instant'}));await settleScroll();
- await page.getByTitle('定位当前原话',{exact:true}).evaluate(button=>button.click());
+ await locateCurrent();
  await page.mouse.move(1335,120);await page.mouse.wheel(0,180);await settleScroll();
  const interrupted=await followGeometry();
  assert.ok(Math.abs(interrupted.top-interrupted.anchor)>100,'Manual scrolling interrupts the location animation');
@@ -175,13 +185,13 @@ try {
  await page.getByRole('button',{name:'筛选与定位',exact:true}).click();
  await page.getByLabel('只看笔记',{exact:true}).check();
  await page.getByRole('button',{name:'关闭筛选与定位',exact:true}).click();
- await followInput.evaluate(input=>input.click());
+ await startFollowing('cue-0');
  await audio.evaluate(player=>{player.currentTime=140.25;player.dispatchEvent(new Event('timeupdate'));});await settleScroll();
  await expect(page.locator('[data-source-id]')).toHaveCount(1);
  await expect(page.locator('.rw-filter-status')).toContainText('只看笔记');
  // A keyboard page scroll pauses follow just like a wheel gesture.
  await page.locator('.rw-original').first().evaluate(node=>node.focus({preventScroll:true}));
- await page.keyboard.press('PageDown');await expect(followInput).not.toBeChecked();
+ await page.keyboard.press('PageDown');await expect(workspace).toHaveAttribute('data-following','false');
  await page.getByRole('button',{name:/^筛选与定位/}).click();
  await page.getByLabel('只看笔记',{exact:true}).uncheck();
  await page.getByRole('button',{name:'关闭筛选与定位',exact:true}).click();
@@ -226,7 +236,8 @@ try {
  await expect(page.locator('.rw-speaker-label').first()).toHaveText('说话人 1');
  await page.locator('.rw-speaker-label').filter({hasText:'未标注'}).first().scrollIntoViewIfNeeded();
  await expect(page.locator('.rw-speaker-label').filter({hasText:'未标注'}).first()).toBeVisible();
- // Set the reading position explicitly: scrolling can leave the prior playback cue visible on Linux fonts.
+ // Set the reading position explicitly before checking mode continuity.
+ await page.getByRole('button',{name:'从 00:00 开始播放',exact:true}).click();await page.getByRole('button',{name:'暂停播放',exact:true}).click();await settleScroll();
  await page.locator('[data-source-id]').first().evaluate(node=>node.scrollIntoView({block:'center'}));await page.getByRole('tab',{name:'逐句校对',exact:true}).click();
  await page.locator('.rw-mode-tabs [data-mode="passages"]').click();
  await page.locator('[data-source-id]').first().scrollIntoViewIfNeeded();
@@ -265,16 +276,20 @@ try {
  await expect.poll(()=>audio.evaluate(node=>node.paused)).toBe(false);
  await audio.evaluate(node=>{node.currentTime=241;node.dispatchEvent(new Event('timeupdate'));});
  await expect.poll(()=>audio.evaluate(node=>node.paused)).toBe(true);
- await page.getByRole('button',{name:'前进 15 秒',exact:true}).click();
- await expect.poll(()=>audio.evaluate(node=>node.currentTime)).toBe(255);
- await page.getByRole('button',{name:'后退 15 秒',exact:true}).click();
+ await workspace.focus();await page.keyboard.press('ArrowRight');
+ await expect.poll(()=>audio.evaluate(node=>node.currentTime)).toBe(245);
+ await page.keyboard.press('ArrowLeft');
  await expect.poll(()=>audio.evaluate(node=>node.currentTime)).toBe(240);
- await page.getByRole('combobox',{name:'播放速度',exact:true}).selectOption('1.5');
+ await page.keyboard.press(']');await expect.poll(()=>audio.evaluate(node=>node.playbackRate)).toBe(1.25);
+ await page.keyboard.press('[');await expect.poll(()=>audio.evaluate(node=>node.playbackRate)).toBe(1);
+ await page.getByRole('combobox',{name:'播放速度',exact:true}).click();
+ await page.getByRole('option',{name:'1.5×',exact:true}).click();
  assert.equal(await audio.evaluate(node=>node.playbackRate),1.5);
- await page.getByRole('button',{name:'播放原声',exact:true}).click();
+ await workspace.focus();await page.keyboard.press('Space');
  await expect.poll(()=>audio.evaluate(node=>node.paused)).toBe(false);
- await page.getByRole('button',{name:'暂停播放',exact:true}).click();
+ await page.keyboard.press('Space');
  await expect.poll(()=>audio.evaluate(node=>node.paused)).toBe(true);
+ await expect(page.locator('.rw-player-main button:not([role=combobox])')).toHaveCount(1);
  await page.getByRole('slider',{name:'播放进度',exact:true}).focus();await page.keyboard.press('Home');
  await expect.poll(()=>audio.evaluate(node=>node.currentTime)).toBe(0);
 
@@ -299,6 +314,9 @@ try {
  for(const [width,height,name] of [[1360,1000,'transcript-desktop'],[390,844,'transcript-mobile']]){
   await page.setViewportSize({width,height});await page.locator('.rw-passage').first().evaluate(node=>node.scrollIntoView({block:'start'}));
   assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1));
+  const rails=await page.evaluate(()=>['.rw-content-switch','.rw-passages','.rw-player'].map(selector=>{const box=document.querySelector(selector).getBoundingClientRect();return {x:box.x,width:box.width};}));
+  for(const rail of rails.slice(1)){assert.ok(Math.abs(rail.x-rails[0].x)<1,JSON.stringify(rails));assert.ok(Math.abs(rail.width-rails[0].width)<1,JSON.stringify(rails));}
+  await expect(page.locator('.rw-player select,.rw-player details,.rw-player-name,.rw-player-skip,.rw-player-locate,.rw-player-follow')).toHaveCount(0);
   await page.screenshot({path:path.join(output,name+'.png')});
  }
  await page.setViewportSize({width:1360,height:1000});await page.getByRole('tab',{name:'摘要',exact:true}).click();await expect(page.getByRole('searchbox')).toHaveCount(0);await expect(page.locator('.rw-summary-heading')).toBeInViewport();await page.screenshot({path:path.join(output,'summary-desktop.png')});
