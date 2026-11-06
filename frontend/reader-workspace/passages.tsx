@@ -1,16 +1,15 @@
 import { useMemo, type CSSProperties } from 'react';
 import type { ReaderCue, ReaderDocument } from './contracts';
-import { time, type SourceSelection } from './domain';
+import { time } from './domain';
 import { SourcePlaybackLink } from './source';
 import {speechParts} from './speech';
 
-function SpeechText({cue,current,seconds,position,displayText,selected}:{cue:ReaderCue;current?:string;seconds:number;position:string;displayText:(text:string)=>string;selected?:SourceSelection|null}) {
+function SpeechText({cue,current,seconds,position,displayText}:{cue:ReaderCue;current?:string;seconds:number;position:string;displayText:(text:string)=>string}) {
     const parts=useMemo(()=>speechParts(cue),[cue]);
     const text=useMemo(()=>displayText(cue.text),[cue.text,displayText]);
     const active=cue.id===current?parts.findIndex(part=>part.start<=seconds&&(seconds<part.end||part.start===part.end&&seconds===part.start)):-1;
-    const selectedPart=(from:number,to:number)=>selected?.cueIds[0]===cue.id&&selected.from===from&&selected.to===to;
-    if(parts.length===1)return <span data-source-id={cue.id} data-cue-id={cue.id} data-speech-from={0} data-speech-to={cue.text.length} className={(cue.id===position?'rw-current ':'')+'rw-speech'+(active===0?' rw-playing':'')+(selectedPart(0,cue.text.length)?' rw-selected-speech':'')}>{text}</span>;
-    return <span data-source-id={cue.id} data-cue-id={cue.id} className={cue.id===position?'rw-current':''}>{parts.map((part,index)=><span key={part.from} className={'rw-speech'+(index===active?' rw-playing':'')+(selectedPart(part.from,part.to)?' rw-selected-speech':'')} data-speech-start={part.start} data-speech-from={part.from} data-speech-to={part.to}>{text.slice(part.from,part.to)}</span>)}</span>;
+    if(parts.length===1)return <span data-source-id={cue.id} data-cue-id={cue.id} data-speech-from={0} data-speech-to={cue.text.length} className={(cue.id===position?'rw-current ':'')+'rw-speech'+(active===0?' rw-playing':'')}>{text}</span>;
+    return <span data-source-id={cue.id} data-cue-id={cue.id} className={cue.id===position?'rw-current':''}>{parts.map((part,index)=><span key={part.from} className={'rw-speech'+(index===active?' rw-playing':'')} data-speech-start={part.start} data-speech-from={part.from} data-speech-to={part.to}>{text.slice(part.from,part.to)}</span>)}</span>;
 }
 
 export type Passage = { key: string; start: number; end: number; speaker: string | null; cues: ReaderCue[] };
@@ -23,8 +22,7 @@ export function passageDomain() {
     } }).CoconutPassages;
 }
 
-export function PassageView({ doc, cues, passages: supplied, current, seconds=0, position, onLocate, onPlayFrom, canListen = false, displayText=(text:string)=>text, selected }: {
-    selected?:SourceSelection|null;
+export function PassageView({ doc, cues, passages: supplied, current, seconds=0, position, onLocate, onPlayFrom, canListen = false, displayText=(text:string)=>text }: {
     displayText?:(text:string)=>string;
     doc: ReaderDocument; cues: ReaderCue[]; passages?: Passage[]; current?: string; seconds?:number; position: string;
     onLocate: (id: string) => void; canListen?: boolean; onPlayFrom: (start: number) => void;
@@ -55,7 +53,7 @@ export function PassageView({ doc, cues, passages: supplied, current, seconds=0,
                 </div>
                 </div>
             </div>
-            <p className="rw-original" tabIndex={0} aria-description="单击文字或按 Enter 选择片段并显示操作；拖选可精确选择。">{passage.cues.map((cue, i) => <span key={cue.id}>{i ? passageDomain().separator(passage.cues[i - 1].text, cue.text) : ''}<SpeechText selected={selected} cue={cue} current={current} seconds={seconds} position={position} displayText={displayText}/></span>)}</p>
+            <p className="rw-original" tabIndex={0} aria-description="单击选取附近的短片段以回听核对；按 Enter 选取当前附近片段；拖选可精确选择。">{passage.cues.map((cue, i) => <span key={cue.id}>{i ? passageDomain().separator(passage.cues[i - 1].text, cue.text) : ''}<SpeechText cue={cue} current={current} seconds={seconds} position={position} displayText={displayText}/></span>)}</p>
             {doc.translation_view && <p className="rw-translation">{passage.cues.map(cue => cue.translations?.[doc.translation_view!]?.text ? (((window as unknown as { Coconut: { translationCurrent: (cue: ReaderCue, doc: ReaderDocument, item: unknown) => boolean } }).Coconut.translationCurrent(cue, doc, cue.translations[doc.translation_view!]) ? '' : '[旧译文，待核对] ') + displayText(cue.translations[doc.translation_view!].text||'')) : '').filter(Boolean).join(' ')}</p>}
             {notes.length > 0 && <section className="rw-passage-notes" aria-label="段落笔记"><h3>段落笔记 · {notes.length}</h3>{notes.map(cue => <p key={cue.id}><button type="button" onClick={() => onLocate(cue.id)}>{time(cue.start)}</button> {doc.notes[cue.id]}</p>)}</section>}
         </section>;

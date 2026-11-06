@@ -229,6 +229,6 @@
 .rw-selection .rw-dialog{font-size:14px;line-height:1.7}
 .rw-selection .rw-dialog textarea{margin-top:8px;min-height:100px}
 .rw-selection .rw-dialog label{display:block;margin-block:12px}
-.rw-speech:not(.rw-playing):not(.rw-selected-speech):hover{background:var(--reading-selected);border-radius:3px;box-decoration-break:clone;-webkit-box-decoration-break:clone}
-.rw-speech.rw-selected-speech{background:var(--accent);color:var(--surface);border-radius:3px;box-decoration-break:clone;-webkit-box-decoration-break:clone}
+.rw-speech:not(.rw-playing):hover{background:var(--reading-selected);border-radius:3px;box-decoration-break:clone;-webkit-box-decoration-break:clone}
+.rw-original::highlight(coconut-word-selection),.rw-original ::highlight(coconut-word-selection){background:var(--accent);color:var(--surface)}
 @media(max-width:600px),(pointer:coarse){.reader-workspace .rw-selection>button{min-height:44px;padding-inline:10px}}

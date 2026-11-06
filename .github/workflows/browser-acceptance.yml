@@ -114,3 +114,7 @@ jobs:
             ${{ runner.temp }}/coconut-react-authored/source-episode-browsing-1360.png
             ${{ runner.temp }}/coconut-react-authored/source-episode-browsing-390.png
             ${{ runner.temp }}/coconut-react-authored/matrix-selection-return-1360.png
+            ${{ runner.temp }}/coconut-react-authored/short-listening-selection.png
+            ${{ runner.temp }}/coconut-react-authored/review-passage-1360.png
+            ${{ runner.temp }}/coconut-react-authored/review-passage-390.png
+            ${{ runner.temp }}/coconut-react-authored/review-passage-320.png
