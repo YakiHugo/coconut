@@ -101,7 +101,7 @@ try{
  await expect(page.locator('.source-error')).toContainText(/无法解码|解码超时/,{timeout:15000});
  assert.equal((await fetch(origin+'/api/v1/library/catalog?protocolVersion=1').then(r=>r.json())).entries.length,1);
  // Combined MP4 stays a video player/File, not a mislabeled audio-only file.
- stage='combined-video-save';mode='video';await read();await button.click();await page.locator('.rw-player-video>summary').click();await expect(page.locator('video')).toBeVisible();
+ stage='combined-video-save';mode='video';await read();await button.click();await expect(page.locator('video')).toBeVisible();
  await expect(page.locator('.app-header').getByText('已保存',{exact:true})).toBeVisible();
  await expect.poll(()=>page.locator('video').evaluate(player=>player.videoWidth)).toBe(160);
  await expect.poll(()=>page.locator('video').evaluate(player=>player.duration)).toBeGreaterThan(1.9);
