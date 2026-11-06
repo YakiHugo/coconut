@@ -3,8 +3,9 @@ FROM node:24-bookworm-slim
 RUN apt-get update && apt-get install -y --no-install-recommends python3 python3-venv ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
-COPY package.json package-lock.json ./
-RUN npm ci --omit=dev --ignore-scripts
+RUN corepack enable
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+RUN pnpm install --prod --frozen-lockfile --ignore-scripts
 COPY requirements.txt ./
 COPY desktop/development-caption-requirements.txt ./caption-requirements.txt
 RUN python3 -m venv /opt/coconut-python \

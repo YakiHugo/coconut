@@ -26,7 +26,7 @@
 
 ```bash
 python -m unittest discover -s tests -v
-npm test
+pnpm test
 ```
 
 在可用的本地服务中，粘贴一个公开单视频 X 帖子，完成字幕任务后打开阅读。

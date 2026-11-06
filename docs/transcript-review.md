@@ -61,8 +61,8 @@ ASR 完成后，Node 保存 `original-asr.json`，再按完整 cue 分批校对�
 `/api/v1/transcript-review/capabilities`、`/jobs?key=...`、`/jobs/:id` 和 `/jobs/:id/result` 为只读查询。创建任务需 `protocolVersion: 1`、`consent: true`、独立 UUID、文档 key 和当前 `source_signature`，并选择 `provider` / 可选 `model`。`cancel`、`retry`、`apply` 为同源 POST；应用仍经过书架 CAS 和持久回执。前端先通过自己的保存队列提交，服务端幂等确认，避免绕过浏览器的保存身份。
 
 ```sh
-npm run test:transcript-review
-npm run check:reader-ui
+pnpm run test:transcript-review
+pnpm run check:reader-ui
 ```
 
 离线测试覆盖校对边界、原文冲突、词时间投影、按批恢复、取消、删除/恢复隔离、同源协议、CLI 工具限制及浏览器保存。真实 CLI 的公开短样本另行手动验证，不在 CI 消耗账号额度。

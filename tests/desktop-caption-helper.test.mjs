@@ -241,7 +241,7 @@ test('missing, damaged and incompatible packages explain repair through status a
   if(kind==='tampered')await writeFile(path.join(s.resourcesPath,'caption-helper/coconut-caption'),'damaged');
   const version=kind==='dependency'?{status:'extractor_failed',diagnostic:{stage:'helper_execution',reason:'helper_error',requests_attempted:null,responses_received:null}}:kind==='capability'?validVersion:{...validVersion,publicProviders};
   const bridge=await packagedBridge(t,s,{version});const status=await fetch(bridge.origin+'/api/captions/status').then(r=>r.json());
-  assert.equal(status.available,false);assert.equal(status.mode,'bundled-helper');assert.equal(status.code,code);assert.match(status.message,message);assert.doesNotMatch(status.message,/COCONUT_CAPTION_PYTHON|pip install|npm run dev/);
+  assert.equal(status.available,false);assert.equal(status.mode,'bundled-helper');assert.equal(status.code,code);assert.match(status.message,message);assert.doesNotMatch(status.message,/COCONUT_CAPTION_PYTHON|pip install|pnpm run dev:bridge/);
   assert.ok(status.providers.every(p=>!p.available));
   for(const url of [providerSamples[0].url,'https://b23.tv/Ab12']){
    const response=await bridge.ingest(url);assert.equal(response.status,200);const {ingestion}=await response.json();assert.equal(ingestion.state,'blocked');assert.equal(ingestion.error.setup_code,code);assert.match(ingestion.error.message,message);assert.equal(ingestion.transcript,null);

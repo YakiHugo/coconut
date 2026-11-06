@@ -10,7 +10,15 @@
     "jsx": "react-jsx",
     "strict": true,
     "noEmit": true,
-    "skipLibCheck": true
+    "skipLibCheck": true,
+    "paths": {
+      "@coconut/reader/*": [
+        "../reader/*"
+      ],
+      "@coconut/shared/*": [
+        "../shared/*"
+      ]
+    }
   },
   "include": [
     "app/**/*.ts",

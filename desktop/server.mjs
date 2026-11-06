@@ -28,7 +28,7 @@ const MIME = {'.png':'image/png','.html':'text/html; charset=utf-8','.js':'text/
 const MAX_BODY = 1024 * 1024;
 export const CSP = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self'; img-src 'self' data: blob:; media-src 'self' blob:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'";
 
-export function createBridge({readerDirectory = path.resolve(ROOT,'../reader'), providers = createProviders(), podcastSources = createPodcastSources(), captionService = null, captionStatus = null, captionShortLinkResolver = undefined, bilibiliSession = null, localMediaService = null, videoAudioService = null, taskStore = null, taskUnavailable = null, libraryStore = null, sourceMediaStore = null, sourceJobs = null, libraryUnavailable = null, libraryLocation = null, privateProxy = null, ownerAccess = null, ingestionExecutor = createIngestionExecutor(),readabilityJobs = null,reviewJobs=null} = {}) {
+export function createBridge({readerDirectory = path.resolve(ROOT,'../reader'), providers = createProviders(), podcastSources = createPodcastSources(), captionService = null, captionStatus = null, captionShortLinkResolver = undefined, bilibiliSession = null, localMediaService = null, videoAudioService = null, taskStore = null, taskUnavailable = null, libraryStore = null, sourceMediaStore = null, sourceJobs = null, libraryUnavailable = null, libraryLocation = null, privateProxy = null, ownerAccess = null, ingestionExecutor = createIngestionExecutor(),readabilityJobs = null,reviewJobs=null,developmentAssets=null} = {}) {
   const profile=privateProxyProfile(privateProxy);
   const translate = createTranslator(providers);
   const capabilities=Object.freeze({...CAPABILITIES,caption_import:captionService?.available===true,persistent_tasks:!!taskStore,canonical_library:!!libraryStore});
@@ -155,6 +155,9 @@ export function createBridge({readerDirectory = path.resolve(ROOT,'../reader'), 
         if (pathname === '/api/language-tools' && req.method === 'GET') return json(200,{translation_models:[],local_translation:false,ask_exact_selection:1,ask_edited_selection:1,capabilities,
           ai:{codex:await providers.status('codex',{signal:controller.signal}),claude:await providers.status('claude',{signal:controller.signal})}});
         if (pathname === '/api/jobs') return json(501,{error:'轻量版不提供处理队列，请重新检查本地服务能力'});
+        if (developmentAssets && !pathname.startsWith('/api/')) {
+          if (await developmentAssets(req,res,{pathname,access})) return;
+        }
         if (!ASSETS.has(pathname)) return json(404,{error:'Not found'});
         const file = ASSETS.get(pathname), body = await readFile(path.join(readerDirectory,file));
         res.writeHead(200,{'Content-Type':MIME[path.extname(file)],'Content-Length':body.length}); res.end(req.method === 'HEAD' ? undefined : body); return;

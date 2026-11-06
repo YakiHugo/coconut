@@ -15,11 +15,11 @@ Current video fallback is deliberately narrower than upstream yt-dlp: direct M4A
 
 ## Running the source app is a separate setup step
 
-The CI results below prove this code and those public samples in the disposable runner. They do **not** install or configure an executor on a user's computer, prove that computer's network route, or make `npm run dev` transcribe automatically. No user-computer dependency/model installation or proxy/DNS change was performed by this work.
+The CI results below prove this code and those public samples in the disposable runner. They do **not** install or configure an executor on a user's computer, prove that computer's network route, or make `pnpm run dev:bridge` transcribe automatically. No user-computer dependency/model installation or proxy/DNS change was performed by this work.
 
 Prerequisites, prepared explicitly by the process owner:
 
-1. Node.js 22.13+ and the repository's `npm ci` dependencies for the source development bridge.
+1. Node.js 22.13+ and the repository's `pnpm install --frozen-lockfile` dependencies for the source development bridge.
 2. For YouTube/Bilibili discovery, an explicitly selected absolute Python 3.10+ interpreter with the hash-pinned packages in `desktop/development-caption-requirements.txt`. See [development caption setup](development-captions.md). This environment is separate from ASR and needs no speech model.
 3. For optional recognition, an independently prepared Python environment whose `faster_whisper`, `ctranslate2`, `av`, `tokenizers`, `huggingface_hub`, `onnxruntime` and `numpy` modules import successfully. The real proof used faster-whisper 1.2.1 and PyAV 16.1.0. A complete existing `Systran/faster-whisper-small` Hugging Face cache snapshot must contain nonempty `model.bin`, valid JSON `config.json` and `tokenizer.json`, and `vocabulary.json` or `vocabulary.txt`. The runtime resolves the ordinary Hugging Face cache (`HF_HUB_CACHE`, `HUGGINGFACE_HUB_CACHE`, or `HF_HOME/hub`); it will not fetch missing files.
 4. Enough resources and private durable disk space for the selected media, job database and model. The runner measurements below are evidence for that runner, not a minimum specification or a measurement of another computer. Installing dependencies or preparing a model is a separate owner-authorized operation, not part of opening a link.
@@ -32,7 +32,7 @@ Once those prerequisites already exist, start the executor and development bridg
 
 # Terminal 2: already prepared caption interpreter; executor must be on this same host.
 COCONUT_CAPTION_PYTHON=/absolute/path/to/caption-venv/bin/python \
-COCONUT_ASR_EXECUTOR_URL=http://127.0.0.1:8081 npm run dev
+COCONUT_ASR_EXECUTOR_URL=http://127.0.0.1:8081 pnpm run dev:bridge
 ```
 
 Open the development URL printed by Node. With a playable source project, explicitly choose “检查本地识别服务”, review the returned state, confirm sending this file, then choose “生成文字稿”. This status check does not run inference. After completion, “将文字稿接入原项目” explicitly commits the result. Downloaded source bytes initially remain only in the current page; canonical project saving does not save those bytes. An acknowledged ASR upload makes the job's media durable in the configured executor.
@@ -105,7 +105,7 @@ The independent upstream Bilibili legacy MP4 sample [BV1nx411u79K](https://www.b
 
 ## Reproduce and distinguish test classes
 
-- `npm run test:desktop`, `npm run test:react`, Python unittest discovery and the production browser suite exercise authored failures, identity/mismatch cases, byte limits, cancellation and durable binding. Authored fixtures are never counted as real platform results.
+- `pnpm run test:desktop`, `pnpm run test:react`, Python unittest discovery and the production browser suite exercise authored failures, identity/mismatch cases, byte limits, cancellation and durable binding. Authored fixtures are never counted as real platform results.
 - `tests/react-video-audio-browser.mjs` renders the real React app/HTTP bridge at 1360 and 390 pixels. It verifies absence-only controls, no automatic download, denied recheck/cancellation/source change with no library write, and a successful authored playable M4A through the real HTTP service, File binding, browser decoder and canonical library. Playback and ASR never start automatically. The two-second sine-wave fixture is authored test data, not a platform result. The MP4 expansion waits for first-sample `loadeddata`/`HAVE_CURRENT_DATA`, not metadata alone. An authored MP4 with intact metadata and deliberately corrupted sample bytes proves that a readable duration/dimensions receipt still creates no project when decoding fails. Projects persist metadata, not media bytes: the UI explicitly says downloaded media remains in this page until an explicit durable ASR upload. Screenshots are authored UI evidence, not live source evidence.
 - `scripts/live_ingestion_proof.mjs --live` uses the real short public episode, actual optional Python executor, actual frontend controller and canonical storage. It needs an explicit absolute `COCONUT_ASR_PROOF_PYTHON` and an explicitly installed Playwright Chromium; it neither installs dependencies nor downloads weights. Pass `bilibili` or `xiaoyuzhou` after `--live` for the bounded fixed public source.
 - `.github/workflows/ingestion-public-proof.yml` separates explicit ephemeral model preparation from offline inference, records versions and metadata, and removes weights afterward. A public accessibility failure remains a failed/unverified live sample, not a fixture success.

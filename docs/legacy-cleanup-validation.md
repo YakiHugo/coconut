@@ -4,9 +4,9 @@ This is an explicitly authorized breaking frontend cleanup; the former renderer 
 
 ## Required current checks
 
-- `npm test`: retained shared domain contracts plus real HTTP/fake-CLI task execution contracts and pixel/native-receipt helper contracts.
-- `npm run test:react`: React stores, mounted components, ownership, drafts, recovery, persistence and native bridge contracts.
-- `npm run check:reader-ui` and `python scripts/reader_assets.py --check`: typing, generated bundle and exact asset hash verification.
+- `pnpm test`: retained shared domain contracts plus real HTTP/fake-CLI task execution contracts and pixel/native-receipt helper contracts.
+- `pnpm run test:react`: React stores, mounted components, ownership, drafts, recovery, persistence and native bridge contracts.
+- `pnpm run check:reader-ui` and `python scripts/reader_assets.py --check`: typing, generated bundle and exact asset hash verification.
 - Python regression discovery: server, source ingestion, captions-only/ASR guards, subtitle parsing, CLI and workflow contracts remain.
 - Desktop Node discovery: SQLite identity/revisions/recovery, ingestion/idempotency, lifecycle ownership, updates, local-media registry, IPC and package integrity remain.
 - Browser acceptance: actual default React source-first widths, canonical SQLite/recovery/AI/native lifecycle matrix, and reading palette/system theme transitions. No timeout increase or failure masking.

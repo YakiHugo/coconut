@@ -1,7 +1,7 @@
 import {EditionAi} from './edition-ai';
 import {ChoicePicker} from './controls';
 import {Fragment,useEffect,useMemo,useRef,useState} from 'react';
-import * as Editions from '../../reader/editions.js';
+import * as Editions from '@coconut/reader/editions.js';
 import type {ReaderDocument,ReaderMedia} from './contracts';
 import {captureEditionSelection,time} from './domain';
 

@@ -1,6 +1,6 @@
 import {useEffect,useState,useSyncExternalStore} from 'react';
-import * as Editions from '../../reader/editions.js';
-import * as Interview from '../../reader/interview.js';
+import * as Editions from '@coconut/reader/editions.js';
+import * as Interview from '@coconut/reader/interview.js';
 import {createInterviewController} from './interview-controller';
 import type {AppStore} from './store';
 const labels:Record<string,string>={queued:'排队中',running:'生成中',succeeded:'已完成，待接收',failed:'失败，可明确续跑',interrupted:'中断，可明确续跑',cancel_requested:'正在取消',cancelled:'已取消'};

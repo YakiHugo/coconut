@@ -41,7 +41,7 @@ local executor and bridge in separate terminals (adjust ports if occupied):
 COCONUT_ASR_EXECUTOR_URL=http://127.0.0.1:8083 \
 COCONUT_CAPTION_PYTHON="$PWD/.venv-captions/bin/python" \
 COCONUT_PODCAST_PROXY=http://127.0.0.1:7897 \
-COCONUT_CAPTION_PROXY=http://127.0.0.1:7897 npm run dev
+COCONUT_CAPTION_PROXY=http://127.0.0.1:7897 pnpm run dev:bridge
 ```
 
 The Python environment needs the existing core requirements and cached `small`

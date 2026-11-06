@@ -24,10 +24,10 @@ adapters; do not lift the document store into component state as a shortcut.
 
 ## Build and distribution
 
-`npm ci --ignore-scripts`, `npm run build:reader-ui`, then
+`pnpm install --frozen-lockfile --ignore-scripts`, `pnpm run build:reader-ui`, then
 `python scripts/reader_assets.py` generate the self-contained production bundle
 and content-hash token. React, React DOM and Scheduler MIT notices are embedded.
-`npm run check:reader-ui` checks strict types and byte-for-byte build parity.
+`pnpm run check:reader-ui` checks strict types and byte-for-byte build parity.
 Dependencies are locked; the browser needs no npm, module resolution or CDN.
 
 The checked-in bundle is loaded independently of storage admission. Only a

@@ -60,7 +60,7 @@ CLI 的自动字幕导入也运行已配置的标点阶段；没有已取得的�
 ```bash
 COCONUT_CAPTION_PYTHON="$PWD/.venv-captions/bin/python" \
 COCONUT_READING_PYTHON="$PWD/.venv/bin/python" \
-COCONUT_PUNCTUATION_MODEL=/absolute/path/model.int8.onnx npm run dev
+COCONUT_PUNCTUATION_MODEL=/absolute/path/model.int8.onnx pnpm run dev:bridge
 ```
 
 仅平台自动字幕经过此导入阶段，发布者提供的字幕保留原样。标点处理复用同一逐字校验，并有子进程大小、超时和取消限制；失败时保留完整字幕并记录提示。此设置不启用模型下载、ASR、音频获取或远程服务。阅读器的后续整理按下面的资源检查规则接续，保存前核对原稿。
@@ -88,7 +88,7 @@ COCONUT_PUNCTUATION_MODEL=/absolute/path/model.int8.onnx npm run dev
 node --test --test-concurrency=1 tests/reader-passages.test.cjs tests/react-reader-workspace.test.mjs tests/react-reader-summary-keyboard.test.mjs tests/react-source-playback.test.mjs
 node tests/react-transcript-reading-browser.mjs
 node --test tests/transcript-resources.test.cjs tests/desktop-readability-jobs.test.mjs tests/react-readability-controller.test.mjs tests/desktop-video-audio.test.mjs
-npm run check:reader-ui
+pnpm run check:reader-ui
 ```
 
 浏览器回归使用明确标注的自写访谈，覆盖默认段落、连续完整段落、未知说话人、笔记、跨 cue 精确选区、复制、SQLite 保存与刷新恢复、手机行宽。真实访谈效果另记入公开来源验收记录；自写材料通过不代表模型质量已经人工验收。

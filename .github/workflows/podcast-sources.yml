@@ -15,12 +15,13 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-          cache: npm
-      - run: npm ci --ignore-scripts
-      - run: npx playwright install --with-deps chromium
+          cache: pnpm
+      - run: pnpm --filter . install --frozen-lockfile --ignore-scripts
+      - run: pnpm exec playwright install --with-deps chromium
       - name: Verify anonymous publisher feeds and source metadata
         run: node tests/podcast-public-smoke.mjs
 # Public source bodies remain transient. Never upload transcripts, source HTML,

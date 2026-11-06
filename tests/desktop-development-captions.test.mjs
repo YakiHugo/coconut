@@ -50,7 +50,7 @@ test('connected Edge credentials travel only through the Bilibili helper pipe, i
 test('missing or mismatched Python fails closed with actionable status and no source extraction',async t=>{
  for(const probe of [{...version,version:'wrong'},{status:'version_mismatch',version:'2025.1.1'},{...version,tlsRootsVerified:false}]){
   const f=await fixture(t,{probe});const {server,origin,captions}=await startDevelopmentBridge({libraryDirectory:null,port:0,taskDirectory:path.join(f.directory,'tasks'),captionPython:f.executable});
-  try{assert.equal(captions.available,false);assert.equal(captions.code,'CAPTION_VERSION');assert.match(captions.message,/COCONUT_CAPTION_PYTHON/);const doctor=formatDoctorReport(await diagnoseDevelopment({port:server.address().port}));assert.match(doctor,/yt-dlp==2026.8.19/);assert.match(doctor,/COCONUT_CAPTION_PYTHON=.*npm run dev/);assert.equal((await fetch(origin+'/api/health').then(r=>r.json())).capabilities.caption_import,false);assert.equal((await readFile(f.log,'utf8')).trim().split('\n').length,1);}finally{await server.shutdown();}
+  try{assert.equal(captions.available,false);assert.equal(captions.code,'CAPTION_VERSION');assert.match(captions.message,/COCONUT_CAPTION_PYTHON/);const doctor=formatDoctorReport(await diagnoseDevelopment({port:server.address().port}));assert.match(doctor,/yt-dlp==2026.8.19/);assert.match(doctor,/COCONUT_CAPTION_PYTHON=.*pnpm run dev:bridge/);assert.equal((await fetch(origin+'/api/health').then(r=>r.json())).capabilities.caption_import,false);assert.equal((await readFile(f.log,'utf8')).trim().split('\n').length,1);}finally{await server.shutdown();}
  }
  const f=await fixture(t);const {server,captions}=await startDevelopmentBridge({libraryDirectory:null,port:0,taskDirectory:path.join(f.directory,'missing-tasks'),captionPython:path.join(f.directory,'missing')});try{assert.equal(captions.available,false);assert.equal(captions.code,'CAPTION_START');}finally{await server.shutdown();}
 });
@@ -122,7 +122,7 @@ test('development guidance uses hashed runtime-only pins and displays only safe 
  assert.match(unconfigured,/python3 --version/);assert.match(unconfigured,/Python 3.10\+/);
  assert.match(captionSetupGuidance('CAPTION_PYTHON_VERSION'),/重新创建独立环境/);
  assert.match(unconfigured,/python3 -m venv \.venv-captions/);assert.match(unconfigured,/--require-hashes --only-binary=:all: --no-deps -r desktop\/development-caption-requirements.txt/);
- assert.match(unconfigured,/COCONUT_CAPTION_PYTHON="\$PWD\/\.venv-captions\/bin\/python" npm run dev/);
+ assert.match(unconfigured,/COCONUT_CAPTION_PYTHON="\$PWD\/\.venv-captions\/bin\/python" pnpm run dev:bridge/);
  assert.match(captionSetupGuidance('CAPTION_MISSING_CERTIFI'),/同一 Python/);
  assert.match(captionSetupGuidance('CAPTION_VERSION',{actualVersion:'2025.01.01'}),/当前 yt-dlp=2025.01.01；需要 2026.08.19/);
  assert.doesNotMatch(captionSetupGuidance('CAPTION_VERSION',{actualVersion:'secret\ncommand'}),/secret|command/);

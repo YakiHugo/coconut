@@ -20,7 +20,7 @@ export async function updateReaderAssets(root, {check = false} = {}) {
   const html = await readFile(path, 'utf8');
   const expected = await refresh(html, root);
   if (check && expected !== html) {
-    throw Error('Reader asset tokens are stale in index.html. Run npm run build:reader-ui');
+    throw Error('Reader asset tokens are stale in index.html. Run pnpm run build:reader-ui');
   }
   if (!check && expected !== html) await writeFile(path, expected);
 }

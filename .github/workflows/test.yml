@@ -17,12 +17,13 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+      - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-          cache: npm
-      - run: npm ci --ignore-scripts
-      - run: npm run check:reader-ui
+          cache: pnpm
+      - run: pnpm --filter . install --frozen-lockfile --ignore-scripts
+      - run: pnpm run check:reader-ui
       - run: python scripts/reader_assets.py --check
       - name: Install the pinned workflow-test parser
         run: |
@@ -31,6 +32,6 @@ jobs:
         run: |
           python -m pip install --disable-pip-version-check --no-input --only-binary=:all: --no-deps numpy==2.5.4
       - run: python -m unittest discover -s tests -v
-      - run: npm test
-      - run: npm run test:react
-      - run: npm run test:service
+      - run: pnpm test
+      - run: pnpm run test:react
+      - run: pnpm run test:service

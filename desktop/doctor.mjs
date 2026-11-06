@@ -17,7 +17,7 @@ const CAPABILITIES = {
 };
 const record = value => value !== null && typeof value === 'object' && !Array.isArray(value);
 const validPort = port => Number.isInteger(port) && port >= 1 && port <= 65535;
-export const USAGE = '用法：npm run doctor [-- --port 8080]（只检查 127.0.0.1 的指定端口；不扫描其他端口）';
+export const USAGE = '用法：pnpm run doctor [--port 8080]（只检查 127.0.0.1 的指定端口；不扫描其他端口）';
 
 export function parseDoctorArgs(args) {
   if (args.length === 1 && args[0] === '--help') return {help:true};
@@ -164,19 +164,19 @@ export function formatDoctorReport(report) {
     lines.push(`后台摘要 metadata：${states[report.executor]}`);
   } else lines.push('服务：端口已响应，但不是已支持的 Coconut health 协议；可能是其他服务或不兼容版本');
   lines.push('提供商安装、登录和额度均未检查；接口能力不代表模型可用。');
-  if (!report.nodeSupported) lines.push('下一步：切换到 Node.js 22+，再运行 npm run doctor。');
+  if (!report.nodeSupported) lines.push('下一步：切换到 Node.js 22+，再运行 pnpm run doctor。');
   if (report.health === 'not_listening' && report.port === DEFAULT_PORT) {
-    lines.push('下一步：在仓库根目录另开终端运行 npm run dev，保持运行后再执行 npm run doctor。');
+    lines.push('下一步：在仓库根目录另开终端运行 pnpm run dev:bridge，保持运行后再执行 pnpm run doctor。');
   } else if (report.health === 'not_listening') {
-    lines.push('下一步：核对你要检查的服务端口。npm run dev 固定使用 8080；先运行 npm run doctor 检查 8080，再决定是否运行 npm run dev。');
+    lines.push('下一步：核对你要检查的服务端口。pnpm run dev:bridge 固定使用 8080；先运行 pnpm run doctor 检查 8080，再决定是否运行 pnpm run dev:bridge。');
   } else if (report.service === 'desktop-bridge' && report.executor === 'ready') {
     lines.push(`下一步：用开发专用浏览器配置打开 ${origin}；reader 修改后刷新，服务代码修改后再手动重启。`);
   } else if (report.service === 'desktop-bridge' && report.executor === 'storage_unavailable') {
-    lines.push('下一步：检查启动终端的任务存储提示，不要删除或覆盖任务数据。确认进行中任务后再决定重启；源码开发命令为 npm run dev。');
+    lines.push('下一步：检查启动终端的任务存储提示，不要删除或覆盖任务数据。确认进行中任务后再决定重启；源码开发命令为 pnpm run dev:bridge。');
   } else if (report.service === 'python' || report.executor === 'disabled') {
-    lines.push(`下一步：可继续在 ${origin} 使用该服务。若要源码开发后台摘要，先确认并手动停止占用 8080 的服务，再从仓库根目录运行 npm run dev。`);
+    lines.push(`下一步：可继续在 ${origin} 使用该服务。若要源码开发后台摘要，先确认并手动停止占用 8080 的服务，再从仓库根目录运行 pnpm run dev:bridge。`);
   } else {
-    lines.push('下一步：核对所选端口的服务与启动终端。不要登录或重试未知接口；若要源码开发，确认 8080 空闲后从仓库根目录运行 npm run dev。');
+    lines.push('下一步：核对所选端口的服务与启动终端。不要登录或重试未知接口；若要源码开发，确认 8080 空闲后从仓库根目录运行 pnpm run dev:bridge。');
   }
   lines.push('提示：不同 origin 的浏览器书架彼此独立；同一 8080 地址也可能已有书架，切换前先导出备份。');
   return lines.join('\n');

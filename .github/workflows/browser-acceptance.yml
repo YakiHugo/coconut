@@ -19,30 +19,33 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-          cache: npm
-      - run: npm ci --ignore-scripts
-      - run: npm run check:reader-ui
+          cache: pnpm
+      - run: pnpm --filter . install --frozen-lockfile --ignore-scripts
+      - run: pnpm run check:reader-ui
       - id: react_setup
-        run: npx playwright install --with-deps chromium && sudo apt-get update && sudo apt-get install -y fonts-noto-cjk
+        run: pnpm exec playwright install --with-deps chromium && sudo apt-get update && sudo apt-get install -y fonts-noto-cjk
+      - name: Verify Vite startup and state-preserving React and CSS hot updates
+        run: pnpm run test:dev
       - name: Verify production React source-first flows at desktop and phone widths
         if: ${{ !cancelled() && steps.react_setup.outcome == 'success' }}
         env:
           COCONUT_REACT_ARTIFACTS: ${{ runner.temp }}/coconut-react-authored
-        run: npm run test:react-browser
+        run: pnpm run test:react-browser
       - name: Verify React canonical persistence, AI scope, native lifecycle and recovery
         if: ${{ !cancelled() && steps.react_setup.outcome == 'success' }}
         env:
           COCONUT_REACT_ARTIFACTS: ${{ runner.temp }}/coconut-react-authored
-        run: npm run test:react-matrix
+        run: pnpm run test:react-matrix
       - name: Verify actual reading palette and system theme transitions
         if: ${{ !cancelled() && steps.react_setup.outcome == 'success' }}
-        run: npm run test:react-palette-browser
+        run: pnpm run test:react-palette-browser
       - name: Verify standalone owner login and the actual React entry
         if: ${{ !cancelled() && steps.react_setup.outcome == 'success' }}
-        run: npm run test:service-browser
+        run: pnpm run test:service-browser
       - name: Upload only authored React review images and geometry
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@v4

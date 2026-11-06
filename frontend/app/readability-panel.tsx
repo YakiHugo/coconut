@@ -4,7 +4,7 @@ import type {AppStore} from './store';
 import {createReadabilityController} from './readability-controller';
 import {inspectFile} from './ingestion';
 import {downloadVideoAudio,validateDownloadedVideoMedia} from './video-audio';
-import {sourceSignature} from '../../shared/transcript-resources.js';
+import {sourceSignature} from '@coconut/shared/transcript-resources.js';
 const labels:Record<string,string>={transcript:'文字稿',punctuation:'标点与断句',speakers:'说话人',chapters:'章节'};
 const phases:Record<string,string>={awaiting_media:'等待原声上传',queued:'等待本地整理',speakers:'正在按声音区分说话人',punctuation:'正在恢复标点',complete:'自动处理已结束',failed:'整理失败',interrupted:'整理已中断',cancelled:'整理已取消'};
 const phaseLabel=(value:string)=>value.startsWith('speakers:')?'正在区分说话人 · 第 '+value.slice(9)+' 块':phases[value]||value;

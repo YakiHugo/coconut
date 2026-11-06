@@ -82,7 +82,7 @@ Markdown 和纯文本面向阅读；来源对照导出在正文后附原片段 I
 node --test tests/reader-reading-editions.test.mjs tests/reader-interview.test.mjs tests/desktop-interview-tasks.test.mjs tests/react-interview-controller.test.mjs tests/react-readability-status.test.mjs
 node tests/react-reading-editions-browser.mjs
 node tests/react-interview-workflow-browser.mjs
-npm run check:reader-ui
+pnpm run check:reader-ui
 python scripts/reader_assets.py --check
 ```
 

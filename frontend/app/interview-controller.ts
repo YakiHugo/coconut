@@ -1,5 +1,5 @@
-import * as Editions from '../../reader/editions.js';
-import type {EditionJob} from '../../reader/editions.js';
+import * as Editions from '@coconut/reader/editions.js';
+import type {EditionJob} from '@coconut/reader/editions.js';
 import type {AppStore} from './store';
 type Value=Record<string,any>;
 /** Uses the existing durable executor. Project jobs are write-ahead submission receipts. */

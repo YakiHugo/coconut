@@ -13,16 +13,18 @@
 - 字幕文件、粘贴与 JSON 备份是次级恢复入口，不是正常使用的前置要求。原声项目补字幕需预览确认，保留原文件归属、项目笔记与书签。
 - 默认界面由 React 完整管理。旧界面、兼容入口和迁移期预览已移除；共享文档校验、存储和恢复能力继续使用。
 
-开发时使用 Node.js 22.13+：
+开发使用 Node.js 22.21+ 或 24.5+，以及 pnpm 10.33.0（版本由 `packageManager` 固定）。可用 Corepack：`corepack enable`。
 
-通过浏览器长期使用，可运行独立服务：Node.js 22.21+ 或 24.5+，`npm ci --ignore-scripts` 后执行 `npm start`。同一服务可部署在 Mac、独立主机或 HTTPS 反向代理之后；数据目录、端口、访问密钥和来源网络统一配置在 `.env`。见[独立服务部署](docs/standalone-service.md)。
+通过浏览器长期使用，可运行独立服务：Node.js 22.21+ 或 24.5+，`pnpm --filter . install --frozen-lockfile --ignore-scripts` 后执行 `pnpm start`。同一服务可部署在 Mac、独立主机或 HTTPS 反向代理之后；数据目录、端口、访问密钥和来源网络统一配置在 `.env`。见[独立服务部署](docs/standalone-service.md)。
 
 ```bash
-npm ci
-npm run dev
+pnpm --filter . install --frozen-lockfile
+pnpm dev
 ```
 
-打开命令输出的本机地址；`npm run doctor` 可检查服务能力。默认不安装或下载 ASR 模型。识别服务的配置、就绪状态和任务协议见 [来源与原始媒体](docs/link-first-ingestion.md)。
+开发服务自动读取 `.env`，默认地址为 `http://127.0.0.1:8080`；已有 `.env` 的端口、模型和数据目录继续生效。React / CSS 修改通过 Vite 热更新；Node 后端、共享 CommonJS 模块或 `.env` 修改后重启 `pnpm dev`。前端与 API 共用一个监听端口，无需单独启动 Python HTTP 服务。旧的固定端口轻量入口保留为 `pnpm dev:bridge`。
+
+打开命令输出的本机地址；`pnpm run doctor` 可检查服务能力。默认不安装或下载 ASR 模型。识别服务的配置、就绪状态和任务协议见 [来源与原始媒体](docs/link-first-ingestion.md)。
 
 macOS 开发服务启用字幕助手后，可在「发现与添加」连接 Edge 中已有的 B 站登录，之后自动复用所选配置的登录态。设置和凭据范围见 [开发字幕获取](docs/development-captions.md#在-macos-开发服务中复用-edge-的-b-站登录)。
 
@@ -78,13 +80,13 @@ Apple Silicon 本地转录默认使用 **Qwen3-ASR-1.7B-8bit + Qwen3-ForcedAlign
 
 ## 开发与验收
 
-修改 React 源码或 reader 静态 JS/CSS 后，运行 `npm run build:reader-ui`：它会生成 bundle，并更新 `reader/index.html` 中全部受支持的本地 JS/CSS 引用的 SHA-256 缓存 token，无需另跑 Python 更新步骤。`check:reader-ui` 只检查、不写文件，同时验证类型、bundle 与缓存 token；引用的资源缺失也会失败。原有 `python scripts/reader_assets.py --check` 仍可独立验证 token。
+开发时无需手动打包 React；提交或发布 React 源码、reader 静态 JS/CSS 的修改前，运行 `pnpm run build:reader-ui`：它会生成 bundle，并更新 `reader/index.html` 中全部受支持的本地 JS/CSS 引用的 SHA-256 缓存 token，无需另跑 Python 更新步骤。`check:reader-ui` 只检查、不写文件，同时验证类型、bundle 与缓存 token；引用的资源缺失也会失败。原有 `python scripts/reader_assets.py --check` 仍可独立验证 token。
 
 ```bash
-npm run build:reader-ui
-npm run check:reader-ui
-npm run test:react
-npm run test:desktop
+pnpm run build:reader-ui
+pnpm run check:reader-ui
+pnpm run test:react
+pnpm run test:desktop
 ```
 
 CI 还检查共享领域模型、Node/Python 协议、真实 Chromium 默认界面和实际 macOS 打包应用的菜单、文件选择、保存、关闭及重启流程。普通回归使用自写材料和明确标注的模拟模型；通过不代表真实模型质量或所有公开平台可用。

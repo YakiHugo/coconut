@@ -1,6 +1,6 @@
 import {useEffect,useRef,useState} from 'react';
 import type {AppStore} from './store';
-import {signature,merge} from '../../shared/transcript-review';
+import {signature,merge} from '@coconut/shared/transcript-review';
 type Job={id:string;documentKey:string;state:string;phase:string;provider:string;model:string;error?:string};
 type Issue={cue_id:string;reason:string;proposal?:{original:string;replacement:string}};
 const live=(job:Job|null)=>!!job&&['queued','running'].includes(job.state);

@@ -1,5 +1,5 @@
 import {useEffect,useState} from 'react';
-import * as Editions from '../../reader/editions.js';
+import * as Editions from '@coconut/reader/editions.js';
 import type {Document} from './contracts';
 type Hit={document:Document;edition:Editions.Edition;blockId:string;kind:string;text:string};
 /** Cooperative, separately scoped index: editorial prose never enters source hits. */

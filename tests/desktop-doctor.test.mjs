@@ -138,8 +138,8 @@ test('refusal, wrong ports and transient failures give accurate next steps witho
   for (const port of [8080, 8081]) {
     const {report, text, calls} = await inspect([{error:Object.assign(new Error(PRIVATE), {code:'ECONNREFUSED'})}], {port});
     assert.equal(report.health, 'not_listening'); assert.equal(report.exitCode, 1); assert.equal(calls.length, 1);
-    assert.match(text, /npm run dev/); assert.ok(!text.includes('npm run dev --')); assert.ok(!text.includes(PRIVATE));
-    if (port === 8081) assert.match(text, /先运行 npm run doctor 检查 8080/);
+    assert.match(text, /pnpm run dev:bridge/); assert.ok(!text.includes('pnpm run dev:bridge --')); assert.ok(!text.includes(PRIVATE));
+    if (port === 8081) assert.match(text, /先运行 pnpm run doctor 检查 8080/);
   }
   const {report, text} = await inspect([{error:Object.assign(new Error(PRIVATE), {code:'ECONNRESET'})}]);
   assert.equal(report.health, 'connection_error'); assert.match(text, /不能据此判断服务离线/);

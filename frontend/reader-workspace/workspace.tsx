@@ -13,7 +13,7 @@ import {ChoicePicker, ReaderDialog} from './controls';
 import { ReadingModeTabs } from './mode-tabs';
 import {EditionPicker,EditionReader} from './editions';
 import {scriptConverter} from '../reading-preferences/chinese-script';
-import * as Editions from '../../reader/editions.js';
+import * as Editions from '@coconut/reader/editions.js';
 import {SelectionToolbar} from './selection-toolbar';
 import {selectionPlaybackStart} from './speech';
 type Domain = {

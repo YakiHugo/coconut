@@ -23,10 +23,11 @@ jobs:
         source: [xiaoyuzhou, rss]
     steps:
       - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - run: npm ci --ignore-scripts
+      - run: pnpm --filter . install --frozen-lockfile --ignore-scripts
       - name: Verify real source, owned bytes and restart without any transcription
         id: live
         run: node scripts/live_podcast_source_closure.mjs --live '${{ matrix.source }}'

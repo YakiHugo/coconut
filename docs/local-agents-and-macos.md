@@ -1,3 +1,5 @@
+> 日常前端开发使用 `pnpm dev`，自动读取 `.env` 并支持 Vite 热更新；详见 [独立服务与本地开发](standalone-service.md#local-development-with-hot-updates)。本文的 `pnpm dev:bridge` 是保留的固定 8080 轻量诊断入口，不读取 `.env`。
+
 # macOS + Web：轻量阅读器与本地代理连接
 
 核对日期：2026-10-07。本文区分已实现的功能、依赖契约验证，以及尚待真实设备验收的发布事项。
@@ -28,41 +30,41 @@ UI / API 的 `protocol` 值是 `codex-exec-json` 或 `claude-print-json`。这�
 从仓库根目录运行，使用 Node.js 22+；不需要安装 app、Python 或 Electron：
 
 ```sh
-npm run doctor                # 只读检查 Node 和指定本机服务；尚未启动时给出下一步
-npm run dev
+pnpm run doctor                # 只读检查 Node 和指定本机服务；尚未启动时给出下一步
+pnpm run dev:bridge
 # 打开 http://127.0.0.1:8080，保持终端运行
-npm run test:tasks             # 另开终端：零依赖、假 provider + 真实本机 HTTP
-npm ci --ignore-scripts        # 只在需要下面的 DOM 回归时安装开发依赖
+pnpm run test:tasks             # 另开终端：零依赖、假 provider + 真实本机 HTTP
+pnpm install --frozen-lockfile --ignore-scripts        # 只在需要下面的 DOM 回归时安装开发依赖
 node --test tests/reader-background-summary.test.mjs
-npm test                      # 阅读器完整 DOM/逻辑回归，不等于真实 GUI 验收
+pnpm test                      # 阅读器完整 DOM/逻辑回归，不等于真实 GUI 验收
 ```
 
-`npm run doctor` 不需要安装依赖，仅检查 `127.0.0.1:8080`；可用 `npm run doctor -- --port 8081` 检查一个明确端口，不接受 URL/主机名、不扫描或自动启动服务。只读取 `/api/health`，确认是轻量 bridge 后再读取 `/api/v1/executor`；不读取任务、原文、私密路径或认证信息，不检查 CLI 登录/额度、不调用模型。整次检查最多 3 秒，每份响应最多 16 KiB，重定向、错误正文及未知字段不输出。健康的 Python 高级服务会明确显示旧协议在线，但不支持 Node 后台摘要，绝不把这当成离线。
+`pnpm run doctor` 不需要安装依赖，仅检查 `127.0.0.1:8080`；可用 `pnpm doctor --port 8081` 检查一个明确端口，不接受 URL/主机名、不扫描或自动启动服务。只读取 `/api/health`，确认是轻量 bridge 后再读取 `/api/v1/executor`；不读取任务、原文、私密路径或认证信息，不检查 CLI 登录/额度、不调用模型。整次检查最多 3 秒，每份响应最多 16 KiB，重定向、错误正文及未知字段不输出。健康的 Python 高级服务会明确显示旧协议在线，但不支持 Node 后台摘要，绝不把这当成离线。
 
-退出码：`0` 表示 Node 22+ 且已识别服务的 metadata 正常（包括健康 Python，或明确未配置持久任务的 bridge）；`1` 表示 Node 版本、连接、协议或任务存储需要检查；`2` 表示参数错误。bridge 的 health 无法区分 `dev`、`start:light` 和 app，也不能证明具体任务目录或模型已就绪；命令会提示这一限制。`--port` 只改变检查目标，`npm run dev` 始终使用 8080。诊断结果只反映本次查询，不代替真实模型或浏览器验收。
+退出码：`0` 表示 Node 22+ 且已识别服务的 metadata 正常（包括健康 Python，或明确未配置持久任务的 bridge）；`1` 表示 Node 版本、连接、协议或任务存储需要检查；`2` 表示参数错误。bridge 的 health 无法区分 `dev`、`start:light` 和 app，也不能证明具体任务目录或模型已就绪；命令会提示这一限制。`--port` 只改变检查目标，`pnpm run dev:bridge` 始终使用 8080。诊断结果只反映本次查询，不代替真实模型或浏览器验收。
 
 开发任务固定放在本仓库已忽略的 `.coconut/dev/tasks`，不写入 `~/.coconut`；启动会打印实际地址与任务存储是否可用。不要把真实私密材料用于开发测试。`start:light` 仍使用原来的 `~/.coconut/tasks`，开发入口不自动迁移其任务。
 
 开发地址固定为 `http://127.0.0.1:8080`，端口占用会停止，不会自动换地址或连接未知服务。浏览器书架按 origin 隔离，服务端开发目录并不隔离同一 origin 的 IndexedDB：建议用单独浏览器配置文件；不要与已有 `8080` 书架混用，切换前先导出 JSON 备份。`localhost`、其他端口、公开 Web 与 app 的书架也各自独立。
 
-修改 `reader/` 的 JS/CSS/HTML 后刷新页面即可读取新文件；修改 `desktop/` 服务代码需 Ctrl+C 后重新 `npm run dev`。重启会把未完成后台任务标为中断，不自动续跑或重新调用模型。提交 reader 资源修改前，运行 `python scripts/reader_assets.py` 更新资源标记，再用 `python scripts/reader_assets.py --check` 核对；这一步是现有贡献者检查，不是开发服务的启动依赖。没有通用 `npm run check` 命令。
+修改 `reader/` 的 JS/CSS/HTML 后刷新页面即可读取新文件；修改 `desktop/` 服务代码需 Ctrl+C 后重新 `pnpm run dev:bridge`。重启会把未完成后台任务标为中断，不自动续跑或重新调用模型。提交 reader 资源修改前，运行 `python scripts/reader_assets.py` 更新资源标记，再用 `python scripts/reader_assets.py --check` 核对；这一步是现有贡献者检查，不是开发服务的启动依赖。没有通用 `pnpm run check` 命令。
 
 可选服务端断点：先停止开发服务，再显式运行 `node --inspect=127.0.0.1:9229 desktop/dev.mjs`，用本机调试器连接；用完关闭。默认不启用 inspector，不要改成公开监听或暴露调试端口。网页问题可使用浏览器开发者工具；任务状态可在 `/api/v1/executor` 与 `/api/v1/tasks` 查看，查询不会调用模型，`not_checked` 不表示已登录或有额度。
 
 以下保留普通轻量服务与桌面贡献者入口：
 
 ```sh
-# 零 Python 的本地 Web 入口，无需 npm install
+# 零 Python 的本地 Web 入口，无需安装依赖
 node desktop/server.mjs --port 8080
 
 # 不调用模型或读取认证文件的单元与真实 loopback HTTP 测试
 node --test tests/desktop-*.test.mjs
 
 # 桌面开发/打包，仅贡献者需要这些工具
-npm ci --prefix desktop
-npm start --prefix desktop
+pnpm install --frozen-lockfile
+pnpm --dir desktop start
 # macOS ZIP 打包需要两个架构的已校验字幕助手构建回执，见下面链接
-# CI 先分别原生构建 arm64/x64，再执行 npm run package:mac --prefix desktop
+# CI 先分别原生构建 arm64/x64，再执行 pnpm --dir desktop run package:mac
 ```
 
 `.github/workflows/desktop.yml` 在 macOS 上运行真正的 Electron 启动检查，并构建两个架构的 ZIP。其附件名为 `Coconut-macOS-unsigned`；工作流只上传应用包，不上传文字稿、浏览器书架、用户 CLI 信息或媒体。源码运行成功、跨平台打包成功、原生 Mac 启动成功、签名公证成功是四个独立状态，不能互相替代。
@@ -71,7 +73,7 @@ npm start --prefix desktop
 
 ## 内置公开视频字幕
 
-macOS 包在启动时仅校验并探测固定字幕助手版本，不请求来源、不识别或调用模型。只有完整性和版本检查通过才声明 caption_import；启用平台来自助手的 `publicProviders`，新构建支持 X、YouTube 和 Bilibili。没有该字段的旧助手仍仅声明 X，未知或畸形能力声明拒绝就绪。公开 Web 和直接运行 Node 的轻量服务默认保持关闭。源码 `npm run dev` 可按 [开发字幕获取](development-captions.md) 显式指定已有可信 Python 环境，探测通过后启用相同三平台 guard；不自动安装依赖。用户粘贴支持的链接后才读取公开访客元数据与现成字幕，任何登录、限流、访问拒绝或外部下载器需求都会停止。
+macOS 包在启动时仅校验并探测固定字幕助手版本，不请求来源、不识别或调用模型。只有完整性和版本检查通过才声明 caption_import；启用平台来自助手的 `publicProviders`，新构建支持 X、YouTube 和 Bilibili。没有该字段的旧助手仍仅声明 X，未知或畸形能力声明拒绝就绪。公开 Web 和直接运行 Node 的轻量服务默认保持关闭。源码 `pnpm run dev:bridge` 可按 [开发字幕获取](development-captions.md) 显式指定已有可信 Python 环境，探测通过后启用相同三平台 guard；不自动安装依赖。用户粘贴支持的链接后才读取公开访客元数据与现成字幕，任何登录、限流、访问拒绝或外部下载器需求都会停止。
 
 打包版继续使用固定原生助手和逐请求私有快照，不能把任意 Python、下载器或开发代理配置传入安装包。缺失、完整性失败和版本不兼容通过字幕能力状态报告；它们都不表示平台没有字幕。来源就绪仅是本地协议与依赖检查通过，不是匿名网络获取成功。安装包新能力必须经原生构建、库存与资源哈希校验后才随新包交付；旧包不会随源码自动更新。
 

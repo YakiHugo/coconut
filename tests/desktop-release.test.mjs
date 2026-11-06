@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {mkdtemp,readFile,writeFile,rm} from 'node:fs/promises';
+import {parse as parseYaml} from 'yaml';
 import {createHash} from 'node:crypto';
 import os from 'node:os';
 import path from 'node:path';
@@ -45,10 +46,10 @@ test('a draft omitted by tag lookup resumes via authenticated release listing',a
 
 test('desktop version, lock metadata and checked-in release notes agree',async()=>{
  const configuration=JSON.parse(await readFile(new URL('../desktop/package.json',import.meta.url),'utf8'));
- const lock=JSON.parse(await readFile(new URL('../desktop/package-lock.json',import.meta.url),'utf8'));
+ const lock=parseYaml(await readFile(new URL('../pnpm-lock.yaml',import.meta.url),'utf8'));
  const notes=await readFile(new URL('../docs/release-notes.md',import.meta.url),'utf8');
- assert.match(configuration.version,/^\d+\.\d+\.\d+$/);assert.equal(lock.version,configuration.version);assert.equal(lock.packages[''].version,configuration.version);
- assert.deepEqual(lock.packages[''].devDependencies,configuration.devDependencies);assert.ok(notes.includes('# Coconut '+configuration.version+' · macOS 开发版'));
+ assert.match(configuration.version,/^\d+\.\d+\.\d+$/);assert.ok(lock.importers.desktop);
+ assert.deepEqual(Object.fromEntries(Object.entries(lock.importers.desktop.devDependencies).map(([name,value])=>[name,value.specifier])),configuration.devDependencies);assert.ok(notes.includes('# Coconut '+configuration.version+' · macOS 开发版'));
  for(const phrase of ['IndexedDB','localStorage','v0.6.0','无法读取新版新增或修改的内容','其他独立文档仍可自动保存','全局未保存警告与关闭保护','导出未保存文档备份','本窗口所有待保存内容','未提交表单草稿需另行保留','不要为了重试而清空存储','这些操作不调用模型','不能直接当作普通书架备份导入'])assert.ok(notes.includes(phrase),'Missing release-note boundary: '+phrase);
  assert.ok(notes.includes('尚未在用户自己的 Mac'));
  assert.match(notes,/真实 Codex \/ Claude Code/);assert.match(notes,/Developer ID/);assert.match(notes,/公证/);

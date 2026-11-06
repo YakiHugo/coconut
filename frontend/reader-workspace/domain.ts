@@ -1,5 +1,5 @@
 import type { ReaderCue, ReaderDocument } from './contracts';
-import {blockText, type Block} from '../../reader/editions.js';
+import {blockText, type Block} from '@coconut/reader/editions.js';
 export function time(seconds: number) { const n = Math.max(0, Math.floor(seconds)); return [n >= 3600 ? String(Math.floor(n / 3600)).padStart(2, '0') : null, String(Math.floor(n / 60) % 60).padStart(2, '0'), String(n % 60).padStart(2, '0')].filter(v => v !== null).join(':'); }
 export function currentCue(cues: ReaderCue[], seconds: number): ReaderCue | undefined {
     let lo = 0, hi = cues.length;
