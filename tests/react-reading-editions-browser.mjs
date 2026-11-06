@@ -78,7 +78,7 @@ try{
  // Current source changes preserve the old edition and its frozen evidence.
  const previous=await record(),changed=structuredClone(previous.document);changed.segments[1].text='后来修正过的原话';
  await request('/api/v1/library/commit',{protocolVersion:1,epoch:library.epoch,action:'put',key:fixture.key,receiptKey:'edition-source-edit',expected:previous.token,document:changed});
- await page.reload();await expect(page.locator('.rw-edition-freshness')).toContainText('历史稿');await page.locator('.rw-edition-block').nth(1).locator('summary').click();
+ await page.reload();await expect(page.locator('.rw-edition-freshness')).toContainText('来源已变化，原文跳转与回听已停用。');await page.locator('.rw-edition-block').nth(1).locator('summary').click();
  await expect(page.locator('.rw-edition-block').nth(1).locator('.rw-edition-evidence')).toContainText('我我觉得，呃，值得试试。');await expect(page.getByRole('button',{name:'打开对应原话',exact:true})).toHaveCount(0);
  assert.deepEqual(errors,[]);assert.deepEqual(modelCalls,[]);
  console.log(JSON.stringify({passed:true,source_unchanged:true,separate_excerpt:true,shared_player:true,sqlite_reload:true,stale_evidence:true,mobile:true,model_calls:0}));
