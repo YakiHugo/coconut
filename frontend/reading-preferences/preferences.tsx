@@ -53,7 +53,7 @@ export function useReadingPreferences() {
       if (event.key !== null && !name) return;
       if (name) { unsaved.current.delete(name); setValues(previous => ({ ...previous, [name]: normalize(name, event.newValue) })); }
       else { unsaved.current.clear(); setValues(Object.fromEntries(names.map(name => [name, preferenceSettings[name].fallback])) as ReadingPreferenceValues); }
-      setStatus(unsaved.current.size ? '其他偏好仍只在本页生效，请重新选择后重试保存。' : '阅读偏好已与另一窗口同步');
+      setStatus(unsaved.current.size ? '其他偏好仍只在本页生效，请重新选择后重试保存。' : '');
     };
     window.addEventListener('storage', sync);
     return () => window.removeEventListener('storage', sync);
@@ -65,7 +65,7 @@ export function useReadingPreferences() {
     try {
       window.localStorage.setItem(preferenceSettings[name].key, value);
       unsaved.current.delete(name);
-      setStatus(unsaved.current.size ? '部分偏好仍只在本页生效，请重新选择后重试保存。' : '阅读偏好已保存在此浏览器');
+      setStatus(unsaved.current.size ? '部分偏好仍只在本页生效，请重新选择后重试保存。' : '');
     } catch {
       unsaved.current.add(name);
       setStatus('本次设置已生效，但浏览器未能保存；下次打开可能恢复原设置。');

@@ -21,6 +21,6 @@ for(const outcome of ['remembered','unavailable','rejected'])test('native opt-in
   if(outcome==='rejected')receipt.reject(Error('native write failed'));else receipt.resolve({status:outcome});
   await wait(()=>!checkbox.disabled);
   if(outcome==='remembered'){assert.equal(checkbox.checked,true);assert.match(status(),/已在这台电脑记住原文件/);assert.ok([...w.document.querySelectorAll('button')].some(button=>button.textContent==='不再记住'));}
-  else{assert.equal(checkbox.checked,false);assert.match(status(),/暂不可用/);assert.equal([...w.document.querySelectorAll('button')].some(button=>button.textContent==='不再记住'),false);}
+  else{assert.equal(checkbox.checked,false);assert.match(status(),/无法读取原文件/);assert.equal([...w.document.querySelectorAll('button')].some(button=>button.textContent==='不再记住'),false);}
  }finally{receipt.resolve({status:'unavailable'});w.root?.unmount();w.controller?.dispose();await w.happyDOM.close();}
 });

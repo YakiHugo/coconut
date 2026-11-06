@@ -36,7 +36,7 @@ try{
   const page=await context.newPage();page.setDefaultTimeout(15000);page.on('pageerror',error=>errors.push(error.message));
   const episode=title=>page.locator('.episode-list article').filter({has:page.getByRole('heading',{name:title,exact:true})});
   const multilingual=()=>episode('Authored multilingual episode'),evolving=()=>episode('Authored evolving episode');
-  async function saved(){await expect(page.locator('.app-header').getByText('已保存',{exact:true})).toBeVisible();}
+  async function saved(){await expect(page.locator('.save-indicator')).toHaveAttribute('data-state','saved');}
   async function backup(){return (await backupLibrary(page)).documents;}
   async function discover(){await page.getByRole('button',{name:'添加内容',exact:true}).click();await expect(page.getByLabel('播客或视频链接')).toBeVisible();}
   async function openFirst(){await multilingual().getByRole('button',{name:'打开单集',exact:true}).click();}
@@ -47,13 +47,13 @@ try{
   await page.getByLabel('播客或视频链接').fill(sourceFeed);await page.getByRole('button',{name:'打开链接',exact:true}).click();await expect(multilingual()).toBeVisible();
   const episodeSearch=page.getByRole('searchbox',{name:'查找当前列表的单集'}),episodeRows=page.locator('.episode-list article');
   await expect(episodeRows).toHaveCount(20);await expect(page.locator('.episode-warning')).toContainText('来源列表不完整');await expect(multilingual()).toContainText('时长 1:02:03');
-  await page.getByText('来源提示',{exact:true}).click();await expect(page.locator('.episode-warnings')).toContainText('发布者提供的文字稿');
+  await expect(page.locator('.episode-warnings')).toContainText('发布者提供的文字稿');
   await page.getByRole('button',{name:'显示更多单集',exact:true}).click();await expect(episodeRows).toHaveCount(40);
   await episodeSearch.fill('Archive episode 190');await expect(episodeRows).toHaveCount(1);await expect(episodeRows).toContainText('Archive episode 190');
-  await episodeSearch.fill('No matching episode');await expect(episodeRows).toHaveCount(0);await expect(page.getByText('当前列表没有匹配的单集。可清空搜索，或在上方换用具体单集链接。',{exact:true})).toBeVisible();await screenshot('episode-search-empty');
+  await episodeSearch.fill('No matching episode');await expect(episodeRows).toHaveCount(0);await expect(page.getByText('没有匹配的单集。',{exact:true})).toBeVisible();await screenshot('episode-search-empty');
   await page.getByRole('button',{name:'清空单集搜索',exact:true}).click();await expect(episodeRows).toHaveCount(20);await screenshot('episode-browsing');
   await episodeSearch.focus();await episodeSearch.pressSequentially('multilingual');await expect(episodeRows).toHaveCount(1);
-  assert.deepEqual(fixture.counts,{feed:beforeDiscovery.feed+1,transcript:beforeDiscovery.transcript});await expect(checked()).toContainText('上次来源检查：');const initialCheck=await checked().textContent();
+  assert.deepEqual(fixture.counts,{feed:beforeDiscovery.feed+1,transcript:beforeDiscovery.transcript});await expect(checked()).toContainText('上次检查：');const initialCheck=await checked().textContent();
   await expect(multilingual().getByRole('button',{name:'打开单集',exact:true})).toBeDisabled();await multilingual().getByRole('combobox').selectOption(frenchTrack);
   fixture.state.failTrack=true;await openFirst();await expect(page.locator('.source-error')).toContainText('Authored transcript temporarily unavailable');await expect(multilingual()).toBeVisible();await expect(multilingual().getByRole('combobox')).toHaveValue(frenchTrack);await screenshot('track-retry');
   fixture.state.failTrack=false;await page.getByRole('button',{name:'重试上次读取：Authored multilingual episode',exact:true}).click();await expect(page.locator('.rw-original')).toHaveText('Bonjour, cette source reste intacte.');await saved();
@@ -99,7 +99,7 @@ try{
   await page.getByLabel('播客或视频链接').fill(catalogFeed);await page.getByRole('button',{name:'打开链接',exact:true}).click();
   const episode=page.locator('.episode-list article').filter({has:page.getByRole('heading',{name:'Authored multilingual episode',exact:true})});
   await expect(page.getByLabel('播客或视频链接')).toHaveValue(catalogFeed);await episode.getByRole('combobox').selectOption(frenchTrack);await episode.getByRole('button',{name:'打开单集',exact:true}).click();
-  await expect(page.locator('.rw-original')).toHaveText('Bonjour, cette source reste intacte.');await expect(page.locator('.app-header').getByText('已保存',{exact:true})).toBeVisible();
+  await expect(page.locator('.rw-original')).toHaveText('Bonjour, cette source reste intacte.');await expect(page.locator('.save-indicator')).toHaveAttribute('data-state','saved');
   await page.reload();await expect(page.locator('.rw-original')).toHaveText('Bonjour, cette source reste intacte.');assert.equal(catalogFixture.counts.transcript,1);assert.equal(catalogFixture.calls.some(call=>call.url.endsWith('.mp3')),false);
   const size=await page.evaluate(()=>({viewport:innerWidth,document:document.documentElement.scrollWidth}));assert.ok(size.document<=width+1);
   checks.push({width,passed:['direct RSS link entry','real RSS/VTT parser to reader','SQLite saved transcript survives reload','no media or model request']});await context.close();await server.shutdown();server=null;

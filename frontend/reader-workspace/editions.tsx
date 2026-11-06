@@ -29,7 +29,7 @@ export function EditionReader({doc,edition,focusBlock,media,busy,saveStatus,onSa
   if(saveStatus!=='saved'||!pending||edition.revision!==pending.revision||!block||block.heading!==pending.heading||Editions.blockText(block)!==pending.text)return;
   pendingEdit.current=null;
   setDraft(draft=>!draft?null:draft.text===pending.text&&draft.heading.trim()===pending.heading?null:{...draft,revision:edition.revision});
-  setMessage('编辑稿保存已确认。');
+  setMessage('编辑稿已保存。');
  },[edition,saveStatus]);
  useEffect(()=>{if(!download)return;link.current?.click();return()=>{const url=download.url;window.setTimeout(()=>URL.revokeObjectURL(url),60000);};},[download]);
  useEffect(()=>{const position=Editions.state(doc).position;if(position?.edition_id===edition.id)host.current?.querySelector<HTMLElement>('[data-edition-section="'+CSS.escape(position.block_id)+'"]')?.scrollIntoView?.({block:'center'});},[]);
@@ -38,18 +38,18 @@ export function EditionReader({doc,edition,focusBlock,media,busy,saveStatus,onSa
   if(!draft)return;
   try{const next=Editions.edit(doc,edition.id,draft.blockId,{heading:draft.heading,text:draft.text},draft.revision),saved=next.reading_editions!.editions.find(item=>item.id===edition.id)!;
    pendingEdit.current={revision:saved.revision,blockId:draft.blockId,heading:draft.heading.trim(),text:Editions.blockText(saved.blocks.find(block=>block.id===draft.blockId)!)};
-   if(await onSave(next)){pendingEdit.current=null;setDraft(null);setMessage('编辑稿已保存，来源文字保留。');}else setMessage('编辑稿尚未确认保存，草稿仍保留；可重试项目保存或复制草稿。');}
+   if(await onSave(next)){pendingEdit.current=null;setDraft(null);setMessage('编辑稿已保存。');}else setMessage('编辑稿尚未确认保存，草稿仍保留；可重试项目保存或复制草稿。');}
   catch(error){setMessage(error instanceof Error?error.message:String(error));}
  }
  async function saveExcerpt(){
   if(!selection)return;
-  try{const next=Editions.excerpt(doc,edition.id,selection.blockId,selection.from,selection.to,{id:crypto.randomUUID(),createdAt:new Date().toISOString(),expectedText:selection.blockText});if(await onSave(next)){setSelection(null);setMessage('已保存编辑稿摘录，附带原文依据。');}else setMessage('摘录尚未确认保存，请检查项目保存状态。');}
+  try{const next=Editions.excerpt(doc,edition.id,selection.blockId,selection.from,selection.to,{id:crypto.randomUUID(),createdAt:new Date().toISOString(),expectedText:selection.blockText});if(await onSave(next)){setSelection(null);setMessage('编辑稿摘录已保存。');}else setMessage('摘录尚未确认保存，请检查项目保存状态。');}
   catch(error){setMessage(error instanceof Error?error.message:String(error));}
  }
  const excerpts=Editions.state(doc).excerpts.filter(item=>item.edition_id===edition.id);
  return <section className="rw-edition-reader" aria-label="编辑访谈稿">
-  <p className="rw-edition-notice" role="note">{edition.method==='model'?'AI 编辑稿 · 直接按原文分批整理，待人工核对。':'人工编辑草稿 · 保留完整来源范围。创建时按发言组织原文，尚未自动润色；可逐段整理正文与主题小标题。'}</p>
-  <p className="rw-edition-freshness" role="status">{current?'来源依据一致；整理后的文字不作为逐字原话。':'来源文字、人物或时间已变化。这份历史稿及其原文依据保留，当前原文跳转与回听已停用。'}</p>
+  <p className="rw-edition-notice" role="note">{edition.method==='model'?'AI 编辑稿 · 待人工核对':'人工编辑草稿'}</p>
+  <p className="rw-edition-freshness" role="status">{current?'整理稿 · 非逐字原话':'来源已变化，原文跳转与回听已停用。'}</p>
   {current&&media&&!canListen&&<p>原声已更换，历史稿的回听已停用。</p>}
   <div className="rw-toolbar"><label>查找编辑稿 <input type="search" value={query} disabled={!!draft} onChange={event=>setQuery(event.target.value)}/></label><button type="button" disabled={!!draft||busy} onClick={()=>{try{setDownload({url:URL.createObjectURL(new Blob([Editions.markdown(doc,edition.id)],{type:'text/markdown;charset=utf-8'})),name:doc.title.replace(/[\\/:*?"<>|\x00-\x1f]/g,'_')+'-interview.md'});}catch(error){setMessage(String(error));}}}>导出编辑稿 Markdown</button></div>
   <div className="rw-toolbar">{[['纯文本','txt'],['来源对照','md']].map(([label,extension])=><button key={label} disabled={!!draft||busy||aiDirty} onClick={()=>setDownload({url:URL.createObjectURL(new Blob([label==='纯文本'?Editions.plainText(doc,edition.id):Editions.evidenceMarkdown(doc,edition.id)],{type:'text/plain;charset=utf-8'})),name:doc.title.replace(/[\\/:*?"<>|\x00-\x1f]/g,'_')+'-interview.'+extension})}>导出编辑稿{label}</button>)}</div>
@@ -61,7 +61,7 @@ export function EditionReader({doc,edition,focusBlock,media,busy,saveStatus,onSa
     {draft?.blockId===block.id?<div className="rw-edition-edit"><label>主题小标题 <input value={draft.heading} maxLength={500} disabled={busy} onChange={event=>setDraft({...draft,heading:event.target.value})}/></label><label>整理正文 <textarea value={draft.text} maxLength={100000} disabled={busy} onChange={event=>setDraft({...draft,text:event.target.value})}/></label><button type="button" disabled={busy} onClick={()=>void saveDraft()}>保存本段编辑</button><button type="button" disabled={busy} onClick={()=>{pendingEdit.current=null;setDraft(null);}}>取消本段编辑</button></div>
      :<div className="rw-edition-text" data-edition-block-id={block.id} tabIndex={0}>{block.paragraphs.map((text,index)=><Fragment key={index}>{index?'\n\n':''}<p>{text}</p></Fragment>)}</div>}
     <div className="rw-toolbar"><button type="button" disabled={busy||!!draft||aiDirty} onClick={()=>{setSelection(null);setDraft({blockId:block.id,heading:block.heading,text:Editions.blockText(block),revision:edition.revision});}}>编辑本段</button><button type="button" disabled={busy||!!draft||aiDirty} onClick={()=>void onSave(Editions.bookmark(doc,edition.id,block.id))}>读到这里</button></div>
-    <details className="rw-edition-evidence"><summary>核对来源 · {evidence.cues.length} 个原片段</summary><p>以下是创建这份稿件时保存的原文依据，回听以完整原片段为边界。</p>{evidence.ranges.map((range,index)=><span className="rw-toolbar" key={index}>{canListen&&<button type="button" onClick={()=>onListen(range.start,range.end)}>回听来源 {time(range.start)}–{time(range.end)}</button>}</span>)}{current&&<button type="button" disabled={!!draft} onClick={()=>onSource(block.source_refs[0])}>打开对应原话</button>}{evidence.cues.map(cue=><p key={cue.id}><small>{time(cue.start)} · {cue.speaker||'未标注'}</small><br/>{cue.text}</p>)}</details>
+    <details className="rw-edition-evidence"><summary>核对来源 · {evidence.cues.length} 个原片段</summary>{evidence.ranges.map((range,index)=><span className="rw-toolbar" key={index}>{canListen&&<button type="button" onClick={()=>onListen(range.start,range.end)}>回听来源 {time(range.start)}–{time(range.end)}</button>}</span>)}{current&&<button type="button" disabled={!!draft} onClick={()=>onSource(block.source_refs[0])}>打开对应原话</button>}{evidence.cues.map(cue=><p key={cue.id}><small>{time(cue.start)} · {cue.speaker||'未标注'}</small><br/>{cue.text}</p>)}</details>
    </section>;})}
   </div>
   {!blocks.length&&<p>编辑稿中没有匹配的内容。</p>}

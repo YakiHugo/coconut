@@ -37,7 +37,9 @@ test('pasting share text extracts without fetching; submit reads the extracted l
         assert.equal(event.defaultPrevented, true);
         assert.equal(x.requests.length, 0);
         assert.match(x.w.document.querySelector('.source-kind').textContent, /Bilibili/);
-        assert.match(x.w.document.querySelector('.app-toast').textContent, /已识别/);
+        assert.equal(x.w.document.querySelector('.app-toast'), null);
+        assert.equal(x.w.document.querySelector('.source-enter'), null);
+        assert.equal(x.w.document.querySelector('.source-row [title]'), null);
         x.w.document.querySelector('.source-composer').dispatchEvent(new x.w.Event('submit', {bubbles:true,cancelable:true}));
         await wait(() => x.w.document.querySelector('.source-feedback'));
         assert.equal(x.requests.length, 1);

@@ -30,7 +30,7 @@ test('existing project is untouched until both loss review and explicit existing
 test('fatal parse remains blocked; absent helper choices are honest; stale cancelled requests never add',async()=>{
  const f=captionContinuityFixture();f.state.mode='fatal';const x=await mountedSourceApp(f);let release;try{
   x.open(url);await wait(()=>x.w.document.querySelector('.source-error').textContent);assert.equal(x.docs().length,0);assert.equal(region(x),null);
-  f.state.mode='missing_choices';x.open(url);await wait(()=>x.w.document.body.textContent.includes('没有返回可选语言'));assert.equal(x.w.document.querySelector('[aria-label="选择视频原语言"] select'),null);assert.equal(x.docs().length,0);
+  f.state.mode='missing_choices';x.open(url);await wait(()=>x.w.document.body.textContent.includes('未返回可选语言'));assert.equal(x.w.document.querySelector('[aria-label="选择视频原语言"] select'),null);assert.equal(x.docs().length,0);
   f.state.mode='partial';f.state.hold=new Promise(r=>release=r);x.open(url);await wait(()=>x.button('取消读取'));x.button('取消读取').click();release();f.state.hold=null;await new Promise(r=>setTimeout(r,25));assert.equal(region(x),null);assert.equal(x.docs().length,0);
  }finally{release?.();await x.w.happyDOM.close();}
 });

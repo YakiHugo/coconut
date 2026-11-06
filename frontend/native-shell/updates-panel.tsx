@@ -11,7 +11,6 @@ export function NativeUpdates({bridge}: {bridge: UpdateBridge}) {
         <p>Coconut {state.version || '—'}{state.arch ? ' · ' + (state.arch === 'arm64' ? 'Apple Silicon' : state.arch === 'x64' ? 'Intel' : state.arch) : ''}</p>
         <p role="status">{error || state.message || '更新状态暂不可用。'}</p>
         <label><input type="checkbox" checked={!!state.developer} disabled={!controller.allowed('developer')} onChange={event => void controller.run('developer', event.target.checked)}/>接收未签名开发版更新</label>
-        <p>更新包由桌面程序从官方发布检查并校验。安装会另行确认，未保存内容会阻止安全重启。</p>
         <button type="button" disabled={!controller.allowed('check')} onClick={() => void controller.run('check')}>检查更新</button>
         {!!state.nextVersion && ['available','error','cancelled'].includes(state.status) && <button type="button" disabled={!controller.allowed('download')} onClick={() => void controller.run('download')}>下载 {state.nextVersion}</button>}
         {state.status === 'ready' && <button type="button" disabled={!controller.allowed('install')} onClick={() => void controller.run('install')}>安装并重启</button>}

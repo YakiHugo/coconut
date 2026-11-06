@@ -30,7 +30,7 @@ export function TranscriptReviewPanel({store,documentKey}:{store:AppStore;docume
    if(prior?.job_id!==active.id){const next=merge(current,output.input,output.results,{provider:active.provider,model:active.model,jobId:active.id});if(!await store.commitDocument(next,{key:documentKey,revision:store.getRevision(documentKey)}))throw Error('校对稿尚未确认保存，请先处理保存状态');}
    if(request!==generation.current)return;
    const saved=await api('jobs/'+active.id+'/apply',{protocolVersion:1});if(request!==generation.current)return;
-   setJob(saved.job);setMessage('校对稿已保存，原识别文字与时间定位保留。');
+   setJob(saved.job);setMessage('校对稿已保存。');
   })().catch(error=>{if(request===generation.current)setMessage(error.message);}).finally(()=>{if(saving.current===request)saving.current=null;});
  },[job,documentKey,dirty,unsaved,store]);
  if(!doc?.segments.length)return null;
@@ -44,9 +44,9 @@ export function TranscriptReviewPanel({store,documentKey}:{store:AppStore;docume
  const time=(id:string)=>{const t=Math.floor(doc.segments.find(c=>c.id===id)?.start||0);return String(Math.floor(t/60)).padStart(2,'0')+':'+String(t%60).padStart(2,'0');};
  return <section ref={panel} className="rw-review-panel" aria-label="AI 校对文字稿" onFocusCapture={()=>setActivatedKey(documentKey)} onPointerEnter={()=>setActivatedKey(documentKey)}>
   <h3>AI 校对文字稿</h3>
-  <p>结合节目资料检查错字、人名、术语和标点，保留口头表达。只发送文字及节目资料，由本机 CLI 使用已配置的连接处理。</p>
+  <p>发送文字与节目资料到所选 CLI，校对错字、人名、术语和标点。</p>
   <fieldset disabled={busy||loading||live(job)}><legend>校对提供商</legend>{[['codex','Codex CLI'],['kimi','Kimi CLI']].map(([id,name])=><label key={id}><input type="radio" name={'review-provider-'+documentKey} value={id} checked={provider===id} onChange={()=>setProvider(id)}/>{name} </label>)}</fieldset>
-  <label>模型（可留空） <input type="text" value={model} maxLength={120} disabled={busy||loading||live(job)} placeholder="使用 CLI 默认模型" onChange={event=>setModel(event.target.value)}/></label>
+  <label>模型 <input type="text" value={model} maxLength={120} disabled={busy||loading||live(job)} placeholder="使用 CLI 默认模型" onChange={event=>setModel(event.target.value)}/></label>
   {job&&<p role="status">{label[job.state]||job.state}{job.phase.startsWith('review:')?' · 第 '+job.phase.slice(7)+' 批':''}{job.error?'：'+job.error:''}</p>}
   {!job&&pending?.state==='pending'&&<p role="status">转录已完成，AI 校对待继续。{pending.error||''}</p>}
   {message&&<p role="status">{message}</p>}

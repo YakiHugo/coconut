@@ -96,7 +96,7 @@ export function ReaderPlayer({ media, seek, onTime, onProgress }: {
     return <section className="rw-player" aria-label="常驻播放控制">
         {media.kind==='audio'?<audio {...props}/>:<video className="rw-player-video" {...props}/>}
         <div className="rw-player-main">
-            <button type="button" className="rw-player-play" aria-label={playing?'暂停播放':'播放原声'} title={playing?'暂停 · 空格 / K':'播放 · 空格 / K'} onClick={toggle}>{playing?<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 5h4v14H7zM14 5h4v14h-4z"/></svg>:<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m8 5 11 7-11 7z"/></svg>}</button>
+            <button type="button" className="rw-player-play" aria-label={playing?'暂停播放':'播放原声'} onClick={toggle}>{playing?<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 5h4v14H7zM14 5h4v14h-4z"/></svg>:<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m8 5 11 7-11 7z"/></svg>}</button>
             <div className="rw-player-track">
                 <input className="rw-player-progress" type="range" min="0" max={ready?duration:0} step="0.1" value={ready?Math.min(currentTime,duration):0} disabled={!ready} aria-label="播放进度" aria-valuetext={time(currentTime)+' / '+time(ready?duration:0)} style={{backgroundSize:(ready?Math.min(100,currentTime/duration*100):0)+'% 4px'}} onKeyDown={event=>{
             if(event.altKey||event.ctrlKey||event.metaKey||event.shiftKey||event.nativeEvent.isComposing)return;

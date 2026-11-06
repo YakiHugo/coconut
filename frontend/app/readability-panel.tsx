@@ -44,7 +44,6 @@ export function ReadabilityPanel({store,documentKey}:{store:AppStore;documentKey
  const active=state.key===documentKey?state.job:null;
  return <section className="rw-resource-processing" aria-label="文字稿资源与整理">
   <h3>文字稿整理{active&&['queued','running','awaiting_media'].includes(active.state)?' · '+phaseLabel(active.phase):''}</h3>
-  <p>复用已有字幕，按资源补齐标点与说话人；原文、笔记和时间定位保留。</p>
   <dl>{state.key===documentKey&&state.rows.map(row=><div key={row.kind} data-resource={row.kind} data-state={row.state}><dt>{labels[row.kind]}</dt><dd>{row.message}</dd></div>)}</dl>
   {active&&<p role="status">{phaseLabel(active.phase)}{active.error?'：'+active.error:''}</p>}
   <p role="status">{attachmentError||state.key===documentKey&&state.message}</p>

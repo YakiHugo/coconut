@@ -43,11 +43,9 @@ p{line-height:1.7}
 .app-sidebar nav button[aria-current=page]{background:var(--reading-selected);color:var(--accent)}
 .app-sidebar nav span{float:right;font-size:11px;font-variant-numeric:tabular-nums;line-height:19px}
 .sidebar-foot{margin-top:auto;padding-top:56px;display:grid;gap:18px;font-size:12px;color:var(--muted)}
-.app-header{height:76px;border-bottom:1px solid var(--reading-edge);display:flex;gap:20px;align-items:center;justify-content:space-between;padding:0 40px;font-size:12px;color:var(--muted)}
-.app-breadcrumb{display:flex;gap:16px;align-items:center;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text)}
-.app-breadcrumb>span{color:var(--muted);flex-shrink:0}
-.app-header-tools{display:flex;align-items:center;gap:22px;flex-shrink:0}
-.app-header-tools>button{padding:6px 9px;font-size:11px}
+.app-save-state{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.app-save-state:not(:has(.save-indicator:not(.visually-hidden))):not(:has(button)){display:none}
+.app-save-state>button{padding:6px 9px;font-size:11px}
 .save-indicator{font-size:11px;white-space:nowrap}
 .save-indicator::before{content:'✓';margin-right:6px}
 .save-indicator[data-state=pending]{color:var(--accent)}
@@ -147,17 +145,18 @@ p{line-height:1.7}
 .app-message{margin:15px 40px;padding:10px 0;font-size:13px;border-bottom:1px solid var(--reading-edge);color:var(--danger);overflow-wrap:anywhere}
 .startup{max-width:700px;margin:10vh auto;padding:30px}
 .startup a{margin-left:20px}
-/* Background receipts remain mounted in one disclosure across navigation. */
+/* Background receipts stay mounted in a task dialog across navigation. */
 .activity-center{position:relative}
-.activity-center>summary{display:flex;align-items:center;gap:8px;cursor:pointer;list-style:none;min-height:36px;color:var(--text);font-size:11px}
-.activity-center>summary::-webkit-details-marker{display:none}
-.activity-center>summary::after{content:'⌄' / '';margin-left:4px;color:var(--muted)}
-.activity-center[open]>summary::after{content:'⌃' / ''}
+.activity-trigger{display:flex;align-items:center;gap:10px;min-height:40px;padding:0;border:0;text-align:left;color:var(--muted);font-size:12px}
+.activity-trigger[aria-expanded=true]{color:var(--accent)}
+.activity-center :is(button,a,summary,input,textarea):is(:focus,:active),.app-save-state button:is(:focus,:active){outline:none;box-shadow:none}
+.activity-center :is(button,a,summary,input,textarea):focus-visible,.app-save-state button:focus-visible,:root[data-reader-theme=dark] .activity-center :is(button,a,summary,input,textarea):focus-visible,:root[data-reader-theme=dark] .app-save-state button:focus-visible{outline:none;box-shadow:inset 0 -2px var(--accent);background:var(--reading-selected);color:var(--text)}
 .activity-indicator{width:5px;height:5px;background:var(--muted);border-radius:50%}
 .activity-indicator[data-active]{background:var(--accent)}
 .activity-indicator[data-attention]{background:var(--danger)}
 .activity-count{font:10px ui-monospace,monospace;color:var(--accent)}
-.activity-panel{position:absolute;right:0;top:46px;z-index:30;width:400px;max-width:calc(100vw - 40px);max-height:min(680px,calc(100dvh - 110px));overflow:auto;overscroll-behavior:contain;padding:24px;background:var(--surface);border:1px solid var(--reading-edge);border-top:2px solid var(--text);border-radius:3px;box-shadow:0 12px 40px #00000014;color:var(--text);font-size:12px;white-space:normal}
+.activity-panel{position:fixed;inset:0;width:440px;max-width:calc(100vw - 40px);max-height:calc(100dvh - 48px);overflow:auto;overscroll-behavior:contain;padding:24px;background:var(--surface);border:1px solid var(--reading-edge);border-top:2px solid var(--text);border-radius:3px;box-shadow:0 12px 40px #00000014;color:var(--text);font-size:12px;white-space:normal}
+.activity-panel::backdrop{background:#0003}
 .activity-heading{display:flex;justify-content:space-between;align-items:center;margin-bottom:24px}
 .activity-heading .kicker{margin:0 0 8px;font-size:9px}
 .activity-heading h2{font-size:22px;margin:0}
@@ -224,16 +223,16 @@ p{line-height:1.7}
 @keyframes toast-in{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}
 @media(max-width:1100px){.discover,.library-page{padding-inline:40px}.reader-workspace{width:calc(100% - 48px)}.react-ai-panel,.remote-media,.ingestion-panel,.native-media-panel,.recovery-options{margin-inline:40px}}
 @media(max-width:760px){
-  .react-app{grid-template-columns:minmax(0,1fr)}
+  .react-app{grid-template-columns:minmax(0,1fr);grid-template-rows:auto minmax(0,1fr)}
   .app-sidebar{position:static;height:auto;overflow:visible;padding:24px 22px 0;border-right:0;border-bottom:1px solid var(--reading-edge);display:grid;grid-template-columns:1fr auto}
   .app-sidebar nav{grid-column:1/-1;display:flex;gap:16px;margin:24px 0 0}
   .app-sidebar nav button{border-radius:0;padding:12px 0;border-bottom:2px solid transparent;font-size:12px}
   .app-sidebar nav button[aria-current=page]{background:transparent;border-bottom-color:var(--accent)}
   .app-sidebar nav span{margin-left:10px;line-height:17px}
   .sidebar-foot{grid-column:2;grid-row:1;margin:0;padding:0;display:flex;align-items:center;gap:16px}
-  .app-header{padding:0 22px;height:58px;gap:12px;font-size:11px}
-  .app-breadcrumb{gap:10px}.app-breadcrumb>span:first-child{display:none}
-  .app-header-tools{gap:14px}.save-indicator,.activity-center>summary{font-size:10px}
+  .save-indicator,.activity-trigger{font-size:11px}
+  .activity-trigger{min-height:32px;gap:6px}
+  .app-save-state{position:absolute;right:22px;top:8px}
   .discover,.library-page{padding:36px 22px 32px}
   h1{font-size:36px;letter-spacing:-.06em;margin:25px 0 20px}
   .discover-intro .kicker{padding-top:13px;font-size:9px}.lede{font-size:13px}
@@ -241,7 +240,7 @@ p{line-height:1.7}
   .reader-workspace{width:calc(100% - 40px);padding:28px 0}
   .react-ai-panel,.remote-media,.ingestion-panel,.native-media-panel,.recovery-options{margin:20px 22px;padding:22px 0}
   .app-message{margin-inline:22px}
-  .activity-panel{top:39px;width:360px;padding:20px}
+  .activity-panel{width:360px;padding:20px}
 }
 @media(max-width:480px){
   .app-brand{font-size:25px}.sidebar-foot{gap:12px}
@@ -252,8 +251,7 @@ p{line-height:1.7}
   .source-feedback{padding:16px}.source-feedback .source-actions{margin-left:0}
   .toast-region{right:20px;bottom:20px}
   .episode-list article{align-items:stretch;flex-direction:column;gap:12px}.episode-list article>div{width:100%}
-  .save-indicator{font-size:9px}.app-header-tools{gap:10px}.app-header-tools>button{padding:4px;font-size:9px}
-  .app-breadcrumb{font-size:10px}.app-breadcrumb>span{display:none}
+  .save-indicator{font-size:10px}.app-save-state>button{padding:4px;font-size:10px}
 }
 @media(prefers-reduced-motion:reduce){.source-progress>span,.app-toast{animation:none}button{transition:none}}
 
