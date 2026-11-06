@@ -187,7 +187,7 @@ p{line-height:1.7}
 .storage-settings h2{font-size:16px}
 .storage-settings [data-testid=storage-setup]{padding-top:12px}
 /* Reading keeps a quiet measure; system chrome follows the editorial shell. */
-.reader-workspace{width:100%;min-width:0;max-width:1000px;padding:42px 64px}
+.reader-workspace{width:calc(100% - 64px);min-width:0;max-width:var(--reader-measure,48rem);padding:36px 0}
 .reader-workspace h1{font-family:var(--ui-font);font-size:clamp(28px,3.4vw,42px);font-weight:550;letter-spacing:-.04em;overflow-wrap:anywhere}
 .rw-source{overflow-wrap:anywhere}
 .rw-eyebrow{color:var(--muted);font-size:10px}
@@ -222,7 +222,7 @@ p{line-height:1.7}
 .app-toast[data-tone=error] .toast-icon{background:transparent;color:var(--danger);border:1px solid var(--danger)}
 .app-toast button{flex-shrink:0;display:flex;align-items:center;justify-content:center;width:28px;height:28px;margin:-3px -4px -3px 0;padding:0;border:0;color:var(--muted);font-size:20px}
 @keyframes toast-in{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}
-@media(max-width:1100px){.discover,.library-page,.reader-workspace{padding-inline:40px}.react-ai-panel,.remote-media,.ingestion-panel,.native-media-panel,.recovery-options{margin-inline:40px}}
+@media(max-width:1100px){.discover,.library-page{padding-inline:40px}.reader-workspace{width:calc(100% - 48px)}.react-ai-panel,.remote-media,.ingestion-panel,.native-media-panel,.recovery-options{margin-inline:40px}}
 @media(max-width:760px){
   .react-app{grid-template-columns:minmax(0,1fr)}
   .app-sidebar{position:static;height:auto;overflow:visible;padding:24px 22px 0;border-right:0;border-bottom:1px solid var(--reading-edge);display:grid;grid-template-columns:1fr auto}
@@ -238,7 +238,7 @@ p{line-height:1.7}
   h1{font-size:36px;letter-spacing:-.06em;margin:25px 0 20px}
   .discover-intro .kicker{padding-top:13px;font-size:9px}.lede{font-size:13px}
   .source-composer{margin-bottom:40px}
-  .reader-workspace{padding:28px 22px}
+  .reader-workspace{width:calc(100% - 40px);padding:28px 0}
   .react-ai-panel,.remote-media,.ingestion-panel,.native-media-panel,.recovery-options{margin:20px 22px;padding:22px 0}
   .app-message{margin-inline:22px}
   .activity-panel{top:39px;width:360px;padding:20px}
