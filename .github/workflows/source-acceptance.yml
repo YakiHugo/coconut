@@ -22,13 +22,13 @@ jobs:
   source-acquisition:
     # Maintainer opt-in only. A later commit requires relabel/dispatch on that SHA.
     # Public availability is not a required merge gate and never becomes a fake pass.
-    if: github.event_name == 'workflow_dispatch' || github.event.label.name == 'live-source-check' || github.event.label.name == 'live-source-bilibili'
+    if: github.event_name == 'workflow_dispatch' || github.event.label.name == 'live-source-check' || github.event.label.name == 'live-source-bilibili' || github.event.label.name == 'live-source-youtube'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
-        include: ${{ github.event_name == 'workflow_dispatch' && fromJSON('[{"name":"manual"}]') || github.event.label.name == 'live-source-bilibili' && fromJSON('[{"name":"bilibili","url":"https://www.bilibili.com/video/BV1XNtJ6UEmm","language":"zh"}]') || fromJSON('[{"name":"bilibili","url":"https://www.bilibili.com/video/BV1XNtJ6UEmm","language":"zh"},{"name":"youtube","url":"https://www.youtube.com/watch?v=S6l3aRsecuE","language":"en"}]') }}
+        include: ${{ github.event_name == 'workflow_dispatch' && fromJSON('[{"name":"manual"}]') || github.event.label.name == 'live-source-youtube' && fromJSON('[{"name":"youtube","url":"https://www.youtube.com/watch?v=sJ4VJWycX9M","language":"en"}]') || github.event.label.name == 'live-source-bilibili' && fromJSON('[{"name":"bilibili","url":"https://www.bilibili.com/video/BV1XNtJ6UEmm","language":"zh"}]') || fromJSON('[{"name":"bilibili","url":"https://www.bilibili.com/video/BV1XNtJ6UEmm","language":"zh"},{"name":"youtube","url":"https://www.youtube.com/watch?v=sJ4VJWycX9M","language":"en"}]') }}
     steps:
       - uses: actions/checkout@v4
         with:

@@ -104,3 +104,17 @@ class SourceOnlyWorkflowContracts(unittest.TestCase):
         self.assertIsNotNone(match)
         matrix = json.loads(match.group(1))
         self.assertEqual(matrix, [{'name': 'bilibili', 'url': 'https://www.bilibili.com/video/BV1XNtJ6UEmm', 'language': 'zh'}])
+
+    def test_youtube_only_label_selects_the_independent_yc_interview_once(self):
+        import re
+        workflow = yaml.safe_load((ROOT / '.github/workflows/source-acceptance.yml').read_text())
+        job = workflow['jobs']['source-acquisition']
+        expression = job['strategy']['matrix']['include']
+        match = re.search(r"github.event.label.name == 'live-source-youtube' && fromJSON\('([^']+)'\)", expression)
+        self.assertIsNotNone(match)
+        self.assertEqual(json.loads(match.group(1)), [{'name': 'youtube', 'url': 'https://www.youtube.com/watch?v=sJ4VJWycX9M', 'language': 'en'}])
+        self.assertNotIn('S6l3aRsecuE', expression, 'Never automatically retry the previously restricted resource')
+        self.assertIn("github.event.label.name == 'live-source-youtube'", job['if'])
+        commands = '\n'.join(step.get('run', '') for step in job['steps'])
+        self.assertNotIn('live_ingestion_proof', commands)
+        self.assertNotIn('faster-whisper', commands)
