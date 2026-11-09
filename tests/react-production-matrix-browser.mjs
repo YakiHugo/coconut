@@ -9,6 +9,7 @@ import {backupLibrary,openSettings,closeSettings} from './helpers/settings-brows
 import assert from 'node:assert/strict';
 import {fork} from 'node:child_process';
 import {createRequire} from 'node:module';
+import {createHash} from 'node:crypto';
 import {mkdtemp,mkdir,writeFile,readFile,rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import path from 'node:path';
@@ -18,7 +19,7 @@ import {notebookSources} from './helpers/notebook-source-fixtures.mjs';
 
 const output=process.env.COCONUT_REACT_ARTIFACTS||'/tmp/coconut-react-authored';
 const root=await mkdtemp(path.join(tmpdir(),'coconut-react-matrix-'));
-const checks=[],contexts=new Set(),services=new Set(),errors=[],blocked=[],forbidden=[];
+const checks=[],contexts=new Set(),services=new Set(),errors=[],blocked=[],forbidden=[],sourceMediaWrites=[];
 let browser,stage='startup',serial=0;
 const documentA={schema_version:1,key:'matrix-a',title:'Authored source A',language:'en',notes:{cue:'Original note'},opaque:{keep:'source extension'},segments:[{id:'cue',start:0,end:2,text:'Read the authored source carefully.',opaque:{keep:true}}]};
 const documentB={...documentA,key:'matrix-b',title:'Authored source B',notes:{},segments:[{id:'cue',start:0,end:2,text:'A different authored source.'}]};
@@ -44,14 +45,14 @@ function startService(name,port=0){
   });
  });
 }
-async function contextFor(service,{seed=original,legacySeed=null,unavailable=false,width=1360,bridge=false,preferences={},remembered=[]}={}){
+async function contextFor(service,{seed=original,legacySeed=null,unavailable=false,width=1360,bridge=false,preferences={},remembered=[],allowSourceMediaSave=false}={}){
  const seeded=seed?JSON.parse(seed):null;if(seeded)await seedLibrary(service,seeded.documents);
  // Last-read selection is a client preference, never a canonical-library field.
  if(seeded?.active)preferences={'coconut-reader-last-active-v1':seeded.active,'coconut-reading-view-defaults-v1':JSON.stringify({version:1,views:seeded.documents.filter(doc=>doc.segments?.length).map(doc=>[doc.key,doc.segments[0].id,'transcript'])}),...preferences};
  const context=await browser.newContext({viewport:{width,height:960},acceptDownloads:true,serviceWorkers:'block'});contexts.add(context);
  await context.route('**/*',route=>{
   const url=new URL(route.request().url());
-  if(url.origin===service.origin){if(unavailable&&url.pathname.startsWith('/api/v1/library'))return route.abort('failed');if(route.request().method()==='POST'&&!['/api/ask','/api/v1/library/batch'].includes(url.pathname)){forbidden.push(url.pathname);return route.abort('blockedbyclient');}return route.continue();}if(['blob:','data:'].includes(url.protocol))return route.continue();
+  if(url.origin===service.origin){if(unavailable&&url.pathname.startsWith('/api/v1/library'))return route.abort('failed');if(route.request().method()==='POST'&&!['/api/ask','/api/v1/library/batch'].includes(url.pathname)){if(allowSourceMediaSave&&url.pathname==='/api/v1/source-media'){const bytes=route.request().postDataBuffer();sourceMediaWrites.push({key:url.searchParams.get('key'),name:url.searchParams.get('name'),type:route.request().headers()['content-type'],size:bytes.length,sha256:createHash('sha256').update(bytes).digest('hex')});return route.continue();}forbidden.push(url.pathname);return route.abort('blockedbyclient');}return route.continue();}if(['blob:','data:'].includes(url.protocol))return route.continue();
   blocked.push(url.origin+url.pathname);return route.abort('blockedbyclient');
  });
  if(legacySeed)await context.addInitScript(raw=>{if(!localStorage.getItem('matrix-seeded')){localStorage.setItem('coconut-reader-v1',raw);localStorage.setItem('matrix-seeded','yes');}},legacySeed);
@@ -366,7 +367,7 @@ try{
  await ai.context.close();contexts.delete(ai.context);await aiService.close();
 
  stage='Authored native bridge mock receipts, subtitle encoding and JSON recovery';
- const localService=await startService('local'),local=await contextFor(localService,{seed:null,bridge:true,width:390}),p=local.page;
+ const localService=await startService('local'),local=await contextFor(localService,{seed:null,bridge:true,width:390,allowSourceMediaSave:true}),p=local.page;
  await expect(p.locator('.subtitle-recovery')).not.toHaveAttribute('open');await expect(p.locator('.recovery-entry')).not.toHaveAttribute('open');await expect(p.getByRole('button',{name:'打开音频或视频文件',exact:true})).toBeVisible();await expect(p.locator('.discover > details,.podcast-catalog')).toHaveCount(0);await shot(p,'source-first-home',390);await shot(p,'source-first-home',1360);
  // Real browser picker ownership with a MOCK native bridge; empty selection is not an OS cancel proof.
  const [emptyChooser]=await Promise.all([p.waitForEvent('filechooser'),p.getByRole('button',{name:'打开音频或视频文件',exact:true}).click()]);
@@ -375,6 +376,10 @@ try{
  await chooseFile(p,p.getByRole('button',{name:'打开音频或视频文件',exact:true}),{name:'authored-native.wav',mimeType:'audio/wav',buffer:wav()});await expect(p.getByRole('heading',{name:'authored-native.wav',exact:true})).toBeVisible();await saved(p);assert.equal(await p.locator('audio').evaluate(player=>player.paused),true);assert.equal(await p.locator('.rw-cue').count(),0);await p.locator('.rw-project-note > summary').click();await p.getByRole('textbox',{name:'项目笔记',exact:true}).fill('Keep this project note');await p.getByRole('button',{name:'保存笔记',exact:true}).click();await saved(p);
  await p.getByRole('checkbox',{name:'在这台电脑记住原文件',exact:true}).check();await expect(p.getByText(/已在这台电脑记住原文件/)).toBeVisible();const nativeBefore=await p.evaluate(()=>authoredNativeCalls);assert.equal(nativeBefore.filter(c=>c.kind==='remember').length,1);const nativeOwner=nativeBefore.find(c=>c.kind==='remember').owner;const nativeStatus=await (await fetch(localService.origin+'/api/v1/library')).json();assert.equal(nativeOwner.library,nativeStatus.binding.mediaLibraryIdentity);assert.equal(nativeOwner.epoch,(await record(localService,(await backup(p)).documents[0].key)).identity.lifetime);await noBrowserPrimary(p);
  const rawBackup=await backup(p),rawDoc=rawBackup.documents[0];assert.equal(rawDoc.project_note,'Keep this project note');assert.ok(!JSON.stringify(rawBackup).includes('authored-native-token'));
+ // The selected local file is now durably copied before entering the project.
+ // Permit only that new local write; ASR, provider downloads, and task submissions remain forbidden.
+ const expectedWav=wav();assert.deepEqual(sourceMediaWrites,[{key:rawDoc.key,name:'authored-native.wav',type:'audio/wav',size:expectedWav.length,sha256:createHash('sha256').update(expectedWav).digest('hex')}]);
+ const savedMediaUrl=new URL(await p.locator('audio').getAttribute('src'),localService.origin);assert.equal(savedMediaUrl.pathname,'/api/v1/source-media/content');const savedMediaResponse=await fetch(savedMediaUrl);assert.equal(savedMediaResponse.status,200);assert.deepEqual(Buffer.from(await savedMediaResponse.arrayBuffer()),expectedWav);
  await p.reload();await p.getByRole('button',{name:'继续阅读',exact:true}).click();await expect(p.locator('audio')).toHaveCount(1);await expect(p.getByRole('button',{name:'播放原声',exact:true})).toBeVisible();assert.equal(await p.locator('audio').evaluate(player=>player.paused),true);await expect(p.getByText(/已载入原文件/)).toBeVisible();await p.getByRole('button',{name:'不再记住',exact:true}).click();await expect(p.getByText(/已不再记住原文件/)).toBeVisible();assert.equal(await p.locator('audio').count(),1,'Forget preserves loaded session');
  const closeInspection=await p.evaluate(()=>coconutPrepareClose('inspect'));assert.equal(closeInspection.safe,true);
  await p.getByRole('textbox',{name:'项目笔记',exact:true}).fill('Unsaved native close guard');assert.equal(await p.evaluate(()=>coconutPrepareClose('inspect').safe),false);assert.equal(await p.evaluate(()=>coconutPrepareClose('safe',{id:12,kind:'close',expiresAt:Date.now()+10000})),false);await p.getByRole('button',{name:'取消修改',exact:true}).click();
@@ -387,7 +392,7 @@ try{
  const restoreService=await startService('restore'),restored=await contextFor(restoreService,{seed:null,width:390});await openSettings(restored.page);await restored.page.locator('.recovery-entry > summary').click();await chooseFile(restored.page,restored.page.getByRole('button',{name:'恢复书架备份',exact:true}),{name:'authored-backup.json',mimeType:'application/json',buffer:Buffer.from(JSON.stringify(attached))});await expect(restored.page.getByText('备份内容已恢复并保存。',{exact:true})).toBeVisible();await saved(restored.page);const recovered=await backup(restored.page);assert.deepEqual(recovered.documents,attached.documents);await restored.page.reload();await restored.page.getByRole('button',{name:/^我的内容/}).click();await restored.page.locator('.library-page li button').filter({hasText:rawDoc.title}).first().click();await expect(restored.page.getByRole('heading',{name:rawDoc.title,exact:true})).toBeVisible();await expect(restored.page.locator('.rw-original')).toContainText('中文测试𠀀');await expect(restored.page.getByRole('textbox',{name:'项目笔记',exact:true})).toHaveValue('Keep this project note');assert.equal(await restored.page.locator('audio').count(),0,'JSON does not serialize a native session URL');
  pass('Real GB18030 bytes require renewed review; attach preserves raw project identity and JSON recovery reload');
  assert.deepEqual(localService.asks,[],'Recovery/native flow never invokes inference');
- assert.deepEqual(errors,[]);assert.deepEqual(blocked,[]);assert.deepEqual(forbidden,[],'No ASR/upload/download/task submission');
+ assert.deepEqual(errors,[]);assert.deepEqual(blocked,[]);assert.deepEqual(forbidden,[],'No ASR, provider download, or task submission; only the explicitly selected local audio was saved');
  await writeFile(path.join(output,'react-production-matrix.json'),JSON.stringify({status:'passed',checks,boundaries:['fake provider','fake source acquisition in companion smoke','native bridge mock','no upstream/ASR/model/Mac verification'],errors,blocked,forbidden},null,2));
  console.log('PASS production React authored matrix');
 }catch(error){await writeFile(path.join(output,'react-production-matrix-failure.json'),JSON.stringify({stage,message:error.message,stack:error.stack,checks,errors,blocked,forbidden},null,2));throw error;}

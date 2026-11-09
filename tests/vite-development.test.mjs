@@ -23,6 +23,10 @@ test('Vite serves source and HMR on the authenticated service origin without exp
   assert.match(response.headers.get('content-security-policy'), /script-src 'self' 'nonce-/);
   const source = await fetch(origin + '/frontend/app/main.tsx').then(r => r.text());
   assert.match(source, /createRoot/);
+  // New shared CommonJS helpers must be prebundled for native browser ESM.
+  const jobsPanel = await fetch(origin + '/frontend/app/source-jobs-panel.tsx').then(r => r.text());
+  assert.match(jobsPanel, /node_modules\/\.vite\/deps\/.*source-alignment/);
+  assert.doesNotMatch(jobsPanel, /from ["']\/shared\/source-alignment\.js["']/);
   assert.equal((await fetch(origin + '/@vite/client')).status, 200);
   assert.equal((await fetch(origin + '/core.js')).status, 200);
   const health = await fetch(origin + '/api/health').then(r => r.json());

@@ -8,9 +8,11 @@ import os from 'node:os';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {execFileSync} from 'node:child_process';
+import {createHash} from 'node:crypto';
 import {_electron as electron,expect} from '@playwright/test';
 const root=fileURLToPath(new URL('../',import.meta.url)),origin='http://127.0.0.1:47831';
-const checks=[],receipts=[],errors=[],blocked=[];
+const checks=[],receipts=[],errors=[],blocked=[],sourceMediaWrites=[];
+let allowSourceMediaSave=false;
 let app,page,temp,libraryIdentity,canonicalNativeOwnerVerified=false,stage='configuration',chooserCount=0,menuDiagnostics=null;
 const output=process.env.COCONUT_NATIVE_DIAGNOSTICS;
 process.umask(0o077);delete process.env.DEBUG;delete process.env.PWDEBUG;
@@ -36,7 +38,7 @@ async function launch(executable,profile,version){
  app=await electron.launch({executablePath:executable,args:['--user-data-dir='+profile],cwd:temp,acceptDownloads:true,chromiumSandbox:true,bypassCSP:false,timeout:45000,env:{HOME:home,TMPDIR:temp,PATH:'/usr/bin:/bin',LANG:process.env.LANG||'en_US.UTF-8'}});
  const facts=await app.evaluate(({app,BrowserWindow})=>({packaged:app.isPackaged,version:app.getVersion(),profile:app.getPath('userData'),asar:app.getAppPath().endsWith('/app.asar'),preferences:BrowserWindow.getAllWindows()[0]?.webContents.getLastWebPreferences()}));
  assert.equal(facts.packaged,true);assert.equal(facts.asar,true);assert.equal(facts.version,version);assert.equal(await fs.realpath(facts.profile),await fs.realpath(profile));
- await app.context().route('**/*',async route=>{const request=route.request(),url=new URL(request.url());if(['blob:','data:'].includes(url.protocol)||(url.origin===origin&&['GET','HEAD'].includes(request.method())&&url.pathname!=='/api/language-tools')||(url.origin===origin&&request.method()==='POST'&&url.pathname==='/api/v1/library/batch'))return route.continue();blocked.push({method:request.method(),path:url.origin===origin?url.pathname:'external'});return route.abort();});
+ await app.context().route('**/*',async route=>{const request=route.request(),url=new URL(request.url());if(allowSourceMediaSave&&url.origin===origin&&request.method()==='POST'&&url.pathname==='/api/v1/source-media'){const bytes=request.postDataBuffer();sourceMediaWrites.push({key:url.searchParams.get('key'),name:url.searchParams.get('name'),type:request.headers()['content-type'],size:bytes.length,sha256:createHash('sha256').update(bytes).digest('hex')});allowSourceMediaSave=false;return route.continue();}if(['blob:','data:'].includes(url.protocol)||(url.origin===origin&&['GET','HEAD'].includes(request.method())&&url.pathname!=='/api/language-tools')||(url.origin===origin&&request.method()==='POST'&&url.pathname==='/api/v1/library/batch'))return route.continue();blocked.push({method:request.method(),path:url.origin===origin?url.pathname:'external'});return route.abort();});
  page=await app.firstWindow();page.setDefaultTimeout(15000);page.on('pageerror',e=>errors.push(sanitizedFailure(e)));page.on('filechooser',()=>chooserCount++);
  await page.waitForURL(url=>url.origin===origin&&url.pathname==='/');await expect(page.locator('.react-app')).toBeVisible();
  assert.equal(await page.locator('script[src="app.js"],.shell,#transcript').count(),0);
@@ -77,8 +79,13 @@ try{
  temp=await fs.mkdtemp(path.join(os.tmpdir(),'coconut-react-packaged-'));const release=path.join(temp,'release');await fs.mkdir(release);execFileSync('/usr/bin/ditto',['-x','-k',archive,release],{timeout:60000,stdio:'pipe'});
  const executable=path.join(release,'Coconut.app/Contents/MacOS/Coconut'),profile=path.join(temp,'profile'),audio=path.join(temp,'authored-react.wav');await fs.writeFile(audio,wav());
  await launch(executable,profile,configuration.version);await expect(page.getByRole('heading',{name:'今天，想听什么？'})).toBeVisible();await screenshot('react-packaged-home.png');
- stage='real_native_raw_chooser';const chooserPromise=page.waitForEvent('filechooser');assert.equal(await menu('open-local-media'),true);const chooser=await chooserPromise;const picking=await page.evaluate(()=>window.coconutPrepareClose('inspect'));assert.equal(picking.safe,false);assert.equal(picking.flushable,false);assert.equal(await page.evaluate(()=>window.coconutPrepareUpdate()),false);assert.equal(await menu('open-local-media'),false);await chooser.setFiles(audio);
+ stage='real_native_raw_chooser';const chooserPromise=page.waitForEvent('filechooser');assert.equal(await menu('open-local-media'),true);const chooser=await chooserPromise;const picking=await page.evaluate(()=>window.coconutPrepareClose('inspect'));assert.equal(picking.safe,false);assert.equal(picking.flushable,false);assert.equal(await page.evaluate(()=>window.coconutPrepareUpdate()),false);assert.equal(await menu('open-local-media'),false);allowSourceMediaSave=true;await chooser.setFiles(audio);
  await expect(page.getByRole('heading',{name:'authored-react.wav',exact:true})).toBeVisible();await saved();await page.waitForFunction(()=>{const media=document.querySelector('audio');return media&&!media.error&&media.readyState>=2&&Math.abs(media.duration-10)<.1;});assert.equal(await page.locator('audio').evaluate(p=>p.paused),true);assert.equal(await page.locator('.rw-cue').count(),0);
+ // Only this explicit local chooser may write source media, exactly once. Verify
+ // the actual packaged service persisted the authored bytes, not a mocked response.
+ assert.equal(allowSourceMediaSave,false);const expectedWav=wav();
+ const savedMediaUrl=new URL(await page.locator('audio').getAttribute('src'),origin);assert.equal(savedMediaUrl.origin,origin);assert.equal(savedMediaUrl.pathname,'/api/v1/source-media/content');
+ const savedMediaResponse=await fetch(savedMediaUrl);assert.equal(savedMediaResponse.status,200);assert.deepEqual(Buffer.from(await savedMediaResponse.arrayBuffer()),expectedWav);
  const input=await page.evaluate(()=>window.authoredMenu.inputs.at(-1));assert.equal(input.activation,true);assert.equal(input.accept,'audio/*,video/*');assert.equal(receipts.find(receipt=>receipt.command==='open-local-media'&&receipt.result===true).activation,true);assert.equal(chooserCount,1);pass('Real native menu preserves user gesture into authored raw-media chooser without inference/autoplay');
  const note=page.getByRole('textbox',{name:'项目笔记',exact:true}),projectNote=page.locator('.rw-project-note');
  await expect(projectNote).not.toHaveAttribute('open');await expect(note).not.toBeVisible();await projectNote.locator('summary').click();await expect(projectNote).toHaveAttribute('open');await expect(note).toBeVisible();
@@ -86,6 +93,7 @@ try{
  // The controlled checkbox commits only after the actual asynchronous native receipt.
  const remember=page.getByRole('checkbox',{name:'在这台电脑记住原文件',exact:true});await expect(remember).not.toBeChecked();await remember.click();await expect(remember).toBeChecked();await expect(page.getByText(/已在这台电脑记住原文件/)).toBeVisible();
  const portable=await backup();assert.equal(portable.documents.length,1);const doc=portable.documents[0];assert.equal(doc.project_kind,'audio_only');assert.equal(doc.project_note,'Authored durable packaged React note');assert.equal(doc.segments.length,0);assert.equal(doc.ai_answers?.length||0,0);assert.ok(!JSON.stringify(portable).includes(temp));assert.ok(!JSON.stringify(portable).includes('/api/local-media/'));
+ assert.deepEqual(sourceMediaWrites,[{key:doc.key,name:'authored-react.wav',type:'audio/wav',size:expectedWav.length,sha256:createHash('sha256').update(expectedWav).digest('hex')}]);
  // Inspect the durable native receipt without including private file fields in diagnostics.
  const nativeManifest=JSON.parse(await fs.readFile(path.join(profile,'local-media.json'),'utf8'));
  const canonicalRecord=await fetch(origin+'/api/v1/library/document?'+new URLSearchParams({protocolVersion:'1',key:doc.key})).then(response=>response.json());
@@ -103,7 +111,7 @@ try{
  await page.getByRole('button',{name:'不再记住',exact:true}).click();await expect(page.getByText(/已不再记住原文件/)).toBeVisible();assert.equal(await page.locator('audio').count(),1);
  stage='native_srt_chooser_review_and_find';const transcript=path.join(temp,'authored-react.srt');await fs.writeFile(transcript,'1\n00:00:00,000 --> 00:00:02,000\nAuthored packaged menu transcript.\n');const subtitleChooser=page.waitForEvent('filechooser');assert.equal(await menu('import-transcript'),true);const pickedSubtitle=await subtitleChooser;await pickedSubtitle.setFiles(transcript);const review=page.getByRole('checkbox',{name:'我已核对文字、编码和诊断，确认加入',exact:true});await expect(review).not.toBeChecked();const add=page.getByRole('button',{name:'加入已核对的字幕',exact:true});await expect(add).toBeDisabled();await review.check();await add.click();await expect(page.locator('.rw-original')).toHaveText('Authored packaged menu transcript.');await saved();assert.equal(await page.evaluate(()=>window.authoredMenu.inputs.at(-1).activation),true);
  await page.locator('.rw-original').focus();assert.equal(await menu('find-transcript'),true);await expect(page.getByRole('searchbox',{name:'搜索原话、译文和笔记',exact:true})).toBeFocused();const afterTranscript=(await backup()).documents;assert.equal(afterTranscript.length,2);assert.deepEqual(afterTranscript.find(item=>item.key===expected[0].key),expected[0]);pass('Actual native transcript chooser requires review and Edit Find focuses React search without changing raw project');
- await close();assert.deepEqual(errors,[]);assert.deepEqual(blocked,[]);
+ await close();assert.equal(sourceMediaWrites.length,1);assert.deepEqual(errors,[]);assert.deepEqual(blocked,[]);
  if(output)await fs.writeFile(path.join(output,'react-packaged-report.json'),JSON.stringify({status:'passed',canonicalNativeOwnerVerified,checks,receipts,boundaries:['actual packaged macOS ZIP','authored local media only','native keep-editing dialog answers injected','no signing/Gatekeeper/update download proof'],errors,blocked},null,2));
 }catch(error){if(output){await fs.mkdir(output,{recursive:true});await screenshot('react-packaged-failure.png').catch(()=>{});const failure=sanitizedFailure(error);await fs.writeFile(path.join(output,'react-packaged-report.json'),JSON.stringify({status:'failed',canonicalNativeOwnerVerified,stage,...failure,menuDiagnostics,checks,receipts,errors,blocked},null,2));}throw error;}
 finally{if(app){await app.evaluate(({dialog})=>{dialog.showMessageBox=async()=>({response:1});}).catch(()=>{});await app.close().catch(()=>{});}if(temp)await fs.rm(temp,{recursive:true,force:true});}
