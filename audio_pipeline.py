@@ -436,7 +436,7 @@ def run_audio_pipeline(source: Path, backend: ASRBackend, *, work_dir=None, spea
             if hasattr(speaker_backend, 'refine_turns'):
                 # Separate from raw acoustic checkpoints: assignment upgrades
                 # reuse expensive segmentation and invalidate only this pass.
-                refinement_key = _digest({'version': 'turn-refinement-v2', 'voices': voice_key,
+                refinement_key = _digest({'version': 'turn-refinement-v3', 'voices': voice_key,
                                           'turns': speaker_turns})[:16]
                 refined_path = directory / f'refined-{refinement_key}.json'
                 if refined_path.exists():

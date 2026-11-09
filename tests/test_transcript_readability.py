@@ -65,12 +65,12 @@ class ReadabilityTests(unittest.TestCase):
         self.assertEqual(punctuate(cues, engine), (3, 0))
         self.assertEqual(engine.add_punctuation.call_count, 3)
 
-    def test_acoustic_majority_labels_only_confident_cues_and_keeps_manual_names(self):
+    def test_only_unopposed_acoustic_labels_are_assigned_and_manual_names_are_kept(self):
         cues = [cue('a'), cue('b', 2), cue('c', 4), cue('d', 6, '手工姓名')]
         turns = [{'start': 0, 'end': 2.6, 'speaker': 8}, {'start': 2.6, 'end': 5, 'speaker': 9},
                  {'start': 5, 'end': 6, 'speaker': 8}, {'start': 6, 'end': 8, 'speaker': 8}]
-        self.assertEqual(assign_speakers(cues, turns), 2)
-        self.assertEqual([c['speaker'] for c in cues], ['说话人 1', '说话人 2', None, '手工姓名'])
+        self.assertEqual(assign_speakers(cues, turns), 1)
+        self.assertEqual([c['speaker'] for c in cues], ['说话人 1', None, None, '手工姓名'])
         self.assertNotIn('original_speaker', cues[0])
 
     def test_unconfigured_pipeline_does_not_import_runtime_or_mutate_source(self):

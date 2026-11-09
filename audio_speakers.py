@@ -125,8 +125,7 @@ def label_segments(segments, turns, decisions):
         duration = segment['end'] - segment['start']
         identifier = None
         status = 'no_speech_evidence'
-        if ranked and not ranked[0][0].startswith('unresolved:') and duration > 0 and ranked[0][1] >= .60 * duration and (
-                len(ranked) == 1 or ranked[1][1] <= ranked[0][1] * .5):
+        if ranked and not ranked[0][0].startswith('unresolved:') and duration > 0 and ranked[0][1] >= .60 * duration and len(ranked) == 1:
             identifier, status = ranked[0][0], 'automatic_unreviewed'
         elif len(ranked) > 1 or ranked and not ranked[0][0].startswith('unresolved:'):
             status = 'overlap_or_boundary'
@@ -188,48 +187,30 @@ def label_aligned_segments(segments, turns, decisions, *, split=False):
             output.append(cue)
             continue
         words, matches = cue['words'], aligned[index]
-        # A zero-length token inside a sentence cannot establish a change of
-        # voice. Nor can a few boundary frames: diarization and word alignment
-        # can disagree there. Keep such words in the text without manufacturing
-        # tiny speaker turns from them. Standalone short replies still use their
-        # own local acoustic window above.
+        # Short responses can be real speaker changes. Never erase them merely
+        # because they last less than a threshold. Punctuation cannot establish
+        # a voice; a zero-duration lexical token remains uncertain.
+        weights = [len(re.sub(r'\W', '', w['word'])) for w in words]
         if len(words) > 1:
-            for word, match in zip(words, matches):
-                if word['end'] <= word['start']:
+            for word, match, weight in zip(words, matches, weights):
+                if not weight or word['end'] <= word['start']:
                     match['speaker_id'] = None
-            runs = []
-            for j, match in enumerate(matches):
-                identifier = match.get('speaker_id')
-                if identifier:
-                    if runs and runs[-1][0] == identifier:
-                        runs[-1][1].append(j)
-                    else:
-                        runs.append((identifier, [j]))
-            if len({identifier for identifier, _ in runs}) > 1:
-                for _, indices in runs:
-                    if words[indices[-1]]['end'] - words[indices[0]]['start'] < .75:
-                        for j in indices:
-                            matches[j]['speaker_id'] = None
-        # Ignore punctuation-only units in the vote, while preserving every
-        # character in output. A competing/unknown voice is never discarded.
-        weights = [max(1, len(re.sub(r'\W', '', w['word']))) for w in words]
+        uncertain = any(weight and not match.get('speaker_id')
+                        for weight, match in zip(weights, matches))
         votes = {}
         for weight, match in zip(weights, matches):
-            if match.get('speaker_id'):
+            if weight and match.get('speaker_id'):
                 votes[match['speaker_id']] = votes.get(match['speaker_id'], 0) + weight
-        if len(votes) == 1 and next(iter(votes.values())) >= .8 * sum(weights):
+        if len(votes) == 1 and not uncertain:
             identifier = next(iter(votes))
             cue.update(speaker_id=identifier, speaker_status='automatic_unreviewed',
                        speaker=f'说话人 {int(identifier.split("-")[-1])}')
         elif len(votes) > 1:
             cue.update(speaker_id=None, speaker=None, speaker_status='speaker_change_within_cue')
-        elif any(not match.get('speaker_id') and match.get('speaker_status') not in
-                 ('automatic_unreviewed', 'no_speech_evidence') for match in matches):
+        elif uncertain or not any(weights):
             # Coarse cue coverage can hide a competing voice in the actual
             # words when the cue includes long pauses. Do not retain that
             # fallback after aligned evidence fails the confidence threshold.
-            # Suppressed boundary slivers and empty acoustic gaps still keep
-            # their existing tolerance above.
             cue.update(speaker_id=None, speaker=None, speaker_status='overlap_or_boundary')
         if not split or len(votes) < 2:
             output.append(cue)
@@ -239,7 +220,7 @@ def label_aligned_segments(segments, turns, decisions, *, split=False):
         boundaries, previous, previous_index = [0], None, 0
         for word_index, match in enumerate(matches):
             identifier = match.get('speaker_id')
-            if not identifier:
+            if not weights[word_index] or not identifier:
                 continue
             if previous is not None and identifier != previous:
                 boundaries.append((previous_index + word_index + 1) // 2)
@@ -250,10 +231,12 @@ def label_aligned_segments(segments, turns, decisions, *, split=False):
             local_votes = {}
             for weight, match in zip(weights[a:b], matches[a:b]):
                 identifier = match.get('speaker_id')
-                if identifier:
+                if weight and identifier:
                     local_votes[identifier] = local_votes.get(identifier, 0) + weight
             identifier = max(local_votes, key=local_votes.get) if local_votes else None
-            if identifier and local_votes[identifier] < .8 * sum(weights[a:b]):
+            if identifier and (len(local_votes) != 1 or any(
+                    weight and not match.get('speaker_id')
+                    for weight, match in zip(weights[a:b], matches[a:b]))):
                 identifier = None
             groups.append((identifier, words[a:b]))
         for part, (identifier, group) in enumerate(groups):
@@ -307,12 +290,33 @@ def reconcile_recording_speakers(blocks, *, expected_speakers=None, threshold=.7
         vectors = values[anchors]
         similarities = vectors @ vectors.T
         np.fill_diagonal(similarities, -np.inf)
+        # Different local labels heard simultaneously cannot be one identity.
+        # Embedding similarity (or a requested participant count) must not erase
+        # this negative evidence. Nonoverlapping split clusters may still merge.
+        sample_lookup = {(sample[0], sample[1]): i for i, sample in enumerate(samples)}
+        conflicts = set()
+        for block_index, block in enumerate(blocks):
+            turns = block['voices']['turns']
+            for i, left_turn in enumerate(turns):
+                for right_turn in turns[i + 1:]:
+                    if str(left_turn['speaker']) == str(right_turn['speaker']):
+                        continue
+                    if min(left_turn['end'], right_turn['end']) <= max(left_turn['start'], right_turn['start']):
+                        continue
+                    left_sample = sample_lookup.get((block_index, str(left_turn['speaker'])))
+                    right_sample = sample_lookup.get((block_index, str(right_turn['speaker'])))
+                    if left_sample is not None and right_sample is not None:
+                        conflicts.add(frozenset((left_sample, right_sample)))
         groups = {i: [i] for i in range(len(anchors))}
         while len(groups) > (expected_speakers or 1):
             left, right = np.unravel_index(np.argmax(similarities), similarities.shape)
             score = similarities[left, right]
             if not np.isfinite(score) or expected_speakers is None and score < threshold:
                 break
+            if any(frozenset((anchors[a], anchors[b])) in conflicts
+                   for a in groups[left] for b in groups[right]):
+                similarities[left, right] = similarities[right, left] = -np.inf
+                continue
             a, b = len(groups[left]), len(groups[right])
             # Only active off-diagonal entries participate in the next merge.
             for other in groups:
@@ -336,6 +340,16 @@ def reconcile_recording_speakers(blocks, *, expected_speakers=None, threshold=.7
             second = float(scores[order[1]]) if len(order) > 1 else -1
             accepted = scores[best] >= threshold and scores[best] - second >= margin
             decisions[(sample[0], sample[1])] = best if accepted else None
+        # Short non-anchor samples also need this guard after nearest-center
+        # assignment; otherwise they can bypass the constrained anchor merge.
+        rejected = set()
+        for pair in conflicts:
+            a, b = tuple(pair)
+            left_key, right_key = samples[a][:2], samples[b][:2]
+            if decisions.get(left_key) is not None and decisions.get(left_key) == decisions.get(right_key):
+                rejected.update((left_key, right_key))
+        for key in rejected:
+            decisions[key] = None
 
     exported, first_seen = [], {}
     for index, block in enumerate(blocks):
@@ -356,6 +370,26 @@ def reconcile_recording_speakers(blocks, *, expected_speakers=None, threshold=.7
         turns.append(dict(start=start, end=end, speaker=identifier or f'unresolved:{index}:{local}',
                           speaker_id=identifier, speaker_status='recording_match' if identifier else 'ambiguous_match'))
     return turns, len(identities)
+
+
+def preserve_overlap_conflicts(original, assigned):
+    """Refinement must not erase simultaneous, distinct acoustic observations."""
+    rejected = set()
+    for i, left in enumerate(original):
+        for j in range(i + 1, len(original)):
+            right = original[j]
+            if left['speaker'] == right['speaker']:
+                continue
+            if min(left['end'], right['end']) <= max(left['start'], right['start']):
+                continue
+            identifier = assigned[i].get('speaker_id')
+            if identifier and identifier == assigned[j].get('speaker_id'):
+                rejected.update((i, j))
+    for index in rejected:
+        assigned[index].update(speaker=f'unresolved:overlap:{index}', speaker_id=None,
+                               speaker_status='overlap_or_boundary')
+        assigned[index].pop('speaker_similarity', None)
+    return assigned
 
 
 class SherpaSpeakerBackend:
@@ -520,7 +554,7 @@ class SherpaSpeakerBackend:
                 if len(matches) == len(clips) and len(set(matches)) == 1:
                     turn.update(speaker=matches[0], speaker_id=matches[0], speaker_status='turn_acoustic_match',
                                 speaker_similarity=round(min(scores), 5))
-        return result
+        return preserve_overlap_conflicts(turns, result)
 
     def analyze_samples(self, samples, sample_rate):
         if sample_rate != self.engine.sample_rate:

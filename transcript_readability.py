@@ -108,7 +108,7 @@ def punctuate(cues: list[dict], engine) -> tuple[int, int]:
 
 
 def assign_speakers(cues: list[dict], turns: list[dict]) -> int:
-    """Label only a clear majority of a cue; ambiguous overlap stays unknown."""
+    """Label only an unopposed voice; short competing speech stays unknown."""
     turns = sorted(turns, key=lambda item: item['start'])
     names = {}
     used_names = {cue.get('speaker') for cue in cues if cue.get('speaker')}
@@ -124,12 +124,13 @@ def assign_speakers(cues: list[dict], turns: list[dict]) -> int:
             if turn['start'] >= cue['end']:
                 break
             overlap = max(0, min(cue['end'], turn['end']) - max(cue['start'], turn['start']))
-            coverage[turn['speaker']] = coverage.get(turn['speaker'], 0) + overlap
+            if overlap > 0:
+                coverage[turn['speaker']] = coverage.get(turn['speaker'], 0) + overlap
         ranked = sorted(coverage.items(), key=lambda item: item[1], reverse=True)
         duration = cue['end'] - cue['start']
         if not ranked or duration <= 0 or ranked[0][1] / duration < .60:
             continue
-        if len(ranked) > 1 and ranked[1][1] > ranked[0][1] * .5:
+        if len(ranked) > 1:
             continue
         identifier = ranked[0][0]
         if identifier not in names:
