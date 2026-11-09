@@ -4,7 +4,7 @@ import {sourceMediaIdentity} from '@coconut/shared/source-media.js';
 type Receipt={protocolVersion:1;binding:string;sha256:string;size:number;type:string;name:string;kind:'audio'|'video'};
 const hex=/^[a-f0-9]{64}$/;
 function receipt(value:unknown):Receipt{const r=value as Receipt;if(r?.protocolVersion!==1||!hex.test(r.binding)||!hex.test(r.sha256)||!Number.isSafeInteger(r.size)||r.size<1||r.size>200*1024*1024||!['audio','video'].includes(r.kind)||typeof r.type!=='string'||!r.type.startsWith(r.kind+'/')||typeof r.name!=='string'||r.name.length>300)throw Error('已保存媒体的回执无效。');return r;}
-function attach(store:AppStore,key:string,media:Receipt){store.setMedia(key,{url:'api/v1/source-media/content?'+new URLSearchParams({key,binding:media.binding,sha256:media.sha256}),kind:media.kind,name:media.name,identity:'source-media-sha256:'+media.sha256,availability:'remote'});}
+function attach(store:AppStore,key:string,media:Receipt){store.setMedia(key,{url:'api/v1/source-media/content?'+new URLSearchParams({key,binding:media.binding,sha256:media.sha256}),kind:media.kind,name:media.name,identity:'source-media-sha256:'+media.sha256,availability:'remote'},'saved-source');}
 async function sha256(text:string){return Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(text))),b=>b.toString(16).padStart(2,'0')).join('');}
 /** Successful completion means both document and bytes have durable receipts. */
 export async function saveSourceMedia(store:AppStore,key:string,file:File,signal:AbortSignal):Promise<void>{

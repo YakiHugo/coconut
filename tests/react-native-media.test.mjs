@@ -42,3 +42,25 @@ test('picker invalidation does not restart automatic resolution while a choice i
  const e=await setup(),gate=deferred();e.gate=gate;const pending=e.controller.resolve('one');e.controller.invalidate();gate.resolve(ready());await pending;
  assert.equal(e.controller.state('one').checked,true);await e.controller.resolve('one');assert.equal(e.media,null);assert.deepEqual(e.released,['token']);
 });
+
+test('remembered original takes priority over durable copy, missing original retains fallback',async()=>{
+ const e=await setup(),saved={identity:'source-media-sha256:abc',url:'api/v1/source-media/content'};e.media=saved;
+ await e.controller.resolve('one');assert.equal(e.media,saved);assert.equal(e.controller.state('one').status,'missing');
+ const gate=deferred();e.gate=gate;const pending=e.controller.resolve('one',true);gate.resolve(ready());await pending;
+ assert.equal(e.media.nativeToken,'token');
+});
+test('saved copy arriving during native resolve releases stale lease and retries with fenced fallback',async()=>{
+ const e=await setup(),gate=deferred();e.gate=gate;const pending=e.controller.resolve('one');
+ const saved={identity:'source-media-sha256:abc',url:'api/v1/source-media/content'};e.media=saved;gate.resolve(ready());await pending;
+ assert.equal(e.media,saved);assert.deepEqual(e.released,['token']);assert.equal(e.controller.state('one').checked,false);
+ const next=deferred();e.gate=next;const retry=e.controller.resolve('one');next.resolve({...ready(),token:'next'});await retry;assert.equal(e.media.nativeToken,'next');
+});
+test('new File during native resolve cannot attach the old original',async()=>{
+ const e=await setup(),gate=deferred();e.gate=gate;const pending=e.controller.resolve('one');e.file={};gate.resolve(ready());await pending;assert.equal(e.media,null);assert.deepEqual(e.released,['token']);
+});
+
+test('opening picker while saved fallback is visible never rearms automatic native restore',async()=>{
+ const e=await setup();e.media={identity:'source-media-sha256:abc',url:'api/v1/source-media/content'};
+ const gate=deferred();e.gate=gate;const pending=e.controller.resolve('one');e.controller.invalidate();gate.resolve(ready());await pending;
+ assert.equal(e.controller.state('one').checked,true);await e.controller.resolve('one');assert.equal(e.media.nativeToken,undefined);assert.deepEqual(e.released,['token']);
+});

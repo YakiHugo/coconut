@@ -16,6 +16,9 @@ export type Dependencies = {
 export type State = {status: string; known: boolean; pending: boolean; suppressed: boolean; checked: boolean};
 type Entry = State & {owner: Owner; revision: number};
 const id = (owner: Owner | null) => JSON.stringify(owner);
+// A saved copy is a fallback. An explicitly remembered original takes priority,
+// but an active manual selection or native lease must never be replaced.
+const savedCopy = (media: Attachment | null) => !!media && media.identity.startsWith('source-media-sha256:');
 export function createNativeMediaController(deps: Dependencies) {
     const entries = new Map<string, Entry>(), listeners = new Set<() => void>();
     let ready = false, closed = false, generation = 0, queue: Promise<unknown> = Promise.resolve();
@@ -34,13 +37,14 @@ export function createNativeMediaController(deps: Dependencies) {
     const current = (value: Entry) => !closed && entries.get(value.owner.key) === value && id(deps.owner(value.owner.key)) === id(value.owner);
     async function resolve(key: string, retry = false) {
         const value = entry(key);
-        if (!value || value.pending || value.suppressed || (!retry && value.checked) || !deps.active(key) || deps.media(key)) return;
+        const previousMedia=deps.media(key),previousFile=deps.file(key);
+        if (!value || value.pending || value.suppressed || (!retry && value.checked) || !deps.active(key) || (previousMedia&&!savedCopy(previousMedia))) return;
         const revision = ++value.revision, selection = generation;
         value.pending = true; value.checked = true; emit();
         let receipt: Receipt; try { receipt = await deps.bridge.resolve(value.owner); } catch { receipt = {status: 'unavailable'}; }
-        if (!current(value) || revision !== value.revision || generation !== selection || !deps.active(key) || deps.media(key) || value.suppressed) {
+        if (!current(value) || revision !== value.revision || generation !== selection || !deps.active(key) || deps.media(key)!==previousMedia || deps.file(key)!==previousFile || value.suppressed) {
             release(receipt.token);
-            if (value.revision === revision) { value.pending = false; value.checked = deps.active(key); emit(); }
+            if (value.revision === revision) { value.pending = false; value.checked = deps.active(key)&&!(generation===selection&&deps.media(key)!==previousMedia&&deps.file(key)===previousFile&&savedCopy(deps.media(key))); emit(); }
             return;
         }
         value.pending = false; value.status = receipt.status;
