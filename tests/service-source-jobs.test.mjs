@@ -201,3 +201,12 @@ test('shutdown preserves queued work as interrupted and restart never silently s
  const job=await f.jobs.create({protocolVersion:1,libraryId:f.library.describe().epoch,operation_id:randomUUID(),key:second.key,source,kind:'transcribe',consent:true});assert.equal(job.state,'queued');assert.equal(f.jobs.activity().active,2);
  await f.restart();assert.equal((await f.jobs.get(job.id)).state,'interrupted');assert.equal(runs,0);assert.equal(f.jobs.activity().active,0);
 });
+test('a retry probe settling after shutdown cannot update the closed task ledger',async t=>{
+ let probes=0,entered=false,release;const gate=new Promise(resolve=>release=resolve);
+ const f=await fixture(t,{transcriber:{profile:{backend:'authored'},status:async()=>{if(++probes>1){entered=true;await gate;}return {available:true};},run:async()=>{throw Error('retry fixture');}}});
+ await f.media.save(doc.key,f.media.owner(doc.key).source,Readable.from(['audio']),{type:'audio/mpeg',name:'source.mp3'});
+ const job=await f.create('transcribe');await until(()=>f.jobs.get(job.id),j=>j.state==='failed');
+ const pending=f.jobs.action(job.id,'retry');const rejection=assert.rejects(pending,error=>error.status===503&&/停止/.test(error.message));
+ await until(async()=>entered,Boolean);await f.jobs.shutdown();release();await rejection;
+ await f.restart();assert.equal((await f.jobs.get(job.id)).state,'failed');assert.equal(probes,2);
+});

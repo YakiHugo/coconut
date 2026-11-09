@@ -139,6 +139,7 @@ export async function createSourceJobs({directory,libraryStore,mediaStore,podcas
  async function get(id){return describe(row(id));}
  async function list(key){if(typeof key!=='string'||key.length>1000)throw fail('项目标识无效');const binding=mediaStore.owner(key).binding;return db.prepare('SELECT * FROM jobs WHERE binding=? ORDER BY created DESC LIMIT 20').all(binding).map(describe);}
  async function action(id,action){
+  if(closing||admissionOwner!==null)throw fail('服务正在停止或等待关闭确认',503);
   let value=owned(row(id));
   if(action==='cancel'){
    if(!['queued','running','interrupted'].includes(value.state))throw fail('此任务不能取消',409);
@@ -147,8 +148,9 @@ export async function createSourceJobs({directory,libraryStore,mediaStore,podcas
   }else if(action==='retry'){
    if(!['failed','interrupted','cancelled'].includes(value.state)&&!(value.kind==='download'&&value.state==='ready'))throw fail('请查看原任务状态',409);
    if(['transcribe','align'].includes(value.kind)){
-    const media=await mediaStore.read(value.document_key,value.binding);if(!media||media.sha256!==JSON.parse(value.operation).fingerprint)throw fail('原声已经替换，请为当前原声明确创建新转写',409);
+    const media=await mediaStore.read(value.document_key,value.binding);if(closing||admissionOwner!==null)throw fail('服务正在停止或等待关闭确认',503);if(!media||media.sha256!==JSON.parse(value.operation).fingerprint)throw fail('原声已经替换，请为当前原声明确创建新转写',409);
     const status=await (value.kind==='align'?transcriber?.alignmentStatus():transcriber?.status());if(!status?.available)throw fail(status?.message||'本地转录未就绪',503);
+    if(closing||admissionOwner!==null)throw fail('服务正在停止或等待关闭确认',503);
     const operation={...JSON.parse(value.operation),profile:transcriber.profile};
     if(value.engine==='direct-v1'&&JSON.stringify(JSON.parse(value.operation).profile)!==JSON.stringify(transcriber.profile))throw fail('模型配置已变化，请创建新任务',409);
     db.prepare("UPDATE jobs SET operation=?,engine='direct-v1',ingestion_id=? WHERE id=?").run(JSON.stringify(operation),id.replaceAll('-',''),id);
