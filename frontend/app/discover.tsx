@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {saveSourceMedia} from './source-media';
+import {acquireSourceAudio} from './source-acquisition';
 import {useOwnedPicker} from '../native-shell/owned-picker-hook';
 import {episodeMetadata,filterEpisodes} from './episode-browser';
 import type { AppStore } from './store';
@@ -22,7 +23,7 @@ export function Discover({ store }: {
     const diagnostics=captionDiagnostics(receipt?.diagnostics),lossPending=!!receipt&&hasCaptionLoss(diagnostics)&&!lossReviewed;
     const [candidate,setCandidateState]=useState<{file:File;inspected:Awaited<ReturnType<typeof inspectFile>>;keys:string[]}|null>(null);
     const [busy,setBusyState]=useState(false),[review,setReview]=useState<{key:string;revision:number}|null>(null),[attaching,setAttaching]=useState(false);
-    const [pendingMedia,setPendingMedia]=useState<{document:NonNullable<ReturnType<AppStore['getDocument']>>;file:File}|null>(null);
+    const [pendingMedia,setPendingMedia]=useState<{document:NonNullable<ReturnType<AppStore['getDocument']>>;file:File;media:ReturnType<AppStore['getMedia']>;sourceFile:ReturnType<AppStore['getFile']>}|null>(null);
     const [failure,setFailure]=useState<{diagnostic:CaptionFailureDiagnostic|null;original:string|null;audio?:VideoAudioFallback|null}|null>(null);
     const parsedLink = parseSourceLink(url);
     const interrupted = /^读取已(?:取消|暂停)/.test(error);
@@ -46,15 +47,18 @@ export function Discover({ store }: {
     const cancel=()=>{picker.controller.retire();cancelSource();};
     useEffect(()=>()=>store.setActivity('source',null),[store]);
     useEffect(()=>{const retire=()=>{if(owner.current){owner.current.abort();owner.current=null;const value={...sessionRef.current,error:'读取已暂停。可重试上次读取。'};sessionRef.current=value;saveDiscoverySession(store,value);}};window.addEventListener('pagehide',retire);return()=>{window.removeEventListener('pagehide',retire);retire();};},[store]);
-    const openReceipt=(value:Ingestion)=>{
+    const openReceipt=async(value:Ingestion)=>{
         const content=ingestionDocument(value);if(!content||hasCaptionLoss(captionDiagnostics(value.diagnostics))&&!sessionRef.current.lossReviewed)return;
+        const controller=new AbortController();owner.current=controller;setBusy(true);
         try {
-            const doc=store.addDocument(content);
+            const doc=store.addDocument(content,{select:false});
             if(!doc){setError('暂时不能添加内容，请先保存当前修改或处理存储状态。');return;}
-            if(value.media)store.setRemoteMedia(doc.key,value.media);
-            if(value.state==='needs_transcription')store.setMessage(value.transcription?.message||'已打开原声项目，尚未配置文字稿识别。');
+            try{await acquireSourceAudio(store,doc.key,controller.signal);}catch(error){if(owner.current===controller&&!controller.signal.aborted)store.setMessage(error instanceof Error?error.message:'原声获取尚未完成，请在来源任务中重试。');}
+            if(owner.current!==controller||controller.signal.aborted||!mounted.current)return;
             updateSession({receipt:null,error:''});
-        }catch(error){setError(error instanceof Error?error.message:'内容无法添加');}
+            owner.current=null;setBusy(false);store.select(doc.key);
+        }catch(error){if(owner.current===controller&&!controller.signal.aborted&&mounted.current)setError(error instanceof Error?error.message:'内容无法添加');}
+        finally{if(owner.current===controller){owner.current=null;if(mounted.current)setBusy(false);}}
     };
     const request = async (attempt:SourceAttempt) => {
         if (sourceState.current.busy || attaching) return;
@@ -66,6 +70,8 @@ export function Discover({ store }: {
             if(owner.current!==controller)return;
             if(valueResult.state==='awaiting_selection')updateSession({selection:valueResult.selection,receipt:null,attempt:null,episodeLimit:20});
             else if(valueResult.state==='blocked'){
+                const fallback=videoAudioFallback(valueResult.error?.audio_fallback);
+                if(valueResult.error?.code==='no_matching_captions'&&fallback){await openVideoAudio(fallback);return;}
                 setFailure({diagnostic:captionFailureDiagnostic(valueResult.error?.diagnostic),original:attempt.feed||attempt.episode?null:captionOriginalURL(attempt.url),audio:videoAudioFallback(valueResult.error?.audio_fallback)});
                 updateSession({error:valueResult.error?.message||'暂时无法读取来源。',languageRequired:valueResult.error?.code==='language_required',languageChoices:captionLanguageChoices(valueResult.error?.languages)});
             }
@@ -74,13 +80,13 @@ export function Discover({ store }: {
                 const content=ingestionDocument(valueResult);
                 if(!content){setError('此来源尚未返回可打开的原声或文字稿，请保留来源后重试。');return;}
                 updateSession({receipt:valueResult,attempt:null,languageRequired:false,languageChoices:[]});
-                if(!hasCaptionLoss(captionDiagnostics(valueResult.diagnostics))&&!matchingSourceDocuments(store.getSnapshot().documents,content).length)openReceipt(valueResult);
+                if(!hasCaptionLoss(captionDiagnostics(valueResult.diagnostics))&&!matchingSourceDocuments(store.getSnapshot().documents,content).length)await openReceipt(valueResult);
             }
         }catch(error){if(owner.current===controller&&!controller.signal.aborted){setFailure({diagnostic:null,original:attempt.feed||attempt.episode?null:captionOriginalURL(attempt.url)});setError(error instanceof Error?error.message:'来源读取失败');}}
         finally{if(owner.current===controller){owner.current=null;setBusy(false);}}
     };
-    const openVideoAudio=async()=>{
-        const fallback=failure?.audio;if(!fallback||busy||attaching)return;
+    const openVideoAudio=async(provided?:VideoAudioFallback)=>{
+        const fallback=provided||failure?.audio;if(!fallback||(!provided&&busy)||attaching)return;
         cancel();setReview(null);const controller=new AbortController();owner.current=controller;setBusy(true);setError('');
         try{
             const result=await downloadVideoAudio(fallback,controller.signal);
@@ -88,7 +94,7 @@ export function Discover({ store }: {
             if(owner.current!==controller||controller.signal.aborted)return;
             const doc=store.addDocument(result.project,{select:false});
             if(!doc)throw Error('当前项目尚未保存，未创建新媒体项目。');
-            setPendingMedia({document:doc,file:result.file});
+            setPendingMedia({document:doc,file:result.file,media:store.getMedia(doc.key),sourceFile:store.getFile(doc.key)});
             await saveSourceMedia(store,doc.key,result.file,controller.signal);
             if(owner.current!==controller||controller.signal.aborted)return;
             setPendingMedia(null);owner.current=null;setBusy(false);updateSession({receipt:null,attempt:null,error:''});store.select(doc.key);
@@ -99,7 +105,7 @@ export function Discover({ store }: {
     const retryMedia=async()=>{
         if(!pendingMedia||busy||attaching)return;
         const {document:doc,file}=pendingMedia;
-        if(store.getDocument(doc.key)!==doc||store.getFile(doc.key)||store.getMedia(doc.key)){setError('项目或原声已变化，旧下载未覆盖；请打开项目核对。');return;}
+        if(store.getDocument(doc.key)!==doc||store.getFile(doc.key)!==pendingMedia.sourceFile||store.getMedia(doc.key)!==pendingMedia.media){setError('项目或原声已变化，旧下载未覆盖；请打开项目核对。');return;}
         cancel();const controller=new AbortController();owner.current=controller;setBusy(true);setError('');
         try{await saveSourceMedia(store,doc.key,file,controller.signal);if(owner.current!==controller||controller.signal.aborted)return;
             setPendingMedia(null);owner.current=null;setBusy(false);updateSession({receipt:null,attempt:null,error:''});store.select(doc.key);
@@ -127,7 +133,7 @@ export function Discover({ store }: {
             const core=(window as any).Coconut,next=attachTranscript(target,content,core,(window as any).CoconutCanonicalLibrary.project);
             const ok=await store.commitDocument(next,{key:target.key,revision:review.revision});
             if(!mounted.current)return;
-            if(ok){updateSession({receipt:null,error:''});setReview(null);store.select(target.key);}
+            if(ok){try{await acquireSourceAudio(store,target.key);}catch(error){store.setMessage(error instanceof Error?error.message:'原声获取尚未完成');}if(mounted.current){updateSession({receipt:null,error:''});setReview(null);store.select(target.key);}}
             else{setError('文字稿保存未确认。请查看保存状态；不要重复接入，原项目标识仍保留。');setReview(null);}
         }catch(error){if(mounted.current)setError(error instanceof Error?error.message:'文字稿未能接入，原项目保留');}
         finally{store.setActivity('source-attach',null);if(mounted.current)setAttaching(false);}
@@ -147,13 +153,13 @@ export function Discover({ store }: {
                 fingerprint?: string;
             } | undefined)?.fingerprint === inspected.source.fingerprint);
             if (existing.length > 0) {setCandidate({file,inspected,keys:existing.map(doc=>doc.key)});return;}
-            const doc = existing[0] || store.addDocument({ project_kind: 'audio_only', title: file.name, local_media_source: inspected.source, segments: [] });
-            if (!doc || owner.current !== controller)
-                return;
-            store.setFile(doc.key, file);
-            store.setMedia(doc.key, { url: URL.createObjectURL(file), kind: inspected.kind, name: file.name, identity: inspected.identity, availability: 'local_session' });
-            store.select(doc.key);
-            store.setMessage('已打开本地原声。');
+            const doc = store.addDocument({ project_kind: 'audio_only', title: file.name, local_media_source: inspected.source, segments: [] },{select:false});
+            if (!doc || owner.current !== controller)return;
+            setPendingMedia({document:doc,file,media:store.getMedia(doc.key),sourceFile:store.getFile(doc.key)});
+            await saveSourceMedia(store,doc.key,file,controller.signal);
+            if(owner.current!==controller||controller.signal.aborted)return;
+            setPendingMedia(null);owner.current=null;setBusy(false);store.select(doc.key);
+            store.setMessage('原声已保存。');
         }
         catch (error) {
             if (owner.current === controller)
@@ -168,7 +174,16 @@ export function Discover({ store }: {
                 fileInput.current.value = '';
         }
     };
-    const chooseCandidate=(key:string|null)=>{if(!candidate)return;const {file,inspected}=candidate;const existing=key?store.getDocument(key):null;if(key&&(!existing||(existing.local_media_source as {fingerprint?:string})?.fingerprint!==inspected.source.fingerprint)){setError('候选项目已变化，请重新打开文件。');setCandidate(null);return;}if(store.getSnapshot().dirty)return;const doc=existing||store.addDocument({project_kind:'audio_only',title:file.name,local_media_source:inspected.source,segments:[]});if(!doc)return;store.setFile(doc.key,file);store.setMedia(doc.key,{url:URL.createObjectURL(file),kind:inspected.kind,name:file.name,identity:inspected.identity,availability:'local_session'});setCandidate(null);store.select(doc.key);};
+    const chooseCandidate=async(key:string|null)=>{
+        if(!candidate||busy)return;const {file,inspected}=candidate;const existing=key?store.getDocument(key):null;
+        if(key&&(!existing||(existing.local_media_source as {fingerprint?:string})?.fingerprint!==inspected.source.fingerprint)){setError('候选项目已变化，请重新打开文件。');setCandidate(null);return;}
+        if(store.getSnapshot().dirty)return;
+        const doc=existing||store.addDocument({project_kind:'audio_only',title:file.name,local_media_source:inspected.source,segments:[]},{select:false});if(!doc)return;
+        setCandidate(null);const controller=new AbortController();owner.current=controller;setBusy(true);setPendingMedia({document:doc,file,media:store.getMedia(doc.key),sourceFile:store.getFile(doc.key)});
+        try{await saveSourceMedia(store,doc.key,file,controller.signal);if(owner.current!==controller||controller.signal.aborted)return;setPendingMedia(null);owner.current=null;setBusy(false);store.select(doc.key);}
+        catch(error){if(owner.current===controller)setError(error instanceof Error?error.message:'原声尚未保存');}
+        finally{if(owner.current===controller){owner.current=null;setBusy(false);}}
+    };
     return <section className="discover" aria-labelledby="discover-title">
   <header className="discover-intro"><h1 id="discover-title">今天，想听什么？</h1></header>
   <form className="source-composer" onSubmit={event => {event.preventDefault();submitLink();}} aria-busy={busy}>

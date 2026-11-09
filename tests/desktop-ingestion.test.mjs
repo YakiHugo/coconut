@@ -43,7 +43,7 @@ test('selected episode preserves original transcript and guarded media download'
  let input;
  const service=createIngestionService({podcastSources:{importEpisode:async data=>{input=data;return {status:'ready',document,episode,feed_url:url};}}});
  const result=await service.ingest({...request,episode:{feed_url:url,episode_id:id}});
- assert.deepEqual(input,{feedUrl:url,episodeId:id});assert.equal(result.ingestion.transcript.document,document);
+ assert.deepEqual(input,{feedUrl:url,episodeId:id});assert.deepEqual(result.ingestion.transcript.document,{...document,provenance:{alignment_required:true}});assert.equal(document.provenance,undefined,'input remains unchanged');
  assert.deepEqual(result.ingestion.media.download.body,{feedUrl:url,episodeId:id,mediaUrl:episode.media[0].url});
  await assert.rejects(service.ingest({...request,episode:{feed_url:'https://other.example/feed',episode_id:id}}),/不一致/);
 });
@@ -258,4 +258,13 @@ test('explicit replay retains the previously recovered job ID even when returned
  }});
  const req=Readable.from([Buffer.from('abc')]);req.headers={'content-length':'3','content-type':'application/octet-stream'};
  await assert.rejects(executor.upload(req,operation),/不同/);assert.equal(consumed,'abc');
+});
+
+test('confirmed missing video captions offers media acquisition while access failures stay blocked',async()=>{
+ for(const status of ['no_matching_captions','network_unavailable','access_restricted']){
+  const service=createIngestionService({captionService:{available:true,importCaption:async()=>({status,message:'authored'})},videoAudioProviders:['bilibili'],videoSourceMedia:true});
+  const result=await service.ingest({protocolVersion:1,source:{kind:'url',url:'https://www.bilibili.com/video/BV1xx411c7mD'}});
+  assert.equal(result.ingestion.state,'blocked');assert.equal(result.ingestion.project,null);
+  assert.equal(!!result.ingestion.error.audio_fallback,status==='no_matching_captions');
+ }
 });

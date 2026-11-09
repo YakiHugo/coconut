@@ -15,13 +15,13 @@ const doc={key:'server-podcast',title:'Authored episode',source_url:'https://exa
 function commit(library,document,action='put'){return library.commit({protocolVersion:1,epoch:library.describe().epoch,key:document.key,receiptKey:randomUUID(),expected:library.get(document.key)?.token||null,action,...(action==='put'?{document}:{})});}
 const missing=()=>Object.assign(Error('not found'),{taskCode:'ingestion_operation_not_found'});
 async function until(fn,predicate){for(let attempt=0;attempt<100;attempt++){const value=await fn();if(predicate(value))return value;await delay(10);}throw Error('Timed out');}
-async function fixture(t,{download,transcriber,reviewer,reviewProvider}={}){
+async function fixture(t,{download,transcriber,reviewer,reviewProvider,videoAudioService}={}){
  const directory=await mkdtemp(path.join(tmpdir(),'coconut-source-jobs-'));
  const library=await createLibraryStore({directory});commit(library,doc);
  const media=await createSourceMediaStore({directory:path.join(directory,'media'),libraryStore:library});
  let calls=0;const podcastSources={downloadMedia:async(request,options)=>{calls++;return download?download(request,options):{body:Buffer.from('ID3 authored media'),type:'audio/mpeg'};}};
  transcriber??={profile:{backend:'authored'},status:async()=>({available:true}),run:async({workDirectory})=>{await writeFile(path.join(workDirectory,'result.json'),JSON.stringify({schema_version:1,title:'Authored',segments:[{id:'a',start:0,end:1,text:'Authored'}]}));}};
- const options={directory:path.join(directory,'jobs'),libraryStore:library,mediaStore:media,podcastSources,transcriber,reviewer,reviewProvider};let jobs=await createSourceJobs(options);
+ const options={directory:path.join(directory,'jobs'),libraryStore:library,mediaStore:media,podcastSources,videoAudioService,transcriber,reviewer,reviewProvider};let jobs=await createSourceJobs(options);
  t.after(async()=>{await jobs.shutdown();await media.shutdown();library.close();await rm(directory,{recursive:true,force:true});});
  const create=kind=>jobs.create({protocolVersion:1,operation_id:randomUUID(),libraryId:library.describe().epoch,key:doc.key,source:media.owner(doc.key).source,kind,consent:true});
  return {directory,library,media,create,transcriber,options,get jobs(){return jobs;},get calls(){return calls;},async restart(){await jobs.shutdown();jobs=await createSourceJobs(options);}};
@@ -182,4 +182,15 @@ test('existing text alignment is durable, isolated from paid review, and fenced 
  await f.restart();const result=await f.jobs.result(job.id);assert.equal(result.alignment.document.segments[0].text,'Hello');assert.equal(result.alignment.input.segments[0].text,'Hello');assert.equal(f.library.get(doc.key).document.segments[0].words,undefined);
  commit(f.library,{...text,segments:[{id:'a',start:0,end:1,text:'Changed'}]});await assert.rejects(f.jobs.result(job.id),/原稿已变化/);
  const newJob=await f.create('align');assert.notEqual(newJob.id,job.id);
+});
+test('existing platform transcript downloads source audio durably without invoking transcription',async t=>{
+ let request,invocations=0;
+ const f=await fixture(t,{videoAudioService:{sourceAvailable:true,providers:['bilibili'],download:async(data,options)=>{request={data,options};return {body:Buffer.from('authored media'),type:'audio/mp4'};}},transcriber:{profile:{backend:'authored'},status:async()=>({available:true}),run:async()=>{invocations++;}}});
+ commit(f.library,{key:doc.key,title:'Existing text',source_url:'https://www.bilibili.com/video/BV1xx411c7mD',provenance:{kind:'platform_subtitles',source_platform:'bilibili',media_id:'BV1xx411c7mD'},segments:[{id:'one',start:0,end:1,text:'原文'}]});
+ const task=await f.create('download');await until(()=>f.jobs.get(task.id),j=>j.state==='ready');
+ assert.equal(request.options.purpose,'source');assert.equal(request.data.consent,true);assert.equal(invocations,0);assert.equal((await f.media.read(doc.key)).type,'audio/mp4');assert.equal(f.library.get(doc.key).document.segments[0].text,'原文');
+});
+test('unavailable video source download does not fall through to podcast fetching',async t=>{
+ const f=await fixture(t);commit(f.library,{key:doc.key,title:'Video',source_url:'https://www.bilibili.com/video/BV1xx411c7mD',segments:[{id:'one',start:0,end:1,text:'Text'}]});
+ await assert.rejects(f.create('download'),/没有可获取的原声/);assert.equal(f.calls,0);
 });

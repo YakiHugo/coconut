@@ -290,7 +290,7 @@ export async function startBridge({port = 8080, host = '127.0.0.1', taskDirector
     catch(error){await Promise.allSettled([options.sourceMediaStore?.shutdown(),options.taskStore?.shutdown(),options.readabilityJobs?.shutdown(),options.reviewJobs?.shutdown()]);options.libraryStore.close();throw error;}
   }
   if(options.enableSourceJobs){
-    try{const {createSourceJobs}=await import('./source-jobs.mjs');options.sourceJobs=await createSourceJobs({directory:path.join(libraryDirectory,'source-jobs'),libraryStore:options.libraryStore,mediaStore:options.sourceMediaStore,podcastSources:options.podcastSources,transcriber:options.transcriber,reviewer:options.transcriptReviewer,reviewProvider:options.reviewProvider??process.env.COCONUT_TRANSCRIPT_REVIEW_PROVIDER??'',reviewModel:options.reviewModel??process.env.COCONUT_TRANSCRIPT_REVIEW_MODEL??''});}
+    try{const {createSourceJobs}=await import('./source-jobs.mjs');options.sourceJobs=await createSourceJobs({directory:path.join(libraryDirectory,'source-jobs'),libraryStore:options.libraryStore,mediaStore:options.sourceMediaStore,podcastSources:options.podcastSources,videoAudioService:options.videoAudioService,transcriber:options.transcriber,reviewer:options.transcriptReviewer,reviewProvider:options.reviewProvider??process.env.COCONUT_TRANSCRIPT_REVIEW_PROVIDER??'',reviewModel:options.reviewModel??process.env.COCONUT_TRANSCRIPT_REVIEW_MODEL??''});}
     catch(error){await options.sourceJobs?.shutdown();await Promise.allSettled([options.sourceMediaStore?.shutdown(),options.taskStore?.shutdown(),options.readabilityJobs?.shutdown(),options.reviewJobs?.shutdown()]);options.libraryStore?.close();throw error;}
   }
   const server = createBridge(options);

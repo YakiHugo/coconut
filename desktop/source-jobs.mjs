@@ -5,11 +5,12 @@ const Coconut=createRequire(import.meta.url)('../reader/core.js');
 const {processingSnapshot,sourceSignature}=createRequire(import.meta.url)('../shared/transcript-resources.js');
 import path from 'node:path';
 import {Readable} from 'node:stream';
+import {captionSource} from './caption-service.mjs';
 const fail=(message,status=400)=>Object.assign(Error(message),{status});
 const uuid=value=>typeof value==='string'&&/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(value);
 const TYPES={'audio/mpeg':'mp3','audio/mp4':'m4a','audio/wav':'wav','audio/ogg':'ogg','audio/flac':'flac','audio/webm':'webm','video/mp4':'mp4','video/webm':'webm'};
 const ALIASES={'audio/mp3':'audio/mpeg','audio/x-m4a':'audio/mp4','audio/wave':'audio/wav','audio/x-wav':'audio/wav','audio/x-flac':'audio/flac'};
-export async function createSourceJobs({directory,libraryStore,mediaStore,podcastSources,transcriber,reviewer=null,reviewProvider='',reviewModel=''}){
+export async function createSourceJobs({directory,libraryStore,mediaStore,podcastSources,videoAudioService=null,transcriber,reviewer=null,reviewProvider='',reviewModel=''}){
  if(reviewProvider&&!['codex','kimi'].includes(reviewProvider))throw fail('转录后校对提供商无效');
  if(!path.isAbsolute(directory)||!libraryStore||!mediaStore)throw fail('Source tasks require an owned library',503);
  await mkdir(directory,{recursive:true,mode:0o700});
@@ -35,10 +36,17 @@ export async function createSourceJobs({directory,libraryStore,mediaStore,podcas
   try{
    owned(value);
    if(value.kind==='download'){
-    const source=libraryStore.get(value.document_key).document.podcast_source;
-    if(!source?.media_url)throw fail('此项目没有可获取的播客原声');
-    const request=source.feed_url?{feedUrl:source.feed_url,episodeId:source.episode_id,mediaUrl:source.media_url}:{url:source.media_url};
-    const media=await podcastSources.downloadMedia(request,{signal});owned(value);
+    const document=libraryStore.get(value.document_key).document,source=document.podcast_source;
+    let media;
+    if(source?.media_url){
+     const request=source.feed_url?{feedUrl:source.feed_url,episodeId:source.episode_id,mediaUrl:source.media_url}:{url:source.media_url};
+     media=await podcastSources.downloadMedia(request,{signal});
+    }else{
+     const video=videoSource(document);
+     if(!video)throw fail('此项目没有可获取的原声');
+     media=await videoAudioService.download({url:video.url,language:null,consent:true},{signal,purpose:'source'});
+    }
+    owned(value);
     const type=ALIASES[media.type]||media.type,extension=TYPES[type]||({'audio/aac':'aac','video/ogg':'ogg','video/quicktime':'mov'})[type];
     if(!extension)throw fail('原声格式不受支持');
     await mediaStore.save(value.document_key,value.source,Readable.from([media.body]),{type,name:'source.'+extension,signal});
@@ -96,6 +104,10 @@ export async function createSourceJobs({directory,libraryStore,mediaStore,podcas
   finally{controller=null;}
  }
  function pump(){if(closing||running)return;const value=db.prepare("SELECT * FROM jobs WHERE state='queued' ORDER BY created,id LIMIT 1").get();if(!value)return;runningId=value.id;running=perform(value).finally(()=>{running=null;runningId=null;pump();});}
+ function videoSource(document){
+  if(!videoAudioService?.sourceAvailable)return null;
+  try{const source=captionSource(document.source_url);return videoAudioService.providers?.includes(source.provider)?source:null;}catch{return null;}
+ }
  async function createOne(data){
   if(closing)throw fail('服务正在停止',503);
   if(data?.protocolVersion!==1||!uuid(data.operation_id)||typeof data.key!=='string'||!data.key||data.key.length>1000||!['download','transcribe','align'].includes(data.kind)||data.consent!==true)throw fail('请明确确认此来源操作');
@@ -109,7 +121,7 @@ export async function createSourceJobs({directory,libraryStore,mediaStore,podcas
   if(existing&&data.kind==='download')return describe(existing);
   if(db.prepare('SELECT count(*) AS count FROM jobs').get().count>=256)throw fail('来源任务已达保存上限，请保留书架备份并检查服务存储',409);
   let operation=null;
-  if(data.kind==='download'){if(!libraryStore.get(data.key).document.podcast_source?.media_url)throw fail('此项目没有播客原声');}
+  if(data.kind==='download'){const document=libraryStore.get(data.key).document;if(!document.podcast_source?.media_url&&!videoSource(document))throw fail('此项目没有可获取的原声');}
   else{
    const record=await mediaStore.read(data.key,owner.binding);if(!record)throw fail('请先保存原声',409);
    if(existing){if(existing.engine==='direct-v1'&&JSON.parse(existing.operation).fingerprint===record.sha256&&JSON.stringify(JSON.parse(existing.operation).profile)===JSON.stringify(transcriber?.profile)&&(data.kind!=='align'||sourceSignature(JSON.parse(existing.operation).document)===sourceSignature(libraryStore.get(data.key).document)))return describe(existing);if(['queued','running'].includes(existing.state))throw fail('旧原声仍有进行中的转写，请先核对原任务',409);}
