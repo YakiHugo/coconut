@@ -3,7 +3,8 @@ import { app, BrowserWindow, dialog, shell, ipcMain, Menu, MenuItem } from 'elec
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { readFile } from 'node:fs/promises';
-import { startBridge } from './server.mjs';
+import { startDesktopService } from './full-service.mjs';
+import {sourceTaskLifecycleGuard} from './source-task-lifecycle.mjs';
 import {libraryLocation,libraryStartupMessage} from './library-location.mjs';
 import { createCaptionHelper, preparePackagedCaptions } from './caption-helper.mjs';
 import { Updater } from './updater.mjs';
@@ -61,14 +62,22 @@ else {
     }
     localMediaService=createLocalMediaService({userDataDirectory:app.getPath('userData'),readerDirectory});
     const library=libraryLocation({mode:'desktop',userDataDirectory:app.getPath('userData')});
-    server = await startBridge({libraryDirectory:library.directory,startupMode:'desktop',port:PORT,readerDirectory,captionService,captionStatus,videoAudioService,localMediaService,taskDirectory:path.join(app.getPath('userData'),'tasks')});
+    server = await startDesktopService({userDataDirectory:app.getPath('userData'),libraryDirectory:library.directory,startupMode:'desktop',port:PORT,readerDirectory,captionService,captionStatus,videoAudioService,localMediaService,taskDirectory:path.join(app.getPath('userData'),'tasks')});
     if(startupAbort.signal.aborted){server.shutdown();return;}
     const origin = `http://127.0.0.1:${PORT}`;
     console.log(libraryStartupMessage(library,await fetch(origin+'/api/v1/library').then(response=>response.json())));
     window = new BrowserWindow({width:1280,height:880,minWidth:780,minHeight:620,show:process.env.COCONUT_SMOKE_TEST !== '1',title:'Coconut',icon:windowIcon,
       webPreferences:{preload:path.join(ROOT,'update-preload.cjs'),nodeIntegration:false,contextIsolation:true,sandbox:true,webSecurity:true,allowRunningInsecureContent:false,webviewTag:false}});
     const lifecycle=createLifecycleOwnership();
-    const readerClose=(mode,request)=>window.webContents.executeJavaScript(`typeof window.coconutPrepareClose === "function" ? window.coconutPrepareClose(${JSON.stringify(mode)},${JSON.stringify(request)}) : null`);
+    const sourceGuard=sourceTaskLifecycleGuard(server.sourceTaskLifecycle);
+    const rendererClose=(mode,request)=>window.webContents.executeJavaScript(`typeof window.coconutPrepareClose === "function" ? window.coconutPrepareClose(${JSON.stringify(mode)},${JSON.stringify(request)}) : null`);
+    const readerClose=async(mode,request)=>{
+      if(mode==='release'){sourceGuard.release(request);return rendererClose(mode,request);}
+      if(mode==='inspect')return sourceGuard.inspect(await rendererClose(mode,request));
+      if(!sourceGuard.prepare(mode,request))return false;
+      try{const result=await rendererClose(mode,request);if(result!==true)sourceGuard.release(request);return result;}
+      catch(error){sourceGuard.release(request);throw error;}
+    };
     closeCoordinator=createCloseCoordinator({
       lifecycle,
       inspect:request=>readerClose('inspect',request),
@@ -96,7 +105,11 @@ else {
       // Reserve this updater before the first await, but leave ordinary quit
       // available while the confirmation/staging work is still non-final.
       updater.change({status:'installing',message:'正在确认安装，当前版本继续运行…'});
-      const safe=lock=>lifecycle.call(attempt,request=>window.webContents.executeJavaScript(`typeof window.coconutPrepareUpdate === "function" && window.coconutPrepareUpdate(${lock?'true':'false'},${JSON.stringify(request)})`));
+      const safe=lock=>lifecycle.call(attempt,async request=>{
+        if(!sourceGuard.idle()||lock&&!sourceGuard.prepare('safe',request))return false;
+        try{const result=await window.webContents.executeJavaScript(`typeof window.coconutPrepareUpdate === "function" && window.coconutPrepareUpdate(${lock?'true':'false'},${JSON.stringify(request)})`);if(lock&&result!==true)sourceGuard.release(request);return result;}
+        catch(error){if(lock)sourceGuard.release(request);throw error;}
+      });
       const current=()=>{if(!lifecycle.current(attempt))throw new Error('已有关闭操作，安装已暂停。');};
       try{
         if(!await safe(false))throw new Error('请先完成编辑、暂停播放和处理任务，并确保书架已保存，再安装更新。');
@@ -178,10 +191,10 @@ else {
         return {reader:!!document.querySelector('.react-app [data-native-command="open-local-media"]'),
           scripts:typeof Coconut==='object',isolated:typeof require==='undefined'&&typeof process==='undefined',
           bridge:health.runtime==='desktop-bridge'&&health.capabilities.local_agents===true,
-          asrDisabled:health.capabilities.media_import===false};
+          sourceTasks:health.client?.capabilities?.sourceJobs===true};
       })()`);
       if (!Object.values(result).every(Boolean)) throw new Error('Desktop smoke test failed: '+JSON.stringify(result));
-      console.log('Coconut desktop smoke passed: packaged reader, isolated renderer and no user-installed Python');
+      console.log('Coconut desktop smoke passed: packaged reader, isolated renderer and durable source tasks without model setup');
       app.quit();
     }
   }).catch(error=>{

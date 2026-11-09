@@ -224,7 +224,7 @@ test('isolated packaged resources import YouTube VTT and Bilibili SRT through th
  }
  assert.deepEqual(bridge.requests.map(r=>r.operation),['version','extract','extract']);
  assert.ok(bridge.requests.every(r=>!Object.hasOwn(r,'trustedProxy')));assert.deepEqual(await readdir(s.tempRoot),[]);
- const main=await readFile(new URL('../desktop/main.mjs',import.meta.url),'utf8');assert.match(main,/await preparePackagedCaptions\(/);assert.match(main,/startBridge\(\{[^\n]+captionService,captionStatus/);assert.doesNotMatch(main,/enabledProviders:\['x'\]/);
+ const main=await readFile(new URL('../desktop/main.mjs',import.meta.url),'utf8');assert.match(main,/await preparePackagedCaptions\(/);assert.match(main,/startDesktopService\(\{[^\n]+captionService,captionStatus/);assert.doesNotMatch(main,/enabledProviders:\['x'\]/);
 });
 test('legacy packaged app exposes only X and blocks other providers before helper or short-link work',async t=>{
  const s=await fixture(t);const bridge=await packagedBridge(t,s,{version:validVersion});

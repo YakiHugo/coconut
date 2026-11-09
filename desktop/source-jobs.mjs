@@ -19,8 +19,9 @@ export async function createSourceJobs({directory,libraryStore,mediaStore,podcas
  try{const handle=await open(filename,'wx',0o600);await handle.close();}catch(error){if(error.code!=='EEXIST')throw error;}
  for(const suffix of ['','-wal','-shm','-journal'])try{await privatePath(filename+suffix);}catch(error){if(error.code!=='ENOENT')throw error;}
  const {DatabaseSync}=await import('node:sqlite'),db=new DatabaseSync(filename);
- try{db.exec("PRAGMA busy_timeout=1000; PRAGMA locking_mode=EXCLUSIVE; CREATE TABLE IF NOT EXISTS jobs (id TEXT PRIMARY KEY, document_key TEXT NOT NULL, binding TEXT NOT NULL, source TEXT NOT NULL, kind TEXT NOT NULL, state TEXT NOT NULL, request TEXT NOT NULL, operation TEXT, ingestion_id TEXT, error TEXT, created INTEGER NOT NULL, updated INTEGER NOT NULL); UPDATE jobs SET state='interrupted' WHERE state='running';");}catch(error){db.close();throw error;}
+ try{db.exec("PRAGMA busy_timeout=1000; PRAGMA locking_mode=EXCLUSIVE; CREATE TABLE IF NOT EXISTS jobs (id TEXT PRIMARY KEY, document_key TEXT NOT NULL, binding TEXT NOT NULL, source TEXT NOT NULL, kind TEXT NOT NULL, state TEXT NOT NULL, request TEXT NOT NULL, operation TEXT, ingestion_id TEXT, error TEXT, created INTEGER NOT NULL, updated INTEGER NOT NULL); UPDATE jobs SET state='interrupted' WHERE state IN ('running','queued');");}catch(error){db.close();throw error;}
  for(const [name,definition] of [['phase',"TEXT NOT NULL DEFAULT ''"],['engine',"TEXT NOT NULL DEFAULT 'legacy'"]])if(!db.prepare('PRAGMA table_info(jobs)').all().some(column=>column.name===name))db.exec('ALTER TABLE jobs ADD COLUMN '+name+' '+definition);
+ let admissionOwner=null,pendingAdmissions=0;
  let closing=false,running=null,runningId=null,controller=null,creation=Promise.resolve(),shutdownPromise;
  mediaStore.setCommitGuard(record=>{
   if(closing)throw fail('来源任务服务正在停止',503);
@@ -109,7 +110,7 @@ export async function createSourceJobs({directory,libraryStore,mediaStore,podcas
   try{const source=captionSource(document.source_url);return videoAudioService.providers?.includes(source.provider)?source:null;}catch{return null;}
  }
  async function createOne(data){
-  if(closing)throw fail('服务正在停止',503);
+  if(closing||admissionOwner!==null)throw fail('服务正在停止或等待关闭确认',503);
   if(data?.protocolVersion!==1||!uuid(data.operation_id)||typeof data.key!=='string'||!data.key||data.key.length>1000||!['download','transcribe','align'].includes(data.kind)||data.consent!==true)throw fail('请明确确认此来源操作');
   const owner=mediaStore.owner(data.key);if(data.libraryId!==libraryStore.describe().epoch)throw fail('所连接的书架已变化，请刷新后核对',409);
   if(data.source!==owner.source)throw fail('原项目来源已变化',409);
@@ -129,12 +130,12 @@ export async function createSourceJobs({directory,libraryStore,mediaStore,podcas
    operation=JSON.stringify({operation_id:data.operation_id,filename:'source.'+extension,size:record.size,fingerprint:record.sha256,last_modified:0,language:'',profile:transcriber?.profile,...(data.kind==='align'?{document:processingSnapshot(libraryStore.get(data.key).document)}:{}),...(data.kind==='transcribe'&&reviewProvider?{review:{provider:reviewProvider,model:reviewModel}}:{})});
    const status=await (data.kind==='align'?transcriber?.alignmentStatus():transcriber?.status());if(!status?.available)throw fail(status?.message||'转写执行器尚未就绪',503);
   }
-  if(closing)throw fail('服务正在停止',503);if(mediaStore.owner(data.key).binding!==owner.binding)throw fail('原项目来源已变化',409);
+  if(closing||admissionOwner!==null)throw fail('服务正在停止或等待关闭确认',503);if(mediaStore.owner(data.key).binding!==owner.binding)throw fail('原项目来源已变化',409);
   const insert=()=>{const now=Date.now();db.prepare('INSERT INTO jobs (id,document_key,binding,source,kind,state,request,operation,created,updated,ingestion_id,engine) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)').run(data.operation_id,data.key,owner.binding,owner.source,data.kind,'queued',request,operation,now,now,['transcribe','align'].includes(data.kind)?data.operation_id.replaceAll('-',''):null,'direct-v1');};
-  if(operation)await mediaStore.exclusive(async()=>{if(closing)throw fail('服务正在停止',503);const current=await mediaStore.read(data.key,owner.binding);if(!current||current.sha256!==JSON.parse(operation).fingerprint)throw fail('原声已变化，请重新确认',409);insert();});else insert();
+  if(operation)await mediaStore.exclusive(async()=>{if(closing||admissionOwner!==null)throw fail('服务正在停止或等待关闭确认',503);const current=await mediaStore.read(data.key,owner.binding);if(closing||admissionOwner!==null)throw fail('服务正在停止或等待关闭确认',503);if(!current||current.sha256!==JSON.parse(operation).fingerprint)throw fail('原声已变化，请重新确认',409);insert();});else insert();
   const receipt=describe(row(data.operation_id));pump();return receipt;
  }
- function create(data){const next=creation.then(()=>createOne(data));creation=next.catch(()=>{});return next;}
+ function create(data){pendingAdmissions++;const next=creation.then(()=>createOne(data));creation=next.catch(()=>{});return next.finally(()=>{pendingAdmissions--;});}
  async function get(id){return describe(row(id));}
  async function list(key){if(typeof key!=='string'||key.length>1000)throw fail('项目标识无效');const binding=mediaStore.owner(key).binding;return db.prepare('SELECT * FROM jobs WHERE binding=? ORDER BY created DESC LIMIT 20').all(binding).map(describe);}
  async function action(id,action){
@@ -152,7 +153,7 @@ export async function createSourceJobs({directory,libraryStore,mediaStore,podcas
     if(value.engine==='direct-v1'&&JSON.stringify(JSON.parse(value.operation).profile)!==JSON.stringify(transcriber.profile))throw fail('模型配置已变化，请创建新任务',409);
     db.prepare("UPDATE jobs SET operation=?,engine='direct-v1',ingestion_id=? WHERE id=?").run(JSON.stringify(operation),id.replaceAll('-',''),id);
    }
-   if(closing)throw fail('服务正在停止',503);update(id,'queued');pump();
+   if(closing||admissionOwner!==null)throw fail('服务正在停止或等待关闭确认',503);update(id,'queued');pump();
   }else throw fail('任务操作无效');return describe(row(id));
  }
  async function result(id){
@@ -167,6 +168,10 @@ export async function createSourceJobs({directory,libraryStore,mediaStore,podcas
   const document={...raw,...Coconut.validate(raw)};owned(value);
   return {job:describe(value),ingestion:{id:value.ingestion_id,state:'ready',transcript:{document}}};
  }
- function shutdown(){return shutdownPromise??=(async()=>{closing=true;controller?.abort();await creation;if(running)await running;db.prepare("UPDATE jobs SET state='interrupted' WHERE state='running'").run();db.close();})();}
- pump();return {create,get,list,action,result,shutdown};
+ function shutdown(){return shutdownPromise??=(async()=>{closing=true;controller?.abort();await creation;if(running)await running;db.prepare("UPDATE jobs SET state='interrupted' WHERE state IN ('running','queued')").run();db.close();})();}
+ function activity(){return {active:pendingAdmissions+db.prepare("SELECT count(*) AS count FROM jobs WHERE state IN ('running','queued')").get().count};}
+ function pauseAdmission(id){if(admissionOwner!==null&&admissionOwner!==id)return false;admissionOwner=id;return true;}
+ function resumeAdmission(id){if(admissionOwner===id)admissionOwner=null;}
+ async function trackedAction(id,operation){pendingAdmissions++;try{return await action(id,operation);}finally{pendingAdmissions--;}}
+ pump();return {create,get,list,action:trackedAction,result,shutdown,activity,pauseAdmission,resumeAdmission};
 }

@@ -4,7 +4,7 @@
 
 ## 运行范围
 
-持久来源任务和独立对齐使用 `npm start` / `server/main.mjs` 的 standalone 服务。Electron 内置的轻量 `desktop/main.mjs` 尚不启用 `sourceJobs` / 本地转录执行器；不要仅将新 Python 文件加入打包清单就声称桌面包支持它。界面在不支持的连接下保留导入的文字并提示服务能力限制。
+持久来源任务和独立对齐可通过 `npm start` / `server/main.mjs` 及桌面 `desktop/main.mjs` 的统一任务运行时使用。桌面模型配置与资源打包见下文；旧轻量 CLI 入口仍不会启用任务。界面在不支持的连接下保留导入的文字并提示服务能力限制。
 
 ## 已有稿对齐
 
@@ -21,3 +21,32 @@
 ## 语气词和翻译
 
 本轮没有覆盖用户本地未提交的口语清理代码。研究结论是先识别换人边界，再保守处理可撤销的阅读层隐藏；回应、否定、数字和不确定范围应保留。AI 翻译仍是独立手动路径，实验前不自动执行。
+
+## 桌面统一任务服务
+
+桌面入口现在与独立服务共用 `sourceTaskRuntime`、模型配置解析和持久来源任务。
+桌面仍使用原有 Application Support/Coconut 书架和固定 loopback 端口，不会自动迁移
+`pnpm start` / `pnpm dev` 的书架。退出时先中止活动任务，再关闭媒体与存储；重启将
+未完成任务保留为 interrupted，不自动调用模型重跑。
+
+Finder 不读取项目 `.env`。可在 Coconut 用户数据目录的 `transcription.json` 中显式配置：
+
+```json
+{
+  "COCONUT_ASR_PYTHON": "/absolute/path/to/venv/bin/python",
+  "COCONUT_ASR_BACKEND": "qwen-mlx",
+  "COCONUT_MODEL_DIRECTORY": "/absolute/path/to/models"
+}
+```
+
+也支持已有 `COCONUT_ASR_MODEL`、`COCONUT_ALIGN_MODEL`、
+`COCONUT_SPEAKER_SEGMENTATION_MODEL`、`COCONUT_SPEAKER_EMBEDDING_MODEL`、
+`COCONUT_READING_PYTHON`、`COCONUT_PUNCTUATION_MODEL` 绝对路径配置。
+明确传入的同名环境变量优先于文件；文件只允许这些本地模型字段，不允许凭据、监听
+地址或公开服务设置。修改配置后重启应用。路径存在不等于环境可用，执行前仍有离线
+探测；模型和依赖不会自动下载。
+
+没有 Python/模型时仍可阅读、导入和持久保存原声，对齐/转录显示缺配置。
+配置文件格式或路径无效时模型处理不可用，但阅读和原声任务继续可用。
+桌面任务不会从 shell 环境启用付费的转录后校对或自动翻译。
+模型实际准确率与源稿质量仍需独立评估，任务/打包测试不构成质量验收。

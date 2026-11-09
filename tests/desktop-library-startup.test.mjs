@@ -51,7 +51,7 @@ test('missing native SQLite degrades actual CLI while independent reader works',
 test('actual desktop entry passes stable userData library and unchanged task/port options',async()=>{
  let source=await fs.readFile(path.join(root,'desktop/main.mjs'),'utf8');source=source.replace(/^import .*;\n/gm,'').replace("const ROOT = path.dirname(fileURLToPath(import.meta.url));",`const ROOT=${JSON.stringify(path.join(root,'desktop'))};`);
  let ready,captured;const app={requestSingleInstanceLock:()=>true,on:()=>{},whenReady:()=>({then:fn=>{ready=fn();return ready;}}),getPath:()=>'/private/authored-userdata',isPackaged:false,exit:()=>{},quit:()=>{}};
- vm.runInNewContext(source,{app,path,process:{env:{},platform:'linux'},AbortController,clearTimeout,clearInterval,console,readFile:async()=>{throw Error('absent');},createLocalMediaService:()=>({}),libraryLocation:options=>libraryLocation({...options,directory:''}),startBridge:async options=>{captured=options;throw Error('stop before window');},dialog:{showErrorBox:()=>{}}});await ready.catch(()=>{});
+ vm.runInNewContext(source,{app,path,process:{env:{},platform:'linux'},AbortController,clearTimeout,clearInterval,console,readFile:async()=>{throw Error('absent');},createLocalMediaService:()=>({}),libraryLocation:options=>libraryLocation({...options,directory:''}),startDesktopService:async options=>{captured=options;throw Error('stop before window');},dialog:{showErrorBox:()=>{}}});await ready.catch(()=>{});
  assert.equal(captured.libraryDirectory,'/private/authored-userdata/library');assert.equal(captured.taskDirectory,'/private/authored-userdata/tasks');assert.equal(captured.port,47831);assert.equal(captured.startupMode,'desktop');
 });
 

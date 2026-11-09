@@ -194,3 +194,10 @@ test('unavailable video source download does not fall through to podcast fetchin
  const f=await fixture(t);commit(f.library,{key:doc.key,title:'Video',source_url:'https://www.bilibili.com/video/BV1xx411c7mD',segments:[{id:'one',start:0,end:1,text:'Text'}]});
  await assert.rejects(f.create('download'),/没有可获取的原声/);assert.equal(f.calls,0);
 });
+test('shutdown preserves queued work as interrupted and restart never silently starts it',async t=>{
+ let runs=0;const f=await fixture(t,{download:async(_,{signal})=>{await delay(10000,null,{signal});return {body:Buffer.from('late'),type:'audio/mpeg'};},transcriber:{profile:{backend:'authored'},status:async()=>({available:true}),run:async()=>{runs++;}}});
+ await f.create('download');await until(async()=>f.calls,n=>n===1);
+ const second={...doc,key:'queued'};commit(f.library,second);const source=f.media.owner(second.key).source;await f.media.save(second.key,source,Readable.from(['authored']),{type:'audio/mpeg',name:'source.mp3'});
+ const job=await f.jobs.create({protocolVersion:1,libraryId:f.library.describe().epoch,operation_id:randomUUID(),key:second.key,source,kind:'transcribe',consent:true});assert.equal(job.state,'queued');assert.equal(f.jobs.activity().active,2);
+ await f.restart();assert.equal((await f.jobs.get(job.id)).state,'interrupted');assert.equal(runs,0);assert.equal(f.jobs.activity().active,0);
+});

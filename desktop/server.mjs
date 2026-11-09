@@ -238,6 +238,9 @@ export function createBridge({readerDirectory = path.resolve(ROOT,'../reader'), 
       return json(error.status|| (error.code === 'ENOENT' ? 404 : 400),{...(remote?{code:error.taskCode||error.code||'request_failed'}:{}),...(pathname==='/api/videos/media'&&typeof error.code==='string'?{code:error.code}:{}),...(error.taskCode?{code:error.taskCode}:(pathname==='/api/captions/import'||pathname==='/api/v1/ingestions'&&['CAPTION_OUTPUT','CAPTION_PARSE_FAILED','CAPTION_TIMEOUT','CAPTION_UNAVAILABLE','CAPTION_INTEGRITY','CAPTION_VERSION','CAPTION_START','CAPTION_EXIT'].includes(error.code))&&error.code?{code:error.code}:{}),...(!remote&&error.localProviderDetails?{localProviderDetails:error.localProviderDetails}:{}),...(error.providerDiagnostics?{code:'provider_failed',localHttpStatus:400,providerDiagnostics:error.providerDiagnostics}:{}),error:error.code === 'ENOENT' ? 'File not found' : remote?remoteDiagnostic(error.message):String(error.message || '请求未完成').slice(0,300)});
     }
   });
+  // Main-process-only lifecycle inspection; never exposed as a remote control API.
+  server.sourceTaskLifecycle={activity:()=>sourceJobs?.activity()||{active:0},
+    pause:id=>sourceJobs?.pauseAdmission(id)??true,resume:id=>sourceJobs?.resumeAdmission(id)};
   server.requestTimeout = 30000; server.headersTimeout = 10000;
   let resources;
   const stopResources=()=>resources??=(async()=>{
@@ -276,8 +279,9 @@ export async function startBridge({port = 8080, host = '127.0.0.1', taskDirector
     try{options.libraryStore=await createLibraryStore({directory:libraryDirectory,exclusiveWriter:true});}
     catch(error){options.libraryStore=null;options.libraryUnavailable={code:error.libraryCode||'library_unavailable',message:'Canonical library could not open; browser storage remains unchanged.'};}
   }
-  if(!options.readabilityJobs&&options.libraryStore&&libraryDirectory&&(options.readingPython||process.env.COCONUT_READING_PYTHON)){
-    try{options.readabilityJobs=await createReadabilityJobs({directory:path.join(libraryDirectory,'readability'),python:options.readingPython||process.env.COCONUT_READING_PYTHON,punctuationModel:options.punctuationModel,segmentationModel:options.segmentationModel,embeddingModel:options.embeddingModel});}
+  const readingPython=options.readingPython===undefined?process.env.COCONUT_READING_PYTHON:options.readingPython;
+  if(!options.readabilityJobs&&options.libraryStore&&libraryDirectory&&readingPython){
+    try{options.readabilityJobs=await createReadabilityJobs({directory:path.join(libraryDirectory,'readability'),python:readingPython,punctuationModel:options.punctuationModel,segmentationModel:options.segmentationModel,embeddingModel:options.embeddingModel});}
     catch(error){options.libraryStore?.close();await options.taskStore?.shutdown();throw error;}
   }
   if(options.libraryStore&&libraryDirectory&&!options.sourceMediaStore){
