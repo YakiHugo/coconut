@@ -10,15 +10,17 @@ import {createProviders} from '../desktop/providers.mjs';
 const script=await readFile('reader/react-app.js','utf8'),page=await readFile('reader/index.html','utf8');
 const sources=await Promise.all([...page.matchAll(/<script src="([^"]+)"/g)].map(match=>match[1].split('?')[0]).filter(name=>name!=='react-app.js').map(name=>readFile('reader/'+name,'utf8')));
 const wait=async check=>{for(let i=0;i<150;i++){if(check())return;await new Promise(r=>setTimeout(r,5));}assert.ok(check(),'UI did not settle');};
-async function setup(options={}){
+async function setup(options={}, {localImport=false}={}){
  const dir=await mkdtemp(join(tmpdir(),'coconut-readiness-'));
  const {server,origin}=await startDevelopmentBridge({port:0,taskDirectory:join(dir,'tasks'),libraryDirectory:join(dir,'library'),captionPython:'',providers:createProviders({find:async()=>null}),...options});
- const w=new Window({url:origin+'/'}),calls=[];w.document.body.innerHTML='<div id="react-root"></div>';Object.defineProperty(w,'crypto',{value:webcrypto});w.structuredClone=structuredClone;
+ const w=new Window({url:origin+'/'}),calls=[];w.document.body.innerHTML='<div id="react-root"></div>';Object.defineProperty(w,'crypto',{value:webcrypto});w.structuredClone=value=>w.eval('JSON.parse')(JSON.stringify(value));w.TextEncoder=TextEncoder;w.File=File;
  Object.defineProperty(w.navigator,'locks',{value:{request:async(name,run)=>run()}});
+ // These fixtures are JSON-only. Recreate clones and JSON responses in the renderer
+ // realm, so the canonical adapter's strict plain-object validation remains real.
  // Happy DOM's AbortSignal is not a native Node fetch signal. Network responses otherwise use the real bridge.
- w.fetch=async(path,init)=>{calls.push({path,method:init?.method||'GET'});assert.notEqual(init?.method,'POST','readiness checks must never run inference or upload');return fetch(new URL(path,origin+'/'),{...init,signal:undefined});};
+ w.fetch=async(path,init)=>{calls.push({path,method:init?.method||'GET'});if(init?.method&&init.method!=='GET')assert.ok(localImport&&(new URL(path,origin).pathname.startsWith('/api/v1/library/')||String(path).startsWith('api/v1/source-media?')),'only explicit local import persistence may write; readiness must never run inference');const response=await fetch(new URL(path,origin+'/'),{...init,headers:{...init?.headers,Origin:origin},signal:undefined});return {ok:response.ok,status:response.status,headers:response.headers,json:async()=>w.eval('JSON.parse')(await response.text())};};
  w.localStorage.setItem('coconut-reader-v1',JSON.stringify({documents:[{key:'source',title:'Saved source',language:'en',segments:[{id:'a',start:0,end:2,text:'Original source'}],notes:{}}],active:'source'}));
- for(const source of sources)w.eval(source);const adapter=w.CoconutLibraryStore.createLegacyAdapter({getStorage:()=>w.localStorage,validate:w.Coconut.validate});w.CoconutStorageProvider={initialize:async()=>({ok:true,adapter,loaded:adapter.load()})};w.eval(script);
+ for(const source of sources)w.eval(source);const adapter=w.CoconutLibraryStore.createLegacyAdapter({getStorage:()=>w.localStorage,validate:w.Coconut.validate});if(!localImport)w.CoconutStorageProvider={initialize:async()=>({ok:true,adapter,loaded:adapter.load()})};w.eval(script);
  await wait(()=>w.document.querySelector('.app-brand'));
  const button=text=>[...w.document.querySelectorAll('button')].find(node=>node.textContent===text);
  const choose=async(label,value)=>{const select=[...w.document.querySelectorAll('.ai-workspace select')].find(node=>node.parentElement.textContent.startsWith(label));select.value=value;select.dispatchEvent(new w.Event('change',{bubbles:true}));await new Promise(r=>setTimeout(r,0));};
@@ -46,11 +48,11 @@ test('ready provider enables only supported mode and model without claiming quot
  }finally{await h.close();}
 });
 test('local import does not claim ASR is unconfigured when actual Node API reports a configured executor',async()=>{
- const h=await setup({ingestionExecutor:{status:async()=>({available:true,model_download:false,message:'本地识别服务已就绪。'})}});try{
+ const h=await setup({ingestionExecutor:{status:async()=>({available:true,model_download:false,message:'本地识别服务已就绪。'})}},{localImport:true});try{
   h.w.URL.createObjectURL=()=> 'blob:local-fixture';h.w.URL.revokeObjectURL=()=>{};h.w.HTMLInputElement.prototype.click=function(){};
   h.button('打开音频或视频文件').click();const input=h.w.document.querySelector('input[accept="audio/*,video/*"]');Object.defineProperty(input,'files',{value:[new h.w.File(['RIFF local fixture'],'fixture.wav',{type:'audio/wav'})]});input.dispatchEvent(new h.w.Event('change',{bubbles:true}));
   await wait(()=>h.button('检查本地识别服务'));assert.ok(h.w.document.querySelector('.reader-workspace'));assert.ok(!h.w.document.body.textContent.includes('尚未配置语音识别'));
   h.button('检查本地识别服务').click();await wait(()=>h.w.document.body.textContent.includes('本地识别服务已就绪。'));assert.ok(!h.w.document.body.textContent.includes('尚未配置语音识别'));
-  assert.ok(h.calls.every(call=>call.method==='GET'));
+  const writes=h.calls.filter(call=>call.method!=='GET');assert.equal(writes.filter(call=>String(call.path).startsWith('api/v1/source-media?')).length,1);assert.ok(writes.every(call=>new URL(call.path,h.origin).pathname.startsWith('/api/v1/library/')||String(call.path).startsWith('api/v1/source-media?')));
  }finally{await h.close();}
 });
