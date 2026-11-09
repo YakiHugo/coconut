@@ -1,0 +1,6 @@
+const test=require('node:test'),assert=require('node:assert/strict');
+const {mergeAlignmentCandidate}=require('../shared/source-alignment.js');
+const {processingSnapshot}=require('../shared/transcript-resources.js');
+const source=()=>({key:'x',title:'test',segments:[{id:'a',start:1,end:2,text:'你好',notes:'keep'}],provenance:{alignment_required:true}});
+test('candidate clocks preserve source, notes and uncertain text quality',()=>{const d=source(),input=processingSnapshot(d),c=structuredClone(input);c.segments[0].words=[{word:'你好',start:1.1,end:1.8}];const next=mergeAlignmentCandidate(d,input,c,{status:'complete'});assert.equal(next.segments[0].notes,'keep');assert.equal(next.segments[0].start,1);assert.equal(next.provenance.source_text_quality,'unverified');assert.equal(next.provenance.alignment_required,false);assert.ok(next.source_alignment.source_snapshot);});
+test('reject changed source, text, timestamps and invalid word clocks',()=>{for(const mutate of [c=>c.segments[0].text='改写',c=>c.segments[0].end=3,c=>c.segments[0].words=[{word:'你好',start:0,end:1}],c=>c.segments=[]]){const d=source(),input=processingSnapshot(d),c=structuredClone(input);mutate(c);assert.throws(()=>mergeAlignmentCandidate(d,input,c,{}));}const d=source(),input=processingSnapshot(d);d.segments[0].text='changed';assert.throws(()=>mergeAlignmentCandidate(d,input,input,{}));});

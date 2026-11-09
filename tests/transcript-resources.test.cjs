@@ -57,3 +57,10 @@ test('legacy resource signatures do not gain absent native metadata fields',()=>
  assert.equal(R.sourceSignature(d),JSON.stringify({key:d.key,language:d.language,source_url:d.source_url,media_duration:10,
   provenance:{kind:'automatic_subtitles'},segments:d.segments.map(({id,start,end,text,speaker})=>({id,start,end,text,speaker}))}));
 });
+
+test('source alignment gate prevents automatic punctuation and speaker inference',()=>{
+ const d=doc();d.provenance.alignment_required=true;
+ const plan=R.inspectResources(d,{audio:true,punctuation:true,speakers:true});
+ assert.deepEqual(plan.steps,[]);assert.equal(plan.rows.find(r=>r.kind==='alignment').state,'needs_alignment');
+ assert.equal(R.processingSnapshot(d).provenance.alignment_required,true);
+});

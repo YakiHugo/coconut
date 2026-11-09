@@ -16,7 +16,7 @@ export function createReadabilityController(deps:Dependencies){
  async function loadMedia(media:Media,signal:AbortSignal):Promise<File>{
   if(deps.fetchMedia)return deps.fetchMedia(media,signal);
   const url=new URL(media.url,location.href);
-  if(!media.url.startsWith('blob:')&&(url.origin!==location.origin||!/^\/api\/(?:local-media\/|v1\/(?:ingestions|readability)\/jobs\/)/.test(url.pathname)))throw Error('请补充与此稿对应的原声文件。');
+  if(!media.url.startsWith('blob:')&&(url.origin!==location.origin||!/^\/api\/(?:local-media\/|v1\/(?:ingestions|readability)\/jobs\/|v1\/source-media\/content)/.test(url.pathname)))throw Error('请补充与此稿对应的原声文件。');
   const response=await fetch(media.url,{signal});if(!response.ok)throw Error('无法读取已载入的原声');
   const reader=response.body?.getReader();if(!reader)throw Error('浏览器无法读取原声');
   let size=0;const chunks:Uint8Array<ArrayBuffer>[]=[];
@@ -70,7 +70,7 @@ export function createReadabilityController(deps:Dependencies){
      await apply(job,key,request,owner.signal);return;
     }
     if(liveStates.includes(job.state)){
-     if(job.needsMedia&&file&&job.mediaIdentity===media?.identity){const issue=transcriptionFileIssue(file);if(issue)throw Error(issue);job=checkJob(await deps.request('api/v1/readability/jobs/'+job.id+'/media',{method:'POST',headers:{'Content-Type':'application/octet-stream'},body:file,signal:owner.signal}),key);emit({job,message:'原声已接收，继续本地整理。'});}
+     if(job.needsMedia&&media&&job.mediaIdentity===media.identity){const upload=file||await loadMedia(media,owner.signal);if(generation!==request||owner.signal.aborted||(deps.getMedia(key)?.identity??null)!==media.identity)return;const issue=transcriptionFileIssue(upload);if(issue)throw Error(issue);job=checkJob(await deps.request('api/v1/readability/jobs/'+job.id+'/media',{method:'POST',headers:{'Content-Type':'application/octet-stream'},body:upload,signal:owner.signal}),key);emit({job,message:'原声已接收，继续本地整理。'});}
      return;
     }
     if(!run)return;
