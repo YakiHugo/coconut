@@ -69,3 +69,13 @@ test('normal completion exits cleanly while the production parent watcher is wai
  const phases=[];await createTranscriber({python,profile:{backend:'authored'},scriptPath:script}).run({inputPath:path.join(data,'audio'),sha256:'a'.repeat(64),workDirectory:data,onProgress:value=>phases.push(value.phase)});
  assert.deepEqual(phases,['done']);
 });
+test('existing text alignment uses explicit operation and independent probe without ASR',async t=>{
+ const data=await directory(t),script=path.join(data,'align.py');
+ await writeFile(script,`import sys,json\nr=json.loads(sys.stdin.readline())\nassert r['operation']=='align_existing'\nif '--probe' in sys.argv: print(json.dumps({'available':True}))\nelse:\n assert r['document']['segments'][0]['id']=='cue'\n print(json.dumps({'phase':'align'}),flush=True)\n`);
+ const runner=createTranscriber({python,profile:{align_model:'/local/align'},scriptPath:script});
+ assert.equal((await runner.alignmentStatus()).available,true);
+ const phases=[];await runner.align({inputPath:path.join(data,'audio'),sha256:'a'.repeat(64),workDirectory:data,document:{segments:[{id:'cue'}]},onProgress:p=>phases.push(p.phase)});
+ assert.deepEqual(phases,['align']);
+ assert.throws(()=>runner.align({inputPath:'relative',workDirectory:data,document:{}}));
+ assert.equal((await createTranscriber({}).alignmentStatus()).available,false);
+});
