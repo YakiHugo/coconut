@@ -18,7 +18,7 @@ export async function saveSourceMedia(store:AppStore,key:string,file:File,signal
 }
 /** Reads only the local saved receipt; never re-fetches provider media or starts ASR. */
 export async function restoreSourceMedia(store:AppStore,key:string,signal:AbortSignal,replaceIdentity?:string):Promise<boolean>{
- const doc=store.getDocument(key),previousFile=store.getFile(key),previousMedia=store.getMedia(key);if(!doc||signal.aborted||previousMedia&&(previousMedia.identity!==replaceIdentity||!replaceIdentity||previousMedia.url.startsWith('blob:')))return false;
+ const doc=store.getDocument(key),previousFile=store.getFile(key),previousMedia=store.getMedia(key);if(!doc||signal.aborted||previousMedia&&(previousMedia.identity!==replaceIdentity||!replaceIdentity||previousMedia.url.startsWith('blob:')||previousMedia.availability==='local_session'||!!previousMedia.nativeToken))return false;
  const response=await fetch('api/v1/source-media?'+new URLSearchParams({key,source:await sha256(sourceMediaIdentity(doc))}),{signal});if(response.status===404)return false;
  const data=await response.json();if(!response.ok)throw Error(typeof data.error==='string'?data.error:'已保存原声暂时无法读取。');const media=receipt(data.media);
  if(signal.aborted||store.getDocument(key)!==doc||store.getMedia(key)!==previousMedia||store.getFile(key)!==previousFile)return false;if(previousMedia?.identity!=='source-media-sha256:'+media.sha256)attach(store,key,media);return true;
