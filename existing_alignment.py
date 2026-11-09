@@ -57,7 +57,7 @@ def align_document(document, duration, align):
                     if not isinstance(word, dict) or not isinstance(word.get('word'), str):
                         raise ValueError('invalid_words')
                     a, b = word.get('start'), word.get('end')
-                    if not all(type(v) in (int, float) and math.isfinite(v) for v in (a, b)) or a < start or b > end + .02 or b <= a or a < previous:
+                    if not all(type(v) in (int, float) and math.isfinite(v) for v in (a, b)) or a < start or b > end or b <= a or a < previous:
                         raise ValueError('invalid_word_timing')
                     previous = b
                 candidate = dict(text=cue['text'], words=words)
