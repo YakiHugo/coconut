@@ -1,5 +1,10 @@
 import copy
 import unittest
+import tempfile
+import json
+import wave
+import types
+from pathlib import Path
 from unittest.mock import patch
 from existing_alignment import align_document, language_name, probe_alignment
 
@@ -42,6 +47,43 @@ class ExistingAlignmentTests(unittest.TestCase):
     def test_duplicate_ids_rejected(self):
         self.doc['segments']*=2
         with self.assertRaises(ValueError):align_document(self.doc,4,self.good)
+    def test_worker_cache_binds_audio_text_and_model_and_loads_only_aligner(self):
+        from existing_alignment import run_alignment
+        from audio_pipeline import _file_digest, SAMPLE_RATE
+        with tempfile.TemporaryDirectory() as root:
+            root=Path(root); audio=root/'source.wav'
+            with wave.open(str(audio),'wb') as f:
+                f.setparams((1,2,SAMPLE_RATE,0,'NONE','not compressed'))
+                f.writeframes(b'\0'*SAMPLE_RATE*2*4)
+            calls=[]
+            class Model:
+                def generate(self,**kw):
+                    calls.append(kw)
+                    return types.SimpleNamespace(items=[types.SimpleNamespace(text='Hello',start_time=.1,end_time=.5),types.SimpleNamespace(text='world',start_time=1.,end_time=1.8)])
+            loaded=[]
+            def load(path):
+                loaded.append(path);return Model()
+            request=dict(input=str(audio),sha256=_file_digest(audio),work=str(root/'work'),document=self.doc,profile={'align_model':'/only/align'})
+            with patch('existing_alignment.probe_alignment',return_value={'available':True}), patch('transcription.fingerprint',return_value='model-a') as fingerprint, patch('importlib.metadata.version',return_value='test'), patch.dict('sys.modules',{'mlx_audio':types.ModuleType('mlx_audio'),'mlx_audio.stt':types.SimpleNamespace(load=load)}), patch('transcription.emit'):
+                run_alignment(request);run_alignment(request)
+                self.assertEqual(len(calls),1)
+                self.assertEqual(loaded,['/only/align'])
+                first=json.loads((root/'work/result.json').read_text())
+                self.assertEqual(first['source_sha256'],request['sha256'])
+                self.assertEqual(first['alignment_report']['status'],'candidate')
+                fingerprint.return_value='model-b'
+                run_alignment(request)
+                self.assertEqual(len(calls),2)
+                second=json.loads((root/'work/result.json').read_text())
+                self.assertNotEqual(first['alignment_identity'],second['alignment_identity'])
+                request['document']=copy.deepcopy(self.doc)
+                request['document']['segments'][0]['text']='different'
+                run_alignment(request)
+                self.assertEqual(len(calls),3)
+                self.assertEqual(json.loads((root/'work/result.json').read_text())['alignment_report']['status'],'needs_review')
+                request['sha256']='wrong'
+                with self.assertRaises(ValueError):run_alignment(request)
+
     def test_language_codes(self):
         self.assertEqual(language_name('zh-CN'),'chinese')
         self.assertEqual(language_name('en_US'),'english')
