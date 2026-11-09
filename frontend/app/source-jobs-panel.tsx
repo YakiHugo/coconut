@@ -31,7 +31,7 @@ export function SourceJobsPanel({store,currentKey,taskHost,onTasksChange}:{store
     if(!Array.isArray(data.jobs)||data.jobs.some((job:Job)=>job.documentKey!==currentKey||!['download','transcribe','align'].includes(job.kind)||!Object.hasOwn(labels,job.state)))throw Error('来源任务回执无效');
     if(!active||generation.current!==version)return;setJobs(data.jobs);
     const download=data.jobs.find((job:Job)=>job.kind==='download'&&job.state==='ready'),receipt=download?download.id+':'+download.updated:'';
-    if(receipt&&receipt!==completedDownload){completedDownload=receipt;const current=store.getMedia(currentKey);if(!current||current.identity?.startsWith('source-media-sha256:'))await restoreSourceMedia(store,currentKey,attachment.signal,current?.identity);}
+    if(receipt&&receipt!==completedDownload){completedDownload=receipt;const current=store.getMedia(currentKey);if(!current||!current.url.startsWith('blob:'))await restoreSourceMedia(store,currentKey,attachment.signal,current?.identity);}
    }catch(error){if(active&&generation.current===version)setMessage(error instanceof Error?error.message:String(error));}
    finally{refreshing.current=false;if(active)timer=setTimeout(()=>void refresh(),3000);}
   };
