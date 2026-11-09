@@ -61,6 +61,7 @@ try{
  await expect(page.locator('.source-error')).toContainText('读取已取消');assert.equal((await state()).sequence,0);
  // Changing the source while the same request is pending also retires ownership.
  hold=new Promise(resolve=>release=resolve);await read();await expect.poll(()=>mediaCalls).toBe(3);
+ await expect(page.getByLabel('播客或视频链接')).toBeEnabled();
  await page.getByLabel('播客或视频链接').fill('https://www.youtube.com/watch?v=zzzzzzzzzzz');release();hold=null;await expect.poll(()=>completed).toBe(3);await expect(button).toHaveCount(0);assert.equal((await state()).sequence,0);
  // Successful authored audio uses the actual endpoint, File fingerprint, store,
  // canonical library and browser decoder. It must not start playback or ASR.
