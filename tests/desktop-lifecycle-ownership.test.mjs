@@ -8,6 +8,7 @@ import {webcrypto} from 'node:crypto';
 import {Window} from 'happy-dom';
 import {build} from 'esbuild';
 const compiled=await build({stdin:{contents:"export {createAppStore} from './frontend/app/store'; export {createCloseController} from './frontend/native-media/close';",resolveDir:process.cwd()},bundle:true,write:false,format:'iife',globalName:'ReactLifecycle',platform:'browser'});
+import {sourceTaskLifecycleGuard} from '../desktop/source-task-lifecycle.mjs';
 import {createCloseCoordinator,createLifecycleOwnership} from '../desktop/close-coordinator.mjs';
 const root=new URL('../',import.meta.url),key='coconut-reader-v1',timeoutMs=1000;
 const read=file=>fs.readFileSync(new URL(file,root),'utf8');
@@ -20,7 +21,7 @@ function section(start,end){
 // assertions below run real main-process coordination, React store, close controller
 // and receipt pipeline. UI lock/update eligibility are controlled host boundaries,
 // not mounted NativeClose UI acceptance (covered by react-*-mounted tests).
-const factory=new Function('deps',`const {window,app,updater,prepareInstall,dialog,path,process,createCloseCoordinator,createLifecycleOwnership,captionHelper,server,localMediaService}=deps;
+const factory=new Function('deps',`const {window,app,updater,prepareInstall,dialog,path,process,createCloseCoordinator,createLifecycleOwnership,sourceTaskLifecycleGuard,captionHelper,server,localMediaService}=deps;
 let quitting=false,quitReady=false,closeCoordinator,updateTimer,updateInterval;const startupAbort=new AbortController();
 ${section('function finishQuit(){','\nfunction ordinaryWebLink')}
 ${section('    const lifecycle=createLifecycleOwnership();','    // Native close')}
@@ -34,7 +35,7 @@ async function until(predicate,label){
  for(let i=0;i<100;i++){if(predicate())return;await turn();}
  assert.fail('Missing expected boundary: '+label);
 }
-function setup(t,{nativeMedia=false}={}){
+function setup(t,{nativeMedia=false,sourceTasks=0}={}){
  t.mock.timers.enable({apis:['setTimeout','Date'],now:1800000000000});
  const w=new Window({url:'https://coconut.example/'}),trace=[],executions=[],queue=[];
  Object.defineProperty(w,'Date',{value:Date});
@@ -76,7 +77,7 @@ function setup(t,{nativeMedia=false}={}){
  const closeRequests=[];
  const app={isPackaged:true,getVersion:()=> 'fixture',quit(){trace.push('app.quit');if(!runtime.quitReady)closeRequests.push(runtime.closeCoordinator.request());}};
  const dialog={showMessageBox:async(_window,options)=>{trace.push('dialog '+options.title);return {response:options.title==='安装 Coconut 更新'?updateDecision:options.title==='关闭 Coconut？'?(closeDecision?1:0):0};}};
- runtime=factory({window:{isDestroyed:()=>false,webContents:{executeJavaScript:execute,session:{flushStorageData(){trace.push('flushStorageData');return storageFlush?.promise;}}}},app,updater,prepareInstall:()=>{trace.push('prepareInstall');return stage.promise;},dialog,path,process:{resourcesPath:'/Applications/Coconut.app/Contents/Resources',arch:'arm64'},createCloseCoordinator,createLifecycleOwnership:()=>createLifecycleOwnership({timeoutMs}),localMediaService:nativeMedia?{shutdown(){trace.push('media.shutdown');return mediaShutdown.promise;}}:undefined,captionHelper:{shutdown(){trace.push('helper.shutdown');return shutdown.promise;}},server:{shutdown(){trace.push('server.shutdown');}}});
+ runtime=factory({window:{isDestroyed:()=>false,webContents:{executeJavaScript:execute,session:{flushStorageData(){trace.push('flushStorageData');return storageFlush?.promise;}}}},app,updater,prepareInstall:()=>{trace.push('prepareInstall');return stage.promise;},dialog,path,process:{resourcesPath:'/Applications/Coconut.app/Contents/Resources',arch:'arm64'},createCloseCoordinator,sourceTaskLifecycleGuard,createLifecycleOwnership:()=>createLifecycleOwnership({timeoutMs}),localMediaService:nativeMedia?{shutdown(){trace.push('media.shutdown');return mediaShutdown.promise;}}:undefined,captionHelper:{shutdown(){trace.push('helper.shutdown');return shutdown.promise;}},server:{sourceTaskLifecycle:{activity:()=>({active:sourceTasks}),pause:()=>true,resume:()=>{}},shutdown(){trace.push('server.shutdown');}}});
  const install={async discard(){trace.push('install.discard');},start(){trace.push('install.start');return start.promise;}};
  const drain=async()=>{paused=false;while(queue.length){queue.shift().run();await turn();}};
  t.after(async()=>{stage.resolve(install);start.resolve();shutdown.resolve();mediaShutdown.resolve();await drain();await turn();controller.dispose();store.dispose();await w.happyDOM.close();});
@@ -254,3 +255,10 @@ test('native quit waits for pending private-reference shutdown as well as helper
  assert.ok(s.trace.includes('media.shutdown'));s.shutdown.resolve();await turn();assert.equal(s.result().quitReady,false);
  s.mediaShutdown.resolve();await until(()=>s.result().quitReady,'native media shutdown completion');assert.equal(s.trace.filter(event=>event==='app.quit').length,1);
 });
+
+ test('running source work in another project blocks update and asks before native quit',async t=>{
+ const s=setup(t,{sourceTasks:1});await s.sample();
+ await s.runtime.installUpdate();assert.equal(s.trace.includes('prepareInstall'),false);assert.equal(s.trace.includes('install.start'),false);
+ assert.equal(await s.runtime.closeCoordinator.request(),false);assert.ok(s.trace.includes('dialog 关闭 Coconut？'));assert.equal(s.trace.includes('server.shutdown'),false);
+ s.setCloseDecision(true);assert.equal(await s.runtime.closeCoordinator.request(),true);assert.ok(s.trace.includes('server.shutdown'));
+ });

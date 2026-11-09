@@ -2,7 +2,7 @@
 // Pure resource planning and conservative merge; no fetching, models or storage.
 const EVIDENCE_FIELDS=['speaker_scope','chunk_index','provider_speaker','timing_basis','alignment_status','boundary_status'];
 const CUE_FIELDS=['id','start','end','text','speaker','original_text','original_speaker','speaker_id','speaker_status','words',...EVIDENCE_FIELDS];
-const PROVENANCE_FIELDS=['kind','language','caption_method','caption_track','media_id','source_platform','punctuation_method','punctuation_backend','punctuation_model','punctuation_status','speaker_method','speaker_backend','speaker_model','speaker_status'];
+const PROVENANCE_FIELDS=['kind','language','caption_method','caption_track','media_id','source_platform','punctuation_method','punctuation_backend','punctuation_model','punctuation_status','speaker_method','speaker_backend','speaker_model','speaker_status','alignment_required','source_text_quality'];
 const RESULT_FIELDS=PROVENANCE_FIELDS.filter(key=>key.startsWith('punctuation_')||key.startsWith('speaker_'));
 const select=(value,fields)=>Object.fromEntries(fields.filter(key=>Object.hasOwn(value||{},key)).map(key=>[key,value[key]]));
 function processingSnapshot(doc){
@@ -27,12 +27,14 @@ function inspectResources(doc,{audio=false,punctuation=false,speakers=false}={})
  const supplied=['publisher_transcript','platform_subtitles','authored_demo'].includes(provenance.kind);
  const punctuationDone=!!provenance.punctuation_method||supplied||count>0&&punctuated/count>=.4;
  const speakersDone=labelled===count&&count>0||provenance.speaker_method==='recording-acoustic-v1';
+ const alignmentRequired=provenance.alignment_required===true;
  const rows=[
   {kind:'transcript',state:count?'complete':'missing',message:count?`已有 ${count} 个带时间的片段`:'尚无带时间文字稿，需生成或导入文字稿'},
   {kind:'punctuation',state:!count?'waiting_transcript':punctuationDone?'complete':punctuation?'ready':'missing_model',message:!count?'取得文字稿后整理':punctuationDone?'保留已有标点与原稿':punctuation?'可用本地模型补标点':'标点模型未配置，保留原文'},
   {kind:'speakers',state:!count?'waiting_transcript':speakersDone?(labelled<count?'needs_review':'complete'):!audio?'waiting_audio':!speakers?'missing_model':'ready',message:!count?'取得文字稿后分组':speakersDone?(labelled<count?`${labelled}/${count} 个片段已有标签，其余归属不确定，需回听核对`:'已有说话人标签；自动标签仍需回听核对'):!audio?'待取得对应原声后分组':!speakers?'声纹模型未配置，保留未标注':`可按声音分组，保留已有 ${labelled} 个标签`},
   {kind:'chapters',state:Array.isArray(doc.reading_chapters)&&doc.reading_chapters.length?'complete':'not_provided',message:Array.isArray(doc.reading_chapters)&&doc.reading_chapters.length?'保留已有章节与时间定位':'来源未提供章节，可在阅读记录中添加'}
  ];
+ if(alignmentRequired){rows.splice(1,0,{kind:'alignment',state:audio?'needs_alignment':'waiting_audio',message:audio?'已有稿需与原声核对时间；对齐成功不代表文字准确':'需取得原声，再核对已有稿的时间与内容'});for(const row of rows)if(['punctuation','speakers'].includes(row.kind)){row.state='waiting_alignment';row.message='先核对文字稿与原声，保留原稿';}}
  return {rows,steps:rows.filter(row=>row.state==='ready').map(row=>row.kind),asr:count===0,requiresAudio:count>0&&!speakersDone&&!audio};
 }
 function wordingPreserved(source,output){

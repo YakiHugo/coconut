@@ -215,3 +215,18 @@ test('missing or mixed reconciliation namespace cannot mutate private references
  for(const [owners,library] of [[[],undefined],[[f.owner],randomUUID()],[[f.owner,{...f.owner,key:'other',library:randomUUID()}],f.owner.library]])assert.deepEqual(await f.native.reconcile(owners,library),{status:'unavailable'});
  assert.equal(await fs.readFile(manifest,'utf8'),original);assert.equal((await f.native.resolve(f.owner)).status,'ready');
 });
+
+test('React native opt-in proves the selected original after playback changes to durable source SHA',async t=>{
+ const {outputFiles}=await build({entryPoints:['frontend/app/native-file-bridge.ts'],bundle:true,write:false,platform:'node',format:'esm'});
+ const {nativeFileBridge}=await import('data:text/javascript;base64,'+Buffer.from(outputFiles[0].text).toString('base64'));
+ const value=await fixture(t),service=value.service(),file=new File([value.bytes],value.owner.source.name,{type:value.owner.source.type,lastModified:value.owner.source.last_modified});
+ const playbackIdentity='source-media-sha256:'+digest(value.bytes);let calls=0;
+ assert.deepEqual(await service.remember(value.owner,value.filePath,playbackIdentity),{status:'unavailable'});
+ const bridge=nativeFileBridge({remember:async(owner,selected,identity)=>{calls++;assert.equal(selected,file);assert.equal(identity,value.identity);return service.remember(owner,value.filePath,identity);}});
+ assert.deepEqual(await bridge.remember(value.owner,file,playbackIdentity),{status:'remembered'});
+ assert.equal((await service.resolve(value.owner)).status,'ready');
+ const restarted=value.service();assert.equal((await restarted.resolve(value.owner)).status,'ready');
+ const changedBytes=Buffer.from(value.bytes);changedBytes[0]^=255;
+ const changed=new File([changedBytes],file.name,{type:file.type,lastModified:file.lastModified});
+ assert.deepEqual(await bridge.remember(value.owner,changed,playbackIdentity),{status:'unavailable'});assert.equal(calls,1);
+});

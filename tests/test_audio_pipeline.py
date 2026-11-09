@@ -184,16 +184,17 @@ class AlignedSpeakerTests(unittest.TestCase):
         result = label_aligned_segments([cue], turns, self.decisions, split=True)
         self.assertEqual(result[0]['text'], '不要猜测')
 
-    def test_boundary_slivers_and_zero_length_sentence_tokens_do_not_invent_voice_changes(self):
+    def test_short_lexical_reply_is_retained_and_zero_length_tokens_stay_uncertain(self):
         cue = dict(id='one', start=0, end=4, text='好我们言归正传吧', words=[
             dict(word='好', start=0, end=.3), dict(word='我们言归正传', start=.3, end=3.9),
             dict(word='吧', start=4, end=4)])
         turns = [dict(start=0, end=.3, speaker='b'), dict(start=.3, end=3.9, speaker='a'),
                  dict(start=3.9, end=5, speaker='b')]
         result = label_aligned_segments([cue], turns, self.decisions, split=True)
-        self.assertEqual(len(result), 1)
-        self.assertEqual(result[0]['speaker_id'], 'speaker-0001')
-        self.assertEqual(result[0]['text'], '好我们言归正传吧')
+        self.assertEqual(len(result), 2)
+        self.assertEqual(result[0]['speaker_id'], 'speaker-0002')
+        self.assertIsNone(result[1]['speaker_id'])
+        self.assertEqual(''.join(c['text'] for c in result), '好我们言归正传吧')
 
     def test_unresolved_word_evidence_clears_a_coarse_speaker_label_across_pauses(self):
         for overlap in (False, True):
@@ -206,7 +207,7 @@ class AlignedSpeakerTests(unittest.TestCase):
                 original = dict(id='one', start=0, end=10, text=''.join(w['word'] for w in words), words=words)
                 coarse = copy.deepcopy(original)
                 label_segments([coarse], turns, self.decisions)
-                self.assertEqual(coarse['speaker_id'], 'speaker-0001')
+                self.assertIsNone(coarse['speaker_id'])
                 for split in (False, True):
                     with self.subTest(overlap=overlap, known_word=known_word, split=split):
                         result = label_aligned_segments([copy.deepcopy(original)], turns, self.decisions, split=split)

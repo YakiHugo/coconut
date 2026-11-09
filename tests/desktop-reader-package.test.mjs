@@ -111,5 +111,8 @@ test('readability worker and shared planner retain their module boundary in pack
   await execute(process.execPath,['--input-type=module','-e',code]);
  }
  const packaging=await readFile(path.join(root,'desktop/package.mjs'),'utf8');
- for(const name of ['readability-jobs.mjs','transcript-resources.js','transcript_readability.py','audio_pipeline.py','audio_speakers.py'])assert.ok(packaging.includes("'"+name+"'"),name+' must be staged');
+ for(const name of ['readability-jobs.mjs','transcript-resources.js'])assert.ok(packaging.includes("'"+name+"'"),name+' must be staged');
+ const {TRANSCRIPTION_RESOURCES}=await import('../desktop/transcription-package.mjs');
+ for(const name of ['transcript_readability.py','audio_pipeline.py','audio_speakers.py'])assert.ok(TRANSCRIPTION_RESOURCES.includes(name),name+' must be staged');
+ assert.match(packaging,/stageTranscriptionResources\(/);
 });

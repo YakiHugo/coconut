@@ -165,8 +165,8 @@ export function createAppStore(deps: StoreDependencies) {
         setRemoteMedia(key: string, value: RemoteMedia) { remoteMedia.set(key, value); publish(); },
         getFile: (key: string) => files.get(key) || null,
         setFile(key: string, file: File) { files.set(key, file); },
-        setMedia(key: string, next: Media) { nativeLifecycle?.invalidate();const previous = media.get(key); media.set(key, next); if (previous && previous.url !== next.url)
-            releaseMedia(previous);if(!next.nativeToken)nativeLifecycle?.selected(key); publish(); },
+        setMedia(key: string, next: Media, origin?: 'saved-source') { if(origin!=='saved-source')nativeLifecycle?.invalidate();const previous = media.get(key); media.set(key, next); if (previous && previous.url !== next.url)
+            releaseMedia(previous);if(!next.nativeToken&&origin!=='saved-source')nativeLifecycle?.selected(key); publish(); },
         setActivity(owner:string,reason:string|null){if(reason)activities.set(owner,reason);else activities.delete(owner);},
         closeSnapshot(){const content=pipeline.status(),nonContentReasons=[...activities.values(),...(dirty?['有未提交的编辑草稿']:[]),...(removed?['本次移除只能在当前页面撤销，请先撤销或导出救援备份']:[])],contentFailed=content.unsaved>0&&!['saved','pending','saving'].includes(content.status),reasons=[...nonContentReasons,...(content.unsaved?['内容尚未保存']:[])];return {safe:!reasons.length,flushable:!contentFailed&&!nonContentReasons.length,reasons,nonContentReasons,contentPending:content.unsaved,contentFailed};},
         acquireBarrier:(id:string)=>pipeline.acquireBarrier?.(id)??null,barrierActive:(token:unknown)=>pipeline.barrierActive?.(token)===true,releaseBarrier:(token:unknown)=>pipeline.releaseBarrier?.(token),discardPending:(token:unknown)=>pipeline.discardPending?.(token)??Promise.resolve({ok:false}),

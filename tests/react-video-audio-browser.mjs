@@ -42,14 +42,13 @@ try{
  page.on('response',response=>{const u=new URL(response.url());if(u.origin===origin&&u.pathname.startsWith('/api/')){localResponses.push({path:u.pathname,status:response.status()});if(localResponses.length>40)localResponses.shift();}});
  const button=page.getByRole('button',{name:'下载公开媒体并新建项目（最多 200 MiB）',exact:true});
  const read=async()=>{await page.getByLabel('播客或视频链接').fill(url);await page.getByRole('button',{name:'打开链接',exact:true}).click();};
- await page.goto(origin);await read();await expect(button).toBeVisible();assert.equal(mediaCalls,0);
+ await page.goto(origin);await read();await expect(page.locator('.source-error')).toContainText('来源明确限制访问');assert.equal(mediaCalls,1);await expect(button).toHaveCount(0);
  for(const width of [1360,390]){
-  await page.setViewportSize({width,height:960});await expect(button).toBeVisible();
+  await page.setViewportSize({width,height:960});await expect(page.locator('.source-error')).toContainText('来源明确限制访问');
   assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
   const image=await page.screenshot({fullPage:true}),base64=image.toString('base64');
   for(let offset=0;offset<base64.length;offset+=8000)console.log('COCONUT_VIDEO_UI_IMAGE '+JSON.stringify({width,offset,total:base64.length,data:base64.slice(offset,offset+8000)}));
  }
- await button.click();await expect(page.locator('.source-error')).toContainText('来源明确限制访问');assert.equal(mediaCalls,1);await expect(button).toHaveCount(0);
  for(const next of ['access_restricted','network_unavailable','caption_parse_failed','language_required','metadata_incomplete']){
   status=next;await page.getByRole('button',{name:'打开链接',exact:true}).click();
   await expect(page.locator('.source-error')).toContainText(next);await expect(button).toHaveCount(0);assert.equal(mediaCalls,1);
@@ -57,15 +56,16 @@ try{
  assert.equal((await state()).sequence,0);
  status='no_matching_captions';mode='ready';
  // Late success after explicit cancellation must not create any project.
- await read();hold=new Promise(resolve=>release=resolve);await button.click();await expect.poll(()=>mediaCalls).toBe(2);
+ hold=new Promise(resolve=>release=resolve);await read();await expect.poll(()=>mediaCalls).toBe(2);
  await page.getByRole('button',{name:'取消读取',exact:true}).click();release();hold=null;await expect.poll(()=>completed).toBe(2);
  await expect(page.locator('.source-error')).toContainText('读取已取消');assert.equal((await state()).sequence,0);
  // Changing the source while the same request is pending also retires ownership.
- await read();hold=new Promise(resolve=>release=resolve);await button.click();await expect.poll(()=>mediaCalls).toBe(3);
+ hold=new Promise(resolve=>release=resolve);await read();await expect.poll(()=>mediaCalls).toBe(3);
+ await expect(page.getByLabel('播客或视频链接')).toBeEnabled();
  await page.getByLabel('播客或视频链接').fill('https://www.youtube.com/watch?v=zzzzzzzzzzz');release();hold=null;await expect.poll(()=>completed).toBe(3);await expect(button).toHaveCount(0);assert.equal((await state()).sequence,0);
  // Successful authored audio uses the actual endpoint, File fingerprint, store,
  // canonical library and browser decoder. It must not start playback or ASR.
- stage='initial-audio-save';await read();await button.click();await expect(page.getByRole('heading',{name:'先播放原文件',exact:true})).toBeVisible();
+ stage='initial-audio-save';await read();await expect(page.getByRole('heading',{name:'先播放原文件',exact:true})).toBeVisible();
  await expect(page.locator('.save-indicator')).toHaveAttribute('data-state','saved');
  await expect(page.locator('audio')).toHaveCount(1);await expect(page.getByRole('button',{name:'播放原声',exact:true})).toBeVisible();await expect.poll(()=>page.locator('audio').evaluate(player=>player.duration)).toBeGreaterThan(1.9);
  assert.equal(await page.locator('audio').evaluate(player=>player.paused),true);assert.equal(await page.evaluate(()=>window.__authoredPlays),0);
@@ -82,7 +82,7 @@ try{
  assert.match(await page.locator('audio').getAttribute('src'),/api\/v1\/source-media\/content/);
 
  // A valid protocol receipt with undecodable media must not create a project.
- await page.getByRole('button',{name:'添加内容',exact:true}).click();mode='invalid';await read();await button.click();
+ await page.getByRole('button',{name:'添加内容',exact:true}).click();mode='invalid';await read();
  await expect(page.locator('.source-error')).toContainText('无法解码');assert.equal((await fetch(origin+'/api/v1/library/catalog?protocolVersion=1').then(r=>r.json())).entries.length,1);
  // The browser can read intact duration/dimensions before discovering broken
  // sample payloads. That metadata alone must never authorize a project.
@@ -97,11 +97,11 @@ try{
   });}finally{video.removeAttribute('src');video.load();URL.revokeObjectURL(url);}
  },brokenVideo.toString('base64'));
  assert.equal(metadataOnly.width,160);assert.ok(metadataOnly.duration>1.9);
- mode='broken_samples';await read();await button.click();
+ mode='broken_samples';await read();
  await expect(page.locator('.source-error')).toContainText(/无法解码|解码超时/,{timeout:15000});
  assert.equal((await fetch(origin+'/api/v1/library/catalog?protocolVersion=1').then(r=>r.json())).entries.length,1);
  // Combined MP4 stays a video player/File, not a mislabeled audio-only file.
- stage='combined-video-save';mode='video';await read();await button.click();await expect(page.locator('video')).toBeVisible();
+ stage='combined-video-save';mode='video';await read();await expect(page.locator('video')).toBeVisible();
  await expect(page.locator('.save-indicator')).toHaveAttribute('data-state','saved');
  await expect.poll(()=>page.locator('video').evaluate(player=>player.videoWidth)).toBe(160);
  await expect.poll(()=>page.locator('video').evaluate(player=>player.duration)).toBeGreaterThan(1.9);
@@ -117,7 +117,7 @@ try{
   for(let offset=0;offset<base64.length;offset+=8000)console.log('COCONUT_VIDEO_SUCCESS_IMAGE '+JSON.stringify({width,offset,total:base64.length,data:base64.slice(offset,offset+8000)}));
  }
  assert.deepEqual(asrRequests,[]);assert.deepEqual(errors,[]);assert.deepEqual(forbidden,[]);
- console.log('PASS authored video fallback UI: absence-only action, denial/cancel/source-change create no project, successful M4A and combined MP4 decoder/File/canonical binding; invalid container and metadata-valid broken samples create no project, no automatic playback or ASR, wide/narrow layout.');
+ console.log('PASS authored video fallback UI: absence-only automatic download, denial/cancel/source-change create no project, successful M4A and combined MP4 decoder/File/canonical binding; invalid container and metadata-valid broken samples create no project, no automatic playback or ASR, wide/narrow layout.');
 }catch(error){
  const page=browser?.contexts()[0]?.pages()[0];
  const renderer=page?await page.evaluate(()=>({route:location.hash.split('/')[0],audio:document.querySelectorAll('audio').length,video:document.querySelectorAll('video').length,reader:!!document.querySelector('.reader-workspace'),discover:!!document.querySelector('#source-url'),pendingMedia:!!document.querySelector('[aria-label="原声保存待完成"]'),saveState:document.querySelector('.save-indicator')?.getAttribute('data-state'),sourceMediaAllowed:window.CoconutClientCapabilities?.allows('sourceMedia')===true})).catch(()=>({unavailable:true})):null;

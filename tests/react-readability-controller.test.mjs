@@ -31,3 +31,16 @@ test('manual source changes fence late results and failures never silently start
  const failed=await setup(t,{worker:()=>{throw Error('authored missing model');}});await failed.controller.refresh('source',{automatic:true});await wait(()=>failed.service.list('source')[0].state==='failed');await failed.controller.refresh('source',{automatic:true});assert.equal(failed.service.list('source').length,1);assert.equal(failed.controller.getSnapshot().job.state,'failed');
 });
 test.after(()=>rm(directory,{recursive:true,force:true}));
+
+test('awaiting upload resumes from same saved original after navigation without File',async()=>{
+ const doc=base(),identity='source-media-sha256:'+'a'.repeat(64),media={identity,url:'api/v1/source-media/content?key=source',kind:'audio',name:'source.mp3'};
+ const resource=require('../shared/transcript-resources.js');
+ const sourceDigest=Buffer.from(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(resource.sourceSignature(doc)))).toString('hex');
+ const job={id:randomUUID(),documentKey:'source',state:'awaiting_media',phase:'awaiting_media',sourceDigest,mediaIdentity:identity,needsMedia:true};let uploaded=false,loaded=false;
+ const controller=createReadabilityController({getDocument:()=>doc,getRevision:()=>1,getFile:()=>null,getMedia:()=>media,commit:async()=>true,uuid:randomUUID,fetchMedia:async()=>{loaded=true;return new File(['ID3 saved'],'source.mp3',{type:'audio/mpeg'});},request:async(url,init)=>{
+  if(url.endsWith('/capabilities'))return {available:true,punctuation:false,speakers:true,message:''};
+  if(url.includes('/jobs?'))return {jobs:[job]};
+  if(url.endsWith('/media')){assert.ok(init.body instanceof File);uploaded=true;return {job:{...job,state:'queued',needsMedia:false}};}throw Error(url);
+ }});
+ await controller.refresh('source');assert.equal(loaded,true);assert.equal(uploaded,true);controller.dispose();
+});

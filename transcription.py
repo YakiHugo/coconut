@@ -339,7 +339,11 @@ def main():
     args = parser.parse_args()
     request = json.loads(sys.stdin.readline())
     if args.probe:
-        emit(**probe(request['profile']))
+        if request.get('operation') == 'align_existing':
+            from existing_alignment import probe_alignment
+            emit(**probe_alignment(request['profile']))
+        else:
+            emit(**probe(request['profile']))
         return
     # Keep stdin open during work. Parent death closes it and terminates this
     # task even when Node cannot run its normal cancellation handler.
@@ -353,7 +357,11 @@ def main():
             os.kill(os.getpid(), signal.SIGTERM)
     threading.Thread(target=parent_closed, daemon=True).start()
     try:
-        run(request)
+        if request.get('operation') == 'align_existing':
+            from existing_alignment import run_alignment
+            run_alignment(request)
+        else:
+            run(request)
     finally:
         finished.set()
 
