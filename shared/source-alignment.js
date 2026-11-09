@@ -15,6 +15,6 @@ function mergeAlignmentCandidate(current,input,candidate,report){
   }
   return {...cue,words:after.words.map(word=>({...word}))};
  });
- return {...current,segments,source_alignment:{source_snapshot:input,report},provenance:{...current.provenance,alignment_required:report?.status!=='complete',source_text_quality:'unverified'}};
+ return {...current,segments,source_alignment:{source_snapshot:input,report},provenance:{...current.provenance,alignment_required:report?.status!=='candidate',source_text_quality:'unverified'}};
 }
 module.exports={mergeAlignmentCandidate};

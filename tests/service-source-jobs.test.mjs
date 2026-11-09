@@ -173,3 +173,13 @@ test('metadata precedes ASR and identity follows acoustic grouping; metadata fai
   const original=JSON.parse(await readFile(path.join(f.directory,'jobs',job.id,'original-asr.json'),'utf8'));assert.equal(original.segments[0].speaker,undefined);
  }
 });
+
+test('existing text alignment is durable, isolated from paid review, and fenced by original text',async t=>{
+ let runs=0;const f=await fixture(t,{reviewProvider:'codex',reviewer:{review(){assert.fail('alignment must not review text');}},transcriber:{profile:{backend:'qwen-mlx'},alignmentStatus:async()=>({available:true}),align:async({document,workDirectory})=>{runs++;const result=structuredClone(document);result.segments[0].words=[{word:'Hello',start:0,end:1}];await writeFile(path.join(workDirectory,'result.json'),JSON.stringify({document:result,alignment_report:{status:'candidate',source_text_quality:'unverified'},source_snapshot:document}));}}});
+ const text={...doc,project_kind:'transcript',segments:[{id:'a',start:0,end:1,text:'Hello'}],provenance:{alignment_required:true}};commit(f.library,text);
+ await f.media.save(doc.key,f.media.owner(doc.key).source,Readable.from(['original audio']),{type:'audio/mpeg',name:'source.mp3'});
+ const job=await f.create('align');await until(()=>f.jobs.get(job.id),j=>j.state==='ready');assert.equal((await f.create('align')).id,job.id);assert.equal(runs,1);
+ await f.restart();const result=await f.jobs.result(job.id);assert.equal(result.alignment.document.segments[0].text,'Hello');assert.equal(result.alignment.input.segments[0].text,'Hello');assert.equal(f.library.get(doc.key).document.segments[0].words,undefined);
+ commit(f.library,{...text,segments:[{id:'a',start:0,end:1,text:'Changed'}]});await assert.rejects(f.jobs.result(job.id),/原稿已变化/);
+ const newJob=await f.create('align');assert.notEqual(newJob.id,job.id);
+});
