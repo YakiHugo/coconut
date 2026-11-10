@@ -6,6 +6,11 @@ import { lookup as dnsLookup } from 'node:dns/promises';
 import { isIP, BlockList } from 'node:net';
 import {validateSourceNetwork} from './source-network.mjs';
 
+/** Safe, internally generated diagnostics; never include upstream bodies, URLs or paths. */
+export class PublicSourceError extends Error {
+  constructor(code,message) {super(message);this.name='PublicSourceError';this.code=code;}
+}
+
 const blocked = new BlockList();
 for (const [network, prefix] of [['0.0.0.0',8],['10.0.0.0',8],['100.64.0.0',10],['127.0.0.0',8],['169.254.0.0',16],['172.16.0.0',12],['192.0.0.0',24],['192.0.2.0',24],['192.88.99.0',24],['192.168.0.0',16],['198.18.0.0',15],['198.51.100.0',24],['203.0.113.0',24],['224.0.0.0',4],['240.0.0.0',4]]) blocked.addSubnet(network,prefix,'ipv4');
 // IPv6 is limited to global unicast, excluding transition/special-purpose/documentation ranges.
@@ -90,8 +95,9 @@ function proxyRequest(proxy, url, options, callback) {
   req.once('close',()=>agent.destroy());
   return req;
 }
-export function createPublicFetcher({lookup = dnsLookup, request = (url,options,callback)=>(url.protocol === 'https:' ? https : http).request(url,options,callback), xiaoyuzhouProxy = null, ownerSources = false, ownerNetwork = null} = {}) {
+export function createPublicFetcher({lookup = dnsLookup, request = (url,options,callback)=>(url.protocol === 'https:' ? https : http).request(url,options,callback), xiaoyuzhouProxy = null, ownerSources = false, ownerShortLinks = false, ownerNetwork = null} = {}) {
   const proxy = validatePodcastProxy(xiaoyuzhouProxy);
+  const ownerOriginAllowed=url=>proxyOriginAllowed(url)||(ownerShortLinks===true&&url.protocol==='https:'&&url.hostname==='b23.tv');
   // A process-owner policy for identified HTTPS providers. It trusts the owner's
   // network (including TUN/Fake-IP); it is not an arbitrary-URL SSRF boundary.
   // Every redirect remains in the identified provider set. Other URLs keep the
@@ -106,7 +112,7 @@ export function createPublicFetcher({lookup = dnsLookup, request = (url,options,
     const all=selected('all_proxy')||'',effective={no_proxy:selected('no_proxy')||''};
     for(const name of ['http_proxy','https_proxy']){
       effective[name]=selected(name)||all;
-      if(effective[name]&&new URL(effective[name]).protocol!=='http:')throw Error('Standalone source networking requires HTTP proxy URLs; SOCKS proxies are not supported.');
+      if(effective[name]&&new URL(effective[name]).protocol!=='http:')throw new PublicSourceError('SOURCE_PROXY_CONFIGURATION','Standalone source networking requires HTTP proxy URLs; SOCKS proxies are not supported.');
     }
     // Python/yt-dlp gives present lowercase values precedence, including empty
     // values that clear uppercase settings. Node otherwise uses truthy fallback.
@@ -114,20 +120,30 @@ export function createPublicFetcher({lookup = dnsLookup, request = (url,options,
     Object.assign(proxyEnv,effective);
   }
   let ownerAgent;
-  return async function fetchPublic(value,{maxBytes=8*1024*1024,timeoutMs=20000,signal,types,inspectMedia=false,maxMediaBytes=200*1024*1024,redirectOnly=false}={}) {
-    const deadline = AbortSignal.timeout(timeoutMs);
-    const combined = signal ? AbortSignal.any([signal,deadline]) : deadline;
+  return async function fetchPublic(value,{maxBytes=8*1024*1024,timeoutMs=20000,idleTimeoutMs,signal,types,inspectMedia=false,maxMediaBytes=200*1024*1024,redirectOnly=false}={}) {
     let url = publicUrl(value);
+    if(idleTimeoutMs!==undefined&&(!Number.isSafeInteger(idleTimeoutMs)||idleTimeoutMs<1||idleTimeoutMs>2147483647))throw new Error('来源空闲超时设置无效');
+    const deadline = AbortSignal.timeout(timeoutMs);
+    const idle=idleTimeoutMs===undefined?null:new AbortController();
+    const combined = signal||idle ? AbortSignal.any([deadline,...(signal?[signal]:[]),...(idle?[idle.signal]:[])]) : deadline;
+    let idleTimer;
+    const progress=()=>{
+      if(!idle||combined.aborted)return;
+      clearTimeout(idleTimer);
+      idleTimer=setTimeout(()=>idle.abort(),idleTimeoutMs);
+      idleTimer.unref();
+    };
     const viaProxy = !!proxy && proxyOriginAllowed(url);
-    const viaOwner=ownerSources===true&&proxyOriginAllowed(url);
+    const viaOwner=ownerSources===true&&ownerOriginAllowed(url);
     try {
+      progress();
       for (let redirects=0;redirects<=4;redirects++) {
         aborted(combined);
         const hostname = url.hostname.replace(/^\[|\]$/g,'');
-        if (viaProxy && !proxyOriginAllowed(url)) throw new Error('小宇宙代理重定向超出允许的来源范围');
-        if (viaOwner && !proxyOriginAllowed(url)) throw new Error('来源重定向超出允许的平台范围');
+        if (viaProxy && !proxyOriginAllowed(url)) throw new PublicSourceError('SOURCE_REDIRECT','小宇宙代理重定向超出允许的来源范围');
+        if (viaOwner && !ownerOriginAllowed(url)) throw new PublicSourceError('SOURCE_REDIRECT','来源重定向超出允许的平台范围');
         const records = viaProxy || viaOwner ? null : isIP(hostname) ? [{address:hostname,family:isIP(hostname)}] : await withAbort(lookup(hostname,{all:true,verbatim:true}),combined);
-        if (records && (!records.length || records.some(record=>!isPublicAddress(record.address)))) throw new Error('来源域名解析到非公开地址，已停止请求');
+        if (records && (!records.length || records.some(record=>!isPublicAddress(record.address)))) throw new PublicSourceError('SOURCE_ACCESS','来源域名解析到非公开地址，已停止请求');
         const pinned = records?.[0];
         const response = await new Promise((resolve,reject)=>{
           let settled = false;
@@ -138,46 +154,52 @@ export function createPublicFetcher({lookup = dnsLookup, request = (url,options,
             // Direct sockets use the checked IP; tunneled sockets must never
             // perform local origin DNS or fall back outside the proxy.
             ...(!viaOwner?{lookup:(_host,options,callback)=>pinned ? options.all ? callback(null,[pinned]) : callback(null,pinned.address,pinned.family) : callback(new Error('代理模式不能回退到来源 DNS'))}: {})},res=>{
-            const fail = message=>{done(new Error(message));res.destroy();};
+            progress();
+            const fail = (code,message)=>{done(new PublicSourceError(code,message));res.destroy();};
             if ([301,302,303,307,308].includes(res.statusCode)) {
               const location = res.headers.location; done(null,{redirect:location}); res.destroy(); return;
             }
-            if (redirectOnly) return fail('短链接未返回可用重定向');
-            if (res.statusCode !== 200) return fail(`公开来源返回 HTTP ${res.statusCode}；未使用登录、Cookie 或识别回退`);
-            if (res.headers['content-encoding'] && res.headers['content-encoding'].toLowerCase() !== 'identity') return fail('来源忽略未压缩请求；已停止以避免解压资源失控');
+            if (redirectOnly) return fail('SOURCE_REDIRECT','短链接未返回可用重定向');
+            if (res.statusCode !== 200) return fail('SOURCE_HTTP',`公开来源返回 HTTP ${res.statusCode}；未使用登录、Cookie 或识别回退`);
+            if (res.headers['content-encoding'] && res.headers['content-encoding'].toLowerCase() !== 'identity') return fail('SOURCE_TYPE','来源忽略未压缩请求；已停止以避免解压资源失控');
             const type = mime(res.headers['content-type']);
             const mediaOnly = inspectMedia && isMediaType(type);
-            if (!mediaOnly && types && !types.has(type)) return fail('来源返回了不支持的内容类型');
+            if (!mediaOnly && types && !types.has(type)) return fail('SOURCE_TYPE','来源返回了不支持的内容类型');
             const limit = mediaOnly ? maxMediaBytes : maxBytes;
             const length = res.headers['content-length'];
-            if (length !== undefined && (!/^\d+$/.test(length) || !Number.isSafeInteger(Number(length)) || Number(length)>limit)) return fail('来源文件超过允许大小或长度无效');
+            if (length !== undefined && (!/^\d+$/.test(length) || !Number.isSafeInteger(Number(length)) || Number(length)>limit)) return fail('SOURCE_LIMIT','来源文件超过允许大小或长度无效');
             const metadata = {url:url.href,type,length:length===undefined ? null : Number(length)};
             if (mediaOnly) {done(null,{...metadata,body:Buffer.alloc(0)});res.destroy();return;}
             const chunks=[];let bytes=0;
-            res.on('data',chunk=>{bytes+=chunk.length;if(bytes>limit)return fail('来源文件超过允许大小');chunks.push(chunk);});
+            res.on('data',chunk=>{if(chunk.length)progress();bytes+=chunk.length;if(bytes>limit)return fail('SOURCE_LIMIT','来源文件超过允许大小');chunks.push(chunk);});
             res.on('end',()=>{
-              if (length!==undefined && bytes!==Number(length)) return fail('来源文件传输不完整');
+              if (length!==undefined && bytes!==Number(length)) return fail('SOURCE_TRANSFER','来源文件传输不完整');
               done(null,{...metadata,body:Buffer.concat(chunks,bytes)});
             });
-            res.on('error',()=>done(new Error('公开来源传输中断')));
-            res.on('aborted',()=>done(new Error('公开来源传输中断')));
+            res.on('error',()=>done(new PublicSourceError('SOURCE_TRANSFER','公开来源传输中断')));
+            res.on('aborted',()=>done(new PublicSourceError('SOURCE_TRANSFER','公开来源传输中断')));
           });
-          req.on('error',()=>done(new Error(combined.aborted ? '来源请求已取消或超时' : '无法连接公开来源')));
+          req.on('error',()=>done(new PublicSourceError('SOURCE_NETWORK','无法连接公开来源')));
           req.end();
         });
         if (!Object.hasOwn(response,'redirect')) return response;
-        if (!response.redirect || redirects===4) throw new Error('来源重定向过多或缺少目标');
+        if (!response.redirect || redirects===4) throw new PublicSourceError('SOURCE_REDIRECT','来源重定向过多或缺少目标');
         const next = publicUrl(response.redirect,url);
-        if (url.protocol==='https:' && next.protocol!=='https:') throw new Error('不允许 HTTPS 降级重定向');
+        if (url.protocol==='https:' && next.protocol!=='https:') throw new PublicSourceError('SOURCE_REDIRECT','不允许 HTTPS 降级重定向');
         // A caller that validates a short-link destination owns any subsequent fetch.
         if (redirectOnly) return {url:url.href,redirect:next.href};
         url=next;
       }
     } catch(error) {
-      if (combined.aborted) throw new Error('来源请求已取消或超时');
+      if(signal?.aborted)throw new PublicSourceError('SOURCE_CANCELLED','来源请求已取消或超时');
+      if(idle?.signal.aborted)throw new PublicSourceError('SOURCE_IDLE_TIMEOUT','来源传输长时间没有收到数据，已停止请求。请检查网络后重试。');
+      if (combined.aborted) throw new PublicSourceError('SOURCE_TIMEOUT','来源请求已取消或超时');
+      if(error instanceof PublicSourceError)throw error;
       // Do not expose DNS/transport diagnostics that may contain private paths or URLs.
-      if (error.code) throw new Error('无法解析或连接公开来源');
+      if (error.code) throw new PublicSourceError('SOURCE_NETWORK','无法解析或连接公开来源');
       throw error;
+    } finally {
+      clearTimeout(idleTimer);
     }
   };
 }

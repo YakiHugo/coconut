@@ -51,6 +51,14 @@ test('real resource deadlines and caller cancellation remain distinct for DNS, h
   }
  }finally{clearTimeout(hold);}
 });
+test('stalled media is reported as idle timeout rather than an unknown failure',async()=>{
+ const hold=setTimeout(()=>{},1000);
+ try{
+  const {diagnostics,calls}=setup([{stall:'body'}]);
+  const result=await failure(diagnostics,{timeoutMs:500,idleTimeoutMs:20});
+  assert.equal(result.reason,'resource_idle_timeout');assert.equal(result.last_request.timeout,'resource_idle');assert.equal(result.last_request.http_status,200);assert.equal(calls.length,1);clean(result);
+ }finally{clearTimeout(hold);}
+});
 test('redirect observation preserves bounded transport and does not leak targets',async()=>{
  const {diagnostics,calls}=setup([{status:302,headers:{location:'https://cdn.example.org/secret?unrelated=secret'}},{status:503,body:'source-body'}]);const result=await failure(diagnostics);
  assert.equal(result.last_request.requests_attempted,2);assert.equal(result.last_request.responses_received,2);assert.equal(result.last_request.http_status,503);assert.equal(result.reason,'http_status_rejected');assert.equal(calls.length,2);clean(result);

@@ -9,6 +9,7 @@ import {Readable} from 'node:stream';
 import {createLibraryStore} from '../desktop/library-store.mjs';
 import {createSourceMediaStore} from '../desktop/source-media.mjs';
 import {createSourceJobs} from '../desktop/source-jobs.mjs';
+import {PublicSourceError} from '../desktop/public-http.mjs';
 import {startService} from '../server/main.mjs';
 import {createTranscriptReviewer} from '../desktop/transcript-review.mjs';
 const doc={key:'server-podcast',title:'Authored episode',source_url:'https://example.test/episode',project_kind:'audio_only',podcast_source:{kind:'direct_media',media_url:'https://example.test/audio.mp3',media_kind:'audio'},segments:[]};
@@ -31,15 +32,82 @@ test('download persists directly on the server, deduplicates concurrent browsers
  await until(()=>f.jobs.get(a.id),j=>j.state==='ready');const receipt=await f.media.read(doc.key);assert.equal(receipt.type,'audio/mpeg');assert.equal(f.calls,1);
  await f.restart();assert.equal((await f.jobs.list(doc.key))[0].id,a.id);assert.equal((await f.create('download')).id,a.id);assert.equal(f.calls,1);assert.deepEqual(await f.media.read(doc.key),receipt);
 });
+test('download retains safe typed source failures, including total timeout and HTTP status',async t=>{
+ const cases=[
+  ['SOURCE_TIMEOUT','来源请求已取消或超时','原声下载超过总时限，请检查网络后重试。'],
+  ['SOURCE_IDLE_TIMEOUT','来源传输长时间没有收到数据，请检查网络后重试。'],
+  ['SOURCE_CANCELLED','来源请求已取消或超时'],
+  ['SOURCE_NETWORK','无法解析或连接公开来源'],
+  ['SOURCE_HTTP','公开来源返回 HTTP 503；未使用登录、Cookie 或识别回退'],
+  ['SOURCE_TYPE','来源返回了不支持的内容类型'],
+  ['SOURCE_LIMIT','来源文件超过允许大小'],
+  ['SOURCE_TRANSFER','来源文件传输不完整'],
+  ['SOURCE_REDIRECT','来源重定向过多或缺少目标'],
+ ];
+ for(const [code,message,expected=message] of cases)await t.test(code,async t=>{
+  const f=await fixture(t,{download:async()=>{throw new PublicSourceError(code,message);}});
+  const job=await f.create('download'),failed=await until(()=>f.jobs.get(job.id),j=>j.state==='failed');
+  assert.equal(failed.error,expected);assert.equal(await f.media.read(doc.key),null);assert.equal(f.calls,1);
+  await f.restart();assert.equal((await f.jobs.get(job.id)).error,expected);assert.equal(f.calls,1);
+ });
+});
+test('download hides unknown diagnostics even when an Error spoofs a safe source code and name',async t=>{
+ const secret='https://secret.example/audio?token=top-secret /private/owner/audio.mp3';
+ const error=Object.assign(Error(secret),{name:'PublicSourceError',code:'SOURCE_TIMEOUT'});
+ const f=await fixture(t,{download:async()=>{throw error;}});
+ const job=await f.create('download'),failed=await until(()=>f.jobs.get(job.id),j=>j.state==='failed');
+ assert.equal(failed.error,'原声下载未完成，请检查网络或来源后明确重试。');
+ assert.doesNotMatch(failed.error,/secret|private|token|保留.*进度/);assert.equal(await f.media.read(doc.key),null);
+ await f.restart();assert.equal((await f.jobs.get(job.id)).error,failed.error);assert.equal(f.calls,1);
+});
+test('download only forwards saved episode URLs for exact Xiaoyuzhou feed hosts',async t=>{
+ const episodeUrl='https://www.xiaoyuzhoufm.com/episode/0123456789abcdef01234567';
+ for(const [feedUrl,withEpisode] of [
+  ['https://www.xiaoyuzhoufm.com/podcast/0123456789abcdef01234567',true],
+  ['https://xiaoyuzhoufm.com/podcast/0123456789abcdef01234567',true],
+  [episodeUrl,true],
+  ['https://publisher.example/feed.xml',false],
+  ['https://www.xiaoyuzhoufm.com.publisher.example/feed.xml',false],
+ ])await t.test(feedUrl,async t=>{
+  let captured;
+  const f=await fixture(t,{download:async request=>{captured=request;return {body:Buffer.from('ID3 authored media'),type:'audio/mpeg'};}});
+  commit(f.library,{...doc,source_url:episodeUrl,podcast_source:{feed_url:feedUrl,episode_id:'a'.repeat(64),media_url:doc.podcast_source.media_url,media_kind:'audio'}});
+  const job=await f.create('download');await until(()=>f.jobs.get(job.id),j=>j.state==='ready');
+  assert.deepEqual(captured,{feedUrl,episodeId:'a'.repeat(64),mediaUrl:doc.podcast_source.media_url,...(withEpisode?{episodeUrl}:{})});
+ });
+});
+test('download without a saved episode URL leaves permanent Xiaoyuzhou feed validation available',async t=>{
+ for(const sourceUrl of [undefined,''])await t.test(sourceUrl===undefined?'missing source_url':'empty source_url',async t=>{
+  const feedUrl='https://www.xiaoyuzhoufm.com/episode/0123456789abcdef01234567';
+  let captured;
+  const f=await fixture(t,{download:async request=>{
+   captured=request;assert.equal(Object.hasOwn(request,'episodeUrl'),false);
+   return {body:Buffer.from('ID3 authored media'),type:'audio/mpeg'};
+  }});
+  const document={...doc,podcast_source:{feed_url:feedUrl,episode_id:'a'.repeat(64),media_url:doc.podcast_source.media_url,media_kind:'audio'}};
+  if(sourceUrl===undefined)delete document.source_url;else document.source_url=sourceUrl;
+  commit(f.library,document);
+  const job=await f.create('download');await until(()=>f.jobs.get(job.id),j=>j.state==='ready');
+  assert.deepEqual(captured,{feedUrl,episodeId:'a'.repeat(64),mediaUrl:doc.podcast_source.media_url});assert.equal(f.calls,1);
+ });
+});
 test('source replacement during acquisition never gives the new project old bytes',async t=>{
  let release;const gate=new Promise(resolve=>release=resolve),f=await fixture(t,{download:async()=>{await gate;return {body:Buffer.from('ID3 old'),type:'audio/mpeg'};}});
  const job=await f.create('download');await until(async()=>f.calls,n=>n===1);commit(f.library,{...doc,source_url:'https://example.test/new'});release();
- await until(()=>f.jobs.get(job.id),j=>j.state==='interrupted');assert.equal(await f.media.read(doc.key),null);assert.deepEqual(await f.jobs.list(doc.key),[]);await assert.rejects(f.jobs.action(job.id,'retry'),/来源已变化/);
+ const interrupted=await until(()=>f.jobs.get(job.id),j=>j.state==='interrupted');assert.equal(interrupted.error,'原项目来源已变化，旧任务不能接入此项目');assert.equal(await f.media.read(doc.key),null);assert.deepEqual(await f.jobs.list(doc.key),[]);await assert.rejects(f.jobs.action(job.id,'retry'),/来源已变化/);
 });
 test('download cancellation is explicit and shutdown never automatically retries interrupted acquisition',async t=>{
  const f=await fixture(t,{download:async(_,{signal})=>{await delay(10000,null,{signal});return {body:Buffer.from('late'),type:'audio/mpeg'};}});
  const first=await f.create('download');await until(async()=>f.calls,n=>n===1);assert.equal((await f.jobs.action(first.id,'cancel')).state,'cancelled');await f.restart();assert.equal(f.calls,1);assert.equal(await f.media.read(doc.key),null);
  await f.jobs.action(first.id,'retry');await until(async()=>f.calls,n=>n===2);await f.restart();assert.equal((await f.jobs.get(first.id)).state,'interrupted');await delay(30);assert.equal(f.calls,2);
+});
+test('typed cancellation cannot turn an explicitly cancelled download into failure',async t=>{
+ const f=await fixture(t,{download:async(_,{signal})=>new Promise((_,reject)=>{
+  signal.addEventListener('abort',()=>reject(new PublicSourceError('SOURCE_CANCELLED','来源请求已取消或超时')),{once:true});
+ })});
+ const job=await f.create('download');await until(async()=>f.calls,n=>n===1);await f.jobs.action(job.id,'cancel');
+ await f.restart();const cancelled=await f.jobs.get(job.id);
+ assert.equal(cancelled.state,'cancelled');assert.equal(cancelled.error,null);assert.equal(f.calls,1);assert.equal(await f.media.read(doc.key),null);
 });
 test('transcription reads the owned file directly, persists progress and attaches after restart',async t=>{
  let runs=0,release;const gate=new Promise(resolve=>release=resolve);
@@ -100,8 +168,18 @@ test('failed stages retry the same work directory; cancellation and restart neve
  let runs=0,work,waiting=false;
  const f=await fixture(t,{transcriber:{profile:{backend:'authored'},status:async()=>({available:true}),run:async({workDirectory,signal})=>{runs++;if(work)assert.equal(workDirectory,work);work=workDirectory;if(runs===1)throw Error('authored alignment failure');waiting=true;await delay(10000,null,{signal});}}});
  await f.media.save(doc.key,f.media.owner(doc.key).source,Readable.from(['original']),{type:'audio/mpeg',name:'source.mp3'});
- const job=await f.create('transcribe');await until(()=>f.jobs.get(job.id),j=>j.state==='failed');await f.restart();assert.equal(runs,1);
+ const job=await f.create('transcribe');const failed=await until(()=>f.jobs.get(job.id),j=>j.state==='failed');assert.equal(failed.error,'任务未完成，已保留处理进度。请检查本地环境后明确重试。');await f.restart();assert.equal(runs,1);
  await f.jobs.action(job.id,'retry');await until(async()=>waiting,Boolean);await f.jobs.action(job.id,'cancel');await f.restart();assert.equal((await f.jobs.get(job.id)).state,'cancelled');assert.equal(runs,2);
+});
+test('typed source errors during transcription retain its generic checkpoint message',async t=>{
+ const f=await fixture(t,{transcriber:{profile:{backend:'authored'},status:async()=>({available:true}),run:async({workDirectory,onProgress})=>{
+  onProgress({phase:'align'});await writeFile(path.join(workDirectory,'checkpoint.json'),'authored checkpoint');
+  throw new PublicSourceError('SOURCE_TIMEOUT','来源请求已取消或超时');
+ }}});
+ await f.media.save(doc.key,f.media.owner(doc.key).source,Readable.from(['original']),{type:'audio/mpeg',name:'source.mp3'});
+ const job=await f.create('transcribe'),failed=await until(()=>f.jobs.get(job.id),j=>j.state==='failed');
+ assert.equal(failed.error,'任务未完成，已保留处理进度。请检查本地环境后明确重试。');assert.equal(JSON.parse(failed.phase).phase,'align');
+ await f.restart();assert.equal((await f.jobs.get(job.id)).error,failed.error);assert.equal(await readFile(path.join(f.directory,'jobs',job.id,'checkpoint.json'),'utf8'),'authored checkpoint');
 });
 test('explicit retry repairs a completed download while ordinary status reads never reacquire bytes',async t=>{
  const f=await fixture(t),job=await f.create('download');await until(()=>f.jobs.get(job.id),j=>j.state==='ready');const receipt=await f.media.read(doc.key);

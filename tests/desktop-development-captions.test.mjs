@@ -229,7 +229,8 @@ test('verified proxy media protocol offers audio after no captions and keeps own
 
 test('media process has its own bounded timeout and cleans partial work',async t=>{
  const f=await fixture(t,{probe:{...version,developmentAudioProtocol:1},result:{status:'no_matching_captions'},delay:5000});
- const helper=createDevelopmentCaptionHelper({python:f.executable,tempRoot:f.directory,timeoutMs:1000,mediaTimeoutMs:80});
+ // Preflight startup is not under test; only media gets the short timeout.
+ const helper=createDevelopmentCaptionHelper({python:f.executable,tempRoot:f.directory,timeoutMs:10000,mediaTimeoutMs:80});
  try{
   assert.equal((await helper.status()).audioFallback,true);
   await assert.rejects(helper.extractAudio({url:'https://www.bilibili.com/video/BV1xx411c7mD'}),error=>error.code==='CAPTION_TIMEOUT');

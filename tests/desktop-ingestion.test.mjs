@@ -5,6 +5,7 @@ import {createIngestionExecutor,normalizeImportJob} from '../desktop/ingestion-e
 import {startBridge} from '../desktop/server.mjs';
 import {createCaptionShortLinkResolver} from '../desktop/caption-short-link.mjs';
 import {Readable} from 'node:stream';
+import {PublicSourceError} from '../desktop/public-http.mjs';
 const url='https://publisher.example/feed',id='a'.repeat(64),jobId='b'.repeat(32);
 const document={schema_version:1,title:'Original',source_media:{job_id:jobId,kind:'audio'},segments:[{id:'original-id',start:0,end:1,text:'Unchanged source'}]};
 const source={kind:'url',url};
@@ -31,6 +32,20 @@ test('short-link resolution waits for caption readiness and failures never fall 
  const result=await failed.ingest(request);assert.equal(result.ingestion.state,'blocked');assert.equal(result.ingestion.error.code,'short_link_unresolved');assert.equal(result.ingestion.source.url,request.source.url);assert.doesNotMatch(JSON.stringify(result),/PRIVATE|token/);
  const controller=new AbortController();const cancelled=createIngestionService({captionService:{available:true,importCaption:forbidden},captionShortLinkResolver:async()=>{controller.abort();throw Error('aborted');}});
  await assert.rejects(cancelled.ingest(request,{signal:controller.signal}),{name:'AbortError'});
+});
+test('short-link failures retain trusted network guidance without exposing arbitrary diagnostics',async()=>{
+ const forbidden=async()=>assert.fail('Short-link failure must not reach captions or podcast discovery');
+ for(const error of [
+  new PublicSourceError('SOURCE_HTTP','公开来源返回 HTTP 403；未使用登录、Cookie 或识别回退'),
+  new PublicSourceError('SOURCE_PROXY_CONFIGURATION','Standalone source networking requires HTTP proxy URLs; SOCKS proxies are not supported.'),
+  Object.assign(Error('PRIVATE URL/token/path'),{name:'PublicSourceError',code:'SOURCE_HTTP'}),
+ ]){
+  const service=createIngestionService({captionService:{available:true,importCaption:forbidden},captionShortLinkResolver:async()=>{throw error;},podcastSources:{discover:forbidden}});
+  const {ingestion}=await service.ingest({protocolVersion:1,source:{kind:'url',url:'https://b23.tv/Ab12'}});
+  assert.equal(ingestion.error.code,'short_link_unresolved');
+  assert.doesNotMatch(ingestion.error.message,/PRIVATE|URL\/token\/path/);
+  if(error instanceof PublicSourceError)assert.match(ingestion.error.message,error.code==='SOURCE_HTTP'?/HTTP 403/:/仅支持 HTTP 代理/);
+ }
 });
 test('link discovery keeps explicit episode selection and original share source',async()=>{
  const discovery={kind:'feed',feed_url:url,episodes:[episode]};

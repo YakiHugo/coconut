@@ -59,8 +59,8 @@ provider on startup.
 
 ## Source networking and trust
 
-The service uses one source-network configuration for identified Xiaoyuzhou and
-video adapters. With no explicit setting it reads validated standard proxy
+The service uses one source-network configuration for identified Xiaoyuzhou,
+official Bilibili sharing redirects and video adapters. With no explicit setting it reads validated standard proxy
 environment variables when present; otherwise it uses ordinary networking,
 including transparent TUN. `COCONUT_SOURCE_NETWORK=direct` ignores environment
 proxies. `environment` snapshots supported proxy/NO_PROXY variables; `custom`
@@ -80,6 +80,9 @@ RSS/arbitrary URLs retain the existing DNS-validated pinned-socket policy;
 non-public results remain rejected. It is not safe to globally allow reserved
 addresses or silently downgrade after a denied request. An untrusted multi-user
 URL-fetching service needs a separately controlled/isolated egress boundary.
+The exact HTTPS `b23.tv` host uses the same selected network for a single sharing
+redirect only. Its destination must be a validated official BV video URL and is
+never fetched by the short-link resolver.
 
 ## Direct local transcription
 

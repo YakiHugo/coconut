@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {Window} from 'happy-dom';
-import {webcrypto} from 'node:crypto';
+import {webcrypto,createHash} from 'node:crypto';
 import {readFile} from 'node:fs/promises';
 import {build} from 'esbuild';
 import {sourceDiscoveryFixture,sourceFeed,frenchTrack,unlabelledTrack,upgradeTrack,audioFirstFixture,audioFirstTrack} from './fixtures/source-discovery.mjs';
@@ -75,6 +75,26 @@ test('source identity uses exact provider/feed/episode or direct URL, never titl
  assert.equal(exactSourceIdentity({title:'Same title',source_url:'https://publisher.example.org/one'}),null);
  assert.equal(exactSourceIdentity({podcast_source:{kind:'direct_media',media_url:'https://publisher.example.org/a.mp3#x'}}),exactSourceIdentity({podcast_source:{kind:'direct_media',media_url:'https://publisher.example.org/a.mp3'}}));
  assert.notEqual(exactSourceIdentity({provenance:{kind:'platform_subtitles',source_platform:'youtube',media_id:'same'}}),exactSourceIdentity({provenance:{kind:'platform_subtitles',source_platform:'bilibili',media_id:'same'}}));
+});
+test('Xiaoyuzhou discovery recognizes old show projects without rewriting saved media identity',async()=>{
+ const eid='1234567890abcdef12345678',pid='abcdef1234567890abcdef12';
+ const source_url='https://www.xiaoyuzhoufm.com/episode/'+eid,feed='https://www.xiaoyuzhoufm.com/podcast/'+pid,media='https://media.xyzcdn.net/authored-original.m4a';
+ const old={key:'saved-xiaoyuzhou',project_kind:'audio_only',transcript_status:'not_imported',title:'原创测试单集',source_url,segments:[],project_note:'保留旧项目笔记',podcast_source:{feed_url:feed,episode_id:createHash('sha256').update(eid).digest('hex'),media_url:media,media_kind:'audio'}};
+ const current={...old,podcast_source:{...old.podcast_source,feed_url:source_url}};
+ assert.equal(matchingSourceDocuments([old],current).length,1);
+ assert.equal(matchingSourceDocuments([old],{...current,source_url:source_url.replace(eid,'f'.repeat(24))}).length,0);
+ assert.equal(matchingSourceDocuments([old],{...current,podcast_source:{...current.podcast_source,episode_id:'f'.repeat(64)}}).length,0);
+ assert.equal(matchingSourceDocuments([old],{...current,podcast_source:{...current.podcast_source,feed_url:'https://www.xiaoyuzhoufm.com.evil.example/podcast/'+pid}}).length,0);
+ const {createPodcastSources}=await import('../desktop/podcast-sources.mjs'),{createIngestionService}=await import('../desktop/ingestion-service.mjs');
+ const body=Buffer.from('<script id="__NEXT_DATA__" type="application/json">'+JSON.stringify({props:{pageProps:{episode:{eid,pid,title:old.title,duration:12,status:'NORMAL',payType:'FREE',isPrivateMedia:false,media:{mimeType:'audio/mp4',size:6,source:{mode:'PUBLIC',url:media}},enclosure:{url:media}}}}})+'</script>');
+ const sources=createPodcastSources({fetchResource:async url=>{assert.equal(url,source_url,'reopening must not request original media');return {url,type:'text/html',body};}});
+ const x=await setup({service:createIngestionService({podcastSources:sources})},[old]);
+ try{
+  await x.load(source_url);await x.open(old.title);await wait(()=>x.w.document.querySelector('.source-project-choice'));
+  assert.equal(x.docs().length,1);assert.equal(x.docs()[0].podcast_source.feed_url,feed);
+  x.button('继续已有项目 · '+old.key.slice(-8)).click();await wait(()=>x.w.document.querySelector('.reader-workspace'));
+  assert.equal(x.docs()[0].key,old.key);assert.equal(x.docs()[0].project_note,old.project_note);assert.equal(x.docs()[0].podcast_source.feed_url,feed);
+ }finally{await x.w.happyDOM.close();}
 });
 test('actual backend rejects trackless language mismatch; React explicit track resolves it without backend changes',async()=>{
  const fixture=sourceDiscoveryFixture();fixture.state.onlyFrench=true;const source={protocolVersion:1,source:{kind:'url',url:sourceFeed}},episode=(await fixture.service.ingest(source)).ingestion.selection.episodes[0];

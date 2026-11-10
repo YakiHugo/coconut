@@ -27,6 +27,15 @@ export function exactSourceIdentity(value:unknown):string|null {
     if(source){
         if(source.kind==='direct_media'){const url=publicURL(source.media_url);return url?JSON.stringify(['direct_media',url]):null;}
         const feed=publicURL(source.feed_url),id=source.episode_id;
+        const episode=publicURL(doc.source_url);
+        if(feed&&episode&&typeof id==='string'&&/^[a-f0-9]{64}$/.test(id)){
+            const feedURL=new URL(feed),episodeURL=new URL(episode),official=(url:URL)=>url.protocol==='https:'&&!url.port&&['xiaoyuzhoufm.com','www.xiaoyuzhoufm.com'].includes(url.hostname);
+            if(official(feedURL)&&official(episodeURL)&&/^\/(?:podcast|episode)\/[a-f0-9]{24}\/?$/.test(feedURL.pathname)&&/^\/episode\/[a-f0-9]{24}\/?$/.test(episodeURL.pathname)&&!episodeURL.search){
+                // Compare the declared episode across old show feeds and new permanent
+                // feeds. Saved documents and their media/task ownership stay untouched.
+                return JSON.stringify(['xiaoyuzhou',episodeURL.pathname.replace(/\/$/,''),id]);
+            }
+        }
         return feed&&typeof id==='string'&&/^[a-f0-9]{64}$/.test(id)?JSON.stringify(['podcast',feed,id]):null;
     }
     const provenance=doc.provenance as Record<string,unknown>|undefined;
