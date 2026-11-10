@@ -6,6 +6,7 @@ const {processingSnapshot,sourceSignature}=createRequire(import.meta.url)('../sh
 import path from 'node:path';
 import {Readable} from 'node:stream';
 import {captionSource} from './caption-service.mjs';
+import {PublicSourceError} from './public-http.mjs';
 const fail=(message,status=400)=>Object.assign(Error(message),{status});
 const uuid=value=>typeof value==='string'&&/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(value);
 const TYPES={'audio/mpeg':'mp3','audio/mp4':'m4a','audio/wav':'wav','audio/ogg':'ogg','audio/flac':'flac','audio/webm':'webm','video/mp4':'mp4','video/webm':'webm'};
@@ -41,6 +42,7 @@ export async function createSourceJobs({directory,libraryStore,mediaStore,podcas
     let media;
     if(source?.media_url){
      const request=source.feed_url?{feedUrl:source.feed_url,episodeId:source.episode_id,mediaUrl:source.media_url}:{url:source.media_url};
+     if(source.feed_url&&typeof document.source_url==='string'&&document.source_url.trim()&&['xiaoyuzhoufm.com','www.xiaoyuzhoufm.com'].includes(new URL(source.feed_url).hostname))request.episodeUrl=document.source_url;
      media=await podcastSources.downloadMedia(request,{signal});
     }else{
      const video=videoSource(document);
@@ -101,7 +103,17 @@ export async function createSourceJobs({directory,libraryStore,mediaStore,podcas
     signal.throwIfAborted();await writeFile(path.join(workDirectory,'reviewed.tmp'),JSON.stringify(raw),{mode:0o600});await rename(path.join(workDirectory,'reviewed.tmp'),path.join(workDirectory,'result.json'));
    }
    if(!signal.aborted&&!closing)update(value.id,'ready');
-  }catch(error){if(!closing&&!signal.aborted)update(value.id,error.status===409?'interrupted':'failed',error.status===409?error.message:'任务未完成，已保留处理进度。请检查本地环境后明确重试。');}
+  }catch(error){
+   if(!closing&&!signal.aborted){
+    const conflict=error?.status===409;
+    let message='任务未完成，已保留处理进度。请检查本地环境后明确重试。';
+    if(value.kind==='download'){
+     message='原声下载未完成，请检查网络或来源后明确重试。';
+     if(error instanceof PublicSourceError)message=error.code==='SOURCE_TIMEOUT'?'原声下载超过总时限，请检查网络后重试。':error.message.slice(0,300);
+    }
+    update(value.id,conflict?'interrupted':'failed',conflict?error.message:message);
+   }
+  }
   finally{controller=null;}
  }
  function pump(){if(closing||running)return;const value=db.prepare("SELECT * FROM jobs WHERE state='queued' ORDER BY created,id LIMIT 1").get();if(!value)return;runningId=value.id;running=perform(value).finally(()=>{running=null;runningId=null;pump();});}

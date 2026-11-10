@@ -6,6 +6,7 @@ import {createRequire} from 'node:module';
 const Coconut=createRequire(import.meta.url)('../reader/core.js');
 import {captionSource} from './caption-service.mjs';
 import {resolveCaptionShortLink} from './caption-short-link.mjs';
+import {PublicSourceError} from './public-http.mjs';
 
 // Recognized short links must reach caption URL validation, never podcast discovery.
 // Only the dedicated single-hop resolver may expand the exact official short form.
@@ -64,7 +65,11 @@ export function createIngestionService({podcastSources,captionService=null,capti
     if(!captionService?.available)return finish(unavailableCaptions());
     if(Array.isArray(captionService.providers)&&!captionService.providers.includes('bilibili'))return finish({state:'blocked',error:{code:'captions_unavailable',message:'此版本尚未启用 Bilibili 字幕获取；链接已保留，未展开短链接。可导入已有字幕。'}});
     try{resolved=await captionShortLinkResolver(data.source.url,{signal});}
-    catch{checkAbort(signal);return finish({state:'blocked',error:{code:'short_link_unresolved',message:'未能安全展开 Bilibili 短链接。请在原站打开后复制完整 BV 视频链接，或稍后重试；未判断字幕是否可用。'}});}
+    catch(error){
+     checkAbort(signal);
+     const reason=error instanceof PublicSourceError?(error.code==='SOURCE_PROXY_CONFIGURATION'?'当前短链接来源网络仅支持 HTTP 代理，请调整代理配置。':'短链接读取失败：'+error.message+'。'):'未能安全展开 Bilibili 短链接。';
+     return finish({state:'blocked',error:{code:'short_link_unresolved',message:reason+'请在原站打开后复制完整 BV 视频链接，或稍后重试；未判断字幕是否可用。'}});
+    }
    }
    const canonical=captionSource(resolved);base.source={...source,url:canonical.url,provider:canonical.provider,media_id:canonical.mediaId};
    if(!captionService?.available)return finish(unavailableCaptions());

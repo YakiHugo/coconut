@@ -8,7 +8,7 @@ import {startBridge} from './server.mjs';
 import {privateProxyFromEnvironment} from './client-access.mjs';
 import {libraryLocation,libraryStartupMessage,DEVELOPMENT_LIBRARY_DIRECTORY} from './library-location.mjs';
 export {DEVELOPMENT_LIBRARY_DIRECTORY};
-import {sourceNetworkFromEnvironment} from './source-network.mjs';
+import {sourceNetworkFromEnvironment,validateSourceNetwork} from './source-network.mjs';
 import {createDevelopmentCaptionHelper} from './development-captions.mjs';
 import {createCaptionService} from './caption-service.mjs';
 import {createCaptionReadability} from './transcript-readability.mjs';
@@ -17,17 +17,29 @@ import {captionSetupGuidance,CAPTION_START_GUIDANCE} from './caption-setup-guida
 import {createBilibiliBrowserSession} from './bilibili-browser-session.mjs';
 import {createPodcastSources} from './podcast-sources.mjs';
 import {createPublicFetcher,validatePodcastProxy} from './public-http.mjs';
+import {createCaptionShortLinkResolver} from './caption-short-link.mjs';
 
 export const DEVELOPMENT_TASK_DIRECTORY = fileURLToPath(new URL('../.coconut/dev/tasks', import.meta.url));
 
 export async function startDevelopmentBridge({port = 8080, taskDirectory = DEVELOPMENT_TASK_DIRECTORY, libraryDirectory = libraryLocation({mode:'development'}).directory, captionPython = process.env.COCONUT_CAPTION_PYTHON, captionProxy = process.env.COCONUT_CAPTION_PROXY, sourceNetwork = undefined, podcastProxy = process.env.COCONUT_PODCAST_PROXY, captionHelperDetached = process.platform!=='win32', readingPython = process.env.COCONUT_READING_PYTHON, punctuationModel = process.env.COCONUT_PUNCTUATION_MODEL, segmentationModel = process.env.COCONUT_SPEAKER_SEGMENTATION_MODEL, embeddingModel = process.env.COCONUT_SPEAKER_EMBEDDING_MODEL, ...options} = {}) {
-  if (Number.parseInt(process.versions.node, 10) < 22) throw new Error('Coconut development requires Node.js 22+.');
+  const [major,minor]=process.versions.node.split('.').map(Number);
+  if(major<22||major===22&&minor<21||major===23||major===24&&minor<5)throw new Error('Coconut development requires Node.js 22.21+ or 24.5+ for standard proxy agents.');
   const trustedPodcastProxy=validatePodcastProxy(podcastProxy);
+  const network=validateSourceNetwork(sourceNetwork??(captionProxy===null?{mode:'direct'}:sourceNetworkFromEnvironment({...process.env,...(captionProxy===undefined?{}:{COCONUT_CAPTION_PROXY:captionProxy})})));
   if(trustedPodcastProxy){
     if(options.podcastSources)throw new Error('不能同时覆盖播客来源和配置播客代理');
     options.podcastSources=createPodcastSources({fetchResource:createPublicFetcher({xiaoyuzhouProxy:trustedPodcastProxy})});
   }
-  const network=sourceNetwork??(captionProxy===null?{mode:'direct'}:sourceNetworkFromEnvironment({...process.env,...(captionProxy===undefined?{}:{COCONUT_CAPTION_PROXY:captionProxy})}));
+  if(!options.podcastSources){
+    // Video helpers also support SOCKS. Validate the podcast transport when it
+    // is used, so an unsupported podcast proxy cannot disable video or reading.
+    let fetchResource;
+    options.podcastSources=createPodcastSources({fetchResource:(...args)=>{
+      fetchResource??=createPublicFetcher({ownerSources:true,ownerNetwork:network});
+      return fetchResource(...args);
+    }});
+  }
+  options.captionShortLinkResolver??=createCaptionShortLinkResolver({ownerNetwork:network});
   let helper=null,captionDiagnostic=null;
   if(captionPython && !options.captionService){
     try{
@@ -65,7 +77,7 @@ export async function startDevelopmentBridge({port = 8080, taskDirectory = DEVEL
     const executor = await discover('/api/v1/executor');
     const captions=await discover('/api/captions/status');
     const library=await discover('/api/v1/library');
-    return {server, origin, taskDirectory, libraryDirectory, library, executor, captions, captionDiagnostic,podcastNetworkMode:trustedPodcastProxy?'xiaoyuzhou_trusted_local_proxy':'direct_public'};
+    return {server, origin, taskDirectory, libraryDirectory, library, executor, captions, captionDiagnostic,podcastNetworkMode:trustedPodcastProxy?'xiaoyuzhou_trusted_local_proxy':network.mode==='direct'?'direct_public':'owner_network'};
   } catch (error) {
     await new Promise(resolve => server.shutdown(resolve));
     throw error;
@@ -77,7 +89,7 @@ if (process.argv[1] && await realpath(process.argv[1]).catch(()=>null) === fileU
   const {server, origin, taskDirectory, libraryDirectory, library, executor, captions, captionDiagnostic,podcastNetworkMode} = await startDevelopmentBridge({privateProxy:privateProxyFromEnvironment()});
   console.log(`Coconut 开发阅读器：${origin}`);
   console.log(`开发任务目录：${taskDirectory}`);
-  console.log(podcastNetworkMode==='xiaoyuzhou_trusted_local_proxy'?'播客网络：小宇宙及其公开音频使用所有者配置的本机代理；其他来源保持直连。':'播客网络：直连公网；未继承系统代理。');
+  console.log(podcastNetworkMode==='xiaoyuzhou_trusted_local_proxy'?'播客网络：小宇宙及其公开音频使用所有者配置的本机代理；其他来源保持直连。':podcastNetworkMode==='owner_network'?'播客网络：小宇宙及其公开音频使用已配置的来源网络；其他来源保持直连。':'播客网络：小宇宙及其公开音频使用本机网络解析，兼容 TUN / Fake-IP；其他来源校验公网地址。');
   console.log(libraryStartupMessage({mode:'development',directory:libraryDirectory},library));
   console.log(`本机后台任务：${executor.enabled ? '可用；提供商尚未检查' : '不可用；请检查开发任务目录，阅读仍可使用'}`);
   console.log(`字幕获取：${captions.available?'公开 X / YouTube / Bilibili 字幕入口已就绪（能否取得字幕取决于来源访问状态）':`${captions.message}（${captions.code}）`}`);

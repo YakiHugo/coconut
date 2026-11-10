@@ -7,7 +7,7 @@
 - RSS 2.0 / Atom：读取公开源，列出最多 200 集；选择单集后才导入发布者的 VTT、SRT 或 Podcasting 2.0 时间戳 JSON
 - 普通发布者网页：仅发现页面公开声明的 `rel=alternate` RSS / Atom，先选源再选一集。节目列表从不自动当成最新一集
 - Apple Podcasts：使用官方公开目录的精确节目 ID 找到 `feedUrl`，再读原发布者 RSS。含单集 `i=` 时，再读取同节目最多 200 集的官方公开目录，要求 `trackId` 和 `collectionId` 都精确相同，并以发布者 GUID 或完全一致的 enclosure 地址在 RSS 中唯一匹配。成功时只显示对应单集，但不自动保存、下载或调用模型；目录失败、身份冲突、超出窗口或无法匹配时保留明确手选，不按标题、发布日期或最新一集猜测
-- 小宇宙：支持官方公开节目页 / 单集页当前服务器提供的可见数据。单集必须同时明确 `status=NORMAL`、`payType=FREE`、`isPrivateMedia=false`、`media.source.mode=PUBLIC`，媒体地址与 enclosure 一致。每次导入或下载重新读取页面并校验这些条件。只列出节目页当前显示的单集，不承诺完整历史节目；已验证路径只提供公开音频，不宣称取得完整文字稿
+- 小宇宙：支持官方公开节目页 / 单集页当前服务器提供的可见数据。单集必须同时明确 `status=NORMAL`、`payType=FREE`、`isPrivateMedia=false`、`media.source.mode=PUBLIC`，媒体地址与 enclosure 一致。只列出节目页当前显示的单集，不承诺完整历史节目；选择单集后保存其永久单集页，下载时从该页重新核验权限与媒体，节目页展示列表更新不会让已保存单集失效。已验证路径只提供公开音频，不宣称取得完整文字稿
 - 音视频直链：只接受明确音频 / 视频 MIME 的公开文件，不接受网页、HLS/DASH、DRM 或登录内容。发现时读取响应头后关闭连接，明确点击下载才获取文件
 - Spotify：不提取其音轨。请使用发布者独立公开 RSS 或合法取得的文件
 - 喜马拉雅、蜻蜓、SoundCloud 等专用分享页尚未接入；不会因为上游下载器有 extractor 就声称已支持
@@ -18,7 +18,22 @@
 
 ## 网络和资源边界
 
-开发服务可由所有者显式设置 `COCONUT_PODCAST_PROXY=http://127.0.0.1:7897`
+桌面应用、轻量入口和开发入口与独立服务使用相同的小宇宙平台网络路径：
+仅对 HTTPS 的 `www.xiaoyuzhoufm.com`、`xiaoyuzhoufm.com` 和
+`media.xyzcdn.net` 交由本机网络解析，不提前把 Clash / mihomo 的 Fake-IP
+当成发布者内网地址拦截。原站 TLS 校验及限定平台内的 HTTPS 重定向检查仍然执行。
+普通 RSS、Apple 和其他来源继续执行公网 DNS 检查与 IP 绑定；没有全局放行保留地址。
+桌面和轻量入口默认直接使用本机网络，不自动发现系统 HTTP 代理。
+显式的 `COCONUT_SOURCE_NETWORK` / `COCONUT_SOURCE_PROXY`（兼容
+`COCONUT_CAPTION_PROXY`）同时用于小宇宙与 B 站短链；桌面从启动环境读取，
+不自动读取项目 `.env`。独立服务继续按其部署配置读取来源网络。
+
+B 站短链仅接受精确的 `https://b23.tv/<分享码>`，同样兼容 Fake-IP 并使用选定的
+来源网络。请求最多 10 秒，只读取一次重定向响应；目标必须通过官方单视频 BV
+链接校验，不继续抓取目标、跟随短链链条或接收网页指定的代理。
+
+旧开发入口 `pnpm dev:bridge` 可由所有者显式设置独立播客代理
+`COCONUT_PODCAST_PROXY=http://127.0.0.1:7897`
 （换成已有可信本机 HTTP 代理端口），用于 Clash / mihomo Fake-IP 环境。
 该通道仅覆盖 HTTPS 的 `www.xiaoyuzhoufm.com`、`xiaoyuzhoufm.com` 与
 `media.xyzcdn.net`；RSS、Apple 和其他来源保持原有 DNS/IP 绑定直连。
@@ -28,12 +43,16 @@
 原站 TLS 证书与主机名仍强制验证，代理失败不回退直连；重定向不能离开限定的
 HTTPS 来源。原有 MIME、字节、取消、时间上限及每次下载的免费/公开检查继续执行。
 这不放行 `198.18.0.0/15`，不修改系统 DNS / Clash 配置，也不启用转录。
-现有 `COCONUT_CAPTION_PROXY` 不作用于播客；本设置目前属于源码开发入口。
+旧开发入口未设置独立播客代理时，小宇宙也复用 `COCONUT_SOURCE_NETWORK` /
+`COCONUT_SOURCE_PROXY`（兼容 `COCONUT_CAPTION_PROXY`）选择的来源网络。
+独立播客代理设置仍优先，并且不能由浏览器请求修改。
+播客网络仅支持 HTTP 代理；旧开发入口的视频仍可使用 SOCKS，播客请求会明确报告
+不支持该代理，而不会阻止阅读器启动或静默改用直连。
 
-- 无 Cookie、Authorization、浏览器登录态、持久凭据或代理环境继承；不绕过登录、地区、收费或 DRM 限制。显式拒绝账号密码和能识别的访问 token / CDN 签名参数链接；参数命名过滤不能证明所有地址都无秘密，用户仍只能输入公开链接。私有 RSS 暂不支持
-- 仅 HTTP(S) 标准端口。直连时，每次请求及最多四跳重定向重新校验 URL / DNS；只接受公共地址，任意 DNS 结果含非公开地址就拒绝。连接绑定已检查的具体 IP，避免检查后再次解析；HTTPS 不降级到 HTTP。上述显式小宇宙代理模式由可信本机代理解析限定域名
+- 无 Cookie、Authorization、浏览器登录态或持久凭据；代理仅使用启动时选定的配置。不绕过登录、地区、收费或 DRM 限制。显式拒绝账号密码和能识别的访问 token / CDN 签名参数链接；参数命名过滤不能证明所有地址都无秘密，用户仍只能输入公开链接。私有 RSS 暂不支持
+- 仅 HTTP(S) 标准端口。通用来源每次请求及最多四跳重定向重新校验 URL / DNS；只接受公共地址，任意 DNS 结果含非公开地址就拒绝。连接绑定已检查的具体 IP，避免检查后再次解析；HTTPS 不降级到 HTTP。上述小宇宙平台网络路径由本机网络或选定的可信代理解析限定域名
 - 只允许有限音频 / 视频 MIME，不按文件名推断可播放媒体。拒绝压缩 HTTP 响应，避免内容长度与解压大小不一致；内容长度和实际流式字节数都受限制
-- 元数据和文字稿各最多 8 MiB，单文件媒体最多 200 MiB，最多两个并发操作。元数据请求最多 20 秒，媒体最多 120 秒；取消 / 断开连接可以中止请求。浏览器播放采用下载完成后的本地 Blob，不做任意 Range 代理
+- 元数据和文字稿各最多 8 MiB，单文件媒体最多 200 MiB，最多两个并发操作。元数据请求最多 20 秒；媒体总请求最多 30 分钟，连续 30 秒未收到响应或媒体数据则停止，持续传输会重置空闲计时，不会延长总时限。取消 / 断开连接可以中止请求。浏览器播放采用下载完成后的本地 Blob，不做任意 Range 代理；失败重试重新下载，不宣称支持断点续传
 - XML 禁止 DTD / 实体声明，自定义实体不展开，嵌套最多 40 层、节点最多 120000、单节点属性及有效命名空间最多各 64；命名空间继承采用共享结构；不执行网页脚本
 - 时间戳稿最多 30000 段、最长 6 小时；声明超过 6 小时的媒体拒绝。缺少时长的文件只能以大小受限的回放入口使用，浏览器需要实际解码后才能确认时长，不能据此允许后续 ASR
 - 刷新 RSS / 页面后重新验证所选单集和原 enclosure / transcript 地址。客户端不能用另一个网址替换媒体或文字稿
@@ -49,13 +68,20 @@ HTTPS 来源。原有 MIME、字节、取消、时间上限及每次下载的免
 - 单集包含 `id`（SHA-256，来源 GUID 或小宇宙 eid，不含秘密）、`title`、`source_url`、`language`、`duration`（秒或 null）、`media:[{url,type,kind,length}]`、`transcripts:[{url,type,language,supported}]`
 - `importEpisode({feedUrl,episodeId,transcriptUrl?})` 重新取得来源后返回 `{status:ready,document,episode,feed_url}` 或 `{status:needs_transcription,episode,feed_url,message}`。省略 transcriptUrl 时只选与节目声明语言一致的轨；多语言不随意猜测
 - `document` 使用 schema_version=1。新 `podcast_source` 保存 `feed_url`、`episode_id`、`transcript_url`、可选 `media_url` / `media_kind`；`provenance.kind=publisher_transcript`、`caption_method=publisher_provided`、`review_status=unreviewed`
-- `downloadMedia({feedUrl,episodeId,mediaUrl})` 返回 `{body:Buffer,type,kind,filename}`。直链用 `{url}`；可选 `maxBytes` 只能降低200 MiB上限；不能把未验证用户路径当文件名。需传递取消信号；服务器响应必须保留同源检查，不记录完整链接或源内容
+- `downloadMedia({feedUrl,episodeId,mediaUrl,episodeUrl?})` 返回 `{body:Buffer,type,kind,filename}`。直链用 `{url}`；可选 `maxBytes` 只能降低200 MiB上限。旧小宇宙项目可传已保存的 `source_url` 为 `episodeUrl`，必须是官方 HTTPS 单集页且 `SHA-256(eid)` 与已有 `episodeId` 相同；RSS 不支持此覆盖。不能把未验证用户路径当文件名。需传递取消信号；服务器响应必须保留同源检查，不记录完整链接或源内容
 
 小宇宙的 `feed_url` 是官方公开页面 URL，而非假造 RSS；`source_type=xiaoyuzhou_public_page` 区分来源。恢复旧备份不自动发出来源网络请求；备份只含项目与来源描述，不携带媒体字节。
+选集结果使用永久单集页作为 `feed_url`；发现节目时仍返回当前节目页及其展示列表。
+已保存旧项目不会自动改写身份，明确获取原声时才用已知永久单集页重新检查。
+再次添加同一单集时，发现页按官方永久单集地址与单集标识识别旧节目页项目，
+保留继续已有项目的选择，不因 `feed_url` 形式改变而自动另建副本。
 
 ### 下载与持久资源交接
 
 播客的「载入原声」先重新核验当前单集及公开 enclosure，再下载受限的实际字节。
+后台下载保存来源校验与传输层生成的安全失败原因，区分公开权限、单集/媒体身份、
+总超时、空闲超时、HTTP 状态、类型、大小和传输中断；未知异常不展示原始路径、
+网址或凭据，也不宣称保留了下载进度。
 前端校验容器 MIME、大小、文件身份及非播放列表内容后，调用统一的
 `saveSourceMedia(store, documentKey, file, signal)`，而不是把 Blob URL 当作持久资源。
 保存未确认时显示「正在保存原声」，保留取消；磁盘、协议或书架身份失败会明确报错，

@@ -8,6 +8,9 @@ import { fileURLToPath } from 'node:url';
 import { createProviders } from './providers.mjs';
 import { createTranslator } from './translation.mjs';
 import { createPodcastSources } from './podcast-sources.mjs';
+import {createPublicFetcher} from './public-http.mjs';
+import {createCaptionShortLinkResolver} from './caption-short-link.mjs';
+import {sourceNetworkFromEnvironment} from './source-network.mjs';
 import {createIngestionService} from './ingestion-service.mjs';
 import {packagedCaptionGuidance,captionDiagnostic,captionFailureAvailability} from './caption-service.mjs';
 import {createIngestionExecutor} from './ingestion-executor.mjs';
@@ -332,7 +335,13 @@ if (process.argv[1] && await realpath(process.argv[1]).catch(()=>null) === fileU
   const args = process.argv.slice(2);
   if (args.length && (args.length !== 2 || args[0] !== '--port')) { console.error('Usage: node desktop/server.mjs [--port 8080]'); process.exit(1); }
   const library=libraryLocation({mode:'cli'});
-  const server = await startBridge({port:args.length ? Number(args[1]) : 8080,taskDirectory:path.join(homedir(),'.coconut','tasks'),libraryDirectory:library.directory,startupMode:'cli',privateProxy:privateProxyFromEnvironment()});
+  const network=sourceNetworkFromEnvironment();
+  let fetchResource;
+  const podcastSources=createPodcastSources({fetchResource:(...args)=>{
+    fetchResource??=createPublicFetcher({ownerSources:true,ownerNetwork:network});
+    return fetchResource(...args);
+  }});
+  const server = await startBridge({port:args.length ? Number(args[1]) : 8080,taskDirectory:path.join(homedir(),'.coconut','tasks'),libraryDirectory:library.directory,startupMode:'cli',privateProxy:privateProxyFromEnvironment(),podcastSources,captionShortLinkResolver:createCaptionShortLinkResolver({ownerNetwork:network})});
   console.log(`Coconut 轻量阅读器：http://127.0.0.1:${server.address().port}（不需要 Python；未发起模型请求）`);
   console.log(libraryStartupMessage(library,await fetch(`http://127.0.0.1:${server.address().port}/api/v1/library`).then(response=>response.json())));
   const stop = () => server.shutdown();

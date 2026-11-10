@@ -1,10 +1,10 @@
 /** Public publisher sources for the zero-Python reader. No accounts, ASR or inference. */
 import { createHash } from 'node:crypto';
 import Coconut from '../reader/core.js';
-import { fetchPublic, publicUrl, mime, isMediaType } from './public-http.mjs';
+import { fetchPublic, publicUrl, mime, isMediaType, PublicSourceError } from './public-http.mjs';
 import { parseXml, decodeEntities } from './podcast-xml.mjs';
 
-export const PODCAST_LIMITS=Object.freeze({metadataBytes:8*1024*1024,transcriptBytes:8*1024*1024,mediaBytes:200*1024*1024,episodes:200,segments:30000,duration:21600,concurrent:2});
+export const PODCAST_LIMITS=Object.freeze({metadataBytes:8*1024*1024,transcriptBytes:8*1024*1024,mediaBytes:200*1024*1024,mediaTimeoutMs:30*60*1000,mediaIdleTimeoutMs:30000,episodes:200,segments:30000,duration:21600,concurrent:2});
 const ATOM='http://www.w3.org/2005/Atom',PODCAST='https://podcastindex.org/namespace/1.0',ITUNES='http://www.itunes.com/dtds/podcast-1.0.dtd';
 // The namespace's own Podcasting 2.0 feed still uses this earlier published URI.
 const PODCAST_URIS=new Set([PODCAST,'https://github.com/Podcastindex-org/podcast-namespace/blob/main/docs/1.0.md']);
@@ -42,6 +42,11 @@ export function selectPublisherTranscript(episode) {
   return {status:'default',transcript_url:selected.url,language:selected.language,type:selected.type,language_source:selected.language_source};
 }
 const isXiaoyuzhou=url=>['xiaoyuzhoufm.com','www.xiaoyuzhoufm.com'].includes(new URL(url).hostname);
+function xiaoyuzhouEpisodeUrl(value,episodeId) {
+  const url=publicUrl(value),match=url.pathname.match(/^\/episode\/([a-f0-9]{24})\/?$/);
+  if(url.protocol!=='https:'||!isXiaoyuzhou(url.href)||url.search||!match||hash(match[1])!==episodeId)throw new PublicSourceError('SOURCE_IDENTITY','小宇宙永久单集链接与所选单集标识不一致');
+  return `https://www.xiaoyuzhoufm.com/episode/${match[1]}`;
+}
 const textBody=resource=>{try{return new TextDecoder('utf-8',{fatal:true}).decode(resource.body);}catch{throw new Error('来源不是有效的 UTF-8 文本');}};
 function safeLink(value,base) {try{return publicUrl(value,base).href;}catch{return '';}}
 function seconds(value) {
@@ -156,16 +161,16 @@ export function publisherFeeds(html,url) {
 }
 export function parseXiaoyuzhouPage(html,url) {
   const source=publicUrl(url),match=source.pathname.match(/^\/(podcast|episode)\/([a-f0-9]{24})\/?$/);
-  if(!isXiaoyuzhou(url)||!match)throw new Error('请提供小宇宙官方节目或单集分享链接');
+  if(!isXiaoyuzhou(url)||!match)throw new PublicSourceError('SOURCE_IDENTITY','请提供小宇宙官方节目或单集分享链接');
   let state;
   for(const element of htmlElements(html)) {
     if(element.name==='script'&&element.attrs.id==='__NEXT_DATA__'&&element.attrs.type==='application/json') {
-      if(state)throw new Error('小宇宙公开页面含重复状态数据');
-      try{state=JSON.parse(element.body);}catch{throw new Error('小宇宙公开页面数据无效');}
+      if(state)throw new PublicSourceError('SOURCE_TYPE','小宇宙公开页面含重复状态数据');
+      try{state=JSON.parse(element.body);}catch{throw new PublicSourceError('SOURCE_TYPE','小宇宙公开页面数据无效');}
     }
   }
   const page=state?.props?.pageProps,show=page?.podcast;
-  if((match[1]==='podcast'&&show?.pid!==match[2])||(match[1]==='episode'&&page?.episode?.eid!==match[2]))throw new Error('小宇宙页面未提供与链接匹配的公开节目数据');
+  if((match[1]==='podcast'&&show?.pid!==match[2])||(match[1]==='episode'&&page?.episode?.eid!==match[2]))throw new PublicSourceError('SOURCE_IDENTITY','小宇宙页面未提供与链接匹配的公开节目数据');
   const candidates=match[1]==='episode'?[page.episode]:Array.isArray(show.episodes)?show.episodes:[];
   const episodes=[];
   for(const item of candidates.slice(0,PODCAST_LIMITS.episodes)) {
@@ -176,7 +181,7 @@ export function parseXiaoyuzhouPage(html,url) {
     episodes.push({id:hash(item.eid),title:small(item.title)||'未命名单集',source_url:`https://www.xiaoyuzhoufm.com/episode/${item.eid}`,
       language:'',duration:seconds(item.duration),published:small(item.pubDate),media:[media],transcripts:[]});
   }
-  if(!episodes.length)throw new Error('此小宇宙页面没有同时明确标记免费、非私有、公开媒体的可导入单集。请使用主播公开 RSS 或合法本地文件');
+  if(!episodes.length)throw new PublicSourceError('SOURCE_ACCESS','此小宇宙页面没有同时明确标记免费、非私有、公开媒体的可导入单集。请使用主播公开 RSS 或合法本地文件');
   return {kind:'feed',source_type:'xiaoyuzhou_public_page',title:small(show?.title||page?.episode?.podcast?.title||page?.episode?.title)||'小宇宙公开播客',feed_url:source.href,language:'',episodes,feeds:[],
     truncated:match[1]==='podcast',warnings:['仅列出此公开页面当前展示、明确免费且非私有的单集，不是完整订阅。','此入口只提供公开媒体；未获取时间戳文字稿，简介、时间轴和平台 AI 摘要不会冒充原文。']};
 }
@@ -342,9 +347,39 @@ export function createPodcastSources({fetchResource=fetchPublic,now=Date.now}={}
     }
   }
   async function chosen(data,signal,reuse=false) {
-    if(!data||typeof data.episodeId!=='string'||!/^[a-f0-9]{64}$/.test(data.episodeId))throw new Error('请先明确选择一集播客');
-    const current=await feed(data.feedUrl,signal,reuse),episode=current.episodes.find(item=>item.id===data.episodeId);
-    if(!episode)throw new Error('所选单集不在当前公开源列表中，请刷新来源后重选');
+    if(!data||typeof data.episodeId!=='string'||!/^[a-f0-9]{64}$/.test(data.episodeId))throw new PublicSourceError('SOURCE_IDENTITY','请先明确选择一集播客');
+    const input=publicUrl(data.feedUrl);
+    let url=input.href;
+    if(Object.hasOwn(data,'episodeUrl')) {
+      // Older projects saved the sliding show list as feed_url. Their original
+      // source_url can recover the episode only when its publisher ID hashes to
+      // the already saved episode_id; it never authorizes another source.
+      if(!isXiaoyuzhou(input.href))throw new PublicSourceError('SOURCE_IDENTITY','仅小宇宙来源支持永久单集链接');
+      url=xiaoyuzhouEpisodeUrl(data.episodeUrl,data.episodeId);
+    } else if(isXiaoyuzhou(input.href)&&input.pathname.startsWith('/episode/')) {
+      // publicUrl already rejected credentials and signed/token query fields.
+      // Ordinary share parameters do not belong to a durable episode identity.
+      input.search='';
+      url=xiaoyuzhouEpisodeUrl(input.href,data.episodeId);
+    }
+    let current=await feed(url,signal,reuse);
+    if(isXiaoyuzhou(url)&&new URL(url).pathname.startsWith('/episode/'))xiaoyuzhouEpisodeUrl(current.feed_url,data.episodeId);
+    let episode=current.episodes.find(item=>item.id===data.episodeId);
+    if(!episode)throw new PublicSourceError('SOURCE_IDENTITY','所选单集不在当前公开源列表中，请刷新来源后重选');
+    if(current.source_type==='xiaoyuzhou_public_page') {
+      const permanent=xiaoyuzhouEpisodeUrl(episode.source_url,data.episodeId);
+      // Media acquisition must check the permanent page itself even when an API
+      // caller still supplies a show URL containing the selected episode.
+      if(!reuse&&!new URL(current.feed_url).pathname.startsWith('/episode/')) {
+        current=await feed(permanent,signal);
+        xiaoyuzhouEpisodeUrl(current.feed_url,data.episodeId);
+        episode=current.episodes.find(item=>item.id===data.episodeId);
+        if(!episode)throw new PublicSourceError('SOURCE_IDENTITY','所选单集不在当前公开源列表中，请刷新来源后重选');
+      }
+      // Discovery keeps the show list; a selected project's durable source must
+      // outlive that list's display window.
+      current={...current,feed_url:permanent};
+    }
     return {current,episode};
   }
   async function importEpisode(data, {signal}={}) {
@@ -375,27 +410,27 @@ export function createPodcastSources({fetchResource=fetchPublic,now=Date.now}={}
     const {current,episode}=await chosen(data,signal,true);
     checkSignal(signal);
     const medium=episode.media[0];
-    if(!medium)throw new Error('所选单集没有可用的公开音视频 enclosure，请刷新来源后重选');
-    if(episode.duration>PODCAST_LIMITS.duration)throw new Error('此单集时长超过6小时');
-    if(medium.length>PODCAST_LIMITS.mediaBytes)throw new Error('发布者声明的媒体超过下载大小上限（最多200 MiB）');
+    if(!medium)throw new PublicSourceError('SOURCE_ACCESS','所选单集没有可用的公开音视频 enclosure，请刷新来源后重选');
+    if(episode.duration>PODCAST_LIMITS.duration)throw new PublicSourceError('SOURCE_LIMIT','此单集时长超过6小时');
+    if(medium.length>PODCAST_LIMITS.mediaBytes)throw new PublicSourceError('SOURCE_LIMIT','发布者声明的媒体超过下载大小上限（最多200 MiB）');
     return {status:'needs_transcription',episode,feed_url:current.feed_url,feed_checked_at:current.feed_checked_at,feed_reused:current.feed_reused};
   }
   async function downloadMedia(data,{signal}={}) {
     const maxBytes=data?.maxBytes??PODCAST_LIMITS.mediaBytes;
-    if(!Number.isSafeInteger(maxBytes)||maxBytes<1||maxBytes>PODCAST_LIMITS.mediaBytes)throw new Error('媒体下载大小上限无效');
+    if(!Number.isSafeInteger(maxBytes)||maxBytes<1||maxBytes>PODCAST_LIMITS.mediaBytes)throw new PublicSourceError('SOURCE_LIMIT','媒体下载大小上限无效');
     let media;
     if(data?.feedUrl) {
       const {episode}=await chosen(data,signal);
-      if(episode.duration>PODCAST_LIMITS.duration)throw new Error('此单集时长超过6小时');
+      if(episode.duration>PODCAST_LIMITS.duration)throw new PublicSourceError('SOURCE_LIMIT','此单集时长超过6小时');
       media=episode.media.find(item=>item.url===data.mediaUrl);
-      if(!media)throw new Error('媒体链接不在所选单集当前的公开 enclosure 中');
-      if(media.length>maxBytes)throw new Error('发布者声明的媒体超过本次下载大小上限（最多200 MiB）');
+      if(!media)throw new PublicSourceError('SOURCE_IDENTITY','媒体链接不在所选单集当前的公开 enclosure 中');
+      if(media.length>maxBytes)throw new PublicSourceError('SOURCE_LIMIT','发布者声明的媒体超过本次下载大小上限（最多200 MiB）');
     } else {media={url:publicUrl(data?.url).href};}
     const types=new Set(['audio/mpeg','audio/mp3','audio/mp4','audio/x-m4a','audio/aac','audio/wav','audio/wave','audio/x-wav','audio/ogg','audio/flac','audio/x-flac','audio/webm','video/mp4','video/webm','video/ogg','video/quicktime']);
-    const resource=await fetchResource(media.url,{signal,maxBytes,timeoutMs:120000,types});
+    const resource=await fetchResource(media.url,{signal,maxBytes,timeoutMs:PODCAST_LIMITS.mediaTimeoutMs,idleTimeoutMs:PODCAST_LIMITS.mediaIdleTimeoutMs,types});
     const kind=resource.type.startsWith('video/')?'video':'audio';
-    if(media.kind&&media.kind!==kind)throw new Error('媒体类型与发布者 enclosure 声明不符');
-    if(!resource.body.length)throw new Error('媒体文件为空');
+    if(media.kind&&media.kind!==kind)throw new PublicSourceError('SOURCE_TYPE','媒体类型与发布者 enclosure 声明不符');
+    if(!resource.body.length)throw new PublicSourceError('SOURCE_TRANSFER','媒体文件为空');
     return {body:resource.body,type:resource.type,kind,filename:kind==='video'?'podcast-video':'podcast-audio'};
   }
   return {discover:async(data={},options={})=>{

@@ -179,7 +179,19 @@ export function createAppStore(deps: StoreDependencies) {
         setMessage(value: string) { assignMessage(value); publish(); },
         invalidateStorage(value: string) { storageInvalid = true; assignMessage(value || '存储连接已变化，请导出备份后重新打开。'); publish(); },
         getMedia: (key: string) => media.get(key) || null,
-        getRemoteMedia: (key: string) => {const temporary=remoteMedia.get(key);if(temporary)return temporary;const doc=getDocument(key);if(!doc?.podcast_source)return null;const cached=portableMedia.get(doc);if(cached)return cached;try{const checked=deps.validate({project_kind:'audio_only',title:doc.title,segments:[],podcast_source:structuredClone(doc.podcast_source)}).podcast_source as {kind?:string;media_kind?:'audio'|'video';media_url?:string;feed_url?:string;episode_id?:string}|undefined;if(!checked?.media_url||!checked.media_kind)return null;const restored:RemoteMedia={kind:checked.media_kind,name:doc.title,download:{endpoint:'/api/podcasts/media',body:checked.kind==='direct_media'?{url:checked.media_url}:{feedUrl:checked.feed_url,episodeId:checked.episode_id,mediaUrl:checked.media_url}}};portableMedia.set(doc,restored);return restored;}catch{return null;}},
+        getRemoteMedia: (key: string) => {
+            const temporary=remoteMedia.get(key);if(temporary)return temporary;
+            const doc=getDocument(key);if(!doc?.podcast_source)return null;
+            const cached=portableMedia.get(doc);if(cached)return cached;
+            try {
+                const checked=deps.validate({project_kind:'audio_only',title:doc.title,segments:[],podcast_source:structuredClone(doc.podcast_source)}).podcast_source as {kind?:string;media_kind?:'audio'|'video';media_url?:string;feed_url?:string;episode_id?:string}|undefined;
+                if(!checked?.media_url||!checked.media_kind)return null;
+                const episodeUrl=checked.feed_url&&typeof doc.source_url==='string'&&doc.source_url.trim()&&['xiaoyuzhoufm.com','www.xiaoyuzhoufm.com'].includes(new URL(checked.feed_url).hostname)?doc.source_url:undefined;
+                const body=checked.kind==='direct_media'?{url:checked.media_url}:{feedUrl:checked.feed_url,episodeId:checked.episode_id,mediaUrl:checked.media_url,...(episodeUrl?{episodeUrl}:{})};
+                const restored:RemoteMedia={kind:checked.media_kind,name:doc.title,download:{endpoint:'/api/podcasts/media',body}};
+                portableMedia.set(doc,restored);return restored;
+            } catch {return null;}
+        },
         setRemoteMedia(key: string, value: RemoteMedia) { remoteMedia.set(key, value); publish(); },
         getFile: (key: string) => files.get(key) || null,
         setFile(key: string, file: File) { files.set(key, file); },

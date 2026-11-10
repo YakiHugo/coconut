@@ -26,6 +26,7 @@ const reasons=new Map([
 ]);
 function reason(error) {
  if(error?.code==='ERR_ASSERTION')return 'assertion_failed';
+ if(error?.code==='SOURCE_IDLE_TIMEOUT')return 'resource_idle_timeout';
  if(/^公开来源返回 HTTP \d{3}；未使用登录、Cookie 或识别回退$/.test(error?.message||''))return 'http_status_rejected';
  return reasons.get(error?.message)||'unclassified_failure';
 }
@@ -54,6 +55,7 @@ export function createPodcastSmokeDiagnostics({lookup=dnsLookup,request=requestD
   catch(error){
    receipt.outcome='failure';
    if(error?.message==='来源请求已取消或超时')receipt.timeout=options.signal?.aborted?(options.signal.reason?.name==='TimeoutError'?'caller_deadline':'caller_cancelled'):'resource_deadline';
+   if(error?.code==='SOURCE_IDLE_TIMEOUT')receipt.timeout='resource_idle';
    throw error;
   } finally {receipt.elapsed_ms=milliseconds(started);lastRequest={...receipt};}
  }

@@ -5,6 +5,9 @@ import {startBridge} from './server.mjs';
 import {transcriptionConfig} from './transcription-config.mjs';
 import {sourceTaskRuntime} from './source-task-runtime.mjs';
 import {createPodcastSources} from './podcast-sources.mjs';
+import {createPublicFetcher} from './public-http.mjs';
+import {createCaptionShortLinkResolver} from './caption-short-link.mjs';
+import {sourceNetworkFromEnvironment,validateSourceNetwork} from './source-network.mjs';
 
 const allowed=new Set(['COCONUT_ASR_PYTHON','COCONUT_MODEL_DIRECTORY','COCONUT_ASR_BACKEND','COCONUT_ASR_MODEL','COCONUT_ALIGN_MODEL','COCONUT_SPEAKER_SEGMENTATION_MODEL','COCONUT_SPEAKER_EMBEDDING_MODEL','COCONUT_READING_PYTHON','COCONUT_PUNCTUATION_MODEL']);
 export async function desktopTranscriptionSettings({userDataDirectory,env=process.env}={}){
@@ -28,13 +31,22 @@ function unavailableTranscriber(){
  const fail=()=>{throw Error('本地模型配置无效');};
  return {profile:null,status,alignmentStatus:status,run:fail,align:fail};
 }
-export async function startDesktopService({userDataDirectory,env=process.env,...options}={}){
+export async function startDesktopService({userDataDirectory,env=process.env,sourceNetwork,...options}={}){
  if(!path.isAbsolute(userDataDirectory||''))throw Error('Desktop requires its application data directory');
+ const network=validateSourceNetwork(sourceNetwork??sourceNetworkFromEnvironment(env));
+ if(!options.podcastSources){
+  let fetchResource;
+  options.podcastSources=createPodcastSources({fetchResource:(...args)=>{
+   fetchResource??=createPublicFetcher({ownerSources:true,ownerNetwork:network});
+   return fetchResource(...args);
+  }});
+ }
+ options.captionShortLinkResolver??=createCaptionShortLinkResolver({ownerNetwork:network});
  let settings,runtime;
  try{settings=await desktopTranscriptionSettings({userDataDirectory,env});runtime=sourceTaskRuntime({...settings,transcriber:options.transcriber});}
  catch{settings={readingPython:null,punctuationModel:null,segmentationModel:null,embeddingModel:null};runtime=sourceTaskRuntime({transcriber:unavailableTranscriber()});}
  // Never accept a public listener/owner profile from a shell environment. The
  // desktop retains its existing library and stable browser origin.
  return startBridge({...options,...settings,...runtime,host:'127.0.0.1',startupMode:'desktop',
-  podcastSources:options.podcastSources||createPodcastSources(),reviewProvider:'',reviewModel:''});
+  reviewProvider:'',reviewModel:''});
 }
