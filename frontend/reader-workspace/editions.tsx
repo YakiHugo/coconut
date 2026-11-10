@@ -1,17 +1,8 @@
 import {EditionAi} from './edition-ai';
-import {ChoicePicker} from './controls';
 import {Fragment,useEffect,useMemo,useRef,useState} from 'react';
 import * as Editions from '@coconut/reader/editions.js';
 import type {ReaderDocument,ReaderMedia} from './contracts';
 import {captureEditionSelection,time} from './domain';
-
-export function EditionPicker({doc,value,disabled,onChange}:{doc:ReaderDocument;value:string;disabled:boolean;onChange:(value:string)=>void}){
- const versions=Editions.state(doc).editions;
- if(!versions.length)return null;
- return <div className="rw-edition-picker" aria-label="阅读版本">
-  <ChoicePicker label="阅读版本" value={value} disabled={disabled} onChange={onChange} options={[{value:'source',label:'连续文字稿'},...versions.map((edition,index)=>({value:edition.id,label:edition.title+' · '+(index+1)}))]}/>
- </div>;
-}
 
 export function EditionReader({doc,edition,focusBlock,media,busy,saveStatus,onSave,onDirtyChange,onSource,onListen}:{doc:ReaderDocument;edition:Editions.Edition;focusBlock?:{id:number;blockId:string}|null;media:ReaderMedia|null;busy:boolean;saveStatus?:string;onSave:(next:ReaderDocument)=>Promise<boolean>;onDirtyChange:(dirty:boolean)=>void;onSource:(cueId:string)=>void;onListen:(start:number,end:number)=>void}){
  const resolve=useMemo(()=>Editions.resolver(doc,edition),[doc,edition]);

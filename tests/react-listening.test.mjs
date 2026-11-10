@@ -8,7 +8,7 @@ import {createRequire} from 'node:module';
 import {Window} from 'happy-dom';
 const require=createRequire(import.meta.url),C=require('../reader/core.js');
 
-test('continuous playback and local passage review retain context, repeat in place and fence changed sources',async()=>{
+test('selected and keyboard-chosen speech starts continuous playback, follows and fences changed sources',async()=>{
     const directory=await mkdtemp(join(tmpdir(),'coconut-listening-')),w=new Window({url:'http://localhost/'}),previous={};
     for(const name of ['window','document','navigator','HTMLElement','Element','Node','Event','MouseEvent','CSS']){
         previous[name]=Object.getOwnPropertyDescriptor(globalThis,name);
@@ -23,14 +23,14 @@ test('continuous playback and local passage review retain context, repeat in pla
     globalThis.MessageChannel=class extends savedChannel{constructor(){super();channels.push(this);}};
     const {ReaderWorkspace,createRoot,createElement,act}=require(join(directory,'reader.cjs'));
     const host=w.document.createElement('div');w.document.body.append(host);const root=createRoot(host);
-    let media={url:'blob:original',identity:'file-candidate-v1:listening',name:'voice.wav',kind:'audio'},revision=1,plays=0;
+    let media={url:'blob:original',identity:'file-candidate-v1:listening',name:'voice.wav',kind:'audio'},revision=1,plays=0,pauses=0;
     let doc={key:'listening',title:'Authored listening',language:'zh',notes:{},segments:[
         {id:'a',start:0,end:2,text:'开头',words:[{word:'开',start:.1,end:.3},{word:'头',start:.3,end:.5}]},
         {id:'b',start:10,end:12,text:'重复重复',words:[{word:'重复',start:10,end:10.5},{word:'重复',start:11,end:11.5}]}
     ],media_timing:{version:1,identity:media.identity,offset:2}};
     const render=()=>root.render(createElement(ReaderWorkspace,{document:doc,revision,media,onSaveDocument:async()=>{throw Error('Listening must not write source');},onReadingPosition:()=>{},onRequestAi:()=>{throw Error('Listening must not request AI');}}));
-    w.HTMLMediaElement.prototype.play=async function(){plays++;this.dispatchEvent(new w.Event('play'));};
-    w.HTMLMediaElement.prototype.pause=function(){this.dispatchEvent(new w.Event('pause'));};
+    w.HTMLMediaElement.prototype.play=async function(){plays++;Object.defineProperty(this,'paused',{value:false,configurable:true});this.dispatchEvent(new w.Event('play'));};
+    w.HTMLMediaElement.prototype.pause=function(){pauses++;Object.defineProperty(this,'paused',{value:true,configurable:true});this.dispatchEvent(new w.Event('pause'));};
     const button=name=>host.querySelector('button[aria-label="'+name+'"]');
     const select=async(id,from,to)=>act(async()=>{
         const source=host.querySelector('[data-source-id="'+id+'"]'),walker=w.document.createTreeWalker(source,4),point=offset=>{
@@ -69,25 +69,31 @@ test('continuous playback and local passage review retain context, repeat in pla
         const original=host.querySelector('[data-source-id="a"]').closest('.rw-original');
         await act(async()=>{original.focus();original.dispatchEvent(new w.KeyboardEvent('keydown',{key:'Enter',bubbles:true,cancelable:true}));});
         assert.equal(w.getSelection().toString(),'开头','keyboard review chooses a short context rather than a single aligned character');
-        const review=button('回听所选片段');assert.ok(review);assert.equal(plays,3,'choosing review context never autoplays');
-        await act(async()=>review.click());assert.equal(plays,4);assert.equal(player.currentTime,0);
-        assert.match(review.textContent,/再听一遍/);assert.equal(host.querySelector('.reader-workspace').dataset.following,'false','review stays at the suspect passage');
+        const selectedPlay=button('从所选位置播放');assert.ok(selectedPlay);assert.equal(plays,3,'choosing speech never autoplays');
+        await act(async()=>selectedPlay.click());assert.equal(plays,4);assert.equal(player.currentTime,0);
+        assert.equal(host.querySelector('.reader-workspace').dataset.following,'true','selected playback follows the ongoing source');
+        assert.equal(w.getSelection().toString(),'');assert.equal(button('从所选位置播放'),null,'play dismisses the selected actions');
+        assert.equal(button('回听所选片段'),null);assert.equal(button('重听刚才所选'),null,'continuous playback adds no replay controls');
+        const beforeBoundary=pauses;
         await act(async()=>{player.currentTime=1;player.dispatchEvent(new w.Event('timeupdate'));});
-        assert.ok(Math.abs(player.currentTime-.65)<.001,'bounded review pauses after the selection plus a little following audio');
-        assert.ok(button('回听所选片段'),'the review remains available after completion');
+        assert.equal(player.currentTime,1,'playback continues past the selected speech and its former trailing context');
+        assert.equal(player.paused,false);assert.equal(pauses,beforeBoundary);
         await act(async()=>{host.querySelector('.rw-player-play').dispatchEvent(new w.PointerEvent('pointerdown',{bubbles:true}));player.pause();});
-        assert.ok(button('回听所选片段'),'using the transport keeps the local comparison and repeat action');
-        await act(async()=>{player.playbackRate=1.5;review.click();});
+        assert.equal(button('从所选位置播放'),null,'using the transport does not recreate selection controls');
+        await act(async()=>{original.focus();original.dispatchEvent(new w.KeyboardEvent('keydown',{key:'Enter',bubbles:true,cancelable:true}));});
+        await act(async()=>{player.playbackRate=1.5;button('从所选位置播放').click();});
         assert.equal(player.currentTime,0);assert.equal(player.playbackRate,1.5);assert.equal(plays,5);
-        assert.equal(w.getSelection().toString(),'开头','replaying keeps the highlighted comparison text');
+        assert.equal(w.getSelection().toString(),'','starting again clears the selection instead of retaining a repeat action');
+        await act(async()=>{original.focus();original.dispatchEvent(new w.KeyboardEvent('keydown',{key:'Enter',bubbles:true,cancelable:true}));});
+        assert.ok(button('从所选位置播放'));
         await act(async()=>{revision++;doc={...doc,segments:doc.segments.map(cue=>cue.id==='a'?{...cue,text:'改过'}:cue)};render();});
-        assert.equal(button('回听所选片段'),null,'changed source cannot replay the old review range');
+        assert.equal(button('从所选位置播放'),null,'changed source cannot play the old selection');
         await act(async()=>{revision++;doc={...doc,media_timing:{...doc.media_timing,offset:0},segments:[{id:'tail',start:59.8,end:60,text:'最后',words:[{word:'最',start:59.8,end:59.9},{word:'后',start:59.9,end:60}]}]};render();});
         const tail=host.querySelector('[data-source-id="tail"]').closest('.rw-original');
         await act(async()=>{w.getSelection().removeAllRanges();tail.focus();tail.dispatchEvent(new w.KeyboardEvent('keydown',{key:'Enter',bubbles:true,cancelable:true}));});
-        await act(async()=>button('回听所选片段').click());assert.ok(Math.abs(player.currentTime-59.3)<.001);
-        await act(async()=>{player.currentTime=60.1;player.dispatchEvent(new w.Event('timeupdate'));});
-        assert.equal(player.currentTime,60,'following context is capped at the real media end');
+        await act(async()=>button('从所选位置播放').click());assert.ok(Math.abs(player.currentTime-59.3)<.001);
+        await act(async()=>{player.currentTime=59.99;player.dispatchEvent(new w.Event('timeupdate'));});
+        assert.equal(player.currentTime,59.99);assert.equal(player.paused,false,'speech near the media end keeps playing until the media itself ends');
     }finally{
         await act(async()=>root.unmount());
         for(const name of Object.keys(previous)){if(previous[name])Object.defineProperty(globalThis,name,previous[name]);else delete globalThis[name];}

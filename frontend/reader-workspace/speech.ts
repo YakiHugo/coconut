@@ -4,7 +4,6 @@ import type {SourceSelection} from './domain';
 export type SpeechPart = {from:number; to:number; start:number; end:number};
 type TimedWord = SpeechPart & {word:string};
 export const LISTENING_LEAD_SECONDS=.5;
-export const LISTENING_TAIL_SECONDS=.35;
 
 /** Use only clocks whose text still exactly matches the displayed source. */
 function timedWords(cue:ReaderCue):TimedWord[] | null {
@@ -62,25 +61,6 @@ export function speechSelection(cue:ReaderCue,offset:number):SourceSelection|nul
     if(!part)return null;
     const {from,to}=part;
     return {cueIds:[cue.id],from,to,text:cue.text.slice(from,to),separators:[]};
-}
-
-/** Exact source timing for a bounded review; zero-duration words remain valid. */
-export function selectionPlaybackRange(doc:ReaderDocument,selection:SourceSelection):{seconds:number;endSeconds:number;wordAligned:boolean}|null {
-    const start=doc.segments.findIndex(cue=>cue.id===selection.cueIds[0]);
-    if(start<0||selection.from<0||selection.to<=selection.from)return null;
-    let offset=0,seconds:number|undefined,endSeconds=0,wordAligned=true;
-    for(const [index,id] of selection.cueIds.entries()){
-        const cue=doc.segments[start+index];if(!cue||cue.id!==id)return null;
-        const from=Math.max(0,selection.from-offset),to=Math.min(cue.text.length,selection.to-offset);
-        if(to>from){
-            const words=timedWords(cue)?.filter(word=>word.to>from&&word.from<to);
-            seconds??=words?.[0]?.start??cue.start;
-            endSeconds=Math.max(endSeconds,words?.length?Math.max(...words.map(word=>word.end)):cue.end);
-            wordAligned=wordAligned&&Boolean(words?.length);
-        }
-        offset+=cue.text.length+(selection.separators[index]?.length??0);
-    }
-    return seconds===undefined?null:{seconds,endSeconds,wordAligned};
 }
 
 export function selectionPlaybackStart(doc:ReaderDocument,selection:SourceSelection):{seconds:number;wordAligned:boolean} | null {

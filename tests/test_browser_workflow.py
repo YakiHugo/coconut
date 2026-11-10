@@ -11,7 +11,7 @@ class BrowserWorkflowTests(unittest.TestCase):
         job = WORKFLOW.split('\n  react-source-first:', 1)[1]
         self.assertIn('run: pnpm run test:react-browser', job)
         self.assertIn('run: pnpm run test:react-matrix', job)
-        self.assertEqual(job.count("if: ${{ !cancelled() && steps.react_setup.outcome == 'success' }}"), 4)
+        self.assertEqual(job.count("if: ${{ !cancelled() && steps.react_setup.outcome == 'success' }}"), 5)
         self.assertIn('run: pnpm run check:reader-ui', job)
         self.assertNotIn('continue-on-error', job)
         paths = re.findall(r'^            \$\{\{ runner.temp \}\}/coconut-react-authored/(.+)$', job, re.M)
@@ -48,7 +48,7 @@ class BrowserWorkflowTests(unittest.TestCase):
             self.assertNotIn('if', step)
         suites = [step for step in steps if step.get('run', '').startswith('pnpm run test:')]
         self.assertEqual([step['run'] for step in suites], [
-            'pnpm run test:dev', 'pnpm run test:react-browser', 'pnpm run test:react-matrix', 'pnpm run test:react-palette-browser', 'pnpm run test:service-browser'])
+            'pnpm run test:dev', 'pnpm run test:react-browser', 'pnpm run test:react-matrix', 'pnpm run test:react-palette-browser', 'pnpm run test:cleanup', 'pnpm run test:service-browser'])
         for step in suites:
             if step['run'] == 'pnpm run test:dev':
                 continue

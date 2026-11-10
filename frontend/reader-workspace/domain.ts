@@ -16,7 +16,7 @@ export function currentCue(cues: ReaderCue[], seconds: number): ReaderCue | unde
     }
     return undefined;
 }
-export function filterCues(doc: ReaderDocument, query: string, notesOnly: boolean, speaker: string | null, displayText:(text:string)=>string=text=>text) { const q = displayText(query).trim().toLocaleLowerCase(); return doc.segments.filter(cue => (!notesOnly || Boolean(doc.notes?.[cue.id]?.trim())) && (speaker === null || (cue.speaker || '') === speaker) && (!q || [cue.text, doc.notes?.[cue.id] || '', cue.speaker || '', cue.translations?.[doc.translation_view || '']?.text || ''].some(text => displayText(text).toLocaleLowerCase().includes(q)))); }
+export function filterCues(doc: ReaderDocument, query: string, displayText:(text:string)=>string=text=>text) { const q = displayText(query).trim().toLocaleLowerCase(); return doc.segments.filter(cue => !q || [cue.text, doc.notes?.[cue.id] || '', cue.speaker || '', cue.translations?.[doc.translation_view || '']?.text || ''].some(text => displayText(text).toLocaleLowerCase().includes(q))); }
 export function selectionOffsets(root: HTMLElement, selection: Selection | null): {
     from: number;
     to: number;
@@ -86,13 +86,4 @@ export function captureEditionSelection(host:HTMLElement,blocks:Block[],selectio
  const from=before.toString().length,to=from+range.toString().length;
  if(to<=from||text.slice(from,to)!==range.toString())return null;
  return {blockId:block.id,from,to,text:text.slice(from,to),blockText:text};
-}
-
-// The domain removal result uses undefined as a deletion instruction. Apply only
-// these two known fields; canonical persistence must still reject unknown lossy data.
-export function applyExactExcerptRemoval(doc:ReaderDocument,removal:Pick<ReaderDocument,'exact_excerpts'|'exact_excerpt_notes'>):ReaderDocument {
- const next={...doc};
- if(removal.exact_excerpts===undefined)delete next.exact_excerpts;else next.exact_excerpts=removal.exact_excerpts;
- if(removal.exact_excerpt_notes===undefined)delete next.exact_excerpt_notes;else next.exact_excerpt_notes=removal.exact_excerpt_notes;
- return next;
 }

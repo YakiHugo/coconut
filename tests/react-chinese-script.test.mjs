@@ -56,11 +56,11 @@ test('Chinese display preserves source offsets, searchable fields and canonical 
    const doc=makeDoc('search-fields',{translation_view:'zh',segments:[{id:'body',start:0,end:1,text:'這裡寫代碼。'},{id:'translation',start:1,end:2,text:'English source.',translations:{zh:{text:'傳統譯文專用詞。',source_text:'English source.',provider:'user'}}},{id:'note',start:2,end:3,text:'A note cue.'},{id:'speaker',start:3,end:4,text:'A named voice.',speaker:'陳曉東'}],notes:{note:'讀書筆記專用詞'}}),before=JSON.stringify(doc);
    await render(doc);
    for(const [query,id] of [['代码','body'],['代碼','body'],['译文专用词','translation'],['读书笔记','note'],['陈晓东','speaker']]){
-    const filtered=filterCues(doc,query,false,null,convert);assert.deepEqual(filtered.map(cue=>cue.id),[id]);assert.equal(filtered[0],doc.segments.find(cue=>cue.id===id));
+    const filtered=filterCues(doc,query,convert);assert.deepEqual(filtered.map(cue=>cue.id),[id]);assert.equal(filtered[0],doc.segments.find(cue=>cue.id===id));
     await search(query);assert.deepEqual([...host.querySelectorAll('[data-source-id]')].map(node=>node.dataset.sourceId),[id]);
    }
-   await search('');assert.equal(host.querySelector('.rw-translation').textContent,'传统译文专用词。');
-   await act(async()=>host.querySelector('[role=tab][data-mode=transcript]').click());assert.equal(host.querySelector('[data-cue-id="translation"] .rw-translation').textContent,'传统译文专用词。');
+   await search('');assert.equal(host.querySelector('.rw-translation'),null);
+   await act(async()=>host.querySelector('[role=tab][data-mode=transcript]').click());assert.equal(host.querySelector('.rw-translation'),null);
    await search('译文专用词');assert.deepEqual([...host.querySelectorAll('[data-source-id]')].map(node=>node.dataset.sourceId),['translation']);assert.equal(JSON.stringify(doc),before);
   });
 

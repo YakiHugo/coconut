@@ -21,6 +21,7 @@
     "test:react-matrix": "node tests/react-production-matrix-browser.mjs",
     "test:react-palette-browser": "node --test tests/react-reading-palette-browser.mjs",
     "test:transcript-review": "node --test --test-concurrency=1 tests/transcript-review.test.cjs tests/desktop-transcript-review.test.mjs tests/desktop-transcript-review-jobs.test.mjs && node tests/react-transcript-review-browser.mjs",
+    "test:cleanup": "python3 -m unittest tests.test_transcript_cleanup tests.test_transcript_boundaries && node --test tests/reader-disfluency.test.mjs tests/reader-cleanup-import.test.mjs tests/react-cleanup.test.mjs tests/clean-reading.test.mjs tests/desktop-clean-reading-identity.test.mjs tests/desktop-clean-reading-jobs.test.mjs tests/desktop-reading-fallback.test.mjs && node tests/react-cleanup-browser.mjs && node tests/react-clean-reading-panel-browser.mjs",
     "dev:bridge": "node desktop/dev.mjs",
     "test:dev": "node --test tests/vite-development.test.mjs && node tests/vite-development-browser.mjs"
   },

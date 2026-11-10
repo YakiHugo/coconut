@@ -1,8 +1,9 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { ReaderDocument } from './contracts';
 import {ChoicePicker} from './controls';
 type ExportKind = 'json' | 'txt' | 'srt' | 'vtt' | 'md';
 type Core = {
+    translationCurrent: (cue: ReaderDocument['segments'][number], doc: ReaderDocument, item: unknown) => boolean;
     transcriptText: (doc: ReaderDocument, target: string, options?: {layout: 'reading'}) => {
         text: string;
         translated: number;
@@ -20,7 +21,9 @@ export function ReaderExports({ doc, hasDrafts, displayText=(text:string)=>text 
     doc: ReaderDocument;
     hasDrafts: boolean;
 }) {
-    const [kind, setKind] = useState<ExportKind>('json'), [bilingual, setBilingual] = useState(false), [status, setStatus] = useState(''), [artifact, setArtifact] = useState<{
+    const core = (window as unknown as {Coconut: Core}).Coconut;
+    const languages = useMemo(()=>[...new Set(doc.segments.flatMap(cue=>Object.keys(cue.translations||{})))].filter(language=>doc.segments.some(cue=>{const item=cue.translations?.[language];return typeof item?.text==='string'&&Boolean(item.text.trim())&&core.translationCurrent(cue,doc,item);})),[core,doc]);
+    const [kind, setKind] = useState<ExportKind>('json'), [bilingual, setBilingual] = useState(false), [language,setLanguage]=useState(doc.translation_view||''), [status, setStatus] = useState(''), [artifact, setArtifact] = useState<{
         url: string;
         name: string;
     } | null>(null);
@@ -31,13 +34,12 @@ export function ReaderExports({ doc, hasDrafts, displayText=(text:string)=>text 
         link.current?.click();
         return () => { const url = artifact.url; window.setTimeout(() => URL.revokeObjectURL(url), 60000); };
     }, [artifact]);
-    useEffect(() => setBilingual(false), [doc.key, doc.translation_view]);
+    useEffect(() => {setBilingual(false);setLanguage(doc.translation_view||'');}, [doc.key, doc.translation_view]);
+    const selectedLanguage=languages.includes(language)?language:languages[0]||'';
     useEffect(()=>{if(!doc.segments.length&&['txt','srt','vtt'].includes(kind))setKind('json');},[doc.segments.length,kind]);
     const download = () => {
         try {
-            const core = (window as unknown as {
-                Coconut: Core;
-            }).Coconut, target = bilingual ? doc.translation_view || '' : '';
+            const target = bilingual ? selectedLanguage : '';
             let text = '', detail = '';
             if (kind === 'json') {
                 text = JSON.stringify(doc, null, 2);
@@ -66,5 +68,5 @@ export function ReaderExports({ doc, hasDrafts, displayText=(text:string)=>text 
             setStatus('导出失败：' + String(e instanceof Error ? e.message : e));
         }
     };
-    return <section className="rw-exports" aria-label="导出本篇内容"><h3>导出本篇内容</h3><p>不含原媒体。TXT 与字幕采用当前中文字形。</p><ChoicePicker label="文件格式" value={kind} onChange={value=>setKind(value as ExportKind)} options={[{value:'json',label:'Coconut JSON 完整项目'},...(doc.segments.length?[{value:'txt',label:'TXT 整篇文字'},{value:'srt',label:'SRT 字幕'},{value:'vtt',label:'VTT 字幕'}]:[]),{value:'md',label:'Markdown 阅读笔记'}]}/>{kind !== 'json' && <label><input type="checkbox" disabled={!doc.translation_view} checked={bilingual} onChange={e => setBilingual(e.target.checked)}/> 包含当前所选语言的有效译文</label>}<button disabled={hasDrafts || (!doc.segments.length && ['txt', 'srt', 'vtt'].includes(kind))} onClick={download}>下载本篇</button>{hasDrafts && <p>请先提交或取消草稿，再导出完整内容。</p>}<a ref={link} hidden href={artifact?.url} download={artifact?.name}>下载文件</a><p role="status">{status}</p></section>;
+    return <section className="rw-exports" aria-label="导出本篇内容"><h3>导出本篇内容</h3><p>不含原媒体。TXT 与字幕采用当前中文字形。</p><ChoicePicker label="文件格式" value={kind} onChange={value=>setKind(value as ExportKind)} options={[{value:'json',label:'Coconut JSON 完整项目'},...(doc.segments.length?[{value:'txt',label:'TXT 整篇文字'},{value:'srt',label:'SRT 字幕'},{value:'vtt',label:'VTT 字幕'}]:[]),{value:'md',label:'Markdown 阅读笔记'}]}/>{kind !== 'json' && <><label><input type="checkbox" disabled={!selectedLanguage} checked={bilingual} onChange={e => setBilingual(e.target.checked)}/> 包含有效译文</label>{bilingual&&languages.length>1&&<ChoicePicker label="译文语言" value={selectedLanguage} onChange={setLanguage} options={languages.map(value=>({value,label:value}))}/>}</>}<button disabled={hasDrafts || (!doc.segments.length && ['txt', 'srt', 'vtt'].includes(kind))} onClick={download}>下载本篇</button>{hasDrafts && <p>请先提交或取消草稿，再导出完整内容。</p>}<a ref={link} hidden href={artifact?.url} download={artifact?.name}>下载文件</a><p role="status">{status}</p></section>;
 }
