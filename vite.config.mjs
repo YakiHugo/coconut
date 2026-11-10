@@ -17,7 +17,7 @@ export default defineConfig({
     force: true,
     entries: ['frontend/app/main.tsx'],
     // These shared UMD/CommonJS modules also run in Node and the packaged reader.
-    include: ['@coconut/reader/editions.js', '@coconut/reader/interview.js', '@coconut/shared/source-media.js',
+    include: ['@coconut/reader/editions.js', '@coconut/reader/interview.js', '@coconut/reader/disfluency.js', '@coconut/shared/source-media.js',
       '@coconut/shared/transcript-resources.js', '@coconut/shared/transcript-review', '@coconut/shared/source-alignment.js'],
   },
   server: {

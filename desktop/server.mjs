@@ -14,6 +14,8 @@ import {createIngestionExecutor} from './ingestion-executor.mjs';
 import {createReadabilityJobs} from './readability-jobs.mjs';
 import {createTranscriptReviewer} from './transcript-review.mjs';
 import {createTranscriptReviewJobs} from './transcript-review-jobs.mjs';
+import {createCleanReadingJobs} from './clean-reading-jobs.mjs';
+import {createCleanReadingPlanner} from './clean-reading.mjs';
 import {createTaskStore,TASK_BODY_BYTES} from './tasks.mjs';
 import {createLibraryStore} from './library-store.mjs';
 import {createSourceMediaStore,handleSourceMediaRequest} from './source-media.mjs';
@@ -28,7 +30,7 @@ const MIME = {'.png':'image/png','.html':'text/html; charset=utf-8','.js':'text/
 const MAX_BODY = 1024 * 1024;
 export const CSP = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self'; img-src 'self' data: blob:; media-src 'self' blob:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'";
 
-export function createBridge({readerDirectory = path.resolve(ROOT,'../reader'), providers = createProviders(), podcastSources = createPodcastSources(), captionService = null, captionStatus = null, captionShortLinkResolver = undefined, bilibiliSession = null, localMediaService = null, videoAudioService = null, taskStore = null, taskUnavailable = null, libraryStore = null, sourceMediaStore = null, sourceJobs = null, libraryUnavailable = null, libraryLocation = null, privateProxy = null, ownerAccess = null, ingestionExecutor = createIngestionExecutor(),readabilityJobs = null,reviewJobs=null,developmentAssets=null} = {}) {
+export function createBridge({readerDirectory = path.resolve(ROOT,'../reader'), providers = createProviders(), podcastSources = createPodcastSources(), captionService = null, captionStatus = null, captionShortLinkResolver = undefined, bilibiliSession = null, localMediaService = null, videoAudioService = null, taskStore = null, taskUnavailable = null, libraryStore = null, sourceMediaStore = null, sourceJobs = null, libraryUnavailable = null, libraryLocation = null, privateProxy = null, ownerAccess = null, ingestionExecutor = createIngestionExecutor(),readabilityJobs = null,reviewJobs=null,cleanReadingJobs=null,developmentAssets=null} = {}) {
   const profile=privateProxyProfile(privateProxy);
   const translate = createTranslator(providers);
   const capabilities=Object.freeze({...CAPABILITIES,caption_import:captionService?.available===true,persistent_tasks:!!taskStore,canonical_library:!!libraryStore});
@@ -65,6 +67,25 @@ export function createBridge({readerDirectory = path.resolve(ROOT,'../reader'), 
     try {
       if(await handleLibraryRequest({req,pathname,origin,json,store:libraryStore,unavailable:libraryUnavailable}))return;
       if(await handleSourceMediaRequest({req,res,pathname,origin,json,store:sourceMediaStore,signal:controller.signal}))return;
+      if(pathname.startsWith('/api/v1/clean-reading')){
+        if(remote&&!canAcquire)return json(403,{error:'此连接未获准使用服务端整理'});
+        if(!cleanReadingJobs)return json(503,{error:'阅读整理需要服务端书架'});
+        const match=pathname.match(/^\/api\/v1\/clean-reading\/jobs\/([a-f0-9-]+)(?:\/(result|cancel|retry|apply))?$/);
+        if(req.method==='GET'){
+          if(pathname==='/api/v1/clean-reading/capabilities')return json(200,cleanReadingJobs.capabilities());
+          if(pathname==='/api/v1/clean-reading/jobs')return json(200,{jobs:cleanReadingJobs.list(new URL(req.url,origin).searchParams.get('key'))});
+          if(match&&(!match[2]||match[2]==='result'))return json(200,{job:await cleanReadingJobs[match[2]==='result'?'result':'get'](match[1])});
+          return json(404,{error:'整理请求不存在'});
+        }
+        if(req.method!=='POST')return json(405,{error:'Method not allowed'});
+        if(req.headers.origin!==origin)return json(403,{error:'整理请求必须同源'});
+        if(req.headers['content-type']?.split(';')[0]!=='application/json')return json(400,{error:'Use application/json'});
+        let size=0;const chunks=[];for await(const chunk of req){size+=chunk.length;if(size>4096)return json(413,{error:'整理请求过大'});chunks.push(chunk);}
+        const data=JSON.parse(Buffer.concat(chunks).toString('utf8'));if(data.protocolVersion!==1)return json(400,{error:'整理协议无效'});
+        if(match&&['cancel','retry','apply'].includes(match[2]))return json(200,{job:await cleanReadingJobs.action(match[1],match[2])});
+        if(pathname==='/api/v1/clean-reading/jobs')return json(202,{job:await cleanReadingJobs.create(data)});
+        return json(404,{error:'整理请求不存在'});
+      }
       if(pathname.startsWith('/api/v1/transcript-review')){
         if(remote&&!canAcquire)return json(403,{error:'此连接未获准使用服务端校对'});
         if(!reviewJobs)return json(503,{error:'文字稿校对需要服务端书架'});
@@ -245,7 +266,7 @@ export function createBridge({readerDirectory = path.resolve(ROOT,'../reader'), 
   let resources;
   const stopResources=()=>resources??=(async()=>{
     await sourceJobs?.shutdown();
-    await Promise.all([taskStore?.shutdown(),readabilityJobs?.shutdown(),reviewJobs?.shutdown(),sourceMediaStore?.shutdown()]);
+    await Promise.all([taskStore?.shutdown(),readabilityJobs?.shutdown(),reviewJobs?.shutdown(),cleanReadingJobs?.shutdown(),sourceMediaStore?.shutdown()]);
     libraryStore?.close();
   })();
   server.on('close',()=>{for(const controller of active)controller.abort();active.clear();void stopResources().catch(()=>{});});
@@ -293,13 +314,18 @@ export async function startBridge({port = 8080, host = '127.0.0.1', taskDirector
     try{options.reviewJobs=await createTranscriptReviewJobs({directory:path.join(libraryDirectory,'transcript-review'),libraryStore:options.libraryStore,reviewer:options.transcriptReviewer,defaultProvider:options.reviewProvider||process.env.COCONUT_TRANSCRIPT_REVIEW_PROVIDER||'codex'});}
     catch(error){await Promise.allSettled([options.sourceMediaStore?.shutdown(),options.taskStore?.shutdown(),options.readabilityJobs?.shutdown(),options.reviewJobs?.shutdown()]);options.libraryStore.close();throw error;}
   }
+  if(options.libraryStore&&libraryDirectory&&!options.cleanReadingJobs){
+    const python=options.cleanupPython||options.readingPython||process.env.COCONUT_CLEANUP_PYTHON||process.env.COCONUT_READING_PYTHON||process.env.COCONUT_ASR_PYTHON||'python3';
+    try{options.cleanReadingJobs=await createCleanReadingJobs({directory:path.join(libraryDirectory,'clean-reading'),libraryStore:options.libraryStore,sourceMediaStore:options.sourceMediaStore,planner:options.cleanReadingPlanner||createCleanReadingPlanner({python})});}
+    catch(error){await Promise.allSettled([options.sourceMediaStore?.shutdown(),options.taskStore?.shutdown(),options.readabilityJobs?.shutdown(),options.reviewJobs?.shutdown()]);options.libraryStore.close();throw error;}
+  }
   if(options.enableSourceJobs){
     try{const {createSourceJobs}=await import('./source-jobs.mjs');options.sourceJobs=await createSourceJobs({directory:path.join(libraryDirectory,'source-jobs'),libraryStore:options.libraryStore,mediaStore:options.sourceMediaStore,podcastSources:options.podcastSources,videoAudioService:options.videoAudioService,transcriber:options.transcriber,reviewer:options.transcriptReviewer,reviewProvider:options.reviewProvider??process.env.COCONUT_TRANSCRIPT_REVIEW_PROVIDER??'',reviewModel:options.reviewModel??process.env.COCONUT_TRANSCRIPT_REVIEW_MODEL??''});}
-    catch(error){await options.sourceJobs?.shutdown();await Promise.allSettled([options.sourceMediaStore?.shutdown(),options.taskStore?.shutdown(),options.readabilityJobs?.shutdown(),options.reviewJobs?.shutdown()]);options.libraryStore?.close();throw error;}
+    catch(error){await options.sourceJobs?.shutdown();await Promise.allSettled([options.sourceMediaStore?.shutdown(),options.taskStore?.shutdown(),options.readabilityJobs?.shutdown(),options.reviewJobs?.shutdown(),options.cleanReadingJobs?.shutdown()]);options.libraryStore?.close();throw error;}
   }
   const server = createBridge(options);
   try{await new Promise((resolve,reject)=>{server.once('error',reject);server.listen(port,host,resolve);});}
-  catch(error){await options.sourceJobs?.shutdown();await Promise.allSettled([options.sourceMediaStore?.shutdown(),options.taskStore?.shutdown(),options.readabilityJobs?.shutdown(),options.reviewJobs?.shutdown()]);options.libraryStore?.close();throw error;}
+  catch(error){await options.sourceJobs?.shutdown();await Promise.allSettled([options.sourceMediaStore?.shutdown(),options.taskStore?.shutdown(),options.readabilityJobs?.shutdown(),options.reviewJobs?.shutdown(),options.cleanReadingJobs?.shutdown()]);options.libraryStore?.close();throw error;}
   return server;
 }
 if (process.argv[1] && await realpath(process.argv[1]).catch(()=>null) === fileURLToPath(import.meta.url)) {

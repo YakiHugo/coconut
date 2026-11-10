@@ -6,12 +6,11 @@ import type { AiSelection } from '../ai-workspace/contracts';
 import type { AppStore } from './store';
 import type { Document } from './contracts';
 export type SelectionAiRequest={id:number;intent:'understand'|'translate';selection:AiSelection};
-export function AiPanel({ store, selection, reviewRequest, openRequest, onNavigate, selectionRequest, onReturnToReading }: {
+export function AiPanel({ store, selection, openRequest, onNavigate, selectionRequest, onReturnToReading }: {
     store: AppStore;
     selection: AiSelection | null;
     selectionRequest?:SelectionAiRequest|null;
     onReturnToReading?:()=>void;
-    reviewRequest?:{id:number;cueId:string;documentKey:string;revision:number;target:string}|null;
     openRequest?:{id:number;documentKey:string;revision:number}|null;
     onNavigate:(cueId:string)=>void;
 }) {
@@ -32,7 +31,6 @@ export function AiPanel({ store, selection, reviewRequest, openRequest, onNaviga
     useEffect(() => { store.setDirty(dirty, 'ai'); return () => store.setDirty(false, 'ai'); }, [store, dirty]);
     useEffect(() => { controller.setDocument(document, String(revision), selection); }, [controller, document, revision, selection]);
     useEffect(() => { const changed = () => controller.connectionChanged(), hidden = () => { controller.connectionChanged(); controller.clearTransientError(); }; window.addEventListener('coconut-client-changed', changed); window.addEventListener('offline', changed); window.addEventListener('pagehide', hidden); return () => { window.removeEventListener('coconut-client-changed', changed); window.removeEventListener('offline', changed); window.removeEventListener('pagehide', hidden); controller.dispose(); }; }, [controller]);
-    useEffect(()=>{if(reviewRequest&&document?.key===reviewRequest.documentKey&&revision===reviewRequest.revision){controller.commands.configure({target:reviewRequest.target});controller.commands.openReview(reviewRequest.cueId);setOpen(true);}},[controller,reviewRequest]);
     useEffect(()=>{if(openRequest&&document?.key===openRequest.documentKey&&revision===openRequest.revision)setOpen(true);},[openRequest]);
     useEffect(()=>{
         const request=selectionRequest;if(!request||handledSelection.current===request.id||request.selection!==selection||request.selection.documentKey!==document?.key||request.selection.revision!==String(revision))return;

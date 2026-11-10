@@ -1,18 +1,23 @@
-function textPoint(root:HTMLElement,offset:number):{node:Node;offset:number}|null {
+function textPoint(root:HTMLElement,offset:number,preferNext=false):{node:Node;offset:number}|null {
     if(!Number.isSafeInteger(offset)||offset<0)return null;
     const walker=root.ownerDocument.createTreeWalker(root,4 /* SHOW_TEXT */);
+    let finalPoint:{node:Node;offset:number}|null=null;
     for(let node=walker.nextNode();node;node=walker.nextNode()){
         const length=node.textContent?.length??0;
-        if(offset<=length)return {node,offset};
+        if(offset<length||offset===length&&!preferNext)return {node,offset};
+        finalPoint={node,offset:length};
         offset-=length;
     }
-    return null;
+    return offset===0?finalPoint:null;
 }
 
 /** UTF-16 offsets shared by original text, script conversion and exact excerpts. */
 export function textRange(root:HTMLElement,from:number,to:number):Range|null {
     if(to<from)return null;
-    const first=textPoint(root,from),last=textPoint(root,to);
+    // At a text-node boundary, a half-open range starts in the next node and
+    // ends in the previous one. Empty display-only punctuation or line-break
+    // elements between them must not distort one source glyph's geometry.
+    const first=textPoint(root,from,true),last=from===to?first:textPoint(root,to);
     if(!first||!last)return null;
     const range=root.ownerDocument.createRange();
     range.setStart(first.node,first.offset);range.setEnd(last.node,last.offset);

@@ -4,28 +4,22 @@ import { captureSourceSelection, filterCues, time, type SourceSelection } from '
 import { ReaderPlayer, PLAYBACK_RATES, type SeekIntent } from './player';
 import {ReaderSummary} from './summary';
 import {useReaderKeyboard} from '../reading-preferences/keyboard';
-import { ReaderAnnotations, SourceCorrections } from './annotations';
+import { SourceCorrections } from './annotations';
 import { PassageView, passageDomain } from './passages';
 import { BilingualCapture } from './bilingual';
 import { ReaderExports } from './exports';
 import { ReaderSource, SourcePlaybackLink, safeSourceURL } from './source';
-import {ChoicePicker, ReaderDialog} from './controls';
+import {ReaderDialog} from './controls';
 import { ReadingModeTabs } from './mode-tabs';
-import {EditionPicker,EditionReader} from './editions';
+import {EditionReader} from './editions';
 import {scriptConverter} from '../reading-preferences/chinese-script';
 import * as Editions from '@coconut/reader/editions.js';
 import {SelectionToolbar} from './selection-toolbar';
-import {LISTENING_LEAD_SECONDS,LISTENING_TAIL_SECONDS,selectionPlaybackStart,selectionPlaybackRange,speechSelection} from './speech';
+import {LISTENING_LEAD_SECONDS,selectionPlaybackStart,speechSelection} from './speech';
 import {supportsTextHighlight,textOffsetAtPoint,textRange} from './text-range';
 import {usePlaybackFollow,useReadingScroller} from './playback-follow';
+import {prepareCleanup} from './cleanup';
 type Domain = {
-    exactExcerptTranslation: (record: unknown) => {
-        text: string;
-        language: string;
-        providers: string[];
-        reviewStates: string[];
-    } | null;
-    translationCurrent: (cue: ReaderCue, doc: ReaderDocument, value: unknown) => boolean;
     createPlaybackIndex: (cues: ReaderCue[]) => {
         find: (seconds: number) => ReaderCue | undefined;
     };
@@ -38,7 +32,6 @@ type Domain = {
         [key: string]: unknown;
     };
     exactExcerptDuplicate: (doc: ReaderDocument, record: unknown) => unknown;
-    exactExcerptFreshness: (record: unknown, doc: ReaderDocument) => string;
     mediaTimingOffset: (doc: ReaderDocument, identity: string) => number;
 };
 const domain = () => (window as unknown as {
@@ -46,9 +39,9 @@ const domain = () => (window as unknown as {
 }).Coconut;
 const UNCONFIRMED_SAVE = '尚未保存。内容可能已更新或存储暂不可用，请保留草稿后重试。';
 export function ReaderWorkspace(props: ReaderWorkspaceProps) { return <WorkspaceSession key={props.document.key} {...props}/>; }
-function WorkspaceSession({ document: doc, revision, media, onSaveDocument, onReadingPosition, onRequestAi, onDirtyChange, onMediaProgress, saveStatus, onVisibleSelection, onReviewTranslation, navigationRequest, onNavigationHandled, initialView, onViewChange, shortcutsEnabled=false, onOpenSummary, aiReturnRequest, resourcePanel, interviewPanel, chineseScript='source' }: ReaderWorkspaceProps) {
+function WorkspaceSession({ document: doc, revision, media, onSaveDocument, onReadingPosition, onRequestAi, onDirtyChange, onMediaProgress, saveStatus, onVisibleSelection, navigationRequest, onNavigationHandled, initialView, onViewChange, shortcutsEnabled=false, onOpenSummary, aiReturnRequest, resourcePanel, interviewPanel, chineseScript='source' }: ReaderWorkspaceProps) {
     const modeTabsId = useId();
-    const [toolsOpen,setToolsOpen]=useState(false),[tool,setTool]=useState('source'),[filtersOpen,setFiltersOpen]=useState(false);
+    const [toolsOpen,setToolsOpen]=useState(false),[tool,setTool]=useState('source');
     const openTools=(next:string)=>{setTool(next);setToolsOpen(true);};
     const displayText=useMemo(()=>scriptConverter(chineseScript,navigator.languages||[navigator.language]),[chineseScript,(navigator.languages||[navigator.language]).join(',')]);
     useEffect(()=>{setSelection(null);},[displayText]);
@@ -57,12 +50,16 @@ function WorkspaceSession({ document: doc, revision, media, onSaveDocument, onRe
     const validInitialView=initialView?.documentKey===doc.key&&doc.segments.some(cue=>cue.id===initialView.cueId)?initialView:null;
     const initialCue=validInitialView?.cueId||doc.readingPosition||doc.segments[0]?.id||'';
     const temporaryNavigation=useRef(false),viewCallback=useRef(onViewChange);viewCallback.current=onViewChange;
-    const [mode, setMode] = useState<'transcript'|'passages'|'summary'>(validInitialView?.mode||'passages'), [annotationDirty, setAnnotationDirty] = useState(false), [correctionDirty, setCorrectionDirty] = useState(false), [query, setQuery] = useState(''), [notesOnly, setNotesOnly] = useState(false), [speaker, setSpeaker] = useState<string | null>(null), [searchOpen, setSearchOpen] = useState(false), [locationTick,setLocationTick]=useState(0), [position, setPosition] = useState(initialCue), [clock, setClock] = useState(0), [follow, setFollow] = useState(false), [seek, setSeek] = useState<SeekIntent | null>(null), [status, setStatus] = useState(''), [busy, setBusy] = useState(false), [drafts, setDrafts] = useState<Record<string, string>>({}), [projectDraft, setProjectDraft] = useState<string | null>(null), [offset, setOffset] = useState(''), [offsetStarted,setOffsetStarted]=useState(false), [jump, setJump] = useState(''), [selection, setSelection] = useState<(SourceSelection & {
-        revision: number; review?:boolean; previewed?:boolean;
+    const [mode, setMode] = useState<'transcript'|'passages'|'summary'>(validInitialView?.mode||'passages'), [correctionDirty, setCorrectionDirty] = useState(false), [query, setQuery] = useState(''), [searchOpen, setSearchOpen] = useState(false), [locationTick,setLocationTick]=useState(0), [position, setPosition] = useState(initialCue), [clock, setClock] = useState(0), [follow, setFollow] = useState(false), [seek, setSeek] = useState<SeekIntent | null>(null), [status, setStatus] = useState(''), [busy, setBusy] = useState(false), [offset, setOffset] = useState(''), [offsetStarted,setOffsetStarted]=useState(false), [selection, setSelection] = useState<(SourceSelection & {
+        revision: number; review?:boolean;
     }) | null>(null);
+    const draggingSource=useRef(false);
+    const cleanup=useMemo(()=>prepareCleanup(doc,displayText),[doc.key,doc.segments,doc.reading_cleanup,displayText]);
+    const cleanupActive=mode==='passages'&&!edition&&cleanup.state==='ready'&&Boolean(cleanup.hiddenCount||cleanup.markCount||cleanup.breakCount);
+    useEffect(()=>{window.getSelection()?.removeAllRanges();setSelection(null);},[cleanup.projection]);
     const [editionFocus,setEditionFocus]=useState<{id:number;blockId:string}|null>(null);
     const handledNavigation=useRef<ReaderWorkspaceProps['navigationRequest']>(null);
-    const aiReturn=useRef<{selection:SourceSelection;cues:{id:string;text:string;speaker:string|null}[];mode:typeof mode;query:string;notesOnly:boolean;speaker:string|null;position:string}|null>(null);
+    const aiReturn=useRef<{selection:SourceSelection;cues:{id:string;text:string;speaker:string|null}[];mode:typeof mode;query:string;position:string}|null>(null);
     const handledAiReturn=useRef(0),[restoreSelection,setRestoreSelection]=useState<SourceSelection|null>(null);
     useEffect(()=>{
         if(!aiReturnRequest||aiReturnRequest.documentKey!==doc.key||handledAiReturn.current===aiReturnRequest.id)return;
@@ -72,9 +69,9 @@ function WorkspaceSession({ document: doc, revision, media, onSaveDocument, onRe
         const unavailable=()=>{setSelection(null);scopeRef.current?.focus({preventScroll:true});setStatus('选中的原文或阅读筛选已变化，请重新选择；未恢复旧选区。');};
         const start=doc.segments.findIndex(cue=>cue.id===saved.cues[0]?.id);
         if(start<0||!saved.cues.every((cue,index)=>doc.segments[start+index]?.id===cue.id&&doc.segments[start+index]?.text===cue.text&&(doc.segments[start+index]?.speaker||null)===cue.speaker)){unavailable();return;}
-        const visible=filterCues(doc,saved.query,saved.notesOnly,saved.speaker,displayText);
+        const visible=filterCues(doc,saved.query,displayText);
         if(!saved.cues.every(cue=>visible.some(current=>current.id===cue.id))){unavailable();return;}
-        setEditionId('source');setMode(saved.mode);setQuery(saved.query);setNotesOnly(saved.notesOnly);setSpeaker(saved.speaker);setSearchOpen(Boolean(saved.query));setPosition(saved.position);setFollow(false);
+        setEditionId('source');setMode(saved.mode);setQuery(saved.query);setSearchOpen(Boolean(saved.query));setPosition(saved.position);setFollow(false);
         setSelection({...saved.selection,revision});setRestoreSelection(saved.selection);
     },[aiReturnRequest,doc,revision,displayText]);
     useEffect(()=>{
@@ -87,11 +84,7 @@ function WorkspaceSession({ document: doc, revision, media, onSaveDocument, onRe
     const [sourceFocus,setSourceFocus]=useState<{id:number;target:ReaderSourceTarget}|null>(null);
     const scopeRef=useRef<HTMLElement|null>(null),searchRef=useRef<HTMLInputElement|null>(null),helpClose=useRef<HTMLButtonElement|null>(null),helpDialog=useRef<HTMLDialogElement|null>(null);
     const [keyboardHelp,setKeyboardHelp]=useState(false),[summaryCitation,setSummaryCitation]=useState('');
-    const projectNoteRef=useRef<HTMLDetailsElement|null>(null);
-    const filtersActive=Boolean(query.trim()||notesOnly||speaker!==null);
-    const noteCount=Object.values(doc.notes||{}).filter(Boolean).length;
-    const recordCount=noteCount+(doc.project_note?1:0)+(doc.timestamp_bookmarks?.length||0)+(Array.isArray(doc.reading_chapters)?doc.reading_chapters.length:0)+(doc.exact_excerpts?.length||0);
-    const readingReturn=useRef<{revision:number;mode:'transcript'|'passages';query:string;notesOnly:boolean;speaker:string|null;position:string}|null>(null);
+    const readingReturn=useRef<{revision:number;mode:'transcript'|'passages';query:string;position:string}|null>(null);
     const unconfirmedSave=useRef<{key:string;revision:number;content:string}|null>(null);
     const latest = useRef({ doc, revision });
     latest.current = { doc, revision };
@@ -101,25 +94,12 @@ function WorkspaceSession({ document: doc, revision, media, onSaveDocument, onRe
     const visibleCallback=useRef(onVisibleSelection);visibleCallback.current=onVisibleSelection;
     const dirtyCallback = useRef(onDirtyChange);
     dirtyCallback.current = onDirtyChange;
-    const host = useRef<HTMLDivElement>(null), seekId = useRef(0), saving = useRef(false), mounted = useRef(true), originalDraftRevision = useRef<number | null>(null);
+    const host = useRef<HTMLDivElement>(null), seekId = useRef(0), saving = useRef(false), mounted = useRef(true);
     const readingScroller=useReadingScroller(host);
     const handledLocation=useRef(0);
     const suspendFollow=useCallback(()=>setFollow(false),[]);
     useEffect(()=>{setFollow(false);setClock(0);setSelection(null);},[mediaSignature]);
     const scrollSource=(element:HTMLElement|null|undefined)=>element?.scrollIntoView?.({block:'nearest'});
-    const dirty = Object.keys(drafts).length > 0 || projectDraft !== null;
-    // A failed durable receipt may already have applied this edit to the live store.
-    // Once that exact content is observable, it is no longer an unsubmitted draft;
-    // the shell keeps the separate unsaved-content warning and retry controls.
-    useEffect(() => {
-        if (originalDraftRevision.current === null || originalDraftRevision.current === revision)
-            return;
-        if (Object.entries(drafts).every(([id, text]) => doc.notes?.[id] === text) && (projectDraft === null || doc.project_note === projectDraft)) {
-            setDrafts({});
-            setProjectDraft(null);
-            originalDraftRevision.current = null;
-        }
-    }, [doc, revision, drafts, projectDraft]);
     useEffect(()=>{
         const receipt=unconfirmedSave.current;
         if(!receipt||busy||saveStatus!=='saved'||receipt.key!==doc.key||receipt.revision!==revision||receipt.content!==JSON.stringify(doc))return;
@@ -128,8 +108,8 @@ function WorkspaceSession({ document: doc, revision, media, onSaveDocument, onRe
     },[doc,revision,saveStatus,busy]);
     const calibrated = media ? domain().mediaTimingOffset(doc, media.identity) : 0;
     const calibrationDirty=offsetStarted&&(offset.trim()===''||!Number.isFinite(Number(offset))||Number(offset)!==calibrated);
-    const anyDirty = dirty || annotationDirty || correctionDirty || calibrationDirty || editionDirty;
-    const reportAnnotation = useCallback((value: boolean) => setAnnotationDirty(value), []), reportCorrection = useCallback((value: boolean) => setCorrectionDirty(value), []);
+    const anyDirty = correctionDirty || calibrationDirty || editionDirty;
+    const reportCorrection = useCallback((value: boolean) => setCorrectionDirty(value), []);
     useEffect(() => { dirtyCallback.current?.(anyDirty); }, [anyDirty]);
     useEffect(() => () => dirtyCallback.current?.(false), []);
     useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
@@ -169,7 +149,7 @@ function WorkspaceSession({ document: doc, revision, media, onSaveDocument, onRe
 
     const playbackIndex = useMemo(() => domain().createPlaybackIndex(doc.segments), [doc.segments, revision]);
     const activeCue = media ? playbackIndex.find(clock - calibrated) : undefined;
-    const filtered = useMemo(() => filterCues(doc,query,notesOnly,speaker,displayText), [doc,displayText,query,notesOnly,speaker]);
+    const filtered = useMemo(() => filterCues(doc,query,displayText), [doc,displayText,query]);
     const shown = filtered;
     useEffect(()=>{
         const visible=new Set(shown.map(cue=>cue.id));
@@ -177,7 +157,7 @@ function WorkspaceSession({ document: doc, revision, media, onSaveDocument, onRe
     },[shown,selection]);
     const passages = useMemo(()=>passageDomain().build(filtered,{source:doc.segments,layout:'reading'}),[doc.segments,filtered]);
     const visibleSignature=JSON.stringify(mode==='summary'||edition?[]:shown.map(cue=>cue.id));
-    useEffect(()=>{visibleCallback.current?.({key:doc.key,revision,cueIds:JSON.parse(visibleSignature)});},[doc.key,revision,visibleSignature,query,notesOnly,speaker,mode]);
+    useEffect(()=>{visibleCallback.current?.({key:doc.key,revision,cueIds:JSON.parse(visibleSignature)});},[doc.key,revision,visibleSignature,query,mode]);
     const speakers = [...new Set(doc.segments.map(c => c.speaker || ''))];
     const locate = (id: string,temporary=false) => {
         if(editionDirty)return;setEditionId('source');
@@ -186,8 +166,6 @@ function WorkspaceSession({ document: doc, revision, media, onSaveDocument, onRe
         const index = filtered.findIndex(c => c.id === id);
         if (index < 0) {
             setQuery('');
-            setNotesOnly(false);
-            setSpeaker(null);
         }
         setPosition(id);setLocationTick(value=>value+1);
         onReadingPosition(id);
@@ -212,14 +190,14 @@ function WorkspaceSession({ document: doc, revision, media, onSaveDocument, onRe
             temporaryNavigation.current=true;setFollow(false);setSelection(null);
             if(target.kind==='cue'||target.kind==='exact-excerpt'){
                 if(target.cueId&&doc.segments.some(cue=>cue.id===target.cueId)){
-                    setMode('transcript');setQuery('');setNotesOnly(false);setSpeaker(null);
+                    setMode('transcript');setQuery('');
                     setPosition(target.cueId);
                 }
                 setStatus(target.kind==='exact-excerpt'?(target.cueId?(target.freshness==='current'?'已定位摘录的当前原文；摘录仍保留选取时快照。':'已定位当前原文；来源已更新，摘录仍是历史快照。'):'原片段已缺失或顺序已变化；已定位历史摘录，未猜测当前原文。'):'已定位笔记与摘录的原文片段。');
             }else if(target.kind==='bookmark'){
                 if(media){seekTo(target.time);setStatus('已定位时间书签 '+time(target.time)+'，未自动播放。');}
-                else setStatus('已定位时间书签 '+time(target.time)+'。原声尚未载入，载入后请点击此书签定位。');
-            }else setStatus('已定位项目笔记。');
+                else setStatus('时间书签 '+time(target.time)+'。原声尚未载入，请载入原文件后在播放器定位。');
+            }else setStatus('已打开笔记所属文稿；项目笔记保存在「我的内容」中。');
             setSourceFocus({id:request.id,target});
         }else if(doc.segments.some(cue=>cue.id===request.cueId)){
             if(mode==='summary')navigateSummary(request.cueId);else locate(request.cueId,true);
@@ -231,18 +209,16 @@ function WorkspaceSession({ document: doc, revision, media, onSaveDocument, onRe
         let element:HTMLElement|null=null;
         if(target.kind==='cue'||(target.kind==='exact-excerpt'&&target.cueId)){
             const row=host.current?.querySelector<HTMLElement>('[data-cue-id="'+CSS.escape(target.cueId!)+'"]');
-            if(target.kind==='cue'){const notes=row?.querySelector('details');if(notes)notes.open=true;}
             element=row?.querySelector<HTMLElement>('.rw-original')||null;
-        }else if(target.kind==='exact-excerpt')element=scopeRef.current?.querySelector<HTMLElement>('[data-excerpt-id="'+CSS.escape(target.excerptId)+'"]')||null;
-        else if(target.kind==='bookmark')element=scopeRef.current?.querySelector<HTMLElement>('[data-bookmark-id="'+CSS.escape(target.bookmarkId)+'"] button')||null;
-        else {if(projectNoteRef.current)projectNoteRef.current.open=true;element=scopeRef.current?.querySelector<HTMLElement>('[aria-label="项目笔记"]')||null;}
+        }else if(target.kind==='bookmark')element=scopeRef.current?.querySelector<HTMLElement>('.rw-player-play')||scopeRef.current;
+        else element=scopeRef.current;
         element?.focus({preventScroll:true});
         const cueId=target.kind==='cue'||target.kind==='exact-excerpt'?target.cueId:null;
         const source=cueId?host.current?.querySelector<HTMLElement>('[data-source-id="'+CSS.escape(cueId)+'"]'):null;
         scrollSource(source||element);
     },[sourceFocus]);
-    useEffect(()=>{if((mode!=='summary'&&(query.trim()||notesOnly||speaker!==null))||temporaryNavigation.current)return;const cueId=shown.some(cue=>cue.id===position)?position:shown[0]?.id;if(cueId)viewCallback.current?.({documentKey:doc.key,cueId,mode});},[doc.key,position,visibleSignature,mode,query,notesOnly,speaker]);
-    const following=follow&&!!media&&mode!=='summary'&&!edition&&!anyDirty&&!toolsOpen&&!filtersOpen&&!keyboardHelp;
+    useEffect(()=>{if((mode!=='summary'&&query.trim())||temporaryNavigation.current)return;const cueId=shown.some(cue=>cue.id===position)?position:shown[0]?.id;if(cueId)viewCallback.current?.({documentKey:doc.key,cueId,mode});},[doc.key,position,visibleSignature,mode,query]);
+    const following=follow&&!!media&&mode!=='summary'&&!edition&&!anyDirty&&!toolsOpen&&!keyboardHelp;
     usePlaybackFollow({scroller:readingScroller,enabled:following,cueId:activeCue?.id,clock,onSuspend:suspendFollow});
     useEffect(() => {
         // Following never clears filters or switches the chosen reading edition.
@@ -262,7 +238,7 @@ function WorkspaceSession({ document: doc, revision, media, onSaveDocument, onRe
         }else{
             readingScroller.cancel();scrollSource(element);
         }
-    }, [position, locationTick, mode, query, notesOnly, speaker]);
+    }, [position, locationTick, mode, query]);
     const readingAnchor=()=>{
         if(selection?.revision===revision)return selection.cueIds[0];
         const pane=scopeRef.current?.querySelector<HTMLElement>('.rw-reading-pane');
@@ -273,9 +249,9 @@ function WorkspaceSession({ document: doc, revision, media, onSaveDocument, onRe
         const row=[...(host.current?.querySelectorAll<HTMLElement>('.rw-original')||[])].find(node=>node.getBoundingClientRect().bottom>top);
         return row?.getAttribute('data-source-id')||row?.querySelector<HTMLElement>('[data-source-id]')?.dataset.sourceId||position;
     };
-    const changeMode=(next:'transcript'|'passages'|'summary')=>{const anchor=readingAnchor(),wasTemporary=temporaryNavigation.current;temporaryNavigation.current=false;setSelection(null);setFollow(false);if(next==='summary'&&mode!=='summary'&&!wasTemporary)readingReturn.current={revision,mode,query,notesOnly,speaker,position:anchor};if(next!=='summary'){setPosition(anchor);setSearchOpen(Boolean(query));}else setSummaryCitation('');setMode(next);if(next==='summary')setSearchOpen(false);};
-    const returnToReading=()=>{const saved=readingReturn.current;if(saved&&saved.revision===revision&&doc.segments.some(cue=>cue.id===saved.position)){setMode(saved.mode);setQuery(saved.query);setNotesOnly(saved.notesOnly);setSpeaker(saved.speaker);setSearchOpen(Boolean(saved.query));setPosition(saved.position);}else{setMode('transcript');setQuery('');setNotesOnly(false);setSpeaker(null);if(saved)setStatus('原文已更新，已返回当前稿中的阅读位置。');}readingReturn.current=null;temporaryNavigation.current=false;};
-    const navigateSummary=(cueId:string)=>{setEditionId('source');if(latest.current.doc!==doc||latest.current.revision!==revision)return;const index=doc.segments.findIndex(cue=>cue.id===cueId);if(index<0)return;setMode('passages');setSummaryCitation(cueId);setSearchOpen(false);setFollow(false);setSelection(null);setQuery('');setNotesOnly(false);setSpeaker(null);setPosition(cueId);setLocationTick(value=>value+1);onReadingPosition(cueId);temporaryNavigation.current=true;};
+    const changeMode=(next:'transcript'|'passages'|'summary')=>{const anchor=readingAnchor(),wasTemporary=temporaryNavigation.current;temporaryNavigation.current=false;window.getSelection()?.removeAllRanges();setSelection(null);setFollow(false);if(next==='summary'&&mode!=='summary'&&!wasTemporary)readingReturn.current={revision,mode,query,position:anchor};if(next!=='summary'){setPosition(anchor);setSearchOpen(Boolean(query));}else setSummaryCitation('');setMode(next);if(next==='summary')setSearchOpen(false);};
+    const returnToReading=()=>{const saved=readingReturn.current;if(saved&&saved.revision===revision&&doc.segments.some(cue=>cue.id===saved.position)){setMode(saved.mode);setQuery(saved.query);setSearchOpen(Boolean(saved.query));setPosition(saved.position);}else{setMode('transcript');setQuery('');if(saved)setStatus('原文已更新，已返回当前稿中的阅读位置。');}readingReturn.current=null;temporaryNavigation.current=false;};
+    const navigateSummary=(cueId:string)=>{setEditionId('source');if(latest.current.doc!==doc||latest.current.revision!==revision)return;const index=doc.segments.findIndex(cue=>cue.id===cueId);if(index<0)return;setMode('passages');setSummaryCitation(cueId);setSearchOpen(false);setFollow(false);setSelection(null);setQuery('');setPosition(cueId);setLocationTick(value=>value+1);onReadingPosition(cueId);temporaryNavigation.current=true;};
     useEffect(()=>{
         if(!summaryCitation||mode==='summary')return;
         const source=host.current?.querySelector<HTMLElement>('[data-source-id="'+CSS.escape(summaryCitation)+'"]');
@@ -382,29 +358,12 @@ function WorkspaceSession({ document: doc, revision, media, onSaveDocument, onRe
                 setBusy(false);
         }
     };
-    const startDraft = () => {
-        if (originalDraftRevision.current === null)
-            originalDraftRevision.current = revision;
-    };
-    const saveDrafts = async () => {
-        const expected = originalDraftRevision.current ?? revision;
-        if (expected !== revision) {
-            setStatus('内容已在其他操作中更新。草稿仍保留，请复制草稿后取消，再重新编辑。');
-            return;
-        }
-        const next = { ...doc, notes: { ...doc.notes, ...drafts }, ...(projectDraft !== null ? { project_note: projectDraft } : {}) };
-        if (await save(next, expected)) {
-            setDrafts({});
-            setProjectDraft(null);
-            originalDraftRevision.current = null;
-        }
-    };
-    const seekTo = (seconds: number, end?: number, play = false) => {
+    const seekTo = (seconds: number, play = false) => {
         if (!media) {
             setStatus('此项目当前没有可播放的原文件。来源信息与文字稿仍保留。');
             return;
         }
-        setSeek({ id: ++seekId.current, owner: media.identity, attachmentURL:media.url, attachmentId:attachment.current.id, seconds, end, play });
+        setSeek({ id: ++seekId.current, owner: media.identity, attachmentURL:media.url, attachmentId:attachment.current.id, seconds, play });
     };
     const playFrom=(seconds:number,lead=0)=>{
         // Start following the requested time, not the previous media clock while
@@ -415,7 +374,7 @@ function WorkspaceSession({ document: doc, revision, media, onSaveDocument, onRe
         // including when the selected speech is already somewhere on screen.
         const cue=playbackIndex.find(seconds);
         if(cue){setPosition(cue.id);setLocationTick(value=>value+1);}
-        seekTo(start,undefined,true);
+        seekTo(start,true);
     };
     const capture = () => {
         if (!host.current)
@@ -426,6 +385,24 @@ function WorkspaceSession({ document: doc, revision, media, onSaveDocument, onRe
         const next=value?{...value,revision}:null;
         setSelection(previous=>value&&previous?.review&&previous.revision===revision&&previous.from===value.from&&previous.to===value.to&&previous.text===value.text&&JSON.stringify(previous.cueIds)===JSON.stringify(value.cueIds)?previous:JSON.stringify(previous)===JSON.stringify(next)?previous:next);
     };
+    useEffect(()=>{
+        const finish=()=>{if(draggingSource.current){draggingSource.current=false;capture();}};
+        const cancel=()=>{draggingSource.current=false;};
+        document.addEventListener('pointerup',finish,true);document.addEventListener('pointercancel',cancel,true);window.addEventListener('blur',cancel);
+        return()=>{document.removeEventListener('pointerup',finish,true);document.removeEventListener('pointercancel',cancel,true);window.removeEventListener('blur',cancel);};
+    },[doc,revision,displayText]);
+    useEffect(()=>{
+        if(!cleanupActive)return;
+        // Native Selection.toString() omits hidden fillers; Range-based capture
+        // still returns their original UTF-16 offsets and complete source text.
+        const copy=(event:ClipboardEvent)=>{
+            if(!host.current||!event.clipboardData)return;
+            const value=captureSourceSelection(host.current,doc,window.getSelection(),passageDomain().separator,displayText);
+            if(value){event.preventDefault();event.clipboardData.setData('text/plain',value.text);}
+        };
+        document.addEventListener('copy',copy,true);
+        return()=>document.removeEventListener('copy',copy,true);
+    },[cleanupActive,doc,displayText]);
     const selectSpeech = (node: HTMLElement,point?:{x:number;y:number}) => {
         const source=node.closest<HTMLElement>('[data-source-id]'),id=source?.dataset.sourceId;
         const cue=doc.segments.find(cue=>cue.id===id);
@@ -447,7 +424,7 @@ function WorkspaceSession({ document: doc, revision, media, onSaveDocument, onRe
         const changed=()=>{
             window.cancelAnimationFrame(frame);frame=window.requestAnimationFrame(()=>{
                 const range=window.getSelection();
-                if(range&&!range.isCollapsed&&range.rangeCount===1&&host.current?.contains(range.getRangeAt(0).commonAncestorContainer))capture();
+                if(!draggingSource.current&&range&&!range.isCollapsed&&range.rangeCount===1&&host.current?.contains(range.getRangeAt(0).commonAncestorContainer))capture();
             });
         };
         document.addEventListener('selectionchange',changed);
@@ -455,16 +432,6 @@ function WorkspaceSession({ document: doc, revision, media, onSaveDocument, onRe
     },[doc,revision,displayText]);
     const playSelection=()=>{
         if(!selection||selection.revision!==revision)return;
-        if(selection.review){
-            const range=selectionPlaybackRange(doc,selection);if(!range)return;
-            const start=Math.max(0,range.seconds+calibrated-LISTENING_LEAD_SECONDS);
-            const duration=currentPlayer()?.duration;
-            const end=Math.min(Number.isFinite(duration)?duration!:Infinity,Math.max(start+.35,range.endSeconds+calibrated+LISTENING_TAIL_SECONDS));
-            if(end<=start)return;
-            setFollow(false);setClock(start);seekTo(start,end,true);
-            setSelection({...selection,previewed:true});
-            return;
-        }
         const start=selectionPlaybackStart(doc,selection);if(!start)return;
         playFrom(start.seconds,LISTENING_LEAD_SECONDS);
         window.getSelection()?.removeAllRanges();setSelection(null);
@@ -472,7 +439,7 @@ function WorkspaceSession({ document: doc, revision, media, onSaveDocument, onRe
     };
     const requestSelectionAi=(intent:'understand'|'translate')=>{
         if(!selection||selection.revision!==revision||busy||anyDirty)return;
-        aiReturn.current={selection:{...selection},cues:selection.cueIds.map(id=>({id,text:doc.segments.find(cue=>cue.id===id)!.text,speaker:doc.segments.find(cue=>cue.id===id)!.speaker||null})),mode,query,notesOnly,speaker,position};
+        aiReturn.current={selection:{...selection},cues:selection.cueIds.map(id=>({id,text:doc.segments.find(cue=>cue.id===id)!.text,speaker:doc.segments.find(cue=>cue.id===id)!.speaker||null})),mode,query,position};
         onRequestAi({key:doc.key,revision,intent,text:selection.text,cueIds:selection.cueIds,scope:{kind:'exact_source_selection',from:selection.from,to:selection.to,separators:selection.separators,cueIds:selection.cueIds}});
         window.getSelection()?.removeAllRanges();setSelection(null);
     };
@@ -523,30 +490,23 @@ function WorkspaceSession({ document: doc, revision, media, onSaveDocument, onRe
             {interviewPanel}
             <section className="rw-manual-edition"><h3>手动整理</h3><button type="button" disabled={anyDirty||busy||Editions.state(doc).editions.length>=Editions.LIMITS.editions} onClick={createManualEdition}>新建人工编辑稿</button></section>
         </div>
-        <div className="rw-tool-content" hidden={tool!=='timing'}>{media && doc.segments.length > 0 && <section className="rw-calibration"><h3>时间校准</h3><p>当前偏移：{calibrated} 秒</p><p>仅调整播放映射，不修改原始字幕时间。正数表示媒体比字幕晚。</p><label>偏移秒数 <input type="number" min="-3600" max="3600" step="0.1" value={offset} disabled={busy} onChange={e => {setOffsetStarted(true);setOffset(e.target.value);}}/></label><button disabled={busy || dirty || annotationDirty || correctionDirty || !media.identity.startsWith('file-candidate-v1:') || offset.trim() === '' || !Number.isFinite(Number(offset)) || Math.abs(Number(offset)) > 3600} onClick={async() => {if(await save({ ...doc, media_timing: { version: 1, identity: media.identity, offset: Number(offset) } })){setOffsetStarted(false);setOffset('');}}}>保存校准</button><button disabled={busy} onClick={()=>{setOffsetStarted(false);setOffset('');}}>取消校准草稿</button></section>}</div>
+        <div className="rw-tool-content" hidden={tool!=='timing'}>{media && doc.segments.length > 0 && <section className="rw-calibration"><h3>时间校准</h3><p>当前偏移：{calibrated} 秒</p><p>仅调整播放映射，不修改原始字幕时间。正数表示媒体比字幕晚。</p><label>偏移秒数 <input type="number" min="-3600" max="3600" step="0.1" value={offset} disabled={busy} onChange={e => {setOffsetStarted(true);setOffset(e.target.value);}}/></label><button disabled={busy || editionDirty || correctionDirty || !media.identity.startsWith('file-candidate-v1:') || offset.trim() === '' || !Number.isFinite(Number(offset)) || Math.abs(Number(offset)) > 3600} onClick={async() => {if(await save({ ...doc, media_timing: { version: 1, identity: media.identity, offset: Number(offset) } })){setOffsetStarted(false);setOffset('');}}}>保存校准</button><button disabled={busy} onClick={()=>{setOffsetStarted(false);setOffset('');}}>取消校准草稿</button></section>}</div>
         {(tool==='editing'||tool==='timing')&&status&&<p role="status">{status}</p>}
     </ReaderDialog>
  {media ? <ReaderPlayer key={attachment.current.id} media={media} seek={seek?.attachmentId===attachment.current.id?seek:null} onTime={setClock} onProgress={onMediaProgress}/> : <p className="rw-media-unavailable">{doc.source_url ? '原声未载入。' : doc.local_media_source ? '重新选择原文件以载入原声。' : '未关联原声。'}</p>}
 
- {doc.segments.length === 0 ? <section className="rw-empty"><h2>先播放原文件</h2><p>{doc.transcript_status === 'processing' ? '文字稿处理中…' : doc.transcript_status === 'unavailable' ? '暂无文字稿。' : '暂无文字稿。'}</p></section> : <><EditionPicker doc={doc} value={edition?.id||'source'} disabled={anyDirty||busy} onChange={value=>{setSelection(null);setSearchOpen(false);setFollow(false);setEditionId(value);}}/>{edition?<EditionReader key={edition.id} doc={doc} edition={edition} focusBlock={editionFocus} media={media} busy={busy} saveStatus={saveStatus} onSave={next=>save(next,revision,true)} onDirtyChange={setEditionDirty} onSource={id=>{setMode('passages');locate(id);}} onListen={(start,end)=>seekTo(start+calibrated,end+calibrated,true)}/>:<>{Array.isArray(doc.reading_chapters)&&doc.reading_chapters.length>0&&<nav className="rw-edition-chapters" aria-label="连续文字稿章节">{(doc.reading_chapters as Array<{id:string;title:string;cue_id:string}>).map(c=><button key={c.id} disabled={anyDirty||busy||!doc.segments.some(s=>s.id===c.cue_id)} onClick={()=>locate(c.cue_id,true)}>{c.title}</button>)}</nav>}<div className="rw-content-switch"><ReadingModeTabs mode={mode} id={modeTabsId} onChange={changeMode}/><button type="button" className="rw-search-trigger" data-native-command="find-transcript" ref={searchTrigger} aria-label="搜索文字稿" aria-expanded={searchOpen&&mode!=='summary'} aria-controls={`${modeTabsId}-search`} onClick={openSearch}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 5 5"/></svg><span>查找</span></button></div><div role="tabpanel" id={`${modeTabsId}-panel`} aria-labelledby={`${modeTabsId}-${mode}`}><div className="rw-search-panel" id={`${modeTabsId}-search`} hidden={!searchOpen||mode==='summary'} onKeyDown={event=>{if(searchOpen&&mode!=='summary'&&event.key==='Escape'&&!event.nativeEvent.isComposing&&event.nativeEvent.keyCode!==229){event.preventDefault();event.stopPropagation();closeSearch();}}}><label><span className="rw-sr-only">搜索原话、译文和笔记</span><input ref={searchRef} type="search" placeholder="搜索原话、译文和笔记" value={query} onChange={e=>{pendingSearchResults.current=true;setFollow(false);setQuery(e.target.value);}}/></label>{query.trim()&&<span className="rw-search-count" role="status">{filtered.length} / {doc.segments.length} 个片段</span>}<button type="button" aria-label="关闭搜索" onClick={closeSearch}>关闭</button></div><nav className="rw-toolbar rw-reading-controls" aria-label="阅读筛选" hidden={mode==='summary'}><ChoicePicker label="译文" value={doc.translation_view || ''} disabled={anyDirty || busy} onChange={value=>{void save({...doc,translation_view:value});}} options={[{value:'',label:'仅原文'},...Object.entries({zh:'中文',en:'English',ja:'日本語',ko:'한국어',fr:'Français',de:'Deutsch',es:'Español'}).map(([value,label])=>({value,label}))]}/><button type="button" className="rw-find-options" onClick={()=>setFiltersOpen(true)}>筛选与定位{filtersActive ? ` · ${filtered.length}/${doc.segments.length}` : ''}</button><button type="button" className="rw-records-link" onClick={()=>{const records=scopeRef.current?.querySelector<HTMLElement>('.rw-records');records?.focus({preventScroll:true});records?.scrollIntoView?.({block:'start'});}}>阅读记录{recordCount ? ` · ${recordCount}` : ''}</button></nav>
- <div className="rw-reading-layout"><div className="rw-reading-pane" hidden={mode==='summary'}>{summaryCitation&&<div className="rw-citation-return"><span>正在阅读摘要引用的原文</span><button type="button" onClick={()=>changeMode('summary')}>返回摘要 ↑</button></div>}<ReaderDialog open={filtersOpen} title="筛选与定位" onClose={()=>setFiltersOpen(false)}><div className="rw-toolbar"><label><input type="checkbox" checked={notesOnly} disabled={mode==='summary'} onChange={e => { setFollow(false); setNotesOnly(e.target.checked); }}/> 只看笔记</label>{speakers.length > 1 && <ChoicePicker label="说话人" value={speaker === null ? '__all' : JSON.stringify(speaker)} disabled={mode==='summary'} onChange={value=>{setFollow(false);setSpeaker(value==='__all'?null:JSON.parse(value));}} options={[{value:'__all',label:'全部'},...speakers.map(s=>({value:JSON.stringify(s),label:s||'未标注'}))]}/>}{filtersActive&&<button type="button" onClick={()=>{setQuery('');setNotesOnly(false);setSpeaker(null);}}>清除阅读筛选</button>}</div><form className="rw-toolbar" onSubmit={e => {
-                e.preventDefault();
-                const parts = jump.trim().split(':');
-                if (!parts.length || parts.length > 3 || parts.some(p => !/^\d+(?:\.\d+)?$/.test(p))) {
-                    setStatus('请输入秒数或 分:秒 / 时:分:秒');
-                    return;
-                }
-                const seconds = parts.reduce((value, p) => value * 60 + Number(p), 0);
-                const cue = doc.segments.find(c => c.end >= seconds);
-                if (cue) {
-                    locate(cue.id);
-                    seekTo(seconds + calibrated);
-                    setFiltersOpen(false);
-                }
-                else
-                    setStatus('时间超出文字稿范围');
-            }}><label>跳转时间 <input value={jump} placeholder="12:34" onChange={e => setJump(e.target.value)}/></label><button type="submit">跳转</button></form><p role="status">{status}</p></ReaderDialog>{filtersActive&&<p className="rw-filter-status" role="status">当前显示 {filtered.length} / {doc.segments.length} 个片段{query.trim()?` · 搜索：${query}`:''}{notesOnly?' · 只看笔记':''}{speaker!==null?` · 说话人：${speaker||'未标注'}`:''}</p>}{filtersActive&&shown.length===0&&<p className="rw-search-empty">没有匹配的片段。</p>}<div className="rw-cues" ref={host} onCopy={event=>{if(selection?.review&&selection.revision===revision&&window.getSelection()?.isCollapsed&&(event.target as HTMLElement).closest('.rw-original')){event.preventDefault();event.clipboardData.setData('text/plain',selection.text);}}} onMouseUp={capture} onClick={event=>{
-                if(event.button!==0||event.detail!==1||!window.getSelection()?.isCollapsed)return;
+ {doc.segments.length === 0 ? <section className="rw-empty"><h2>先播放原文件</h2><p>{doc.transcript_status === 'processing' ? '文字稿处理中…' : '暂无文字稿。'}</p></section> : <>
+ {edition?<EditionReader key={edition.id} doc={doc} edition={edition} focusBlock={editionFocus} media={media} busy={busy} saveStatus={saveStatus} onSave={next=>save(next,revision,true)} onDirtyChange={setEditionDirty} onSource={id=>{setMode('passages');locate(id);}} onListen={start=>playFrom(start)}/>:<>
+ {Array.isArray(doc.reading_chapters)&&doc.reading_chapters.length>0&&<nav className="rw-edition-chapters" aria-label="连续文字稿章节">{(doc.reading_chapters as Array<{id:string;title:string;cue_id:string}>).map(c=><button key={c.id} disabled={anyDirty||busy||!doc.segments.some(s=>s.id===c.cue_id)} onClick={()=>locate(c.cue_id,true)}>{c.title}</button>)}</nav>}
+ <div className="rw-content-switch"><ReadingModeTabs mode={mode} id={modeTabsId} onChange={changeMode}/><button type="button" className="rw-search-trigger" data-native-command="find-transcript" ref={searchTrigger} aria-label="搜索文字稿" aria-expanded={searchOpen&&mode!=='summary'} aria-controls={`${modeTabsId}-search`} onClick={openSearch}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 5 5"/></svg><span>查找</span></button></div>
+ <div role="tabpanel" id={`${modeTabsId}-panel`} aria-labelledby={`${modeTabsId}-${mode}`}>
+ <div className="rw-search-panel" id={`${modeTabsId}-search`} hidden={!searchOpen||mode==='summary'} onKeyDown={event=>{if(searchOpen&&mode!=='summary'&&event.key==='Escape'&&!event.nativeEvent.isComposing&&event.nativeEvent.keyCode!==229){event.preventDefault();event.stopPropagation();closeSearch();}}}><label><span className="rw-sr-only">搜索原话、译文和笔记</span><input ref={searchRef} type="search" placeholder="搜索原话、译文和笔记" value={query} onChange={e=>{pendingSearchResults.current=true;setFollow(false);setQuery(e.target.value);}}/></label>{query.trim()&&<span className="rw-search-count" role="status">{filtered.length} / {doc.segments.length} 个片段</span>}<button type="button" aria-label="关闭搜索" onClick={closeSearch}>关闭</button></div>
+ <div className="rw-reading-layout"><div className="rw-reading-pane" hidden={mode==='summary'}>
+ {mode==='passages'&&cleanup.state==='unavailable'&&<p className="rw-cleanup-notice" role="status">{cleanup.message}</p>}
+ {summaryCitation&&<div className="rw-citation-return"><span>正在阅读摘要引用的原文</span><button type="button" onClick={()=>changeMode('summary')}>返回摘要 ↑</button></div>}
+ {query.trim()&&shown.length===0&&<p className="rw-search-empty">没有匹配的片段。</p>}
+ <div className="rw-cues" ref={host} onPointerDown={event=>{if(event.button===0&&(event.target as HTMLElement).closest('.rw-original')){draggingSource.current=true;setSelection(null);setFollow(false);}}} onCopy={event=>{if(selection?.review&&selection.revision===revision&&window.getSelection()?.isCollapsed&&(event.target as HTMLElement).closest('.rw-original')){event.preventDefault();event.clipboardData.setData('text/plain',selection.text);}}} onMouseUp={capture} onClick={event=>{
+                if(event.button!==0||event.detail!==1||!window.getSelection()?.isCollapsed||(event.target as HTMLElement).closest('[data-cleanup-mark],[data-cleanup-break]'))return;
                 const speech=(event.target as HTMLElement).closest<HTMLElement>('.rw-speech,[data-source-id]');
                 if(speech&&host.current?.contains(speech))selectSpeech(speech,{x:event.clientX,y:event.clientY});
             }} onKeyDown={event=>{
@@ -555,10 +515,17 @@ function WorkspaceSession({ document: doc, revision, media, onSaveDocument, onRe
                 if(!paragraph.matches('.rw-original')||!window.getSelection()?.isCollapsed)return;
                 const speech=paragraph.querySelector<HTMLElement>('.rw-speech.rw-playing')||paragraph.querySelector<HTMLElement>('.rw-speech')||(paragraph.matches('[data-source-id]')?paragraph:null);
                 if(speech){event.preventDefault();selectSpeech(speech);}
-            }} onKeyUp={event=>{if(!event.nativeEvent.isComposing&&(['ArrowLeft','ArrowRight','ArrowUp','ArrowDown','Home','End','PageUp','PageDown'].includes(event.key)||((event.ctrlKey||event.metaKey)&&event.key.toLowerCase()==='a')))capture();}}>{mode !== 'transcript' ? <PassageView displayText={displayText} canListen={Boolean(media)} doc={doc} cues={shown} passages={passages} current={activeCue?.id} seconds={clock-calibrated} position={position} onLocate={locate} onPlayFrom={playFrom}/> : shown.map(cue => <section key={cue.id} data-cue-id={cue.id} className={'rw-cue' + (cue.id === activeCue?.id ? ' rw-playing' : '') + (cue.id === position ? ' rw-current' : '')}><div className="rw-cue-meta"><button type="button" onClick={() => { locate(cue.id); seekTo(cue.start + calibrated); }}>{time(cue.start)}</button>{cue.speaker && <span>{cue.speaker}</span>}{media ? <button type="button" onClick={() => seekTo(cue.start + calibrated, cue.end + calibrated, true)}>回听此段</button> : <SourcePlaybackLink sourceUrl={doc.source_url} start={cue.start}/>}</div><p className="rw-original" tabIndex={0} aria-description="单击选取附近的短片段以回听核对；拖选可精确选择。" data-source-id={cue.id}>{displayText(cue.text)}</p>{displayText(cue.text)!==cue.text&&<section className="rw-transcription-source" aria-label="转录原文"><h3>转录原文</h3><p>{cue.text}</p></section>}{doc.translation_view && cue.translations?.[doc.translation_view]?.text && <p className="rw-translation">{!domain().translationCurrent(cue, doc, cue.translations[doc.translation_view]) && <small>旧译文 · 原文已变化，请核对后更新。 </small>}{displayText(cue.translations[doc.translation_view].text||'')}</p>}{onReviewTranslation&&doc.translation_view&&cue.translations?.[doc.translation_view]&&<button type="button" onClick={()=>onReviewTranslation(cue.id)}>核对译文</button>}<>{typeof cue.original_text==='string' && cue.original_text!==cue.text && <details className="rw-original-history"><summary>识别原文</summary><p>{cue.original_text}</p></details>}</><details open={Object.hasOwn(drafts, cue.id) ? true : undefined}><summary>笔记{doc.notes?.[cue.id] ? ' · 已有记录' : ''}</summary><textarea disabled={busy} aria-label={time(cue.start) + ' 的笔记'} value={drafts[cue.id] ?? doc.notes?.[cue.id] ?? ''} onChange={e => { startDraft(); setDrafts(old => ({ ...old, [cue.id]: e.target.value })); }}/></details></section>)}</div>
- </div>{mode==='summary'&&<div className="rw-summary-pane"><ReaderSummary doc={doc} selectedCueId={position} canListen={Boolean(media)} onListen={cue=>seekTo(cue.start+calibrated,cue.end+calibrated,true)} onNavigate={navigateSummary} onReturn={returnToReading} onOpenSummary={onOpenSummary}/></div>}</div></div></>}</>}
+            }} onKeyUp={event=>{if(!event.nativeEvent.isComposing&&(['ArrowLeft','ArrowRight','ArrowUp','ArrowDown','Home','End','PageUp','PageDown'].includes(event.key)||((event.ctrlKey||event.metaKey)&&event.key.toLowerCase()==='a')))capture();}}>
+ {mode !== 'transcript' ? <PassageView displayText={displayText} projection={cleanupActive?cleanup.projection:undefined} canListen={Boolean(media)} doc={doc} cues={shown} passages={passages} current={activeCue?.id} seconds={clock-calibrated} position={position} onLocate={locate} onPlayFrom={playFrom}/> : shown.map(cue =>
+ <section key={cue.id} data-cue-id={cue.id} className={'rw-cue' + (cue.id === activeCue?.id ? ' rw-playing' : '') + (cue.id === position ? ' rw-current' : '')}>
+ <div className="rw-cue-meta"><button type="button" onClick={() => { locate(cue.id); seekTo(cue.start + calibrated); }}>{time(cue.start)}</button>{cue.speaker && <span>{cue.speaker}</span>}{media ? <button type="button" onClick={() => playFrom(cue.start)}>从此处播放</button> : <SourcePlaybackLink sourceUrl={doc.source_url} start={cue.start}/>}</div>
+ <p className="rw-original" tabIndex={0} aria-description="单击选取播放位置；拖选可精确选择。" data-source-id={cue.id}>{displayText(cue.text)}</p>
+ {displayText(cue.text)!==cue.text&&<section className="rw-transcription-source" aria-label="转录原文"><h3>转录原文</h3><p>{cue.text}</p></section>}
+ {typeof cue.original_text==='string' && cue.original_text!==cue.text && <section className="rw-original-history"><h3>识别原文</h3><p>{cue.original_text}</p></section>}
+ </section>)}</div>
+ </div>{mode==='summary'&&<div className="rw-summary-pane"><ReaderSummary doc={doc} selectedCueId={position} canListen={Boolean(media)} onListen={cue=>playFrom(cue.start)} onNavigate={navigateSummary} onReturn={returnToReading} onOpenSummary={onOpenSummary}/></div>}</div></div></>}</>}
  {selection?.revision===revision && <SelectionToolbar source={host} doc={doc} selection={selection} highlightSelection={Boolean(selection.review)} onDismiss={()=>setSelection(null)}>
-    {media&&<button type="button" aria-label={selection.review?'回听所选片段':'从所选位置播放'} onClick={playSelection}><span aria-hidden="true">▷</span> {selection.review?(selection.previewed?'再听一遍':'回听片段'):'播放'}</button>}
+    {media&&<button type="button" aria-label="从所选位置播放" onClick={playSelection}><span aria-hidden="true">▷</span> 播放</button>}
     <button type="button" aria-label="复制原话" onClick={async()=>{
         try{await navigator.clipboard.writeText(selection.text);setStatus('已复制选中原话');}
         catch{setStatus('无法直接复制，请在选中文字上使用系统复制。');}
@@ -570,8 +537,5 @@ function WorkspaceSession({ document: doc, revision, media, onSaveDocument, onRe
     <button type="button" className="rw-selection-close" aria-label="关闭选文操作" onClick={dismissSelection}>×</button>
  </SelectionToolbar>}
 
- <section className="rw-records" tabIndex={-1} aria-label="阅读记录"><header><h2>阅读记录</h2>{mode!=='summary'&&shown.length>0&&<button type="button" className="rw-records-link" onClick={()=>{const original=host.current?.querySelector<HTMLElement>('[data-source-id="'+CSS.escape(position)+'"]')?.closest<HTMLElement>('.rw-original')||host.current?.querySelector<HTMLElement>('.rw-original');original?.focus({preventScroll:true});original?.scrollIntoView?.({block:'center'});}}>返回正文</button>}<div className="rw-toolbar rw-reading-position"><button type="button" disabled={busy || anyDirty || !position} onClick={() => save({ ...doc, readingPosition: readingAnchor() })}>读到这里</button>{doc.readingPosition && <button type="button" onClick={() => locate(doc.readingPosition!)}>回到已保存续点</button>}</div></header><details className="rw-project-note" ref={projectNoteRef} open={Boolean(doc.project_note)||projectDraft!==null||dirty?true:undefined}><summary>项目笔记{doc.project_note?' · 已有记录':' · 添加想法'}</summary><textarea disabled={busy} aria-label="项目笔记" value={projectDraft ?? doc.project_note ?? ''} onChange={e => { startDraft(); setProjectDraft(e.target.value); }}/>{dirty && <div className="rw-toolbar"><button disabled={busy} onClick={saveDrafts}>保存笔记</button><button disabled={busy} onClick={() => { setDrafts({}); setProjectDraft(null); originalDraftRevision.current = null; }}>取消修改</button><span>未提交的草稿</span></div>}</details>
- <section><h2>时间书签</h2><button disabled={!media || busy || anyDirty} onClick={() => save({ ...doc, timestamp_bookmarks: [...(doc.timestamp_bookmarks || []), { id: crypto.randomUUID(), time: Math.round(clock * 1000) / 1000, note: '' }] })}>记录当前播放位置 · {time(clock)}</button></section>
- {Boolean(doc.exact_excerpts?.length) && <section><h2>保存的精确摘录</h2>{doc.exact_excerpts!.map(record => <section key={record.id} data-excerpt-id={record.id} tabIndex={-1}><p>{record.text}</p>{domain().exactExcerptTranslation(record) && <p>摘录时译文（{domain().exactExcerptTranslation(record)!.language}）：{domain().exactExcerptTranslation(record)!.text} <small>分别选取并确认对应，不等于人工核对译文。</small></p>}<small>原文核对：{{ current: '与当前来源一致', stale: '来源或译文已更新；保留选取时快照', missing: '原片段已不在当前文稿；保留快照' }[domain().exactExcerptFreshness(record, doc)] || '待核对'}</small>{doc.exact_excerpt_notes?.[record.id] && <p>{doc.exact_excerpt_notes[record.id]}</p>}</section>)}</section>}
- <ReaderAnnotations doc={doc} revision={revision} disabled={busy || dirty || correctionDirty || calibrationDirty} save={save} locate={id=>locate(id,true)} seek={seekTo} position={position} dirty={reportAnnotation}/></section><section className="rw-tools" aria-label="阅读工具">{doc.segments.length > 0 && <SourceCorrections doc={doc} revision={revision} disabled={busy || dirty || annotationDirty || calibrationDirty} save={save} position={position} dirty={reportCorrection}/>}<button type="button" onClick={()=>setKeyboardHelp(true)}>阅读快捷键</button>{keyboardHelp&&<dialog ref={helpDialog} role="dialog" aria-modal="true" aria-label="阅读快捷键" onCancel={event=>{event.preventDefault();setKeyboardHelp(false);}} onClose={()=>setKeyboardHelp(false)} onKeyDown={event=>{if(event.key==='Tab'){event.preventDefault();helpClose.current?.focus();}if(event.key==='Escape'){event.preventDefault();event.stopPropagation();setKeyboardHelp(false);}}}><h2>阅读快捷键</h2><p>在阅读正文获得焦点时：/ 查找，← / J 后退 5 秒，→ / L 前进 5 秒，空格 / K 播放或暂停，[ / ] 降低或提高倍率，G 定位当前原话，? 显示帮助。</p><p>{shortcutsEnabled?'阅读快捷键已开启':'阅读快捷键已关闭'}</p><button ref={helpClose} onClick={()=>setKeyboardHelp(false)}>关闭快捷键帮助</button></dialog>}<ReaderExports displayText={displayText} doc={doc} hasDrafts={anyDirty}/></section><p role="status" aria-live="polite">{status}</p></article>;
+ <section className="rw-tools" aria-label="阅读工具">{doc.segments.length > 0 && <SourceCorrections doc={doc} revision={revision} disabled={busy || calibrationDirty || editionDirty} save={save} position={position} dirty={reportCorrection}/>}<button type="button" onClick={()=>setKeyboardHelp(true)}>阅读快捷键</button>{keyboardHelp&&<dialog ref={helpDialog} role="dialog" aria-modal="true" aria-label="阅读快捷键" onCancel={event=>{event.preventDefault();setKeyboardHelp(false);}} onClose={()=>setKeyboardHelp(false)} onKeyDown={event=>{if(event.key==='Tab'){event.preventDefault();helpClose.current?.focus();}if(event.key==='Escape'){event.preventDefault();event.stopPropagation();setKeyboardHelp(false);}}}><h2>阅读快捷键</h2><p>在阅读正文获得焦点时：/ 查找，← / J 后退 5 秒，→ / L 前进 5 秒，空格 / K 播放或暂停，[ / ] 降低或提高倍率，G 定位当前原话，? 显示帮助。</p><p>{shortcutsEnabled?'阅读快捷键已开启':'阅读快捷键已关闭'}</p><button ref={helpClose} onClick={()=>setKeyboardHelp(false)}>关闭快捷键帮助</button></dialog>}<ReaderExports displayText={displayText} doc={doc} hasDrafts={anyDirty}/></section><p role="status" aria-live="polite">{status}</p></article>;
 }

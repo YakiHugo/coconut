@@ -1,4 +1,22 @@
 import type { AppSnapshot, Document, Media, RemoteMedia, StoreDependencies, Workspace } from './contracts';
+import * as Disfluency from '@coconut/reader/disfluency.js';
+function rebindImportedCleanup(source:Document,target:Document,strict=false){
+    const plan=source.reading_cleanup;
+    if(plan===undefined||plan===null)return target;
+    try{
+        target.reading_cleanup=Disfluency.rebindPlan(source as Disfluency.SourceDocument,target as Disfluency.SourceDocument,plan);
+    }catch{
+        const invalid=()=>Error('口语精简建议无效或与来源稿不一致，未导入。请重新生成建议，或从 JSON 副本移除 reading_cleanup 后重试。');
+        if(strict)throw invalid();
+        // Recovery retains opaque historical plans. A failed original check must
+        // never become an active plan merely because normalization/rekeying made
+        // its forged or stale signature happen to match the destination.
+        try{Disfluency.rebindPlan(target as Disfluency.SourceDocument,target as Disfluency.SourceDocument,plan);}
+        catch{return target;}
+        throw invalid();
+    }
+    return target;
+}
 export function createAppStore(deps: StoreDependencies) {
     let documents = deps.documents, activeKey = deps.active, revision = 0, workspace: Workspace = 'discover', message = '', dirty = false, storageInvalid = false;
     let messageGeneration=0,persistenceMessageGeneration:number|null=null;
@@ -68,7 +86,7 @@ export function createAppStore(deps: StoreDependencies) {
         if (!writable() || dirty)
             return null;
         const validated = deps.project(structuredClone(value),deps.validate(structuredClone(value)));
-        const doc = { ...validated, key: 'react-' + crypto.randomUUID() } as Document;
+        const doc = rebindImportedCleanup(value as Document,{ ...validated, key: 'react-' + crypto.randomUUID() } as Document,true);
         const preflight = pipeline.preflightDocuments([{ key: doc.key, identity: doc, kind: 'update' }]);
         if (!preflight.ok)
             throw Error(preflight.error?.message || '存储不能接收此内容');
@@ -106,11 +124,11 @@ export function createAppStore(deps: StoreDependencies) {
         const projectedDocuments=[...plan.library.documents],used=new Set(projectedDocuments.map(doc=>doc.key));
         for(const entry of plan.entries){
             const source=raw.get(entry.sourceKey);if(!source)throw Error('备份来源身份不完整。');
-            const projected=deps.project(source,{...deps.validate(structuredClone(source)),key:entry.document.key});
+            const projected=rebindImportedCleanup(source,deps.project(source,{...deps.validate(structuredClone(source)),key:entry.document.key}));
             if(entry.outcome==='duplicate'){
                 const comparable=(doc:Document)=>JSON.stringify({...doc,key:null});
                 if(comparable(projected)===comparable(entry.document))continue;
-                let key=source.key,suffix=1;while(used.has(key)){const tail='-restored-'+suffix++;key=source.key.slice(0,200-tail.length)+tail;}used.add(key);projectedDocuments.push({...projected,key});
+                let key=source.key,suffix=1;while(used.has(key)){const tail='-restored-'+suffix++;key=source.key.slice(0,200-tail.length)+tail;}used.add(key);projectedDocuments.push(rebindImportedCleanup(source,{...projected,key}));
             }else{const index=projectedDocuments.indexOf(entry.document);if(index<0)throw Error('恢复文档身份不完整。');projectedDocuments[index]=projected;}
         }
         plan.library.documents=projectedDocuments;

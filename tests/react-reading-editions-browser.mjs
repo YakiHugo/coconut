@@ -27,7 +27,8 @@ try{
  await page.goto(origin+'/#read/'+fixture.key);await expect(page.locator('.rw-passage').first()).toBeVisible();
  // The initial reading surface stays compact; preparation has one explicit entry.
  await expect(page.locator('.rw-passage').first()).toBeInViewport();
- await expect(page.locator('.rw-document-header select,.rw-edition-picker select')).toHaveCount(0);
+ await expect(page.locator('.rw-document-header select,.rw-edition-picker')).toHaveCount(0);
+ await expect(page.getByRole('combobox',{name:'阅读版本',exact:true})).toHaveCount(0);
  for(const selector of ['.rw-resource-processing','.rw-interview-generation','.rw-source'])await expect(page.locator(selector)).not.toBeVisible();
  const tools=page.getByRole('button',{name:'来源与整理',exact:true});await tools.click();
  const preparation=page.getByRole('dialog',{name:'来源与整理',exact:true});
@@ -47,13 +48,10 @@ try{
  await page.getByRole('button',{name:'来源与整理',exact:true}).click();await page.getByRole('button',{name:'访谈编辑',exact:true}).click();await page.getByRole('button',{name:'新建人工编辑稿',exact:true}).click();await expect(page.getByRole('region',{name:'编辑访谈稿',exact:true})).toBeVisible();
  assert.equal(await page.locator('audio').evaluate((node,original)=>node===original,player),true);
  await expect(page.locator('[data-source-id]')).toHaveCount(0);await expect(page.locator('.rw-edition-block')).toHaveCount(3);
- const version=page.getByRole('combobox',{name:'阅读版本',exact:true});
- await version.focus();await page.keyboard.press('ArrowDown');await expect(page.getByRole('listbox',{name:'阅读版本',exact:true})).toBeVisible();
- await page.keyboard.press('Home');await page.keyboard.press('Enter');await expect(page.locator('.rw-passage').first()).toBeVisible();await expect(version).toBeFocused();
- await version.click();await page.getByRole('listbox',{name:'阅读版本',exact:true}).getByRole('option').last().click();await expect(page.locator('.rw-edition-block')).toHaveCount(3);
- await version.click();await page.keyboard.press('Escape');await expect(page.getByRole('listbox')).toHaveCount(0);await expect(version).toBeFocused();
+ await expect(page.locator('.rw-edition-picker')).toHaveCount(0);
+ await expect(page.getByRole('combobox',{name:'阅读版本',exact:true})).toHaveCount(0);
  const answer=page.locator('.rw-edition-block').nth(1);await answer.getByRole('button',{name:'编辑本段',exact:true}).click();
- await expect(page.getByRole('combobox',{name:'阅读版本',exact:true})).toBeDisabled();
+ await expect(page.getByRole('combobox',{name:'阅读版本',exact:true})).toHaveCount(0);
  await page.getByRole('textbox',{name:'主题小标题',exact:true}).fill('为什么值得尝试');await page.getByRole('textbox',{name:'整理正文',exact:true}).fill('我觉得值得试试。\n\n但也可能失败。');
  await page.getByRole('button',{name:'保存本段编辑',exact:true}).click();await expect(page.locator('.rw-edition-edit')).toHaveCount(0);await expect(answer.locator('.rw-edition-text')).toHaveText('我觉得值得试试。\n\n但也可能失败。');
  await expect.poll(async()=>(await record()).document.reading_editions.editions[0].revision).toBe(2);
@@ -72,6 +70,8 @@ try{
  await answer.locator('summary').click();await expect(answer.locator('.rw-edition-evidence')).toContainText('我我觉得，呃，值得试试。');
  await answer.getByRole('button',{name:'回听来源 00:02–00:08',exact:true}).click();await expect.poll(()=>page.locator('audio').evaluate(audio=>audio.paused)).toBe(false);await page.getByRole('button',{name:'暂停播放',exact:true}).click();
  await answer.getByRole('button',{name:'打开对应原话',exact:true}).click();await expect(page.locator('[data-source-id="b"]')).toHaveText('我我觉得，呃，值得试试。');
+ assert.equal(await page.locator('audio').evaluate((node,original)=>node===original,player),true);
+ await page.getByRole('button',{name:/我的内容/}).click();await page.getByRole('combobox',{name:'搜索范围',exact:true}).selectOption('editions');await page.getByRole('searchbox',{name:'查找内容',exact:true}).fill('已核对');await expect(page.locator('.edition-library-search')).toContainText('编辑正文');await page.getByRole('button',{name:'打开编辑稿来源',exact:true}).click();await expect(page.locator('.rw-edition-block')).toHaveCount(3);await expect(page.locator('.rw-edition-block').nth(1)).toBeFocused();
  await page.reload();await expect(page.getByRole('region',{name:'编辑访谈稿',exact:true})).toBeVisible();await expect(page.locator('.rw-edition-block').nth(1)).toContainText('我觉得值得试试。');
  await page.setViewportSize({width:390,height:844});assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1));await mkdir(output,{recursive:true});await page.screenshot({path:path.join(output,'edition-interview-390.png')});
  await page.setViewportSize({width:1360,height:950});await page.screenshot({path:path.join(output,'edition-interview-1360.png')});
@@ -81,5 +81,5 @@ try{
  await page.reload();await expect(page.locator('.rw-edition-freshness')).toContainText('来源已变化，原文跳转与回听已停用。');await page.locator('.rw-edition-block').nth(1).locator('summary').click();
  await expect(page.locator('.rw-edition-block').nth(1).locator('.rw-edition-evidence')).toContainText('我我觉得，呃，值得试试。');await expect(page.getByRole('button',{name:'打开对应原话',exact:true})).toHaveCount(0);
  assert.deepEqual(errors,[]);assert.deepEqual(modelCalls,[]);
- console.log(JSON.stringify({passed:true,source_unchanged:true,separate_excerpt:true,shared_player:true,sqlite_reload:true,stale_evidence:true,mobile:true,model_calls:0}));
+ console.log(JSON.stringify({passed:true,source_unchanged:true,separate_excerpt:true,shared_player:true,sqlite_reload:true,stale_evidence:true,library_navigation:true,edition_picker_absent:true,mobile:true,model_calls:0}));
 }finally{await browser?.close();await server?.shutdown();await rm(directory,{recursive:true,force:true});}

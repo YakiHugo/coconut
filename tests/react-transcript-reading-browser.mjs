@@ -48,7 +48,7 @@ try {
  assert.equal(await page.locator('.rw-speaker-label').count(),await page.locator('.rw-passage').count());
  await expect(page.locator('.rw-passage').nth(1).locator('.rw-speaker-label')).toHaveText('说话人 1');
  await expect(page.locator('.rw-passage').nth(1).locator('.rw-cue-meta :is(button,a)')).toHaveCount(1);
- // The timestamp starts continuous playback, while explicit range listening still stops.
+ // The timestamp starts continuous playback and keeps going past the paragraph.
  await page.getByRole('button',{name:'载入原声（最多 200 MiB）',exact:true}).click();
  const audio=page.locator('audio');await expect.poll(()=>audio.evaluate(player=>player.duration)).toBe(260);const ownedMediaUrl=await audio.evaluate(player=>player.currentSrc||player.src);assert.equal(new URL(ownedMediaUrl).pathname,'/api/v1/source-media/content');assert.equal(sourceMediaRequests,1);
  assert.equal(await audio.evaluate(player=>player.paused),true,'Loading never starts playback');
@@ -180,20 +180,16 @@ try {
  await page.mouse.move(1335,120);await page.mouse.wheel(0,180);await settleScroll();
  const interrupted=await followGeometry();
  assert.ok(Math.abs(interrupted.top-interrupted.anchor)>100,'Manual scrolling interrupts the location animation');
- // Hidden playback cues must not clear an intentional reading filter.
- await page.getByRole('button',{name:'筛选与定位',exact:true}).click();
- await page.getByLabel('只看笔记',{exact:true}).check();
- await page.getByRole('button',{name:'关闭筛选与定位',exact:true}).click();
+ // Removed reading filters never hide source cues, including projects with saved notes.
+ await expect(page.getByRole('button',{name:/^筛选与定位/})).toHaveCount(0);
+ await expect(page.getByLabel('只看笔记',{exact:true})).toHaveCount(0);
+ await expect(page.locator('.rw-filter-status')).toHaveCount(0);
  await startFollowing('cue-0');
  await audio.evaluate(player=>{player.currentTime=140.25;player.dispatchEvent(new Event('timeupdate'));});await settleScroll();
- await expect(page.locator('[data-source-id]')).toHaveCount(1);
- await expect(page.locator('.rw-filter-status')).toContainText('只看笔记');
+ await expect(page.locator('[data-source-id]')).toHaveCount(fixture.segments.length);
  // A keyboard page scroll pauses follow just like a wheel gesture.
  await page.locator('.rw-original').first().evaluate(node=>node.focus({preventScroll:true}));
  await page.keyboard.press('PageDown');await expect(workspace).toHaveAttribute('data-following','false');
- await page.getByRole('button',{name:/^筛选与定位/}).click();
- await page.getByLabel('只看笔记',{exact:true}).uncheck();
- await page.getByRole('button',{name:'关闭筛选与定位',exact:true}).click();
  await page.locator('[data-source-id="cue-1"]').scrollIntoViewIfNeeded();
  await page.evaluate(()=>{
   const node=document.querySelector('[data-source-id="cue-1"]'),range=document.createRange();range.setStart(node.firstChild,2);range.setEnd(node.firstChild,8);
@@ -215,8 +211,8 @@ try {
  // Headless Chromium screenshots are authored UI evidence, not Podwise content.
  await mkdir(output,{recursive:true});await page.locator('.rw-passages').scrollIntoViewIfNeeded();
  await page.screenshot({path:path.join(output,'transcript-desktop.png')});
- await expect(page.locator('.rw-passage-notes')).toContainText(fixture.notes['cue-0']);
- await expect(page.locator('.rw-passage-notes')).toBeVisible();
+ await expect(page.locator('.rw-passage-notes')).toHaveCount(0);
+ await expect(workspace).not.toContainText(fixture.notes['cue-0']);
  assert.equal(await page.locator('.rw-passages details').count(),0);
  const selected=await page.evaluate(()=>{
   const first=document.querySelector('[data-source-id="cue-0"]'),last=document.querySelector('[data-source-id="cue-1"]');
@@ -274,11 +270,15 @@ try {
  await page.getByRole('button',{name:'返回摘要 ↑',exact:true}).click();await page.getByRole('button',{name:'回听摘要引用 · 03:58',exact:true}).click();
  await expect.poll(()=>audio.evaluate(node=>node.paused)).toBe(false);
  await audio.evaluate(node=>{node.currentTime=241;node.dispatchEvent(new Event('timeupdate'));});
- await expect.poll(()=>audio.evaluate(node=>node.paused)).toBe(true);
+ await expect.poll(()=>audio.evaluate(node=>node.paused)).toBe(false);
+ await expect(workspace).toHaveAttribute('data-following','true');
+ assert.ok(await audio.evaluate(node=>node.currentTime>=241),'summary playback continues past its cited cue');
+ await page.getByRole('button',{name:'暂停播放',exact:true}).click();
+ const keyboardOrigin=await audio.evaluate(node=>node.currentTime);
  await workspace.focus();await page.keyboard.press('ArrowRight');
- await expect.poll(()=>audio.evaluate(node=>node.currentTime)).toBe(245);
+ await expect.poll(()=>audio.evaluate(node=>node.currentTime)).toBe(keyboardOrigin+5);
  await page.keyboard.press('ArrowLeft');
- await expect.poll(()=>audio.evaluate(node=>node.currentTime)).toBe(240);
+ await expect.poll(()=>audio.evaluate(node=>node.currentTime)).toBe(keyboardOrigin);
  await page.keyboard.press(']');await expect.poll(()=>audio.evaluate(node=>node.playbackRate)).toBe(1.25);
  await page.keyboard.press('[');await expect.poll(()=>audio.evaluate(node=>node.playbackRate)).toBe(1);
  await page.getByRole('combobox',{name:'播放速度',exact:true}).click();
@@ -322,7 +322,7 @@ try {
  await page.getByRole('button',{name:'01:34 · 核对原文',exact:true}).click();await expect(page.locator('[data-source-id="visual-5"]')).toBeInViewport();
  await expect(page.getByRole('searchbox')).toHaveCount(0);await page.locator('.rw-original').last().focus();await page.keyboard.press('Control+f');const find=page.getByRole('searchbox',{name:'搜索原话、译文和笔记'});await expect(find).toBeFocused();await find.fill('不存在的关键词');await expect(page.locator('.rw-search-empty')).toBeVisible();await find.press('Escape');await expect(find).toHaveCount(0);await expect(page.locator('[data-source-id="visual-5"]')).toBeVisible();
  await page.setViewportSize({width:1360,height:1000});await page.getByRole('button',{name:'搜索文字稿',exact:true}).click();await find.fill('文字');await page.screenshot({path:path.join(output,'search-desktop.png')});await find.press('Escape');
- // Long speech, fast turn-taking and bilingual blocks share the same source anchors.
+ // Long speech and fast turn-taking keep source anchors while saved translations stay out of the reading flow.
  const longSentence='我们在这里完整解释一个观点，并且保留它的例子和限定条件。阅读时按文字长度分段，每一块都能回到对应的原声。';
  const mixedSegments=[...Array.from({length:18},()=>['讲述者',longSentence]),
   ...['对。','为什么？','因为条件变了。','明白。','不过有例外。','你继续。'].map((text,i)=>[i%2?'讲述者':'讨论者',text]),
@@ -336,13 +336,17 @@ try {
  const narrative=page.locator('.rw-passage:not(.rw-passage-compact)'),shortRows=page.locator('.rw-passage-compact');
  assert.ok(await narrative.count()>=3);await expect(shortRows).toHaveCount(6);
  assert.deepEqual(await shortRows.locator('[data-source-id]').evaluateAll(nodes=>nodes.map(node=>node.dataset.sourceId)),mixedSegments.slice(18,24).map(cue=>cue.id),'each fast reply remains its own reading block');
- const bilingual=await mixedRows.evaluateAll(rows=>rows.map(row=>({ids:[...row.querySelectorAll('[data-source-id]')].map(node=>node.dataset.sourceId),translation:row.querySelector('.rw-translation')?.textContent,label:row.querySelector('.rw-speaker-label')?.textContent,time:row.querySelector('.rw-cue-meta :is(button,a)')?.textContent})));
- assert.deepEqual(bilingual.flatMap(row=>row.ids),mixedSegments.map(cue=>cue.id));
- for(const row of bilingual){
+ const sourceRows=await mixedRows.evaluateAll(rows=>rows.map(row=>({ids:[...row.querySelectorAll('[data-source-id]')].map(node=>node.dataset.sourceId),text:row.querySelector('.rw-original').textContent,label:row.querySelector('.rw-speaker-label')?.textContent,time:row.querySelector('.rw-cue-meta :is(button,a)')?.textContent})));
+ assert.deepEqual(sourceRows.flatMap(row=>row.ids),mixedSegments.map(cue=>cue.id));
+ for(const row of sourceRows){
   const cues=row.ids.map(id=>mixedSegments.find(cue=>cue.id===id));
-  assert.equal(row.label,cues[0].speaker);assert.equal(row.translation,cues.map(cue=>cue.translations.en.text).join(' '));
+  assert.equal(row.label,cues[0].speaker);
+  assert.equal(row.text,cues.map((cue,index)=>(index?P.separator(cues[index-1].text,cue.text):'')+cue.text).join(''));
   assert.ok(row.time.includes(C.time(cues[0].start)));
  }
+ await expect(page.locator('.rw-passages .rw-translation')).toHaveCount(0);
+ const savedMixed=(await request('/api/v1/library/document?protocolVersion=1&key='+mixed.key)).record.document;
+ assert.deepEqual(savedMixed.segments.map(cue=>cue.translations),mixedSegments.map(cue=>cue.translations),'reading keeps saved translations intact for explicit capture');
  for(const [width,height,name] of [[1360,1000,'mixed-desktop'],[390,844,'mixed-mobile']]){
   await page.setViewportSize({width,height});await shortRows.first().scrollIntoViewIfNeeded();
   assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1));
@@ -413,7 +417,7 @@ try {
  // Paragraphs stay one Tab stop; Enter opens the active/first fragment, Tab reaches actions.
  await page.locator('.rw-original').first().focus();await page.keyboard.press('Enter');
  await expect(contextual).toBeVisible();assert.equal(await selectedWord(),'第一句话。');
- await page.keyboard.press('Tab');await expect(page.getByRole('button',{name:'回听所选片段',exact:true})).toBeFocused();
+ await page.keyboard.press('Tab');await expect(page.getByRole('button',{name:'从所选位置播放',exact:true})).toBeFocused();
  await page.keyboard.press('Escape');await expect(contextual).toHaveCount(0);
  // Double-click keeps the browser's smaller word selection instead of expanding to a sentence.
  await sentences.nth(1).dblclick();await expect(contextual).toBeVisible();
@@ -471,15 +475,16 @@ try {
  await page.screenshot({path:path.join(output,'short-listening-selection.png')});
  await page.getByRole('button',{name:'复制原话',exact:true}).click();
  assert.equal(await page.evaluate(()=>navigator.clipboard.readText()),clickedWord.text);
- await page.getByRole('button',{name:'回听所选片段',exact:true}).click();
+ await page.getByRole('button',{name:'从所选位置播放',exact:true}).click();
  await expect.poll(()=>audio.evaluate((player,start)=>player.currentTime>=start&&player.currentTime<start+1&&!player.paused,26+clickedWord.from*.2-.5)).toBe(true);
- await expect(contextual).toBeVisible();
- const reviewEnd=26+(clickedWord.from+clickedWord.text.length)*.2+.35;
- await audio.evaluate((player,end)=>{player.currentTime=end+.05;player.dispatchEvent(new Event('timeupdate'));},reviewEnd);
- await expect.poll(()=>audio.evaluate(player=>player.paused)).toBe(true);
- assert.ok(Math.abs(await audio.evaluate(player=>player.currentTime)-reviewEnd)<.02);
- await expect(page.getByRole('button',{name:'回听所选片段',exact:true})).toHaveText('▷ 再听一遍');
- await page.getByRole('button',{name:'关闭选文操作',exact:true}).click();
+ await expect(contextual).toHaveCount(0);
+ await expect(workspace).toHaveAttribute('data-following','true');
+ assert.equal(await selectedWord(),'','playing the clicked speech clears its selection');
+ const beyondSelection=26+(clickedWord.from+clickedWord.text.length)*.2+1;
+ await audio.evaluate((player,seconds)=>{player.currentTime=seconds;player.dispatchEvent(new Event('timeupdate'));},beyondSelection);
+ await expect.poll(()=>audio.evaluate(player=>!player.paused)).toBe(true);
+ assert.ok(await audio.evaluate((player,seconds)=>player.currentTime>=seconds, beyondSelection),'clicked playback continues past the excerpt instead of clamping');
+ await expect(page.getByRole('button',{name:'回听所选片段',exact:true})).toHaveCount(0);
  await audio.evaluate((player,start)=>{player.currentTime=start+.1;player.dispatchEvent(new Event('timeupdate'));},fragments[5].start);
  await expect(listening.nth(5)).toHaveClass(/rw-playing/);await expect(listening.nth(4)).not.toHaveClass(/rw-playing/);
  // Highlight changes inside one long cue share the same position as cue changes.
@@ -493,7 +498,7 @@ try {
   }
   await page.getByRole('button',{name:'暂停播放',exact:true}).click();
  }
- // A suspect phrase is selected with context and can be reviewed repeatedly in place.
+ // Clicking suspect speech selects context; Play starts continuous following without replay controls.
  const pointSource=page.locator('[data-source-id="timed-point"]');
  const clickGlyph=async(from,to=from+1)=>{
   await pointSource.scrollIntoViewIfNeeded();await settleScroll();
@@ -508,29 +513,32 @@ try {
   await clickGlyph(1);const reviewText=await selectedWord();
   assert.ok(reviewText.includes('甲也采访')&&reviewText.length>1,'a zero-duration suspect word has audible context');
   assert.equal(await audio.evaluate(player=>player.paused),true,'selection alone does not play');
-  const review=page.getByRole('button',{name:'回听所选片段',exact:true});await review.click();
+  const selectedPlay=page.getByRole('button',{name:'从所选位置播放',exact:true});await selectedPlay.click();
   await expect.poll(()=>audio.evaluate(player=>!player.paused&&player.currentTime>=79.5&&player.currentTime<80.5)).toBe(true);
-  await expect(workspace).toHaveAttribute('data-following','false');
+  await expect(workspace).toHaveAttribute('data-following','true');
+  await expect(contextual).toHaveCount(0);
   await audio.evaluate(player=>{player.currentTime=82.4;player.dispatchEvent(new Event('timeupdate'));});
-  await expect.poll(()=>audio.evaluate(player=>player.paused)).toBe(true);
-  assert.ok(Math.abs(await audio.evaluate(player=>player.currentTime)-82.35)<.02);
-  assert.equal(await selectedWord(),reviewText,'the highlighted comparison text remains after stopping');
-  await expect(review).toHaveText('▷ 再听一遍');await review.click();
-  await expect.poll(()=>audio.evaluate(player=>!player.paused&&player.currentTime>=79.5&&player.currentTime<80.5)).toBe(true);
+  await expect.poll(()=>audio.evaluate(player=>!player.paused)).toBe(true);
+  assert.ok(await audio.evaluate(player=>player.currentTime>=82.4),'clicked playback keeps going past the whole selected context');
+  assert.equal(await selectedWord(),'','continuous playback clears the comparison selection');
+  await expect(selectedPlay).toHaveCount(0);
+  await expect(page.getByRole('button',{name:'回听所选片段',exact:true})).toHaveCount(0);
+  await expect(page.getByRole('button',{name:'重听刚才所选',exact:true})).toHaveCount(0);
   await page.getByRole('button',{name:'暂停播放',exact:true}).click();
   await expect.poll(()=>audio.evaluate(player=>player.paused)).toBe(true);
-  await page.screenshot({path:path.join(output,'review-passage-'+width+'.png')});
+  await page.screenshot({path:path.join(output,'continuous-selected-playback-'+width+'.png')});
   await clickGlyph(18);const contextText=await selectedWord();assert.ok(contextText.includes('founder founder'));
   await page.keyboard.press(process.platform==='darwin'?'Meta+c':'Control+c');
   assert.equal(await page.evaluate(()=>navigator.clipboard.readText()),contextText,'keyboard copy uses the highlighted passage');
   await page.getByRole('button',{name:'复制原话',exact:true}).click();assert.equal(await page.evaluate(()=>navigator.clipboard.readText()),contextText);
-  await review.focus();await page.keyboard.press('Enter');
+  const overflow=await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth);assert.equal(overflow,false,'selected actions fit the narrow viewport');
+  await selectedPlay.focus();await page.keyboard.press('Enter');
   await expect.poll(()=>audio.evaluate(player=>!player.paused)).toBe(true);
+  await expect(workspace).toHaveAttribute('data-following','true');
+  await expect(contextual).toHaveCount(0);
   await page.getByRole('button',{name:'暂停播放',exact:true}).click();
   await expect.poll(()=>audio.evaluate(player=>player.paused)).toBe(true);
   await expect(page.getByRole('button',{name:'播放原声',exact:true})).toBeVisible();
-  await page.getByRole('button',{name:'关闭选文操作',exact:true}).click();
-  const overflow=await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth);assert.equal(overflow,false,'review actions fit the narrow viewport');
   await clickGlyph(21,23);const emojiContext=await selectedWord();assert.ok(emojiContext.includes('🥥')&&emojiContext.length>2,'surrogate pairs stay inside the full review context');
   await page.getByRole('button',{name:'关闭选文操作',exact:true}).click();
  }

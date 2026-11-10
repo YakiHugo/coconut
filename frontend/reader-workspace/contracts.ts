@@ -91,7 +91,6 @@ export interface ReaderWorkspaceProps extends ReaderSnapshot {
     onViewChange?:(view:ReaderView)=>void;
     resumePosition?:ReaderResumePosition|null;
     onVisibleSelection?:(selection:{key:string;revision:number;cueIds:string[]})=>void;
-    onReviewTranslation?:(cueId:string)=>void;
     navigationRequest?:ReaderNavigationRequest|null;
     onNavigationHandled?:(request:ReaderNavigationRequest)=>void;
     onSaveDocument(next: ReaderDocument, expected: {

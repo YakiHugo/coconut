@@ -1359,7 +1359,10 @@
             const words=s.words?.map(w=>{
              if(!w||typeof w.word!=='string'||!Number.isFinite(w.start)||!Number.isFinite(w.end)||
                 w.start<s.start-.05||w.start<priorWord-.05||w.end<w.start||w.end>s.end+.05)throw new Error('逐词时间无效');
-             priorWord=w.start;return {word:w.word,start:w.start,end:w.end};
+	             const offsets=[w.text_start,w.text_end].every(value=>value===undefined||Number.isSafeInteger(value)&&value>=0&&value<=s.text.length)&&
+	              (w.text_start===undefined||w.text_end===undefined||w.text_end>=w.text_start);
+	             priorWord=w.start;return {word:w.word,start:w.start,end:w.end,
+	              ...(offsets&&w.text_start!==undefined?{text_start:w.text_start}:{}),...(offsets&&w.text_end!==undefined?{text_end:w.text_end}:{})};
             });
 			prior = s.start;
 			const id = typeof s.id === "string" ? s.id : "segment-" + (i + 1);
@@ -1416,6 +1419,9 @@
   const excerpts=exactExcerpts(data),excerptNotes=exactExcerptNotes(data,excerpts);
 		return {
 			notes,
+	   // Plans are disposable and checked against the current source by the
+	   // reading/import consumer. Keep stale or malformed historical data opaque.
+	   ...(data.reading_cleanup!==undefined?{reading_cleanup:root.structuredClone(data.reading_cleanup)}:{}),
    ...(readingEditions?{reading_editions:readingEditions}:{}),
    ...(chapters!==undefined?{reading_chapters:chapters}:{}),
    ...(excerpts?.length?{exact_excerpts:excerpts}:{}),
@@ -1946,7 +1952,11 @@
 		if (filename.toLowerCase().endsWith(".json")){
    const data=JSON.parse(text);
    if(data?.format==='coconut-library')throw new Error('这是整书架备份，请使用「恢复书架备份」');
-			return {document:validate(data), diagnostics:[]};
+	   const document=validate(data);
+	   // A cleanup signature includes the exporting project key. Retain it until
+	   // the store verifies the original source and assigns a fresh import key.
+	   if(data.reading_cleanup!==undefined&&typeof data.key==='string')document.key=data.key;
+			return {document, diagnostics:[]};
   }
 		const isVtt = filename.toLowerCase().endsWith(".vtt") || /^(?:\uFEFF)?WEBVTT(?:[ \t]|\r?\n|$)/.test(text);
 		const segments = [], diagnostics = [];

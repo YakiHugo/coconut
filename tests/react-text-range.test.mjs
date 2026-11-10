@@ -38,3 +38,16 @@ test('caret hit testing checks both glyph edges, keeps surrogate pairs intact an
         assert.equal(textOffsetAtPoint(root,10,10),null);
     }finally{await w.happyDOM.close();}
 });
+
+test('half-open glyph ranges exclude display-only punctuation and line-break nodes at source boundaries',async()=>{
+    const w=new Window();
+    try{
+        const root=w.document.createElement('p');root.innerHTML='前<span data-cleanup-mark="，"></span><span data-cleanup-break="true"></span><b>后</b><span data-cleanup-mark="。"></span>';
+        const next=root.querySelector('b').firstChild,first=root.firstChild;
+        const glyph=textRange(root,1,2);
+        assert.equal(glyph.toString(),'后');assert.equal(glyph.startContainer,next);assert.equal(glyph.startOffset,0);assert.equal(glyph.endContainer,next);assert.equal(glyph.endOffset,1);
+        const previous=textRange(root,0,1);assert.equal(previous.startContainer,first);assert.equal(previous.endContainer,first);assert.equal(previous.toString(),'前');
+        const collapsed=textRange(root,1,1);assert.equal(collapsed.collapsed,true);assert.equal(collapsed.startContainer,next);
+        assert.equal(textRange(root,2,2).collapsed,true);assert.equal(textRange(root,3,3),null);
+    }finally{await w.happyDOM.close();}
+});
