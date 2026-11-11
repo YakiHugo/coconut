@@ -201,5 +201,5 @@ test('sample language hint accepts a matching returned regional language without
 
 test('ingestion API preserves safe reader-parse failure codes in live evidence',async t=>{
  const f=await helper(t,{...caption,captionBase64:Buffer.concat([Buffer.from('WEBVTT\n\n'),Buffer.from([255])]).toString('base64')});
- const report=await runSmoke({python:f.python});assert.equal(report.api_path,'/api/v1/ingestions');assert.equal(report.import_status,'http_error');assert.equal(report.reason,'caption_parse_failed');assert.equal(report.diagnostic.stage,'reader_parse');assert.equal(report.outcome,'unverified');safe(report);
+ const report=await runSmoke({python:f.python});assert.equal(report.api_path,'/api/v1/ingestions');assert.equal(report.import_status,'caption_parse_failed');assert.equal(report.reason,'caption_parse_failed');assert.equal(report.diagnostic.stage,'reader_parse');assert.equal(report.outcome,'unverified');safe(report);
 });
