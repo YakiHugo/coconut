@@ -64,7 +64,12 @@ export function recordSourceReceipt(report,input,payload,httpStatus){
   report.captions={state:status==='no_matching_captions'?'not_available':'blocked',status,...(diagnostic?{diagnostic}:{})};
   // Explicit owner media is a separate request, never an automatic fallback.
   // Only a subtitle-specific login gate may pass an access-restricted caption result.
-  return status==='no_matching_captions'||input.provider==='bilibili'&&status==='access_restricted'&&diagnostic?.reason==='subtitle_login_required'?'/api/videos/source-media':null;
+  const independent=receipt.error?.audio_fallback;
+  const explicitSource=independent?.endpoint==='/api/videos/media'&&independent.url===input.url&&independent.purpose==='source';
+  const captionStageFailure=['caption_file_invalid','caption_parse_failed','extractor_failed','network_unavailable'].includes(status)&&
+   ['caption_download','caption_parse','caption_output','reader_parse'].includes(diagnostic?.stage);
+  const independentAllowed=captionStageFailure||input.provider==='youtube'&&status==='subtitle_token_required'&&diagnostic?.reason==='subtitle_token_required';
+  return status==='no_matching_captions'||explicitSource&&independentAllowed||input.provider==='bilibili'&&status==='access_restricted'&&diagnostic?.reason==='subtitle_login_required'?'/api/videos/source-media':null;
  }
  const doc=receipt?.transcript?.document,cues=doc?.segments,provenance=doc?.provenance;
  if(receipt?.state!=='ready'||doc?.source_url!==input.url||provenance?.source_platform!==input.provider||
@@ -110,6 +115,7 @@ export async function recordSourceMedia(report,input,response,route){
  }catch(error){await reader.cancel().catch(()=>{});throw error;}finally{reader.releaseLock();}
  Object.assign(report.media,{state:'ready',downloaded:true,bytes,type:meta.type,kind:meta.kind,
   duration_seconds:meta.duration,sha256:meta.sha256,subtitle_check:meta.subtitle_check});
+ if(report.availability)report.availability={...report.availability,metadata:'validated',media:'available'};
  return {bytes:Buffer.concat(chunks),type:meta.type,kind:meta.kind,format:meta.format};
 }
 

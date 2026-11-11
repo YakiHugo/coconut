@@ -75,7 +75,22 @@ class MediaTests(unittest.TestCase):
         for change in [{'ext':'webm'}, {'has_drm':True}, {'protocol':'m3u8_native'}, {'vcodec':'h264'}]:
             self.assertIsNone(media.choose_audio({'formats':[{**original,**change},foreign_default]},'youtube'))
         unknown={**FORMAT,'language':None,'language_preference':-1}
-        self.assertIsNone(media.choose_audio({'formats':[unknown]},'youtube'))
+        unlabeled=media.choose_audio({'formats':[{**unknown,'format_id':'140-drc','abr':32},unknown]},'youtube')
+        self.assertEqual(unlabeled['format_id'],'140')
+        self.assertIsNone(unlabeled['_audio_language'])
+        self.assertEqual(unlabeled['_audio_language_basis'],'unlabeled_single_source')
+        self.assertEqual(media.choose_media({'formats':[unknown]},'youtube')['_audio_role'],'unknown')
+        self.assertIsNone(media.choose_audio({'formats':[unknown,{**unknown,'language':'fr','language_preference':5}]},'youtube'))
+        single={**FORMAT,'language':'en','language_preference':-1}
+        chosen=media.choose_audio({'formats':[{**single,'abr':128},single]},'youtube')
+        self.assertEqual(chosen['_audio_language'],'en')
+        self.assertEqual(chosen['_audio_language_basis'],'single_language_track')
+        self.assertIsNone(media.choose_audio({'formats':[single,{**single,'language':'fr'}]},'youtube'))
+        webm={**single,'ext':'webm','language':'en'}
+        self.assertIsNone(media.choose_audio({'formats':[{**single,'language':'fr'},webm]},'youtube'))
+        drm={**single,'language':'en','has_drm':True}
+        self.assertIsNone(media.choose_audio({'formats':[{**single,'language':'fr'},drm]},'youtube'))
+        self.assertIsNone(media.choose_audio({'formats':[{**unknown,'language':'en_desc'}]},'youtube'))
         default={**FORMAT,'language_preference':5}
         self.assertIsNone(media.choose_audio({'formats':[default]},'youtube'))
         self.assertIsNone(media.choose_audio({'formats':[foreign_default]},'youtube'))
@@ -127,6 +142,9 @@ class MediaTests(unittest.TestCase):
         self.assertEqual(selected['_audio_role'],'unknown')
         self.assertIsNone(selected['_audio_language'])
         self.assertEqual(selected['_audio_language_basis'],'platform_video_stream')
+        original_webm={**FORMAT,'ext':'webm','vcodec':'none','language':'en','language_preference':10}
+        other={**item,'language':'fr','language_preference':5}
+        self.assertIsNone(media.choose_media({'formats':[original_webm,other]},'youtube'))
         default={**item,'language':'en','language_preference':5}
         self.assertEqual(media.choose_media({'formats':[default]},'youtube')['_audio_role'],'default')
         for change in [{'format_id':'22'},{'fragments':[{}]},{'has_drm':True},{'protocol':'m3u8_native'},{'acodec':'none'},{'language':'en','language_preference':-1},{'url':CDN+'&pot=token'}]:

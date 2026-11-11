@@ -27,8 +27,15 @@ file-write limits, **not** an OS memory sandbox or a claim that TCP/TLS/header
 buffers and total process memory have a hard bound. No unbounded decoder/flush
 is used; a small compressed text body is held only within the response limits.
 
-Only direct original M4A or supported single MP4 is accepted. This is not general
-HLS/DASH merging, ffmpeg conversion, JS challenges, PO-token provisioning or ASR.
+Only a direct M4A or supported single MP4 is accepted. This is not general
+HLS/DASH merging, ffmpeg conversion, PO-token provisioning or ASR. When the
+owner process has a local Deno binary, YouTube uses the pinned extractor's
+default clients and solves player signatures locally. That does not fetch a PO
+token, read cookies, or switch clients after an access denial. A platform
+original track is still preferred. If every eligible track shares one language
+and none is marked default or descriptive, that M4A can start downloading; the
+receipt keeps the language but does not claim it is proven original speech.
+A completely unlabeled soundtrack is saved as unlabeled audio.
 
 Native yt-dlp is **not an SSRF sandbox**. Local metadata redirects use upstream
 semantics rather than Coconut's old per-hop public-IP pinning. This is confined
@@ -108,9 +115,11 @@ installed Mac application or publish release artifacts.
 ## Subtitle PO-token observations are not whole-video access denials
 
 The pinned yt-dlp extractor can detect a subtitle PO-token requirement while
-parsing a player response, before requesting any subtitle bytes. Coconut keeps
-that immediate stop (including an explicit media action whose extraction reaches
-this observation), but reports `subtitle_token_required`, not `access_restricted`.
+parsing a player response, before requesting any subtitle bytes. Caption import
+stops immediately and reports `subtitle_token_required`, not `access_restricted`.
+That stop does not download media. A later, explicit source action may check
+public media without requesting subtitles or a token. Login and HTTP denials
+remain terminal and do not offer that action.
 The owner API emits only these conservative availability observations:
 
 ```json
@@ -119,9 +128,10 @@ The owner API emits only these conservative availability observations:
 
 This is not proof that all metadata was validated, that the video needs account
 login, that captions are absent, or that its media can or cannot be downloaded.
-A login/HTTP denial still retains its separate access-restricted status. No
-subtitle request, media fallback, token generation, alternate client, or automatic
-retry is enabled by this status. The reader offers the original site and existing
+A login/HTTP denial still retains its separate access-restricted status. The
+token observation does not request subtitles, generate a token, switch clients,
+or automatically retry. The reader can offer a separate source check; it does
+not start that check, and it still offers the original site and existing
 subtitle-file import rather than login or repeated-request advice. Reports remain
 failed/blocked with persistence and restart unattempted. Authored `xpe`/`xpv`
 fixtures cover human/automatic subtitles and caption/media actions; they are not

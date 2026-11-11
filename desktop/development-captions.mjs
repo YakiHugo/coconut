@@ -1,6 +1,7 @@
-/** Opt-in source helper. Never searches PATH, installs dependencies or invokes ASR. */
+/** Opt-in source helper. The helper process does not search PATH; owner startup may resolve a local Deno binary. Never installs dependencies or invokes ASR. */
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
+import {access,constants} from 'node:fs/promises';
 import {readFile,mkdtemp,mkdir,rm} from 'node:fs/promises';
 import {readHelperMedia} from './caption-helper-media.mjs';
 import {validateSourceNetwork} from './source-network.mjs';
@@ -41,7 +42,17 @@ export function validateCaptionProxy(value){
  if(!match||Number(match[2])>65535)throw fail('CAPTION_PROXY_CONFIGURATION','字幕代理仅支持显式本机 HTTP 端口，不能包含凭据');
  return `http://${match[1]}:${match[2]}`;
 }
-export function createDevelopmentCaptionHelper({python,proxy=null,network=null,bilibiliSession=null,timeoutMs=HELPER_LIMITS.timeoutMs,mediaTimeoutMs=910000,tempRoot=tmpdir(),onSpawn,detached=process.platform!=='win32'}={}){
+/** Owner startup only. Request JSON cannot name this executable. */
+export async function resolvePlayerJsRuntime(env=process.env){
+ const explicit=env.COCONUT_DENO;
+ const candidates=explicit?[explicit]:typeof env.PATH==='string'?env.PATH.split(':').filter(Boolean).map(dir=>path.join(dir,'deno')):[];
+ for(const candidate of candidates){
+  if(typeof candidate!=='string'||!path.isAbsolute(candidate)||path.basename(candidate)!=='deno')continue;
+  try{await access(candidate,constants.X_OK);return candidate;}catch{/* try the next owner PATH entry */}
+ }
+ return null;
+}
+export function createDevelopmentCaptionHelper({python,proxy=null,network=null,bilibiliSession=null,playerRuntime=null,timeoutMs=HELPER_LIMITS.timeoutMs,mediaTimeoutMs=910000,tempRoot=tmpdir(),onSpawn,detached=process.platform!=='win32'}={}){
  if(typeof detached!=='boolean')throw fail('CAPTION_CONFIGURATION','无效的字幕进程组配置');
  if(typeof python!=='string'||!path.isAbsolute(python))throw fail('CAPTION_CONFIGURATION','字幕 Python 必须是已安装解释器的绝对路径');
  if(!Number.isInteger(timeoutMs)||timeoutMs<1||timeoutMs>HELPER_LIMITS.timeoutMs)throw fail('CAPTION_LIMIT','无效的字幕助手限制');
@@ -57,7 +68,7 @@ export function createDevelopmentCaptionHelper({python,proxy=null,network=null,b
    try{
     directory=await mkdtemp(path.join(tempRoot,'coconut-dev-caption-'));
     for(const name of ['home','tmp','config','cache','data','empty-bin'])await mkdir(path.join(directory,name),{mode:0o700});
-    const output=await runCaptionProcess(python,input,{directory,signal:signal?AbortSignal.any([signal,controller.signal]):controller.signal,
+    const output=await runCaptionProcess(python,input,{directory,playerRuntime,signal:signal?AbortSignal.any([signal,controller.signal]):controller.signal,
      timeoutMs:input.operation==='version'?Math.min(timeoutMs,10000):input.operation==='extract-development-audio'?mediaTimeoutMs:timeoutMs,maxOutputBytes:HELPER_LIMITS.outputBytes,onSpawn,detached,args:['-I','-B','-c',launcher]});
     let result;try{result=JSON.parse(output);}catch{throw fail('CAPTION_OUTPUT','字幕助手没有返回完整元数据');}
     if(!result||typeof result!=='object'||Array.isArray(result))throw fail('CAPTION_OUTPUT','字幕助手没有返回完整元数据');

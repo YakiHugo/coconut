@@ -23,11 +23,11 @@ test('actual owner API preserves subtitle requirement, unknown media and no auto
  assert.equal(response.status,200);const payload=await response.json(),receipt=payload.ingestion;
  assert.equal(receipt.state,'blocked');assert.equal(receipt.error.code,'subtitle_token_required');
  assert.deepEqual(receipt.error.availability,availability);assert.deepEqual(receipt.error.diagnostic,diagnostic);
- assert.equal(receipt.error.audio_fallback,undefined);assert.equal(receipt.transcript,null);assert.equal(receipt.project,null);
+ assert.deepEqual(receipt.error.audio_fallback,{endpoint:'/api/videos/media',url,language:null,purpose:'source'});assert.equal(receipt.transcript,null);assert.equal(receipt.project,null);
  assert.match(receipt.error.message,/客户端来源证明，不等于账号登录/);assert.match(receipt.error.message,/媒体是否可取得尚未知/);
  assert.doesNotMatch(JSON.stringify(receipt),/PRIVATE/);assert.equal(captions,1);assert.equal(media,0);
  const input=sourceInput(url,'en',true),report=initialSourceReport(input);
- assert.equal(recordSourceReceipt(report,input,payload,200),null);assert.equal(report.passed,false);
+ assert.equal(recordSourceReceipt(report,input,payload,200),'/api/videos/source-media');assert.equal(report.passed,false);
  assert.deepEqual(report.availability,availability);assert.equal(report.metadata.state,'unverified');assert.equal(report.captions.state,'blocked');
  assert.equal(report.media.state,'not_attempted');assert.equal(report.persist.state,'not_attempted');assert.equal(report.restart.state,'not_attempted');
  // An already explicit, separate media request can hit the same extraction stop:

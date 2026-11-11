@@ -90,7 +90,9 @@ test('Xiaoyuzhou discovery recognizes old show projects without rewriting saved 
  const sources=createPodcastSources({fetchResource:async url=>{assert.equal(url,source_url,'reopening must not request original media');return {url,type:'text/html',body};}});
  const x=await setup({service:createIngestionService({podcastSources:sources})},[old]);
  try{
-  await x.load(source_url);await x.open(old.title);await wait(()=>x.w.document.querySelector('.source-project-choice'));
+  x.input(x.w.document.querySelector('#source-url'),source_url);
+  x.w.document.querySelector('#source-url').closest('form').dispatchEvent(new x.w.Event('submit',{bubbles:true,cancelable:true}));
+  await wait(()=>x.w.document.querySelector('.source-project-choice'));
   assert.equal(x.docs().length,1);assert.equal(x.docs()[0].podcast_source.feed_url,feed);
   x.button('继续已有项目 · '+old.key.slice(-8)).click();await wait(()=>x.w.document.querySelector('.reader-workspace'));
   assert.equal(x.docs()[0].key,old.key);assert.equal(x.docs()[0].project_note,old.project_note);assert.equal(x.docs()[0].podcast_source.feed_url,feed);
