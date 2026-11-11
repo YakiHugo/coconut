@@ -2,7 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
-import {createVideoAudioService} from '../desktop/video-audio-service.mjs';
+import {createVideoAudioService,VideoSourceError,videoSourceErrorDetails} from '../desktop/video-audio-service.mjs';
 import {createIngestionService} from '../desktop/ingestion-service.mjs';
 import {startBridge} from '../desktop/server.mjs';
 const url='https://www.youtube.com/watch?v=abcdefghijk';
@@ -40,6 +40,32 @@ test('explicit audio action rechecks captions and preserves precise terminal fai
  const result=await service.download({url,consent:true});
  assert.deepEqual(result.body,bytes);assert.equal(result.source.url,url);assert.equal(result.source.sha256,sha256);
  assert.equal(result.source.subtitle_check,'no_matching_captions');assert.equal(result.source.format_id,'140');
+});
+test('helper process failures become finite source errors without the raw message',async()=>{
+ const secret='https://secret.example/helper-timeout';
+ const error=Error(secret);error.name='CaptionHelperError';error.code='CAPTION_TIMEOUT';
+ await assert.rejects(createVideoAudioService({sourceMedia:true,helper:{extractAudio:async()=>{throw error;}}}).download({url,consent:true},{purpose:'source'}),failure=>{
+  assert.ok(failure instanceof VideoSourceError);
+  assert.equal(failure.code,'extractor_failed');
+  assert.equal(failure.diagnostic.stage,'helper_execution');
+  assert.equal(failure.diagnostic.reason,'helper_error');
+  assert.doesNotMatch(failure.message,/secret/);
+  return true;
+ });
+});
+test('single-language youtube audio keeps the language without claiming it is original',async()=>{
+ const result=valid();
+ result.source.audio_language='en';result.source.audio_language_basis='single_language_track';result.source.audio_role='unknown';
+ const downloaded=await createVideoAudioService({helper:{extractAudio:async()=>result}}).download({url,consent:true});
+ assert.equal(downloaded.source.audio_language,'en');assert.equal(downloaded.source.audio_role,'unknown');
+ result.source.audio_role='original';
+ await assert.rejects(createVideoAudioService({helper:{extractAudio:async()=>result}}).download({url,consent:true}),/校验/);
+});
+test('unlabeled youtube audio is accepted without claiming an original language',async()=>{
+ const result=valid();
+ result.source.audio_language=null;result.source.audio_language_basis='unlabeled_single_source';result.source.audio_role='unknown';
+ const downloaded=await createVideoAudioService({helper:{extractAudio:async()=>result}}).download({url,consent:true});
+ assert.equal(downloaded.source.audio_language,null);assert.equal(downloaded.source.audio_role,'unknown');
 });
 test('audio receipt must match canonical source, bytes and bounded duration',async()=>{
  for(const mutate of [r=>r.source.id='different',r=>r.source.url='https://evil.example',r=>r.source.subtitle_check='failed',r=>r.source.audio_language_basis='guessed',r=>r.source.audio_language=null,r=>r.source.duration=Infinity,r=>r.media.sha256='a'.repeat(64),r=>r.media.bytes++,r=>r.media.type='video/mp4',r=>r.bytes=Buffer.from('not media')]){
@@ -102,4 +128,27 @@ test('independent source action can truthfully report subtitles not requested',a
  const service=createVideoAudioService({sourceMedia:true,helper:{extractAudio:async()=>result}});
  assert.equal((await service.download({url,consent:true},{purpose:'source'})).source.subtitle_check,'not_requested');
  await assert.rejects(service.download({url,consent:true}),/校验/);
+});
+test('video failure construction accepts finite observations and cannot publish upstream text',async()=>{
+ const secret='https://secret.example/signed?token=top-secret /private/owner/media.mp4';
+ const diagnostic={stage:'metadata',reason:'login_required',requests_attempted:1,responses_received:1};
+ const error=new VideoSourceError('access_restricted',{diagnostic:{...diagnostic,url:secret},message:secret,cause:secret});
+ assert.equal(error.status,409);assert.match(error.message,/明确要求登录或认证/);assert.deepEqual(error.diagnostic,diagnostic);
+ assert.deepEqual(videoSourceErrorDetails(error),{code:'access_restricted',diagnostic});
+ assert.throws(()=>{error.message=secret;},TypeError);assert.doesNotMatch(JSON.stringify(error),/secret|private|signed/);
+ assert.throws(()=>new VideoSourceError(secret),/未知的视频来源错误类型/);
+ const service=createVideoAudioService({sourceMedia:true,helper:{extractAudio:async()=>({status:secret,message:secret,diagnostic:{...diagnostic,reason:secret},availability:{media:'available'}})}});
+ await assert.rejects(service.download({url,consent:true},{purpose:'source'}),error=>{
+  assert.ok(error instanceof VideoSourceError);assert.equal(error.code,'extractor_failed');
+  assert.equal(error.diagnostic,undefined);assert.equal(error.availability,undefined);assert.doesNotMatch(error.message,/secret|private|signed/);return true;
+ });
+});
+test('source media absence and service configuration errors make only supported claims',async()=>{
+ const service=createVideoAudioService({sourceMedia:true,helper:{extractAudio:async()=>({status:'media_unavailable'})}});
+ await assert.rejects(service.download({url,consent:true},{purpose:'source'}),error=>error instanceof VideoSourceError&&error.code==='media_unavailable'&&!/没有.*字幕/.test(error.message));
+ await assert.rejects(service.download({url,consent:true}),/已确认没有匹配字幕/);
+ await assert.rejects(createVideoAudioService().download({url,consent:true},{purpose:'source'}),error=>error instanceof VideoSourceError&&error.status===503&&error.code==='video_media_unavailable'&&/未配置/.test(error.message));
+ await assert.rejects(createVideoAudioService({helper:{extractAudio:()=>assert.fail('Unconfigured source helper must not run')}}).download({url,consent:true},{purpose:'source'}),error=>error instanceof VideoSourceError&&error.status===503&&error.code==='video_source_unavailable');
+ const token=new VideoSourceError('subtitle_token_required',{diagnostic:{stage:'metadata',reason:'subtitle_token_required',requests_attempted:2,responses_received:1}});
+ assert.deepEqual(token.availability,{metadata:'unverified',captions:'token_required',media:'unknown'});assert.match(token.message,/媒体是否可取得尚未知/);
 });

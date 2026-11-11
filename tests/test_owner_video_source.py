@@ -16,11 +16,28 @@ if AVAILABLE:
     from yt_dlp.networking import Request, Response
     from yt_dlp.networking.common import RequestDirector
     from yt_dlp.networking.exceptions import HTTPError
+    from yt_dlp.extractor.youtube.pot._director import PoTokenRequestDirector
 
 MEDIA = b'\x00\x00\x00\x18ftypM4A ' + b'authored media bytes'
 CDN = 'https://rr1---sn-abcdef.googlevideo.com/videoplayback?sig=public'
 FORMAT = {'url':CDN,'ext':'m4a','vcodec':'none','acodec':'mp4a.40.2','protocol':'https','abr':64,'format_id':'140','language':'en','language_preference':10}
 INFO = {'id':'BaW_jenozKc','duration':4,'title':'Authored','live_status':'not_live','formats':[FORMAT],'subtitles':{},'automatic_captions':{}}
+
+
+def youtube_media_player(marker='xpe', automatic=False):
+    """Authored WEB player: restricted captions and a public direct itag18."""
+    player = copy.deepcopy(PLAYER)
+    track = player['captions']['playerCaptionsTracklistRenderer']['captionTracks'][0]
+    track['baseUrl'] += '&exp=' + marker
+    if automatic:
+        track.update(kind='asr', vssId='a.en')
+    player['streamingData'] = {'formats': [{
+        'itag': 18, 'url': CDN, 'mimeType': 'video/mp4; codecs="avc1.42001E, mp4a.40.2"',
+        'width': 640, 'height': 360, 'quality': 'medium', 'bitrate': 200000,
+        'contentLength': str(len(MEDIA)),
+        'audioTrack': {'id': 'en.0', 'displayName': 'English (original)', 'audioIsDefault': True},
+    }]}
+    return player
 
 
 def fixture(request):
@@ -52,7 +69,7 @@ class NativeSourceTests(unittest.TestCase):
     def test_subtitle_po_requirement_stops_locally_without_asserting_video_or_media_denial(self):
         for marker in ('xpe', 'xpv'):
             for automatic in (False, True):
-                for action in ('captions', 'fallback', 'source'):
+                for action in ('captions', 'fallback', 'source_without_output'):
                     player = copy.deepcopy(PLAYER)
                     track = player['captions']['playerCaptionsTracklistRenderer']['captionTracks'][0]
                     track['baseUrl'] += '&exp=' + marker
@@ -60,11 +77,113 @@ class NativeSourceTests(unittest.TestCase):
                         track.update(kind='asr', vssId='a.en')
                     with self.subTest(marker=marker, automatic=automatic, action=action), tempfile.TemporaryDirectory() as tmp, patch.dict(globals(), {'PLAYER': player}), patch.object(RequestDirector, 'send', side_effect=fixture) as send, patch.object(source, 'download_media', side_effect=AssertionError('media must not start')) as media:
                         output = Path(tmp) / 'public-media.bin'
-                        result = source.acquire_video(YOUTUBE, 'en', **({} if action == 'captions' else {'output': output, 'purpose': 'source' if action == 'source' else None}))
+                        result = source.acquire_video(YOUTUBE, 'en', **(
+                            {} if action == 'captions' else {'purpose': 'source'} if action == 'source_without_output' else {'output': output}))
                         self.assertEqual(result, {'status': 'subtitle_token_required', 'diagnostic': {'stage': 'metadata', 'reason': 'subtitle_token_required', 'requests_attempted': 1, 'responses_received': 1}})
                         self.assertEqual([call.args[0].url for call in send.call_args_list], [YOUTUBE])
                         media.assert_not_called()
                         self.assertEqual(list(Path(tmp).iterdir()), [])
+
+    def test_youtube_subtitle_token_and_public_media_are_independent_resources(self):
+        for marker in ('xpe', 'xpv'):
+            for automatic in (False, True):
+                player = youtube_media_player(marker, automatic)
+                for action in ('captions', 'fallback', 'source'):
+                    requests, directors = [], []
+                    def public_media(director, request):
+                        requests.append(request)
+                        directors.append(director)
+                        if request.url == CDN:
+                            return Response(io.BytesIO(MEDIA), CDN, {'Content-Type': 'video/mp4', 'Content-Length': str(len(MEDIA))})
+                        return fixture(request)
+                    with self.subTest(marker=marker, automatic=automatic, action=action), tempfile.TemporaryDirectory() as tmp, \
+                            patch.dict(globals(), {'PLAYER': player}), \
+                            patch.object(RequestDirector, 'send', autospec=True, side_effect=public_media), \
+                            patch.object(PoTokenRequestDirector, 'get_po_token', side_effect=AssertionError('token acquisition forbidden')) as tokens:
+                        output = Path(tmp) / 'public-media.bin'
+                        result = source.acquire_video(YOUTUBE, 'en', **(
+                            {} if action == 'captions' else {'output': output, 'purpose': 'source' if action == 'source' else None}))
+                        tokens.assert_not_called()
+                        if action != 'source':
+                            self.assertEqual(result['status'], 'subtitle_token_required', result)
+                            self.assertEqual(result['diagnostic']['stage'], 'metadata')
+                            self.assertEqual([request.url for request in requests], [YOUTUBE])
+                            self.assertEqual(list(Path(tmp).iterdir()), [])
+                            continue
+                        self.assertEqual(result['status'], 'media_ready', result)
+                        self.assertEqual(output.read_bytes(), MEDIA)
+                        self.assertEqual(result['source']['subtitle_check'], 'not_requested')
+                        self.assertEqual(result['source']['purpose'], 'source')
+                        self.assertEqual(result['source']['format_id'], '18')
+                        self.assertEqual(result['source']['format'], 'mp4')
+                        self.assertEqual(result['source']['audio_language'], 'en')
+                        self.assertEqual(result['source']['audio_role'], 'original')
+                        self.assertEqual([request.url for request in requests], [YOUTUBE, CDN])
+                        self.assertIs(directors[0], directors[1])
+                        self.assertEqual(requests[1].headers.get('Referer'), YOUTUBE)
+                        self.assertTrue(requests[1].headers.get('Range').startswith('bytes=0-'))
+                        self.assertEqual(len(list(Path(tmp).iterdir())), 1)
+
+    def test_explicit_youtube_media_still_verifies_player_before_download(self):
+        for field, value, reason in (
+                ('playabilityStatus', {'status': 'LOGIN_REQUIRED'}, 'login_required'),
+                ('playabilityStatus', {'status': 'UNPLAYABLE'}, 'access_restricted'),
+                ('videoId', 'xxxxxxxxxxx', 'identity_mismatch'),
+                ('lengthSeconds', '0', 'duration_unavailable')):
+            player = youtube_media_player()
+            if field == 'playabilityStatus':
+                player[field] = value
+            else:
+                player['videoDetails'][field] = value
+            with self.subTest(field=field, value=value), tempfile.TemporaryDirectory() as tmp, \
+                    patch.dict(globals(), {'PLAYER': player}), patch.object(RequestDirector, 'send', side_effect=fixture) as send, \
+                    patch.object(PoTokenRequestDirector, 'get_po_token', side_effect=AssertionError('token acquisition forbidden')) as tokens:
+                result = source.acquire_video(YOUTUBE, 'en', output=Path(tmp) / 'public-media.bin', purpose='source')
+                self.assertEqual(result['diagnostic']['reason'], reason, result)
+                self.assertEqual([call.args[0].url for call in send.call_args_list], [YOUTUBE])
+                tokens.assert_not_called()
+                self.assertEqual(list(Path(tmp).iterdir()), [])
+
+    def test_explicit_youtube_media_denial_after_subtitle_token_is_terminal(self):
+        for status, reason in ((401, 'login_required'), (403, 'http_access_denied'), (412, 'http_access_denied'), (429, 'rate_limited')):
+            def denied_media(request):
+                if request.url == CDN:
+                    raise HTTPError(Response(io.BytesIO(), CDN, {}, status=status))
+                return fixture(request)
+            with self.subTest(status=status), tempfile.TemporaryDirectory() as tmp, \
+                    patch.dict(globals(), {'PLAYER': youtube_media_player()}), \
+                    patch.object(RequestDirector, 'send', side_effect=denied_media) as send, \
+                    patch.object(PoTokenRequestDirector, 'get_po_token', side_effect=AssertionError('token acquisition forbidden')) as tokens:
+                result = source.acquire_video(YOUTUBE, 'en', output=Path(tmp) / 'public-media.bin', purpose='source')
+                self.assertEqual(result['status'], 'access_restricted', result)
+                self.assertEqual(result['diagnostic']['stage'], 'media_download')
+                self.assertEqual(result['diagnostic']['reason'], reason)
+                self.assertEqual([call.args[0].url for call in send.call_args_list], [YOUTUBE, CDN])
+                tokens.assert_not_called()
+                self.assertEqual(list(Path(tmp).iterdir()), [])
+
+    def test_explicit_youtube_media_without_eligible_public_format_stays_unavailable(self):
+        for kind in ('missing', 'media_token', 'drm', 'dubbed', 'wrong_language'):
+            player = youtube_media_player()
+            item = player['streamingData']['formats'][0]
+            if kind == 'missing':
+                player['streamingData']['formats'] = []
+            elif kind == 'media_token':
+                item['itag'] = 22  # WEB GVS policy requires a token; never opt it in.
+            elif kind == 'drm':
+                item['drmFamilies'] = ['WIDEVINE']
+            elif kind == 'dubbed':
+                item['audioTrack']['displayName'] = 'English (dubbed)'
+            else:
+                item['audioTrack']['id'] = 'fr.0'
+            with self.subTest(kind=kind), tempfile.TemporaryDirectory() as tmp, \
+                    patch.dict(globals(), {'PLAYER': player}), patch.object(RequestDirector, 'send', side_effect=fixture) as send, \
+                    patch.object(PoTokenRequestDirector, 'get_po_token', side_effect=AssertionError('token acquisition forbidden')) as tokens:
+                result = source.acquire_video(YOUTUBE, 'en', output=Path(tmp) / 'public-media.bin', purpose='source')
+                self.assertEqual(result['status'], 'media_unavailable', result)
+                self.assertEqual([call.args[0].url for call in send.call_args_list], [YOUTUBE])
+                tokens.assert_not_called()
+                self.assertEqual(list(Path(tmp).iterdir()), [])
 
     def test_player_login_remains_distinct_from_subtitle_po_requirement(self):
         player = copy.deepcopy(PLAYER)

@@ -10,9 +10,11 @@ import {createLibraryStore} from '../desktop/library-store.mjs';
 import {createSourceMediaStore} from '../desktop/source-media.mjs';
 import {createSourceJobs} from '../desktop/source-jobs.mjs';
 import {PublicSourceError} from '../desktop/public-http.mjs';
+import {createVideoAudioService,VideoSourceError} from '../desktop/video-audio-service.mjs';
 import {startService} from '../server/main.mjs';
 import {createTranscriptReviewer} from '../desktop/transcript-review.mjs';
 const doc={key:'server-podcast',title:'Authored episode',source_url:'https://example.test/episode',project_kind:'audio_only',podcast_source:{kind:'direct_media',media_url:'https://example.test/audio.mp3',media_kind:'audio'},segments:[]};
+const videoDoc={key:doc.key,title:'Authored video',source_url:'https://www.youtube.com/watch?v=abcdefghijk',segments:[{id:'one',start:0,end:1,text:'原文'}]};
 function commit(library,document,action='put'){return library.commit({protocolVersion:1,epoch:library.describe().epoch,key:document.key,receiptKey:randomUUID(),expected:library.get(document.key)?.token||null,action,...(action==='put'?{document}:{})});}
 const missing=()=>Object.assign(Error('not found'),{taskCode:'ingestion_operation_not_found'});
 async function until(fn,predicate){for(let attempt=0;attempt<100;attempt++){const value=await fn();if(predicate(value))return value;await delay(10);}throw Error('Timed out');}
@@ -31,6 +33,12 @@ test('download persists directly on the server, deduplicates concurrent browsers
  const f=await fixture(t);assert.equal(f.calls,0);const [a,b]=await Promise.all([f.create('download'),f.create('download')]);assert.equal(a.id,b.id);
  await until(()=>f.jobs.get(a.id),j=>j.state==='ready');const receipt=await f.media.read(doc.key);assert.equal(receipt.type,'audio/mpeg');assert.equal(f.calls,1);
  await f.restart();assert.equal((await f.jobs.list(doc.key))[0].id,a.id);assert.equal((await f.create('download')).id,a.id);assert.equal(f.calls,1);assert.deepEqual(await f.media.read(doc.key),receipt);
+});
+test('legacy task ledgers gain optional error details without restarting saved work',async t=>{
+ const f=await fixture(t),job=await f.create('download');await until(()=>f.jobs.get(job.id),j=>j.state==='ready');
+ await f.jobs.shutdown();const {DatabaseSync}=await import('node:sqlite'),db=new DatabaseSync(path.join(f.directory,'jobs','source-jobs.sqlite'));
+ try{db.exec('ALTER TABLE jobs DROP COLUMN error_details');}finally{db.close();}
+ await f.restart();const restored=await f.jobs.get(job.id);assert.equal(restored.state,'ready');assert.equal(restored.error_details,null);assert.equal(f.calls,1);
 });
 test('download retains safe typed source failures, including total timeout and HTTP status',async t=>{
  const cases=[
@@ -261,12 +269,96 @@ test('existing text alignment is durable, isolated from paid review, and fenced 
  commit(f.library,{...text,segments:[{id:'a',start:0,end:1,text:'Changed'}]});await assert.rejects(f.jobs.result(job.id),/原稿已变化/);
  const newJob=await f.create('align');assert.notEqual(newJob.id,job.id);
 });
+test('helper process timeouts persist a finite source failure and hide the raw message',async t=>{
+ const secret='https://secret.example/helper-timeout';
+ const service=createVideoAudioService({sourceMedia:true,helper:{extractAudio:async()=>{const error=Error(secret);error.name='CaptionHelperError';error.code='CAPTION_TIMEOUT';throw error;}}});
+ const f=await fixture(t,{videoAudioService:service,transcriber:{run:()=>assert.fail('No ASR')}});
+ commit(f.library,videoDoc);
+ const job=await f.create('download'),failed=await until(()=>f.jobs.get(job.id),j=>j.state==='failed');
+ assert.equal(failed.error_details.code,'extractor_failed');
+ assert.equal(failed.error_details.diagnostic.reason,'helper_error');
+ assert.doesNotMatch(JSON.stringify(failed),/secret/);
+});
 test('existing platform transcript downloads source audio durably without invoking transcription',async t=>{
  let request,invocations=0;
  const f=await fixture(t,{videoAudioService:{sourceAvailable:true,providers:['bilibili'],download:async(data,options)=>{request={data,options};return {body:Buffer.from('authored media'),type:'audio/mp4'};}},transcriber:{profile:{backend:'authored'},status:async()=>({available:true}),run:async()=>{invocations++;}}});
  commit(f.library,{key:doc.key,title:'Existing text',source_url:'https://www.bilibili.com/video/BV1xx411c7mD',provenance:{kind:'platform_subtitles',source_platform:'bilibili',media_id:'BV1xx411c7mD'},segments:[{id:'one',start:0,end:1,text:'原文'}]});
  const task=await f.create('download');await until(()=>f.jobs.get(task.id),j=>j.state==='ready');
  assert.equal(request.options.purpose,'source');assert.equal(request.data.consent,true);assert.equal(invocations,0);assert.equal((await f.media.read(doc.key)).type,'audio/mp4');assert.equal(f.library.get(doc.key).document.segments[0].text,'原文');
+});
+test('video source failures retain safe reasons and details across restart and only retry explicitly',async t=>{
+ const secret='https://secret.example/signed?token=top-secret /private/owner/media.mp4';
+ const cases=[
+  ['subtitle_token_required','subtitle_token_required',/PO token/,true],
+  ['access_restricted','login_required',/明确要求登录或认证/],
+  ['access_restricted','subtitle_login_required',/字幕接口明确要求登录/],
+  ['access_restricted','http_access_denied',/HTTP 403 \/ 412/],
+  ['access_restricted','rate_limited',/请求限流/],
+  ['network_unavailable','transport_unavailable',/连接未完成/],
+  ['guard_stopped','origin_tls_failed',/TLS 证书校验未通过/],
+  ['guard_stopped','budget_exceeded',/15 分钟或 200 MiB/],
+  ['media_unavailable',null,/未找到当前支持的公开 M4A 音轨或单文件 MP4/],
+ ];
+ for(const [code,reason,message,token=false] of cases)await t.test(reason||code,async t=>{
+  let calls=0;
+  const diagnostic=reason?{stage:'media_download',reason,requests_attempted:2,responses_received:1}:null;
+  const service=createVideoAudioService({sourceMedia:true,helper:{extractAudio:async request=>{
+   calls++;assert.equal(request.purpose,'source');
+   return {status:code,message:secret,diagnostic:diagnostic?{...diagnostic,url:secret,cause:secret}:null,availability:{media:'available'},error:secret,stack:secret};
+  }}});
+  const f=await fixture(t,{videoAudioService:service,transcriber:{run:()=>assert.fail('No ASR for source failures')}});
+  commit(f.library,videoDoc);
+  const job=await f.create('download'),failed=await until(()=>f.jobs.get(job.id),j=>j.state==='failed');
+  const details={code,...(diagnostic?{diagnostic}:{}),...(token?{availability:{metadata:'unverified',captions:'token_required',media:'unknown'}}:{})};
+  assert.match(failed.error,message);assert.deepEqual(failed.error_details,details);
+  assert.doesNotMatch(failed.error,/已确认没有匹配字幕/);assert.doesNotMatch(JSON.stringify(failed),/secret|private|signed/);
+  assert.equal(await f.media.read(doc.key),null);assert.equal(f.calls,0);assert.equal(calls,1);
+  assert.equal((await f.create('download')).id,job.id);assert.equal(calls,1);
+  await f.jobs.shutdown();
+  const {DatabaseSync}=await import('node:sqlite'),db=new DatabaseSync(path.join(f.directory,'jobs','source-jobs.sqlite'));
+  try{
+   const stored=db.prepare('SELECT error,error_details FROM jobs WHERE id=?').get(job.id);
+   assert.deepEqual(JSON.parse(stored.error_details),details);assert.doesNotMatch(JSON.stringify(stored),/secret|private|signed|stack|cause/);
+  }finally{db.close();}
+  await f.restart();
+  assert.deepEqual((await f.jobs.get(job.id)).error_details,details);assert.equal((await f.jobs.get(job.id)).error,failed.error);
+  await delay(30);assert.equal(calls,1);
+  await f.jobs.action(job.id,'retry');await until(()=>f.jobs.get(job.id),j=>j.state==='failed');assert.equal(calls,2);
+ });
+});
+test('video configuration failures are failed service errors rather than unavailable platform media',async t=>{
+ const f=await fixture(t,{videoAudioService:{sourceAvailable:true,providers:['youtube'],download:async()=>{throw new VideoSourceError('video_media_unavailable');}}});
+ commit(f.library,videoDoc);
+ const job=await f.create('download'),failed=await until(()=>f.jobs.get(job.id),j=>j.state==='failed');
+ assert.match(failed.error,/助手未配置/);assert.doesNotMatch(failed.error,/未找到|没有匹配字幕/);
+ assert.deepEqual(failed.error_details,{code:'video_media_unavailable'});assert.equal(f.calls,0);
+});
+test('video-shaped unknown errors cannot expose secrets or change the existing 409 conflict semantics',async t=>{
+ for(const status of [undefined,409])await t.test(String(status),async t=>{
+  const secret='https://secret.example/signed?token=top-secret /private/owner/media.mp4';
+  const error=Object.assign(Error(secret),{name:'VideoSourceError',code:'subtitle_token_required',diagnostic:{stage:'media_download',reason:'login_required',requests_attempted:1,responses_received:1},availability:{media:'available'},status});
+  const f=await fixture(t,{videoAudioService:createVideoAudioService({sourceMedia:true,helper:{extractAudio:async()=>{throw error;}}})});
+  commit(f.library,videoDoc);
+  const job=await f.create('download'),failed=await until(()=>f.jobs.get(job.id),j=>j.state===(status===409?'interrupted':'failed'));
+  assert.equal(failed.error_details,null);assert.doesNotMatch(JSON.stringify(failed),/secret|private|signed/);
+  await f.restart();assert.equal((await f.jobs.get(job.id)).state,failed.state);assert.equal((await f.jobs.get(job.id)).error,failed.error);
+ });
+});
+test('persisted video failure details are validated again and never trust stored availability',async t=>{
+ const f=await fixture(t,{videoAudioService:{sourceAvailable:true,providers:['youtube'],download:async()=>{throw new VideoSourceError('subtitle_token_required');}}});
+ commit(f.library,videoDoc);const job=await f.create('download');await until(()=>f.jobs.get(job.id),j=>j.state==='failed');
+ const availability={metadata:'unverified',captions:'token_required',media:'unknown'},diagnostic={stage:'metadata',reason:'subtitle_token_required',requests_attempted:2,responses_received:1};
+ const values=[
+  [JSON.stringify({code:'subtitle_token_required',diagnostic:{...diagnostic,url:'secret'},availability:{media:'available'},cause:'secret'}),{code:'subtitle_token_required',diagnostic,availability}],
+  [JSON.stringify({code:'subtitle_token_required',diagnostic:{...diagnostic,requests_attempted:-1},availability:{media:'available'}}),{code:'subtitle_token_required',availability}],
+  [JSON.stringify({code:'secret',diagnostic,availability}),null],
+  ['invalid secret JSON',null],
+ ];
+ for(const [raw,expected] of values){
+  await f.jobs.shutdown();const {DatabaseSync}=await import('node:sqlite'),db=new DatabaseSync(path.join(f.directory,'jobs','source-jobs.sqlite'));
+  try{db.prepare('UPDATE jobs SET error_details=? WHERE id=?').run(raw,job.id);}finally{db.close();}
+  await f.restart();const restored=await f.jobs.get(job.id);assert.deepEqual(restored.error_details,expected);assert.doesNotMatch(JSON.stringify(restored),/secret/);
+ }
 });
 test('unavailable video source download does not fall through to podcast fetching',async t=>{
  const f=await fixture(t);commit(f.library,{key:doc.key,title:'Video',source_url:'https://www.bilibili.com/video/BV1xx411c7mD',segments:[{id:'one',start:0,end:1,text:'Text'}]});

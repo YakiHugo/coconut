@@ -31,7 +31,7 @@ try{
  tokenRequired=true;await page.getByLabel('播客或视频链接').fill(url);await page.getByRole('button',{name:'打开链接',exact:true}).click();
  await expect(panel.getByRole('heading')).toHaveText('字幕需要 PO token，媒体可用性未知');
  await expect(panel).toContainText('可前往原站查看或导入已有字幕');await expect(panel.getByRole('button')).toHaveCount(0);
- await panel.getByText('查看读取详情',{exact:true}).click();await expect(panel).toContainText('不等于账号登录');
+ await expect(panel).toContainText('不等于账号登录');
  await expect(panel).toContainText('媒体是否可取得尚未知');assert.equal(requests.length,3);
  assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
  await page.screenshot({path:path.join(output,'caption-token-required-narrow.png'),fullPage:true});

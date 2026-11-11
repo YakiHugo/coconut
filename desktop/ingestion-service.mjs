@@ -74,10 +74,21 @@ export function createIngestionService({podcastSources,captionService=null,capti
    const canonical=captionSource(resolved);base.source={...source,url:canonical.url,provider:canonical.provider,media_id:canonical.mediaId};
    if(!captionService?.available)return finish(unavailableCaptions());
    if(Array.isArray(captionService.providers)&&!captionService.providers.includes(canonical.provider))return finish({state:'blocked',error:{code:'captions_unavailable',message:'此版本尚未启用该来源的字幕获取；链接已保留，可导入已有字幕。'}});
-   const result=await captionService.importCaption({url:canonical.url,language:data.language},{signal});
-   // This specific flag restricts only Bilibili subtitles, not the public media.
-   // Offer a separate, user-initiated media check; no automatic retry or bypass.
-   const independentMedia=videoSourceMedia&&canonical.provider==='bilibili'&&result.status==='access_restricted'&&result.diagnostic?.reason==='subtitle_login_required';
+   let result;
+   try{result=await captionService.importCaption({url:canonical.url,language:data.language},{signal});}
+   catch(error){
+    checkAbort(signal);
+    if(error?.code!=='CAPTION_PARSE_FAILED')throw error;
+    result={status:'caption_parse_failed',message:'已取得的字幕无法解析，未导入。可检查或重新导出 SRT / VTT 后导入；未启动识别。',diagnostic:{stage:'reader_parse',reason:'caption_parse_failed',requests_attempted:null,responses_received:null}};
+   }
+   // These observations concern subtitles only. An explicitly chosen source
+   // action independently verifies media with the same client and network.
+   const captionStageFailure=['caption_file_invalid','caption_parse_failed','extractor_failed','network_unavailable'].includes(result.status)&&
+    ['caption_download','caption_parse','caption_output','reader_parse'].includes(result.diagnostic?.stage);
+   const independentMedia=videoSourceMedia&&(
+    canonical.provider==='bilibili'&&result.status==='access_restricted'&&result.diagnostic?.reason==='subtitle_login_required'||
+    canonical.provider==='youtube'&&result.status==='subtitle_token_required'&&result.diagnostic?.reason==='subtitle_token_required'||
+    captionStageFailure);
    return result.status==='ready'?finish({state:'ready',transcript:{document:{...result.document,provenance:{...result.document.provenance,alignment_required:true}}},...(result.diagnostics?{diagnostics:result.diagnostics}:{})}):finish({state:'blocked',error:{code:result.status,message:result.message,...(result.availability?{availability:result.availability}:{}),...(result.status==='language_required'?{languages:result.languages}:{}),...(result.diagnostic?{diagnostic:result.diagnostic}:{}),...((result.status==='no_matching_captions'||independentMedia)&&videoAudioProviders.includes(canonical.provider)?{audio_fallback:{endpoint:'/api/videos/media',url:canonical.url,language:data.language||null,...(independentMedia?{purpose:'source'}:{})}}:{})}});
   }
   if(data.episode){

@@ -2,6 +2,7 @@ import {captionFailureDiagnostic, type CaptionFailureDiagnostic} from './caption
 export type Episode = {
     id: string;
     title: string;
+    source_url?: string;
     description?: string;
     published?: string;
     duration?: number | null;
@@ -31,6 +32,8 @@ export type Ingestion = {
         document?: unknown;
     };
     selection?: {
+        kind?: 'feed' | 'choices';
+        source_type?: string;
         feed_url: string;
         feed_checked_at?: string;
         title?: string;

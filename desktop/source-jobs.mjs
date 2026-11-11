@@ -7,7 +7,11 @@ import path from 'node:path';
 import {Readable} from 'node:stream';
 import {captionSource} from './caption-service.mjs';
 import {PublicSourceError} from './public-http.mjs';
-const fail=(message,status=400)=>Object.assign(Error(message),{status});
+import {VideoSourceError,videoSourceErrorDetails} from './video-audio-service.mjs';
+const localErrors=new WeakSet();
+const fail=(message,status=400)=>{const error=Object.assign(Error(message),{status});localErrors.add(error);return error;};
+const mediaConflicts=new Set(['Source document changed','Saved media changed','Saved media failed integrity check; explicitly download again to repair','Media save cancelled','Saved media was replaced','Saved media failed integrity check','Saved media or source changed']);
+function storedErrorDetails(raw){try{return typeof raw==='string'&&raw.length<=2048?videoSourceErrorDetails(JSON.parse(raw)):null;}catch{return null;}}
 const uuid=value=>typeof value==='string'&&/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(value);
 const TYPES={'audio/mpeg':'mp3','audio/mp4':'m4a','audio/wav':'wav','audio/ogg':'ogg','audio/flac':'flac','audio/webm':'webm','video/mp4':'mp4','video/webm':'webm'};
 const ALIASES={'audio/mp3':'audio/mpeg','audio/x-m4a':'audio/mp4','audio/wave':'audio/wav','audio/x-wav':'audio/wav','audio/x-flac':'audio/flac'};
@@ -21,7 +25,7 @@ export async function createSourceJobs({directory,libraryStore,mediaStore,podcas
  for(const suffix of ['','-wal','-shm','-journal'])try{await privatePath(filename+suffix);}catch(error){if(error.code!=='ENOENT')throw error;}
  const {DatabaseSync}=await import('node:sqlite'),db=new DatabaseSync(filename);
  try{db.exec("PRAGMA busy_timeout=1000; PRAGMA locking_mode=EXCLUSIVE; CREATE TABLE IF NOT EXISTS jobs (id TEXT PRIMARY KEY, document_key TEXT NOT NULL, binding TEXT NOT NULL, source TEXT NOT NULL, kind TEXT NOT NULL, state TEXT NOT NULL, request TEXT NOT NULL, operation TEXT, ingestion_id TEXT, error TEXT, created INTEGER NOT NULL, updated INTEGER NOT NULL); UPDATE jobs SET state='interrupted' WHERE state IN ('running','queued');");}catch(error){db.close();throw error;}
- for(const [name,definition] of [['phase',"TEXT NOT NULL DEFAULT ''"],['engine',"TEXT NOT NULL DEFAULT 'legacy'"]])if(!db.prepare('PRAGMA table_info(jobs)').all().some(column=>column.name===name))db.exec('ALTER TABLE jobs ADD COLUMN '+name+' '+definition);
+ for(const [name,definition] of [['phase',"TEXT NOT NULL DEFAULT ''"],['engine',"TEXT NOT NULL DEFAULT 'legacy'"],['error_details','TEXT']])if(!db.prepare('PRAGMA table_info(jobs)').all().some(column=>column.name===name))db.exec('ALTER TABLE jobs ADD COLUMN '+name+' '+definition);
  let admissionOwner=null,pendingAdmissions=0;
  let closing=false,running=null,runningId=null,controller=null,creation=Promise.resolve(),shutdownPromise;
  mediaStore.setCommitGuard(record=>{
@@ -31,8 +35,8 @@ export async function createSourceJobs({directory,libraryStore,mediaStore,podcas
  });
  const row=id=>{if(!uuid(id))throw fail('任务标识无效');const value=db.prepare('SELECT * FROM jobs WHERE id=?').get(id);if(!value)throw fail('任务不存在',404);return value;};
  function owned(value){if(mediaStore.owner(value.document_key).binding!==value.binding)throw fail('原项目来源已变化，旧任务不能接入此项目',409);return value;}
- function describe(value){return {id:value.id,documentKey:value.document_key,binding:value.binding,source:value.source,kind:value.kind,state:value.state,phase:value.phase,currentProfile:!['transcribe','align'].includes(value.kind)||value.engine==='direct-v1'&&JSON.stringify(JSON.parse(value.operation).profile)===JSON.stringify(transcriber?.profile),resultAvailable:['transcribe','align'].includes(value.kind)&&value.engine==='direct-v1'&&value.state==='ready',assetSha256:value.operation?JSON.parse(value.operation).fingerprint:null,ingestionId:value.ingestion_id||null,error:value.error,created:value.created,updated:value.updated};}
- function update(id,state,error=null){db.prepare('UPDATE jobs SET state=?,error=?,updated=? WHERE id=?').run(state,error,Date.now(),id);}
+ function describe(value){return {id:value.id,documentKey:value.document_key,binding:value.binding,source:value.source,kind:value.kind,state:value.state,phase:value.phase,currentProfile:!['transcribe','align'].includes(value.kind)||value.engine==='direct-v1'&&JSON.stringify(JSON.parse(value.operation).profile)===JSON.stringify(transcriber?.profile),resultAvailable:['transcribe','align'].includes(value.kind)&&value.engine==='direct-v1'&&value.state==='ready',assetSha256:value.operation?JSON.parse(value.operation).fingerprint:null,ingestionId:value.ingestion_id||null,error:value.error,error_details:storedErrorDetails(value.error_details),created:value.created,updated:value.updated};}
+ function update(id,state,error=null,details=null){const safeDetails=videoSourceErrorDetails(details);db.prepare('UPDATE jobs SET state=?,error=?,error_details=?,updated=? WHERE id=?').run(state,error,safeDetails?JSON.stringify(safeDetails):null,Date.now(),id);}
  async function perform(value){
   controller=new AbortController();const signal=controller.signal;update(value.id,'running');
   try{
@@ -105,13 +109,16 @@ export async function createSourceJobs({directory,libraryStore,mediaStore,podcas
    if(!signal.aborted&&!closing)update(value.id,'ready');
   }catch(error){
    if(!closing&&!signal.aborted){
-    const conflict=error?.status===409;
+    const videoFailure=value.kind==='download'&&error instanceof VideoSourceError;
+    const conflict=error?.status===409&&!videoFailure;
     let message='任务未完成，已保留处理进度。请检查本地环境后明确重试。';
     if(value.kind==='download'){
      message='原声下载未完成，请检查网络或来源后明确重试。';
      if(error instanceof PublicSourceError)message=error.code==='SOURCE_TIMEOUT'?'原声下载超过总时限，请检查网络后重试。':error.message.slice(0,300);
+     if(videoFailure)message=error.message;
     }
-    update(value.id,conflict?'interrupted':'failed',conflict?error.message:message);
+    if(conflict)message=localErrors.has(error)||mediaConflicts.has(error?.message)?error.message:'原声或任务绑定发生冲突，请核对来源后明确重试。';
+    update(value.id,conflict?'interrupted':'failed',message,videoFailure?error:null);
    }
   }
   finally{controller=null;}

@@ -90,7 +90,12 @@ export async function inspectCaptionOutputFiles(directory,{listEntries=readdir,r
   }
 }
 
-export function runCaptionProcess(executable,input,{directory,signal,timeoutMs,maxOutputBytes,onSpawn,spawnProcess=spawn,args=['--protocol=1'],detached=process.platform!=='win32'}) {
+export function playerRuntimeEnv(runtime) {
+  if (runtime == null) return {};
+  if (typeof runtime !== 'string' || !path.isAbsolute(runtime) || path.basename(runtime) !== 'deno') throw fail('CAPTION_CONFIGURATION','播放器脚本运行时必须是 Deno 的绝对路径');
+  return {COCONUT_DENO:runtime};
+}
+export function runCaptionProcess(executable,input,{directory,signal,timeoutMs,maxOutputBytes,onSpawn,spawnProcess=spawn,args=['--protocol=1'],detached=process.platform!=='win32',playerRuntime=null}) {
   return new Promise((resolve,reject)=>{
     let child, timer, monitor, reading=false, firstError, closed=false, outputBytes=0;
     const chunks=[];
@@ -108,7 +113,7 @@ export function runCaptionProcess(executable,input,{directory,signal,timeoutMs,m
     try {
       if(typeof detached!=='boolean')throw fail('CAPTION_CONFIGURATION','无效的字幕进程组配置');
       cancelled(signal);
-      child=spawnProcess(executable,args,{cwd:directory,env:{...helperEnvironment(directory),...helperNetworkEnvironment(input.network)},shell:false,
+      child=spawnProcess(executable,args,{cwd:directory,env:{...helperEnvironment(directory),...helperNetworkEnvironment(input.network),...playerRuntimeEnv(playerRuntime)},shell:false,
         stdio:['pipe','pipe','pipe'],detached});
     } catch(error) {finish(error instanceof CaptionHelperError?error:fail('CAPTION_START','无法启动字幕助手'));return;}
     child.stdin.on('error',()=>{});child.stdin.end(JSON.stringify(input));
@@ -133,7 +138,7 @@ export function runCaptionProcess(executable,input,{directory,signal,timeoutMs,m
       finally {reading=false;}
     },25);
     if(signal?.aborted)abort();
-    try{onSpawn?.({pid:child.pid,directory,env:{...helperEnvironment(directory),...helperNetworkEnvironment(input.network)}});}catch{stop(fail('CAPTION_START','字幕助手证明回调失败'));}
+    try{onSpawn?.({pid:child.pid,directory,env:{...helperEnvironment(directory),...helperNetworkEnvironment(input.network),...playerRuntimeEnv(playerRuntime)}});}catch{stop(fail('CAPTION_START','字幕助手证明回调失败'));}
   });
 }
 

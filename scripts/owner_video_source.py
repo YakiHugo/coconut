@@ -35,6 +35,16 @@ from scripts.public_x_caption_guard import StopProof, PINNED_VERSION
 from scripts.public_video_caption_guard import source_identity, validate_bilibili_cookies, json3_document_vtt
 from scripts.public_video_media import choose_media, select_bilibili_audio_urls
 
+def player_js_runtime():
+    """Owner-start Deno path only. Never a request field, plugin, or PO-token provider."""
+    value = os.environ.get('COCONUT_DENO')
+    if not isinstance(value, str) or os.path.basename(value) != 'deno' or not os.path.isabs(value):
+        return None
+    if not os.path.isfile(value) or not os.access(value, os.X_OK):
+        return None
+    return value
+
+
 MAX_CAPTION = 1024 * 1024
 MAX_METADATA = 4 * 1024 * 1024
 MAX_TOTAL = 24 * 1024 * 1024
@@ -229,9 +239,13 @@ class OwnerVideoDL(yt_dlp.YoutubeDL):
             writesubtitles=not media_only, writeautomaticsub=not media_only, check_formats=False,
             ignore_no_formats_error=True, format='best/bestaudio/bestvideo',
             fixup='never', external_downloader={}, postprocessors=[],
-            js_runtimes={}, remote_components=[],
-            extractor_args={'youtube': {'player_client': ['web'], 'fetch_pot': ['never'],
-                'player_skip': ['js', 'configs', 'initial_data'], 'skip': ['hls', 'dash', 'translated_subs']}},
+            js_runtimes={'deno': {'path': runtime}} if (runtime := player_js_runtime()) else {}, remote_components=[],
+            # WEB now publishes SABR URLs only. With a local Deno runtime, use the
+            # pinned extractor's default clients to solve player signatures. Still
+            # never fetch a PO token, read cookies, or follow HLS/DASH manifests.
+            extractor_args={'youtube': {'player_client': ['default'] if runtime else ['web'], 'fetch_pot': ['never'],
+                'player_skip': ['configs', 'initial_data'] if runtime else ['js', 'configs', 'initial_data'],
+                'skip': ['hls', 'dash', 'translated_subs']}},
             http_headers={'User-Agent': 'Coconut/0.1 owner-local-source'})
         super().__init__(settings, auto_init=False)
         # Assign the cached-property value before native request-director construction.
@@ -247,7 +261,12 @@ class OwnerVideoDL(yt_dlp.YoutubeDL):
             @staticmethod
             def _get_checkok_params(): return {}
             def raise_login_required(self, *args, **kwargs): raise StopProof('login_required')
-            def _report_pot_subtitles_skipped(self, *args, **kwargs): raise StopProof('subtitle_token_required')
+            def _report_pot_subtitles_skipped(self, *args, **kwargs):
+                # Upstream builds subtitle metadata even with writesubtitles=False.
+                # Explicit source actions let it discard those separate resources.
+                if owner.media_only:
+                    return super()._report_pot_subtitles_skipped(*args, **kwargs)
+                raise StopProof('subtitle_token_required')
             def _download_initial_webpage(self, webpage_url, webpage_client, video_id):
                 page = self._download_webpage(webpage_url, video_id)
                 initial = self._search_json(self._YT_INITIAL_PLAYER_RESPONSE_RE, page, 'initial player response', video_id, default={})

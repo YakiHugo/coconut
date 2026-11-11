@@ -56,3 +56,35 @@ test('subtitle PO requirement is not a login instruction, absent captions, or a 
   await new Promise(r=>setTimeout(r,30));assert.equal(x.requests.length,1);assert.equal(x.docs().length,0);
  }finally{await x.w.happyDOM.close();}
 });
+
+test('caption download failure offers an explicit source check without calling it restricted',async()=>{
+ const d={stage:'caption_download',reason:'extractor_error',requests_attempted:1,responses_received:1};
+ const x=await mountedSourceApp({service:{ingest:async()=>({protocolVersion:1,ingestion:{id:'caption-download',state:'blocked',source:{url},error:{code:'extractor_failed',message:'字幕提取器未完成',diagnostic:d,audio_fallback:{endpoint:'/api/videos/media',url,language:null,purpose:'source'}}}})}});
+ try{
+  x.open(url);await wait(()=>panel(x)&&x.button('单独检查并获取公开原声（最多 200 MiB）'));
+  assert.match(panel(x).textContent,/字幕读取未完成/);
+  assert.doesNotMatch(panel(x).textContent,/字幕访问受限|没有音频/);
+  assert.equal(panel(x).querySelector('details,summary'),null);
+  assert.equal(x.requests.length,1);
+ }finally{await x.w.happyDOM.close();}
+});
+test('a supported independent source check stays explicit after a subtitle-only failure',async()=>{
+ const d={stage:'metadata',reason:'subtitle_token_required',requests_attempted:1,responses_received:1};
+ const x=await mountedSourceApp({service:{ingest:async()=>({protocolVersion:1,ingestion:{id:'subtitle-only',state:'blocked',source:{url},error:{code:'subtitle_token_required',message:'Authored subtitle-only stop',diagnostic:d,audio_fallback:{endpoint:'/api/videos/media',url,language:null,purpose:'source'}}}})}});
+ let mediaRequests=0;
+ try{
+  const original=x.w.fetch;
+  x.w.fetch=async(path,options)=>{
+   if(path!=='api/videos/source-media')return original(path,options);
+   mediaRequests++;assert.equal(JSON.parse(options.body).url,url);
+   return {ok:false,json:async()=>({code:'media_unavailable',error:'当前入口未找到支持的公开媒体格式'})};
+  };
+  x.open(url);await wait(()=>panel(x)&&x.button('单独检查并获取公开原声（最多 200 MiB）'));
+  assert.equal(mediaRequests,0);assert.equal(x.docs().length,0);
+  assert.match(panel(x).textContent,/可单独检查公开原声/);
+  x.button('单独检查并获取公开原声（最多 200 MiB）').click();
+  await wait(()=>mediaRequests===1&&x.w.document.querySelector('.source-error')?.textContent.includes('当前入口未找到支持的公开媒体格式'));
+  assert.equal(x.requests.length,1,'an independent media check must not retry captions');
+  assert.equal(x.docs().length,0);
+ }finally{await x.w.happyDOM.close();}
+});

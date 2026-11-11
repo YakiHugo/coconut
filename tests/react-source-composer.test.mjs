@@ -29,7 +29,7 @@ function paste(x, text) {
 const diagnostic = {stage:'metadata',reason:'subtitle_login_required',requests_attempted:2,responses_received:2};
 const fixture = {service:{ingest:async () => ({protocolVersion:1,ingestion:{id:'failure',state:'blocked',source:{},error:{code:'login_required',message:'登录后才能获取字幕。保留服务端的完整说明。',diagnostic}}})}};
 
-test('pasting share text extracts without fetching; submit reads the extracted link and folds diagnostics', async () => {
+test('pasting share text extracts without fetching; submit reads the extracted link and shows diagnostics', async () => {
     const x = await mountedSourceApp(fixture);
     try {
         const event = paste(x, '推荐这个视频 ' + video + '。');
@@ -44,7 +44,8 @@ test('pasting share text extracts without fetching; submit reads the extracted l
         await wait(() => x.w.document.querySelector('.source-feedback'));
         assert.equal(x.requests.length, 1);
         assert.equal(x.requests[0].source.url, video);
-        assert.equal(x.w.document.querySelector('.source-diagnostics').open, false);
+        assert.equal(x.w.document.querySelector('.source-feedback details, .source-feedback summary'), null);
+        assert.match(x.w.document.querySelector('.source-diagnostics').textContent, /尝试请求 2 次/);
         assert.match(x.w.document.querySelector('.source-feedback h2').textContent, /登录/);
         assert.match(x.w.document.querySelector('[data-caption-diagnostic]').textContent, /尝试请求 2 次/);
         await wait(() => x.w.document.querySelector('.app-toast [role=alert]')?.textContent.includes('登录'));

@@ -20,6 +20,16 @@ MEDIA_RANGE_BYTES = 8 * 1024 * 1024
 MIME_TYPES = frozenset(('audio/mp4', 'video/mp4', 'application/octet-stream'))
 
 
+def track_language(item):
+    """A valid language, None when unlabeled, or False when the label is unusable."""
+    value = item.get('language') if isinstance(item, dict) else None
+    if value is None or value == '':
+        return None
+    if isinstance(value, str) and re.fullmatch(r'[a-z]{2,3}(?:-[A-Za-z0-9]{2,8}){0,2}', value):
+        return value
+    return False
+
+
 def audio_url_allowed(value, provider):
     if not isinstance(value, str) or len(value) > 8192 or re.search(r'[\x00-\x20\x7f\\]', value):
         return False
@@ -110,10 +120,24 @@ def choose_audio(info, provider, language=None):
             candidates = [item for item in candidates if item.get('language_preference') == 10 and language_code(item) == chosen_language]
             basis = 'platform_original'
         else:
-            # yt-dlp can omit encrypted/ineligible originals before info.formats.
-            # A surviving default track is therefore not proof of original audio.
-            return None
-        if language and chosen_language.split('-')[0] != language.split('-')[0]:
+            # Judge language before download eligibility. A filtered-out WebM or
+            # DRM track is still evidence of another language.
+            declarations = [track_language(item) for item in audio_formats]
+            if (any(item is False for item in declarations) or
+                    any(not role_allowed(item) or item.get('language_preference') in (5, -10) for item in audio_formats)):
+                return None
+            labeled = {item for item in declarations if item}
+            if len(labeled) > 1:
+                return None
+            if labeled:
+                chosen_language = next(iter(labeled))
+                candidates = [item for item in candidates if language_code(item) == chosen_language]
+                basis = 'single_language_track'
+            else:
+                chosen_language, basis = None, 'unlabeled_single_source'
+            plain = [item for item in candidates if not str(item.get('format_id') or '').endswith('-drc')]
+            candidates = plain or candidates
+        if language and chosen_language and chosen_language.split('-')[0] != language.split('-')[0]:
             return None
     else:
         # Bilibili's pinned single-CID DASH extractor publishes bitrate variants,
@@ -136,7 +160,7 @@ def choose_media(info, provider, language=None):
     audio = choose_audio(info, provider, language)
     if audio:
         return {**audio, '_kind':'audio', '_type':'audio/mp4', '_extension':'m4a',
-                '_audio_role':'original' if provider == 'youtube' else 'unknown'}
+                '_audio_role':'original' if audio.get('_audio_language_basis') == 'platform_original' else 'unknown'}
     # A combined public source stream is not a claim about original voice.
     # Do not use another client, a token, DRM, manifest, or separate track merge.
     formats = [item for item in info.get('formats') or [] if isinstance(item, dict)]
@@ -156,6 +180,14 @@ def choose_media(info, provider, language=None):
         if provider == 'youtube':
             # Pinned WEB explicitly exempts public combined itag18 from GVS POT.
             # Never include missing-POT formats or seek another client.
+            # A known original track, even if not an eligible M4A, blocks a
+            # different-language combined fallback.
+            originals = [fmt for fmt in formats if fmt.get('language_preference') == 10 and fmt.get('acodec') not in (None, 'none')]
+            if originals:
+                original_languages = {track_language(fmt) for fmt in originals}
+                if (False in original_languages or None in original_languages or len(original_languages) != 1 or
+                        track_language(item) != next(iter(original_languages)) or item.get('language_preference') != 10):
+                    continue
             if str(item.get('format_id')) != '18':
                 continue
             preference = item.get('language_preference')

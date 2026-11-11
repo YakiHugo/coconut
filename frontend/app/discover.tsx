@@ -9,6 +9,7 @@ import {discoverySession,saveDiscoverySession,matchingSourceDocuments,exactSourc
 import {captionLanguageChoices,captionDiagnostics,hasCaptionLoss} from './caption-receipt';
 import {captionFailureDiagnostic,captionFailureSummary,captionFailureTitle,captionOriginalURL,type CaptionFailureDiagnostic} from './caption-failure';
 import {parseSourceLink} from './source-link';
+import {resolveEpisodeLink} from './episode-link';
 import {useToast} from './toast';
 import { ingest, inspectFile, type Ingestion } from './ingestion';
 import {downloadVideoAudio,validateDownloadedVideoMedia,videoAudioFallback,type VideoAudioFallback} from './video-audio';
@@ -68,8 +69,19 @@ export function Discover({ store }: {
         const controller=new AbortController();owner.current=controller;setBusy(true);
         updateSession({attempt,error:'',receipt:null,lossReviewed:false});
         try {
-            const valueResult=await ingest({source:{kind:'url',url:attempt.feed||attempt.url},...(attempt.language?{language:attempt.language}:{}),...(attempt.intent?{intent:attempt.intent}:{}),...(attempt.episode?{episode:{feed_url:attempt.feed,episode_id:attempt.episode.id,...(attempt.track?{transcript_url:attempt.track}:{})}}:{})},controller.signal);
+            const read=(attempt:SourceAttempt)=>ingest({source:{kind:'url',url:attempt.feed||attempt.url},...(attempt.language?{language:attempt.language}:{}),...(attempt.intent?{intent:attempt.intent}:{}),...(attempt.episode?{episode:{feed_url:attempt.feed,episode_id:attempt.episode.id,...(attempt.track?{transcript_url:attempt.track}:{})}}:{})},controller.signal);
+            let valueResult=await read(attempt);
             if(owner.current!==controller)return;
+            if(valueResult.state==='awaiting_selection'&&!attempt.episode&&!attempt.feed){
+                const episode=await resolveEpisodeLink(attempt.url,valueResult.selection);
+                if(owner.current!==controller||controller.signal.aborted||!mounted.current)return;
+                if(episode){
+                    attempt={...attempt,feed:valueResult.selection!.feed_url,episode};
+                    updateSession({selection:valueResult.selection,attempt,episodeLimit:20});
+                    valueResult=await read(attempt);
+                    if(owner.current!==controller||controller.signal.aborted||!mounted.current)return;
+                }
+            }
             if(valueResult.state==='awaiting_selection')updateSession({selection:valueResult.selection,receipt:null,attempt:null,episodeLimit:20});
             else if(valueResult.state==='blocked'){
                 const fallback=videoAudioFallback(valueResult.error?.audio_fallback);
@@ -202,10 +214,10 @@ export function Discover({ store }: {
   {pendingMedia&&<section aria-label="原声保存待完成"><p>项目已创建，原声尚未保存。离开本页后需重新关联原文件。</p><button disabled={busy||attaching} onClick={()=>void retryMedia()}>重试保存已下载原声</button><button disabled={busy||attaching} onClick={()=>{cancel();store.select(pendingMedia.document.key);}}>打开已创建的项目</button></section>}
   {candidate&&<section aria-label="核对原声项目"><h2>核对原声来源</h2><p>文件采样与已有项目相同，请核对是否为同一原声。</p>{candidate.keys.map(key=><button key={key} onClick={()=>chooseCandidate(key)}>关联到 {store.getDocument(key)?.title||key}</button>)}<button onClick={()=>chooseCandidate(null)}>作为新原声项目打开</button><button onClick={()=>setCandidate(null)}>取消关联</button></section>}
   {error&&!busy&&!languageRequired&&<section className="source-feedback caption-failure" data-tone={interrupted?'info':'error'} aria-label={failure&&(failure.diagnostic||failure.original)?'本次字幕读取结果':'来源读取结果'}>
-    <div className="source-feedback-heading"><span className="source-feedback-icon" aria-hidden="true">{interrupted?'·':'!'}</span><div><h2>{interrupted?error.split('。')[0]:captionFailureTitle(failure?.diagnostic||null)}</h2>{subtitleTokenRequired&&<p>可前往原站查看或导入已有字幕。</p>}</div></div>
+    <div className="source-feedback-heading"><span className="source-feedback-icon" aria-hidden="true">{interrupted?'·':'!'}</span><div><h2>{interrupted?error.split('。')[0]:captionFailureTitle(failure?.diagnostic||null)}</h2>{subtitleTokenRequired&&<p>{failure?.audio?'字幕读取需要额外令牌，可单独检查公开原声。':'可前往原站查看或导入已有字幕。'}</p>}</div></div>
     <div className="source-actions">{session.attempt&&!subtitleTokenRequired&&<button type="button" onClick={()=>void request(session.attempt!)}>重试上次读取{session.attempt.episode?'：'+session.attempt.episode.title:''}</button>}{failure?.original&&<a href={failure.original} target="_blank" rel="noopener noreferrer">打开原站</a>}</div>
-    {failure?.audio&&<button className="source-audio-fallback" disabled={busy||attaching} onClick={()=>void openVideoAudio()}>下载公开媒体并新建项目（最多 200 MiB）</button>}
-    <details className="source-diagnostics"><summary>查看读取详情</summary><p className="source-error">{error}</p>{failure?.diagnostic&&<p data-caption-diagnostic>{captionFailureSummary(failure.diagnostic)}</p>}<p>{failure?.audio?.purpose==='source'?'字幕访问受限；公开媒体需单独核对访问权限。':failure?.audio?'公开媒体可能使用默认音轨，语言及是否原版尚未确认。':'未取得可阅读的文字稿。'}</p></details>
+    {failure?.audio&&<button className="source-audio-fallback" disabled={busy||attaching} onClick={()=>void openVideoAudio()}>{failure.audio.purpose==='source'?'单独检查并获取公开原声（最多 200 MiB）':'下载公开媒体并新建项目（最多 200 MiB）'}</button>}
+    <div className="source-diagnostics"><p className="source-error">{error}</p>{failure?.diagnostic&&<p data-caption-diagnostic>{captionFailureSummary(failure.diagnostic)}</p>}<p>{failure?.audio?.purpose==='source'?(failure.diagnostic?.reason==='subtitle_token_required'?'字幕需要额外令牌；公开原声可单独检查，不会自动开始。':'字幕读取未完成；公开原声可单独检查。'):failure?.audio?'公开媒体可能使用默认音轨，语言及是否原版尚未确认。':'未取得可阅读的文字稿。'}</p></div>
   </section>}
   {(!error||busy||languageRequired)&&<p className="source-error" hidden>{error}</p>}
   {languageRequired&&<section aria-label="选择视频原语言"><h2 ref={languageHeading} tabIndex={-1}>确认视频原语言</h2><p>请选择视频原语言。可用字幕语言不一定是原语言。</p>{languageChoices.length>0?<label>视频原语言<select value={language} onChange={event=>{cancel();updateSession({language:event.target.value,error,receipt:null,lossReviewed:false});}}><option value="">请选择原语言</option>{languageChoices.map(code=><option key={code} value={code}>{code}</option>)}</select></label>:<p>字幕服务未返回可选语言，请更新后重试。</p>}{languageChoices.length>0&&<button disabled={busy||!languageChoices.includes(language)} onClick={()=>void request({...session.attempt!,language})}>按所选原语言重试</button>}</section>}

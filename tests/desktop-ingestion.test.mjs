@@ -47,6 +47,41 @@ test('short-link failures retain trusted network guidance without exposing arbit
   if(error instanceof PublicSourceError)assert.match(ingestion.error.message,error.code==='SOURCE_HTTP'?/HTTP 403/:/仅支持 HTTP 代理/);
  }
 });
+test('subtitle-only failures offer an explicit independent media check without starting one',async()=>{
+ const videoUrl='https://www.youtube.com/watch?v=abcdefghijk';
+ for(const [status,stage,reason] of [
+  ['subtitle_token_required','metadata','subtitle_token_required'],
+  ['extractor_failed','caption_download','extractor_error'],
+  ['caption_parse_failed','reader_parse','caption_parse_failed'],
+  ['network_unavailable','caption_download','transport_unavailable'],
+ ]){
+  let captions=0;
+  const service=createIngestionService({videoSourceMedia:true,videoAudioProviders:['youtube'],captionService:{available:true,importCaption:async()=>{captions++;return {status,message:'Authored subtitle failure',diagnostic:{stage,reason,requests_attempted:1,responses_received:1}};}}});
+  const {ingestion}=await service.ingest({protocolVersion:1,source:{kind:'url',url:videoUrl}});
+  assert.equal(ingestion.state,'blocked');assert.equal(ingestion.error.code,status);
+  assert.deepEqual(ingestion.error.audio_fallback,{endpoint:'/api/videos/media',url:videoUrl,language:null,purpose:'source'});
+  assert.equal(captions,1);assert.equal(ingestion.project,null);
+ }
+ for(const [status,stage,reason] of [
+  ['access_restricted','metadata','login_required'],
+  ['access_restricted','metadata','http_access_denied'],
+  ['network_unavailable','metadata','transport_unavailable'],
+  ['extractor_failed','metadata','extractor_error'],
+ ]){
+  const service=createIngestionService({videoSourceMedia:true,videoAudioProviders:['youtube'],captionService:{available:true,importCaption:async()=>({status,message:'Authored source failure',diagnostic:{stage,reason,requests_attempted:1,responses_received:0}})}});
+  const {ingestion}=await service.ingest({protocolVersion:1,source:{kind:'url',url:videoUrl}});
+  assert.equal(ingestion.error.audio_fallback,undefined,'metadata access failures remain terminal');
+ }
+ let captions=0;
+ const thrown=createIngestionService({videoSourceMedia:true,videoAudioProviders:['youtube'],captionService:{available:true,importCaption:async()=>{captions++;const error=Error('raw parser dump');error.code='CAPTION_PARSE_FAILED';throw error;}}});
+ const parsed=await thrown.ingest({protocolVersion:1,source:{kind:'url',url:videoUrl}});
+ assert.equal(parsed.ingestion.state,'blocked');
+ assert.equal(parsed.ingestion.error.code,'caption_parse_failed');
+ assert.equal(parsed.ingestion.error.diagnostic.stage,'reader_parse');
+ assert.equal(parsed.ingestion.error.audio_fallback.purpose,'source');
+ assert.doesNotMatch(parsed.ingestion.error.message,/raw parser/);
+ assert.equal(captions,1);
+});
 test('link discovery keeps explicit episode selection and original share source',async()=>{
  const discovery={kind:'feed',feed_url:url,episodes:[episode]};
  const service=createIngestionService({podcastSources:{discover:async()=>discovery}});

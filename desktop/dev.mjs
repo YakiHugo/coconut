@@ -9,7 +9,7 @@ import {privateProxyFromEnvironment} from './client-access.mjs';
 import {libraryLocation,libraryStartupMessage,DEVELOPMENT_LIBRARY_DIRECTORY} from './library-location.mjs';
 export {DEVELOPMENT_LIBRARY_DIRECTORY};
 import {sourceNetworkFromEnvironment,validateSourceNetwork} from './source-network.mjs';
-import {createDevelopmentCaptionHelper} from './development-captions.mjs';
+import {createDevelopmentCaptionHelper,resolvePlayerJsRuntime} from './development-captions.mjs';
 import {createCaptionService} from './caption-service.mjs';
 import {createCaptionReadability} from './transcript-readability.mjs';
 import {createVideoAudioService} from './video-audio-service.mjs';
@@ -44,7 +44,7 @@ export async function startDevelopmentBridge({port = 8080, taskDirectory = DEVEL
   if(captionPython && !options.captionService){
     try{
       options.bilibiliSession??=await createBilibiliBrowserSession({python:captionPython,configuration:taskDirectory?path.join(path.dirname(taskDirectory),'caption-browser.json'):null});
-      helper=createDevelopmentCaptionHelper({python:captionPython,network,bilibiliSession:options.bilibiliSession,detached:captionHelperDetached});
+      helper=createDevelopmentCaptionHelper({python:captionPython,network,bilibiliSession:options.bilibiliSession,playerRuntime:await resolvePlayerJsRuntime(),detached:captionHelperDetached});
       const status=await helper.status();
       captionDiagnostic=status;
       options.captionStatus={code:status.ready?'ready':status.code,mode:'development-python',networkMode:status.networkMode};
