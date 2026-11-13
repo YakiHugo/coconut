@@ -67,8 +67,19 @@ Existing subtitle-only readability jobs remain usable independently and never
 re-run ASR. Qwen output is not automatically sent through another punctuation
 model. Text summaries/interview editions are separate downstream actions.
 
-Recognition receives the episode title and any confirmed participant names as
-Qwen context/hotwords. Context participates in checkpoint identity; changing it
+Recognition receives publisher background directly, without a preliminary LLM
+call. Xiaoyuzhou supplies the show name, author, publication date and cleaned
+Show Notes (falling back to description); Bilibili supplies uploader, publication
+date and video description from the existing metadata extraction. The project
+stores these separately as `transcription_context`, never as transcript cues.
+Descriptions are bounded to 6,000 characters; the binary video response may
+retain a shorter excerpt to keep its metadata header within 8 KiB.
+
+Qwen receives simple labeled lines: title, platform, show, publisher, date and
+publisher description, followed by a reminder to follow the actual audio.
+Existing confirmed names/terms remain available as hotwords. Source tasks freeze
+this input at creation; explicit retry keeps it, while creating a task after a
+background change uses separate work. Context participates in checkpoint identity; changing it
 uses a separate recognition directory while preserving older work. Hints can
 still miss rare name characters. Episode-scoped `verified_asr_aliases` in the
 participant evidence can therefore correct explicitly reviewed misspellings

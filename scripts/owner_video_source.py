@@ -431,6 +431,7 @@ def download_media(downloader, info, output, language, subtitle_check, purpose):
             'sha256': digest, 'type': selected['_type'], 'kind': selected['_kind']},
             'source': {'url': downloader.source_url, 'id': downloader.identity, 'provider': downloader.provider,
                 'title': str(info.get('title') or 'Video source')[:500], 'duration': info['duration'],
+                **subtitle_import.publisher_context(info, downloader.source_url, downloader.provider),
                 'subtitle_check': subtitle_check, **({'purpose': 'source'} if purpose == 'source' else {}),
                 'audio_language': selected['_audio_language'], 'audio_language_basis': selected['_audio_language_basis'],
                 'audio_role': selected['_audio_role'], 'format': selected['_extension'],
@@ -490,6 +491,7 @@ def acquire_video(url, language=None, *, network=None, bilibili_cookies=None, ou
                 automatic = subtitle_import.track_is_automatic(field, track)
                 _, basis = subtitle_import.preferred_language(info, language)
                 return {'source': {'url': url, 'id': downloader.identity, 'title': str(info.get('title') or 'Video transcript')[:500],
+                    **subtitle_import.publisher_context(info, url, downloader.provider),
                     'duration': info['duration'], 'language': subtitle_import.track_language(track), 'automatic': automatic,
                     'extractor': downloader.provider, 'translated': False, 'live': False,
                     'live_status': info.get('live_status') or 'not_live'},

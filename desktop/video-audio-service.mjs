@@ -1,6 +1,18 @@
 /** Explicit development-only public media; no paid or automatic ASR. */
 import {createHash} from 'node:crypto';
 import {captionSource,CAPTION_FAILURE_STATUSES,captionDiagnostic,captionFailureAvailability,SUBTITLE_TOKEN_GUIDANCE} from './caption-service.mjs';
+import {publisherContext} from './transcription-context.mjs';
+/** Keep the binary response's metadata header within the existing 8 KiB budget. */
+export function videoSourceHeader(source){
+ const value=structuredClone(source),encode=()=>Buffer.from(JSON.stringify(value)).toString('base64url');
+ let encoded=encode();
+ while(encoded.length>8192&&value.transcription_context?.description){
+  value.transcription_context.description=value.transcription_context.description.slice(0,-200);
+  encoded=encode();
+ }
+ if(encoded.length>8192)delete value.transcription_context;
+ return encode();
+}
 const messages={
  video_media_unavailable:'公开媒体助手未配置，请由服务所有者检查助手配置后明确重试。',
  video_source_unavailable:'当前助手不支持已有字幕的原声载入，请由服务所有者检查助手版本和配置。',
@@ -94,7 +106,8 @@ export function createVideoAudioService({helper,enabledProviders=['youtube','bil
    if(!shape||!audioEvidence||!meta||meta.url!==source.url||meta.id!==source.mediaId||meta.provider!==source.provider||(purpose==='source'?meta.purpose!=='source'||!['found','no_matching_captions','not_requested'].includes(meta.subtitle_check):meta.subtitle_check!=='no_matching_captions')||!Number.isFinite(meta.duration)||meta.duration<=0||meta.duration>21600||typeof meta.title!=='string'||meta.title.length>500||typeof meta.format_id!=='string'||!/^[A-Za-z0-9_.-]{1,80}$/.test(meta.format_id)||
     !Buffer.isBuffer(bytes)||bytes.length<12||bytes.length>200*1024*1024||media.bytes!==bytes.length||bytes.subarray(4,8).toString()!=='ftyp'||createHash('sha256').update(bytes).digest('hex')!==media.sha256)throw Error('公开媒体来源或文件校验未通过');
    // Fixed metadata only: never publish transient CDN/signature URLs.
-   return {body:bytes,type:media.type,kind:media.kind,filename:'public-source.'+meta.format,source:{url:source.url,provider:source.provider,id:source.mediaId,title:meta.title,duration:meta.duration,subtitle_check:meta.subtitle_check,...(purpose?{purpose}:{}),audio_language:lang,audio_language_basis:meta.audio_language_basis,audio_role:meta.audio_role,format:meta.format,format_id:meta.format_id,kind:media.kind,type:media.type,sha256:media.sha256}};
+   const context=publisherContext(meta.transcription_context);
+   return {body:bytes,type:media.type,kind:media.kind,filename:'public-source.'+meta.format,source:{url:source.url,provider:source.provider,id:source.mediaId,title:meta.title,duration:meta.duration,subtitle_check:meta.subtitle_check,...(context?.source_url===source.url?{transcription_context:context}:{}),...(purpose?{purpose}:{}),audio_language:lang,audio_language_basis:meta.audio_language_basis,audio_role:meta.audio_role,format:meta.format,format_id:meta.format_id,kind:media.kind,type:media.type,sha256:media.sha256}};
   }finally{busy=false;}
  }});
 }

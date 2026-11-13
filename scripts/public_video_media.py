@@ -13,6 +13,7 @@ import urllib.error
 import urllib.request
 from urllib.parse import urlparse, parse_qs
 from scripts.public_x_caption_guard import StopProof
+from subtitle_import import publisher_context
 
 MAX_MEDIA = 200 * 1024 * 1024
 MAX_MEDIA_SECONDS = 15 * 60
@@ -305,6 +306,7 @@ def download_verified_audio(info, transport, output, source_url, language=None):
         'sha256':digest.hexdigest(),'type':selected['_type'],'kind':selected['_kind']},
         'source':{'url':source_url,'id':transport.identity,'provider':transport.provider,
         'title':str(info.get('title') or 'Video audio')[:500],'duration':info['duration'],
+        **publisher_context(info, source_url, transport.provider),
         'subtitle_check':'no_matching_captions','audio_language':selected['_audio_language'],
         'audio_language_basis':selected['_audio_language_basis'],'audio_role':selected['_audio_role'],
         'format':selected['_extension'],'format_id':str(selected.get('format_id') or '')[:80]}}
