@@ -248,16 +248,37 @@ test('switching Qwen to MOSS creates a new task and cannot retry the old profile
  assert.equal((await f.jobs.result(second.id)).ingestion.transcript.document.provenance.backend,'moss-mlx');
  assert.deepEqual(JSON.parse(await readFile(path.join(work[0],'authored-qwen-checkpoint.json'),'utf8')),{backend:'qwen-mlx'});
 });
-test('metadata precedes ASR and identity follows acoustic grouping; metadata failure does not discard ASR',async t=>{
+test('publisher context goes directly to ASR; optional roster extraction follows recognition and failure retains ASR',async t=>{
  for(const unavailable of [false,true]){
   const steps=[];
   const reviewer={prepareContext:async d=>{steps.push('context');if(unavailable)throw Error('CLI unavailable');return {...d,speaker_identity_evidence:{expected_speakers:2,speakers:[{name:'张元'}]},transcription_glossary:[{term:'Manus',source:'publisher'}]};},identifySpeakers:async d=>{steps.push('identity');return {...d,segments:d.segments.map(s=>({...s,speaker:'张元（嘉宾）'}))};},review:async d=>{steps.push('review');return {result:d};}};
-  const f=await fixture(t,{reviewer,reviewProvider:'codex',transcriber:{profile:{backend:'authored'},status:async()=>({available:true}),run:async request=>{steps.push('asr');assert.deepEqual(request.hotwords,unavailable?[]:['张元','Manus']);assert.equal(request.speakerCount,unavailable?undefined:2);await writeFile(path.join(request.workDirectory,'result.json'),JSON.stringify({schema_version:1,title:'Authored',segments:[{id:'a',start:0,end:1,text:'原识别',speaker_id:'speaker-0001'}]}));}}});
+  const context={source_url:doc.source_url,platform:'xiaoyuzhou',show:'测试播客',description:'嘉宾张元，话题 Manus。'};
+  const f=await fixture(t,{reviewer,reviewProvider:'codex',transcriber:{profile:{backend:'authored'},status:async()=>({available:true}),run:async request=>{steps.push('asr');assert.deepEqual(request.context,context);assert.deepEqual(request.hotwords,[]);assert.equal(request.speakerCount,undefined);await writeFile(path.join(request.workDirectory,'result.json'),JSON.stringify({schema_version:1,title:'Authored',segments:[{id:'a',start:0,end:1,text:'原识别',speaker_id:'speaker-0001'}]}));}}});
+  commit(f.library,{...doc,transcription_context:context});
   await f.media.save(doc.key,f.media.owner(doc.key).source,Readable.from(['ID3 authored']),{type:'audio/mpeg',name:'source.mp3'});const job=await f.create('transcribe');await until(()=>f.jobs.get(job.id),j=>j.state==='ready');
   const result=(await f.jobs.result(job.id)).ingestion.transcript.document;
-  assert.deepEqual(steps,['context','asr','identity','review']);assert.equal(result.segments[0].speaker,'张元（嘉宾）');
+  assert.deepEqual(steps,['asr','context','identity','review']);assert.equal(result.segments[0].speaker,'张元（嘉宾）');assert.deepEqual(result.transcription_context,context);
   const original=JSON.parse(await readFile(path.join(f.directory,'jobs',job.id,'original-asr.json'),'utf8'));assert.equal(original.segments[0].speaker,undefined);
  }
+});
+
+test('downloaded publisher background survives restart; retry freezes it while new context creates separate recognition',async t=>{
+ const context={source_url:doc.source_url,platform:'bilibili',publisher:'测试发布者',description:'讨论 SGLang。'},seen=[];
+ const f=await fixture(t,{download:async()=>({body:Buffer.from('original audio'),type:'audio/mpeg',source:{transcription_context:context}}),
+  transcriber:{profile:{backend:'qwen-mlx'},status:async()=>({available:true}),run:async({context,workDirectory})=>{
+   seen.push(context);if(seen.length===1)throw Error('interrupted alignment');
+   await writeFile(path.join(workDirectory,'result.json'),JSON.stringify({title:'识别稿',segments:[{id:'one',start:0,end:1,text:'原识别'}]}));
+  }}});
+ const download=await f.create('download');await until(()=>f.jobs.get(download.id),j=>j.state==='ready');await f.restart();
+ const job=await f.create('transcribe');await until(()=>f.jobs.get(job.id),j=>j.state==='failed');
+ const updated={...context,description:'讨论 RadixArk。'};
+ commit(f.library,{...doc,transcription_context:updated});
+ assert.equal((await f.jobs.get(job.id)).currentProfile,false);
+ await f.jobs.action(job.id,'retry');await until(()=>f.jobs.get(job.id),j=>j.state==='ready');
+ assert.deepEqual(seen,[context,context]);
+ assert.deepEqual((await f.jobs.result(job.id)).ingestion.transcript.document.transcription_context,context);
+ const next=await f.create('transcribe');assert.notEqual(next.id,job.id);
+ await until(()=>f.jobs.get(next.id),j=>j.state==='ready');assert.deepEqual(seen[2],updated);
 });
 
 test('existing text alignment is durable, isolated from paid review, and fenced by original text',async t=>{

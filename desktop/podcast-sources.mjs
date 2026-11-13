@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import Coconut from '../reader/core.js';
 import { fetchPublic, publicUrl, mime, isMediaType, PublicSourceError } from './public-http.mjs';
 import { parseXml, decodeEntities } from './podcast-xml.mjs';
+import {publisherText} from './transcription-context.mjs';
 
 export const PODCAST_LIMITS=Object.freeze({metadataBytes:8*1024*1024,transcriptBytes:8*1024*1024,mediaBytes:200*1024*1024,mediaTimeoutMs:30*60*1000,mediaIdleTimeoutMs:30000,episodes:200,segments:30000,duration:21600,concurrent:2});
 const ATOM='http://www.w3.org/2005/Atom',PODCAST='https://podcastindex.org/namespace/1.0',ITUNES='http://www.itunes.com/dtds/podcast-1.0.dtd';
@@ -178,7 +179,11 @@ export function parseXiaoyuzhouPage(html,url) {
        (match[1]==='podcast'&&item.pid!==match[2])||item.enclosure?.url!==item.media.source.url)continue;
     const media=mediaItem(item.media.source.url,item.media.mimeType,item.media.size,url);
     if(!media)continue;
+    const context=Coconut.transcriptionContext({source_url:`https://www.xiaoyuzhoufm.com/episode/${item.eid}`,platform:'xiaoyuzhou',
+      show:show?.title||item.podcast?.title,publisher:show?.author||item.podcast?.author,published:item.pubDate,
+      description:publisherText(item.shownotes)||publisherText(item.description)});
     episodes.push({id:hash(item.eid),title:small(item.title)||'未命名单集',source_url:`https://www.xiaoyuzhoufm.com/episode/${item.eid}`,
+      ...(context?{transcription_context:context}:{}),
       language:'',duration:seconds(item.duration),published:small(item.pubDate),media:[media],transcripts:[]});
   }
   if(!episodes.length)throw new PublicSourceError('SOURCE_ACCESS','此小宇宙页面没有同时明确标记免费、非私有、公开媒体的可导入单集。请使用主播公开 RSS 或合法本地文件');
@@ -399,7 +404,8 @@ export function createPodcastSources({fetchResource=fetchPublic,now=Date.now}={}
     const medium=episode.media[0];
     const document={schema_version:1,title:episode.title,source_url:episode.source_url,language:transcript.language||null,segments,
       provenance:{kind:'publisher_transcript',caption_method:'publisher_provided',caption_track:transcript.url,subtitle_check:'found',language_basis:transcript.language?(transcript.language_source==='inherited'?'publisher_metadata_inherited':'publisher_metadata'):'unknown',review_status:'unreviewed',source_platform:'podcast_rss',...(medium?{source_medium:medium.kind}:{}),...(episode.duration&&episode.duration<=PODCAST_LIMITS.duration?{media_duration:episode.duration}:{})},
-      podcast_source:{feed_url:current.feed_url,episode_id:episode.id,transcript_url:transcript.url,...(medium?{media_url:medium.url,media_kind:medium.kind}:{})}};
+      podcast_source:{feed_url:current.feed_url,episode_id:episode.id,transcript_url:transcript.url,...(medium?{media_url:medium.url,media_kind:medium.kind}:{})},
+      ...(episode.transcription_context?{transcription_context:episode.transcription_context}:{})};
     return {status:'ready',document,episode,feed_url:current.feed_url,feed_checked_at:current.feed_checked_at,feed_reused:current.feed_reused};
   }
   async function openEpisodeMedia(data,{signal}={}) {
@@ -418,9 +424,10 @@ export function createPodcastSources({fetchResource=fetchPublic,now=Date.now}={}
   async function downloadMedia(data,{signal}={}) {
     const maxBytes=data?.maxBytes??PODCAST_LIMITS.mediaBytes;
     if(!Number.isSafeInteger(maxBytes)||maxBytes<1||maxBytes>PODCAST_LIMITS.mediaBytes)throw new PublicSourceError('SOURCE_LIMIT','媒体下载大小上限无效');
-    let media;
+    let media,context;
     if(data?.feedUrl) {
       const {episode}=await chosen(data,signal);
+      context=episode.transcription_context;
       if(episode.duration>PODCAST_LIMITS.duration)throw new PublicSourceError('SOURCE_LIMIT','此单集时长超过6小时');
       media=episode.media.find(item=>item.url===data.mediaUrl);
       if(!media)throw new PublicSourceError('SOURCE_IDENTITY','媒体链接不在所选单集当前的公开 enclosure 中');
@@ -431,7 +438,7 @@ export function createPodcastSources({fetchResource=fetchPublic,now=Date.now}={}
     const kind=resource.type.startsWith('video/')?'video':'audio';
     if(media.kind&&media.kind!==kind)throw new PublicSourceError('SOURCE_TYPE','媒体类型与发布者 enclosure 声明不符');
     if(!resource.body.length)throw new PublicSourceError('SOURCE_TRANSFER','媒体文件为空');
-    return {body:resource.body,type:resource.type,kind,filename:kind==='video'?'podcast-video':'podcast-audio'};
+    return {body:resource.body,type:resource.type,kind,filename:kind==='video'?'podcast-video':'podcast-audio',...(context?{transcription_context:context}:{})};
   }
   return {discover:async(data={},options={})=>{
     // Explicit refresh invalidates a valid source even if admission is busy or

@@ -12,6 +12,7 @@ import {createPublicFetcher} from './public-http.mjs';
 import {createCaptionShortLinkResolver} from './caption-short-link.mjs';
 import {sourceNetworkFromEnvironment} from './source-network.mjs';
 import {createIngestionService} from './ingestion-service.mjs';
+import {videoSourceHeader} from './video-audio-service.mjs';
 import {packagedCaptionGuidance,captionDiagnostic,captionFailureAvailability} from './caption-service.mjs';
 import {createIngestionExecutor} from './ingestion-executor.mjs';
 import {createReadabilityJobs} from './readability-jobs.mjs';
@@ -239,7 +240,7 @@ export function createBridge({readerDirectory = path.resolve(ROOT,'../reader'), 
         if(!canAcquire&&videoAudioService?.ownerLocalOnly)return json(403,{code:'owner_local_required',error:'视频来源获取仅允许本机界面。'});
         if(!videoAudioService?.available)return json(503,{code:'video_media_unavailable',error:'此开发服务未配置公开媒体助手；不会自动安装依赖。'});
         const media=await videoAudioService.download(data,{signal:controller.signal,...(pathname==='/api/videos/source-media'?{purpose:'source'}:{})});
-        res.writeHead(200,{'Content-Type':media.type,'Content-Length':media.body.length,'Content-Disposition':'attachment; filename="'+media.filename+'"','X-Coconut-Media-Source':Buffer.from(JSON.stringify(media.source)).toString('base64url')});
+        res.writeHead(200,{'Content-Type':media.type,'Content-Length':media.body.length,'Content-Disposition':'attachment; filename="'+media.filename+'"','X-Coconut-Media-Source':videoSourceHeader(media.source)});
         res.end(media.body);return;
       }
       if(pathname === '/api/podcasts/media') {

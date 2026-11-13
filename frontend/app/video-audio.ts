@@ -34,7 +34,8 @@ export async function downloadVideoAudio(value:VideoAudioFallback,signal:AbortSi
  const digest=await crypto.subtle.digest('SHA-256',await file.arrayBuffer()),sha256=Array.from(new Uint8Array(digest),b=>b.toString(16).padStart(2,'0')).join('');
  if(sha256!==metadata.sha256)throw Error('媒体内容与来源记录不一致。');
  const inspected=await inspectFile(file);
- return {file,inspected,project:{project_kind:'audio_only',title:metadata.title,source_url:fallback.url,media_duration:metadata.duration,local_media_source:inspected.source,segments:[],media_provenance:{method:'public_video_media',source_platform:identity.provider,media_id:identity.id,subtitle_check:metadata.subtitle_check,audio_language:metadata.audio_language,audio_language_basis:metadata.audio_language_basis,audio_role:metadata.audio_role,media_kind:metadata.kind,container:metadata.format,format_id:metadata.format_id,sha256}}};
+ const context=metadata.transcription_context?(window as any).Coconut.transcriptionContext(metadata.transcription_context):undefined;
+ return {file,inspected,project:{project_kind:'audio_only',title:metadata.title,source_url:fallback.url,media_duration:metadata.duration,...(context?.source_url===fallback.url?{transcription_context:context}:{}),local_media_source:inspected.source,segments:[],media_provenance:{method:'public_video_media',source_platform:identity.provider,media_id:identity.id,subtitle_check:metadata.subtitle_check,audio_language:metadata.audio_language,audio_language_basis:metadata.audio_language_basis,audio_role:metadata.audio_role,media_kind:metadata.kind,container:metadata.format,format_id:metadata.format_id,sha256}}};
 }
 
 /** Decode before creating a project; never call play or infer original voice. */

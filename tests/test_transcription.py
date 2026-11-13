@@ -127,11 +127,17 @@ class AdapterTests(unittest.TestCase):
             run(request)
             run(request)
             run({**request, 'title': '张元访谈第二期'})
-        self.assertEqual(len(calls), 2)
+            background = dict(platform='xiaoyuzhou', show='技术访谈', publisher='测试作者',
+                              description='本期讨论 Manus 和推理系统。')
+            run({**request, 'context': background})
+            run({**request, 'context': background})
+        self.assertEqual(len(calls), 3)
         self.assertEqual(calls[0]['hotwords'], ['张元', '陈旌'])
         self.assertEqual(calls[0]['system_prompt'], '节目标题：对话张元')
         self.assertEqual(calls[1]['system_prompt'], '节目标题：张元访谈第二期')
-        self.assertEqual(len(list((self.root / 'work').glob('audio-context-*'))), 2)
+        self.assertIn('节目名称：技术访谈', calls[2]['system_prompt'])
+        self.assertIn('发布者提供的内容说明：本期讨论 Manus 和推理系统。', calls[2]['system_prompt'])
+        self.assertEqual(len(list((self.root / 'work').glob('audio-context-*'))), 3)
 
     def test_invalid_vocabulary_is_rejected_before_inference(self):
         for hotwords in ('张元', [''], [42], ['a' * 81], ['a'] * 65):

@@ -519,6 +519,7 @@ def extract_public_video_captions(url, language=None, *, ca_file=None, proxy=Non
                     return failure('caption_file_invalid', 'invalid_caption_file')
             p = document['provenance']
             return {'source': {'url': url, 'id': p['media_id'], 'title': document['title'],
+                **subtitle_import.publisher_context(verified_info or {}, url, transport.provider),
                 'duration': p['media_duration'], 'language': p['language'],
                 'automatic': p['caption_method'] == 'automatic', 'extractor': transport.provider,
                 'translated': False, 'live': False, 'live_status': completion},

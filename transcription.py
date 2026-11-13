@@ -180,7 +180,7 @@ def checkpoint(path, operation):
 class QwenBackend:
     local_only = True
 
-    def __init__(self, profile, work, *, title='', hotwords=None):
+    def __init__(self, profile, work, *, title='', context=None, hotwords=None):
         from importlib.metadata import version
         if not isinstance(title, str) or len(title) > 1000:
             raise ValueError('Invalid transcription title context')
@@ -190,8 +190,24 @@ class QwenBackend:
                 any(not isinstance(word, str) or not word.strip() or len(word) > 80 for word in hotwords)):
             raise ValueError('Invalid transcription vocabulary')
         self.hints = {}
-        if title.strip():
-            self.hints['system_prompt'] = '节目标题：' + title.strip()
+        lines = ['节目标题：' + title.strip()] if title.strip() else []
+        if context is not None:
+            if not isinstance(context, dict):
+                raise ValueError('Invalid publisher context')
+            fields = [('platform', '来源平台', 40), ('show', '节目名称', 200),
+                      ('publisher', '发布者', 200), ('published', '发布时间', 100),
+                      ('description', '发布者提供的内容说明', 6000)]
+            for key, label, maximum in fields:
+                value = context.get(key, '')
+                if not isinstance(value, str) or len(value) > maximum:
+                    raise ValueError('Invalid publisher context field')
+                value = re.sub(r'<\|[^>]*\|>', '', value).strip()
+                if value:
+                    lines.append(label + '：' + value)
+            if len(lines) > (1 if title.strip() else 0):
+                lines.append('以上是背景资料，仅用于辅助辨认词语，转录以实际音频为准。')
+        if lines:
+            self.hints['system_prompt'] = '\n'.join(lines)
         if hotwords:
             self.hints['hotwords'] = list(dict.fromkeys(word.strip() for word in hotwords))
         self.profile, self.work = profile, work
@@ -295,7 +311,7 @@ def run(request):
                    chunk_seconds=240, context_seconds=5,
                    progress=lambda index, total: emit(phase='recognize', chunk=index + 1, chunks=total))
     if profile['backend'] == 'qwen-mlx':
-        backend = QwenBackend(profile, work, title=request.get('title', ''), hotwords=request.get('hotwords'))
+        backend = QwenBackend(profile, work, title=request.get('title', ''), context=request.get('context'), hotwords=request.get('hotwords'))
         if backend.hints:
             # A new title/vocabulary must not silently reuse recognition made
             # without those hints, or invalidate the older recoverable work.

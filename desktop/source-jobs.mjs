@@ -34,8 +34,20 @@ export async function createSourceJobs({directory,libraryStore,mediaStore,podcas
   if(tasks.some(value=>JSON.parse(value.operation).fingerprint!==record.sha256))throw fail('此项目已有绑定原声的转写任务。来源返回了不同音频，未替换旧原声；请另建项目核对新版本。',409);
  });
  const row=id=>{if(!uuid(id))throw fail('任务标识无效');const value=db.prepare('SELECT * FROM jobs WHERE id=?').get(id);if(!value)throw fail('任务不存在',404);return value;};
+ function recognitionSnapshot(document,binding){
+  const download=db.prepare("SELECT operation FROM jobs WHERE binding=? AND kind='download' AND state='ready' ORDER BY updated DESC LIMIT 1").get(binding);
+  const supplied=Coconut.transcriptionContext(document.transcription_context),acquired=download?.operation?Coconut.transcriptionContext(JSON.parse(download.operation).transcription_context):null;
+  const context=supplied||acquired;
+  return {title:document.title,...(context&&context.source_url===document.source_url?{transcription_context:context}:{}),
+   ...(document.speaker_identity_evidence?{speaker_identity_evidence:document.speaker_identity_evidence}:{}),
+   ...(document.transcription_glossary?{transcription_glossary:document.transcription_glossary}:{})};
+ }
  function owned(value){if(mediaStore.owner(value.document_key).binding!==value.binding)throw fail('原项目来源已变化，旧任务不能接入此项目',409);return value;}
- function describe(value){return {id:value.id,documentKey:value.document_key,binding:value.binding,source:value.source,kind:value.kind,state:value.state,phase:value.phase,currentProfile:!['transcribe','align'].includes(value.kind)||value.engine==='direct-v1'&&JSON.stringify(JSON.parse(value.operation).profile)===JSON.stringify(transcriber?.profile),resultAvailable:['transcribe','align'].includes(value.kind)&&value.engine==='direct-v1'&&value.state==='ready',assetSha256:value.operation?JSON.parse(value.operation).fingerprint:null,ingestionId:value.ingestion_id||null,error:value.error,error_details:storedErrorDetails(value.error_details),created:value.created,updated:value.updated};}
+ function describe(value){
+  const operation=value.operation?JSON.parse(value.operation):null,current=libraryStore.get(value.document_key)?.document;
+  const matchingContext=value.kind!=='transcribe'||!operation?.recognition_document||current&&JSON.stringify(operation.recognition_document)===JSON.stringify(recognitionSnapshot(current,value.binding));
+  return {id:value.id,documentKey:value.document_key,binding:value.binding,source:value.source,kind:value.kind,state:value.state,phase:value.phase,currentProfile:!['transcribe','align'].includes(value.kind)||value.engine==='direct-v1'&&JSON.stringify(operation.profile)===JSON.stringify(transcriber?.profile)&&Boolean(matchingContext),resultAvailable:['transcribe','align'].includes(value.kind)&&value.engine==='direct-v1'&&value.state==='ready',assetSha256:operation?.fingerprint||null,ingestionId:value.ingestion_id||null,error:value.error,error_details:storedErrorDetails(value.error_details),created:value.created,updated:value.updated};
+ }
  function update(id,state,error=null,details=null){const safeDetails=videoSourceErrorDetails(details);db.prepare('UPDATE jobs SET state=?,error=?,error_details=?,updated=? WHERE id=?').run(state,error,safeDetails?JSON.stringify(safeDetails):null,Date.now(),id);}
  async function perform(value){
   controller=new AbortController();const signal=controller.signal;update(value.id,'running');
@@ -57,6 +69,8 @@ export async function createSourceJobs({directory,libraryStore,mediaStore,podcas
     const type=ALIASES[media.type]||media.type,extension=TYPES[type]||({'audio/aac':'aac','video/ogg':'ogg','video/quicktime':'mov'})[type];
     if(!extension)throw fail('原声格式不受支持');
     await mediaStore.save(value.document_key,value.source,Readable.from([media.body]),{type,name:'source.'+extension,signal});
+    const context=Coconut.transcriptionContext(media.source?.transcription_context||media.transcription_context);
+    if(context?.source_url===document.source_url&&!signal.aborted&&!closing)db.prepare('UPDATE jobs SET operation=? WHERE id=?').run(JSON.stringify({transcription_context:context}),value.id);
     if(!signal.aborted&&!closing)update(value.id,'ready');return;
    }
    const operation=JSON.parse(value.operation);
@@ -71,11 +85,8 @@ export async function createSourceJobs({directory,libraryStore,mediaStore,podcas
     if(sourceSignature(libraryStore.get(value.document_key).document)!==sourceSignature(operation.document))throw fail('原稿已变化，对齐候选未应用',409);
     if(!signal.aborted&&!closing)update(value.id,'ready');return;
    }
-   let ownerDocument=libraryStore.get(value.document_key).document;
-   if(operation.review&&reviewer?.prepareContext){
-    try{ownerDocument=await reviewer.prepareContext(ownerDocument,{directory:path.join(workDirectory,'context'),...operation.review,signal,onProgress:p=>{if(!closing&&!signal.aborted)db.prepare('UPDATE jobs SET phase=?,updated=? WHERE id=?').run(JSON.stringify(p),Date.now(),value.id);}});}
-    catch(error){if(signal.aborted||closing)throw error;ownerDocument={...ownerDocument,transcription_context_status:'pending'};}
-   }
+   const currentDocument=libraryStore.get(value.document_key).document;
+   let ownerDocument={...currentDocument,...(operation.recognition_document||recognitionSnapshot(currentDocument,value.binding))};
    const participants=Array.isArray(ownerDocument.speaker_identity_evidence?.speakers)?ownerDocument.speaker_identity_evidence.speakers.filter(s=>typeof s?.name==='string'&&s.name.trim()&&s.name.length<=80).slice(0,64):[];
    const terms=Array.isArray(ownerDocument.transcription_glossary)?ownerDocument.transcription_glossary.filter(t=>typeof t?.term==='string'&&t.term.trim()&&t.term.length<=80&&typeof t.source==='string'&&t.source.trim()).map(t=>t.term):[];
    const hotwords=[...new Set([...participants.map(s=>s.name),...terms])].slice(0,64),aliases=new Map();
@@ -85,16 +96,21 @@ export async function createSourceJobs({directory,libraryStore,mediaStore,podcas
     aliases.set(alias,aliases.has(alias)&&aliases.get(alias)!==participant.name?null:participant.name);
    }
    const nameCorrections=Object.fromEntries([...aliases].filter(([alias,name])=>name&&!hotwords.includes(alias)));
-   await transcriber.run({inputPath:input.path,sha256:operation.fingerprint,workDirectory,title:ownerDocument.title,hotwords,nameCorrections,speakerCount:ownerDocument.speaker_identity_evidence?.expected_speakers,signal,
+   await transcriber.run({inputPath:input.path,sha256:operation.fingerprint,workDirectory,title:ownerDocument.title,context:ownerDocument.transcription_context,hotwords,nameCorrections,speakerCount:ownerDocument.speaker_identity_evidence?.expected_speakers,signal,
     onProgress:progress=>{if(!closing&&!signal.aborted)db.prepare("UPDATE jobs SET phase=?,updated=? WHERE id=? AND state='running'").run(JSON.stringify(progress),Date.now(),value.id);}});
    owned(value);await mediaStore.localInput(value.document_key,value.binding,operation.fingerprint);
    let raw=JSON.parse(await readFile(path.join(workDirectory,'result.json'),'utf8'));
    const document=Coconut.validate(raw);
    if(!Array.isArray(document.segments))throw fail('转录没有返回有效文字稿');
+   raw={...raw,...(ownerDocument.transcription_context?{transcription_context:ownerDocument.transcription_context}:{})};
    if(operation.review&&reviewer){
     await writeFile(path.join(workDirectory,'original-asr.json'),JSON.stringify(raw),{mode:0o600});
     raw={...raw,title:ownerDocument.title,source_url:ownerDocument.source_url||raw.source_url||'',...(ownerDocument.speaker_identity_evidence?{speaker_identity_evidence:ownerDocument.speaker_identity_evidence}:{}),...(ownerDocument.transcription_glossary?{transcription_glossary:ownerDocument.transcription_glossary}:{}),...(ownerDocument.podcast_source?{podcast_source:ownerDocument.podcast_source}:{})};
     try{
+     // Publisher text goes directly to ASR. Optional extraction now only helps
+     // downstream name assignment/review, never delays recognition.
+     if(reviewer.prepareContext)try{raw=await reviewer.prepareContext(raw,{directory:path.join(workDirectory,'context'),...operation.review,signal,onProgress:p=>{if(!closing&&!signal.aborted)db.prepare("UPDATE jobs SET phase=?,updated=? WHERE id=? AND state='running'").run(JSON.stringify(p),Date.now(),value.id);}});}
+     catch(error){if(signal.aborted||closing)throw error;raw={...raw,transcription_context_status:'pending'};}
      if(reviewer.identifySpeakers)raw=await reviewer.identifySpeakers(raw,{directory:path.join(workDirectory,'speaker-identity'),...operation.review,signal,onProgress:p=>{if(!closing&&!signal.aborted)db.prepare('UPDATE jobs SET phase=?,updated=? WHERE id=?').run(JSON.stringify(p),Date.now(),value.id);}});
      const output=await reviewer.review(raw,{directory:path.join(workDirectory,'review'),...operation.review,signal,jobId:value.id,onProgress:p=>{if(!closing&&!signal.aborted)db.prepare('UPDATE jobs SET phase=?,updated=? WHERE id=?').run(JSON.stringify(p),Date.now(),value.id);}});
      raw=output.result;
@@ -106,6 +122,7 @@ export async function createSourceJobs({directory,libraryStore,mediaStore,podcas
     }
     signal.throwIfAborted();await writeFile(path.join(workDirectory,'reviewed.tmp'),JSON.stringify(raw),{mode:0o600});await rename(path.join(workDirectory,'reviewed.tmp'),path.join(workDirectory,'result.json'));
    }
+   else if(ownerDocument.transcription_context){await writeFile(path.join(workDirectory,'context-result.tmp'),JSON.stringify(raw),{mode:0o600});await rename(path.join(workDirectory,'context-result.tmp'),path.join(workDirectory,'result.json'));}
    if(!signal.aborted&&!closing)update(value.id,'ready');
   }catch(error){
    if(!closing&&!signal.aborted){
@@ -144,9 +161,9 @@ export async function createSourceJobs({directory,libraryStore,mediaStore,podcas
   if(data.kind==='download'){const document=libraryStore.get(data.key).document;if(!document.podcast_source?.media_url&&!videoSource(document))throw fail('此项目没有可获取的原声');}
   else{
    const record=await mediaStore.read(data.key,owner.binding);if(!record)throw fail('请先保存原声',409);
-   if(existing){if(existing.engine==='direct-v1'&&JSON.parse(existing.operation).fingerprint===record.sha256&&JSON.stringify(JSON.parse(existing.operation).profile)===JSON.stringify(transcriber?.profile)&&(data.kind!=='align'||sourceSignature(JSON.parse(existing.operation).document)===sourceSignature(libraryStore.get(data.key).document)))return describe(existing);if(['queued','running'].includes(existing.state))throw fail('旧原声仍有进行中的转写，请先核对原任务',409);}
+   if(existing){if(existing.engine==='direct-v1'&&JSON.parse(existing.operation).fingerprint===record.sha256&&JSON.stringify(JSON.parse(existing.operation).profile)===JSON.stringify(transcriber?.profile)&&(data.kind!=='transcribe'||JSON.stringify(JSON.parse(existing.operation).recognition_document)===JSON.stringify(recognitionSnapshot(libraryStore.get(data.key).document,owner.binding)))&&(data.kind!=='align'||sourceSignature(JSON.parse(existing.operation).document)===sourceSignature(libraryStore.get(data.key).document)))return describe(existing);if(['queued','running'].includes(existing.state))throw fail('旧原声仍有进行中的转写，请先核对原任务',409);}
    const extension=TYPES[record.type];if(!extension)throw fail('此原声格式暂不支持转写，请转换为 MP3/WAV/MP4 后导入',409);
-   operation=JSON.stringify({operation_id:data.operation_id,filename:'source.'+extension,size:record.size,fingerprint:record.sha256,last_modified:0,language:'',profile:transcriber?.profile,...(data.kind==='align'?{document:processingSnapshot(libraryStore.get(data.key).document)}:{}),...(data.kind==='transcribe'&&reviewProvider?{review:{provider:reviewProvider,model:reviewModel}}:{})});
+   operation=JSON.stringify({operation_id:data.operation_id,filename:'source.'+extension,size:record.size,fingerprint:record.sha256,last_modified:0,language:'',profile:transcriber?.profile,...(data.kind==='align'?{document:processingSnapshot(libraryStore.get(data.key).document)}:{recognition_document:recognitionSnapshot(libraryStore.get(data.key).document,owner.binding)}),...(data.kind==='transcribe'&&reviewProvider?{review:{provider:reviewProvider,model:reviewModel}}:{})});
    const status=await (data.kind==='align'?transcriber?.alignmentStatus():transcriber?.status());if(!status?.available)throw fail(status?.message||'转写执行器尚未就绪',503);
   }
   if(closing||admissionOwner!==null)throw fail('服务正在停止或等待关闭确认',503);if(mediaStore.owner(data.key).binding!==owner.binding)throw fail('原项目来源已变化',409);
@@ -174,7 +191,8 @@ export async function createSourceJobs({directory,libraryStore,mediaStore,podcas
     if(value.engine==='direct-v1'&&JSON.stringify(JSON.parse(value.operation).profile)!==JSON.stringify(transcriber.profile))throw fail('模型配置已变化，请创建新任务',409);
     db.prepare("UPDATE jobs SET operation=?,engine='direct-v1',ingestion_id=? WHERE id=?").run(JSON.stringify(operation),id.replaceAll('-',''),id);
    }
-   if(closing||admissionOwner!==null)throw fail('服务正在停止或等待关闭确认',503);update(id,'queued');pump();
+   if(closing||admissionOwner!==null)throw fail('服务正在停止或等待关闭确认',503);
+   update(id,'queued');pump();
   }else throw fail('任务操作无效');return describe(row(id));
  }
  async function result(id){

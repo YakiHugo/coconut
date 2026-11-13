@@ -84,6 +84,18 @@
   if(typeof value!=="string"||value.length>4096)return "";
   try { const url=new URL(value);return ["http:","https:"].includes(url.protocol)&&!url.username&&!url.password&&!url.port&&url.href.length<=4096?url.href:""; }catch{return "";}
  }
+ // Publisher background is separate from transcript text and media identity.
+ function transcriptionContext(value) {
+  if(!value||typeof value!=='object'||Array.isArray(value))return undefined;
+  const url=podcastURL(value.source_url);
+  if(!url)return undefined;
+  const text=(v,max)=>typeof v==='string'?v.replace(/<\|[^>]*\|>/g,'').replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g,'').trim().slice(0,max):'';
+  const result={source_url:url};
+  for(const [key,max] of [['platform',40],['publisher',200],['show',200],['published',100],['description',6000]]){
+   const clean=text(value[key],max);if(clean)result[key]=clean;
+  }
+  return Object.keys(result).length>1?result:undefined;
+ }
  function podcastOrigin(doc) {
   return doc.podcast_source ? (podcastURL(doc.source_url)||podcastURL(doc.podcast_source.feed_url)).replace(/[()]/g,c=>c==='('?'%28':'%29') : '';
  }
@@ -196,6 +208,7 @@
   const original=validateAudioProject(project),text=validate(transcript);
   if(isAudioProject(text))throw new Error('请选择真正的 JSON / SRT / VTT 定时文字稿，原声项目没有可附加的原文');
   const result={...text,title:original.title,language:original.project_language_override?original.language:text.language||original.language,project_language_override:original.project_language_override===true,source_url:original.source_url,podcast_source:original.podcast_source,
+   ...(original.transcription_context?{transcription_context:original.transcription_context}:{}),
    ...projectAnnotations(original),...(original.media_duration?{media_duration:original.media_duration}:{})};
   // The selected file supplies words, not an unrelated local media job association.
   delete result.source_media;delete result.local_media_source;
@@ -219,6 +232,7 @@
    title:typeof data.title==='string'?data.title:'未命名原声项目',source_url:local?(podcastURL(data.source_url)||''):podcastURL(data.source_url)||origin.feed_url||origin.media_url,
    language:typeof data.language==='string'?data.language:'',...(local?{local_media_source:local}:{podcast_source:origin}),
    ...(data.project_language_override===true?{project_language_override:true}:{}),
+   ...(transcriptionContext(data.transcription_context)?{transcription_context:transcriptionContext(data.transcription_context)}:{}),
    ...(Number.isFinite(data.media_duration)&&data.media_duration>0&&data.media_duration<=604800?{media_duration:data.media_duration}:{}),
    ...annotations,
    // Audio metadata and user notes are never transcript evidence or model output.
@@ -1435,6 +1449,7 @@
 			...(sourceMedia ? { source_media: sourceMedia } : {}),
    ...(localSource?{local_media_source:localSource}:{}),
             ...(podcastSource(data.podcast_source)?{podcast_source:podcastSource(data.podcast_source)}:{}),
+   ...(transcriptionContext(data.transcription_context)?{transcription_context:transcriptionContext(data.transcription_context)}:{}),
 			schema_version: 1,
             language: typeof data.language === "string" ? data.language : "",
             translation_view: ["en","zh","ja","ko","fr","de","es"].includes(data.translation_view) ? data.translation_view : "",
@@ -2047,6 +2062,7 @@
 		return parseWithDiagnostics(text, filename).document;
 	}
 	const api = { ANSWER_INPUT_CHARACTERS, answerInputCharacters, answerInputLimitReason, createSourceCorrectionPreview, applySourceCorrectionPreview, undoSourceCorrection, parsePastedSubtitles, subtitleEncodings, decodeSubtitleBytes, translationSelectionInfo, translationSelectionModels, pairedExactExcerptSnapshot, exactExcerptTranslation, exactExcerptTranslationParts, normalizeReadingChapters, readingChapters, createReadingChapter, updateReadingChapter, readingChaptersWith, isReadingCollection, normalizeReadingCollection, createReadingCollection, collectionItemFromCapture, readingCollectionItemKey, readingCollectionItemState, readingCollectionMarkdown, SPEAKER_CORRECTION_LABEL_LIMIT, createSpeakerCorrectionPreview, applySpeakerCorrectionPreview, createLibraryBackupSelection, librarySavedHits, librarySavedHitCurrent, libraryTranslationHitCurrent, libraryTranslationHitCurrentSteps, exactExcerptNote, exactExcerptNotesWith, exactExcerptRemoval, exactExcerptSnapshot, exactExcerptText, exactExcerptParts, exactExcerptSource, exactExcerptCount, exactExcerptDuplicate, exactExcerptFreshness, exactExcerptFreshnessBatch, exactExcerptState, exactExcerptStateBatch, createReadingRecency, createReadingViews, createLibrarySearch, createLibraryNotebookSearch, libraryCaptureSteps, libraryCaptureCurrent, libraryCaptures, libraryNotebookMarkdown, mediaTiming, mediaTimingOffset, mediaTimingRange, localMediaSource, searchDocument, invalidateSearch, manualReviewSnapshot, manualReviewCurrent, saveManualTranslation, translationReviewQueue, hasNoteContent, segmentNoteCount, BACKUP_REVIEW_BYTES, SUBTITLE_IMPORT_BYTES, vttPayload, libraryHits, librarySnippet, hasProjectAnnotations, projectAnnotationCount, attachProjectTranscript, libraryMatches, documentDuration, sortedLibrary, AUDIO_NOTE_BUDGET, audioNoteCharacters, isAudioProject, audioProjectIdentity, podcastMediaIdentity, SUMMARY_QUESTION, summaryReadiness, podcastURL, podcastSource, cleanGlossary, relevantGlossary, translationQualityMessage, retainAnswers, summaryFreshness, latestSummary, summaryMarkdown, aiReadingMarkdown, parseReadingTime, createPlaybackIndex, segmentAtTime, transcriptText, subtitleExport, planLibraryBackup, mergeLibraryBackup, time, source, media, validate, parse, parseWithDiagnostics, matchesSegment, notebookSegments, notebookMarkdown, translationCurrent, sameCueSnapshot, offlineTranslationBatches, subscriptionPlan, cleanContexts, answerFreshness };
+  api.transcriptionContext=transcriptionContext;
 	if (typeof module !== "undefined" && module.exports) module.exports = api;
 	else root.Coconut = api;
 })(typeof window !== "undefined" ? window : globalThis);

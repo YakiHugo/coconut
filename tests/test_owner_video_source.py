@@ -56,6 +56,15 @@ def fixture(request):
 
 @unittest.skipUnless(AVAILABLE, 'Pinned yt-dlp required; native contract CI installs it')
 class NativeSourceTests(unittest.TestCase):
+    def test_bilibili_description_reaches_caption_receipt_without_extra_requests(self):
+        with patch.dict(STATE['videoData'], {'desc': '本期讨论 SGLang 与 RadixArk。'}), \
+                patch.object(RequestDirector, 'send', side_effect=fixture):
+            result = source.acquire_video(BILIBILI, 'en')
+        background = result['source']['transcription_context']
+        self.assertEqual(background['source_url'], BILIBILI)
+        self.assertEqual(background['publisher'], 'Fixture')
+        self.assertEqual(background['description'], '本期讨论 SGLang 与 RadixArk。')
+
     def test_official_extractors_call_native_director_and_output_existing_captions(self):
         for url,provider in [(YOUTUBE,'youtube'),(BILIBILI,'bilibili')]:
             with self.subTest(provider=provider),patch.object(RequestDirector,'send',side_effect=fixture) as send:

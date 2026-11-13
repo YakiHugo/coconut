@@ -33,7 +33,7 @@ function inputSource(source){
 }
 function audioProject(source,media,episode=null,feedUrl=''){
  if(!media)return null;
- return {document:Coconut.validate({project_kind:'audio_only',transcript_status:'not_imported',title:episode?.title||media.name||'原声项目',language:episode?.language||'',source_url:episode?.source_url||source.url,media_duration:episode?.duration,podcast_source:feedUrl?{feed_url:feedUrl,episode_id:episode.id,media_url:media.url,media_kind:media.kind}:{kind:'direct_media',media_url:media.url,media_kind:media.kind},segments:[]})};
+ return {document:Coconut.validate({project_kind:'audio_only',transcript_status:'not_imported',title:episode?.title||media.name||'原声项目',language:episode?.language||'',source_url:episode?.source_url||source.url,media_duration:episode?.duration,transcription_context:episode?.transcription_context,podcast_source:feedUrl?{feed_url:feedUrl,episode_id:episode.id,media_url:media.url,media_kind:media.kind}:{kind:'direct_media',media_url:media.url,media_kind:media.kind},segments:[]})};
 }
 function episodeMedia(result){
  const media=result.episode?.media?.[0];

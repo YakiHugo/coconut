@@ -2,6 +2,7 @@
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {createRequire} from 'node:module';
+import {publisherContext} from './transcription-context.mjs';
 const ROOT=path.dirname(fileURLToPath(import.meta.url));
 const require=createRequire(import.meta.url);
 const MAX_BYTES=8*1024*1024;
@@ -139,6 +140,8 @@ export function createCaptionService({helper,readerDirectory=path.resolve(ROOT,'
     if(!document.segments.length||document.segments.length>20000||document.segments.some(cue=>cue.end>meta.duration+1||cue.end>MAX_DURATION))throw new Error('字幕片段范围与视频时长无法核对');
     document.title=typeof meta.title==='string'&&meta.title.trim()?meta.title.trim().slice(0,500):'视频文字稿';
     document.source_url=source.url;document.language=meta.language;
+    const context=publisherContext(meta.transcription_context);
+    if(context?.source_url===source.url)document.transcription_context=context;
     document.provenance={kind:meta.automatic?'automatic_subtitles':'platform_subtitles',caption_method:meta.automatic?'automatic':'platform_provided',review_status:'unreviewed',language:meta.language,caption_track:String(track.captionTrack||meta.caption_track||meta.language).slice(0,100),language_basis:basis,subtitle_check:'found',source_platform:source.provider,source_medium:'video',media_id:meta.id,media_duration:meta.duration};
     // Keep parse loss on this import receipt, outside document identity and provenance.
     let readable=Coconut.validate(document);

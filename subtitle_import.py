@@ -16,6 +16,20 @@ TIME = r'(?:\d{2,}:)?\d{2}:\d{2}[.,]\d{3}'
 CUE = re.compile(rf'^({TIME})\s+-->\s+({TIME})(?:\s+.*)?$')
 
 
+def publisher_context(info: dict, url: str, provider: str) -> dict:
+    """Already fetched publisher metadata; no extra request or inferred roster."""
+    if provider != 'bilibili':
+        return {}
+    value = {'source_url': url, 'platform': provider}
+    for key, field, limit in (('publisher', 'uploader', 200),
+                              ('published', 'upload_date', 100),
+                              ('description', 'description', 6000)):
+        text = info.get(field)
+        if isinstance(text, str) and text.strip():
+            value[key] = text.strip()[:limit]
+    return {'transcription_context': value}
+
+
 def seconds(text: str) -> float:
     parts = text.replace(',', '.').split(':')
     if len(parts) not in (2, 3):
