@@ -70,7 +70,7 @@ export function createVideoAudioService({helper,enabledProviders=['youtube','bil
  const providers=Object.freeze([...new Set(enabledProviders)].filter(value=>['youtube','bilibili'].includes(value)));
  const available=typeof helper?.extractAudio==='function'&&providers.length>0;
  let busy=false;
- return Object.freeze({available,providers,ownerLocalOnly:helper?.ownerLocalOnly===true,sourceAvailable:available&&sourceMedia,async download(data,{signal,purpose=null}={}){
+ return Object.freeze({available,providers,ownerLocalOnly:helper?.ownerLocalOnly===true,sourceAvailable:available&&sourceMedia,async download(data,{signal,purpose=null,consume}={}){
   if(!available)throw new VideoSourceError('video_media_unavailable');
   if(purpose==='source'&&!sourceMedia)throw new VideoSourceError('video_source_unavailable');
   if(data?.consent!==true)throw Error('下载公开媒体需要明确操作');
@@ -80,17 +80,7 @@ export function createVideoAudioService({helper,enabledProviders=['youtube','bil
   if(language!==null&&(typeof language!=='string'||!/^([a-z]{2,3})(-[A-Za-z0-9]{2,8}){0,2}$/.test(language)))throw Error('语言标记无效');
   if(busy)throw Object.assign(Error('已有公开媒体请求正在进行'),{status:409});
   busy=true;
-  try{
-   let result;
-   try{result=await helper.extractAudio({url:source.url,language,signal,...(purpose?{purpose}:{})});}
-   catch(error){
-    if(signal?.aborted||error?.code==='CAPTION_CANCELLED')throw error?.code==='CAPTION_CANCELLED'?Error('媒体请求已取消'):error;
-    if(error?.name==='CaptionHelperError'&&['CAPTION_TIMEOUT','CAPTION_EXIT','CAPTION_OUTPUT_LIMIT'].includes(error.code)){
-     throw new VideoSourceError('extractor_failed',{diagnostic:{stage:'helper_execution',reason:error.code==='CAPTION_OUTPUT_LIMIT'?'budget_exceeded':'helper_error',requests_attempted:null,responses_received:null},purpose});
-    }
-    if(error?.name==='CaptionHelperError'&&['CAPTION_START','CAPTION_UNAVAILABLE'].includes(error.code))throw new VideoSourceError('video_media_unavailable');
-    throw error;
-   }
+  const processResult=async result=>{
    if(signal?.aborted)throw Error('媒体请求已取消');
    if(result?.status!=='media_ready'){
     const status=[...CAPTION_FAILURE_STATUSES,'media_unavailable','captions_available'].includes(result?.status)?result.status:'extractor_failed';
@@ -104,10 +94,25 @@ export function createVideoAudioService({helper,enabledProviders=['youtube','bil
      meta?.audio_language_basis==='platform_video_stream'&&['original','default','unknown'].includes(meta.audio_role)&&(lang===null||validLang)&&(meta.audio_role!=='unknown'||lang===null)&&meta.format_id==='18'):
     meta?.audio_language_basis==='provider_single_source'&&lang===null&&meta.audio_role==='unknown';
    if(!shape||!audioEvidence||!meta||meta.url!==source.url||meta.id!==source.mediaId||meta.provider!==source.provider||(purpose==='source'?meta.purpose!=='source'||!['found','no_matching_captions','not_requested'].includes(meta.subtitle_check):meta.subtitle_check!=='no_matching_captions')||!Number.isFinite(meta.duration)||meta.duration<=0||meta.duration>21600||typeof meta.title!=='string'||meta.title.length>500||typeof meta.format_id!=='string'||!/^[A-Za-z0-9_.-]{1,80}$/.test(meta.format_id)||
-    !Buffer.isBuffer(bytes)||bytes.length<12||bytes.length>200*1024*1024||media.bytes!==bytes.length||bytes.subarray(4,8).toString()!=='ftyp'||createHash('sha256').update(bytes).digest('hex')!==media.sha256)throw Error('公开媒体来源或文件校验未通过');
+    !(result.body&&typeof result.body[Symbol.asyncIterator]==='function'&&Number.isSafeInteger(media.bytes)&&media.bytes>=12&&media.bytes<=200*1024*1024&&/^[a-f0-9]{64}$/.test(media.sha256)||Buffer.isBuffer(bytes)&&bytes.length>=12&&bytes.length<=200*1024*1024&&media.bytes===bytes.length&&bytes.subarray(4,8).toString()==='ftyp'&&createHash('sha256').update(bytes).digest('hex')===media.sha256))throw Error('公开媒体来源或文件校验未通过');
    // Fixed metadata only: never publish transient CDN/signature URLs.
    const context=publisherContext(meta.transcription_context);
-   return {body:bytes,type:media.type,kind:media.kind,filename:'public-source.'+meta.format,source:{url:source.url,provider:source.provider,id:source.mediaId,title:meta.title,duration:meta.duration,subtitle_check:meta.subtitle_check,...(context?.source_url===source.url?{transcription_context:context}:{}),...(purpose?{purpose}:{}),audio_language:lang,audio_language_basis:meta.audio_language_basis,audio_role:meta.audio_role,format:meta.format,format_id:meta.format_id,kind:media.kind,type:media.type,sha256:media.sha256}};
+   const value={body:result.body||bytes,size:media.bytes,sha256:media.sha256,type:media.type,kind:media.kind,filename:'public-source.'+meta.format,source:{url:source.url,provider:source.provider,id:source.mediaId,title:meta.title,duration:meta.duration,subtitle_check:meta.subtitle_check,...(context?.source_url===source.url?{transcription_context:context}:{}),...(purpose?{purpose}:{}),audio_language:lang,audio_language_basis:meta.audio_language_basis,audio_role:meta.audio_role,format:meta.format,format_id:meta.format_id,kind:media.kind,type:media.type,sha256:media.sha256}};
+   if(consume){await consume(value);const {body,...metadata}=value;return metadata;}
+   return value;
+  };
+  try{
+   let result,consumed=false;
+   try{result=await helper.extractAudio({url:source.url,language,signal,...(purpose?{purpose}:{}),...(consume?{consume:async value=>{consumed=true;return processResult(value);}}:{})});if(consumed)return result;}
+   catch(error){
+    if(signal?.aborted||error?.code==='CAPTION_CANCELLED')throw error?.code==='CAPTION_CANCELLED'?Error('媒体请求已取消'):error;
+    if(error?.name==='CaptionHelperError'&&['CAPTION_TIMEOUT','CAPTION_EXIT','CAPTION_OUTPUT_LIMIT'].includes(error.code)){
+     throw new VideoSourceError('extractor_failed',{diagnostic:{stage:'helper_execution',reason:error.code==='CAPTION_OUTPUT_LIMIT'?'budget_exceeded':'helper_error',requests_attempted:null,responses_received:null},purpose});
+    }
+    if(error?.name==='CaptionHelperError'&&['CAPTION_START','CAPTION_UNAVAILABLE'].includes(error.code))throw new VideoSourceError('video_media_unavailable');
+    throw error;
+   }
+   return await processResult(result);
   }finally{busy=false;}
  }});
 }

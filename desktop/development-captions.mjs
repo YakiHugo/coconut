@@ -3,7 +3,7 @@ import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {access,constants} from 'node:fs/promises';
 import {readFile,mkdtemp,mkdir,rm} from 'node:fs/promises';
-import {readHelperMedia} from './caption-helper-media.mjs';
+import {readHelperMedia,cleanupHelperMedia} from './caption-helper-media.mjs';
 import {validateSourceNetwork} from './source-network.mjs';
 import {tmpdir} from 'node:os';
 import {captionSource,captionLanguages,CAPTION_FAILURE_STATUSES,captionDiagnostic} from './caption-service.mjs';
@@ -60,10 +60,10 @@ export function createDevelopmentCaptionHelper({python,proxy=null,network=null,b
  const trustedProxy=validateCaptionProxy(proxy);
  const sourceNetwork=validateSourceNetwork(network??(trustedProxy?{mode:'custom',proxy:trustedProxy}:{mode:'direct'}));
  const active=new Set();let closing=false;
- async function execute(input,{signal}={}){
+ async function execute(input,{signal,consume}={}){
   if(closing||signal?.aborted)throw fail('CAPTION_CANCELLED','字幕请求已取消');
   if(active.size)throw fail('CAPTION_BUSY','已有字幕请求正在运行');
-  const controller=new AbortController();let directory;
+  const controller=new AbortController();let directory,consumed=false;
   const operation=(async()=>{
    try{
     directory=await mkdtemp(path.join(tempRoot,'coconut-dev-caption-'));
@@ -72,9 +72,9 @@ export function createDevelopmentCaptionHelper({python,proxy=null,network=null,b
      timeoutMs:input.operation==='version'?Math.min(timeoutMs,10000):input.operation==='extract-development-audio'?mediaTimeoutMs:timeoutMs,maxOutputBytes:HELPER_LIMITS.outputBytes,onSpawn,detached,args:['-I','-B','-c',launcher]});
     let result;try{result=JSON.parse(output);}catch{throw fail('CAPTION_OUTPUT','字幕助手没有返回完整元数据');}
     if(!result||typeof result!=='object'||Array.isArray(result))throw fail('CAPTION_OUTPUT','字幕助手没有返回完整元数据');
-    if(input.operation==='extract-development-audio'&&result.status==='media_ready')result=await readHelperMedia(directory,result);
+    if(input.operation==='extract-development-audio'&&result.status==='media_ready'){result=await readHelperMedia(directory,result,{consume,signal:signal?AbortSignal.any([signal,controller.signal]):controller.signal});consumed=!!consume;}
     return result;
-   }finally{if(directory)await rm(directory,{recursive:true,force:true});}
+   }finally{await cleanupHelperMedia(directory,consumed);}
   })();
   active.add(controller);controller.operation=operation;
   try{return await operation;}finally{active.delete(controller);}
@@ -110,14 +110,14 @@ export function createDevelopmentCaptionHelper({python,proxy=null,network=null,b
    if(!bytes.length||bytes.length>HELPER_LIMITS.captionBytes||r.format==='vtt'&&!/^\uFEFF?WEBVTT(?:[ \t].*)?\r?\n/.test(bytes.toString('utf8')))throw fail('CAPTION_OUTPUT','字幕文件无效');
    return {source:r.source,track:r.track,format:r.format,bytes};
   },
-  async extractAudio({url,language=null,purpose=null,signal}={}){
+  async extractAudio({url,language=null,purpose=null,signal,consume}={}){
    if(!ready||!audioReady)throw fail('CAPTION_UNAVAILABLE','开发原声助手尚未通过检查');
    const source=captionSource(url);
    if(!['youtube','bilibili'].includes(source.provider))throw fail('CAPTION_INPUT','此来源不支持公开媒体回退');
    if(language!==null&&(typeof language!=='string'||!/^([a-z]{2,3})(-[A-Za-z0-9]{2,8}){0,2}$/.test(language)))throw fail('CAPTION_INPUT','原语言标记无效');
    if(purpose!==null&&(purpose!=='source'||!sourceMediaReady))throw fail('CAPTION_UNAVAILABLE','当前助手不支持为已有字幕载入原声');
    const cookies=source.provider==='bilibili'?await bilibiliSession?.cookies({signal}):null;
-   return execute({operation:'extract-development-audio',url:source.url,language,...(purpose?{purpose}:{}),...(cookies?{bilibiliCookies:cookies}:{}),network:sourceNetwork},{signal});
+   return execute({operation:'extract-development-audio',url:source.url,language,...(purpose?{purpose}:{}),...(cookies?{bilibiliCookies:cookies}:{}),network:sourceNetwork},{signal,consume});
   },
   shutdown(){closing=true;for(const controller of active)controller.abort();return Promise.allSettled([...active].map(controller=>controller.operation));},
  });

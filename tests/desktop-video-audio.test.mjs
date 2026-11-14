@@ -152,3 +152,11 @@ test('source media absence and service configuration errors make only supported 
  const token=new VideoSourceError('subtitle_token_required',{diagnostic:{stage:'metadata',reason:'subtitle_token_required',requests_attempted:2,responses_received:1}});
  assert.deepEqual(token.availability,{metadata:'unverified',captions:'token_required',media:'unknown'});assert.match(token.message,/媒体是否可取得尚未知/);
 });
+test('stream callback validates source before lending bytes and keeps busy until saved',async()=>{
+ const {Readable}=await import('node:stream');let release;const saved=new Promise(resolve=>release=resolve);
+ const service=createVideoAudioService({helper:{extractAudio:async({consume})=>{const {bytes,...result}=valid();return consume({...result,body:Readable.from([bytes])});}}});
+ let received=false;const download=service.download({url,consent:true},{consume:async media=>{received=true;assert.equal(media.sha256,sha256);assert.equal(media.size,bytes.length);let n=0;for await(const chunk of media.body)n+=chunk.length;assert.equal(n,bytes.length);await saved;}});
+ await new Promise(resolve=>setImmediate(resolve));assert.ok(received);await assert.rejects(service.download({url,consent:true}),/进行/);release();const result=await download;assert.equal(result.body,undefined);assert.equal(result.source.id,'abcdefghijk');
+ const bad=createVideoAudioService({helper:{extractAudio:async({consume})=>{const result=valid();result.source.id='wrong';return consume({...result,body:Readable.from([bytes])});}}});
+ await assert.rejects(bad.download({url,consent:true},{consume:()=>assert.fail('bad identity reached storage')}),/校验/);
+});
