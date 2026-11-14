@@ -51,3 +51,21 @@ test('storage refuses symlinks and unowned library namespace reuse',async t=>{
 });
 test('explicit re-download repairs same-size corrupted blobs before returning a durable receipt',async t=>{const {directory,store}=await setup(t),source=hash(shared.sourceMediaIdentity(doc)),bytes=Buffer.from('original');const first=await store.save(doc.key,source,Readable.from([bytes]),{type:'audio/mpeg',name:'a.mp3'});const file=path.join(directory,'source-media',first.sha256+'.media');await fs.writeFile(file,Buffer.from('corrupt!'));await assert.rejects(store.read(doc.key),/integrity/);const repaired=await store.save(doc.key,source,Readable.from([bytes]),{type:'audio/mpeg',name:'a.mp3'});assert.deepEqual(repaired,first);assert.deepEqual(await fs.readFile(file),bytes);});
 test('startup retires only private generated incomplete staging files',async t=>{const {directory,library}=await setup(t),root=path.join(directory,'source-media'),stale=path.join(root,'a'.repeat(40)+'.tmp'),unrelated=path.join(root,'user.tmp');await fs.writeFile(stale,'incomplete',{mode:0o600});await fs.writeFile(unrelated,'preserve',{mode:0o600});const restarted=await createSourceMediaStore({directory:root,libraryStore:library});await restarted.shutdown();await assert.rejects(fs.stat(stale),{code:'ENOENT'});assert.equal(await fs.readFile(unrelated,'utf8'),'preserve');});
+
+test('expected download identity is checked before a media receipt is committed',async t=>{
+ const {store}=await setup(t),source=hash(shared.sourceMediaIdentity(doc)),bytes=Buffer.from('original media');
+ const original=await store.save(doc.key,source,Readable.from([bytes]),{type:'audio/mpeg',name:'audio.mp3',expectedSha256:hash(bytes),expectedSize:bytes.length});
+ for(const expected of [{expectedSha256:'a'.repeat(64)},{expectedSize:bytes.length+1}]){
+  await assert.rejects(store.save(doc.key,source,Readable.from([bytes]),{type:'audio/mpeg',name:'audio.mp3',...expected}),/identity changed/);
+  assert.deepEqual(await store.read(doc.key),original);
+ }
+ await assert.rejects(store.save(doc.key,source,Readable.from([bytes]),{type:'audio/mpeg',name:'audio.mp3',expectedSize:0}),/Invalid expected/);
+});
+
+test('cancellation at the final commit fence preserves the previous receipt',async t=>{
+ const {store}=await setup(t),source=hash(shared.sourceMediaIdentity(doc));
+ const prior=await store.save(doc.key,source,Readable.from(['original']),{type:'audio/mpeg',name:'audio.mp3'});
+ const controller=new AbortController();store.setCommitGuard(()=>controller.abort());
+ await assert.rejects(store.save(doc.key,source,Readable.from(['replacement']),{type:'audio/mpeg',name:'audio.mp3',signal:controller.signal}),/Source document changed/);
+ assert.deepEqual(await store.read(doc.key),prior);
+});

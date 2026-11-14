@@ -33,9 +33,9 @@ export function createCaptionHelper({resourcesPath, artifact=artifacts[`${proces
         return {installed:false,integrity:false,ready:false,providers:[],reason:packagedCaptionGuidance(code),code};
       }
     },
-    async extractAudio({url,language=null,purpose=null,signal}={}){
+    async extractAudio({url,language=null,purpose=null,signal,consume}={}){
       if(!ready||!ownerLocal)throw new CaptionHelperError('CAPTION_UNAVAILABLE','此安装包未提供本机媒体获取能力');
-      return execute({resourcesPath,artifact,operation:'extract-audio',url,language,purpose,network:sourceNetwork,timeoutMs:910000,signal});
+      return execute({resourcesPath,artifact,operation:'extract-audio',url,language,purpose,network:sourceNetwork,timeoutMs:910000,signal,consume});
     },
     async extractCaptions({url,language=null,signal} = {}) {
       if(closing||signal?.aborted)throw new CaptionHelperError('CAPTION_CANCELLED','字幕请求已取消');
