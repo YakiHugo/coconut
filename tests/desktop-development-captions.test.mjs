@@ -248,3 +248,21 @@ test('existing-transcript source media is a distinct capability and uses only th
  assert.equal(reads,1);assert.equal(calls[0].input.purpose,'source');assert.deepEqual(calls[0].input.bilibiliCookies,{SESSDATA:'AUTHORED_SOURCE_SESSION'});assert.equal(calls[1].input.bilibiliCookies,undefined);
  const old=await fixture(t,{probe:{...version,developmentAudioProtocol:1}}),legacy=createDevelopmentCaptionHelper({python:old.executable});t.after(()=>legacy.shutdown());assert.equal((await legacy.status()).sourceMedia,false);await assert.rejects(legacy.extractAudio({url:'https://www.bilibili.com/video/BV1xx411c7mD',purpose:'source'}),error=>error.code==='CAPTION_UNAVAILABLE');
 });
+test('streaming helper keeps private media until consumption ends and removes it on failure or cancellation',async t=>{
+ const f=await fixture(t);const bytes=Buffer.from('0000ftypM4A authored stream');
+ const {createHash}=await import('node:crypto');
+ const result={status:'media_ready',media:{filename:'public-media.bin',type:'audio/mp4',kind:'audio',bytes:bytes.length,sha256:createHash('sha256').update(bytes).digest('hex')}};
+ await writeFile(f.executable,`#!${process.execPath}\nconst fs=require('node:fs');let raw='';process.stdin.on('data',b=>raw+=b);process.stdin.on('end',()=>{const input=JSON.parse(raw);if(input.operation==='version')process.stdout.write(JSON.stringify(${JSON.stringify({...version,developmentAudioProtocol:1})}));else{fs.writeFileSync('public-media.bin',Buffer.from(${JSON.stringify(bytes.toString('base64'))},'base64'));process.stdout.write(JSON.stringify(${JSON.stringify(result)}));}});`,{mode:0o700});
+ const helper=createDevelopmentCaptionHelper({python:f.executable,tempRoot:f.directory});t.after(()=>helper.shutdown());assert.equal((await helper.status()).ready,true);
+ for(const mode of ['complete','failure','cancel']){
+  const controller=new AbortController();const operation=helper.extractAudio({url:'https://www.youtube.com/watch?v=abcdefghijk',signal:controller.signal,consume:async value=>{
+   assert.equal((await readdir(f.directory)).some(name=>name.startsWith('coconut-dev-caption-')),true);
+   if(mode==='failure')throw Error('storage full');
+   if(mode==='cancel')controller.abort();
+   for await(const chunk of value.body){}
+   return 'saved';
+  }});
+  if(mode==='complete')assert.equal(await operation,'saved');else await assert.rejects(operation);
+  assert.equal((await readdir(f.directory)).some(name=>name.startsWith('coconut-dev-caption-')),false);
+ }
+});

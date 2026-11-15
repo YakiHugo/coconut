@@ -1,5 +1,6 @@
 /** Bounded, anonymous public HTTP. Never use an ambient proxy, cookie jar or credentials. */
 import http from 'node:http';
+import {Readable} from 'node:stream';
 import https from 'node:https';
 import tls from 'node:tls';
 import { lookup as dnsLookup } from 'node:dns/promises';
@@ -120,7 +121,7 @@ export function createPublicFetcher({lookup = dnsLookup, request = (url,options,
     Object.assign(proxyEnv,effective);
   }
   let ownerAgent;
-  return async function fetchPublic(value,{maxBytes=8*1024*1024,timeoutMs=20000,idleTimeoutMs,signal,types,inspectMedia=false,maxMediaBytes=200*1024*1024,redirectOnly=false}={}) {
+  return async function fetchPublic(value,{maxBytes=8*1024*1024,timeoutMs=20000,idleTimeoutMs,signal,types,inspectMedia=false,maxMediaBytes=200*1024*1024,redirectOnly=false,consume}={}) {
     let url = publicUrl(value);
     if(idleTimeoutMs!==undefined&&(!Number.isSafeInteger(idleTimeoutMs)||idleTimeoutMs<1||idleTimeoutMs>2147483647))throw new Error('来源空闲超时设置无效');
     const deadline = AbortSignal.timeout(timeoutMs);
@@ -146,7 +147,7 @@ export function createPublicFetcher({lookup = dnsLookup, request = (url,options,
         if (records && (!records.length || records.some(record=>!isPublicAddress(record.address)))) throw new PublicSourceError('SOURCE_ACCESS','来源域名解析到非公开地址，已停止请求');
         const pinned = records?.[0];
         const response = await new Promise((resolve,reject)=>{
-          let settled = false;
+          let settled = false,streamingBody;
           const done = (error,result)=>{ if (settled) return; settled=true; error ? reject(error) : resolve(result); };
           const send = viaProxy ? (url,options,callback)=>proxyRequest(proxy,url,options,callback) : request;
           const req = send(url,{method:'GET',agent:viaOwner&&!viaProxy?(ownerAgent??=new https.Agent({keepAlive:false,proxyEnv})):false,signal:combined,maxHeaderSize:16384,
@@ -170,6 +171,27 @@ export function createPublicFetcher({lookup = dnsLookup, request = (url,options,
             if (length !== undefined && (!/^\d+$/.test(length) || !Number.isSafeInteger(Number(length)) || Number(length)>limit)) return fail('SOURCE_LIMIT','来源文件超过允许大小或长度无效');
             const metadata = {url:url.href,type,length:length===undefined ? null : Number(length)};
             if (mediaOnly) {done(null,{...metadata,body:Buffer.alloc(0)});res.destroy();return;}
+            if(consume){
+              let complete=false;
+              const body=Readable.from((async function*(){
+                let bytes=0;
+                try{
+                  for await(const chunk of res){
+                    if(chunk.length)progress();bytes+=chunk.length;
+                    if(bytes>limit)throw new PublicSourceError('SOURCE_LIMIT','来源文件超过允许大小');
+                    yield chunk;
+                  }
+                  if(!bytes||length!==undefined&&bytes!==Number(length))throw new PublicSourceError('SOURCE_TRANSFER','来源文件传输不完整');
+                  complete=true;
+                }catch(error){if(error instanceof PublicSourceError)throw error;throw new PublicSourceError('SOURCE_TRANSFER','公开来源传输中断');}
+              })(),{signal:combined});
+              streamingBody=body;
+              Promise.resolve().then(()=>consume({...metadata,body})).then(value=>{
+                if(!complete)throw new PublicSourceError('SOURCE_TRANSFER','来源媒体未完整保存');
+                done(null,{...metadata,consumed:value});
+              }).catch(error=>done(error)).finally(()=>{body.destroy();res.destroy();});
+              return;
+            }
             const chunks=[];let bytes=0;
             res.on('data',chunk=>{if(chunk.length)progress();bytes+=chunk.length;if(bytes>limit)return fail('SOURCE_LIMIT','来源文件超过允许大小');chunks.push(chunk);});
             res.on('end',()=>{
@@ -179,7 +201,7 @@ export function createPublicFetcher({lookup = dnsLookup, request = (url,options,
             res.on('error',()=>done(new PublicSourceError('SOURCE_TRANSFER','公开来源传输中断')));
             res.on('aborted',()=>done(new PublicSourceError('SOURCE_TRANSFER','公开来源传输中断')));
           });
-          req.on('error',()=>done(new PublicSourceError('SOURCE_NETWORK','无法连接公开来源')));
+          req.on('error',()=>{const error=new PublicSourceError('SOURCE_NETWORK','无法连接公开来源');if(streamingBody)streamingBody.destroy(error);else done(error);});
           req.end();
         });
         if (!Object.hasOwn(response,'redirect')) return response;

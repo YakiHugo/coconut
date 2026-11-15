@@ -102,3 +102,28 @@ test('deadline and cancellation terminate requests waiting for headers or stalle
   try{const pending=fetch('https://example.org/feed',{timeoutMs:20,signal:controller.signal});if(cancel)setTimeout(()=>controller.abort(),5);await assert.rejects(pending,/取消或超时/);assert.equal(destroyed,true);}finally{clearTimeout(hold);}
  }
 });
+test('stream consumption receives bounded chunks and no buffered body receipt',async()=>{
+ const t=fakeTransport([{chunks:[Buffer.from('abc'),Buffer.from('def')],headers:{'content-length':'6'}}]);
+ let count=0;const result=await createPublicFetcher({lookup,request:t.request})('https://example.com/audio',{types:allowed,consume:async({body,length})=>{assert.equal(length,6);for await(const chunk of body)count+=chunk.length;return 'saved';}});
+ assert.equal(count,6);assert.equal(result.body,undefined);assert.equal(result.consumed,'saved');
+});
+test('stream validator fails before EOF for truncated, oversized or empty media',async()=>{
+ for(const spec of [{body:'abc',headers:{'content-length':'4'}},{body:'123456'},{chunks:[]}]){
+  const t=fakeTransport([spec]);let ended=false;
+  await assert.rejects(createPublicFetcher({lookup,request:t.request})('https://example.com/audio',{types:allowed,maxBytes:5,consume:async({body})=>{for await(const chunk of body){}ended=true;}}));
+  assert.equal(ended,false,'consumer must not commit after invalid EOF');
+ }
+});
+test('partial or rejected consumers do not produce a successful download receipt',async()=>{
+ for(const consume of [async()=>{},async()=>{throw Error('storage full');}]){
+  const t=fakeTransport([{body:'abc'}]);await assert.rejects(createPublicFetcher({lookup,request:t.request})('https://example.com/audio',{types:allowed,consume}));
+ }
+});
+test('stream abort waits for consumer cleanup before rejecting the operation',async()=>{
+ const controller=new AbortController();let cleaned=false;
+ const t=fakeTransport([{body:'abc'}]);
+ const fetcher=createPublicFetcher({lookup,request:t.request});
+ await assert.rejects(fetcher('https://example.com/audio',{types:allowed,signal:controller.signal,consume:async({body})=>{
+  try{controller.abort();for await(const chunk of body){}}finally{await new Promise(resolve=>setTimeout(resolve,10));cleaned=true;}
+ }}));assert.equal(cleaned,true);
+});

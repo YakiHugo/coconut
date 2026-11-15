@@ -421,7 +421,7 @@ export function createPodcastSources({fetchResource=fetchPublic,now=Date.now}={}
     if(medium.length>PODCAST_LIMITS.mediaBytes)throw new PublicSourceError('SOURCE_LIMIT','发布者声明的媒体超过下载大小上限（最多200 MiB）');
     return {status:'needs_transcription',episode,feed_url:current.feed_url,feed_checked_at:current.feed_checked_at,feed_reused:current.feed_reused};
   }
-  async function downloadMedia(data,{signal}={}) {
+  async function downloadMedia(data,{signal,consume}={}) {
     const maxBytes=data?.maxBytes??PODCAST_LIMITS.mediaBytes;
     if(!Number.isSafeInteger(maxBytes)||maxBytes<1||maxBytes>PODCAST_LIMITS.mediaBytes)throw new PublicSourceError('SOURCE_LIMIT','媒体下载大小上限无效');
     let media,context;
@@ -434,10 +434,18 @@ export function createPodcastSources({fetchResource=fetchPublic,now=Date.now}={}
       if(media.length>maxBytes)throw new PublicSourceError('SOURCE_LIMIT','发布者声明的媒体超过本次下载大小上限（最多200 MiB）');
     } else {media={url:publicUrl(data?.url).href};}
     const types=new Set(['audio/mpeg','audio/mp3','audio/mp4','audio/x-m4a','audio/aac','audio/wav','audio/wave','audio/x-wav','audio/ogg','audio/flac','audio/x-flac','audio/webm','video/mp4','video/webm','video/ogg','video/quicktime']);
-    const resource=await fetchResource(media.url,{signal,maxBytes,timeoutMs:PODCAST_LIMITS.mediaTimeoutMs,idleTimeoutMs:PODCAST_LIMITS.mediaIdleTimeoutMs,types});
+    const consumedMedia=resource=>{
+      const kind=resource.type.startsWith('video/')?'video':'audio';
+      if(media.kind&&media.kind!==kind)throw new PublicSourceError('SOURCE_TYPE','媒体类型与发布者 enclosure 声明不符');
+      return {body:resource.body,type:resource.type,kind,filename:kind==='video'?'podcast-video':'podcast-audio',...(resource.length!==null?{size:resource.length}:{}),...(context?{transcription_context:context}:{})};
+    };
+    let streamed;
+    const resource=await fetchResource(media.url,{signal,maxBytes,timeoutMs:PODCAST_LIMITS.mediaTimeoutMs,idleTimeoutMs:PODCAST_LIMITS.mediaIdleTimeoutMs,types,...(consume?{consume:async value=>{streamed=consumedMedia(value);await consume(streamed);}}:{})});
+    if(streamed){const {body,...metadata}=streamed;return metadata;}
     const kind=resource.type.startsWith('video/')?'video':'audio';
     if(media.kind&&media.kind!==kind)throw new PublicSourceError('SOURCE_TYPE','媒体类型与发布者 enclosure 声明不符');
     if(!resource.body.length)throw new PublicSourceError('SOURCE_TRANSFER','媒体文件为空');
+    if(consume){const value=consumedMedia(resource);await consume(value);const {body,...metadata}=value;return metadata;}
     return {body:resource.body,type:resource.type,kind,filename:kind==='video'?'podcast-video':'podcast-audio',...(context?{transcription_context:context}:{})};
   }
   return {discover:async(data={},options={})=>{

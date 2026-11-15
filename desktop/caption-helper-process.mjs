@@ -1,4 +1,4 @@
-import {readHelperMedia} from './caption-helper-media.mjs';
+import {readHelperMedia,cleanupHelperMedia} from './caption-helper-media.mjs';
 import {validateSourceNetwork,helperNetworkEnvironment} from './source-network.mjs';
 import {captionSource,captionLanguages,CAPTION_FAILURE_STATUSES,captionDiagnostic} from './caption-service.mjs';
 /**
@@ -143,7 +143,7 @@ export function runCaptionProcess(executable,input,{directory,signal,timeoutMs,m
 }
 
 /** Internal-only test hooks cannot be supplied through the bridge or renderer. */
-export async function runPinnedCaptionHelper({resourcesPath,artifact,operation,fixtureUrl,url,language=null,network=null,purpose=null,signal,
+export async function runPinnedCaptionHelper({resourcesPath,artifact,operation,fixtureUrl,url,language=null,network=null,purpose=null,signal,consume,
   timeoutMs=HELPER_LIMITS.timeoutMs,maxOutputBytes=HELPER_LIMITS.outputBytes,onSpawn,
   tempRoot=tmpdir(),spawnProcess=spawn}={}) {
   if(!['version','authored-fixture','extract','extract-audio'].includes(operation))throw fail('CAPTION_OPERATION','不支持的字幕助手操作');
@@ -160,7 +160,7 @@ export async function runPinnedCaptionHelper({resourcesPath,artifact,operation,f
   }
   cancelled(signal);
   if(active)throw fail('CAPTION_BUSY','已有字幕请求正在运行');
-  active=true;let directory;
+  active=true;let directory,consumed=false;
   try {
     const bytes=await verifiedHelperBytes(resourcesPath,artifact);cancelled(signal);
     directory=await mkdtemp(path.join(tempRoot,'coconut-caption-'));
@@ -172,7 +172,7 @@ export async function runPinnedCaptionHelper({resourcesPath,artifact,operation,f
     cancelled(signal);let result;
     try{result=JSON.parse(stdout);}catch{throw fail('CAPTION_OUTPUT','字幕助手没有返回完整元数据');}
     if(!result || typeof result!=='object' || Array.isArray(result))throw fail('CAPTION_OUTPUT','字幕助手没有返回完整元数据');
-    if(operation==='extract-audio'&&result.status==='media_ready')return await readHelperMedia(directory,result);
+    if(operation==='extract-audio'&&result.status==='media_ready'){const value=await readHelperMedia(directory,result,{consume,signal});consumed=!!consume;return value;}
     if(operation==='extract-audio'&&['media_unavailable','captions_available'].includes(result.status))return {status:result.status};
     if(['extract','extract-audio'].includes(operation) && CAPTION_FAILURE_STATUSES.includes(result.status)){
       const diagnostic=captionDiagnostic(result.diagnostic);
@@ -200,5 +200,5 @@ export async function runPinnedCaptionHelper({resourcesPath,artifact,operation,f
     const allowed=new Set(['home','tmp','config','cache','data','empty-bin','bin','caption.en.vtt']);
     if((await readdir(directory)).some(name=>!allowed.has(name)))throw fail('CAPTION_OUTPUT','字幕助手写入了未允许的文件');
     return {source:result.source,track:result.track,bytes:body,format:result.format};
-  } finally {try{if(directory)await rm(directory,{recursive:true,force:true});}finally{active=false;for(const resolve of idleWaiters)resolve();idleWaiters.clear();}}
+  } finally {try{await cleanupHelperMedia(directory,consumed);}finally{active=false;for(const resolve of idleWaiters)resolve();idleWaiters.clear();}}
 }

@@ -210,10 +210,10 @@ test('missing consent, conflicting operation identity and stale source fail befo
  await assert.rejects(f.jobs.create(base));await assert.rejects(f.jobs.create({...base,consent:true,source:'0'.repeat(64)}));assert.equal(f.calls,0);
  await f.jobs.create({...base,consent:true});await assert.rejects(f.jobs.create({...base,consent:true,kind:'transcribe'}),/另一份来源/);
 });
-test('a queued transcription can be cancelled before another source finishes acquisition',async t=>{
+test('same-source transcription waits for acquisition and can be cancelled',async t=>{
  let runs=0;const f=await fixture(t,{download:async(_,{signal})=>{await delay(10000,null,{signal});return {body:Buffer.from('late'),type:'audio/mpeg'};},transcriber:{profile:{backend:'authored'},status:async()=>({available:true}),run:async()=>{runs++;}}});
  const first=await f.create('download');await until(async()=>f.calls,n=>n===1);
- const second={...doc,key:'second-source'};commit(f.library,second);const source=f.media.owner(second.key).source;await f.media.save(second.key,source,Readable.from(['ID3 second']),{type:'audio/mpeg',name:'source.mp3'});
+ const second={...doc};commit(f.library,second);const source=f.media.owner(second.key).source;await f.media.save(second.key,source,Readable.from(['ID3 second']),{type:'audio/mpeg',name:'source.mp3'});
  const job=await f.jobs.create({protocolVersion:1,libraryId:f.library.describe().epoch,operation_id:randomUUID(),key:second.key,source,kind:'transcribe',consent:true});assert.equal(job.state,'queued');
  assert.equal((await f.jobs.action(job.id,'cancel')).state,'cancelled');await f.jobs.action(first.id,'cancel');await delay(30);assert.equal(runs,0);
 });
@@ -388,7 +388,7 @@ test('unavailable video source download does not fall through to podcast fetchin
 test('shutdown preserves queued work as interrupted and restart never silently starts it',async t=>{
  let runs=0;const f=await fixture(t,{download:async(_,{signal})=>{await delay(10000,null,{signal});return {body:Buffer.from('late'),type:'audio/mpeg'};},transcriber:{profile:{backend:'authored'},status:async()=>({available:true}),run:async()=>{runs++;}}});
  await f.create('download');await until(async()=>f.calls,n=>n===1);
- const second={...doc,key:'queued'};commit(f.library,second);const source=f.media.owner(second.key).source;await f.media.save(second.key,source,Readable.from(['authored']),{type:'audio/mpeg',name:'source.mp3'});
+ const second={...doc};commit(f.library,second);const source=f.media.owner(second.key).source;await f.media.save(second.key,source,Readable.from(['authored']),{type:'audio/mpeg',name:'source.mp3'});
  const job=await f.jobs.create({protocolVersion:1,libraryId:f.library.describe().epoch,operation_id:randomUUID(),key:second.key,source,kind:'transcribe',consent:true});assert.equal(job.state,'queued');assert.equal(f.jobs.activity().active,2);
  await f.restart();assert.equal((await f.jobs.get(job.id)).state,'interrupted');assert.equal(runs,0);assert.equal(f.jobs.activity().active,0);
 });
@@ -400,4 +400,38 @@ test('a retry probe settling after shutdown cannot update the closed task ledger
  const pending=f.jobs.action(job.id,'retry');const rejection=assert.rejects(pending,error=>error.status===503&&/停止/.test(error.message));
  await until(async()=>entered,Boolean);await f.jobs.shutdown();release();await rejection;
  await f.restart();assert.equal((await f.jobs.get(job.id)).state,'failed');assert.equal(probes,2);
+});
+
+function createFor(f,document,kind){return f.jobs.create({protocolVersion:1,operation_id:randomUUID(),libraryId:f.library.describe().epoch,key:document.key,source:f.media.owner(document.key).source,kind,consent:true});}
+async function saveFor(f,document){commit(f.library,document);await f.media.save(document.key,f.media.owner(document.key).source,Readable.from(['authored']),{type:'audio/mpeg',name:'audio.mp3'});}
+test('independent downloads overlap inference, while transcribe and align share one inference lane',async t=>{
+ let downloadStarted=false,inference=0,peak=0,aligns=0,release;const gate=new Promise(resolve=>release=resolve);
+ const f=await fixture(t,{download:async()=>{downloadStarted=true;return {body:Buffer.from('download'),type:'audio/mpeg'};},transcriber:{profile:{backend:'authored'},status:async()=>({available:true}),alignmentStatus:async()=>({available:true}),run:async({workDirectory})=>{inference++;peak=Math.max(peak,inference);await gate;await writeFile(path.join(workDirectory,'result.json'),JSON.stringify({title:'text',segments:[{id:'a',start:0,end:1,text:'word'}]}));inference--;},align:async()=>{aligns++;peak=Math.max(peak,++inference);inference--;}}});
+ t.after(()=>release());
+ await saveFor(f,doc);const first=await f.create('transcribe');await until(async()=>inference,n=>n===1);
+ const other={...doc,key:'other',segments:[{id:'a',start:0,end:1,text:'word'}]};await saveFor(f,other);const alignment=await createFor(f,other,'align');
+ const third={...doc,key:'download'};commit(f.library,third);const download=await createFor(f,third,'download');
+ await until(()=>f.jobs.get(download.id),j=>j.state==='ready');assert.equal(downloadStarted,true);assert.equal((await f.jobs.get(first.id)).state,'running');assert.equal((await f.jobs.get(alignment.id)).state,'queued');assert.equal(aligns,0);
+ release();await until(()=>f.jobs.get(alignment.id),j=>j.state==='ready');assert.equal(peak,1);assert.equal(aligns,1);
+});
+test('cancelling either active lane leaves the other active; shutdown aborts both and never restarts work',async t=>{
+ let downloads=0,runs=0;const f=await fixture(t,{download:async(_,{signal})=>{downloads++;await delay(10000,null,{signal});},transcriber:{profile:{backend:'authored'},status:async()=>({available:true}),run:async({signal})=>{runs++;await delay(10000,null,{signal});}}});
+ await saveFor(f,doc);const inference=await f.create('transcribe');await until(async()=>runs,n=>n===1);
+ const other={...doc,key:'download'};commit(f.library,other);const download=await createFor(f,other,'download');await until(async()=>downloads,n=>n===1);
+ await f.jobs.action(download.id,'cancel');await delay(15);assert.equal((await f.jobs.get(inference.id)).state,'running');
+ await f.jobs.action(download.id,'retry');await until(async()=>downloads,n=>n===2);await f.jobs.action(inference.id,'cancel');await delay(15);assert.equal((await f.jobs.get(download.id)).state,'running');
+ await f.jobs.action(inference.id,'retry');await until(async()=>runs,n=>n===2);await f.restart();
+ assert.equal((await f.jobs.get(download.id)).state,'interrupted');assert.equal((await f.jobs.get(inference.id)).state,'interrupted');assert.equal(downloads,2);assert.equal(runs,2);
+});
+test('blocked same-source retry does not block a later independent download',async t=>{
+ let release,downloads=0,runs=0;const gate=new Promise(resolve=>release=resolve);
+ const f=await fixture(t,{download:async()=>{downloads++;return {body:Buffer.from('authored'),type:'audio/mpeg'};},transcriber:{profile:{backend:'authored'},status:async()=>({available:true}),run:async({workDirectory})=>{runs++;await gate;await writeFile(path.join(workDirectory,'result.json'),JSON.stringify({title:'text',segments:[{id:'a',start:0,end:1,text:'word'}]}));}}});t.after(()=>release());
+ const original=await f.create('download');await until(()=>f.jobs.get(original.id),j=>j.state==='ready');const inference=await f.create('transcribe');await until(async()=>runs,n=>n===1);
+ await f.jobs.action(original.id,'retry');assert.equal((await f.jobs.get(original.id)).state,'queued');
+ const other={...doc,key:'other'};commit(f.library,other);const independent=await createFor(f,other,'download');await until(()=>f.jobs.get(independent.id),j=>j.state==='ready');assert.equal(downloads,2);assert.equal((await f.jobs.get(original.id)).state,'queued');
+ release();await until(()=>f.jobs.get(inference.id),j=>j.state==='ready');await until(()=>f.jobs.get(original.id),j=>j.state==='ready');assert.equal(downloads,3);
+});
+test('source download consumes a stream before adapter cleanup without requesting a Buffer',async t=>{
+ let consumed=false,closed=false;const f=await fixture(t,{download:async(_,{consume})=>{assert.equal(typeof consume,'function');await consume({body:Readable.from(['stream',' bytes']),type:'audio/mpeg'});consumed=true;closed=true;return {type:'audio/mpeg'};}});
+ const job=await f.create('download');await until(()=>f.jobs.get(job.id),j=>j.state==='ready');assert.equal(consumed,true);assert.equal(closed,true);assert.equal((await f.media.read(doc.key)).size,12);
 });
