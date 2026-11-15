@@ -146,3 +146,34 @@ synchronous model call; process cancellation remains the hard-stop mechanism.
 Tests use deterministic local backends for recognition contracts. Codec decoding
 and byte equivalence are separate from ASR quality; this experiment does not
 establish improved recognition, speaker accuracy, or an optimal chunk length.
+
+## Consensus recovery at chunk seams
+
+Core midpoint ownership can discard the same recognized word twice when two
+independent alignments disagree across a cut. `seam_recovery.py` only recovers a
+word present in both neighboring hypotheses, cropped by both, within one second
+of the seam and with at most 750 ms midpoint disagreement. It requires a unique
+contiguous multi-token anchor in the shared input overlap and a unique target
+token on both sides. Tokenization differences, repeated responses, weak anchors,
+disconnected cores and clocks that collide with retained neighbors abstain.
+This is a narrow heuristic, not an ASR correction or proof of word accuracy.
+
+The selected word and punctuation are copied verbatim from one source hypothesis;
+its original clock is retained, not averaged or retimed. Recovery creates a
+separate `seam-consensus-v1` cue with explicitly unknown speaker and unverified
+clock. It bypasses duplicate removal and automatic speaker assignment, including
+later word-aligned speaker passes. Recovered cues can therefore look fragmented;
+a reviewed timing/speaker correction remains preferable to confident guessing.
+
+Raw ASR/alignment checkpoints are never rewritten. Per-seam work-directory JSON
+and the result/document `seam_recovery` field retain both source chunk indices,
+segment/word positions, word clocks, anchor and selection reason. Replaying the
+same cached chunks deterministically reapplies this post-processing. Existing
+saved transcripts are not automatically modified.
+
+Validation includes a small rebased timing excerpt from an observed podcast
+seam: both hypotheses contained the final character of “成为合伙人”, but ownership
+removed it twice. A local 33-chunk checkpoint replay restores exactly that one
+word, retains the following short response, and leaves checkpoint hashes intact.
+This is not a corpus-level ASR/speaker accuracy claim; the full recording and raw
+transcripts remain local and are not repository fixtures.

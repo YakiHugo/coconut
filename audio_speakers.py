@@ -95,6 +95,9 @@ def label_segments(segments, turns, decisions):
     turns = sorted(turns, key=lambda turn: turn['start'])
     cursor = 0
     for segment in sorted(segments, key=lambda segment: segment['start']):
+        if segment.get('boundary_status') == 'seam-consensus-v1':
+            segment.update(speaker=None, speaker_id=None, speaker_status='seam_recovered_unknown')
+            continue
         intervals = {}
         statuses = set()
         while cursor < len(turns) and turns[cursor]['end'] <= segment['start']:
@@ -149,6 +152,8 @@ def label_aligned_segments(segments, turns, decisions, *, split=False):
     label_segments(segments, turns, decisions)
     probes, aligned = [], {}
     for index, cue in enumerate(segments):
+        if cue.get('boundary_status') == 'seam-consensus-v1':
+            continue
         words = cue.get('words') or []
         if not words or ''.join(w['word'] for w in words) != cue.get('text'):
             continue

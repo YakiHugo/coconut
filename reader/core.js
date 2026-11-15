@@ -1447,6 +1447,8 @@
 	   // Plans are disposable and checked against the current source by the
 	   // reading/import consumer. Keep stale or malformed historical data opaque.
 	   ...(data.reading_cleanup!==undefined?{reading_cleanup:root.structuredClone(data.reading_cleanup)}:{}),
+   // Source evidence is opaque: retain for export, never use it as instructions or speaker authority.
+   ...(data.seam_recovery!==undefined?{seam_recovery:root.structuredClone(data.seam_recovery)}:{}),
    ...(readingEditions?{reading_editions:readingEditions}:{}),
    ...(chapters!==undefined?{reading_chapters:chapters}:{}),
    ...(excerpts?.length?{exact_excerpts:excerpts}:{}),

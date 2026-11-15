@@ -55,3 +55,31 @@ test('renaming a native chunk speaker cannot cross chunks even if their display 
  const fresh=C.validate(raw),stale=C.createSpeakerCorrectionPreview(fresh,{cueId:'a',scope:'cue',action:'rename',speaker:'嘉宾'});
  fresh.segments[0].speaker_scope='recording';assert.throws(()=>C.applySpeakerCorrectionPreview(fresh,stale),/已变化/);
 });
+
+test('real Python seam recovery survives sentence splitting, acoustic assignment and JSON import',async()=>{
+ const {execFile}=await import('node:child_process'),{promisify}=await import('node:util'),{fileURLToPath}=await import('node:url');
+ const root=fileURLToPath(new URL('../',import.meta.url));
+ const script=`import json
+from tests.test_seam_recovery import fixture
+from audio_pipeline import owned_segments,stitch_segments
+from seam_recovery import recover_seam
+from transcription import sentence_segments
+from audio_speakers import label_aligned_segments
+from transcript import make_document
+a,left,b,right=fixture()
+extra,trace=recover_seam(a,left,b,right)
+segments=sorted(stitch_segments(owned_segments(a,left,160000)+owned_segments(b,right,160000))+extra,key=lambda s:s['start'])
+segments=sentence_segments(segments)
+segments=label_aligned_segments(segments,[{'start':0,'end':10,'speaker':'a'}],{'a':{'speaker_id':'speaker-0001','status':'automatic_unreviewed'}},split=True)
+print(json.dumps(make_document({'segments':segments,'seam_recovery':trace},'Seam fixture','')))`;
+ const {stdout}=await promisify(execFile)('python3',['-B','-c',script],{cwd:root,timeout:15000});
+ const raw=JSON.parse(stdout),doc=C.parse(JSON.stringify(C.validate(raw)),'backup.json');
+ assert.equal(doc.segments.map(s=>s.text).join(''),'成为合伙人。嗯');
+ const recovered=doc.segments.find(s=>s.boundary_status==='seam-consensus-v1');
+ assert.equal(recovered.text,'人。');assert.equal(recovered.speaker,null);assert.equal(recovered.speaker_id,null);
+ assert.equal(recovered.speaker_status,'seam_recovered_unknown');
+ assert.deepEqual(doc.seam_recovery,raw.seam_recovery);
+ assert.equal(doc.seam_recovery.length,1);
+ assert.equal(doc.seam_recovery[0].sources.length,2);
+ const before=JSON.stringify(raw.seam_recovery);doc.seam_recovery[0].sources[0].word='edited';assert.equal(JSON.stringify(raw.seam_recovery),before);
+});

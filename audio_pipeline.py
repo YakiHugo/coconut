@@ -393,6 +393,8 @@ def run_audio_pipeline(source: Path, backend: ASRBackend, *, work_dir=None, spea
             chunks = plan_chunks(frames, chunk_seconds, context_seconds)
             stream = ((chunk, frames) for chunk in chunks)
         output, languages, warnings, speaker_turns, speaker_blocks = [], [], [], [], []
+        previous = None
+        seam_cues, seam_evidence = [], []
         voice_key = _digest(speaker_backend.cache_key)[:16] if speaker_backend else ''
         identity_key = _digest({'voice_key': voice_key, 'threshold': speaker_threshold,
                                 'margin': speaker_margin})[:16]
@@ -425,6 +427,14 @@ def run_audio_pipeline(source: Path, backend: ASRBackend, *, work_dir=None, spea
                     check_cancel()
                     save_document(raw, cache)
                 segments = owned_segments(raw, chunk, ownership_frames)
+                if previous:
+                    from seam_recovery import recover_seam
+                    recovered, evidence = recover_seam(previous[0], previous[1], raw, chunk)
+                    seam_cues.extend(recovered)
+                    seam_evidence.extend(evidence)
+                    save_document({'version': 'seam-consensus-v1', 'decisions': evidence},
+                                  directory / f'seam-{previous[1].index:05d}-{chunk.index:05d}.json')
+                previous = (raw, chunk)
                 if raw.get('language'):
                     languages.append(raw['language'])
                 if raw.get('alignment_warning'):
@@ -491,10 +501,14 @@ def run_audio_pipeline(source: Path, backend: ASRBackend, *, work_dir=None, spea
             decisions = {turn['speaker']: dict(speaker_id=turn['speaker_id'], status=turn['speaker_status'])
                          for turn in speaker_turns}
             label_segments(output, speaker_turns, decisions)
+        # Recovered words have unverified clocks: never inherit a neighboring
+        # speaker or enter heuristic duplicate removal. Raw ASR caches are intact.
+        output = sorted(output + seam_cues, key=lambda item: (item['start'], item['end']))
         check_cancel()
         languages = list(dict.fromkeys(languages))
         return {'language': languages[0] if len(languages) == 1 else None, 'languages': languages,
                 'segments': output, 'speaker_turns': speaker_turns,
+                'seam_recovery': seam_evidence,
                 'alignment_warning': '; '.join(dict.fromkeys(warnings)) or None,
                 'pipeline': {'version': VERSION, 'chunks': len(chunks), 'duration': frames / SAMPLE_RATE,
                              'speaker_count': speaker_count,
