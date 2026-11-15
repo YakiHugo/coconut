@@ -1,9 +1,10 @@
 /** One durable source/transcription queue. Python computes; it owns no task ledger. */
-import {mkdir,lstat,open,readFile,writeFile,rename} from 'node:fs/promises';
+import {mkdir,lstat,open,readFile,writeFile,rename,readdir,unlink} from 'node:fs/promises';
 import {createRequire} from 'node:module';
 const Coconut=createRequire(import.meta.url)('../reader/core.js');
 const {processingSnapshot,sourceSignature}=createRequire(import.meta.url)('../shared/transcript-resources.js');
 import path from 'node:path';
+import {randomUUID} from 'node:crypto';
 import {Readable} from 'node:stream';
 import {captionSource} from './caption-service.mjs';
 import {PublicSourceError} from './public-http.mjs';
@@ -26,19 +27,31 @@ export async function createSourceJobs({directory,libraryStore,mediaStore,podcas
  const {DatabaseSync}=await import('node:sqlite'),db=new DatabaseSync(filename);
  try{db.exec("PRAGMA busy_timeout=1000; PRAGMA locking_mode=EXCLUSIVE; CREATE TABLE IF NOT EXISTS jobs (id TEXT PRIMARY KEY, document_key TEXT NOT NULL, binding TEXT NOT NULL, source TEXT NOT NULL, kind TEXT NOT NULL, state TEXT NOT NULL, request TEXT NOT NULL, operation TEXT, ingestion_id TEXT, error TEXT, created INTEGER NOT NULL, updated INTEGER NOT NULL); UPDATE jobs SET state='interrupted' WHERE state IN ('running','queued');");}catch(error){db.close();throw error;}
  for(const [name,definition] of [['phase',"TEXT NOT NULL DEFAULT ''"],['engine',"TEXT NOT NULL DEFAULT 'legacy'"],['error_details','TEXT']])if(!db.prepare('PRAGMA table_info(jobs)').all().some(column=>column.name===name))db.exec('ALTER TABLE jobs ADD COLUMN '+name+' '+definition);
+ // Only private generated attempt audio is disposable after an unclean stop.
+ async function cleanAttemptAudio(folder){
+  let entries;try{await privatePath(folder,true);entries=await readdir(folder,{withFileTypes:true});}catch(error){if(error.code==='ENOENT')return;throw error;}
+  for(const entry of entries){const file=path.join(folder,entry.name);if(entry.isSymbolicLink())throw fail('Unsafe source task storage',503);if(entry.isDirectory())await cleanAttemptAudio(file);else if(entry.isFile()&&/\.(wav|partial)$/.test(entry.name)){await privatePath(file);await unlink(file);}}
+ }
+ for(const task of db.prepare("SELECT id FROM jobs WHERE kind='download_transcribe' AND state='interrupted'").all())if(uuid(task.id))await cleanAttemptAudio(path.join(directory,task.id,'attempts'));
+ db.exec('CREATE TABLE IF NOT EXISTS job_receipts (id TEXT PRIMARY KEY, job_id TEXT NOT NULL, request TEXT NOT NULL, binding TEXT NOT NULL)');
  let admissionOwner=null,pendingAdmissions=0;
  let closing=false,creation=Promise.resolve(),shutdownPromise;
  // One I/O worker and one inference worker; never run two models together.
  const lanes=new Map();
- const laneFor=kind=>kind==='download'?'download':'inference';
+ const laneFor=kind=>kind==='download_transcribe'?['download','inference']:[kind==='download'?'download':'inference'];
+ const combined=kind=>kind==='download_transcribe';
+ const userSnapshot=document=>({title:document.title,transcription_context:document.transcription_context||null,speaker_identity_evidence:document.speaker_identity_evidence||null,transcription_glossary:document.transcription_glossary||null});
+ const same=(a,b)=>JSON.stringify(a)===JSON.stringify(b);
+ async function capabilities(){const status=await transcriber?.incrementalStatus?.();return {protocolVersion:1,downloadTranscribe:{available:Boolean(status?.available),local_only:true,acquisitionMode:'incremental-experimental-v1',backend:'qwen-mlx',fallback:'complete-file'}};}
+ function currentCombined(value,operation){const current=libraryStore.get(value.document_key)?.document;return Boolean(current&&mediaStore.owner(value.document_key).binding===value.binding&&same(operation.user_snapshot,userSnapshot(current))&&same(operation.profile,transcriber?.profile));}
  mediaStore.setCommitGuard(record=>{
   if(closing)throw fail('来源任务服务正在停止',503);
-  const tasks=db.prepare("SELECT operation FROM jobs WHERE binding=? AND kind IN ('transcribe','align')").all(record.binding);
-  if(tasks.some(value=>JSON.parse(value.operation).fingerprint!==record.sha256))throw fail('此项目已有绑定原声的转写任务。来源返回了不同音频，未替换旧原声；请另建项目核对新版本。',409);
+  const tasks=db.prepare("SELECT operation FROM jobs WHERE binding=? AND kind IN ('transcribe','align','download_transcribe')").all(record.binding);
+  if(tasks.some(value=>JSON.parse(value.operation).fingerprint&&JSON.parse(value.operation).fingerprint!==record.sha256))throw fail('此项目已有绑定原声的转写任务。来源返回了不同音频，未替换旧原声；请另建项目核对新版本。',409);
  });
  const row=id=>{if(!uuid(id))throw fail('任务标识无效');const value=db.prepare('SELECT * FROM jobs WHERE id=?').get(id);if(!value)throw fail('任务不存在',404);return value;};
  function recognitionSnapshot(document,binding){
-  const download=db.prepare("SELECT operation FROM jobs WHERE binding=? AND kind='download' AND state='ready' ORDER BY updated DESC LIMIT 1").get(binding);
+  const download=db.prepare("SELECT operation FROM jobs WHERE binding=? AND (kind='download' AND state='ready' OR kind='download_transcribe' AND json_extract(operation,'$.fingerprint') IS NOT NULL) ORDER BY updated DESC LIMIT 1").get(binding);
   const supplied=Coconut.transcriptionContext(document.transcription_context),acquired=download?.operation?Coconut.transcriptionContext(JSON.parse(download.operation).transcription_context):null;
   const context=supplied||acquired;
   return {title:document.title,...(context&&context.source_url===document.source_url?{transcription_context:context}:{}),
@@ -48,24 +61,56 @@ export async function createSourceJobs({directory,libraryStore,mediaStore,podcas
  function owned(value){if(mediaStore.owner(value.document_key).binding!==value.binding)throw fail('原项目来源已变化，旧任务不能接入此项目',409);return value;}
  function describe(value){
   const operation=value.operation?JSON.parse(value.operation):null,current=libraryStore.get(value.document_key)?.document;
-  const matchingContext=value.kind!=='transcribe'||!operation?.recognition_document||current&&JSON.stringify(operation.recognition_document)===JSON.stringify(recognitionSnapshot(current,value.binding));
-  return {id:value.id,documentKey:value.document_key,binding:value.binding,source:value.source,kind:value.kind,state:value.state,phase:value.phase,currentProfile:!['transcribe','align'].includes(value.kind)||value.engine==='direct-v1'&&JSON.stringify(operation.profile)===JSON.stringify(transcriber?.profile)&&Boolean(matchingContext),resultAvailable:['transcribe','align'].includes(value.kind)&&value.engine==='direct-v1'&&value.state==='ready',assetSha256:operation?.fingerprint||null,ingestionId:value.ingestion_id||null,error:value.error,error_details:storedErrorDetails(value.error_details),created:value.created,updated:value.updated};
+  const matchingContext=combined(value.kind)?currentCombined(value,operation):value.kind!=='transcribe'||!operation?.recognition_document||current&&JSON.stringify(operation.recognition_document)===JSON.stringify(recognitionSnapshot(current,value.binding));
+  return {id:value.id,documentKey:value.document_key,binding:value.binding,source:value.source,kind:value.kind,state:value.state,phase:value.phase,currentProfile:!['transcribe','align','download_transcribe'].includes(value.kind)||value.engine==='direct-v1'&&JSON.stringify(operation.profile)===JSON.stringify(transcriber?.profile)&&Boolean(matchingContext),resultAvailable:['transcribe','align','download_transcribe'].includes(value.kind)&&value.engine==='direct-v1'&&value.state==='ready'&&Boolean(matchingContext),mediaReady:Boolean(operation?.fingerprint),assetSha256:operation?.fingerprint||null,ingestionId:value.ingestion_id||null,error:value.error,error_details:storedErrorDetails(value.error_details),created:value.created,updated:value.updated};
  }
  function update(id,state,error=null,details=null){const safeDetails=videoSourceErrorDetails(details);db.prepare('UPDATE jobs SET state=?,error=?,error_details=?,updated=? WHERE id=?').run(state,error,safeDetails?JSON.stringify(safeDetails):null,Date.now(),id);}
+ function recognitionArguments(ownerDocument){
+  const participants=Array.isArray(ownerDocument.speaker_identity_evidence?.speakers)?ownerDocument.speaker_identity_evidence.speakers.filter(s=>typeof s?.name==='string'&&s.name.trim()&&s.name.length<=80).slice(0,64):[];
+  const terms=Array.isArray(ownerDocument.transcription_glossary)?ownerDocument.transcription_glossary.filter(t=>typeof t?.term==='string'&&t.term.trim()&&t.term.length<=80&&typeof t.source==='string'&&t.source.trim()).map(t=>t.term):[];
+  const hotwords=[...new Set([...participants.map(s=>s.name),...terms])].slice(0,64),aliases=new Map();
+  for(const participant of participants)for(const alias of Array.isArray(participant.verified_asr_aliases)?participant.verified_asr_aliases:[]){
+   if(typeof alias!=='string'||alias===participant.name||alias.length<2||alias.length!==participant.name.length)continue;
+   if(aliases.size>=64&&!aliases.has(alias))continue;
+   aliases.set(alias,aliases.has(alias)&&aliases.get(alias)!==participant.name?null:participant.name);
+  }
+  const nameCorrections=Object.fromEntries([...aliases].filter(([alias,name])=>name&&!hotwords.includes(alias)));
+  return {title:ownerDocument.title,context:ownerDocument.transcription_context,hotwords,nameCorrections,speakerCount:ownerDocument.speaker_identity_evidence?.expected_speakers};
+ }
  async function perform(value,signal){
   update(value.id,'running');
+  let liveSession=null;
   try{
    owned(value);
-   if(value.kind==='download'){
+   let incrementalDone=false;
+   if(value.kind==='download'||combined(value.kind)&&!JSON.parse(value.operation).fingerprint){
     const document=libraryStore.get(value.document_key).document,source=document.podcast_source;
-    let media,consumed=false;
+    let media,consumed=false,session=null,sessionError=null,attemptDirectory=null;
+    const operation=combined(value.kind)?JSON.parse(value.operation):null;
+    let frozen=null;
+    const rememberError=error=>{sessionError??=error;};
     const consume=async result=>{
      if(consumed)throw fail('原声任务重复提交媒体',409);
      owned(value);
      const type=ALIASES[result.type]||result.type,extension=TYPES[type]||({'audio/aac':'aac','video/ogg':'ogg','video/quicktime':'mov'})[type];
      if(!extension)throw fail('原声格式不受支持');
      const body=Buffer.isBuffer(result.body)?Readable.from([result.body]):result.body;
-     await mediaStore.save(value.document_key,value.source,body,{type,name:'source.'+extension,signal,expectedSha256:result.sha256,expectedSize:result.size});
+     let observer;
+     if(operation){
+      if(!currentCombined(value,operation))throw fail('识别输入已变化，请创建新任务',409);
+      const context=Coconut.transcriptionContext(result.source?.transcription_context||result.transcription_context);
+      if(context?.source_url===document.source_url&&!operation.recognition_document.transcription_context)operation.recognition_document.transcription_context=context;
+      if(context?.source_url===document.source_url)operation.transcription_context=context;
+      frozen=recognitionArguments({...document,...operation.recognition_document});
+      if(source?.media_url&&!Buffer.isBuffer(result.body)&&['audio/mpeg','audio/flac'].includes(type)){
+       operation.attempt_id=randomUUID();attemptDirectory=path.join(directory,value.id,'attempts',operation.attempt_id);await mkdir(attemptDirectory,{recursive:true,mode:0o700});
+       db.prepare('UPDATE jobs SET operation=? WHERE id=?').run(JSON.stringify(operation),value.id);
+       observer={opened:({readOnlyFd})=>{try{session=liveSession=transcriber.startIncremental({attemptId:operation.attempt_id,mediaFd:readOnlyFd,workDirectory:attemptDirectory,sourceSnapshot:operation.user_snapshot,...frozen,signal,onProgress:p=>{if(!closing&&!signal.aborted)db.prepare('UPDATE jobs SET phase=? WHERE id=?').run(JSON.stringify(p),value.id);}});session.completion.catch(rememberError);}catch(error){rememberError(error);}},appended:({availableBytes})=>{try{session?.appendWatermark(availableBytes);}catch(error){rememberError(error);}},sealed:record=>{try{session?.seal({size:record.size,sha256:record.sha256});}catch(error){rememberError(error);}},aborted:()=>{session?.abort();}};
+      }
+     }
+     const record=await mediaStore.save(value.document_key,value.source,body,{type,name:'source.'+extension,signal,expectedSha256:result.sha256,expectedSize:result.size,observer});
+     if(operation){operation.fingerprint=record.sha256;operation.size=record.size;db.prepare('UPDATE jobs SET operation=? WHERE id=?').run(JSON.stringify(operation),value.id);}
+
      consumed=true;
     };
     if(source?.media_url){
@@ -81,8 +126,18 @@ export async function createSourceJobs({directory,libraryStore,mediaStore,podcas
     if(!consumed)await consume(media);
     owned(value);
     const context=Coconut.transcriptionContext(media.source?.transcription_context||media.transcription_context);
-    if(context?.source_url===document.source_url&&!signal.aborted&&!closing)db.prepare('UPDATE jobs SET operation=? WHERE id=?').run(JSON.stringify({transcription_context:context}),value.id);
-    if(!signal.aborted&&!closing)update(value.id,'ready');return;
+    if(!operation&&context?.source_url===document.source_url&&!signal.aborted&&!closing)db.prepare('UPDATE jobs SET operation=? WHERE id=?').run(JSON.stringify({transcription_context:context}),value.id);
+    if(!operation){if(!signal.aborted&&!closing)update(value.id,'ready');return;}
+    if(session){await session.completion;}
+    if(sessionError)throw sessionError;
+    if(session){
+     const receipt=JSON.parse(await readFile(path.join(attemptDirectory,'incremental_receipt.json'),'utf8'));
+     const expectedContext={title:frozen.title??null,context:frozen.context??null,hotwords:frozen.hotwords??null,name_corrections:frozen.nameCorrections??null,speaker_count:frozen.speakerCount??null};
+     if(receipt.protocol_version!==1||receipt.attempt_id!==operation.attempt_id||receipt.source_sha256!==operation.fingerprint||receipt.size!==operation.size||!same(receipt.source_snapshot,operation.user_snapshot)||!same(receipt.profile,operation.profile)||!same(receipt.frozen_context,expectedContext)||!Number.isInteger(receipt.reused_chunks)||receipt.reused_chunks<0||!Number.isInteger(receipt.recomputed_chunks)||receipt.recomputed_chunks<0||![null,'stream_decode_unavailable','canonical_pcm_mismatch'].includes(receipt.fallback_reason))throw fail('增量转录完整性验证失败');
+     const raw=await readFile(path.join(attemptDirectory,'result.json'),'utf8');Coconut.validate(JSON.parse(raw));
+     const destination=path.join(directory,value.id);await writeFile(path.join(destination,'result.tmp'),raw,{mode:0o600});await rename(path.join(destination,'result.tmp'),path.join(destination,'result.json'));incrementalDone=true;
+    }
+    value=row(value.id);
    }
    const operation=JSON.parse(value.operation);
    if(value.engine!=='direct-v1')throw fail('旧 Python 队列任务已保留；请明确重试以使用新的转录执行器',409);
@@ -96,18 +151,11 @@ export async function createSourceJobs({directory,libraryStore,mediaStore,podcas
     if(sourceSignature(libraryStore.get(value.document_key).document)!==sourceSignature(operation.document))throw fail('原稿已变化，对齐候选未应用',409);
     if(!signal.aborted&&!closing)update(value.id,'ready');return;
    }
+   if(combined(value.kind)&&!currentCombined(value,operation))throw fail('识别输入已变化，请创建新任务',409);
    const currentDocument=libraryStore.get(value.document_key).document;
    let ownerDocument={...currentDocument,...(operation.recognition_document||recognitionSnapshot(currentDocument,value.binding))};
-   const participants=Array.isArray(ownerDocument.speaker_identity_evidence?.speakers)?ownerDocument.speaker_identity_evidence.speakers.filter(s=>typeof s?.name==='string'&&s.name.trim()&&s.name.length<=80).slice(0,64):[];
-   const terms=Array.isArray(ownerDocument.transcription_glossary)?ownerDocument.transcription_glossary.filter(t=>typeof t?.term==='string'&&t.term.trim()&&t.term.length<=80&&typeof t.source==='string'&&t.source.trim()).map(t=>t.term):[];
-   const hotwords=[...new Set([...participants.map(s=>s.name),...terms])].slice(0,64),aliases=new Map();
-   for(const participant of participants)for(const alias of Array.isArray(participant.verified_asr_aliases)?participant.verified_asr_aliases:[]){
-    if(typeof alias!=='string'||alias===participant.name||alias.length<2||alias.length!==participant.name.length)continue;
-    if(aliases.size>=64&&!aliases.has(alias))continue;
-    aliases.set(alias,aliases.has(alias)&&aliases.get(alias)!==participant.name?null:participant.name);
-   }
-   const nameCorrections=Object.fromEntries([...aliases].filter(([alias,name])=>name&&!hotwords.includes(alias)));
-   await transcriber.run({inputPath:input.path,sha256:operation.fingerprint,workDirectory,title:ownerDocument.title,context:ownerDocument.transcription_context,hotwords,nameCorrections,speakerCount:ownerDocument.speaker_identity_evidence?.expected_speakers,signal,
+   const {hotwords,nameCorrections}=recognitionArguments(ownerDocument);
+   if(!incrementalDone)await transcriber.run({inputPath:input.path,sha256:operation.fingerprint,workDirectory,title:ownerDocument.title,context:ownerDocument.transcription_context,hotwords,nameCorrections,speakerCount:ownerDocument.speaker_identity_evidence?.expected_speakers,signal,
     onProgress:progress=>{if(!closing&&!signal.aborted)db.prepare("UPDATE jobs SET phase=?,updated=? WHERE id=? AND state='running'").run(JSON.stringify(progress),Date.now(),value.id);}});
    owned(value);await mediaStore.localInput(value.document_key,value.binding,operation.fingerprint);
    let raw=JSON.parse(await readFile(path.join(workDirectory,'result.json'),'utf8'));
@@ -136,6 +184,7 @@ export async function createSourceJobs({directory,libraryStore,mediaStore,podcas
    else if(ownerDocument.transcription_context){await writeFile(path.join(workDirectory,'context-result.tmp'),JSON.stringify(raw),{mode:0o600});await rename(path.join(workDirectory,'context-result.tmp'),path.join(workDirectory,'result.json'));}
    if(!signal.aborted&&!closing)update(value.id,'ready');
   }catch(error){
+   if(liveSession){try{liveSession.abort();await liveSession.completion;}catch{}}
    if(!closing&&!signal.aborted){
     const videoFailure=value.kind==='download'&&error instanceof VideoSourceError;
     const conflict=error?.status===409&&!videoFailure;
@@ -155,10 +204,10 @@ export async function createSourceJobs({directory,libraryStore,mediaStore,podcas
   for(const value of db.prepare("SELECT * FROM jobs WHERE state='queued' ORDER BY created,id").all()){
    const lane=laneFor(value.kind);
    // Do not replace or re-fetch the same source while its inference is active.
-   if(lanes.has(lane)||[...lanes.values()].some(active=>active.binding===value.binding))continue;
+   if(lane.some(key=>lanes.has(key))||[...lanes.values()].some(active=>active.binding===value.binding))continue;
    const active={id:value.id,binding:value.binding,controller:new AbortController(),promise:null};
-   lanes.set(lane,active);
-   active.promise=perform(value,active.controller.signal).finally(()=>{lanes.delete(lane);pump();});
+   for(const key of lane)lanes.set(key,active);
+   active.promise=perform(value,active.controller.signal).finally(()=>{for(const key of lane)lanes.delete(key);pump();});
   }
  }
  function videoSource(document){
@@ -167,10 +216,13 @@ export async function createSourceJobs({directory,libraryStore,mediaStore,podcas
  }
  async function createOne(data){
   if(closing||admissionOwner!==null)throw fail('服务正在停止或等待关闭确认',503);
-  if(data?.protocolVersion!==1||!uuid(data.operation_id)||typeof data.key!=='string'||!data.key||data.key.length>1000||!['download','transcribe','align'].includes(data.kind)||data.consent!==true)throw fail('请明确确认此来源操作');
+  if(data?.protocolVersion!==1||!uuid(data.operation_id)||typeof data.key!=='string'||!data.key||data.key.length>1000||!['download','transcribe','align','download_transcribe'].includes(data.kind)||data.consent!==true)throw fail('请明确确认此来源操作');
+  if(combined(data.kind)&&(data.localOnly!==true||data.acquisitionMode!=='incremental-experimental-v1'||data.review!==undefined||data.model!==undefined||data.profile!==undefined))throw fail('请明确确认仅本地实验转录');
   const owner=mediaStore.owner(data.key);if(data.libraryId!==libraryStore.describe().epoch)throw fail('所连接的书架已变化，请刷新后核对',409);
   if(data.source!==owner.source)throw fail('原项目来源已变化',409);
   const request=JSON.stringify({key:data.key,source:data.source,kind:data.kind});
+  const alias=db.prepare('SELECT * FROM job_receipts WHERE id=?').get(data.operation_id);
+  if(alias){if(alias.request!==request||alias.binding!==owner.binding)throw fail('此操作已绑定另一份来源',409);return {...describe(row(alias.job_id)),requestedOperationId:data.operation_id};}
   const previous=db.prepare('SELECT * FROM jobs WHERE id=?').get(data.operation_id);
   if(previous){if(previous.request!==request||previous.binding!==owner.binding)throw fail('此操作已绑定另一份来源',409);return describe(previous);}
   // Reuse the original task across browsers, including uncertain upload receipts.
@@ -178,7 +230,21 @@ export async function createSourceJobs({directory,libraryStore,mediaStore,podcas
   if(existing&&data.kind==='download')return describe(existing);
   if(db.prepare('SELECT count(*) AS count FROM jobs').get().count>=256)throw fail('来源任务已达保存上限，请保留书架备份并检查服务存储',409);
   let operation=null;
-  if(data.kind==='download'){const document=libraryStore.get(data.key).document;if(!document.podcast_source?.media_url&&!videoSource(document))throw fail('此项目没有可获取的原声');}
+  if(combined(data.kind)){
+   const document=libraryStore.get(data.key).document;
+   if(db.prepare("SELECT id FROM jobs WHERE binding=? AND kind='download' AND state IN ('running','queued')").get(owner.binding))throw fail('原声下载正在进行，请完成后再明确转录',409);
+   const record=await mediaStore.read(data.key,owner.binding);
+   const unclaimedSaved=existing&&!JSON.parse(existing.operation).fingerprint&&record&&['failed','cancelled','interrupted'].includes(existing.state);
+   if(existing&&!unclaimedSaved&&currentCombined(existing,JSON.parse(existing.operation))){
+    if(db.prepare('SELECT count(*) AS count FROM job_receipts').get().count>=2048)throw fail('任务回执已达保存上限',409);
+    db.prepare('INSERT INTO job_receipts (id,job_id,request,binding) VALUES (?,?,?,?)').run(data.operation_id,existing.id,request,owner.binding);
+    return {...describe(existing),requestedOperationId:data.operation_id};
+   }
+   if(existing&&['queued','running'].includes(existing.state))throw fail('旧转录仍在进行，请先取消原任务',409);
+   if(!(await capabilities()).downloadTranscribe.available)throw fail('本地增量转录尚未就绪',503);
+   if(!record&&!document.podcast_source?.media_url&&!videoSource(document))throw fail('此项目没有可获取的原声');
+   operation=JSON.stringify({profile:transcriber.profile,user_snapshot:userSnapshot(document),recognition_document:recognitionSnapshot(document,owner.binding),fingerprint:record?.sha256||null,size:record?.size||null});
+  }else if(data.kind==='download'){const document=libraryStore.get(data.key).document;if(!document.podcast_source?.media_url&&!videoSource(document))throw fail('此项目没有可获取的原声');}
   else{
    const record=await mediaStore.read(data.key,owner.binding);if(!record)throw fail('请先保存原声',409);
    if(existing){if(existing.engine==='direct-v1'&&JSON.parse(existing.operation).fingerprint===record.sha256&&JSON.stringify(JSON.parse(existing.operation).profile)===JSON.stringify(transcriber?.profile)&&(data.kind!=='transcribe'||JSON.stringify(JSON.parse(existing.operation).recognition_document)===JSON.stringify(recognitionSnapshot(libraryStore.get(data.key).document,owner.binding)))&&(data.kind!=='align'||sourceSignature(JSON.parse(existing.operation).document)===sourceSignature(libraryStore.get(data.key).document)))return describe(existing);if(['queued','running'].includes(existing.state))throw fail('旧原声仍有进行中的转写，请先核对原任务',409);}
@@ -187,12 +253,12 @@ export async function createSourceJobs({directory,libraryStore,mediaStore,podcas
    const status=await (data.kind==='align'?transcriber?.alignmentStatus():transcriber?.status());if(!status?.available)throw fail(status?.message||'转写执行器尚未就绪',503);
   }
   if(closing||admissionOwner!==null)throw fail('服务正在停止或等待关闭确认',503);if(mediaStore.owner(data.key).binding!==owner.binding)throw fail('原项目来源已变化',409);
-  const insert=()=>{const now=Date.now();db.prepare('INSERT INTO jobs (id,document_key,binding,source,kind,state,request,operation,created,updated,ingestion_id,engine) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)').run(data.operation_id,data.key,owner.binding,owner.source,data.kind,'queued',request,operation,now,now,['transcribe','align'].includes(data.kind)?data.operation_id.replaceAll('-',''):null,'direct-v1');};
-  if(operation)await mediaStore.exclusive(async()=>{if(closing||admissionOwner!==null)throw fail('服务正在停止或等待关闭确认',503);const current=await mediaStore.read(data.key,owner.binding);if(closing||admissionOwner!==null)throw fail('服务正在停止或等待关闭确认',503);if(!current||current.sha256!==JSON.parse(operation).fingerprint)throw fail('原声已变化，请重新确认',409);insert();});else insert();
+  const insert=()=>{const now=Date.now();db.prepare('INSERT INTO jobs (id,document_key,binding,source,kind,state,request,operation,created,updated,ingestion_id,engine) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)').run(data.operation_id,data.key,owner.binding,owner.source,data.kind,'queued',request,operation,now,now,['transcribe','align','download_transcribe'].includes(data.kind)?data.operation_id.replaceAll('-',''):null,'direct-v1');};
+  if(operation)await mediaStore.exclusive(async()=>{if(closing||admissionOwner!==null)throw fail('服务正在停止或等待关闭确认',503);const current=await mediaStore.read(data.key,owner.binding);if(closing||admissionOwner!==null)throw fail('服务正在停止或等待关闭确认',503);if((current?.sha256||null)!==JSON.parse(operation).fingerprint)throw fail('原声已变化，请重新确认',409);insert();});else insert();
   const receipt=describe(row(data.operation_id));pump();return receipt;
  }
  function create(data){pendingAdmissions++;const next=creation.then(()=>createOne(data));creation=next.catch(()=>{});return next.finally(()=>{pendingAdmissions--;});}
- async function get(id){return describe(row(id));}
+ async function get(id){const alias=db.prepare('SELECT * FROM job_receipts WHERE id=?').get(id);return alias?{...describe(row(alias.job_id)),requestedOperationId:id}:describe(row(id));}
  async function list(key){if(typeof key!=='string'||key.length>1000)throw fail('项目标识无效');const binding=mediaStore.owner(key).binding;return db.prepare('SELECT * FROM jobs WHERE binding=? ORDER BY created DESC LIMIT 20').all(binding).map(describe);}
  async function action(id,action){
   if(closing||admissionOwner!==null)throw fail('服务正在停止或等待关闭确认',503);
@@ -203,9 +269,10 @@ export async function createSourceJobs({directory,libraryStore,mediaStore,podcas
    for(const active of lanes.values())if(active.id===id)active.controller.abort();
   }else if(action==='retry'){
    if(!['failed','interrupted','cancelled'].includes(value.state)&&!(value.kind==='download'&&value.state==='ready'))throw fail('请查看原任务状态',409);
-   if(['transcribe','align'].includes(value.kind)){
-    const media=await mediaStore.read(value.document_key,value.binding);if(closing||admissionOwner!==null)throw fail('服务正在停止或等待关闭确认',503);if(!media||media.sha256!==JSON.parse(value.operation).fingerprint)throw fail('原声已经替换，请为当前原声明确创建新转写',409);
-    const status=await (value.kind==='align'?transcriber?.alignmentStatus():transcriber?.status());if(!status?.available)throw fail(status?.message||'本地转录未就绪',503);
+   if(['transcribe','align','download_transcribe'].includes(value.kind)){
+    if(combined(value.kind)&&!currentCombined(value,JSON.parse(value.operation)))throw fail('识别输入已变化，请创建新任务',409);
+    const media=await mediaStore.read(value.document_key,value.binding);if(closing||admissionOwner!==null)throw fail('服务正在停止或等待关闭确认',503);if((media?.sha256||null)!==JSON.parse(value.operation).fingerprint)throw fail('原声已经替换，请为当前原声明确创建新转写',409);
+    const status=await (combined(value.kind)?transcriber?.incrementalStatus():value.kind==='align'?transcriber?.alignmentStatus():transcriber?.status());if(!status?.available)throw fail(status?.message||'本地转录未就绪',503);
     if(closing||admissionOwner!==null)throw fail('服务正在停止或等待关闭确认',503);
     const operation={...JSON.parse(value.operation),profile:transcriber.profile};
     if(value.engine==='direct-v1'&&JSON.stringify(JSON.parse(value.operation).profile)!==JSON.stringify(transcriber.profile))throw fail('模型配置已变化，请创建新任务',409);
@@ -216,9 +283,9 @@ export async function createSourceJobs({directory,libraryStore,mediaStore,podcas
   }else throw fail('任务操作无效');return describe(row(id));
  }
  async function result(id){
-  const value=owned(row(id));if(!['transcribe','align'].includes(value.kind)||value.state!=='ready')throw fail('文字稿尚未完成',409);
+  const value=owned(row(id));if(!['transcribe','align','download_transcribe'].includes(value.kind)||value.state!=='ready')throw fail('文字稿尚未完成',409);
   if(value.engine!=='direct-v1')throw fail('旧任务结果仍保存在原 Python 数据目录，请从原服务导出文字稿',409);
-  const operation=JSON.parse(value.operation);await mediaStore.localInput(value.document_key,value.binding,operation.fingerprint);
+  const operation=JSON.parse(value.operation);if(combined(value.kind)&&!currentCombined(value,operation))throw fail('识别输入已变化，旧结果不能应用',409);await mediaStore.localInput(value.document_key,value.binding,operation.fingerprint);
   const raw=JSON.parse(await readFile(path.join(directory,id,'result.json'),'utf8'));
   if(value.kind==='align'){
    if(sourceSignature(libraryStore.get(value.document_key).document)!==sourceSignature(operation.document))throw fail('原稿已变化，旧对齐候选未应用',409);
@@ -232,5 +299,5 @@ export async function createSourceJobs({directory,libraryStore,mediaStore,podcas
  function pauseAdmission(id){if(admissionOwner!==null&&admissionOwner!==id)return false;admissionOwner=id;return true;}
  function resumeAdmission(id){if(admissionOwner===id)admissionOwner=null;}
  async function trackedAction(id,operation){pendingAdmissions++;try{return await action(id,operation);}finally{pendingAdmissions--;}}
- pump();return {create,get,list,action:trackedAction,result,shutdown,activity,pauseAdmission,resumeAdmission};
+ pump();return {capabilities,create,get,list,action:trackedAction,result,shutdown,activity,pauseAdmission,resumeAdmission};
 }

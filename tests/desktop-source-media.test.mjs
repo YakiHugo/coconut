@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import * as fs from 'node:fs/promises';
+import {readSync,writeSync,fstatSync} from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import {createHash,randomUUID} from 'node:crypto';
@@ -101,4 +102,24 @@ test('concurrent distinct verification and completed LRU are bounded',async t=>{
  // Establish order explicitly because parallel hash completion is unordered.
  for(const {record,key}of items.slice(0,4))await playback(store,record,{key});
  for(const {record,key}of items.slice(4))await playback(store,record,{key});assert.equal(counter.count(),65);await playback(store,items[64].record,{key:items[64].key});assert.equal(counter.count(),65);await playback(store,items[0].record,{key:items[0].key});assert.equal(counter.count(),66);
+});
+
+test('internal observer sees a read-only append spool and seal only after integrity commit',async t=>{
+ const {store}=await setup(t),source=hash(shared.sourceMediaIdentity(doc)),events=[];let fd;
+ const bytes=Buffer.from('first second');
+ const observer={opened(value){fd=value.readOnlyFd;assert.equal(fstatSync(fd).size,0);assert.throws(()=>writeSync(fd,Buffer.from('bad')),/bad file descriptor|EBADF/);events.push('opened');},
+ appended({availableBytes}){const copy=Buffer.alloc(availableBytes);assert.equal(readSync(fd,copy,0,availableBytes,0),availableBytes);assert.deepEqual(copy,bytes.subarray(0,availableBytes));events.push(availableBytes);},
+ sealed(receipt){assert.equal(receipt.sha256,hash(bytes));assert.equal(fstatSync(fd).size,bytes.length);events.push('sealed');},aborted(){assert.fail('complete media cannot abort');}};
+ const record=await store.save(doc.key,source,Readable.from([bytes.subarray(0,5),bytes.subarray(5)]),{type:'audio/mpeg',name:'a.mp3',expectedSha256:hash(bytes),observer});
+ assert.deepEqual(events,['opened',5,bytes.length,'sealed']);assert.deepEqual(await store.read(doc.key),record);assert.throws(()=>fstatSync(fd),/bad file descriptor|EBADF/);
+});
+test('invalid transfer aborts observer without a seal or replacing saved media',async t=>{
+ const {store}=await setup(t),source=hash(shared.sourceMediaIdentity(doc));const prior=await store.save(doc.key,source,Readable.from(['old']),{type:'audio/mpeg',name:'a.mp3'});
+ const events=[];let fd;await assert.rejects(store.save(doc.key,source,Readable.from(['new']),{type:'audio/mpeg',name:'a.mp3',expectedSha256:'0'.repeat(64),observer:{opened(v){fd=v.readOnlyFd;},appended(){events.push('append');},sealed(){events.push('seal');},aborted(){events.push('abort');}}}),/identity changed/);
+ assert.deepEqual(events,['append','abort']);assert.deepEqual(await store.read(doc.key),prior);assert.throws(()=>fstatSync(fd),/bad file descriptor|EBADF/);
+});
+test('post-commit observer notification failure cannot erase a durable receipt',async t=>{
+ const {store}=await setup(t),warnings=[];t.mock.method(process,'emitWarning',message=>warnings.push(message));
+ const record=await store.save(doc.key,hash(shared.sourceMediaIdentity(doc)),Readable.from(['saved']),{type:'audio/mpeg',name:'a.mp3',observer:{sealed(){throw Error('notification unavailable');}}});
+ assert.deepEqual(await store.read(doc.key),record);assert.equal(warnings.length,1);
 });

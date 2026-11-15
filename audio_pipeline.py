@@ -129,28 +129,41 @@ def _wav_frames(path):
         return stream.getnframes()
 
 
-def prepare_audio(source, directory):
+def prepare_audio(source, directory, *, max_frames=None):
     """Stream decode to disk. Neither compressed input nor a 3h PCM is held in RAM."""
     try:
-        _wav_frames(source)
+        frames = _wav_frames(source)
+        if max_frames is not None and frames > max_frames:
+            raise RuntimeError('Decoded PCM frame limit exceeded')
         return source
     except (wave.Error, EOFError, ValueError):
         pass
     import av
     target = directory / 'audio.wav'
     if target.exists():
-        _wav_frames(target)
+        frames = _wav_frames(target)
+        if max_frames is not None and frames > max_frames:
+            raise RuntimeError('Decoded PCM frame limit exceeded')
         return target
     partial = directory / 'audio.partial.wav'
     try:
         with av.open(str(source)) as container, wave.open(str(partial), 'wb') as output:
             output.setparams((1, 2, SAMPLE_RATE, 0, 'NONE', 'not compressed'))
             resampler = av.AudioResampler(format='s16', layout='mono', rate=SAMPLE_RATE)
+            decoded_frames = 0
             for frame in container.decode(audio=0):
                 for converted in resampler.resample(frame):
-                    output.writeframesraw(converted.to_ndarray().tobytes())
+                    block = converted.to_ndarray().tobytes()
+                    decoded_frames += len(block)//2
+                    if max_frames is not None and decoded_frames > max_frames:
+                        raise RuntimeError('Decoded PCM frame limit exceeded')
+                    output.writeframesraw(block)
             for converted in resampler.resample(None):
-                output.writeframesraw(converted.to_ndarray().tobytes())
+                block = converted.to_ndarray().tobytes()
+                decoded_frames += len(block)//2
+                if max_frames is not None and decoded_frames > max_frames:
+                    raise RuntimeError('Decoded PCM frame limit exceeded')
+                output.writeframesraw(block)
         _wav_frames(partial)
         partial.replace(target)
     finally:
@@ -343,7 +356,8 @@ def run_audio_pipeline(source: Path, backend: ASRBackend, *, work_dir=None, spea
                        speaker_threshold=.72, speaker_margin=.08, progress=None,
                        expected_duration=None, minimum_duration=None,
                        reconcile_speakers=False, expected_speakers=None,
-                       decode_mode="buffered", cancel_event=None, pcm_queue_capacity=2):
+                       decode_mode="buffered", cancel_event=None, pcm_queue_capacity=2,
+                       max_decoded_frames=None):
     """Run/resume either local ASR or an explicitly selected cloud adapter.
 
     Atomic ASR and acoustic checkpoints are separate. Completed paid chunks are
@@ -387,7 +401,8 @@ def run_audio_pipeline(source: Path, backend: ASRBackend, *, work_dir=None, spea
             audio, frames, chunks = producer.audio, None, []
             stream = iter(producer)
         else:
-            audio = prepare_audio(source, directory)
+            audio = (prepare_audio(source, directory) if max_decoded_frames is None else
+                     prepare_audio(source, directory, max_frames=max_decoded_frames))
             frames = _wav_frames(audio)
             check_duration(frames)
             chunks = plan_chunks(frames, chunk_seconds, context_seconds)
