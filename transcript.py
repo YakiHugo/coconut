@@ -55,7 +55,8 @@ def make_document(result: dict, title: str, source_url: str) -> dict:
     if not segments:
         raise ValueError('The transcript contains no text segments')
     return {'schema_version': 1, 'title': title, 'source_url': source_url,
-            'language': result.get('language'), 'segments': segments}
+            'language': result.get('language'), 'segments': segments,
+            **({'seam_recovery': result['seam_recovery']} if result.get('seam_recovery') else {})}
 
 
 def timestamp(seconds: float) -> str:
