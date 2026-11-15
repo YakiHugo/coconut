@@ -6,6 +6,7 @@ and recording-scoped speaker identities belong to this module, not the provider.
 from __future__ import annotations
 
 import copy
+from contextlib import ExitStack
 import hashlib
 import json
 import math
@@ -341,7 +342,8 @@ def run_audio_pipeline(source: Path, backend: ASRBackend, *, work_dir=None, spea
                        chunk_seconds=600, context_seconds=5, local_only=False,
                        speaker_threshold=.72, speaker_margin=.08, progress=None,
                        expected_duration=None, minimum_duration=None,
-                       reconcile_speakers=False, expected_speakers=None):
+                       reconcile_speakers=False, expected_speakers=None,
+                       decode_mode="buffered", cancel_event=None, pcm_queue_capacity=2):
     """Run/resume either local ASR or an explicitly selected cloud adapter.
 
     Atomic ASR and acoustic checkpoints are separate. Completed paid chunks are
@@ -350,44 +352,79 @@ def run_audio_pipeline(source: Path, backend: ASRBackend, *, work_dir=None, spea
     if local_only and (not backend.local_only or
                        speaker_backend and not getattr(speaker_backend, 'local_only', False)):
         raise ValueError('Local-only processing cannot use a cloud/provider backend')
+    if decode_mode == 'pipelined' and (not backend.local_only or
+            speaker_backend and not getattr(speaker_backend, 'local_only', False)):
+        raise ValueError('Pipelined decoding currently requires local-only backends')
+    if decode_mode not in ('buffered', 'pipelined'):
+        raise ValueError('Unknown PCM decode mode')
+    def check_cancel():
+        if cancel_event is not None and cancel_event.is_set():
+            raise InterruptedError('Audio processing cancelled')
+    check_cancel()
     registry = SpeakerRegistry(speaker_threshold, speaker_margin)
-    with _directory(work_dir) as directory:
+    with _directory(work_dir) as directory, ExitStack() as resources:
         directory = Path(directory)
         manifest = {'version': VERSION, 'source_sha256': _file_digest(source),
                     'backend': backend.cache_key, 'local_only': local_only,
                     'chunk_seconds': chunk_seconds, 'context_seconds': context_seconds}
+        if decode_mode == 'pipelined':
+            manifest['decode_mode'] = 'pipelined-pcm-v1'
         marker = directory / 'manifest.json'
         if marker.exists() and json.loads(marker.read_text()) != manifest:
             raise ValueError('Audio work directory belongs to different input/options')
         save_document(manifest, marker)
-        audio = prepare_audio(source, directory)
-        frames = _wav_frames(audio)
-        duration = frames / SAMPLE_RATE
-        if expected_duration is not None and abs(duration - expected_duration) > max(3, expected_duration * .005):
-            raise ValueError('Audio duration does not match the transcript source')
-        if minimum_duration is not None and duration + 1 < minimum_duration:
-            raise ValueError('Transcript timing extends beyond the supplied audio')
-        chunks = plan_chunks(frames, chunk_seconds, context_seconds)
+        def check_duration(frames):
+            duration = frames / SAMPLE_RATE
+            if expected_duration is not None and abs(duration - expected_duration) > max(3, expected_duration * .005):
+                raise ValueError('Audio duration does not match the transcript source')
+            if minimum_duration is not None and duration + 1 < minimum_duration:
+                raise ValueError('Transcript timing extends beyond the supplied audio')
+        producer = None
+        if decode_mode == 'pipelined':
+            from pcm_producer import PCMProducer
+            producer = resources.enter_context(PCMProducer(source, directory, chunk_seconds=chunk_seconds,
+                context_seconds=context_seconds, cancel=cancel_event, capacity=pcm_queue_capacity))
+            audio, frames, chunks = producer.audio, None, []
+            stream = iter(producer)
+        else:
+            audio = prepare_audio(source, directory)
+            frames = _wav_frames(audio)
+            check_duration(frames)
+            chunks = plan_chunks(frames, chunk_seconds, context_seconds)
+            stream = ((chunk, frames) for chunk in chunks)
         output, languages, warnings, speaker_turns, speaker_blocks = [], [], [], [], []
         voice_key = _digest(speaker_backend.cache_key)[:16] if speaker_backend else ''
         identity_key = _digest({'voice_key': voice_key, 'threshold': speaker_threshold,
                                 'margin': speaker_margin})[:16]
-        for chunk in chunks:
+        for chunk, ownership_frames in stream:
+            check_cancel()
+            if producer:
+                chunks.append(chunk)
             if progress:
-                progress(chunk.index, len(chunks))
+                progress(chunk.index, None if producer else len(chunks))
             request_id = _digest({'manifest': manifest, 'chunk': asdict(chunk)})
             cache = directory / f'asr-{chunk.index:05d}.json'
             voice_cache = directory / f'voices-{voice_key}-{chunk.index:05d}.json'
             path = directory / f'chunk-{chunk.index:05d}.wav'
             try:
-                pcm = None
+                pcm = True if producer else None
+                if producer:
+                    identity = {'chunk': asdict(chunk), 'pcm_sha256': _file_digest(path)}
+                    identity_path = directory / f'pcm-{chunk.index:05d}.json'
+                    if (cache.exists() or voice_cache.exists()) and not identity_path.exists():
+                        raise ValueError('Decoded chunk checkpoint has no identity')
+                    if identity_path.exists() and json.loads(identity_path.read_text()) != identity:
+                        raise ValueError('Decoded chunk identity changed')
+                    save_document(identity, identity_path)
                 if cache.exists():
                     raw = validate_result(json.loads(cache.read_text()), chunk.duration)
                 else:
-                    pcm = write_chunk(audio, chunk, path)
+                    if not producer:
+                        pcm = write_chunk(audio, chunk, path)
                     raw = validate_result(backend.recognize(path, request_id=request_id), chunk.duration)
+                    check_cancel()
                     save_document(raw, cache)
-                segments = owned_segments(raw, chunk, frames)
+                segments = owned_segments(raw, chunk, ownership_frames)
                 if raw.get('language'):
                     languages.append(raw['language'])
                 if raw.get('alignment_warning'):
@@ -399,6 +436,7 @@ def run_audio_pipeline(source: Path, backend: ASRBackend, *, work_dir=None, spea
                         if pcm is None:
                             write_chunk(audio, chunk, path)
                         voices = validate_voices(speaker_backend.analyze(path), chunk.duration)
+                        check_cancel()
                         save_document(voices, voice_cache)
                     turns = []
                     if reconcile_speakers:
@@ -428,6 +466,12 @@ def run_audio_pipeline(source: Path, backend: ASRBackend, *, work_dir=None, spea
                 output.extend(segments)
             finally:
                 path.unlink(missing_ok=True)
+        check_cancel()
+        if producer:
+            frames = producer.frames
+            check_duration(frames)
+            if _file_digest(source) != manifest['source_sha256']:
+                raise ValueError('Source media changed during decoding')
         output = stitch_segments(output)
         speaker_count = len(registry.voices)
         if speaker_backend and reconcile_speakers:
@@ -447,6 +491,7 @@ def run_audio_pipeline(source: Path, backend: ASRBackend, *, work_dir=None, spea
             decisions = {turn['speaker']: dict(speaker_id=turn['speaker_id'], status=turn['speaker_status'])
                          for turn in speaker_turns}
             label_segments(output, speaker_turns, decisions)
+        check_cancel()
         languages = list(dict.fromkeys(languages))
         return {'language': languages[0] if len(languages) == 1 else None, 'languages': languages,
                 'segments': output, 'speaker_turns': speaker_turns,

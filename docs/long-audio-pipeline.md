@@ -116,3 +116,33 @@ python3 scripts/reader_assets.py --check
 ```
 
 测试覆盖三小时切块计划、上下文字词归属、边界时间抖动、局部编号交换、人物消失再出现、弱/含糊声纹、并发身份冲突、低占比嘉宾、重叠覆盖、跨阶段故障恢复、真实子进程适配器和本地限制，以及 ID/时间经过阅读器保存恢复。真实长录音集成结果另放在 `.coconut/architecture-validation-2026-10-25/`；没有人工 RTTM，不报告 DER 或人物识别准确率。
+
+## Experimental opt-in decode / recognition overlap
+
+`run_audio_pipeline(..., decode_mode='pipelined')` is a Python-only experiment;
+Node/service defaults and all chunk sizes are unchanged. Only local backends are
+allowed in this mode. No model is installed or selected automatically.
+
+A single decoder thread writes a full PCM spool and produces bounded WAV files
+once a core plus its right context is available. A queue of one or two paths
+(`pcm_queue_capacity`, default 2) applies backpressure. One inference caller
+processes them in order. At most the queue, one preparing chunk and one active
+chunk are present; the complete PCM spool remains on disk, not in RAM. EOF
+finalizes the last chunk and the full WAV. Final duration checks, source SHA
+revalidation, stitching and recording-wide speaker reconciliation happen before
+the function returns any final transcript. Per-chunk progress has an unknown
+total (`None`) until decoding completes; existing service callers are unchanged.
+
+Use a **separate work directory** for this mode. Its manifest is versioned and
+per-chunk PCM SHA/clock markers guard ASR and acoustic checkpoint reuse. Retry
+redecodes the source but reuses complete matching inference checkpoints. A decode
+failure, source change or duration mismatch never returns a partial success and
+never silently invokes another backend. To fall back, explicitly run the
+unchanged `decode_mode='buffered'` path in its own work directory. Corrupt input
+is not repaired by fallback. `cancel_event` is a `threading.Event`: it stops queue
+waits/decoding and checks inference boundaries, but cannot interrupt a backend's
+synchronous model call; process cancellation remains the hard-stop mechanism.
+
+Tests use deterministic local backends for recognition contracts. Codec decoding
+and byte equivalence are separate from ASR quality; this experiment does not
+establish improved recognition, speaker accuracy, or an optimal chunk length.
