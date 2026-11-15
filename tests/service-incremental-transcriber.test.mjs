@@ -25,14 +25,21 @@ test('incremental probe is offline, protocol-scoped and sanitizes unsupported wo
 });
 test('real inherited FD, coalesced highest watermarks, seal ordering and open stdin after seal',async t=>{
  const {runner,options,directory,handle}=await fixture(t,`import sys,json,os,time,select,hashlib\ntime.sleep(.15)\nr=json.loads(sys.stdin.readline())\nassert r['operation']=='transcribe_incremental' and r['protocol_version']==1 and r['media_fd']==3 and r['local_only'] is True\nassert r['source_snapshot']['binding']=='authored'\nassert os.environ['TRANSFORMERS_OFFLINE']=='1'\nmessages=[]\nfor line in sys.stdin:\n m=json.loads(line);assert m['attempt_id']==r['attempt_id'];messages.append(m)\n if m['type']=='seal':\n  data=os.pread(3,m['size'],0);assert hashlib.sha256(data).hexdigest()==m['sha256']\n  assert not select.select([sys.stdin],[],[],.05)[0], 'seal must not close parent stdin'\n  open(os.path.join(r['work'],'controls.json'),'w').write(json.dumps(messages))\n  print(json.dumps({'phase':'fallback','reason':'canonical_pcm_mismatch','raw':'secret'}),flush=True)\n  print(json.dumps({'phase':'recognize','chunk':1,'chunks':None,'path':'secret'}),flush=True)\n  print(json.dumps({'phase':'done'}),flush=True)\n  break\n`);
- const events=[],operation=runner.startIncremental({...options,sourceSnapshot:{binding:'authored',padding:'x'.repeat(200000)},onProgress:p=>events.push(p)});t.after(()=>operation.abort());
+ const events=[],operation=runner.startIncremental({...options,sourceSnapshot:{binding:'authored',padding:'x'.repeat(50000)},onProgress:p=>events.push(p)});t.after(()=>operation.abort());
  for(let n=1;n<=20000;n++)operation.appendWatermark(n);operation.seal({size:30000,sha256:digest});await operation.completion;
  const controls=JSON.parse(await readFile(path.join(directory,'controls.json'),'utf8'));assert.deepEqual(controls.map(m=>m.type),['append','seal']);assert.equal(controls[0].available_bytes,30000);assert.equal(controls[1].size,30000);
  assert.deepEqual(events,[{phase:'fallback',reason:'canonical_pcm_mismatch'},{phase:'recognize',chunk:1},{phase:'done'}]);assert.equal((await handle.stat()).size,30000);
 });
+test('real stdin backpressure retains only highest pending watermark without blocking producer',async t=>{
+ const {runner,options,directory}=await fixture(t,`import sys,json,os,time\nr=json.loads(sys.stdin.readline())\nwhile not os.path.exists(os.path.join(r['work'],'release')):time.sleep(.005)\nmessages=[]\nfor line in sys.stdin:\n m=json.loads(line);messages.append(m)\n if m['type']=='seal':\n  open(os.path.join(r['work'],'pressure.json'),'w').write(json.dumps(messages))\n  print(json.dumps({'phase':'done'}),flush=True)\n  break\n`);
+ const op=runner.startIncremental(options);t.after(()=>op.abort());
+ for(let n=1;n<=20000;n++){op.appendWatermark(n);await new Promise(resolve=>setImmediate(resolve));}
+ op.seal({size:30000,sha256:digest});await writeFile(path.join(directory,'release'),'go');await op.completion;
+ const messages=JSON.parse(await readFile(path.join(directory,'pressure.json'),'utf8')),append=messages.filter(m=>m.type==='append');assert.ok(append.length>1&&append.length<20000,`coalesced ${append.length} watermarks`);assert.equal(append.at(-1).available_bytes,30000);assert.equal(messages.at(-1).type,'seal');assert.ok(append.every((m,i)=>!i||m.available_bytes>append[i-1].available_bytes));
+});
 test('watermark and seal validation do not close caller-owned FD',async t=>{
  const {runner,options,handle}=await fixture(t,'import time\ntime.sleep(30)\n');
- assert.throws(()=>runner.startIncremental({...options,mediaFd:-1}));assert.throws(()=>runner.startIncremental({...options,attemptId:'not-a-uuid'}));assert.throws(()=>runner.startIncremental({...options,workDirectory:'relative'}));
+ assert.throws(()=>runner.startIncremental({...options,sourceSnapshot:{padding:'x'.repeat(65536)}}),/上下文过大/);assert.throws(()=>runner.startIncremental({...options,mediaFd:-1}));assert.throws(()=>runner.startIncremental({...options,attemptId:'not-a-uuid'}));assert.throws(()=>runner.startIncremental({...options,workDirectory:'relative'}));
  const op=runner.startIncremental(options);t.after(()=>op.abort());op.appendWatermark(10);assert.throws(()=>op.appendWatermark(9));assert.throws(()=>op.appendWatermark(NaN));assert.throws(()=>op.seal({size:9,sha256:digest}));op.seal({size:30000,sha256:digest});assert.throws(()=>op.appendWatermark(30001));assert.throws(()=>op.seal({size:30000,sha256:digest}));op.abort();await assert.rejects(op.completion);assert.equal((await handle.stat()).size,30000);
  const controller=new AbortController();controller.abort();assert.throws(()=>runner.startIncremental({...options,signal:controller.signal}));
 });

@@ -13,7 +13,7 @@ export function startIncrementalProcess({python,profile,scriptPath},{attemptId,m
  if(!uuid.test(attemptId)||!Number.isInteger(mediaFd)||mediaFd<3||!path.isAbsolute(workDirectory||'')||sourceSnapshot===undefined)throw Error('增量转录只接受服务拥有的媒体句柄与任务身份');
  try{if(!fstatSync(mediaFd).isFile())throw Error();}catch{throw Error('增量转录媒体句柄无效');}
  const initial=JSON.stringify({operation:'transcribe_incremental',protocol_version:1,attempt_id:attemptId,media_fd:3,work:workDirectory,source_snapshot:sourceSnapshot,title,context,hotwords,name_corrections:nameCorrections,speaker_count:speakerCount,profile,local_only:true})+'\n';
- if(Buffer.byteLength(initial)>262144)throw Error('增量转录任务上下文过大');
+ if(Buffer.byteLength(initial)>65536)throw Error('增量转录任务上下文过大');
  // spawn duplicates this descriptor into child fd 3. Never close caller mediaFd.
  const child=spawn(python,['-u',scriptPath],{shell:false,detached:process.platform!=='win32',stdio:['pipe','pipe','pipe',mediaFd],env:{...process.env,...offline,...(profile?.model_cache?{HF_HOME:profile.model_cache}:{})}});
  let maxWatermark=0,sentWatermark=0,pendingSeal=null,sealRequested=false,sealSent=false,blocked=false,scheduled=false,settled=false,stopping=false,reason,killer,buffer='';
