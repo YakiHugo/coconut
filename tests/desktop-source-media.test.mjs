@@ -4,7 +4,7 @@ import * as fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import {createHash,randomUUID} from 'node:crypto';
-import {Readable} from 'node:stream';
+import {Readable,Writable} from 'node:stream';
 import {startBridge} from '../desktop/server.mjs';
 import {createLibraryStore} from '../desktop/library-store.mjs';
 import {createSourceMediaStore} from '../desktop/source-media.mjs';
@@ -68,4 +68,37 @@ test('cancellation at the final commit fence preserves the previous receipt',asy
  const controller=new AbortController();store.setCommitGuard(()=>controller.abort());
  await assert.rejects(store.save(doc.key,source,Readable.from(['replacement']),{type:'audio/mpeg',name:'audio.mp3',signal:controller.signal}),/Source document changed/);
  assert.deepEqual(await store.read(doc.key),prior);
+});
+
+async function playback(store,record,{method='HEAD',range,key=doc.key}={}){const chunks=[],response=new Writable({write(chunk,encoding,done){chunks.push(Buffer.from(chunk));done();}});response.writeHead=function(status,headers){this.status=status;this.headers=headers;};response.setHeader=()=>{};response.bytes=()=>Buffer.concat(chunks);await store.stream(key,record.binding,record.sha256,{method,headers:range?{range}:{}},response);return response;}
+async function countHashes(t,file){const handle=await fs.open(file,'r'),prototype=Object.getPrototypeOf(handle),original=prototype.createReadStream;await handle.close();let hashes=0,hold=null;const gates=[];
+ t.mock.method(prototype,'createReadStream',function(options){const stream=original.call(this,options);if(options?.start===0&&options.end===undefined){hashes++;if(hold){const iterate=stream[Symbol.asyncIterator].bind(stream),gate=hold;stream[Symbol.asyncIterator]=async function*(){await gate;yield* iterate();};}}return stream;});return {count:()=>hashes,hold(){hold=new Promise(resolve=>gates.push(resolve));},release(){for(const resolve of gates.splice(0))resolve();hold=null;}};
+}
+test('playback HEAD and GET ranges reuse verification but transcription still verifies',async t=>{
+ const {directory,store}=await setup(t),bytes=Buffer.from('original playback bytes'),record=await store.save(doc.key,hash(shared.sourceMediaIdentity(doc)),Readable.from([bytes]),{type:'audio/mpeg',name:'a.mp3'}),file=path.join(directory,'source-media',record.sha256+'.media'),counter=await countHashes(t,file);
+ await playback(store,record);assert.equal(counter.count(),1);
+ for(let n=0;n<5;n++){const response=await playback(store,record,{method:'GET',range:'bytes=2-5'});assert.deepEqual(response.bytes(),bytes.subarray(2,6));assert.equal(response.status,206);assert.equal(response.headers['Content-Length'],4);}assert.equal(counter.count(),1);
+ await store.input(doc.key,record.binding,record.sha256).then(value=>value.close());assert.equal(counter.count(),3); // verification and returned input stream
+ assert.deepEqual(await store.read(doc.key),record);
+ await fs.utimes(file,new Date(),new Date(Date.now()+1000));await playback(store,record);assert.equal(counter.count(),4);
+ const replacement=file+'.replacement';await fs.writeFile(replacement,bytes,{mode:0o600});await fs.rename(replacement,file);await playback(store,record);assert.equal(counter.count(),5);
+ const before=await fs.stat(file);await fs.writeFile(file,Buffer.alloc(bytes.length,120));await fs.utimes(file,before.atime,before.mtime);await assert.rejects(playback(store,record),/integrity/);await assert.rejects(playback(store,record),/integrity/);assert.equal(counter.count(),7,'bad bytes never cached');
+});
+test('cached playback still rejects unsafe permissions, hardlinks and symlinks',async t=>{
+ const {directory,store}=await setup(t),record=await store.save(doc.key,hash(shared.sourceMediaIdentity(doc)),Readable.from(['safe bytes']),{type:'audio/mpeg',name:'a.mp3'}),file=path.join(directory,'source-media',record.sha256+'.media');await playback(store,record);
+ if(process.platform!=='win32'){await fs.chmod(file,0o644);await assert.rejects(playback(store,record),/Unsafe/);await fs.chmod(file,0o600);}
+ const link=file+'.link';await fs.link(file,link);await assert.rejects(playback(store,record),/Unsafe/);await fs.unlink(link);await fs.rename(file,link);await fs.symlink(link,file);await assert.rejects(playback(store,record),/Unsafe/);
+});
+test('concurrent playback shares hash and rejects a modification during verification',async t=>{
+ const {directory,store}=await setup(t),record=await store.save(doc.key,hash(shared.sourceMediaIdentity(doc)),Readable.from(['safe bytes']),{type:'audio/mpeg',name:'a.mp3'}),file=path.join(directory,'source-media',record.sha256+'.media'),counter=await countHashes(t,file);counter.hold();t.after(()=>counter.release());
+ const requests=Array.from({length:8},()=>playback(store,record));for(let n=0;n<100&&counter.count()<1;n++)await new Promise(resolve=>setTimeout(resolve,5));assert.equal(counter.count(),1);await fs.utimes(file,new Date(),new Date(Date.now()+2000));counter.release();const results=await Promise.allSettled(requests);assert.ok(results.every(value=>value.status==='rejected'&&/changed/.test(value.reason.message)));await playback(store,record);assert.equal(counter.count(),2);
+});
+test('concurrent distinct verification and completed LRU are bounded',async t=>{
+ const {directory,store,library}=await setup(t),items=[];
+ for(let i=0;i<65;i++){const value={...doc,key:'bounded:'+i};commit(library,value);items.push({key:value.key,record:await store.save(value.key,hash(shared.sourceMediaIdentity(value)),Readable.from([Buffer.from('authored '+i)]),{type:'audio/mpeg',name:'a.mp3'})});}
+ const counter=await countHashes(t,path.join(directory,'source-media',items[0].record.sha256+'.media'));counter.hold();t.after(()=>counter.release());const first=items.slice(0,4).map(({record,key})=>playback(store,record,{key}));for(let n=0;n<100&&counter.count()<4;n++)await new Promise(resolve=>setTimeout(resolve,5));assert.equal(counter.count(),4);
+ await assert.rejects(playback(store,items[4].record,{key:items[4].key}),error=>error.status===503&&/busy/.test(error.message));assert.equal(counter.count(),4);counter.release();await Promise.all(first);
+ // Establish order explicitly because parallel hash completion is unordered.
+ for(const {record,key}of items.slice(0,4))await playback(store,record,{key});
+ for(const {record,key}of items.slice(4))await playback(store,record,{key});assert.equal(counter.count(),65);await playback(store,items[64].record,{key:items[64].key});assert.equal(counter.count(),65);await playback(store,items[0].record,{key:items[0].key});assert.equal(counter.count(),66);
 });
