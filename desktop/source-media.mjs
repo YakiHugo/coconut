@@ -19,6 +19,35 @@ export async function createSourceMediaStore({directory,libraryStore}){
  let pending=0,queue=Promise.resolve(),closed=false,commitGuard=null;const active=new Set();
  function owner(key){const record=libraryStore.get(key);if(!record||record.deleted)throw fail('Source document is unavailable',404);const library=libraryStore.describe().binding.mediaLibraryIdentity,source=hash(identity.sourceMediaIdentity(record.document));return {binding:hash(JSON.stringify([library,key,record.identity.lifetime,source])),source};}
  const filename=(name)=>path.join(directory,name);
+ // Playback-only, process-local observations. Input/read still fully verify.
+ const verifiedPlayback=new Map(),verifyingPlayback=new Map();
+ function playbackIdentity(stat,record){
+  if(!stat.isFile()||stat.nlink!==1n||process.platform!=='win32'&&((stat.mode&0o077n)!==0n||stat.uid!==BigInt(process.getuid())))throw fail('Unsafe source media storage');
+  if(stat.size!==BigInt(record.size))throw fail('Saved media changed',409);
+  return [record.sha256,stat.dev,stat.ino,stat.size,stat.mtimeNs,stat.ctimeNs,stat.mode,stat.uid,stat.gid].join(':');
+ }
+ async function verifyPlayback(handle,record){
+  const signature=playbackIdentity(await handle.stat({bigint:true}),record);
+  if(verifiedPlayback.has(signature)){verifiedPlayback.delete(signature);verifiedPlayback.set(signature,true);}
+  else {
+   let operation=verifyingPlayback.get(signature);
+   if(!operation){
+    if(verifyingPlayback.size>=4)throw fail('Source media verification is busy; retry playback');
+    operation=(async()=>{
+     const digest=createHash('sha256');for await(const chunk of handle.createReadStream({autoClose:false,start:0}))digest.update(chunk);
+     if(playbackIdentity(await handle.stat({bigint:true}),record)!==signature)throw fail('Saved media changed during verification',409);
+     if(digest.digest('hex')!==record.sha256)throw fail('Saved media failed integrity check',409);
+     verifiedPlayback.set(signature,true);while(verifiedPlayback.size>64)verifiedPlayback.delete(verifiedPlayback.keys().next().value);
+    })();
+    verifyingPlayback.set(signature,operation);
+    void operation.finally(()=>verifyingPlayback.delete(signature)).catch(()=>{});
+   }
+   await operation;
+  }
+  // Waiters own distinct FDs. Recheck metadata and permissions on their FD too.
+  if(playbackIdentity(await handle.stat({bigint:true}),record)!==signature){verifiedPlayback.delete(signature);throw fail('Saved media changed during verification',409);}
+ }
+
  async function read(key,expected,{verify=true}={}){const current=owner(key);if(expected&&current.binding!==expected)throw fail('Source document changed',409);let record;try{const file=filename(current.binding+'.json');const stat=await privatePath(file);if(stat.size>4096)throw fail('Invalid media receipt');record=JSON.parse(await fs.readFile(file,'utf8'));}catch(error){if(error.code==='ENOENT')return null;throw error;}
  if(record.binding!==current.binding||record.protocolVersion!==1||!/^[a-f0-9]{64}$/.test(record.sha256)||!Number.isSafeInteger(record.size)||record.size<1||record.size>LIMIT||!TYPES.has(record.type)||record.kind!==(record.type.startsWith('video/')?'video':'audio')||typeof record.name!=='string'||record.name.length>300)throw fail('Invalid media receipt');
  const blob=filename(record.sha256+'.media'),blobStat=await privatePath(blob);if(blobStat.size!==record.size)throw fail('Saved media changed',409);
@@ -39,7 +68,7 @@ export async function createSourceMediaStore({directory,libraryStore}){
  if(!exists){let used=0;for(const item of await fs.readdir(directory))if(/^[a-f0-9]{64}\.media$/.test(item))used+=(await privatePath(filename(item))).size;if(used+size>BUDGET)throw fail('Source media storage exceeds 2 GiB; preserve or move the library before retrying',413);await fs.rename(temporary,blob);}
  await atomic(filename(before.binding+'.json'),JSON.stringify(record),()=>{commitGuard?.(record);if(closed||signal?.aborted||owner(key).binding!==before.binding)throw fail('Source document changed',409);});if(signal?.aborted||owner(key).binding!==before.binding)throw fail('Source document changed',409);return record;});queue=operation.catch(()=>{});return await operation;
  }finally{pending--;await handle?.close();await fs.unlink(temporary).catch(()=>{});}}
- async function stream(key,binding,expectedDigest,req,res){const record=await read(key,binding,{verify:false});if(!record)throw fail('Saved media is unavailable',404);if(record.sha256!==expectedDigest)throw fail('Saved media was replaced',409);const file=filename(record.sha256+'.media');await privatePath(file);const handle=await fs.open(file,fs.constants.O_RDONLY|fs.constants.O_NOFOLLOW);try{const stat=await handle.stat();if(stat.size!==record.size)throw fail('Saved media changed',409);const digest=createHash('sha256');for await(const chunk of handle.createReadStream({autoClose:false,start:0}))digest.update(chunk);if(digest.digest('hex')!==record.sha256)throw fail('Saved media failed integrity check',409);
+ async function stream(key,binding,expectedDigest,req,res){const record=await read(key,binding,{verify:false});if(!record)throw fail('Saved media is unavailable',404);if(record.sha256!==expectedDigest)throw fail('Saved media was replaced',409);const file=filename(record.sha256+'.media');await privatePath(file);const handle=await fs.open(file,fs.constants.O_RDONLY|fs.constants.O_NOFOLLOW);try{await verifyPlayback(handle,record);
  if(owner(key).binding!==binding)throw fail('Source document changed',409);
  let start=0,end=record.size-1,partial=false;const value=req.headers.range;if(value!==undefined){const match=/^bytes=(\d*)-(\d*)$/.exec(value);if(!match||!match[1]&&!match[2])throw fail('Invalid range',416);const first=match[1]?Number(match[1]):null,last=match[2]?Number(match[2]):null;if(first!==null&&!Number.isSafeInteger(first)||last!==null&&!Number.isSafeInteger(last)||first===null&&last===0)throw fail('Invalid range',416);start=first===null?Math.max(0,record.size-last):first;end=first===null||last===null?end:Math.min(last,end);if(start>end||start>=record.size)throw fail('Invalid range',416);partial=true;}
  const headers={'Content-Type':record.type,'Content-Length':end-start+1,'Accept-Ranges':'bytes','Cache-Control':'no-store','X-Content-Type-Options':'nosniff'};if(partial)headers['Content-Range']=`bytes ${start}-${end}/${record.size}`;res.writeHead(partial?206:200,headers);if(req.method==='HEAD')res.end();else await pipeline(handle.createReadStream({autoClose:false,start,end}),res);
