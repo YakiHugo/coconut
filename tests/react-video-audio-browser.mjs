@@ -10,10 +10,11 @@ const audio=await readFile(new URL('./fixtures/authored-video-audio.m4a',import.
 const directory=await mkdtemp(path.join(os.tmpdir(),'coconut-durable-video-ui-'));
 let browser,calls=0,release;const errors=[],forbidden=[],unexpected=[];
 const gate=new Promise(resolve=>release=resolve);
-const helper={extractAudio:async({url})=>{
+const helper={extractAudio:async({url,purpose})=>{
+ assert.equal(purpose,'source');
  calls++;const id=new URL(url).searchParams.get('v');if(id==='abcdefghijk')await gate;if(id==='deniedxxxxx')return {status:'access_restricted'};
  const combined=id==='videoxxxxxx',bytes=combined?video:audio;
- return {status:'media_ready',bytes,media:{bytes:bytes.length,sha256:createHash('sha256').update(bytes).digest('hex'),type:combined?'video/mp4':'audio/mp4',kind:combined?'video':'audio'},source:{url,id,provider:'youtube',title:'Authored fixture',duration:2,subtitle_check:'no_matching_captions',audio_language:combined?null:'en',audio_language_basis:combined?'platform_video_stream':'platform_original',audio_role:combined?'unknown':'original',format:combined?'mp4':'m4a',format_id:combined?'18':'140'}};
+ return {status:'media_ready',bytes,media:{bytes:bytes.length,sha256:createHash('sha256').update(bytes).digest('hex'),type:combined?'video/mp4':'audio/mp4',kind:combined?'video':'audio'},source:{url,id,purpose,provider:'youtube',title:'Authored fixture',duration:2,subtitle_check:'no_matching_captions',audio_language:combined?null:'en',audio_language_basis:combined?'platform_video_stream':'platform_original',audio_role:combined?'unknown':'original',format:combined?'mp4':'m4a',format_id:combined?'18':'140'}};
 }};
 const server=await startBridge({port:0,libraryDirectory:directory,enableSourceJobs:true,
  captionService:{available:true,providers:['youtube'],importCaption:async()=>({status:'no_matching_captions',message:'Authored absence'})},
