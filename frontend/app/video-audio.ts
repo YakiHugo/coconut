@@ -54,3 +54,10 @@ export async function validateDownloadedVideoMedia(file:File,kind:'audio'|'video
   });
  }finally{player.removeAttribute('src');player.load();URL.revokeObjectURL(url);}
 }
+
+/** A pending canonical source, not a local file or a saved-media receipt. */
+export function videoSourceProject(value:VideoAudioFallback){
+ const fallback=videoAudioFallback(value),identity=fallback&&source(fallback.url);
+ if(!fallback||!identity)throw Error('视频来源无效。');
+ return {project_kind:'audio_only',transcript_status:'not_imported',title:(identity.provider==='youtube'?'YouTube':'B 站')+' '+identity.id,source_url:fallback.url,language:fallback.language||'',video_source:{version:1,provider:identity.provider,media_id:identity.id},segments:[]};
+}

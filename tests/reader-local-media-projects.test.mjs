@@ -31,3 +31,14 @@ test('local project language override, including explicit unknown, survives subt
   assert.equal(attached.language,language);assert.equal(attached.project_language_override,true);assert.equal(attached.local_media_source.fingerprint,localSource.fingerprint);
  }
 });
+
+test('pending video identity survives backup and transcript attachment without fake local bytes',()=>{
+ const {sourceMediaIdentity}=require('../shared/source-media.js');
+ const raw={project_kind:'audio_only',title:'YouTube abcdefghijk',source_url:'https://www.youtube.com/watch?v=abcdefghijk',video_source:{version:1,provider:'youtube',media_id:'abcdefghijk'},segments:[]};
+ const video=Coconut.validate(raw);assert.deepEqual(Coconut.validate(JSON.parse(JSON.stringify(video))),video);assert.equal(video.local_media_source,undefined);assert.equal(video.podcast_source,undefined);assert.equal(video.media_duration,undefined);
+ const attached=Coconut.attachProjectTranscript(video,{title:'words',segments:[{id:'a',start:0,end:1,text:'hello'}]});assert.deepEqual(attached.video_source,video.video_source);assert.equal(Coconut.audioProjectIdentity(attached),Coconut.audioProjectIdentity(video));assert.equal(sourceMediaIdentity(attached),sourceMediaIdentity(video));
+ assert.equal(sourceMediaIdentity({source_url:'legacy'}),JSON.stringify({source_url:'legacy',podcast_source:null,media_provenance:null,local_media_source:null}));
+ for(const patch of [{source_url:'https://evil.test/'},{video_source:{version:1,provider:'youtube',media_id:'differentxx'}},{local_media_source:localSource},{podcast_source:{kind:'direct_media',media_url:'https://example.org/a.mp3',media_kind:'audio'}}])assert.throws(()=>Coconut.validate({...raw,...patch}),/视频来源/);
+ assert.throws(()=>Coconut.validate({...attached,source_url:'https://www.youtube.com/watch?v=zzzzzzzzzzz'}),/视频来源/);
+ const unrelated=Coconut.attachProjectTranscript(Coconut.validate(project()),attached);assert.equal(unrelated.video_source,undefined);assert.equal(unrelated.local_media_source.fingerprint,localSource.fingerprint);
+});

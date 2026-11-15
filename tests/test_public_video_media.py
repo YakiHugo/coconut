@@ -209,6 +209,17 @@ class MediaTests(unittest.TestCase):
                 result=media.extract_public_video_audio(URL,output=output)
             self.assertEqual(result,{'status':'captions_available'});self.assertFalse(output.exists())
 
+    def test_youtube_media_preserves_publisher_context_without_extra_request(self):
+        transport = guard.VideoTransport(URL)
+        info = {**INFO, 'uploader': 'Authored channel', 'upload_date': '20261114',
+                'description': 'Discussion of exact terminology.'}
+        with tempfile.TemporaryDirectory() as td, patch.object(transport.opener, 'open', return_value=Response()) as opened:
+            result = media.download_verified_audio(info, transport, Path(td)/'audio.m4a', URL)
+            self.assertEqual(result['source']['transcription_context'], {
+                'platform': 'youtube', 'source_url': URL, 'publisher': 'Authored channel',
+                'published': '20261114', 'description': 'Discussion of exact terminology.'})
+            self.assertEqual(opened.call_count, 1)
+
     def test_cdn_denial_does_not_try_a_backup(self):
         transport=guard.VideoTransport(URL)
         info={**INFO,'formats':[FORMAT,{**FORMAT,'url':CDN+'&other=1'}]}

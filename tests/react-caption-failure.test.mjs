@@ -71,12 +71,12 @@ test('caption download failure offers an explicit source check without calling i
 test('a supported independent source check stays explicit after a subtitle-only failure',async()=>{
  const d={stage:'metadata',reason:'subtitle_token_required',requests_attempted:1,responses_received:1};
  const x=await mountedSourceApp({service:{ingest:async()=>({protocolVersion:1,ingestion:{id:'subtitle-only',state:'blocked',source:{url},error:{code:'subtitle_token_required',message:'Authored subtitle-only stop',diagnostic:d,audio_fallback:{endpoint:'/api/videos/media',url,language:null,purpose:'source'}}}})}});
- let mediaRequests=0;
+ let mediaRequests=0;x.w.TextEncoder=TextEncoder;x.w.CoconutClientCapabilities={allows:()=>true,identity:()=> 'client',generation:1,current:{libraryId:'library'}};
  try{
   const original=x.w.fetch;
   x.w.fetch=async(path,options)=>{
-   if(path!=='api/videos/source-media')return original(path,options);
-   mediaRequests++;assert.equal(JSON.parse(options.body).url,url);
+   if(path!=='api/v1/source-jobs')return original(path,options);
+   mediaRequests++;assert.equal(JSON.parse(options.body).kind,'download');
    return {ok:false,json:async()=>({code:'media_unavailable',error:'当前入口未找到支持的公开媒体格式'})};
   };
   x.open(url);await wait(()=>panel(x)&&x.button('单独检查并获取公开原声（最多 200 MiB）'));
@@ -85,6 +85,6 @@ test('a supported independent source check stays explicit after a subtitle-only 
   x.button('单独检查并获取公开原声（最多 200 MiB）').click();
   await wait(()=>mediaRequests===1&&x.w.document.querySelector('.source-error')?.textContent.includes('当前入口未找到支持的公开媒体格式'));
   assert.equal(x.requests.length,1,'an independent media check must not retry captions');
-  assert.equal(x.docs().length,0);
+  assert.equal(x.docs().length,1);assert.equal(x.docs()[0].video_source.media_id,'abcdefghijk');
  }finally{await x.w.happyDOM.close();}
 });

@@ -18,7 +18,7 @@ CUE = re.compile(rf'^({TIME})\s+-->\s+({TIME})(?:\s+.*)?$')
 
 def publisher_context(info: dict, url: str, provider: str) -> dict:
     """Already fetched publisher metadata; no extra request or inferred roster."""
-    if provider != 'bilibili':
+    if provider not in ('bilibili', 'youtube'):
         return {}
     value = {'source_url': url, 'platform': provider}
     for key, field, limit in (('publisher', 'uploader', 200),

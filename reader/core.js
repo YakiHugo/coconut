@@ -114,10 +114,17 @@
   if(typeof value.type!=='string'||value.type.length>100||/[\x00-\x1f\x7f]/.test(value.type)||typeof value.fingerprint!=='string'||!/^[a-f0-9]{64}$/.test(value.fingerprint))return undefined;
   return {version:1,kind:value.kind,name:value.name,size:value.size,last_modified:value.last_modified,type:value.type,fingerprint:value.fingerprint};
  }
+ function videoSource(value,url) {
+  if(!value||value.version!==1||!['youtube','bilibili'].includes(value.provider)||typeof value.media_id!=='string')return undefined;
+  const valid=value.provider==='youtube'?/^[A-Za-z0-9_-]{11}$/.test(value.media_id)&&url==='https://www.youtube.com/watch?v='+value.media_id:/^BV[A-Za-z0-9]{10}$/.test(value.media_id)&&url==='https://www.bilibili.com/video/'+value.media_id;
+  return valid?{version:1,provider:value.provider,media_id:value.media_id}:undefined;
+ }
  function isAudioProject(doc) { return doc?.project_kind==='audio_only'; }
  const AUDIO_NOTE_BUDGET=1000000;
  function audioNoteCharacters(doc) {return (doc.project_note?.length||0)+(doc.timestamp_bookmarks||[]).reduce((total,item)=>total+item.note.length,0);}
  function audioProjectIdentity(doc) {
+  const video=videoSource(doc?.video_source,doc?.source_url);
+  if(video)return JSON.stringify(['platform',video.provider,video.media_id]);
   const local=localMediaSource(doc?.local_media_source);
   if(local)return JSON.stringify(['local_media',local.fingerprint]);
   const origin=podcastSource(doc?.podcast_source);
@@ -211,7 +218,8 @@
    ...(original.transcription_context?{transcription_context:original.transcription_context}:{}),
    ...projectAnnotations(original),...(original.media_duration?{media_duration:original.media_duration}:{})};
   // The selected file supplies words, not an unrelated local media job association.
-  delete result.source_media;delete result.local_media_source;
+  delete result.source_media;delete result.local_media_source;delete result.video_source;
+  if(original.video_source){result.video_source=original.video_source;delete result.podcast_source;}
   if(original.local_media_source){result.local_media_source=original.local_media_source;delete result.podcast_source;}
   if(original.podcast_source&&audioProjectIdentity(original)===audioProjectIdentity(text)&&original.podcast_source.media_url===text.podcast_source?.media_url&&original.podcast_source.media_kind===text.podcast_source?.media_kind&&text.podcast_source.transcript_url){
    result.podcast_source={...original.podcast_source,transcript_url:text.podcast_source.transcript_url};
@@ -223,14 +231,15 @@
  function validateAudioProject(data) {
   if(data.reading_chapters!==undefined)throw new Error('原声项目尚无文字稿，不能保存章节');
   if(data.exact_excerpts!==undefined||data.exact_excerpt_notes!==undefined)exactError();
-  const origin=podcastSource(data.podcast_source),local=localMediaSource(data.local_media_source);
+  const origin=podcastSource(data.podcast_source),local=localMediaSource(data.local_media_source),video=videoSource(data.video_source,data.source_url);
+  if(data.video_source!==undefined&&(!video||data.podcast_source!==undefined||data.local_media_source!==undefined||data.source_media!==undefined))throw new Error('视频来源身份无效或混入其他媒体来源');
   if(data.local_media_source!==undefined&&!local)throw new Error('本地文件信息无效，请重新选择原音视频；项目备份未改变');
-  if(!Array.isArray(data.segments)||data.segments.length||(!origin?.media_url&&!local)||origin&&local)throw new Error('原声项目必须保留一个公开媒体或本地文件来源，且不能把简介或笔记当作文字稿');
+  if(!Array.isArray(data.segments)||data.segments.length||(!origin?.media_url&&!local&&!video)||origin&&local)throw new Error('原声项目必须保留一个公开媒体或本地文件来源，且不能把简介或笔记当作文字稿');
   if(typeof data.title==='string'&&data.title.length>500||typeof data.language==='string'&&data.language.length>100)throw new Error('原声项目标题不能超过500字符，语言标记不能超过100字符');
   const annotations=projectAnnotations(data);
   return {schema_version:1,project_kind:'audio_only',transcript_status:data.transcript_status==='unavailable'?'unavailable':'not_imported',
-   title:typeof data.title==='string'?data.title:'未命名原声项目',source_url:local?(podcastURL(data.source_url)||''):podcastURL(data.source_url)||origin.feed_url||origin.media_url,
-   language:typeof data.language==='string'?data.language:'',...(local?{local_media_source:local}:{podcast_source:origin}),
+   title:typeof data.title==='string'?data.title:'未命名原声项目',source_url:video?data.source_url:local?(podcastURL(data.source_url)||''):podcastURL(data.source_url)||origin.feed_url||origin.media_url,
+   language:typeof data.language==='string'?data.language:'',...(video?{video_source:video}:local?{local_media_source:local}:{podcast_source:origin}),
    ...(data.project_language_override===true?{project_language_override:true}:{}),
    ...(transcriptionContext(data.transcription_context)?{transcription_context:transcriptionContext(data.transcription_context)}:{}),
    ...(Number.isFinite(data.media_duration)&&data.media_duration>0&&data.media_duration<=604800?{media_duration:data.media_duration}:{}),
@@ -896,7 +905,7 @@
  // Exact excerpts are immutable historical evidence, separate from live whole-cue bookmarks.
  // Stored offsets are UTF-16; capture additionally enforces current grapheme boundaries.
  const validatedExactExcerpts=new WeakSet();
- const exactSourceFields=['title','language','source_url','provenance','podcast_source','local_media_source','source_media'];
+ const exactSourceFields=['title','language','source_url','provenance','podcast_source','local_media_source','source_media','video_source'];
  function exactEqual(a,b){
   if(a===b)return true;
   if(!a||!b||typeof a!=='object'||typeof b!=='object'||Array.isArray(a)!==Array.isArray(b))return false;
@@ -1428,6 +1437,8 @@
 			provenance.media_duration = data.provenance.media_duration;
 		const localSource=localMediaSource(data.local_media_source);
   if(data.local_media_source!==undefined&&(!localSource||data.podcast_source!==undefined||data.source_media!==undefined))throw new Error('本地文件来源无效或混入其他媒体来源');
+  const video=videoSource(data.video_source,data.source_url);
+  if(data.video_source!==undefined&&(!video||data.podcast_source!==undefined||data.local_media_source!==undefined||data.source_media!==undefined))throw new Error('视频来源身份无效或混入其他媒体来源');
   const sourceMedia = mediaSource(data.source_media);
   const chapters=normalizeReadingChapters(data);
   const excerpts=exactExcerpts(data),excerptNotes=exactExcerptNotes(data,excerpts);
@@ -1448,6 +1459,7 @@
 			...(provenance ? { provenance } : {}),
 			...(sourceMedia ? { source_media: sourceMedia } : {}),
    ...(localSource?{local_media_source:localSource}:{}),
+   ...(video?{video_source:video}:{}),
             ...(podcastSource(data.podcast_source)?{podcast_source:podcastSource(data.podcast_source)}:{}),
    ...(transcriptionContext(data.transcription_context)?{transcription_context:transcriptionContext(data.transcription_context)}:{}),
 			schema_version: 1,
