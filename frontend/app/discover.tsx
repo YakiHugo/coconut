@@ -12,7 +12,7 @@ import {parseSourceLink} from './source-link';
 import {resolveEpisodeLink} from './episode-link';
 import {useToast} from './toast';
 import { ingest, inspectFile, type Ingestion } from './ingestion';
-import {downloadVideoAudio,validateDownloadedVideoMedia,videoAudioFallback,type VideoAudioFallback} from './video-audio';
+import {videoSourceProject,videoAudioFallback,type VideoAudioFallback} from './video-audio';
 export function Discover({ store }: {
     store: AppStore;
 }) {
@@ -103,16 +103,14 @@ export function Discover({ store }: {
         const fallback=provided||failure?.audio;if(!fallback||(!provided&&busy)||attaching)return;
         cancel();setReview(null);const controller=new AbortController();owner.current=controller;setBusy(true);setError('');
         try{
-            const result=await downloadVideoAudio(fallback,controller.signal);
-            await validateDownloadedVideoMedia(result.file,result.inspected.kind,result.project.media_duration,controller.signal);
-            if(owner.current!==controller||controller.signal.aborted)return;
-            const doc=store.addDocument(result.project,{select:false});
+            const project=videoSourceProject(fallback);
+            const existing=matchingSourceDocuments(store.getSnapshot().documents,project);
+            const doc=existing[0]||store.addDocument(project,{select:false});
             if(!doc)throw Error('当前项目尚未保存，未创建新媒体项目。');
-            setPendingMedia({document:doc,file:result.file,media:store.getMedia(doc.key),sourceFile:store.getFile(doc.key)});
-            await saveSourceMedia(store,doc.key,result.file,controller.signal);
-            if(owner.current!==controller||controller.signal.aborted)return;
-            setPendingMedia(null);owner.current=null;setBusy(false);updateSession({receipt:null,attempt:null,error:''});store.select(doc.key);
-            store.setMessage('原声已保存。');
+            await acquireSourceAudio(store,doc.key,controller.signal);
+            if(owner.current!==controller||controller.signal.aborted||!mounted.current)return;
+            owner.current=null;setBusy(false);updateSession({receipt:null,attempt:null,error:''});store.select(doc.key);
+            store.setMessage('原声获取任务已提交。');
         }catch(error){if(owner.current===controller&&!controller.signal.aborted){setFailure({diagnostic:null,original:fallback.url});setError(error instanceof Error?error.message:'公开媒体未完成。');}}
         finally{if(owner.current===controller){owner.current=null;setBusy(false);}}
     };

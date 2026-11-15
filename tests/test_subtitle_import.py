@@ -1,7 +1,17 @@
 import unittest
-from subtitle_import import parse_subtitles, seconds, select_track, validate_video_url
+from subtitle_import import parse_subtitles, seconds, select_track, validate_video_url, publisher_context
 
 class SubtitleTests(unittest.TestCase):
+    def test_publisher_context_preserves_bounded_fetched_metadata(self):
+        info = {'uploader': ' Author ', 'upload_date': '20261114', 'description': 'x' * 7000}
+        for provider in ('youtube', 'bilibili'):
+            value = publisher_context(info, 'https://source.example/', provider)['transcription_context']
+            self.assertEqual(value, {'source_url': 'https://source.example/', 'platform': provider,
+                'publisher': 'Author', 'published': '20261114', 'description': 'x' * 6000})
+        self.assertEqual(publisher_context(info, 'https://source.example/', 'other'), {})
+        self.assertNotIn('description', publisher_context({'description': None},
+            'https://source.example/', 'youtube')['transcription_context'])
+
     def test_srt_and_entities(self):
         result = parse_subtitles('1\r\n00:00:01,200 --> 00:00:03,400\r\n<b>Hello</b> &amp; 世界\r\n', '.srt')
         self.assertEqual(result, [{'start': 1.2, 'end': 3.4, 'text': 'Hello & 世界'}])

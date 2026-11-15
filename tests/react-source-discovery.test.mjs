@@ -277,3 +277,8 @@ test('conflicting duplicate URL labels are visibly unavailable rather than a mis
   await x.load();const row=x.episode('Publisher choices');assert.equal(row.querySelector('button').disabled,true);assert.match(row.textContent,/标注冲突，暂不可导入/);assert.match(row.querySelector('option').textContent,/文字稿标注冲突/);assert.ok([...row.querySelectorAll('option')].slice(1).every(option=>option.disabled&&option.textContent.includes('标注冲突')));assert.equal([...row.querySelectorAll('button')].find(button=>button.textContent==='先听原声').disabled,false);
  }finally{await x.w.happyDOM.close();}
 });
+
+test('pending video matches canonical captions, not conflicting URLs',()=>{
+ const pending={source_url:'https://www.youtube.com/watch?v=abcdefghijk',video_source:{version:1,provider:'youtube',media_id:'abcdefghijk'}},captions={provenance:{kind:'platform_subtitles',source_platform:'youtube',media_id:'abcdefghijk'}};
+ assert.equal(exactSourceIdentity(pending),exactSourceIdentity(captions));assert.equal(matchingSourceDocuments([{...pending,key:'one'}],captions).length,1);assert.equal(exactSourceIdentity({...pending,source_url:'https://evil.test/'}),null);
+});

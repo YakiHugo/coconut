@@ -38,6 +38,8 @@ export function exactSourceIdentity(value:unknown):string|null {
         }
         return feed&&typeof id==='string'&&/^[a-f0-9]{64}$/.test(id)?JSON.stringify(['podcast',feed,id]):null;
     }
+    const video=doc.video_source as Record<string,unknown>|undefined;
+    if(video?.version===1&&((video.provider==='youtube'&&typeof video.media_id==='string'&&/^[A-Za-z0-9_-]{11}$/.test(video.media_id)&&doc.source_url==='https://www.youtube.com/watch?v='+video.media_id)||(video.provider==='bilibili'&&typeof video.media_id==='string'&&/^BV[A-Za-z0-9]{10}$/.test(video.media_id)&&doc.source_url==='https://www.bilibili.com/video/'+video.media_id)))return JSON.stringify(['platform',video.provider,video.media_id]);
     const provenance=doc.provenance as Record<string,unknown>|undefined;
     if(provenance&&['platform_subtitles','automatic_subtitles'].includes(String(provenance.kind))&&['youtube','bilibili','x'].includes(String(provenance.source_platform))&&typeof provenance.media_id==='string'&&provenance.media_id.length>0&&provenance.media_id.length<=128){
         return JSON.stringify(['platform',provenance.source_platform,provenance.media_id]);
