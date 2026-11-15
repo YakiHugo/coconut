@@ -3,7 +3,7 @@ import {copyFile,readFile} from 'node:fs/promises';
 import path from 'node:path';
 
 export const TRANSCRIPTION_RESOURCES=Object.freeze([
- 'transcription.py','existing_alignment.py','audio_pipeline.py','audio_speakers.py',
+ 'transcription.py','existing_alignment.py','audio_pipeline.py','pcm_producer.py','audio_speakers.py',
  'transcript.py','transcript_readability.py','moss_asr.py','transcribe.py','local_asr.py','subtitle_import.py',
  'transcript_cleanup.py','transcript_boundaries.py',
 ]);
