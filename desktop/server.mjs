@@ -114,6 +114,7 @@ export function createBridge({readerDirectory = path.resolve(ROOT,'../reader'), 
         if(!sourceJobs)return json(503,{error:'来源任务未启用'});
         const match=pathname.match(/^\/api\/v1\/source-jobs\/([a-f0-9-]+)(?:\/(result|cancel|retry))?$/);
         if(req.method==='GET'){
+          if(pathname==='/api/v1/source-jobs/capabilities')return json(200,await sourceJobs.capabilities());
           if(pathname==='/api/v1/source-jobs')return json(200,{jobs:await sourceJobs.list(new URL(req.url,origin).searchParams.get('key'))});
           if(match&&(!match[2]||match[2]==='result'))return json(200,match[2]?await sourceJobs.result(match[1]):{job:await sourceJobs.get(match[1])});
           return json(404,{error:'任务不存在'});

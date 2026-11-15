@@ -61,3 +61,20 @@ export function videoSourceProject(value:VideoAudioFallback){
  if(!fallback||!identity)throw Error('视频来源无效。');
  return {project_kind:'audio_only',transcript_status:'not_imported',title:(identity.provider==='youtube'?'YouTube':'B 站')+' '+identity.id,source_url:fallback.url,language:fallback.language||'',video_source:{version:1,provider:identity.provider,media_id:identity.id},segments:[]};
 }
+
+/** Shortcut only identities the server already admits without losing selection.
+ * Unsupported subpages/parts retain their original URL for source resolution. */
+export function canonicalVideoFallback(value:string):VideoAudioFallback|null{
+ try{
+  const url=new URL(value);if(url.protocol!=='https:'||url.username||url.password||url.port&&url.port!=='443')return null;
+  let canonical='';
+  if(['youtube.com','www.youtube.com','m.youtube.com','youtu.be'].includes(url.hostname)){
+   const id=url.hostname==='youtu.be'?/^\/([A-Za-z0-9_-]{11})\/?$/.exec(url.pathname)?.[1]:url.pathname==='/watch'?url.searchParams.get('v'):null;
+   if(id&&/^[A-Za-z0-9_-]{11}$/.test(id)&&url.searchParams.getAll('v').length<=1)canonical='https://www.youtube.com/watch?v='+id;
+  }else if(['bilibili.com','www.bilibili.com','m.bilibili.com'].includes(url.hostname)){
+   const id=/^\/video\/(BV[A-Za-z0-9]{10})\/?$/.exec(url.pathname)?.[1],parts=url.searchParams.getAll('p');
+   if(id&&(parts.length===0||parts.length===1&&parts[0]==='1'))canonical='https://www.bilibili.com/video/'+id;
+  }
+  return canonical?videoAudioFallback({endpoint:'/api/videos/media',url:canonical,language:null,purpose:'source'}):null;
+ }catch{return null;}
+}

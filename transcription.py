@@ -283,7 +283,7 @@ class QwenBackend:
         return validate_result(value, duration)
 
 
-def run(request):
+def run(request, *, qwen_backend=None, pipeline_options=None):
     from audio_pipeline import run_audio_pipeline, _file_digest
     from transcript import make_document, save_document
     profile = request['profile']
@@ -310,8 +310,10 @@ def run(request):
     options = dict(work_dir=work / 'audio', speaker_backend=speaker_backend,
                    chunk_seconds=240, context_seconds=5,
                    progress=lambda index, total: emit(phase='recognize', chunk=index + 1, chunks=total))
+    if pipeline_options:
+        options.update(pipeline_options)
     if profile['backend'] == 'qwen-mlx':
-        backend = QwenBackend(profile, work, title=request.get('title', ''), context=request.get('context'), hotwords=request.get('hotwords'))
+        backend = qwen_backend or QwenBackend(profile, work, title=request.get('title', ''), context=request.get('context'), hotwords=request.get('hotwords'))
         if backend.hints:
             # A new title/vocabulary must not silently reuse recognition made
             # without those hints, or invalidate the older recoverable work.
@@ -353,13 +355,21 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--probe', action='store_true')
     args = parser.parse_args()
-    request = json.loads(sys.stdin.readline())
+    from incremental_transcription import initial_request
+    request = initial_request()
     if args.probe:
-        if request.get('operation') == 'align_existing':
+        if request.get('operation') == 'probe_incremental':
+            from incremental_transcription import probe_incremental
+            emit(**probe_incremental(request['profile']))
+        elif request.get('operation') == 'align_existing':
             from existing_alignment import probe_alignment
             emit(**probe_alignment(request['profile']))
         else:
             emit(**probe(request['profile']))
+        return
+    if request.get('operation') == 'transcribe_incremental':
+        from incremental_transcription import run_incremental
+        run_incremental(request)
         return
     # Keep stdin open during work. Parent death closes it and terminates this
     # task even when Node cannot run its normal cancellation handler.
