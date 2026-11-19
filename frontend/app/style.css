@@ -111,8 +111,9 @@ p{line-height:1.7}
 .episode-list article>button{flex-shrink:0}
 .episode-list h3{font-size:16px;font-weight:550;margin:0}
 .episode-list p{font-size:12px;margin-bottom:0}
-.episode-list label{margin-top:12px;overflow-wrap:anywhere}
-.episode-list select{display:block;width:100%;max-width:100%;margin-top:6px;padding:9px}
+.episode-list .rw-choice{margin-top:12px;flex-wrap:wrap}
+.episode-list .rw-choice>button:focus-visible,.episode-actions button:focus-visible{outline:none;box-shadow:inset 0 -2px var(--accent)}
+.episode-list .rw-choice>button[aria-expanded=true],.episode-actions button:active{background:var(--reading-selected)}
 .episode-list article>.episode-actions{display:flex;flex-direction:column;gap:8px;flex:0 0 auto}
 .episode-actions button{white-space:nowrap}
 .source-project-choice{margin-top:28px;border-top:1px solid var(--reading-edge);padding-top:16px}
@@ -211,6 +212,7 @@ p{line-height:1.7}
 .react-ai-panel h3,.ingestion-panel h3{font-size:16px}
 .react-ai-panel article,.ingestion-panel article{padding:18px 0;border-bottom:1px solid var(--reading-edge);overflow-wrap:anywhere}
 .ingestion-panel label{display:block}
+.reader-workspace .ingestion-panel{margin:24px 0}
 .native-media-panel{font-size:12px;color:var(--muted)}
 .native-media-panel button{font-size:12px;margin:8px}
 .native-media-panel p{font-size:12px;overflow-wrap:anywhere}

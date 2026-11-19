@@ -3,6 +3,7 @@ export interface ReaderCue {
     start: number;
     end: number;
     text: string;
+    alignment_media_sha256?: string;
     speaker?: string | null;
     translations?: Record<string, {
         text?: string;
@@ -83,6 +84,7 @@ export type ReaderNavigationRequest = {id:number;documentKey:string;revision:num
 export interface ReaderWorkspaceProps extends ReaderSnapshot {
     chineseScript?:string;
     resourcePanel?: import('react').ReactNode;
+    sourcePanel?: import('react').ReactNode;
     interviewPanel?: import('react').ReactNode;
     aiReturnRequest?:{id:number;documentKey:string};
     shortcutsEnabled?:boolean;
