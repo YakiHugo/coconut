@@ -15,7 +15,7 @@ import {EditionReader} from './editions';
 import {scriptConverter} from '../reading-preferences/chinese-script';
 import * as Editions from '@coconut/reader/editions.js';
 import {SelectionToolbar} from './selection-toolbar';
-import {LISTENING_LEAD_SECONDS,selectionPlaybackStart,speechSelection} from './speech';
+import {LISTENING_LEAD_SECONDS,selectionPlaybackStart,sourcePlayback,speechSelection} from './speech';
 import {supportsTextHighlight,textOffsetAtPoint,textRange} from './text-range';
 import {usePlaybackFollow,useReadingScroller} from './playback-follow';
 import {prepareCleanup} from './cleanup';
@@ -39,7 +39,7 @@ const domain = () => (window as unknown as {
 }).Coconut;
 const UNCONFIRMED_SAVE = '尚未保存。内容可能已更新或存储暂不可用，请保留草稿后重试。';
 export function ReaderWorkspace(props: ReaderWorkspaceProps) { return <WorkspaceSession key={props.document.key} {...props}/>; }
-function WorkspaceSession({ document: doc, revision, media, onSaveDocument, onReadingPosition, onRequestAi, onDirtyChange, onMediaProgress, saveStatus, onVisibleSelection, navigationRequest, onNavigationHandled, initialView, onViewChange, shortcutsEnabled=false, onOpenSummary, aiReturnRequest, resourcePanel, interviewPanel, chineseScript='source' }: ReaderWorkspaceProps) {
+function WorkspaceSession({ document: doc, revision, media, onSaveDocument, onReadingPosition, onRequestAi, onDirtyChange, onMediaProgress, saveStatus, onVisibleSelection, navigationRequest, onNavigationHandled, initialView, onViewChange, shortcutsEnabled=false, onOpenSummary, aiReturnRequest, resourcePanel, sourcePanel, interviewPanel, chineseScript='source' }: ReaderWorkspaceProps) {
     const modeTabsId = useId();
     const [toolsOpen,setToolsOpen]=useState(false),[tool,setTool]=useState('source');
     const openTools=(next:string)=>{setTool(next);setToolsOpen(true);};
@@ -147,7 +147,10 @@ function WorkspaceSession({ document: doc, revision, media, onSaveDocument, onRe
         return () => scope?.removeEventListener('keydown',selectionKeyboard);
     }, [selection,revision]);
 
-    const playbackIndex = useMemo(() => domain().createPlaybackIndex(doc.segments), [doc.segments, revision]);
+    const playback = useMemo(() => sourcePlayback(doc.segments,media?.identity,doc.source_alignment), [doc.segments, doc.source_alignment, media?.identity, revision]);
+    const playbackCues = useMemo(() => new Map(playback.cues.map(cue=>[cue.id,cue])), [playback.cues]);
+    const playbackIndex = useMemo(() => domain().createPlaybackIndex(playback.cues), [playback.cues]);
+    const publisherTranscript = (doc.provenance as {kind?:string}|undefined)?.kind === 'publisher_transcript';
     const activeCue = media ? playbackIndex.find(clock - calibrated) : undefined;
     const filtered = useMemo(() => filterCues(doc,query,displayText), [doc,displayText,query]);
     const shown = filtered;
@@ -376,6 +379,8 @@ function WorkspaceSession({ document: doc, revision, media, onSaveDocument, onRe
         if(cue){setPosition(cue.id);setLocationTick(value=>value+1);}
         seekTo(start,true);
     };
+    // Publisher and anchor times locate the audio. Estimated ends can cut speech.
+    const playCue=(cue:ReaderCue)=>playFrom(playbackCues.get(cue.id)?.start??cue.start);
     const capture = () => {
         if (!host.current)
             return;
@@ -405,7 +410,7 @@ function WorkspaceSession({ document: doc, revision, media, onSaveDocument, onRe
     },[cleanupActive,doc,displayText]);
     const selectSpeech = (node: HTMLElement,point?:{x:number;y:number}) => {
         const source=node.closest<HTMLElement>('[data-source-id]'),id=source?.dataset.sourceId;
-        const cue=doc.segments.find(cue=>cue.id===id);
+        const cue=id?playbackCues.get(id):undefined;
         if(!source||!cue||source.textContent!==displayText(cue.text)||source.textContent.length!==cue.text.length)return;
         const offset=point?textOffsetAtPoint(source,point.x,point.y):Number(node.dataset.speechFrom??0);
         const value=offset===null?null:speechSelection(cue,offset);
@@ -432,10 +437,13 @@ function WorkspaceSession({ document: doc, revision, media, onSaveDocument, onRe
     },[doc,revision,displayText]);
     const playSelection=()=>{
         if(!selection||selection.revision!==revision)return;
-        const start=selectionPlaybackStart(doc,selection);if(!start)return;
-        playFrom(start.seconds,LISTENING_LEAD_SECONDS);
+        const start=selectionPlaybackStart({...doc,segments:playback.cues},selection);if(!start)return;
+        const firstCueId=selection.cueIds[0];
+        const sourceClock=playbackCues.get(firstCueId)?.alignment_media_sha256 || playback.gaps.has(firstCueId);
+        const lead=publisherTranscript||sourceClock?0:LISTENING_LEAD_SECONDS;
+        playFrom(start.seconds,lead);
         window.getSelection()?.removeAllRanges();setSelection(null);
-        setStatus(start.wordAligned?'':'此稿只有片段时间，已带少量前文从原片段开始播放。');
+        setStatus(!lead||start.wordAligned?'':'已带少量前文从原片段开始播放。');
     };
     const requestSelectionAi=(intent:'understand'|'translate')=>{
         if(!selection||selection.revision!==revision||busy||anyDirty)return;
@@ -484,7 +492,7 @@ function WorkspaceSession({ document: doc, revision, media, onSaveDocument, onRe
         <nav className="rw-tool-nav" aria-label="文字稿工具">
             {[['source','原始来源'],...(resourcePanel?[['processing','文字整理']]:[]),...(doc.segments.length?[['editing','访谈编辑']]:[]),...(media&&doc.segments.length?[['timing','时间校准']]:[])].map(([id,label])=><button type="button" key={id} aria-current={tool===id?'page':undefined} onClick={()=>setTool(id)}>{label}</button>)}
         </nav>
-        <div className="rw-tool-content" hidden={tool!=='source'}><ReaderSource doc={doc}/>{media?.availability==='local_session'&&<p>刷新后需重新选择原文件。</p>}</div>
+        <div className="rw-tool-content" hidden={tool!=='source'}><ReaderSource doc={doc}/>{media?.availability==='local_session'&&<p>刷新后需重新选择原文件。</p>}{sourcePanel}</div>
         <div className="rw-tool-content" hidden={tool!=='processing'}>{resourcePanel}</div>
         <div className="rw-tool-content" hidden={tool!=='editing'}>
             {interviewPanel}
@@ -516,14 +524,14 @@ function WorkspaceSession({ document: doc, revision, media, onSaveDocument, onRe
                 const speech=paragraph.querySelector<HTMLElement>('.rw-speech.rw-playing')||paragraph.querySelector<HTMLElement>('.rw-speech')||(paragraph.matches('[data-source-id]')?paragraph:null);
                 if(speech){event.preventDefault();selectSpeech(speech);}
             }} onKeyUp={event=>{if(!event.nativeEvent.isComposing&&(['ArrowLeft','ArrowRight','ArrowUp','ArrowDown','Home','End','PageUp','PageDown'].includes(event.key)||((event.ctrlKey||event.metaKey)&&event.key.toLowerCase()==='a')))capture();}}>
- {mode !== 'transcript' ? <PassageView displayText={displayText} projection={cleanupActive?cleanup.projection:undefined} canListen={Boolean(media)} doc={doc} cues={shown} passages={passages} current={activeCue?.id} seconds={clock-calibrated} position={position} onLocate={locate} onPlayFrom={playFrom}/> : shown.map(cue =>
+ {mode !== 'transcript' ? <PassageView displayText={displayText} projection={cleanupActive?cleanup.projection:undefined} canListen={Boolean(media)} doc={doc} cues={shown} passages={passages} playbackCues={playbackCues} current={activeCue?.id} seconds={clock-calibrated} position={position} onLocate={locate} onPlayFrom={playFrom}/> : shown.map(cue =>
  <section key={cue.id} data-cue-id={cue.id} className={'rw-cue' + (cue.id === activeCue?.id ? ' rw-playing' : '') + (cue.id === position ? ' rw-current' : '')}>
- <div className="rw-cue-meta"><button type="button" onClick={() => { locate(cue.id); seekTo(cue.start + calibrated); }}>{time(cue.start)}</button>{cue.speaker && <span>{cue.speaker}</span>}{media ? <button type="button" onClick={() => playFrom(cue.start)}>从此处播放</button> : <SourcePlaybackLink sourceUrl={doc.source_url} start={cue.start}/>}</div>
+ <div className="rw-cue-meta"><button type="button" onClick={() => { locate(cue.id); seekTo((playbackCues.get(cue.id)?.start??cue.start) + calibrated); }}>{time(cue.start)}</button>{cue.speaker && <span>{cue.speaker}</span>}{media ? <button type="button" onClick={() => playCue(cue)}>从此处播放</button> : <SourcePlaybackLink sourceUrl={doc.source_url} start={cue.start}/>}</div>
  <p className="rw-original" tabIndex={0} aria-description="单击选取播放位置；拖选可精确选择。" data-source-id={cue.id}>{displayText(cue.text)}</p>
  {displayText(cue.text)!==cue.text&&<section className="rw-transcription-source" aria-label="转录原文"><h3>转录原文</h3><p>{cue.text}</p></section>}
  {typeof cue.original_text==='string' && cue.original_text!==cue.text && <section className="rw-original-history"><h3>识别原文</h3><p>{cue.original_text}</p></section>}
  </section>)}</div>
- </div>{mode==='summary'&&<div className="rw-summary-pane"><ReaderSummary doc={doc} selectedCueId={position} canListen={Boolean(media)} onListen={cue=>playFrom(cue.start)} onNavigate={navigateSummary} onReturn={returnToReading} onOpenSummary={onOpenSummary}/></div>}</div></div></>}</>}
+ </div>{mode==='summary'&&<div className="rw-summary-pane"><ReaderSummary doc={doc} selectedCueId={position} canListen={Boolean(media)} onListen={playCue} onNavigate={navigateSummary} onReturn={returnToReading} onOpenSummary={onOpenSummary}/></div>}</div></div></>}</>}
  {selection?.revision===revision && <SelectionToolbar source={host} doc={doc} selection={selection} highlightSelection={Boolean(selection.review)} onDismiss={()=>setSelection(null)}>
     {media&&<button type="button" aria-label="从所选位置播放" onClick={playSelection}><span aria-hidden="true">▷</span> 播放</button>}
     <button type="button" aria-label="复制原话" onClick={async()=>{

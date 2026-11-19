@@ -2,11 +2,57 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {build} from 'esbuild';
 const output=await build({entryPoints:['frontend/reader-workspace/speech.ts'],bundle:true,write:false,format:'esm',platform:'node'});
-const {speechParts,speechSelection,selectionPlaybackStart}=await import('data:text/javascript;base64,'+Buffer.from(output.outputFiles[0].text).toString('base64'));
+const {speechParts,speechSelection,selectionPlaybackStart,sourcePlayback}=await import('data:text/javascript;base64,'+Buffer.from(output.outputFiles[0].text).toString('base64'));
 const cue=()=>({id:'a',start:10,end:20,text:'第一句。第二句。',words:[
     {word:'第一句。',start:11,end:13},{word:'第二句。',start:16,end:19}
 ]});
 const selection=from=>({cueIds:['a'],from,to:8,text:'第二句。',separators:[]});
+
+test('one missed author cue uses the neighboring word clocks only on the same recording',()=>{
+    const hash='a'.repeat(64),identity='source-media-sha256:'+hash;
+    const first={...cue(),alignment_media_sha256:hash};
+    const missed={id:'b',start:20,end:22,text:'中间这段。'};
+    const last={id:'c',start:22,end:24,text:'后文。',alignment_media_sha256:hash,words:[{word:'后文。',start:22.5,end:23.5}]};
+    const source=[first,missed,last];
+    const playback=sourcePlayback(source,identity);
+    assert.deepEqual(playback.gaps.get('b'),{start:19,end:22.5});
+    assert.equal(speechParts(playback.cues[1])[0].end,22.5);
+    const selected=speechSelection(missed,2);
+    assert.deepEqual(selectionPlaybackStart({segments:source},selected),{seconds:20,wordAligned:false});
+    assert.deepEqual(selectionPlaybackStart({segments:playback.cues},selected),{seconds:19,wordAligned:false});
+    assert.deepEqual(missed,{id:'b',start:20,end:22,text:'中间这段。'});
+    for(const other of [undefined,'source-media-sha256:'+'b'.repeat(64)]){
+        const stale=sourcePlayback(source,other);
+        assert.equal(stale.gaps.size,0);
+        assert.equal(stale.cues[0].words,undefined);
+        assert.equal(stale.cues[1].start,20);
+    }
+    assert.equal(sourcePlayback([first,missed,{...missed,id:'d'},last],identity).gaps.size,0);
+    assert.equal(sourcePlayback([first,missed,{...last,text:'已改原文。'}],identity).gaps.size,0);
+});
+
+test('previously accepted word clocks use the recorded asset and original cue identity',()=>{
+    const hash='a'.repeat(64),identity='source-media-sha256:'+hash;
+    const first=cue(),missed={id:'b',start:20,end:22,text:'中间这段。'};
+    const last={id:'c',start:22,end:24,text:'后文。',words:[{word:'后文。',start:22.5,end:23.5}]};
+    const original=[first,missed,last];
+    const receipt={asset_sha256:hash,source_snapshot:{segments:original},report:{cues:original.map(cue=>({cue_id:cue.id,status:cue.words?'aligned':'needs_review'}))}};
+    const playback=sourcePlayback(original,identity,receipt);
+    assert.equal(playback.cues[0].alignment_media_sha256,hash);
+    assert.deepEqual(playback.gaps.get('b'),{start:19,end:22.5});
+    assert.equal(sourcePlayback(original,'source-media-sha256:'+'b'.repeat(64),receipt).cues[0].words,undefined);
+    const edited=sourcePlayback([first,missed,{...last,text:'Edited'}],identity,receipt);
+    assert.equal(edited.gaps.size,0);
+});
+
+test('a click within an accepted author cue selects the word at that offset',()=>{
+    const first={id:'a',start:0,end:2,text:'one two',alignment_media_sha256:'a'.repeat(64),
+        words:[{word:'one ',start:.25,end:.75},{word:'two',start:1,end:1.5}]};
+    assert.equal(speechParts(first).length,1);
+    const selected=speechSelection(first,5);
+    assert.equal(selected.text,'two');
+    assert.deepEqual(selectionPlaybackStart({segments:[first]},selected),{seconds:1,wordAligned:true});
+});
 
 test('clause parts preserve original offsets and actual clocks, including pauses',()=>{
     const source=cue(),before=structuredClone(source),parts=speechParts(source);

@@ -26,6 +26,7 @@ export async function audioFirstBrowser({browser,width,directory,output}){
   const page=await context.newPage();page.setDefaultTimeout(15000);page.on('pageerror',error=>errors.push(error.message));
   const episode=()=>page.locator('.episode-list article').filter({has:page.getByRole('heading',{name:'Authored audio-first episode',exact:true})});
   const audioFirst=()=>episode().getByRole('button',{name:'先听原声',exact:true});
+  const chooseTrack=async()=>{await episode().getByRole('combobox').click();await episode().getByRole('option',{name:'en · text/vtt',exact:true}).click();};
   const sourceError=()=>page.locator('.source-error');
   const loadMedia=()=>page.getByRole('button',{name:'载入原声（最多 200 MiB）',exact:true});
   const saved=()=>expect(page.locator('.save-indicator')).toHaveAttribute('data-state','saved');
@@ -39,10 +40,10 @@ export async function audioFirstBrowser({browser,width,directory,output}){
   // Valid same-language publisher metadata recommends this track even though
   // its bytes are deliberately broken. Audio-first must still bypass fetching it.
   await expect(episode().getByRole('button',{name:'打开单集',exact:true})).toBeEnabled();
-  const trackChoice=episode().getByRole('combobox');await expect(trackChoice).toHaveValue('');await expect(trackChoice.locator('option:checked')).toHaveText('默认：en · text/vtt');await expect(trackChoice.locator(`option[value="${audioFirstTrack}"]`)).toHaveText('en · text/vtt · 1');await expect(audioFirst()).toBeEnabled();
+  const trackChoice=episode().getByRole('combobox');await expect(trackChoice).toContainText('默认：en · text/vtt');await expect(audioFirst()).toBeEnabled();
   const missing=page.locator('.episode-list article').filter({has:page.getByRole('heading',{name:'Authored episode without audio',exact:true})});await expect(missing.getByRole('button',{name:'先听原声',exact:true})).toBeDisabled();await expect(missing).toContainText('未提供可用的公开原声');await screenshot('choice');
   // Selecting a known-bad track does not make audio-first fetch that track.
-  await episode().getByRole('combobox').selectOption(audioFirstTrack);await audioFirst().click();await expect(page.getByRole('heading',{name:'先播放原文件',exact:true})).toBeVisible();await saved();
+  await chooseTrack();await audioFirst().click();await expect(page.getByRole('heading',{name:'先播放原文件',exact:true})).toBeVisible();await saved();
   assert.deepEqual(fixture.counts,{feed:1,transcript:0,media:0});const opened=requests.findLast(request=>request.path==='/api/v1/ingestions').body;assert.equal(opened.intent,'media_only');assert.equal(opened.episode.transcript_url,undefined);await expect(page.locator('audio')).toHaveCount(0);await noPlayback();
   // Authored fixture sidecars persist even though the reader no longer edits them.
   const projectNote=page.locator('.rw-project-note'),noteInput=page.getByRole('textbox',{name:'项目笔记',exact:true});
@@ -68,7 +69,7 @@ export async function audioFirstBrowser({browser,width,directory,output}){
   assert.equal(await page.locator('audio').evaluate(player=>player.currentSrc||player.src),ownedUrl);await noPlayback();assert.equal(await page.locator('audio').evaluate(player=>player.currentTime),0);
   await expect(page.locator('.rw-player-main button:not([role=combobox])')).toHaveCount(1);await page.getByRole('slider',{name:'播放进度',exact:true}).fill('8');await expect.poll(()=>page.locator('audio').evaluate(player=>player.currentTime)).toBe(8);await noPlayback();
   // An explicit transcript request still surfaces the original parser error.
-  await discover();await loadFeed();await episode().getByRole('combobox').selectOption(audioFirstTrack);await episode().getByRole('button',{name:'打开单集',exact:true}).click();await expect(sourceError()).toContainText('不是 WebVTT');assert.equal(fixture.counts.transcript,1);assert.equal(requests.findLast(request=>request.path==='/api/v1/ingestions').body.episode.transcript_url,audioFirstTrack);await expect(audioFirst()).toBeEnabled();assert.deepEqual(await backup(),[original]);
+  await discover();await loadFeed();await chooseTrack();await episode().getByRole('button',{name:'打开单集',exact:true}).click();await expect(sourceError()).toContainText('不是 WebVTT');assert.equal(fixture.counts.transcript,1);assert.equal(requests.findLast(request=>request.path==='/api/v1/ingestions').body.episode.transcript_url,audioFirstTrack);await expect(audioFirst()).toBeEnabled();assert.deepEqual(await backup(),[original]);
   await audioFirst().click();await expect(page.getByRole('region',{name:'此来源已在书架'})).toBeVisible();assert.equal(fixture.counts.transcript,1);assert.equal((await backup()).length,1);await page.getByRole('button',{name:'继续已有项目 · '+original.key.slice(-8),exact:true}).click();await expect(page.locator('.reader-workspace')).toBeVisible();assert.deepEqual(await backup(),[original]);await noPlayback();
   // Later valid publisher bytes attach only after review, in the same project.
   fixture.state.fixed=true;await discover();await episode().getByRole('button',{name:'打开单集',exact:true}).click();await expect(page.getByRole('region',{name:'此来源已在书架'})).toBeVisible();assert.equal((await backup())[0].segments.length,0);await page.getByRole('button',{name:'核对新文字稿 · '+original.key.slice(-8),exact:true}).click();await expect(page.getByRole('region',{name:'核对并接入文字稿'})).toContainText('The same audio project');

@@ -45,10 +45,11 @@ export function passageDomain() {
     } }).CoconutPassages;
 }
 
-export function PassageView({ doc, cues, passages: supplied, current, seconds=0, position, onLocate, onPlayFrom, canListen = false, displayText=(text:string)=>text,projection }: {
+export function PassageView({ doc, cues, passages: supplied, playbackCues, current, seconds=0, position, onLocate, onPlayFrom, canListen = false, displayText=(text:string)=>text,projection }: {
     displayText?:(text:string)=>string;
     projection?:Projection;
     doc: ReaderDocument; cues: ReaderCue[]; passages?: Passage[]; current?: string; seconds?:number; position: string;
+    playbackCues?: ReadonlyMap<string,ReaderCue>;
     onLocate: (id: string) => void; canListen?: boolean; onPlayFrom: (start: number) => void;
 }) {
     const passages = supplied || passageDomain().build(cues, { source: doc.segments, layout: 'reading' });
@@ -60,6 +61,7 @@ export function PassageView({ doc, cues, passages: supplied, current, seconds=0,
     return <div className="rw-passages">{passages.map((passage,index) => {
         const speakerIndex = Math.max(0, speakers.indexOf(passageDomain().speakerIdentity(passage.cues[0])));
         const hasSource = typeof doc.source_url === 'string' && /^https?:/.test(doc.source_url);
+        const playbackStart = playbackCues?.get(passage.cues[0].id)?.start ?? passage.start;
         const playing = passage.cues.some(cue => cue.id === current);
         const compact = Boolean(passageDomain().speakerIdentity(passage.cues[0])) &&
             passage.cues.reduce((length,cue) => length + cue.text.length, 0) <= 80 &&
@@ -70,13 +72,13 @@ export function PassageView({ doc, cues, passages: supplied, current, seconds=0,
                 <div className="rw-passage-identity">
                 <span className="rw-speaker-label">{passage.speaker || '未标注'}</span>
                 <div className="rw-cue-meta">
-                    {canListen ? <button type="button" className="rw-time-link" aria-label={'从 ' + time(passage.start) + ' 开始播放'} aria-current={playing ? 'time' : undefined} onClick={() => { onLocate(passage.cues[0].id); onPlayFrom(passage.start); }}>▷ {time(passage.start)}</button>
+                    {canListen ? <button type="button" className="rw-time-link" aria-label={'从 ' + time(playbackStart) + ' 开始播放'} aria-current={playing ? 'time' : undefined} onClick={() => { onLocate(passage.cues[0].id); onPlayFrom(playbackStart); }}>▷ {time(playbackStart)}</button>
                         : hasSource ? <SourcePlaybackLink sourceUrl={doc.source_url} start={passage.start} compact/>
                         : <button type="button" className="rw-time-link" onClick={() => onLocate(passage.cues[0].id)}>{time(passage.start)}</button>}
                 </div>
                 </div>
             </div>
-            <p className="rw-original" tabIndex={0} aria-description="单击选取播放位置；按 Enter 选取当前位置；拖选可精确选择。">{passage.cues.map((cue, i) => <span key={cue.id}>{i ? passageDomain().separator(passage.cues[i - 1].text, cue.text) : ''}<SpeechText cue={cue} current={current} seconds={seconds} position={position} displayText={displayText} projection={projection}/></span>)}</p>
+            <p className="rw-original" tabIndex={0} aria-description="单击选取播放位置；按 Enter 选取当前位置；拖选可精确选择。">{passage.cues.map((cue, i) => <span key={cue.id}>{i ? passageDomain().separator(passage.cues[i - 1].text, cue.text) : ''}<SpeechText cue={playbackCues?.get(cue.id)??cue} current={current} seconds={seconds} position={position} displayText={displayText} projection={projection}/></span>)}</p>
         </section>;
     })}</div>;
 }

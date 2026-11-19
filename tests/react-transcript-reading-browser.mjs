@@ -1,5 +1,6 @@
 /** Authored text, real React and SQLite. No external services or inference. */
 import assert from 'node:assert/strict';
+import {createHash} from 'node:crypto';
 import {mkdtemp,mkdir,rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import path from 'node:path';
@@ -548,6 +549,30 @@ try {
  await expect(contextual).toHaveCount(0);
  // Source updates retire the old local preview, without adding transport controls.
  await expect(page.getByRole('button',{name:'重听刚才所选',exact:true})).toHaveCount(0);
+
+ // An estimated stop can fall in the middle of a word, even with two neighbors.
+ const asset=createHash('sha256').update(wav(260)).digest('hex');
+ const publisher={...fixture,key:'publisher-clock-proof',title:'作者稿回听区间',notes:{},ai_answers:[],
+  provenance:{kind:'publisher_transcript'},segments:[
+   {id:'before',start:0,end:1,text:'前一句。',alignment_media_sha256:asset,words:[{word:'前一句。',start:.1,end:.9}]},
+   {id:'gap',start:1.1,end:1.9,text:'中间一句。'},
+   {id:'after',start:2,end:3,text:'后一句。',alignment_media_sha256:asset,words:[{word:'后一句。',start:2.1,end:2.8}]},
+   {id:'publisher-time',start:4,end:4.5,text:'作者标记的位置。'},
+  ]};
+ await request('/api/v1/library/commit',{protocolVersion:1,epoch:library.epoch,action:'put',key:publisher.key,receiptKey:'publisher-clock-seed',expected:null,document:publisher});
+ await page.reload();await page.getByRole('button',{name:/^我的内容/}).click();await page.locator('.library-page li > button').filter({hasText:publisher.title}).click();
+ await page.getByRole('button',{name:'来源与整理',exact:true}).click();
+ await page.getByRole('button',{name:'载入原声（最多 200 MiB）',exact:true}).click();
+ await expect.poll(()=>audio.evaluate(player=>player.duration)).toBe(260);
+ await page.getByRole('button',{name:'关闭来源与整理',exact:true}).click();
+ await page.getByRole('tab',{name:'逐句校对',exact:true}).click();
+ for(const [id, start, beyond] of [['gap',.9,2.3],['publisher-time',4,4.75]]){
+  await audio.evaluate(player=>{window.publisherSeek=null;player.addEventListener('seeking',()=>{window.publisherSeek=player.currentTime;},{once:true});});
+  await page.locator('.rw-cue[data-cue-id="'+id+'"]').getByRole('button',{name:'从此处播放',exact:true}).click();
+  await expect.poll(()=>page.evaluate(()=>window.publisherSeek)).toBeCloseTo(start,2);
+  await expect.poll(()=>audio.evaluate((player,time)=>!player.paused&&player.currentTime>=time,beyond)).toBe(true);
+  await page.getByRole('button',{name:'暂停播放',exact:true}).click();
+ }
  assert.deepEqual(errors,[]);
  console.log(JSON.stringify({passed:true,paragraphs:actual.length,cues:120,tabs_keyboard:true,continuous_playback:true,contextual_selection:true,continuous_selection_play:true,selection_play_always_locates:true,continuous_playback_keeps_anchor:true,exact_selection:true,clipboard:true,sqlite_reload:true,mobile:true,shared_reading_anchor:true,smooth_location:true,interruptible_location:true,reduced_motion:true,screenshots:output}));
 }finally{await browser?.close();await server?.shutdown();await rm(directory,{recursive:true,force:true});}
