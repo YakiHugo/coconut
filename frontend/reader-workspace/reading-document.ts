@@ -37,7 +37,8 @@ export function readingParagraphs(cues:ReaderCue[], options:{
         const joinedBefore=Boolean(join?.previous&&join.previous===cues[index-1]?.id);
         const joinedAfter=Boolean(cues[index+1]&&options.joins?.get(cues[index+1].id)?.previous===cue.id);
         const projection=mapped&&options.projection?getCue(options.projection,cue.id):null;
-        const marks=new Map(projection?.marks.filter(mark=>!edits.some(edit=>edit.from<mark.at&&(mark.at<edit.to||join&&mark.at===edit.to))).map(mark=>[mark.at,mark.mark]));
+        const marks=new Map(projection?.marks.filter(mark=>!(joinedAfter&&mark.at===cue.text.length)&&
+            !edits.some(edit=>edit.from<mark.at&&(mark.at<edit.to||join&&mark.at===edit.to))).map(mark=>[mark.at,mark.mark]));
         const breaks=new Set(projection?.breaks.filter(item=>!(joinedAfter&&item.at===cue.text.length)&&!edits.some(edit=>edit.from<item.at&&item.at<edit.to)).map(item=>item.at));
         const hidden=projection?.spans.filter(span=>span.action==='hide'&&!edits.some(edit=>edit.from<span.to&&span.from<edit.to))??[];
         const edited=Boolean(edits.length||marks.size||breaks.size||hidden.length);

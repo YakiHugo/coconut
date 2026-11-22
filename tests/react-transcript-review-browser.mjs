@@ -36,14 +36,6 @@ try{
  const joined=page.locator('[data-reading-sentence="c"]');
  await expect(joined).toHaveCount(2);
  assert.equal((await joined.allTextContents()).join(''),'今天开始正式录音。');
- await page.getByRole('button',{name:'来源与整理',exact:true}).click();
- await page.getByRole('button',{name:'说话人',exact:true}).click();
- await page.getByRole('button',{name:'编辑显示名 主持人',exact:true}).click();
- await page.getByRole('textbox',{name:'说话人显示名',exact:true}).fill('轮值主持');
- await page.getByRole('button',{name:'保存修改',exact:true}).click();
- await expect(page.locator('.rw-speaker-label').filter({hasText:'轮值主持'})).toBeVisible();
- assert.deepEqual((await saved()).segments,result.segments);
- assert.deepEqual((await saved()).reading_review,result.reading_review);
 
  await page.locator('[data-source-id="a"] [data-reading-replacement]').evaluate(node=>{
   const range=document.createRange();range.selectNodeContents(node);
@@ -61,6 +53,16 @@ try{
  await page.getByRole('textbox',{name:'章节标题',exact:true}).fill('现场人数');
  await page.getByRole('button',{name:'保存修改',exact:true}).click();
  await expect(page.getByRole('heading',{name:'现场人数',exact:true})).toBeVisible();
+ await page.getByRole('button',{name:'来源与整理',exact:true}).click();
+ await page.getByRole('button',{name:'说话人',exact:true}).click();
+ await page.getByRole('button',{name:'编辑显示名 主持人',exact:true}).click();
+ await page.getByRole('textbox',{name:'说话人显示名',exact:true}).fill('轮值主持');
+ await page.getByRole('button',{name:'保存修改',exact:true}).click();
+ await expect(page.getByRole('dialog',{name:'编辑说话人显示名'})).not.toBeVisible();
+ await expect(page.locator('.rw-speaker-label').filter({hasText:'轮值主持'})).toBeVisible();
+ assert.deepEqual((await saved()).segments,result.segments);
+ assert.deepEqual((await saved()).reading_review,result.reading_review);
+
  await page.getByRole('button',{name:'1 处待核对',exact:true}).click();
  await page.getByRole('region',{name:'AI 精校',exact:true}).getByRole('button',{name:'00:02',exact:true}).click();
  await expect(page.getByRole('tab',{name:'逐句校对'})).toHaveAttribute('aria-selected','true');

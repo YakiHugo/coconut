@@ -291,13 +291,16 @@ class CanonicalBackend:
         self.chunk_seconds, self.context_seconds = chunk_seconds, context_seconds
         self.reused = self.recomputed = 0
         self.mismatch = False
+        self.chunks = None
         self.emit = emit
 
     def recognize(self, path, *, request_id):
         from audio_pipeline import prepare_audio, _wav_frames, plan_chunks, _file_digest, validate_result
         index = int(path.stem.removeprefix('chunk-'))
-        frames = _wav_frames(prepare_audio(self.source, path.parent, max_frames=MAX_FRAMES))
-        chunk = plan_chunks(frames, self.chunk_seconds, self.context_seconds)[index]
+        if self.chunks is None:
+            frames = _wav_frames(prepare_audio(self.source, path.parent, max_frames=MAX_FRAMES))
+            self.chunks = plan_chunks(frames, self.chunk_seconds, self.context_seconds)
+        chunk = self.chunks[index]
         expected = {'chunk': asdict(chunk), 'pcm_sha256': _file_digest(path), 'backend': self.backend.cache_key}
         candidate = self.candidates.get(index)
         if candidate:
@@ -374,6 +377,7 @@ def run_incremental(request, *, control_fd=0):
         candidates, reason = collect_candidates(control, backend, attempt_dir/'candidates', emit=emit)
         work_budget(work, MAX_MEDIA)
         seal = copy_sealed(control, sealed_source)
+        sealed_source = sealed_source.rename(attempt_dir / (seal['sha256'] + '.media'))
         wrapper = CanonicalBackend(backend, candidates, sealed_source, emit=emit)
         canonical_request = {**request, 'input': str(sealed_source), 'sha256': seal['sha256'], 'work': str(attempt_dir/'canonical')}
         # Normal document creation/speakers run only after canonical chunk checks.

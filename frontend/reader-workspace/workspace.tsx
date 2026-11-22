@@ -108,6 +108,12 @@ function WorkspaceSession({ document: doc, revision, media, onSaveDocument, onRe
         [doc.segments,doc.reading_adjustments,activeReview?.sourceSignature]);
     const replacements=useMemo(()=>activeReview?readingReplacements(doc.segments,activeReview.edits,adjustments):undefined,
         [doc.segments,activeReview,adjustments]);
+    const joins=useMemo(()=>{
+        const stored=activeReview?.joins;
+        if(!stored?.size||!adjustments.length)return stored;
+        const interrupted=new Set(adjustments.map(edit=>stored.get(edit.cue_id)?.first));
+        return new Map([...stored].filter(([,join])=>!interrupted.has(join.first)));
+    },[activeReview,adjustments]);
     const [readingEdit,setReadingEdit]=useState<{kind:'text'|'chapter'|'speaker';cueId:string;text:string;revision:number}|null>(null);
     const [readingEditError,setReadingEditError]=useState('');
     const chapters=useMemo(()=>{
@@ -715,7 +721,7 @@ function WorkspaceSession({ document: doc, revision, media, onSaveDocument, onRe
                 const speech=paragraph.querySelector<HTMLElement>('.rw-speech.rw-playing')||paragraph.querySelector<HTMLElement>('.rw-speech')||(paragraph.matches('[data-source-id]')?paragraph:null);
                 if(speech){event.preventDefault();selectSpeech(speech);}
             }} onKeyUp={event=>{if(!event.nativeEvent.isComposing&&(['ArrowLeft','ArrowRight','ArrowUp','ArrowDown','Home','End','PageUp','PageDown'].includes(event.key)||((event.ctrlKey||event.metaKey)&&event.key.toLowerCase()==='a')))capture();}}>
- {mode !== 'transcript' ? <PassageView displayText={displayText} projection={cleanupActive?cleanup.projection:undefined} replacements={replacements} joins={activeReview?.joins} speakerDisplay={speakerDisplay} chapters={chaptersByCue} canListen={Boolean(media)} doc={doc} cues={shown} passages={passages} playbackCues={playbackCues} current={activeCue?.id} seconds={clock-calibrated} position={position} onLocate={locate} onPlayFrom={playFrom}/> : shown.map(cue =>
+ {mode !== 'transcript' ? <PassageView displayText={displayText} projection={cleanupActive?cleanup.projection:undefined} replacements={replacements} joins={joins} speakerDisplay={speakerDisplay} chapters={chaptersByCue} canListen={Boolean(media)} doc={doc} cues={shown} passages={passages} playbackCues={playbackCues} current={activeCue?.id} seconds={clock-calibrated} position={position} onLocate={locate} onPlayFrom={playFrom}/> : shown.map(cue =>
  <section key={cue.id} data-cue-id={cue.id} className={'rw-cue' + (cue.id === activeCue?.id ? ' rw-playing' : '') + (cue.id === position ? ' rw-current' : '')}>
  <div className="rw-cue-meta notranslate" translate="no" default-translate="no"><button type="button" onClick={() => { locate(cue.id); seekTo((playbackCues.get(cue.id)?.start??cue.start) + calibrated); }}>{time(cue.start)}</button>{speakerDisplay(cue) && <span>{speakerDisplay(cue)}</span>}{media ? <button type="button" onClick={() => playCue(cue)}>从此处播放</button> : <SourcePlaybackLink sourceUrl={doc.source_url} start={cue.start}/>}</div>
  <p className="rw-original" tabIndex={0} aria-description="单击选取播放位置；拖选可精确选择。" data-source-id={cue.id}>{displayText(cue.text)}</p>
