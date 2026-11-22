@@ -1,6 +1,6 @@
 import {getCue, type Projection} from '@coconut/reader/disfluency.js';
 import type {ReaderCue} from './contracts';
-import {speechParts, type SpeechPart} from './speech';
+import {sourceClockForRange,speechParts, type SpeechPart} from './speech';
 
 export type ReadingPiece =
     | {kind:'source'|'replacement'; text:string; from:number; to:number}
@@ -37,6 +37,7 @@ export function readingParagraphs(cues:ReaderCue[], options:{
         const hidden=projection?.spans.filter(span=>span.action==='hide'&&!edits.some(edit=>edit.from<span.to&&span.from<edit.to))??[];
         const edited=Boolean(edits.length||marks.size||breaks.size||hidden.length);
         const speech=mapped&&!edits.length?speechParts(playback):[{from:0,to:cue.text.length,start:playback.start,end:playback.end}];
+        const clock=edited?sourceClockForRange(playback):null;
         let cueText='';
         for(const part of speech) {
             const cuts=new Set([part.from,part.to]);
@@ -53,7 +54,9 @@ export function readingParagraphs(cues:ReaderCue[], options:{
                 const text=pieces.map(piece=>piece.text).join('');
                 const gap=cueText||!previous?'':options.separator(previous,text);
                 if(gap)paragraph.separators.set(paragraph.runs.length,gap);
-                paragraph.runs.push({cueId:cue.id,speech:part,pieces,mapped,edited});
+                const source=pieces.filter(piece=>piece.kind!=='mark');
+                const clip=clock&&source.length?clock(source[0].from,source.at(-1)!.to,part):part;
+                paragraph.runs.push({cueId:cue.id,speech:clip,pieces,mapped,edited});
                 cueText+=text;
                 pieces=[];
             };
@@ -63,7 +66,7 @@ export function readingParagraphs(cues:ReaderCue[], options:{
                 if(replacement) {
                     if(from===replacement.from)pieces.push({kind:'replacement',from,to:replacement.to,text:options.displayText(replacement.text)});
                 } else if(!hidden.some(span=>span.from<=from&&to<=span.to)) {
-                    pieces.push({kind:'source',from,to,text:mapped?shown.slice(from,to):shown});
+                    pieces.push({kind:'source',from,to,text:mapped?shown.slice(from,to):edits.length?options.displayText(cue.text.slice(from,to)):shown});
                 }
                 const mark=marks.get(to);
                 if(mark)pieces.push({kind:'mark',at:to,text:mark});
@@ -102,4 +105,29 @@ export function readingChapters(cues:ReaderCue[],manual:readonly {cue_id:string;
             byCue.set(chapter.cue_id,{...chapter,kind:'model'});
     }
     return [...byCue.values()].sort((a,b)=>positions.get(a.cue_id)!-positions.get(b.cue_id)!);
+}
+
+export type ReadingAdjustment={cue_id:string;text:string};
+export function readingAdjustments(cues:ReaderCue[],value:unknown,sourceSignature:string|undefined):ReadingAdjustment[] {
+    const stored=value as {version?:unknown;source_signature?:unknown;edits?:unknown}|null;
+    if(!sourceSignature||stored?.version!==1||stored.source_signature!==sourceSignature||
+        !Array.isArray(stored.edits)||stored.edits.length>500)return [];
+    const ids=new Set(cues.map(cue=>cue.id));
+    const edits=new Map<string,ReadingAdjustment>();
+    for(const entry of stored.edits){
+        if(entry&&ids.has(entry.cue_id)&&typeof entry.text==='string'&&entry.text.trim()&&entry.text.length<=6000)
+            edits.set(entry.cue_id,{cue_id:entry.cue_id,text:entry.text});
+    }
+    return [...edits.values()];
+}
+
+export function readingReplacements(cues:ReaderCue[],suggestions:ReadonlyMap<string,readonly ReadingReplacement[]>,
+    adjustments:ReadingAdjustment[]):ReadonlyMap<string,readonly ReadingReplacement[]> {
+    if(!adjustments.length)return suggestions;
+    const result=new Map(suggestions),lengths=new Map(cues.map(cue=>[cue.id,cue.text.length]));
+    for(const edit of adjustments){
+        const to=lengths.get(edit.cue_id);
+        if(to)result.set(edit.cue_id,[{from:0,to,text:edit.text}]);
+    }
+    return result;
 }

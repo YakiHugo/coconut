@@ -156,6 +156,26 @@ try{
  await page.getByRole('tab',{name:'逐句校对',exact:true}).click();assert.equal(await page.locator('[data-cleanup-mark]').count(),0);assert.equal(await page.locator('[data-cleanup-break]').count(),0);
  await page.getByRole('tab',{name:'文字稿',exact:true}).click();await expect(page.locator('[data-cleanup-mark]')).toHaveCount(2);
  for(const width of [1360,390]){await page.setViewportSize({width,height:900});await page.evaluate(()=>scrollTo(0,0));assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);await page.screenshot({path:path.join(output,'boundaries-'+width+'.png'),fullPage:true});}
+ // Exercise DOM injection separately from the extension's network translator.
+ await page.getByRole('button',{name:'搜索文字稿',exact:true}).click();
+ const search=page.getByRole('searchbox');
+ await search.fill('今天，');
+ await expect.poll(()=>page.evaluate(()=>CSS.highlights.get('coconut-reading-search')?.size||0)).toBeGreaterThan(0);
+ await page.getByRole('button',{name:'关闭搜索',exact:true}).click();
+ const injected=await page.evaluate(()=>{
+  const paragraph=document.querySelector('article p.rw-original'),marker=document.createElement('span');
+  marker.className='immersive-translate-target-wrapper';marker.textContent='Translated filler';
+  paragraph.append(marker);
+  const range=document.createRange();range.selectNodeContents(paragraph);
+  getSelection().removeAllRanges();getSelection().addRange(range);
+  const clipboardData=new DataTransfer(),event=new ClipboardEvent('copy',{bubbles:true,cancelable:true,clipboardData});
+  paragraph.dispatchEvent(event);getSelection().removeAllRanges();
+  return clipboardData.getData('text/plain');
+ });
+ assert.equal(injected,'我们今天，');
+ await page.locator('.immersive-translate-target-wrapper').click();
+ assert.equal(await page.locator('.rw-selection').count(),0);
+ await page.locator('.immersive-translate-target-wrapper').evaluate(node=>node.remove());
  await page.evaluate(()=>setMarkedDoc(false));await expect(source.first()).toHaveAttribute('data-cleanup-applied','true');await expect(cleanupModeButtons).toHaveCount(0);await expect(page.locator('[data-cleanup-mark]')).toHaveCount(2);await expect(page.locator('[data-cleanup-hidden]')).toHaveCount(0);
  await page.evaluate(()=>updateDoc(doc=>({...doc,segments:doc.segments.map(cue=>cue.id==='a'?{...cue,text:'来源已经更新。',words:undefined}:cue)})));
  await expect(page.getByText('口语精简建议与当前原文不一致，已保留口语。',{exact:true})).toBeVisible();

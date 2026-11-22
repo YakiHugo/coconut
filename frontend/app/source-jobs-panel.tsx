@@ -8,6 +8,7 @@ import {mergeAlignmentCandidate} from '@coconut/shared/source-alignment.js';
 import {acquireAndTranscribe,useCombinedCapability} from './combined-source';
 import {restoreSourceMedia} from './source-media';
 import {signature} from '@coconut/shared/transcript-review';
+import {rememberReadingReview} from './reading-review-state';
 // @ts-expect-error Shared source ownership contract also runs on the server.
 import {sourceMediaIdentity} from '@coconut/shared/source-media.js';
 type Job={id:string;documentKey:string;source:string;binding:string;kind:'download'|'transcribe'|'align'|'download_transcribe';assetSha256:string|null;mediaReady?:boolean;state:string;updated:number;readingReviewProvider?:string;ingestionId:string|null;phase?:string;currentProfile?:boolean;resultAvailable?:boolean;error:string|null};
@@ -27,6 +28,7 @@ export function SourceJobsPanel({store,currentKey,taskHost,panelHost,onTasksChan
  const operations=useRef(new AbortController());
  const generation=useRef(0),refreshing=useRef(false),doc=currentKey?store.getDocument(currentKey):null,source=doc?sourceMediaIdentity(doc):'',media=currentKey?store.getMedia(currentKey):null;
  const canTranscribe=doc?.project_kind==='audio_only'&&doc.segments.length===0;
+ const saving=Boolean(store.getSnapshot?.().save.unsaved),dirty=Boolean(store.getSnapshot?.().dirty);
  useEffect(()=>{const changed=()=>{generation.current++;setClient(connection());};window.addEventListener('coconut-client-changed',changed);return()=>window.removeEventListener('coconut-client-changed',changed);},[]);
  useEffect(()=>{
   operations.current.abort();const operationController=new AbortController();operations.current=operationController;
@@ -62,18 +64,21 @@ export function SourceJobsPanel({store,currentKey,taskHost,panelHost,onTasksChan
  useEffect(()=>{
   const binding=doc?.local_job_binding as {id?:string}|undefined;
   const job=jobs.find(item=>item.readingReviewProvider&&item.state==='ready'&&item.ingestionId&&item.ingestionId===binding?.id);
-  if(!enabled||!job||!doc?.segments.length||doc.reading_review||autoQueued.current.has(job.id))return;
+  if(!enabled||!job||!doc?.segments.length||saving||dirty||doc.reading_review||autoQueued.current.has(job.id))return;
   autoQueued.current.add(job.id);
   void request('api/v1/transcript-review/jobs',{protocolVersion:1,operation_id:job.id,key:doc.key,consent:true,kind:'reading',provider:job.readingReviewProvider,source_signature:signature(doc)})
-   .then(()=>window.dispatchEvent(new CustomEvent('coconut-reading-review-started',{detail:doc.key})))
+   .then(()=>{
+    rememberReadingReview(doc.key,true);
+    window.dispatchEvent(new CustomEvent('coconut-reading-review-started',{detail:doc.key}));
+   })
    .catch(error=>{if(store.getSnapshot().activeKey===doc.key)setMessage(error.message);});
- },[doc,jobs,enabled,store]);
+ },[doc,jobs,enabled,store,saving,dirty]);
  useEffect(()=>{
-  if(!canTranscribe||!enabled||!currentKey||busy)return;
+  if(!canTranscribe||!enabled||!currentKey||busy||saving||dirty)return;
   const job=jobs.find(item=>item.readingReviewProvider&&item.state==='ready'&&item.resultAvailable===true&&
    item.currentProfile!==false&&item.assetSha256&&media?.identity==='source-media-sha256:'+item.assetSha256);
-  if(job&&!autoAccepted.current.has(job.id)&&!store.getSnapshot().dirty&&!store.getSnapshot().save.unsaved){autoAccepted.current.add(job.id);void accept(job);}
- },[canTranscribe,enabled,currentKey,busy,jobs,media?.identity,store]);
+  if(job&&!autoAccepted.current.has(job.id)){autoAccepted.current.add(job.id);void accept(job);}
+ },[canTranscribe,enabled,currentKey,busy,jobs,media?.identity,store,saving,dirty]);
  if(!enabled||!doc||!currentKey||!doc.podcast_source&&!videoSource(doc)&&!media?.identity?.startsWith('source-media-sha256:')&&!jobs.length)return null;
  async function run(action:()=>Promise<void>){if(busy)return;const version=generation.current;setBusy(true);setMessage('');try{await action();}catch(error){if(generation.current===version)setMessage(error instanceof Error?error.message:String(error));}finally{if(generation.current===version)setBusy(false);}}
  const create=(kind:'download'|'transcribe'|'align'|'download_transcribe')=>run(async()=>{

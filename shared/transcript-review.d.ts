@@ -14,3 +14,4 @@ export function readingReview(document:ResourceDocument):{
     batches:number;
     fallbackBatches:number;
 }|null;
+export function readingBatchCount(document:ResourceDocument):number;

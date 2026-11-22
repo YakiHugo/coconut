@@ -172,4 +172,4 @@ function readingReview(document){
  }
  return {jobId:value.job_id,sourceSignature:value.source_signature,edits,speakers,headings,issues:value.issues,batches:value.batches,fallbackBatches:value.fallback_batches};
 }
-Object.assign(module.exports,{readingPlan,readingSignature,readingBatch,readingSchema,readingInstruction,readingReview});
+Object.assign(module.exports,{readingPlan,readingSignature,readingBatch,readingSchema,readingInstruction,readingReview,readingBatchCount:document=>readingPlan(document).batches.length});

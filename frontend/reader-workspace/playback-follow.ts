@@ -12,7 +12,8 @@ function sourcePosition(host:HTMLElement, cueId:string, following:boolean) {
     if(following&&!highlighted&&(source.matches('.rw-speech')||source.querySelector('.rw-speech')))return;
     const speech=highlighted||source;
     const range=document.createRange();range.selectNodeContents(speech);
-    const rect=[...(range.getClientRects?.()||speech.getClientRects())].find(rect=>rect.width>0&&rect.height>0);
+    const rect=[...(range.getClientRects?.()||speech.getClientRects())].find(rect=>rect.width>0&&rect.height>0)
+        ||(!following?source.closest('.rw-passage,.rw-cue')?.getBoundingClientRect():null);
     if(!rect)return;
     const workspace=host.closest('.reader-workspace');
     const tabs=workspace?.querySelector('.rw-content-switch')?.getBoundingClientRect();
