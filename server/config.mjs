@@ -22,7 +22,7 @@ export function serviceConfig(env=process.env){
   if(env.COCONUT_PODCAST_PROXY&&(network.mode!=='custom'||network.proxy!==env.COCONUT_PODCAST_PROXY.replace(/\/$/,'')))throw Error('Conflicting source and podcast proxy settings.');
   const {asrPython,asrProfile,modelDirectory}=transcriptionConfig(env);
   const reviewProvider=env.COCONUT_TRANSCRIPT_REVIEW_PROVIDER||'',reviewModel=env.COCONUT_TRANSCRIPT_REVIEW_MODEL||'';
-  if(reviewProvider&&!['codex','kimi'].includes(reviewProvider))throw Error('Unsupported transcript review provider');
+  if(reviewProvider&&!['codex','kimi','claude'].includes(reviewProvider))throw Error('Unsupported transcript review provider');
   if(reviewModel&&!/^[A-Za-z0-9][A-Za-z0-9._/-]{0,119}$/.test(reviewModel))throw Error('Invalid transcript review model');
   return Object.freeze({host,port:Number(portText),dataDirectory,publicOrigin,ownerToken,backendLabel:env.COCONUT_BACKEND_LABEL||'Coconut',network,
     captionPython:env.COCONUT_CAPTION_PYTHON||null,readingPython:env.COCONUT_READING_PYTHON||null,asrPython,asrProfile,modelDirectory,reviewProvider,reviewModel});

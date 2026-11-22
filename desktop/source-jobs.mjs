@@ -17,7 +17,7 @@ const uuid=value=>typeof value==='string'&&/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}
 const TYPES={'audio/mpeg':'mp3','audio/mp4':'m4a','audio/wav':'wav','audio/ogg':'ogg','audio/flac':'flac','audio/webm':'webm','video/mp4':'mp4','video/webm':'webm'};
 const ALIASES={'audio/mp3':'audio/mpeg','audio/x-m4a':'audio/mp4','audio/wave':'audio/wav','audio/x-wav':'audio/wav','audio/x-flac':'audio/flac'};
 export async function createSourceJobs({directory,libraryStore,mediaStore,podcastSources,videoAudioService=null,transcriber,reviewer=null,reviewProvider='',reviewModel=''}){
- if(reviewProvider&&!['codex','kimi'].includes(reviewProvider))throw fail('转录后校对提供商无效');
+ if(reviewProvider&&!['codex','kimi','claude'].includes(reviewProvider))throw fail('转录后校对提供商无效');
  if(!path.isAbsolute(directory)||!libraryStore||!mediaStore)throw fail('Source tasks require an owned library',503);
  await mkdir(directory,{recursive:true,mode:0o700});
  async function privatePath(file,isDirectory=false){const stat=await lstat(file);if(stat.isSymbolicLink()||!(isDirectory?stat.isDirectory():stat.isFile())||!isDirectory&&stat.nlink!==1||process.platform!=='win32'&&((stat.mode&0o077)!==0||stat.uid!==process.getuid()))throw fail('Unsafe source task storage',503);}
@@ -151,7 +151,7 @@ export async function createSourceJobs({directory,libraryStore,mediaStore,podcas
    const workDirectory=path.join(directory,value.id);await mkdir(workDirectory,{recursive:true,mode:0o700});
    if(value.kind==='align'){
     if(sourceSignature(libraryStore.get(value.document_key).document)!==sourceSignature(operation.document))throw fail('原稿已变化，请创建新的对齐任务',409);
-    await transcriber.align({inputPath:input.path,sha256:operation.fingerprint,workDirectory,document:operation.document,signal,onProgress:p=>{if(!closing&&!signal.aborted)db.prepare('UPDATE jobs SET phase=?,updated=? WHERE id=?').run(JSON.stringify(p),Date.now(),value.id);}});
+    await transcriber.align({inputPath:input.path,sha256:operation.fingerprint,workDirectory,document:operation.document,pcmCache:mediaStore.pcmCacheDirectory,signal,onProgress:p=>{if(!closing&&!signal.aborted)db.prepare('UPDATE jobs SET phase=?,updated=? WHERE id=?').run(JSON.stringify(p),Date.now(),value.id);}});
     owned(value);await mediaStore.localInput(value.document_key,value.binding,operation.fingerprint);
     if(sourceSignature(libraryStore.get(value.document_key).document)!==sourceSignature(operation.document))throw fail('原稿已变化，对齐候选未应用',409);
     if(!signal.aborted&&!closing)update(value.id,'ready');return;
@@ -161,7 +161,7 @@ export async function createSourceJobs({directory,libraryStore,mediaStore,podcas
    requireMissingTranscript(value.kind,currentDocument);
    let ownerDocument={...currentDocument,...(operation.recognition_document||recognitionSnapshot(currentDocument,value.binding))};
    const {hotwords,nameCorrections}=recognitionArguments(ownerDocument);
-   if(!incrementalDone)await transcriber.run({inputPath:input.path,sha256:operation.fingerprint,workDirectory,title:ownerDocument.title,context:ownerDocument.transcription_context,hotwords,nameCorrections,speakerCount:ownerDocument.speaker_identity_evidence?.expected_speakers,signal,
+   if(!incrementalDone)await transcriber.run({inputPath:input.path,sha256:operation.fingerprint,workDirectory,pcmCache:mediaStore.pcmCacheDirectory,title:ownerDocument.title,context:ownerDocument.transcription_context,hotwords,nameCorrections,speakerCount:ownerDocument.speaker_identity_evidence?.expected_speakers,signal,
     onProgress:progress=>{if(!closing&&!signal.aborted)db.prepare("UPDATE jobs SET phase=?,updated=? WHERE id=? AND state='running'").run(JSON.stringify(progress),Date.now(),value.id);}});
    owned(value);await mediaStore.localInput(value.document_key,value.binding,operation.fingerprint);
    let raw=JSON.parse(await readFile(path.join(workDirectory,'result.json'),'utf8'));
@@ -223,7 +223,7 @@ export async function createSourceJobs({directory,libraryStore,mediaStore,podcas
  async function createOne(data){
   if(closing||admissionOwner!==null)throw fail('服务正在停止或等待关闭确认',503);
   if(data?.protocolVersion!==1||!uuid(data.operation_id)||typeof data.key!=='string'||!data.key||data.key.length>1000||!['download','transcribe','align','download_transcribe'].includes(data.kind)||data.consent!==true)throw fail('请明确确认此来源操作');
-  if(data.after_transcription_review!==undefined&&(![false,'codex','kimi'].includes(data.after_transcription_review)||!['transcribe','download_transcribe'].includes(data.kind)))throw fail('转录后精校选项无效');
+  if(data.after_transcription_review!==undefined&&(![false,'codex','kimi','claude'].includes(data.after_transcription_review)||!['transcribe','download_transcribe'].includes(data.kind)))throw fail('转录后精校选项无效');
   if(combined(data.kind)&&(data.localOnly!==true||data.acquisitionMode!=='incremental-experimental-v1'||data.review!==undefined||data.model!==undefined||data.profile!==undefined))throw fail('请明确确认仅本地实验转录');
   const owner=mediaStore.owner(data.key);if(data.libraryId!==libraryStore.describe().epoch)throw fail('所连接的书架已变化，请刷新后核对',409);
   if(data.source!==owner.source)throw fail('原项目来源已变化',409);

@@ -1,5 +1,7 @@
 import React, { useEffect, useRef, useMemo, useSyncExternalStore } from 'react';
 import {useOwnedPicker} from '../native-shell/owned-picker-hook';
+import {ReadingReviewChoice,useReadingReviewChoice} from '../app/reading-review-choice';
+import {queueReadingReview} from '../app/reading-review-state';
 import { attachTranscript } from '../app/attach-transcript';
 import type { Document } from '../app/contracts';
 import type { AppStore } from '../app/store';
@@ -31,13 +33,18 @@ export function SubtitleRecovery({ store, targetKey,label }: { store: AppStore; 
     return existing;
   }, [store, targetKey]);
   const state = useSyncExternalStore(controller.subscribe, controller.getSnapshot);
+  const reviewChoice=useReadingReviewChoice(!state.paused&&state.rows.some(row=>!!row.parsed&&row.reviewed));
+  const offerReview=(value:unknown)=>{
+    const document=typeof value==='string'?store.getDocument(value):value as Document|null;
+    if(document?.segments?.length)void queueReadingReview(store,document,reviewChoice.provider);
+  };
   const input = useRef<HTMLInputElement>(null);
   const picker=useOwnedPicker({scope:'subtitle:'+ (targetKey||'standalone'),setActivity:store.setActivity,reason:'正在选择字幕文件'});
   useEffect(()=>()=>picker.controller.retire(),[targetKey,picker.controller]);
   useEffect(() => { const retire = () => controller.pause(); window.addEventListener('pagehide', retire); return () => { window.removeEventListener('pagehide', retire); retire(); }; }, [controller]);
   return <details className="subtitle-recovery" onToggle={event => { if (!event.currentTarget.open) {picker.controller.retire();controller.pause();} }}>
     <summary>{label||'导入 SRT / VTT 字幕'}</summary>
-    <p>字幕仅在本机读取，不上传。</p>
+    <p>字幕在本机读取。启用精校时会发送文字稿与节目资料。</p>
     <p>关闭或刷新页面会丢失未导入的草稿。</p>
     {state.paused && <button onClick={() => controller.resume()}>继续核对保留的草稿</button>}
     {targetKey && <section aria-label="选择字幕恢复目标">
@@ -63,7 +70,8 @@ export function SubtitleRecovery({ store, targetKey,label }: { store: AppStore; 
       <button onClick={() => controller.remove(row.id)}>移除此预览</button>
     </li>)}</ol>
     </fieldset>
-    <button disabled={state.applying || state.busy || state.paused || !state.rows.some(row => row.parsed && row.reviewed)} onClick={() => void controller.apply()}>{state.mode === 'attach' ? '将已核对字幕附加到目标项目' : '加入已核对的字幕'}</button>
+    <ReadingReviewChoice value={reviewChoice} when="导入后" disabled={state.applying}/>
+    <button disabled={state.applying || state.busy || state.paused || !state.rows.some(row => row.parsed && row.reviewed)} onClick={() => void controller.apply(reviewChoice.checked?offerReview:undefined)}>{state.mode === 'attach' ? '将已核对字幕附加到目标项目' : '加入已核对的字幕'}</button>
     <button onClick={() => controller.pause()}>取消读取 / 保留草稿</button>
     <p role="status">{state.busy ? '正在读取字幕…' : state.message}</p>
   </details>;

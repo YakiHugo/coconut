@@ -102,7 +102,7 @@ export function ReaderPlayer({ media, seek, onTime, onProgress }: {
             if(event.altKey||event.ctrlKey||event.metaKey||event.shiftKey||event.nativeEvent.isComposing)return;
             if(event.key==='ArrowLeft'||event.key==='ArrowRight'){event.preventDefault();move((ref.current?.currentTime||0)+(event.key==='ArrowRight'?5:-5));}
         }} onChange={event=>move(Number(event.target.value))}/>
-                <div className="rw-player-time" aria-label="播放时间"><span>{time(currentTime)}</span><span>{time(ready?duration:0)}</span></div>
+                <div className="rw-player-time" aria-label="播放时间"><span className="notranslate" translate="no">{time(currentTime)}</span><span className="notranslate" translate="no">{time(ready?duration:0)}</span></div>
             </div>
             <div className="rw-player-rate"><ChoicePicker label="播放速度" value={String(rate)} options={PLAYBACK_RATES.map(n=>({value:String(n),label:n+'×'}))} onChange={changeRate}/></div>
         </div>{error&&<p role="alert">{error}</p>}

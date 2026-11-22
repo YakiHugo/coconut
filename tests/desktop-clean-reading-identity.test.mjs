@@ -34,7 +34,7 @@ for(const kind of ['source','packaged'])test('real cleanup identity and planner 
   environment:{},
   run:async(binary,args,options)=>{
    calls.push({binary,args,options});
-   return {code:0,stdout:JSON.stringify({decisions:[],marks:[],breaks:[],issues:[]})};
+   return {code:0,stdout:JSON.stringify({cleanup:{decisions:[]},boundaries:{marks:[],breaks:[],issues:[]}})};
   },
   fallback:{run:async(source,options)=>{
    fallbackOptions=options;
@@ -50,9 +50,9 @@ for(const kind of ['source','packaged'])test('real cleanup identity and planner 
  });
  assert.equal(result.identity,identity);
  assert.equal(result.reading_cleanup.provenance.policy_sha256,identity);
- assert.equal(calls.length,2);
+ assert.equal(calls.length,1);
  for(const call of calls)assert.equal(path.resolve(call.options.cwd),resources,'Python imports still use the external resource root');
- assert.equal(calls[1].args[0],path.join(resources,'transcript_boundaries.py'));
+ assert.equal(calls[0].args[0],path.join(resources,'transcript_boundaries.py'));
  assert.equal(fallbackOptions.provider,'codex');
  assert.equal(fallbackOptions.model,'test-model');
  assert.equal(fallbackOptions.maxFraction,.1);

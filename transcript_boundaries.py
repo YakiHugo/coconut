@@ -257,17 +257,25 @@ def plan_boundaries(document,*,acoustic_evidence=None,punctuation_candidates=Non
 
 def main():
  parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('input',type=Path,nargs='?');parser.add_argument('--audio',type=Path);parser.add_argument('--work',type=Path,default=Path('.coconut/boundaries'));parser.add_argument('-o','--output',type=Path);parser.add_argument('--stdio',action='store_true');args=parser.parse_args()
+ req={}
  if args.stdio:
   req=json.load(sys.stdin);doc=req['document'];audio=req.get('audioPath');work=req.get('workDirectory') or str(args.work);cleanup=req.get('reading_cleanup')
  else:
   if not args.input:parser.error('input or --stdio required')
   doc=json.loads(args.input.read_text());audio=args.audio;work=args.work;cleanup=doc.get('reading_cleanup')
- evidence=None
- if audio:
-  print('Checking local VAD and energy evidence',file=sys.stderr,flush=True)
-  try:evidence=build_acoustic_evidence(doc,audio,work)
-  except (ImportError,OSError,ValueError,RuntimeError) as e:print('Audio evidence unavailable: '+type(e).__name__,file=sys.stderr)
- plan=plan_boundaries(doc,acoustic_evidence=evidence,reading_cleanup=cleanup)
+ if req.get('generateCleanup') is True:
+  from transcript_cleanup import decisions
+  cleanup=decisions(doc)
+ override=req.get('boundaryPlan')
+ if override is None:
+  evidence=None
+  if audio:
+   print('Checking local VAD and energy evidence',file=sys.stderr,flush=True)
+   try:evidence=build_acoustic_evidence(doc,audio,work)
+   except (ImportError,OSError,ValueError,RuntimeError) as e:print('Audio evidence unavailable: '+type(e).__name__,file=sys.stderr)
+  plan=plan_boundaries(doc,acoustic_evidence=evidence,reading_cleanup=cleanup)
+ else:plan=override
+ if req.get('generateCleanup') is True:plan={'cleanup':cleanup,'boundaries':plan}
  if args.output:args.output.parent.mkdir(parents=True,exist_ok=True);args.output.write_text(json.dumps(plan,ensure_ascii=False,indent=2)+'\n')
  else:print(json.dumps(plan,ensure_ascii=False))
 if __name__=='__main__':main()

@@ -1,6 +1,6 @@
 import {useEffect,useMemo,useRef,useState} from 'react';
 import type {AppStore} from './store';
-import {pendingReadingReview,rememberReadingReview} from './reading-review-state';
+import {pendingReadingReview,readingReviewSubmissionFailure,rememberReadingReview,reportReadingReviewSubmission} from './reading-review-state';
 import {signature,merge,readingReview,readingBatchCount} from '@coconut/shared/transcript-review';
 type Job={id:string;documentKey:string;state:string;phase:string;provider:string;model:string;kind?:string;error?:string};
 type Issue={cue_id:string;reason:string;proposal?:{original:string;replacement:string}};
@@ -72,7 +72,7 @@ export function TranscriptReviewPanel({store,documentKey,onLocate}:{store:AppSto
  if(!doc?.segments.length)return null;
  async function start(){const key=documentKey,request=generation.current;setBusy(true);setMessage('');try{
   const current=store.getDocument(key);if(!current||store.getSnapshot().dirty||store.getSnapshot().save.unsaved)throw Error('请先保存当前编辑，再校对');
-  const value=await api('jobs',{protocolVersion:1,operation_id:crypto.randomUUID(),key,provider,model,consent:true,source_signature:signature(current),...(reading?{kind:'reading'}:{})});if(reading)rememberReadingReview(key,true);if(request===generation.current){setJob(value.job);setIssues([]);}
+  const value=await api('jobs',{protocolVersion:1,operation_id:crypto.randomUUID(),key,provider,model,consent:true,source_signature:signature(current),...(reading?{kind:'reading'}:{})});if(reading){rememberReadingReview(key,true);if(readingReviewSubmissionFailure(key))reportReadingReviewSubmission(key,'');}if(request===generation.current){setJob(value.job);setIssues([]);}
  }catch(error){if(request===generation.current)setMessage(error instanceof Error?error.message:String(error));}finally{if(owner.current===key)setBusy(false);}}
  async function action(verb:string){if(!job)return;const request=generation.current;setBusy(true);try{const value=await api('jobs/'+job.id+'/'+verb,{protocolVersion:1,consent:true});if(request===generation.current)setJob(value.job);}catch(error){if(request===generation.current)setMessage(error instanceof Error?error.message:String(error));}finally{if(request===generation.current)setBusy(false);}}
  const pending=doc.transcript_review as {state?:string;error?:string;issues?:Issue[];changes?:unknown[]}|undefined;
@@ -83,7 +83,7 @@ export function TranscriptReviewPanel({store,documentKey,onLocate}:{store:AppSto
  return <section ref={panel} className="rw-review-panel" aria-label={reading?'AI 精校':'AI 校对文字稿'} onFocusCapture={()=>setActivated(documentKey)} onPointerEnter={()=>setActivated(documentKey)}>
   <h3>{reading?'AI 精校':'AI 校对文字稿'}</h3>
   <p>发送文字稿和节目资料到所选 CLI，使用其额度。{estimate>0?'约 '+estimate+' 批。':''}</p>
-  <fieldset disabled={busy||loading||live(job)}><legend>校对提供商</legend>{[['codex','Codex CLI'],['kimi','Kimi CLI']].map(([id,name])=><label key={id}><input type="radio" name={'review-provider-'+documentKey} value={id} checked={provider===id} onChange={()=>setProvider(id)}/>{name} </label>)}</fieldset>
+  <fieldset disabled={busy||loading||live(job)}><legend>校对提供商</legend>{[['codex','Codex CLI'],['kimi','Kimi CLI'],['claude','Claude Code']].map(([id,name])=><label key={id}><input type="radio" name={'review-provider-'+documentKey} value={id} checked={provider===id} onChange={()=>setProvider(id)}/>{name} </label>)}</fieldset>
   <label>模型 <input type="text" value={model} maxLength={120} disabled={busy||loading||live(job)} placeholder="使用 CLI 默认模型" onChange={event=>setModel(event.target.value)}/></label>
   {job&&(job.kind!=='reading'||job.state!=='applied'||partial)&&<p role="status">{partial?review?.fallbackBatches+' 批待核对':label[job.state]||job.state}{job.phase.startsWith('review:')?' · 第 '+job.phase.slice(7)+' 批':''}{job.error?'：'+job.error:''}</p>}
   {!job&&pending?.state==='pending'&&<p role="status">转录已完成，AI 校对待继续。{pending.error||''}</p>}

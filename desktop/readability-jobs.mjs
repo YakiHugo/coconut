@@ -32,14 +32,14 @@ export async function createReadabilityJobs({directory,python=process.env.COCONU
  function describe(value){const request=JSON.parse(value.request);return {id:value.id,documentKey:value.document_key,state:value.state,phase:value.phase,steps:request.steps,sourceDigest:hash(sourceSignature(request.document)),resultDigest:value.result_digest||null,mediaIdentity:request.savedMedia?'source-media-sha256:'+request.savedMedia.sha256:request.media?.identity||null,needsMedia:request.steps.includes('speakers')&&!value.media_hash&&!request.savedMedia,error:value.error||null,created:value.created,updated:value.updated,...(value.media_hash?{media:{url:'/api/v1/readability/jobs/'+value.id+'/media',kind:TYPES[request.media.extension].startsWith('video/')?'video':'audio',name:request.media.name,mimeType:TYPES[request.media.extension]}}:{})};}
  function update(id,state,phase,error=null){db.prepare('UPDATE jobs SET state=?,phase=?,error=?,updated=? WHERE id=?').run(state,phase,error,Date.now(),id);}
  const jobDirectory=id=>path.join(directory,identifier(id));
- async function defaultWorker({id,document,steps,media,signal,onPhase}){
+ async function defaultWorker({id,document,steps,media,pcmCache,signal,onPhase}){
   const work=jobDirectory(id),input=path.join(work,'input.json'),output=path.join(work,'result.json');
   await writeFile(input,JSON.stringify(document),{mode:0o600});
   const args=['-I','-B',worker,input,'-o',output,'--work-dir',path.join(work,'voices')];
   if(steps.includes('punctuation'))args.push('--punctuation-model',punctuationModel);
   if(steps.includes('speakers'))args.push('--audio',media,'--segmentation-model',segmentationModel,'--embedding-model',embeddingModel);
   await new Promise((resolve,reject)=>{
-   let failure,reason='',phaseBuffer='';const child=spawn(python,args,{shell:false,detached:process.platform!=='win32',env:{PATH:'/usr/bin:/bin',LANG:'en_US.UTF-8',HF_HUB_OFFLINE:'1',TRANSFORMERS_OFFLINE:'1'},stdio:['ignore','ignore','pipe']});
+   let failure,reason='',phaseBuffer='';const child=spawn(python,args,{shell:false,detached:process.platform!=='win32',env:{PATH:'/usr/bin:/bin',LANG:'en_US.UTF-8',HF_HUB_OFFLINE:'1',TRANSFORMERS_OFFLINE:'1',...(pcmCache?{COCONUT_PCM_CACHE:pcmCache}:{})},stdio:['ignore','ignore','pipe']});
    const stop=error=>{failure||=error;try{if(process.platform!=='win32'&&child.pid)process.kill(-child.pid,'SIGKILL');else child.kill('SIGKILL');}catch{}};
    const cancel=()=>stop(fail('整理已取消'));signal.addEventListener('abort',cancel,{once:true});
    const timer=setTimeout(()=>stop(fail('本地整理超时；已有检查点保留，可重试')),timeoutMs);
@@ -59,7 +59,7 @@ export async function createReadabilityJobs({directory,python=process.env.COCONU
    if(request.savedMedia&&!reused)throw fail('书架原声不可用，请重新核对来源',409);
    controller.signal.throwIfAborted();
    const output=await (runWorker||defaultWorker)({id:value.id,document:structuredClone(request.document),steps:request.steps,
-    media:reused?.path??(request.media?path.join(jobDirectory(value.id),'source.'+request.media.extension):null),signal:controller.signal,onPhase:phase=>{if(!controller.signal.aborted&&!closing)update(value.id,'running',phase);}});
+    pcmCache:reused?sourceMediaStore.pcmCacheDirectory:undefined,media:reused?.path??(request.media?path.join(jobDirectory(value.id),'source.'+request.media.extension):null),signal:controller.signal,onPhase:phase=>{if(!controller.signal.aborted&&!closing)update(value.id,'running',phase);}});
    if(controller.signal.aborted||closing)return;
    if(request.savedMedia)await sourceMediaStore.localInput(value.document_key,request.savedMedia.binding,request.savedMedia.sha256);
    const result=mergeProcessingResult(request.document,request.document,output);Coconut.validate(result);

@@ -46,8 +46,8 @@ export function mergeReadingEdits(document,{decisions=[],marks=[],breaks=[]}={})
  return {decisions:merged,marks:normalize(marks),breaks:normalize(breaks)};
 }
 
-export function createCleanReadingPlanner({python='python3',fallback=createReadingFallback(),run=runCommand,environment=process.env}={}){
- const env=safeEnvironment(environment);
+export function createCleanReadingPlanner({python='python3',fallback=createReadingFallback(),run=runCommand,environment=process.env,pcmCache}={}){
+ const env={...safeEnvironment(environment),...(path.isAbsolute(pcmCache||'')?{COCONUT_PCM_CACHE:pcmCache}:{})};
  return {
   identity:cleanReadingIdentity,
   async prepare(document,{directory,provider='',model='',audioPath=null,signal,onProgress=()=>{},boundaryPlan=null}={}){
@@ -55,16 +55,11 @@ export function createCleanReadingPlanner({python='python3',fallback=createReadi
    const source=readingSource(document),sourceSignature=D.signature(document),identity=await cleanReadingIdentity();
    await mkdir(directory,{recursive:true,mode:0o700});
    onProgress({phase:'rules'});
-   const local=await run(python,['-c','import json,sys;from transcript_cleanup import decisions;print(json.dumps(decisions(json.load(sys.stdin)),ensure_ascii=False))'],
-    {cwd:ROOT,env,input:JSON.stringify(source),signal,timeout:120000,maxBytes:16*1024*1024});
-   if(local.code!==0)throw Error('本地口语规则未完成，原稿已保留');
-   const base=JSON.parse(local.stdout);let boundaries=boundaryPlan;
-   if(!boundaries){
-    onProgress({phase:'boundaries'});
-    const result=await run(python,[path.join(ROOT,'transcript_boundaries.py'),'--stdio'],
-     {cwd:ROOT,env,input:JSON.stringify({document:source,audioPath,workDirectory:path.join(directory,'acoustic'),reading_cleanup:base}),signal,timeout:600000,maxBytes:16*1024*1024});
-    if(result.code!==0)throw Error('停顿断句未完成，原稿已保留');boundaries=JSON.parse(result.stdout);
-   }
+   const local=await run(python,[path.join(ROOT,'transcript_boundaries.py'),'--stdio'],
+    {cwd:ROOT,env,input:JSON.stringify({document:source,audioPath,workDirectory:path.join(directory,'acoustic'),generateCleanup:true,boundaryPlan}),signal,timeout:600000,maxBytes:16*1024*1024});
+   if(local.code!==0)throw Error('本地阅读整理未完成，原稿已保留');
+   const {cleanup:base,boundaries}=JSON.parse(local.stdout);
+   if(!Array.isArray(base?.decisions)||!boundaries)throw Error('本地阅读整理结果无效，原稿已保留');
    const localEdits=mergeReadingEdits(source,{decisions:[...base.decisions,...(boundaries.decisions||[])],marks:boundaries.marks||[],breaks:boundaries.breaks||[]});
    // Validate local output before it can be supplied as context to a text model.
    D.createProjection(source,{...localEdits,policyVersion:'conservative-reading-v3',sourceSignature});
