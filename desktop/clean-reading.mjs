@@ -50,13 +50,13 @@ export function createCleanReadingPlanner({python='python3',fallback=createReadi
  const env={...safeEnvironment(environment),...(path.isAbsolute(pcmCache||'')?{COCONUT_PCM_CACHE:pcmCache}:{})};
  return {
   identity:cleanReadingIdentity,
-  async prepare(document,{directory,provider='',model='',audioPath=null,signal,onProgress=()=>{},boundaryPlan=null}={}){
+  async prepare(document,{directory,provider='',model='',audioPath=null,signal,onProgress=()=>{}}={}){
    if(!path.isAbsolute(directory||'')||!['','codex'].includes(provider))throw Error('阅读整理配置无效');
    const source=readingSource(document),sourceSignature=D.signature(document),identity=await cleanReadingIdentity();
    await mkdir(directory,{recursive:true,mode:0o700});
    onProgress({phase:'rules'});
    const local=await run(python,[path.join(ROOT,'transcript_boundaries.py'),'--stdio'],
-    {cwd:ROOT,env,input:JSON.stringify({document:source,audioPath,workDirectory:path.join(directory,'acoustic'),generateCleanup:true,boundaryPlan}),signal,timeout:600000,maxBytes:16*1024*1024});
+    {cwd:ROOT,env,input:JSON.stringify({document:source,audioPath,workDirectory:path.join(directory,'acoustic'),generateCleanup:true}),signal,timeout:600000,maxBytes:16*1024*1024});
    if(local.code!==0)throw Error('本地阅读整理未完成，原稿已保留');
    const {cleanup:base,boundaries}=JSON.parse(local.stdout);
    if(!Array.isArray(base?.decisions)||!boundaries)throw Error('本地阅读整理结果无效，原稿已保留');

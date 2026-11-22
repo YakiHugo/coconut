@@ -266,15 +266,12 @@ def main():
  if req.get('generateCleanup') is True:
   from transcript_cleanup import decisions
   cleanup=decisions(doc)
- override=req.get('boundaryPlan')
- if override is None:
-  evidence=None
-  if audio:
-   print('Checking local VAD and energy evidence',file=sys.stderr,flush=True)
-   try:evidence=build_acoustic_evidence(doc,audio,work)
-   except (ImportError,OSError,ValueError,RuntimeError) as e:print('Audio evidence unavailable: '+type(e).__name__,file=sys.stderr)
-  plan=plan_boundaries(doc,acoustic_evidence=evidence,reading_cleanup=cleanup)
- else:plan=override
+ evidence=None
+ if audio:
+  print('Checking local VAD and energy evidence',file=sys.stderr,flush=True)
+  try:evidence=build_acoustic_evidence(doc,audio,work)
+  except (ImportError,OSError,ValueError,RuntimeError) as e:print('Audio evidence unavailable: '+type(e).__name__,file=sys.stderr)
+ plan=plan_boundaries(doc,acoustic_evidence=evidence,reading_cleanup=cleanup)
  if req.get('generateCleanup') is True:plan={'cleanup':cleanup,'boundaries':plan}
  if args.output:args.output.parent.mkdir(parents=True,exist_ok=True);args.output.write_text(json.dumps(plan,ensure_ascii=False,indent=2)+'\n')
  else:print(json.dumps(plan,ensure_ascii=False))

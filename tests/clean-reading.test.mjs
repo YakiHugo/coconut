@@ -20,8 +20,10 @@ test('local boundary issues survive optional fallback and candidates reach its b
  const dir=await mkdtemp(path.join(tmpdir(),'coconut-clean-plan-'));let received;
  try{
   const doc={key:'x',title:'authored',segments:[{id:'a',start:0,end:3,text:'今天讨论然后继续。'}]};
-  const planner=createCleanReadingPlanner({run:async()=>({code:0,stdout:JSON.stringify({decisions:[],policyVersion:'rules'})}),fallback:{run:async(source,options)=>{received=options;return {decisions:[],marks:[],issues:[],stats:{requests:0}};}}});
-  const result=await planner.prepare(doc,{directory:dir,boundaryPlan:{decisions:[],marks:[],breaks:[],issues:[{cue_id:'a',from:0,to:8,reason:'needs_context',candidate_marks:[{at:4,mark:'。'}]}]}});
+  const boundaries={decisions:[],marks:[],breaks:[],issues:[{cue_id:'a',from:0,to:8,reason:'needs_context',candidate_marks:[{at:4,mark:'。'}]}]};
+  const planner=createCleanReadingPlanner({run:async()=>({code:0,stdout:JSON.stringify({cleanup:{decisions:[]},boundaries})}),
+   fallback:{run:async(source,options)=>{received=options;return {decisions:[],marks:[],issues:[],stats:{requests:0}};}}});
+  const result=await planner.prepare(doc,{directory:dir});
   assert.equal(result.reading_cleanup.issues.length,1);assert.equal(received.boundaryCandidates[0].at,4);assert.deepEqual(received.boundaryCandidates[0].allowed_marks,['。']);assert.equal(result.reading_cleanup.stats.llmCalls,0);
  }finally{await rm(dir,{recursive:true,force:true});}
 });
