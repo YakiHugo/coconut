@@ -17,7 +17,7 @@ export function currentCue(cues: ReaderCue[], seconds: number): ReaderCue | unde
     }
     return undefined;
 }
-export function filterCues(doc: ReaderDocument, query: string, displayText:(text:string)=>string=text=>text, phraseHits?:ReadonlyMap<string,unknown>) { const q = displayText(query).trim().toLocaleLowerCase(); return doc.segments.filter(cue => !q || phraseHits?.has(cue.id) || [cue.text, doc.notes?.[cue.id] || '', cue.speaker || '', cue.translations?.[doc.translation_view || '']?.text || ''].some(text => displayText(text).toLocaleLowerCase().includes(q))); }
+export function filterCues(doc: ReaderDocument, query: string, displayText:(text:string)=>string=text=>text, phraseHits?:ReadonlyMap<string,unknown>, speakerDisplay?:(cue:ReaderCue)=>string|undefined) { const q = displayText(query).trim().toLocaleLowerCase(); return doc.segments.filter(cue => !q || phraseHits?.has(cue.id) || [cue.text, doc.notes?.[cue.id] || '', cue.speaker || '', speakerDisplay?.(cue)||'', cue.translations?.[doc.translation_view || '']?.text || ''].some(text => displayText(text).toLocaleLowerCase().includes(q))); }
 export function selectionOffsets(root: HTMLElement, selection: Selection | null): {
     from: number;
     to: number;

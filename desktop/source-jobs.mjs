@@ -17,10 +17,10 @@ const uuid=value=>typeof value==='string'&&/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}
 const TYPES={'audio/mpeg':'mp3','audio/mp4':'m4a','audio/wav':'wav','audio/ogg':'ogg','audio/flac':'flac','audio/webm':'webm','video/mp4':'mp4','video/webm':'webm'};
 const ALIASES={'audio/mp3':'audio/mpeg','audio/x-m4a':'audio/mp4','audio/wave':'audio/wav','audio/x-wav':'audio/wav','audio/x-flac':'audio/flac'};
 export async function createSourceJobs({directory,libraryStore,mediaStore,podcastSources,videoAudioService=null,transcriber,reviewer=null,reviewProvider='',reviewModel=''}){
- if(reviewProvider&&!['codex','kimi'].includes(reviewProvider))throw fail('转录后校对提供商无效');
+ if(reviewProvider&&!['codex','kimi','claude'].includes(reviewProvider))throw fail('转录后校对提供商无效');
  if(!path.isAbsolute(directory)||!libraryStore||!mediaStore)throw fail('Source tasks require an owned library',503);
  await mkdir(directory,{recursive:true,mode:0o700});
- async function privatePath(file,isDirectory=false){const stat=await lstat(file);if(stat.isSymbolicLink()||!(isDirectory?stat.isDirectory():stat.isFile())||!isDirectory&&stat.nlink!==1||process.platform!=='win32'&&((stat.mode&0o077)!==0||stat.uid!==process.getuid()))throw fail('Unsafe source task storage',503);}
+ async function privatePath(file,isDirectory=false,allowShared=false){const stat=await lstat(file);if(stat.isSymbolicLink()||!(isDirectory?stat.isDirectory():stat.isFile())||!isDirectory&&!allowShared&&stat.nlink!==1||process.platform!=='win32'&&((stat.mode&0o077)!==0||stat.uid!==process.getuid()))throw fail('Unsafe source task storage',503);}
  await privatePath(directory,true);const filename=path.join(directory,'source-jobs.sqlite');
  try{const handle=await open(filename,'wx',0o600);await handle.close();}catch(error){if(error.code!=='EEXIST')throw error;}
  for(const suffix of ['','-wal','-shm','-journal'])try{await privatePath(filename+suffix);}catch(error){if(error.code!=='ENOENT')throw error;}
@@ -30,7 +30,10 @@ export async function createSourceJobs({directory,libraryStore,mediaStore,podcas
  // Only private generated attempt audio is disposable after an unclean stop.
  async function cleanAttemptAudio(folder){
   let entries;try{await privatePath(folder,true);entries=await readdir(folder,{withFileTypes:true});}catch(error){if(error.code==='ENOENT')return;throw error;}
-  for(const entry of entries){const file=path.join(folder,entry.name);if(entry.isSymbolicLink())throw fail('Unsafe source task storage',503);if(entry.isDirectory())await cleanAttemptAudio(file);else if(entry.isFile()&&/\.(wav|partial)$/.test(entry.name)){await privatePath(file);await unlink(file);}}
+  for(const entry of entries){const file=path.join(folder,entry.name);if(entry.isSymbolicLink())throw fail('Unsafe source task storage',503);if(entry.isDirectory())await cleanAttemptAudio(file);else if(entry.isFile()&&(/\.(wav|partial)$/.test(entry.name)||/^(?:[a-f0-9]{64}|sealed-source)\.media$/.test(entry.name))){
+   // A job can retain a private link to the same normalized PCM as other jobs.
+   await privatePath(file,false,entry.name==='audio.wav'||entry.name==='audio.cache.partial.wav');await unlink(file);
+  }}
  }
  for(const task of db.prepare("SELECT id FROM jobs WHERE kind='download_transcribe' AND state='interrupted'").all())if(uuid(task.id))await cleanAttemptAudio(path.join(directory,task.id,'attempts'));
  db.exec('CREATE TABLE IF NOT EXISTS job_receipts (id TEXT PRIMARY KEY, job_id TEXT NOT NULL, request TEXT NOT NULL, binding TEXT NOT NULL)');
@@ -110,7 +113,7 @@ export async function createSourceJobs({directory,libraryStore,mediaStore,podcas
       if(source?.media_url&&!Buffer.isBuffer(result.body)&&['audio/mpeg','audio/flac'].includes(type)){
        operation.attempt_id=randomUUID();attemptDirectory=path.join(directory,value.id,'attempts',operation.attempt_id);await mkdir(attemptDirectory,{recursive:true,mode:0o700});
        db.prepare('UPDATE jobs SET operation=? WHERE id=?').run(JSON.stringify(operation),value.id);
-       observer={opened:({readOnlyFd})=>{try{requireMissingTranscript(value.kind,libraryStore.get(value.document_key).document);session=liveSession=transcriber.startIncremental({attemptId:operation.attempt_id,mediaFd:readOnlyFd,workDirectory:attemptDirectory,sourceSnapshot:operation.user_snapshot,...frozen,signal,onProgress:p=>{if(!closing&&!signal.aborted)db.prepare('UPDATE jobs SET phase=? WHERE id=?').run(JSON.stringify(p),value.id);}});session.completion.catch(rememberError);}catch(error){rememberError(error);}},appended:({availableBytes})=>{try{session?.appendWatermark(availableBytes);}catch(error){rememberError(error);}},sealed:record=>{try{session?.seal({size:record.size,sha256:record.sha256});}catch(error){rememberError(error);}},aborted:()=>{session?.abort();}};
+       observer={opened:({readOnlyFd})=>{try{requireMissingTranscript(value.kind,libraryStore.get(value.document_key).document);session=liveSession=transcriber.startIncremental({attemptId:operation.attempt_id,mediaFd:readOnlyFd,workDirectory:attemptDirectory,pcmCache:mediaStore.pcmCacheDirectory,sourceSnapshot:operation.user_snapshot,...frozen,signal,onProgress:p=>{if(!closing&&!signal.aborted)db.prepare('UPDATE jobs SET phase=? WHERE id=?').run(JSON.stringify(p),value.id);}});session.completion.catch(rememberError);}catch(error){rememberError(error);}},appended:({availableBytes})=>{try{session?.appendWatermark(availableBytes);}catch(error){rememberError(error);}},sealed:record=>{try{session?.seal({size:record.size,sha256:record.sha256});}catch(error){rememberError(error);}},aborted:()=>{session?.abort();}};
       }
      }
      const record=await mediaStore.save(value.document_key,value.source,body,{type,name:'source.'+extension,signal,expectedSha256:result.sha256,expectedSize:result.size,observer});
@@ -151,7 +154,7 @@ export async function createSourceJobs({directory,libraryStore,mediaStore,podcas
    const workDirectory=path.join(directory,value.id);await mkdir(workDirectory,{recursive:true,mode:0o700});
    if(value.kind==='align'){
     if(sourceSignature(libraryStore.get(value.document_key).document)!==sourceSignature(operation.document))throw fail('原稿已变化，请创建新的对齐任务',409);
-    await transcriber.align({inputPath:input.path,sha256:operation.fingerprint,workDirectory,document:operation.document,signal,onProgress:p=>{if(!closing&&!signal.aborted)db.prepare('UPDATE jobs SET phase=?,updated=? WHERE id=?').run(JSON.stringify(p),Date.now(),value.id);}});
+    await transcriber.align({inputPath:input.path,sha256:operation.fingerprint,workDirectory,document:operation.document,pcmCache:mediaStore.pcmCacheDirectory,signal,onProgress:p=>{if(!closing&&!signal.aborted)db.prepare('UPDATE jobs SET phase=?,updated=? WHERE id=?').run(JSON.stringify(p),Date.now(),value.id);}});
     owned(value);await mediaStore.localInput(value.document_key,value.binding,operation.fingerprint);
     if(sourceSignature(libraryStore.get(value.document_key).document)!==sourceSignature(operation.document))throw fail('原稿已变化，对齐候选未应用',409);
     if(!signal.aborted&&!closing)update(value.id,'ready');return;
@@ -161,7 +164,7 @@ export async function createSourceJobs({directory,libraryStore,mediaStore,podcas
    requireMissingTranscript(value.kind,currentDocument);
    let ownerDocument={...currentDocument,...(operation.recognition_document||recognitionSnapshot(currentDocument,value.binding))};
    const {hotwords,nameCorrections}=recognitionArguments(ownerDocument);
-   if(!incrementalDone)await transcriber.run({inputPath:input.path,sha256:operation.fingerprint,workDirectory,title:ownerDocument.title,context:ownerDocument.transcription_context,hotwords,nameCorrections,speakerCount:ownerDocument.speaker_identity_evidence?.expected_speakers,signal,
+   if(!incrementalDone)await transcriber.run({inputPath:input.path,sha256:operation.fingerprint,workDirectory,pcmCache:mediaStore.pcmCacheDirectory,title:ownerDocument.title,context:ownerDocument.transcription_context,hotwords,nameCorrections,speakerCount:ownerDocument.speaker_identity_evidence?.expected_speakers,signal,
     onProgress:progress=>{if(!closing&&!signal.aborted)db.prepare("UPDATE jobs SET phase=?,updated=? WHERE id=? AND state='running'").run(JSON.stringify(progress),Date.now(),value.id);}});
    owned(value);await mediaStore.localInput(value.document_key,value.binding,operation.fingerprint);
    let raw=JSON.parse(await readFile(path.join(workDirectory,'result.json'),'utf8'));
@@ -223,7 +226,7 @@ export async function createSourceJobs({directory,libraryStore,mediaStore,podcas
  async function createOne(data){
   if(closing||admissionOwner!==null)throw fail('服务正在停止或等待关闭确认',503);
   if(data?.protocolVersion!==1||!uuid(data.operation_id)||typeof data.key!=='string'||!data.key||data.key.length>1000||!['download','transcribe','align','download_transcribe'].includes(data.kind)||data.consent!==true)throw fail('请明确确认此来源操作');
-  if(data.after_transcription_review!==undefined&&(![false,'codex','kimi'].includes(data.after_transcription_review)||!['transcribe','download_transcribe'].includes(data.kind)))throw fail('转录后精校选项无效');
+  if(data.after_transcription_review!==undefined&&(![false,'codex','kimi','claude'].includes(data.after_transcription_review)||!['transcribe','download_transcribe'].includes(data.kind)))throw fail('转录后精校选项无效');
   if(combined(data.kind)&&(data.localOnly!==true||data.acquisitionMode!=='incremental-experimental-v1'||data.review!==undefined||data.model!==undefined||data.profile!==undefined))throw fail('请明确确认仅本地实验转录');
   const owner=mediaStore.owner(data.key);if(data.libraryId!==libraryStore.describe().epoch)throw fail('所连接的书架已变化，请刷新后核对',409);
   if(data.source!==owner.source)throw fail('原项目来源已变化',409);

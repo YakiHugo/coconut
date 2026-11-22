@@ -7,7 +7,7 @@ const phases=new Set(['prepare','recognize','align','speakers','save','done']);
 const fallbackReasons=new Set(['stream_decode_unavailable','canonical_pcm_mismatch']);
 const uuid=/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const offline={HF_HUB_OFFLINE:'1',TRANSFORMERS_OFFLINE:'1',HF_HUB_DISABLE_IMPLICIT_TOKEN:'1'};
-export function startIncrementalProcess({python,profile,scriptPath},{attemptId,mediaFd,workDirectory,sourceSnapshot,title,context,hotwords,nameCorrections,speakerCount,signal,onProgress=()=>{}}){
+export function startIncrementalProcess({python,profile,scriptPath},{attemptId,mediaFd,workDirectory,sourceSnapshot,title,context,hotwords,nameCorrections,speakerCount,pcmCache,signal,onProgress=()=>{}}){
  if(!python||profile?.backend!=='qwen-mlx')throw Error('本地增量转录环境未配置');
  signal?.throwIfAborted();
  if(!uuid.test(attemptId)||!Number.isInteger(mediaFd)||mediaFd<3||!path.isAbsolute(workDirectory||'')||sourceSnapshot===undefined)throw Error('增量转录只接受服务拥有的媒体句柄与任务身份');
@@ -15,7 +15,7 @@ export function startIncrementalProcess({python,profile,scriptPath},{attemptId,m
  const initial=JSON.stringify({operation:'transcribe_incremental',protocol_version:1,attempt_id:attemptId,media_fd:3,work:workDirectory,source_snapshot:sourceSnapshot,title,context,hotwords,name_corrections:nameCorrections,speaker_count:speakerCount,profile,local_only:true})+'\n';
  if(Buffer.byteLength(initial)>65536)throw Error('增量转录任务上下文过大');
  // spawn duplicates this descriptor into child fd 3. Never close caller mediaFd.
- const child=spawn(python,['-u',scriptPath],{shell:false,detached:process.platform!=='win32',stdio:['pipe','pipe','pipe',mediaFd],env:{...process.env,...offline,...(profile?.model_cache?{HF_HOME:profile.model_cache}:{})}});
+ const child=spawn(python,['-u',scriptPath],{shell:false,detached:process.platform!=='win32',stdio:['pipe','pipe','pipe',mediaFd],env:{...process.env,...offline,COCONUT_PCM_CACHE:path.isAbsolute(pcmCache||'')?pcmCache:'',...(profile?.model_cache?{HF_HOME:profile.model_cache}:{})}});
  let maxWatermark=0,sentWatermark=0,pendingSeal=null,sealRequested=false,sealSent=false,blocked=false,scheduled=false,settled=false,stopping=false,reason,killer,buffer='';
  const decoder=new StringDecoder('utf8');let resolve,reject;
  const completion=new Promise((a,b)=>{resolve=a;reject=b;});void completion.catch(()=>{});

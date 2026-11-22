@@ -8,6 +8,7 @@ export function readingReview(document:ResourceDocument):{
     jobId:string;
     sourceSignature:string;
     edits:ReadonlyMap<string,readonly {cue_id:string;from:number;to:number;text:string}[]>;
+    joins:ReadonlyMap<string,{first:string;previous?:string}>;
     speakers:ReadonlyMap<string,string>;
     headings:readonly {cue_id:string;title:string}[];
     issues:ReadingIssue[];
@@ -15,3 +16,5 @@ export function readingReview(document:ResourceDocument):{
     fallbackBatches:number;
 }|null;
 export function readingBatchCount(document:ResourceDocument):number;
+
+export const REVIEW_PROVIDERS:readonly string[];

@@ -10,7 +10,7 @@ const uuid=id=>typeof id==='string'&&/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0
 const hash=value=>createHash('sha256').update(JSON.stringify(value)).digest('hex');
 export async function createTranscriptReviewJobs({directory,libraryStore,reviewer=createTranscriptReviewer(),defaultProvider='codex'}={}){
  if(!path.isAbsolute(directory||'')||!libraryStore)throw fail('校对需要已保存的项目',503);
- if(!['codex','kimi'].includes(defaultProvider))throw fail('默认校对提供商无效');
+ if(!R.REVIEW_PROVIDERS.includes(defaultProvider))throw fail('默认校对提供商无效');
  await mkdir(directory,{recursive:true,mode:0o700});
  const {DatabaseSync}=await import('node:sqlite'),db=new DatabaseSync(path.join(directory,'review.sqlite'));
  try{db.exec("PRAGMA busy_timeout=1000; CREATE TABLE IF NOT EXISTS jobs(id TEXT PRIMARY KEY, document_key TEXT NOT NULL, binding TEXT NOT NULL, digest TEXT NOT NULL, request TEXT NOT NULL, state TEXT NOT NULL, phase TEXT NOT NULL, error TEXT, created INTEGER NOT NULL); CREATE UNIQUE INDEX IF NOT EXISTS active_review ON jobs(binding) WHERE state IN ('queued','running'); UPDATE jobs SET state='interrupted',phase='interrupted' WHERE state='running';");}catch(error){db.close();throw error;}
@@ -57,7 +57,7 @@ export async function createTranscriptReviewJobs({directory,libraryStore,reviewe
   if(data?.protocolVersion!==1||data.consent!==true||!uuid(data.operation_id)||typeof data.key!=='string')throw fail('请确认使用所选 CLI 校对文字稿');
   if(data.kind!==undefined&&data.kind!=='reading')throw fail('校对任务类型无效');
   const current=record(data.key),provider=data.provider||defaultProvider,model=data.model||'';
-  if(!['codex','kimi'].includes(provider)||typeof model!=='string'||model&&!/^[A-Za-z0-9][A-Za-z0-9._/-]{0,119}$/.test(model))throw fail('校对提供商或模型无效');
+  if(!R.REVIEW_PROVIDERS.includes(provider)||typeof model!=='string'||model&&!/^[A-Za-z0-9][A-Za-z0-9._/-]{0,119}$/.test(model))throw fail('校对提供商或模型无效');
   if(data.source_signature!==R.signature(current.document))throw fail('文字稿或节目资料已变化，请重新发起校对',409);
   const c=R.context(current.document),document={key:data.key,title:c.title,source_url:c.source_url,podcast_source:{description:c.description},speaker_identity_evidence:{source_url:current.document.speaker_identity_evidence?.source_url||'',speakers:c.participants},transcription_glossary:c.terms,segments:R.snapshot(current.document).segments};
   if(data.kind==='reading'){
@@ -99,5 +99,5 @@ export async function createTranscriptReviewJobs({directory,libraryStore,reviewe
  }
  function list(key){const owner=binding(record(key));return db.prepare('SELECT * FROM jobs WHERE binding=? ORDER BY created DESC LIMIT 20').all(owner).map(describe);}
  function shutdown(){return shutdownPromise??=(async()=>{closing=true;if(controller){update(runningId,'interrupted');controller.abort();}await running;db.close();})();}
- pump();return {create,list,get:id=>describe(owned(row(id))),result,action,shutdown,capabilities:()=>({protocolVersion:1,providers:['codex','kimi'],defaultProvider,persistent:true,reading:true,automatic:true,audio_upload:false}),providerStatus:reviewer.status};
+ pump();return {create,list,get:id=>describe(owned(row(id))),result,action,shutdown,capabilities:()=>({protocolVersion:1,providers:R.REVIEW_PROVIDERS,defaultProvider,persistent:true,reading:true,automatic:true,audio_upload:false}),providerStatus:reviewer.status};
 }

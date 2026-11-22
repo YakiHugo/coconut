@@ -15,7 +15,7 @@ export function createTranscriptReviewer({providers=createReviewProviders()}={})
   identifySpeakers:(document,options)=>identifySpeakers(document,{...options,providers}),
   async reviewReading(document,{directory,provider='codex',model='',signal,onProgress=()=>{},jobId=''}){
    const plan=R.readingPlan(document);
-   const identity=hash({version:1,input:plan.input,provider,model,kind:'reading',headings:document.reading_has_chapters!==true});
+   const identity=hash({version:2,input:plan.input,provider,model,kind:'reading',headings:document.reading_has_chapters!==true});
    const work=path.join(directory,identity);await mkdir(work,{recursive:true,mode:0o700});
    const opts={directory:work,provider,model,signal,onProgress};
    let contextDocument=document;
@@ -26,7 +26,7 @@ export function createTranscriptReviewer({providers=createReviewProviders()}={})
     const named=await identifySpeakers(contextDocument,{...opts,providers});
     speakers=(named.speaker_identity_evidence?.assignments||[]).map(({id,name})=>({id,name}));
    }catch(error){if(signal?.aborted)throw error;}
-   const context=R.context(contextDocument),edits=[],issues=[],headings=[];
+   const context=R.context(contextDocument),edits=[],issues=[],headings=[],joins=[];
    const allowHeadings=document.reading_has_chapters!==true;
    let fallback=0,lastError;
    for(const [index,batch] of plan.batches.entries()){
@@ -48,16 +48,16 @@ export function createTranscriptReviewer({providers=createReviewProviders()}={})
       reason=String(error.message||'精校批次失败').slice(0,200);
      }
     }
-    if(value){edits.push(...value.edits);issues.push(...value.issues);if(allowHeadings)headings.push(...value.headings);}
+    if(value){joins.push(...value.joins);edits.push(...value.edits);issues.push(...value.issues);if(allowHeadings)headings.push(...value.headings);}
     else{fallback++;issues.push({cue_id:batch.target_ids[0],reason:'本批使用基础整理：'+reason});}
    }
    if(fallback===plan.batches.length)throw lastError??Error('AI 精校未返回可用批次');
-   const reading_review={version:1,job_id:jobId,provider,model,source_signature:plan.source_signature,batches:plan.batches.length,fallback_batches:fallback,edits,issues,speakers,headings};
+   const reading_review={version:1,job_id:jobId,provider,model,source_signature:plan.source_signature,batches:plan.batches.length,fallback_batches:fallback,edits,issues,speakers,headings,joins};
    if(!R.readingReview({...document,reading_review}))throw Error('精校稿与原文不匹配');
    return {reading_review};
   },
   async review(document,{directory,provider='codex',model='',signal,onProgress=()=>{},jobId=''}={}){
-   if(!['codex','kimi'].includes(provider)||!path.isAbsolute(directory||''))throw Error('校对提供商或目录无效');
+   if(!R.REVIEW_PROVIDERS.includes(provider)||!path.isAbsolute(directory||''))throw Error('校对提供商或目录无效');
    const plan=R.plan(document),identity=hash({version:1,input:plan.input,provider,model});
    const work=path.join(directory,identity);await mkdir(work,{recursive:true,mode:0o700});
    const results=[];

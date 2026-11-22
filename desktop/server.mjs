@@ -65,7 +65,7 @@ export function createBridge({readerDirectory = path.resolve(ROOT,'../reader'), 
     const origin=access.origin,remote=access.mode==='private-owner',canAcquire=access.mode==='local'||access.sourceAcquisition===true;
     try { pathname = new URL(req.url, origin).pathname; } catch { return json(400,{error:'无效路径'}); }
     if(remote&&localOnlyRoute(pathname))return json(403,{code:'local_only',error:'此操作需要在所连接的电脑上完成'});
-    const client=()=>describeClient(access,{profile,libraryStore,taskStore,localMediaService,sourceMediaStore,sourceJobs});
+    const client=()=>describeClient(access,{profile,libraryStore,taskStore,localMediaService,sourceMediaStore,sourceJobs,reviewJobs});
     const controller = new AbortController(); active.add(controller);
     res.on('close',()=>{ if (!res.writableEnded) controller.abort(); active.delete(controller); });
     try {
@@ -330,7 +330,7 @@ export async function startBridge({port = 8080, host = '127.0.0.1', taskDirector
   }
   if(options.libraryStore&&libraryDirectory&&!options.cleanReadingJobs){
     const python=options.cleanupPython||options.readingPython||process.env.COCONUT_CLEANUP_PYTHON||process.env.COCONUT_READING_PYTHON||process.env.COCONUT_ASR_PYTHON||'python3';
-    try{options.cleanReadingJobs=await createCleanReadingJobs({directory:path.join(libraryDirectory,'clean-reading'),libraryStore:options.libraryStore,sourceMediaStore:options.sourceMediaStore,planner:options.cleanReadingPlanner||createCleanReadingPlanner({python})});}
+    try{options.cleanReadingJobs=await createCleanReadingJobs({directory:path.join(libraryDirectory,'clean-reading'),libraryStore:options.libraryStore,sourceMediaStore:options.sourceMediaStore,planner:options.cleanReadingPlanner||createCleanReadingPlanner({python,pcmCache:options.sourceMediaStore?.pcmCacheDirectory})});}
     catch(error){await Promise.allSettled([options.sourceMediaStore?.shutdown(),options.taskStore?.shutdown(),options.readabilityJobs?.shutdown(),options.reviewJobs?.shutdown()]);options.libraryStore.close();throw error;}
   }
   if(options.enableSourceJobs){

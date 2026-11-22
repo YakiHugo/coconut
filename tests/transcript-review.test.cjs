@@ -52,3 +52,22 @@ test('legacy review snapshots retain their exact shape when optional evidence is
  assert.deepEqual(R.snapshot(d),{key:d.key,context:{title:d.title,source_url:d.source_url,description:'',participants:[],terms:[]},
   segments:d.segments.map(c=>({id:c.id,start:c.start,end:c.end,text:c.text,speaker:c.speaker,speaker_id:null,words:structuredClone(c.words)}))});
 });
+
+test('editor joins contiguous speech after grounded changes while preserving a range for every cue',()=>{
+ const doc={key:'cross-cue',title:'Claude Code',segments:[
+  {id:'a',text:'我们测试 Claude Cood，',start:0,end:2,speaker:'甲'},
+  {id:'b',text:'以及它的字幕功能。',start:2,end:4,speaker:'甲'},
+  {id:'c',text:'还有下一条。',start:4,end:6,speaker:'乙'},
+ ]};
+ const {input,batches}=R.readingPlan(doc),batch=batches[0];
+ const result=R.readingBatch(batch,{edits:[{cue_id:'a',original:'Claude Cood',replacement:'Claude Code',category:'entity',basis:'标题'}],issues:[],
+  joins:[{cue_ids:['a','b'],text:'我们测试 Claude Code 以及它的字幕功能。'},{cue_ids:['b','c'],text:'以及它的字幕功能，还有下一条。'}]},input.context);
+ assert.deepEqual(result.joins,[['a','b']]);
+ assert.deepEqual(result.edits,[{cue_id:'a',from:0,to:doc.segments[0].text.length,text:'我们测试 Claude Code '}]);
+ assert.equal(result.issues.length,1);
+ const review=R.readingReview({...doc,reading_review:{version:1,job_id:'job',batches:1,fallback_batches:0,source_signature:R.readingSignature(doc),...result}});
+ assert.equal(review.joins.get('b').previous,'a');
+ const modified=R.readingBatch(batch,{edits:[],issues:[],joins:[{cue_ids:['a','b'],text:'我们发布 Claude Cood 以及它的字幕功能。'}]},input.context);
+ assert.equal(modified.joins.length,0);
+ assert.equal(modified.issues.length,1);
+});

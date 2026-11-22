@@ -215,6 +215,7 @@ class OwnerVideoDL(yt_dlp.YoutubeDL):
         self.source_url = url
         self.media_only = media_only
         self.expected_duration = None
+        self.bilibili_view_points = []
         self.stage = 'extractor_setup'
         self.count = self.responses = self.total = self.media_bytes = 0
         self.raw_media_bytes = self.raw_metadata_bytes = self.expanded_metadata_bytes = 0
@@ -288,8 +289,7 @@ class OwnerVideoDL(yt_dlp.YoutubeDL):
                 owner.expected_duration = video.get('duration')
                 return page, handle
             def _get_chapters(self, aid, cid):
-                # Coconut does not consume extractor chapters. Upstream would fetch
-                # the same subtitle-login API a second time solely for this field.
+                # Reuse the bounded player response used for subtitle metadata.
                 return None
             def extract_formats(self, play_info):
                 if play_info and (play_info.get('is_preview') or any('试看' in str(value) for value in play_info.get('accept_description', []))):
@@ -379,6 +379,10 @@ class OwnerVideoDL(yt_dlp.YoutubeDL):
                 raise StopProof('login_required' if payload['code'] in (-101, 401) else 'rate_limited' if payload['code'] == 429 else 'access_restricted')
             if isinstance(payload.get('data'), dict) and payload['data'].get('need_login_subtitle'):
                 raise StopProof('subtitle_login_required')
+            if parsed.path == '/x/player/wbi/v2' and isinstance(payload.get('data'), dict):
+                points = payload['data'].get('view_points')
+                if isinstance(points, list):
+                    self.bilibili_view_points = points[:120]
         elif parsed.hostname == 'www.youtube.com' and parsed.path == '/youtubei/v1/player':
             self.check_player(json.loads(body))
         headers = {key: value for key, value in response.headers.items() if key.lower() not in ('content-length', 'content-encoding')}
@@ -400,6 +404,11 @@ def verified_info(downloader, url):
         raise StopProof('duration_unavailable')
     if downloader.provider == 'bilibili' and isinstance(downloader.expected_duration, (int, float)) and abs(duration - downloader.expected_duration) > max(5, downloader.expected_duration * .05):
         raise StopProof('access_restricted')
+    if downloader.provider == 'bilibili' and downloader.bilibili_view_points:
+        info['chapters'] = [
+            {'title': row['content'], 'start_time': row.get('from'), 'end_time': row.get('to')}
+            for row in downloader.bilibili_view_points if isinstance(row, dict) and isinstance(row.get('content'), str)
+        ]
     if downloader.provider == 'youtube' and (not downloader.access_verified or info.get('live_status') not in ('not_live', 'was_live')):
         raise StopProof('metadata_incomplete')
     return info

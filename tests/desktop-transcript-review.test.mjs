@@ -24,3 +24,19 @@ test('Kimi runs a no-tools profile with private input and rejects tool messages'
  assert.deepEqual(await adapter.structured('kimi','private transcript',{},'instruction'),{edits:[],issues:[]});tool=true;
  await assert.rejects(adapter.structured('kimi','private transcript',{},'instruction'),/工具/);assert.equal(calls,4);
 });
+
+test('Claude review uses the existing Claude Code provider and its exclusive CLI session',async()=>{
+ let active=false;
+ const signal=new AbortController().signal,schema={type:'object'},response={edits:[],issues:[],joins:[],headings:[]};
+ const adapter=createReviewProviders({codex:{
+  status(provider,options){assert.equal(provider,'claude');assert.equal(options.signal,signal);return {ready:true};},
+  async exclusive(task){active=true;try{return await task();}finally{active=false;}},
+  async structured(provider,input,format,instruction,options){
+   assert.equal(active,true);assert.equal(provider,'claude');assert.equal(input,'Authored source');
+   assert.equal(format,schema);assert.equal(instruction,'Review the transcript');
+   assert.deepEqual(options,{signal,model:'sonnet'});return response;
+  }
+ }});
+ assert.deepEqual(await adapter.status('claude',{signal}),{ready:true});
+ assert.deepEqual(await adapter.structured('claude','Authored source',schema,'Review the transcript',{signal,model:'sonnet'}),response);
+});

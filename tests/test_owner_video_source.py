@@ -48,7 +48,7 @@ def fixture(request):
     elif '/pagelist?' in url: body=json.dumps({'code':0,'data':STATE['videoData']['pages']}).encode()
     elif '/nav' in url: body=json.dumps({'code':-101,'data':{'wbi_img':{'img_url':'https://i0.hdslb.com/bfs/wbi/7cd084941338484aae1ad9425b84077c.png','sub_url':'https://i0.hdslb.com/bfs/wbi/4932caff0ff746eab6f01bf08b70ac45.png'}}}).encode()
     elif '/playurl?' in url: body=b'{"code":0,"data":{"dash":{"video":[],"audio":[]},"timelength":4000}}'
-    elif '/wbi/v2?' in url: body=b'{"code":0,"data":{"subtitle":{"subtitles":[{"lan":"en","subtitle_url":"//aisubtitle.hdslb.com/bfs/subtitle/fixture.json"}]}}}'
+    elif '/wbi/v2?' in url: body=b'{"code":0,"data":{"view_points":[{"from":0,"to":4,"content":"Official start"}],"subtitle":{"subtitles":[{"lan":"en","subtitle_url":"//aisubtitle.hdslb.com/bfs/subtitle/fixture.json"}]}}}'
     elif '/bfs/subtitle/' in url: body=b'{"body":[{"from":0,"to":4,"content":"Authored original fixture."}]}'
     else: raise AssertionError('Unexpected authored fixture request: '+url)
     return Response(io.BytesIO(body),url,{'Content-Length':str(len(body))})
@@ -58,12 +58,14 @@ def fixture(request):
 class NativeSourceTests(unittest.TestCase):
     def test_bilibili_description_reaches_caption_receipt_without_extra_requests(self):
         with patch.dict(STATE['videoData'], {'desc': '本期讨论 SGLang 与 RadixArk。'}), \
-                patch.object(RequestDirector, 'send', side_effect=fixture):
+                patch.object(RequestDirector, 'send', side_effect=fixture) as send:
             result = source.acquire_video(BILIBILI, 'en')
         background = result['source']['transcription_context']
         self.assertEqual(background['source_url'], BILIBILI)
         self.assertEqual(background['publisher'], 'Fixture')
         self.assertEqual(background['description'], '本期讨论 SGLang 与 RadixArk。')
+        self.assertEqual(background['chapters'], [{'start': 0, 'title': 'Official start'}])
+        self.assertEqual(sum('/wbi/v2?' in args[0].url for args, _ in send.call_args_list), 1)
 
     def test_official_extractors_call_native_director_and_output_existing_captions(self):
         for url,provider in [(YOUTUBE,'youtube'),(BILIBILI,'bilibili')]:

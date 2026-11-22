@@ -6,6 +6,7 @@ export type ReadingPiece =
     | {kind:'source'|'replacement'; text:string; from:number; to:number}
     | {kind:'mark'; text:string; at:number};
 export type ReadingReplacement = {from:number; to:number; text:string};
+export type ReadingJoin = {first:string;previous?:string};
 export type ReadingRun = {cueId:string; pieces:ReadingPiece[]; speech:SpeechPart; mapped:boolean; edited:boolean};
 export type ReadingParagraph = {runs:ReadingRun[]; separators:Map<number,string>};
 
@@ -15,6 +16,7 @@ export function readingParagraphs(cues:ReaderCue[], options:{
     projection?:Projection;
     playbackCues?:ReadonlyMap<string,ReaderCue>;
     replacements?:ReadonlyMap<string,readonly ReadingReplacement[]>;
+    joins?:ReadonlyMap<string,ReadingJoin>;
 }):ReadingParagraph[] {
     const paragraphs:ReadingParagraph[]=[];
     const firstParagraph=():ReadingParagraph=>({runs:[],separators:new Map()});
@@ -26,14 +28,18 @@ export function readingParagraphs(cues:ReaderCue[], options:{
         }
         previous='';
     };
-    for(const cue of cues) {
+    for(const [index,cue] of cues.entries()) {
         const playback=options.playbackCues?.get(cue.id)??cue;
         const shown=options.displayText(cue.text);
         const mapped=shown.length===cue.text.length;
         const edits=options.replacements?.get(cue.id)??[];
+        const join=options.joins?.get(cue.id);
+        const joinedBefore=Boolean(join?.previous&&join.previous===cues[index-1]?.id);
+        const joinedAfter=Boolean(cues[index+1]&&options.joins?.get(cues[index+1].id)?.previous===cue.id);
         const projection=mapped&&options.projection?getCue(options.projection,cue.id):null;
-        const marks=new Map(projection?.marks.filter(mark=>!edits.some(edit=>edit.from<mark.at&&mark.at<edit.to)).map(mark=>[mark.at,mark.mark]));
-        const breaks=new Set(projection?.breaks.filter(item=>!edits.some(edit=>edit.from<item.at&&item.at<edit.to)).map(item=>item.at));
+        const marks=new Map(projection?.marks.filter(mark=>!(joinedAfter&&mark.at===cue.text.length)&&
+            !edits.some(edit=>edit.from<mark.at&&(mark.at<edit.to||join&&mark.at===edit.to))).map(mark=>[mark.at,mark.mark]));
+        const breaks=new Set(projection?.breaks.filter(item=>!(joinedAfter&&item.at===cue.text.length)&&!edits.some(edit=>edit.from<item.at&&item.at<edit.to)).map(item=>item.at));
         const hidden=projection?.spans.filter(span=>span.action==='hide'&&!edits.some(edit=>edit.from<span.to&&span.from<edit.to))??[];
         const edited=Boolean(edits.length||marks.size||breaks.size||hidden.length);
         const speech=mapped&&!edits.length?speechParts(playback):[{from:0,to:cue.text.length,start:playback.start,end:playback.end}];
@@ -52,7 +58,7 @@ export function readingParagraphs(cues:ReaderCue[], options:{
             const append=()=>{
                 if(!pieces.length)return;
                 const text=pieces.map(piece=>piece.text).join('');
-                const gap=cueText||!previous?'':options.separator(previous,text);
+                const gap=cueText||!previous||joinedBefore?'':options.separator(previous,text);
                 if(gap)paragraph.separators.set(paragraph.runs.length,gap);
                 const source=pieces.filter(piece=>piece.kind!=='mark');
                 const clip=clock&&source.length?clock(source[0].from,source.at(-1)!.to,part):part;
@@ -130,4 +136,14 @@ export function readingReplacements(cues:ReaderCue[],suggestions:ReadonlyMap<str
         if(to)result.set(edit.cue_id,[{from:0,to,text:edit.text}]);
     }
     return result;
+}
+
+export function readingSpeakerNames(value:unknown,groups:ReadonlyMap<string,ReaderCue>) {
+    const names=new Map<string,string>();
+    if(!Array.isArray(value))return names;
+    for(const entry of value.slice(0,500)){
+        if(entry&&typeof entry.id==='string'&&groups.has(entry.id)&&typeof entry.name==='string'&&
+            entry.name.trim()&&entry.name.length<=120)names.set(entry.id,entry.name.trim());
+    }
+    return names;
 }
