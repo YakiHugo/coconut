@@ -32,25 +32,25 @@ test('cleanup accepts exact rules without probabilities and rejects stale, malfo
  assert.equal(prepareCleanup(fixture(),text=>text).state,'none');
 });
 
-test('projected source DOM preserves all canonical text and clocks, maps ranges through hidden fillers and keeps all-hidden anchors',()=>{
+test('reading DOM omits fillers and keeps canonical offsets, clocks and anchors',()=>{
  const w=new Window(),saved=globalThis.window;globalThis.window=w;w.CoconutPassages=P;
  try{
   const input=withPlan(fixture()),cleanup=prepareCleanup(input,text=>text),host=w.document.createElement('div');
   host.innerHTML=renderToStaticMarkup(createElement(PassageView,{doc:input,cues:input.segments,position:'a',current:'b',seconds:3.5,projection:cleanup.projection,onLocate:()=>{},onPlayFrom:()=>{}}));
   const first=host.querySelector('[data-source-id="a"]'),hidden=host.querySelector('[data-source-id="b"]');
-  assert.equal(first.textContent,input.segments[0].text);assert.equal(first.querySelector('[hidden]').textContent,'呃');
-  assert.equal(hidden.textContent,'呃，');assert.equal(hidden.querySelectorAll('[hidden]').length,1);
+  assert.equal(first.textContent,'我知道🙂。');assert.equal(first.querySelector('[hidden]'),null);
+  assert.equal(hidden.textContent,'');assert.equal(hidden.querySelectorAll('[hidden]').length,0);
   assert.equal(hidden.matches('.rw-playing')||Boolean(hidden.querySelector('.rw-playing')),false,'all-hidden speech never invents visible highlighting');
   const walker=w.document.createTreeWalker(first,4),nodes=[];for(let node=walker.nextNode();node;node=walker.nextNode())nodes.push(node);
   const range=w.document.createRange();range.setStart(nodes[0],0);range.setEnd(nodes.at(-1),nodes.at(-1).textContent.length);
   w.getSelection().addRange(range);
   const selection=captureSourceSelection(host,input,w.getSelection(),P.separator);
-  assert.equal(selection.text,input.segments[0].text);assert.deepEqual(selection.cueIds,['a']);assert.equal(selection.from,0);assert.equal(selection.to,first.textContent.length);
+  assert.equal(selection.text,input.segments[0].text);assert.deepEqual(selection.cueIds,['a']);assert.equal(selection.from,0);assert.equal(selection.to,input.segments[0].text.length);
   assert.equal(host.querySelector('[data-source-id="c"]').textContent,input.segments[2].text);
  }finally{if(saved===undefined)delete globalThis.window;else globalThis.window=saved;void w.happyDOM.close();}
 });
 
-test('marks-only plans provide a reading projection with punctuation and sentence breaks without source text nodes',()=>{
+test('marks-only plans render punctuation and paragraph breaks with their source ranges',()=>{
  const w=new Window(),saved=globalThis.window;globalThis.window=w;w.CoconutPassages=P;
  try{
   const input={key:'marks-only',title:'自写断句',notes:{},segments:[{id:'m',start:0,end:5,text:'今天讨论模型然后谈产品',speaker:'甲'}]};
@@ -58,9 +58,12 @@ test('marks-only plans provide a reading projection with punctuation and sentenc
   const cleanup=prepareCleanup(input,text=>text),host=w.document.createElement('div');
   assert.equal(cleanup.state,'ready');assert.equal(cleanup.hiddenCount,0);assert.equal(cleanup.markCount,1);assert.equal(cleanup.breakCount,1);
   host.innerHTML=renderToStaticMarkup(createElement(PassageView,{doc:input,cues:input.segments,position:'m',projection:cleanup.projection,onLocate:()=>{},onPlayFrom:()=>{}}));
-  const source=host.querySelector('[data-source-id="m"]'),mark=source.querySelector('[data-cleanup-mark]'),line=source.querySelector('[data-cleanup-break]');
-  assert.equal(source.textContent,input.segments[0].text);assert.equal(mark.textContent,'');assert.equal(mark.getAttribute('data-cleanup-mark'),'。');assert.equal(line.textContent,'');
-  const range=w.document.createRange();range.selectNodeContents(source);assert.equal(range.toString(),input.segments[0].text);
+  const paragraphs=[...host.querySelectorAll('article p')];
+  assert.deepEqual(paragraphs.map(p=>p.textContent),['今天讨论模型。','然后谈产品']);
+  const first=paragraphs[0].querySelector('[data-reading-from]'),last=paragraphs[1].querySelector('[data-reading-from]');
+  const range=w.document.createRange();range.setStart(first.firstChild,0);range.setEnd(last.firstChild,last.textContent.length);
+  w.getSelection().addRange(range);
+  assert.equal(captureSourceSelection(host,input,w.getSelection(),P.separator).text,input.segments[0].text);
  }finally{if(saved===undefined)delete globalThis.window;else globalThis.window=saved;void w.happyDOM.close();}
 });
 

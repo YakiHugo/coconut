@@ -1,7 +1,8 @@
 import {useEffect, useMemo, type RefObject} from 'react';
 
 function sourcePosition(host:HTMLElement, cueId:string, following:boolean) {
-    const source=host.querySelector<HTMLElement>('[data-source-id="'+CSS.escape(cueId)+'"]');
+    const selector='[data-source-id="'+CSS.escape(cueId)+'"]';
+    const source=following?host.querySelector<HTMLElement>(selector+':has(.rw-playing),'+selector+'.rw-playing')??host.querySelector<HTMLElement>(selector):host.querySelector<HTMLElement>(selector);
     if(!source)return;
     // Measuring the row first lets content-visibility resolve offscreen text.
     source.closest('.rw-passage,.rw-cue')?.getBoundingClientRect();

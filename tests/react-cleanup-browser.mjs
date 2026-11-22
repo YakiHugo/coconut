@@ -17,7 +17,7 @@ const code=`
 import {createElement} from 'react';
 import {createRoot} from 'react-dom/client';
 import {ReaderWorkspace} from './frontend/reader-workspace/workspace';
-import {textRange} from './frontend/reader-workspace/text-range';
+import {visibleSourceRange} from './frontend/reader-workspace/domain';
 import {speechSelection} from './frontend/reader-workspace/speech';
 import C from './reader/core.js';
 import P from './reader/passages.js';
@@ -36,7 +36,7 @@ window.setMarkedDoc=withHides=>{
  doc.reading_cleanup={version:1,policyVersion:'authored-boundaries-v1',sourceSignature:D.signature(doc),decisions:withHides?[{cue_id:'a',from:2,to:3,action:'hide',reason:'自写填充'}]:[],marks:[{cue_id:'a',at:5,mark:'，',reason:'自写分句',method:'rule'},{cue_id:'a',at:9,mark:'。',reason:'自写句末',method:'llm'}],breaks:[{cue_id:'a',at:5,reason:'自写段落'}]};
  window.doc=doc;revision++;render();
 };
-window.sourceRange=(id,from,to)=>textRange(document.querySelector('[data-source-id="'+id+'"]'),from,to);
+window.sourceRange=(id,from,to)=>visibleSourceRange(document.querySelector('.rw-cues'),doc,{cueIds:[id],from,to,text:doc.segments.find(c=>c.id===id).text.slice(from,to),separators:[]});
 window.expectedReview=(id,offset)=>speechSelection(doc.segments.find(cue=>cue.id===id),offset);
 window.selectSource=(id,from,to)=>{const source=document.querySelector('[data-source-id="'+id+'"]'),range=window.sourceRange(id,from,to);source.closest('.rw-original').focus();getSelection().removeAllRanges();getSelection().addRange(range);source.dispatchEvent(new MouseEvent('mouseup',{bubbles:true}));};
 render();
@@ -62,14 +62,14 @@ try{
  await expect(cleanupModeButtons).toHaveCount(0);
  await expect(page.locator('.rw-reading-controls,.rw-records')).toHaveCount(0);
  await expect(page.getByRole('button',{name:'阅读记录',exact:true})).toHaveCount(0);
- assert.equal(await source.textContent(),fixture.segments[0].text);
+ assert.equal(await source.textContent(),'我们今天聊机器人。');
  assert.equal(await source.innerText(),'我们今天聊机器人。');
- assert.equal(await page.locator('[data-source-id="b"]').textContent(),'呃，');assert.equal(await page.locator('[data-source-id="b"]').innerText(),'');
+ assert.equal(await page.locator('[data-source-id="b"]').textContent(),'');assert.equal(await page.locator('[data-source-id="b"]').innerText(),'');
  assert.equal(await page.locator('[data-source-id="c"]').innerText(),'嗯，是的。','a standalone response stays visible');
  assert.equal(await page.locator('[data-source-id="d"]').innerText(),fixture.segments[3].text,'semantic 就是 stays visible');
  await page.evaluate(()=>selectSource('a',0,10));
  const native=await source.evaluate(node=>({content:node.textContent,range:getSelection().getRangeAt(0).toString(),selection:getSelection().toString()}));
- assert.equal(native.range,fixture.segments[0].text);assert.equal(native.selection,'我们今天聊机器人。');report.hidden_range_vs_selection=native;
+ assert.equal(native.range,'我们今天聊机器人。');assert.equal(native.selection,'我们今天聊机器人。');report.hidden_range_vs_selection=native;
  // Actual mouse dragging crosses the invisible filler. The captured source
  // offsets must include it, even though the native selected string omits it.
  const glyphs=await page.evaluate(()=>{
@@ -80,7 +80,7 @@ try{
  await page.mouse.move(glyphs.x,glyphs.y);await page.mouse.down();await page.mouse.move(glyphs.end,glyphs.y,{steps:12});await page.mouse.up();
  await expect(page.getByRole('button',{name:'复制原话',exact:true})).toBeVisible();
  await page.keyboard.press(process.platform==='darwin'?'Meta+C':'Control+C');
- await expect.poll(()=>page.evaluate(()=>navigator.clipboard.readText())).toBe(fixture.segments[0].text);
+ await expect.poll(()=>page.evaluate(()=>navigator.clipboard.readText())).toBe('我们今天聊机器人。');
  report.native_drag_copy=await page.evaluate(()=>navigator.clipboard.readText());
  await page.evaluate(()=>selectSource('a',0,10));
  await page.getByRole('button',{name:'保存精确摘录',exact:true}).click();
@@ -125,18 +125,21 @@ try{
  // Generated glyphs and paragraph breaks change the visual reading layer while
  // source nodes, ranges, exact excerpts and media clocks keep original offsets.
  await page.evaluate(()=>setMarkedDoc(true));await expect(page.locator('[data-cleanup-mark]')).toHaveCount(2);
- await expect(page.locator('[data-cleanup-break]')).toHaveCount(1);await source.scrollIntoViewIfNeeded();
- const marked=await source.evaluate(node=>{
-  const r=document.createRange();r.selectNodeContents(node);
-  return {source:node.textContent,range:r.toString(),marks:[...node.querySelectorAll('[data-cleanup-mark]')].map(mark=>({text:mark.textContent,content:getComputedStyle(mark,'::after').content})),
-   first:sourceRange('a',0,1).getBoundingClientRect().top,next:sourceRange('a',5,6).getBoundingClientRect().top};
- });
- assert.equal(marked.source,'我们呃今天聊机器人');assert.equal(marked.range,marked.source);assert.ok(marked.next>marked.first+10,'sentence break starts a new visible line');
- assert.deepEqual(marked.marks.map(mark=>mark.text),['','']);assert.deepEqual(marked.marks.map(mark=>mark.content),['"，"','"。"']);report.generated_reading_layer=marked;
+ const firstParagraph=page.locator('article p.rw-original').first();
+ await firstParagraph.scrollIntoViewIfNeeded();
+ const marked=await page.evaluate(()=>({
+  source:doc.segments[0].text,
+  paragraphs:[...document.querySelectorAll('article p.rw-original')].map(p=>p.textContent),
+  pseudo:[...document.querySelectorAll('[data-cleanup-mark]')].map(mark=>getComputedStyle(mark,'::after').content),
+  first:sourceRange('a',0,1).getBoundingClientRect().top,next:sourceRange('a',5,6).getBoundingClientRect().top,
+ }));
+ assert.deepEqual(marked.paragraphs,['我们今天，','聊机器人。']);
+ assert.deepEqual(marked.pseudo,['none','none']);
+ assert.ok(marked.next>marked.first+10,'each paragraph starts on its own line');report.generated_reading_layer=marked;
  const acrossLines=await page.evaluate(()=>{getSelection().removeAllRanges();const first=sourceRange('a',0,1).getBoundingClientRect(),last=sourceRange('a',8,9).getBoundingClientRect();return {x:first.left+.2,y:first.top+first.height/2,endX:last.right-.2,endY:last.top+last.height/2};});
  await page.mouse.move(acrossLines.x,acrossLines.y);await page.mouse.down();await page.mouse.move(acrossLines.endX,acrossLines.endY,{steps:16});await page.mouse.up();
  await expect(page.getByRole('button',{name:'复制原话',exact:true})).toBeVisible();
- await page.keyboard.press(process.platform==='darwin'?'Meta+C':'Control+C');await expect.poll(()=>page.evaluate(()=>navigator.clipboard.readText())).toBe(marked.source);
+ await page.keyboard.press(process.platform==='darwin'?'Meta+C':'Control+C');await expect.poll(()=>page.evaluate(()=>navigator.clipboard.readText())).toBe('我们今天，\n\n聊机器人');
  await page.evaluate(()=>selectSource('a',0,9));await page.getByRole('button',{name:'保存精确摘录',exact:true}).click();
  await expect.poll(()=>page.evaluate(()=>savedDocs.length)).toBe(2);assert.equal(await page.evaluate(()=>savedDocs.at(-1).exact_excerpts[0].text),marked.source);
  await page.evaluate(()=>getSelection().removeAllRanges());
@@ -153,14 +156,14 @@ try{
  await page.getByRole('tab',{name:'逐句校对',exact:true}).click();assert.equal(await page.locator('[data-cleanup-mark]').count(),0);assert.equal(await page.locator('[data-cleanup-break]').count(),0);
  await page.getByRole('tab',{name:'文字稿',exact:true}).click();await expect(page.locator('[data-cleanup-mark]')).toHaveCount(2);
  for(const width of [1360,390]){await page.setViewportSize({width,height:900});await page.evaluate(()=>scrollTo(0,0));assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);await page.screenshot({path:path.join(output,'boundaries-'+width+'.png'),fullPage:true});}
- await page.evaluate(()=>setMarkedDoc(false));await expect(source).toHaveAttribute('data-cleanup-applied','true');await expect(cleanupModeButtons).toHaveCount(0);await expect(page.locator('[data-cleanup-mark]')).toHaveCount(2);await expect(page.locator('[data-cleanup-hidden]')).toHaveCount(0);
+ await page.evaluate(()=>setMarkedDoc(false));await expect(source.first()).toHaveAttribute('data-cleanup-applied','true');await expect(cleanupModeButtons).toHaveCount(0);await expect(page.locator('[data-cleanup-mark]')).toHaveCount(2);await expect(page.locator('[data-cleanup-hidden]')).toHaveCount(0);
  await page.evaluate(()=>updateDoc(doc=>({...doc,segments:doc.segments.map(cue=>cue.id==='a'?{...cue,text:'来源已经更新。',words:undefined}:cue)})));
  await expect(page.getByText('口语精简建议与当前原文不一致，已保留口语。',{exact:true})).toBeVisible();
  assert.equal(await source.innerText(),'来源已经更新。');assert.equal(await page.locator('[data-cleanup-hidden]').count(),0);
  assert.equal(await page.locator('.rw-selection').count(),0);assert.equal(await page.evaluate(()=>aiRequests.length),0);
  assert.deepEqual(errors,[]);report.errors=errors;report.result='passed';
  await writeFile(path.join(output,'report.json'),JSON.stringify(report,null,2));
- console.log(JSON.stringify({result:'passed',artifacts:output,native_range_preserves_source:true,native_copy_preserves_source:true,excerpt_preserves_source:true}));
+ console.log(JSON.stringify({result:'passed',artifacts:output,native_range_reads_display:true,native_copy_reads_display:true,excerpt_preserves_source:true}));
 }finally{
  await browser?.close();await new Promise(resolve=>server.close(resolve));
 }
