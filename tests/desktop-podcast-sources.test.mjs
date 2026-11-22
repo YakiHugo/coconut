@@ -247,6 +247,13 @@ test('only the selected episode imports bounded publisher chapters, with show-no
  const request={feedUrl,episodeId:catalog.episodes[0].id};
  const result=await good.sources.importEpisode(request);
  assert.deepEqual(result.document.transcription_context.chapters,[{start:0,title:'开场'},{start:5,title:'官方章节'}]);
+ const audioFeed=feed.replace(/<p:transcript[^>]*\/>/g,'');
+ const audioOnly=service({...options,[feedUrl]:{type:'application/rss+xml',body:Buffer.from(audioFeed)},
+  [url]:{type:'application/json',body:Buffer.from(JSON.stringify({chapters:[{startTime:5,title:'仅原声也保留章节'}]}))}});
+ const audioEpisode=(await audioOnly.sources.discover({url:feedUrl})).episodes[0];
+ const stillNeedsTranscript=await audioOnly.sources.importEpisode({feedUrl,episodeId:audioEpisode.id});
+ assert.equal(stillNeedsTranscript.status,'needs_transcription');
+ assert.deepEqual(stillNeedsTranscript.episode.transcription_context.chapters,[{start:5,title:'仅原声也保留章节'}]);
  assert.equal(good.calls.at(-1).options.maxBytes,256*1024);
  const offline=service({...options,[url]:Error('publisher chapter file unavailable')});
  const fallback=await offline.sources.importEpisode(request);

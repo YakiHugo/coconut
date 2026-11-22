@@ -412,7 +412,10 @@ export function createPodcastSources({fetchResource=fetchPublic,now=Date.now}={}
   }
   async function importEpisode(data, {signal}={}) {
     const {current,episode}=await chosen(data,signal,true),available=episode.transcripts.filter(t=>t.supported);
-    if(!available.length)return {status:'needs_transcription',episode,feed_url:current.feed_url,feed_checked_at:current.feed_checked_at,feed_reused:current.feed_reused,message:'此单集没有可导入的发布者时间戳文字稿；可选择合法字幕文件，不会自动识别或下载模型。'};
+    if(!available.length){
+      const context=await episodeContext(episode,signal);
+      return {status:'needs_transcription',episode:context?{...episode,transcription_context:context}:episode,feed_url:current.feed_url,feed_checked_at:current.feed_checked_at,feed_reused:current.feed_reused,message:'此单集没有可导入的发布者时间戳文字稿；可选择合法字幕文件，不会自动识别或下载模型。'};
+    }
     let transcript;
     if(data.transcriptUrl)transcript=available.find(item=>item.url===data.transcriptUrl);
     else {

@@ -5,8 +5,15 @@ const labels:Record<string,string>={codex:'Codex CLI',kimi:'Kimi CLI',claude:'Cl
 export type ReviewChoice={provider:string;checked:boolean;setChecked:(value:boolean)=>void};
 
 export function useReadingReviewChoice(enabled:boolean):ReviewChoice {
-    enabled=enabled&&(window as any).CoconutClientCapabilities?.allows('transcriptReview')===true;
+    const capabilities=(window as any).CoconutClientCapabilities;
+    const [connection,setConnection]=useState(()=>capabilities?.generation);
     const [provider,setProvider]=useState(''),[checked,setChecked]=useState(false);
+    useEffect(()=>{
+        const changed=()=>{setProvider('');setChecked(false);setConnection(capabilities?.generation);};
+        window.addEventListener('coconut-client-changed',changed);
+        return()=>window.removeEventListener('coconut-client-changed',changed);
+    },[capabilities]);
+    enabled=enabled&&capabilities?.allows('transcriptReview')===true;
     useEffect(()=>{
         if(!enabled){setProvider('');setChecked(false);return;}
         const owner=new AbortController();
@@ -18,7 +25,7 @@ export function useReadingReviewChoice(enabled:boolean):ReviewChoice {
                 try{setChecked(localStorage.getItem('coconut-auto-reading-review-v1')===value.defaultProvider);}catch{}
             }).catch(()=>{});
         return()=>owner.abort();
-    },[enabled]);
+    },[enabled,connection]);
     return {provider:enabled?provider:'',checked:enabled&&!!provider&&checked,setChecked(value){
         setChecked(value);
         try{localStorage.setItem('coconut-auto-reading-review-v1',value?provider:'');}catch{}

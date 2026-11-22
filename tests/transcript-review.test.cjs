@@ -63,8 +63,7 @@ test('editor joins contiguous speech after grounded changes while preserving a r
  const result=R.readingBatch(batch,{edits:[{cue_id:'a',original:'Claude Cood',replacement:'Claude Code',category:'entity',basis:'标题'}],issues:[],
   joins:[{cue_ids:['a','b'],text:'我们测试 Claude Code 以及它的字幕功能。'},{cue_ids:['b','c'],text:'以及它的字幕功能，还有下一条。'}]},input.context);
  assert.deepEqual(result.joins,[['a','b']]);
- assert.equal(result.edits.map(edit=>edit.text).join(''),'我们测试 Claude Code 以及它的字幕功能。');
- assert.deepEqual(result.edits.map(edit=>[edit.cue_id,edit.from,edit.to]),[['a',0,doc.segments[0].text.length],['b',0,doc.segments[1].text.length]]);
+ assert.deepEqual(result.edits,[{cue_id:'a',from:0,to:doc.segments[0].text.length,text:'我们测试 Claude Code '}]);
  assert.equal(result.issues.length,1);
  const review=R.readingReview({...doc,reading_review:{version:1,job_id:'job',batches:1,fallback_batches:0,source_signature:R.readingSignature(doc),...result}});
  assert.equal(review.joins.get('b').previous,'a');

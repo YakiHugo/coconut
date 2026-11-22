@@ -1,4 +1,4 @@
-import React,{useEffect,useState,useSyncExternalStore} from 'react';
+import React,{useEffect,useRef,useState,useSyncExternalStore} from 'react';
 import {createPortal} from 'react-dom';
 import type {TaskOverview} from './activity';
 import {useToast} from './toast';
@@ -23,6 +23,15 @@ export function IngestionPanel({store,currentKey,taskHost,onTasksChange}:{store:
  const state=useSyncExternalStore(controller.subscribe,controller.getSnapshot),doc=currentKey?store.getDocument(currentKey):null,file=currentKey?store.getFile(currentKey):null;
  const legacyUpload=Boolean(doc?.project_kind==='audio_only'&&file&&!(window as any).CoconutClientCapabilities?.allows('sourceJobs'));
  const reviewChoice=useReadingReviewChoice(legacyUpload&&state.available);
+ const autoAccepted=useRef(new Set<string>());
+ useEffect(()=>{
+  if(!currentKey||doc?.project_kind!=='audio_only'||doc.segments.length||state.busy||store.getSnapshot().dirty||store.getSnapshot().save.unsaved)return;
+  const entry=state.entries.find(item=>item.binding.key===currentKey&&item.reviewProvider&&item.job?.state==='ready'&&
+    item.binding.revision===store.getRevision(currentKey)&&ingestionBinding(store,currentKey,item.binding)?.fingerprint===item.binding.fingerprint);
+  if(!entry||autoAccepted.current.has(entry.operation))return;
+  autoAccepted.current.add(entry.operation);
+  void controller.commands.accept(entry.operation);
+ },[controller,currentKey,doc,state.busy,state.entries,store]);
  useEffect(()=>{store.setActivity('asr',state.busy?'文字稿任务请求尚未完成':null);return()=>store.setActivity('asr',null);},[store,state.busy]);
  useEffect(()=>{setConsent(false);},[currentKey,file,doc?.local_media_source,doc?.podcast_source]);
  useEffect(()=>{const retire=()=>controller.dispose();window.addEventListener('pagehide',retire);return()=>{window.removeEventListener('pagehide',retire);retire();};},[controller]);

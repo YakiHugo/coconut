@@ -6,7 +6,7 @@ export { safeSourceURL } from './source-playback';
 export function SourcePlaybackLink({ sourceUrl, start, compact = false }: { sourceUrl: unknown; start: number; compact?: boolean }) {
     const link = getSourcePlaybackLink(sourceUrl, start);
     if (!link) return null;
-    return <a className="notranslate" translate="no" href={link.url} target="_blank" rel="noopener noreferrer" aria-label={link.timed ? `在 ${link.platform} 从 ${time(Math.floor(start))} 播放` : '打开原站'}>{compact && link.timed ? `▷ ${time(start)}` : link.timed ? `在 ${link.platform} 从 ${time(Math.floor(start))} 播放 ↗` : '打开原站 ↗'}</a>;
+    return <a className="notranslate" translate="no" default-translate="no" href={link.url} target="_blank" rel="noopener noreferrer" aria-label={link.timed ? `在 ${link.platform} 从 ${time(Math.floor(start))} 播放` : '打开原站'}>{compact && link.timed ? `▷ ${time(start)}` : link.timed ? `在 ${link.platform} 从 ${time(Math.floor(start))} 播放 ↗` : '打开原站 ↗'}</a>;
 }
 
 export function ReaderSource({ doc }: {

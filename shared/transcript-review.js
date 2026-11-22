@@ -165,7 +165,10 @@ function applyJoins(batch,value,byId,approved,issues){
    issues.push({cue_id:source[0].id,reason:'合句跨越原话范围或改变了正文，保留原有分句'});
    continue;
   }
-  source.forEach((cue,i)=>{approved.set(cue.id,[{cue_id:cue.id,from:0,to:cue.text.length,text:projected[i]}]);used.add(cue.id);});
+  source.forEach((cue,i)=>{
+   if(projected[i]!==originalParts[i])approved.set(cue.id,[{cue_id:cue.id,from:0,to:cue.text.length,text:projected[i]}]);
+   used.add(cue.id);
+  });
   accepted.push([...join.cue_ids]);
  }
  return accepted;
@@ -232,7 +235,7 @@ function readingReview(document){
    if(!Array.isArray(group)||group.length<2||group.length>3||!group.every(id=>positions.has(id)))return null;
    const first=positions.get(group[0]);
    for(const [index,id] of group.entries()){
-    if(positions.get(id)!==first+index||joins.has(id)||!edits.has(id)||index&&!continuous(byId.get(group[index-1]),byId.get(id)))return null;
+    if(positions.get(id)!==first+index||joins.has(id)||index&&!continuous(byId.get(group[index-1]),byId.get(id)))return null;
     joins.set(id,{first:group[0],previous:group[index-1]});
    }
   }

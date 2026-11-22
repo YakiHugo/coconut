@@ -93,7 +93,7 @@ export function ReaderPlayer({ media, seek, onTime, onProgress }: {
     const move=(seconds:number)=>{const player=ref.current;if(!player||!ready)return;playAttempt.current++;controller.current?.cancel();pending.current=null;engaged.current=true;player.currentTime=Math.max(0,Math.min(duration,seconds));setCurrentTime(player.currentTime);onTime(player.currentTime);};
     const toggle=()=>{const player=ref.current;if(!player)return;const attempt=++playAttempt.current;if(!player.paused){player.pause();return;}setError('');void player.play().catch(reason=>{if(ref.current===player&&playAttempt.current===attempt&&reason?.name!=='AbortError')setError('播放未能开始，请重试播放按钮。');});};
     const changeRate=(value:string)=>{const next=Number(value);if(ref.current)ref.current.playbackRate=next;setRate(next);};
-    return <section className="rw-player notranslate" translate="no" aria-label="常驻播放控制">
+    return <section className="rw-player notranslate" translate="no" default-translate="no" aria-label="常驻播放控制">
         {media.kind==='audio'?<audio {...props}/>:<video className="rw-player-video" {...props}/>}
         <div className="rw-player-main">
             <button type="button" className="rw-player-play" aria-label={playing?'暂停播放':'播放原声'} onClick={toggle}>{playing?<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 5h4v14H7zM14 5h4v14h-4z"/></svg>:<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m8 5 11 7-11 7z"/></svg>}</button>
@@ -102,7 +102,7 @@ export function ReaderPlayer({ media, seek, onTime, onProgress }: {
             if(event.altKey||event.ctrlKey||event.metaKey||event.shiftKey||event.nativeEvent.isComposing)return;
             if(event.key==='ArrowLeft'||event.key==='ArrowRight'){event.preventDefault();move((ref.current?.currentTime||0)+(event.key==='ArrowRight'?5:-5));}
         }} onChange={event=>move(Number(event.target.value))}/>
-                <div className="rw-player-time" aria-label="播放时间"><span className="notranslate" translate="no">{time(currentTime)}</span><span className="notranslate" translate="no">{time(ready?duration:0)}</span></div>
+                <div className="rw-player-time" aria-label="播放时间"><span className="notranslate" translate="no" default-translate="no">{time(currentTime)}</span><span className="notranslate" translate="no" default-translate="no">{time(ready?duration:0)}</span></div>
             </div>
             <div className="rw-player-rate"><ChoicePicker label="播放速度" value={String(rate)} options={PLAYBACK_RATES.map(n=>({value:String(n),label:n+'×'}))} onChange={changeRate}/></div>
         </div>{error&&<p role="alert">{error}</p>}

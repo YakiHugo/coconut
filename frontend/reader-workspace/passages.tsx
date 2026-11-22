@@ -104,13 +104,13 @@ export function PassageView({ doc, cues, passages: supplied, playbackCues, curre
         return <section className={'rw-passage' + (compact ? ' rw-passage-compact' : '') + (!passage.speaker ? ' rw-speaker-unknown' : '') + (playing ? ' rw-passage-playing' : '')}
             key={passage.key} style={{ '--speaker-hue': [86, 30, 150, 205, 65][speakerIndex % 5] } as CSSProperties}>
             {chapters?.has(firstCue.id)&&<h2 className="rw-chapter-title">{displayText(chapters.get(firstCue.id)!.title)}</h2>}
-            <div className="rw-passage-heading notranslate"  translate="no">
+            <div className="rw-passage-heading notranslate"  translate="no" default-translate="no">
                 <div className="rw-passage-identity">
-                <span className="rw-speaker-label notranslate" translate="no">{name || passage.speaker || '未标注'}</span>
+                <span className="rw-speaker-label notranslate" translate="no" default-translate="no">{name || passage.speaker || '未标注'}</span>
                 <div className="rw-cue-meta">
-                    {canListen ? <button type="button" className="rw-time-link notranslate" translate="no" aria-label={'从 ' + time(playbackStart) + ' 开始播放'} aria-current={playing ? 'time' : undefined} onClick={() => { onLocate(passage.cues[0].id); onPlayFrom(playbackStart); }}>▷ {time(playbackStart)}</button>
+                    {canListen ? <button type="button" className="rw-time-link notranslate" translate="no" default-translate="no" aria-label={'从 ' + time(playbackStart) + ' 开始播放'} aria-current={playing ? 'time' : undefined} onClick={() => { onLocate(passage.cues[0].id); onPlayFrom(playbackStart); }}>▷ {time(playbackStart)}</button>
                         : hasSource ? <SourcePlaybackLink sourceUrl={doc.source_url} start={passage.start} compact/>
-                        : <button type="button" className="rw-time-link notranslate" translate="no" onClick={() => onLocate(passage.cues[0].id)}>{time(passage.start)}</button>}
+                        : <button type="button" className="rw-time-link notranslate" translate="no" default-translate="no" onClick={() => onLocate(passage.cues[0].id)}>{time(passage.start)}</button>}
                 </div>
                 </div>
             </div>

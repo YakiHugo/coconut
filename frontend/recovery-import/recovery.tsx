@@ -1,3 +1,4 @@
+import {ChoicePicker} from '../reader-workspace/controls';
 import React, { useEffect, useRef, useMemo, useSyncExternalStore } from 'react';
 import {useOwnedPicker} from '../native-shell/owned-picker-hook';
 import {ReadingReviewChoice,useReadingReviewChoice} from '../app/reading-review-choice';
@@ -54,14 +55,18 @@ export function SubtitleRecovery({ store, targetKey,label }: { store: AppStore; 
     </section>}
     <fieldset disabled={state.applying}><legend>字幕预览与核对</legend>
     <label>字幕标题<input value={state.title} maxLength={200} onChange={event => controller.edit({ title: event.target.value })}/></label>
-    <label>字幕格式<select value={state.format} onChange={event => controller.edit({ format: event.target.value })}><option value="auto">自动识别</option><option value="srt">SRT</option><option value="vtt">VTT</option></select></label>
+    <ChoicePicker label="字幕格式" value={state.format} disabled={state.applying}
+      options={[{value:'auto',label:'自动识别'},{value:'srt',label:'SRT'},{value:'vtt',label:'VTT'}]}
+      onChange={format=>controller.edit({format})}/>
     <label>粘贴带完整起止时间的字幕<textarea value={state.text} rows={8} onChange={event => controller.edit({ text: event.target.value })}/></label>
     <button onClick={() => controller.previewPaste()}>预览粘贴字幕</button>
     <button data-native-command="import-transcript" disabled={state.busy} onClick={() => {if(state.busy||state.applying)return;const captured=store.getSnapshot(),scope=controller.getSnapshot(),doc=targetKey?store.getDocument(targetKey):null;picker.controller.begin(input.current,()=>{const value=store.getSnapshot(),current=controller.getSnapshot();return value.workspace===captured.workspace&&value.activeKey===captured.activeKey&&(!targetKey||store.getDocument(targetKey)===doc)&&current.mode===scope.mode&&current.target===scope.target;});}}>选择字幕文件（可多选）</button>
     <input key={picker.inputKey} ref={input} hidden type="file" accept=".srt,.vtt" multiple onChange={event => {const element=event.currentTarget,files=Array.from(element.files||[]);void picker.controller.accept(element,async({current})=>{if(current())await controller.chooseFiles(files);});}}/>
     <ol>{state.rows.map(row => <li key={row.id}>
       <h3>{row.name}</h3>
-      {row.bytes && <label>原始文件编码<select value={row.encoding} onChange={event => controller.encoding(row.id, event.target.value)}>{controller.encodings().map(option => <option key={option.id} value={option.id} disabled={!option.available}>{option.label}{!option.available && '（当前浏览器不支持）'}</option>)}</select></label>}
+      {row.bytes && <ChoicePicker label="原始文件编码" value={row.encoding} disabled={state.applying}
+        options={controller.encodings().filter(option=>option.available).map(option=>({value:option.id,label:option.label}))}
+        onChange={encoding=>controller.encoding(row.id,encoding)}/>}
       {row.error && <p role="alert">{row.error}</p>}
       {row.parsed && <><p>{(row.parsed.document as {segments: unknown[]}).segments.length} 条字幕。{row.parsed.diagnostics.length > 0 && `部分字幕未导入：${row.parsed.diagnostics.length} 项诊断。请先检查原文。`}</p>
         {row.parsed.diagnostics.length > 0 && <pre>{JSON.stringify(row.parsed.diagnostics, null, 2)}</pre>}
