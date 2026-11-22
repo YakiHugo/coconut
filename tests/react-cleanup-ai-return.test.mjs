@@ -21,7 +21,7 @@ test('AI return to cleaned passages retains exact source actions and keyboard en
     const savedChannel=globalThis.MessageChannel,channels=[];
     let root,act;
     try{
-        const result=await build({stdin:{contents:"export {ReaderWorkspace} from './frontend/reader-workspace/workspace';export {createRoot} from 'react-dom/client';export {createElement,act} from 'react';",resolveDir:process.cwd(),loader:'tsx'},bundle:true,platform:'node',format:'cjs',write:false});
+        const result=await build({stdin:{contents:"export {ReaderWorkspace} from './frontend/reader-workspace/workspace';export {visibleSourceRange} from './frontend/reader-workspace/domain';export {createRoot} from 'react-dom/client';export {createElement,act} from 'react';",resolveDir:process.cwd(),loader:'tsx'},bundle:true,platform:'node',format:'cjs',write:false});
         await writeFile(join(directory,'reader.cjs'),result.outputFiles[0].contents);
         globalThis.MessageChannel=class extends savedChannel{constructor(){super();channels.push(this);}};
         const mounted=require(join(directory,'reader.cjs'));act=mounted.act;
@@ -46,14 +46,8 @@ test('AI return to cleaned passages retains exact source actions and keyboard en
         const expectedText='我呃知道🙂今天讨论模型';
         const expectedScope={kind:'exact_source_selection',from:0,to:expectedText.length,separators:[],cueIds:['a']};
         const select=()=>act(async()=>{
-            const node=source(),walker=w.document.createTreeWalker(node,4),point=offset=>{
-                walker.currentNode=node;
-                for(let text=walker.nextNode();text;text=walker.nextNode()){
-                    if(offset<=text.textContent.length)return [text,offset];offset-=text.textContent.length;
-                }
-                assert.fail('Selection offset must be inside canonical source text');
-            };
-            const range=w.document.createRange();range.setStart(...point(0));range.setEnd(...point(expectedText.length));
+            const node=source(),range=mounted.visibleSourceRange(host,doc,{...expectedScope,text:expectedText});
+            assert.ok(range);
             w.getSelection().removeAllRanges();w.getSelection().addRange(range);
             node.dispatchEvent(new w.MouseEvent('mouseup',{bubbles:true}));
         });
@@ -90,14 +84,14 @@ test('AI return to cleaned passages retains exact source actions and keyboard en
         await act(async()=>render());
         assert.equal(tab('passages').getAttribute('aria-selected'),'true');
         assert.equal(source().dataset.cleanupApplied,'true');
-        assert.equal(source().querySelector('[data-cleanup-hidden]').textContent,'呃');
+        assert.equal(source().querySelector('[data-cleanup-hidden]'),null);
         assert.equal(source().querySelector('[data-cleanup-mark]').getAttribute('data-cleanup-mark'),'。');
-        assert.ok(source().querySelector('[data-cleanup-break]'));
-        assert.equal(source().textContent,doc.segments[0].text,'Projection preserves canonical text nodes for exact selection');
+        assert.equal(host.querySelectorAll('[data-source-id="a"]').length,2);
+        assert.equal(source().textContent,'我知道🙂。');
         await select();assertActions();
         const clipboard=new w.DataTransfer(),copy=new w.ClipboardEvent('copy',{bubbles:true,cancelable:true,clipboardData:clipboard});
         await act(async()=>source().dispatchEvent(copy));
-        assert.equal(copy.defaultPrevented,true);assert.equal(clipboard.getData('text/plain'),expectedText,'Native copy includes hidden filler and excludes reading punctuation');
+        assert.equal(copy.defaultPrevented,false,'Native copy uses the displayed paragraphs; the toolbar copies the original');
 
         await request('understand');await returnFromSummary(1);
         await act(async()=>button('复制原话').click());

@@ -178,6 +178,20 @@
    }
    const adapter={backend:'canonical',maxBatchSize:100,maxBatchBytes:16777216,documentEpoch:key=>tokens.get(key)?.deleted?null:tokens.get(key)?.identity.lifetime??null,
     mediaLibraryIdentity:async()=>({ok:true,identity:m.mediaLibraryIdentity}),
+    async adoptReadingReview(current,accept){
+     const prior=tokens.get(current.key);
+     if(closed||!prior||prior.deleted)return false;
+     const {record}=await request('/document?'+new URLSearchParams({protocolVersion:'1',key:current.key}));
+     if(closed||tokens.get(current.key)!==prior||!record||record.deleted||record.key!==current.key||record.token?.epoch!==m.epoch||
+        record.token.revision<=prior.token.revision||record.identity?.lifetime!==prior.identity.lifetime||record.identity?.position!==prior.identity.position||
+        !record.document?.reading_review||await hash(JSON.stringify(record.document))!==record.sha256||tokens.get(current.key)!==prior)return false;
+     const next=project(record.document,{...validate(root.structuredClone(record.document)),key:current.key});
+     const withoutReview=({reading_review,...rest})=>rest;
+     if(json(withoutReview(current))!==json(withoutReview(next)))return false;
+     // This path adopts a saved reading draft only. Capture and persist all
+     // personal edits through the regular versioned write path.
+     return accept(next,()=>tokens.set(current.key,record));
+    },
     estimateBatchBytes(changes){
      const commands=changes.map(c=>{const current=tokens.get(c.key),action=c.kind==='remove'?'delete':current?.deleted?'restore':'put',document=action==='delete'?undefined:c.identity;
       if(document&&bytes(json(document)).length>8388608)throw Object.assign(issue('document_too_large','Document exceeds the canonical 8388608-byte limit.'),{retryable:false});

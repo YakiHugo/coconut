@@ -21,6 +21,21 @@ function timedWords(cue:ReaderCue):TimedWord[] | null {
     return words.map(word=>word.word).join('')===cue.text?words:null;
 }
 
+export function sourceClockForRange(cue:ReaderCue) {
+    const words=timedWords(cue);
+    return (from:number,to:number,fallback:SpeechPart):SpeechPart=>{
+        if(!words)return {...fallback,from,to};
+        let first:TimedWord|undefined,end=0;
+        for(const word of words){
+            if(word.from>=to)break;
+            if(word.to<=from)continue;
+            first??=word;
+            end=Math.max(end,word.end);
+        }
+        return {from,to,start:first?.start??fallback.start,end:first?end:fallback.end};
+    };
+}
+
 /** Older accepted jobs kept the asset hash on the alignment receipt. */
 function legacyBindings(alignment:unknown) {
     const receipt = alignment as {asset_sha256?:string;source_snapshot?:{segments?:ReaderCue[]};report?:{cues?:Array<{cue_id:string;status:string}>}}|undefined;

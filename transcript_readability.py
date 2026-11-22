@@ -66,6 +66,35 @@ def punctuation_chunks(cues: list[dict]):
         yield chunk
 
 
+def _punctuated_words(words, original, text):
+    if not words or ''.join(word.get('word', '') for word in words) != original:
+        return None
+    source = [(char, index) for index, word in enumerate(words)
+              for char in word['word'] if not char.isspace()]
+    pieces = [''] * len(words)
+    cursor, owner = 0, 0
+    for char in text:
+        if cursor < len(source) and char == source[cursor][0]:
+            owner = source[cursor][1]
+            cursor += 1
+        elif not char.isspace() and char not in PUNCTUATION:
+            return None
+        pieces[owner] += char
+    if cursor != len(source):
+        return None
+    result, offset = [], 0
+    for word, piece in zip(words, pieces):
+        if not piece.strip():
+            continue
+        end = offset + len(piece)
+        updated = {**word, 'word': piece}
+        if 'text_start' in word or 'text_end' in word:
+            updated.update(text_start=offset, text_end=end)
+        result.append(updated)
+        offset = end
+    return result if offset == len(text) else None
+
+
 def punctuate(cues: list[dict], engine) -> tuple[int, int]:
     changed = rejected = 0
     def apply(chunk):
@@ -88,8 +117,11 @@ def punctuate(cues: list[dict], engine) -> tuple[int, int]:
             return
         for cue, text in zip(chunk, texts):
             if cue['text'] != text:
+                words = _punctuated_words(cue.get('words'), cue['text'], text)
                 cue.setdefault('original_text', cue['text'])
                 cue['text'] = text
+                if words is not None:
+                    cue['words'] = words
                 changed += 1
     for chunk in punctuation_chunks(cues):
         # A manually corrected cue carries its own original-text history.

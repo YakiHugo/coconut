@@ -13,7 +13,7 @@ export function ReadabilityPanel({store,documentKey}:{store:AppStore;documentKey
  const state=useSyncExternalStore(controller.subscribe,controller.getSnapshot),doc=documentKey?store.getDocument(documentKey):null,file=documentKey?store.getFile(documentKey):null,media=documentKey?store.getMedia(documentKey):null;
  const [attachmentError,setAttachmentError]=useState(''),[attaching,setAttaching]=useState(false),attachment=useRef<AbortController|null>(null);
  const signature=doc?.segments.length?sourceSignature(doc):'',dirty=store.getSnapshot().dirty;
- useEffect(()=>{if(documentKey&&signature&&!dirty)void controller.refresh(documentKey,{automatic:true});},[controller,documentKey,signature,file,media?.identity,dirty]);
+ useEffect(()=>{if(documentKey&&signature&&!dirty)void controller.refresh(documentKey);},[controller,documentKey,signature,file,media?.identity,dirty]);
  useEffect(()=>{if(!documentKey||state.key!==documentKey||!state.job||!['queued','running','awaiting_media'].includes(state.job.state))return;const timer=setTimeout(()=>void controller.refresh(documentKey),1500);return()=>clearTimeout(timer);},[controller,documentKey,state.job,state.busy]);
  useEffect(()=>{store.setActivity('readability',state.busy?'正在核对或保存文字整理任务':null);return()=>store.setActivity('readability',null);},[state.busy,store]);
  useEffect(()=>{const retire=()=>{controller.dispose();attachment.current?.abort();};window.addEventListener('pagehide',retire);return()=>{window.removeEventListener('pagehide',retire);retire();};},[controller]);

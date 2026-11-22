@@ -3,9 +3,10 @@ import { createHash } from 'node:crypto';
 import Coconut from '../reader/core.js';
 import { fetchPublic, publicUrl, mime, isMediaType, PublicSourceError } from './public-http.mjs';
 import { parseXml, decodeEntities } from './podcast-xml.mjs';
-import {publisherText} from './transcription-context.mjs';
+import {publisherContext,publisherText} from './transcription-context.mjs';
 
 export const PODCAST_LIMITS=Object.freeze({metadataBytes:8*1024*1024,transcriptBytes:8*1024*1024,mediaBytes:200*1024*1024,mediaTimeoutMs:30*60*1000,mediaIdleTimeoutMs:30000,episodes:200,segments:30000,duration:21600,concurrent:2});
+const CONTENT='http://purl.org/rss/1.0/modules/content/';
 const ATOM='http://www.w3.org/2005/Atom',PODCAST='https://podcastindex.org/namespace/1.0',ITUNES='http://www.itunes.com/dtds/podcast-1.0.dtd';
 // The namespace's own Podcasting 2.0 feed still uses this earlier published URI.
 const PODCAST_URIS=new Set([PODCAST,'https://github.com/Podcastindex-org/podcast-namespace/blob/main/docs/1.0.md']);
@@ -92,8 +93,17 @@ export function parsePodcastFeed(text,feedUrl) {
     // Continue scanning the already byte/node-bounded feed after the display
     // limit: a repeated GUID later in the archive still makes identity unsafe.
     if(episodes.length===PODCAST_LIMITS.episodes)continue;
+    const published=small(value(item,atom?'published':'pubDate',atom?ATOM:''));
+    const notes=atom?value(item,'content',ATOM)||value(item,'summary',ATOM)
+      :value(item,'encoded',CONTENT)||value(item,'description','')||value(item,'summary',ITUNES);
+    const context=notes&&publisherContext({source_url:sourceUrl||feedUrl,platform:'podcast_rss',description:notes,
+      show:small(value(channel,'title',atom?ATOM:'')),published});
+    const chapterLinks=item.children.filter(node=>node.local==='chapters'&&PODCAST_URIS.has(node.uri)&&
+      (!node.attrs.type||['application/json+chapters','application/json'].includes(mime(node.attrs.type))))
+      .map(node=>safeLink(node.attrs.url,node.base)).filter(Boolean);
     episodes.push({id,title:small(value(item,'title',atom?ATOM:''))||'未命名单集',source_url:sourceUrl||feedUrl,
-      ...itemMetadata,duration:seconds(value(item,'duration',ITUNES)),published:small(value(item,atom?'published':'pubDate',atom?ATOM:'')),media,transcripts});
+      ...itemMetadata,duration:seconds(value(item,'duration',ITUNES)),published,media,transcripts,
+      ...(context?{transcription_context:context}:{}),...(new Set(chapterLinks).size===1?{chapters_url:chapterLinks[0]}:{})});
   }
   if(!episodes.length)throw new Error('此源中没有可用的公开音视频 enclosure 或发布者文字稿');
   for(const episode of episodes){episode.transcript_selection=selectPublisherTranscript(episode);if(ambiguous.has(episode.id)||episode.media.some(item=>ambiguousMedia.has(item.url)))episode.identity_ambiguous=true;}
@@ -179,7 +189,7 @@ export function parseXiaoyuzhouPage(html,url) {
        (match[1]==='podcast'&&item.pid!==match[2])||item.enclosure?.url!==item.media.source.url)continue;
     const media=mediaItem(item.media.source.url,item.media.mimeType,item.media.size,url);
     if(!media)continue;
-    const context=Coconut.transcriptionContext({source_url:`https://www.xiaoyuzhoufm.com/episode/${item.eid}`,platform:'xiaoyuzhou',
+    const context=publisherContext({source_url:`https://www.xiaoyuzhoufm.com/episode/${item.eid}`,platform:'xiaoyuzhou',
       show:show?.title||item.podcast?.title,publisher:show?.author||item.podcast?.author,published:item.pubDate,
       description:publisherText(item.shownotes)||publisherText(item.description)});
     episodes.push({id:hash(item.eid),title:small(item.title)||'未命名单集',source_url:`https://www.xiaoyuzhoufm.com/episode/${item.eid}`,
@@ -387,6 +397,19 @@ export function createPodcastSources({fetchResource=fetchPublic,now=Date.now}={}
     }
     return {current,episode};
   }
+  async function episodeContext(episode,signal) {
+    const context=episode.transcription_context;
+    if(!episode.chapters_url)return context;
+    try{
+      const sidecar=await fetchResource(episode.chapters_url,{signal,maxBytes:256*1024,timeoutMs:5000,
+        types:new Set(['application/json+chapters','application/json','text/plain'])});
+      const payload=JSON.parse(textBody(sidecar));
+      const chapters=Coconut.publisherChapters(Array.isArray(payload?.chapters)?payload.chapters.slice(0,500)
+        .map(item=>({start:item?.startTime,title:item?.title})):null);
+      if(chapters.length)return Coconut.transcriptionContext({...context,source_url:episode.source_url,platform:context?.platform||'podcast_rss',chapters});
+    }catch(error){if(signal?.aborted)throw error;}
+    return context;
+  }
   async function importEpisode(data, {signal}={}) {
     const {current,episode}=await chosen(data,signal,true),available=episode.transcripts.filter(t=>t.supported);
     if(!available.length)return {status:'needs_transcription',episode,feed_url:current.feed_url,feed_checked_at:current.feed_checked_at,feed_reused:current.feed_reused,message:'此单集没有可导入的发布者时间戳文字稿；可选择合法字幕文件，不会自动识别或下载模型。'};
@@ -401,11 +424,12 @@ export function createPodcastSources({fetchResource=fetchPublic,now=Date.now}={}
     if(transcript.selection_conflict)throw new Error('发布者对同一文字稿地址提供了冲突标注，请选择其他文字稿或先听原声');
     const resource=await fetchResource(transcript.url,{signal,maxBytes:PODCAST_LIMITS.transcriptBytes,types:new Set([transcript.type,'text/plain','application/octet-stream'])});
     const segments=parsePublisherTranscript(textBody(resource),transcript.type);
+    const context=await episodeContext(episode,signal);
     const medium=episode.media[0];
     const document={schema_version:1,title:episode.title,source_url:episode.source_url,language:transcript.language||null,segments,
       provenance:{kind:'publisher_transcript',caption_method:'publisher_provided',caption_track:transcript.url,subtitle_check:'found',language_basis:transcript.language?(transcript.language_source==='inherited'?'publisher_metadata_inherited':'publisher_metadata'):'unknown',review_status:'unreviewed',source_platform:'podcast_rss',...(medium?{source_medium:medium.kind}:{}),...(episode.duration&&episode.duration<=PODCAST_LIMITS.duration?{media_duration:episode.duration}:{})},
       podcast_source:{feed_url:current.feed_url,episode_id:episode.id,transcript_url:transcript.url,...(medium?{media_url:medium.url,media_kind:medium.kind}:{})},
-      ...(episode.transcription_context?{transcription_context:episode.transcription_context}:{})};
+      ...(context?{transcription_context:context}:{})};
     return {status:'ready',document,episode,feed_url:current.feed_url,feed_checked_at:current.feed_checked_at,feed_reused:current.feed_reused};
   }
   async function openEpisodeMedia(data,{signal}={}) {
@@ -419,7 +443,8 @@ export function createPodcastSources({fetchResource=fetchPublic,now=Date.now}={}
     if(!medium)throw new PublicSourceError('SOURCE_ACCESS','所选单集没有可用的公开音视频 enclosure，请刷新来源后重选');
     if(episode.duration>PODCAST_LIMITS.duration)throw new PublicSourceError('SOURCE_LIMIT','此单集时长超过6小时');
     if(medium.length>PODCAST_LIMITS.mediaBytes)throw new PublicSourceError('SOURCE_LIMIT','发布者声明的媒体超过下载大小上限（最多200 MiB）');
-    return {status:'needs_transcription',episode,feed_url:current.feed_url,feed_checked_at:current.feed_checked_at,feed_reused:current.feed_reused};
+    const context=await episodeContext(episode,signal);
+    return {status:'needs_transcription',episode:context?{...episode,transcription_context:context}:episode,feed_url:current.feed_url,feed_checked_at:current.feed_checked_at,feed_reused:current.feed_reused};
   }
   async function downloadMedia(data,{signal,consume}={}) {
     const maxBytes=data?.maxBytes??PODCAST_LIMITS.mediaBytes;
@@ -427,11 +452,11 @@ export function createPodcastSources({fetchResource=fetchPublic,now=Date.now}={}
     let media,context;
     if(data?.feedUrl) {
       const {episode}=await chosen(data,signal);
-      context=episode.transcription_context;
       if(episode.duration>PODCAST_LIMITS.duration)throw new PublicSourceError('SOURCE_LIMIT','此单集时长超过6小时');
       media=episode.media.find(item=>item.url===data.mediaUrl);
       if(!media)throw new PublicSourceError('SOURCE_IDENTITY','媒体链接不在所选单集当前的公开 enclosure 中');
       if(media.length>maxBytes)throw new PublicSourceError('SOURCE_LIMIT','发布者声明的媒体超过本次下载大小上限（最多200 MiB）');
+      context=await episodeContext(episode,signal);
     } else {media={url:publicUrl(data?.url).href};}
     const types=new Set(['audio/mpeg','audio/mp3','audio/mp4','audio/x-m4a','audio/aac','audio/wav','audio/wave','audio/x-wav','audio/ogg','audio/flac','audio/x-flac','audio/webm','video/mp4','video/webm','video/ogg','video/quicktime']);
     const consumedMedia=resource=>{

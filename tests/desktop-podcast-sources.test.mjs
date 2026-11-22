@@ -233,3 +233,22 @@ test('publisher VTT never collapses distinct voices that share a long name prefi
  // Keep the existing bounded JSON publisher normalization unchanged.
  assert.equal(parsePublisherTranscript(JSON.stringify({segments:[{start:1,end:2,text:'Source',speaker:prefix+'Alice'}]}),'application/json')[0].speaker,prefix);
 });
+
+test('only the selected episode imports bounded publisher chapters, with show-note fallback',async()=>{
+ const url='https://publisher.example.org/chapters.json';
+ const feed=rss.replace('<item>', '<item><description><![CDATA[<p>00:00 开头</p><p>00:05 后半段</p>]]></description><p:chapters url="'+url+'" type="application/json"/>');
+ const body=Buffer.from(feed);
+ const options={[feedUrl]:{type:'application/rss+xml',body}};
+ const good=service({...options,[url]:{type:'application/json',body:Buffer.from(JSON.stringify({chapters:[
+  {startTime:5,title:'官方章节'},{startTime:-5,title:'无效时间'},{startTime:0,title:'  开场  '}
+ ]}))}});
+ const catalog=await good.sources.discover({url:feedUrl});
+ assert.equal(good.calls.length,1);
+ const request={feedUrl,episodeId:catalog.episodes[0].id};
+ const result=await good.sources.importEpisode(request);
+ assert.deepEqual(result.document.transcription_context.chapters,[{start:0,title:'开场'},{start:5,title:'官方章节'}]);
+ assert.equal(good.calls.at(-1).options.maxBytes,256*1024);
+ const offline=service({...options,[url]:Error('publisher chapter file unavailable')});
+ const fallback=await offline.sources.importEpisode(request);
+ assert.deepEqual(fallback.document.transcription_context.chapters,[{start:0,title:'开头'},{start:5,title:'后半段'}]);
+});

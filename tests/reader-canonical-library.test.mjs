@@ -378,3 +378,20 @@ test('a remote browser missing its capability module cannot read or mutate canon
  globalThis.location={hostname:'reader.example.test'};t.after(()=>{delete globalThis.location;});
  const f=await fixture(t);await assert.rejects(f.client.request(),error=>error.code==='unsupported');await assert.rejects(f.client.begin(),error=>error.code==='unsupported');assert.equal(f.calls.length,0);assert.equal(await f.client.marker(),undefined);
 });
+
+test('a saved review can advance the canonical token without resaving user data',async t=>{
+ const f=await fixture(t);await f.client.begin();
+ const {adapter,loaded}=await f.client.initialize(await f.client.marker());
+ const original=loaded.documents[0],record=f.server.get('a');
+ f.server.commit({protocolVersion:1,epoch:record.token.epoch,key:'a',receiptKey:'review-delta',action:'put',expected:record.token,
+  document:{...record.document,reading_review:{job_id:'fixture'}}});
+ let adopted;
+ assert.equal(await adapter.adoptReadingReview(original,()=>false),false);
+ assert.equal(await adapter.adoptReadingReview(original,(next,advance)=>{adopted=next;advance();return true;}),true);
+ assert.equal(adopted.reading_review.job_id,'fixture');
+ const outcome=await adapter.write(adapter.prepareChanges([{key:'a',identity:{...adopted,notes:{cue:'after review'}},kind:'update',generation:1}]));
+ assert.equal(outcome.ok,true);
+ assert.equal(f.server.get('a').document.notes.cue,'after review');
+ assert.equal(f.server.get('a').document.reading_review.job_id,'fixture');
+ assert.equal(await adapter.adoptReadingReview(original,()=>assert.fail('personal data differed')),false);
+});

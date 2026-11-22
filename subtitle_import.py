@@ -4,6 +4,7 @@ from __future__ import annotations
 import html
 from html.entities import html5
 import json
+import math
 import os
 import re
 import sys
@@ -27,6 +28,17 @@ def publisher_context(info: dict, url: str, provider: str) -> dict:
         text = info.get(field)
         if isinstance(text, str) and text.strip():
             value[key] = text.strip()[:limit]
+    chapters = info.get('chapters')
+    if isinstance(chapters, list):
+        clean = []
+        for chapter in chapters[:200]:
+            if not isinstance(chapter, dict):
+                continue
+            start, title = chapter.get('start_time'), chapter.get('title')
+            if type(start) in (float, int) and math.isfinite(start) and 0 <= start <= 604800 and isinstance(title, str) and title.strip():
+                clean.append({'start': start, 'title': title.strip()[:200]})
+        if clean:
+            value['chapters'] = clean
     return {'transcription_context': value}
 
 

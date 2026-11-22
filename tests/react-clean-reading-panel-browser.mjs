@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict';
+import {randomUUID} from 'node:crypto';
+import D from '../reader/disfluency.js';
 import {mkdtemp,rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import path from 'node:path';
@@ -21,24 +23,22 @@ try{
  const page=await browser.newPage({viewport:{width:1360,height:900}}),external=[],errors=[];
  page.on('request',request=>{if(new URL(request.url()).origin!==origin&&!request.url().startsWith('blob:'))external.push(request.url());});
  page.on('pageerror',error=>errors.push(error.message));
+ const job=await jobs.create({protocolVersion:1,operation_id:randomUUID(),key:original.key,source_signature:D.signature(original),fallback:false,consent:false});
+ await expect.poll(()=>jobs.get(job.id).state,{timeout:30000}).toBe('ready');
+ await jobs.action(job.id,'apply');
  await page.goto(origin+'/#read/'+original.key);
- await page.getByRole('button',{name:'来源与整理',exact:true}).click();
- await page.getByRole('button',{name:'文字整理',exact:true}).click();
- const start=page.getByRole('button',{name:'整理口语与断句',exact:true});await expect(start).toBeEnabled();await start.click();
- await expect(page.getByText('整理结果已保存',{exact:false})).toBeVisible({timeout:30000});
- await page.getByRole('button',{name:'关闭来源与整理',exact:true}).click();
  const source=page.locator('[data-source-id="a"]');
  await expect(source).toHaveAttribute('data-cleanup-applied','true');
  await expect(page.getByRole('button',{name:/^(精简口语|保留口语)$/})).toHaveCount(0);
  await expect(page.locator('.rw-reading-controls,.rw-records')).toHaveCount(0);
- assert.equal(await source.textContent(),original.segments[0].text);
+ assert.equal(await source.textContent(),await source.innerText());
  const displayed=await source.innerText();assert.notEqual(displayed,original.segments[0].text,'saved cleanup is displayed immediately');
  const plan=library.get(original.key).document.reading_cleanup,segments=library.get(original.key).document.segments;
  assert.ok(plan.decisions.length>0);assert.equal(plan.fallback.provider,'');assert.equal(plan.stats.llmCalls,0);
  assert.deepEqual(segments.map(({id,start,end,text,speaker,words})=>({id,start,end,text,speaker,words})),original.segments.map(({id,start,end,text,speaker,words})=>({id,start,end,text,speaker,words})));
  await page.reload();await expect(source).toHaveAttribute('data-cleanup-applied','true');
  await expect(page.getByRole('button',{name:/^(精简口语|保留口语)$/})).toHaveCount(0);
- await source.scrollIntoViewIfNeeded();await expect.poll(()=>source.innerText()).toBe(displayed);assert.equal(await source.textContent(),original.segments[0].text);
+ await source.scrollIntoViewIfNeeded();await expect.poll(()=>source.innerText()).toBe(displayed);assert.equal(await source.textContent(),await source.innerText());
  assert.deepEqual(external,[]);assert.deepEqual(errors,[]);
  console.log(JSON.stringify({result:'passed',state:'applied',decisions:plan.decisions.length,llmCalls:plan.stats.llmCalls,sourceUnchanged:true,reloadRestores:true,externalRequests:0}));
 }finally{
