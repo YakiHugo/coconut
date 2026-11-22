@@ -20,7 +20,7 @@ export async function createSourceJobs({directory,libraryStore,mediaStore,podcas
  if(reviewProvider&&!['codex','kimi','claude'].includes(reviewProvider))throw fail('转录后校对提供商无效');
  if(!path.isAbsolute(directory)||!libraryStore||!mediaStore)throw fail('Source tasks require an owned library',503);
  await mkdir(directory,{recursive:true,mode:0o700});
- async function privatePath(file,isDirectory=false){const stat=await lstat(file);if(stat.isSymbolicLink()||!(isDirectory?stat.isDirectory():stat.isFile())||!isDirectory&&stat.nlink!==1||process.platform!=='win32'&&((stat.mode&0o077)!==0||stat.uid!==process.getuid()))throw fail('Unsafe source task storage',503);}
+ async function privatePath(file,isDirectory=false,allowShared=false){const stat=await lstat(file);if(stat.isSymbolicLink()||!(isDirectory?stat.isDirectory():stat.isFile())||!isDirectory&&!allowShared&&stat.nlink!==1||process.platform!=='win32'&&((stat.mode&0o077)!==0||stat.uid!==process.getuid()))throw fail('Unsafe source task storage',503);}
  await privatePath(directory,true);const filename=path.join(directory,'source-jobs.sqlite');
  try{const handle=await open(filename,'wx',0o600);await handle.close();}catch(error){if(error.code!=='EEXIST')throw error;}
  for(const suffix of ['','-wal','-shm','-journal'])try{await privatePath(filename+suffix);}catch(error){if(error.code!=='ENOENT')throw error;}
@@ -30,7 +30,10 @@ export async function createSourceJobs({directory,libraryStore,mediaStore,podcas
  // Only private generated attempt audio is disposable after an unclean stop.
  async function cleanAttemptAudio(folder){
   let entries;try{await privatePath(folder,true);entries=await readdir(folder,{withFileTypes:true});}catch(error){if(error.code==='ENOENT')return;throw error;}
-  for(const entry of entries){const file=path.join(folder,entry.name);if(entry.isSymbolicLink())throw fail('Unsafe source task storage',503);if(entry.isDirectory())await cleanAttemptAudio(file);else if(entry.isFile()&&/\.(wav|partial)$/.test(entry.name)){await privatePath(file);await unlink(file);}}
+  for(const entry of entries){const file=path.join(folder,entry.name);if(entry.isSymbolicLink())throw fail('Unsafe source task storage',503);if(entry.isDirectory())await cleanAttemptAudio(file);else if(entry.isFile()&&(/\.(wav|partial)$/.test(entry.name)||/^(?:[a-f0-9]{64}|sealed-source)\.media$/.test(entry.name))){
+   // A job can retain a private link to the same normalized PCM as other jobs.
+   await privatePath(file,false,entry.name==='audio.wav'||entry.name==='audio.cache.partial.wav');await unlink(file);
+  }}
  }
  for(const task of db.prepare("SELECT id FROM jobs WHERE kind='download_transcribe' AND state='interrupted'").all())if(uuid(task.id))await cleanAttemptAudio(path.join(directory,task.id,'attempts'));
  db.exec('CREATE TABLE IF NOT EXISTS job_receipts (id TEXT PRIMARY KEY, job_id TEXT NOT NULL, request TEXT NOT NULL, binding TEXT NOT NULL)');

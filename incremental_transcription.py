@@ -398,7 +398,7 @@ def run_incremental(request, *, control_fd=0):
         # Keep identity-bound JSON checkpoints, not large transient PCM copies.
         # SIGKILL cannot run finally; Node must retire these owned artifacts on recovery.
         for path in attempt_dir.rglob('*'):
-            if path.is_file() and (path.name in {'audio.wav', 'audio.partial.wav', 'stream-audio.wav',
+            if path.is_file() and (path.name in {'audio.wav', 'audio.partial.wav', 'audio.cache.partial.wav', 'stream-audio.wav',
                     'stream-audio.partial.wav', 'stream-pcm.partial', 'sealed-source.partial'} or
                     re.fullmatch(r'chunk-[0-9]+\.wav', path.name)):
                 path.unlink(missing_ok=True)

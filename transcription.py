@@ -368,6 +368,7 @@ def main():
             emit(**probe(request['profile']))
         return
     if request.get('operation') == 'transcribe_incremental':
+        os.umask(0o077)
         from incremental_transcription import run_incremental
         run_incremental(request)
         return
