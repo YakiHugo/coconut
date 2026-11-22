@@ -640,7 +640,7 @@ function WorkspaceSession({ document: doc, revision, media, onSaveDocument, onRe
  {doc.segments.length === 0 ? <section className="rw-empty"><h2>先播放原文件</h2><p>{doc.transcript_status === 'processing' ? '文字稿处理中…' : '暂无文字稿。'}</p></section> : <>
  {edition?<><div className="rw-review-version notranslate" translate="no">
     <button type="button" disabled={anyDirty||busy} onClick={()=>{setEditionId('source');setMode('passages');setLocationTick(value=>value+1);}}>返回文字稿</button>
- </div><EditionReader key={edition.id} doc={doc} edition={edition} focusBlock={editionFocus} media={media} busy={busy} saveStatus={saveStatus} onSave={next=>save(next,revision,true)} onDirtyChange={setEditionDirty} onSource={id=>{setMode('passages');locate(id);}} onListen={start=>playFrom(start)}/></>:<>
+ </div><EditionReader key={edition.id} doc={doc} edition={edition} focusBlock={editionFocus} media={media} busy={busy} saveStatus={saveStatus} onSave={next=>save(next,revision,true)} onDirtyChange={setEditionDirty} onSource={id=>{setMode('transcript');locate(id);}} onListen={start=>playFrom(start)}/></>:<>
 
  <div className="rw-content-switch notranslate" translate="no"><ReadingModeTabs mode={mode} id={modeTabsId} onChange={changeMode}/><button type="button" className="rw-search-trigger" data-native-command="find-transcript" ref={searchTrigger} aria-label="搜索文字稿" aria-expanded={searchOpen&&mode!=='summary'} aria-controls={`${modeTabsId}-search`} onClick={openSearch}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 5 5"/></svg><span>查找</span></button></div>
  <div role="tabpanel" id={`${modeTabsId}-panel`} aria-labelledby={`${modeTabsId}-${mode}`}>
