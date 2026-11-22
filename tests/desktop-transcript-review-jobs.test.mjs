@@ -57,3 +57,53 @@ test('HTTP review enforces same origin and explicit submission without request-b
  // server owns this injected service; avoid double-shutdown in fixture cleanup.
  const original=f.jobs.shutdown;let stopped=false;f.jobs.shutdown=async()=>{if(!stopped){stopped=true;await original();}};
 });
+
+test('reading review publishes sparse edits to the latest notes and retries only failed batches after restart',async t=>{
+ let broken=true;
+ const calls=[];
+ const f=await fixture(t,async(provider,input)=>{
+  const {target_ids,cues}=JSON.parse(input);
+  assert.ok(cues.every(cue=>!Object.hasOwn(cue,'words')));
+  assert.ok(!input.includes('my private note'));
+  calls.push(target_ids[0]);
+  if(target_ids[0]!=='a'&&broken)throw Error('fixture batch offline');
+  return target_ids[0]==='a'?{...output,headings:[{cue_id:'a',title:'访谈开场'}]}:{edits:[],issues:[],headings:[]};
+ });
+ const current=f.library.get('one').document;
+ const segments=[...current.segments,{id:'b',start:2,end:3,text:'第二部分。'.repeat(900),speaker:'乙'}];
+ f.commit({...current,segments});
+ const job=f.jobs.create({...f.input(),kind:'reading'});
+ f.commit({...f.library.get('one').document,notes:{a:'并发保存的笔记'}});
+ await until(()=>f.jobs.get(job.id).state==='applied');
+ let saved=f.library.get('one').document;
+ assert.deepEqual(saved.segments,segments);
+ assert.deepEqual(saved.notes,{a:'并发保存的笔记'});
+ assert.equal(saved.reading_review.fallback_batches,1);
+ assert.deepEqual(saved.reading_review.edits,[{cue_id:'a',from:0,to:2,text:'刘元'}]);
+ assert.deepEqual(calls,['a','b','b']);
+ await f.restart();
+ broken=false;
+ await f.jobs.action(job.id,'retry');
+ await until(()=>f.jobs.get(job.id).state==='applied');
+ saved=f.library.get('one').document;
+ assert.equal(saved.reading_review.fallback_batches,0);
+ assert.deepEqual(saved.segments,segments);
+ assert.deepEqual(calls,['a','b','b','b']);
+ const revision=f.library.get('one').token.revision;
+ await f.jobs.action(job.id,'apply');
+ assert.equal(f.library.get('one').token.revision,revision);
+});
+
+test('late reading review cannot publish after the source changes',async t=>{
+ let release,started=false;
+ const gate=new Promise(resolve=>release=resolve);
+ const f=await fixture(t,async()=>{started=true;await gate;return output;});
+ const job=f.jobs.create({...f.input(),kind:'reading'});
+ await until(()=>started);
+ const current=f.library.get('one').document;
+ f.commit({...current,segments:[{...current.segments[0],text:'人工修正'}]});
+ release();
+ await until(()=>f.jobs.get(job.id).state==='failed');
+ assert.equal(f.library.get('one').document.reading_review,undefined);
+ assert.equal(f.library.get('one').document.segments[0].text,'人工修正');
+});

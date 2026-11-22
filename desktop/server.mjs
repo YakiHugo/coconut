@@ -95,7 +95,16 @@ export function createBridge({readerDirectory = path.resolve(ROOT,'../reader'), 
         if(!reviewJobs)return json(503,{error:'文字稿校对需要服务端书架'});
         const match=pathname.match(/^\/api\/v1\/transcript-review\/jobs\/([a-f0-9-]+)(?:\/(result|cancel|retry|apply))?$/);
         if(req.method==='GET'){
-          if(pathname==='/api/v1/transcript-review/capabilities')return json(200,reviewJobs.capabilities());
+          if(pathname==='/api/v1/transcript-review/capabilities'){
+           const capabilities=reviewJobs.capabilities(),query=new URL(req.url,origin).searchParams;
+           if(query.get('readiness')==='1'&&capabilities.reading){
+            const provider=query.get('provider')||capabilities.defaultProvider;
+            if(!capabilities.providers.includes(provider))return json(400,{error:'精校提供商无效'});
+            try{return json(200,{...capabilities,status:await reviewJobs.providerStatus(provider)});}
+            catch{return json(200,{...capabilities,status:{ready:false,reason:'CLI 暂不可用'}});}
+           }
+           return json(200,capabilities);
+          }
           if(pathname==='/api/v1/transcript-review/jobs')return json(200,{jobs:reviewJobs.list(new URL(req.url,origin).searchParams.get('key'))});
           if(match&&(!match[2]||match[2]==='result'))return json(200,{job:await reviewJobs[match[2]==='result'?'result':'get'](match[1])});
           return json(404,{error:'校对请求不存在'});
@@ -305,14 +314,14 @@ export async function startBridge({port = 8080, host = '127.0.0.1', taskDirector
     try{options.libraryStore=await createLibraryStore({directory:libraryDirectory,exclusiveWriter:true});}
     catch(error){options.libraryStore=null;options.libraryUnavailable={code:error.libraryCode||'library_unavailable',message:'Canonical library could not open; browser storage remains unchanged.'};}
   }
-  const readingPython=options.readingPython===undefined?process.env.COCONUT_READING_PYTHON:options.readingPython;
-  if(!options.readabilityJobs&&options.libraryStore&&libraryDirectory&&readingPython){
-    try{options.readabilityJobs=await createReadabilityJobs({directory:path.join(libraryDirectory,'readability'),python:readingPython,punctuationModel:options.punctuationModel,segmentationModel:options.segmentationModel,embeddingModel:options.embeddingModel});}
-    catch(error){options.libraryStore?.close();await options.taskStore?.shutdown();throw error;}
-  }
   if(options.libraryStore&&libraryDirectory&&!options.sourceMediaStore){
     try{options.sourceMediaStore=await createSourceMediaStore({directory:path.join(libraryDirectory,'source-media'),libraryStore:options.libraryStore});}
     catch{options.sourceMediaStore=null;} // Fail closed; never mislabel page blobs as saved.
+  }
+  const readingPython=options.readingPython===undefined?process.env.COCONUT_READING_PYTHON:options.readingPython;
+  if(!options.readabilityJobs&&options.libraryStore&&libraryDirectory&&readingPython){
+    try{options.readabilityJobs=await createReadabilityJobs({directory:path.join(libraryDirectory,'readability'),python:readingPython,punctuationModel:options.punctuationModel,segmentationModel:options.segmentationModel,embeddingModel:options.embeddingModel,sourceMediaStore:options.sourceMediaStore,libraryStore:options.libraryStore});}
+    catch(error){await Promise.allSettled([options.sourceMediaStore?.shutdown(),options.taskStore?.shutdown()]);options.libraryStore?.close();throw error;}
   }
   if(options.libraryStore&&libraryDirectory&&!options.reviewJobs){
     options.transcriptReviewer??=createTranscriptReviewer();

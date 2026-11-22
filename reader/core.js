@@ -85,6 +85,17 @@
   try { const url=new URL(value);return ["http:","https:"].includes(url.protocol)&&!url.username&&!url.password&&!url.port&&url.href.length<=4096?url.href:""; }catch{return "";}
  }
  // Publisher background is separate from transcript text and media identity.
+ function publisherChapters(value) {
+  if(!Array.isArray(value))return [];
+  const chapters=[],starts=new Set();
+  for(const entry of value.slice(0,500)){
+   if(!entry||!Number.isFinite(entry.start)||entry.start<0||entry.start>604800||starts.has(entry.start)||typeof entry.title!=='string')continue;
+   const title=entry.title.replace(/[\x00-\x1f\x7f]/g,' ').trim().slice(0,200);
+   if(!title)continue;
+   starts.add(entry.start);chapters.push({start:entry.start,title});
+  }
+  return chapters.sort((a,b)=>a.start-b.start);
+ }
  function transcriptionContext(value) {
   if(!value||typeof value!=='object'||Array.isArray(value))return undefined;
   const url=podcastURL(value.source_url);
@@ -94,6 +105,8 @@
   for(const [key,max] of [['platform',40],['publisher',200],['show',200],['published',100],['description',6000]]){
    const clean=text(value[key],max);if(clean)result[key]=clean;
   }
+  const chapters=publisherChapters(value.chapters);
+  if(chapters.length)result.chapters=chapters;
   return Object.keys(result).length>1?result:undefined;
  }
  function podcastOrigin(doc) {
@@ -2076,7 +2089,7 @@
 		return parseWithDiagnostics(text, filename).document;
 	}
 	const api = { ANSWER_INPUT_CHARACTERS, answerInputCharacters, answerInputLimitReason, createSourceCorrectionPreview, applySourceCorrectionPreview, undoSourceCorrection, parsePastedSubtitles, subtitleEncodings, decodeSubtitleBytes, translationSelectionInfo, translationSelectionModels, pairedExactExcerptSnapshot, exactExcerptTranslation, exactExcerptTranslationParts, normalizeReadingChapters, readingChapters, createReadingChapter, updateReadingChapter, readingChaptersWith, isReadingCollection, normalizeReadingCollection, createReadingCollection, collectionItemFromCapture, readingCollectionItemKey, readingCollectionItemState, readingCollectionMarkdown, SPEAKER_CORRECTION_LABEL_LIMIT, createSpeakerCorrectionPreview, applySpeakerCorrectionPreview, createLibraryBackupSelection, librarySavedHits, librarySavedHitCurrent, libraryTranslationHitCurrent, libraryTranslationHitCurrentSteps, exactExcerptNote, exactExcerptNotesWith, exactExcerptRemoval, exactExcerptSnapshot, exactExcerptText, exactExcerptParts, exactExcerptSource, exactExcerptCount, exactExcerptDuplicate, exactExcerptFreshness, exactExcerptFreshnessBatch, exactExcerptState, exactExcerptStateBatch, createReadingRecency, createReadingViews, createLibrarySearch, createLibraryNotebookSearch, libraryCaptureSteps, libraryCaptureCurrent, libraryCaptures, libraryNotebookMarkdown, mediaTiming, mediaTimingOffset, mediaTimingRange, localMediaSource, searchDocument, invalidateSearch, manualReviewSnapshot, manualReviewCurrent, saveManualTranslation, translationReviewQueue, hasNoteContent, segmentNoteCount, BACKUP_REVIEW_BYTES, SUBTITLE_IMPORT_BYTES, vttPayload, libraryHits, librarySnippet, hasProjectAnnotations, projectAnnotationCount, attachProjectTranscript, libraryMatches, documentDuration, sortedLibrary, AUDIO_NOTE_BUDGET, audioNoteCharacters, isAudioProject, audioProjectIdentity, podcastMediaIdentity, SUMMARY_QUESTION, summaryReadiness, podcastURL, podcastSource, cleanGlossary, relevantGlossary, translationQualityMessage, retainAnswers, summaryFreshness, latestSummary, summaryMarkdown, aiReadingMarkdown, parseReadingTime, createPlaybackIndex, segmentAtTime, transcriptText, subtitleExport, planLibraryBackup, mergeLibraryBackup, time, source, media, validate, parse, parseWithDiagnostics, matchesSegment, notebookSegments, notebookMarkdown, translationCurrent, sameCueSnapshot, offlineTranslationBatches, subscriptionPlan, cleanContexts, answerFreshness };
-  api.transcriptionContext=transcriptionContext;
+  api.transcriptionContext=transcriptionContext;api.publisherChapters=publisherChapters;
 	if (typeof module !== "undefined" && module.exports) module.exports = api;
 	else root.Coconut = api;
 })(typeof window !== "undefined" ? window : globalThis);

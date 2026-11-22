@@ -51,3 +51,29 @@ export function textOffsetAtPoint(root:HTMLElement,x:number,y:number):number|nul
     }
     return null;
 }
+
+/** Highlight display text without inserting nodes into a translatable paragraph. */
+export function textHighlights(root:HTMLElement,needle:string,excluded:string):Range[] {
+    const walker=root.ownerDocument.createTreeWalker(root,4);
+    const spans:Array<{node:Node;from:number;to:number}>=[];
+    let text='';
+    for(let node=walker.nextNode();node;node=walker.nextNode()){
+        if(node.parentElement?.closest(excluded))continue;
+        const value=node.textContent??'';
+        if(value){spans.push({node,from:text.length,to:text.length+value.length});text+=value;}
+    }
+    const escaped=Array.from(needle,char=>'.*+?^$()[]{}|\\'.includes(char)?'\\'+char:char).join('');
+    const ranges:Range[]=[];
+    let cursor=0;
+    for(const match of text.matchAll(new RegExp(escaped,'giu'))){
+        const from=match.index,to=from+match[0].length;
+        while(spans[cursor]?.to<=from)cursor++;
+        for(let i=cursor;spans[i]?.from<to;i++){
+            const span=spans[i],range=root.ownerDocument.createRange();
+            range.setStart(span.node,Math.max(from,span.from)-span.from);
+            range.setEnd(span.node,Math.min(to,span.to)-span.from);
+            ranges.push(range);
+        }
+    }
+    return ranges;
+}

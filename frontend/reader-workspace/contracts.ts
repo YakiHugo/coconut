@@ -76,13 +76,15 @@ export type ReaderSourceTarget =
     | {kind:'exact-excerpt';excerptId:string;cueId:string|null;freshness:'current'|'stale'|'missing'}
     | {kind:'bookmark';bookmarkId:string;time:number}
     | {kind:'project-note'};
-export type ReaderNavigationRequest = {id:number;documentKey:string;revision:number} & (
+export type ReaderNavigationRequest = {
+    reviewIssue?:boolean;id:number;documentKey:string;revision:number} & (
     | {cueId:string;source?:never;edition?:never}
     | {cueId?:never;source?:never;edition:{editionId:string;blockId:string}}
     | {cueId?:never;edition?:never;source:{document:ReaderDocument;target:ReaderSourceTarget}}
 );
 export interface ReaderWorkspaceProps extends ReaderSnapshot {
     chineseScript?:string;
+    readabilityPanel?: import('react').ReactNode;
     resourcePanel?: import('react').ReactNode;
     sourcePanel?: import('react').ReactNode;
     interviewPanel?: import('react').ReactNode;

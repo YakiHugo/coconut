@@ -82,3 +82,24 @@ export function readingParagraphs(cues:ReaderCue[], options:{
     }
     return paragraphs;
 }
+
+export type ReadingChapter = {cue_id:string;title:string;kind:'manual'|'publisher'|'model'};
+
+export function readingChapters(cues:ReaderCue[],manual:readonly {cue_id:string;title:string}[],
+    publisher:readonly {start:number;title:string}[],model:readonly {cue_id:string;title:string}[]):ReadingChapter[] {
+    const positions=new Map(cues.map((cue,index)=>[cue.id,index]));
+    const authored=manual.filter(chapter=>positions.has(chapter.cue_id)).map(chapter=>({...chapter,kind:'manual' as const}));
+    const byCue=new Map(authored.map(chapter=>[chapter.cue_id,chapter] as [string,ReadingChapter]));
+    if(publisher.length){
+        let index=0;
+        for(const chapter of publisher){
+            while(index<cues.length&&cues[index].end<=chapter.start)index++;
+            const cue=cues[index];
+            if(cue&&!byCue.has(cue.id))byCue.set(cue.id,{cue_id:cue.id,title:chapter.title,kind:'publisher'});
+        }
+    }else if(!authored.length){
+        for(const chapter of model)if(positions.has(chapter.cue_id)&&!byCue.has(chapter.cue_id))
+            byCue.set(chapter.cue_id,{...chapter,kind:'model'});
+    }
+    return [...byCue.values()].sort((a,b)=>positions.get(a.cue_id)!-positions.get(b.cue_id)!);
+}

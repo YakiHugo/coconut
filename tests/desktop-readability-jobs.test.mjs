@@ -42,3 +42,30 @@ test('HTTP protocol requires reader origin, keeps resource upload separate, and 
  const head=await fetch(route,{method:'HEAD'});assert.equal(head.headers.get('content-length'),'14');assert.equal((await head.arrayBuffer()).byteLength,0);
  assert.equal((await fetch(route,{headers:{Range:'bytes=99-100'}})).status,416);
 });
+
+test('speaker processing can use verified saved media directly without a browser upload',async t=>{
+ const input=document(),fingerprint='a'.repeat(64),binding='fixture-binding';
+ let reads=0;
+ const f=await fixture(t,async({document:doc,media,steps})=>{
+  assert.equal(media,path.join(f.directory,'saved-media'));
+  assert.deepEqual(steps,['punctuation','speakers']);
+  doc.segments[0].text+='。';
+  doc.segments[0].speaker='说话人 1';
+  return doc;
+ });
+ const service=await createReadabilityJobs({...f.options,libraryStore:{get:()=>({document:input})},sourceMediaStore:{
+  owner:()=>({binding}),async localInput(key,requestedBinding,sha256){
+   assert.equal(key,input.key);assert.equal(requestedBinding,binding);assert.equal(sha256,fingerprint);
+   reads++;
+   return {path:path.join(f.directory,'saved-media')};
+  }
+ }});
+ t.after(()=>service.shutdown());
+ const command={protocolVersion:1,operation_id:randomUUID(),document:input,saved_media:fingerprint};
+ const job=await service.create(command);
+ assert.equal(job.needsMedia,false);
+ assert.equal(job.mediaIdentity,'source-media-sha256:'+fingerprint);
+ await wait(()=>service.get(job.id).state==='ready');
+ assert.equal(reads,3);
+ await assert.rejects(service.create({...command,operation_id:randomUUID(),document:{...input,segments:[{...input.segments[0],text:'改稿'}]}}),/原稿已变化/);
+});

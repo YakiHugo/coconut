@@ -3,7 +3,7 @@ import type {Projection} from '@coconut/reader/disfluency.js';
 import type { ReaderCue, ReaderDocument } from './contracts';
 import { time } from './domain';
 import { SourcePlaybackLink } from './source';
-import {readingParagraphs,type ReadingParagraph,type ReadingReplacement,type ReadingRun} from './reading-document';
+import {readingParagraphs,type ReadingParagraph,type ReadingReplacement,type ReadingRun,type ReadingChapter} from './reading-document';
 
 function ReadingSpeech({run,active,single}:{run:ReadingRun;active:boolean;single:boolean}) {
     const {speech,pieces,mapped,edited}=run;
@@ -54,14 +54,25 @@ export function passageDomain() {
     } }).CoconutPassages;
 }
 
-export function PassageView({ doc, cues, passages: supplied, playbackCues, current, seconds=0, position, onLocate, onPlayFrom, canListen = false, displayText=(text:string)=>text,projection,replacements }: {
-    displayText?:(text:string)=>string;
-    projection?:Projection; replacements?:ReadonlyMap<string,readonly ReadingReplacement[]>;
+export function PassageView({ doc, cues, passages: supplied, playbackCues, current, seconds=0, position, onLocate, onPlayFrom, canListen = false, displayText=(text:string)=>text,projection,replacements,speakerNames,chapters }: {
+    displayText?:(text:string)=>string; chapters?:ReadonlyMap<string,ReadingChapter>;
+    projection?:Projection; replacements?:ReadonlyMap<string,readonly ReadingReplacement[]>; speakerNames?:ReadonlyMap<string,string>;
     doc: ReaderDocument; cues: ReaderCue[]; passages?: Passage[]; current?: string; seconds?:number; position: string;
     playbackCues?: ReadonlyMap<string,ReaderCue>;
     onLocate: (id: string) => void; canListen?: boolean; onPlayFrom: (start: number) => void;
 }) {
-    const passages = supplied || passageDomain().build(cues, { source: doc.segments, layout: 'reading' });
+    const layout = supplied || passageDomain().build(cues, { source: doc.segments, layout: 'reading' });
+    const passages = useMemo(()=>{
+        if(!chapters?.size)return layout;
+        return layout.flatMap(passage=>{
+            const cuts=[0,...passage.cues.flatMap((cue,i)=>i>0&&chapters.has(cue.id)?[i]:[]),passage.cues.length];
+            if(cuts.length===2)return [passage];
+            return cuts.slice(1).map((end,i)=>{
+                const cues=passage.cues.slice(cuts[i],end),first=cues[0];
+                return {...passage,key:'passage:'+first.id,start:first.start,end:Math.max(...cues.map(cue=>cue.end)),cues};
+            });
+        });
+    },[layout,chapters]);
     const reading = useMemo(()=>passages.map(passage=>readingParagraphs(passage.cues,{
         separator:passageDomain().separator,displayText,projection,playbackCues,replacements
     })),[passages,displayText,projection,playbackCues,replacements]);
@@ -72,6 +83,8 @@ export function PassageView({ doc, cues, passages: supplied, playbackCues, curre
         passageDomain().continuous(left.cues.at(-1)!,right.cues[0]));
     return <article className="rw-passages" lang={typeof doc.language==='string'?doc.language:undefined}>{passages.map((passage,index) => {
         const speakerIndex = Math.max(0, speakers.indexOf(passageDomain().speakerIdentity(passage.cues[0])));
+        const firstCue=passage.cues[0];
+        const name=typeof firstCue.speaker_id==='string'&&!Object.hasOwn(firstCue,'original_speaker')?speakerNames?.get(firstCue.speaker_id):undefined;
         const hasSource = typeof doc.source_url === 'string' && /^https?:/.test(doc.source_url);
         const playbackStart = playbackCues?.get(passage.cues[0].id)?.start ?? passage.start;
         const playing = passage.cues.some(cue => cue.id === current);
@@ -80,9 +93,10 @@ export function PassageView({ doc, cues, passages: supplied, playbackCues, curre
             !continues(passages[index-1],passage) && !continues(passage,passages[index+1]);
         return <section className={'rw-passage' + (compact ? ' rw-passage-compact' : '') + (!passage.speaker ? ' rw-speaker-unknown' : '') + (playing ? ' rw-passage-playing' : '')}
             key={passage.key} style={{ '--speaker-hue': [86, 30, 150, 205, 65][speakerIndex % 5] } as CSSProperties}>
-            <div className="rw-passage-heading notranslate" translate="no">
+            {chapters?.has(firstCue.id)&&<h2 className="rw-chapter-title">{displayText(chapters.get(firstCue.id)!.title)}</h2>}
+            <div className="rw-passage-heading notranslate"  translate="no">
                 <div className="rw-passage-identity">
-                <span className="rw-speaker-label">{passage.speaker || '未标注'}</span>
+                <span className="rw-speaker-label">{name || passage.speaker || '未标注'}</span>
                 <div className="rw-cue-meta">
                     {canListen ? <button type="button" className="rw-time-link" aria-label={'从 ' + time(playbackStart) + ' 开始播放'} aria-current={playing ? 'time' : undefined} onClick={() => { onLocate(passage.cues[0].id); onPlayFrom(playbackStart); }}>▷ {time(playbackStart)}</button>
                         : hasSource ? <SourcePlaybackLink sourceUrl={doc.source_url} start={passage.start} compact/>

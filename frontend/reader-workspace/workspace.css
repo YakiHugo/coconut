@@ -201,3 +201,11 @@
 @media(max-width:600px),(pointer:coarse){.reader-workspace .rw-selection>button{min-height:44px;padding-inline:10px}}
 
 .rw-passage p.rw-original + p.rw-original{margin-top:.75em}
+
+.rw-review-version{display:flex;gap:14px;flex-wrap:wrap;margin-top:10px}
+.reader-workspace .rw-review-version button{font-size:12px;border:0;min-height:28px;padding:4px 6px;color:var(--accent)}
+
+.rw-chapter-title{font-size:1.28em;margin:0 0 .8em}
+.rw-chapter-list{padding-inline-start:24px}
+.rw-chapter-list button{text-align:start;margin:2px 0}
+.rw-original::highlight(coconut-reading-search),.rw-original ::highlight(coconut-reading-search){background:#f5d47e;color:#302514}

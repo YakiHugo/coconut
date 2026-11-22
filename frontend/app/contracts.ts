@@ -50,6 +50,7 @@ export type SaveResult = {
     };
 };
 export type StoreDependencies = {
+    adoptReadingReview?:(current:Document,accept:(next:Document,advance:()=>void)=>boolean)=>Promise<boolean>;
     nativeCatalogReady?:()=>boolean;
     nativeLibraryIdentity?:()=>string|null;
     nativeOwner?:(key:string)=>{library:string;epoch:number}|null;

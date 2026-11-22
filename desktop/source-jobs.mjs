@@ -65,7 +65,7 @@ export async function createSourceJobs({directory,libraryStore,mediaStore,podcas
  function describe(value){
   const operation=value.operation?JSON.parse(value.operation):null,current=libraryStore.get(value.document_key)?.document;
   const matchingContext=combined(value.kind)?currentCombined(value,operation):value.kind!=='transcribe'||!operation?.recognition_document||current&&JSON.stringify(operation.recognition_document)===JSON.stringify(recognitionSnapshot(current,value.binding));
-  return {id:value.id,documentKey:value.document_key,binding:value.binding,source:value.source,kind:value.kind,state:value.state,phase:value.phase,currentProfile:!['transcribe','align','download_transcribe'].includes(value.kind)||value.engine==='direct-v1'&&JSON.stringify(operation.profile)===JSON.stringify(transcriber?.profile)&&Boolean(matchingContext),resultAvailable:['transcribe','align','download_transcribe'].includes(value.kind)&&value.engine==='direct-v1'&&value.state==='ready'&&Boolean(matchingContext),mediaReady:Boolean(operation?.fingerprint),assetSha256:operation?.fingerprint||null,ingestionId:value.ingestion_id||null,error:value.error,error_details:storedErrorDetails(value.error_details),created:value.created,updated:value.updated};
+  return {id:value.id,documentKey:value.document_key,binding:value.binding,source:value.source,kind:value.kind,state:value.state,phase:value.phase,currentProfile:!['transcribe','align','download_transcribe'].includes(value.kind)||value.engine==='direct-v1'&&JSON.stringify(operation.profile)===JSON.stringify(transcriber?.profile)&&Boolean(matchingContext),...(operation?.after_transcription_review?{readingReviewProvider:operation.after_transcription_review}:{}),resultAvailable:['transcribe','align','download_transcribe'].includes(value.kind)&&value.engine==='direct-v1'&&value.state==='ready'&&Boolean(matchingContext),mediaReady:Boolean(operation?.fingerprint),assetSha256:operation?.fingerprint||null,ingestionId:value.ingestion_id||null,error:value.error,error_details:storedErrorDetails(value.error_details),created:value.created,updated:value.updated};
  }
  function update(id,state,error=null,details=null){const safeDetails=videoSourceErrorDetails(details);db.prepare('UPDATE jobs SET state=?,error=?,error_details=?,updated=? WHERE id=?').run(state,error,safeDetails?JSON.stringify(safeDetails):null,Date.now(),id);}
  function recognitionArguments(ownerDocument){
@@ -223,10 +223,11 @@ export async function createSourceJobs({directory,libraryStore,mediaStore,podcas
  async function createOne(data){
   if(closing||admissionOwner!==null)throw fail('服务正在停止或等待关闭确认',503);
   if(data?.protocolVersion!==1||!uuid(data.operation_id)||typeof data.key!=='string'||!data.key||data.key.length>1000||!['download','transcribe','align','download_transcribe'].includes(data.kind)||data.consent!==true)throw fail('请明确确认此来源操作');
+  if(data.after_transcription_review!==undefined&&(![false,'codex','kimi'].includes(data.after_transcription_review)||!['transcribe','download_transcribe'].includes(data.kind)))throw fail('转录后精校选项无效');
   if(combined(data.kind)&&(data.localOnly!==true||data.acquisitionMode!=='incremental-experimental-v1'||data.review!==undefined||data.model!==undefined||data.profile!==undefined))throw fail('请明确确认仅本地实验转录');
   const owner=mediaStore.owner(data.key);if(data.libraryId!==libraryStore.describe().epoch)throw fail('所连接的书架已变化，请刷新后核对',409);
   if(data.source!==owner.source)throw fail('原项目来源已变化',409);
-  const request=JSON.stringify({key:data.key,source:data.source,kind:data.kind});
+  const request=JSON.stringify({key:data.key,source:data.source,kind:data.kind,...(data.after_transcription_review!==undefined?{after_transcription_review:data.after_transcription_review}:{})});
   const alias=db.prepare('SELECT * FROM job_receipts WHERE id=?').get(data.operation_id);
   if(alias){if(alias.request!==request||alias.binding!==owner.binding)throw fail('此操作已绑定另一份来源',409);return {...describe(row(alias.job_id)),requestedOperationId:data.operation_id};}
   const previous=db.prepare('SELECT * FROM jobs WHERE id=?').get(data.operation_id);
@@ -242,7 +243,7 @@ export async function createSourceJobs({directory,libraryStore,mediaStore,podcas
    if(db.prepare("SELECT id FROM jobs WHERE binding=? AND kind='download' AND state IN ('running','queued')").get(owner.binding))throw fail('原声下载正在进行，请完成后再明确转录',409);
    const record=await mediaStore.read(data.key,owner.binding);
    const unclaimedSaved=existing&&!JSON.parse(existing.operation).fingerprint&&record&&['failed','cancelled','interrupted'].includes(existing.state);
-   if(existing&&!unclaimedSaved&&currentCombined(existing,JSON.parse(existing.operation))){
+   if(existing&&!unclaimedSaved&&currentCombined(existing,JSON.parse(existing.operation))&&(JSON.parse(existing.operation).after_transcription_review||false)===(data.after_transcription_review||false)){
     if(db.prepare('SELECT count(*) AS count FROM job_receipts').get().count>=2048)throw fail('任务回执已达保存上限',409);
     db.prepare('INSERT INTO job_receipts (id,job_id,request,binding) VALUES (?,?,?,?)').run(data.operation_id,existing.id,request,owner.binding);
     return {...describe(existing),requestedOperationId:data.operation_id};
@@ -250,13 +251,13 @@ export async function createSourceJobs({directory,libraryStore,mediaStore,podcas
    if(existing&&['queued','running'].includes(existing.state))throw fail('旧转录仍在进行，请先取消原任务',409);
    if(!(await capabilities()).downloadTranscribe.available)throw fail('本地增量转录尚未就绪',503);
    if(!record&&!document.podcast_source?.media_url&&!videoSource(document))throw fail('此项目没有可获取的原声');
-   operation=JSON.stringify({profile:transcriber.profile,user_snapshot:userSnapshot(document),recognition_document:recognitionSnapshot(document,owner.binding),fingerprint:record?.sha256||null,size:record?.size||null});
+   operation=JSON.stringify({profile:transcriber.profile,user_snapshot:userSnapshot(document),recognition_document:recognitionSnapshot(document,owner.binding),fingerprint:record?.sha256||null,size:record?.size||null,...(data.after_transcription_review?{after_transcription_review:data.after_transcription_review}:{})});
   }else if(data.kind==='download'){const document=libraryStore.get(data.key).document;if(!document.podcast_source?.media_url&&!videoSource(document))throw fail('此项目没有可获取的原声');}
   else{
    const record=await mediaStore.read(data.key,owner.binding);if(!record)throw fail('请先保存原声',409);
-   if(existing){if(existing.engine==='direct-v1'&&JSON.parse(existing.operation).fingerprint===record.sha256&&JSON.stringify(JSON.parse(existing.operation).profile)===JSON.stringify(transcriber?.profile)&&(data.kind!=='transcribe'||JSON.stringify(JSON.parse(existing.operation).recognition_document)===JSON.stringify(recognitionSnapshot(libraryStore.get(data.key).document,owner.binding)))&&(data.kind!=='align'||sourceSignature(JSON.parse(existing.operation).document)===sourceSignature(libraryStore.get(data.key).document)))return describe(existing);if(['queued','running'].includes(existing.state))throw fail('旧原声仍有进行中的转写，请先核对原任务',409);}
+   if(existing){if(existing.engine==='direct-v1'&&(JSON.parse(existing.operation).after_transcription_review||false)===(data.after_transcription_review||false)&&JSON.parse(existing.operation).fingerprint===record.sha256&&JSON.stringify(JSON.parse(existing.operation).profile)===JSON.stringify(transcriber?.profile)&&(data.kind!=='transcribe'||JSON.stringify(JSON.parse(existing.operation).recognition_document)===JSON.stringify(recognitionSnapshot(libraryStore.get(data.key).document,owner.binding)))&&(data.kind!=='align'||sourceSignature(JSON.parse(existing.operation).document)===sourceSignature(libraryStore.get(data.key).document)))return describe(existing);if(['queued','running'].includes(existing.state))throw fail('旧原声仍有进行中的转写，请先核对原任务',409);}
    const extension=TYPES[record.type];if(!extension)throw fail('此原声格式暂不支持转写，请转换为 MP3/WAV/MP4 后导入',409);
-   operation=JSON.stringify({operation_id:data.operation_id,filename:'source.'+extension,size:record.size,fingerprint:record.sha256,last_modified:0,language:'',profile:transcriber?.profile,...(data.kind==='align'?{document:processingSnapshot(libraryStore.get(data.key).document)}:{recognition_document:recognitionSnapshot(libraryStore.get(data.key).document,owner.binding)}),...(data.kind==='transcribe'&&reviewProvider?{review:{provider:reviewProvider,model:reviewModel}}:{})});
+   operation=JSON.stringify({operation_id:data.operation_id,filename:'source.'+extension,size:record.size,fingerprint:record.sha256,last_modified:0,language:'',profile:transcriber?.profile,...(data.kind==='align'?{document:processingSnapshot(libraryStore.get(data.key).document)}:{recognition_document:recognitionSnapshot(libraryStore.get(data.key).document,owner.binding)}),...(data.kind==='transcribe'&&data.after_transcription_review?{after_transcription_review:data.after_transcription_review}:data.kind==='transcribe'&&data.after_transcription_review===undefined&&reviewProvider?{review:{provider:reviewProvider,model:reviewModel}}:{})});
    const status=await (data.kind==='align'?transcriber?.alignmentStatus():transcriber?.status());if(!status?.available)throw fail(status?.message||'转写执行器尚未就绪',503);
   }
   if(closing||admissionOwner!==null)throw fail('服务正在停止或等待关闭确认',503);if(mediaStore.owner(data.key).binding!==owner.binding)throw fail('原项目来源已变化',409);

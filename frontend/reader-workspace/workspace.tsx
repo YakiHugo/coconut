@@ -16,9 +16,11 @@ import {scriptConverter} from '../reading-preferences/chinese-script';
 import * as Editions from '@coconut/reader/editions.js';
 import {SelectionToolbar} from './selection-toolbar';
 import {LISTENING_LEAD_SECONDS,selectionPlaybackStart,sourcePlayback,speechSelection} from './speech';
-import {supportsTextHighlight,textOffsetAtPoint} from './text-range';
+import {supportsTextHighlight,textOffsetAtPoint,textHighlights} from './text-range';
 import {usePlaybackFollow,useReadingScroller} from './playback-follow';
 import {prepareCleanup} from './cleanup';
+import {readingReview} from '@coconut/shared/transcript-review';
+import {readingChapters,readingParagraphs} from './reading-document';
 type Domain = {
     createPlaybackIndex: (cues: ReaderCue[]) => {
         find: (seconds: number) => ReaderCue | undefined;
@@ -39,7 +41,7 @@ const domain = () => (window as unknown as {
 }).Coconut;
 const UNCONFIRMED_SAVE = '尚未保存。内容可能已更新或存储暂不可用，请保留草稿后重试。';
 export function ReaderWorkspace(props: ReaderWorkspaceProps) { return <WorkspaceSession key={props.document.key} {...props}/>; }
-function WorkspaceSession({ document: doc, revision, media, onSaveDocument, onReadingPosition, onRequestAi, onDirtyChange, onMediaProgress, saveStatus, onVisibleSelection, navigationRequest, onNavigationHandled, initialView, onViewChange, shortcutsEnabled=false, onOpenSummary, aiReturnRequest, resourcePanel, sourcePanel, interviewPanel, chineseScript='source' }: ReaderWorkspaceProps) {
+function WorkspaceSession({ document: doc, revision, media, onSaveDocument, onReadingPosition, onRequestAi, onDirtyChange, onMediaProgress, saveStatus, onVisibleSelection, navigationRequest, onNavigationHandled, initialView, onViewChange, shortcutsEnabled=false, onOpenSummary, aiReturnRequest, resourcePanel, readabilityPanel, sourcePanel, interviewPanel, chineseScript='source' }: ReaderWorkspaceProps) {
     const modeTabsId = useId();
     const [toolsOpen,setToolsOpen]=useState(false),[tool,setTool]=useState('source');
     const openTools=(next:string)=>{setTool(next);setToolsOpen(true);};
@@ -57,6 +59,17 @@ function WorkspaceSession({ document: doc, revision, media, onSaveDocument, onRe
     const cleanup=useMemo(()=>prepareCleanup(doc,displayText),[doc.key,doc.segments,doc.reading_cleanup,displayText]);
     const cleanupActive=mode==='passages'&&!edition&&cleanup.state==='ready'&&Boolean(cleanup.hiddenCount||cleanup.markCount||cleanup.breakCount);
     useEffect(()=>{window.getSelection()?.removeAllRanges();setSelection(null);},[cleanup.projection]);
+    const availableReview=useMemo(()=>readingReview(doc),[doc.segments,doc.reading_review]);
+    const [selectedReview,setSelectedReview]=useState(()=>availableReview);
+    const activeReview=availableReview&&selectedReview?.sourceSignature===availableReview.sourceSignature
+        ?selectedReview.jobId===availableReview.jobId&&selectedReview.fallbackBatches===availableReview.fallbackBatches?availableReview:selectedReview
+        :null;
+    const chapters=useMemo(()=>{
+        const context=doc.transcription_context as {chapters?:Array<{start:number;title:string}>}|undefined;
+        const manual=doc.reading_chapters as Array<{cue_id:string;title:string}>|undefined;
+        return readingChapters(doc.segments,manual??[],context?.chapters??[],activeReview?.headings??[]);
+    },[doc.segments,doc.reading_chapters,doc.transcription_context,activeReview]);
+    const chaptersByCue=useMemo(()=>new Map(chapters.map(chapter=>[chapter.cue_id,chapter])),[chapters]);
     const [editionFocus,setEditionFocus]=useState<{id:number;blockId:string}|null>(null);
     const handledNavigation=useRef<ReaderWorkspaceProps['navigationRequest']>(null);
     const aiReturn=useRef<{selection:SourceSelection;cues:{id:string;text:string;speaker:string|null}[];mode:typeof mode;query:string;position:string}|null>(null);
@@ -160,11 +173,15 @@ function WorkspaceSession({ document: doc, revision, media, onSaveDocument, onRe
         let index:ReturnType<ReturnType<typeof passageDomain>['searchIndex']>|undefined;
         return (needle:string)=>{
             const projection=cleanup.projection;
-            if(!projection)return null;
-            index??=passageDomain().searchIndex(doc.segments.map((cue,i)=>({...cue,text:displayText(projection.cues[i].readingText)})));
+            if(!projection&&!activeReview)return null;
+            index??=passageDomain().searchIndex(doc.segments.map(cue=>{
+                const text=readingParagraphs([cue],{separator:passageDomain().separator,displayText,projection,replacements:activeReview?.edits})
+                    .map(paragraph=>paragraph.runs.flatMap(run=>run.pieces.map(piece=>piece.text)).join('')).join(' ');
+                return {...cue,text};
+            }));
             return index.search(needle,'text');
         };
-    },[doc.segments,displayText,cleanup.projection]);
+    },[doc.segments,displayText,cleanup.projection,activeReview]);
     const filtered = useMemo(() => {
         const needle=displayText(query).trim();
         if(!needle)return doc.segments;
@@ -173,6 +190,15 @@ function WorkspaceSession({ document: doc, revision, media, onSaveDocument, onRe
         return filterCues(doc,query,displayText,hits);
     }, [doc,displayText,query,mode,sourceSearch,readingSearch]);
     const shown = filtered;
+    useEffect(()=>{
+        const root=host.current,needle=displayText(query).trim();
+        if(!root||!needle||mode==='summary'||edition||!supportsTextHighlight())return;
+        const ranges=Array.from(root.querySelectorAll<HTMLElement>('.rw-original'))
+            .flatMap(paragraph=>textHighlights(paragraph,needle,translationTarget));
+        const highlight=new window.Highlight(...ranges);
+        window.CSS.highlights.set('coconut-reading-search',highlight);
+        return()=>{if(window.CSS.highlights.get('coconut-reading-search')===highlight)window.CSS.highlights.delete('coconut-reading-search');};
+    },[filtered,query,displayText,mode,edition,activeReview,cleanup.projection]);
     useEffect(()=>{
         const visible=new Set(shown.map(cue=>cue.id));
         if(selection?.cueIds.some(id=>!visible.has(id)))setSelection(null);
@@ -222,7 +248,8 @@ function WorkspaceSession({ document: doc, revision, media, onSaveDocument, onRe
             }else setStatus('已打开笔记所属文稿；项目笔记保存在「我的内容」中。');
             setSourceFocus({id:request.id,target});
         }else if(doc.segments.some(cue=>cue.id===request.cueId)){
-            if(mode==='summary')navigateSummary(request.cueId);else locate(request.cueId,true);
+            if(request.reviewIssue){setToolsOpen(false);setMode('transcript');setSelection(null);locate(request.cueId,true);}
+            else if(mode==='summary')navigateSummary(request.cueId);else locate(request.cueId,true);
         }
         onNavigationHandled?.(request);
     },[navigationRequest,doc,revision,anyDirty,busy]);
@@ -270,6 +297,13 @@ function WorkspaceSession({ document: doc, revision, media, onSaveDocument, onRe
         if(current&&current.bottom>top&&current.top<bottom)return position;
         const row=[...(host.current?.querySelectorAll<HTMLElement>('.rw-original')||[])].find(node=>node.getBoundingClientRect().bottom>top);
         return row?.getAttribute('data-source-id')||row?.querySelector<HTMLElement>('[data-source-id]')?.dataset.sourceId||position;
+    };
+    const showReview=(show:boolean)=>{
+        const anchor=readingAnchor();
+        window.getSelection()?.removeAllRanges();setSelection(null);setFollow(false);
+        setSelectedReview(show?availableReview:null);
+        if(mode!=='passages')setMode('passages');
+        if(anchor){setPosition(anchor);setLocationTick(value=>value+1);}
     };
     const changeMode=(next:'transcript'|'passages'|'summary')=>{const anchor=readingAnchor(),wasTemporary=temporaryNavigation.current;temporaryNavigation.current=false;window.getSelection()?.removeAllRanges();setSelection(null);setFollow(false);if(next==='summary'&&mode!=='summary'&&!wasTemporary)readingReturn.current={revision,mode,query,position:anchor};if(next!=='summary'){setPosition(anchor);setSearchOpen(Boolean(query));}else setSummaryCitation('');setMode(next);if(next==='summary')setSearchOpen(false);};
     const returnToReading=()=>{const saved=readingReturn.current;if(saved&&saved.revision===revision&&doc.segments.some(cue=>cue.id===saved.position)){setMode(saved.mode);setQuery(saved.query);setSearchOpen(Boolean(saved.query));setPosition(saved.position);}else{setMode('transcript');setQuery('');if(saved)setStatus('原文已更新，已返回当前稿中的阅读位置。');}readingReturn.current=null;temporaryNavigation.current=false;};
@@ -501,16 +535,35 @@ function WorkspaceSession({ document: doc, revision, media, onSaveDocument, onRe
             {missingSpeakers>0&&<button type="button" onClick={()=>openTools('source')}>{missingSpeakers} 段说话人待核对</button>}
             <button type="button" className="rw-source-entry" onClick={()=>openTools('source')}>来源与整理</button>
         </div>
+        {(chapters.length>0||availableReview)&&!edition&&mode!=='summary'&&<div className="rw-review-version notranslate" translate="no">
+            {chapters.length>0&&<button type="button" onClick={()=>openTools('chapters')}>章节</button>}
+            {activeReview&&<button type="button" onClick={()=>showReview(false)}>查看基础稿</button>}
+            {availableReview&&activeReview!==availableReview&&<button type="button" onClick={()=>showReview(true)}>切换至精校稿</button>}
+            {!!availableReview?.issues.length&&<button type="button" onClick={()=>openTools('processing')}>{availableReview.issues.length} 处待核对</button>}
+        </div>}
         {saveStatus && saveStatus!=='saved' && <p role="status">{saveStatus==='pending'||saveStatus==='saving'?'正在保存…':'保存尚未确认，请保留本页修改。'}</p>}
     </header>
     <ReaderDialog open={toolsOpen} title="来源与整理" onClose={()=>setToolsOpen(false)}>
         <nav className="rw-tool-nav" aria-label="文字稿工具">
-            {[['source','原始来源'],...(resourcePanel?[['processing','文字整理']]:[]),...(doc.segments.length?[['editing','访谈编辑']]:[]),...(media&&doc.segments.length?[['timing','时间校准']]:[])].map(([id,label])=><button type="button" key={id} aria-current={tool===id?'page':undefined} onClick={()=>setTool(id)}>{label}</button>)}
+            {[['source','原始来源'],...(chapters.length?[['chapters','章节']]:[]),...(resourcePanel?[['processing','文字整理']]:[]),...(readabilityPanel?[['local','本地原声处理']]:[]),...(doc.segments.length?[['editing','访谈编辑']]:[]),...(media&&doc.segments.length?[['timing','时间校准']]:[])].map(([id,label])=><button type="button" key={id} aria-current={tool===id?'page':undefined} onClick={()=>setTool(id)}>{label}</button>)}
         </nav>
         <div className="rw-tool-content" hidden={tool!=='source'}><ReaderSource doc={doc}/>{media?.availability==='local_session'&&<p>刷新后需重新选择原文件。</p>}{sourcePanel}</div>
+        <div className="rw-tool-content" hidden={tool!=='chapters'}>
+            <nav aria-label="章节目录"><ol className="rw-chapter-list">{chapters.map(chapter=><li key={chapter.cue_id}>
+                <button type="button" disabled={anyDirty||busy} onClick={()=>{setToolsOpen(false);setMode('passages');locate(chapter.cue_id,true);}}>
+                    {displayText(chapter.title)}
+                </button>
+            </li>)}</ol></nav>
+        </div>
         <div className="rw-tool-content" hidden={tool!=='processing'}>{resourcePanel}</div>
+        <div className="rw-tool-content" hidden={tool!=='local'}>{readabilityPanel}</div>
         <div className="rw-tool-content" hidden={tool!=='editing'}>
             {interviewPanel}
+            {Editions.state(doc).editions.length>0&&<section aria-label="已保存的编辑稿">
+                <h3>已保存的编辑稿</h3>
+                {Editions.state(doc).editions.map(item=><button key={item.id} type="button" disabled={anyDirty||busy}
+                    onClick={()=>{setEditionId(item.id);setToolsOpen(false);setFollow(false);setSelection(null);}}>{item.title}</button>)}
+            </section>}
             <section className="rw-manual-edition"><h3>手动整理</h3><button type="button" disabled={anyDirty||busy||Editions.state(doc).editions.length>=Editions.LIMITS.editions} onClick={createManualEdition}>新建人工编辑稿</button></section>
         </div>
         <div className="rw-tool-content" hidden={tool!=='timing'}>{media && doc.segments.length > 0 && <section className="rw-calibration"><h3>时间校准</h3><p>当前偏移：{calibrated} 秒</p><p>仅调整播放映射，不修改原始字幕时间。正数表示媒体比字幕晚。</p><label>偏移秒数 <input type="number" min="-3600" max="3600" step="0.1" value={offset} disabled={busy} onChange={e => {setOffsetStarted(true);setOffset(e.target.value);}}/></label><button disabled={busy || editionDirty || correctionDirty || !media.identity.startsWith('file-candidate-v1:') || offset.trim() === '' || !Number.isFinite(Number(offset)) || Math.abs(Number(offset)) > 3600} onClick={async() => {if(await save({ ...doc, media_timing: { version: 1, identity: media.identity, offset: Number(offset) } })){setOffsetStarted(false);setOffset('');}}}>保存校准</button><button disabled={busy} onClick={()=>{setOffsetStarted(false);setOffset('');}}>取消校准草稿</button></section>}</div>
@@ -519,8 +572,10 @@ function WorkspaceSession({ document: doc, revision, media, onSaveDocument, onRe
  {media ? <ReaderPlayer key={attachment.current.id} media={media} seek={seek?.attachmentId===attachment.current.id?seek:null} onTime={setClock} onProgress={onMediaProgress}/> : <p className="rw-media-unavailable">{doc.source_url ? '原声未载入。' : doc.local_media_source ? '重新选择原文件以载入原声。' : '未关联原声。'}</p>}
 
  {doc.segments.length === 0 ? <section className="rw-empty"><h2>先播放原文件</h2><p>{doc.transcript_status === 'processing' ? '文字稿处理中…' : '暂无文字稿。'}</p></section> : <>
- {edition?<EditionReader key={edition.id} doc={doc} edition={edition} focusBlock={editionFocus} media={media} busy={busy} saveStatus={saveStatus} onSave={next=>save(next,revision,true)} onDirtyChange={setEditionDirty} onSource={id=>{setMode('passages');locate(id);}} onListen={start=>playFrom(start)}/>:<>
- {Array.isArray(doc.reading_chapters)&&doc.reading_chapters.length>0&&<nav className="rw-edition-chapters" aria-label="连续文字稿章节">{(doc.reading_chapters as Array<{id:string;title:string;cue_id:string}>).map(c=><button key={c.id} disabled={anyDirty||busy||!doc.segments.some(s=>s.id===c.cue_id)} onClick={()=>locate(c.cue_id,true)}>{c.title}</button>)}</nav>}
+ {edition?<><div className="rw-review-version notranslate" translate="no">
+    <button type="button" disabled={anyDirty||busy} onClick={()=>{setEditionId('source');setMode('passages');setLocationTick(value=>value+1);}}>返回文字稿</button>
+ </div><EditionReader key={edition.id} doc={doc} edition={edition} focusBlock={editionFocus} media={media} busy={busy} saveStatus={saveStatus} onSave={next=>save(next,revision,true)} onDirtyChange={setEditionDirty} onSource={id=>{setMode('passages');locate(id);}} onListen={start=>playFrom(start)}/></>:<>
+
  <div className="rw-content-switch notranslate" translate="no"><ReadingModeTabs mode={mode} id={modeTabsId} onChange={changeMode}/><button type="button" className="rw-search-trigger" data-native-command="find-transcript" ref={searchTrigger} aria-label="搜索文字稿" aria-expanded={searchOpen&&mode!=='summary'} aria-controls={`${modeTabsId}-search`} onClick={openSearch}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 5 5"/></svg><span>查找</span></button></div>
  <div role="tabpanel" id={`${modeTabsId}-panel`} aria-labelledby={`${modeTabsId}-${mode}`}>
  <div className="rw-search-panel notranslate" translate="no" id={`${modeTabsId}-search`} hidden={!searchOpen||mode==='summary'} onKeyDown={event=>{if(searchOpen&&mode!=='summary'&&event.key==='Escape'&&!event.nativeEvent.isComposing&&event.nativeEvent.keyCode!==229){event.preventDefault();event.stopPropagation();closeSearch();}}}><label><span className="rw-sr-only">搜索原话、译文和笔记</span><input ref={searchRef} type="search" placeholder="搜索原话、译文和笔记" value={query} onChange={e=>{pendingSearchResults.current=true;setFollow(false);setQuery(e.target.value);}}/></label>{query.trim()&&<span className="rw-search-count" role="status">{filtered.length} / {doc.segments.length} 个片段</span>}<button type="button" aria-label="关闭搜索" onClick={closeSearch}>关闭</button></div>
@@ -552,7 +607,7 @@ function WorkspaceSession({ document: doc, revision, media, onSaveDocument, onRe
                 const speech=paragraph.querySelector<HTMLElement>('.rw-speech.rw-playing')||paragraph.querySelector<HTMLElement>('.rw-speech')||(paragraph.matches('[data-source-id]')?paragraph:null);
                 if(speech){event.preventDefault();selectSpeech(speech);}
             }} onKeyUp={event=>{if(!event.nativeEvent.isComposing&&(['ArrowLeft','ArrowRight','ArrowUp','ArrowDown','Home','End','PageUp','PageDown'].includes(event.key)||((event.ctrlKey||event.metaKey)&&event.key.toLowerCase()==='a')))capture();}}>
- {mode !== 'transcript' ? <PassageView displayText={displayText} projection={cleanupActive?cleanup.projection:undefined} canListen={Boolean(media)} doc={doc} cues={shown} passages={passages} playbackCues={playbackCues} current={activeCue?.id} seconds={clock-calibrated} position={position} onLocate={locate} onPlayFrom={playFrom}/> : shown.map(cue =>
+ {mode !== 'transcript' ? <PassageView displayText={displayText} projection={cleanupActive?cleanup.projection:undefined} replacements={activeReview?.edits} speakerNames={activeReview?.speakers} chapters={chaptersByCue} canListen={Boolean(media)} doc={doc} cues={shown} passages={passages} playbackCues={playbackCues} current={activeCue?.id} seconds={clock-calibrated} position={position} onLocate={locate} onPlayFrom={playFrom}/> : shown.map(cue =>
  <section key={cue.id} data-cue-id={cue.id} className={'rw-cue' + (cue.id === activeCue?.id ? ' rw-playing' : '') + (cue.id === position ? ' rw-current' : '')}>
  <div className="rw-cue-meta notranslate" translate="no"><button type="button" onClick={() => { locate(cue.id); seekTo((playbackCues.get(cue.id)?.start??cue.start) + calibrated); }}>{time(cue.start)}</button>{cue.speaker && <span>{cue.speaker}</span>}{media ? <button type="button" onClick={() => playCue(cue)}>从此处播放</button> : <SourcePlaybackLink sourceUrl={doc.source_url} start={cue.start}/>}</div>
  <p className="rw-original" tabIndex={0} aria-description="单击选取播放位置；拖选可精确选择。" data-source-id={cue.id}>{displayText(cue.text)}</p>
