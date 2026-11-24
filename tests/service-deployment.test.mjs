@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
-import {mkdtemp,rm} from 'node:fs/promises';
+import {mkdtemp,mkdir,readFile,writeFile,rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import path from 'node:path';
 import {randomUUID} from 'node:crypto';
@@ -9,6 +9,7 @@ import {serviceConfig} from '../server/config.mjs';
 import {startService} from '../server/main.mjs';
 import {createOwnerAccess} from '../desktop/owner-access.mjs';
 import {startBridge} from '../desktop/server.mjs';
+import {createLibraryStore} from '../desktop/library-store.mjs';
 
 const token='authored-owner-test-key-with-at-least-32-characters';
 const publicOrigin='https://reader.example.test';
@@ -42,6 +43,42 @@ test('standalone local service opens one canonical library without any model or 
  assert.equal((await request('/api/v1/executor')).json().enabled,true);
  assert.equal((await request('/api/v1/ingestions/capabilities')).json().transcription.available,false);
 });
+test('a second service reports the occupied library and leaves the running service usable',async t=>{
+ const {env,request,directory}=await setup(t);
+ await assert.rejects(startService({env}),error=>{
+  assert.equal(error.cause?.libraryCode,'library_in_use');
+  assert.ok(error.message.includes(path.join(directory,'library')));
+  assert.match(error.message,/Stop the other Coconut service/);
+  return true;
+ });
+ assert.equal((await request('/api/v1/library')).json().enabled,true);
+});
+for(const entrypoint of ['bridge','service'])for(const storage of ['library','source-media']){
+ test(`${entrypoint} preserves the ${storage} initialization error and existing data`,async t=>{
+  const directory=await mkdtemp(path.join(tmpdir(),'coconut-startup-failure-'));
+  t.after(()=>rm(directory,{recursive:true,force:true}));
+  const libraryDirectory=path.join(directory,'library');
+  await mkdir(libraryDirectory,{mode:0o700});
+  const blocker=path.join(libraryDirectory,storage==='library'?'library.sqlite':'source-media');
+  const original=Buffer.from('authored data to preserve');
+  await writeFile(blocker,original,{mode:0o600});
+  const start=()=>entrypoint==='service'
+   ?startService({env:{COCONUT_PORT:'0',COCONUT_DATA_DIRECTORY:directory}})
+   :startBridge({port:0,taskDirectory:path.join(directory,'tasks'),libraryDirectory,enableSourceJobs:true});
+  await assert.rejects(start(),error=>{
+   assert.match(error.message,storage==='library'?/Cannot open library at/:/Cannot open source media storage at/);
+   assert.ok(error.message.includes(storage==='library'?libraryDirectory:blocker));
+   assert.ok(error.cause instanceof Error);
+   assert.doesNotMatch(error.message,/Source tasks require an owned library/);
+   return true;
+  });
+  assert.deepEqual(await readFile(blocker),original);
+  if(storage==='source-media'){
+   const reopened=await createLibraryStore({directory:libraryDirectory,exclusiveWriter:true});
+   reopened.close();
+  }
+ });
+}
 test('hosted owner login protects the real HTTP APIs and preserves sessions across service restart',async t=>{
  const setupResult=await setup(t,{COCONUT_HOST:'0.0.0.0',COCONUT_PUBLIC_ORIGIN:publicOrigin,COCONUT_OWNER_TOKEN:token});
  const {request,login,env,directory,setServer}=setupResult;

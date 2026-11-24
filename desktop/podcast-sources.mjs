@@ -4,8 +4,9 @@ import Coconut from '../reader/core.js';
 import { fetchPublic, publicUrl, mime, isMediaType, PublicSourceError } from './public-http.mjs';
 import { parseXml, decodeEntities } from './podcast-xml.mjs';
 import {publisherText} from './transcription-context.mjs';
+import {DEFAULT_PODCAST_DOWNLOAD_POLICY,podcastDownloadPolicyFromEnvironment,validatePodcastDownloadPolicy} from './podcast-download-policy.mjs';
 
-export const PODCAST_LIMITS=Object.freeze({metadataBytes:8*1024*1024,transcriptBytes:8*1024*1024,mediaBytes:200*1024*1024,mediaTimeoutMs:30*60*1000,mediaIdleTimeoutMs:30000,episodes:200,segments:30000,duration:21600,concurrent:2});
+export const PODCAST_LIMITS=Object.freeze({metadataBytes:8*1024*1024,transcriptBytes:8*1024*1024,mediaBytes:200*1024*1024,mediaTimeoutMs:DEFAULT_PODCAST_DOWNLOAD_POLICY.timeoutMs,mediaIdleTimeoutMs:DEFAULT_PODCAST_DOWNLOAD_POLICY.idleTimeoutMs,episodes:200,segments:30000,duration:21600,concurrent:2});
 const ATOM='http://www.w3.org/2005/Atom',PODCAST='https://podcastindex.org/namespace/1.0',ITUNES='http://www.itunes.com/dtds/podcast-1.0.dtd';
 // The namespace's own Podcasting 2.0 feed still uses this earlier published URI.
 const PODCAST_URIS=new Set([PODCAST,'https://github.com/Podcastindex-org/podcast-namespace/blob/main/docs/1.0.md']);
@@ -256,7 +257,8 @@ export function matchAppleEpisode(results,collectionId,trackId,episodes,identity
   if(matches.length!==1||matches[0].identity_ambiguous)return null;
   return {episode:matches[0],matched_by:matches[0].id===guidHash?'publisher_guid':'enclosure_url'};
 }
-export function createPodcastSources({fetchResource=fetchPublic,now=Date.now}={}) {
+export function createPodcastSources({fetchResource=fetchPublic,now=Date.now,downloadPolicy=podcastDownloadPolicyFromEnvironment()}={}) {
+  const policy=validatePodcastDownloadPolicy(downloadPolicy);
   let active=0;
   const bounded=async action=>{if(active>=PODCAST_LIMITS.concurrent)throw new Error('最多同时处理两个播客请求，请稍后重试');active++;try{return await action();}finally{active--;}};
   // Completed publisher RSS snapshots only. Bounds are ceilings, not allocations.
@@ -387,13 +389,18 @@ export function createPodcastSources({fetchResource=fetchPublic,now=Date.now}={}
     }
     return {current,episode};
   }
-  async function importEpisode(data, {signal}={}) {
+  async function importEpisode(data, {signal,authorOnly=false}={}) {
     const {current,episode}=await chosen(data,signal,true),available=episode.transcripts.filter(t=>t.supported);
+    if(authorOnly&&!available.length)return episode.transcripts.length
+      ? {status:'unavailable',message:'发布者声明的文字稿格式暂不支持'}
+      : {status:'author_captions_absent'};
     if(!available.length)return {status:'needs_transcription',episode,feed_url:current.feed_url,feed_checked_at:current.feed_checked_at,feed_reused:current.feed_reused,message:'此单集没有可导入的发布者时间戳文字稿；可选择合法字幕文件，不会自动识别或下载模型。'};
     let transcript;
     if(data.transcriptUrl)transcript=available.find(item=>item.url===data.transcriptUrl);
     else {
       const selection=selectPublisherTranscript(episode);
+      if(authorOnly&&selection.status!=='default')return {status:'language_required',message:'请选择发布者文字稿',
+        tracks:available.filter(track=>!track.selection_conflict).map(track=>({value:track.url,label:(track.language||'未标明语言')+' · '+track.type}))};
       if(selection.status!=='default')throw new Error('发布者文字稿语言未知或与单集语言不一致，请明确选择要导入的文字稿语言');
       transcript=available.find(track=>track.url===selection.transcript_url);
     }
@@ -421,7 +428,7 @@ export function createPodcastSources({fetchResource=fetchPublic,now=Date.now}={}
     if(medium.length>PODCAST_LIMITS.mediaBytes)throw new PublicSourceError('SOURCE_LIMIT','发布者声明的媒体超过下载大小上限（最多200 MiB）');
     return {status:'needs_transcription',episode,feed_url:current.feed_url,feed_checked_at:current.feed_checked_at,feed_reused:current.feed_reused};
   }
-  async function downloadMedia(data,{signal,consume}={}) {
+  async function downloadMedia(data,{signal,consume,onProgress}={}) {
     const maxBytes=data?.maxBytes??PODCAST_LIMITS.mediaBytes;
     if(!Number.isSafeInteger(maxBytes)||maxBytes<1||maxBytes>PODCAST_LIMITS.mediaBytes)throw new PublicSourceError('SOURCE_LIMIT','媒体下载大小上限无效');
     let media,context;
@@ -440,7 +447,7 @@ export function createPodcastSources({fetchResource=fetchPublic,now=Date.now}={}
       return {body:resource.body,type:resource.type,kind,filename:kind==='video'?'podcast-video':'podcast-audio',...(resource.length!==null?{size:resource.length}:{}),...(context?{transcription_context:context}:{})};
     };
     let streamed;
-    const resource=await fetchResource(media.url,{signal,maxBytes,timeoutMs:PODCAST_LIMITS.mediaTimeoutMs,idleTimeoutMs:PODCAST_LIMITS.mediaIdleTimeoutMs,types,...(consume?{consume:async value=>{streamed=consumedMedia(value);await consume(streamed);}}:{})});
+    const resource=await fetchResource(media.url,{signal,onProgress,maxBytes,timeoutMs:policy.timeoutMs,idleTimeoutMs:policy.idleTimeoutMs,types,...(consume?{consume:async value=>{streamed=consumedMedia(value);await consume(streamed);}}:{})});
     if(streamed){const {body,...metadata}=streamed;return metadata;}
     const kind=resource.type.startsWith('video/')?'video':'audio';
     if(media.kind&&media.kind!==kind)throw new PublicSourceError('SOURCE_TYPE','媒体类型与发布者 enclosure 声明不符');
@@ -448,7 +455,7 @@ export function createPodcastSources({fetchResource=fetchPublic,now=Date.now}={}
     if(consume){const value=consumedMedia(resource);await consume(value);const {body,...metadata}=value;return metadata;}
     return {body:resource.body,type:resource.type,kind,filename:kind==='video'?'podcast-video':'podcast-audio',...(context?{transcription_context:context}:{})};
   }
-  return {discover:async(data={},options={})=>{
+  return {get downloadPolicy(){return policy;},discover:async(data={},options={})=>{
     // Explicit refresh invalidates a valid source even if admission is busy or
     // the caller has already cancelled. It must never leave a stale fallback.
     const url=publicUrl(data.url).href;

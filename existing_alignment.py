@@ -26,9 +26,54 @@ def language_name(value):
     return next((name for name, short in LANGUAGES.items() if short == code), code)
 
 
-def align_document(document, duration, align):
+def _observations(cue, words):
+    from audio_pipeline import bind_word_spans, normalize_word_clocks
+    words = copy.deepcopy(words)
+    if not isinstance(words, list) or not words:
+        raise ValueError('missing_words')
+    for word in words:
+        if not isinstance(word, dict) or not isinstance(word.get('word'), str):
+            raise ValueError('invalid_words')
+        if not all(type(word.get(key)) in (int, float) and math.isfinite(word[key]) for key in ('start', 'end')):
+            raise ValueError('invalid_word_timing')
+    observed = dict(text=cue['text'], start=cue['start'], end=cue['end'], words=words)
+    if not bind_word_spans(observed):
+        raise ValueError('incomplete_text_mapping')
+    normalize_word_clocks(observed)
+    return observed['words']
+
+
+def _clock_path(cue, original, alternate=None):
+    paths = [(cue['start'], 0, None)]
+    if alternate is not None and [w['word'] for w in alternate] != [w['word'] for w in original]:
+        return None
+    for index, word in enumerate(original):
+        choices = [word]
+        if alternate is not None:
+            other = alternate[index]
+            if max(abs(other[key] - word[key]) for key in ('start', 'end')) <= .24 + 1e-9:
+                choices.append(other)
+        paths_next = []
+        for changed, choice in enumerate(choices):
+            if not cue['start'] <= choice['start'] < choice['end'] <= cue['end']:
+                continue
+            prior = min((state for state in paths if state[0] <= choice['start']),
+                        key=lambda state: state[1], default=None)
+            if prior is not None:
+                paths_next.append((choice['end'], prior[1] + changed, (choice, prior[2])))
+        if not paths_next:
+            return None
+        paths = paths_next
+    node = min(paths, key=lambda state: state[1])[2]
+    selected = []
+    while node is not None:
+        word, node = node
+        selected.append(word)
+    return selected[::-1]
+
+
+def align_document(document, duration, align, *, retry=None):
     """Pure validation boundary; align(cue) returns recording-relative word clocks."""
-    from audio_pipeline import bind_word_spans
     if not isinstance(document, dict) or not isinstance(document.get('segments'), list) or not document['segments']:
         raise ValueError('A nonempty timed transcript is required')
     result = copy.deepcopy(document)
@@ -49,21 +94,15 @@ def align_document(document, duration, align):
             row['reason'] = 'empty_text'
         else:
             try:
-                words = copy.deepcopy(align(cue))
-                previous = start
-                if not isinstance(words, list) or not words:
-                    raise ValueError('missing_words')
-                for word in words:
-                    if not isinstance(word, dict) or not isinstance(word.get('word'), str):
-                        raise ValueError('invalid_words')
-                    a, b = word.get('start'), word.get('end')
-                    if not all(type(v) in (int, float) and math.isfinite(v) for v in (a, b)) or a < start or b > end or b <= a or a < previous:
-                        raise ValueError('invalid_word_timing')
-                    previous = b
-                candidate = dict(text=cue['text'], words=words)
-                if not bind_word_spans(candidate):
-                    raise ValueError('incomplete_text_mapping')
-                cue.update(words=candidate['words'], timing_basis='word', alignment_status='complete')
+                first = _observations(cue, align(cue))
+                words = _clock_path(cue, first)
+                if words is None and retry is not None and all(start - .24 <= w['start'] <= w['end'] <= end + .24 for w in first):
+                    words = _clock_path(cue, first, _observations(cue, retry(cue)))
+                    if words:
+                        row['clock_recovery'] = 'context_pass'
+                if words is None:
+                    raise ValueError('invalid_word_timing')
+                cue.update(words=words, timing_basis='word', alignment_status='complete')
                 row.update(status='aligned', reason=None)
             except Exception:
                 # Do not leak model paths/errors, erase original clocks, or manufacture timing.
@@ -72,13 +111,61 @@ def align_document(document, duration, align):
     count = sum(row['status'] == 'aligned' for row in rows)
     report = dict(schema_version=1, source_text_quality='unverified', status='candidate' if count == len(rows) else 'needs_review',
                   aligned_cues=count, total_cues=len(rows), coverage=count / len(rows), cues=rows)
-    result['provenance'] = {**result.get('provenance', {}), 'alignment_method': 'qwen-existing-v1', 'source_text_quality': 'unverified'}
+    result['provenance'] = {**result.get('provenance', {}), 'alignment_method': 'qwen-existing-v2', 'source_text_quality': 'unverified'}
     return dict(document=result, alignment_report=report, source_snapshot=copy.deepcopy(document))
 
 
+def audio_aligner(audio, frames, cache, model_path, language, model=None):
+    from audio_pipeline import SAMPLE_RATE, _digest, aligner_audio
+    from transcription import checkpoint, emit
+    def align(cue, padding=0):
+        key = _digest([cue['start'], cue['end'], cue['text'], language, padding])
+        def generate():
+            nonlocal model
+            from mlx_audio.stt import load
+            if model is None:
+                with contextlib.redirect_stdout(sys.stderr):
+                    model = load(model_path)
+            begin = max(0, round((cue['start'] - padding) * SAMPLE_RATE))
+            finish = min(frames, round((cue['end'] + padding) * SAMPLE_RATE))
+            waveform = aligner_audio(audio, begin, finish)
+            emit(phase='align')
+            with contextlib.redirect_stdout(sys.stderr):
+                response = model.generate(audio=waveform, text=cue['text'], language=language_name(language))
+            return [dict(word=item.text, start=float(item.start_time)+begin/SAMPLE_RATE, end=float(item.end_time)+begin/SAMPLE_RATE)
+                    for item in getattr(response, 'items', response)]
+        return checkpoint(cache / (key + '.json'), generate)
+    return align
+
+
+def repair_transcribed_clocks(document, source, directory, model_path, model=None):
+    """Keep ASR text. Retry bad word clocks once against the finalized sentence."""
+    from audio_pipeline import SAMPLE_RATE, _wav_frames, normalize_word_clocks, prepare_audio
+    for cue in document['segments']:
+        normalize_word_clocks(cue)
+    pending = [cue for cue in document['segments'] if cue.get('words') and
+               (_clock_path(cue, cue['words']) is None or
+                ''.join(w['word'] for w in cue['words']) != cue['text'])]
+    if not pending:
+        return
+    cache = directory / 'sentence-clocks-v1'
+    cache.mkdir(parents=True, exist_ok=True)
+    audio = prepare_audio(source, directory)
+    frames = _wav_frames(audio)
+    measure = audio_aligner(audio, frames, cache, model_path, document.get('language'), model)
+    check = align_document(dict(segments=pending), frames / SAMPLE_RATE, lambda cue: cue['words'],
+                           retry=lambda cue: measure(cue, .20))
+    for cue, recovered, row in zip(pending, check['document']['segments'], check['alignment_report']['cues']):
+        if row['status'] == 'aligned':
+            cue.update(words=recovered['words'], alignment_status='complete', timing_basis='word')
+        else:
+            cue.pop('words', None)
+            cue.update(alignment_status='needs_review', timing_basis='segment')
+
+
 def run_alignment(request):
-    from audio_pipeline import _digest, _file_digest, _wav_frames, prepare_audio, AudioChunk, SAMPLE_RATE, write_chunk
-    from transcription import fingerprint, checkpoint, emit
+    from audio_pipeline import _digest, _file_digest, _wav_frames, prepare_audio, SAMPLE_RATE
+    from transcription import fingerprint, emit
     from transcript import save_document
     from importlib.metadata import version
     profile = request['profile']
@@ -92,35 +179,15 @@ def run_alignment(request):
         raise ValueError('Source media changed')
     document = request['document']
     identity = dict(audio=request['sha256'], document=document, model=fingerprint(profile['align_model']),
-                    runtime=version('mlx-audio'), adapter='qwen-existing-v1')
+                    runtime=version('mlx-audio'), adapter='qwen-existing-v2')
     cache = work / ('alignment-' + _digest(identity))
     cache.mkdir(parents=True, exist_ok=True)
     emit(phase='prepare')
     audio = prepare_audio(source, cache)
-    duration = _wav_frames(audio) / SAMPLE_RATE
-    model = None
-    def align(cue):
-        nonlocal model
-        key = _digest(cue)
-        def generate():
-            nonlocal model
-            from mlx_audio.stt import load
-            if model is None:
-                with contextlib.redirect_stdout(sys.stderr):
-                    model = load(profile['align_model'])
-            start, end = cue['start'], cue['end']
-            cut = cache / (key + '.wav')
-            try:
-                write_chunk(audio, AudioChunk(0, round(start*SAMPLE_RATE), round(end*SAMPLE_RATE), 0, 0), cut)
-                emit(phase='align')
-                with contextlib.redirect_stdout(sys.stderr):
-                    response = model.generate(audio=str(cut), text=cue['text'], language=language_name(document.get('language')))
-                return [dict(word=item.text, start=float(item.start_time)+start, end=float(item.end_time)+start)
-                        for item in getattr(response, 'items', response)]
-            finally:
-                cut.unlink(missing_ok=True)
-        return checkpoint(cache / (key + '.json'), generate)
-    result = align_document(document, duration, align)
+    frames = _wav_frames(audio)
+    duration = frames / SAMPLE_RATE
+    align = audio_aligner(audio, frames, cache, profile['align_model'], document.get('language'))
+    result = align_document(document, duration, align, retry=lambda cue: align(cue, .20))
     result['source_sha256'] = request['sha256']
     result['alignment_identity'] = _digest(identity)
     emit(phase='save')

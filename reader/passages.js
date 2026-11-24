@@ -89,14 +89,24 @@
  }
  function readingPassages(entries){
   const passages=[],sizes=entries.map(({cue})=>readingSize(cue.text)),sentenceAhead=new Uint8Array(entries.length);
+  const joins=entries.map((entry,index)=>index>0&&adjacent(entries[index-1],entry));
+  for(let index=1;index<entries.length;index++){
+   const question=entries[index-1].cue,answer=entries[index].cue;
+   if(!joins[index]||speakerIdentity(question)||speakerIdentity(answer))continue;
+   if(/[你您]/u.test(question.text)&&/[?？]\s*$/u.test(question.text)&&
+    !/[“”「」『』"]|[说說问問][：:，,\s]*[你您我]|(?:我|他|她|有人|人家|朋友|同事|老师)(?:就|会|曾经)?[说說问問]|反问|转述|我想问自己/u.test(question.text)&&
+    /^(?:[嗯哦啊呃，,、\s]|OK)*(?:我(?:给你|給你|的|当时|當時|自己|觉得|覺得|个人|個人|最初)|对我来说|對我來說)/iu.test(answer.text)){
+    joins[index-1]=false;joins[index]=false;
+   }
+  }
   for(let i=entries.length-1;i>=0;i--){
-   sentenceAhead[i]=sentenceEnd.test(entries[i].cue.text)||(i+1<entries.length&&adjacent(entries[i],entries[i+1])&&sentenceAhead[i+1])?1:0;
+   sentenceAhead[i]=sentenceEnd.test(entries[i].cue.text)||(joins[i+1]&&sentenceAhead[i+1])?1:0;
   }
   for(let first=0;first<entries.length;){
    let next=first,target=0,maximum=0,lastSentence=-1,sentenceSize=0;
    while(next<entries.length){
     if(next>first){
-     if(!adjacent(entries[next-1],entries[next]))break;
+     if(!joins[next])break;
      if(maximum+sizes[next].maximum>1){
       // Prefer a substantial complete sentence over a trailing fragment.
       if(lastSentence>first&&sentenceSize>=.6)next=lastSentence;

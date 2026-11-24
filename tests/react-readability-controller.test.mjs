@@ -32,15 +32,26 @@ test('manual source changes fence late results and failures never silently start
 });
 test.after(()=>rm(directory,{recursive:true,force:true}));
 
-test('awaiting upload resumes from same saved original after navigation without File',async()=>{
- const doc=base(),identity='source-media-sha256:'+'a'.repeat(64),media={identity,url:'api/v1/source-media/content?key=source',kind:'audio',name:'source.mp3'};
- const resource=require('../shared/transcript-resources.js');
- const sourceDigest=Buffer.from(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(resource.sourceSignature(doc)))).toString('hex');
- const job={id:randomUUID(),documentKey:'source',state:'awaiting_media',phase:'awaiting_media',sourceDigest,mediaIdentity:identity,needsMedia:true};let uploaded=false,loaded=false;
- const controller=createReadabilityController({getDocument:()=>doc,getRevision:()=>1,getFile:()=>null,getMedia:()=>media,commit:async()=>true,uuid:randomUUID,fetchMedia:async()=>{loaded=true;return new File(['ID3 saved'],'source.mp3',{type:'audio/mpeg'});},request:async(url,init)=>{
-  if(url.endsWith('/capabilities'))return {available:true,punctuation:false,speakers:true,message:''};
-  if(url.includes('/jobs?'))return {jobs:[job]};
-  if(url.endsWith('/media')){assert.ok(init.body instanceof File);uploaded=true;return {job:{...job,state:'queued',needsMedia:false}};}throw Error(url);
- }});
- await controller.refresh('source');assert.equal(loaded,true);assert.equal(uploaded,true);controller.dispose();
+test('speaker reruns reference the saved source digest without a second upload',async()=>{
+ const current={key:'saved',title:'Authored',segments:[{id:'one',start:0,end:1,text:'Already here.'}]};
+ const id=randomUUID();
+ const identity='source-media-sha256:'+'a'.repeat(64);
+ const calls=[];
+ const controller=createReadabilityController({
+  getDocument:()=>current,getRevision:()=>1,getFile:()=>null,
+  getMedia:()=>({identity,url:'/api/v1/source-media/content',name:'source.wav',kind:'audio'}),
+  fetchMedia:()=>assert.fail('must not read audio into the renderer'),
+  commit:async()=>true,uuid:()=>id,request:async(url,init)=>{
+   calls.push(url);
+   if(url.endsWith('/capabilities'))return {available:true,punctuation:false,speakers:true,savedSourceMedia:true};
+   if(url.includes('?key='))return {jobs:[]};
+   assert.equal(url,'api/v1/readability/jobs');
+   assert.deepEqual(JSON.parse(init.body).media,{identity,saved:true});
+   return {job:{id,documentKey:current.key,state:'queued',needsMedia:false,mediaIdentity:identity}};
+  }
+ });
+ await controller.refresh(current.key,{run:true});
+ assert.equal(controller.getSnapshot().job?.state,'queued');
+ assert.equal(calls.length,3);
+ controller.dispose();
 });

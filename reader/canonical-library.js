@@ -178,6 +178,20 @@
    }
    const adapter={backend:'canonical',maxBatchSize:100,maxBatchBytes:16777216,documentEpoch:key=>tokens.get(key)?.deleted?null:tokens.get(key)?.identity.lifetime??null,
     mediaLibraryIdentity:async()=>({ok:true,identity:m.mediaLibraryIdentity}),
+    async refreshDocument(key,adopt){
+     const previous=tokens.get(key);
+     if(closed||!previous||previous.deleted)return false;
+     const {record}=await request('/document?'+new URLSearchParams({protocolVersion:'1',key}));
+     if(!record||record.key!==key||record.document?.key!==key||record.deleted||
+        record.token?.epoch!==m.epoch||!Number.isSafeInteger(record.token.revision)||
+        record.identity?.lifetime!==previous.identity.lifetime||record.identity.position!==previous.identity.position||
+        record.token.revision<=previous.token.revision)return false;
+     if(await hash(JSON.stringify(record.document))!==record.sha256)throw issue('corruption');
+     const document=project(record.document,{...validate(root.structuredClone(record.document)),key});
+     if(closed||tokens.get(key)!==previous||!adopt(document))return false;
+     tokens.set(key,record);
+     return true;
+    },
     estimateBatchBytes(changes){
      const commands=changes.map(c=>{const current=tokens.get(c.key),action=c.kind==='remove'?'delete':current?.deleted?'restore':'put',document=action==='delete'?undefined:c.identity;
       if(document&&bytes(json(document)).length>8388608)throw Object.assign(issue('document_too_large','Document exceeds the canonical 8388608-byte limit.'),{retryable:false});

@@ -18,6 +18,7 @@ MAX_MEDIA = 200 * 1024 * 1024
 MAX_FRAMES = 6 * 3600 * 16000
 MAX_WORK = 2 * 1024 * 1024 * 1024
 MAX_CONTROL = 65536
+MAX_STREAM_METADATA = 8 * 1024 * 1024
 MAX_INITIAL_REQUEST = 64 * 1024 * 1024  # Ordinary alignment includes the full document.
 FALLBACK_REASONS = {'stream_decode_unavailable', 'canonical_pcm_mismatch'}
 
@@ -176,11 +177,51 @@ class LiveReader(io.RawIOBase):
         return data
 
 
-def bounded_blocks(control, maximum=MAX_FRAMES, stop=None):
+def streaming_media_format(control):
+    def header(offset, length):
+        control.wait(lambda: control.available >= offset + length or control.seal is not None)
+        if control.available < offset + length:
+            return b''
+        value = os.pread(control.fd, length, offset)
+        if len(value) != length:
+            raise StreamFailure('Media spool changed below published watermark')
+        return value
+
+    control.wait(lambda: control.available >= 4 or control.seal is not None)
+    prefix = os.pread(control.fd, min(8, control.available), 0)
+    if prefix.startswith(b'fLaC'):
+        return 'flac'
+    if prefix.startswith(b'ID3') or len(prefix) >= 2 and prefix[0] == 255 and prefix[1] & 224 == 224 and prefix[1] & 6 != 0:
+        return 'mp3'
+    if header(0, 8)[4:] != b'ftyp':
+        return None
+    offset = 0
+    while offset < MAX_STREAM_METADATA:
+        box = header(offset, 8)
+        if not box:
+            return None
+        size, kind = int.from_bytes(box[:4], 'big'), box[4:]
+        minimum = 8
+        if size == 1:
+            extra = header(offset + 8, 8)
+            if not extra:
+                return None
+            size, minimum = int.from_bytes(extra, 'big'), 16
+        if size < minimum or offset + size > MAX_STREAM_METADATA or kind == b'mdat':
+            return None
+        if kind == b'moov':
+            return 'm4a'
+        offset += size
+    return None
+
+
+def bounded_blocks(control, maximum=MAX_FRAMES, stop=None, media_format=None):
     import av
+    media_format = media_format or streaming_media_format(control)
     frames = 0
     with av.open(LiveReader(control, stop), buffer_size=32768) as container:
-        if container.format.name not in {'mp3', 'flac'}:
+        formats = container.format.name.split(',')
+        if media_format not in formats or not container.streams.audio:
             raise StreamCapability('Stream format is not enabled')
         resampler = av.AudioResampler(format='s16', layout='mono', rate=16000)
         for frame in container.decode(audio=0):
@@ -237,20 +278,18 @@ def copy_sealed(control, target):
 def collect_candidates(control, backend, directory, *, chunk_seconds=240, context_seconds=5, emit=lambda **_: None):
     import av
     from pcm_producer import PCMProducer
-    from audio_pipeline import _file_digest, _digest, validate_result
+    from audio_pipeline import _file_digest, _digest, recognize_window, validate_result
     from transcript import save_document
     if not getattr(backend, 'local_only', False):
         raise StreamFailure('Incremental recognition requires a local backend')
     directory.mkdir(parents=True, exist_ok=False)
-    control.wait(lambda: control.available >= 4 or control.seal is not None)
-    prefix = os.pread(control.fd, min(10, control.available), 0)
-    supported = prefix.startswith((b'fLaC', b'ID3')) or (len(prefix) >= 2 and prefix[0] == 255 and prefix[1] & 224 == 224 and prefix[1] & 6 != 0)
-    if not supported:
+    media_format = streaming_media_format(control)
+    if not media_format:
         emit(phase='fallback', reason='stream_decode_unavailable')
         return {}, 'stream_decode_unavailable'
     class LiveProducer(PCMProducer):
         def _blocks(self):
-            yield from bounded_blocks(control, stop=self.stop)
+            yield from bounded_blocks(control, stop=self.stop, media_format=media_format)
         def check(self):
             control.check()
             super().check()
@@ -263,7 +302,7 @@ def collect_candidates(control, backend, directory, *, chunk_seconds=240, contex
                 path = directory/f'chunk-{chunk.index:05d}.wav'
                 identity = {'chunk': asdict(chunk), 'pcm_sha256': _file_digest(path), 'backend': backend.cache_key}
                 request_id = _digest({'attempt_id': control.attempt_id, **identity})
-                raw = validate_result(backend.recognize(path, request_id=request_id), chunk.duration)
+                raw = validate_result(recognize_window(backend, path, request_id, chunk), chunk.duration)
                 control.check()
                 record = {'identity': identity, 'raw': raw}
                 encoded = json.dumps(record, allow_nan=False).encode()
@@ -285,6 +324,11 @@ def collect_candidates(control, backend, directory, *, chunk_seconds=240, contex
 
 class CanonicalBackend:
     local_only = True
+
+    @property
+    def aligner(self):
+        return getattr(self.backend, 'aligner', None)
+
     def __init__(self, backend, candidates, source, *, chunk_seconds=240, context_seconds=5, emit=lambda **_: None):
         self.backend, self.candidates, self.source = backend, candidates, source
         self.cache_key, self.hints = backend.cache_key, getattr(backend, 'hints', {})
@@ -294,7 +338,7 @@ class CanonicalBackend:
         self.emit = emit
 
     def recognize(self, path, *, request_id):
-        from audio_pipeline import prepare_audio, _wav_frames, plan_chunks, _file_digest, validate_result
+        from audio_pipeline import prepare_audio, _wav_frames, plan_chunks, _file_digest, recognize_window, validate_result
         index = int(path.stem.removeprefix('chunk-'))
         frames = _wav_frames(prepare_audio(self.source, path.parent, max_frames=MAX_FRAMES))
         chunk = plan_chunks(frames, self.chunk_seconds, self.context_seconds)[index]
@@ -309,7 +353,7 @@ class CanonicalBackend:
                 self.emit(phase='fallback', reason='canonical_pcm_mismatch')
             self.mismatch = True
         self.recomputed += 1
-        return self.backend.recognize(path, request_id=request_id)
+        return recognize_window(self.backend, path, request_id, chunk)
 
 
 def frozen_context(request):
@@ -331,6 +375,9 @@ def probe_incremental(profile):
 
 
 def run_incremental(request, *, control_fd=0):
+    media_wait_seconds = request.get('media_wait_seconds', 180)
+    if type(media_wait_seconds) is not int or not 1 <= media_wait_seconds <= 660:
+        raise StreamFailure('Invalid incremental media wait seconds')
     from transcription import QwenBackend, run, emit
     from transcript import save_document
     import uuid
@@ -355,7 +402,7 @@ def run_incremental(request, *, control_fd=0):
     attempt_dir = work/'incremental'/attempt
     attempt_dir.mkdir(parents=True, exist_ok=False)
     work_budget(work, 2*MAX_FRAMES*2 + 2*MAX_MEDIA + 64*1024*1024)
-    control = Control(3, attempt)
+    control = Control(3, attempt, wait_seconds=media_wait_seconds)
     previous_term = signal.getsignal(signal.SIGTERM)
     terminating = False
     def terminate(_signum, _frame):

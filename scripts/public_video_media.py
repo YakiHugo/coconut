@@ -157,11 +157,13 @@ def choose_audio(info, provider, language=None):
 
 
 
-def choose_media(info, provider, language=None):
+def choose_media(info, provider, language=None, *, audio_only=False):
     audio = choose_audio(info, provider, language)
     if audio:
         return {**audio, '_kind':'audio', '_type':'audio/mp4', '_extension':'m4a',
                 '_audio_role':'original' if audio.get('_audio_language_basis') == 'platform_original' else 'unknown'}
+    if audio_only:
+        return None
     # A combined public source stream is not a claim about original voice.
     # Do not use another client, a token, DRM, manifest, or separate track merge.
     formats = [item for item in info.get('formats') or [] if isinstance(item, dict)]

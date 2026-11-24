@@ -117,7 +117,7 @@ def main():
         if not isinstance(request['endpoint'], str) or len(request['endpoint']) > 200:
             return {'status': 'unavailable'}
         return authored_fixture(request['endpoint'])
-    if operation in ('extract-development-audio', 'extract-audio') and {'operation', 'url', 'language'} <= set(request) <= {'operation', 'url', 'language', 'network', 'trustedProxy', 'bilibiliCookies', 'purpose'}:
+    if operation in ('extract-development-audio', 'extract-audio') and {'operation', 'url', 'language'} <= set(request) <= {'operation', 'url', 'language', 'network', 'trustedProxy', 'bilibiliCookies', 'purpose', 'audioOnly'}:
         if not isinstance(request['url'], str) or len(request['url']) > 2048:
             return {'status':'unavailable'}
         if urllib.parse.urlsplit(request['url']).hostname not in ('www.youtube.com', 'www.bilibili.com'):
@@ -129,8 +129,16 @@ def main():
             return {'status':'language_required'}
         from scripts.owner_video_source import acquire_video
         network = request.get('network', {'mode':'custom', 'proxy':request['trustedProxy']} if request.get('trustedProxy') else None)
+        def progress(received, total):
+            sys.__stderr__.write(f'coconut-download {received} {total or 0}\n')
+            sys.__stderr__.flush()
         return acquire_video(request['url'], language, output=Path('public-media.bin'),
-            network=network, bilibili_cookies=request.get('bilibiliCookies'), purpose=request.get('purpose'))
+            network=network, bilibili_cookies=request.get('bilibiliCookies'), purpose=request.get('purpose'),
+            audio_only=request.get('audioOnly') is True, on_progress=progress)
+    if request.pop('authorOnly', False) is True:
+        author_only = True
+    else:
+        author_only = False
     extraction_keys = {'operation', 'url', 'language'}
     development_options = operation == 'extract-development' and extraction_keys <= set(request) <= extraction_keys | {'network', 'trustedProxy', 'bilibiliCookies'}
     if operation in ('extract', 'extract-development') and (set(request) in (extraction_keys, extraction_keys | {'network'}) or development_options):
@@ -156,10 +164,10 @@ def main():
         if urllib.parse.urlsplit(request['url']).hostname in ('www.youtube.com', 'www.bilibili.com'):
             from scripts.owner_video_source import acquire_video
             network = request.get('network', {'mode':'custom', 'proxy':proxy} if proxy else None)
-            result = acquire_video(request['url'], language, network=network, bilibili_cookies=request.get('bilibiliCookies'))
+            result = acquire_video(request['url'], language, network=network, bilibili_cookies=request.get('bilibiliCookies'), author_only=author_only)
         else:
             result = extract_public_captions(request['url'], language, ca_file=certifi.where())
-        if result.get('status') in ('subtitle_token_required', 'access_restricted', 'unavailable', 'language_required', 'network_unavailable', 'metadata_incomplete', 'no_matching_captions', 'extractor_failed', 'caption_file_invalid', 'caption_parse_failed', 'guard_stopped'):
+        if result.get('status') in ('subtitle_token_required', 'access_restricted', 'unavailable', 'language_required', 'network_unavailable', 'metadata_incomplete', 'no_matching_captions', 'author_captions_absent', 'extractor_failed', 'caption_file_invalid', 'caption_parse_failed', 'guard_stopped'):
             return {key: result[key] for key in ('status', 'diagnostic', 'languages') if key in result}
         body = result.pop('bytes', None)
         if not isinstance(body, bytes) or not 0 < len(body) <= MAX_CAPTION:

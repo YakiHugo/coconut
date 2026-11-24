@@ -88,13 +88,13 @@ export function useReadingScroller(host:RefObject<HTMLDivElement|null>) {
     return scroller;
 }
 
-export function usePlaybackFollow({scroller,enabled,cueId,clock,onSuspend}:{
-    scroller:ReturnType<typeof useReadingScroller>;enabled:boolean;cueId?:string;clock:number;onSuspend:()=>void;
+export function usePlaybackFollow({scroller,enabled,cueId,partIndex,onSuspend}:{
+    scroller:ReturnType<typeof useReadingScroller>;enabled:boolean;cueId?:string;partIndex:number;onSuspend:()=>void;
 }) {
     useEffect(()=>{
         if(!enabled||cueId===undefined)return;
         scroller.follow(cueId);
-    },[enabled,cueId,clock,scroller]);
+    },[enabled,cueId,partIndex,scroller]);
     useEffect(()=>{if(!enabled)scroller.cancel();},[enabled,scroller]);
     useEffect(()=>{
         if(!enabled)return;

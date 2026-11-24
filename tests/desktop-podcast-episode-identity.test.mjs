@@ -49,8 +49,8 @@ test('a Xiaoyuzhou episode saved from a show keeps its permanent source after th
   const media=await sources.downloadMedia(ingestion.media.download.body);
   assert.equal(media.body.toString(),'small media');
   assert.deepEqual(calls.slice(before).map(call=>call.url),[episodeUrl(eidA),mediaUrl(eidA)]);
-  assert.equal(calls.at(-1).options.timeoutMs,30*60*1000);
-  assert.equal(calls.at(-1).options.idleTimeoutMs,30000);
+  assert.equal(calls.at(-1).options.timeoutMs,2*60*60*1000);
+  assert.equal(calls.at(-1).options.idleTimeoutMs,120000);
   assert.equal(calls.at(-1).options.maxBytes,PODCAST_LIMITS.mediaBytes);
 });
 

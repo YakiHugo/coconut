@@ -33,6 +33,60 @@ class ASRBackend(Protocol):
         ...
 
 
+class InvalidWindowClocks(ValueError):
+    def __init__(self, message, raw, duration):
+        super().__init__(message)
+        self.raw, self.duration = raw, duration
+
+
+def _without_invalid_context(value, chunk):
+    core_start = (chunk.core_start_frame - chunk.start_frame) / SAMPLE_RATE
+    core_end = (chunk.core_end_frame - chunk.start_frame) / SAMPLE_RATE
+    view = copy.deepcopy(value)
+    removed = 0
+    for segment in view['segments']:
+        words = segment.get('words', [])
+        first, last = 0, len(words)
+        while first < last and core_start > 0 and -.5 <= words[first]['start'] < 0 and words[first]['start'] <= words[first]['end'] < core_start:
+            first += 1
+        while last > first and core_end < chunk.duration and core_end < words[last-1]['start'] <= words[last-1]['end'] and chunk.duration + .05 < words[last-1]['end'] <= chunk.duration + .5:
+            last -= 1
+        if first == 0 and last == len(words):
+            continue
+        if first == last or not bind_word_spans(segment):
+            return None
+        kept = words[first:last]
+        segment['words'] = kept
+        segment['text'] = ''.join(word['word'] for word in kept)
+        removed += len(words) - len(kept)
+    if removed:
+        view['discarded_invalid_context_words'] = removed
+        return view
+    return None
+
+
+def recognize_window(backend, path, request_id, chunk):
+    try:
+        return backend.recognize(path, request_id=request_id)
+    except InvalidWindowClocks as error:
+        if error.duration != chunk.duration:
+            raise
+        view = _without_invalid_context(error.raw, chunk) or error.raw
+        # Preserve the text of a timed ASR window even if an individual word
+        # falls outside the audio. Ownership can still use its coarse extent.
+        segments = []
+        for segment in view['segments']:
+            try:
+                validate_result({'segments': [segment]}, chunk.duration)
+            except ValueError:
+                segment = dict(segment)
+                if not segment.pop('words', None):
+                    raise
+                segment.update(alignment_status='needs_review', timing_basis='audio_chunk')
+            segments.append(segment)
+        return validate_result({**view, 'segments': segments}, chunk.duration)
+
+
 class SpeakerBackend(Protocol):
     cache_key: dict
     local_only: bool
@@ -172,14 +226,28 @@ def prepare_audio(source, directory, *, max_frames=None):
 
 
 def write_chunk(source, chunk, path):
-    with wave.open(str(source), 'rb') as stream, wave.open(str(path), 'wb') as output:
-        stream.setpos(chunk.start_frame)
-        pcm = stream.readframes(chunk.end_frame - chunk.start_frame)
-        if len(pcm) != (chunk.end_frame - chunk.start_frame) * 2:
-            raise ValueError('Truncated audio chunk')
+    pcm = read_pcm_slice(source, chunk.start_frame, chunk.end_frame)
+    with wave.open(str(path), 'wb') as output:
         output.setparams((1, 2, SAMPLE_RATE, 0, 'NONE', 'not compressed'))
         output.writeframes(pcm)
     return pcm
+
+
+def read_pcm_slice(source, start_frame, end_frame):
+    frames = end_frame - start_frame
+    with wave.open(str(source), 'rb') as stream:
+        stream.setpos(start_frame)
+        pcm = stream.readframes(frames)
+    if len(pcm) != frames * 2:
+        raise ValueError('Truncated audio chunk')
+    return pcm
+
+
+def aligner_audio(source, start_frame, end_frame):
+    import numpy as np
+    waveform = np.frombuffer(read_pcm_slice(source, start_frame, end_frame), dtype='<i2').astype(np.float32)
+    waveform /= 32768.0
+    return waveform
 
 
 def _time_range(item, duration):
@@ -241,6 +309,82 @@ def bind_word_spans(segment):
     return True
 
 
+WORD_CLOCK_TOLERANCE = .05 + 1e-9
+
+
+def _rebase_word_spans(words):
+    offset = 0
+    for word in words:
+        end = offset + len(word['word'])
+        if 'text_start' in word or 'text_end' in word:
+            word.update(text_start=offset, text_end=end)
+        offset = end
+
+
+def trim_word_edges(words):
+    """Strip the matching edge tokens whenever a retained source span is cropped."""
+    words = [dict(word) for word in words]
+    while words:
+        words[0]['word'] = words[0]['word'].lstrip()
+        if words[0]['word']:
+            break
+        words.pop(0)
+    while words:
+        words[-1]['word'] = words[-1]['word'].rstrip()
+        if words[-1]['word']:
+            break
+        words.pop()
+    _rebase_word_spans(words)
+    return words
+
+
+def normalize_word_clocks(segment):
+    """Repair local boundary jitter using only the observed speech intervals."""
+    words = segment.get('words', [])
+    if not words or ''.join(word['word'] for word in words) != segment['text']:
+        return
+    previous = None
+    for word in words:
+        start, end = word['start'], word['end']
+        if segment['start'] - WORD_CLOCK_TOLERANCE <= start < segment['start'] <= end:
+            word['start'] = segment['start']
+        if start <= segment['end'] < end <= segment['end'] + WORD_CLOCK_TOLERANCE:
+            word['end'] = segment['end']
+        if previous is not None and 0 < previous['end'] - word['start'] <= WORD_CLOCK_TOLERANCE and word['end'] > word['start']:
+            boundary = min(previous['end'], word['end'])
+            if boundary >= previous['start']:
+                previous['end'] = word['start'] = boundary
+        previous = word
+
+    # A collapsed unit can share an adjacent observed interval at its boundary.
+    # Isolated collapses retain their zero-length evidence for a contextual retry.
+    merged, pending = [], []
+    for word in words:
+        if word['start'] == word['end']:
+            pending.append(word)
+            continue
+        if pending:
+            prefix = ''.join(item['word'] for item in pending)
+            left = merged[-1] if merged else None
+            left_gap = abs(pending[0]['start'] - left['end']) if left and left['end'] > left['start'] else math.inf
+            right_gap = abs(word['start'] - pending[-1]['end'])
+            if left_gap <= WORD_CLOCK_TOLERANCE and left_gap <= right_gap:
+                left['word'] += prefix
+            elif right_gap <= WORD_CLOCK_TOLERANCE:
+                word['word'] = prefix + word['word']
+            else:
+                merged.extend(pending)
+            pending = []
+        merged.append(word)
+    if pending:
+        if merged and merged[-1]['end'] > merged[-1]['start'] and abs(pending[0]['start'] - merged[-1]['end']) <= WORD_CLOCK_TOLERANCE:
+            merged[-1]['word'] += ''.join(word['word'] for word in pending)
+        else:
+            merged.extend(pending)
+    _rebase_word_spans(merged)
+    segment['words'] = merged
+
+
 def validate_voices(result, duration):
     if not isinstance(result, dict) or not isinstance(result.get('turns'), list) or not isinstance(result.get('evidence'), dict):
         raise ValueError('Invalid acoustic result')
@@ -282,7 +426,10 @@ def owned_segments(result, chunk, total_frames):
             if not selected:
                 continue
             if len(selected) != len(words):
-                segment['text'] = raw['text'][selected[0]['text_start']:selected[-1]['text_end']].strip()
+                selected = trim_word_edges(selected)
+                if not selected:
+                    continue
+                segment['text'] = ''.join(word['word'] for word in selected)
                 segment['start'], segment['end'] = selected[0]['start'], selected[-1]['end']
             segment['words'] = [{**word, 'start': word['start'] + chunk.start,
                                  'end': word['end'] + chunk.start} for word in selected]
@@ -335,6 +482,10 @@ def stitch_segments(segments):
             if not kept:
                 continue
             if len(kept) != len(words):
+                if all('text_start' in word for word in kept):
+                    kept = trim_word_edges(kept)
+                    if not kept:
+                        continue
                 segment['words'] = kept
                 segment['start'], segment['end'] = kept[0]['start'], kept[-1]['end']
                 segment['text'] = _words_text(kept)
@@ -438,7 +589,7 @@ def run_audio_pipeline(source: Path, backend: ASRBackend, *, work_dir=None, spea
                 else:
                     if not producer:
                         pcm = write_chunk(audio, chunk, path)
-                    raw = validate_result(backend.recognize(path, request_id=request_id), chunk.duration)
+                    raw = validate_result(recognize_window(backend, path, request_id, chunk), chunk.duration)
                     check_cancel()
                     save_document(raw, cache)
                 segments = owned_segments(raw, chunk, ownership_frames)
@@ -519,6 +670,8 @@ def run_audio_pipeline(source: Path, backend: ASRBackend, *, work_dir=None, spea
         # Recovered words have unverified clocks: never inherit a neighboring
         # speaker or enter heuristic duplicate removal. Raw ASR caches are intact.
         output = sorted(output + seam_cues, key=lambda item: (item['start'], item['end']))
+        for segment in output:
+            normalize_word_clocks(segment)
         check_cancel()
         languages = list(dict.fromkeys(languages))
         return {'language': languages[0] if len(languages) == 1 else None, 'languages': languages,

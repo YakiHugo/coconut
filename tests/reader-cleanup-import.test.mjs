@@ -61,7 +61,7 @@ test('normal parsing retains stale or malformed cleanup inert and store import r
   const incoming=withPlan();alter(incoming);const before=structuredClone(incoming),parsed=C.parse(JSON.stringify(incoming),'reading.json'),app=store();
   try{
    assert.deepEqual(parsed.reading_cleanup,incoming.reading_cleanup);
-   assert.equal(prepareCleanup(parsed,text=>text).state,'unavailable');
+   assert.equal(prepareCleanup(parsed,text=>text).projection?.policyVersion,'spoken-reading-v1');
    assert.throws(()=>app.addDocument(parsed));assert.equal(app.getSnapshot().documents.length,0);
    assert.deepEqual(incoming,before);
   }finally{app.dispose();}
@@ -91,11 +91,11 @@ test('canonical loading and same-key backup recovery preserve opaque invalid cle
  const loaded=store([invalid]),restored=store();
  try{
   assert.deepEqual(loaded.getDocument(invalid.key).reading_cleanup,invalid.reading_cleanup);
-  assert.equal(prepareCleanup(loaded.getDocument(invalid.key),text=>text).state,'unavailable');
+  assert.equal(prepareCleanup(loaded.getDocument(invalid.key),text=>text).projection?.policyVersion,'spoken-reading-v1');
   assert.equal(await restored.restoreJSON(invalid,restored.getSnapshot().revision),true);
   const doc=restored.getDocument(invalid.key);
   assert.deepEqual(doc.reading_cleanup,invalid.reading_cleanup);assert.deepEqual(doc.future_project,{keep:true});
-  assert.equal(prepareCleanup(doc,text=>text).state,'unavailable');
+  assert.equal(prepareCleanup(doc,text=>text).projection?.policyVersion,'spoken-reading-v1');
  }finally{loaded.dispose();restored.dispose();}
 });
 
@@ -109,7 +109,7 @@ test('backup collision rebinds only verified plans and retains invalid plans ine
    const imported=app.getDocument(incoming.key+'-restored-1');
    assert.ok(imported);assert.equal(app.getDocument(incoming.key).title,'Original');
    assert.deepEqual(imported.future_project,incoming.future_project);assert.deepEqual(imported.segments[0].future_cue,incoming.segments[0].future_cue);
-   assert.equal(prepareCleanup(imported,text=>text).state,invalid?'unavailable':'ready');
+   assert.equal(prepareCleanup(imported,text=>text).projection.policyVersion,invalid?'spoken-reading-v1':incoming.reading_cleanup.policyVersion);
    assert.equal(imported.reading_cleanup.sourceSignature,invalid?incoming.reading_cleanup.sourceSignature:D.signature(imported));
    assert.deepEqual(incoming,before);
   }finally{app.dispose();}

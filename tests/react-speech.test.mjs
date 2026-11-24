@@ -2,11 +2,58 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {build} from 'esbuild';
 const output=await build({entryPoints:['frontend/reader-workspace/speech.ts'],bundle:true,write:false,format:'esm',platform:'node'});
-const {speechParts,speechSelection,selectionPlaybackStart}=await import('data:text/javascript;base64,'+Buffer.from(output.outputFiles[0].text).toString('base64'));
+const {speechParts,speechSelection,selectionPlaybackStart,sourcePlayback}=await import('data:text/javascript;base64,'+Buffer.from(output.outputFiles[0].text).toString('base64'));
 const cue=()=>({id:'a',start:10,end:20,text:'第一句。第二句。',words:[
     {word:'第一句。',start:11,end:13},{word:'第二句。',start:16,end:19}
 ]});
 const selection=from=>({cueIds:['a'],from,to:8,text:'第二句。',separators:[]});
+
+test('a missed author cue keeps its own interval, using neighboring clocks only when it has no duration',()=>{
+    const hash='a'.repeat(64),identity='source-media-sha256:'+hash;
+    const first={...cue(),alignment_media_sha256:hash};
+    const missed={id:'b',start:20,end:22,text:'中间这段。'};
+    const last={id:'c',start:22,end:24,text:'后文。',alignment_media_sha256:hash,words:[{word:'后文。',start:22.5,end:23.5}]};
+    const source=[first,missed,last];
+    const playback=sourcePlayback(source,identity);
+    assert.equal(playback.gaps.size,0);
+    assert.equal(speechParts(playback.cues[1])[0].end,22);
+    assert.deepEqual(sourcePlayback([first,{...missed,end:20},last],identity).gaps.get('b'),{start:19,end:22.5});
+    const rangeEnd=cue=>cue.end;
+    const selected=speechSelection(missed,2);
+    assert.deepEqual(selectionPlaybackStart({segments:source},selected,rangeEnd),{seconds:20,end:22,wordAligned:false});
+    assert.deepEqual(selectionPlaybackStart({segments:playback.cues},selected,rangeEnd),{seconds:20,end:22,wordAligned:false});
+    assert.deepEqual(missed,{id:'b',start:20,end:22,text:'中间这段。'});
+    for(const other of [undefined,'source-media-sha256:'+'b'.repeat(64)]){
+        const stale=sourcePlayback(source,other);
+        assert.equal(stale.gaps.size,0);
+        assert.equal(stale.cues[0].words,undefined);
+        assert.equal(stale.cues[1].start,20);
+    }
+    assert.equal(sourcePlayback([first,missed,{...missed,id:'d'},last],identity).gaps.size,0);
+    assert.equal(sourcePlayback([first,missed,{...last,text:'已改原文。'}],identity).gaps.size,0);
+});
+
+test('a click within an accepted author cue selects the word at that offset',()=>{
+    const first={id:'a',start:0,end:2,text:'one two',alignment_media_sha256:'a'.repeat(64),
+        words:[{word:'one ',start:.25,end:.75},{word:'two',start:1,end:1.5}]};
+    assert.equal(speechParts(first).length,1);
+    const selected=speechSelection(first,5);
+    assert.equal(selected.text,'two');
+    assert.deepEqual(selectionPlaybackStart({segments:[first]},selected,cue=>cue.end),{seconds:1,wordAligned:true});
+});
+
+test('verified ASR words use the clicked word; an outdated or collapsed alignment uses the recorded cue',()=>{
+    const cue={id:'a',start:3,end:5,text:'重复重复',timing_basis:'word',alignment_status:'complete',
+        words:[{word:'重复',start:3.1,end:3.6},{word:'重复',start:4.1,end:4.6}]};
+    const selected=speechSelection(cue,3);
+    assert.equal(selected.from,2);
+    assert.deepEqual(selectionPlaybackStart({segments:[cue]},selected),{seconds:4.1,wordAligned:true});
+    for(const changed of [{...cue,text:'已经修改'},{...cue,words:[cue.words[0],{...cue.words[1],end:4.1}]}]){
+        const fallback=speechSelection(changed,3);
+        assert.equal(fallback.from,changed.text===cue.text?2:0);
+        assert.deepEqual(selectionPlaybackStart({segments:[changed]},fallback,c=>c.end),{seconds:3,end:5,wordAligned:false});
+    }
+});
 
 test('clause parts preserve original offsets and actual clocks, including pauses',()=>{
     const source=cue(),before=structuredClone(source),parts=speechParts(source);
@@ -59,12 +106,24 @@ test('an indivisible aligned word retains its actual interval rather than fabric
 test('missing, stale, invalid or out-of-order word clocks fall back to the source cue',()=>{
     const cases=[{...cue(),words:undefined},{...cue(),text:'校对后不同的文字。'},
         {...cue(),words:[{word:'第一句。第二句。',start:9,end:19}]},
-        {...cue(),words:[{word:'第一句。',start:16,end:17},{word:'第二句。',start:12,end:19}]},
         {...cue(),words:[{word:'第一句。第二句。',start:11,end:Infinity}]}];
     for(const source of cases){
         assert.deepEqual(speechParts(source),[{from:0,to:source.text.length,start:10,end:20}]);
         assert.deepEqual(selectionPlaybackStart({segments:[source]},selection(4)),{seconds:10,wordAligned:false});
     }
+});
+
+test('a corrupt intermediate clock leaves valid neighbors usable and clamps small overlaps',()=>{
+    const source={id:'a',start:0,end:5,text:'One bad two three',timing_basis:'word',alignment_status:'complete',words:[
+        {word:'One ',start:.1,end:1},{word:'bad ',start:2,end:Infinity},
+        {word:'two ',start:2,end:3},{word:'three',start:2.97,end:4}
+    ]};
+    const point=offset=>selectionPlaybackStart({segments:[source]},speechSelection(source,offset));
+    assert.deepEqual(point(1),{seconds:.1,wordAligned:true});
+    assert.deepEqual(point(5),{seconds:0,wordAligned:false});
+    assert.deepEqual(point(9),{seconds:2,wordAligned:true});
+    assert.deepEqual(point(13),{seconds:3,wordAligned:true});
+    assert.equal(speechParts(source).map(part=>source.text.slice(part.from,part.to)).join(''),source.text);
 });
 
 test('repeated words and Unicode use original UTF-16 offsets instead of searching selected text',()=>{
@@ -107,10 +166,10 @@ test('review selection prefers nearby clause boundaries and stays small when pun
     assert.equal(near.text,dense.text.slice(near.from,near.to));
 });
 
-test('continuous listening retains zero-duration word starts and can begin in a later selected cue',()=>{
+test('a zero-duration word uses the original cue and a later valid selection retains its word timing',()=>{
     const first={id:'a',start:1,end:2,text:'也',words:[{word:'也',start:1,end:1}]},last={id:'b',start:3,end:4,text:'后文',words:[{word:'后',start:3,end:3.2},{word:'文',start:3.2,end:4}]};
-    assert.deepEqual(selectionPlaybackStart({segments:[first,last]},{cueIds:['a','b'],from:0,to:3,text:'也后文',separators:['']}),{seconds:1,wordAligned:true});
-    assert.deepEqual(selectionPlaybackStart({segments:[first]},{cueIds:['a'],from:0,to:1,text:'也',separators:[]}),{seconds:1,wordAligned:true});
+    assert.deepEqual(selectionPlaybackStart({segments:[first,last]},{cueIds:['a','b'],from:0,to:3,text:'也后文',separators:['']}),{seconds:1,wordAligned:false});
+    assert.deepEqual(selectionPlaybackStart({segments:[first]},{cueIds:['a'],from:0,to:1,text:'也',separators:[]},c=>c.end),{seconds:1,end:2,wordAligned:false});
     assert.deepEqual(selectionPlaybackStart({segments:[first,last]},{cueIds:['a','b'],from:1,to:3,text:'后文',separators:['']}),{seconds:3,wordAligned:true});
 });
 

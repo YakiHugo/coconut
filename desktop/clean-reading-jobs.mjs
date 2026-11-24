@@ -1,6 +1,6 @@
 /** Durable reading-plan jobs. A failed optional fallback preserves local output. */
 import {mkdir,readFile,writeFile,rename} from 'node:fs/promises';
-import {createHash} from 'node:crypto';
+import {createHash,randomUUID} from 'node:crypto';
 import {createRequire} from 'node:module';
 import path from 'node:path';
 import {createCleanReadingPlanner,readingSource} from './clean-reading.mjs';
@@ -13,12 +13,14 @@ export async function createCleanReadingJobs({directory,libraryStore,sourceMedia
  await mkdir(directory,{recursive:true,mode:0o700});
  const {DatabaseSync}=await import('node:sqlite'),db=new DatabaseSync(path.join(directory,'reading.sqlite'));
  db.exec("PRAGMA busy_timeout=1000;CREATE TABLE IF NOT EXISTS jobs(id TEXT PRIMARY KEY,document_key TEXT NOT NULL,binding TEXT NOT NULL,digest TEXT NOT NULL,request TEXT NOT NULL,state TEXT NOT NULL,phase TEXT NOT NULL,error TEXT,created INTEGER NOT NULL);CREATE UNIQUE INDEX IF NOT EXISTS live_reading ON jobs(binding) WHERE state IN ('queued','running');UPDATE jobs SET state='interrupted',phase='interrupted' WHERE state='running';");
+ const listeners=new Set();
+ const emit=(key,type)=>{for(const listener of listeners)listener({key,type});};
  let closing=false,running=null,controller=null,runningId=null,shutdownPromise;
  const binding=r=>hash({epoch:r.token.epoch,key:r.key,lifetime:r.identity.lifetime});
  const record=key=>{const r=libraryStore.get(key);if(!r||r.deleted)throw fail('整理项目已不存在',409);return r;};
  const row=id=>{if(!uuid(id))throw fail('整理任务标识无效');const r=db.prepare('SELECT * FROM jobs WHERE id=?').get(id);if(!r)throw fail('整理任务不存在',404);return r;};
  const owned=r=>{if(binding(record(r.document_key))!==r.binding)throw fail('原项目已删除或替换，旧整理结果不能接入',409);return r;};
- const describe=r=>{const input=JSON.parse(r.request);return {id:r.id,documentKey:r.document_key,state:r.state,phase:r.phase,error:r.error,provider:input.provider,model:input.model,created:r.created};};
+ const describe=r=>{const input=JSON.parse(r.request);return {id:r.id,documentKey:r.document_key,state:r.state,phase:r.phase,error:r.error,automatic:input.automatic===true,provider:input.provider,model:input.model,created:r.created};};
  const update=(id,state,phase=state,error=null)=>db.prepare('UPDATE jobs SET state=?,phase=?,error=? WHERE id=?').run(state,phase,error,id);
  const work=id=>path.join(directory,id);
  async function perform(value){
@@ -37,13 +39,16 @@ export async function createCleanReadingJobs({directory,libraryStore,sourceMedia
    result.reading_cleanup.jobId=value.id;
    await writeFile(path.join(work(value.id),'job-result.tmp'),JSON.stringify({reading_cleanup:result.reading_cleanup,sourceSignature:request.sourceSignature,identity:result.identity}),{mode:0o600});
    await rename(path.join(work(value.id),'job-result.tmp'),path.join(work(value.id),'job-result.json'));
-   if(!closing&&!controller.signal.aborted)update(value.id,'ready');
+   if(!closing&&!controller.signal.aborted){
+    update(value.id,'ready');
+    if(request.automatic)await action(value.id,'apply');
+   }
   }catch(error){if(!closing&&!controller.signal.aborted)update(value.id,'failed','failed',String(error.message||'整理未完成').slice(0,300));}
   finally{controller=null;runningId=null;}
  }
  function pump(){if(closing||running)return;const value=db.prepare("SELECT * FROM jobs WHERE state='queued' ORDER BY created LIMIT 1").get();if(!value)return;
   running=new Promise(resolve=>setImmediate(resolve)).then(()=>perform(value)).finally(()=>{running=null;pump();});}
- async function create(data){
+ async function create(data,automatic=false){
   if(closing)throw fail('整理服务正在停止',503);
   if(data?.protocolVersion!==1||!uuid(data.operation_id)||typeof data.key!=='string')throw fail('整理请求无效');
   const current=record(data.key),provider=data.fallback===true?'codex':'',model=data.model||'';
@@ -51,14 +56,28 @@ export async function createCleanReadingJobs({directory,libraryStore,sourceMedia
   if(typeof model!=='string'||model&&!/^[A-Za-z0-9][A-Za-z0-9._-]{0,119}$/.test(model))throw fail('模型名称无效');
   const document=readingSource(current.document),sourceSignature=D.signature(document);
   if(!document.segments.length||data.source_signature!==sourceSignature)throw fail('文字稿已变化，请重新发起整理',409);
-  const audio=sourceMediaStore?await sourceMediaStore.read(data.key):null,plannerIdentity=await planner.identity();
-  const request={document,sourceSignature,provider,model:provider?model:'',plannerIdentity,audio:audio?{binding:audio.binding,sha256:audio.sha256}:null};
+  const audio=!automatic&&sourceMediaStore?await sourceMediaStore.read(data.key):null,plannerIdentity=await planner.identity();
+  const request={document,sourceSignature,...(automatic?{automatic:true}:{}),provider,model:provider?model:'',plannerIdentity,audio:audio?{binding:audio.binding,sha256:audio.sha256}:null};
   const owner=binding(current),digest=hash({request,owner}),previous=db.prepare('SELECT * FROM jobs WHERE id=?').get(data.operation_id);
   if(previous){if(previous.digest!==digest)throw fail('此操作标识已用于另一份整理请求',409);return describe(owned(previous));}
   if(db.prepare("SELECT id FROM jobs WHERE binding=? AND state IN ('queued','running')").get(owner))throw fail('这份稿件已有进行中的整理任务',409);
   if(db.prepare('SELECT count(*) AS n,coalesce(sum(length(request)),0) AS bytes FROM jobs').get().n>=64||db.prepare('SELECT coalesce(sum(length(request)),0) AS bytes FROM jobs').get().bytes+JSON.stringify(request).length>64*1024*1024)throw fail('整理任务记录已满，请先备份任务',409);
   db.prepare('INSERT INTO jobs(id,document_key,binding,digest,request,state,phase,created) VALUES(?,?,?,?,?,?,?,?)').run(data.operation_id,data.key,owner,digest,JSON.stringify(request),'queued','queued',Date.now());
   pump();return describe(row(data.operation_id));
+ }
+ async function createAutomatic(key){
+  const current=record(key),sourceSignature=D.signature(readingSource(current.document));
+  if(current.document.reading_cleanup?.sourceSignature===sourceSignature)return;
+  const owner=binding(current);
+  const previous=db.prepare("SELECT * FROM jobs WHERE binding=? AND json_extract(request,'$.sourceSignature')=? AND json_extract(request,'$.automatic')=1 ORDER BY created DESC,rowid DESC LIMIT 1").get(owner,sourceSignature);
+  if(previous){
+   if(['ready','interrupted'].includes(previous.state)&&!db.prepare("SELECT id FROM jobs WHERE binding=? AND state IN ('queued','running')").get(owner)){
+    update(previous.id,'queued');pump();
+   }
+   return;
+  }
+  const id=randomUUID();
+  return create({protocolVersion:1,key,operation_id:id,source_signature:sourceSignature},true);
  }
  async function result(id){const value=owned(row(id));if(!['ready','applied'].includes(value.state))throw fail('整理尚未完成',409);return {...describe(value),...JSON.parse(await readFile(path.join(work(id),'job-result.json'),'utf8'))};}
  async function action(id,action){
@@ -69,18 +88,25 @@ export async function createCleanReadingJobs({directory,libraryStore,sourceMedia
    const request=JSON.parse(value.request);if(D.signature(record(value.document_key).document)!==request.sourceSignature||request.plannerIdentity!==await planner.identity())throw fail('原稿或整理策略已变化，请创建新任务',409);
    if(db.prepare("SELECT id FROM jobs WHERE binding=? AND state IN ('queued','running')").get(value.binding))throw fail('已有整理任务进行中',409);update(id,'queued');pump();
   }else if(action==='apply'){
-   const output=await result(id),current=record(value.document_key),request=JSON.parse(value.request);
-   if(D.signature(current.document)!==output.sourceSignature)throw fail('原文、时间或说话人已变化，未应用旧整理结果',409);
+   const output=await result(id),request=JSON.parse(value.request);
    if(request.audio)await sourceMediaStore.localInput(value.document_key,request.audio.binding,request.audio.sha256);
+   const current=record(value.document_key);owned(value);
+   if(D.signature(current.document)!==output.sourceSignature)throw fail('原文、时间或说话人已变化，未应用旧整理结果',409);
    const p=output.reading_cleanup;D.createProjection(current.document,{decisions:p.decisions,marks:p.marks||[],breaks:p.breaks||[],policyVersion:p.policyVersion,sourceSignature:p.sourceSignature});
+   // Explicit CLI output for this same text takes precedence over local rules.
+   if(request.automatic&&current.document.reading_cleanup?.sourceSignature===output.sourceSignature){
+    update(id,'applied');return describe(row(id));
+   }
    if(JSON.stringify(current.document.reading_cleanup)!==JSON.stringify(p)){
     const document={...current.document,reading_cleanup:p};Core.validate(document);
-    libraryStore.commit({protocolVersion:1,epoch:current.token.epoch,key:current.key,receiptKey:id,action:'put',expected:current.token,document});}
+    libraryStore.commit({protocolVersion:1,epoch:current.token.epoch,key:current.key,receiptKey:id,action:'put',expected:current.token,document});
+    if(request.automatic)emit(value.document_key,'document');
+   }
    update(id,'applied');
   }else throw fail('整理操作无效');
   return describe(row(id));
  }
  const list=key=>{const owner=binding(record(key));return db.prepare('SELECT * FROM jobs WHERE binding=? ORDER BY created DESC LIMIT 20').all(owner).map(describe);};
  function shutdown(){return shutdownPromise??=(async()=>{closing=true;if(controller){update(runningId,'interrupted');controller.abort();}await running;db.close();})();}
- pump();return {create,list,get:id=>describe(owned(row(id))),result,action,shutdown,capabilities:()=>({protocolVersion:1,persistent:true,defaultProvider:'',providers:['codex'],automatic:false,maxSourceFraction:.1,maxWindows:12,maxRequests:3,audioUpload:false})};
+ pump();return {create:data=>create(data),createAutomatic,subscribe(listener){listeners.add(listener);return ()=>listeners.delete(listener);},list,get:id=>describe(owned(row(id))),result,action,shutdown,capabilities:()=>({protocolVersion:1,persistent:true,defaultProvider:'',providers:['codex'],automatic:false,maxSourceFraction:.1,maxWindows:12,maxRequests:3,audioUpload:false})};
 }

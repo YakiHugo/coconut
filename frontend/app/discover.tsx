@@ -3,8 +3,10 @@ import {saveSourceMedia} from './source-media';
 import {acquireAndTranscribe,useCombinedCapability} from './combined-source';
 import {acquireSourceAudio} from './source-acquisition';
 import {useOwnedPicker} from '../native-shell/owned-picker-hook';
+import {ChoicePicker} from '../reader-workspace/controls';
 import {episodeMetadata,filterEpisodes} from './episode-browser';
 import type { AppStore } from './store';
+import type {Document} from './contracts';
 import {attachTranscript} from './attach-transcript';
 import {discoverySession,saveDiscoverySession,matchingSourceDocuments,exactSourceIdentity,ingestionDocument,type DiscoverySession,type SourceAttempt} from './discovery-session';
 import {captionLanguageChoices,captionDiagnostics,hasCaptionLoss} from './caption-receipt';
@@ -12,12 +14,23 @@ import {captionFailureDiagnostic,captionFailureSummary,captionFailureTitle,capti
 import {parseSourceLink} from './source-link';
 import {resolveEpisodeLink} from './episode-link';
 import {useToast} from './toast';
-import { ingest, inspectFile, type Ingestion } from './ingestion';
+import { ingest, inspectFile, type Episode, type Ingestion } from './ingestion';
 import {canonicalVideoFallback as canonicalVideo,videoSourceProject,videoAudioFallback,type VideoAudioFallback} from './video-audio';
+
+function isPublisherTranscript(doc:Document) {
+    return (doc.provenance as {kind?:string}|undefined)?.kind==='publisher_transcript';
+}
+
+function trackLabel(track:NonNullable<Episode['transcripts']>[number]) {
+    const language=track.language||(track.language_status==='invalid'?'语言标注无效':'语言未标明');
+    return `${track.language_source==='inherited'?'按发布者语言 ':''}${language} · ${track.type}`;
+}
+
 export function Discover({ store }: {
     store: AppStore;
 }) {
     const notify = useToast();
+    const automaticAcquisition=(window as any).CoconutClientCapabilities?.allows('sourceJobs')===true;
     const combinedAvailable=useCombinedCapability(),combinedStop=useRef<{cancel:boolean}|null>(null);
     const [session,setSessionState]=useState(()=>discoverySession(store)),sessionRef=useRef(session);
     const updateSession=(patch:Partial<DiscoverySession>)=>{const next={...sessionRef.current,...patch};sessionRef.current=next;saveDiscoverySession(store,next);setSessionState(next);};
@@ -50,6 +63,13 @@ export function Discover({ store }: {
     const cancel=()=>{picker.controller.retire();cancelSource();};
     useEffect(()=>()=>store.setActivity('source',null),[store]);
     useEffect(()=>{const retire=()=>{if(owner.current){owner.current.abort();owner.current=null;const value={...sessionRef.current,error:'读取已暂停。可重试上次读取。'};sessionRef.current=value;saveDiscoverySession(store,value);}};window.addEventListener('pagehide',retire);return()=>{window.removeEventListener('pagehide',retire);retire();};},[store]);
+    const downloadPublisherAudio=(doc:Document)=>{
+        if(!(doc.podcast_source as {media_url?:string}|undefined)?.media_url||store.getMedia(doc.key)||(window as any).CoconutClientCapabilities?.allows('sourceJobs')!==true)return;
+        void acquireSourceAudio(store,doc.key).catch(error=>{
+            if(store.getSnapshot().workspace==='read'&&store.getSnapshot().activeKey===doc.key)
+                store.setMessage(error instanceof Error?error.message:'原声获取尚未完成，请在来源任务中重试。');
+        });
+    };
     const openingReceipt=useRef(false);
     const openReceipt=async(value:Ingestion,combined=false)=>{
         if(openingReceipt.current)return;
@@ -62,10 +82,13 @@ export function Discover({ store }: {
             if(matches.length>1)throw Error('此来源有多个项目，请打开目标项目后操作');
             const doc=matches[0]||store.addDocument(content,{select:false});
             if(!doc){setError('暂时不能添加内容，请先保存当前修改或处理存储状态。');return;}
-            try{if(combined)await acquireAndTranscribe(store,doc.key,controller.signal,()=>stop.cancel);else await acquireSourceAudio(store,doc.key,controller.signal);}catch(error){if(combined)throw error;if(owner.current===controller&&!controller.signal.aborted)store.setMessage(error instanceof Error?error.message:'原声获取尚未完成，请在来源任务中重试。');}
+            const publisher=isPublisherTranscript(doc);
+            if(combined)await acquireAndTranscribe(store,doc.key,controller.signal,()=>stop.cancel);
+            else if(!publisher)try{await acquireSourceAudio(store,doc.key,controller.signal);}catch(error){if(owner.current===controller&&!controller.signal.aborted)store.setMessage(error instanceof Error?error.message:'原声获取尚未完成，请在来源任务中重试。');}
             if(owner.current!==controller||controller.signal.aborted||!mounted.current)return;
             updateSession({receipt:null,error:''});
-            owner.current=null;setBusy(false);store.select(doc.key);
+            owner.current=null;setBusy(false);
+            if(store.select(doc.key)&&publisher)downloadPublisherAudio(doc);
         }catch(error){if(owner.current===controller&&!controller.signal.aborted&&mounted.current)setError(error instanceof Error?error.message:'内容无法添加');}
         finally{if(combinedStop.current===stop)combinedStop.current=null;openingReceipt.current=false;if(owner.current===controller){owner.current=null;if(mounted.current)setBusy(false);}}
     };
@@ -75,8 +98,11 @@ export function Discover({ store }: {
         const controller=new AbortController();owner.current=controller;setBusy(true);
         updateSession({attempt,error:'',receipt:null,lossReviewed:false});
         try {
-            if(attempt.transcribe){if(!combinedAvailable)throw Error('当前连接不支持获取原声并转录');const canonical=canonicalVideo(attempt.url);if(canonical){await openVideoAudio(canonical,true);return;}}
-            const read=(attempt:SourceAttempt)=>ingest({source:{kind:'url',url:attempt.feed||attempt.url},...(attempt.language?{language:attempt.language}:{}),...((attempt.transcribe&&attempt.episode)||attempt.intent?{intent:attempt.transcribe?'media_only':attempt.intent}:{}),...(attempt.episode?{episode:{feed_url:attempt.feed,episode_id:attempt.episode.id,...(attempt.track?{transcript_url:attempt.track}:{})}}:{})},controller.signal);
+            if(attempt.transcribe&&!combinedAvailable)throw Error('当前连接不支持获取原声并转录');
+            const read=(attempt:SourceAttempt)=>{
+                const episode=attempt.episode;
+                return ingest({source:{kind:'url',url:attempt.feed||attempt.url},...(attempt.language?{language:attempt.language}:{}),...(attempt.intent?{intent:attempt.intent}:automaticAcquisition&&!attempt.transcribe&&(!episode||episode.media?.length)?{intent:'acquire'}:{}),...(episode?{episode:{feed_url:attempt.feed,episode_id:episode.id,...(attempt.track?{transcript_url:attempt.track}:{})}}:{})},controller.signal);
+            };
             let valueResult=await read(attempt);
             if(owner.current!==controller)return;
             if(valueResult.state==='awaiting_selection'&&!attempt.episode&&!attempt.feed){
@@ -100,8 +126,22 @@ export function Discover({ store }: {
                 if(attempt.episode&&typeof valueResult.source?.feed_checked_at==='string'&&sessionRef.current.selection)updateSession({selection:{...sessionRef.current.selection,feed_checked_at:valueResult.source.feed_checked_at}});
                 const content=ingestionDocument(valueResult);
                 if(!content){setError('此来源尚未返回可打开的原声或文字稿，请保留来源后重试。');return;}
+                if(valueResult.acquisition){
+                    const [existing]=matchingSourceDocuments(store.getSnapshot().documents,content);
+                    const doc=existing||store.addDocument(content,{select:false});
+                    if(!doc)throw Error('暂时不能添加来源项目，请检查书架保存状态');
+                    updateSession({receipt:null,attempt:null,error:'',languageRequired:false,languageChoices:[]});
+                    owner.current=null;setBusy(false);
+                    if(store.select(doc.key)){
+                        void acquireSourceAudio(store,doc.key,undefined,{language:attempt.language,track:attempt.track}).catch(error=>{
+                            if(store.getSnapshot().activeKey===doc.key)
+                                store.setMessage(error instanceof Error?error.message:'来源任务未开始，可重新打开来源链接重试。');
+                        });
+                    }
+                    return;
+                }
                 updateSession({receipt:valueResult,attempt:null,languageRequired:false,languageChoices:[]});
-                if(attempt.transcribe){await openReceipt(valueResult,true);return;}
+                if(attempt.transcribe&&valueResult.state==='needs_transcription'){await openReceipt(valueResult,true);return;}
                 if(!hasCaptionLoss(captionDiagnostics(valueResult.diagnostics))&&!matchingSourceDocuments(store.getSnapshot().documents,content).length)await openReceipt(valueResult);
             }
         }catch(error){if(owner.current===controller&&!controller.signal.aborted){setFailure({diagnostic:null,original:attempt.feed||attempt.episode?null:captionOriginalURL(attempt.url)});setError(error instanceof Error?error.message:'来源读取失败');}}
@@ -156,7 +196,14 @@ export function Discover({ store }: {
             const core=(window as any).Coconut,next=attachTranscript(target,content,core,(window as any).CoconutCanonicalLibrary.project);
             const ok=await store.commitDocument(next,{key:target.key,revision:review.revision});
             if(!mounted.current)return;
-            if(ok){try{await acquireSourceAudio(store,target.key);}catch(error){store.setMessage(error instanceof Error?error.message:'原声获取尚未完成');}if(mounted.current){updateSession({receipt:null,error:''});setReview(null);store.select(target.key);}}
+            if(ok){
+                const publisher=isPublisherTranscript(next);
+                if(!publisher)try{await acquireSourceAudio(store,target.key);}catch(error){store.setMessage(error instanceof Error?error.message:'原声获取尚未完成');}
+                if(mounted.current){
+                    updateSession({receipt:null,error:''});setReview(null);
+                    if(store.select(target.key)&&publisher)downloadPublisherAudio(next);
+                }
+            }
             else{setError('文字稿保存未确认。请查看保存状态；不要重复接入，原项目标识仍保留。');setReview(null);}
         }catch(error){if(mounted.current)setError(error instanceof Error?error.message:'文字稿未能接入，原项目保留');}
         finally{store.setActivity('source-attach',null);if(mounted.current)setAttaching(false);}
@@ -230,10 +277,26 @@ export function Discover({ store }: {
     <div className="source-diagnostics"><p className="source-error">{error}</p>{failure?.diagnostic&&<p data-caption-diagnostic>{captionFailureSummary(failure.diagnostic)}</p>}<p>{failure?.audio?.purpose==='source'?(failure.diagnostic?.reason==='subtitle_token_required'?'字幕需要额外令牌；公开原声可单独检查，不会自动开始。':'字幕读取未完成；公开原声可单独检查。'):failure?.audio?'公开媒体可能使用默认音轨，语言及是否原版尚未确认。':'未取得可阅读的文字稿。'}</p></div>
   </section>}
   {(!error||busy||languageRequired)&&<p className="source-error" hidden>{error}</p>}
-  {languageRequired&&<section aria-label="选择视频原语言"><h2 ref={languageHeading} tabIndex={-1}>确认视频原语言</h2><p>请选择视频原语言。可用字幕语言不一定是原语言。</p>{languageChoices.length>0?<label>视频原语言<select value={language} onChange={event=>{cancel();updateSession({language:event.target.value,error,receipt:null,lossReviewed:false});}}><option value="">请选择原语言</option>{languageChoices.map(code=><option key={code} value={code}>{code}</option>)}</select></label>:<p>字幕服务未返回可选语言，请更新后重试。</p>}{languageChoices.length>0&&<button disabled={busy||!languageChoices.includes(language)} onClick={()=>void request({...session.attempt!,language})}>按所选原语言重试</button>}</section>}
+  {languageRequired&&<section aria-label="选择视频原语言"><h2 ref={languageHeading} tabIndex={-1}>确认视频原语言</h2><p>请选择视频原语言。可用字幕语言不一定是原语言。</p>{languageChoices.length>0?<ChoicePicker label="视频原语言" value={language} options={[{value:'',label:'请选择原语言'},...languageChoices.map(code=>({value:code,label:code}))]} onChange={language=>{cancel();updateSession({language,error,receipt:null,lossReviewed:false});}}/>:<p>字幕服务未返回可选语言，请更新后重试。</p>}{languageChoices.length>0&&<button disabled={busy||!languageChoices.includes(language)} onClick={()=>void request({...session.attempt!,language})}>按所选原语言重试</button>}</section>}
   {selection&&<section className="episode-list" aria-label="选择播客单集"><h2>{selection.title||'选择一集开始'}</h2>{selection.feed_url&&<div className="feed-refresh"><p className="quiet">{checkLabel?'上次检查：'+checkLabel:''}</p><button disabled={busy||attaching} onClick={()=>void request({url,feed:selection.feed_url})}>刷新节目列表</button></div>}{selection.feeds?.map(feed=><button key={feed.url} disabled={busy||attaching} onClick={()=>{changeURL(feed.url);void request({url:feed.url});}}>{feed.title}</button>)}{selection.truncated&&<p className="episode-warning" role="status">来源列表不完整，搜索仅限当前列表。</p>}{Boolean(selection.warnings?.length)&&<div className="episode-warnings"><ul>{selection.warnings!.map((warning,index)=><li key={index}>{warning}</li>)}</ul></div>}{Boolean(selection.episodes?.length)&&<div className="episode-browser"><label htmlFor="episode-query">查找当前列表的单集</label><input id="episode-query" type="search" value={episodeQuery} disabled={busy||attaching} onChange={event=>updateSession({episodeQuery:event.target.value,episodeLimit:20})} placeholder="按单集标题查找"/>{episodeQuery&&<button disabled={busy||attaching} onClick={()=>updateSession({episodeQuery:'',episodeLimit:20})}>清空单集搜索</button>}<p role="status">匹配 {filteredEpisodes.length} 集 · 已显示 {visibleEpisodes.length} 集</p>{!filteredEpisodes.length&&<p>没有匹配的单集。</p>}</div>}{visibleEpisodes.map(episode=>{
-      const supported=(episode.transcripts||[]).filter(track=>track.supported&&track.url),selectedTrack=supported.some(track=>!track.selection_conflict&&track.url===tracks[episode.id])?tracks[episode.id]:'',metadata=episodeMetadata(episode),allConflicting=supported.length>0&&supported.every(track=>track.selection_conflict),suggestion=episode.transcript_selection,recommended=suggestion?.status==='default'?supported.find(track=>track.url===suggestion.transcript_url):undefined;
-      return <article key={episode.id}><div><h3>{episode.title}</h3>{metadata&&<p className="episode-metadata">{metadata}</p>}<p>{supported.length?'发布者提供带时文字稿 · 未经人工校对':'此单集暂无可导入的带时文字稿'}</p>{allConflicting&&<p className="episode-warning">文字稿标注冲突，暂不可导入。</p>}{supported.length>0&&<label>文字稿语言与格式 · {episode.title}<select aria-label={'文字稿语言与格式 · '+episode.title} value={selectedTrack} disabled={busy||attaching} onChange={event=>{cancel();setReview(null);updateSession({tracks:{...sessionRef.current.tracks,[episode.id]:event.target.value},receipt:null,attempt:null,error:''});}}><option value="">{recommended?`默认：${recommended.language_source==='inherited'?'按发布者语言 ':''}${recommended.language} · ${recommended.type}`:allConflicting?'文字稿标注冲突，暂不可导入':'请选择发布者文字稿语言'}</option>{supported.map((track,index)=><option key={track.url+':'+index} value={track.url} disabled={track.selection_conflict}>{track.selection_conflict?'标注冲突 · ':''}{track.language_source==='inherited'?'按发布者语言 ':''}{track.language||(track.language_status==='invalid'?'语言标注无效':'语言未标明')} · {track.type} · {index+1}</option>)}</select></label>}{!episode.media?.length&&<p className="quiet">此单集未提供可用的公开原声链接。</p>}</div><div className="episode-actions"><button disabled={busy||attaching||supported.length>0&&!selectedTrack&&!recommended} onClick={()=>void request({url,episode,feed:selection.feed_url,track:selectedTrack||undefined})}>打开单集</button><button disabled={busy||attaching||!episode.media?.length} onClick={()=>void request({url,episode,feed:selection.feed_url,intent:'media_only'})}>先听原声</button>{combinedAvailable&&<button disabled={busy||attaching||!episode.media?.length} onClick={()=>void request({url,episode,feed:selection.feed_url,transcribe:true})}>获取原声并转录</button>}</div></article>;
+      const supported=(episode.transcripts||[]).filter(track=>track.supported&&track.url);
+      const available=Array.from(new Map(supported.filter(track=>!track.selection_conflict).map(track=>[track.url,track])).values());
+      const selectedTrack=available.some(track=>track.url===tracks[episode.id])?tracks[episode.id]:'';
+      const metadata=episodeMetadata(episode),suggestion=episode.transcript_selection;
+      const recommended=suggestion?.status==='default'?available.find(track=>track.url===suggestion.transcript_url):undefined;
+      const labels=available.map(trackLabel);
+      const options=[{value:'',label:recommended?`默认：${trackLabel(recommended)}`:'选择文字稿'},...available.map((track,index)=>({value:track.url,label:labels.indexOf(labels[index])===labels.lastIndexOf(labels[index])?labels[index]:`${labels[index]} · ${index+1}`}))];
+      return <article key={episode.id}><div>
+        <h3>{episode.title}</h3>{metadata&&<p className="episode-metadata">{metadata}</p>}
+        <p>{supported.length?'发布者提供带时文字稿 · 未经人工校对':'此单集暂无可导入的带时文字稿'}</p>
+        {supported.some(track=>track.selection_conflict)&&<p className="episode-warning">文字稿标注冲突，相关稿件暂不可导入。</p>}
+        {available.length>0&&<ChoicePicker label="文字稿语言与格式" value={selectedTrack} options={options} disabled={busy||attaching} onChange={track=>{cancel();setReview(null);updateSession({tracks:{...sessionRef.current.tracks,[episode.id]:track},receipt:null,attempt:null,error:''});}}/>}
+        {!episode.media?.length&&<p className="quiet">此单集未提供可用的公开原声链接。</p>}
+      </div><div className="episode-actions">
+        <button disabled={busy||attaching||(!automaticAcquisition||!episode.media?.length)&&supported.length>0&&!selectedTrack&&!recommended} onClick={()=>void request({url,episode,feed:selection.feed_url,track:selectedTrack||undefined})}>打开单集</button>
+        {!automaticAcquisition&&<button disabled={busy||attaching||!episode.media?.length} onClick={()=>void request({url,episode,feed:selection.feed_url,intent:'media_only'})}>先听原声</button>}
+        {combinedAvailable&&!supported.length&&<button disabled={busy||attaching||!episode.media?.length} onClick={()=>void request({url,episode,feed:selection.feed_url,transcribe:true})}>获取原声并转录</button>}
+      </div></article>;
   })}{visibleEpisodes.length<filteredEpisodes.length&&<button className="episode-more" disabled={busy||attaching} onClick={()=>updateSession({episodeLimit:episodeLimit+20})}>显示更多单集</button>}</section>}
   {receipt&&Boolean(content)&&diagnostics.length>0&&<section className="caption-review" aria-label="字幕解析检查"><h2 ref={lossHeading} tabIndex={-1}>{hasCaptionLoss(diagnostics)?'部分字幕未导入':'字幕解析提示'}</h2><p>保留 {(content as any).segments?.length||0} 个片段 · {diagnostics.length} 项解析提示</p><ul>{diagnostics.slice(0,100).map((item,index)=><li key={index}><p>{item.category==='malformed_timing'?'时间格式无效，片段未导入':item.category==='empty_cue'?'片段无可读文字，未导入':item.category} · 原文行 {item.startLine??'?'}–{item.endLine??'?'}</p>{item.cueId&&<p>片段：{item.cueId}</p>}{item.preview&&<pre>{item.preview}</pre>}</li>)}</ul>{diagnostics.length>100&&<p>仅展示前 100 项；其余仍计入上述数量，请核对来源。</p>}{lossPending&&<><button disabled={busy||attaching} onClick={()=>{updateSession({lossReviewed:true});if(!matches.length)openReceipt(receipt);}}>保留剩余文字稿，继续</button><button disabled={busy||attaching} onClick={()=>{setReview(null);updateSession({receipt:null,lossReviewed:false,error:''});}}>取消本次导入</button></>}</section>}
   {receipt&&Boolean(content)&&!lossPending&&<section className="source-project-choice" aria-label={matches.length?'此来源已在书架':'来源等待加入书架'}><h2 ref={choiceHeading} tabIndex={-1}>{matches.length?'此来源已在书架':'来源已就绪，尚未加入书架'}</h2>{matches.map(doc=><article key={doc.key}><h3>{doc.title}</h3><p>{doc.segments.length?`${doc.segments.length} 段文字`:'原声 · 尚无文字稿'} · 项目标识 {doc.key.slice(-8)}</p><button disabled={busy||attaching} onClick={()=>reopen(doc.key)}>继续已有项目 · {doc.key.slice(-8)}</button>{receipt.state==='ready'&&doc.project_kind==='audio_only'&&!doc.segments.length&&<button disabled={busy||attaching} onClick={()=>setReview({key:doc.key,revision:store.getRevision(doc.key)})}>核对新文字稿 · {doc.key.slice(-8)}</button>}</article>)}<button disabled={busy||attaching} onClick={()=>{setReview(null);openReceipt(receipt);}}>{matches.length?'另建独立副本':'加入书架'}</button><button disabled={busy||attaching} onClick={()=>{setReview(null);updateSession({receipt:null,error:''});}}>返回单集列表</button></section>}

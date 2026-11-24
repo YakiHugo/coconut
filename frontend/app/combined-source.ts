@@ -12,8 +12,12 @@ const intents=new WeakMap<AppStore,Map<string,Intent>>();
 /** Explicit local-only intent. Reuse uncertain submissions, never upgrade download. */
 export async function acquireAndTranscribe(store:AppStore,key:string,signal?:AbortSignal,cancelRequested:()=>boolean=()=>false){
  const scope=connection(),doc=store.getDocument(key),libraryId=client()?.current?.libraryId;if(!doc)throw Error('来源项目不存在');
- const mediaIdentity=store.getMedia(key)?.identity,source=sourceMediaIdentity(doc),current=()=>!signal?.aborted&&connection()===scope&&client()?.allows('sourceJobs')===true&&store.getDocument(key)?.project_kind==='audio_only'&&store.getMedia(key)?.identity===mediaIdentity&&sourceMediaIdentity(store.getDocument(key))===source;
- if(doc.project_kind!=='audio_only'||store.getMedia(key)?.identity?.startsWith('source-media-sha256:'))throw Error('此项目已有原声或文字稿，请打开项目核对');
+ const mediaIdentity=store.getMedia(key)?.identity,source=sourceMediaIdentity(doc);
+ const current=()=>{
+  const latest=store.getDocument(key);
+  return !signal?.aborted&&connection()===scope&&client()?.allows('sourceJobs')===true&&latest?.project_kind==='audio_only'&&!latest.segments?.length&&store.getMedia(key)?.identity===mediaIdentity&&sourceMediaIdentity(latest)===source;
+ };
+ if(doc.project_kind!=='audio_only'||doc.segments?.length||mediaIdentity?.startsWith('source-media-sha256:'))throw Error('此项目已有原声或文字稿，请打开项目核对');
  if(!await combinedCapability(signal)||!current())throw Error('当前连接不支持获取原声并转录');
  const saved=await store.flush();if(!saved.ok||!current())throw Error('来源或保存状态已变化，任务未提交');
  const hash=Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(source))),b=>b.toString(16).padStart(2,'0')).join('');if(!current())throw Error('来源已变化，任务未提交');
@@ -33,7 +37,7 @@ export async function acquireAndTranscribe(store:AppStore,key:string,signal?:Abo
   if(!current())throw Error('来源已变化，任务未提交');
   // Navigation does not discard the durable receipt. Explicit stop is a
   // separately confirmed server action, never an aborted HTTP request.
-  const response=await fetch('api/v1/source-jobs',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({protocolVersion:1,libraryId,key,source:hash,operation_id:requestedId,kind:'download_transcribe',localOnly:true,acquisitionMode:'incremental-experimental-v1',consent:true})});
+  const response=await fetch('api/v1/source-jobs',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({protocolVersion:1,libraryId,key,source:hash,operation_id:requestedId,kind:'download_transcribe',localOnly:true,acquisitionMode:'incremental-experimental-v1',consent:true,saveResult:true})});
   const data=await response.json();if(!response.ok)throw Error(data.error||'任务尚未确认，请在来源任务中核对');return acceptReceipt(data.job,requestedId);
  })().finally(()=>{intent!.promise=undefined;});}
  let job;try{job=await intent.promise;}finally{

@@ -17,7 +17,7 @@
 :root[data-reader-theme="dark"] :is(.rw-player,.selection-actions){color:var(--text);background:var(--surface)}
 :root[data-reader-theme="dark"] :is(.app-brand span,.sidebar-foot,.app-header,.kicker,.lede,.quiet,.recovery-entry,.library-page small,.podcast-catalog li p,.podcast-catalog a,.react-ai-panel p,.remote-media p,.ingestion-panel p,.ingestion-panel label,.rw-eyebrow,.rw-player p,.rw-media-unavailable,.rw-translation){color:var(--muted)}
 :root[data-reader-theme="dark"] .source-error{color:#efb395}
-:root[data-reader-theme="dark"] :is(.app-header,.recovery-entry,.episode-list article,.library-page li button,.app-message,.rw-player,.rw-cue,.rw-passage,.rw-corrections,.rw-selection,.react-ai-panel,.remote-media,.react-ai-panel article,.podcast-catalog li,.ingestion-panel,.ingestion-panel article){border-color:var(--reading-edge)}
+:root[data-reader-theme="dark"] :is(.app-header,.recovery-entry,.episode-list article,.library-page li button,.app-message,.rw-player,.rw-cue,.rw-passage,.rw-selection,.react-ai-panel,.remote-media,.react-ai-panel article,.podcast-catalog li,.ingestion-panel,.ingestion-panel article){border-color:var(--reading-edge)}
 :root[data-reader-theme="dark"] .rw-playing{border-left-color:var(--accent)}
 :root[data-reader-theme="dark"] :focus-visible{outline:3px solid var(--accent);outline-offset:3px}
 .reading-preferences :focus-visible,:root[data-reader-theme="dark"] .reading-preferences :focus-visible{outline:none;box-shadow:inset 0 -2px var(--accent);background-color:var(--reading-selected);color:var(--text)}

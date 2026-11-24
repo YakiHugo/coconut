@@ -13,6 +13,22 @@ test('grounded names and punctuation project across word boundaries while retain
  assert.deepEqual(result.segments[0].words,[{word:'刘',start:0,end:.2},{word:'元来了。',start:.2,end:2}]);
  assert.deepEqual(result.notes,d.notes);assert.deepEqual(d,original);assert.equal(result.transcript_review.changes.length,2);
 });
+test('grounded longer names take the source phrase interval without changing surrounding clocks',()=>{
+ const d=doc();d.title='节目嘉宾安德鲁';
+ d.segments[0]={...d.segments[0],end:3,text:'欢迎 安迪 来了',words:[
+  {word:'欢迎 ',start:0,end:.8},{word:'安',start:.9,end:1.3},{word:'迪 ',start:1.3,end:1.8},{word:'来了',start:2,end:3}
+ ]};
+ const edited=merge(d,[edit('安迪','安德鲁')]).segments[0];
+ assert.equal(edited.text,'欢迎 安德鲁 来了');
+ assert.deepEqual(edited.words,[d.segments[0].words[0],{word:'安德鲁 ',start:.9,end:1.8},d.segments[0].words[3]]);
+ assert.equal(edited.original_text,d.segments[0].text);
+ const mismatch=structuredClone(d);
+ mismatch.segments[0].words=[{word:'欢迎 安迪 ',start:0,end:1.8},d.segments[0].words[3]];
+ const result=merge(mismatch,[edit('安迪','安德鲁'),edit('来了','来了。','punctuation')]);
+ assert.equal(result.segments[0].text,'欢迎 安迪 来了。');
+ assert.equal(result.transcript_review.issues.length,1);
+});
+
 test('unfounded entities, changed numbers and negations, and inserted words stay as review issues',()=>{
  for(const [text,proposal] of [['刘源来了',edit('刘源','张元')],['投资12万',edit('12','20','typo')],['不能去',edit('不能','可以','typo')],['我参加',edit('我','你','typo')],['投资三万',edit('三','五','typo')],['刘源来了',edit('来了','已经来了','typo')]]){
   const d=doc();d.segments[0].text=text;delete d.segments[0].words;const result=merge(d,[proposal]);assert.equal(result.segments[0].text,text);assert.equal(result.transcript_review.issues.length,1);

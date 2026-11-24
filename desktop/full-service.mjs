@@ -8,6 +8,7 @@ import {createPodcastSources} from './podcast-sources.mjs';
 import {createPublicFetcher} from './public-http.mjs';
 import {createCaptionShortLinkResolver} from './caption-short-link.mjs';
 import {sourceNetworkFromEnvironment,validateSourceNetwork} from './source-network.mjs';
+import {podcastDownloadPolicyFromEnvironment} from './podcast-download-policy.mjs';
 
 const allowed=new Set(['COCONUT_ASR_PYTHON','COCONUT_MODEL_DIRECTORY','COCONUT_ASR_BACKEND','COCONUT_ASR_MODEL','COCONUT_ALIGN_MODEL','COCONUT_SPEAKER_SEGMENTATION_MODEL','COCONUT_SPEAKER_EMBEDDING_MODEL','COCONUT_READING_PYTHON','COCONUT_PUNCTUATION_MODEL']);
 export async function desktopTranscriptionSettings({userDataDirectory,env=process.env}={}){
@@ -36,7 +37,7 @@ export async function startDesktopService({userDataDirectory,env=process.env,sou
  const network=validateSourceNetwork(sourceNetwork??sourceNetworkFromEnvironment(env));
  if(!options.podcastSources){
   let fetchResource;
-  options.podcastSources=createPodcastSources({fetchResource:(...args)=>{
+  options.podcastSources=createPodcastSources({downloadPolicy:podcastDownloadPolicyFromEnvironment(env),fetchResource:(...args)=>{
    fetchResource??=createPublicFetcher({ownerSources:true,ownerNetwork:network});
    return fetchResource(...args);
   }});

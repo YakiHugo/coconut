@@ -2,7 +2,7 @@
 
 把长音视频变成可信、好读、可回源的文字材料。
 
-保存状态会显示“保存中 / 已保存”及具体失败原因。连续编辑合并保存；失败后可重试，或下载包含完整译文、笔记与 AI 历史的“未保存文档备份”。本页草稿和移除恢复副本另行保留。原生关闭与安装更新会先等待实际保存回执；默认直接保存到电脑上的 SQLite 统一书架，普通编辑仅写入有修改的文档。服务不可用时明确报错，不会改写浏览器存储。已有浏览器记录仅作为只读恢复副本保留。详见 [保存与恢复](docs/library-save-pipeline.md)。
+保存状态会显示“保存中 / 已保存”及具体失败原因。连续编辑合并保存；失败后可重试，或下载包含完整译文、笔记与 AI 历史的“未保存文档备份”。本页草稿和移除恢复副本另行保留。原生关闭与安装更新会先等待实际保存回执；默认直接保存到电脑上的 SQLite 统一书架，普通编辑仅写入有修改的文档。服务不可用时明确报错，不会改写浏览器存储。已有浏览器记录仅作为只读恢复副本保留。
 
 ## 从来源开始
 
@@ -15,7 +15,7 @@
 
 开发使用 Node.js 22.21+ 或 24.5+，以及 pnpm 10.33.0（版本由 `packageManager` 固定）。可用 Corepack：`corepack enable`。
 
-通过浏览器长期使用，可运行独立服务：Node.js 22.21+ 或 24.5+，`pnpm --filter . install --frozen-lockfile --ignore-scripts` 后执行 `pnpm start`。同一服务可部署在 Mac、独立主机或 HTTPS 反向代理之后；数据目录、端口、访问密钥和来源网络统一配置在 `.env`。见[独立服务部署](docs/standalone-service.md)。
+通过浏览器长期使用，可运行独立服务：Node.js 22.21+ 或 24.5+，`pnpm --filter . install --frozen-lockfile --ignore-scripts` 后执行 `pnpm start`。同一服务可部署在 Mac、独立主机或 HTTPS 反向代理之后；数据目录、端口、访问密钥和来源网络统一配置在 `.env`，配置项见 [.env.example](.env.example)。
 
 ```bash
 pnpm --filter . install --frozen-lockfile
@@ -24,13 +24,15 @@ pnpm dev
 
 开发服务自动读取 `.env`，默认地址为 `http://127.0.0.1:8080`；已有 `.env` 的端口、模型和数据目录继续生效。React / CSS 修改通过 Vite 热更新；Node 后端、共享 CommonJS 模块或 `.env` 修改后重启 `pnpm dev`。前端与 API 共用一个监听端口，无需单独启动 Python HTTP 服务。旧的固定端口轻量入口保留为 `pnpm dev:bridge`。
 
-打开命令输出的本机地址；`pnpm run doctor` 可检查服务能力。默认不安装或下载 ASR 模型。识别服务的配置、就绪状态和任务协议见 [来源与原始媒体](docs/link-first-ingestion.md)。
+打开命令输出的本机地址；`pnpm run doctor` 可检查服务能力。默认不安装或下载 ASR 模型。
 
-macOS 开发服务启用字幕助手后，可在「发现与添加」连接 Edge 中已有的 B 站登录，之后自动复用所选配置的登录态。设置和凭据范围见 [开发字幕获取](docs/development-captions.md#在-macos-开发服务中复用-edge-的-b-站登录)。
+macOS 开发服务启用字幕助手后，可在「发现与添加」连接 Edge 中已有的 B 站登录，之后自动复用所选配置的登录态。仅保存所选配置标识；每次请求读取限定的 B 站登录 Cookie，断开连接后停止读取。
 
-默认 React 与实际原生验收边界见 [应用入口](docs/react-default-cutover.md) 和 [应用行为合同](docs/react-migration-parity.md)。公共静态页面无法自行提供本机 AI、平台获取或 ASR 后端。
+公共静态页面无法自行提供本机 AI、平台获取或 ASR 后端。
 
 ## 阅读与保存
+
+打开文字稿默认进入精读稿：在本地精简明显的停顿词和重复起头，不改写原始文字和时间，不调用 AI。已保存且仍匹配原文的整理结果优先使用。需要核对原话时，打开「来源与整理 → 逐句校对」；复制原话和精确摘录仍取自原稿。
 
 阅读、播放器、搜索、选区、笔记、摘要、AI 任务及恢复设置都由 React 管理。原文、时间定位、来源和用户修改分别保留；字幕来源可追溯不代表已经人工校对。
 
@@ -40,31 +42,21 @@ macOS 开发服务启用字幕助手后，可在「发现与添加」连接 Edge
 
 原始媒体先在当前会话播放。桌面可明确选择在这台电脑记住原文件；重启后仍不自动播放。文件丢失或改变时保留笔记并要求重新选择，不删除或改写原文件。
 
-- [保存与恢复](docs/library-save-pipeline.md)
-- [统一书架](docs/canonical-library.md)
-- [原声项目](docs/audio-library-projects.md)
-- [备份恢复边界](docs/backup-recovery.md)
-
 ## 来源获取与识别
 
 公开播客、视频字幕和原始媒体按服务实际能力提供。公开静态页面、源码本地服务和桌面包的能力并不相同。平台限制、缺少字幕或依赖不可用会明确显示，不把简介当文字稿，不自动切换身份或读取浏览器 Cookie。
 
 公开链接和字幕获取有来源、大小、时长与请求预算限制。受信任代理支持所有者显式配置的字幕获取，以及明确选择并通过来源校验的原始媒体下载；默认关闭，不是任意地址转发。
 
-原始媒体无需先有文字稿即可播放。ASR 是可选能力；独立服务由 Node 直接启动 Python 转录任务，必须配置本地模型、确认输入并取得就绪状态；正常应用流程不会静默安装依赖或下载权重。没有可用模型时仍可播放和记录笔记。
+打开明确的播客单集或受支持的视频链接后，服务端创建或复用来源项目，并独立获取原声和作者字幕。原声一就绪即可播放。字幕分支需要选择语言或重试时，下载继续进行。
 
-Apple Silicon 本地转录默认使用 **Qwen3-ASR-1.7B-8bit + Qwen3-ForcedAligner-0.6B-8bit**，通过 MLX 运行。Whisper 保留为显式选择的备用后端；Qwen 未就绪时不会自动切换。模型准备、整集运行记录及验证范围见[本地转录管线](docs/transcription-pipeline.md)。
+Apple Silicon 本地转录默认使用 **Qwen3-ASR-1.7B-8bit + Qwen3-ForcedAligner-0.6B-8bit**，通过 MLX 运行。Whisper 保留为显式选择的备用后端；Qwen 未就绪时不会自动切换。
+
+转录遇到生成上限时会改用短段重试，只有覆盖完整音频才接受结果。词时间异常时保留识别文字，带上前后原声再对齐一次，仍无法可靠定位的片段使用已有的句段时间回听。
 
 说话人分组由独立的本地声音模型完成。配置两份 `COCONUT_SPEAKER_*_MODEL` 后，Qwen 转录会在切句后自动执行声音分组；已有稿可单独补标签，无须重新识别。自动声音编号需要回听核对，不代表真实姓名；不确定的片段保留未标注。
 
-来源未返回现成字幕时，开发模式可先获取原声，再用已配置的本地识别服务生成带时间轴的文字稿，并接入原项目。平台字幕和自动转写保留不同的来源标记；具体启动配置见[来源与本地转写](docs/link-first-ingestion.md#one-user-visible-task-existing-python-execution-backend)。
-
-- [链接、播客与原始媒体任务](docs/link-first-ingestion.md)
-- [开发字幕获取](docs/development-captions.md)
-- [字幕失败诊断](docs/caption-diagnostic-outcomes.md)
-- [三平台导入实现与真实验证证据](docs/public-ingestion-evidence.md)
-- [本地转录管线与 Qwen 接入](docs/transcription-pipeline.md)
-- [来源与 ASR 边界](docs/podcast-sources-and-asr.md)
+确认作者未提供字幕、原声已保存且本地模型就绪后，Node 会自动启动本地转写。需要登录、字幕请求失败或来源未给出字幕信息时，保留手动转写入口。模型配置和引擎沿用本机设置。结果保存进原项目后自动运行本地精读规则。对齐、标点和说话人补跑及需要额度的 CLI 校对位于「来源与整理」。详细状态和恢复方式见 [来源获取与文字稿处理](frontend/app/source-acquisition-workflow.md)。
 
 ## AI 与后台任务
 
@@ -72,11 +64,7 @@ Apple Silicon 本地转录默认使用 **Qwen3-ASR-1.7B-8bit + Qwen3-ForcedAlign
 
 后台摘要保存进度和任务身份；中断后明确续跑，不自动重发未知请求。接收结果前核对原文快照，失败内容保留可用的恢复路径。本机错误详情需本人展开查看，不进入文档历史或备份。
 
-- [本地 AI 与 macOS](docs/local-agents-and-macos.md)
-- [持久后台摘要任务](docs/persistent-summary-tasks.md)
-- [长文摘要计划](docs/long-document-summaries.md)
-
-默认使用连续阅读：原始字幕片段按完整表达合并为自然段，说话人切换单独展示，仍可通过时间戳定位原声。已配置的本地模型可补标点、按声音分组；原稿历史与逐句校对保留。准备方式和边界见 [文字稿可读性](docs/transcript-readability.md)。
+默认使用连续阅读：原始字幕片段按完整表达合并为自然段，说话人切换单独展示，仍可通过时间戳定位原声。已配置的本地模型可补标点、按声音分组；原稿历史与逐句校对保留。
 
 ## 开发与验收
 
@@ -91,12 +79,12 @@ pnpm run test:desktop
 
 CI 还检查共享领域模型、Node/Python 协议、真实 Chromium 默认界面和实际 macOS 打包应用的菜单、文件选择、保存、关闭及重启流程。普通回归使用自写材料和明确标注的模拟模型；通过不代表真实模型质量或所有公开平台可用。
 
-公开来源后端检查、模拟界面检查与真实来源到 React 的端到端证据分别报告，不能把独立通过的前两者拼成真实闭环。本次 B站与小宇宙的真实识别、React 接入与刷新恢复证据，以及 YouTube 登录阻塞，见 [验收记录](docs/public-ingestion-evidence.md)。CI 成功不代表用户电脑已安装识别环境或本地代理已验证；具体准备和未配置时的行为见 [运行要求](docs/public-ingestion-evidence.md#running-the-source-app-is-a-separate-setup-step)。删除旧界面不会删除用户数据，也不会取消新默认界面的安全、存储或原文件校验。
+公开来源后端检查、模拟界面检查与真实来源到 React 的端到端证据分别报告，不能把独立通过的前两者拼成真实闭环。CI 成功不代表用户电脑已安装识别环境或本地代理已验证。删除旧界面不会删除用户数据，也不会取消新默认界面的安全、存储或原文件校验。
 
 源码主干与既有 [GitHub Releases](https://github.com/YakiHugo/coconut/releases) 是不同交付物。版本号未改变时，不覆盖已经发布的开发包。macOS 开发包未获 Developer ID 签名或 Apple 公证，不应绕过系统安全警告。
 
-长音频的本地/云端共用切块、时间还原、跨块声纹匹配和断点恢复，见 [长音频处理架构](docs/long-audio-pipeline.md)。
+长音频的本地/云端共用切块、时间还原、跨块声纹匹配和断点恢复。
 
 ## 转录校对
 
-新转录可接续本机 Codex CLI 或 Kimi CLI 做错字、人名、术语和标点校对；已有文字稿也可从阅读页「来源与整理 → 文字整理」独立处理。原始识别、时间定位与修改记录保留，支持分批恢复和待核对项。配置及边界见[转录后的 AI 校对](docs/transcript-review.md)。
+新转录可接续本机 Codex CLI 或 Kimi CLI 做错字、人名、术语和标点校对；已有文字稿也可从阅读页「来源与整理 → 文字整理」独立处理。有节目资料依据的不等长名称更正沿用原短语的整段时间，其余词保留原有时钟。原始识别与修改记录保留，支持分批恢复和待核对项。

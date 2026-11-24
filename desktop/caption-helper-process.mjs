@@ -15,9 +15,9 @@ import path from 'node:path';
 
 const lock = JSON.parse(await readFile(new URL('./caption-helper-lock.json',import.meta.url),'utf8'));
 export const HELPER_LIMITS = Object.freeze({timeoutMs:130000, outputBytes:1500000, captionBytes:1024*1024, concurrency:1});
-let active = false;
+const active=new Set();
 const idleWaiters=new Set();
-export function waitForCaptionHelperIdle(){return active?new Promise(resolve=>idleWaiters.add(resolve)):Promise.resolve();}
+export function waitForCaptionHelperIdle(){return active.size?new Promise(resolve=>idleWaiters.add(resolve)):Promise.resolve();}
 
 export class CaptionHelperError extends Error {
   constructor(code,message) { super(message); this.name='CaptionHelperError'; this.code=code; }
@@ -95,10 +95,10 @@ export function playerRuntimeEnv(runtime) {
   if (typeof runtime !== 'string' || !path.isAbsolute(runtime) || path.basename(runtime) !== 'deno') throw fail('CAPTION_CONFIGURATION','播放器脚本运行时必须是 Deno 的绝对路径');
   return {COCONUT_DENO:runtime};
 }
-export function runCaptionProcess(executable,input,{directory,signal,timeoutMs,maxOutputBytes,onSpawn,spawnProcess=spawn,args=['--protocol=1'],detached=process.platform!=='win32',playerRuntime=null}) {
+export function runCaptionProcess(executable,input,{directory,signal,timeoutMs,maxOutputBytes,onSpawn,onProgress,spawnProcess=spawn,args=['--protocol=1'],detached=process.platform!=='win32',playerRuntime=null}) {
   return new Promise((resolve,reject)=>{
     let child, timer, monitor, reading=false, firstError, closed=false, outputBytes=0;
-    const chunks=[];
+    const chunks=[];let progressBuffer='',lastReceived=0;
     const stop=error=>{
       firstError ||= error;
       if (!child || closed) return;
@@ -128,6 +128,17 @@ export function runCaptionProcess(executable,input,{directory,signal,timeoutMs,m
         outputBytes+=chunk.length;
         if(outputBytes>maxOutputBytes){stop(fail('CAPTION_OUTPUT_LIMIT','字幕助手输出超过安全限制'));return;}
         if(capture)chunks.push(chunk);
+        else if(onProgress){
+          const lines=(progressBuffer+chunk.toString('utf8')).split('\n');
+          progressBuffer=(lines.pop()||'').slice(-128);
+          for(const line of lines){
+            const match=/^coconut-download (\d{1,9}) (\d{1,9})$/.exec(line);
+            if(!match)continue;
+            const receivedBytes=Number(match[1]),totalBytes=Number(match[2])||null;
+            if(receivedBytes<lastReceived||receivedBytes>200*1024*1024||totalBytes!==null&&(totalBytes<receivedBytes||totalBytes>200*1024*1024))continue;
+            lastReceived=receivedBytes;onProgress({receivedBytes,totalBytes});
+          }
+        }
       });
     }
     monitor=setInterval(async()=>{
@@ -143,7 +154,7 @@ export function runCaptionProcess(executable,input,{directory,signal,timeoutMs,m
 }
 
 /** Internal-only test hooks cannot be supplied through the bridge or renderer. */
-export async function runPinnedCaptionHelper({resourcesPath,artifact,operation,fixtureUrl,url,language=null,network=null,purpose=null,signal,consume,
+export async function runPinnedCaptionHelper({resourcesPath,artifact,operation,fixtureUrl,url,language=null,network=null,purpose=null,signal,consume,authorOnly=false,audioOnly=false,onProgress,
   timeoutMs=HELPER_LIMITS.timeoutMs,maxOutputBytes=HELPER_LIMITS.outputBytes,onSpawn,
   tempRoot=tmpdir(),spawnProcess=spawn}={}) {
   if(!['version','authored-fixture','extract','extract-audio'].includes(operation))throw fail('CAPTION_OPERATION','不支持的字幕助手操作');
@@ -155,12 +166,13 @@ export async function runPinnedCaptionHelper({resourcesPath,artifact,operation,f
     try{source=captionSource(url);}catch{throw fail('CAPTION_INPUT','仅支持已启用来源的公开单视频链接和有效原语');}
     if(source.url!==url || (language!==null && (typeof language!=='string' || !/^[a-z]{2,3}(?:-[A-Za-z0-9]{2,8}){0,2}$/.test(language))))throw fail('CAPTION_INPUT','仅支持规范的公开单视频链接和有效原语');
     if(!captionHelperProviders(artifact?.publicProviders).includes(source.provider))throw fail('CAPTION_PROVIDER_UNAVAILABLE','此安装包的字幕助手尚未启用该来源');
-    input={operation,url,language,...(network&&source.provider!=='x'?{network:validateSourceNetwork(network)}:{}),...(purpose?{purpose}:{})};
+    input={operation,url,language,...(network&&source.provider!=='x'?{network:validateSourceNetwork(network)}:{}),...(purpose?{purpose}:{}),...(authorOnly?{authorOnly:true}:{}),...(audioOnly?{audioOnly:true}:{})};
     if(operation==='extract-audio'&&(!['youtube','bilibili'].includes(source.provider)||purpose!==null&&purpose!=='source'))throw fail('CAPTION_INPUT','媒体来源或目的无效');
   }
   cancelled(signal);
-  if(active)throw fail('CAPTION_BUSY','已有字幕请求正在运行');
-  active=true;let directory,consumed=false;
+  const lane=operation==='extract-audio'&&purpose==='source'?'audio':'captions';
+  if(active.has(lane)||operation==='version'&&active.size)throw fail('CAPTION_BUSY','已有同类来源请求正在运行');
+  active.add(lane);let directory,consumed=false;
   try {
     const bytes=await verifiedHelperBytes(resourcesPath,artifact);cancelled(signal);
     directory=await mkdtemp(path.join(tempRoot,'coconut-caption-'));
@@ -168,7 +180,7 @@ export async function runPinnedCaptionHelper({resourcesPath,artifact,operation,f
     // Execute a private verified snapshot, closing the resource hash-to-exec race.
     const executable=path.join(directory,'bin','coconut-caption');
     await writeFile(executable,bytes,{mode:0o500,flag:'wx'});
-    const stdout=await runCaptionProcess(executable,input,{directory,signal,timeoutMs,maxOutputBytes,onSpawn,spawnProcess});
+    const stdout=await runCaptionProcess(executable,input,{directory,signal,timeoutMs,maxOutputBytes,onSpawn,onProgress,spawnProcess});
     cancelled(signal);let result;
     try{result=JSON.parse(stdout);}catch{throw fail('CAPTION_OUTPUT','字幕助手没有返回完整元数据');}
     if(!result || typeof result!=='object' || Array.isArray(result))throw fail('CAPTION_OUTPUT','字幕助手没有返回完整元数据');
@@ -200,5 +212,5 @@ export async function runPinnedCaptionHelper({resourcesPath,artifact,operation,f
     const allowed=new Set(['home','tmp','config','cache','data','empty-bin','bin','caption.en.vtt']);
     if((await readdir(directory)).some(name=>!allowed.has(name)))throw fail('CAPTION_OUTPUT','字幕助手写入了未允许的文件');
     return {source:result.source,track:result.track,bytes:body,format:result.format};
-  } finally {try{await cleanupHelperMedia(directory,consumed);}finally{active=false;for(const resolve of idleWaiters)resolve();idleWaiters.clear();}}
+  } finally {try{await cleanupHelperMedia(directory,consumed);}finally{active.delete(lane);if(!active.size){for(const resolve of idleWaiters)resolve();idleWaiters.clear();}}}
 }

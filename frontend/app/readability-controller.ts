@@ -1,7 +1,7 @@
 import {processingSnapshot,sourceSignature,inspectResources,mergeProcessingResult,type ResourceDocument,type ResourceRow} from '@coconut/shared/transcript-resources.js';
 import type {Document,Media} from './contracts';
 import {downloadedMediaFile,transcriptionFileIssue} from './ingestion-media';
-export type ReadabilityCapabilities={available:boolean;punctuation:boolean;speakers:boolean;sourceMedia?:boolean;message:string};
+export type ReadabilityCapabilities={available:boolean;punctuation:boolean;speakers:boolean;sourceMedia?:boolean;savedSourceMedia?:boolean;message:string};
 export type ReadabilityJob={id:string;documentKey:string;state:string;phase:string;steps:string[];sourceDigest:string;resultDigest?:string|null;mediaIdentity:string|null;media?:{url:string;kind:'audio'|'video';name:string};needsMedia:boolean;error:string|null;input?:ResourceDocument;result?:ResourceDocument};
 export type ReadabilityState={key:string|null;busy:boolean;message:string;capabilities:ReadabilityCapabilities|null;rows:ResourceRow[];job:ReadabilityJob|null};
 type Dependencies={getDocument:(key:string)=>Document|null;getRevision:(key:string)=>number;getFile:(key:string)=>File|null;getMedia:(key:string)=>Media|null;canApply?:()=>boolean;commit:(doc:Document,expected:{key:string;revision:number})=>Promise<boolean>;request:(url:string,init?:RequestInit)=>Promise<any>;uuid:()=>string;fetchMedia?:(media:Media,signal:AbortSignal)=>Promise<File>};
@@ -70,7 +70,7 @@ export function createReadabilityController(deps:Dependencies){
      await apply(job,key,request,owner.signal);return;
     }
     if(liveStates.includes(job.state)){
-     if(job.needsMedia&&media&&job.mediaIdentity===media.identity){const upload=file||await loadMedia(media,owner.signal);if(generation!==request||owner.signal.aborted||(deps.getMedia(key)?.identity??null)!==media.identity)return;const issue=transcriptionFileIssue(upload);if(issue)throw Error(issue);job=checkJob(await deps.request('api/v1/readability/jobs/'+job.id+'/media',{method:'POST',headers:{'Content-Type':'application/octet-stream'},body:upload,signal:owner.signal}),key);emit({job,message:'原声已接收，继续本地整理。'});}
+     if(job.needsMedia&&media&&job.mediaIdentity===media.identity&&!media.identity.startsWith('source-media-sha256:')){const upload=file||await loadMedia(media,owner.signal);if(generation!==request||owner.signal.aborted||(deps.getMedia(key)?.identity??null)!==media.identity)return;const issue=transcriptionFileIssue(upload);if(issue)throw Error(issue);job=checkJob(await deps.request('api/v1/readability/jobs/'+job.id+'/media',{method:'POST',headers:{'Content-Type':'application/octet-stream'},body:upload,signal:owner.signal}),key);emit({job,message:'原声已接收，继续本地整理。'});}
      return;
     }
     if(!run)return;
@@ -82,12 +82,14 @@ export function createReadabilityController(deps:Dependencies){
    emit({job:null});
    const runnable=inspectResources(doc,{audio:!!file||run&&!!media,...caps});
    if(!runnable.steps.length||!run&&!automatic)return;
-   let audio=file;
-   if(run&&runnable.steps.includes('speakers')&&!audio&&media)audio=await loadMedia(media,owner.signal);
+   const savedSource=media?.identity.startsWith('source-media-sha256:')===true;
+   if(savedSource&&runnable.steps.includes('speakers')&&!caps.savedSourceMedia)throw Error('请更新服务以直接读取已保存原声');
+   let audio=savedSource?null:file;
+   if(!savedSource&&run&&runnable.steps.includes('speakers')&&!audio&&media)audio=await loadMedia(media,owner.signal);
    if(audio){const issue=transcriptionFileIssue(audio);if(issue)throw Error(issue);}
    doc=deps.getDocument(key);if(!doc||sourceSignature(doc)!==signature)throw Error('原稿已变化，未发送整理任务');
    if((deps.getMedia(key)?.identity??null)!==(media?.identity??null)||file&&deps.getFile(key)!==file)throw Error('原声已变化，未发送旧资源的整理任务');
-   const mediaInput=audio?{identity:media?.identity||'file:'+audio.name+':'+audio.size+':'+audio.lastModified,name:audio.name,size:audio.size}:null;
+   const mediaInput=savedSource&&runnable.steps.includes('speakers')?{identity:media!.identity,saved:true}:audio?{identity:media?.identity||'file:'+audio.name+':'+audio.size+':'+audio.lastModified,name:audio.name,size:audio.size}:null;
    job=checkJob(await deps.request('api/v1/readability/jobs',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({protocolVersion:1,operation_id:deps.uuid(),document:processingSnapshot(doc),media:mediaInput}),signal:owner.signal}),key);
    if(disposed||generation!==request)return;emit({job,message:'已有文字稿已复用，正在补齐可用的整理步骤。'});
    if(job.needsMedia&&audio){job=checkJob(await deps.request('api/v1/readability/jobs/'+job.id+'/media',{method:'POST',headers:{'Content-Type':'application/octet-stream'},body:audio,signal:owner.signal}),key);if(!disposed&&generation===request)emit({job});}

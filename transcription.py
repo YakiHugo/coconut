@@ -6,6 +6,7 @@ import contextlib
 import hashlib
 import importlib.util
 import json
+import math
 import os
 import re
 import signal
@@ -177,6 +178,27 @@ def checkpoint(path, operation):
     return result
 
 
+QWEN_ADAPTER = 'qwen-local-segment-retry-v3'
+
+
+def _covers_audio(segments, duration):
+    previous_end = 0.
+    for segment in segments or []:
+        start, end = segment['start'], segment['end']
+        if not 0 <= start < end <= duration + .001 or abs(start - previous_end) > .001:
+            return False
+        previous_end = end
+    return bool(segments) and abs(previous_end - duration) <= .001
+
+
+def _decode_failed(result, budget, duration):
+    # MLX returns audio-window extents here, before it has word or sentence times.
+    if getattr(result, 'generation_tokens', 0) >= budget or (result.segments and not _covers_audio(result.segments, duration)):
+        return True
+    letters = ''.join(c for c in result.text if c.isalnum())
+    return any(len(match.group()) >= 40 for match in re.finditer(r'(.{1,20}?)\1{19,}', letters))
+
+
 class QwenBackend:
     local_only = True
 
@@ -214,13 +236,13 @@ class QwenBackend:
         self.asr = self.aligner = None
         self.cache_key = dict(backend='qwen-mlx', runtime=version('mlx-audio'),
                               asr=fingerprint(profile['asr_model']),
-                              aligner=fingerprint(profile['align_model']), adapter='qwen-local-v1')
+                              aligner=fingerprint(profile['align_model']), adapter=QWEN_ADAPTER)
         if self.hints:
             self.cache_key['context'] = self.hints
 
     def recognize(self, path, *, request_id):
         from mlx_audio.stt import load
-        from audio_pipeline import validate_result
+        from audio_pipeline import InvalidWindowClocks, validate_result
         import wave
         with wave.open(str(path)) as audio:
             duration = audio.getnframes() / audio.getframerate()
@@ -231,12 +253,19 @@ class QwenBackend:
                 with contextlib.redirect_stdout(sys.stderr):
                     self.asr = load(self.profile['asr_model'])
             emit(phase='recognize')
-            # A generous bound per <=4 minute processing unit. Keep raw text
-            # before invoking the independent aligner, including every segment.
+            budget = min(16384, max(256, math.ceil(duration * 12) + 64))
             with contextlib.redirect_stdout(sys.stderr):
-                result = self.asr.generate(str(path), max_tokens=16384, verbose=False, **self.hints)
-            if getattr(result, 'generation_tokens', 0) >= 16384:
-                raise RuntimeError('ASR generation limit reached; text may be incomplete')
+                result = self.asr.generate(str(path), max_tokens=budget, verbose=False, **self.hints)
+            if _decode_failed(result, budget, duration):
+                if duration < 4:
+                    raise RuntimeError('ASR decoding failed; text may be incomplete')
+                retry_budget = min(16384, budget * 2)
+                with contextlib.redirect_stdout(sys.stderr):
+                    result = self.asr.generate(str(path), max_tokens=retry_budget,
+                                               chunk_duration=min(30, duration / 2), verbose=False, **self.hints)
+                if _decode_failed(result, retry_budget, duration) or not _covers_audio(result.segments, duration):
+                    raise RuntimeError('ASR shorter-window retry returned incomplete or repetitive output; partial text discarded')
+                return {'text': result.text, 'segments': result.segments, 'recovery': 'shorter_audio_windows'}
             return {'text': result.text, 'segments': result.segments}
 
         raw = checkpoint(raw_path, recognize)
@@ -258,29 +287,26 @@ class QwenBackend:
             # Align each emitted audio/text pair and cache it independently.
             aligned_path = self.work / ('alignment-' + request_id + '-' + str(index) + '.json')
             def align():
-                from audio_pipeline import AudioChunk, SAMPLE_RATE, write_chunk
+                from audio_pipeline import SAMPLE_RATE, aligner_audio
                 if self.aligner is None:
                     with contextlib.redirect_stdout(sys.stderr):
                         self.aligner = load(self.profile['align_model'])
                 emit(phase='align')
-                cut = self.work / ('align-' + request_id + '.wav')
-                chunk = AudioChunk(0, round(start * SAMPLE_RATE), round(end * SAMPLE_RATE),
-                                   round(start * SAMPLE_RATE), round(end * SAMPLE_RATE))
-                try:
-                    write_chunk(Path(path), chunk, cut)
-                    with contextlib.redirect_stdout(sys.stderr):
-                        result = self.aligner.generate(audio=str(cut), text=item['text'], language=language)
-                    values = getattr(result, 'items', result)
-                    return [dict(word=value.text, start=float(value.start_time) + start,
-                                 end=float(value.end_time) + start) for value in values]
-                finally:
-                    cut.unlink(missing_ok=True)
+                waveform = aligner_audio(Path(path), round(start * SAMPLE_RATE), round(end * SAMPLE_RATE))
+                with contextlib.redirect_stdout(sys.stderr):
+                    result = self.aligner.generate(audio=waveform, text=item['text'], language=language)
+                values = getattr(result, 'items', result)
+                return [dict(word=value.text, start=float(value.start_time) + start,
+                             end=float(value.end_time) + start) for value in values]
             # Failure retains the ASR checkpoint; explicit retry invokes only
             # the missing alignment, not the expensive recognition again.
             segment['words'] = checkpoint(aligned_path, align)
             segments.append(segment)
         value = {'segments': segments, 'language': languages[0] if len(set(languages)) == 1 else None}
-        return validate_result(value, duration)
+        try:
+            return validate_result(value, duration)
+        except ValueError as error:
+            raise InvalidWindowClocks(str(error), value, duration) from error
 
 
 def run(request, *, qwen_backend=None, pipeline_options=None):
@@ -317,8 +343,10 @@ def run(request, *, qwen_backend=None, pipeline_options=None):
         if backend.hints:
             # A new title/vocabulary must not silently reuse recognition made
             # without those hints, or invalidate the older recoverable work.
-            context_key = hashlib.sha256(json.dumps(backend.hints, ensure_ascii=False, sort_keys=True).encode()).hexdigest()[:16]
+            context_key = hashlib.sha256(json.dumps([backend.cache_key, backend.hints], ensure_ascii=False, sort_keys=True).encode()).hexdigest()[:16]
             options['work_dir'] = work / ('audio-context-' + context_key)
+        elif backend.cache_key.get('adapter') == QWEN_ADAPTER:
+            options['work_dir'] = Path(options['work_dir']) / QWEN_ADAPTER
         result = run_audio_pipeline(source, backend, local_only=True, **options)
         result['segments'] = sentence_segments(result['segments'])
         model = Path(profile['asr_model']).name
@@ -345,6 +373,9 @@ def run(request, *, qwen_backend=None, pipeline_options=None):
         document = enhance_document(document, source, segmentation=profile['segmentation'],
                                     embedding=profile['embedding'], work_dir=work / 'speakers',
                                     split_speakers=True, speaker_count=speaker_count)
+    if profile['backend'] == 'qwen-mlx':
+        from existing_alignment import repair_transcribed_clocks
+        repair_transcribed_clocks(document, source, options['work_dir'], profile.get('align_model'), getattr(backend, 'aligner', None))
     document = correct_verified_names(document, request.get('name_corrections'))
     emit(phase='save')
     save_document(document, work / 'result.json')

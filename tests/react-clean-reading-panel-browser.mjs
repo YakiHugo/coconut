@@ -22,6 +22,11 @@ try{
  page.on('request',request=>{if(new URL(request.url()).origin!==origin&&!request.url().startsWith('blob:'))external.push(request.url());});
  page.on('pageerror',error=>errors.push(error.message));
  await page.goto(origin+'/#read/'+original.key);
+ await expect(page.getByRole('tab',{name:'精读稿',exact:true})).toHaveAttribute('aria-selected','true');
+ await expect(page.getByRole('tab',{name:'逐句原文'})).toHaveCount(0);
+ await expect(page.locator('[data-source-id="a"]')).toHaveText(original.segments[0].text);
+ assert.equal(await page.locator('[data-source-id="a"]').innerText(),'我觉得值得认真讨论，然后继续。');
+ assert.equal(library.get(original.key).document.reading_cleanup,undefined);
  await page.getByRole('button',{name:'来源与整理',exact:true}).click();
  await page.getByRole('button',{name:'文字整理',exact:true}).click();
  const start=page.getByRole('button',{name:'整理口语与断句',exact:true});await expect(start).toBeEnabled();await start.click();

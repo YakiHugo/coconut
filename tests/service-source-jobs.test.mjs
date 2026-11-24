@@ -9,7 +9,9 @@ import {Readable} from 'node:stream';
 import {createLibraryStore} from '../desktop/library-store.mjs';
 import {createSourceMediaStore} from '../desktop/source-media.mjs';
 import {createSourceJobs} from '../desktop/source-jobs.mjs';
-import {PublicSourceError} from '../desktop/public-http.mjs';
+import {PublicSourceError,createPublicFetcher} from '../desktop/public-http.mjs';
+import {createPodcastSources} from '../desktop/podcast-sources.mjs';
+import {EventEmitter} from 'node:events';
 import {createVideoAudioService,VideoSourceError} from '../desktop/video-audio-service.mjs';
 import {startService} from '../server/main.mjs';
 import {createTranscriptReviewer} from '../desktop/transcript-review.mjs';
@@ -18,21 +20,99 @@ const videoDoc={key:doc.key,title:'Authored video',source_url:'https://www.youtu
 function commit(library,document,action='put'){return library.commit({protocolVersion:1,epoch:library.describe().epoch,key:document.key,receiptKey:randomUUID(),expected:library.get(document.key)?.token||null,action,...(action==='put'?{document}:{})});}
 const missing=()=>Object.assign(Error('not found'),{taskCode:'ingestion_operation_not_found'});
 async function until(fn,predicate){for(let attempt=0;attempt<100;attempt++){const value=await fn();if(predicate(value))return value;await delay(10);}throw Error('Timed out');}
-async function fixture(t,{download,transcriber,reviewer,reviewProvider,videoAudioService}={}){
+async function fixture(t,{download,transcriber,reviewer,reviewProvider,videoAudioService,captionService,cleanReadingJobs,importEpisode}={}){
  const directory=await mkdtemp(path.join(tmpdir(),'coconut-source-jobs-'));
  const library=await createLibraryStore({directory});commit(library,doc);
  const media=await createSourceMediaStore({directory:path.join(directory,'media'),libraryStore:library});
- let calls=0;const podcastSources={downloadMedia:async(request,options)=>{calls++;return download?download(request,options):{body:Buffer.from('ID3 authored media'),type:'audio/mpeg'};}};
+ let calls=0;const podcastSources={importEpisode,downloadMedia:async(request,options)=>{calls++;return download?download(request,options):{body:Buffer.from('ID3 authored media'),type:'audio/mpeg'};}};
  transcriber??={profile:{backend:'authored'},status:async()=>({available:true}),run:async({workDirectory})=>{await writeFile(path.join(workDirectory,'result.json'),JSON.stringify({schema_version:1,title:'Authored',segments:[{id:'a',start:0,end:1,text:'Authored'}]}));}};
- const options={directory:path.join(directory,'jobs'),libraryStore:library,mediaStore:media,podcastSources,videoAudioService,transcriber,reviewer,reviewProvider};let jobs=await createSourceJobs(options);
+ const options={directory:path.join(directory,'jobs'),libraryStore:library,mediaStore:media,podcastSources,videoAudioService,captionService,cleanReadingJobs,transcriber,reviewer,reviewProvider};let jobs=await createSourceJobs(options);
  t.after(async()=>{await jobs.shutdown();await media.shutdown();library.close();await rm(directory,{recursive:true,force:true});});
- const create=kind=>jobs.create({protocolVersion:1,operation_id:randomUUID(),libraryId:library.describe().epoch,key:doc.key,source:media.owner(doc.key).source,kind,consent:true});
- return {directory,library,media,create,transcriber,options,get jobs(){return jobs;},get calls(){return calls;},async restart(){await jobs.shutdown();jobs=await createSourceJobs(options);}};
+ const create=(kind,extra={})=>jobs.create({protocolVersion:1,operation_id:randomUUID(),libraryId:library.describe().epoch,key:doc.key,source:media.owner(doc.key).source,kind,consent:true,...extra});
+ const acquire=(extra={})=>jobs.acquire({protocolVersion:1,operation_id:randomUUID(),libraryId:library.describe().epoch,key:doc.key,source:media.owner(doc.key).source,consent:true,...extra});
+ return {directory,library,media,create,acquire,transcriber,options,get jobs(){return jobs;},get calls(){return calls;},async restart(){await jobs.shutdown();jobs=await createSourceJobs(options);}};
 }
 test('download persists directly on the server, deduplicates concurrent browsers and survives restart',async t=>{
  const f=await fixture(t);assert.equal(f.calls,0);const [a,b]=await Promise.all([f.create('download'),f.create('download')]);assert.equal(a.id,b.id);
  await until(()=>f.jobs.get(a.id),j=>j.state==='ready');const receipt=await f.media.read(doc.key);assert.equal(receipt.type,'audio/mpeg');assert.equal(f.calls,1);
  await f.restart();assert.equal((await f.jobs.list(doc.key))[0].id,a.id);assert.equal((await f.create('download')).id,a.id);assert.equal(f.calls,1);assert.deepEqual(await f.media.read(doc.key),receipt);
+});
+test('download persists bounded live byte progress and always saves final counters across restart',async t=>{
+ let now=1000000;t.mock.method(Date,'now',()=>now);
+ let onProgress,finish;
+ const f=await fixture(t,{download:async(_request,options)=>{
+  onProgress=options.onProgress;
+  return new Promise(resolve=>{finish=resolve;});
+ }});
+ const job=await f.create('download');
+ assert.deepEqual(JSON.parse((await f.jobs.get(job.id)).phase),{phase:'resolve'});
+ onProgress({receivedBytes:0,totalBytes:100,url:'must not persist'});
+ assert.deepEqual(JSON.parse((await f.jobs.get(job.id)).phase),{phase:'download',receivedBytes:0,totalBytes:100});
+ for(let receivedBytes=1;receivedBytes<50;receivedBytes++)onProgress({receivedBytes,totalBytes:100});
+ assert.equal(JSON.parse((await f.jobs.get(job.id)).phase).receivedBytes,0);
+ now+=1000;onProgress({receivedBytes:50,totalBytes:100});
+ assert.deepEqual(JSON.parse((await f.jobs.get(job.id)).phase),{phase:'download',receivedBytes:50,totalBytes:100});
+ now+=1;onProgress({receivedBytes:99,totalBytes:100});
+ assert.equal(JSON.parse((await f.jobs.get(job.id)).phase).receivedBytes,50);
+ finish({body:Buffer.alloc(100),type:'audio/mpeg'});
+ const ready=await until(()=>f.jobs.get(job.id),value=>value.state==='ready');
+ assert.deepEqual(JSON.parse(ready.phase),{phase:'save',receivedBytes:100,totalBytes:100});
+ now+=1000;onProgress({receivedBytes:100,totalBytes:200});
+ assert.equal((await f.jobs.get(job.id)).phase,ready.phase);
+ await f.restart();assert.equal((await f.jobs.get(job.id)).phase,ready.phase);
+ assert.equal((await f.media.read(doc.key)).size,100);
+});
+test('download retries reset stale counters and ignore invalid, cancelled or previous-attempt progress',async t=>{
+ let attempt=0,previousProgress,onProgress;
+ const f=await fixture(t,{download:async(_request,options)=>{
+  onProgress=options.onProgress;
+  if(++attempt===1){
+   previousProgress=onProgress;onProgress({receivedBytes:42,totalBytes:null});
+   throw new PublicSourceError('SOURCE_TRANSFER','公开来源传输中断');
+  }
+  await delay(10000,null,{signal:options.signal});
+ }});
+ const job=await f.create('download'),failed=await until(()=>f.jobs.get(job.id),value=>value.state==='failed');
+ assert.deepEqual(JSON.parse(failed.phase),{phase:'download',receivedBytes:42,totalBytes:null});
+ await f.jobs.action(job.id,'retry');await until(async()=>attempt,value=>value===2);
+ const resolving={phase:'resolve'};
+ assert.deepEqual(JSON.parse((await f.jobs.get(job.id)).phase),resolving);
+ previousProgress({receivedBytes:100,totalBytes:100});
+ for(const invalid of [{receivedBytes:-1,totalBytes:null},{receivedBytes:Infinity,totalBytes:null},{receivedBytes:20,totalBytes:10},{receivedBytes:1,totalBytes:'secret'}])onProgress(invalid);
+ assert.deepEqual(JSON.parse((await f.jobs.get(job.id)).phase),resolving);
+ onProgress({receivedBytes:1,totalBytes:null});
+ const live=(await f.jobs.get(job.id)).phase;
+ assert.deepEqual(JSON.parse(live),{phase:'download',receivedBytes:1,totalBytes:null});
+ await f.jobs.action(job.id,'cancel');onProgress({receivedBytes:2,totalBytes:null});
+ assert.equal((await f.jobs.get(job.id)).phase,live);
+ await f.restart();assert.equal((await f.jobs.get(job.id)).state,'cancelled');
+});
+test('public HTTP media bytes flow through podcast sources into a running job before a saved player asset exists',async t=>{
+ let now=1000000;t.mock.method(Date,'now',()=>now);
+ let response;
+ const fetchResource=createPublicFetcher({lookup:async()=>[{address:'93.184.216.34',family:4}],request:(_url,_options,callback)=>{
+  const req=new EventEmitter();
+  req.end=()=>{
+   response=new Readable({read(){}});
+   response.statusCode=200;response.headers={'content-type':'audio/mpeg'};
+   callback(response);
+  };
+  return req;
+ }});
+ const sources=createPodcastSources({fetchResource});
+ const f=await fixture(t,{download:(request,options)=>sources.downloadMedia(request,options)});
+ commit(f.library,{...doc,podcast_source:{...doc.podcast_source,media_url:'https://publisher.example.org/episode.mp3'}});
+ const job=await f.create('download');await until(async()=>response,Boolean);
+ assert.deepEqual(JSON.parse((await f.jobs.get(job.id)).phase),{phase:'download',receivedBytes:0,totalBytes:null});
+ now+=1000;response.push(Buffer.from('ID3 live bytes'));
+ await until(()=>f.jobs.get(job.id),value=>JSON.parse(value.phase).receivedBytes>0);
+ const live=await f.jobs.get(job.id);
+ assert.equal(live.state,'running');assert.equal(JSON.parse(live.phase).receivedBytes,14);
+ assert.equal(await f.media.read(doc.key),null);
+ response.push(Buffer.from(' final'));response.push(null);
+ const ready=await until(()=>f.jobs.get(job.id),value=>value.state==='ready');
+ assert.deepEqual(JSON.parse(ready.phase),{phase:'save',receivedBytes:20,totalBytes:null});
+ assert.equal((await f.media.read(doc.key)).size,20);
 });
 test('legacy task ledgers gain optional error details without restarting saved work',async t=>{
  const f=await fixture(t),job=await f.create('download');await until(()=>f.jobs.get(job.id),j=>j.state==='ready');
@@ -285,11 +365,35 @@ test('existing text alignment is durable, isolated from paid review, and fenced 
  let runs=0;const f=await fixture(t,{reviewProvider:'codex',reviewer:{review(){assert.fail('alignment must not review text');}},transcriber:{profile:{backend:'qwen-mlx'},alignmentStatus:async()=>({available:true}),align:async({document,workDirectory})=>{runs++;const result=structuredClone(document);result.segments[0].words=[{word:'Hello',start:0,end:1}];await writeFile(path.join(workDirectory,'result.json'),JSON.stringify({document:result,alignment_report:{status:'candidate',source_text_quality:'unverified'},source_snapshot:document}));}}});
  const text={...doc,project_kind:'transcript',segments:[{id:'a',start:0,end:1,text:'Hello'}],provenance:{alignment_required:true}};commit(f.library,text);
  await f.media.save(doc.key,f.media.owner(doc.key).source,Readable.from(['original audio']),{type:'audio/mpeg',name:'source.mp3'});
+ await assert.rejects(f.create('transcribe'),/已有文字稿/);
+ await assert.rejects(f.jobs.create({protocolVersion:1,operation_id:randomUUID(),libraryId:f.library.describe().epoch,key:doc.key,source:f.media.owner(doc.key).source,kind:'download_transcribe',consent:true,localOnly:true,acquisitionMode:'incremental-experimental-v1'}),/已有文字稿/);
  const job=await f.create('align');await until(()=>f.jobs.get(job.id),j=>j.state==='ready');assert.equal((await f.create('align')).id,job.id);assert.equal(runs,1);
  await f.restart();const result=await f.jobs.result(job.id);assert.equal(result.alignment.document.segments[0].text,'Hello');assert.equal(result.alignment.input.segments[0].text,'Hello');assert.equal(f.library.get(doc.key).document.segments[0].words,undefined);
  commit(f.library,{...text,segments:[{id:'a',start:0,end:1,text:'Changed'}]});await assert.rejects(f.jobs.result(job.id),/原稿已变化/);
  const newJob=await f.create('align');assert.notEqual(newJob.id,job.id);
 });
+test('alignment saves validated clocks on the existing document revision and retains notes',async t=>{
+ const f=await fixture(t,{transcriber:{profile:{backend:'authored'},alignmentStatus:async()=>({available:true}),
+  align:async({document,workDirectory})=>{
+   const candidate=structuredClone(document);
+   candidate.segments[0].words=[{word:'Hello',start:.2,end:.9}];
+   await writeFile(path.join(workDirectory,'result.json'),JSON.stringify({
+    document:candidate,alignment_report:{status:'candidate',cues:[{cue_id:'a',status:'aligned'}]},alignment_identity:'authored-alignment',
+   }));
+  }}});
+ const text={...doc,project_kind:'transcript',segments:[{id:'a',start:0,end:1,text:'Hello'}],notes:{a:'Keep this note'}};
+ commit(f.library,text);
+ const media=await f.media.save(doc.key,f.media.owner(doc.key).source,Readable.from(['original audio']),{type:'audio/mpeg',name:'source.mp3'});
+ const job=await f.create('align',{saveResult:true});
+ const ready=await until(()=>f.jobs.get(job.id),item=>item.state==='ready');
+ const saved=f.library.get(doc.key);
+ assert.equal(ready.documentRevision,saved.token.revision);
+ assert.deepEqual(saved.document.notes,text.notes);
+ assert.equal(saved.document.segments[0].text,'Hello');
+ assert.deepEqual(saved.document.segments[0].words,[{word:'Hello',start:.2,end:.9}]);
+ assert.equal(saved.document.segments[0].alignment_media_sha256,media.sha256);
+});
+
 test('helper process timeouts persist a finite source failure and hide the raw message',async t=>{
  const secret='https://secret.example/helper-timeout';
  const service=createVideoAudioService({sourceMedia:true,helper:{extractAudio:async()=>{const error=Error(secret);error.name='CaptionHelperError';error.code='CAPTION_TIMEOUT';throw error;}}});
@@ -434,4 +538,51 @@ test('blocked same-source retry does not block a later independent download',asy
 test('source download consumes a stream before adapter cleanup without requesting a Buffer',async t=>{
  let consumed=false,closed=false;const f=await fixture(t,{download:async(_,{consume})=>{assert.equal(typeof consume,'function');await consume({body:Readable.from(['stream',' bytes']),type:'audio/mpeg'});consumed=true;closed=true;return {type:'audio/mpeg'};}});
  const job=await f.create('download');await until(()=>f.jobs.get(job.id),j=>j.state==='ready');assert.equal(consumed,true);assert.equal(closed,true);assert.equal((await f.media.read(doc.key)).size,12);
+});
+
+const episodeProject={...doc,podcast_source:{feed_url:'https://example.test/feed',episode_id:'f'.repeat(64),media_url:doc.podcast_source.media_url,media_kind:'audio'}};
+test('automatic acquisition publishes author captions before audio and keeps parallel progress',async t=>{
+ let finishDownload,startDownload;const opened=new Promise(resolve=>startDownload=resolve),download=new Promise(resolve=>finishDownload=resolve);
+ t.after(()=>finishDownload({body:Buffer.from('ID3'),type:'audio/mpeg'}));
+ const cleanup=[],events=[];
+ const f=await fixture(t,{download:(_,{onProgress})=>{onProgress({receivedBytes:1,totalBytes:3});startDownload();return download;},
+  importEpisode:async(_request,{authorOnly})=>{
+   assert.equal(authorOnly,true);await opened;
+   return {status:'ready',document:{title:doc.title,source_url:doc.source_url,podcast_source:episodeProject.podcast_source,
+    provenance:{kind:'publisher_transcript'},segments:[{id:'first',start:0,end:1,text:'Author caption.'}]}};
+  },cleanReadingJobs:{createAutomatic:async key=>cleanup.push(key)}});
+ commit(f.library,{...episodeProject,project_note:'Existing note'});
+ f.jobs.subscribe(event=>events.push(event));
+ const [audio,captions]=await f.acquire();
+ await until(()=>f.jobs.get(captions.id),job=>job.state==='ready');
+ assert.equal((await f.jobs.get(audio.id)).state,'running');
+ assert.equal(f.library.get(doc.key).document.segments[0].text,'Author caption.');
+ assert.equal(f.library.get(doc.key).document.project_note,'Existing note');
+ assert.deepEqual(cleanup,[doc.key]);
+ finishDownload({body:Buffer.from('ID3'),type:'audio/mpeg'});
+ await until(()=>f.jobs.get(audio.id),job=>job.state==='ready');
+ assert.equal((await f.jobs.list(doc.key)).length,2);
+ assert.ok(events.some(event=>event.type==='document'&&event.key===doc.key));
+ assert.ok(events.some(event=>event.type==='media'&&event.key===doc.key));
+ assert.deepEqual((await f.acquire()).map(job=>job.id),[audio.id]);
+});
+
+test('only verified author-caption absence starts a configured local ASR and saves its result',async t=>{
+ let captionAttempts=0,runs=0;
+ const f=await fixture(t,{
+  importEpisode:async()=>++captionAttempts===1?{status:'access_restricted',message:'字幕需要登录'}:{status:'author_captions_absent'},
+  transcriber:{profile:{backend:'authored'},status:async()=>({available:true,local_only:true,model_download:false}),
+   run:async({workDirectory})=>{runs++;await writeFile(path.join(workDirectory,'result.json'),JSON.stringify({
+    title:doc.title,language:'en',segments:[{id:'asr',start:0,end:2,text:'Verified local transcript.'}]}));}},
+ });
+ commit(f.library,episodeProject);
+ const [audio,captions]=await f.acquire();
+ await until(()=>f.jobs.get(captions.id),job=>job.state==='failed');
+ await until(()=>f.jobs.get(audio.id),job=>job.state==='ready');
+ assert.equal(runs,0);
+ await f.jobs.action(captions.id,'retry');
+ await until(()=>f.jobs.list(doc.key),jobs=>jobs.some(job=>job.kind==='transcribe'&&job.state==='ready'));
+ assert.equal((await f.jobs.get(captions.id)).state,'absent');
+ assert.equal(f.library.get(doc.key).document.segments[0].text,'Verified local transcript.');
+ assert.equal(f.calls,1);assert.equal(runs,1);
 });

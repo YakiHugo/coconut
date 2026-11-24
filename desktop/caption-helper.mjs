@@ -33,14 +33,14 @@ export function createCaptionHelper({resourcesPath, artifact=artifacts[`${proces
         return {installed:false,integrity:false,ready:false,providers:[],reason:packagedCaptionGuidance(code),code};
       }
     },
-    async extractAudio({url,language=null,purpose=null,signal,consume}={}){
+    async extractAudio({url,language=null,purpose=null,signal,consume,onProgress,audioOnly=false}={}){
       if(!ready||!ownerLocal)throw new CaptionHelperError('CAPTION_UNAVAILABLE','此安装包未提供本机媒体获取能力');
-      return execute({resourcesPath,artifact,operation:'extract-audio',url,language,purpose,network:sourceNetwork,timeoutMs:910000,signal,consume});
+      return execute({resourcesPath,artifact,operation:'extract-audio',url,language,purpose,network:sourceNetwork,timeoutMs:910000,signal,consume,onProgress,audioOnly});
     },
-    async extractCaptions({url,language=null,signal} = {}) {
+    async extractCaptions({url,language=null,signal,authorOnly=false} = {}) {
       if(closing||signal?.aborted)throw new CaptionHelperError('CAPTION_CANCELLED','字幕请求已取消');
       if(!ready)throw new CaptionHelperError('CAPTION_UNAVAILABLE','安装包字幕助手尚未通过检查');
-      try{return await execute({resourcesPath,artifact,operation:'extract',url,language,...(ownerLocal?{network:sourceNetwork}:{}),signal});}
+      try{return await execute({resourcesPath,artifact,operation:'extract',url,language,authorOnly,...(ownerLocal?{network:sourceNetwork}:{}),signal});}
       catch(error){
         if(['CAPTION_UNAVAILABLE','CAPTION_INTEGRITY','CAPTION_VERSION','CAPTION_START','CAPTION_EXIT'].includes(error.code))throw new CaptionHelperError(error.code,packagedCaptionGuidance(error.code));
         throw error;

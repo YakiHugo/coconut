@@ -1,7 +1,7 @@
 'use strict';
 // Pure resource planning and conservative merge; no fetching, models or storage.
 const EVIDENCE_FIELDS=['speaker_scope','chunk_index','provider_speaker','timing_basis','alignment_status','boundary_status'];
-const CUE_FIELDS=['id','start','end','text','speaker','original_text','original_speaker','speaker_id','speaker_status','words',...EVIDENCE_FIELDS];
+const CUE_FIELDS=['id','start','end','text','speaker','original_text','original_speaker','speaker_id','speaker_status','words','alignment_media_sha256',...EVIDENCE_FIELDS];
 const PROVENANCE_FIELDS=['kind','language','caption_method','caption_track','media_id','source_platform','punctuation_method','punctuation_backend','punctuation_model','punctuation_status','speaker_method','speaker_backend','speaker_model','speaker_status','alignment_required','source_text_quality'];
 const RESULT_FIELDS=PROVENANCE_FIELDS.filter(key=>key.startsWith('punctuation_')||key.startsWith('speaker_'));
 const select=(value,fields)=>Object.fromEntries(fields.filter(key=>Object.hasOwn(value||{},key)).map(key=>[key,value[key]]));

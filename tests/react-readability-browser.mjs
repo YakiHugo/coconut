@@ -14,7 +14,7 @@ try{
  page.on('pageerror',error=>errors.push(error.message));page.on('request',req=>{if(req.url().includes('/ingestions/upload'))asr.push(req.url());});await page.route('**/*',route=>new URL(route.request().url()).origin===origin?route.continue():route.abort());
  await page.goto(origin+'/#read/'+fixture.key);await expect(page.locator('.rw-passage').first()).toBeVisible();
  await page.getByRole('button',{name:'来源与整理',exact:true}).click();await page.getByRole('button',{name:'文字整理',exact:true}).click();await expect(page.locator('[data-resource=speakers]')).toContainText('待取得对应原声');
- await page.locator('.rw-resource-file input').setInputFiles({name:'authored.wav',mimeType:'audio/wav',buffer:wav()});await expect.poll(()=>started).toBe(true);
+ await page.locator('.rw-resource-file input').setInputFiles({name:'authored.wav',mimeType:'audio/wav',buffer:wav()});await page.getByRole('button',{name:'检查并继续整理',exact:true}).click();await expect.poll(()=>started).toBe(true);
  await expect(page.locator('audio')).toHaveCount(1);assert.equal(await page.locator('audio').evaluate(audio=>audio.paused),true);
  await page.getByRole('button',{name:'时间校准',exact:true}).click();const offset=page.getByRole('spinbutton',{name:'偏移秒数'});await offset.fill('0.25');await expect(page.getByRole('button',{name:'保存校准',exact:true})).toBeEnabled();release();await expect.poll(()=>jobs.list(fixture.key)[0].state).toBe('ready');
  await expect(page.locator('.rw-resource-processing')).toContainText('保存或取消当前编辑');

@@ -1,5 +1,4 @@
 import type { ReaderCue, ReaderDocument } from './contracts';
-import {blockText, type Block} from '@coconut/reader/editions.js';
 export function time(seconds: number) { const n = Math.max(0, Math.floor(seconds)); return [n >= 3600 ? String(Math.floor(n / 3600)).padStart(2, '0') : null, String(Math.floor(n / 60) % 60).padStart(2, '0'), String(n % 60).padStart(2, '0')].filter(v => v !== null).join(':'); }
 export function currentCue(cues: ReaderCue[], seconds: number): ReaderCue | undefined {
     let lo = 0, hi = cues.length;
@@ -16,7 +15,10 @@ export function currentCue(cues: ReaderCue[], seconds: number): ReaderCue | unde
     }
     return undefined;
 }
-export function filterCues(doc: ReaderDocument, query: string, displayText:(text:string)=>string=text=>text) { const q = displayText(query).trim().toLocaleLowerCase(); return doc.segments.filter(cue => !q || [cue.text, doc.notes?.[cue.id] || '', cue.speaker || '', cue.translations?.[doc.translation_view || '']?.text || ''].some(text => displayText(text).toLocaleLowerCase().includes(q))); }
+export function literalSearch(query:string):RegExp|null {
+    const text=query.trim();
+    return text?new RegExp(text.replace(/[.*+?^${}()|[\]\\]/g,'\\$&'),'giu'):null;
+}
 export function selectionOffsets(root: HTMLElement, selection: Selection | null): {
     from: number;
     to: number;
@@ -73,17 +75,4 @@ export function captureSourceSelection(host: HTMLElement, doc: ReaderDocument, s
     // A renderer must never label edited prose as a verbatim source node.
     if(first.textContent!==displayText(cues[0].text)||last.textContent!==displayText(cues.at(-1)!.text))return null;
     return { cueIds: cues.map(c => c.id), from, to, text, separators };
-}
-
-export function captureEditionSelection(host:HTMLElement,blocks:Block[],selection:Selection|null):{blockId:string;from:number;to:number;text:string;blockText:string}|null{
- if(!selection||selection.isCollapsed||selection.rangeCount!==1)return null;
- const range=selection.getRangeAt(0),element=(node:Node)=>node.nodeType===1?node as Element:node.parentElement;
- const first=element(range.startContainer)?.closest<HTMLElement>('[data-edition-block-id]'),last=element(range.endContainer)?.closest<HTMLElement>('[data-edition-block-id]');
- if(!first||first!==last||!host.contains(first))return null;
- const block=blocks.find(block=>block.id===first.dataset.editionBlockId);if(!block)return null;
- const text=blockText(block);if(first.textContent!==text)return null;
- const before=range.cloneRange();before.selectNodeContents(first);before.setEnd(range.startContainer,range.startOffset);
- const from=before.toString().length,to=from+range.toString().length;
- if(to<=from||text.slice(from,to)!==range.toString())return null;
- return {blockId:block.id,from,to,text:text.slice(from,to),blockText:text};
 }

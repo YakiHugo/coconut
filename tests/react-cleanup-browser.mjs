@@ -1,5 +1,6 @@
 /** Authored source, production React components and real browser selection. */
 import assert from 'node:assert/strict';
+import {openOriginal} from './helpers/open-original.mjs';
 import {build} from 'esbuild';
 import {createServer} from 'node:http';
 import {mkdir,readFile,writeFile} from 'node:fs/promises';
@@ -111,8 +112,8 @@ try{
  assert.ok(await page.locator('audio').evaluate(player=>player.currentTime<2.5),'playback uses original 1.5-second word start and lead-in');
  await page.locator('audio').evaluate(player=>{player.pause();player.currentTime=6.5;player.dispatchEvent(new Event('timeupdate'));});
  assert.equal(await page.locator('[data-source-id="b"].rw-playing,[data-source-id="b"] .rw-playing').count(),0,'hidden-only speech has no false visible highlight');
- await page.getByRole('tab',{name:'逐句校对',exact:true}).click();await source.scrollIntoViewIfNeeded();assert.equal(await source.innerText(),fixture.segments[0].text);await expect(cleanupModeButtons).toHaveCount(0);
- await page.getByRole('tab',{name:'文字稿',exact:true}).click();await expect(source).toHaveAttribute('data-cleanup-applied','true');await source.scrollIntoViewIfNeeded();await expect.poll(()=>source.innerText()).toBe('我们今天聊机器人。');
+ await openOriginal(page);await source.scrollIntoViewIfNeeded();assert.equal(await source.innerText(),fixture.segments[0].text);await expect(cleanupModeButtons).toHaveCount(0);
+ await page.getByRole('tab',{name:'精读稿',exact:true}).click();await expect(source).toHaveAttribute('data-cleanup-applied','true');await source.scrollIntoViewIfNeeded();await expect.poll(()=>source.innerText()).toBe('我们今天聊机器人。');
  await mkdir(output,{recursive:true});
  for(const width of [1360,390]){
   await page.setViewportSize({width,height:900});await page.evaluate(()=>window.scrollTo(0,0));
@@ -150,12 +151,12 @@ try{
  await page.evaluate(()=>selectSource('a',6,7));await page.getByRole('button',{name:'从所选位置播放',exact:true}).click();
  await expect.poll(()=>page.locator('audio').evaluate(player=>player.currentTime)).toBeGreaterThanOrEqual(2.5);assert.ok(await page.locator('audio').evaluate(player=>player.currentTime<3.8));
  await page.locator('audio').evaluate(player=>player.pause());
- await page.getByRole('tab',{name:'逐句校对',exact:true}).click();assert.equal(await page.locator('[data-cleanup-mark]').count(),0);assert.equal(await page.locator('[data-cleanup-break]').count(),0);
- await page.getByRole('tab',{name:'文字稿',exact:true}).click();await expect(page.locator('[data-cleanup-mark]')).toHaveCount(2);
+ await openOriginal(page);assert.equal(await page.locator('[data-cleanup-mark]').count(),0);assert.equal(await page.locator('[data-cleanup-break]').count(),0);
+ await page.getByRole('tab',{name:'精读稿',exact:true}).click();await expect(page.locator('[data-cleanup-mark]')).toHaveCount(2);
  for(const width of [1360,390]){await page.setViewportSize({width,height:900});await page.evaluate(()=>scrollTo(0,0));assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);await page.screenshot({path:path.join(output,'boundaries-'+width+'.png'),fullPage:true});}
  await page.evaluate(()=>setMarkedDoc(false));await expect(source).toHaveAttribute('data-cleanup-applied','true');await expect(cleanupModeButtons).toHaveCount(0);await expect(page.locator('[data-cleanup-mark]')).toHaveCount(2);await expect(page.locator('[data-cleanup-hidden]')).toHaveCount(0);
  await page.evaluate(()=>updateDoc(doc=>({...doc,segments:doc.segments.map(cue=>cue.id==='a'?{...cue,text:'来源已经更新。',words:undefined}:cue)})));
- await expect(page.getByText('口语精简建议与当前原文不一致，已保留口语。',{exact:true})).toBeVisible();
+ await expect(page.locator('[data-cleanup-mark]')).toHaveCount(0);
  assert.equal(await source.innerText(),'来源已经更新。');assert.equal(await page.locator('[data-cleanup-hidden]').count(),0);
  assert.equal(await page.locator('.rw-selection').count(),0);assert.equal(await page.evaluate(()=>aiRequests.length),0);
  assert.deepEqual(errors,[]);report.errors=errors;report.result='passed';

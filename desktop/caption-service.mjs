@@ -8,7 +8,7 @@ const require=createRequire(import.meta.url);
 const MAX_BYTES=8*1024*1024;
 const MAX_DURATION=6*3600;
 
-export const CAPTION_FAILURE_STATUSES=Object.freeze(['unavailable','subtitle_token_required','access_restricted','language_required','network_unavailable','metadata_incomplete','no_matching_captions','extractor_failed','caption_file_invalid','caption_parse_failed','guard_stopped']);
+export const CAPTION_FAILURE_STATUSES=Object.freeze(['unavailable','author_captions_absent','subtitle_token_required','access_restricted','language_required','network_unavailable','metadata_incomplete','no_matching_captions','extractor_failed','caption_file_invalid','caption_parse_failed','guard_stopped']);
 const diagnosticStages=new Set(['initialization','extractor_setup','metadata','track_selection','caption_download','caption_parse','caption_output','helper_execution','reader_parse','media_download']);
 const diagnosticReasons=new Set(['access_restricted','login_required','subtitle_login_required','subtitle_token_required','rate_limited','http_access_denied','transport_unavailable','metadata_incomplete','request_scope_stopped','non_public_address','identity_mismatch','budget_exceeded','encoded_response_rejected','unexpected_response','upstream_error','dependency_mismatch','alternate_extractor_stopped','unsupported_request','external_execution_stopped','duration_unavailable','redirect_stopped','guard_stopped','language_unknown','no_matching_track','invalid_caption_file','caption_parse_failed','caption_download_or_file_failed','extractor_error','helper_error','proxy_configuration_invalid','proxy_unavailable','proxy_auth_required','proxy_connect_rejected','origin_tls_failed']);
 // Only finite enum/counter observations cross the helper, UI and report boundary.
@@ -44,6 +44,7 @@ export function packagedCaptionGuidance(code){
  return (Object.hasOwn(reasons,code)?reasons[code]:'安装包内的字幕助手检查未通过。')+'请重新安装包含字幕助手的完整 Coconut 安装包；也可导入或粘贴已有字幕。不会自动安装依赖或启动识别。';
 }
 const failureMessages={
+ author_captions_absent:'作者未提供字幕',
  subtitle_token_required:SUBTITLE_TOKEN_GUIDANCE,
  metadata_incomplete:'来源未提供足够的访问或视频完成状态，暂不能安全导入；可稍后重试或导入已有字幕。',
  network_unavailable:'网络或 TLS 连接未完成，无法判断字幕是否可用；请检查网络后重试。',
@@ -88,13 +89,13 @@ export function createCaptionService({helper,readerDirectory=path.resolve(ROOT,'
    if(!available)throw new Error('此版本尚未启用内置视频字幕获取，可导入已有字幕；不会启动识别或下载模型');
    const source=captionSource(data?.url);
    if(!enabled.has(source.provider))throw new Error('此视频来源尚未启用');
-   const language=data?.language||null;
+   const language=data?.language||null,authorOnly=data?.authorOnly===true;
    if(language!==null&&(typeof language!=='string'||!/^([a-z]{2,3})(-[A-Za-z0-9]{2,8}){0,2}$/.test(language)))throw new Error('原语言标记无效');
    if(busy)throw new Error('正在获取另一份字幕，请等候完成或取消后再试');
    if(signal?.aborted)throw new Error('已取消获取字幕');
    busy=true;
    try{
-    const result=await helper.extractCaptions({url:source.url,language,signal});
+    const result=await helper.extractCaptions({url:source.url,language,signal,...(authorOnly?{authorOnly:true}:{})});
     if(signal?.aborted)throw new Error('已取消获取字幕');
     if(!result||typeof result!=='object')throw new Error('字幕获取未返回有效结果');
     if(result.status&&result.status!=='ready'){
@@ -129,6 +130,7 @@ export function createCaptionService({helper,readerDirectory=path.resolve(ROOT,'
     if(typeof meta.language!=='string'||!/^([a-z]{2,3})(-[A-Za-z0-9]{2,8}){0,2}$/.test(meta.language))throw new Error('无法确认字幕原语言');
     if(language&&language.split('-')[0]!==meta.language.split('-')[0])throw new Error('字幕语言与所选原语言不一致');
     if(typeof meta.automatic!=='boolean'||meta.translated===true)throw new Error('无法确认这是原语言字幕，未导入');
+    if(authorOnly&&meta.automatic)return {status:'unavailable',message:'来源仅返回平台自动字幕，作者字幕状态未核实'};
     const track=result.track||{};
     if(track.language&&track.language!==meta.language||track.captionMethod&&track.captionMethod!==(meta.automatic?'automatic':'platform_provided'))throw new Error('字幕轨道与来源记录不一致');
     const basis=track.languageBasis||meta.language_basis||'unknown';

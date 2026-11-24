@@ -6,6 +6,15 @@ const P=require('../reader/passages.js');
 const cue=(id,start=0,end=start+1,text='A short source fragment',speaker=null)=>({id,start,end,text,speaker});
 const ids=passages=>passages.map(passage=>passage.cues.map(cue=>cue.id));
 
+test('reading separates a direct question and a first-person reply without naming either voice',()=>{
+ const source=['还有一段经历。','是谁带你做科研的呀？','我给你具体讲一讲。','当时有两个选择。'].map((text,index)=>cue(String(index),index,index+1,text));
+ const read=()=>P.build(source,{layout:'reading'});
+ assert.deepEqual(ids(read()),[['0'],['1'],['2','3']]);assert.ok(read().every(group=>group.speaker===null));
+ source[1].text='朋友问是谁带你做科研的呀？';assert.equal(read().length,1);
+ source[1].text='其中有个 VC 说你觉得肖弘有什么缺点？';assert.equal(read().length,1);
+ source[1].text='你当时有什么想法？';source.forEach(row=>row.speaker='刘元');assert.equal(read().length,1);
+});
+
 test('UMD exposes the same pure API to the browser without requiring a module loader',()=>{
  const context={window:{}};vm.runInNewContext(fs.readFileSync(require.resolve('../reader/passages.js'),'utf8'),context);
  assert.deepEqual(Object.keys(context.window.CoconutPassages),Object.keys(P));

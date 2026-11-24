@@ -73,9 +73,32 @@ test('body, declared length, content type, compression and HTTP status are bound
  const cases=[{body:'abcd',headers:{'content-length':'4'}},{chunks:[Buffer.from('ab'),Buffer.from('cd')]},{headers:{'content-length':'NaN'}},{body:'ab',headers:{'content-length':'3'}},{headers:{'content-type':'text/html'}},{headers:{'content-encoding':'gzip'}},{status:401},{status:206}];
  for(const spec of cases){const t=fakeTransport([spec]);await assert.rejects(createPublicFetcher({lookup,request:t.request})('https://example.org/feed',{maxBytes:3,types:allowed}));}
 });
+test('download progress reports accepted bytes at most once per second plus completion with known or unknown totals',async t=>{
+ let now=1000;t.mock.method(Date,'now',()=>now);
+ for(const totalBytes of [4,null]){
+  const progress=[];
+  async function* chunks(){for(let index=0;index<4;index++){now+=400;yield Buffer.from('a');}}
+  const transport=fakeTransport([{chunks:chunks(),headers:totalBytes===null?{}:{'content-length':String(totalBytes)}}]);
+  const result=await createPublicFetcher({lookup,request:transport.request})('https://example.org/audio',{onProgress:value=>progress.push(value)});
+  assert.equal(result.body.toString(),'aaaa');
+  assert.deepEqual(progress,[{receivedBytes:0,totalBytes},{receivedBytes:3,totalBytes},{receivedBytes:4,totalBytes}]);
+ }
+});
+test('download progress ignores redirects and rejected headers, and never reports over-limit or incomplete bytes as completed',async()=>{
+ for(const [response,maxBytes,expected] of [
+  [{status:403},3,[]],
+  [{headers:{'content-length':'4'}},3,[]],
+  [{chunks:[Buffer.from('abcd')]},3,[{receivedBytes:0,totalBytes:null}]],
+  [{body:'ab',headers:{'content-length':'3'}},3,[{receivedBytes:0,totalBytes:3}]],
+ ]){
+  const progress=[],transport=fakeTransport([{status:302,headers:{location:'/final'}},response]);
+  await assert.rejects(createPublicFetcher({lookup,request:transport.request})('https://example.org/audio',{maxBytes,onProgress:value=>progress.push(value)}));
+  assert.deepEqual(progress,expected);
+ }
+});
 test('media inspection only accepts supported actual MIME and stops before downloading body',async()=>{
  const t=fakeTransport([{headers:{'content-type':'audio/mpeg','content-length':'100'},body:'must not download'}]);
- const response=await createPublicFetcher({lookup,request:t.request})('https://example.org/media',{maxBytes:1,maxMediaBytes:100,inspectMedia:true,types:allowed});
+ const response=await createPublicFetcher({lookup,request:t.request})('https://example.org/media',{maxBytes:1,maxMediaBytes:100,inspectMedia:true,types:allowed,onProgress:()=>assert.fail('inspection must not report downloaded bytes')});
  assert.equal(response.body.length,0);assert.equal(response.length,100);assert.equal(response.type,'audio/mpeg');
  const hls=fakeTransport([{headers:{'content-type':'application/vnd.apple.mpegurl'},body:'playlist'}]);await assert.rejects(createPublicFetcher({lookup,request:hls.request})('https://example.org/media',{inspectMedia:true,types:allowed}),/内容类型/);
 });
@@ -126,4 +149,24 @@ test('stream abort waits for consumer cleanup before rejecting the operation',as
  await assert.rejects(fetcher('https://example.com/audio',{types:allowed,signal:controller.signal,consume:async({body})=>{
   try{controller.abort();for await(const chunk of body){}}finally{await new Promise(resolve=>setTimeout(resolve,10));cleaned=true;}
  }}));assert.equal(cleaned,true);
+});
+test('stream progress failures reject the consumer before commit and wait for cleanup',async t=>{
+ let now=1000;t.mock.method(Date,'now',()=>now+=1000);
+ for(const failure of ['chunk','completion']){
+  let callbacks=0,committed=false,cleaned=false;
+  const received=[];
+  async function* chunks(){for(const text of ['first','second'])yield Buffer.from(text);}
+  const transport=fakeTransport([{chunks:chunks()}]);
+  await assert.rejects(createPublicFetcher({lookup,request:transport.request})('https://example.com/audio',{
+   types:allowed,
+   onProgress:()=>{if(++callbacks===(failure==='chunk'?3:4))throw Error('progress failure');},
+   consume:async({body})=>{
+    try{for await(const chunk of body)received.push(chunk.toString());committed=true;}
+    finally{await new Promise(resolve=>setImmediate(resolve));cleaned=true;}
+   },
+  }),/公开来源传输中断/);
+  assert.equal(committed,false);
+  assert.equal(cleaned,true);
+  assert.deepEqual(received,failure==='chunk'?['first']:['first','second']);
+ }
 });

@@ -1,13 +1,14 @@
 import type { KeyboardEvent } from 'react';
 
 export type ReadingMode = 'passages' | 'transcript' | 'summary';
-const modes: { value: ReadingMode; label: string; path: string }[] = [
-    { value: 'passages', label: '文字稿', path: 'M4 4h16v16H4z M8 9h8 M8 13h8 M8 17h4' },
-    { value: 'transcript', label: '逐句校对', path: 'M4 6h3 M11 6h9 M4 12h3 M11 12h9 M4 18h3 M11 18h9' },
+const allModes: { value: ReadingMode; label: string; path: string }[] = [
+    { value: 'passages', label: '精读稿', path: 'M4 4h16v16H4z M8 9h8 M8 13h8 M8 17h4' },
+    { value: 'transcript', label: '逐句原文', path: 'M4 6h3 M11 6h9 M4 12h3 M11 12h9 M4 18h3 M11 18h9' },
     { value: 'summary', label: '摘要', path: 'M6 3h12v18H6z M9 7h6 M9 11h6 M9 15h4' },
 ];
 
 export function ReadingModeTabs({ mode, id, onChange }: { mode: ReadingMode; id: string; onChange: (mode: ReadingMode) => void }) {
+    const modes=allModes.filter(item=>item.value!=='transcript'||mode==='transcript');
     const move = (event: KeyboardEvent<HTMLDivElement>) => {
         if (event.altKey || event.ctrlKey || event.metaKey || event.nativeEvent.isComposing) return;
         const index = modes.findIndex(item => item.value === mode);

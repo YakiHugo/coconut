@@ -1,7 +1,7 @@
 import {useEffect,useRef,useState} from 'react';
 import type {AppStore} from './store';
 import {signature,createProjection} from '@coconut/reader/disfluency.js';
-type Job={id:string;documentKey:string;state:string;phase:string;provider:string;model:string;error?:string};
+type Job={id:string;documentKey:string;state:string;phase:string;provider:string;model:string;automatic?:boolean;error?:string};
 type ReadingPlan=NonNullable<ReturnType<AppStore['getDocument']>>['reading_cleanup'];
 const live=(job:Job|null)=>!!job&&['queued','running'].includes(job.state);
 const labels:Record<string,string>={queued:'等待整理',running:'正在整理',ready:'整理完成，等待保存',applied:'整理结果已保存',failed:'整理未完成',interrupted:'整理已中断',cancelled:'整理已取消'};
@@ -26,7 +26,7 @@ export function CleanReadingPanel({store,documentKey}:{store:AppStore;documentKe
    const output=(await api('jobs/'+active.id+'/result')).job;if(request!==generation.current)return;
    const plan=output.reading_cleanup;
    setSummary({...plan.stats,issues:plan.issues?.length||0});
-   if(active.state==='applied')return;
+   if(active.state==='applied'||active.automatic)return;
    const current=store.getDocument(documentKey);if(!current||store.getSnapshot().dirty||store.getSnapshot().save.unsaved>0)return;
    if(signature(current)!==output.sourceSignature)throw Error('原文、时间或人物已变化，未应用旧结果');
    createProjection(current,{decisions:plan.decisions,marks:plan.marks||[],breaks:plan.breaks||[],policyVersion:plan.policyVersion,sourceSignature:plan.sourceSignature});
@@ -53,7 +53,7 @@ export function CleanReadingPanel({store,documentKey}:{store:AppStore;documentKe
   {message&&<p role="status">{message}</p>}
   <div className="rw-toolbar"><button type="button" disabled={busy||loading||live(job)||blocked} onClick={()=>void start()}>{busy?'正在提交…':'整理口语与断句'}</button>
    {job&&['failed','interrupted','cancelled'].includes(job.state)&&<button type="button" disabled={busy||blocked} onClick={()=>void action('retry')}>继续整理任务</button>}
-   {job?.state==='ready'&&<button type="button" disabled={busy||blocked} onClick={()=>void apply()}>保存整理结果</button>}
+   {job?.state==='ready'&&!job.automatic&&<button type="button" disabled={busy||blocked} onClick={()=>void apply()}>保存整理结果</button>}
    {live(job)&&<button type="button" disabled={busy} onClick={()=>void action('cancel')}>取消整理</button>}
   </div>
  </section>;
