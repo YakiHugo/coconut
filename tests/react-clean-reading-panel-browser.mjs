@@ -1,7 +1,5 @@
 import assert from 'node:assert/strict';
 import {openOriginal} from './helpers/open-original.mjs';
-import {randomUUID} from 'node:crypto';
-import D from '../reader/disfluency.js';
 import {mkdtemp,rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import path from 'node:path';
@@ -24,9 +22,6 @@ try{
  const page=await browser.newPage({viewport:{width:1360,height:900}}),external=[],errors=[];
  page.on('request',request=>{if(new URL(request.url()).origin!==origin&&!request.url().startsWith('blob:'))external.push(request.url());});
  page.on('pageerror',error=>errors.push(error.message));
- const job=await jobs.create({protocolVersion:1,operation_id:randomUUID(),key:original.key,source_signature:D.signature(original),fallback:false,consent:false});
- await expect.poll(()=>jobs.get(job.id).state,{timeout:30000}).toBe('ready');
- await jobs.action(job.id,'apply');
  await page.goto(origin+'/#read/'+original.key);
  await expect(page.getByRole('tab',{name:'精读稿',exact:true})).toHaveAttribute('aria-selected','true');
  await expect(page.getByRole('tab',{name:'逐句原文'})).toHaveCount(0);
