@@ -1,5 +1,5 @@
 /** Known semantic replacement plus deep opaque preservation, never a raw spread. */
-function attachTranscript(project,transcript,core,projectFields){
+export function attachTranscript(project,transcript,core,projectFields){
  // Audio-only validation resets transcript-owned containers. Canonical storage
  // may nevertheless retain opaque records inside them. They cannot be copied
  // onto new cue IDs (even matching IDs), nor silently dropped during attachment.
@@ -16,4 +16,3 @@ function attachTranscript(project,transcript,core,projectFields){
  if(['platform_subtitles','automatic_subtitles','publisher_transcript'].includes(String(provenance?.kind)))result.provenance={...provenance,alignment_required:true};
  return result;
 }
-module.exports={attachTranscript};

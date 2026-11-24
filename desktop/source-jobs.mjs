@@ -5,7 +5,7 @@ const require=createRequire(import.meta.url),Coconut=require('../reader/core.js'
 const {project}=require('../reader/canonical-library.js');
 const {processingSnapshot,sourceSignature}=require('../shared/transcript-resources.js');
 const {mergeAlignmentCandidate}=require('../shared/source-alignment.js');
-const {attachTranscript}=require('../shared/attach-transcript.js');
+import {attachTranscript} from '../shared/attach-transcript.mjs';
 import path from 'node:path';
 import {randomUUID} from 'node:crypto';
 import {Readable} from 'node:stream';
