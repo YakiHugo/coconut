@@ -1,5 +1,8 @@
 """Provider-independent clocks, recovery, and recording-wide acoustic identity."""
 import copy
+import hashlib
+import importlib.util
+import os
 import json
 import math
 import sys
@@ -10,7 +13,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from audio_pipeline import (CallableBackend, JsonCommandBackend, SAMPLE_RATE, owned_segments, stitch_segments,
-                            plan_chunks, run_audio_pipeline, validate_result)
+                            plan_chunks, prepare_audio, run_audio_pipeline, validate_result)
 from audio_speakers import (SpeakerRegistry, label_segments, label_aligned_segments,
                             reconcile_recording_speakers, SherpaSpeakerBackend)
 from transcript import make_document
@@ -25,6 +28,35 @@ def wav(path, seconds=20):
 
 def evidence(vector, duration=3):
     return {'embedding': vector, 'duration': duration}
+
+
+@unittest.skipUnless(os.name == 'posix' and importlib.util.find_spec('av'), 'PCM reuse requires PyAV on POSIX')
+class PcmCacheTests(unittest.TestCase):
+    def test_owned_media_shares_normalization_between_workers(self):
+        with tempfile.TemporaryDirectory() as temp:
+            directory = Path(temp)
+            input_path = directory / 'original.wav'
+            with wave.open(str(input_path), 'wb') as stream:
+                stream.setparams((1, 2, 8000, 0, 'NONE', 'not compressed'))
+                stream.writeframes(b'\x01\x00' * 8000)
+            digest = hashlib.sha256(input_path.read_bytes()).hexdigest()
+            source = input_path.rename(directory / (digest + '.media'))
+            first, second, cache = (directory / name for name in ('asr', 'reading', 'cache'))
+            first.mkdir()
+            second.mkdir()
+            with patch.dict(os.environ, COCONUT_PCM_CACHE=str(cache)):
+                asr_audio = prepare_audio(source, first)
+                with patch('audio_pipeline._prepare_audio_local', side_effect=AssertionError('second decode')):
+                    reading_audio = prepare_audio(source, second)
+                    with self.assertRaisesRegex(RuntimeError, 'frame limit'):
+                        prepare_audio(source, second, max_frames=1000)
+                self.assertTrue(asr_audio.samefile(reading_audio))
+                (cache / digest / 'audio.wav').unlink()
+                with wave.open(str(reading_audio), 'rb') as stream:
+                    self.assertEqual((stream.getframerate(), stream.getnframes()), (SAMPLE_RATE, SAMPLE_RATE))
+                source.write_bytes(b'changed')
+                with self.assertRaisesRegex(ValueError, 'identity changed'):
+                    prepare_audio(source, second)
 
 
 class RegistryTests(unittest.TestCase):

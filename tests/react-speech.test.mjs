@@ -33,6 +33,21 @@ test('a missed author cue keeps its own interval, using neighboring clocks only 
     assert.equal(sourcePlayback([first,missed,{...last,text:'已改原文。'}],identity).gaps.size,0);
 });
 
+test('previously accepted word clocks use the recorded asset and original cue identity',()=>{
+    const hash='a'.repeat(64),identity='source-media-sha256:'+hash;
+    const first=cue(),missed={id:'b',start:20,end:22,text:'中间这段。'};
+    const last={id:'c',start:22,end:24,text:'后文。',words:[{word:'后文。',start:22.5,end:23.5}]};
+    const original=[first,missed,last];
+    const receipt={asset_sha256:hash,source_snapshot:{segments:original},report:{cues:original.map(cue=>({cue_id:cue.id,status:cue.words?'aligned':'needs_review'}))}};
+    const playback=sourcePlayback(original,identity,receipt);
+    assert.equal(playback.cues[0].alignment_media_sha256,hash);
+    assert.equal(playback.gaps.size,0);
+    assert.deepEqual(sourcePlayback([first,{...missed,end:20},last],identity,receipt).gaps.get('b'),{start:19,end:22.5});
+    assert.equal(sourcePlayback(original,'source-media-sha256:'+'b'.repeat(64),receipt).cues[0].words,undefined);
+    const edited=sourcePlayback([first,missed,{...last,text:'Edited'}],identity,receipt);
+    assert.equal(edited.gaps.size,0);
+});
+
 test('a click within an accepted author cue selects the word at that offset',()=>{
     const first={id:'a',start:0,end:2,text:'one two',alignment_media_sha256:'a'.repeat(64),
         words:[{word:'one ',start:.25,end:.75},{word:'two',start:1,end:1.5}]};

@@ -32,7 +32,7 @@ function textMatches(root:HTMLElement,pattern:RegExp) {
 
 export function useTranscriptSearch(
     host:RefObject<HTMLDivElement|null>,query:string,displayText:(text:string)=>string,
-    enabled:boolean,content:unknown,mode:string,projection:unknown
+    enabled:boolean,content:unknown,mode:string,projection:unknown,review:unknown
 ) {
     const pattern=useMemo(()=>literalSearch(displayText(query)),[displayText,query]);
     const [result,setResult]=useState<{matches:Range[];index:number}|null>(null);
@@ -46,7 +46,7 @@ export function useTranscriptSearch(
         for(const range of matches)highlight.add(range);
         CSS.highlights.set('coconut-search',highlight);
         return()=>{CSS.highlights.delete('coconut-search');};
-    },[host,pattern,enabled,content,mode,projection]);
+    },[host,pattern,enabled,content,mode,projection,review]);
     const active=result?.matches[result.index];
     useEffect(()=>{
         if(!active||!enabled)return;

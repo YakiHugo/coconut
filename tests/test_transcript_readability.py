@@ -31,6 +31,18 @@ class ReadabilityTests(unittest.TestCase):
             self.assertEqual(new['original_text'], old['text'])
             self.assertEqual([(new[k], old[k]) for k in ['id', 'start', 'end']], [(old[k], old[k]) for k in ['id', 'start', 'end']])
 
+    def test_punctuation_updates_word_spans_without_moving_clocks(self):
+        cues = [cue('你好 世界')]
+        words = [{'word': '你好', 'start': 0, 'end': 1, 'text_start': 0, 'text_end': 2},
+                 {'word': ' 世界', 'start': 1, 'end': 2, 'text_start': 2, 'text_end': 5}]
+        cues[0]['words'] = words
+        engine = Mock()
+        engine.add_punctuation.return_value = '你好，世界。'
+        self.assertEqual(punctuate(cues, engine), (1, 0))
+        self.assertEqual(cues[0]['words'], [
+            {**words[0], 'word': '你好，', 'text_end': 3},
+            {**words[1], 'word': '世界。', 'text_start': 3, 'text_end': 6}])
+
     def test_model_rewrite_deletion_and_reordering_are_rejected_atomically(self):
         for text in ['你好，我们聊机器人。', '你好，机器人。', '机器人，你好。']:
             with self.subTest(text=text):

@@ -1,9 +1,6 @@
 .reader-workspace{--reader-measure:48rem;width:calc(100% - 64px);max-width:var(--reader-measure);margin:auto;padding:36px 0;color:var(--text,#25322f)}.reader-workspace h1{font-size:clamp(24px,4vw,38px);line-height:1.3}.rw-eyebrow{font-size:12px;letter-spacing:.12em;color:#58736a}.rw-player{background:var(--surface,#fff);padding:12px;border:1px solid #dbe4df;border-radius:12px}.rw-player video,.rw-player audio{width:100%;max-height:330px}.rw-player>div,.rw-toolbar{display:flex;align-items:center;flex-wrap:wrap;gap:12px}.rw-player>div{justify-content:space-between}.rw-player>div>span{min-width:0;max-width:100%;overflow-wrap:anywhere}.rw-player p,.rw-media-unavailable{font-size:13px;color:#52655e}.rw-toolbar{margin:16px 0}.reader-workspace button,.reader-workspace select,.reader-workspace input{font:inherit;min-height:36px}.reader-workspace button{cursor:pointer}.reader-workspace button:disabled{cursor:default;opacity:.55}.reader-workspace textarea{box-sizing:border-box;display:block;width:100%;min-height:86px;font:inherit;padding:10px}.rw-cue{padding:20px 16px;border-left:3px solid transparent;border-bottom:1px solid #dce4df;scroll-margin-top:24px}.rw-cue-meta{display:flex;gap:12px;align-items:center;font-size:12px}.rw-original{font-size:18px;line-height:1.85;white-space:pre-wrap;overflow-wrap:anywhere}.rw-translation{color:#52655e;line-height:1.7;white-space:pre-wrap}.rw-playing{background:#edf5ec;border-left-color:#4e805b}.rw-cue.rw-current{border-left-color:var(--accent,#4e805b)}.rw-empty{padding:24px;background:#f1f5ef;border-radius:12px}@media(max-width:600px){.reader-workspace{width:calc(100% - 40px);padding:28px 0}.rw-cue{padding:16px 8px}.rw-player video{max-height:220px}.rw-toolbar label{max-width:100%}.rw-toolbar input[type=search]{max-width:100%}}
 .rw-passage{padding:24px 12px;border-bottom:1px solid #dce4df}.rw-passage .rw-original>span>span{border-radius:3px}
 .rw-cleanup-notice{margin:16px 0 20px;color:var(--muted);font-size:12px;line-height:1.7}
-.rw-reading-mark{user-select:none;-webkit-user-select:none}
-.rw-reading-mark::after{content:attr(data-cleanup-mark)}
-.rw-reading-break::after{content:"";display:block;height:.55em}
 .rw-tools{display:flex;align-items:start;flex-wrap:wrap;gap:16px;border-top:1px solid var(--reading-edge,#daddd0);margin-top:28px;padding-top:20px;font-size:13px}
 .rw-tools>button{font-size:13px}.rw-tools details>summary{cursor:pointer}
 /* Shared paper and olive navigation, consistent with the library. */
@@ -179,3 +176,12 @@
  .rw-search-panel{flex-wrap:wrap}
  .rw-search-panel>label{flex-basis:100%}
 }
+.rw-passage p.rw-original + p.rw-original{margin-top:.75em}
+
+.rw-review-version{display:flex;gap:14px;flex-wrap:wrap;margin-top:10px}
+.reader-workspace .rw-review-version button{font-size:12px;border:0;min-height:28px;padding:4px 6px;color:var(--accent)}
+
+.rw-chapter-title{font-size:1.28em;margin:0 0 .8em}
+.rw-chapter-list{padding-inline-start:24px}
+.rw-chapter-list button{text-align:start;margin:2px 0}
+.rw-original::highlight(coconut-reading-search),.rw-original ::highlight(coconut-reading-search){background:#f5d47e;color:#302514}

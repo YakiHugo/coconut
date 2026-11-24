@@ -89,7 +89,7 @@ export function createRecoveryController(store: Store, domain: Domain, attachmen
       update({ paused: true, busy: false, target: null, rows: state.rows.map(row => row.error === '等待读取' ? { ...row, error: '读取已取消，请重新选择此文件。' } : row), message: '已暂停。草稿保留在本次打开的页面中，可继续核对。' });
     },
     resume() { update({ paused: false, message: '' }); },
-    async apply() {
+    async apply(onImported?:(documentOrKey:unknown)=>void) {
       if (state.busy || state.applying || state.paused) return;
       const ready = state.rows.filter(row => row.parsed && row.reviewed);
       if (!ready.length) return;
@@ -103,6 +103,7 @@ export function createRecoveryController(store: Store, domain: Domain, attachmen
         try {
           const ok = await attachment.commit(row.parsed!.document, target);
           if (request !== generation) return;
+          if(ok)onImported?.(target.key);
           if (!ok) { update({ message: '附加尚未确认保存，草稿保留。请查看页面保存状态并重试保存或导出备份，不要重复附加。' }); return; }
           update({ target: null, rows: state.rows.filter(item => item.id !== row.id), ...(!row.bytes ? {text: '', title: ''} : {}), message: '已将字幕保存到原项目，原媒体与笔记保留。' });
         } catch (error) { if (request === generation) update({ message: errorMessage(error) }); }
@@ -113,7 +114,7 @@ export function createRecoveryController(store: Store, domain: Domain, attachmen
       store.setDirty(false, owner);
       const accepted = new Set<number>(); let failure = '';
       for (const row of ready) {
-        try { if (!store.addDocument(row.parsed!.document)) { failure = '内容尚未加入，草稿保留。请先处理其他未完成的修改或保存问题。'; break; } accepted.add(row.id); }
+        try { const document=store.addDocument(row.parsed!.document);if (!document) { failure = '内容尚未加入，草稿保留。请先处理其他未完成的修改或保存问题。'; break; } onImported?.(document);accepted.add(row.id); }
         catch (error) { failure = errorMessage(error); break; }
       }
       const pasteAccepted = ready.some(row => accepted.has(row.id) && !row.bytes);

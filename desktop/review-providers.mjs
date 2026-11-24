@@ -10,15 +10,15 @@ export function createReviewProviders({codex=createProviders(),run=runCommand,en
  env.PATH=[env.PATH,path.join(homedir(),'.kimi-code','bin')].join(path.delimiter);
  const find=async()=>{if(findKimi)return findKimi();for(const directory of env.PATH.split(path.delimiter)){const file=path.join(directory,'kimi');try{await access(file,constants.X_OK);return file;}catch{}}return null;};
  async function status(provider,{signal}={}){
-  if(provider==='codex')return codex.status('codex',{signal});
-  if(provider!=='kimi')throw Error('校对仅支持 Codex CLI 或 Kimi CLI');
+  if(provider==='codex'||provider==='claude')return codex.status(provider,{signal});
+  if(provider!=='kimi')throw Error('校对支持 Codex CLI、Kimi CLI 或 Claude Code');
   const binary=await find();if(!binary)return {ready:false,reason:'未找到 Kimi CLI，请先在本机安装并登录。'};
   const result=await run(binary,['--help'],{env,signal});
   if(result.code!==0||!['--agent-file','--skills-dir','--output-format','--prompt'].every(flag=>result.stdout.includes(flag)))return {ready:false,reason:'Kimi CLI 缺少文本校对所需接口，请升级。'};
   return {ready:true,protocol:'kimi-stream-json',reason:'使用 Kimi CLI 已配置的模型和登录；实际请求时检查连接与额度。'};
  }
  async function structured(provider,input,schema,instruction,{signal,model=''}={}){
-  if(provider==='codex')return codex.exclusive(()=>codex.structured('codex',input,schema,instruction,{signal,model}));
+  if(provider==='codex'||provider==='claude')return codex.exclusive(()=>codex.structured(provider,input,schema,instruction,{signal,model}));
   if(!/^[A-Za-z0-9][A-Za-z0-9._/-]{0,119}$/.test(model||'default'))throw Error('Kimi 模型别名无效');
   const connection=await status(provider,{signal});if(!connection.ready)throw Error(connection.reason);
   const directory=await mkdtemp(path.join(tmpdir(),'coconut-kimi-review-'));

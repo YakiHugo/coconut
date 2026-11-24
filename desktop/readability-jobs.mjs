@@ -16,7 +16,7 @@ const hash=text=>createHash('sha256').update(text).digest('hex');
 const fail=(message,status=400)=>Object.assign(Error(message),{status});
 const identifier=value=>{if(typeof value!=='string'||! /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(value))throw fail('整理任务标识无效');return value;};
 const exists=async filename=>{if(typeof filename!=='string'||!path.isAbsolute(filename))return false;try{return (await stat(filename)).isFile()&&(await stat(filename)).size>0;}catch{return false;}};
-export async function createReadabilityJobs({directory,python=process.env.COCONUT_READING_PYTHON,punctuationModel=process.env.COCONUT_PUNCTUATION_MODEL,segmentationModel=process.env.COCONUT_SPEAKER_SEGMENTATION_MODEL,embeddingModel=process.env.COCONUT_SPEAKER_EMBEDDING_MODEL,timeoutMs=2*3600*1000,runWorker,sourceMediaStore=null,libraryStore=null}={}){
+export async function createReadabilityJobs({directory,python=process.env.COCONUT_READING_PYTHON,punctuationModel=process.env.COCONUT_PUNCTUATION_MODEL,segmentationModel=process.env.COCONUT_SPEAKER_SEGMENTATION_MODEL,embeddingModel=process.env.COCONUT_SPEAKER_EMBEDDING_MODEL,timeoutMs=2*3600*1000,runWorker,sourceMediaStore,libraryStore}={}){
  if(!path.isAbsolute(directory||''))throw fail('整理任务目录须为绝对路径');
  await mkdir(directory,{recursive:true,mode:0o700});
  const {DatabaseSync}=await import('node:sqlite');
@@ -27,19 +27,19 @@ export async function createReadabilityJobs({directory,python=process.env.COCONU
  if(!db.prepare('PRAGMA table_info(jobs)').all().some(column=>column.name==='result_digest'))db.exec('ALTER TABLE jobs ADD COLUMN result_digest TEXT');
  db.prepare("UPDATE jobs SET state='interrupted',phase='interrupted',updated=? WHERE state='running'").run(Date.now());
  let closing=false,running=null,scheduled=false,creation=Promise.resolve();const uploads=new Set();let activeController=null;
- async function capabilities(){const runtime=await exists(python);return {protocolVersion:1,available:runtime,local_only:true,model_download:false,persistent:true,punctuation:runtime&&await exists(punctuationModel),speakers:runtime&&await exists(segmentationModel)&&await exists(embeddingModel),alignment:false,savedSourceMedia:!!sourceMediaStore,message:runtime?'使用已配置的本地模型；不重新识别已有字幕。':'本地整理运行环境未配置，现有文字稿仍可阅读。'};}
+ async function capabilities(){const runtime=await exists(python);return {protocolVersion:1,available:runtime,local_only:true,model_download:false,persistent:true,savedMedia:!!sourceMediaStore&&!!libraryStore,punctuation:runtime&&await exists(punctuationModel),speakers:runtime&&await exists(segmentationModel)&&await exists(embeddingModel),alignment:false,message:runtime?'使用已配置的本地模型；不重新识别已有字幕。':'本地整理运行环境未配置，现有文字稿仍可阅读。'};}
  function row(id){const value=db.prepare('SELECT * FROM jobs WHERE id=?').get(identifier(id));if(!value)throw fail('整理任务不存在',404);return value;}
- function describe(value){const request=JSON.parse(value.request);return {id:value.id,documentKey:value.document_key,state:value.state,phase:value.phase,steps:request.steps,sourceDigest:hash(sourceSignature(request.document)),resultDigest:value.result_digest||null,mediaIdentity:request.media?.identity||null,needsMedia:request.steps.includes('speakers')&&!value.media_hash,error:value.error||null,created:value.created,updated:value.updated,...(value.media_hash&&!request.media?.saved?{media:{url:'/api/v1/readability/jobs/'+value.id+'/media',kind:TYPES[request.media.extension].startsWith('video/')?'video':'audio',name:request.media.name,mimeType:TYPES[request.media.extension]}}:{})};}
+ function describe(value){const request=JSON.parse(value.request);return {id:value.id,documentKey:value.document_key,state:value.state,phase:value.phase,steps:request.steps,sourceDigest:hash(sourceSignature(request.document)),resultDigest:value.result_digest||null,mediaIdentity:request.savedMedia?'source-media-sha256:'+request.savedMedia.sha256:request.media?.identity||null,needsMedia:request.steps.includes('speakers')&&!value.media_hash&&!request.savedMedia,error:value.error||null,created:value.created,updated:value.updated,...(value.media_hash?{media:{url:'/api/v1/readability/jobs/'+value.id+'/media',kind:TYPES[request.media.extension].startsWith('video/')?'video':'audio',name:request.media.name,mimeType:TYPES[request.media.extension]}}:{})};}
  function update(id,state,phase,error=null){db.prepare('UPDATE jobs SET state=?,phase=?,error=?,updated=? WHERE id=?').run(state,phase,error,Date.now(),id);}
  const jobDirectory=id=>path.join(directory,identifier(id));
- async function defaultWorker({id,document,steps,media,signal,onPhase}){
+ async function defaultWorker({id,document,steps,media,pcmCache,signal,onPhase}){
   const work=jobDirectory(id),input=path.join(work,'input.json'),output=path.join(work,'result.json');
   await writeFile(input,JSON.stringify(document),{mode:0o600});
   const args=['-I','-B',worker,input,'-o',output,'--work-dir',path.join(work,'voices')];
   if(steps.includes('punctuation'))args.push('--punctuation-model',punctuationModel);
   if(steps.includes('speakers'))args.push('--audio',media,'--segmentation-model',segmentationModel,'--embedding-model',embeddingModel);
   await new Promise((resolve,reject)=>{
-   let failure,reason='',phaseBuffer='';const child=spawn(python,args,{shell:false,detached:process.platform!=='win32',env:{PATH:'/usr/bin:/bin',LANG:'en_US.UTF-8',HF_HUB_OFFLINE:'1',TRANSFORMERS_OFFLINE:'1'},stdio:['ignore','ignore','pipe']});
+   let failure,reason='',phaseBuffer='';const child=spawn(python,args,{shell:false,detached:process.platform!=='win32',env:{PATH:'/usr/bin:/bin',LANG:'en_US.UTF-8',HF_HUB_OFFLINE:'1',TRANSFORMERS_OFFLINE:'1',...(pcmCache?{COCONUT_PCM_CACHE:pcmCache}:{})},stdio:['ignore','ignore','pipe']});
    const stop=error=>{failure||=error;try{if(process.platform!=='win32'&&child.pid)process.kill(-child.pid,'SIGKILL');else child.kill('SIGKILL');}catch{}};
    const cancel=()=>stop(fail('整理已取消'));signal.addEventListener('abort',cancel,{once:true});
    const timer=setTimeout(()=>stop(fail('本地整理超时；已有检查点保留，可重试')),timeoutMs);
@@ -55,11 +55,13 @@ export async function createReadabilityJobs({directory,python=process.env.COCONU
   const request=JSON.parse(value.request),controller=new AbortController();activeController=controller;
   update(value.id,'running',request.steps.includes('speakers')?'speakers':'punctuation');
   try{
-   const audio=request.media?.saved
-    ? (await sourceMediaStore.localInput(value.document_key,request.media.binding,value.media_hash)).path
-    : request.media?path.join(jobDirectory(value.id),'source.'+request.media.extension):null;
-   const output=await (runWorker||defaultWorker)({id:value.id,document:structuredClone(request.document),steps:request.steps,media:audio,signal:controller.signal,onPhase:phase=>{if(!controller.signal.aborted&&!closing)update(value.id,'running',phase);}});
+   const reused=request.savedMedia?await sourceMediaStore?.localInput(value.document_key,request.savedMedia.binding,request.savedMedia.sha256):null;
+   if(request.savedMedia&&!reused)throw fail('书架原声不可用，请重新核对来源',409);
+   controller.signal.throwIfAborted();
+   const output=await (runWorker||defaultWorker)({id:value.id,document:structuredClone(request.document),steps:request.steps,
+    pcmCache:reused?sourceMediaStore.pcmCacheDirectory:undefined,media:reused?.path??(request.media?path.join(jobDirectory(value.id),'source.'+request.media.extension):null),signal:controller.signal,onPhase:phase=>{if(!controller.signal.aborted&&!closing)update(value.id,'running',phase);}});
    if(controller.signal.aborted||closing)return;
+   if(request.savedMedia)await sourceMediaStore.localInput(value.document_key,request.savedMedia.binding,request.savedMedia.sha256);
    const result=mergeProcessingResult(request.document,request.document,output);Coconut.validate(result);
    await writeFile(path.join(jobDirectory(value.id),'result.tmp'),JSON.stringify(result),{mode:0o600});
    await rename(path.join(jobDirectory(value.id),'result.tmp'),path.join(jobDirectory(value.id),'result.json'));
@@ -78,35 +80,37 @@ export async function createReadabilityJobs({directory,python=process.env.COCONU
   Coconut.validate(raw);const document=processingSnapshot(raw);
   if(Buffer.byteLength(JSON.stringify(document))>MAX_INPUT)throw fail('文字稿超过 8 MiB',413);
   let media=null;
-  let mediaHash=null;
-  if(data.media?.saved===true){
-   if(!sourceMediaStore||!libraryStore)throw fail('服务端原声尚不可用',409);
-   const current=libraryStore.get(document.key);
-   if(!current||current.deleted||sourceSignature(current.document)!==sourceSignature(document))throw fail('原稿已变化，请重新发起整理',409);
-   const saved=await sourceMediaStore.read(document.key);
-   if(!saved||data.media.identity!=='source-media-sha256:'+saved.sha256)throw fail('服务端原声已变化，请重新核对',409);
-   media={saved:true,binding:saved.binding,identity:data.media.identity};
-   mediaHash=saved.sha256;
-  }else if(data.media){
+  if(data.media){
    const m=data.media,extension=typeof m.name==='string'?m.name.split('.').at(-1).toLowerCase():'';
    if(typeof m.name!=='string'||m.name.length>300||/[\\/\u0000-\u001f]/.test(m.name)||!Object.hasOwn(TYPES,extension)||typeof m.identity!=='string'||!m.identity||m.identity.length>16384||!Number.isSafeInteger(m.size)||m.size<1||m.size>MAX_AUDIO)throw fail('原声身份或格式无效');
    media={identity:m.identity,name:m.name,size:m.size,extension};
   }
-  const digest=hash(JSON.stringify({document,media})),previous=db.prepare('SELECT * FROM jobs WHERE id=?').get(id);
+  let savedMedia=null;
+  if(data.saved_media!==undefined){
+   if(media||!sourceMediaStore||!libraryStore||typeof data.saved_media!=='string'||!/^[a-f0-9]{64}$/.test(data.saved_media))
+    throw fail('已保存原声身份无效');
+   const current=libraryStore.get(document.key);
+   if(!current||current.deleted||sourceSignature(current.document)!==sourceSignature(document))
+    throw fail('原稿已变化，请重新核对原声',409);
+   const {binding}=sourceMediaStore.owner(document.key);
+   await sourceMediaStore.localInput(document.key,binding,data.saved_media);
+   savedMedia={binding,sha256:data.saved_media};
+  }
+  const digest=hash(JSON.stringify({document,media,...(savedMedia?{savedMedia}:{})})),previous=db.prepare('SELECT * FROM jobs WHERE id=?').get(id);
   if(previous){if(previous.digest!==digest)throw fail('同一操作已绑定另一份原稿或原声',409);return describe(previous);}
-  const caps=await capabilities(),plan=inspectResources(document,{audio:!!media,...caps});
+  const caps=await capabilities(),plan=inspectResources(document,{audio:!!media||!!savedMedia,...caps});
   if(!plan.steps.length)throw fail('没有可执行的整理阶段；请检查原声或本地模型配置',409);
   if(db.prepare("SELECT id FROM jobs WHERE document_key=? AND state IN ('queued','running','awaiting_media')").get(document.key))throw fail('此文字稿已有整理任务，请先查看原任务',409);
   if(db.prepare('SELECT count(*) AS count FROM jobs').get().count>=256)throw fail('整理任务已达保存上限，请先保留备份并清理任务目录',409);
   await mkdir(jobDirectory(id),{mode:0o700});
-  const request=JSON.stringify({document,media,steps:plan.steps}),now=Date.now(),state=plan.steps.includes('speakers')&&!mediaHash?'awaiting_media':'queued';
-  try{db.prepare('INSERT INTO jobs (id,request,digest,document_key,state,phase,created,updated,media_hash) VALUES (?,?,?,?,?,?,?,?,?)').run(id,request,digest,document.key,state,state,now,now,mediaHash);}catch(error){throw fail('此文字稿已有整理任务，请查看原任务',409);}
+  const request=JSON.stringify({document,media,steps:plan.steps,...(savedMedia?{savedMedia}:{})}),now=Date.now(),state=plan.steps.includes('speakers')&&!savedMedia?'awaiting_media':'queued';
+  try{db.prepare('INSERT INTO jobs (id,request,digest,document_key,state,phase,created,updated) VALUES (?,?,?,?,?,?,?,?)').run(id,request,digest,document.key,state,state,now,now);}catch(error){throw fail('此文字稿已有整理任务，请查看原任务',409);}
   pump();return describe(row(id));
  }
  function create(data){const next=creation.then(()=>createOne(data));creation=next.catch(()=>{});return next;}
  async function upload(id,req,{signal}={}){
   const value=row(id),request=JSON.parse(value.request),media=request.media;
-  if(!media||media.saved||!request.steps.includes('speakers'))throw fail('此任务不需要上传原声');
+  if(!media||!request.steps.includes('speakers'))throw fail('此任务不需要上传原声');
   if(uploads.has(id))throw fail('此任务正在接收原声',409);
   if(['cancelled','interrupted','failed'].includes(value.state))throw fail('请先重试原任务',409);
   if(req.headers['content-type']?.split(';')[0]!=='application/octet-stream'||Number(req.headers['content-length'])!==media.size)throw fail('原声上传长度或类型不符');
@@ -129,7 +133,7 @@ export async function createReadabilityJobs({directory,python=process.env.COCONU
  function list(key){if(typeof key!=='string'||key.length>1024)throw fail('文字稿标识无效');return db.prepare('SELECT * FROM jobs WHERE document_key=? ORDER BY created DESC LIMIT 20').all(key).map(describe);}
  async function result(id){const value=row(id);if(value.state!=='ready')throw fail('整理尚未完成',409);return {...describe(value),input:JSON.parse(value.request).document,result:JSON.parse(await readFile(path.join(jobDirectory(id),'result.json'),'utf8'))};}
  async function streamMedia(id,req,res){
-  const value=row(id),request=JSON.parse(value.request);if(!value.media_hash||request.media?.saved)throw fail('此任务未保存原声副本',404);
+  const value=row(id),request=JSON.parse(value.request);if(!value.media_hash)throw fail('此任务未保存原声',404);
   const handle=await open(path.join(jobDirectory(id),'source.'+request.media.extension),constants.O_RDONLY|constants.O_NOFOLLOW|constants.O_NONBLOCK);
   try{
    const info=await handle.stat();if(!info.isFile()||info.size!==request.media.size)throw fail('任务原声已变化，无法播放',409);
@@ -147,7 +151,7 @@ export async function createReadabilityJobs({directory,python=process.env.COCONU
    if(!['failed','interrupted','cancelled'].includes(value.state))throw fail('此任务无需重试',409);
    const request=JSON.parse(value.request),caps=await capabilities();
    if(request.steps.some(step=>!caps[step]))throw fail('本地整理模型尚未就绪',503);
-   update(id,request.steps.includes('speakers')&&!value.media_hash?'awaiting_media':'queued','queued');pump();
+   update(id,request.steps.includes('speakers')&&!value.media_hash&&!request.savedMedia?'awaiting_media':'queued','queued');pump();
   }else throw fail('整理操作无效');
   return get(id);
  }

@@ -6,10 +6,13 @@ and recording-scoped speaker identities belong to this module, not the provider.
 from __future__ import annotations
 
 import copy
-from contextlib import ExitStack
+from contextlib import contextmanager, ExitStack
+import errno
 import hashlib
 import json
 import math
+import os
+import stat
 import subprocess
 import tempfile
 import wave
@@ -184,6 +187,90 @@ def _wav_frames(path):
 
 
 def prepare_audio(source, directory, *, max_frames=None):
+    cache = os.environ.get('COCONUT_PCM_CACHE')
+    # Only server-owned immutable assets enter the shared cache. Ordinary
+    # command-line paths retain their own work directory.
+    if not cache or not Path(cache).is_absolute() or os.name != 'posix' or Path(source).suffix != '.media':
+        return _prepare_audio_local(source, directory, max_frames=max_frames)
+    root = Path(cache)
+    root.mkdir(mode=0o700, exist_ok=True)
+    info = root.lstat()
+    if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid() or info.st_mode & 0o077:
+        raise ValueError('Unsafe PCM cache directory')
+    identity = _file_digest(source)
+    if Path(source).stem != identity:
+        raise ValueError('Saved audio identity changed')
+    entry = root / identity
+    entry.mkdir(mode=0o700, exist_ok=True)
+    info = entry.lstat()
+    if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid() or info.st_mode & 0o077:
+        raise ValueError('Unsafe PCM cache entry')
+    # Per-source lock avoids duplicate decoding. The index lock protects cache
+    # hard links across sources; a worker keeps its own link during eviction.
+    with _pcm_lock(entry / 'decode.lock'):
+        target = entry / 'audio.wav'
+        local = Path(directory) / 'audio.wav'
+        with _pcm_lock(root / 'cache.lock'):
+            if target.is_file():
+                try:
+                    info = target.lstat()
+                    if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid() or info.st_mode & 0o077:
+                        raise ValueError('Unsafe normalized audio')
+                    frames = _wav_frames(target)
+                    if info.st_size < frames * 2 + 44:
+                        raise ValueError('Truncated normalized audio')
+                except (wave.Error, EOFError, ValueError):
+                    target.unlink()
+                else:
+                    if max_frames is not None and frames > max_frames:
+                        raise RuntimeError('Decoded PCM frame limit exceeded')
+                    if local.exists() and local.samefile(target):
+                        return local
+                    temporary = local.with_name('audio.cache.partial.wav')
+                    temporary.unlink(missing_ok=True)
+                    try:
+                        os.link(target, temporary)
+                        temporary.replace(local)
+                        os.utime(target)
+                        return local
+                    except OSError as error:
+                        if error.errno != errno.EXDEV:
+                            raise
+                    finally:
+                        temporary.unlink(missing_ok=True)
+        normalized = _prepare_audio_local(source, Path(directory), max_frames=max_frames)
+        if normalized != local or target.exists():
+            return normalized
+        size = local.stat().st_size
+        budget = 2 * 1024**3
+        if size > budget:
+            return normalized
+        with _pcm_lock(root / 'cache.lock'):
+            entries = [(item.stat(), item) for item in root.glob('*/audio.wav') if item.is_file()]
+            usage = sum(info.st_size for info, _ in entries)
+            for info, old in sorted(entries, key=lambda entry: entry[0].st_mtime_ns):
+                if usage + size <= budget:
+                    break
+                old.unlink()
+                usage -= info.st_size
+            try:
+                local.chmod(0o600)
+                os.link(local, target)
+            except OSError as error:
+                if error.errno != errno.EXDEV:
+                    raise
+        return normalized
+
+
+@contextmanager
+def _pcm_lock(path):
+    import fcntl
+    with os.fdopen(os.open(path, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600), 'rb') as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        yield
+
+
+def _prepare_audio_local(source, directory, *, max_frames=None):
     """Stream decode to disk. Neither compressed input nor a 3h PCM is held in RAM."""
     try:
         frames = _wav_frames(source)

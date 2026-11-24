@@ -7,6 +7,8 @@ import {ChoicePicker} from '../reader-workspace/controls';
 import {episodeMetadata,filterEpisodes} from './episode-browser';
 import type { AppStore } from './store';
 import type {Document} from './contracts';
+import {ReadingReviewChoice,useReadingReviewChoice} from './reading-review-choice';
+import {queueReadingReview} from './reading-review-state';
 import {attachTranscript} from './attach-transcript';
 import {discoverySession,saveDiscoverySession,matchingSourceDocuments,exactSourceIdentity,ingestionDocument,type DiscoverySession,type SourceAttempt} from './discovery-session';
 import {captionLanguageChoices,captionDiagnostics,hasCaptionLoss} from './caption-receipt';
@@ -42,6 +44,7 @@ export function Discover({ store }: {
     const [pendingMedia,setPendingMedia]=useState<{document:NonNullable<ReturnType<AppStore['getDocument']>>;file:File;media:ReturnType<AppStore['getMedia']>;sourceFile:ReturnType<AppStore['getFile']>}|null>(null);
     const [failure,setFailure]=useState<{diagnostic:CaptionFailureDiagnostic|null;original:string|null;audio?:VideoAudioFallback|null}|null>(null);
     const parsedLink = parseSourceLink(url);
+    const reviewChoice=useReadingReviewChoice(!!parsedLink);
     const interrupted = /^读取已(?:取消|暂停)/.test(error);
     const subtitleTokenRequired = failure?.diagnostic?.reason === 'subtitle_token_required';
     useEffect(() => {if (error) notify({message: failure?.diagnostic ? captionFailureTitle(failure.diagnostic) : error, tone: interrupted ? 'info' : 'error'});}, [error, failure, interrupted, notify]);
@@ -83,12 +86,13 @@ export function Discover({ store }: {
             const doc=matches[0]||store.addDocument(content,{select:false});
             if(!doc){setError('暂时不能添加内容，请先保存当前修改或处理存储状态。');return;}
             const publisher=isPublisherTranscript(doc);
-            if(combined)await acquireAndTranscribe(store,doc.key,controller.signal,()=>stop.cancel);
+            if(combined)await acquireAndTranscribe(store,doc.key,controller.signal,()=>stop.cancel,reviewChoice.checked?reviewChoice.provider:false);
             else if(!publisher)try{await acquireSourceAudio(store,doc.key,controller.signal);}catch(error){if(owner.current===controller&&!controller.signal.aborted)store.setMessage(error instanceof Error?error.message:'原声获取尚未完成，请在来源任务中重试。');}
             if(owner.current!==controller||controller.signal.aborted||!mounted.current)return;
             updateSession({receipt:null,error:''});
             owner.current=null;setBusy(false);
             if(store.select(doc.key)&&publisher)downloadPublisherAudio(doc);
+            if(!combined&&reviewChoice.checked&&doc.segments.length)void queueReadingReview(store,doc,reviewChoice.provider);
         }catch(error){if(owner.current===controller&&!controller.signal.aborted&&mounted.current)setError(error instanceof Error?error.message:'内容无法添加');}
         finally{if(combinedStop.current===stop)combinedStop.current=null;openingReceipt.current=false;if(owner.current===controller){owner.current=null;if(mounted.current)setBusy(false);}}
     };
@@ -133,7 +137,10 @@ export function Discover({ store }: {
                     updateSession({receipt:null,attempt:null,error:'',languageRequired:false,languageChoices:[]});
                     owner.current=null;setBusy(false);
                     if(store.select(doc.key)){
-                        void acquireSourceAudio(store,doc.key,undefined,{language:attempt.language,track:attempt.track}).catch(error=>{
+                        if(doc.segments.length&&reviewChoice.checked)void queueReadingReview(store,doc,reviewChoice.provider);
+                        void acquireSourceAudio(store,doc.key,undefined,{language:attempt.language,track:attempt.track,
+                            ...(!doc.segments.length&&reviewChoice.checked?{after_transcription_review:reviewChoice.provider}:{})
+                        }).catch(error=>{
                             if(store.getSnapshot().activeKey===doc.key)
                                 store.setMessage(error instanceof Error?error.message:'来源任务未开始，可重新打开来源链接重试。');
                         });
@@ -157,7 +164,7 @@ export function Discover({ store }: {
             if(combined&&existing.length>1)throw Error('此来源有多个项目，请打开目标项目后操作');
             const doc=existing[0]||store.addDocument(project,{select:false});
             if(!doc)throw Error('当前项目尚未保存，未创建新媒体项目。');
-            if(combined)await acquireAndTranscribe(store,doc.key,controller.signal,()=>stop.cancel);else await acquireSourceAudio(store,doc.key,controller.signal);
+            if(combined)await acquireAndTranscribe(store,doc.key,controller.signal,()=>stop.cancel,reviewChoice.checked?reviewChoice.provider:false);else await acquireSourceAudio(store,doc.key,controller.signal);
             if(combinedStop.current===stop)combinedStop.current=null;
             if(owner.current!==controller||controller.signal.aborted||!mounted.current)return;
             owner.current=null;setBusy(false);updateSession({receipt:null,attempt:null,error:''});store.select(doc.key);
@@ -195,6 +202,7 @@ export function Discover({ store }: {
         try{
             const core=(window as any).Coconut,next=attachTranscript(target,content,core,(window as any).CoconutCanonicalLibrary.project);
             const ok=await store.commitDocument(next,{key:target.key,revision:review.revision});
+            if(ok&&reviewChoice.checked)void queueReadingReview(store,next,reviewChoice.provider);
             if(!mounted.current)return;
             if(ok){
                 const publisher=isPublisherTranscript(next);
@@ -266,6 +274,7 @@ export function Discover({ store }: {
     </div>
     <input key={picker.inputKey} ref={fileInput} type="file" accept="audio/*,video/*" hidden onChange={event => {const input=event.currentTarget,file=input.files?.[0];void picker.controller.accept(input,async({current})=>{if(file&&current())await openFile(file,current);});}}/>
     {busy&&<div className="source-hint"><span role="status" className="source-progress"><span aria-hidden="true"/>正在读取来源…</span></div>}
+    <ReadingReviewChoice value={reviewChoice} when="取得文字稿后" disabled={busy||attaching}/>
     {combinedAvailable&&<button type="button" disabled={busy||attaching||!parsedLink} onClick={()=>submitLink(true)}>获取原声并转录</button>}
   </form>
   {pendingMedia&&<section aria-label="原声保存待完成"><p>项目已创建，原声尚未保存。离开本页后需重新关联原文件。</p><button disabled={busy||attaching} onClick={()=>void retryMedia()}>重试保存已下载原声</button><button disabled={busy||attaching} onClick={()=>{cancel();store.select(pendingMedia.document.key);}}>打开已创建的项目</button></section>}

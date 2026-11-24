@@ -2,7 +2,7 @@ import type {AppStore} from './store';
 // @ts-expect-error Shared with the source-media service.
 import {sourceMediaIdentity} from '@coconut/shared/source-media.js';
 /** The service owns admitted downloads and publisher-caption checks. */
-export async function acquireSourceAudio(store:AppStore,key:string,signal?:AbortSignal,author?:{language?:string;track?:string}):Promise<void>{
+export async function acquireSourceAudio(store:AppStore,key:string,signal?:AbortSignal,author?:{language?:string;track?:string;after_transcription_review?:string}):Promise<void>{
  const client=(window as any).CoconutClientCapabilities;
  if(client?.allows('sourceJobs')!==true)throw Error('当前连接不支持持久保存原声，请连接本地服务后重试。');
  const identity=client.identity(),generation=client.generation,libraryId=client.current?.libraryId,doc=store.getDocument(key);

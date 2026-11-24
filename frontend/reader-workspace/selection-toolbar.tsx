@@ -1,20 +1,7 @@
 import {useLayoutEffect,useRef,useState,type CSSProperties,type ReactNode,type RefObject} from 'react';
 import type {ReaderDocument} from './contracts';
-import type {SourceSelection} from './domain';
-import {supportsTextHighlight,textRange} from './text-range';
-
-function sourceRange(host:HTMLElement,doc:ReaderDocument,selection:SourceSelection):Range | null {
-    const sourceNodes=new Map(Array.from(host.querySelectorAll<HTMLElement>('[data-source-id]'),node=>[node.dataset.sourceId!,node]));
-    const lengths=new Map(doc.segments.map(cue=>[cue.id,cue.text.length]));
-    const nodes=selection.cueIds.map(id=>sourceNodes.get(id));
-    if(nodes.some(node=>!node))return null;
-    let end=selection.to;
-    for(let i=0;i<selection.cueIds.length-1;i++)end-=(lengths.get(selection.cueIds[i])??0)+selection.separators[i].length;
-    if(nodes.length===1)return textRange(nodes[0]!,selection.from,end);
-    const first=textRange(nodes[0]!,selection.from,nodes[0]!.textContent!.length),last=textRange(nodes.at(-1)!,0,end);
-    if(!first||!last)return null;
-    first.setEnd(last.endContainer,last.endOffset);return first;
-}
+import {visibleSourceRange,type SourceSelection} from './domain';
+import {supportsTextHighlight} from './text-range';
 
 /** Keep actions next to the source, including inside a narrow app side panel. */
 export function SelectionToolbar({source,doc,selection,highlightSelection=false,onDismiss,children}:{source:RefObject<HTMLDivElement|null>;doc:ReaderDocument;selection:SourceSelection;highlightSelection?:boolean;onDismiss:()=>void;children:ReactNode}) {
@@ -22,7 +9,7 @@ export function SelectionToolbar({source,doc,selection,highlightSelection=false,
     const [placement,setPlacement]=useState({left:12,top:80,width:600,height:48,barWidth:240});
     useLayoutEffect(()=>{
         const node=bar.current,host=source.current;if(!node||!host)return;
-        const range=sourceRange(host,doc,selection);
+        const range=visibleSourceRange(host,doc,selection);
         const highlight=range&&highlightSelection&&supportsTextHighlight()?new window.Highlight(range):null;
         if(highlight)window.CSS.highlights.set('coconut-word-selection',highlight);
         let frame=0;

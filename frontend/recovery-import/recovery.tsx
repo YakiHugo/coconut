@@ -1,5 +1,8 @@
+import {ChoicePicker} from '../reader-workspace/controls';
 import React, { useEffect, useRef, useMemo, useSyncExternalStore } from 'react';
 import {useOwnedPicker} from '../native-shell/owned-picker-hook';
+import {ReadingReviewChoice,useReadingReviewChoice} from '../app/reading-review-choice';
+import {queueReadingReview} from '../app/reading-review-state';
 import { attachTranscript } from '../app/attach-transcript';
 import type { Document } from '../app/contracts';
 import type { AppStore } from '../app/store';
@@ -31,13 +34,18 @@ export function SubtitleRecovery({ store, targetKey,label }: { store: AppStore; 
     return existing;
   }, [store, targetKey]);
   const state = useSyncExternalStore(controller.subscribe, controller.getSnapshot);
+  const reviewChoice=useReadingReviewChoice(!state.paused&&state.rows.some(row=>!!row.parsed&&row.reviewed));
+  const offerReview=(value:unknown)=>{
+    const document=typeof value==='string'?store.getDocument(value):value as Document|null;
+    if(document?.segments?.length)void queueReadingReview(store,document,reviewChoice.provider);
+  };
   const input = useRef<HTMLInputElement>(null);
   const picker=useOwnedPicker({scope:'subtitle:'+ (targetKey||'standalone'),setActivity:store.setActivity,reason:'正在选择字幕文件'});
   useEffect(()=>()=>picker.controller.retire(),[targetKey,picker.controller]);
   useEffect(() => { const retire = () => controller.pause(); window.addEventListener('pagehide', retire); return () => { window.removeEventListener('pagehide', retire); retire(); }; }, [controller]);
   return <details className="subtitle-recovery" onToggle={event => { if (!event.currentTarget.open) {picker.controller.retire();controller.pause();} }}>
     <summary>{label||'导入 SRT / VTT 字幕'}</summary>
-    <p>字幕仅在本机读取，不上传。</p>
+    <p>字幕在本机读取。启用精校时会发送文字稿与节目资料。</p>
     <p>关闭或刷新页面会丢失未导入的草稿。</p>
     {state.paused && <button onClick={() => controller.resume()}>继续核对保留的草稿</button>}
     {targetKey && <section aria-label="选择字幕恢复目标">
@@ -47,14 +55,18 @@ export function SubtitleRecovery({ store, targetKey,label }: { store: AppStore; 
     </section>}
     <fieldset disabled={state.applying}><legend>字幕预览与核对</legend>
     <label>字幕标题<input value={state.title} maxLength={200} onChange={event => controller.edit({ title: event.target.value })}/></label>
-    <label>字幕格式<select value={state.format} onChange={event => controller.edit({ format: event.target.value })}><option value="auto">自动识别</option><option value="srt">SRT</option><option value="vtt">VTT</option></select></label>
+    <ChoicePicker label="字幕格式" value={state.format} disabled={state.applying}
+      options={[{value:'auto',label:'自动识别'},{value:'srt',label:'SRT'},{value:'vtt',label:'VTT'}]}
+      onChange={format=>controller.edit({format})}/>
     <label>粘贴带完整起止时间的字幕<textarea value={state.text} rows={8} onChange={event => controller.edit({ text: event.target.value })}/></label>
     <button onClick={() => controller.previewPaste()}>预览粘贴字幕</button>
     <button data-native-command="import-transcript" disabled={state.busy} onClick={() => {if(state.busy||state.applying)return;const captured=store.getSnapshot(),scope=controller.getSnapshot(),doc=targetKey?store.getDocument(targetKey):null;picker.controller.begin(input.current,()=>{const value=store.getSnapshot(),current=controller.getSnapshot();return value.workspace===captured.workspace&&value.activeKey===captured.activeKey&&(!targetKey||store.getDocument(targetKey)===doc)&&current.mode===scope.mode&&current.target===scope.target;});}}>选择字幕文件（可多选）</button>
     <input key={picker.inputKey} ref={input} hidden type="file" accept=".srt,.vtt" multiple onChange={event => {const element=event.currentTarget,files=Array.from(element.files||[]);void picker.controller.accept(element,async({current})=>{if(current())await controller.chooseFiles(files);});}}/>
     <ol>{state.rows.map(row => <li key={row.id}>
       <h3>{row.name}</h3>
-      {row.bytes && <label>原始文件编码<select value={row.encoding} onChange={event => controller.encoding(row.id, event.target.value)}>{controller.encodings().map(option => <option key={option.id} value={option.id} disabled={!option.available}>{option.label}{!option.available && '（当前浏览器不支持）'}</option>)}</select></label>}
+      {row.bytes && <ChoicePicker label="原始文件编码" value={row.encoding} disabled={state.applying}
+        options={controller.encodings().filter(option=>option.available).map(option=>({value:option.id,label:option.label}))}
+        onChange={encoding=>controller.encoding(row.id,encoding)}/>}
       {row.error && <p role="alert">{row.error}</p>}
       {row.parsed && <><p>{(row.parsed.document as {segments: unknown[]}).segments.length} 条字幕。{row.parsed.diagnostics.length > 0 && `部分字幕未导入：${row.parsed.diagnostics.length} 项诊断。请先检查原文。`}</p>
         {row.parsed.diagnostics.length > 0 && <pre>{JSON.stringify(row.parsed.diagnostics, null, 2)}</pre>}
@@ -63,7 +75,8 @@ export function SubtitleRecovery({ store, targetKey,label }: { store: AppStore; 
       <button onClick={() => controller.remove(row.id)}>移除此预览</button>
     </li>)}</ol>
     </fieldset>
-    <button disabled={state.applying || state.busy || state.paused || !state.rows.some(row => row.parsed && row.reviewed)} onClick={() => void controller.apply()}>{state.mode === 'attach' ? '将已核对字幕附加到目标项目' : '加入已核对的字幕'}</button>
+    <ReadingReviewChoice value={reviewChoice} when="导入后" disabled={state.applying}/>
+    <button disabled={state.applying || state.busy || state.paused || !state.rows.some(row => row.parsed && row.reviewed)} onClick={() => void controller.apply(reviewChoice.checked?offerReview:undefined)}>{state.mode === 'attach' ? '将已核对字幕附加到目标项目' : '加入已核对的字幕'}</button>
     <button onClick={() => controller.pause()}>取消读取 / 保留草稿</button>
     <p role="status">{state.busy ? '正在读取字幕…' : state.message}</p>
   </details>;

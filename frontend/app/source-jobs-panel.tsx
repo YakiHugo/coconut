@@ -7,9 +7,11 @@ import type {Document} from './contracts';
 import {attachTranscript} from './attach-transcript';
 import {mergeAlignmentCandidate} from '@coconut/shared/source-alignment.js';
 import {restoreSourceMedia} from './source-media';
+import {ReadingReviewChoice,useReadingReviewChoice} from './reading-review-choice';
+import {queueReadingReview} from './reading-review-state';
 // @ts-expect-error Shared source ownership contract also runs on the server.
 import {sourceMediaIdentity} from '@coconut/shared/source-media.js';
-type Job={id:string;documentKey:string;source:string;binding:string;kind:'download'|'transcribe'|'align'|'download_transcribe'|'captions';automatic?:boolean;documentRevision?:number;languages?:string[];tracks?:{value:string;label:string}[];assetSha256:string|null;mediaReady?:boolean;state:string;updated:number;ingestionId:string|null;phase?:string;currentProfile?:boolean;resultAvailable?:boolean;error:string|null};
+type Job={id:string;documentKey:string;source:string;binding:string;kind:'download'|'transcribe'|'align'|'download_transcribe'|'captions';automatic?:boolean;documentRevision?:number;languages?:string[];tracks?:{value:string;label:string}[];assetSha256:string|null;mediaReady?:boolean;state:string;updated:number;readingReviewProvider?:string;ingestionId:string|null;phase?:string;currentProfile?:boolean;resultAvailable?:boolean;error:string|null};
 const videoSource=(doc:Document)=>typeof doc.source_url==='string'&&/^https:\/\/(?:www\.)?(?:bilibili\.com\/video\/|youtube\.com\/watch\?|youtu\.be\/)/.test(doc.source_url);
 const labels:Record<string,string>={queued:'等待中',running:'进行中',ready:'已完成',failed:'失败',interrupted:'已中断，等待核对',cancelled:'已取消',absent:'作者未提供字幕',language_required:'选择作者字幕',unverified:'来源未提供字幕信息'};
 function downloadProgress(phase?:string):{receivedBytes:number;totalBytes:number|null}|null{
@@ -32,7 +34,11 @@ export function SourceJobsPanel({store,currentKey,taskHost,panelHost,processingH
  const [alignmentPreview,setAlignmentPreview]=useState<{id:string;aligned:number;total:number;state:string}|null>(null);
  const generation=useRef(0),doc=currentKey?store.getDocument(currentKey):null,source=doc?sourceMediaIdentity(doc):'',media=currentKey?store.getMedia(currentKey):null;
  const saveState=store.getSnapshot();
+ const saving=Boolean(saveState.save.unsaved),dirty=saveState.dirty;
+ const autoAccepted=useRef(new Set<string>()),autoQueued=useRef(new Set<string>());
  const canTranscribe=doc?.project_kind==='audio_only'&&doc.segments.length===0;
+ const reviewChoice=useReadingReviewChoice(enabled&&canTranscribe);
+ const optedProvider=reviewChoice.checked?reviewChoice.provider:false;
  useEffect(()=>{const changed=()=>{generation.current++;setClient(connection());};window.addEventListener('coconut-client-changed',changed);return()=>window.removeEventListener('coconut-client-changed',changed);},[]);
  useEffect(()=>{
   const version=++generation.current;setAlignmentPreview(null);setJobs([]);setConsent(false);setAvailable(false);setMessage('');setBusy(false);if(!enabled||!currentKey)return;
@@ -96,13 +102,26 @@ export function SourceJobsPanel({store,currentKey,taskHost,panelHost,processingH
  },[enabled,client.generation,client.identity,currentKey,source,store]);
  useEffect(()=>{if(!saveState.dirty&&!saveState.save.unsaved)refreshCurrent.current?.();},[saveState.dirty,saveState.save.unsaved]);
  useEffect(()=>{onTasksChange({total:jobs.length,running:jobs.filter(job=>['queued','running'].includes(job.state)).length,attention:jobs.filter(job=>['failed','interrupted','language_required'].includes(job.state)||job.state==='ready'&&!job.automatic&&job.kind!=='download').length});},[jobs,onTasksChange]);
+ useEffect(()=>{
+  const binding=doc?.local_job_binding as {id?:string}|undefined;
+  const job=jobs.find(item=>item.readingReviewProvider&&item.state==='ready'&&(item.id===doc?.source_workflow_job||item.ingestionId&&item.ingestionId===binding?.id));
+  if(!enabled||!job||!doc?.segments.length||saving||dirty||doc.reading_review||autoQueued.current.has(job.id))return;
+  autoQueued.current.add(job.id);
+  void queueReadingReview(store,doc,job.readingReviewProvider!,job.id);
+ },[doc,jobs,enabled,store,saving,dirty]);
+ useEffect(()=>{
+  if(!canTranscribe||!enabled||!currentKey||busy||saving||dirty)return;
+  const job=jobs.find(item=>item.readingReviewProvider&&item.state==='ready'&&item.resultAvailable===true&&
+   item.currentProfile!==false&&item.assetSha256&&media?.identity==='source-media-sha256:'+item.assetSha256);
+  if(job&&!autoAccepted.current.has(job.id)){autoAccepted.current.add(job.id);void accept(job);}
+ },[canTranscribe,enabled,currentKey,busy,jobs,media?.identity,store,saving,dirty]);
  if(!enabled||!doc||!currentKey||!doc.podcast_source&&!videoSource(doc)&&!media?.identity?.startsWith('source-media-sha256:')&&!jobs.length)return null;
  async function run(action:()=>Promise<void>){if(busy)return;const version=generation.current;setBusy(true);setMessage('');try{await action();}catch(error){if(generation.current===version)setMessage(error instanceof Error?error.message:String(error));}finally{if(generation.current===version)setBusy(false);}}
  const create=(kind:'download'|'transcribe'|'align')=>run(async()=>{
   const key=currentKey!,original=store.getDocument(key),version=generation.current;
   const saved=await store.flush();if(!saved.ok||!original||store.getDocument(key)!==original)throw Error('请先确认来源项目已保存');
   const sourceHash=await digest(source);if(generation.current!==version||!connection().enabled||connection().identity!==client.identity)throw Error('所连接的书架或项目已变化，请重新确认');
-  const data=await request('api/v1/source-jobs',{protocolVersion:1,libraryId:client.libraryId,key,source:sourceHash,operation_id:crypto.randomUUID(),kind,consent:true,...(kind==='download'?{}:{saveResult:true})});
+  const data=await request('api/v1/source-jobs',{protocolVersion:1,libraryId:client.libraryId,key,source:sourceHash,operation_id:crypto.randomUUID(),kind,consent:true,...(kind==='download'?{}:{saveResult:true}),...(kind==='transcribe'?{after_transcription_review:optedProvider}:{})});
   if(generation.current!==version)return;setJobs(previous=>[data.job,...previous.filter(job=>job.id!==data.job.id)]);setConsent(false);refreshCurrent.current?.();
  });
  const action=(job:Job,command:'cancel'|'retry',options?:{language?:string;track?:string})=>run(async()=>{const version=generation.current;const data=await request('api/v1/source-jobs/'+job.id+'/'+command,{protocolVersion:1,...options});if(data.job?.id!==job.id||data.job?.kind!==job.kind||data.job?.source!==job.source)throw Error('来源任务回执身份不匹配');if(generation.current===version){setJobs(previous=>previous.map(value=>value.id===job.id?data.job:value));setCaptionChoice('');refreshCurrent.current?.();}});
@@ -161,6 +180,7 @@ export function SourceJobsPanel({store,currentKey,taskHost,panelHost,processingH
       {['failed','interrupted','cancelled'].includes(recognition.state)&&<button disabled={busy} onClick={()=>void action(recognition,'retry')}>重试转写</button>}
     </div>}
     {canTranscribe&&media?.identity?.startsWith('source-media-sha256:')&&!transcriptions.length&&(!captions||!['running','queued'].includes(captions.state))&&<>
+      <ReadingReviewChoice value={reviewChoice} when="转录后" disabled={busy}/>
       <label><input type="checkbox" checked={consent} onChange={event=>setConsent(event.target.checked)}/>使用本机已配置模型</label>
       <button disabled={busy||!consent||!available} onClick={()=>void create('transcribe')}>生成文字稿</button>
     </>}

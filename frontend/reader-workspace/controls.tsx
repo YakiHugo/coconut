@@ -44,8 +44,8 @@ export function ReaderDialog({open,title,onClose,children}:{open:boolean;title:s
         node?.showModal();close.current?.focus({preventScroll:true});
         return()=>{if(node?.open)node.close();if(previous?.isConnected)previous.focus({preventScroll:true});};
     },[open]);
-    return <dialog ref={dialog} className="rw-dialog" aria-labelledby={id} onCancel={event=>{event.preventDefault();onClose();}} onClose={()=>{if(open)onClose();}}>
-        <header className="rw-dialog-heading"><h2 id={id}>{title}</h2><button ref={close} type="button" aria-label={'关闭'+title} onClick={onClose}>关闭 <span aria-hidden="true">×</span></button></header>
+    return <dialog ref={dialog} className="rw-dialog notranslate" translate="no" default-translate="no" aria-labelledby={id} onCancel={event=>{event.preventDefault();onClose();}} onClose={()=>{if(open)onClose();}}>
+        <header className="rw-dialog-heading"><h2 id={id} className="notranslate" translate="no" default-translate="no">{title}</h2><button ref={close} type="button" aria-label={'关闭'+title} onClick={onClose}>关闭 <span aria-hidden="true">×</span></button></header>
         {children}
     </dialog>;
 }

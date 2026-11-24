@@ -50,11 +50,46 @@ function timedWords(cue:ReaderCue):TimedWord[] | null {
     return words;
 }
 
-export function sourcePlayback(cues:ReaderCue[],mediaIdentity?:string){
+export function sourceClockForRange(cue:ReaderCue) {
+    const words=timedWords(cue);
+    return (from:number,to:number,fallback:SpeechPart):SpeechPart=>{
+        if(!words)return {...fallback,from,to};
+        let first:TimedWord|undefined,end=0;
+        for(const word of words){
+            if(word.from>=to)break;
+            if(word.to<=from)continue;
+            first??=word;
+            end=Math.max(end,word.end);
+        }
+        return {from,to,start:first?.start??fallback.start,end:first?end:fallback.end};
+    };
+}
+
+/** Older accepted jobs kept the asset hash on the alignment receipt. */
+function legacyBindings(alignment:unknown) {
+    const receipt = alignment as {asset_sha256?:string;source_snapshot?:{segments?:ReaderCue[]};report?:{cues?:Array<{cue_id:string;status:string}>}}|undefined;
+    const snapshot = receipt?.source_snapshot?.segments;
+    const report = receipt?.report?.cues;
+    if(typeof receipt?.asset_sha256!=='string'||!/^[a-f0-9]{64}$/.test(receipt.asset_sha256)||!Array.isArray(snapshot)||!Array.isArray(report))return null;
+    const accepted = new Map(snapshot.flatMap((cue,index)=>{
+        const result=report[index];
+        return typeof cue?.id==='string'&&result?.status==='aligned'&&result.cue_id===cue.id?[[cue.id,cue] as const]:[];
+    }));
+    return {hash:receipt.asset_sha256,accepted};
+}
+
+export function sourcePlayback(cues:ReaderCue[],mediaIdentity?:string,alignment?:unknown){
     const gaps=new Map<string,{start:number;end:number}>();
-    if(!cues.some(cue=>cue.alignment_media_sha256))return {cues,gaps};
-    const playable=cues.map(cue=>cue.alignment_media_sha256&&mediaIdentity!=='source-media-sha256:'+cue.alignment_media_sha256
-        ? {...cue,words:undefined,alignment_media_sha256:undefined,timing_basis:'segment'} : cue);
+    const legacy=legacyBindings(alignment);
+    if(!legacy&&!cues.some(cue=>cue.alignment_media_sha256))return {cues,gaps};
+    const playable=cues.map(cue=>{
+        const original=legacy?.accepted.get(cue.id);
+        const hash=cue.alignment_media_sha256 || (original?.text===cue.text&&original.start===cue.start&&original.end===cue.end ? legacy?.hash : undefined);
+        if(!hash)return cue;
+        return mediaIdentity==='source-media-sha256:'+hash
+            ? {...cue,alignment_media_sha256:hash}
+            : {...cue,words:undefined,alignment_media_sha256:undefined,timing_basis:'segment' as const};
+    });
     const anchors=playable.map(cue=>cue.alignment_media_sha256?timedWords(cue)?.filter(word=>word.clock==='observed'):null);
     for(let i=1;i<playable.length-1;i++){
         const cue=playable[i],start=anchors[i-1]?.at(-1)?.end,end=anchors[i+1]?.[0].start;

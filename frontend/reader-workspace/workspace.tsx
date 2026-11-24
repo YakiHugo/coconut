@@ -1,6 +1,7 @@
+import {readingReviewSubmissionFailure} from '../app/reading-review-state';
 import { memo, useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import type { ReaderCue, ReaderDocument, ReaderWorkspaceProps, ReaderSourceTarget } from './contracts';
-import { captureSourceSelection, time, type SourceSelection } from './domain';
+import { captureSourceSelection, readingSourceOffset, time, translationTarget, visibleSourceRange, type SourceSelection } from './domain';
 import { ReaderPlayer, PLAYBACK_RATES, type PlaybackLocation, type SeekIntent } from './player';
 import {ReaderSummary} from './summary';
 import {useReaderKeyboard} from '../reading-preferences/keyboard';
@@ -17,6 +18,8 @@ import {supportsTextHighlight,textOffsetAtPoint,textRange} from './text-range';
 import {usePlaybackFollow,useReadingScroller} from './playback-follow';
 import {prepareCleanup} from './cleanup';
 import {useTranscriptSearch} from './transcript-search';
+import {readingReview} from '@coconut/shared/transcript-review';
+import {readingAdjustments,readingChapters,readingReplacements,readingSpeakerNames} from './reading-document';
 type Domain = {
     createPlaybackIndex: (cues: ReaderCue[]) => {
         find: (seconds: number) => ReaderCue | undefined;
@@ -31,6 +34,9 @@ type Domain = {
     };
     exactExcerptDuplicate: (doc: ReaderDocument, record: unknown) => unknown;
     mediaTimingOffset: (doc: ReaderDocument, identity: string) => number;
+    createReadingChapter: (doc:ReaderDocument,input:{id:string;title:string;cueId:string})=>{id:string};
+    updateReadingChapter: (doc:ReaderDocument,id:string,input:{title:string})=>{id:string};
+    readingChaptersWith: (doc:ReaderDocument,input:{id:string})=>unknown;
 };
 const domain = () => (window as unknown as {
     Coconut: Domain;
@@ -39,6 +45,13 @@ const UNCONFIRMED_SAVE = '尚未保存。内容可能已更新或存储暂不可
 export function ReaderWorkspace(props: ReaderWorkspaceProps) { return <WorkspaceSession key={props.document.key} {...props}/>; }
 function WorkspaceSession({ document: doc, revision, media, onSaveDocument, onReadingPosition, onRequestAi, onDirtyChange, onMediaProgress, saveStatus, onVisibleSelection, navigationRequest, onNavigationHandled, initialView, onViewChange, shortcutsEnabled=false, onOpenSummary, aiReturnRequest, resourcePanel, sourcePanel, sourceStatus, chineseScript='source' }: ReaderWorkspaceProps) {
     const modeTabsId = useId();
+    const [reviewFailure,setReviewFailure]=useState('');
+    useEffect(()=>{
+        const read=()=>setReviewFailure(readingReviewSubmissionFailure(doc.key));
+        const update=(event:Event)=>{if((event as CustomEvent<string>).detail===doc.key)read();};
+        read();window.addEventListener('coconut-reading-review-started',update);
+        return()=>window.removeEventListener('coconut-reading-review-started',update);
+    },[doc.key]);
     const [toolsOpen,setToolsOpen]=useState(false),[tool,setTool]=useState('source');
     const openTools=(next:string)=>{setTool(next);setToolsOpen(true);};
     const displayText=useMemo(()=>scriptConverter(chineseScript,navigator.languages||[navigator.language]),[chineseScript,(navigator.languages||[navigator.language]).join(',')]);
@@ -53,6 +66,56 @@ function WorkspaceSession({ document: doc, revision, media, onSaveDocument, onRe
     const cleanup=useMemo(()=>prepareCleanup(doc),[doc.key,doc.segments,doc.reading_cleanup]);
     const cleanupActive=mode==='passages'&&cleanup.state==='ready'&&Boolean(cleanup.hiddenCount||cleanup.markCount||cleanup.breakCount);
     useEffect(()=>{window.getSelection()?.removeAllRanges();setSelection(null);},[cleanup.projection]);
+    const availableReview=useMemo(()=>readingReview(doc),[doc.segments,doc.reading_review]);
+    const [selectedReview,setSelectedReview]=useState(()=>availableReview);
+    const [initialReviewJob,setInitialReviewJob]=useState('');
+    useEffect(()=>{
+        const received=(event:Event)=>{
+            const value=(event as CustomEvent<{key:string;jobId:string}>).detail;
+            if(value?.key===doc.key)setInitialReviewJob(value.jobId);
+        };
+        window.addEventListener('coconut-reading-review-opened',received);
+        return()=>window.removeEventListener('coconut-reading-review-opened',received);
+    },[doc.key]);
+    useEffect(()=>{
+        if(initialReviewJob&&availableReview?.jobId===initialReviewJob){
+            setInitialReviewJob('');setSelectedReview(availableReview);
+        }
+    },[initialReviewJob,availableReview]);
+    const activeReview=availableReview&&selectedReview?.sourceSignature===availableReview.sourceSignature
+        ?selectedReview.jobId===availableReview.jobId&&selectedReview.fallbackBatches===availableReview.fallbackBatches?availableReview:selectedReview
+        :null;
+    const speakerGroups=useMemo(()=>{
+        const result=new Map<string,ReaderCue>(),identity=passageDomain().speakerIdentity;
+        for(const cue of doc.segments){
+            const id=identity(cue);
+            if(id&&!result.has(id))result.set(id,cue);
+        }
+        return result;
+    },[doc.segments]);
+    const speakerAliases=useMemo(()=>readingSpeakerNames(doc.reading_speakers,speakerGroups),[doc.reading_speakers,speakerGroups]);
+    const speakerDisplay=useCallback((cue:ReaderCue)=>{
+        const group=passageDomain().speakerIdentity(cue);
+        if(group&&speakerAliases.has(group))return speakerAliases.get(group);
+        return (typeof cue.speaker_id==='string'&&!Object.hasOwn(cue,'original_speaker')?activeReview?.speakers.get(cue.speaker_id):undefined)
+            ??cue.speaker??undefined;
+    },[speakerAliases,activeReview]);
+    const adjustments=useMemo(()=>readingAdjustments(doc.segments,doc.reading_adjustments,activeReview?.sourceSignature),
+        [doc.segments,doc.reading_adjustments,activeReview?.sourceSignature]);
+    const replacements=useMemo(()=>activeReview?readingReplacements(doc.segments,activeReview.edits,adjustments):undefined,
+        [doc.segments,activeReview,adjustments]);
+    const joins=useMemo(()=>{
+        const stored=activeReview?.joins;
+        if(!stored?.size||!adjustments.length)return stored;
+        const interrupted=new Set(adjustments.map(edit=>stored.get(edit.cue_id)?.first));
+        return new Map([...stored].filter(([,join])=>!interrupted.has(join.first)));
+    },[activeReview,adjustments]);
+    const chapters=useMemo(()=>{
+        const context=doc.transcription_context as {chapters?:Array<{start:number;title:string}>}|undefined;
+        const manual=doc.reading_chapters as Array<{cue_id:string;title:string}>|undefined;
+        return readingChapters(doc.segments,manual??[],context?.chapters??[],activeReview?.headings??[]);
+    },[doc.segments,doc.reading_chapters,doc.transcription_context,activeReview]);
+    const chaptersByCue=useMemo(()=>new Map(chapters.map(chapter=>[chapter.cue_id,chapter])),[chapters]);
     const handledNavigation=useRef<ReaderWorkspaceProps['navigationRequest']>(null);
     const aiReturn=useRef<{selection:SourceSelection;cues:{id:string;text:string;speaker:string|null}[];mode:typeof mode;query:string;position:string}|null>(null);
     const handledAiReturn=useRef(0),[restoreSelection,setRestoreSelection]=useState<SourceSelection|null>(null);
@@ -138,7 +201,7 @@ function WorkspaceSession({ document: doc, revision, media, onSaveDocument, onRe
         return () => scope?.removeEventListener('keydown',selectionKeyboard);
     }, [selection,revision]);
 
-    const playback = useMemo(() => sourcePlayback(doc.segments,media?.identity), [doc.segments, media?.identity]);
+    const playback = useMemo(() => sourcePlayback(doc.segments,media?.identity,doc.source_alignment), [doc.segments, media?.identity,doc.source_alignment]);
     const playbackCues = useMemo(() => new Map(playback.cues.map(cue=>[cue.id,cue])), [playback.cues]);
     const playbackIndex = useMemo(() => domain().createPlaybackIndex(playback.cues), [playback.cues]);
     const publisherTranscript = (doc.provenance as {kind?:string}|undefined)?.kind === 'publisher_transcript';
@@ -153,7 +216,7 @@ function WorkspaceSession({ document: doc, revision, media, onSaveDocument, onRe
         return {cueId:cue.id,partIndex};
     },[playbackIndex,calibrated,mode]);
     const onLocationChange=useCallback((location:PlaybackLocation|null)=>setActivePlayback({attachmentId,location}),[attachmentId]);
-    const search=useTranscriptSearch(host,query,displayText,searchOpen&&mode!=='summary',doc.segments,mode,cleanup.projection);
+    const search=useTranscriptSearch(host,query,displayText,searchOpen&&mode!=='summary',doc.segments,mode,cleanup.projection,activeReview);
     const passages=useMemo(()=>passageDomain().build(doc.segments,{source:doc.segments,layout:'reading'}),[doc.segments]);
     const summaryOpen=mode==='summary';
     const visibleCueIds=useMemo(()=>summaryOpen?[]:doc.segments.map(cue=>cue.id),[doc.segments,summaryOpen]);
@@ -189,7 +252,8 @@ function WorkspaceSession({ document: doc, revision, media, onSaveDocument, onRe
             }else setStatus('已打开笔记所属文稿；项目笔记保存在「我的内容」中。');
             setSourceFocus({id:request.id,target});
         }else if(doc.segments.some(cue=>cue.id===request.cueId)){
-            if(mode==='summary')navigateSummary(request.cueId);else locate(request.cueId,true);
+            if(request.reviewIssue){setToolsOpen(false);setMode('transcript');setSelection(null);locate(request.cueId,true);}
+            else if(mode==='summary')navigateSummary(request.cueId);else locate(request.cueId,true);
         }
         onNavigationHandled?.(request);
     },[navigationRequest,doc,revision,anyDirty,busy]);
@@ -236,6 +300,13 @@ function WorkspaceSession({ document: doc, revision, media, onSaveDocument, onRe
         if(current&&current.bottom>top&&current.top<bottom)return position;
         const row=[...(host.current?.querySelectorAll<HTMLElement>('.rw-original')||[])].find(node=>node.getBoundingClientRect().bottom>top);
         return row?.getAttribute('data-source-id')||row?.querySelector<HTMLElement>('[data-source-id]')?.dataset.sourceId||position;
+    };
+    const showReview=(show:boolean)=>{
+        const anchor=readingAnchor();
+        window.getSelection()?.removeAllRanges();setSelection(null);setFollow(false);
+        setSelectedReview(show?availableReview:null);
+        if(mode!=='passages')setMode('passages');
+        if(anchor){setPosition(anchor);setLocationTick(value=>value+1);}
     };
     const changeMode=(next:'transcript'|'passages'|'summary')=>{const anchor=readingAnchor(),wasTemporary=temporaryNavigation.current;temporaryNavigation.current=false;window.getSelection()?.removeAllRanges();setSelection(null);setFollow(false);if(next==='summary'&&mode!=='summary'&&!wasTemporary)readingReturn.current={revision,mode,query,position:anchor};if(next!=='summary'){setPosition(anchor);setSearchOpen(Boolean(query));}else setSummaryCitation('');setMode(next);if(next==='summary')setSearchOpen(false);};
     const returnToReading=()=>{const saved=readingReturn.current;if(saved&&saved.revision===revision&&doc.segments.some(cue=>cue.id===saved.position)){setMode(saved.mode);setQuery(saved.query);setSearchOpen(Boolean(saved.query));setPosition(saved.position);}else{setMode('passages');setQuery('');if(saved)setStatus('原文已更新，已返回当前稿中的阅读位置。');}readingReturn.current=null;temporaryNavigation.current=false;};
@@ -377,23 +448,19 @@ function WorkspaceSession({ document: doc, revision, media, onSaveDocument, onRe
         document.addEventListener('pointerup',finish,true);document.addEventListener('pointercancel',cancel,true);window.addEventListener('blur',cancel);
         return()=>{document.removeEventListener('pointerup',finish,true);document.removeEventListener('pointercancel',cancel,true);window.removeEventListener('blur',cancel);};
     },[doc,revision,displayText]);
-    useEffect(()=>{
-        if(!cleanupActive)return;
-        // Native Selection.toString() omits hidden fillers; Range-based capture
-        // still returns their original UTF-16 offsets and complete source text.
-        const copy=(event:ClipboardEvent)=>{
-            if(!host.current||!event.clipboardData)return;
-            const value=captureSourceSelection(host.current,doc,window.getSelection(),passageDomain().separator,displayText);
-            if(value){event.preventDefault();event.clipboardData.setData('text/plain',value.text);}
-        };
-        document.addEventListener('copy',copy,true);
-        return()=>document.removeEventListener('copy',copy,true);
-    },[cleanupActive,doc,displayText]);
     const hitSpeech=(node:HTMLElement,point?:{x:number;y:number})=>{
         const source=node.closest<HTMLElement>('[data-source-id]'),id=source?.dataset.sourceId;
         const cue=id?playbackCues.get(id):undefined;
-        if(!source||!cue||source.textContent!==displayText(cue.text)||source.textContent.length!==cue.text.length)return;
-        const offset=point?textOffsetAtPoint(source,point.x,point.y):Number(node.dataset.speechFrom??0);
+        if(!source||!cue||node.closest(translationTarget))return;
+        const mapped=node.closest<HTMLElement>('[data-reading-from]')||node.querySelector<HTMLElement>('[data-reading-from]');
+        if(source.dataset.readingEdited){
+            if(!mapped||!source.contains(mapped))return;
+            const local=point?textOffsetAtPoint(mapped,point.x,point.y):0;
+            const offset=local===null?null:readingSourceOffset(mapped,cue,local,displayText);
+            return offset===null?null:{source,cue,offset};
+        }
+        if(source.textContent!==displayText(cue.text)||source.textContent.length!==cue.text.length)return;
+        const offset=point?textOffsetAtPoint(source,point.x,point.y):Number(node.dataset.speechFrom??node.dataset.readingFrom??0);
         return offset===null?null:{source,cue,offset};
     };
     const selectSpeech=(node:HTMLElement,point?:{x:number;y:number})=>{
@@ -402,12 +469,13 @@ function WorkspaceSession({ document: doc, revision, media, onSaveDocument, onRe
         const {source,cue,offset}=hit;
         const value=speechSelection(cue,offset);
         if(!value)return;
-        const range=textRange(source,value.from,value.to);if(!range)return;
+        const range=source.dataset.readingEdited&&host.current?visibleSourceRange(host.current,doc,value):textRange(source,value.from,value.to);
+        if(!range)return;
         setFollow(false);
         const native=window.getSelection();native?.removeAllRanges();
         // Custom highlights do not change the browser's double-click word or
         // drag-selection anchors. Older engines retain a native range fallback.
-        if(!supportsTextHighlight())native?.addRange(range);
+        if(range&&!supportsTextHighlight())native?.addRange(range);
         setSelection({...value,revision,review:true});
         node.closest<HTMLElement>('.rw-original')?.focus({preventScroll:true});
     };
@@ -459,8 +527,8 @@ function WorkspaceSession({ document: doc, revision, media, onSaveDocument, onRe
     const sourceUrl=safeSourceURL(doc.source_url);
     return <article className={"reader-workspace"+(media?" rw-has-player":"")} ref={scopeRef} data-following={following} tabIndex={0} aria-label="阅读与原声工作区">
     <header className="rw-document-header">
-        <h1>{doc.title}</h1>
-        <div className="rw-document-meta">
+        <h1 className="notranslate" translate="no" default-translate="no">{doc.title}</h1>
+        <div className="rw-document-meta notranslate" translate="no" default-translate="no">
             <span>{doc.segments.length ? time(doc.segments.at(-1)?.end || 0) : '原声项目 · 尚无文字稿'}</span>
             {speakerCount>0&&<span>{speakerCount}{(doc.provenance as Record<string,unknown>|undefined)?.speaker_method&&(doc.provenance as Record<string,unknown>).speaker_method!=='unavailable'?' 个声音分组':' 位说话人'}</span>}
             {sourceUrl&&<a href={sourceUrl} target="_blank" rel="noopener noreferrer">原始来源 ↗</a>}
@@ -468,12 +536,18 @@ function WorkspaceSession({ document: doc, revision, media, onSaveDocument, onRe
         </div>
         {saveStatus && saveStatus!=='saved' && <p role="status">{saveStatus==='pending'||saveStatus==='saving'?'正在保存…':'保存尚未确认，请保留本页修改。'}</p>}
         {sourceStatus}
+        {reviewFailure&&<p role="status">自动精校未提交。{reviewFailure} <button type="button" onClick={()=>openTools('processing')}>打开精校</button></p>}
     </header>
     <ReaderDialog open={toolsOpen} title="来源与整理" onClose={()=>setToolsOpen(false)}>
         <nav className="rw-tool-nav" aria-label="文字稿工具">
-            {[['source','原始来源'],...(resourcePanel?[['processing','文字整理']]:[]),...(media&&doc.segments.length?[['timing','时间校准']]:[])].map(([id,label])=><button type="button" key={id} aria-current={tool===id?'page':undefined} onClick={()=>setTool(id)}>{label}</button>)}
+            {[['source','原始来源'],...(chapters.length?[['chapters','章节']]:[]),...(resourcePanel?[['processing','文字整理']]:[]),...(media&&doc.segments.length?[['timing','时间校准']]:[])].map(([id,label])=><button type="button" key={id} aria-current={tool===id?'page':undefined} onClick={()=>setTool(id)}>{label}</button>)}
         </nav>
         <div className="rw-tool-content" hidden={tool!=='source'}>{doc.segments.length>0&&<button type="button" disabled={anyDirty||busy} onClick={()=>{changeMode('transcript');setToolsOpen(false);}}>逐句原文</button>}<ReaderSource doc={doc}/>{media?.availability==='local_session'&&<p>刷新后需重新选择原文件。</p>}{doc.segments.length>0&&sourcePanel}</div>
+        <div className="rw-tool-content" hidden={tool!=='chapters'}>
+            <nav aria-label="章节目录"><ol className="rw-chapter-list">{chapters.map(chapter=><li key={chapter.cue_id}>
+                <button type="button" onClick={()=>{setToolsOpen(false);locate(chapter.cue_id,true);}}>{displayText(chapter.title)}</button>
+            </li>)}</ol></nav>
+        </div>
         <div className="rw-tool-content" hidden={tool!=='processing'}>{resourcePanel}</div>
         <div className="rw-tool-content" hidden={tool!=='timing'}>{media && doc.segments.length > 0 && <section className="rw-calibration"><h3>时间校准</h3><p>当前偏移：{calibrated} 秒</p><p>仅调整播放映射，不修改原始字幕时间。正数表示媒体比字幕晚。</p><label>偏移秒数 <input type="number" min="-3600" max="3600" step="0.1" value={offset} disabled={busy} onChange={e => {setOffsetStarted(true);setOffset(e.target.value);}}/></label><button disabled={busy || !media.identity.startsWith('file-candidate-v1:') || offset.trim() === '' || !Number.isFinite(Number(offset)) || Math.abs(Number(offset)) > 3600} onClick={async() => {if(await save({ ...doc, media_timing: { version: 1, identity: media.identity, offset: Number(offset) } })){setOffsetStarted(false);setOffset('');}}}>保存校准</button><button disabled={busy} onClick={()=>{setOffsetStarted(false);setOffset('');}}>取消校准草稿</button></section>}</div>
         {(tool==='timing')&&status&&<p role="status">{status}</p>}
@@ -481,8 +555,13 @@ function WorkspaceSession({ document: doc, revision, media, onSaveDocument, onRe
  {media ? <ReaderPlayer key={attachment.current.id} media={media} seek={seek?.attachmentId===attachment.current.id?seek:null} locateTime={locateTime} onLocationChange={onLocationChange} follow={following} onFollow={doc.segments.length?followNow:undefined} onProgress={onMediaProgress}/> : (!sourceStatus&&(!sourcePanel||doc.segments.length>0)) && <p className="rw-media-unavailable">{doc.source_url ? '原声未载入。' : doc.local_media_source ? '重新选择原文件以载入原声。' : '未关联原声。'}</p>}
 
  {doc.segments.length === 0 ? (media || !sourcePanel&&!sourceStatus) && <section className="rw-empty"><h2>先播放原文件</h2><p>{doc.transcript_status === 'processing' ? '文字稿处理中…' : '暂无文字稿。'}</p></section> : <>
- {Array.isArray(doc.reading_chapters)&&doc.reading_chapters.length>0&&<nav className="rw-chapters" aria-label="连续文字稿章节">{(doc.reading_chapters as Array<{id:string;title:string;cue_id:string}>).map(c=><button key={c.id} disabled={anyDirty||busy||!doc.segments.some(s=>s.id===c.cue_id)} onClick={()=>locate(c.cue_id,true)}>{c.title}</button>)}</nav>}
  <div className="rw-content-switch"><ReadingModeTabs mode={mode} id={modeTabsId} onChange={changeMode}/><button type="button" className="rw-search-trigger" data-native-command="find-transcript" ref={searchTrigger} aria-label="搜索文字稿" aria-expanded={searchOpen&&mode!=='summary'} aria-controls={`${modeTabsId}-search`} onClick={openSearch}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 5 5"/></svg><span>查找</span></button></div>
+ {mode==='passages'&&(availableReview||chapters.length>0)&&<div className="rw-review-version notranslate" translate="no" default-translate="no">
+    {chapters.length>0&&<button type="button" onClick={()=>openTools('chapters')}>章节</button>}
+    {availableReview&&<button type="button" onClick={()=>showReview(!activeReview)}>{activeReview?'查看基础稿':'查看精校稿'}</button>}
+    {activeReview&&activeReview.issues.length>0&&<button type="button" onClick={()=>openTools('processing')}>{activeReview.issues.length} 处待核对</button>}
+    {activeReview&&activeReview.fallbackBatches>0&&<button type="button" onClick={()=>openTools('processing')}>{activeReview.fallbackBatches} 批待核对</button>}
+ </div>}
  <div role="tabpanel" id={`${modeTabsId}-panel`} aria-labelledby={`${modeTabsId}-${mode}`}>
  <div className="rw-search-panel" id={`${modeTabsId}-search`} hidden={!searchOpen||mode==='summary'} onKeyDown={event=>{
     if(!searchOpen||mode==='summary'||event.nativeEvent.isComposing||event.nativeEvent.keyCode===229)return;
@@ -496,7 +575,7 @@ function WorkspaceSession({ document: doc, revision, media, onSaveDocument, onRe
     <button type="button" aria-label="关闭搜索" onClick={closeSearch}>关闭</button>
  </div>
  <div className="rw-reading-layout"><div className="rw-reading-pane" hidden={mode==='summary'}>
- {mode==='passages'&&cleanup.state==='unavailable'&&<p className="rw-cleanup-notice" role="status">{cleanup.message}</p>}
+ {mode==='passages'&&cleanup.state==='unavailable'&&<p className="rw-cleanup-notice notranslate" translate="no" default-translate="no" role="status">{cleanup.message}</p>}
  {summaryCitation&&<div className="rw-citation-return"><span>正在阅读摘要引用的原文</span><button type="button" onClick={()=>changeMode('summary')}>返回摘要 ↑</button></div>}
  <div className="rw-cues" ref={host} onPointerDown={event=>{if(event.button===0&&(event.target as HTMLElement).closest('.rw-original')){draggingSource.current=true;setSelection(null);setFollow(false);}}} onCopy={event=>{if(selection?.review&&selection.revision===revision&&window.getSelection()?.isCollapsed&&(event.target as HTMLElement).closest('.rw-original')){event.preventDefault();event.clipboardData.setData('text/plain',selection.text);}}} onMouseUp={capture} onClick={event=>{
                 if(event.button!==0||event.detail!==1||!window.getSelection()?.isCollapsed||(event.target as HTMLElement).closest('[data-cleanup-mark],[data-cleanup-break]'))return;
@@ -517,7 +596,7 @@ function WorkspaceSession({ document: doc, revision, media, onSaveDocument, onRe
                 const speech=paragraph.querySelector<HTMLElement>('.rw-speech.rw-playing')||paragraph.querySelector<HTMLElement>('.rw-speech')||(paragraph.matches('[data-source-id]')?paragraph:null);
                 if(speech){event.preventDefault();selectSpeech(speech);}
             }} onKeyUp={event=>{if(!event.nativeEvent.isComposing&&(['ArrowLeft','ArrowRight','ArrowUp','ArrowDown','Home','End','PageUp','PageDown'].includes(event.key)||((event.ctrlKey||event.metaKey)&&event.key.toLowerCase()==='a')))capture();}}>
- {mode==='summary'?null:mode==='passages'?<PassageView displayText={displayText} projection={cleanupActive?cleanup.projection:undefined} canListen={Boolean(media)} doc={doc} cues={doc.segments} passages={passages} playbackCues={playbackCues} active={active} position={position} onLocate={locate} onPlayFrom={playFrom}/> : doc.segments.map(cue=>
+ {mode==='summary'?null:mode==='passages'?<PassageView displayText={displayText} projection={cleanupActive?cleanup.projection:undefined} replacements={replacements} joins={joins} speakerDisplay={speakerDisplay} chapters={chaptersByCue} canListen={Boolean(media)} doc={doc} cues={doc.segments} passages={passages} playbackCues={playbackCues} active={active} position={position} onLocate={locate} onPlayFrom={playFrom}/> : doc.segments.map(cue=>
     <TranscriptRow key={cue.id} cue={cue} current={cue.id===position} playing={cue.id===active?.cueId} displayText={displayText}
         canListen={Boolean(media)} sourceUrl={sourceUrl||undefined} onJump={jumpCue} onPlay={playCue}/>
  )}</div>

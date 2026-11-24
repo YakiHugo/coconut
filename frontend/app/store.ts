@@ -43,6 +43,18 @@ export function createAppStore(deps: StoreDependencies) {
     })?.code || '')); };
     const select = (key: string) => { if (dirty || !getDocument(key))
         return false; nativeLifecycle?.invalidate();activeKey = key; workspace = 'read'; publish(); return true; };
+    async function adoptReadingReview(key:string) {
+        const current=getDocument(key);
+        if(!current||!deps.adoptReadingReview||dirty||pipeline.status().unsaved||!writable())return false;
+        return deps.adoptReadingReview(current,(next,advance)=>{
+            if(current!==getDocument(key)||dirty||pipeline.status().unsaved||!writable())return false;
+            advance();
+            documents=documents.map(doc=>doc===current?next:doc);
+            versions.set(key,getRevision(key)+1);
+            publish();
+            return true;
+        });
+    }
     async function commitDocument(next: Document, expected: {
         key: string;
         revision: number;
@@ -179,7 +191,7 @@ export function createAppStore(deps: StoreDependencies) {
             if(adopted)publish();
             return Boolean(adopted);
         },
-        getDocument, getRevision, commitDocument,restoreJSON,removeDocument,undoRemove,canUndoRemove:()=>!!removed&&!structuralBusy,recoveryDocuments:()=>removed&&!documents.some(doc=>doc.key===removed!.key)?[...documents,removed]:documents, addDocument, select, restoreBackup,
+        getDocument, getRevision, commitDocument,adoptReadingReview,restoreJSON,removeDocument,undoRemove,canUndoRemove:()=>!!removed&&!structuralBusy,recoveryDocuments:()=>removed&&!documents.some(doc=>doc.key===removed!.key)?[...documents,removed]:documents, addDocument, select, restoreBackup,
         navigate(next: Workspace) { if (dirty)
             return false; nativeLifecycle?.invalidate();workspace = next; publish(); return true; },
         setDirty(value: boolean, owner = 'reader') { if (value)

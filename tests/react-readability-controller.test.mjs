@@ -43,10 +43,11 @@ test('speaker reruns reference the saved source digest without a second upload',
   fetchMedia:()=>assert.fail('must not read audio into the renderer'),
   commit:async()=>true,uuid:()=>id,request:async(url,init)=>{
    calls.push(url);
-   if(url.endsWith('/capabilities'))return {available:true,punctuation:false,speakers:true,savedSourceMedia:true};
+   if(url.endsWith('/capabilities'))return {available:true,punctuation:false,speakers:true,savedMedia:true};
    if(url.includes('?key='))return {jobs:[]};
    assert.equal(url,'api/v1/readability/jobs');
-   assert.deepEqual(JSON.parse(init.body).media,{identity,saved:true});
+   assert.equal(JSON.parse(init.body).media,null);
+   assert.equal(JSON.parse(init.body).saved_media,identity.split(':')[1]);
    return {job:{id,documentKey:current.key,state:'queued',needsMedia:false,mediaIdentity:identity}};
   }
  });

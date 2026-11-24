@@ -10,6 +10,10 @@ export function videoSourceHeader(source){
   value.transcription_context.description=value.transcription_context.description.slice(0,-200);
   encoded=encode();
  }
+ while(encoded.length>8192&&value.transcription_context?.chapters?.length){
+  value.transcription_context.chapters.pop();
+  encoded=encode();
+ }
  if(encoded.length>8192)delete value.transcription_context;
  return encode();
 }
