@@ -1,5 +1,5 @@
 import {useEffect, useMemo, useState, type RefObject} from 'react';
-import {literalSearch} from './domain';
+import {literalSearch,translationTarget} from './domain';
 import {supportsTextHighlight} from './text-range';
 
 function textMatches(root:HTMLElement,pattern:RegExp) {
@@ -7,7 +7,7 @@ function textMatches(root:HTMLElement,pattern:RegExp) {
     for(const paragraph of root.querySelectorAll<HTMLElement>('.rw-original,.rw-transcription-source p,.rw-original-history p')){
         const textNodes:{node:Node;start:number;end:number}[]=[];
         const walker=paragraph.ownerDocument.createTreeWalker(paragraph,4 /* SHOW_TEXT */,{
-            acceptNode:node=>node.parentElement?.closest('[hidden]')?2:1,
+            acceptNode:node=>node.parentElement?.closest('[hidden],'+translationTarget)?2:1,
         });
         let text='';
         for(let node=walker.nextNode();node;node=walker.nextNode()){

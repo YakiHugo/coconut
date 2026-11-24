@@ -577,10 +577,29 @@ function WorkspaceSession({ document: doc, revision, media, onSaveDocument, onRe
  <div className="rw-reading-layout"><div className="rw-reading-pane" hidden={mode==='summary'}>
  {mode==='passages'&&cleanup.state==='unavailable'&&<p className="rw-cleanup-notice notranslate" translate="no" default-translate="no" role="status">{cleanup.message}</p>}
  {summaryCitation&&<div className="rw-citation-return"><span>正在阅读摘要引用的原文</span><button type="button" onClick={()=>changeMode('summary')}>返回摘要 ↑</button></div>}
- <div className="rw-cues" ref={host} onPointerDown={event=>{if(event.button===0&&(event.target as HTMLElement).closest('.rw-original')){draggingSource.current=true;setSelection(null);setFollow(false);}}} onCopy={event=>{if(selection?.review&&selection.revision===revision&&window.getSelection()?.isCollapsed&&(event.target as HTMLElement).closest('.rw-original')){event.preventDefault();event.clipboardData.setData('text/plain',selection.text);}}} onMouseUp={capture} onClick={event=>{
+ <div className="rw-cues" ref={host} onPointerDown={event=>{
+                const target=event.target as HTMLElement;
+                if(event.button===0&&target.closest('.rw-original')&&!target.closest(translationTarget)){
+                    draggingSource.current=true;setSelection(null);setFollow(false);
+                }
+            }} onCopy={event=>{
+                const native=window.getSelection();
+                if(selection?.review&&selection.revision===revision&&native?.isCollapsed&&(event.target as HTMLElement).closest('.rw-original')){
+                    event.preventDefault();event.clipboardData.setData('text/plain',selection.text);
+                }else if(native?.rangeCount===1&&!native.isCollapsed){
+                    const range=native.getRangeAt(0);
+                    if(!host.current?.contains(range.commonAncestorContainer))return;
+                    const content=range.cloneContents(),translated=content.querySelectorAll(translationTarget);
+                    if(!translated.length)return;
+                    translated.forEach(node=>node.remove());
+                    const paragraphs=Array.from(content.querySelectorAll('p'));
+                    event.preventDefault();
+                    event.clipboardData.setData('text/plain',paragraphs.length?paragraphs.map(p=>p.textContent).join('\n\n'):content.textContent||'');
+                }
+            }} onMouseUp={capture} onClick={event=>{
                 if(event.button!==0||event.detail!==1||!window.getSelection()?.isCollapsed||(event.target as HTMLElement).closest('[data-cleanup-mark],[data-cleanup-break]'))return;
                 const speech=(event.target as HTMLElement).closest<HTMLElement>('.rw-speech,[data-source-id]');
-                if(speech&&host.current?.contains(speech))selectSpeech(speech,{x:event.clientX,y:event.clientY});
+                if(speech&&host.current?.contains(speech))selectSpeech(event.target as HTMLElement,{x:event.clientX,y:event.clientY});
             }} onDoubleClick={event=>{
                 if(!media||event.button!==0||(event.target as HTMLElement).closest('[data-cleanup-mark],[data-cleanup-break]'))return;
                 const hit=hitSpeech(event.target as HTMLElement,{x:event.clientX,y:event.clientY});

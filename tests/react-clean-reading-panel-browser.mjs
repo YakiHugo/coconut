@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import {openOriginal} from './helpers/open-original.mjs';
 import {randomUUID} from 'node:crypto';
 import D from '../reader/disfluency.js';
 import {mkdtemp,rm} from 'node:fs/promises';
@@ -29,8 +30,10 @@ try{
  await page.goto(origin+'/#read/'+original.key);
  await expect(page.getByRole('tab',{name:'精读稿',exact:true})).toHaveAttribute('aria-selected','true');
  await expect(page.getByRole('tab',{name:'逐句原文'})).toHaveCount(0);
+ await expect(page.locator('[data-source-id="a"]')).toHaveText('我觉得值得认真讨论，然后继续。');
+ await openOriginal(page);
  await expect(page.locator('[data-source-id="a"]')).toHaveText(original.segments[0].text);
- assert.equal(await page.locator('[data-source-id="a"]').innerText(),'我觉得值得认真讨论，然后继续。');
+ await page.getByRole('tab',{name:'精读稿',exact:true}).click();
  assert.equal(library.get(original.key).document.reading_cleanup,undefined);
  await page.getByRole('button',{name:'来源与整理',exact:true}).click();
  await page.getByRole('button',{name:'文字整理',exact:true}).click();

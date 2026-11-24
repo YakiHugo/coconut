@@ -161,7 +161,7 @@ try{
  await page.getByRole('button',{name:'搜索文字稿',exact:true}).click();
  const search=page.getByRole('searchbox');
  await search.fill('今天，');
- await expect.poll(()=>page.evaluate(()=>CSS.highlights.get('coconut-reading-search')?.size||0)).toBeGreaterThan(0);
+ await expect.poll(()=>page.evaluate(()=>CSS.highlights.get('coconut-search')?.size||0)).toBeGreaterThan(0);
  await page.getByRole('button',{name:'关闭搜索',exact:true}).click();
  const injected=await page.evaluate(()=>{
   const paragraph=document.querySelector('article p.rw-original'),marker=document.createElement('span');

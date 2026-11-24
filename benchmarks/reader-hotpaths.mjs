@@ -40,7 +40,8 @@ for(const count of [1771,5000]){
   audio.dispatchEvent(new window.Event('loadedmetadata'));
   audio.currentTime=1;audio.dispatchEvent(new window.Event('timeupdate'));
   window.document.querySelector('.rw-player-follow').click();
-  await new Promise(resolve=>setTimeout(resolve,0));
+  // Measure settled playback after the explicit locate animation.
+  await new Promise(resolve=>setTimeout(resolve,550));
   cueReads=0;layoutReads=0;
   const clockUpdates=60,start=performance.now();
   for(let i=0;i<clockUpdates;i++){
