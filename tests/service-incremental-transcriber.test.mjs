@@ -23,6 +23,22 @@ test('incremental probe is offline, protocol-scoped and sanitizes unsupported wo
  assert.equal((await createTranscriber({python,profile:{backend:'moss-mlx'}}).incrementalStatus()).available,false);
  const missing=await createTranscriber({python:'/missing-python',profile:{backend:'qwen-mlx'}}).incrementalStatus();assert.equal(missing.code,'incremental_executor_unavailable');
 });
+test('incremental media wait default and bounds reach the real worker initial request',async t=>{
+ for(const mediaWaitSeconds of [undefined,1,180,660]){
+  const {runner,options,directory}=await fixture(t,`import sys,json,os\nr=json.loads(sys.stdin.readline())\nassert type(r['media_wait_seconds']) is int\nopen(os.path.join(r['work'],'request.json'),'w').write(json.dumps(r))\nfor line in sys.stdin:\n if json.loads(line)['type']=='seal':\n  print(json.dumps({'phase':'done'}),flush=True)\n  break\n`);
+  const op=runner.startIncremental({...options,...(mediaWaitSeconds===undefined?{}:{mediaWaitSeconds})});t.after(()=>op.abort());
+  op.seal({size:30000,sha256:digest});await op.completion;
+  const request=JSON.parse(await readFile(path.join(directory,'request.json'),'utf8'));assert.equal(request.media_wait_seconds,mediaWaitSeconds??180);
+ }
+});
+test('malformed incremental media waits fail synchronously before spawning Python',async t=>{
+ const {options,handle}=await fixture(t,'raise AssertionError("invalid wait reached worker")\n');
+ const runner=createTranscriber({python:'/missing-python',profile:{backend:'qwen-mlx'}});
+ for(const mediaWaitSeconds of [0,-1,661,1.5,'180',null,true,false,{},[],NaN,Infinity,-Infinity]){
+  assert.throws(()=>runner.startIncremental({...options,mediaWaitSeconds}),/媒体等待时间/,String(mediaWaitSeconds));
+ }
+ assert.equal((await handle.stat()).size,30000);
+});
 test('real inherited FD, coalesced highest watermarks, seal ordering and open stdin after seal',async t=>{
  const {runner,options,directory,handle}=await fixture(t,`import sys,json,os,time,select,hashlib\ntime.sleep(.15)\nr=json.loads(sys.stdin.readline())\nassert r['operation']=='transcribe_incremental' and r['protocol_version']==1 and r['media_fd']==3 and r['local_only'] is True\nassert r['source_snapshot']['binding']=='authored'\nassert os.environ['TRANSFORMERS_OFFLINE']=='1'\nmessages=[]\nfor line in sys.stdin:\n m=json.loads(line);assert m['attempt_id']==r['attempt_id'];messages.append(m)\n if m['type']=='seal':\n  data=os.pread(3,m['size'],0);assert hashlib.sha256(data).hexdigest()==m['sha256']\n  assert not select.select([sys.stdin],[],[],.05)[0], 'seal must not close parent stdin'\n  open(os.path.join(r['work'],'controls.json'),'w').write(json.dumps(messages))\n  print(json.dumps({'phase':'fallback','reason':'canonical_pcm_mismatch','raw':'secret'}),flush=True)\n  print(json.dumps({'phase':'recognize','chunk':1,'chunks':None,'path':'secret'}),flush=True)\n  print(json.dumps({'phase':'done'}),flush=True)\n  break\n`);
  const events=[],operation=runner.startIncremental({...options,sourceSnapshot:{binding:'authored',padding:'x'.repeat(50000)},onProgress:p=>events.push(p)});t.after(()=>operation.abort());

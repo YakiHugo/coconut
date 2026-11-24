@@ -10,10 +10,12 @@ import tempfile
 import threading
 import time
 import unittest
+import uuid
 from unittest.mock import patch
 from audio_pipeline import CallableBackend, run_audio_pipeline, prepare_audio
 from incremental_transcription import (Control, LiveReader, StreamFailure, copy_sealed,
-    collect_candidates, CanonicalBackend, bounded_blocks, initial_request, probe_incremental)
+    collect_candidates, CanonicalBackend, bounded_blocks, initial_request, probe_incremental,
+    run_incremental)
 
 
 class InitialRequestTests(unittest.TestCase):
@@ -29,6 +31,47 @@ class InitialRequestTests(unittest.TestCase):
             stream.write(json.dumps({'operation': 'transcribe_incremental', 'context': 'x' * 65536}).encode() + b'\n'); stream.seek(0)
             with self.assertRaisesRegex(ValueError, 'exceeds limit'):
                 initial_request(stream.fileno())
+
+
+class MediaWaitTests(unittest.TestCase):
+    def request(self, work, **extra):
+        return {'operation': 'transcribe_incremental', 'protocol_version': 1,
+                'attempt_id': str(uuid.uuid4()), 'media_fd': 3, 'local_only': True,
+                'work': str(work), 'source_snapshot': {'key': 'authored'},
+                'profile': {'backend': 'qwen-mlx', 'asr_model': '/fixture/model'}, **extra}
+
+    def test_media_wait_default_and_bounds_are_passed_to_control_without_models(self):
+        class ReachedControl(Exception):
+            pass
+        with tempfile.TemporaryDirectory() as directory:
+            for index, extra in enumerate([{}, {'media_wait_seconds': 1},
+                                          {'media_wait_seconds': 180}, {'media_wait_seconds': 660}]):
+                with self.subTest(extra=extra):
+                    request = self.request(Path(directory)/str(index), **extra)
+                    with patch('incremental_transcription.probe_incremental', return_value={'available': True}), \
+                         patch('incremental_transcription.Control', side_effect=ReachedControl) as control, \
+                         patch('transcription.QwenBackend') as backend:
+                        with self.assertRaises(ReachedControl):
+                            run_incremental(request)
+                        control.assert_called_once_with(3, request['attempt_id'],
+                                                        wait_seconds=extra.get('media_wait_seconds', 180))
+                        backend.assert_not_called()
+
+    def test_invalid_media_wait_fails_before_probe_control_or_models(self):
+        with tempfile.TemporaryDirectory() as directory:
+            work = Path(directory)/'work'
+            for value in [None, True, False, 0, -1, 661, 1.5, 180.0, '180', [], {},
+                          float('nan'), float('inf'), -float('inf')]:
+                with self.subTest(value=value), \
+                     patch('incremental_transcription.probe_incremental') as probe, \
+                     patch('incremental_transcription.Control') as control, \
+                     patch('transcription.QwenBackend') as backend:
+                    with self.assertRaisesRegex(StreamFailure, 'media wait'):
+                        run_incremental(self.request(work, media_wait_seconds=value))
+                    probe.assert_not_called()
+                    control.assert_not_called()
+                    backend.assert_not_called()
+                    self.assertFalse(work.exists())
 
 
 class ControlTests(unittest.TestCase):
@@ -258,6 +301,41 @@ transcription.main()
         self.assertEqual(receipt['frozen_context']['context'], None)
         self.assertEqual(receipt['profile'], request['profile'])
         child.stdin.close(); child.stdout.close(); child.stderr.close()
+
+    def test_faststart_m4a_decodes_audio_before_seal_and_matches_canonical_output(self):
+        source = self.directory/'faststart.m4a'
+        subprocess.run(['ffmpeg', '-v', 'error', '-f', 'lavfi', '-i',
+                        'anoisesrc=duration=20:sample_rate=44100:seed=456',
+                        '-c:a', 'aac', '-movflags', '+faststart', str(source)], check=True)
+        data = source.read_bytes()
+        cut = len(data)*3//4
+        self.spool.write_bytes(data[:cut])
+        self.append(cut)
+        early = []
+
+        def recognize(path):
+            if self.control.seal is None:
+                early.append(True)
+                with self.spool.open('ab') as output:
+                    output.write(data[cut:])
+                self.append(len(data))
+                self.seal(data)
+            return {'segments': [{'start': .1, 'end': .2, 'text': hashlib.sha256(path.read_bytes()).hexdigest()}]}
+
+        backend = CallableBackend({'fixture': 1}, recognize)
+        candidates, reason = collect_candidates(self.control, backend, self.directory/'m4a-candidates',
+                                                chunk_seconds=2, context_seconds=.5)
+        self.assertIsNone(reason)
+        self.assertEqual(early, [True])
+        self.assertTrue(candidates)
+        sealed = self.directory/'sealed.m4a'
+        copy_sealed(self.control, sealed)
+        check = CanonicalBackend(backend, candidates, sealed, chunk_seconds=2, context_seconds=.5)
+        result = run_audio_pipeline(sealed, check, work_dir=self.directory/'m4a-oracle',
+                                    chunk_seconds=2, context_seconds=.5)
+        expected = run_audio_pipeline(sealed, backend, work_dir=self.directory/'m4a-baseline',
+                                      chunk_seconds=2, context_seconds=.5)
+        self.assertEqual(result, expected)
 
     def test_mp4_falls_back_without_speculative_model_and_still_checks_seal(self):
         source = Path(__file__).parent/'fixtures'/'authored-video-audio.m4a'

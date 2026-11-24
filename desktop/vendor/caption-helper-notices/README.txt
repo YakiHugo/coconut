@@ -26,5 +26,5 @@ MPL-2.0; see LICENSE.MPL-2.0 and LICENSE.certifi. No Coconut term is intended
 to restrict your rights to this component under that license.
 
 The other components' source references are in sources.json and
-python-runtime-input.json. Refer to docs/caption-helper-licenses.md in the
-Coconut source distribution for the component scope and release checks.
+python-runtime-input.json. Component licenses and notices are included in
+this directory; verify the packaged source references before redistribution.

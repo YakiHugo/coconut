@@ -18,25 +18,33 @@ const fixture=()=>({key:'cleanup',title:'自写口语',language:'zh',notes:{},se
 ]});
 function withPlan(doc){return {...doc,reading_cleanup:{version:1,policyVersion:'authored-v1',sourceSignature:D.signature(doc),decisions:[{cue_id:'a',from:1,to:2,action:'hide',reason:'自写规则'}, {cue_id:'b',from:0,to:2,action:'hide',reason:'自写规则'}]}};}
 
-test('cleanup accepts exact rules without probabilities and rejects stale, malformed and length-changing display plans',()=>{
+test('saved rules take precedence; stale and malformed masks are discarded for current local reading',()=>{
  const input=withPlan(fixture()),before=structuredClone(input);
- const ready=prepareCleanup(input,text=>text);
+ const ready=prepareCleanup(input);
  assert.equal(ready.state,'ready');assert.equal(ready.hiddenCount,2);assert.equal(ready.hiddenCharacters,3);
  assert.equal(ready.projection.cues[0].text,'我知道🙂。');assert.deepEqual(input,before);
- assert.equal(prepareCleanup({...input,notes:{a:'新增笔记'}},text=>text).state,'ready');
- const stale=prepareCleanup({...input,segments:input.segments.map((c,i)=>i===0?{...c,text:'您好'}:c)},text=>text);
- assert.equal(stale.state,'unavailable');assert.equal(stale.projection,undefined);assert.match(stale.message,/已保留口语/);
- assert.equal(prepareCleanup({...input,reading_cleanup:{...input.reading_cleanup,sourceSignature:''}},text=>text).state,'unavailable');
- assert.equal(prepareCleanup({...input,reading_cleanup:{...input.reading_cleanup,version:2}},text=>text).state,'unavailable');
- assert.equal(prepareCleanup(input,text=>text+'x').state,'unavailable');
- assert.equal(prepareCleanup(fixture(),text=>text).state,'none');
+ assert.equal(prepareCleanup({...input,notes:{a:'新增笔记'}}).state,'ready');
+ const stale=prepareCleanup({...input,segments:input.segments.map((c,i)=>i===0?{...c,text:'您好'}:c)});
+ assert.equal(stale.state,'ready');assert.equal(stale.hiddenCount,0);
+ assert.equal(prepareCleanup({...input,reading_cleanup:{...input.reading_cleanup,sourceSignature:''}}).hiddenCount,0);
+ assert.equal(prepareCleanup({...input,reading_cleanup:{...input.reading_cleanup,version:2}}).hiddenCount,0);
+ assert.equal(prepareCleanup(fixture()).state,'ready');
+});
+
+test('default spoken reading preserves evidence, quoted speech across cues, uncertainty and short answers',()=>{
+ const phrases=['嗯，呃，我我觉得可能要再试一次。','嗯？','我不是不同意。','他提到“我我觉得，','嗯，这个不好说”。','🙂然后，然后再继续讨论。','是不是，是是非非，嗯哼，都不改。','他提醒我，我还没有回答。'];
+ const doc={key:'default',segments:phrases.map((text,index)=>({id:String(index),start:index,end:index+1,text}))};
+ const before=structuredClone(doc),result=prepareCleanup(doc);
+ assert.equal(result.state,'ready');
+ assert.deepEqual(result.projection.cues.map(cue=>cue.readingText),['嗯，我觉得可能要再试一次。',...phrases.slice(1,5),'🙂然后再继续讨论。',...phrases.slice(6)]);
+ assert.deepEqual(doc,before);
 });
 
 test('reading DOM omits fillers and keeps canonical offsets, clocks and anchors',()=>{
  const w=new Window(),saved=globalThis.window;globalThis.window=w;w.CoconutPassages=P;
  try{
-  const input=withPlan(fixture()),cleanup=prepareCleanup(input,text=>text),host=w.document.createElement('div');
-  host.innerHTML=renderToStaticMarkup(createElement(PassageView,{doc:input,cues:input.segments,position:'a',current:'b',seconds:3.5,projection:cleanup.projection,onLocate:()=>{},onPlayFrom:()=>{}}));
+  const input=withPlan(fixture()),cleanup=prepareCleanup(input),host=w.document.createElement('div');
+  host.innerHTML=renderToStaticMarkup(createElement(PassageView,{doc:input,cues:input.segments,position:'a',active:{cueId:'b',partIndex:0},projection:cleanup.projection,onLocate:()=>{},onPlayFrom:()=>{}}));
   const first=host.querySelector('[data-source-id="a"]'),hidden=host.querySelector('[data-source-id="b"]');
   assert.equal(first.textContent,'我知道🙂。');assert.equal(first.querySelector('[hidden]'),null);
   assert.equal(hidden.textContent,'');assert.equal(hidden.querySelectorAll('[hidden]').length,0);
@@ -50,12 +58,25 @@ test('reading DOM omits fillers and keeps canonical offsets, clocks and anchors'
  }finally{if(saved===undefined)delete globalThis.window;else globalThis.window=saved;void w.happyDOM.close();}
 });
 
+test('a length-changing conversion keeps the full sentence and leaves neighboring projections intact',()=>{
+ const w=new Window(),previous=globalThis.window;globalThis.window=w;w.CoconutPassages=P;
+ try{
+  const input=withPlan(fixture()),host=w.document.createElement('div');
+  host.innerHTML=renderToStaticMarkup(createElement(PassageView,{doc:input,cues:input.segments,position:'a',
+   projection:prepareCleanup(input).projection,displayText:text=>text===input.segments[0].text?text+'！':text,onLocate:()=>{},onPlayFrom:()=>{}}));
+  const changed=host.querySelector('[data-source-id="a"]'),unchanged=host.querySelector('[data-source-id="b"]');
+  assert.equal(changed.textContent,input.segments[0].text+'！');
+  assert.equal(changed.querySelector('[hidden]'),null);
+  assert.equal(unchanged.textContent,'');
+ }finally{if(previous===undefined)delete globalThis.window;else globalThis.window=previous;void w.happyDOM.close();}
+});
+
 test('marks-only plans render punctuation and paragraph breaks with their source ranges',()=>{
  const w=new Window(),saved=globalThis.window;globalThis.window=w;w.CoconutPassages=P;
  try{
   const input={key:'marks-only',title:'自写断句',notes:{},segments:[{id:'m',start:0,end:5,text:'今天讨论模型然后谈产品',speaker:'甲'}]};
   input.reading_cleanup={version:1,policyVersion:'boundaries-v1',sourceSignature:D.signature(input),decisions:[],marks:[{cue_id:'m',at:6,mark:'。',reason:'语义句界'}],breaks:[{cue_id:'m',at:6,reason:'换行'}]};
-  const cleanup=prepareCleanup(input,text=>text),host=w.document.createElement('div');
+  const cleanup=prepareCleanup(input),host=w.document.createElement('div');
   assert.equal(cleanup.state,'ready');assert.equal(cleanup.hiddenCount,0);assert.equal(cleanup.markCount,1);assert.equal(cleanup.breakCount,1);
   host.innerHTML=renderToStaticMarkup(createElement(PassageView,{doc:input,cues:input.segments,position:'m',projection:cleanup.projection,onLocate:()=>{},onPlayFrom:()=>{}}));
   const paragraphs=[...host.querySelectorAll('article p')];

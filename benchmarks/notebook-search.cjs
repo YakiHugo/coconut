@@ -1,6 +1,6 @@
 /** Authored, bounded core-only probe. No browser/network, no timing assertions.
  * Usage: node --expose-gc benchmarks/notebook-search.cjs [cooperative|synchronous] [core.js path]
- * Use flock/timeout as documented in docs/notebook-performance.md on shared hosts.
+ * On shared hosts, use an exclusive process lock and an external timeout.
  */
 const {performance}=require('node:perf_hooks'),path=require('node:path');
 const mode=process.argv[2]||'cooperative';

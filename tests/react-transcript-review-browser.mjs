@@ -1,5 +1,6 @@
 /** Authored text and simulated CLI outputs exercise real durable review/save. */
 import assert from 'node:assert/strict';
+import {openOriginal} from './helpers/open-original.mjs';
 import {mkdtemp,rm,mkdir} from 'node:fs/promises';
 import path from 'node:path';import {tmpdir} from 'node:os';
 import {chromium,expect} from '@playwright/test';
@@ -16,17 +17,16 @@ try{
  page.on('pageerror',error=>errors.push(error.message));await page.route('**/*',route=>new URL(route.request().url()).origin===origin?route.continue():route.abort());
  await page.goto(origin+'/#read/'+fixture.key);await page.getByRole('button',{name:'来源与整理',exact:true}).click();await page.getByRole('button',{name:'文字整理',exact:true}).click();await expect(page.locator('[aria-label="AI 精校"]')).toBeVisible();
  await page.getByRole('radio',{name:'Kimi CLI'}).check();await page.getByRole('button',{name:'开始精校',exact:true}).click();await expect.poll(()=>started).toBe(true);await page.getByRole('button',{name:'关闭来源与整理',exact:true}).click();
- await page.getByRole('tab',{name:'逐句校对',exact:true}).click();
+ await openOriginal(page);
  await page.locator('[data-source-id="a"]').evaluate(node=>{const range=document.createRange();range.setStart(node.firstChild,0);range.setEnd(node.firstChild,2);getSelection().removeAllRanges();getSelection().addRange(range);node.dispatchEvent(new MouseEvent('mouseup',{bubbles:true}));});
  await page.getByRole('button',{name:'保存精确摘录',exact:true}).click();
  const saved=async()=>(await request('/api/v1/library/document?protocolVersion=1&key='+fixture.key)).record.document;
  await expect.poll(async()=>(await saved()).exact_excerpts?.[0]?.text).toBe('刘源');
- const correction=page.getByRole('textbox',{name:'查找原文',exact:true});await correction.fill('校对期间保留的草稿');release();
+ release();
  await expect.poll(async()=>(await request('/api/v1/transcript-review/jobs?key='+fixture.key)).jobs[0].state).toBe('applied');
  assert.equal((await saved()).segments[0].text,'刘源来了。');
- await expect(correction).toHaveValue('校对期间保留的草稿');
- await page.getByRole('button',{name:'取消校正草稿',exact:true}).click();
- await page.getByRole('button',{name:'切换至精校稿',exact:true}).click();
+ await page.getByRole('tab',{name:'精读稿',exact:true}).click();
+ await page.getByRole('button',{name:'查看精校稿',exact:true}).click();
  await expect(page.locator('[data-source-id="a"]')).toHaveText('刘元来了。');
  const result=await saved();assert.equal(result.notes.a,fixture.notes.a);
  assert.equal(result.exact_excerpts[0].text,'刘源');
@@ -37,40 +37,21 @@ try{
  await expect(joined).toHaveCount(2);
  assert.equal((await joined.allTextContents()).join(''),'今天开始正式录音。');
 
- await page.locator('[data-source-id="a"] [data-reading-replacement]').evaluate(node=>{
-  const range=document.createRange();range.selectNodeContents(node);
-  getSelection().removeAllRanges();getSelection().addRange(range);
-  node.dispatchEvent(new MouseEvent('mouseup',{bubbles:true}));
- });
- await page.getByRole('button',{name:'微调精校',exact:true}).click();
- await page.getByRole('textbox',{name:'精校文字',exact:true}).fill('刘元来了，开始录制。');
- await page.getByRole('button',{name:'保存修改',exact:true}).click();
- await expect(page.locator('[data-source-id="a"]')).toHaveText('刘元来了，开始录制。');
- assert.equal((await saved()).segments[0].text,'刘源来了。');
  await expect(page.getByRole('heading',{name:'参加人数',exact:true})).toBeVisible();
  await page.getByRole('button',{name:'章节',exact:true}).click();
- await page.getByRole('button',{name:'编辑章节 参加人数',exact:true}).click();
- await page.getByRole('textbox',{name:'章节标题',exact:true}).fill('现场人数');
- await page.getByRole('button',{name:'保存修改',exact:true}).click();
- await expect(page.getByRole('heading',{name:'现场人数',exact:true})).toBeVisible();
- await page.getByRole('button',{name:'来源与整理',exact:true}).click();
- await page.getByRole('button',{name:'说话人',exact:true}).click();
- await page.getByRole('button',{name:'编辑显示名 主持人',exact:true}).click();
- await page.getByRole('textbox',{name:'说话人显示名',exact:true}).fill('轮值主持');
- await page.getByRole('button',{name:'保存修改',exact:true}).click();
- await expect(page.getByRole('dialog',{name:'编辑说话人显示名'})).not.toBeVisible();
- await expect(page.locator('.rw-speaker-label').filter({hasText:'轮值主持'})).toBeVisible();
- assert.deepEqual((await saved()).segments,result.segments);
- assert.deepEqual((await saved()).reading_review,result.reading_review);
+ await expect(page.getByRole('navigation',{name:'章节目录'}).getByRole('button',{name:'参加人数',exact:true})).toBeVisible();
+ await page.getByRole('button',{name:'关闭来源与整理',exact:true}).click();
+ await page.getByRole('button',{name:'查看基础稿',exact:true}).click();
+ await expect(page.locator('[data-source-id="a"]')).toHaveText('刘源来了。');
+ await page.getByRole('button',{name:'查看精校稿',exact:true}).click();
 
  await page.getByRole('button',{name:'1 处待核对',exact:true}).click();
  await page.getByRole('region',{name:'AI 精校',exact:true}).getByRole('button',{name:'00:02',exact:true}).click();
- await expect(page.getByRole('tab',{name:'逐句校对'})).toHaveAttribute('aria-selected','true');
+ await expect(page.locator('.rw-cue [data-source-id="b"]')).toBeVisible();
  await page.reload();
- await page.getByRole('tab',{name:'文字稿',exact:true}).click();
- await expect(page.locator('[data-source-id="a"]')).toHaveText('刘元来了，开始录制。');
- await expect(page.locator('.rw-speaker-label').filter({hasText:'轮值主持'})).toBeVisible();
+ await page.getByRole('tab',{name:'精读稿',exact:true}).click();
+ await expect(page.locator('[data-source-id="a"]')).toHaveText('刘元来了。');
  assert.equal(calls,1);
  await page.setViewportSize({width:390,height:844});assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1));await mkdir('/tmp/coconut-review-browser',{recursive:true});await page.screenshot({path:'/tmp/coconut-review-browser/mobile.png'});assert.deepEqual(errors,[]);
- console.log(JSON.stringify({passed:true,provider:'kimi',draft_fence:true,existing_notes_preserved:true,concurrent_excerpt_preserved:true,word_clocks_preserved:true,protected_number:true,reload_without_model_call:true,mobile:true}));
+ console.log(JSON.stringify({passed:true,provider:'kimi',existing_notes_preserved:true,concurrent_excerpt_preserved:true,word_clocks_preserved:true,protected_number:true,reload_without_model_call:true,mobile:true}));
 }finally{release?.();await browser?.close();await server?.shutdown();await rm(directory,{recursive:true,force:true});}

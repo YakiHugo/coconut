@@ -121,7 +121,7 @@ export function createPublicFetcher({lookup = dnsLookup, request = (url,options,
     Object.assign(proxyEnv,effective);
   }
   let ownerAgent;
-  return async function fetchPublic(value,{maxBytes=8*1024*1024,timeoutMs=20000,idleTimeoutMs,signal,types,inspectMedia=false,maxMediaBytes=200*1024*1024,redirectOnly=false,consume}={}) {
+  return async function fetchPublic(value,{maxBytes=8*1024*1024,timeoutMs=20000,idleTimeoutMs,signal,types,inspectMedia=false,maxMediaBytes=200*1024*1024,redirectOnly=false,consume,onProgress}={}) {
     let url = publicUrl(value);
     if(idleTimeoutMs!==undefined&&(!Number.isSafeInteger(idleTimeoutMs)||idleTimeoutMs<1||idleTimeoutMs>2147483647))throw new Error('来源空闲超时设置无效');
     const deadline = AbortSignal.timeout(timeoutMs);
@@ -171,17 +171,36 @@ export function createPublicFetcher({lookup = dnsLookup, request = (url,options,
             if (length !== undefined && (!/^\d+$/.test(length) || !Number.isSafeInteger(Number(length)) || Number(length)>limit)) return fail('SOURCE_LIMIT','来源文件超过允许大小或长度无效');
             const metadata = {url:url.href,type,length:length===undefined ? null : Number(length)};
             if (mediaOnly) {done(null,{...metadata,body:Buffer.alloc(0)});res.destroy();return;}
+            let bytes=0,lastProgress=null;
+            // Only accepted response bodies report bytes; redirects, inspection
+            // and rejected headers never look like a download. Keep callbacks
+            // bounded even for a source that sends many tiny chunks.
+            const reportProgress=(final=false)=>{
+              if(!onProgress||settled||combined.aborted)return true;
+              const now=Date.now();
+              if(!final&&lastProgress!==null&&now-lastProgress<1000)return true;
+              lastProgress=now;
+              try{onProgress({receivedBytes:bytes,totalBytes:metadata.length});return true;}
+              catch(error){
+                // Streaming consumers must see an error rather than normal EOF,
+                // and finish cleanup before the fetch rejects.
+                if(streamingBody)throw error;
+                done(error);res.destroy();return false;
+              }
+            };
+            if(!reportProgress())return;
             if(consume){
               let complete=false;
               const body=Readable.from((async function*(){
-                let bytes=0;
                 try{
                   for await(const chunk of res){
                     if(chunk.length)progress();bytes+=chunk.length;
                     if(bytes>limit)throw new PublicSourceError('SOURCE_LIMIT','来源文件超过允许大小');
+                    if(!reportProgress())return;
                     yield chunk;
                   }
                   if(!bytes||length!==undefined&&bytes!==Number(length))throw new PublicSourceError('SOURCE_TRANSFER','来源文件传输不完整');
+                  if(!reportProgress(true))return;
                   complete=true;
                 }catch(error){if(error instanceof PublicSourceError)throw error;throw new PublicSourceError('SOURCE_TRANSFER','公开来源传输中断');}
               })(),{signal:combined});
@@ -192,10 +211,12 @@ export function createPublicFetcher({lookup = dnsLookup, request = (url,options,
               }).catch(error=>done(error)).finally(()=>{body.destroy();res.destroy();});
               return;
             }
-            const chunks=[];let bytes=0;
-            res.on('data',chunk=>{if(chunk.length)progress();bytes+=chunk.length;if(bytes>limit)return fail('SOURCE_LIMIT','来源文件超过允许大小');chunks.push(chunk);});
+            const chunks=[];
+            res.on('data',chunk=>{if(settled)return;if(chunk.length)progress();bytes+=chunk.length;if(bytes>limit)return fail('SOURCE_LIMIT','来源文件超过允许大小');chunks.push(chunk);reportProgress();});
             res.on('end',()=>{
+              if(settled)return;
               if (length!==undefined && bytes!==Number(length)) return fail('SOURCE_TRANSFER','来源文件传输不完整');
+              if(!reportProgress(true))return;
               done(null,{...metadata,body:Buffer.concat(chunks,bytes)});
             });
             res.on('error',()=>done(new PublicSourceError('SOURCE_TRANSFER','公开来源传输中断')));

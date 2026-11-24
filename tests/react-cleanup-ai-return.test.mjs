@@ -70,7 +70,7 @@ test('AI return to cleaned passages retains exact source actions and keyboard en
         const returnFromSummary=async id=>{
             await act(async()=>tab('summary').click());
             assert.equal(tab('summary').getAttribute('aria-selected'),'true');
-            assert.equal(source().hasAttribute('data-cleanup-applied'),false,'Summary deactivates the reading projection');
+            assert.equal(source(),null,'Summary does not mount raw or edited transcript content');
             await act(async()=>{aiReturnRequest={id,documentKey:doc.key};render();});
             assert.equal(tab('passages').getAttribute('aria-selected'),'true');
             assert.equal(source().dataset.cleanupApplied,'true','AI return reactivates the same cleanup projection');

@@ -15,7 +15,7 @@ function mergeAlignmentCandidate(current,input,candidate,report,assetSha256){
    previous=word.end;
   }
   if(after.words.map(word=>word.word).join('')!==cue.text)throw Error('候选逐词时间与原文不符');
-  return {...cue,words:after.words.map(word=>({...word})),...(assetSha256?{alignment_media_sha256:assetSha256}:{})};
+  return {...cue,words:after.words.map(word=>({...word})),timing_basis:'word',alignment_status:'complete',...(assetSha256?{alignment_media_sha256:assetSha256}:{})};
  });
  return {...current,segments,source_alignment:{source_snapshot:input,report},provenance:{...current.provenance,alignment_required:report?.status!=='candidate',source_text_quality:'unverified'}};
 }

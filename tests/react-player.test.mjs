@@ -44,7 +44,7 @@ test('player distinguishes continuous selection playback from bounded evidence p
     const media={identity:'original',url:'blob:original',kind:'audio',name:'Original audio'};
     const intent=(id,seconds,extra={})=>({id,owner:media.identity,attachmentURL:media.url,attachmentId:1,seconds,play:true,...extra});
     let root,host,player,seek=null,progress=[],times=[];
-    const render=()=>root.render(createElement(ReaderPlayer,{media,seek,onTime:seconds=>times.push(seconds),onProgress:(seconds,duration)=>progress.push({seconds,duration})}));
+    const render=()=>root.render(createElement(ReaderPlayer,{media,seek,locateTime:seconds=>({cueId:String(Math.floor(seconds)),partIndex:0}),onLocationChange:location=>times.push(Number(location.cueId)),onProgress:(seconds,duration)=>progress.push({seconds,duration})}));
     const mount=async()=>{
         host=win.document.createElement('div');win.document.body.append(host);root=createRoot(host);
         seek=null;progress=[];times=[];
@@ -79,6 +79,7 @@ test('player distinguishes continuous selection playback from bounded evidence p
             assert.equal(player.paused,false);
             assert.equal(pauses.get(player)||0,pauseCount);
             assert.equal(times.at(-1),beyondExcerpt);
+            const published=times.length;await advance(beyondExcerpt+.1);await advance(beyondExcerpt+.2);assert.equal(times.length,published);
             assert.deepEqual(progress.at(-1),{seconds:beyondExcerpt,duration:60},'continuous playback saves the current listening position');
             await unmount();
         });
@@ -93,6 +94,11 @@ test('player distinguishes continuous selection playback from bounded evidence p
             assert.equal(player.currentTime,12);
             assert.equal(player.paused,true);
             assert.equal(controllers.at(-1).getState().status,'finished');
+            await request(intent(2,59,{end:60.2}));
+            assert.equal(player.currentTime,59);
+            assert.equal(controllers.at(-1).getState().range.end,60);
+            await advance(60);
+            assert.equal(player.paused,true);
             await unmount();
         });
         await t.test('continuous playback cancels an earlier bounded review and its saved origin',async()=>{

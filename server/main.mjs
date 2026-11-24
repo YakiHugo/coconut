@@ -15,7 +15,7 @@ export async function startService({env=process.env,config=serviceConfig(env),..
   const [major,minor]=process.versions.node.split('.').map(Number);
   if(major<22||major===22&&minor<21||major===23||major===24&&minor<5)throw Error('The standalone service requires Node 22.21+ or 24.5+ for standard proxy agents.');
   const ownerAccess=config.publicOrigin?createOwnerAccess({origin:config.publicOrigin,token:config.ownerToken,backendLabel:config.backendLabel}):null;
-  const podcastSources=options.podcastSources||createPodcastSources({fetchResource:createPublicFetcher({ownerSources:true,ownerNetwork:config.network})});
+  const podcastSources=options.podcastSources||createPodcastSources({fetchResource:createPublicFetcher({ownerSources:true,ownerNetwork:config.network}),downloadPolicy:config.podcastDownloadPolicy});
   const runtime=sourceTaskRuntime({...config,transcriber:options.transcriber});
   const started=await startDevelopmentBridge({...options,...runtime,host:config.host,port:config.port,ownerAccess,podcastSources,podcastProxy:null,
     taskDirectory:path.join(config.dataDirectory,'tasks'),libraryDirectory:path.join(config.dataDirectory,'library'),

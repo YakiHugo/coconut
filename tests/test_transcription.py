@@ -13,7 +13,8 @@ from unittest.mock import patch
 # sys.modules stubs must not unload NumPy's native modules after reconciliation.
 import numpy
 
-from audio_pipeline import SAMPLE_RATE, AudioChunk, validate_result, owned_segments
+from audio_pipeline import SAMPLE_RATE, AudioChunk, validate_result, owned_segments, normalize_word_clocks
+from audio_pipeline import _without_invalid_context
 from transcription import QwenBackend, model_files, probe, run, sentence_segments, correct_verified_names
 
 
@@ -182,6 +183,9 @@ class AdapterTests(unittest.TestCase):
             result = backend.recognize(self.audio, request_id='authored')
         self.assertEqual(len(asr_calls), 1)
         self.assertEqual(len(align_calls), 2)
+        self.assertEqual(align_calls[-1]['audio'].dtype, numpy.float32)
+        self.assertEqual(len(align_calls[-1]['audio']), 2*SAMPLE_RATE)
+        self.assertFalse(list(self.root.rglob('align-*.wav')))
         self.assertEqual(result['segments'][0]['text'], '你好，世界。')
         self.assertEqual(''.join(w['word'] for w in result['segments'][0]['words']), '你好，世界。')
         self.assertEqual(result['language'], 'zh')
@@ -195,12 +199,86 @@ class AdapterTests(unittest.TestCase):
         self.assertEqual(owned_segments(value, chunk, 20*SAMPLE_RATE)[0]['text'], '前文后文')
         self.assertEqual(raw['segments'][0]['text'], '前文后文')
 
+    def test_bad_context_clock_does_not_block_recognized_core_or_change_raw(self):
+        chunk=AudioChunk(1, 0, 10*SAMPLE_RATE, SAMPLE_RATE, 9*SAMPLE_RATE)
+        raw=dict(segments=[dict(start=0,end=10,text='前，正文尾。',words=[
+            dict(word='前',start=-.08,end=.1),dict(word='正文',start=3,end=6),dict(word='尾',start=9.92,end=10.16)])])
+        original=copy.deepcopy(raw)
+        kept=validate_result(_without_invalid_context(raw,chunk),10)
+        self.assertEqual(kept['discarded_invalid_context_words'],2)
+        self.assertEqual(kept['segments'][0]['words'],[dict(word='正文',start=3,end=6,text_start=0,text_end=2)])
+        self.assertEqual(raw,original)
+        raw['segments'][0]['words'][-1]['start']=8.99
+        with self.assertRaises(ValueError): validate_result(_without_invalid_context(raw,chunk),10)
+        self.assertIsNone(_without_invalid_context(original,AudioChunk(0,0,10*SAMPLE_RATE,0,10*SAMPLE_RATE)))
+        raw['segments'][0]['text']='与词不符'
+        self.assertIsNone(_without_invalid_context(raw,chunk))
+
+    def test_bad_owned_word_keeps_text_without_fabricating_a_clock(self):
+        from audio_pipeline import InvalidWindowClocks, recognize_window
+        from unittest.mock import Mock
+        raw = dict(segments=[dict(start=0, end=2, text='保留原话。',
+                                  words=[dict(word='保留原话', start=1.2, end=2.2)])])
+        backend = Mock()
+        backend.recognize.side_effect = InvalidWindowClocks('word outside audio', raw, 2)
+        result = recognize_window(backend, self.audio, 'timing', AudioChunk(0, 0, 32000, 0, 32000))
+        self.assertEqual(result['segments'][0], dict(start=0, end=2, text='保留原话。',
+                         alignment_status='needs_review', timing_basis='audio_chunk'))
+        self.assertIn('words', raw['segments'][0])
+        raw['segments'][0]['end'] = 3
+        with self.assertRaises(ValueError):
+            recognize_window(backend, self.audio, 'bad-segment', AudioChunk(0, 0, 32000, 0, 32000))
+
+    def test_generation_limit_redecodes_audio_and_rejects_partial_recovery(self):
+        from unittest.mock import Mock
+        with wave.open(str(self.audio),'wb') as stream:
+            stream.setparams((1,2,SAMPLE_RATE,0,'NONE','not compressed'))
+            stream.writeframes(b'\0'*(SAMPLE_RATE*2*8))
+        backend=self.backend()
+        segments=[dict(text='你好。',start=0,end=4,language='Chinese'),dict(text='再见。',start=4,end=8,language='Chinese')]
+        initial=types.SimpleNamespace(text='不停重复',segments=[],generation_tokens=256)
+        backend.asr=Mock()
+        backend.asr.generate.side_effect=[initial,types.SimpleNamespace(text='你好。再见。',segments=segments,generation_tokens=12),
+                                        initial,types.SimpleNamespace(text='你好。',segments=segments[:1],generation_tokens=12)]
+        backend.aligner=Mock()
+        backend.aligner.generate.side_effect=lambda **kw:[types.SimpleNamespace(text=kw['text'],start_time=.1,end_time=3.)]
+        with patch.dict('sys.modules',{'mlx_audio.stt':types.SimpleNamespace(load=None)}),contextlib.redirect_stdout(io.StringIO()):
+            result=backend.recognize(self.audio,request_id='recover')
+            with self.assertRaisesRegex(RuntimeError,'partial text discarded'):
+                backend.recognize(self.audio,request_id='partial')
+        self.assertEqual([segment['text'] for segment in result['segments']],['你好。','再见。'])
+        self.assertEqual(result['segments'][1]['words'][0]['start'],4.1)
+        self.assertNotIn('chunk_duration',backend.asr.generate.call_args_list[0].kwargs)
+        self.assertEqual(backend.asr.generate.call_args_list[1].kwargs['chunk_duration'],4.)
+        self.assertFalse((self.root/'recognition-partial.json').exists())
+
+    def test_only_failed_decodes_trigger_text_retry(self):
+        from transcription import _decode_failed
+        def output(text, end=8):
+            return types.SimpleNamespace(text=text, segments=[dict(start=0, end=end)], generation_tokens=7)
+        self.assertFalse(_decode_failed(output('嗯，对对对，这次 OpenAI AI 升级了。'), 256, 8))
+        self.assertTrue(_decode_failed(output('啊对，' * 25), 256, 8))
+        self.assertTrue(_decode_failed(output('前一半。', 4), 256, 8))
+
     def test_complete_alignment_crops_exact_source_punctuation_and_spacing(self):
         raw = {'segments': [dict(start=8, end=11, text='Hello, 世界！', words=[
             dict(start=8, end=9, word='Hello'), dict(start=10.5, end=11, word='世界')])]}
         value = validate_result(raw, 12)
         chunk = AudioChunk(0, 0, 12*SAMPLE_RATE, 0, 10*SAMPLE_RATE)
-        self.assertEqual(owned_segments(value, chunk, 20*SAMPLE_RATE)[0]['text'], 'Hello,')
+        retained = owned_segments(value, chunk, 20*SAMPLE_RATE)[0]
+        self.assertEqual(retained['text'], 'Hello,')
+        self.assertEqual(''.join(word['word'] for word in retained['words']), retained['text'])
+        self.assertEqual(retained['words'][0]['text_end'], 6)
+
+    def test_bounded_overlap_and_adjacent_zero_words_keep_exact_audio_and_text(self):
+        segment = dict(start=0, end=4, text='先也继续。后文。', words=[
+            dict(word='先', start=.05, end=.5), dict(word='也', start=.5, end=.5),
+            dict(word='继续。', start=.48, end=1), dict(word='后文。', start=2, end=3)])
+        normalize_word_clocks(segment)
+        self.assertEqual(''.join(word['word'] for word in segment['words']), segment['text'])
+        self.assertEqual([(word['start'], word['end']) for word in segment['words']], [(.05, .5), (.5, 1), (2, 3)])
+        self.assertEqual(segment['words'][0]['word'], '先也')
+        self.assertEqual(segment['words'][-1], dict(word='后文。', start=2, end=3))
 
     def test_pipeline_writes_canonical_document_with_original_script_and_no_display_conversion(self):
         backend = self.backend()

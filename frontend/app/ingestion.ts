@@ -25,6 +25,7 @@ export type Ingestion = {
     id: string;
     state: 'ready' | 'awaiting_selection' | 'needs_transcription' | 'blocked';
     source: Record<string, unknown>;
+    acquisition?:boolean;
     transcript?: {
         document?: unknown;
     };

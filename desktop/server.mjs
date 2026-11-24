@@ -46,6 +46,14 @@ export function createBridge({readerDirectory = path.resolve(ROOT,'../reader'), 
     message:capabilities.caption_import?'可尝试获取已启用来源的公开原语言字幕；平台访问限制仍可能阻止获取。':captionStatus?.mode==='bundled-helper'?packagedCaptionGuidance(captionStatus.code):'字幕助手未就绪。可导入或粘贴已有字幕；开发环境可用 COCONUT_CAPTION_PYTHON 指定已安装的兼容 Python。不会自动安装依赖或启动识别。'});
   const ingestionService = createIngestionService({podcastSources,captionService,captionStatus:captionSources,captionShortLinkResolver,videoAudioProviders:videoAudioService?.available===true?videoAudioService.providers||[]:[],videoSourceMedia:videoAudioService?.sourceAvailable===true});
   const active = new Set();
+  const streams=new Set();
+  const sendEvent=({type,...data})=>{
+    const frame='event: '+type+'\ndata: '+JSON.stringify(data)+'\n\n';
+    for(const stream of streams)if(!stream.write(frame))stream.end();
+  };
+  const stopSourceEvents=sourceJobs?.subscribe?.(sendEvent);
+  const stopReadingEvents=cleanReadingJobs?.subscribe?.(sendEvent);
+
   const server = http.createServer(async (req,res) => {
     for (const [key,value] of Object.entries({'X-Content-Type-Options':'nosniff','Referrer-Policy':'no-referrer','Cache-Control':'no-store',
       'Content-Security-Policy':CSP,'X-Frame-Options':'DENY','Cross-Origin-Resource-Policy':'same-origin'})) res.setHeader(key,value);
@@ -69,6 +77,20 @@ export function createBridge({readerDirectory = path.resolve(ROOT,'../reader'), 
     const controller = new AbortController(); active.add(controller);
     res.on('close',()=>{ if (!res.writableEnded) controller.abort(); active.delete(controller); });
     try {
+      if(pathname==='/api/v1/events'){
+        if(req.method!=='GET')return json(405,{error:'Method not allowed'});
+        if(!canAcquire||req.headers.origin&&req.headers.origin!==origin)return json(403,{error:'事件订阅需要同源来源权限'});
+        if(!sourceJobs)return json(503,{error:'来源任务未启用'});
+        if(streams.size>=32)return json(503,{error:'事件订阅已达上限'});
+        res.writeHead(200,{'Content-Type':'text/event-stream; charset=utf-8','Cache-Control':'no-cache, no-transform','X-Accel-Buffering':'no'});
+        res.write('retry: 4000\n\n');
+        streams.add(res);
+        const heartbeat=setInterval(()=>{if(!res.write(': heartbeat\n\n'))res.end();},15000);
+        const close=()=>{clearInterval(heartbeat);streams.delete(res);res.end();};
+        controller.signal.addEventListener('abort',close,{once:true});
+        res.once('close',close);
+        return;
+      }
       if(await handleLibraryRequest({req,pathname,origin,json,store:libraryStore,unavailable:libraryUnavailable}))return;
       if(await handleSourceMediaRequest({req,res,pathname,origin,json,store:sourceMediaStore,signal:controller.signal}))return;
       if(pathname.startsWith('/api/v1/clean-reading')){
@@ -133,8 +155,13 @@ export function createBridge({readerDirectory = path.resolve(ROOT,'../reader'), 
         if(req.headers['content-type']?.split(';')[0]!=='application/json')return json(400,{error:'Use application/json'});
         let size=0;const chunks=[];for await(const chunk of req){size+=chunk.length;if(size>4096)return json(413,{error:'请求过大'});chunks.push(chunk);}
         const data=JSON.parse(Buffer.concat(chunks).toString('utf8'));
-        if(match&&['cancel','retry'].includes(match[2])){if(data?.protocolVersion!==1)return json(400,{error:'协议版本无效'});return json(200,{job:await sourceJobs.action(match[1],match[2])});}
-        if(pathname==='/api/v1/source-jobs')return json(202,{job:await sourceJobs.create(data)});
+        if(match&&['cancel','retry'].includes(match[2])){if(data?.protocolVersion!==1)return json(400,{error:'协议版本无效'});return json(200,{job:await sourceJobs.action(match[1],match[2],data)});}
+        if(pathname==='/api/v1/source-jobs'){
+          if(data.kind==='acquire'){
+            return json(202,{jobs:await sourceJobs.acquire(data)});
+          }
+          return json(202,{job:await sourceJobs.create(data)});
+        }
         return json(404,{error:'任务不存在'});
       }
       if (localMediaService && await localMediaService.handle(req,res,pathname)) return;
@@ -238,7 +265,7 @@ export function createBridge({readerDirectory = path.resolve(ROOT,'../reader'), 
         if(['cancel','archive','restore'].includes(action))return json(200,{protocolVersion:1,task:await taskStore[action](pathname.split('/').at(-2),guardedMutation?data.expected:undefined)});
         const receipt=await taskStore.submit(data);return json(receipt.created?202:200,{protocolVersion:1,...receipt});
       }
-      if(pathname === '/api/v1/ingestions'){const receipt=await ingestionService.ingest(data,{signal:controller.signal,ownerLocal:canAcquire});if(receipt.ingestion.state==='needs_transcription')receipt.ingestion.transcription=await ingestionExecutor.status({signal:controller.signal});return json(200,receipt);}
+      if(pathname === '/api/v1/ingestions'){const receipt=await ingestionService.ingest(data,{signal:controller.signal,ownerLocal:canAcquire,automatic:!!sourceJobs&&canAcquire});if(receipt.ingestion.state==='needs_transcription'&&!receipt.ingestion.acquisition)receipt.ingestion.transcription=await ingestionExecutor.status({signal:controller.signal});return json(200,receipt);}
       if(pathname === '/api/captions/import'){
         if(!canAcquire&&captionService?.ownerLocalOnly)return json(403,{code:'owner_local_required',error:'视频来源获取仅允许本机界面。'});
         if(!capabilities.caption_import)return json(501,{code:captionSources.code,error:captionSources.message});
@@ -279,6 +306,7 @@ export function createBridge({readerDirectory = path.resolve(ROOT,'../reader'), 
   server.requestTimeout = 30000; server.headersTimeout = 10000;
   let resources;
   const stopResources=()=>resources??=(async()=>{
+    stopSourceEvents?.();stopReadingEvents?.();
     await sourceJobs?.shutdown();
     await Promise.all([taskStore?.shutdown(),readabilityJobs?.shutdown(),reviewJobs?.shutdown(),cleanReadingJobs?.shutdown(),sourceMediaStore?.shutdown()]);
     libraryStore?.close();
@@ -312,11 +340,25 @@ export async function startBridge({port = 8080, host = '127.0.0.1', taskDirector
   if(libraryDirectory){
     options.libraryLocation={mode:options.startupMode||'embedded',directory:libraryDirectory};
     try{options.libraryStore=await createLibraryStore({directory:libraryDirectory,exclusiveWriter:true});}
-    catch(error){options.libraryStore=null;options.libraryUnavailable={code:error.libraryCode||'library_unavailable',message:'Canonical library could not open; browser storage remains unchanged.'};}
+    catch(error){
+      options.libraryStore=null;options.libraryUnavailable={code:error.libraryCode||'library_unavailable',message:'Canonical library could not open; browser storage remains unchanged.'};
+      if(options.enableSourceJobs){
+        await options.taskStore?.shutdown();
+        const guidance=error.libraryCode==='library_in_use'?' Stop the other Coconut service before restarting; changing the port does not release the library.':'';
+        throw new Error(`Cannot open library at ${libraryDirectory}: ${error.message}${guidance}`,{cause:error});
+      }
+    }
   }
   if(options.libraryStore&&libraryDirectory&&!options.sourceMediaStore){
     try{options.sourceMediaStore=await createSourceMediaStore({directory:path.join(libraryDirectory,'source-media'),libraryStore:options.libraryStore});}
-    catch{options.sourceMediaStore=null;} // Fail closed; never mislabel page blobs as saved.
+    catch(error){
+      options.sourceMediaStore=null; // Fail closed; never mislabel page blobs as saved.
+      if(options.enableSourceJobs){
+        await Promise.allSettled([options.taskStore?.shutdown(),options.readabilityJobs?.shutdown()]);
+        options.libraryStore.close();
+        throw new Error(`Cannot open source media storage at ${path.join(libraryDirectory,'source-media')}: ${error.message}`,{cause:error});
+      }
+    }
   }
   const readingPython=options.readingPython===undefined?process.env.COCONUT_READING_PYTHON:options.readingPython;
   if(!options.readabilityJobs&&options.libraryStore&&libraryDirectory&&readingPython){
@@ -334,7 +376,7 @@ export async function startBridge({port = 8080, host = '127.0.0.1', taskDirector
     catch(error){await Promise.allSettled([options.sourceMediaStore?.shutdown(),options.taskStore?.shutdown(),options.readabilityJobs?.shutdown(),options.reviewJobs?.shutdown()]);options.libraryStore.close();throw error;}
   }
   if(options.enableSourceJobs){
-    try{const {createSourceJobs}=await import('./source-jobs.mjs');options.sourceJobs=await createSourceJobs({directory:path.join(libraryDirectory,'source-jobs'),libraryStore:options.libraryStore,mediaStore:options.sourceMediaStore,podcastSources:options.podcastSources,videoAudioService:options.videoAudioService,transcriber:options.transcriber,reviewer:options.transcriptReviewer,reviewProvider:options.reviewProvider??process.env.COCONUT_TRANSCRIPT_REVIEW_PROVIDER??'',reviewModel:options.reviewModel??process.env.COCONUT_TRANSCRIPT_REVIEW_MODEL??''});}
+    try{const {createSourceJobs}=await import('./source-jobs.mjs');options.sourceJobs=await createSourceJobs({directory:path.join(libraryDirectory,'source-jobs'),libraryStore:options.libraryStore,mediaStore:options.sourceMediaStore,podcastSources:options.podcastSources,videoAudioService:options.videoAudioService,captionService:options.captionService,cleanReadingJobs:options.cleanReadingJobs,transcriber:options.transcriber,reviewer:options.transcriptReviewer,reviewProvider:options.reviewProvider??process.env.COCONUT_TRANSCRIPT_REVIEW_PROVIDER??'',reviewModel:options.reviewModel??process.env.COCONUT_TRANSCRIPT_REVIEW_MODEL??''});}
     catch(error){await options.sourceJobs?.shutdown();await Promise.allSettled([options.sourceMediaStore?.shutdown(),options.taskStore?.shutdown(),options.readabilityJobs?.shutdown(),options.reviewJobs?.shutdown(),options.cleanReadingJobs?.shutdown()]);options.libraryStore?.close();throw error;}
   }
   const server = createBridge(options);

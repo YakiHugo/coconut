@@ -60,16 +60,18 @@ export function createDevelopmentCaptionHelper({python,proxy=null,network=null,b
  const trustedProxy=validateCaptionProxy(proxy);
  const sourceNetwork=validateSourceNetwork(network??(trustedProxy?{mode:'custom',proxy:trustedProxy}:{mode:'direct'}));
  const active=new Set();let closing=false;
- async function execute(input,{signal,consume}={}){
+ async function execute(input,{signal,consume,onProgress}={}){
   if(closing||signal?.aborted)throw fail('CAPTION_CANCELLED','字幕请求已取消');
-  if(active.size)throw fail('CAPTION_BUSY','已有字幕请求正在运行');
-  const controller=new AbortController();let directory,consumed=false;
+  const lane=input.operation==='extract-development-audio'&&input.purpose==='source'?'audio':'captions';
+  if([...active].some(controller=>controller.lane===lane)||input.operation==='version'&&active.size)
+   throw fail('CAPTION_BUSY','已有同类来源请求正在运行');
+  const controller=new AbortController();controller.lane=lane;let directory,consumed=false;
   const operation=(async()=>{
    try{
     directory=await mkdtemp(path.join(tempRoot,'coconut-dev-caption-'));
     for(const name of ['home','tmp','config','cache','data','empty-bin'])await mkdir(path.join(directory,name),{mode:0o700});
     const output=await runCaptionProcess(python,input,{directory,playerRuntime,signal:signal?AbortSignal.any([signal,controller.signal]):controller.signal,
-     timeoutMs:input.operation==='version'?Math.min(timeoutMs,10000):input.operation==='extract-development-audio'?mediaTimeoutMs:timeoutMs,maxOutputBytes:HELPER_LIMITS.outputBytes,onSpawn,detached,args:['-I','-B','-c',launcher]});
+     timeoutMs:input.operation==='version'?Math.min(timeoutMs,10000):input.operation==='extract-development-audio'?mediaTimeoutMs:timeoutMs,maxOutputBytes:HELPER_LIMITS.outputBytes,onSpawn,onProgress,detached,args:['-I','-B','-c',launcher]});
     let result;try{result=JSON.parse(output);}catch{throw fail('CAPTION_OUTPUT','字幕助手没有返回完整元数据');}
     if(!result||typeof result!=='object'||Array.isArray(result))throw fail('CAPTION_OUTPUT','字幕助手没有返回完整元数据');
     if(input.operation==='extract-development-audio'&&result.status==='media_ready'){result=await readHelperMedia(directory,result,{consume,signal:signal?AbortSignal.any([signal,controller.signal]):controller.signal});consumed=!!consume;}
@@ -97,12 +99,12 @@ export function createDevelopmentCaptionHelper({python,proxy=null,network=null,b
     ready=true;audioReady=r.developmentAudioProtocol===1&&(sourceNetwork.mode==='direct'||r.developmentProxyAudioProtocol===1);sourceMediaReady=audioReady&&r.developmentSourceMediaProtocol===1;return {ready:true,sourceMedia:sourceMediaReady,audioFallback:audioReady,audioProviders:audioReady?['youtube','bilibili']:[],code:'ready',version:r.version,providers:r.developmentProviders,networkMode:sourceNetwork.mode==='direct'?'direct_public':sourceNetwork.mode==='custom'?'trusted_local_proxy':'environment_proxy',ownerLocalOnly:true};
    }catch(error){if(error.code==='CAPTION_CANCELLED')throw error;return {ready:false,code:error.code||'CAPTION_UNAVAILABLE'};}
   },
-  async extractCaptions({url,language=null,signal}={}){
+  async extractCaptions({url,language=null,signal,authorOnly=false}={}){
    if(!ready)throw fail('CAPTION_UNAVAILABLE','开发字幕助手尚未通过检查');
    const source=captionSource(url);
    if(language!==null&&(typeof language!=='string'||!/^([a-z]{2,3})(-[A-Za-z0-9]{2,8}){0,2}$/.test(language)))throw fail('CAPTION_INPUT','原语言标记无效');
    const cookies=source.provider==='bilibili'?await bilibiliSession?.cookies({signal}):null;
-   const r=await execute({operation:'extract-development',url:source.url,language,...(cookies?{bilibiliCookies:cookies}:{}),...(['youtube','bilibili'].includes(source.provider)?{network:sourceNetwork}:{})},{signal});
+   const r=await execute({operation:'extract-development',url:source.url,language,...(authorOnly?{authorOnly:true}:{}),...(cookies?{bilibiliCookies:cookies}:{}),...(['youtube','bilibili'].includes(source.provider)?{network:sourceNetwork}:{})},{signal});
    if(CAPTION_FAILURE_STATUSES.includes(r.status)){const diagnostic=captionDiagnostic(r.diagnostic);return {status:r.status,...(r.status==='language_required'?{languages:captionLanguages(r.languages)}:{}),...(diagnostic?{diagnostic}:{})};}
    if(r.status!=='ok'||!['vtt','srt'].includes(r.format)||typeof r.captionBase64!=='string'||r.captionBase64.length>Math.ceil(HELPER_LIMITS.captionBytes/3)*4||
     !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(r.captionBase64))throw fail('CAPTION_OUTPUT','字幕助手输出格式无效');
@@ -110,14 +112,14 @@ export function createDevelopmentCaptionHelper({python,proxy=null,network=null,b
    if(!bytes.length||bytes.length>HELPER_LIMITS.captionBytes||r.format==='vtt'&&!/^\uFEFF?WEBVTT(?:[ \t].*)?\r?\n/.test(bytes.toString('utf8')))throw fail('CAPTION_OUTPUT','字幕文件无效');
    return {source:r.source,track:r.track,format:r.format,bytes};
   },
-  async extractAudio({url,language=null,purpose=null,signal,consume}={}){
+  async extractAudio({url,language=null,purpose=null,signal,consume,onProgress,audioOnly=false}={}){
    if(!ready||!audioReady)throw fail('CAPTION_UNAVAILABLE','开发原声助手尚未通过检查');
    const source=captionSource(url);
    if(!['youtube','bilibili'].includes(source.provider))throw fail('CAPTION_INPUT','此来源不支持公开媒体回退');
    if(language!==null&&(typeof language!=='string'||!/^([a-z]{2,3})(-[A-Za-z0-9]{2,8}){0,2}$/.test(language)))throw fail('CAPTION_INPUT','原语言标记无效');
    if(purpose!==null&&(purpose!=='source'||!sourceMediaReady))throw fail('CAPTION_UNAVAILABLE','当前助手不支持为已有字幕载入原声');
    const cookies=source.provider==='bilibili'?await bilibiliSession?.cookies({signal}):null;
-   return execute({operation:'extract-development-audio',url:source.url,language,...(purpose?{purpose}:{}),...(cookies?{bilibiliCookies:cookies}:{}),network:sourceNetwork},{signal,consume});
+   return execute({operation:'extract-development-audio',url:source.url,language,...(purpose?{purpose}:{}),...(audioOnly?{audioOnly:true}:{}),...(cookies?{bilibiliCookies:cookies}:{}),network:sourceNetwork},{signal,consume,onProgress});
   },
   shutdown(){closing=true;for(const controller of active)controller.abort();return Promise.allSettled([...active].map(controller=>controller.operation));},
  });

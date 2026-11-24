@@ -42,11 +42,11 @@ function episodeMedia(result){
 export function createIngestionService({podcastSources,captionService=null,captionStatus=null,captionShortLinkResolver=resolveCaptionShortLink,videoAudioProviders=[],videoSourceMedia=false}={}){
  const capabilities=()=>({protocolVersion:1,request_scoped:true,persistent:false,url:true,local_file:'metadata_only',captions:captionService?.available===true,transcription:unavailableTranscription});
  const unavailableCaptions=()=>({state:'blocked',error:{code:'captions_unavailable',...(captionStatus?.mode==='bundled-helper'?{setup_code:captionStatus.code,message:captionStatus.message+'此链接已保留，可修复安装包后重试。'}:{message:'字幕获取服务尚未就绪；此链接已保留，可在服务就绪后重试。'})}});
- async function ingest(data,{signal,ownerLocal=true}={}){
+ async function ingest(data,{signal,ownerLocal=true,automatic=false}={}){
   checkAbort(signal);
   if(data?.protocolVersion!==1)throw new Error('导入协议版本无效');
-  if(data.intent!==undefined&&data.intent!=='media_only')throw new Error('导入意图无效');
-  const source=inputSource(data.source);
+  if(data.intent!==undefined&&!['acquire','media_only'].includes(data.intent))throw new Error('导入意图无效');
+  const source=inputSource(data.source),acquire=automatic&&data.intent==='acquire';
   if(data.intent==='media_only'){
    if(source.kind!=='url'||!data.episode)throw new Error('仅可为明确选择的播客单集打开原始媒体');
    if(Object.hasOwn(data,'transcript_url')||Object.hasOwn(data.episode,'transcript_url'))throw new Error('仅打开原始媒体时不能指定文字稿');
@@ -62,8 +62,8 @@ export function createIngestionService({podcastSources,captionService=null,capti
    if(data.episode)throw new Error('视频链接不能指定播客单集');
    let resolved=source.url;
    if(['b23.tv','www.b23.tv'].includes(new URL(source.url).hostname)){
-    if(!captionService?.available)return finish(unavailableCaptions());
-    if(Array.isArray(captionService.providers)&&!captionService.providers.includes('bilibili'))return finish({state:'blocked',error:{code:'captions_unavailable',message:'此版本尚未启用 Bilibili 字幕获取；链接已保留，未展开短链接。可导入已有字幕。'}});
+    if(!captionService?.available&&!(acquire&&videoAudioProviders.includes('bilibili')))return finish(unavailableCaptions());
+    if(Array.isArray(captionService?.providers)&&!captionService.providers.includes('bilibili'))return finish({state:'blocked',error:{code:'captions_unavailable',message:'此版本尚未启用 Bilibili 字幕获取；链接已保留，未展开短链接。可导入已有字幕。'}});
     try{resolved=await captionShortLinkResolver(data.source.url,{signal});}
     catch(error){
      checkAbort(signal);
@@ -72,6 +72,11 @@ export function createIngestionService({podcastSources,captionService=null,capti
     }
    }
    const canonical=captionSource(resolved);base.source={...source,url:canonical.url,provider:canonical.provider,media_id:canonical.mediaId};
+   if(acquire&&videoSourceMedia&&videoAudioProviders.includes(canonical.provider)){
+    const document=Coconut.validate({project_kind:'audio_only',title:(canonical.provider==='youtube'?'YouTube':'B 站')+' '+canonical.mediaId,
+     source_url:canonical.url,language:data.language||'',video_source:{version:1,provider:canonical.provider,media_id:canonical.mediaId},segments:[]});
+    return finish({state:'needs_transcription',acquisition:true,project:{document}});
+   }
    if(!captionService?.available)return finish(unavailableCaptions());
    if(Array.isArray(captionService.providers)&&!captionService.providers.includes(canonical.provider))return finish({state:'blocked',error:{code:'captions_unavailable',message:'此版本尚未启用该来源的字幕获取；链接已保留，可导入已有字幕。'}});
    let result;
@@ -98,11 +103,12 @@ export function createIngestionService({podcastSources,captionService=null,capti
    // (at most 60 seconds) or a fresh fetch, never client episode metadata.
    if(inputSource({kind:'url',url:episode.feed_url}).url!==source.url)throw new Error('单集来源与当前链接不一致');
    const selection={feedUrl:episode.feed_url,episodeId:episode.episode_id,...(episode.transcript_url?{transcriptUrl:episode.transcript_url}:{})};
-   const result=await (data.intent==='media_only'?podcastSources.openEpisodeMedia(selection,{signal}):podcastSources.importEpisode(selection,{signal}));
-   return finish({state:result.status==='ready'?'ready':'needs_transcription',source:{...source,feed_url:result.feed_url,episode_id:result.episode.id,...(result.feed_checked_at?{feed_checked_at:result.feed_checked_at,feed_reused:result.feed_reused}:{})},media:episodeMedia(result),project:result.status==='ready'?null:audioProject(source,episodeMedia(result),result.episode,result.feed_url),transcript:result.status==='ready'?{document:{...result.document,provenance:{...result.document.provenance,alignment_required:true}}}:null,...(result.status!=='ready'?{message:unavailableTranscription.message}:{})});
+   const {transcriptUrl,...episodeRequest}=selection;
+   const result=await (data.intent==='media_only'||acquire?podcastSources.openEpisodeMedia(episodeRequest,{signal}):podcastSources.importEpisode(selection,{signal}));
+   return finish({state:result.status==='ready'?'ready':'needs_transcription',...(acquire?{acquisition:true}:{}),source:{...source,feed_url:result.feed_url,episode_id:result.episode.id,...(result.feed_checked_at?{feed_checked_at:result.feed_checked_at,feed_reused:result.feed_reused}:{})},media:episodeMedia(result),project:result.status==='ready'?null:audioProject(source,episodeMedia(result),result.episode,result.feed_url),transcript:result.status==='ready'?{document:{...result.document,provenance:{...result.document.provenance,alignment_required:true}}}:null,...(result.status!=='ready'?{message:unavailableTranscription.message}:{})});
   }
   const discovery=await podcastSources.discover({url:source.url},{signal});
-  if(discovery.kind==='media'){const media={kind:discovery.media.kind,url:discovery.media.url,name:discovery.title,mimeType:discovery.media.type,availability:'remote',download:{endpoint:'/api/podcasts/media',body:{url:discovery.media.url}}};return finish({state:'needs_transcription',media,project:audioProject(source,media),message:unavailableTranscription.message});}
+  if(discovery.kind==='media'){const media={kind:discovery.media.kind,url:discovery.media.url,name:discovery.title,mimeType:discovery.media.type,availability:'remote',download:{endpoint:'/api/podcasts/media',body:{url:discovery.media.url}}};return finish({state:'needs_transcription',...(acquire?{acquisition:true}:{}),media,project:audioProject(source,media),message:unavailableTranscription.message});}
   return finish({state:'awaiting_selection',selection:discovery});
  }
  return Object.freeze({capabilities,ingest});

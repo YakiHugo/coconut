@@ -414,8 +414,8 @@ def verified_info(downloader, url):
     return info
 
 
-def download_media(downloader, info, output, language, subtitle_check, purpose):
-    selected = choose_media(info, downloader.provider, language)
+def download_media(downloader, info, output, language, subtitle_check, purpose, *, audio_only=False, on_progress=None):
+    selected = choose_media(info, downloader.provider, language, audio_only=audio_only)
     if selected is None: return {'status': 'media_unavailable'}
     if output.exists() or output.with_suffix(output.suffix + '.part').exists():
         raise StopProof('request_scope_stopped')
@@ -424,8 +424,25 @@ def download_media(downloader, info, output, language, subtitle_check, purpose):
     options = dict(downloader.params, skip_download=False, max_filesize=MAX_MEDIA,
                    continuedl=False, nopart=False, updatetime=False, http_chunk_size=8 * 1024 * 1024,
                    buffersize=64 * 1024, noresizebuffer=True, noprogress=True)
+    last_progress = 0
+
+    def report(status):
+        nonlocal last_progress
+        if not on_progress or status.get('status') not in ('downloading', 'finished'):
+            return
+        now = time.monotonic()
+        received, total = status.get('downloaded_bytes'), status.get('total_bytes')
+        if not isinstance(received, int) or received < 0 or received > MAX_MEDIA:
+            return
+        if status.get('status') != 'finished' and now - last_progress < .75:
+            return
+        last_progress = now
+        on_progress(received, total if isinstance(total, int) and received <= total <= MAX_MEDIA else None)
     try:
-        ok, _ = HttpFD(downloader, options).download(str(output), {
+        fetcher = HttpFD(downloader, options)
+        if on_progress:
+            fetcher.add_progress_hook(report)
+        ok, _ = fetcher.download(str(output), {
             'url': selected['url'], 'ext': selected['_extension'],
             'http_headers': {'Referer': downloader.source_url}, 'protocol': 'https'})
         if not ok or not output.is_file() or not 12 <= output.stat().st_size <= MAX_MEDIA:
@@ -449,7 +466,7 @@ def download_media(downloader, info, output, language, subtitle_check, purpose):
         output.with_suffix(output.suffix + '.part').unlink(missing_ok=True)
 
 
-def acquire_video(url, language=None, *, network=None, bilibili_cookies=None, output=None, purpose=None):
+def acquire_video(url, language=None, *, network=None, bilibili_cookies=None, output=None, purpose=None, author_only=False, audio_only=False, on_progress=None):
     downloader = None
     media_ready = False
     try:
@@ -458,19 +475,29 @@ def acquire_video(url, language=None, *, network=None, bilibili_cookies=None, ou
             if downloader.media_only:
                 # Explicit independent media action: do not fetch or re-test subtitles,
                 # and never turn their absent query into a claim of caption absence.
-                result = download_media(downloader, info, output, language, 'not_requested', purpose)
+                result = download_media(downloader, info, output, language, 'not_requested', purpose, audio_only=audio_only, on_progress=on_progress)
                 media_ready = result.get('status') == 'media_ready'
                 return result
             downloader.stage = 'track_selection'
+            if author_only:
+                language_hint, _ = subtitle_import.preferred_language(info, language)
+                authored = {key: tracks for key, tracks in (info.get('subtitles') or {}).items()
+                            if key not in ('live_chat', 'danmaku') and not subtitle_import.track_is_automatic('subtitles', key)}
+                if not authored:
+                    if downloader.source_logger.warned:
+                        raise StopProof('metadata_incomplete')
+                    return {'status': 'author_captions_absent'}
+                info = dict(info, subtitles=authored, automatic_captions={}, language=language_hint)
             selected = subtitle_import.select_track(info, language)
             languages = subtitle_import.available_caption_languages(info, formats=('vtt', 'srt', 'json3'))
             ambiguous = not selected and subtitle_import.preferred_language(info, language)[0] is None and bool(languages)
-            if ambiguous: return {'status': 'language_required', 'languages': languages}
+            if ambiguous or author_only and not selected and languages:
+                return {'status': 'language_required', 'languages': languages}
             if not selected and downloader.source_logger.warned:
                 raise StopProof('metadata_incomplete')
             if output is not None:
                 if selected and purpose != 'source': return {'status': 'captions_available'}
-                result = download_media(downloader, info, output, language, 'found' if selected else 'no_matching_captions', purpose)
+                result = download_media(downloader, info, output, language, 'found' if selected else 'no_matching_captions', purpose, audio_only=audio_only, on_progress=on_progress)
                 media_ready = result.get('status') == 'media_ready'
                 return result
             if not selected: return {'status': 'no_matching_captions'}

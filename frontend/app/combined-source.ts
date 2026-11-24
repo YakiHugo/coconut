@@ -37,7 +37,7 @@ export async function acquireAndTranscribe(store:AppStore,key:string,signal?:Abo
   if(!current())throw Error('来源已变化，任务未提交');
   // Navigation does not discard the durable receipt. Explicit stop is a
   // separately confirmed server action, never an aborted HTTP request.
-  const response=await fetch('api/v1/source-jobs',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({protocolVersion:1,libraryId,key,source:hash,operation_id:requestedId,kind:'download_transcribe',localOnly:true,acquisitionMode:'incremental-experimental-v1',consent:true,...(afterTranscriptionReview?{after_transcription_review:afterTranscriptionReview}:{})})});
+  const response=await fetch('api/v1/source-jobs',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({protocolVersion:1,libraryId,key,source:hash,operation_id:requestedId,kind:'download_transcribe',localOnly:true,acquisitionMode:'incremental-experimental-v1',consent:true,saveResult:true,...(afterTranscriptionReview?{after_transcription_review:afterTranscriptionReview}:{})})});
   const data=await response.json();if(!response.ok)throw Error(data.error||'任务尚未确认，请在来源任务中核对');return acceptReceipt(data.job,requestedId);
  })().finally(()=>{intent!.promise=undefined;});}
  let job;try{job=await intent.promise;}finally{

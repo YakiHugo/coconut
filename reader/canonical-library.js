@@ -178,6 +178,20 @@
    }
    const adapter={backend:'canonical',maxBatchSize:100,maxBatchBytes:16777216,documentEpoch:key=>tokens.get(key)?.deleted?null:tokens.get(key)?.identity.lifetime??null,
     mediaLibraryIdentity:async()=>({ok:true,identity:m.mediaLibraryIdentity}),
+    async refreshDocument(key,adopt){
+     const previous=tokens.get(key);
+     if(closed||!previous||previous.deleted)return false;
+     const {record}=await request('/document?'+new URLSearchParams({protocolVersion:'1',key}));
+     if(!record||record.key!==key||record.document?.key!==key||record.deleted||
+        record.token?.epoch!==m.epoch||!Number.isSafeInteger(record.token.revision)||
+        record.identity?.lifetime!==previous.identity.lifetime||record.identity.position!==previous.identity.position||
+        record.token.revision<=previous.token.revision)return false;
+     if(await hash(JSON.stringify(record.document))!==record.sha256)throw issue('corruption');
+     const document=project(record.document,{...validate(root.structuredClone(record.document)),key});
+     if(closed||tokens.get(key)!==previous||!adopt(document))return false;
+     tokens.set(key,record);
+     return true;
+    },
     async adoptReadingReview(current,accept){
      const prior=tokens.get(current.key);
      if(closed||!prior||prior.deleted)return false;

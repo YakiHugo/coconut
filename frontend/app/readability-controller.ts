@@ -70,7 +70,7 @@ export function createReadabilityController(deps:Dependencies){
      await apply(job,key,request,owner.signal);return;
     }
     if(liveStates.includes(job.state)){
-     if(job.needsMedia&&media&&job.mediaIdentity===media.identity){const upload=file||await loadMedia(media,owner.signal);if(generation!==request||owner.signal.aborted||(deps.getMedia(key)?.identity??null)!==media.identity)return;const issue=transcriptionFileIssue(upload);if(issue)throw Error(issue);job=checkJob(await deps.request('api/v1/readability/jobs/'+job.id+'/media',{method:'POST',headers:{'Content-Type':'application/octet-stream'},body:upload,signal:owner.signal}),key);emit({job,message:'原声已接收，继续本地整理。'});}
+     if(job.needsMedia&&media&&job.mediaIdentity===media.identity&&!media.identity.startsWith('source-media-sha256:')){const upload=file||await loadMedia(media,owner.signal);if(generation!==request||owner.signal.aborted||(deps.getMedia(key)?.identity??null)!==media.identity)return;const issue=transcriptionFileIssue(upload);if(issue)throw Error(issue);job=checkJob(await deps.request('api/v1/readability/jobs/'+job.id+'/media',{method:'POST',headers:{'Content-Type':'application/octet-stream'},body:upload,signal:owner.signal}),key);emit({job,message:'原声已接收，继续本地整理。'});}
      return;
     }
     if(!run)return;
@@ -83,6 +83,7 @@ export function createReadabilityController(deps:Dependencies){
    const runnable=inspectResources(doc,{audio:!!file||run&&!!media,...caps});
    if(!runnable.steps.length||!run&&!automatic)return;
    const savedMedia=caps.savedMedia&&runnable.steps.includes('speakers')?media?.identity.match(/^source-media-sha256:([a-f0-9]{64})$/)?.[1]:undefined;
+   if(media?.identity.startsWith('source-media-sha256:')&&runnable.steps.includes('speakers')&&!savedMedia)throw Error('请更新服务以直接读取已保存的原声');
    let audio=savedMedia?null:file;
    if(run&&runnable.steps.includes('speakers')&&!savedMedia&&!audio&&media)audio=await loadMedia(media,owner.signal);
    if(audio){const issue=transcriptionFileIssue(audio);if(issue)throw Error(issue);}

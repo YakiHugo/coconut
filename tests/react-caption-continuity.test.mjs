@@ -9,7 +9,11 @@ test('actual caption service language recovery carries explicit choice and retai
   x.open(url);await wait(()=>x.w.document.querySelector('[aria-label="选择视频原语言"]'));
   assert.equal(x.docs().length,0);assert.equal(x.button('按所选原语言重试').disabled,true);assert.deepEqual(f.requests.map(r=>r.language),[null]);
   x.button('我的内容 0').click();await wait(()=>x.w.document.querySelector('.library-page'));await x.discover();assert.equal(x.w.document.querySelector('#source-url').value,url);
-  const select=x.w.document.querySelector('[aria-label="选择视频原语言"] select');assert.deepEqual([...select.options].map(o=>o.value),['','en','fr']);x.select(select,'en');await wait(()=>!x.button('按所选原语言重试').disabled);
+  const picker=x.w.document.querySelector('[aria-label="选择视频原语言"] [role=combobox]');picker.click();
+  await wait(()=>x.w.document.querySelectorAll('[role=option]').length===3);
+  const choices=[...x.w.document.querySelectorAll('[role=option]')];
+  assert.deepEqual(choices.map(option=>option.firstChild.textContent),['请选择原语言','en','fr']);
+  choices[1].click();await wait(()=>!x.button('按所选原语言重试').disabled);
   x.button('按所选原语言重试').click();await wait(()=>x.docs().length===1);assert.deepEqual(f.requests.map(r=>r.language),[null,'en']);assert.equal(x.docs()[0].language,'en');assert.equal(x.docs()[0].source_url,url);
   await x.discover();assert.equal(x.w.document.querySelector('#source-url').value,url);x.input(x.w.document.querySelector('#source-url'),'https://x.com/other/status/999');await wait(()=>!x.w.document.querySelector('[aria-label="选择视频原语言"]'));assert.equal(x.docs().length,1);
  }finally{await x.w.happyDOM.close();}

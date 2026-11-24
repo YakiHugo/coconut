@@ -198,7 +198,7 @@ p{line-height:1.7}
 .rw-selection{border:1px solid var(--reading-edge);background:var(--reading-raised);border-radius:3px}
 .rw-empty,.rw-annotations>div{background:var(--reading-raised);border-radius:3px}
 .rw-translation,.rw-player p,.rw-media-unavailable{color:var(--muted)}
-.rw-passage,.rw-corrections{border-color:var(--reading-edge)}
+.rw-passage{border-color:var(--reading-edge)}
 .rw-summary-heading h2{font-family:var(--ui-font);font-size:28px;font-weight:550;letter-spacing:-.035em}
 .react-ai-panel,.remote-media,.ingestion-panel,.native-media-panel{max-width:872px;margin:20px auto 50px;padding:24px 0;border-top:1px solid var(--reading-edge)}
 .react-ai-panel summary{cursor:pointer;font-size:14px}
@@ -213,6 +213,8 @@ p{line-height:1.7}
 .react-ai-panel article,.ingestion-panel article{padding:18px 0;border-bottom:1px solid var(--reading-edge);overflow-wrap:anywhere}
 .ingestion-panel label{display:block}
 .reader-workspace .ingestion-panel{margin:24px 0}
+.source-download-progress progress{display:block;width:100%;height:6px;accent-color:var(--accent)}
+.source-download-progress p{font-variant-numeric:tabular-nums}
 .native-media-panel{font-size:12px;color:var(--muted)}
 .native-media-panel button{font-size:12px;margin:8px}
 .native-media-panel p{font-size:12px;overflow-wrap:anywhere}
@@ -307,3 +309,9 @@ p{line-height:1.7}
 }
 
 @media(max-width:480px){.settings-panel .reading-preferences-options .rw-choice>button{width:170px;flex-basis:170px}.settings-panel .reading-preferences-options :is(label,.rw-choice){gap:12px}}
+
+.source-job-status{display:grid;gap:6px;justify-items:start;font-size:13px;color:var(--muted)}
+.source-job-status:empty{display:none}
+.source-job-status p{margin:8px 0}
+.source-job-status progress{width:min(240px,100%);accent-color:var(--accent)}
+.source-job-status button{font-size:13px}

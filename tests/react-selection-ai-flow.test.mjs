@@ -23,7 +23,7 @@ async function setup(){
  };
  for(const code of sources)w.eval(code);const adapter=w.CoconutLibraryStore.createLegacyAdapter({getStorage:()=>w.localStorage,validate:w.Coconut.validate});w.CoconutStorageProvider={initialize:async()=>({ok:true,adapter,loaded:adapter.load()})};w.eval(script);
  const button=text=>[...w.document.querySelectorAll('button')].find(b=>(b.getAttribute('aria-label')||b.textContent)===text);
- await wait(()=>button('继续阅读'));button('继续阅读').click();await wait(()=>w.document.querySelector('.rw-cues'));
+ await wait(()=>button('继续阅读'));button('继续阅读').click();await wait(()=>w.document.querySelector('.rw-passage'));button('来源与整理').click();await wait(()=>w.document.querySelector('dialog[open]'));button('逐句原文').click();await wait(()=>w.document.querySelector('.rw-cue'));
  const selectText=async(id,from=0,to=15)=>{const el=w.document.querySelector(`[data-source-id="${id}"]`),range=w.document.createRange();range.setStart(el.firstChild,from);range.setEnd(el.firstChild,to);w.getSelection().removeAllRanges();w.getSelection().addRange(range);el.dispatchEvent(new w.MouseEvent('mouseup',{bubbles:true}));await wait(()=>button('理解选中文字'));};
  const consent=()=>[...w.document.querySelectorAll('.ai-workspace input[type=checkbox]')].find(el=>el.parentElement.textContent.startsWith('我确认'));
  return {w,doc,calls,scrolled,button,selectText,consent,hold:()=>held=true,get observed(){return observed;},get aborts(){return aborts;},saved:()=>JSON.parse(w.localStorage.getItem('coconut-reader-v1')).documents[0]};
@@ -69,20 +69,6 @@ test('passage return target is explicitly focusable in real browsers and retains
   assert.equal(w.document.activeElement.getAttribute('tabindex'),'0');assert.equal(w.document.querySelector('[role=tab][aria-selected=true]').dataset.mode,'passages');assert.equal(w.document.activeElement.contains(w.document.querySelector('[data-source-id="cue-0"]')),true);
  }finally{await w.happyDOM.close();}
 });
-test('changed search results cannot falsely report restoration of a now hidden selection',async()=>{
- const h=await setup(),{w}=h;try{
-  const search=w.document.querySelector('input[type=search]'),setInput=(input,value)=>{Object.getOwnPropertyDescriptor(w.HTMLInputElement.prototype,'value').set.call(input,value);input.dispatchEvent(new w.Event('input',{bubbles:true}));};
-  h.button('搜索文字稿').click();setInput(search,'Original phrase 0');await wait(()=>w.document.querySelectorAll('[data-source-id]').length===1);
-  await h.selectText('cue-0');h.button('理解选中文字').click();await wait(()=>w.document.querySelector('.react-ai-panel').open);
-  const labels=[...w.document.querySelectorAll('.rw-corrections label')];
-  setInput(labels.find(label=>label.textContent==='查找原文').querySelector('input'),'Original phrase 0');
-  setInput(labels.find(label=>label.textContent==='替换为').querySelector('input'),'Revised phrase 0');
-  await wait(()=>!h.button('预览修改').disabled);h.button('预览修改').click();await wait(()=>h.button('应用所选修改'));h.button('应用所选修改').click();
-  await wait(()=>h.saved().segments[0].text.startsWith('Revised phrase 0')&&!w.document.querySelector('[data-source-id="cue-0"]'));
-  h.button('返回所选原文').click();await wait(()=>w.document.querySelector('.reader-workspace > p[role=status]').textContent.includes('未恢复旧选区'));assert.equal(w.document.activeElement,w.document.querySelector('.reader-workspace'));assert.equal(w.document.querySelector('.rw-selection'),null);
- }finally{await w.happyDOM.close();}
-});
-
 function key(w,target,name,options={}){target.focus();const event=new w.KeyboardEvent('keydown',{key:name,bubbles:true,cancelable:true,...options});target.dispatchEvent(event);return event;}
 for(const modeName of ['transcript','passages'])test('selection keyboard entry is local, reversible and dismissible in '+modeName,async()=>{
  const h=await setup(),{w}=h;try{
@@ -100,16 +86,12 @@ for(const modeName of ['transcript','passages'])test('selection keyboard entry i
   const close=[...w.document.querySelectorAll('.rw-selection button')].find(b=>b.getAttribute('aria-label')==='关闭选文操作');close.click();await wait(()=>!w.document.querySelector('.rw-selection'));assert.equal(w.document.activeElement,source);assert.equal(key(w,source,'Tab').defaultPrevented,false);assert.equal(h.calls.length,0);
  }finally{await w.happyDOM.close();}
 });
-test('selection keyboard does not intercept editing controls, other sources, modifiers, IME or cleared and revised selections',async()=>{
+test('selection keyboard does not intercept editing controls, other sources, modifiers, IME or cleared selections',async()=>{
  const h=await setup(),{w}=h;try{
-  await h.selectText('cue-0');const source=w.document.querySelector('[data-source-id="cue-0"]'),other=w.document.querySelector('[data-source-id="cue-3"]'),correction=[...w.document.querySelectorAll('.rw-corrections label')].find(label=>label.textContent==='查找原文').querySelector('input');
-  for(const target of [correction,other,w.document.querySelector('input[type=search]')]){assert.equal(key(w,target,'Tab').defaultPrevented,false);assert.equal(key(w,target,'Escape').defaultPrevented,false);}
+  await h.selectText('cue-0');const source=w.document.querySelector('[data-source-id="cue-0"]'),other=w.document.querySelector('[data-source-id="cue-3"]');
+  for(const target of [other,w.document.querySelector('input[type=search]')]){assert.equal(key(w,target,'Tab').defaultPrevented,false);assert.equal(key(w,target,'Escape').defaultPrevented,false);}
   for(const options of [{isComposing:true},{keyCode:229},{ctrlKey:true},{metaKey:true},{altKey:true}]){assert.equal(key(w,source,'Tab',options).defaultPrevented,false);assert.equal(key(w,source,'Escape',options).defaultPrevented,false);}
   w.getSelection().removeAllRanges();source.dispatchEvent(new w.MouseEvent('mouseup',{bubbles:true}));await wait(()=>!w.document.querySelector('.rw-selection'));assert.equal(key(w,source,'Tab').defaultPrevented,false);
-  await h.selectText('cue-0');Object.getOwnPropertyDescriptor(w.HTMLInputElement.prototype,'value').set.call(correction,'Original phrase 0');correction.dispatchEvent(new w.Event('input',{bubbles:true}));await wait(()=>!h.button('预览修改').disabled&&h.button('理解选中文字').disabled);
-  assert.equal(key(w,source,'Tab').defaultPrevented,true);assert.equal(w.document.activeElement,h.button('复制原话'),'Skip unavailable actions while a source correction is dirty');
-  const replacement=[...w.document.querySelectorAll('.rw-corrections label')].find(label=>label.textContent==='替换为').querySelector('input');Object.getOwnPropertyDescriptor(w.HTMLInputElement.prototype,'value').set.call(replacement,'Revised phrase 0');replacement.dispatchEvent(new w.Event('input',{bubbles:true}));
-  h.button('预览修改').click();await wait(()=>h.button('应用所选修改'));h.button('应用所选修改').click();await wait(()=>h.saved().segments[0].text.startsWith('Revised phrase 0')&&!w.document.querySelector('.rw-selection'));assert.equal(key(w,source,'Tab').defaultPrevented,false);
-  await h.selectText('cue-0');[...w.document.querySelectorAll('.app-sidebar nav button')].find(b=>b.textContent.startsWith('我的内容')).click();await wait(()=>w.document.querySelector('.library-page'));h.button('继续阅读').click();await wait(()=>w.document.querySelector('.rw-cues'));assert.equal(key(w,w.document.querySelector('[data-source-id="cue-0"]'),'Tab').defaultPrevented,false,'A new reading session never inherits the old entry');
+  await h.selectText('cue-0');[...w.document.querySelectorAll('.app-sidebar nav button')].find(b=>b.textContent.startsWith('我的内容')).click();await wait(()=>w.document.querySelector('.library-page'));h.button('继续阅读').click();await wait(()=>w.document.querySelector('.rw-passage'));assert.equal(key(w,w.document.querySelector('[data-source-id="cue-0"]'),'Tab').defaultPrevented,false,'A new reading session never inherits the old entry');
  }finally{await w.happyDOM.close();}
 });

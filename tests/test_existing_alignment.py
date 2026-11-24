@@ -47,6 +47,52 @@ class ExistingAlignmentTests(unittest.TestCase):
     def test_duplicate_ids_rejected(self):
         self.doc['segments']*=2
         with self.assertRaises(ValueError):align_document(self.doc,4,self.good)
+
+    def test_context_pass_fills_collapsed_clock_without_shifting_good_clock(self):
+        first = [dict(word='Hello', start=1.1, end=1.5), dict(word='world', start=2., end=2.)]
+        alternate = [dict(word='Hello', start=1.14, end=1.48), dict(word='world', start=1.96, end=2.16)]
+        result = align_document(self.doc, 4, lambda cue:first, retry=lambda cue:alternate)
+        words = result['document']['segments'][0]['words']
+        self.assertEqual([(w['start'],w['end']) for w in words], [(1.1,1.5),(1.96,2.16)])
+        self.assertEqual(''.join(w['word'] for w in words), 'Hello, world!')
+        self.assertEqual(result['alignment_report']['cues'][0]['clock_recovery'], 'context_pass')
+        self.assertEqual(first[0]['word'], 'Hello')
+        self.assertEqual(alternate[0]['word'], 'Hello')
+
+    def test_context_pass_cannot_buy_coverage_with_wrong_text_drift_or_overlap(self):
+        first = [dict(word='Hello',start=1.1,end=1.5), dict(word='world',start=1.4,end=1.4)]
+        for replacement in [dict(word='other',start=1.5,end=1.6),dict(word='world',start=2,end=2.1),
+                            dict(word='world',start=1.35,end=1.44)]:
+            result = align_document(self.doc,4,lambda cue:first,retry=lambda cue:[first[0],replacement])
+            self.assertEqual(result['alignment_report']['aligned_cues'],0)
+            self.assertEqual(result['document']['segments'],self.doc['segments'])
+        from unittest.mock import Mock
+        retry = Mock()
+        align_document(self.doc,4,self.good,retry=retry)
+        align_document(self.doc,4,lambda cue:[dict(word='different',start=1.,end=1.)],retry=retry)
+        retry.assert_not_called()
+    def test_fresh_asr_keeps_text_and_sentence_when_word_retry_is_inconclusive(self):
+        from existing_alignment import repair_transcribed_clocks
+        from unittest.mock import Mock
+        with tempfile.TemporaryDirectory() as tmp:
+            directory = Path(tmp)
+            cue = {**self.doc['segments'][0], 'words': [
+                dict(word='Hello, ', start=1.1, end=1.5), dict(word='world!', start=2., end=2.)]}
+            good = {**copy.deepcopy(cue), 'id':'good'}
+            good['words'][1]['end'] = 2.3
+            for finish, expected_basis in [(2.16, 'word'), (2.82, 'segment')]:
+                doc = dict(language='en', segments=[copy.deepcopy(cue), copy.deepcopy(good)])
+                measure = Mock(return_value=[dict(word='Hello', start=1.1, end=1.5),
+                                             dict(word='world', start=2., end=finish)])
+                with patch('audio_pipeline.prepare_audio'), patch('audio_pipeline._wav_frames', return_value=64000), patch('existing_alignment.audio_aligner', return_value=measure):
+                    repair_transcribed_clocks(doc, directory/'audio.wav', directory, 'model')
+                revised = doc['segments'][0]
+                self.assertEqual((revised['text'], revised['start'], revised['end']), ('Hello, world!', 1., 3.))
+                self.assertEqual(revised['timing_basis'], expected_basis)
+                self.assertEqual('words' in revised, expected_basis == 'word')
+                self.assertEqual(doc['segments'][1], good)
+                measure.assert_called_once()
+
     def test_worker_cache_binds_audio_text_and_model_and_loads_only_aligner(self):
         from existing_alignment import run_alignment
         from audio_pipeline import _file_digest, SAMPLE_RATE

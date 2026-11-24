@@ -7,7 +7,7 @@ export type ReadingPiece =
     | {kind:'mark'; text:string; at:number};
 export type ReadingReplacement = {from:number; to:number; text:string};
 export type ReadingJoin = {first:string;previous?:string};
-export type ReadingRun = {cueId:string; pieces:ReadingPiece[]; speech:SpeechPart; mapped:boolean; edited:boolean};
+export type ReadingRun = {cueId:string; partIndex:number; pieces:ReadingPiece[]; speech:SpeechPart; mapped:boolean; edited:boolean};
 export type ReadingParagraph = {runs:ReadingRun[]; separators:Map<number,string>};
 
 export function readingParagraphs(cues:ReaderCue[], options:{
@@ -42,10 +42,10 @@ export function readingParagraphs(cues:ReaderCue[], options:{
         const breaks=new Set(projection?.breaks.filter(item=>!(joinedAfter&&item.at===cue.text.length)&&!edits.some(edit=>edit.from<item.at&&item.at<edit.to)).map(item=>item.at));
         const hidden=projection?.spans.filter(span=>span.action==='hide'&&!edits.some(edit=>edit.from<span.to&&span.from<edit.to))??[];
         const edited=Boolean(edits.length||marks.size||breaks.size||hidden.length);
-        const speech=mapped&&!edits.length?speechParts(playback):[{from:0,to:cue.text.length,start:playback.start,end:playback.end}];
+        const speech=speechParts(playback);
         const clock=edited?sourceClockForRange(playback):null;
         let cueText='';
-        for(const part of speech) {
+        for(const [partIndex,part] of speech.entries()) {
             const cuts=new Set([part.from,part.to]);
             const inside=(at:number)=>at>part.from&&at<part.to;
             for(const span of [...hidden,...edits]) {
@@ -62,7 +62,7 @@ export function readingParagraphs(cues:ReaderCue[], options:{
                 if(gap)paragraph.separators.set(paragraph.runs.length,gap);
                 const source=pieces.filter(piece=>piece.kind!=='mark');
                 const clip=clock&&source.length?clock(source[0].from,source.at(-1)!.to,part):part;
-                paragraph.runs.push({cueId:cue.id,speech:clip,pieces,mapped,edited});
+                paragraph.runs.push({cueId:cue.id,partIndex,speech:clip,pieces,mapped,edited});
                 cueText+=text;
                 pieces=[];
             };
@@ -72,7 +72,7 @@ export function readingParagraphs(cues:ReaderCue[], options:{
                 if(replacement) {
                     if(from===replacement.from)pieces.push({kind:'replacement',from,to:replacement.to,text:options.displayText(replacement.text)});
                 } else if(!hidden.some(span=>span.from<=from&&to<=span.to)) {
-                    pieces.push({kind:'source',from,to,text:mapped?shown.slice(from,to):edits.length?options.displayText(cue.text.slice(from,to)):shown});
+                    pieces.push({kind:'source',from,to,text:mapped?shown.slice(from,to):!edits.length&&speech.length===1?shown:options.displayText(cue.text.slice(from,to))});
                 }
                 const mark=marks.get(to);
                 if(mark)pieces.push({kind:'mark',at:to,text:mark});
@@ -80,7 +80,7 @@ export function readingParagraphs(cues:ReaderCue[], options:{
             }
             append();
         }
-        if(!cueText)paragraph.runs.push({cueId:cue.id,speech:speech[0],pieces:[],mapped,edited});
+        if(!cueText)paragraph.runs.push({cueId:cue.id,partIndex:0,speech:speech[0],pieces:[],mapped,edited});
         else previous=cueText;
     }
     if(paragraph.runs.length) {

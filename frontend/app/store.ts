@@ -178,6 +178,19 @@ export function createAppStore(deps: StoreDependencies) {
         nativeOwner(key:string){const doc=getDocument(key),base=deps.nativeOwner?.(key);if(retirements.has(key)||!base||!doc?.local_media_source||!writable()||savedSources.get(key)!==JSON.stringify(doc.local_media_source))return null;return {...base,key,source:structuredClone(doc.local_media_source) as Record<string,unknown>};},
         releaseNativeMedia(){for(const [key,item]of media){if(item.nativeToken){releaseMedia(item);media.delete(key);}}publish();},
         setNativeLifecycle(value:typeof nativeLifecycle){nativeLifecycle=value;},invalidateMedia(){nativeLifecycle?.invalidate();},
+        async refreshDocument(key:string){
+            const current=getDocument(key),ready=()=>current&&getDocument(key)===current&&!dirty&&!structuralBusy&&writable()&&!pipeline.status().unsaved;
+            if(!ready())return false;
+            const adopted=await deps.refreshDocument?.(key,next=>{
+                if(!ready()||next.key!==key)return false;
+                documents=documents.map(doc=>doc===current?next:doc);
+                versions.set(key,getRevision(key)+1);
+                savedSources.set(key,JSON.stringify(next.local_media_source||null));
+                return true;
+            });
+            if(adopted)publish();
+            return Boolean(adopted);
+        },
         getDocument, getRevision, commitDocument,adoptReadingReview,restoreJSON,removeDocument,undoRemove,canUndoRemove:()=>!!removed&&!structuralBusy,recoveryDocuments:()=>removed&&!documents.some(doc=>doc.key===removed!.key)?[...documents,removed]:documents, addDocument, select, restoreBackup,
         navigate(next: Workspace) { if (dirty)
             return false; nativeLifecycle?.invalidate();workspace = next; publish(); return true; },

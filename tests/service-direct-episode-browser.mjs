@@ -48,7 +48,7 @@ try{
  await expect(page.locator('.reader-workspace')).toBeVisible();
  await expect.poll(()=>fixture.counts.media).toBe(1);
  await expect(page.getByRole('dialog',{name:'任务与状态',exact:true})).toHaveCount(0);
- await expect(page.getByText('正在获取原声，完成后会自动载入播放器。',{exact:true})).toBeVisible();
+ await expect(page.getByRole('region',{name:'服务端原声与文字稿'})).toContainText('作者未提供字幕');
  releaseMedia();fixture.state.holdMedia=null;
  await expect(page.locator('audio')).toHaveAttribute('src',/api\/v1\/source-media\/content/);
  await expect(page.locator('.save-indicator')).toHaveAttribute('data-state','saved');
@@ -61,17 +61,17 @@ try{
  const key=document.key;
  const getJobs=async()=>context.request.get(origin+'/api/v1/source-jobs?'+new URLSearchParams({key})).then(response=>response.json()).then(result=>result.jobs);
  await expect.poll(async()=>(await getJobs()).find(job=>job.kind==='download')?.state).toBe('ready');
- const jobs=await getJobs();assert.equal(jobs.length,1);assert.equal(jobs[0].kind,'download');
+ const jobs=await getJobs();assert.equal(jobs.length,2);assert.equal(jobs.find(job=>job.kind==='captions').state,'absent');
  assert.equal(fixture.counts.media,1);
 
  const ingestionRequests=requests.filter(request=>request.path==='/api/v1/ingestions'&&request.method==='POST');
  assert.equal(ingestionRequests.length,2,'one link submission must discover then select exactly once');
- assert.deepEqual(ingestionRequests[0].body,{protocolVersion:1,source:{kind:'url',url:directEpisodeURL}});
+ assert.deepEqual(ingestionRequests[0].body,{protocolVersion:1,source:{kind:'url',url:directEpisodeURL},intent:'acquire'});
  assert.equal(ingestionRequests[1].body.source.url,directEpisodeURL);
  assert.deepEqual(ingestionRequests[1].body.episode,{feed_url:directEpisodeURL,episode_id:directEpisodeId});
  assert.equal(ingestionRequests[1].body.language,undefined);
  const jobRequests=requests.filter(request=>request.path==='/api/v1/source-jobs'&&request.method==='POST');
- assert.equal(jobRequests.length,1);assert.equal(jobRequests[0].body.kind,'download');assert.equal(jobRequests[0].body.key,key);
+ assert.equal(jobRequests.length,1);assert.equal(jobRequests[0].body.kind,'acquire');assert.equal(jobRequests[0].body.key,key);
  assert.equal(jobRequests[0].body.consent,true);
  assert.deepEqual(requests.filter(request=>request.method==='POST'&&['/api/podcasts/media','/api/v1/source-media','/api/v1/ingestions/upload'].includes(request.path)),[]);
  const mediaURL=new URL(await page.locator('audio').getAttribute('src'),origin).href;
@@ -87,9 +87,9 @@ try{
  await expect.poll(()=>page.locator('audio').evaluate(audio=>audio.currentTime)).toBeGreaterThan(0);
  assert.equal((await context.request.get(new URL(await page.locator('audio').getAttribute('src'),origin).href)).status(),200);
  assert.equal((await getCatalog()).entries.length,1);
- assert.equal((await getJobs()).length,1);assert.equal(fixture.counts.media,1,'reload plays stored bytes without another download');
+ assert.equal((await getJobs()).length,2);assert.equal(fixture.counts.media,1,'reload plays stored bytes without another download');
  assert.equal(requests.filter(request=>request.path==='/api/v1/source-jobs'&&request.method==='POST').length,1);
  assert.deepEqual(forbidden,[]);assert.deepEqual(errors,[]);
  await context.close();
- console.log('PASS one-click official episode import: real service/SQLite, two ingestion stages, one ready download, stored WAV playback and reload; no ASR/model/external requests.');
+ console.log('PASS one-click official episode import: real service/SQLite, two ingestion stages, independent download and author-caption check, stored WAV playback and reload; no ASR/model/external requests.');
 }finally{releaseMedia();await browser?.close();await server?.shutdown();await rm(directory,{recursive:true,force:true});}

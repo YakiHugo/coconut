@@ -74,7 +74,7 @@ export function createVideoAudioService({helper,enabledProviders=['youtube','bil
  const providers=Object.freeze([...new Set(enabledProviders)].filter(value=>['youtube','bilibili'].includes(value)));
  const available=typeof helper?.extractAudio==='function'&&providers.length>0;
  let busy=false;
- return Object.freeze({available,providers,ownerLocalOnly:helper?.ownerLocalOnly===true,sourceAvailable:available&&sourceMedia,async download(data,{signal,purpose=null,consume}={}){
+ return Object.freeze({available,providers,ownerLocalOnly:helper?.ownerLocalOnly===true,sourceAvailable:available&&sourceMedia,async download(data,{signal,purpose=null,consume,onProgress,audioOnly=false}={}){
   if(!available)throw new VideoSourceError('video_media_unavailable');
   if(purpose==='source'&&!sourceMedia)throw new VideoSourceError('video_source_unavailable');
   if(data?.consent!==true)throw Error('下载公开媒体需要明确操作');
@@ -91,6 +91,7 @@ export function createVideoAudioService({helper,enabledProviders=['youtube','bil
     throw new VideoSourceError(status,{diagnostic:result?.diagnostic,purpose});
    }
    const meta=result.source,media=result.media,bytes=result.bytes;
+   if(audioOnly&&media?.kind!=='audio')throw new VideoSourceError('media_unavailable',{purpose});
    const shape=(media?.type==='audio/mp4'&&media.kind==='audio'&&meta?.format==='m4a')||(media?.type==='video/mp4'&&media.kind==='video'&&meta?.format==='mp4');
    const lang=meta?.audio_language,validLang=typeof lang==='string'&&/^[a-z]{2,3}(?:-[A-Za-z0-9]{2,8}){0,2}$/.test(lang);
    const audioEvidence=source.provider==='youtube'?
@@ -107,7 +108,7 @@ export function createVideoAudioService({helper,enabledProviders=['youtube','bil
   };
   try{
    let result,consumed=false;
-   try{result=await helper.extractAudio({url:source.url,language,signal,...(purpose?{purpose}:{}),...(consume?{consume:async value=>{consumed=true;return processResult(value);}}:{})});if(consumed)return result;}
+   try{result=await helper.extractAudio({url:source.url,language,signal,...(audioOnly?{audioOnly:true}:{}),...(onProgress?{onProgress}:{}),...(purpose?{purpose}:{}),...(consume?{consume:async value=>{consumed=true;return processResult(value);}}:{})});if(consumed)return result;}
    catch(error){
     if(signal?.aborted||error?.code==='CAPTION_CANCELLED')throw error?.code==='CAPTION_CANCELLED'?Error('媒体请求已取消'):error;
     if(error?.name==='CaptionHelperError'&&['CAPTION_TIMEOUT','CAPTION_EXIT','CAPTION_OUTPUT_LIMIT'].includes(error.code)){

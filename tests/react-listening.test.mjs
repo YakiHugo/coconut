@@ -47,7 +47,7 @@ test('selected and keyboard-chosen speech starts continuous playback, follows an
         Object.defineProperty(player,'duration',{value:60,configurable:true});await act(async()=>player.dispatchEvent(new w.Event('loadedmetadata')));
         assert.equal(plays,0);assert.equal(button('重听刚才所选'),null);
         await select('b',2,4);await act(async()=>button('从所选位置播放').click());
-        assert.equal(player.currentTime,12.5,'11 seconds + 2-second calibration - half a second of context');
+        assert.equal(player.currentTime,13,'a timed word starts at its exact clock plus calibration');
         assert.equal(plays,1);assert.equal(button('重听刚才所选'),null,'playing a selection does not add another playback button');assert.equal(w.getSelection().toString(),'');
         await act(async()=>{player.currentTime=30;player.playbackRate=1.5;player.dispatchEvent(new w.Event('timeupdate'));player.pause();});
         await select('a',0,1);
@@ -56,12 +56,12 @@ test('selected and keyboard-chosen speech starts continuous playback, follows an
         await act(async()=>{revision++;doc={...doc,media_timing:{...doc.media_timing,offset:-.2}};render();});
         assert.equal(button('重听刚才所选'),null,'document changes do not add replay controls');
         await select('a',0,1);await act(async()=>button('从所选位置播放').click());
-        assert.equal(player.currentTime,0,'context is clamped after calibration, never before the media origin');assert.equal(plays,2);
+        assert.equal(player.currentTime,0,'playback is clamped after calibration, never before the media origin');assert.equal(plays,2);
         await act(async()=>{media={...media,url:'blob:replacement'};render();});player=host.querySelector('audio');
         Object.defineProperty(player,'duration',{value:60,configurable:true});await act(async()=>player.dispatchEvent(new w.Event('loadedmetadata')));
         assert.equal(button('重听刚才所选'),null,'replacement media does not add replay controls');assert.equal(plays,2);
         await select('b',2,4);await act(async()=>button('从所选位置播放').click());
-        assert.equal(player.currentTime,10.3);assert.equal(plays,3);
+        assert.equal(player.currentTime,10.8);assert.equal(plays,3);
         await act(async()=>{media=null;render();});await act(async()=>{media={url:'blob:replacement',identity:'file-candidate-v1:listening',name:'voice.wav',kind:'audio'};render();});
         assert.equal(button('重听刚才所选'),null,'reattaching media does not add replay controls');assert.equal(plays,3);
         player=host.querySelector('audio');Object.defineProperty(player,'duration',{value:60,configurable:true});
@@ -91,7 +91,7 @@ test('selected and keyboard-chosen speech starts continuous playback, follows an
         await act(async()=>{revision++;doc={...doc,media_timing:{...doc.media_timing,offset:0},segments:[{id:'tail',start:59.8,end:60,text:'最后',words:[{word:'最',start:59.8,end:59.9},{word:'后',start:59.9,end:60}]}]};render();});
         const tail=host.querySelector('[data-source-id="tail"]').closest('.rw-original');
         await act(async()=>{w.getSelection().removeAllRanges();tail.focus();tail.dispatchEvent(new w.KeyboardEvent('keydown',{key:'Enter',bubbles:true,cancelable:true}));});
-        await act(async()=>button('从所选位置播放').click());assert.ok(Math.abs(player.currentTime-59.3)<.001);
+        await act(async()=>button('从所选位置播放').click());assert.ok(Math.abs(player.currentTime-59.8)<.001);
         await act(async()=>{player.currentTime=59.99;player.dispatchEvent(new w.Event('timeupdate'));});
         assert.equal(player.currentTime,59.99);assert.equal(player.paused,false,'speech near the media end keeps playing until the media itself ends');
     }finally{

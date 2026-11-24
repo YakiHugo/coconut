@@ -1,8 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createRequire} from 'node:module';
-import {build} from 'esbuild';
-import {Window} from 'happy-dom';
 const require=createRequire(import.meta.url),E=require('../reader/editions.js'),C=require('../reader/core.js');
 const createdAt='2026-10-30T08:00:00.000Z';
 const fixture=()=>({...C.validate({title:'自写访谈',language:'zh',source_url:'https://example.test/interview',notes:{a:'笔记'},segments:[
@@ -82,18 +80,4 @@ test('manual editions preserve distinct voices even when their display names mat
  const next=create(doc);
  assert.deepEqual(next.reading_editions.editions[0].blocks.map(b=>b.source_refs),[['a'],['b']]);
  assert.deepEqual(doc.segments.map(c=>c.speaker_id),['speaker-0001','speaker-0002']);
-});
-const output=await build({entryPoints:['frontend/reader-workspace/domain.ts'],bundle:true,write:false,format:'esm',platform:'node'});
-const D=await import('data:text/javascript;base64,'+Buffer.from(output.outputFiles[0].text).toString('base64'));
-test('source selections reject edited DOM; edition selections use the actual edited text and reject cross-block selections',async()=>{
- const win=new Window(),host=win.document.createElement('div');win.document.body.append(host);
- const doc=fixture();host.innerHTML='<p data-source-id="b">我觉得值得试试。</p>';
- const range=win.document.createRange();range.selectNodeContents(host.firstChild);win.getSelection().addRange(range);
- assert.equal(D.captureSourceSelection(host,doc,win.getSelection(),()=>''),null);
- host.innerHTML='<div data-edition-block-id="one"><p>第一段。</p>\n\n<p>第二段。</p></div><div data-edition-block-id="two">另一段。</div>';
- const blocks=[{id:'one',paragraphs:['第一段。','第二段。']},{id:'two',paragraphs:['另一段。']}];
- win.getSelection().removeAllRanges();range.selectNodeContents(host.firstChild);win.getSelection().addRange(range);
- const selection=D.captureEditionSelection(host,blocks,win.getSelection());assert.equal(selection.text,'第一段。\n\n第二段。');assert.equal(selection.from,0);
- range.setEnd(host.lastChild.firstChild,3);assert.equal(D.captureEditionSelection(host,blocks,win.getSelection()),null);
- await win.happyDOM.close();
 });

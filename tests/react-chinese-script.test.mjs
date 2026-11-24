@@ -15,7 +15,7 @@ test('Chinese display preserves source offsets, searchable fields and canonical 
   await symlink(join(process.cwd(),'node_modules'),join(temp,'node_modules'),'dir');
   const bundle=await build({stdin:{contents:"export * from './frontend/reading-preferences/chinese-script';export * from './frontend/reader-workspace/domain';export * from './frontend/reader-workspace/speech';export * from './frontend/reader-workspace/workspace';",resolveDir:process.cwd(),loader:'ts'},bundle:true,format:'cjs',platform:'node',write:false,external:['react','react-dom','react-dom/client','react/jsx-runtime']});
   const file=join(temp,'ui.cjs');await writeFile(file,bundle.outputFiles[0].contents);
-  const {scriptConverter,resolveChineseScript,captureSourceSelection,selectionPlaybackStart,filterCues,ReaderWorkspace}=require(file);
+  const {scriptConverter,resolveChineseScript,captureSourceSelection,selectionPlaybackStart,ReaderWorkspace}=require(file);
   const convert=scriptConverter('zh-Hans');
   const Coconut=require('../reader/core.js'),Passages=require('../reader/passages.js');win.Coconut=Coconut;win.CoconutPassages=Passages;
   win.HTMLElement.prototype.scrollIntoView=()=>{};
@@ -52,16 +52,16 @@ test('Chinese display preserves source offsets, searchable fields and canonical 
    await act(async()=>win.getSelection().removeAllRanges());assert.equal(JSON.stringify(doc),before);
   });
 
-  await t.test('script-normalized searches cover source, translations, notes and speaker names in both reading modes',async()=>{
-   const doc=makeDoc('search-fields',{translation_view:'zh',segments:[{id:'body',start:0,end:1,text:'這裡寫代碼。'},{id:'translation',start:1,end:2,text:'English source.',translations:{zh:{text:'傳統譯文專用詞。',source_text:'English source.',provider:'user'}}},{id:'note',start:2,end:3,text:'A note cue.'},{id:'speaker',start:3,end:4,text:'A named voice.',speaker:'陳曉東'}],notes:{note:'讀書筆記專用詞'}}),before=JSON.stringify(doc);
-   await render(doc);
-   for(const [query,id] of [['代码','body'],['代碼','body'],['译文专用词','translation'],['读书笔记','note'],['陈晓东','speaker']]){
-    const filtered=filterCues(doc,query,convert);assert.deepEqual(filtered.map(cue=>cue.id),[id]);assert.equal(filtered[0],doc.segments.find(cue=>cue.id===id));
-    await search(query);assert.deepEqual([...host.querySelectorAll('[data-source-id]')].map(node=>node.dataset.sourceId),[id]);
+  await t.test('script-normalized searches count visible text and retain surrounding cues',async()=>{
+   const doc=makeDoc('search-fields',{segments:[{id:'body',start:0,end:1,text:'這裡寫代碼。代碼可以閱讀。'},{id:'context',start:1,end:2,text:'English context.'}]}),before=JSON.stringify(doc);
+   await render(doc);await act(async()=>host.querySelector('.rw-search-trigger').click());
+   for(const query of ['代码','代碼']){
+    await search(query);assert.equal(host.querySelector('.rw-search-count').textContent,'第 1 / 2 处');
+    assert.deepEqual([...host.querySelectorAll('[data-source-id]')].map(node=>node.dataset.sourceId),['body','context']);
    }
-   await search('');assert.equal(host.querySelector('.rw-translation'),null);
-   await act(async()=>host.querySelector('[role=tab][data-mode=transcript]').click());assert.equal(host.querySelector('.rw-translation'),null);
-   await search('译文专用词');assert.deepEqual([...host.querySelectorAll('[data-source-id]')].map(node=>node.dataset.sourceId),['translation']);assert.equal(JSON.stringify(doc),before);
+   await act(async()=>host.querySelector('button[aria-label="下一处"]').click());
+   assert.equal(host.querySelector('.rw-search-count').textContent,'第 2 / 2 处');
+   assert.equal(JSON.stringify(doc),before);
   });
 
   await t.test('visible format choices convert reading downloads and retain JSON and notebook originals',async()=>{
