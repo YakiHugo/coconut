@@ -1,0 +1,68 @@
+.document-grid { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: clamp(9px, 2vw, 20px); margin: 0; padding: 0; list-style: none; }
+
+.document-grid > li { min-width: 0; }
+.recent-transcripts .document-grid > li { display: grid; }
+
+.react-app .document-card {
+    display: grid;
+    grid-template-columns: minmax(0,1fr);
+    grid-template-rows: auto 1fr;
+    width: 100%;
+    padding: 0;
+    overflow: hidden;
+    border: 1px solid var(--home-edge);
+    border-radius: 12px;
+    background: var(--home-field);
+    text-align: start;
+}
+
+.react-app .document-card:is(:hover,:active,:focus-visible) { background: var(--home-active); }
+.react-app .document-card:focus-visible { outline: none; text-decoration: underline; text-underline-offset: 3px; }
+
+.document-card-cover {
+    --cover-base: #dcebec;
+    --cover-shade: #bed9d9;
+    --cover-ink: #214646;
+    display: grid;
+    grid-row: 1;
+    align-items: center;
+    aspect-ratio: 2.1;
+    overflow: hidden;
+    padding: clamp(12px, 2.7vw, 30px);
+    background: radial-gradient(ellipse at 88% 135%, var(--cover-shade) 0 54%, transparent 54.5%), var(--cover-base);
+    color: var(--cover-ink);
+}
+
+.document-card-cover[data-cover=green] { --cover-base:#dfece0; --cover-shade:#bcd6bf; --cover-ink:#214935 }
+.document-card-cover[data-cover=amber] { --cover-base:#f3e8d4; --cover-shade:#dfc4a1; --cover-ink:#5d4028 }
+.document-card-cover[data-cover=violet] { --cover-base:#e7e1f3; --cover-shade:#cec1e9; --cover-ink:#493665 }
+
+:root[data-reader-theme=dark] .document-card-cover { --cover-base:#273d3c; --cover-shade:#324e4d; --cover-ink:#d9eeea }
+:root[data-reader-theme=dark] .document-card-cover[data-cover=green] { --cover-base:#273b30; --cover-shade:#365541; --cover-ink:#e1efd8 }
+:root[data-reader-theme=dark] .document-card-cover[data-cover=amber] { --cover-base:#3b3027; --cover-shade:#544033; --cover-ink:#fae8cf }
+:root[data-reader-theme=dark] .document-card-cover[data-cover=violet] { --cover-base:#362e4b; --cover-shade:#4b3d66; --cover-ink:#eee4fc }
+
+.document-card-excerpt {
+    display: -webkit-box;
+    overflow: hidden;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 3;
+    overflow-wrap: anywhere;
+    font-family: ui-serif, "Songti SC", Georgia, serif;
+    font-size: clamp(14px, 2vw, 20px);
+    line-height: 1.5;
+}
+
+.document-card-details { display: grid; align-content: start; gap: 4px; padding: 10px 13px 12px; overflow-wrap: anywhere; }
+.document-card-details strong { font-size: 14px; line-height: 1.4; }
+.document-card-details small { color: var(--home-muted); font-size: 12px; }
+
+.document-card-cover svg { width: 28px; height: 28px; justify-self: center; }
+
+@media (max-width: 560px) {
+    .document-grid { grid-template-columns: 1fr; }
+    .react-app .document-card { min-height: 68px; grid-template-columns: 90px minmax(0,1fr); grid-template-rows: 1fr; }
+    .document-card-cover { grid-column: 1; aspect-ratio: auto; padding: 8px; }
+    .document-card-excerpt { font-size: 11px; line-height: 1.35; }
+    .document-card-details { grid-area: 1 / 2; align-content: center; }
+}

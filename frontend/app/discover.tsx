@@ -16,6 +16,7 @@ import {captionFailureDiagnostic,captionFailureSummary,captionFailureTitle,capti
 import {parseSourceLink} from './source-link';
 import {resolveEpisodeLink} from './episode-link';
 import {useToast} from './toast';
+import {CoconutWordmark, RecentTranscripts} from './discover-home';
 import { ingest, inspectFile, type Episode, type Ingestion } from './ingestion';
 import {canonicalVideoFallback as canonicalVideo,videoSourceProject,videoAudioFallback,type VideoAudioFallback} from './video-audio';
 
@@ -263,20 +264,22 @@ export function Discover({ store }: {
         finally{if(owner.current===controller){owner.current=null;setBusy(false);}}
     };
     return <section className="discover" aria-labelledby="discover-title">
-  <header className="discover-intro"><h1 id="discover-title">今天，想听什么？</h1></header>
+  <div className="discover-hero">
+  <CoconutWordmark/>
   <form className="source-composer" onSubmit={event => {event.preventDefault();submitLink();}} aria-busy={busy}>
     <label className="visually-hidden" htmlFor="source-url">播客或视频链接</label>
     <div className="source-row">
       <button className="source-add" aria-label="打开音频或视频文件" data-native-command="open-local-media" type="button" disabled={busy||attaching} onClick={() => {if(store.closeSnapshot().nonContentReasons.length)return;store.invalidateMedia();const captured=store.getSnapshot();picker.controller.begin(fileInput.current,()=>{const value=store.getSnapshot();return value.workspace===captured.workspace&&value.activeKey===captured.activeKey&&value.documents===captured.documents;});}}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg><span className="visually-hidden">打开音频或视频文件</span></button>
       <input id="source-url" disabled={attaching} type="text" inputMode="url" autoComplete="off" spellCheck={false} maxLength={8192} value={url} onChange={event=>changeURL(event.target.value)} onPaste={event=>{const text=event.clipboardData.getData('text'),parsed=parseSourceLink(text);if(parsed){event.preventDefault();changeURL(parsed.url);}}} placeholder="粘贴播客或视频链接…"/>
       {parsedLink&&<span className="source-kind">{parsedLink.label}</span>}
-      {busy?<button className="source-submit source-stop" type="button" aria-label="取消读取" onClick={event=>{event.preventDefault();const combined=combinedStop.current;if(combined)combined.cancel=true;cancel();setError(combined?'已停止等待，请在来源任务中核对取消状态。':'读取已取消。可重试上次读取。');}}><span aria-hidden="true"/><span className="visually-hidden">取消读取</span></button>:<button className="source-submit" disabled={!url.trim()||attaching} type="submit" aria-label="打开链接"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true"><path d="M12 19V5m-6 6 6-6 6 6"/></svg><span className="visually-hidden">打开链接</span></button>}
+      {busy?<button className="source-submit source-stop" type="button" aria-label="取消读取" onClick={event=>{event.preventDefault();const combined=combinedStop.current;if(combined)combined.cancel=true;cancel();setError(combined?'已停止等待，请在来源任务中核对取消状态。':'读取已取消。可重试上次读取。');}}><span aria-hidden="true"/><span className="visually-hidden">取消读取</span></button>:<button className="source-submit" disabled={!url.trim()||attaching} type="submit" aria-label="打开链接"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true"><path d="M4 12h15m-6-6 6 6-6 6"/></svg></button>}
     </div>
     <input key={picker.inputKey} ref={fileInput} type="file" accept="audio/*,video/*" hidden onChange={event => {const input=event.currentTarget,file=input.files?.[0];void picker.controller.accept(input,async({current})=>{if(file&&current())await openFile(file,current);});}}/>
     {busy&&<div className="source-hint"><span role="status" className="source-progress"><span aria-hidden="true"/>正在读取来源…</span></div>}
     <ReadingReviewChoice value={reviewChoice} when="取得文字稿后" disabled={busy||attaching}/>
     {combinedAvailable&&<button type="button" disabled={busy||attaching||!parsedLink} onClick={()=>submitLink(true)}>获取原声并转录</button>}
   </form>
+  </div>
   {pendingMedia&&<section aria-label="原声保存待完成"><p>项目已创建，原声尚未保存。离开本页后需重新关联原文件。</p><button disabled={busy||attaching} onClick={()=>void retryMedia()}>重试保存已下载原声</button><button disabled={busy||attaching} onClick={()=>{cancel();store.select(pendingMedia.document.key);}}>打开已创建的项目</button></section>}
   {candidate&&<section aria-label="核对原声项目"><h2>核对原声来源</h2><p>文件采样与已有项目相同，请核对是否为同一原声。</p>{candidate.keys.map(key=><button key={key} onClick={()=>chooseCandidate(key)}>关联到 {store.getDocument(key)?.title||key}</button>)}<button onClick={()=>chooseCandidate(null)}>作为新原声项目打开</button><button onClick={()=>setCandidate(null)}>取消关联</button></section>}
   {error&&!busy&&!languageRequired&&<section className="source-feedback caption-failure" data-tone={interrupted?'info':'error'} aria-label={failure&&(failure.diagnostic||failure.original)?'本次字幕读取结果':'来源读取结果'}>
@@ -310,5 +313,6 @@ export function Discover({ store }: {
   {receipt&&Boolean(content)&&diagnostics.length>0&&<section className="caption-review" aria-label="字幕解析检查"><h2 ref={lossHeading} tabIndex={-1}>{hasCaptionLoss(diagnostics)?'部分字幕未导入':'字幕解析提示'}</h2><p>保留 {(content as any).segments?.length||0} 个片段 · {diagnostics.length} 项解析提示</p><ul>{diagnostics.slice(0,100).map((item,index)=><li key={index}><p>{item.category==='malformed_timing'?'时间格式无效，片段未导入':item.category==='empty_cue'?'片段无可读文字，未导入':item.category} · 原文行 {item.startLine??'?'}–{item.endLine??'?'}</p>{item.cueId&&<p>片段：{item.cueId}</p>}{item.preview&&<pre>{item.preview}</pre>}</li>)}</ul>{diagnostics.length>100&&<p>仅展示前 100 项；其余仍计入上述数量，请核对来源。</p>}{lossPending&&<><button disabled={busy||attaching} onClick={()=>{updateSession({lossReviewed:true});if(!matches.length)openReceipt(receipt);}}>保留剩余文字稿，继续</button><button disabled={busy||attaching} onClick={()=>{setReview(null);updateSession({receipt:null,lossReviewed:false,error:''});}}>取消本次导入</button></>}</section>}
   {receipt&&Boolean(content)&&!lossPending&&<section className="source-project-choice" aria-label={matches.length?'此来源已在书架':'来源等待加入书架'}><h2 ref={choiceHeading} tabIndex={-1}>{matches.length?'此来源已在书架':'来源已就绪，尚未加入书架'}</h2>{matches.map(doc=><article key={doc.key}><h3>{doc.title}</h3><p>{doc.segments.length?`${doc.segments.length} 段文字`:'原声 · 尚无文字稿'} · 项目标识 {doc.key.slice(-8)}</p><button disabled={busy||attaching} onClick={()=>reopen(doc.key)}>继续已有项目 · {doc.key.slice(-8)}</button>{receipt.state==='ready'&&doc.project_kind==='audio_only'&&!doc.segments.length&&<button disabled={busy||attaching} onClick={()=>setReview({key:doc.key,revision:store.getRevision(doc.key)})}>核对新文字稿 · {doc.key.slice(-8)}</button>}</article>)}<button disabled={busy||attaching} onClick={()=>{setReview(null);openReceipt(receipt);}}>{matches.length?'另建独立副本':'加入书架'}</button><button disabled={busy||attaching} onClick={()=>{setReview(null);updateSession({receipt:null,error:''});}}>返回单集列表</button></section>}
   {review&&!lossPending&&receipt?.state==='ready'&&Boolean(content)&&<section aria-label="核对并接入文字稿"><h2 ref={reviewHeading} tabIndex={-1}>核对后接入原项目</h2><p>目标：{store.getDocument(review.key)?.title} · {review.key.slice(-8)}</p><p>发布者可能更新音轨，请核对文字稿与原声是否对应。原项目的笔记和书签将保留。</p><p>文字稿语言：{String((content as any).language||'未标明')} · {(content as any).segments?.length||0} 个片段</p><p>{(content as any).segments?.slice(0,3).map((cue:any)=>cue.text).join(' ')}</p><button disabled={busy||attaching} onClick={()=>void confirmAttach()}>{attaching?'正在保存…':'确认接入此原声项目'}</button><button disabled={busy||attaching} onClick={()=>setReview(null)}>取消接入</button></section>}
+  <RecentTranscripts store={store}/>
  </section>;
 }

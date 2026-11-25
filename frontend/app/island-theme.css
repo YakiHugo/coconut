@@ -1,0 +1,71 @@
+.react-app {
+    --home-surface: #fafbf5;
+    --home-ink: #203427;
+    --home-muted: #586657;
+    --home-edge: #dce4d4;
+    --home-panel: #e9f0dd;
+    --home-hill: #dce9ca;
+    --home-sky: #f8fbef;
+    --home-field: #fdfef9;
+    --home-active: #e5edd9;
+    --home-action: #284b34;
+    --home-action-text: #f9fff4;
+    --home-letter-fir: #305e3f;
+    --home-letter-leaf: #6b8b45;
+    --home-letter-jade: #43714a;
+    --home-letter-clay: #b87b54;
+    --home-face: #172b21;
+
+    --surface: var(--home-surface);
+    --text: var(--home-ink);
+    --muted: var(--home-muted);
+    --accent: var(--home-action);
+    --reading-edge: var(--home-edge);
+    --reading-raised: var(--home-panel);
+    --reading-selected: var(--home-active);
+
+    background: var(--surface);
+    color: var(--text);
+}
+
+:root[data-reader-theme=dark] .react-app {
+    --home-surface: #1a2119;
+    --home-ink: #eef5e9;
+    --home-muted: #b8c5b5;
+    --home-edge: #374537;
+    --home-panel: #253221;
+    --home-hill: #2c3e26;
+    --home-sky: #293926;
+    --home-field: #20291e;
+    --home-active: #35472f;
+    --home-action: #cbe7aa;
+    --home-action-text: #1d2d1b;
+    --home-letter-fir: #a2d487;
+    --home-letter-leaf: #c5d68c;
+    --home-letter-jade: #b9db9a;
+    --home-letter-clay: #e3b492;
+    --home-face: #eee6ba;
+}
+
+.react-app[data-workspace] > .app-sidebar {
+    background: var(--surface);
+}
+
+.react-app .reader-workspace .rw-player {
+    background: var(--home-field);
+}
+
+.react-app .reader-workspace .rw-player-play {
+    background: var(--accent);
+    color: var(--home-action-text);
+}
+
+.react-app .reader-workspace .rw-player-play:is(:hover,:focus-visible) {
+    background: var(--accent);
+    color: var(--home-action-text);
+    filter: brightness(1.16);
+}
+
+.react-app .reader-workspace .rw-player-play:focus-visible {
+    box-shadow: inset 0 -2px currentColor;
+}
