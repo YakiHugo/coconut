@@ -19,6 +19,26 @@ try {
   started = await startViteDevelopment({config:serviceConfig({COCONUT_PORT:'0',COCONUT_DATA_DIRECTORY:path.join(directory,'real-data')})});
   await page.goto(started.origin);
   await expect(page.getByRole('button',{name:'打开音频或视频文件',exact:true})).toBeVisible().catch(async error => {console.error({errors,body:await page.locator('body').innerText()});throw error;});
+  await expect(page).toHaveURL(started.origin + '/#discover');
+  await page.goto(started.origin + '/?entry=direct#unknown');
+  await expect(page).toHaveURL(started.origin + '/?entry=direct#discover');
+  await expect(page.getByRole('button',{name:'添加内容',exact:true})).toHaveAttribute('aria-current','page');
+  const library = page.getByRole('button',{name:/我的内容/});
+  await library.click();
+  await expect(page).toHaveURL(started.origin + '/?entry=direct#library');
+  await page.goBack();
+  await expect(page.getByRole('button',{name:'添加内容',exact:true})).toHaveAttribute('aria-current','page');
+  await page.goForward();
+  await expect(library).toHaveAttribute('aria-current','page');
+  const historyLength = await page.evaluate(() => history.length);
+  await page.evaluate(() => { location.hash = '#read/missing'; });
+  await expect(page).toHaveURL(started.origin + '/?entry=direct#library');
+  assert.equal(await page.evaluate(() => history.length), historyLength + 1);
+  await page.goto(started.origin + '/#read/%ZZ');
+  await expect(page).toHaveURL(started.origin + '/#library');
+  await expect(library).toHaveAttribute('aria-current','page');
+  await page.goto(started.origin + '/#read');
+  await expect(page).toHaveURL(started.origin + '/#library');
   assert.deepEqual(errors, []);
   await started.server.shutdown(); started = null;
 
