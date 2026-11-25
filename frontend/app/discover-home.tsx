@@ -1,5 +1,6 @@
-import { useRef, useState } from 'react';
+import { useRef, useState, useSyncExternalStore } from 'react';
 import type { Document } from './contracts';
+import type { AppStore } from './store';
 import { DocumentCard } from './document-card';
 
 const letters = ['c', 'o', 'c', 'o', 'n', 'u', 't'];
@@ -33,11 +34,8 @@ export function CoconutWordmark() {
     </h1>;
 }
 
-export function RecentTranscripts({ documents, onOpen, onOpenLibrary }: {
-    documents: readonly Document[];
-    onOpen: (key: string) => void;
-    onOpenLibrary: () => void;
-}) {
+export function RecentTranscripts({ store }: { store: AppStore }) {
+    const {documents} = useSyncExternalStore(store.subscribe, store.getSnapshot);
     // The library stores documents in insertion order, including legacy imports.
     const recent: Document[] = [];
     for (let index = documents.length - 1; index >= 0 && recent.length < 3; index--) {
@@ -48,12 +46,12 @@ export function RecentTranscripts({ documents, onOpen, onOpenLibrary }: {
     return <section className="recent-transcripts" aria-labelledby="recent-transcripts-title">
         <header>
             <h2 id="recent-transcripts-title">最近转录</h2>
-            {documents.length > 0 && <button type="button" className="recent-transcripts-all" onClick={onOpenLibrary}>
+            {documents.length > 0 && <button type="button" className="recent-transcripts-all" onClick={() => store.navigate('library')}>
                 全部内容 <span aria-hidden="true">→</span>
             </button>}
         </header>
         {recent.length ? <ul className="document-grid">{recent.map(document => <li key={document.key}>
-            <DocumentCard document={document} onOpen={onOpen}/>
+            <DocumentCard document={document} onOpen={store.select}/>
         </li>)}</ul> : <p>暂无转录</p>}
     </section>;
 }

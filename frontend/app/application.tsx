@@ -93,7 +93,7 @@ function ApplicationContent({store,storageSettings}: {store:AppStore;storageSett
         <main id="main-content" inert={settingsOpen}>
             {state.message && unsaved && <p className="app-message notranslate" translate="no" default-translate="no" role="status">{state.message}</p>}
             {state.dirty && <p className="app-message notranslate" translate="no" default-translate="no">请先保存或取消编辑。</p>}
-            {state.workspace === 'discover' && <Discover store={store} documents={state.documents}/>}
+            {state.workspace === 'discover' && <Discover store={store}/>}
 
  {state.workspace === 'library' && <Library store={store} onOpenSource={capture=>{const request=openNotebookSource(store,capture,++navigationId.current);if(request)setNavigationRequest(request);}}/>}
  {state.workspace === 'read' && document && <SavedSourceMedia key={'saved-media:'+document.key} store={store} documentKey={document.key}/>}

@@ -29,9 +29,8 @@ function trackLabel(track:NonNullable<Episode['transcripts']>[number]) {
     return `${track.language_source==='inherited'?'按发布者语言 ':''}${language} · ${track.type}`;
 }
 
-export function Discover({ store, documents }: {
+export function Discover({ store }: {
     store: AppStore;
-    documents: readonly Document[];
 }) {
     const notify = useToast();
     const automaticAcquisition=(window as any).CoconutClientCapabilities?.allows('sourceJobs')===true;
@@ -314,6 +313,6 @@ export function Discover({ store, documents }: {
   {receipt&&Boolean(content)&&diagnostics.length>0&&<section className="caption-review" aria-label="字幕解析检查"><h2 ref={lossHeading} tabIndex={-1}>{hasCaptionLoss(diagnostics)?'部分字幕未导入':'字幕解析提示'}</h2><p>保留 {(content as any).segments?.length||0} 个片段 · {diagnostics.length} 项解析提示</p><ul>{diagnostics.slice(0,100).map((item,index)=><li key={index}><p>{item.category==='malformed_timing'?'时间格式无效，片段未导入':item.category==='empty_cue'?'片段无可读文字，未导入':item.category} · 原文行 {item.startLine??'?'}–{item.endLine??'?'}</p>{item.cueId&&<p>片段：{item.cueId}</p>}{item.preview&&<pre>{item.preview}</pre>}</li>)}</ul>{diagnostics.length>100&&<p>仅展示前 100 项；其余仍计入上述数量，请核对来源。</p>}{lossPending&&<><button disabled={busy||attaching} onClick={()=>{updateSession({lossReviewed:true});if(!matches.length)openReceipt(receipt);}}>保留剩余文字稿，继续</button><button disabled={busy||attaching} onClick={()=>{setReview(null);updateSession({receipt:null,lossReviewed:false,error:''});}}>取消本次导入</button></>}</section>}
   {receipt&&Boolean(content)&&!lossPending&&<section className="source-project-choice" aria-label={matches.length?'此来源已在书架':'来源等待加入书架'}><h2 ref={choiceHeading} tabIndex={-1}>{matches.length?'此来源已在书架':'来源已就绪，尚未加入书架'}</h2>{matches.map(doc=><article key={doc.key}><h3>{doc.title}</h3><p>{doc.segments.length?`${doc.segments.length} 段文字`:'原声 · 尚无文字稿'} · 项目标识 {doc.key.slice(-8)}</p><button disabled={busy||attaching} onClick={()=>reopen(doc.key)}>继续已有项目 · {doc.key.slice(-8)}</button>{receipt.state==='ready'&&doc.project_kind==='audio_only'&&!doc.segments.length&&<button disabled={busy||attaching} onClick={()=>setReview({key:doc.key,revision:store.getRevision(doc.key)})}>核对新文字稿 · {doc.key.slice(-8)}</button>}</article>)}<button disabled={busy||attaching} onClick={()=>{setReview(null);openReceipt(receipt);}}>{matches.length?'另建独立副本':'加入书架'}</button><button disabled={busy||attaching} onClick={()=>{setReview(null);updateSession({receipt:null,error:''});}}>返回单集列表</button></section>}
   {review&&!lossPending&&receipt?.state==='ready'&&Boolean(content)&&<section aria-label="核对并接入文字稿"><h2 ref={reviewHeading} tabIndex={-1}>核对后接入原项目</h2><p>目标：{store.getDocument(review.key)?.title} · {review.key.slice(-8)}</p><p>发布者可能更新音轨，请核对文字稿与原声是否对应。原项目的笔记和书签将保留。</p><p>文字稿语言：{String((content as any).language||'未标明')} · {(content as any).segments?.length||0} 个片段</p><p>{(content as any).segments?.slice(0,3).map((cue:any)=>cue.text).join(' ')}</p><button disabled={busy||attaching} onClick={()=>void confirmAttach()}>{attaching?'正在保存…':'确认接入此原声项目'}</button><button disabled={busy||attaching} onClick={()=>setReview(null)}>取消接入</button></section>}
-  <RecentTranscripts documents={documents} onOpen={store.select} onOpenLibrary={() => store.navigate('library')}/>
+  <RecentTranscripts store={store}/>
  </section>;
 }
