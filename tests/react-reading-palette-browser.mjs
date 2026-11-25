@@ -4,28 +4,39 @@ import { readFile } from 'node:fs/promises';
 import { build } from 'esbuild';
 import { chromium } from '@playwright/test';
 
-test('React saved and system themes change the actual shell, reader and control palette', async () => {
+test('React saved and system themes apply the island palette to the shell, reader and controls', async () => {
  const browser=await chromium.launch({headless:true,...(process.env.COCONUT_CHROMIUM_EXECUTABLE?{executablePath:process.env.COCONUT_CHROMIUM_EXECUTABLE}:{})});
  try {
-  const context=await browser.newContext({colorScheme:'dark'}),page=await context.newPage();
+  const context=await browser.newContext({colorScheme:'dark',reducedMotion:'reduce'}),page=await context.newPage();
   // An authored document only: no provider, network, or project data is read.
   await page.route('**/*',route=>route.fulfill({contentType:'text/html',body:'<html><head></head><body><div id="root"></div></body></html>'}));
   await page.goto('http://coconut.test');
-  const styles=await Promise.all(['frontend/reader-workspace/workspace.css','frontend/reading-preferences/preferences.css','frontend/app/style.css'].map(file=>readFile(file,'utf8')));
+  const styles=await Promise.all(['frontend/reader-workspace/workspace.css','frontend/reading-preferences/preferences.css','frontend/app/style.css','frontend/app/island-theme.css'].map(file=>readFile(file,'utf8')));
   await page.addStyleTag({content:styles.join('\n')});
   const bundle=await build({stdin:{contents:`
     import React from 'react';import {createRoot} from 'react-dom/client';
     import {ReadingPreferences,useReadingPreferences} from './frontend/reading-preferences/preferences';
-    function App(){const controller=useReadingPreferences();return <><ReadingPreferences controller={controller}/><aside className="app-sidebar"><span className="sidebar-foot">Navigation</span><nav><button aria-current="page">Reader</button></nav></aside><main className="reader-workspace"><p className="rw-original">Source text</p><p className="rw-translation">Translation</p><div className="rw-player">Player</div><div className="rw-selection">Selection</div><textarea aria-label="Note"/><section className="react-ai-panel"><label>Model<select><option>Local</option></select></label><p>Details</p></section><dialog open>Dialog<input placeholder="Search"/></dialog></main></>;}createRoot(document.getElementById('root')).render(<App/>);`,loader:'tsx',resolveDir:process.cwd()},bundle:true,format:'iife',define:{'process.env.NODE_ENV':'"production"'},write:false});
+    function App(){const controller=useReadingPreferences();return <div className="react-app" data-workspace="read"><ReadingPreferences controller={controller}/><aside className="app-sidebar"><span className="sidebar-foot">Navigation</span><nav><button aria-current="page">Reader</button></nav></aside><main className="reader-workspace"><p className="rw-original">Source text</p><p className="rw-translation">Translation</p><div className="rw-player"><button className="rw-player-play">Play</button></div><div className="rw-selection">Selection</div><textarea aria-label="Note"/><section className="react-ai-panel"><label>Model<select><option>Local</option></select></label><p>Details</p></section><dialog open>Dialog<input placeholder="Search"/></dialog></main></div>;}createRoot(document.getElementById('root')).render(<App/>);`,loader:'tsx',resolveDir:process.cwd()},bundle:true,format:'iife',define:{'process.env.NODE_ENV':'"production"'},write:false});
   await page.evaluate(()=>localStorage.setItem('coconut-reading-theme-v1','dark'));
   await page.addScriptTag({content:bundle.outputFiles[0].text});
   await page.waitForFunction(()=>document.documentElement.dataset.readerTheme==='dark');
-  const palette=()=>page.evaluate(()=>Object.fromEntries(['html','body','.app-sidebar','.sidebar-foot','.rw-original','.rw-translation','.rw-player','.rw-selection','textarea','.react-ai-panel select','dialog','dialog input'].map(selector=>{const style=getComputedStyle(document.querySelector(selector));return [selector,{color:style.color,background:style.backgroundColor}];})));
-  const dark=await palette();assert.equal(dark.html.background,'rgb(25, 26, 29)');assert.equal(dark.html.color,'rgb(237, 237, 238)');
-  for(const selector of ['.app-sidebar','textarea','.react-ai-panel select','dialog','dialog input'])assert.equal(dark[selector].background,'rgb(36, 37, 42)',selector);
-  assert.equal(dark['.rw-original'].color,dark.html.color);assert.equal(dark['.rw-translation'].color,'rgb(164, 165, 173)');assert.equal(dark['.rw-player'].background,dark.html.background);assert.equal(dark['.rw-selection'].background,'rgb(42, 51, 82)');
+  const palette=()=>page.evaluate(()=>Object.fromEntries(['.react-app','.app-sidebar','.app-sidebar nav','.app-sidebar [aria-current]','.sidebar-foot','.rw-original','.rw-translation','.rw-player','.rw-player-play','.rw-selection','textarea','.react-ai-panel select','dialog','dialog input'].map(selector=>{const style=getComputedStyle(document.querySelector(selector));return [selector,{color:style.color,background:style.backgroundColor}];})));
+  const dark=await palette();
+  assert.equal(dark['.react-app'].background,'rgb(26, 33, 25)');
+  assert.equal(dark['.app-sidebar'].background,dark['.react-app'].background);
+  for(const selector of ['.app-sidebar nav','textarea','.react-ai-panel select','dialog','dialog input'])assert.equal(dark[selector].background,'rgb(37, 50, 33)',selector);
+  assert.equal(dark['.rw-original'].color,'rgb(238, 245, 233)');
+  assert.equal(dark['.rw-translation'].color,'rgb(184, 197, 181)');
+  assert.equal(dark['.rw-player'].background,dark['.app-sidebar [aria-current]'].background);
+  assert.equal(dark['.rw-player-play'].background,'rgb(203, 231, 170)');
+  assert.equal(dark['.rw-selection'].background,'rgb(53, 71, 47)');
   const theme=page.getByRole('combobox',{name:'主题',exact:true});await theme.press('Home');await theme.press('Enter');
-  const light=await palette();assert.equal(light.html.background,'rgb(250, 250, 249)');assert.notDeepEqual(light,dark);assert.equal(light['.app-sidebar'].background,'rgb(250, 250, 249)');
+  const light=await palette();
+  assert.equal(light['.react-app'].background,'rgb(250, 251, 245)');
+  assert.equal(light['.app-sidebar'].background,light['.react-app'].background);
+  assert.equal(light['.rw-original'].color,'rgb(32, 52, 39)');
+  assert.equal(light['.rw-player-play'].background,'rgb(40, 75, 52)');
+  assert.notDeepEqual(light,dark);
   await theme.press('End');await theme.press('Enter');await page.waitForFunction(()=>document.documentElement.dataset.readerTheme==='dark');assert.deepEqual(await palette(),dark);
   await page.emulateMedia({colorScheme:'light'});await page.waitForFunction(()=>document.documentElement.dataset.readerTheme==='light');assert.deepEqual(await palette(),light);
   assert.equal(await page.evaluate(()=>localStorage.getItem('coconut-reading-theme-v1')),'system');

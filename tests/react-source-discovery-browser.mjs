@@ -47,7 +47,7 @@ try{
   const refresh=()=>page.getByRole('button',{name:'刷新节目列表',exact:true}),checked=()=>page.locator('.feed-refresh p');
   async function feedAborted(){await expect.poll(()=>fixture.calls.findLast(call=>call.url===sourceFeed)?.signal?.aborted).toBe(true);}
   async function screenshot(name){const size=await page.evaluate(()=>({viewport:innerWidth,document:document.documentElement.scrollWidth}));assert.ok(size.document<=width+1,'Discovery horizontal overflow '+JSON.stringify(size));await page.screenshot({path:path.join(output,`source-${name}-${width}.png`),fullPage:true});}
-  const beforeDiscovery={...fixture.counts};await page.goto(origin);await expect(page.getByRole('heading',{name:'今天，想听什么？'})).toBeVisible();
+  const beforeDiscovery={...fixture.counts};await page.goto(origin);await expect(page.getByRole('heading',{name:'coconut'})).toBeVisible();
   await page.getByLabel('播客或视频链接').fill(sourceFeed);await page.getByRole('button',{name:'打开链接',exact:true}).click();await expect(multilingual()).toBeVisible();
   const episodeSearch=page.getByRole('searchbox',{name:'查找当前列表的单集'}),episodeRows=page.locator('.episode-list article');
   await expect(episodeRows).toHaveCount(20);await expect(page.locator('.episode-warning')).toContainText('来源列表不完整');await expect(multilingual()).toContainText('时长 1:02:03');

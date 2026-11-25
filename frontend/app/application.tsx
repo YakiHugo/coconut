@@ -62,8 +62,39 @@ function ApplicationContent({store,storageSettings}: {store:AppStore;storageSett
     const previousView=document?readingViews.get(document.key):null;
     const savedView=previousView?.mode==='transcript'?{...previousView,mode:'passages' as const}:previousView;
     const exportBackup = () => { const url = URL.createObjectURL(new Blob([JSON.stringify({ format: 'coconut-library', version: 1, documents: store.recoveryDocuments(), active: state.activeKey })], { type: 'application/json' })); const link = window.document.createElement('a'); link.href = url; link.download = 'coconut-reading-backup.json'; link.click(); setTimeout(() => URL.revokeObjectURL(url), 60000); };
-    return <div className="react-app"><NativeClose store={store}/><aside className="app-sidebar notranslate" translate="no" default-translate="no"><a className="app-brand notranslate" translate="no" default-translate="no" href="#discover" onClick={event => { event.preventDefault(); setSettingsOpen(false);store.navigate('discover'); }}>coconut</a><nav aria-label="主要导航"><button aria-current={state.workspace === 'discover' ? 'page' : undefined} disabled={state.dirty} onClick={() => {setSettingsOpen(false);store.navigate('discover');}}>添加内容</button><button aria-current={state.workspace === 'library' ? 'page' : undefined} disabled={state.dirty} onClick={() => {setSettingsOpen(false);store.navigate('library');}}>我的内容 <span>{state.documents.length}</span></button>{document && <button disabled={state.dirty} aria-current={state.workspace === 'read' ? 'page' : undefined} onClick={() => {setSettingsOpen(false);store.select(document.key);}}>继续阅读</button>}</nav><div className="sidebar-foot"><div className="app-save-state"><span className={"save-indicator"+(state.save.status==='saved'?' visually-hidden':'')} data-state={state.save.status} role="status">{state.save.status === 'saved' ? '已保存' : state.save.status === 'pending' ? '正在保存…' : '保存未完成'}</span>{unsaved && <button onClick={() => void store.retry()}>重试保存</button>}</div><ActivityCenter save={state.save} tasks={{total:tasks.total+sourceTasks.total,running:tasks.running+sourceTasks.running,attention:tasks.attention+sourceTasks.attention}} onTaskHost={setTaskHost}/><Settings store={store} preferences={preferences} open={settingsOpen} onOpenChange={setSettingsOpen} onExportBackup={exportBackup} storageSettings={storageSettings}/></div></aside><main id="main-content" inert={settingsOpen}>{state.message && unsaved && <p className="app-message notranslate" translate="no" default-translate="no" role="status">{state.message}</p>}{state.dirty && <p className="app-message notranslate" translate="no" default-translate="no">请先保存或取消编辑。</p>}
- {state.workspace === 'discover' && <Discover store={store}/>}
+    const navigate = (workspace: 'discover' | 'library') => {
+        setSettingsOpen(false);
+        store.navigate(workspace);
+    };
+    return <div className="react-app" data-workspace={state.workspace}>
+        <NativeClose store={store}/>
+        <header className="app-sidebar notranslate" translate="no" default-translate="no">
+            <a className="app-brand" href="#discover" aria-label="返回 Coconut 首页" onClick={event => {event.preventDefault();navigate('discover');}}>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" aria-hidden="true">
+                    <path d="M4 11v2m4-6v10m4-13v16m4-11v6m4-5v4"/>
+                </svg>
+            </a>
+            <nav aria-label="主要导航">
+                <button aria-current={state.workspace === 'discover' ? 'page' : undefined} disabled={state.dirty} onClick={() => navigate('discover')}>添加内容</button>
+                <button aria-current={state.workspace === 'library' ? 'page' : undefined} disabled={state.dirty} onClick={() => navigate('library')}>我的内容 <span>{state.documents.length}</span></button>
+                {document && <button disabled={state.dirty} aria-current={state.workspace === 'read' ? 'page' : undefined} onClick={() => {setSettingsOpen(false);store.select(document.key);}}>继续阅读</button>}
+            </nav>
+            <div className="sidebar-foot">
+                <div className="app-save-state">
+                    <span className={state.save.status === 'saved' ? 'save-indicator visually-hidden' : 'save-indicator'} data-state={state.save.status} role="status">
+                        {state.save.status === 'saved' ? '已保存' : state.save.status === 'pending' ? '正在保存…' : '保存未完成'}
+                    </span>
+                    {unsaved && <button onClick={() => void store.retry()}>重试保存</button>}
+                </div>
+                <ActivityCenter save={state.save} tasks={{total:tasks.total+sourceTasks.total,running:tasks.running+sourceTasks.running,attention:tasks.attention+sourceTasks.attention}} onTaskHost={setTaskHost}/>
+                <Settings store={store} preferences={preferences} open={settingsOpen} onOpenChange={setSettingsOpen} onExportBackup={exportBackup} storageSettings={storageSettings}/>
+            </div>
+        </header>
+        <main id="main-content" inert={settingsOpen}>
+            {state.message && unsaved && <p className="app-message notranslate" translate="no" default-translate="no" role="status">{state.message}</p>}
+            {state.dirty && <p className="app-message notranslate" translate="no" default-translate="no">请先保存或取消编辑。</p>}
+            {state.workspace === 'discover' && <Discover store={store} documents={state.documents}/>}
+
  {state.workspace === 'library' && <Library store={store} onOpenSource={capture=>{const request=openNotebookSource(store,capture,++navigationId.current);if(request)setNavigationRequest(request);}}/>}
  {state.workspace === 'read' && document && <SavedSourceMedia key={'saved-media:'+document.key} store={store} documentKey={document.key}/>}
  {state.workspace === 'read' && document && !publisher && <MediaSource key={'media:' + document.key} store={store} documentKey={document.key}/>}

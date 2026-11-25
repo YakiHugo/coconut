@@ -7,6 +7,10 @@ import { Application } from './application';
 import { createAppStore } from './store';
 import type { StoreDependencies } from './contracts';
 import './style.css';
+import './island-theme.css';
+import './discover-home.css';
+import './document-card.css';
+import './library.css';
 // Only shared domain/persistence modules cross this boundary.
 const runtime = window as unknown as {
     CoconutClientCapabilities?:{refresh:()=>Promise<unknown>};

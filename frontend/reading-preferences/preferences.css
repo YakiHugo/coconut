@@ -13,7 +13,6 @@
 :root[data-reader-theme="dark"] button:hover,
 :root[data-reader-theme="dark"] .app-sidebar nav button[aria-current=page],
 :root[data-reader-theme="dark"] :is(.rw-playing,.rw-selection,.rw-empty,.rw-annotations>div){background:var(--reading-selected)}
-:root[data-reader-theme="dark"] .source-composer .source-submit{color:#191a1d;background:var(--accent)}
 :root[data-reader-theme="dark"] :is(.rw-player,.selection-actions){color:var(--text);background:var(--surface)}
 :root[data-reader-theme="dark"] :is(.app-brand span,.sidebar-foot,.app-header,.kicker,.lede,.quiet,.recovery-entry,.library-page small,.podcast-catalog li p,.podcast-catalog a,.react-ai-panel p,.remote-media p,.ingestion-panel p,.ingestion-panel label,.rw-eyebrow,.rw-player p,.rw-media-unavailable,.rw-translation){color:var(--muted)}
 :root[data-reader-theme="dark"] .source-error{color:#efb395}
