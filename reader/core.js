@@ -744,25 +744,37 @@
  function createReadingViews({getSessionStorage,getStorage,limit=512}={}){
   const key='coconut-reading-view-v1',sharedKey='coconut-reading-view-defaults-v1';
   const validText=value=>typeof value==='string'&&value.length>0&&value.length<=1024;
-  const valid=item=>Array.isArray(item)&&item.length===3&&validText(item[0])&&typeof item[1]==='string'&&item[1].length<=1024&&['transcript','passages','summary'].includes(item[2]);
+  function valid(item){
+   if(!Array.isArray(item)||item.length<3||item.length>4)return false;
+   const [id,cueId,mode,speechFrom]=item;
+   return validText(id)&&typeof cueId==='string'&&cueId.length<=1024&&['transcript','passages','summary'].includes(mode)
+    &&(item.length===3||Number.isSafeInteger(speechFrom)&&speechFrom>=0);
+  }
   const trim=map=>new Map([...map].slice(-Math.max(1,Math.min(512,limit))));
   function read(getStorage,key){
    // A readable empty/cleared preference retires unowned defaults. Only a
    // denied read keeps the last in-memory fallback for temporary recovery.
    let raw;try{raw=getStorage().getItem(key);}catch{return null;}
-   try{const data=JSON.parse(raw);if(data?.version===1&&Array.isArray(data.views))return trim(new Map(data.views.filter(valid).map(item=>[item[0],item])));}catch{}
+   try{
+    const data=JSON.parse(raw);
+    if([1,2].includes(data?.version)&&Array.isArray(data.views)){
+     // Version 1 stored a vertical pixel offset. Its cue is still usable.
+     return trim(new Map(data.views.filter(valid).map(item=>[item[0],data.version===1?item.slice(0,3):item])));
+    }
+   }catch{}
    return new Map();
   }
   let views=read(getSessionStorage,key)||new Map(),fallback=read(getStorage,sharedKey)||new Map();
-  function write(getStorage,key,map){try{getStorage().setItem(key,JSON.stringify({version:1,views:[...map.values()]}));}catch{}}
+  function write(getStorage,key,map){try{getStorage().setItem(key,JSON.stringify({version:2,views:[...map.values()]}));}catch{}}
+  const view=item=>({cueId:item[1],mode:item[2],...(item.length===4?{speechFrom:item[3]}:{})});
   function get(id){
-   const own=views.get(id);if(own)return {cueId:own[1],mode:own[2]};
+   const own=views.get(id);if(own)return view(own);
    const fresh=read(getStorage,sharedKey);if(fresh)fallback=fresh;
-   const item=fallback.get(id);return item?{cueId:item[1],mode:item[2]}:null;
+   const item=fallback.get(id);return item?view(item):null;
   }
-  function record(id,cueId,mode){
-   const item=[id,cueId,mode];if(!valid(item))return;
-   const previous=views.get(id);if(previous&&previous[1]===cueId&&previous[2]===mode)return;
+  function record(id,cueId,mode,speechFrom){
+   const item=speechFrom===undefined?[id,cueId,mode]:[id,cueId,mode,speechFrom];if(!valid(item))return;
+   const previous=views.get(id);if(previous&&previous[1]===cueId&&previous[2]===mode&&previous[3]===speechFrom)return;
    views.delete(id);views.set(id,item);views=trim(views);write(getSessionStorage,key,views);
    const shared=read(getStorage,sharedKey)||new Map(fallback);shared.delete(id);shared.set(id,item);fallback=trim(shared);write(getStorage,sharedKey,fallback);
   }

@@ -1,6 +1,6 @@
 import {readingReviewSubmissionFailure} from '../app/reading-review-state';
-import { memo, useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
-import type { ReaderCue, ReaderDocument, ReaderWorkspaceProps, ReaderSourceTarget } from './contracts';
+import { memo, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import type { ReaderCue, ReaderDocument, ReaderView, ReaderWorkspaceProps, ReaderSourceTarget } from './contracts';
 import { captureSourceSelection, readingSourceOffset, time, translationTarget, visibleSourceRange, type SourceSelection } from './domain';
 import { ReaderPlayer, PLAYBACK_RATES, type PlaybackLocation, type SeekIntent } from './player';
 import {ReaderSummary} from './summary';
@@ -16,6 +16,7 @@ import {SelectionToolbar} from './selection-toolbar';
 import {LISTENING_LEAD_SECONDS,selectionPlaybackStart,sourcePlayback,speechParts,speechSelection} from './speech';
 import {supportsTextHighlight,textOffsetAtPoint,textRange} from './text-range';
 import {usePlaybackFollow,useReadingScroller} from './playback-follow';
+import {useReadingPosition,type ReadingPosition} from './reading-position';
 import {prepareCleanup} from './cleanup';
 import {useTranscriptSearch} from './transcript-search';
 import {readingReview} from '@coconut/shared/transcript-review';
@@ -56,10 +57,17 @@ function WorkspaceSession({ document: doc, revision, media, onSaveDocument, onRe
     const openTools=(next:string)=>{setTool(next);setToolsOpen(true);};
     const displayText=useMemo(()=>scriptConverter(chineseScript,navigator.languages||[navigator.language]),[chineseScript,(navigator.languages||[navigator.language]).join(',')]);
     useEffect(()=>{setSelection(null);},[displayText]);
-    const validInitialView=initialView?.documentKey===doc.key&&doc.segments.some(cue=>cue.id===initialView.cueId)?initialView:null;
-    const initialCue=validInitialView?.cueId||doc.readingPosition||doc.segments[0]?.id||'';
+    const [{startingView, openFromTop}] = useState<{startingView:ReaderView;openFromTop:boolean}>(() => {
+        if(initialView?.documentKey===doc.key&&doc.segments.some(cue=>cue.id===initialView.cueId)){
+            return {startingView:initialView,openFromTop:false};
+        }
+        const legacyCue=doc.segments.find(cue=>cue.id===doc.readingPosition);
+        const cueId=legacyCue?.id??doc.segments[0]?.id??'';
+        return {startingView:{documentKey:doc.key,cueId,mode:'passages'},openFromTop:!legacyCue};
+    });
     const temporaryNavigation=useRef(false),viewCallback=useRef(onViewChange);viewCallback.current=onViewChange;
-    const [mode, setMode] = useState<'transcript'|'passages'|'summary'>(validInitialView?.mode||'passages'), [query, setQuery] = useState(''), [searchOpen, setSearchOpen] = useState(false), [locationTick,setLocationTick]=useState(0), [position, setPosition] = useState(initialCue), [follow, setFollow] = useState(false), [seek, setSeek] = useState<SeekIntent | null>(null), [status, setStatus] = useState(''), [busy, setBusy] = useState(false), [offset, setOffset] = useState(''), [offsetStarted,setOffsetStarted]=useState(false), [selection, setSelection] = useState<(SourceSelection & {
+    const savedView=useRef(startingView),pendingRestore=useRef<ReadingPosition|null>(startingView.mode==='summary'?null:startingView);
+    const [mode, setMode] = useState(startingView.mode), [query, setQuery] = useState(''), [searchOpen, setSearchOpen] = useState(false), [locationTick,setLocationTick]=useState(0), [position, setPosition] = useState(startingView.cueId), [follow, setFollow] = useState(false), [seek, setSeek] = useState<SeekIntent | null>(null), [status, setStatus] = useState(''), [busy, setBusy] = useState(false), [offset, setOffset] = useState(''), [offsetStarted,setOffsetStarted]=useState(false), [selection, setSelection] = useState<(SourceSelection & {
         revision: number; review?:boolean;
     }) | null>(null);
     const draggingSource=useRef(false);
@@ -139,7 +147,7 @@ function WorkspaceSession({ document: doc, revision, media, onSaveDocument, onRe
     const [sourceFocus,setSourceFocus]=useState<{id:number;target:ReaderSourceTarget}|null>(null);
     const scopeRef=useRef<HTMLElement|null>(null),searchRef=useRef<HTMLInputElement|null>(null),helpClose=useRef<HTMLButtonElement|null>(null),helpDialog=useRef<HTMLDialogElement|null>(null);
     const [keyboardHelp,setKeyboardHelp]=useState(false),[summaryCitation,setSummaryCitation]=useState('');
-    const readingReturn=useRef<{revision:number;mode:'transcript'|'passages';query:string;position:string}|null>(null);
+    const readingReturn=useRef<(ReadingPosition&{revision:number;mode:'transcript'|'passages';query:string})|null>(null);
     const unconfirmedSave=useRef<{key:string;revision:number;content:string}|null>(null);
     const latest = useRef({ doc, revision });
     latest.current = { doc, revision };
@@ -150,9 +158,13 @@ function WorkspaceSession({ document: doc, revision, media, onSaveDocument, onRe
     const dirtyCallback = useRef(onDirtyChange);
     dirtyCallback.current = onDirtyChange;
     const host = useRef<HTMLDivElement>(null), seekId = useRef(0), saving = useRef(false), mounted = useRef(true);
-    const readingScroller=useReadingScroller(host);
+    const manualTakeover=useRef(false),restoreAfterMedia=useRef<ReadingPosition|null>(null);
+    const readingScroller=useReadingScroller(host,()=>scrollPosition.current?.reset(),()=>{
+        manualTakeover.current=true;
+        restoreAfterMedia.current=null;
+        setFollow(false);
+    });
     const handledLocation=useRef(0);
-    const suspendFollow=useCallback(()=>setFollow(false),[]);
     useEffect(()=>{setFollow(false);setSelection(null);},[mediaSignature]);
     const scrollSource=(element:HTMLElement|null|undefined)=>element?.scrollIntoView?.({block:'nearest'});
     useEffect(()=>{
@@ -224,6 +236,7 @@ function WorkspaceSession({ document: doc, revision, media, onSaveDocument, onRe
     const speakerCount=useMemo(()=>new Set(doc.segments.map(cue=>cue.speaker).filter(Boolean)).size,[doc.segments]);
     const locate=useCallback((id:string,temporary=false)=>{
         setFollow(false);
+        manualTakeover.current=false;
         temporaryNavigation.current=temporary;
         setPosition(id);setLocationTick(value=>value+1);
         onReadingPosition(id);
@@ -239,7 +252,7 @@ function WorkspaceSession({ document: doc, revision, media, onSaveDocument, onRe
         if(request.source){
 
             const target=request.source.target;
-            temporaryNavigation.current=true;setFollow(false);setSelection(null);
+            manualTakeover.current=false;temporaryNavigation.current=true;setFollow(false);setSelection(null);
             if(target.kind==='cue'||target.kind==='exact-excerpt'){
                 if(target.cueId&&doc.segments.some(cue=>cue.id===target.cueId)){
                     setMode('transcript');setQuery('');
@@ -270,25 +283,68 @@ function WorkspaceSession({ document: doc, revision, media, onSaveDocument, onRe
         const source=cueId?host.current?.querySelector<HTMLElement>('[data-source-id="'+CSS.escape(cueId)+'"]'):null;
         scrollSource(source||element);
     },[sourceFocus]);
-    useEffect(()=>{if(temporaryNavigation.current)return;const cueId=playbackCues.has(position)?position:doc.segments[0]?.id;if(cueId)viewCallback.current?.({documentKey:doc.key,cueId,mode});},[doc.key,doc.segments,position,playbackCues,mode]);
     const following=follow&&!!media&&mode!=='summary'&&!anyDirty&&!toolsOpen&&!keyboardHelp;
-    usePlaybackFollow({scroller:readingScroller,enabled:following,cueId:active?.cueId,partIndex:active?.partIndex??-1,onSuspend:suspendFollow});
+    const recordView=useCallback((anchor:ReadingPosition,viewMode:ReaderView['mode'])=>{
+        const {cueId,speechFrom}=anchor;
+        const view={documentKey:doc.key,cueId,mode:viewMode,...(speechFrom===undefined?{}:{speechFrom})};
+        savedView.current=view;
+        viewCallback.current?.(view);
+    },[doc.key]);
+    const scrollPosition=useReadingPosition(host,doc.segments.length&&mode!=='summary'?mode:null,
+        ()=>{
+            if(!manualTakeover.current)return false;
+            temporaryNavigation.current=false;
+            return true;
+        },
+        recordView);
+    const recordFollow=useCallback((anchor:ReadingPosition)=>{
+        if(!manualTakeover.current&&!temporaryNavigation.current)recordView(anchor,mode);
+    },[mode,recordView]);
+    usePlaybackFollow({scroller:readingScroller,enabled:following,cueId:active?.cueId,partIndex:active?.partIndex??-1,onPosition:recordFollow});
     useEffect(()=>{
         if(following&&active?.cueId){
             setPosition(active.cueId);
             onReadingPosition(active.cueId);
         }
     },[following,active?.cueId]);
+    const restoredPosition = useRef<ReadingPosition|null>(null);
+    useLayoutEffect(()=>{
+        const restore=pendingRestore.current,root=host.current;
+        restoredPosition.current=null;
+        if(mode==='summary'||!restore||!root)return;
+        pendingRestore.current=null;
+        if(restore.cueId!==position)return;
+        const atStart=restore===startingView&&openFromTop;
+        readingScroller.restore(restore,atStart);
+        if(!media&&!atStart)restoreAfterMedia.current=restore;
+        restoredPosition.current=restore;
+    },[mode,position,locationTick]);
+    useLayoutEffect(()=>{
+        const restore=restoreAfterMedia.current;
+        if(!media||!restore)return;
+        restoreAfterMedia.current=null;
+        if(mode!=='summary'&&!follow&&!temporaryNavigation.current)readingScroller.restore(restore);
+    },[media?.identity]);
+    useEffect(()=>{
+        if(temporaryNavigation.current)return;
+        const anchor=mode==='summary'?(readingReturn.current??savedView.current):(restoredPosition.current??{cueId:position});
+        if(playbackCues.has(anchor.cueId))recordView(anchor,mode);
+    },[mode,recordView]);
     useEffect(() => {
         const requested=handledLocation.current!==locationTick;
         handledLocation.current=locationTick;
-        if (follow&&!requested)
+        if (restoredPosition.current||(follow&&!requested))
             return;
         const element = host.current?.querySelector<HTMLElement>(`[data-cue-id="${CSS.escape(position)}"]`);
         if(requested){
-            readingScroller.locate(position);
+            restoreAfterMedia.current=null;
+            if(!follow&&!temporaryNavigation.current){
+                scrollPosition.current?.flush();
+                readingScroller.locate(position,anchor=>{if(!temporaryNavigation.current)recordView(anchor,mode);});
+            }else if(!following||active?.cueId!==position)readingScroller.locate(position);
         }else{
             readingScroller.cancel();scrollSource(element);
+            scrollPosition.current?.reset();
         }
     }, [position, locationTick, mode]);
     const readingAnchor=()=>{
@@ -308,9 +364,44 @@ function WorkspaceSession({ document: doc, revision, media, onSaveDocument, onRe
         if(mode!=='passages')setMode('passages');
         if(anchor){setPosition(anchor);setLocationTick(value=>value+1);}
     };
-    const changeMode=(next:'transcript'|'passages'|'summary')=>{const anchor=readingAnchor(),wasTemporary=temporaryNavigation.current;temporaryNavigation.current=false;window.getSelection()?.removeAllRanges();setSelection(null);setFollow(false);if(next==='summary'&&mode!=='summary'&&!wasTemporary)readingReturn.current={revision,mode,query,position:anchor};if(next!=='summary'){setPosition(anchor);setSearchOpen(Boolean(query));}else setSummaryCitation('');setMode(next);if(next==='summary')setSearchOpen(false);};
-    const returnToReading=()=>{const saved=readingReturn.current;if(saved&&saved.revision===revision&&doc.segments.some(cue=>cue.id===saved.position)){setMode(saved.mode);setQuery(saved.query);setSearchOpen(Boolean(saved.query));setPosition(saved.position);}else{setMode('passages');setQuery('');if(saved)setStatus('原文已更新，已返回当前稿中的阅读位置。');}readingReturn.current=null;temporaryNavigation.current=false;};
-    const navigateSummary=(cueId:string)=>{if(latest.current.doc!==doc||latest.current.revision!==revision)return;const index=doc.segments.findIndex(cue=>cue.id===cueId);if(index<0)return;setMode('passages');setSummaryCitation(cueId);setSearchOpen(false);setFollow(false);setSelection(null);setQuery('');setPosition(cueId);setLocationTick(value=>value+1);onReadingPosition(cueId);temporaryNavigation.current=true;};
+    const changeMode=(next:ReaderView['mode'])=>{
+        scrollPosition.current?.flush();
+        readingScroller.cancel();
+        const wasTemporary=temporaryNavigation.current;
+        const saved=savedView.current;
+        const useViewport=!wasTemporary&&!query.trim()&&saved.mode===mode&&playbackCues.has(saved.cueId);
+        const returning=mode==='summary'&&next!=='summary'?readingReturn.current:null;
+        const validReturn=returning&&returning.revision===revision&&doc.segments.some(cue=>cue.id===returning.cueId)?returning:null;
+        const anchor:ReadingPosition=validReturn??(useViewport?saved:{cueId:readingAnchor()});
+        restoreAfterMedia.current=null;
+        manualTakeover.current=false;
+        temporaryNavigation.current=false;
+        window.getSelection()?.removeAllRanges();setSelection(null);setFollow(false);
+        if(next==='summary'){
+            if(mode!=='summary'&&!wasTemporary)readingReturn.current={cueId:anchor.cueId,speechFrom:anchor.speechFrom,revision,mode,query};
+            setSummaryCitation('');setSearchOpen(false);
+        }else{
+            if(validReturn?.mode===next)pendingRestore.current=validReturn;
+            else if(mode==='summary'&&next==='passages'&&saved.mode==='summary'&&saved.cueId===anchor.cueId)pendingRestore.current=saved;
+            if(mode==='summary')readingReturn.current=null;
+            setPosition(anchor.cueId);setSearchOpen(Boolean(query));
+        }
+        setMode(next);
+    };
+    const returnToReading=()=>{
+        const saved=readingReturn.current;
+        if(saved&&saved.revision===revision&&doc.segments.some(cue=>cue.id===saved.cueId)){
+            pendingRestore.current=saved;
+            setMode(saved.mode);setQuery(saved.query);setSearchOpen(Boolean(saved.query));setPosition(saved.cueId);
+        }else{
+            const previous=savedView.current;
+            if(previous.mode==='summary'&&previous.cueId===position)pendingRestore.current=previous;
+            setMode('passages');setQuery('');
+            if(saved)setStatus('原文已更新，已返回当前稿中的阅读位置。');
+        }
+        readingReturn.current=null;temporaryNavigation.current=false;
+    };
+    const navigateSummary=(cueId:string)=>{if(latest.current.doc!==doc||latest.current.revision!==revision)return;const index=doc.segments.findIndex(cue=>cue.id===cueId);if(index<0)return;setMode('passages');setSummaryCitation(cueId);setSearchOpen(false);setFollow(false);setSelection(null);setQuery('');setPosition(cueId);setLocationTick(value=>value+1);onReadingPosition(cueId);manualTakeover.current=false;temporaryNavigation.current=true;};
     useEffect(()=>{
         if(!summaryCitation||mode==='summary')return;
         const source=host.current?.querySelector<HTMLElement>('[data-source-id="'+CSS.escape(summaryCitation)+'"]');
@@ -330,6 +421,8 @@ function WorkspaceSession({ document: doc, revision, media, onSaveDocument, onRe
     const searchTrigger=useRef<HTMLButtonElement|null>(null),searchReturn=useRef<HTMLElement|null>(null),pendingSearchFocus=useRef(false);
     const openSearch=()=>{
         if(!doc.segments.length)return false;
+        scrollPosition.current?.flush();
+        manualTakeover.current=false;
         temporaryNavigation.current=false;setSummaryCitation('');
         if(!searchOpen)searchReturn.current=document.activeElement as HTMLElement|null;
         pendingSearchFocus.current=true;
@@ -349,6 +442,9 @@ function WorkspaceSession({ document: doc, revision, media, onSaveDocument, onRe
     },[mode]);
     const closeSearch=()=>{
         pendingSearchReturn.current=true;setSearchOpen(false);setQuery('');
+    };
+    const moveSearch=(direction:number)=>{
+        scrollPosition.current?.flush();manualTakeover.current=false;setFollow(false);search.move(direction);
     };
     useEffect(()=>{
         if(searchOpen||!pendingSearchReturn.current)return;
@@ -413,15 +509,22 @@ function WorkspaceSession({ document: doc, revision, media, onSaveDocument, onRe
         }
         setSeek({ id: ++seekId.current, owner: media.identity, attachmentURL:media.url, attachmentId:attachment.current.id, seconds, play, end });
     },[media?.identity,media?.url]);
+    const beginFollow=useCallback(()=>{
+        scrollPosition.current?.flush();
+        manualTakeover.current=false;
+        temporaryNavigation.current=false;
+        restoreAfterMedia.current=null;
+        setFollow(true);
+    },[scrollPosition]);
     const playFrom=useCallback((seconds:number,lead=0,end?:number)=>{
         const start=Math.max(0,seconds+calibrated-lead);
-        setFollow(true);
+        beginFollow();
         // Explicit playback always brings its source to the reading anchor,
         // including when the selected speech is already somewhere on screen.
         const cue=playbackIndex.find(seconds);
         if(cue){setPosition(cue.id);setLocationTick(value=>value+1);}
         seekTo(start,true,end===undefined?undefined:end+calibrated);
-    },[calibrated,playbackIndex,seekTo]);
+    },[calibrated,playbackIndex,seekTo,beginFollow]);
     const playCue=useCallback((cue:ReaderCue)=>playFrom(playbackCues.get(cue.id)?.start??cue.start),[playFrom,playbackCues]);
     const jumpCue=useCallback((cue:ReaderCue)=>{
         locate(cue.id);
@@ -429,7 +532,7 @@ function WorkspaceSession({ document: doc, revision, media, onSaveDocument, onRe
     },[locate,media?.identity,playbackCues,calibrated,seekTo]);
     const followNow=()=>{
         if(mode==='summary')changeMode('passages');
-        setFollow(true);
+        beginFollow();
         const cueId=active?.cueId||position;
         if(cueId){setPosition(cueId);setLocationTick(value=>value+1);}
     };
@@ -566,12 +669,12 @@ function WorkspaceSession({ document: doc, revision, media, onSaveDocument, onRe
  <div className="rw-search-panel" id={`${modeTabsId}-search`} hidden={!searchOpen||mode==='summary'} onKeyDown={event=>{
     if(!searchOpen||mode==='summary'||event.nativeEvent.isComposing||event.nativeEvent.keyCode===229)return;
     if(event.key==='Escape'){event.preventDefault();event.stopPropagation();closeSearch();}
-    else if(event.key==='Enter'&&event.target===searchRef.current){event.preventDefault();setFollow(false);search.move(event.shiftKey?-1:1);}
+    else if(event.key==='Enter'&&event.target===searchRef.current){event.preventDefault();moveSearch(event.shiftKey?-1:1);}
  }}>
-    <label><span className="rw-sr-only">搜索文字稿</span><input ref={searchRef} type="search" placeholder="搜索文字稿" value={query} onChange={e=>{setFollow(false);setQuery(e.target.value);}}/></label>
+    <label><span className="rw-sr-only">搜索文字稿</span><input ref={searchRef} type="search" placeholder="搜索文字稿" value={query} onChange={e=>{scrollPosition.current?.flush();manualTakeover.current=false;setFollow(false);setQuery(e.target.value);}}/></label>
     {query.trim()&&<span className="rw-search-count" role="status">{search.count?`第 ${search.index} / ${search.count} 处`:'无匹配'}</span>}
-    <button type="button" aria-label="上一处" disabled={!search.count} onClick={()=>{setFollow(false);search.move(-1);}}>↑</button>
-    <button type="button" aria-label="下一处" disabled={!search.count} onClick={()=>{setFollow(false);search.move(1);}}>↓</button>
+    <button type="button" aria-label="上一处" disabled={!search.count} onClick={()=>moveSearch(-1)}>↑</button>
+    <button type="button" aria-label="下一处" disabled={!search.count} onClick={()=>moveSearch(1)}>↓</button>
     <button type="button" aria-label="关闭搜索" onClick={closeSearch}>关闭</button>
  </div>
  <div className="rw-reading-layout"><div className="rw-reading-pane" hidden={mode==='summary'}>

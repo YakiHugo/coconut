@@ -69,7 +69,7 @@ export interface ReaderSnapshot {
     media: ReaderMedia | null;
     saveStatus?: string;
 }
-export interface ReaderView {documentKey:string;cueId:string;mode:'transcript'|'passages'|'summary'}
+export interface ReaderView {documentKey:string;cueId:string;mode:'transcript'|'passages'|'summary';speechFrom?:number}
 export interface ReaderResumePosition {identity:string;time:number;duration:number}
 export type ReaderSourceTarget =
     | {kind:'cue';cueId:string}

@@ -27,6 +27,25 @@ test('empty cue IDs remain valid source anchors and the default preference cap i
  views.record('empty','','transcript');assert.deepEqual(views.get('empty'),{cueId:'',mode:'transcript'});for(let i=0;i<600;i++)views.record('doc-'+i,'cue-'+i,'passages');assert.equal(JSON.parse(session.getItem(VIEW)).views.length,512);assert.equal(JSON.parse(disk.getItem(SHARED)).views.length,512);assert.equal(views.get('doc-0'),null);
 });
 
+test('sentence anchors survive storage round trips and legacy pixel offsets keep only their cue',async()=>{
+ const {default:Coconut}=await import(new URL('reader/core.js',sourceRoot));
+ const disk=storage(),session=storage(),options={getStorage:()=>disk,getSessionStorage:()=>session};
+ session.setItem(VIEW,JSON.stringify({version:1,views:[['legacy','cue','passages',120]]}));
+ const views=Coconut.createReadingViews(options);
+ assert.deepEqual(views.get('legacy'),{cueId:'cue',mode:'passages'});
+ views.record('doc','cue','passages',120);
+ assert.deepEqual(Coconut.createReadingViews(options).get('doc'),{cueId:'cue',mode:'passages',speechFrom:120});
+ const fresh=Coconut.createReadingViews({...options,getSessionStorage:()=>storage()});
+ assert.equal(fresh.get('doc').speechFrom,120);
+ views.record('doc','cue','passages',120);
+ views.record('doc','cue','passages',-1);
+ assert.equal(disk.writes.length,1);
+ views.record('doc','cue','passages',0);
+ assert.equal(fresh.get('doc').speechFrom,0);
+ views.record('doc','cue','passages');
+ assert.deepEqual(fresh.get('doc'),{cueId:'cue',mode:'passages'});
+});
+
 test('successful shared-hint removal or clear retires unowned cached defaults; denied reads retain memory and owned views stay independent',async()=>{
  const {default:Coconut}=await import(new URL('reader/core.js',sourceRoot)),disk=storage(),a=Coconut.createReadingViews({getStorage:()=>disk,getSessionStorage:()=>storage()});
  a.record('a','cue-a','transcript');let denied=false;

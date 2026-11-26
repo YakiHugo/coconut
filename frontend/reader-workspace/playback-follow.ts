@@ -1,31 +1,45 @@
-import {useEffect, useMemo, type RefObject} from 'react';
+import {useEffect, useMemo, useRef, type RefObject} from 'react';
 
-function sourcePosition(host:HTMLElement, cueId:string, following:boolean) {
-    const selector='[data-source-id="'+CSS.escape(cueId)+'"]';
-    const source=following?host.querySelector<HTMLElement>(selector+':has(.rw-playing),'+selector+'.rw-playing')??host.querySelector<HTMLElement>(selector):host.querySelector<HTMLElement>(selector);
-    if(!source)return;
-    // Measuring the row first lets content-visibility resolve offscreen text.
-    source.closest('.rw-passage,.rw-cue')?.getBoundingClientRect();
-    const highlighted=source.matches('.rw-playing')?source:source.querySelector<HTMLElement>('.rw-playing');
-    // Word-aligned speech can have pauses between sentences. Keep the previous
-    // viewport during those pauses instead of jumping back to the cue's start.
-    if(following&&!highlighted&&(source.matches('.rw-speech')||source.querySelector('.rw-speech')))return;
-    const speech=highlighted||source;
+import {readingBounds, readingPosition, readingScrollContainer, type ReadingPosition} from './reading-position';
+
+function sourceTarget(host:HTMLElement, position:ReadingPosition, following:boolean) {
+    const selector='[data-source-id="'+CSS.escape(position.cueId)+'"]';
+    if(following){
+        const cue=host.querySelector<HTMLElement>(selector+':has(.rw-playing),'+selector+'.rw-playing')??host.querySelector<HTMLElement>(selector);
+        if(!cue)return;
+        const speech=cue.matches('.rw-playing')?cue:cue.querySelector<HTMLElement>('.rw-playing');
+        // Word-aligned speech can have pauses between sentences.
+        if(!speech&&(cue.matches('.rw-speech')||cue.querySelector('.rw-speech')))return;
+        return {cue,speech:speech??cue};
+    }
+    const cues=host.querySelectorAll<HTMLElement>(selector);
+    if(!cues.length)return;
+    if(position.speechFrom!==undefined){
+        const part=`[data-speech-from="${position.speechFrom}"]`;
+        for(const cue of cues){
+            const speech=cue.matches(part)?cue:cue.querySelector<HTMLElement>(part);
+            if(speech)return {cue,speech};
+        }
+    }
+    const cue=cues[0];
+    return {cue,speech:cue.querySelector<HTMLElement>('[data-speech-from]')??cue};
+}
+
+function sourcePosition(host:HTMLElement, viewport:HTMLElement|Window, position:ReadingPosition, following:boolean) {
+    const target=sourceTarget(host,position,following);
+    if(!target)return;
+    const {cue,speech}=target;
+    const row=cue.closest('.rw-passage,.rw-cue');
+    row?.getBoundingClientRect();
     const range=document.createRange();range.selectNodeContents(speech);
     const rect=[...(range.getClientRects?.()||speech.getClientRects())].find(rect=>rect.width>0&&rect.height>0)
-        ||(!following?source.closest('.rw-passage,.rw-cue')?.getBoundingClientRect():null);
+        ||(!following?row?.getBoundingClientRect():null);
     if(!rect)return;
-    const workspace=host.closest('.reader-workspace');
-    const tabs=workspace?.querySelector('.rw-content-switch')?.getBoundingClientRect();
-    const search=workspace?.querySelector<HTMLElement>('.rw-search-panel');
-    const player=workspace?.querySelector('.rw-player')?.getBoundingClientRect();
-    // Reserve the sticky controls even before they reach the viewport's top.
-    const top=24+(tabs?.height||0)+(search&&!search.hidden?search.getBoundingClientRect().height:0);
-    const bottom=Math.min(window.innerHeight-24,player&&player.height>0?player.top-24:Infinity);
-    if(bottom<=top)return;
-    // Leave most of the reading area for upcoming speech and a little context above.
-    const anchor=top+(bottom-top)/4;
-    return {distance:rect.top-anchor};
+    const {top,bottom}=readingBounds(host,viewport);
+    if(bottom-top<=48)return;
+    // Place the sentence a quarter of the way down the reading area.
+    const anchor=top+24+(bottom-top-48)/4;
+    return {distance:rect.top-anchor,visible:rect.bottom>top&&rect.top<bottom,position:readingPosition(cue,speech)};
 }
 
 function scrollKey(event:KeyboardEvent) {
@@ -34,88 +48,123 @@ function scrollKey(event:KeyboardEvent) {
     if(target?.closest('input,textarea,select,dialog,[role=combobox],[role=listbox],[contenteditable]:not([contenteditable="false"])'))return false;
     return ['ArrowUp','ArrowDown','PageUp','PageDown','Home','End',' '].includes(event.key)&&!(event.key===' '&&target?.closest('button,a'));
 }
-const scrollbar=(event:PointerEvent)=>event.target===document.documentElement&&event.clientX>=document.documentElement.clientWidth;
+function scrollbar(event:PointerEvent) {
+    const target=event.target;
+    if(!(target instanceof HTMLElement))return false;
+    if(target===document.documentElement)return event.clientX>=target.clientWidth;
+    return target.id==='main-content'&&event.clientX>=target.getBoundingClientRect().left+target.clientLeft+target.clientWidth;
+}
 
-/** One cancellable animation serves explicit location and automatic following. */
-export function useReadingScroller(host:RefObject<HTMLDivElement|null>) {
+/** Following, locating and reopening share the same placement. */
+export function useReadingScroller(host:RefObject<HTMLDivElement|null>, onScroll:()=>void, onManualScroll:()=>void) {
+    const callbacks=useRef({onScroll,onManualScroll});
+    callbacks.current={onScroll,onManualScroll};
     const scroller=useMemo(()=>{
-        let animation:{frame:number;cueId:string;following:boolean}|null=null;
-        const cancel=()=>{if(animation)window.cancelAnimationFrame(animation.frame);animation=null;};
-        const scroll=(cueId:string,following:boolean)=>{
-            // Follow the latest speech without restarting the easing on every
-            // clock update, including a cue change during the transition.
-            if(following&&animation){animation.cueId=cueId;animation.following=true;return;}
+        type Arrival = (position:ReadingPosition)=>void;
+        let animation:{frame:number;position:ReadingPosition;following:boolean;onArrive?:Arrival}|null=null;
+        let restoreFrame=0;
+        const cancel=()=>{
+            if(animation)window.cancelAnimationFrame(animation.frame);
+            window.cancelAnimationFrame(restoreFrame);
+            animation=null;restoreFrame=0;
+        };
+        const move=(viewport:HTMLElement|Window, distance:number)=>{
+            viewport.scrollBy?.({top:distance,behavior:'instant'});
+            callbacks.current.onScroll();
+        };
+        const scroll=(position:ReadingPosition,following:boolean,onArrive?:Arrival)=>{
+            // Retarget in place as playback advances during an animation.
+            if(following&&animation){Object.assign(animation,{position,following,onArrive});return;}
             cancel();
             const element=host.current;if(!element)return;
-            const initial=sourcePosition(element,cueId,following);
-            if(!initial||Math.abs(initial.distance)<1)return;
-            if(window.matchMedia('(prefers-reduced-motion: reduce)').matches){
-                window.scrollBy({top:initial.distance,behavior:'instant'});return;
+            const viewport=readingScrollContainer(element);
+            const initial=sourcePosition(element,viewport,position,following);
+            if(!initial)return;
+            const arrive=(target:ReadingPosition,follow:boolean,callback?:Arrival)=>{
+                if(!callback)return;
+                const settled=sourcePosition(element,viewport,target,follow);
+                if(settled?.visible)callback(settled.position);
+            };
+            if(Math.abs(initial.distance)<1||window.matchMedia('(prefers-reduced-motion: reduce)').matches){
+                if(Math.abs(initial.distance)>=1)move(viewport,initial.distance);
+                arrive(position,following,onArrive);return;
             }
             const duration=Math.min(480,240+Math.sqrt(Math.abs(initial.distance))*3);
-            const started=window.performance.now(),current={frame:0,cueId,following};let previous=0;
+            const started=window.performance.now(),current={frame:0,position,following,onArrive};let previous=0;
             animation=current;
             const step=(now:number)=>{
                 if(animation!==current)return;
                 if(!element.isConnected){cancel();return;}
-                const position=sourcePosition(element,current.cueId,current.following);
-                if(!position){cancel();return;}
+                const target=sourcePosition(element,viewport,current.position,current.following);
+                if(!target){cancel();return;}
                 const progress=Math.min(1,(now-started)/duration);
                 const eased=progress<.5?4*progress**3:1-(-2*progress+2)**3/2;
-                // Remeasure each frame: content-visibility can change document
-                // height while distant paragraphs are brought into view.
+                // Offscreen rows can change size when brought into view.
                 const fraction=progress===1?1:(eased-previous)/(1-previous);
-                window.scrollBy({top:position.distance*fraction,behavior:'instant'});
+                move(viewport,target.distance*fraction);
                 previous=eased;
                 if(progress<1)current.frame=window.requestAnimationFrame(step);
-                else animation=null;
+                else{animation=null;arrive(current.position,current.following,current.onArrive);}
             };
             current.frame=window.requestAnimationFrame(step);
         };
-        return {locate:(cueId:string)=>scroll(cueId,false),follow:(cueId:string)=>scroll(cueId,true),cancel};
+        const restore=(position:ReadingPosition, fromStart=false)=>{
+            cancel();
+            const element=host.current;if(!element)return;
+            const viewport=readingScrollContainer(element);
+            if(fromStart){
+                viewport.scrollTo?.({top:0,behavior:'instant'});
+                callbacks.current.onScroll();
+                return;
+            }
+            // Make content-visibility lay out a distant sentence before measuring its line.
+            sourceTarget(element,position,false)?.speech.scrollIntoView?.({block:'center',behavior:'instant'});
+            const align=()=>{
+                const target=sourcePosition(element,viewport,position,false);
+                if(target&&Math.abs(target.distance)>=1)move(viewport,target.distance);
+                else callbacks.current.onScroll();
+            };
+            align();
+            // Recheck after layout has expanded the newly visible rows.
+            restoreFrame=window.requestAnimationFrame(()=>{
+                if(element.isConnected)align();
+                restoreFrame=0;
+            });
+        };
+        const follow=(cueId:string)=>{
+            const position={cueId};
+            const target=host.current&&sourceTarget(host.current,position,true);
+            scroll(position,true);
+            if(target)return readingPosition(target.cue,target.speech);
+        };
+        return {locate:(cueId:string,onArrive?:Arrival)=>scroll({cueId},false,onArrive),follow,restore,cancel,
+            cancelFollowing:()=>{if(animation?.following)cancel();}};
     },[host]);
     useEffect(()=>{
-        const keyboard=(event:KeyboardEvent)=>{if(scrollKey(event))scroller.cancel();};
-        const pointer=(event:PointerEvent)=>{if(scrollbar(event))scroller.cancel();};
-        window.addEventListener('wheel',scroller.cancel,{passive:true});
-        window.addEventListener('touchmove',scroller.cancel,{passive:true});
+        const manual=(event:Event)=>{
+            if(event.target instanceof Element&&event.target.closest('dialog[open]'))return;
+            scroller.cancel();callbacks.current.onManualScroll();
+        };
+        const keyboard=(event:KeyboardEvent)=>{if(scrollKey(event))manual(event);};
+        const pointer=(event:PointerEvent)=>{if(scrollbar(event))manual(event);};
+        window.addEventListener('wheel',manual,{passive:true});
+        window.addEventListener('touchmove',manual,{passive:true});
         window.addEventListener('keydown',keyboard);
         window.addEventListener('pointerdown',pointer);
         return()=>{
-            scroller.cancel();window.removeEventListener('wheel',scroller.cancel);
-            window.removeEventListener('touchmove',scroller.cancel);
-            window.removeEventListener('keydown',keyboard);window.removeEventListener('pointerdown',pointer);
+            scroller.cancel();window.removeEventListener('wheel',manual);
+            window.removeEventListener('touchmove',manual);window.removeEventListener('keydown',keyboard);window.removeEventListener('pointerdown',pointer);
         };
     },[scroller]);
     return scroller;
 }
 
-export function usePlaybackFollow({scroller,enabled,cueId,partIndex,onSuspend}:{
-    scroller:ReturnType<typeof useReadingScroller>;enabled:boolean;cueId?:string;partIndex:number;onSuspend:()=>void;
+export function usePlaybackFollow({scroller,enabled,cueId,partIndex,onPosition}:{
+    scroller:ReturnType<typeof useReadingScroller>;enabled:boolean;cueId?:string;partIndex:number;onPosition:(position:ReadingPosition)=>void;
 }) {
     useEffect(()=>{
-        if(!enabled||cueId===undefined)return;
-        scroller.follow(cueId);
-    },[enabled,cueId,partIndex,scroller]);
-    useEffect(()=>{if(!enabled)scroller.cancel();},[enabled,scroller]);
-    useEffect(()=>{
-        if(!enabled)return;
-        const suspend=()=>onSuspend();
-        const keyboard=(event:KeyboardEvent)=>{
-            if(scrollKey(event))suspend();
-        };
-        const pointer=(event:PointerEvent)=>{
-            if(scrollbar(event))suspend();
-        };
-        window.addEventListener('wheel',suspend,{passive:true});
-        window.addEventListener('touchmove',suspend,{passive:true});
-        window.addEventListener('keydown',keyboard);
-        window.addEventListener('pointerdown',pointer);
-        return()=>{
-            window.removeEventListener('wheel',suspend);
-            window.removeEventListener('touchmove',suspend);
-            window.removeEventListener('keydown',keyboard);
-            window.removeEventListener('pointerdown',pointer);
-        };
-    },[enabled,onSuspend]);
+        if(!enabled||cueId===undefined){scroller.cancelFollowing();return;}
+        const position=scroller.follow(cueId);
+        if(position)onPosition(position);
+    },[enabled,cueId,partIndex,scroller,onPosition]);
 }
