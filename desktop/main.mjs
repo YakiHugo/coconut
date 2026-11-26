@@ -165,8 +165,11 @@ else {
     editMenu.append(new MenuItem({type:'separator'}));editMenu.append(new MenuItem(findItem));
     Menu.setApplicationMenu(applicationMenu);
     bindFileMenu(Menu.getApplicationMenu());
-    window.webContents.session.setPermissionRequestHandler((_contents,_permission,callback)=>callback(false));
-    window.webContents.session.setPermissionCheckHandler(()=>false);
+    const permitsLocalFonts=(contents,permission,details)=>permission==='local-fonts'&&contents===window.webContents&&
+      details.isMainFrame&&[origin+'/',origin+'/index.html'].includes(details.requestingUrl?.split('#')[0]);
+    window.webContents.session.setPermissionRequestHandler((contents,permission,callback,details)=>callback(permitsLocalFonts(contents,permission,details)));
+    window.webContents.session.setPermissionCheckHandler((contents,permission,requestingOrigin,details)=>
+      [origin,origin+'/'].includes(requestingOrigin)&&permitsLocalFonts(contents,permission,details));
     window.webContents.on('did-start-navigation',(_event,_url,isInPlace,isMainFrame)=>{if(isMainFrame&&!isInPlace)localMediaService.releaseAll();});
     window.webContents.on('render-process-gone',()=>localMediaService.releaseAll());
     window.webContents.on('will-attach-webview',event=>event.preventDefault());

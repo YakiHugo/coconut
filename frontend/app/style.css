@@ -177,7 +177,7 @@ p{line-height:1.7}
 .storage-settings [data-testid=storage-setup]{padding-top:12px}
 /* Reading keeps a quiet measure; system chrome follows the editorial shell. */
 .reader-workspace{width:calc(100% - 64px);min-width:0;max-width:var(--reader-measure,48rem);padding:36px 0}
-.reader-workspace h1{font-family:var(--ui-font);font-size:clamp(28px,3.4vw,42px);font-weight:550;letter-spacing:-.04em;overflow-wrap:anywhere}
+.reader-workspace h1{font-family:var(--reading-font-family,var(--ui-font));font-size:clamp(28px,3.4vw,42px);font-weight:550;letter-spacing:-.04em;overflow-wrap:anywhere}
 .rw-source{overflow-wrap:anywhere}
 .rw-eyebrow{color:var(--muted);font-size:10px}
 .rw-player{border:0;border-bottom:1px solid var(--reading-edge);border-radius:3px;background:var(--surface);padding:12px 0}
@@ -188,7 +188,7 @@ p{line-height:1.7}
 .rw-empty,.rw-annotations>div{background:var(--reading-raised);border-radius:3px}
 .rw-translation,.rw-player p,.rw-media-unavailable{color:var(--muted)}
 .rw-passage{border-color:var(--reading-edge)}
-.rw-summary-heading h2{font-family:var(--ui-font);font-size:28px;font-weight:550;letter-spacing:-.035em}
+.rw-summary-heading h2{font-family:var(--reading-font-family,var(--ui-font));font-size:28px;font-weight:550;letter-spacing:-.035em}
 .react-ai-panel,.remote-media,.ingestion-panel,.native-media-panel{max-width:872px;margin:20px auto 50px;padding:24px 0;border-top:1px solid var(--reading-edge)}
 .react-ai-panel summary{cursor:pointer;font-size:14px}
 .react-ai-panel fieldset{border:0;padding:20px 0;display:flex;gap:18px;flex-wrap:wrap}
