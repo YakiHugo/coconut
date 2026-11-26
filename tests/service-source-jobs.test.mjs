@@ -328,16 +328,16 @@ test('switching Qwen to MOSS creates a new task and cannot retry the old profile
  assert.equal((await f.jobs.result(second.id)).ingestion.transcript.document.provenance.backend,'moss-mlx');
  assert.deepEqual(JSON.parse(await readFile(path.join(work[0],'authored-qwen-checkpoint.json'),'utf8')),{backend:'qwen-mlx'});
 });
-test('publisher context goes directly to ASR; optional roster extraction follows recognition and failure retains ASR',async t=>{
+test('publisher roster reaches ASR before recognition and provider failure retains local ASR',async t=>{
  for(const unavailable of [false,true]){
   const steps=[];
   const reviewer={prepareContext:async d=>{steps.push('context');if(unavailable)throw Error('CLI unavailable');return {...d,speaker_identity_evidence:{expected_speakers:2,speakers:[{name:'张元'}]},transcription_glossary:[{term:'Manus',source:'publisher'}]};},identifySpeakers:async d=>{steps.push('identity');return {...d,segments:d.segments.map(s=>({...s,speaker:'张元（嘉宾）'}))};},review:async d=>{steps.push('review');return {result:d};}};
   const context={source_url:doc.source_url,platform:'xiaoyuzhou',show:'测试播客',description:'嘉宾张元，话题 Manus。'};
-  const f=await fixture(t,{reviewer,reviewProvider:'codex',transcriber:{profile:{backend:'authored'},status:async()=>({available:true}),run:async request=>{steps.push('asr');assert.deepEqual(request.context,context);assert.deepEqual(request.hotwords,[]);assert.equal(request.speakerCount,undefined);await writeFile(path.join(request.workDirectory,'result.json'),JSON.stringify({schema_version:1,title:'Authored',segments:[{id:'a',start:0,end:1,text:'原识别',speaker_id:'speaker-0001'}]}));}}});
+  const f=await fixture(t,{reviewer,reviewProvider:'codex',transcriber:{profile:{backend:'authored'},status:async()=>({available:true}),run:async request=>{steps.push('asr');assert.deepEqual(request.context,unavailable?context:{...context,participants:[{name:'张元',role:''}]});assert.deepEqual(request.hotwords,unavailable?[]:['张元','Manus']);assert.equal(request.speakerCount,unavailable?undefined:2);await writeFile(path.join(request.workDirectory,'result.json'),JSON.stringify({schema_version:1,title:'Authored',segments:[{id:'a',start:0,end:1,text:'原识别',speaker_id:'speaker-0001'}]}));}}});
   commit(f.library,{...doc,transcription_context:context});
   await f.media.save(doc.key,f.media.owner(doc.key).source,Readable.from(['ID3 authored']),{type:'audio/mpeg',name:'source.mp3'});const job=await f.create('transcribe');await until(()=>f.jobs.get(job.id),j=>j.state==='ready');
   const result=(await f.jobs.result(job.id)).ingestion.transcript.document;
-  assert.deepEqual(steps,['asr','context','identity','review']);assert.equal(result.segments[0].speaker,'张元（嘉宾）');assert.deepEqual(result.transcription_context,context);
+  assert.deepEqual(steps,['context','asr','identity','review']);assert.equal(result.segments[0].speaker,'张元（嘉宾）');assert.deepEqual(result.transcription_context,context);
   const original=JSON.parse(await readFile(path.join(f.directory,'jobs',job.id,'original-asr.json'),'utf8'));assert.equal(original.segments[0].speaker,undefined);
  }
 });
