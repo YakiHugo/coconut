@@ -12,6 +12,7 @@ import importlib.metadata
 import json
 import math
 from pathlib import Path
+from functools import lru_cache
 import re
 import sys
 import time
@@ -23,7 +24,6 @@ COMMAS='，,；;'
 PUNCT='，,。.!！？?；;：:、…'
 CLOSERS='”’」』》）)]】'
 OPEN_TO_CLOSE={'“':'”','‘':'’','「':'」','『':'』','"':'"'}
-LEXEMES=('可能','恭喜','事情','创始人','顺利','合伙人','能力','这样子','的时候','因为','所以','但是','然后','非常','意思','理念','感觉','什么','为什么','怎么','自己','公司','市场','项目','投资','工作','需要','重要','信息','生活','成功','世界','产品','技术','人工智能','学习','最后','过去','现在','未来','没有','已经','应该','如果','比如','或者','虽然','也是','就是','不是','不会','一直','当时','当然','一样','能够')
 FUNCTION_END=re.compile(r'(?:的|地|得|和|与|在|把|被|对|给|跟|为|从|向|很|更|比较|如果|因为|比如|虽然|或者|但是|所以|然后|就是|还有|一个|一种|那种|所谓|关于|怎么|可能|应该|不能|没有|不|才|又|想|要|将|会|能|到|像|是|说|讲|问|告诉|表示|认为|觉得|希望|以为|意识到|发现|忘了|记得|这个|那个|时候|的话|之前|之后|过程中|情况下|当然|总之|不过|其实)$')
 NEW_CLAUSE=re.compile(r'^(?:(?:然后|后来|但是|但|然而|不过|所以|因此|而且|另外|另一方面|总之|现在|有的时候)(?:呢)?|(?:我|你|他|她|它|我们|你们|他们|她们|它们)(?:觉得|认为|当时|后来|现在|就|也|还|没有|已经|从|说))')
 
@@ -72,13 +72,28 @@ def _quote_masks(cues):
     if lo<hi:masks[target['id']].update(range(lo-x,hi-x));covered.update(range(lo,hi))
  return masks
 
+@lru_cache(maxsize=1)
+def _word_segmenter():
+ try:
+  from rjieba import cut
+ except ImportError:
+  return None
+ return cut
+
 def _lexeme_crosses(left,right):
- a=_lexical(left)[-12:];b=_lexical(right)[:12]
- if not a or not b:return False
- if a[-1:].isascii() and b[:1].isascii() and a[-1:].isalnum() and b[:1].isalnum():return True
- for word in LEXEMES:
-  for k in range(1,len(word)):
-   if a.endswith(word[:k]) and b.startswith(word[k:]):return True
+ if re.search(r'[A-Za-z0-9]$',left) and re.match(r'[A-Za-z0-9]',right):return True
+ left=re.search(r'[\u3400-\u9fff]{1,12}$',left)
+ right=re.match(r'[\u3400-\u9fff]{1,12}',right)
+ if not left or not right:return False
+ tokenizer=_word_segmenter()
+ if tokenizer is None:return False
+ text=left[0]+right[0]
+ boundary=len(left[0])
+ offset=0
+ for word in tokenizer(text,hmm=False):
+  end=offset+len(word)
+  if end>=boundary:return offset<boundary<end
+  offset=end
  return False
 
 def _incomplete(left,right):

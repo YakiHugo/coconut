@@ -229,31 +229,25 @@ def enhance_document(document: dict, audio: Path | None = None, *, punctuation: 
 
     cues = result['segments']
     if segmentation and embedding and audio and provenance.get('speaker_method') != 'recording-acoustic-v1':
-        from audio_pipeline import CallableBackend, run_audio_pipeline
-        from audio_speakers import SherpaSpeakerBackend, label_aligned_segments
+        from audio_pipeline import SAMPLE_RATE, _directory, _wav_frames, prepare_audio
+        from audio_speakers import diarize_recording, fuse_speakers
         segmentation_path, embedding_path = _model(segmentation), _model(embedding)
         print('[speakers] grouping voices locally', file=sys.stderr, flush=True)
-        grouped = run_audio_pipeline(audio,
-            CallableBackend({'backend': 'speaker-only'}, lambda _: {'segments': []}),
-            speaker_backend=SherpaSpeakerBackend(segmentation_path, embedding_path),
-            local_only=True, work_dir=work_dir,
-            reconcile_speakers=True, expected_speakers=speaker_count,
-            expected_duration=document.get('media_duration'),
-            minimum_duration=max((cue['end'] for cue in cues), default=0),
-            progress=lambda index, total: print(f'[speakers] chunk {index + 1}/{total}', file=sys.stderr, flush=True))
-        turns = grouped['speaker_turns']
-        automatic = [cue for cue in cues if not cue.get('speaker')]
-        decisions = {turn['speaker']: {'speaker_id': turn['speaker_id'],
-                                      'status': turn['speaker_status']} for turn in turns}
-        # Existing subtitle/annotation jobs retain their original cue contract.
-        # Fresh ASR can split before notes, translations or excerpts exist.
-        if split_speakers and len(automatic) == len(cues):
-            cues[:] = label_aligned_segments(automatic, turns, decisions, split=True)
-        else:
-            label_aligned_segments(automatic, turns, decisions)
+        with _directory(work_dir) as directory:
+            pcm = prepare_audio(audio, directory)
+            duration = _wav_frames(pcm) / SAMPLE_RATE
+            expected = document.get('media_duration')
+            if expected and abs(expected-duration) > max(3.,expected*.005):
+                raise ValueError('Audio duration does not match the transcript source')
+            if max((cue['end'] for cue in cues), default=0) > duration+1.:
+                raise ValueError('Transcript timing extends beyond the supplied audio')
+            turns = diarize_recording(pcm, directory / 'speakers', segmentation_path, embedding_path,
+                expected_speakers=speaker_count,
+                progress=lambda index,total: print(f'[speakers] chunk {index}/{total}', file=sys.stderr, flush=True))
+        cues[:] = fuse_speakers(cues, turns, split=split_speakers and all(not cue.get('speaker') for cue in cues))
         count = sum(bool(cue.get('speaker_id')) for cue in cues)
         provenance.update(speaker_method='recording-acoustic-v1', speaker_backend='sherpa-onnx',
-                          speaker_model='pyannote-segmentation-3.0 + 3dspeaker-eres2net + word-turn-v2',
+                          speaker_model='pyannote-segmentation-3.0 + 3dspeaker-eres2net + recording-clusters-v1',
                           speaker_status=f'automatic_unreviewed:{count}/{len(cues)}')
     if punctuation and provenance.get('punctuation_method') != VERSION:
         print('[punctuation] restoring punctuation locally', file=sys.stderr, flush=True)

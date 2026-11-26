@@ -8,3 +8,6 @@ httpx[socks]>=0.28,<1
 
 # Local cue-by-cue translation tokenizer; uses the existing CTranslate2 runtime.
 sentencepiece==0.2.1
+
+# Local word boundaries for Chinese reading and speaker cuts.
+rjieba==0.2.2

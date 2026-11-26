@@ -122,8 +122,8 @@ def sentence_segments(segments):
                 emit_group()
             group.append(word)
             text = ''.join(item['word'] for item in group)
-            if (re.search(r'[。！？.!?][\s”’」』）)]*$', word['word']) or
-                    len(text) >= 160 and re.search(r'[，,；;：:][\s”’」』）)]*$', word['word']) or
+            if (re.search(r'[。！？.!?][\s"”’」』）)]*$', word['word']) or
+                    len(text) >= 160 and re.search(r'[，,；;：:][\s"”’」』）)]*$', word['word']) or
                     group[-1]['end'] - group[0]['start'] >= 45):
                 emit_group()
         emit_group()
@@ -535,16 +535,15 @@ def _qwen_document(request, source, work, profile, speaker_count, backend, optio
         if result.get('asr_metrics', {}).get('first_pass_chunks'):
             document['provenance']['asr_metrics'] = result['asr_metrics']
         if profile.get('segmentation'):
-            from audio_speakers import diarize_recording, label_aligned_segments
+            from audio_speakers import diarize_recording, fuse_speakers
             turns = diarize_recording(audio, directory / 'speakers', profile['segmentation'], profile['embedding'],
                 expected_speakers=speaker_count, check=check,
                 progress=lambda index, total: emit(phase='speakers', chunk=index, chunks=total))
-            decisions = {turn['speaker']: {'speaker_id': turn['speaker_id'], 'status': turn['speaker_status']} for turn in turns}
-            cues = label_aligned_segments(document['segments'], turns, decisions, split=True)
+            cues = fuse_speakers(document['segments'], turns, check=check)
             document['segments'] = cues
             count = sum(bool(cue.get('speaker_id')) for cue in cues)
             document['provenance'].update(speaker_method='recording-acoustic-v1', speaker_backend='sherpa-onnx',
-                speaker_model='pyannote-segmentation-3.0 + 3dspeaker-eres2net + word-turn-v2',
+                speaker_model='pyannote-segmentation-3.0 + 3dspeaker-eres2net + recording-clusters-v1',
                 speaker_status=f'automatic_unreviewed:{count}/{len(cues)}')
         check()
         document = correct_verified_names(document, request.get('name_corrections'))

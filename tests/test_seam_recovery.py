@@ -100,11 +100,11 @@ class SeamTests(unittest.TestCase):
         self.assertEqual(recover_seam(a,left,b,right),([],[]))
 
     def test_later_acoustic_pass_cannot_inherit_a_speaker_from_uncertain_clock(self):
-        from audio_speakers import label_aligned_segments
+        from audio_speakers import fuse_speakers
         a,left,b,right=fixture();cues,_=recover_seam(a,left,b,right)
         turns=[{'start':3,'end':5,'speaker':'a'}];decisions={'a':{'speaker_id':'speaker-1','status':'automatic_unreviewed'}}
         for split in (False,True):
-            result=label_aligned_segments(copy.deepcopy(cues),turns,decisions,split=split)
+            result=fuse_speakers(copy.deepcopy(cues),[{**turn,'speaker_id':decisions.get(turn['speaker'],{}).get('speaker_id')} for turn in turns],split=split)
             self.assertEqual(len(result),1)
             self.assertIsNone(result[0]['speaker_id'])
             self.assertEqual(result[0]['speaker_status'],'seam_recovered_unknown')

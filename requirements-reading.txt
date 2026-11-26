@@ -2,3 +2,7 @@
 # Install explicitly in the same Python environment as the ASR executor.
 # Model files are provisioned separately; imports never download them.
 sherpa-onnx==1.13.8
+onnxruntime==1.25.0
+
+# Local word boundaries for Chinese reading and speaker cuts.
+rjieba==0.2.2
