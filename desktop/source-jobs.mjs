@@ -56,7 +56,7 @@ export async function createSourceJobs({directory,libraryStore,mediaStore,podcas
  };
  const userSnapshot=document=>({title:document.title,transcription_context:document.transcription_context||null,speaker_identity_evidence:document.speaker_identity_evidence||null,transcription_glossary:document.transcription_glossary||null});
  const same=(a,b)=>JSON.stringify(a)===JSON.stringify(b);
- async function capabilities(){const status=await transcriber?.incrementalStatus?.();return {protocolVersion:1,downloadTranscribe:{available:Boolean(status?.available),local_only:true,acquisitionMode:'incremental-experimental-v1',backend:'qwen-mlx',fallback:'complete-file'}};}
+ async function capabilities(){const status=transcriber?.profile?.backend==='qwen-mlx'?await transcriber.status():null;return {protocolVersion:1,downloadTranscribe:{available:Boolean(status?.available&&status.local_only!==false&&status.model_download!==true),local_only:true,acquisitionMode:'incremental-experimental-v1',backend:'qwen-mlx',fallback:'complete-file'}};}
  function currentCombined(value,operation){const current=libraryStore.get(value.document_key)?.document;return Boolean(current&&mediaStore.owner(value.document_key).binding===value.binding&&same(operation.user_snapshot,userSnapshot(current))&&same(operation.profile,transcriber?.profile));}
  mediaStore.setCommitGuard(record=>{
   if(closing)throw fail('来源任务服务正在停止',503);
@@ -170,11 +170,18 @@ export async function createSourceJobs({directory,libraryStore,mediaStore,podcas
    aliases.set(alias,aliases.has(alias)&&aliases.get(alias)!==participant.name?null:participant.name);
   }
   const nameCorrections=Object.fromEntries([...aliases].filter(([alias,name])=>name&&!hotwords.includes(alias)));
-  return {title:ownerDocument.title,context:ownerDocument.transcription_context,hotwords,nameCorrections,speakerCount:ownerDocument.speaker_identity_evidence?.expected_speakers};
+  const participantNames=participants.map(person=>({name:person.name,role:['主持人','嘉宾'].includes(person.role)?person.role:''}));
+  const context=participantNames.length?{...ownerDocument.transcription_context,participants:participantNames}:ownerDocument.transcription_context;
+  return {title:ownerDocument.title,context,hotwords,nameCorrections,speakerCount:ownerDocument.speaker_identity_evidence?.expected_speakers};
+ }
+ function prepareRecognitionContext(document,{provider,model='',directory,signal}){
+  if(!provider||!reviewer?.prepareContext||!document.transcription_context?.description)return Promise.resolve(document);
+  // Publisher metadata only. The provider is taken from this job's authorized review.
+  return Promise.resolve().then(()=>reviewer.prepareContext(document,{directory,provider,model,signal}))
+   .catch(()=>document);
  }
  async function perform(value,signal){
   update(value.id,'running');
-  let liveSession=null;
   let acceptingProgress=true,progressTimer;
   const setPhase=phase=>{
    if(acceptingProgress&&!closing&&!signal.aborted){
@@ -187,38 +194,47 @@ export async function createSourceJobs({directory,libraryStore,mediaStore,podcas
    owned(value);
    if(value.kind==='captions'){await fetchAuthorCaptions(value,signal,setPhase);return;}
    requireMissingTranscript(value.kind,libraryStore.get(value.document_key).document);
-   let incrementalDone=false;
+   const initial=JSON.parse(value.operation||'{}'),contextDirectory=path.join(directory,value.id,'context');
+   const contextOptions={...initial.review,provider:initial.review?.provider||initial.after_transcription_review,
+    directory:contextDirectory,signal};
+   let contextPromise=null,contextInput=null;
+   const prefetch=(document,snapshot)=>{
+    const candidate={...document,...snapshot},key=JSON.stringify([candidate.title,candidate.transcription_context,
+     candidate.speaker_identity_evidence,candidate.transcription_glossary]);
+    if(key!==contextInput){
+     contextInput=key;
+     contextPromise=prepareRecognitionContext(candidate,contextOptions);
+    }
+    return contextPromise;
+   };
+   if(value.kind==='transcribe'||combined(value.kind)){
+    const document=libraryStore.get(value.document_key).document;
+    prefetch(document,initial.recognition_document||recognitionSnapshot(document,value.binding));
+   }
+
    if(value.kind==='download'||combined(value.kind)&&!JSON.parse(value.operation).fingerprint){
     setPhase({phase:'resolve'});
     const document=libraryStore.get(value.document_key).document,source=document.podcast_source;
     if(autoDownload(value)&&!JSON.parse(value.operation||'{}').force_download&&await mediaStore.read(value.document_key,value.binding)){
      if(!signal.aborted&&!closing){update(value.id,'ready');emit(value.document_key,'media');maybeTranscribe(value.document_key,value.binding);}return;
     }
-    let media,consumed=false,session=null,sessionError=null,attemptDirectory=null;
+    let media,consumed=false;
     const operation=combined(value.kind)?JSON.parse(value.operation):null;
-    let frozen=null;
-    const rememberError=error=>{sessionError??=error;};
     const consume=async result=>{
      if(consumed)throw fail('原声任务重复提交媒体',409);
      owned(value);
      const type=ALIASES[result.type]||result.type,extension=TYPES[type]||({'audio/aac':'aac','video/ogg':'ogg','video/quicktime':'mov'})[type];
      if(!extension)throw fail('原声格式不受支持');
      const body=Buffer.isBuffer(result.body)?Readable.from([result.body]):result.body;
-     let observer;
      if(operation){
       requireMissingTranscript(value.kind,libraryStore.get(value.document_key).document);
       if(!currentCombined(value,operation))throw fail('识别输入已变化，请创建新任务',409);
       const context=Coconut.transcriptionContext(result.source?.transcription_context||result.transcription_context);
       if(context?.source_url===document.source_url&&!operation.recognition_document.transcription_context)operation.recognition_document.transcription_context=context;
       if(context?.source_url===document.source_url)operation.transcription_context=context;
-      frozen=recognitionArguments({...document,...operation.recognition_document});
-      if(source?.media_url&&!Buffer.isBuffer(result.body)&&['audio/mpeg','audio/flac','audio/mp4'].includes(type)){
-       operation.attempt_id=randomUUID();attemptDirectory=path.join(directory,value.id,'attempts',operation.attempt_id);await mkdir(attemptDirectory,{recursive:true,mode:0o700});
-       db.prepare('UPDATE jobs SET operation=? WHERE id=?').run(JSON.stringify(operation),value.id);
-       observer={opened:({readOnlyFd})=>{try{requireMissingTranscript(value.kind,libraryStore.get(value.document_key).document);session=liveSession=transcriber.startIncremental({attemptId:operation.attempt_id,mediaFd:readOnlyFd,pcmCache:mediaStore.pcmCacheDirectory,workDirectory:attemptDirectory,sourceSnapshot:operation.user_snapshot,...frozen,mediaWaitSeconds:Math.ceil((podcastSources.downloadPolicy?.idleTimeoutMs??120000)/1000)+60,signal,onProgress:setPhase});session.completion.catch(rememberError);}catch(error){rememberError(error);}},appended:({availableBytes})=>{try{session?.appendWatermark(availableBytes);}catch(error){rememberError(error);}},sealed:record=>{try{session?.seal({size:record.size,sha256:record.sha256});}catch(error){rememberError(error);}},aborted:()=>{session?.abort();}};
-      }
+      prefetch(document,operation.recognition_document);
      }
-     const record=await mediaStore.save(value.document_key,value.source,body,{type,name:'source.'+extension,signal,expectedSha256:result.sha256,expectedSize:result.size,observer,onReceived:size=>{receiving=false;if(!operation)setPhase({phase:'save',receivedBytes:size,totalBytes});}});
+     const record=await mediaStore.save(value.document_key,value.source,body,{type,name:'source.'+extension,signal,expectedSha256:result.sha256,expectedSize:result.size,onReceived:size=>{receiving=false;if(!operation)setPhase({phase:'save',receivedBytes:size,totalBytes});}});
      if(operation){operation.fingerprint=record.sha256;operation.size=record.size;db.prepare('UPDATE jobs SET operation=? WHERE id=?').run(JSON.stringify(operation),value.id);}
 
      consumed=true;
@@ -266,15 +282,6 @@ export async function createSourceJobs({directory,libraryStore,mediaStore,podcas
      }
      return;
     }
-    if(session){await session.completion;}
-    if(sessionError)throw sessionError;
-    if(session){
-     const receipt=JSON.parse(await readFile(path.join(attemptDirectory,'incremental_receipt.json'),'utf8'));
-     const expectedContext={title:frozen.title??null,context:frozen.context??null,hotwords:frozen.hotwords??null,name_corrections:frozen.nameCorrections??null,speaker_count:frozen.speakerCount??null};
-     if(receipt.protocol_version!==1||receipt.attempt_id!==operation.attempt_id||receipt.source_sha256!==operation.fingerprint||receipt.size!==operation.size||!same(receipt.source_snapshot,operation.user_snapshot)||!same(receipt.profile,operation.profile)||!same(receipt.frozen_context,expectedContext)||!Number.isInteger(receipt.reused_chunks)||receipt.reused_chunks<0||!Number.isInteger(receipt.recomputed_chunks)||receipt.recomputed_chunks<0||![null,'stream_decode_unavailable','canonical_pcm_mismatch'].includes(receipt.fallback_reason))throw fail('增量转录完整性验证失败');
-     const raw=await readFile(path.join(attemptDirectory,'result.json'),'utf8');Coconut.validate(JSON.parse(raw));
-     const destination=path.join(directory,value.id);await writeFile(path.join(destination,'result.tmp'),raw,{mode:0o600});await rename(path.join(destination,'result.tmp'),path.join(destination,'result.json'));incrementalDone=true;
-    }
     value=row(value.id);
    }
    const operation=JSON.parse(value.operation);
@@ -302,23 +309,22 @@ export async function createSourceJobs({directory,libraryStore,mediaStore,podcas
    if(combined(value.kind)&&!currentCombined(value,operation))throw fail('识别输入已变化，请创建新任务',409);
    const currentDocument=libraryStore.get(value.document_key).document;
    requireMissingTranscript(value.kind,currentDocument);
-   let ownerDocument={...currentDocument,...(operation.recognition_document||recognitionSnapshot(currentDocument,value.binding))};
-   const {hotwords,nameCorrections}=recognitionArguments(ownerDocument);
-   if(!incrementalDone)await transcriber.run({inputPath:input.path,sha256:operation.fingerprint,workDirectory,pcmCache:mediaStore.pcmCacheDirectory,title:ownerDocument.title,context:ownerDocument.transcription_context,hotwords,nameCorrections,speakerCount:ownerDocument.speaker_identity_evidence?.expected_speakers,mediaDuration:ownerDocument.media_duration,signal,
+   const ownerDocument=await prefetch(currentDocument,operation.recognition_document||recognitionSnapshot(currentDocument,value.binding));
+   signal.throwIfAborted();
+   owned(value);
+   const {hotwords,nameCorrections,context}=recognitionArguments(ownerDocument);
+   await transcriber.run({inputPath:input.path,sha256:operation.fingerprint,workDirectory,pcmCache:mediaStore.pcmCacheDirectory,title:ownerDocument.title,context,hotwords,nameCorrections,speakerCount:ownerDocument.speaker_identity_evidence?.expected_speakers,mediaDuration:ownerDocument.media_duration,signal,
     onProgress:setPhase});
    owned(value);await mediaStore.localInput(value.document_key,value.binding,operation.fingerprint);
    let raw=JSON.parse(await readFile(path.join(workDirectory,'result.json'),'utf8'));
    const document=Coconut.validate(raw);
    if(!Array.isArray(document.segments))throw fail('转录没有返回有效文字稿');
-   raw={...raw,...(ownerDocument.transcription_context?{transcription_context:ownerDocument.transcription_context}:{})};
+   const publisherFields=Object.fromEntries(['transcription_context','speaker_identity_evidence','transcription_glossary'].filter(key=>ownerDocument[key]).map(key=>[key,ownerDocument[key]]));
+   raw={...raw,...publisherFields};
    if(operation.review&&reviewer){
     await writeFile(path.join(workDirectory,'original-asr.json'),JSON.stringify(raw),{mode:0o600});
     raw={...raw,title:ownerDocument.title,source_url:ownerDocument.source_url||raw.source_url||'',...(ownerDocument.speaker_identity_evidence?{speaker_identity_evidence:ownerDocument.speaker_identity_evidence}:{}),...(ownerDocument.transcription_glossary?{transcription_glossary:ownerDocument.transcription_glossary}:{}),...(ownerDocument.podcast_source?{podcast_source:ownerDocument.podcast_source}:{})};
     try{
-     // Publisher text goes directly to ASR. Optional extraction now only helps
-     // downstream name assignment/review, never delays recognition.
-     if(reviewer.prepareContext)try{raw=await reviewer.prepareContext(raw,{directory:path.join(workDirectory,'context'),...operation.review,signal,onProgress:setPhase});}
-     catch(error){if(signal.aborted||closing)throw error;raw={...raw,transcription_context_status:'pending'};}
      if(reviewer.identifySpeakers)raw=await reviewer.identifySpeakers(raw,{directory:path.join(workDirectory,'speaker-identity'),...operation.review,signal,onProgress:setPhase});
      const output=await reviewer.review(raw,{directory:path.join(workDirectory,'review'),...operation.review,signal,jobId:value.id,onProgress:setPhase});
      raw=output.result;
@@ -330,7 +336,7 @@ export async function createSourceJobs({directory,libraryStore,mediaStore,podcas
     }
     signal.throwIfAborted();await writeFile(path.join(workDirectory,'reviewed.tmp'),JSON.stringify(raw),{mode:0o600});await rename(path.join(workDirectory,'reviewed.tmp'),path.join(workDirectory,'result.json'));
    }
-   else if(ownerDocument.transcription_context){await writeFile(path.join(workDirectory,'context-result.tmp'),JSON.stringify(raw),{mode:0o600});await rename(path.join(workDirectory,'context-result.tmp'),path.join(workDirectory,'result.json'));}
+   else if(Object.keys(publisherFields).length){await writeFile(path.join(workDirectory,'context-result.tmp'),JSON.stringify(raw),{mode:0o600});await rename(path.join(workDirectory,'context-result.tmp'),path.join(workDirectory,'result.json'));}
    if(!signal.aborted&&!closing){
     if(publishResult(value)){
      if(combined(value.kind)&&!currentCombined(value,operation)||
@@ -342,7 +348,6 @@ export async function createSourceJobs({directory,libraryStore,mediaStore,podcas
     if(document)await prepareReading(document);
    }
   }catch(error){
-   if(liveSession){try{liveSession.abort();await liveSession.completion;}catch{}}
    if(!closing&&!signal.aborted){
     const videoFailure=value.kind==='download'&&error instanceof VideoSourceError;
     const conflict=error?.status===409&&!videoFailure;
@@ -405,7 +410,7 @@ export async function createSourceJobs({directory,libraryStore,mediaStore,podcas
     return {...describe(existing),requestedOperationId:data.operation_id};
    }
    if(existing&&['queued','running'].includes(existing.state))throw fail('旧转录仍在进行，请先取消原任务',409);
-   if(!(await capabilities()).downloadTranscribe.available)throw fail('本地增量转录尚未就绪',503);
+   if(!(await capabilities()).downloadTranscribe.available)throw fail('本地转录尚未就绪',503);
    if(!record&&!document.podcast_source?.media_url&&!videoSource(document))throw fail('此项目没有可获取的原声');
    operation=JSON.stringify({profile:transcriber.profile,user_snapshot:userSnapshot(document),recognition_document:recognitionSnapshot(document,owner.binding),fingerprint:record?.sha256||null,size:record?.size||null,...(data.after_transcription_review?{after_transcription_review:data.after_transcription_review}:{})});
   }else if(data.kind==='download'){const document=libraryStore.get(data.key).document;if(!document.podcast_source?.media_url&&!videoSource(document))throw fail('此项目没有可获取的原声');}
@@ -463,7 +468,7 @@ export async function createSourceJobs({directory,libraryStore,mediaStore,podcas
    if(['transcribe','align','download_transcribe'].includes(value.kind)){
     if(combined(value.kind)&&!currentCombined(value,JSON.parse(value.operation)))throw fail('识别输入已变化，请创建新任务',409);
     const media=await mediaStore.read(value.document_key,value.binding);if(closing||admissionOwner!==null)throw fail('服务正在停止或等待关闭确认',503);if((media?.sha256||null)!==JSON.parse(value.operation).fingerprint)throw fail('原声已经替换，请为当前原声明确创建新转写',409);
-    const status=await (combined(value.kind)?transcriber?.incrementalStatus():value.kind==='align'?transcriber?.alignmentStatus():transcriber?.status());if(!status?.available)throw fail(status?.message||'本地转录未就绪',503);
+    const status=await (value.kind==='align'?transcriber?.alignmentStatus():transcriber?.status());if(!status?.available)throw fail(status?.message||'本地转录未就绪',503);
     if(closing||admissionOwner!==null)throw fail('服务正在停止或等待关闭确认',503);
     const operation={...JSON.parse(value.operation),profile:transcriber.profile};
     if(value.engine==='direct-v1'&&JSON.stringify(JSON.parse(value.operation).profile)!==JSON.stringify(transcriber.profile))throw fail('模型配置已变化，请创建新任务',409);

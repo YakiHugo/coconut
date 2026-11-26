@@ -5,4 +5,3 @@ av==16.1.0
 -r requirements-reading.txt
 # Local Silero V6 assets are distributed with faster-whisper.
 faster-whisper==1.2.1
-onnxruntime==1.25.0
