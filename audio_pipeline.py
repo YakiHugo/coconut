@@ -69,8 +69,12 @@ def _without_invalid_context(value, chunk):
 
 
 def recognize_window(backend, path, request_id, chunk):
+    return validate_window_clocks(lambda: backend.recognize(path, request_id=request_id), chunk)
+
+
+def validate_window_clocks(observe, chunk):
     try:
-        return backend.recognize(path, request_id=request_id)
+        return observe()
     except InvalidWindowClocks as error:
         if error.duration != chunk.duration:
             raise

@@ -89,7 +89,8 @@ def sentence_segments(segments):
     Untimed or incompletely aligned text keeps its original coarse extent.
     """
     result = []
-    for segment in segments:
+    for index, segment in enumerate(segments):
+        first_output = len(result)
         words = segment.get('words') or []
         if not words or ''.join(word['word'] for word in words).strip() != segment['text'].strip():
             result.append(segment)
@@ -120,6 +121,13 @@ def sentence_segments(segments):
                     group[-1]['end'] - group[0]['start'] >= 45):
                 emit_group()
         emit_group()
+        # Overlapping ASR extents can make a late sentence start after a
+        # subsequent source extent. Preserve source order and its coarse clock.
+        starts = [cue['start'] for cue in result[first_output:]]
+        if index + 1 < len(segments):
+            starts.append(segments[index+1]['start'])
+        if any(a > b for a, b in zip(starts, starts[1:])):
+            result[first_output:] = [segment]
     return result
 
 
@@ -240,19 +248,22 @@ class QwenBackend:
         if self.hints:
             self.cache_key['context'] = self.hints
 
-    def recognize(self, path, *, request_id):
+    def release(self, stage):
+        import gc
+        setattr(self, stage, None)
+        gc.collect()
+        mlx = sys.modules.get('mlx.core')
+        if mlx is not None:
+            mlx.clear_cache()
+
+    def recognize_text(self, path, duration, request_id, directory):
         from mlx_audio.stt import load
-        from audio_pipeline import InvalidWindowClocks, validate_result
-        import wave
-        with wave.open(str(path)) as audio:
-            duration = audio.getnframes() / audio.getframerate()
-        raw_path = self.work / ('recognition-' + request_id + '.json')
+        raw_path = directory / ('recognition-' + request_id + '.json')
 
         def recognize():
             if self.asr is None:
                 with contextlib.redirect_stdout(sys.stderr):
                     self.asr = load(self.profile['asr_model'])
-            emit(phase='recognize')
             budget = min(16384, max(256, math.ceil(duration * 12) + 64))
             with contextlib.redirect_stdout(sys.stderr):
                 result = self.asr.generate(str(path), max_tokens=budget, verbose=False, **self.hints)
@@ -268,11 +279,17 @@ class QwenBackend:
                 return {'text': result.text, 'segments': result.segments, 'recovery': 'shorter_audio_windows'}
             return {'text': result.text, 'segments': result.segments}
 
-        raw = checkpoint(raw_path, recognize)
+        return checkpoint(raw_path, recognize)
+
+    def align_recognition(self, path, raw, duration, request_id, directory, *, origin=0., check=lambda: None):
+        from mlx_audio.stt import load
+        from audio_pipeline import InvalidWindowClocks, validate_result
+        raw = dict(raw)
         if not raw.get('segments') and raw.get('text', '').strip():
             raw['segments'] = [dict(text=raw['text'], start=0, end=duration)]
         segments, languages = [], []
         for index, item in enumerate(raw['segments']):
+            check()
             if not item['text'].strip():
                 continue
             start, end = float(item['start']), float(item['end'])
@@ -285,14 +302,13 @@ class QwenBackend:
             segment = dict(start=start, end=end, text=item['text'], alignment_status='unavailable', timing_basis='audio_chunk')
             # MLX's ASR segment extents are audio chunks, not word timestamps.
             # Align each emitted audio/text pair and cache it independently.
-            aligned_path = self.work / ('alignment-' + request_id + '-' + str(index) + '.json')
+            aligned_path = directory / ('alignment-' + request_id + '-' + str(index) + '.json')
             def align():
                 from audio_pipeline import SAMPLE_RATE, aligner_audio
                 if self.aligner is None:
                     with contextlib.redirect_stdout(sys.stderr):
                         self.aligner = load(self.profile['align_model'])
-                emit(phase='align')
-                waveform = aligner_audio(Path(path), round(start * SAMPLE_RATE), round(end * SAMPLE_RATE))
+                waveform = aligner_audio(Path(path), round((origin + start) * SAMPLE_RATE), round((origin + end) * SAMPLE_RATE))
                 with contextlib.redirect_stdout(sys.stderr):
                     result = self.aligner.generate(audio=waveform, text=item['text'], language=language)
                 values = getattr(result, 'items', result)
@@ -307,6 +323,139 @@ class QwenBackend:
             return validate_result(value, duration)
         except ValueError as error:
             raise InvalidWindowClocks(str(error), value, duration) from error
+
+
+    def recognize(self, path, *, request_id):
+        from audio_pipeline import _wav_frames, SAMPLE_RATE
+        duration = _wav_frames(path) / SAMPLE_RATE
+        raw = self.recognize_text(path, duration, request_id, self.work)
+        return self.align_recognition(path, raw, duration, request_id, self.work)
+
+
+def _check_cancel(event):
+    if event is not None and event.is_set():
+        raise InterruptedError('Transcription cancelled')
+
+
+def _qwen_stages(backend, audio, directory, chunks, frames, check):
+    from dataclasses import asdict
+    from audio_pipeline import (_digest, owned_segments, stitch_segments, normalize_word_clocks,
+                                validate_window_clocks, write_chunk)
+    from seam_recovery import recover_seam
+
+    identity = _digest(backend.cache_key)
+    recognition = directory / 'recognition' / identity
+    alignment = directory / 'alignment' / identity
+    recognition.mkdir(parents=True, exist_ok=True)
+    alignment.mkdir(parents=True, exist_ok=True)
+    requests = [_digest(asdict(chunk)) for chunk in chunks]
+    try:
+        for index, (chunk, key) in enumerate(zip(chunks, requests), 1):
+            check()
+            emit(phase='recognize', chunk=index, chunks=len(chunks))
+            if (recognition / ('recognition-' + key + '.json')).exists():
+                continue
+            window = directory / 'window.wav'
+            try:
+                write_chunk(audio, chunk, window)
+                backend.recognize_text(window, chunk.duration, key, recognition)
+            finally:
+                window.unlink(missing_ok=True)
+    finally:
+        backend.release('asr')
+
+    segments, languages, recovered, evidence = [], [], [], []
+    previous = None
+    for index, (chunk, key) in enumerate(zip(chunks, requests), 1):
+        check()
+        emit(phase='align', chunk=index, chunks=len(chunks))
+        raw = json.loads((recognition / ('recognition-' + key + '.json')).read_text())
+        aligned = validate_window_clocks(
+            lambda: backend.align_recognition(audio, raw, chunk.duration, key, alignment,
+                                              origin=chunk.start, check=check), chunk)
+        segments.extend(owned_segments(aligned, chunk, frames))
+        if previous:
+            words, observations = recover_seam(previous[0], previous[1], aligned, chunk)
+            recovered.extend(words)
+            evidence.extend(observations)
+        previous = aligned, chunk
+        if aligned.get('language'):
+            languages.append(aligned['language'])
+    language = languages[0] if len(set(languages)) == 1 else None
+    output = sorted(stitch_segments(segments) + recovered, key=lambda item: (item['start'], item['end']))
+    for cue in output:
+        normalize_word_clocks(cue)
+    return {'segments': sentence_segments(output), 'language': language, 'seam_recovery': evidence}
+
+
+def _qwen_document(request, source, work, profile, speaker_count, backend, options):
+    from audio_pipeline import _directory, _wav_frames, plan_chunks, prepare_audio, SAMPLE_RATE, VERSION
+    from existing_alignment import repair_transcribed_clocks
+    from transcript import make_document, save_document
+
+    event = options.get('cancel_event')
+    def check():
+        _check_cancel(event)
+
+    with _directory(work / 'stages') as directory:
+        check()
+        manifest = directory / 'source.json'
+        source_identity = {'sha256': request['sha256']}
+        if manifest.exists():
+            if json.loads(manifest.read_text()) != source_identity:
+                raise ValueError('Transcription work belongs to another recording')
+        else:
+            save_document(source_identity, manifest)
+        maximum = options.get('max_decoded_frames')
+        audio = prepare_audio(source, directory) if maximum is None else prepare_audio(source, directory, max_frames=maximum)
+        frames = _wav_frames(audio)
+        duration = frames / SAMPLE_RATE
+        expected = request.get('media_duration')
+        if expected is not None and (type(expected) not in (int, float) or not math.isfinite(expected) or expected <= 0):
+            raise ValueError('Invalid source media duration')
+        if expected is not None and abs(duration - expected) > max(3, expected * .005):
+            raise ValueError('Audio duration does not match the transcript source')
+        try:
+            if hasattr(backend, 'recognize_text'):
+                chunks = plan_chunks(frames, options['chunk_seconds'], options['context_seconds'])
+                result = _qwen_stages(backend, audio, directory, chunks, frames, check)
+            else:
+                # Explicit incremental adapters carry a sealed, previously aligned chunk.
+                from audio_pipeline import _digest, run_audio_pipeline
+                result = run_audio_pipeline(audio, backend, work_dir=directory / 'sealed' / _digest(backend.cache_key),
+                                            chunk_seconds=options['chunk_seconds'], context_seconds=options['context_seconds'],
+                                            progress=options['progress'], cancel_event=event, local_only=True)
+                result['segments'] = sentence_segments(result['segments'])
+            check()
+            document = make_document(result, request.get('title', '文字稿'), '')
+            document['media_duration'] = duration
+            repair_transcribed_clocks(document, audio, directory, profile.get('align_model'),
+                                       getattr(backend, 'aligner', None), check=check)
+        finally:
+            if hasattr(backend, 'release'):
+                backend.release('aligner')
+        check()
+        document['provenance'] = dict(kind='local_asr', backend='qwen-mlx', model=Path(profile['asr_model']).name,
+            caption_method='asr', review_status='unreviewed', language_basis='asr_detected' if result.get('language') else 'unknown',
+            alignment_warning=result.get('alignment_warning'), source_sha256=request['sha256'],
+            speaker_method='unavailable', audio_pipeline=VERSION)
+        if profile.get('segmentation'):
+            from audio_speakers import diarize_recording, label_aligned_segments
+            turns = diarize_recording(audio, directory / 'speakers', profile['segmentation'], profile['embedding'],
+                expected_speakers=speaker_count, check=check,
+                progress=lambda index, total: emit(phase='speakers', chunk=index, chunks=total))
+            decisions = {turn['speaker']: {'speaker_id': turn['speaker_id'], 'status': turn['speaker_status']} for turn in turns}
+            cues = label_aligned_segments(document['segments'], turns, decisions, split=True)
+            document['segments'] = cues
+            count = sum(bool(cue.get('speaker_id')) for cue in cues)
+            document['provenance'].update(speaker_method='recording-acoustic-v1', speaker_backend='sherpa-onnx',
+                speaker_model='pyannote-segmentation-3.0 + 3dspeaker-eres2net + word-turn-v2',
+                speaker_status=f'automatic_unreviewed:{count}/{len(cues)}')
+        check()
+        document = correct_verified_names(document, request.get('name_corrections'))
+        emit(phase='save')
+        save_document(document, work / 'result.json')
+        emit(phase='done')
 
 
 def run(request, *, qwen_backend=None, pipeline_options=None):
@@ -340,17 +489,8 @@ def run(request, *, qwen_backend=None, pipeline_options=None):
         options.update(pipeline_options)
     if profile['backend'] == 'qwen-mlx':
         backend = qwen_backend or QwenBackend(profile, work, title=request.get('title', ''), context=request.get('context'), hotwords=request.get('hotwords'))
-        if backend.hints:
-            # A new title/vocabulary must not silently reuse recognition made
-            # without those hints, or invalidate the older recoverable work.
-            context_key = hashlib.sha256(json.dumps([backend.cache_key, backend.hints], ensure_ascii=False, sort_keys=True).encode()).hexdigest()[:16]
-            options['work_dir'] = work / ('audio-context-' + context_key)
-        elif backend.cache_key.get('adapter') == QWEN_ADAPTER:
-            options['work_dir'] = Path(options['work_dir']) / QWEN_ADAPTER
-        result = run_audio_pipeline(source, backend, local_only=True, **options)
-        result['segments'] = sentence_segments(result['segments'])
-        model = Path(profile['asr_model']).name
-    elif profile['backend'] == 'moss-mlx':
+        return _qwen_document(request, source, work, profile, speaker_count, backend, options)
+    if profile['backend'] == 'moss-mlx':
         from moss_asr import run_moss_pipeline
         result = run_moss_pipeline(source, model_path=profile['asr_model'],
                                    work_dir=work / 'moss', title=request.get('title', ''),
@@ -367,15 +507,6 @@ def run(request, *, qwen_backend=None, pipeline_options=None):
         caption_method='asr', review_status='unreviewed', language_basis='asr_detected' if result.get('language') else 'unknown',
         alignment_warning=result.get('alignment_warning'), source_sha256=request['sha256'],
         speaker_method=result['pipeline']['speaker_method'], audio_pipeline=result['pipeline']['version'])
-    if profile['backend'] == 'qwen-mlx' and profile.get('segmentation'):
-        from transcript_readability import enhance_document
-        emit(phase='speakers')
-        document = enhance_document(document, source, segmentation=profile['segmentation'],
-                                    embedding=profile['embedding'], work_dir=work / 'speakers',
-                                    split_speakers=True, speaker_count=speaker_count)
-    if profile['backend'] == 'qwen-mlx':
-        from existing_alignment import repair_transcribed_clocks
-        repair_transcribed_clocks(document, source, options['work_dir'], profile.get('align_model'), getattr(backend, 'aligner', None))
     document = correct_verified_names(document, request.get('name_corrections'))
     emit(phase='save')
     save_document(document, work / 'result.json')
@@ -406,6 +537,7 @@ def main():
     # Keep stdin open during work. Parent death closes it and terminates this
     # task even when Node cannot run its normal cancellation handler.
     finished = threading.Event()
+    cancel = threading.Event()
     def parent_closed():
         # A daemon blocked on BufferedReader.read() can abort CPython at normal
         # interpreter shutdown. Read the raw fd so completion needs no I/O lock.
@@ -413,13 +545,18 @@ def main():
             pass
         if not finished.is_set():
             os.kill(os.getpid(), signal.SIGTERM)
+    if request.get('operation') != 'align_existing':
+        def terminate(_signal, _frame):
+            cancel.set()
+            raise InterruptedError('Transcription cancelled')
+        signal.signal(signal.SIGTERM, terminate)
     threading.Thread(target=parent_closed, daemon=True).start()
     try:
         if request.get('operation') == 'align_existing':
             from existing_alignment import run_alignment
             run_alignment(request)
         else:
-            run(request)
+            run(request, pipeline_options={'cancel_event': cancel})
     finally:
         finished.set()
 

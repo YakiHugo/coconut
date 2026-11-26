@@ -133,6 +133,8 @@ def align_document(document, duration, align, *, retry=None):
                     raise ValueError('invalid_word_timing')
                 cue.update(words=words, timing_basis='word', alignment_status='complete')
                 row.update(status='aligned', reason=None)
+            except InterruptedError:
+                raise
             except Exception:
                 # Do not leak model paths/errors, erase original clocks, or manufacture timing.
                 row['reason'] = 'alignment_unverified'
@@ -144,10 +146,11 @@ def align_document(document, duration, align, *, retry=None):
     return dict(document=result, alignment_report=report, source_snapshot=copy.deepcopy(document))
 
 
-def audio_aligner(audio, frames, cache, model_path, language, model=None):
+def audio_aligner(audio, frames, cache, model_path, language, model=None, *, check=lambda: None):
     from audio_pipeline import SAMPLE_RATE, _digest, aligner_audio
     from transcription import checkpoint, emit
     def align(cue, padding=0):
+        check()
         key = _digest([cue['start'], cue['end'], cue['text'], language, padding])
         def generate():
             nonlocal model
@@ -167,10 +170,11 @@ def audio_aligner(audio, frames, cache, model_path, language, model=None):
     return align
 
 
-def repair_transcribed_clocks(document, source, directory, model_path, model=None):
+def repair_transcribed_clocks(document, source, directory, model_path, model=None, *, check=lambda: None):
     """Keep ASR text. Retry bad word clocks once against the finalized sentence."""
     from audio_pipeline import SAMPLE_RATE, _wav_frames, normalize_word_clocks, prepare_audio
     for cue in document['segments']:
+        check()
         normalize_word_clocks(cue)
     pending = [cue for cue in document['segments'] if cue.get('words') and
                (_clock_path(cue, cue['words']) is None or
@@ -181,7 +185,7 @@ def repair_transcribed_clocks(document, source, directory, model_path, model=Non
     cache.mkdir(parents=True, exist_ok=True)
     audio = prepare_audio(source, directory)
     frames = _wav_frames(audio)
-    measure = audio_aligner(audio, frames, cache, model_path, document.get('language'), model)
+    measure = audio_aligner(audio, frames, cache, model_path, document.get('language'), model, check=check)
     check = align_document(dict(segments=pending), frames / SAMPLE_RATE, lambda cue: cue['words'],
                            retry=lambda cue: measure(cue, .20))
     for cue, recovered, row in zip(pending, check['document']['segments'], check['alignment_report']['cues']):

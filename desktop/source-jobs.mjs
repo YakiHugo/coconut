@@ -304,7 +304,7 @@ export async function createSourceJobs({directory,libraryStore,mediaStore,podcas
    requireMissingTranscript(value.kind,currentDocument);
    let ownerDocument={...currentDocument,...(operation.recognition_document||recognitionSnapshot(currentDocument,value.binding))};
    const {hotwords,nameCorrections}=recognitionArguments(ownerDocument);
-   if(!incrementalDone)await transcriber.run({inputPath:input.path,sha256:operation.fingerprint,workDirectory,pcmCache:mediaStore.pcmCacheDirectory,title:ownerDocument.title,context:ownerDocument.transcription_context,hotwords,nameCorrections,speakerCount:ownerDocument.speaker_identity_evidence?.expected_speakers,signal,
+   if(!incrementalDone)await transcriber.run({inputPath:input.path,sha256:operation.fingerprint,workDirectory,pcmCache:mediaStore.pcmCacheDirectory,title:ownerDocument.title,context:ownerDocument.transcription_context,hotwords,nameCorrections,speakerCount:ownerDocument.speaker_identity_evidence?.expected_speakers,mediaDuration:ownerDocument.media_duration,signal,
     onProgress:setPhase});
    owned(value);await mediaStore.localInput(value.document_key,value.binding,operation.fingerprint);
    let raw=JSON.parse(await readFile(path.join(workDirectory,'result.json'),'utf8'));
