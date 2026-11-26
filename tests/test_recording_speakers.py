@@ -27,3 +27,9 @@ class RecordingSpeakerTest(unittest.TestCase):
         cue['text'] = '午餐到了'
         cue['words'][0]['word'] = '午餐'
         self.assertIsNone(fuse_speakers([cue],turns)[0]['speaker_id'])
+
+    def test_one_window_cannot_establish_an_extra_person_in_a_long_recording(self):
+        samples = [(7., [1., 0.]) for _ in range(5)] + [(8., [0., 1.])]
+        labels = _global_clusters(samples, {}, None, lambda: None)
+        self.assertEqual(len(set(labels.values())), 1)
+        self.assertNotIn(5, labels)
