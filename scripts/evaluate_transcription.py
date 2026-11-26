@@ -5,12 +5,14 @@ from __future__ import annotations
 import argparse
 from collections import Counter, defaultdict
 from difflib import SequenceMatcher
+from hashlib import sha256
 import json
 from pathlib import Path
 import re
 
 TERMINAL = re.compile(r'[.!?。！？…][”’」』）)\s]*$')
-TOKEN = re.compile(r"[\u3400-\u9fff]|[^\W_]+(?:['’][^\W_]+)*", re.UNICODE)
+LETTER_OR_NUMBER = r"[^\W_\u3400-\u9fff]"
+TOKEN = re.compile(rf"[\u3400-\u9fff]|{LETTER_OR_NUMBER}+(?:['’]{LETTER_OR_NUMBER}+)*")
 
 
 def load(path):
@@ -20,6 +22,15 @@ def load(path):
 def tokens(value):
     return TOKEN.findall(value.casefold())
 
+
+
+def occupied_seconds(cues):
+    end = 0.
+    total = 0.
+    for cue in cues:
+        total += max(0., cue['end'] - max(end, cue['start']))
+        end = max(end, cue['end'])
+    return total
 
 def owner(cues, target):
     seconds = Counter()
@@ -96,8 +107,13 @@ def measure(root, episode, manifest):
     seams = [(left, right) for left,right in zip(cues,cues[1:])
              if isinstance(left.get('chunk_index'),int) and right.get('chunk_index')!=left['chunk_index']]
     unassigned = [cue for cue in cues if not cue.get('speaker_id')]
+    cue_seconds = occupied_seconds(cues)
+    speaker_seconds = occupied_seconds(cue for cue in cues if cue.get('speaker_id'))
+    text_identity = sha256(''.join(cue['text'] for cue in cues).encode()).hexdigest()
     metrics = {'status':'complete','cues':len(cues),'unassigned':len(unassigned),
                'speaker_coverage':1-len(unassigned)/len(cues) if cues else None,
+               'speaker_time_coverage':speaker_seconds/cue_seconds if cue_seconds else None,
+               'text_sha256':text_identity,
                'speaker_groups':len({cue['speaker_id'] for cue in cues if cue.get('speaker_id')}),
                'unassigned_10s':sum(cue['end']-cue['start']>=10 for cue in unassigned),
                'nonterminal_chunk_transitions':sum(not TERMINAL.search(a['text']) for a,_ in seams),
