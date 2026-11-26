@@ -14,6 +14,7 @@ export function transcriptionConfig(env=process.env){
   const moss=backend==='moss-mlx';
   const asrProfile={backend,model_cache:modelDirectory||undefined,asr_model:env.COCONUT_ASR_MODEL||path.join(root,moss?'MOSS-Transcribe-Diarize-MLX-8bit':'Qwen3-ASR-1.7B-8bit'),align_model:moss?'':env.COCONUT_ALIGN_MODEL||path.join(root,'Qwen3-ForcedAligner-0.6B-8bit'),
     segmentation:moss?'':env.COCONUT_SPEAKER_SEGMENTATION_MODEL||'',embedding:moss?'':env.COCONUT_SPEAKER_EMBEDDING_MODEL||''};
-  for(const value of [asrProfile.asr_model,asrProfile.align_model,asrProfile.segmentation,asrProfile.embedding])if(value&&!path.isAbsolute(value))throw Error('Transcription models require absolute local paths.');
+  if(backend==='qwen-mlx'&&env.COCONUT_VAD_MODEL)asrProfile.vad_model=env.COCONUT_VAD_MODEL;
+  for(const value of [asrProfile.vad_model,asrProfile.asr_model,asrProfile.align_model,asrProfile.segmentation,asrProfile.embedding])if(value&&!path.isAbsolute(value))throw Error('Transcription models require absolute local paths.');
   return {asrPython,asrProfile,modelDirectory};
 }
