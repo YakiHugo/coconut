@@ -382,37 +382,31 @@ class AdapterTests(unittest.TestCase):
                 run(dict(profile=self.profile, input=str(self.audio), work=str(self.root / 'work'), sha256=_file_digest(self.audio), speaker_count=count))
 
     def test_qwen_speaker_stage_reuses_recognition_and_acoustic_checkpoints(self):
-        from audio_pipeline import CallableBackend
-        calls = {'asr': 0, 'voices': 0, 'refinement': 0}
+        from audio_pipeline import CallableBackend, SAMPLE_RATE
+        calls = {'asr': 0, 'voices': 0}
         def recognize(*args, **kwargs):
             calls['asr'] += 1
-            return {'language': 'zh', 'segments': [dict(start=0, end=2, text='你好再见', words=[
-                dict(start=0, end=1, word='你好'), dict(start=1, end=2, word='再见')])]}
+            return {'language':'zh','segments':[dict(start=0, end=2, text='你好，再见', words=[
+                dict(start=0, end=.8, word='你好，'), dict(start=1.2, end=2, word='再见')])]}
         backend = CallableBackend({'fixture':'two-voice-transcript'}, recognize)
-        class Voices:
-            local_only = True
-            cache_key = {'fixture': 'two-authored-voices'}
-            def analyze(inner, path):
-                calls['voices'] += 1
-                return {'embedding_model': 'authored', 'turns': [dict(start=0, end=1, speaker='a'),
-                    dict(start=1, end=2, speaker='b')], 'evidence': {
-                    'a': {'embedding': [1, 0], 'duration': 2},
-                    'b': {'embedding': [0, 1], 'duration': 2}}}
-            def refine_turns(inner, path, turns, *, check):
-                calls['refinement'] += 1
-                return turns
+        def acoustic(*args, **kwargs):
+            calls['voices'] += 1
+            yield [
+                {'samples':{0:(3., [1.,0.]), 1:(3., [0.,1.])},
+                 'runs':[(0, SAMPLE_RATE, [0]), (SAMPLE_RATE, 2*SAMPLE_RATE, [1])]},
+            ]
         from audio_pipeline import _file_digest
         request = dict(profile={**self.profile, 'segmentation': str(self.audio), 'embedding': str(self.audio)},
                        input=str(self.audio), work=str(self.root / 'work'), sha256=_file_digest(self.audio))
         with patch('transcription.probe', return_value={'available': True}), \
                 patch('transcription.QwenBackend', return_value=backend), \
                 patch.dict('sys.modules', {'sherpa_onnx': types.ModuleType('sherpa_onnx')}), \
-                patch('audio_speakers.SherpaSpeakerBackend', return_value=Voices()), \
+                patch('audio_speakers._acoustic_windows', side_effect=acoustic), \
                 contextlib.redirect_stdout(io.StringIO()):
             run(request)
             run(request)
         document = json.loads((self.root / 'work' / 'result.json').read_text())
-        self.assertEqual(calls, {'asr': 1, 'voices': 1, 'refinement': 1})
+        self.assertEqual(calls, {'asr':1, 'voices':1})
         self.assertEqual([s['speaker_id'] for s in document['segments']], ['speaker-0001', 'speaker-0002'])
-        self.assertEqual([s['text'] for s in document['segments']], ['你好', '再见'])
+        self.assertEqual([s['text'] for s in document['segments']], ['你好，', '再见'])
         self.assertEqual(document['provenance']['speaker_method'], 'recording-acoustic-v1')

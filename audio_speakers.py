@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import math
+import re
 
 
 def unit_vector(values):
@@ -397,45 +398,326 @@ def preserve_overlap_conflicts(original, assigned):
     return assigned
 
 
+def fuse_speakers(cues, turns, *, split=True, check=lambda: None):
+    """Project the acoustic timeline through observed word clocks and safe cuts."""
+    from bisect import bisect_left, bisect_right
+    from audio_pipeline import _rebase_word_spans
+    from transcript_boundaries import _lexeme_crosses
+
+    terminal = re.compile(r'[.?!。？！…]["”’」』）)]*\s*$')
+    clause = re.compile(r'[,;:，；：]["”’」』）)]*\s*$')
+    starts = [turn['start'] for turn in turns]
+    ends, edge = [], 0.
+    for turn in turns:
+        edge = max(edge, turn['end'])
+        ends.append(edge)
+
+    def overlap(start, end, active):
+        return [(turn['speaker_id'], max(start, turn['start']), min(end, turn['end']))
+                for turn in active if turn['start'] < end and start < turn['end']]
+
+    def assignment(cue, active):
+        start, end = cue['start'], cue['end']
+        spans = overlap(start, end, active)
+        known = {}
+        for voice, a, b in spans:
+            if voice:
+                known[voice] = known.get(voice, 0.) + b-a
+        voice = max(known, key=known.get, default=None)
+        covered = known.get(voice, 0.)
+        duration = end-start
+        others = [(a, b) for key, a, b in spans if key != voice]
+        status = 'no_speech_evidence' if not spans else 'overlap_or_boundary'
+        if voice and not others and covered >= .70 * duration:
+            status = 'automatic_unreviewed'
+        elif voice and covered >= .85 * duration:
+            competing = sum(b-a for a, b in others)
+            main = [(a, b) for key, a, b in spans if key == voice]
+            # The main voice must remain active through the competing activity.
+            # Independent speech in a pause remains eligible for a speaker turn.
+            if competing <= min(.8, .12 * duration) and all(
+                    b-a-sum(max(0., min(b,y)-max(a,x)) for x,y in main) <= .02 for a,b in others):
+                status = 'dominant_with_brief_overlap'
+        if status not in ('automatic_unreviewed', 'dominant_with_brief_overlap'):
+            voice = None
+        cue.update(speaker_id=voice, speaker_status=status,
+                   speaker=f'说话人 {int(voice.removeprefix("speaker-"))}' if voice else None)
+        return cue
+
+    def word_group(word, active):
+        begin, end = word['start'], word['end']
+        if end <= begin or not any(char.isalnum() for char in word['word']):
+            return None
+        spans = overlap(begin, end, active)
+        voices = {identity for identity, _, _ in spans}
+        if len(voices) != 1 or None in voices:
+            return None
+        return next(iter(voices)) if sum(b-a for _, a, b in spans) >= .60*(end-begin) else None
+
+    def cut_at(words, first, last):
+        before, after = words[first]['end'], words[last]['start']
+        if after-before > 1.5:
+            return None
+        center = (before+after)/2
+        choices = []
+        for at in range(first+1, last+1):
+            a, b = words[at-1], words[at]
+            gap, point = b['start']-a['end'], (b['start']+a['end'])/2
+            if gap < 0 or abs(center-point) > .5:
+                continue
+            if terminal.search(a['word']):
+                priority = 0
+            elif gap >= .15 and not _lexeme_crosses(a['word'].rstrip(), b['word'].lstrip()):
+                priority = 1
+            elif clause.search(a['word']):
+                priority = 2
+            else:
+                continue
+            choices.append((priority, abs(center-point), at))
+        return min(choices)[-1] if choices else None
+
+    result = []
+    for cue in cues:
+        check()
+        if cue.get('speaker'):
+            result.append(cue)
+            continue
+        if cue.get('boundary_status') == 'seam-consensus-v1':
+            result.append({**cue, 'speaker_status':'seam_recovered_unknown'})
+            continue
+        active = turns[bisect_right(ends, cue['start']):bisect_left(starts, cue['end'])]
+        whole = assignment(dict(cue), active)
+        words = cue.get('words') or []
+        if not split or whole['speaker_id'] or len(words) < 2 or ''.join(w['word'] for w in words) != cue['text']:
+            result.append(whole)
+            continue
+        cuts, previous = [], None
+        for index, word in enumerate(words):
+            voice = word_group(word, active)
+            if voice is None:
+                continue
+            if previous and previous[1] != voice:
+                cut = cut_at(words, previous[0], index)
+                if cut is not None:
+                    cuts.append(cut)
+            previous = index, voice
+        if not cuts:
+            result.append(whole)
+            continue
+        for number, (left, right) in enumerate(zip([0, *cuts], [*cuts, len(words)])):
+            selected = [dict(w) for w in words[left:right]]
+            _rebase_word_spans(selected)
+            part = {**cue, 'id':cue['id'] if not number else f'{cue["id"]}-voice-{number}',
+                    'start':cue['start'] if not number else selected[0]['start'],
+                    'end':cue['end'] if right == len(words) else selected[-1]['end'],
+                    'text':''.join(w['word'] for w in selected), 'words':selected}
+            result.append(assignment(part, active))
+    return result
+
+
+def _global_clusters(samples, conflicts, expected_speakers, check):
+    """Cluster all recording-wide anchors once. Overlapping lanes cannot link."""
+    import numpy as np
+
+    similarity, margin = .65, .08
+    anchors = [i for i, (duration, vector) in enumerate(samples) if duration >= 1.6 and vector]
+    if not anchors:
+        return {}
+    vectors = np.asarray([samples[i][1] for i in anchors], dtype=np.float32)
+    parents = list(range(len(anchors)))
+    members = [{i} for i in anchors]
+    blocked = [set(conflicts.get(i, ())) for i in anchors]
+    sums = vectors.copy()
+    centers = vectors.copy()
+    edges = []
+    neighbors = min(12, len(anchors))
+    for start in range(0, len(anchors), 128):
+        check()
+        scores = vectors[start:start+128] @ vectors.T
+        for offset, row in enumerate(scores):
+            first = start + offset
+            for second in np.argpartition(row, -neighbors)[-neighbors:]:
+                if second != first and row[second] >= similarity:
+                    edges.append((-float(row[second]), min(first, int(second)), max(first, int(second))))
+
+    def root(i):
+        while parents[i] != i:
+            parents[i] = parents[parents[i]]
+            i = parents[i]
+        return i
+
+    for index, (_, a, b) in enumerate(sorted(set(edges))):
+        if index % 128 == 0:
+            check()
+        a, b = root(a), root(b)
+        if (a == b or members[a] & blocked[b] or members[b] & blocked[a] or
+                centers[a] @ centers[b] < similarity):
+            continue
+        if len(members[a]) < len(members[b]):
+            a, b = b, a
+        parents[b] = a
+        members[a].update(members[b])
+        blocked[a].update(blocked[b])
+        sums[a] += sums[b]
+        centers[a] = sums[a] / np.linalg.norm(sums[a])
+
+    groups = [i for i in range(len(anchors)) if parents[i] == i]
+    support = {i: sum(samples[j][0] for j in members[i]) for i in groups}
+    # Repeated evidence dominates isolated clips. A strong clean clip still
+    # supports a voice on short recordings or one late in the programme.
+    groups = [i for i in groups if len(members[i]) >= 2 or support[i] >= 3.]
+    groups.sort(key=lambda i: (-support[i], min(members[i])))
+    if expected_speakers is not None:
+        groups = groups[:expected_speakers]
+    groups.sort(key=lambda i: min(members[i]))
+    assignments = {index: group for group in groups for index in members[group]}
+    for index, (_, vector) in enumerate(samples):
+        check()
+        if index in assignments or not vector:
+            continue
+        ranked = sorted(((float(centers[group] @ vector), group) for group in groups if
+                         not members[group] & conflicts.get(index, set())), reverse=True)
+        if not ranked:
+            continue
+        score, group = ranked[0]
+        if score >= similarity and (len(ranked) == 1 or score - ranked[1][0] >= margin):
+            assignments[index] = group
+            members[group].add(index)
+    names = {group: f'speaker-{i+1:04d}' for i, group in enumerate(groups)}
+    return {index:names[group] for index, group in assignments.items()}
+
+
+def _active_lanes(scores, left, right, origin, hop, receptive_field):
+    """Convert pyannote powerset frames into recording-clock activity runs."""
+    import numpy as np
+
+    powerset = ((), (0,), (1,), (2,), (0, 1), (0, 2), (1, 2))
+    classes = np.argmax(scores, axis=1)
+    if not len(classes):
+        return
+    centers = origin + receptive_field // 2 + np.arange(len(classes)) * hop
+    start_index = min(len(classes)-1, int(np.searchsorted(centers + hop // 2, left, side='right')))
+    end_index = min(len(classes), int(np.searchsorted(centers - hop // 2, right, side='left')))
+    start = left
+    previous = int(classes[start_index])
+    for index in range(start_index+1, end_index):
+        state = int(classes[index])
+        if state == previous:
+            continue
+        end = min(right, int(centers[index]-hop//2))
+        if end > start and powerset[previous]:
+            yield start, end, powerset[previous]
+        start, previous = end, state
+    if right > start and powerset[previous]:
+        yield start, right, powerset[previous]
+
+
+def _acoustic_windows(audio, directory, segmentation, embedding, check, progress):
+    import json
+    import numpy as np
+    import onnxruntime as ort
+    import sherpa_onnx
+    from audio_pipeline import SAMPLE_RATE, aligner_audio, _wav_frames
+    from transcript import save_document
+
+    options = ort.SessionOptions()
+    options.inter_op_num_threads = 1
+    options.intra_op_num_threads = 2
+    session = ort.InferenceSession(str(segmentation), sess_options=options, providers=['CPUExecutionProvider'])
+    metadata = session.get_modelmeta().custom_metadata_map
+    if (metadata.get('model_type') != 'pyannote-segmentation-3.0' or
+            int(metadata.get('num_classes', 0)) != 7 or int(metadata.get('sample_rate', 0)) != SAMPLE_RATE):
+        raise ValueError('Unsupported pyannote segmentation export')
+    window = int(metadata['window_size'])
+    hop, receptive_field = int(metadata['receptive_field_shift']), int(metadata['receptive_field_size'])
+    step = window // 2
+    extractor = sherpa_onnx.SpeakerEmbeddingExtractor(
+        sherpa_onnx.SpeakerEmbeddingExtractorConfig(model=str(embedding), num_threads=2))
+    frames = _wav_frames(audio)
+    # A block checkpoint contains only runs and embeddings. Each model input is
+    # a ten-second tensor, including when the source runs for several hours.
+    core_windows = range(0, frames, step)
+    per_block = 24
+    blocks = (len(core_windows) + per_block - 1) // per_block
+    for block in range(blocks):
+        check()
+        progress(block+1, blocks)
+        cache = directory / f'activity-{block:05d}.json'
+        if cache.exists():
+            yield json.loads(cache.read_text())['windows']
+            continue
+        rows = []
+        for left in core_windows[block*per_block:(block+1)*per_block]:
+            check()
+            right = min(frames, left+step)
+            origin = min(max(left - step//2, 0), max(0, frames - window))
+            waveform = aligner_audio(audio, origin, min(frames, origin+window))
+            model_input = np.pad(waveform, (0, window-len(waveform)))[None, None, :]
+            scores, = session.run(None, {session.get_inputs()[0].name:model_input})
+            runs = list(_active_lanes(scores[0], left, right, origin, hop, receptive_field))
+            compact = {}
+            for lane in {lane for _, _, active in runs for lane in active}:
+                slices = [waveform[a-origin:b-origin] for a, b, active in runs if active == (lane,)]
+                count = sum(len(value) for value in slices)
+                vector = None
+                if count >= .30 * SAMPLE_RATE:
+                    stream = extractor.create_stream()
+                    stream.accept_waveform(SAMPLE_RATE, np.concatenate(slices))
+                    stream.input_finished()
+                    if extractor.is_ready(stream):
+                        vector = unit_vector(list(extractor.compute(stream)))
+                compact[lane] = (count / SAMPLE_RATE, vector)
+            rows.append({'runs': runs, 'samples': compact})
+        check()
+        save_document({'windows':rows}, cache)
+        yield rows
+
+
 def diarize_recording(audio, directory, segmentation, embedding, *, expected_speakers=None,
                       check=lambda: None, progress=lambda index, total: None):
-    """Build and cache a recording-wide acoustic timeline from normalized PCM."""
+    """Detect local activity, embed clean voice once, then cluster the recording."""
     import json
-    from audio_pipeline import SAMPLE_RATE, _digest, _wav_frames, plan_chunks, validate_voices, write_chunk
+    from pathlib import Path
+    from audio_pipeline import SAMPLE_RATE, _digest, _file_digest
     from transcript import save_document
 
     check()
-    backend = SherpaSpeakerBackend(segmentation, embedding)
-    frames = _wav_frames(audio)
-    chunks = plan_chunks(frames)
-    directory = directory / _digest(backend.cache_key)
+    models = [Path(segmentation), Path(embedding)]
+    identity = {'version':'recording-powerset-v1', 'models':[_file_digest(p) for p in models],
+                'pcm_sha256':_file_digest(audio)}
+    directory = Path(directory) / _digest(identity)
     directory.mkdir(parents=True, exist_ok=True)
-    target = directory / ('refined-' + _digest({'count': expected_speakers, 'version': 1}) + '.json')
+    target = directory / ('groups-' + _digest({'expected':expected_speakers}) + '.json')
     if target.exists():
-        progress(len(chunks), len(chunks))
+        progress(1, 1)
         return json.loads(target.read_text())['turns']
-    blocks = []
-    for chunk in chunks:
-        check()
-        progress(chunk.index + 1, len(chunks))
-        cache = directory / f'voices-{chunk.index:05d}.json'
-        if cache.exists():
-            voices = validate_voices(json.loads(cache.read_text()), chunk.duration)
-        else:
-            window = directory / 'window.wav'
-            try:
-                write_chunk(audio, chunk, window)
-                voices = validate_voices(backend.analyze(window), chunk.duration)
-                check()
-                save_document(voices, cache)
-            finally:
-                window.unlink(missing_ok=True)
-        blocks.append(dict(start=chunk.start, core_start=chunk.core_start_frame / SAMPLE_RATE,
-                           core_end=chunk.core_end_frame / SAMPLE_RATE, voices=voices))
-    check()
-    turns, _ = reconcile_recording_speakers(blocks, expected_speakers=expected_speakers)
-    check()
-    turns = backend.refine_turns(audio, turns, check=check)
+    samples, overlapping, runs = [], {}, []
+    for block in _acoustic_windows(audio, directory, *models, check, progress):
+        for row in block:
+            indices = {}
+            for lane, evidence in row['samples'].items():
+                indices[int(lane)] = len(samples)
+                samples.append(evidence)
+            for start, end, lanes in row['runs']:
+                indices_here = [indices[lane] for lane in lanes]
+                runs.append((start, end, indices_here))
+                for first in indices_here:
+                    overlapping.setdefault(first, set()).update(second for second in indices_here if second != first)
+    assignments = _global_clusters(samples, overlapping, expected_speakers, check)
+    by_voice = {}
+    # Preserve unresolved lane activity and its overlap with resolved tracks.
+    for start, end, active in runs:
+        for index in active:
+            identity = assignments.get(index)
+            speaker = identity or f'unresolved:{index}'
+            spans = by_voice.setdefault(speaker, [])
+            a, b = start / SAMPLE_RATE, end / SAMPLE_RATE
+            if spans and spans[-1]['end'] == a:
+                spans[-1]['end'] = b
+            else:
+                spans.append(dict(start=a, end=b, speaker=speaker, speaker_id=identity,
+                    speaker_status='automatic_unreviewed' if identity else 'unresolved_acoustic'))
+    turns = sorted((span for spans in by_voice.values() for span in spans), key=lambda turn: (turn['start'], turn['end']))
     check()
     save_document({'turns': turns}, target)
     return turns
