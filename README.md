@@ -74,6 +74,15 @@ Apple Silicon 本地转录默认使用 **Qwen3-ASR-1.7B-8bit + Qwen3-ForcedAlign
 
 ## 开发与验收
 
+对比已保存的转录时，`--corpus` 指向形如 `[{"id":"episode"}]` 的本地 JSON 清单。多期对比用各跑次的目录，目录下每期放在 `<id>/result.json`。单期清单也可直接对比两个文字稿文件。
+
+```bash
+python3 scripts/evaluate_transcription.py --corpus corpus.json --run old=old.json --run new=new.json
+node scripts/evaluate_reading.mjs old.json new.json
+```
+
+第一条命令报告归属覆盖、窗口接缝与词时钟。第二条复用阅读器的本地精读投影和章节逻辑，统计可见段落、独立语气词和章节相对发布者时间的偏移。两条命令只读已有结果。词时钟与归属指标还需独立原声抽检才能判断准确率。
+
 开发时无需手动打包 React；提交或发布 React 源码、reader 静态 JS/CSS 的修改前，运行 `pnpm run build:reader-ui`：它会生成 bundle，并更新 `reader/index.html` 中全部受支持的本地 JS/CSS 引用的 SHA-256 缓存 token，无需另跑 Python 更新步骤。`check:reader-ui` 只检查、不写文件，同时验证类型、bundle 与缓存 token；引用的资源缺失也会失败。原有 `python scripts/reader_assets.py --check` 仍可独立验证 token。
 
 ```bash
