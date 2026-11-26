@@ -39,6 +39,12 @@ class AdapterTests(unittest.TestCase):
             (directory / 'model.safetensors').write_bytes(b'authored placeholder; never loaded')
         self.audio = self.root / 'source.wav'
         wav(self.audio)
+        vad = self.root / 'vad.onnx'
+        vad.write_bytes(b'authored Silero checkpoint')
+        self.profile['vad_model'] = str(vad)
+        probabilities = patch('audio_vad._probabilities', return_value=iter(()))
+        probabilities.start()
+        self.addCleanup(probabilities.stop)
 
     def backend(self):
         with patch('importlib.metadata.version', return_value='authored'):
