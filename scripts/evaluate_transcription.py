@@ -98,8 +98,7 @@ def check_reference(cues, reference):
 
 
 def measure(root, episode, manifest):
-    work = root / episode['id']
-    result = work / 'result.json'
+    result = root if root.is_file() else root / episode['id'] / 'result.json'
     if not result.exists():
         return {'status':'missing_result'}
     document = load(result)
@@ -116,13 +115,17 @@ def measure(root, episode, manifest):
                'text_sha256':text_identity,
                'speaker_groups':len({cue['speaker_id'] for cue in cues if cue.get('speaker_id')}),
                'unassigned_10s':sum(cue['end']-cue['start']>=10 for cue in unassigned),
+               'unassigned_over_50_chars':sum(len(cue['text'].strip())>50 for cue in unassigned),
                'nonterminal_chunk_transitions':sum(not TERMINAL.search(a['text']) for a,_ in seams),
                'chunk_transitions':len(seams),'clock_needs_review':sum(c.get('alignment_status')=='needs_review' for c in cues),
-               'word_partial':sum(c.get('timing_basis')=='word_partial' for c in cues)}
+               'word_partial':sum(c.get('timing_basis')=='word_partial' for c in cues),
+               'cues_with_word_clocks':sum(bool(c.get('words')) for c in cues),
+               'cues_with_complete_word_clocks':sum(c.get('alignment_status')=='complete' and c.get('timing_basis')=='word' for c in cues),
+               'zero_duration_words':sum(w['end']==w['start'] for c in cues for w in c.get('words') or ())}
     provenance = document.get('provenance', {})
     metrics.update(chunking=provenance.get('chunking'), asr=provenance.get('asr_metrics'))
-    timing = work/'run-metrics.json'
-    metrics['runtime'] = load(timing) if timing.exists() else None
+    timing = result.with_name('run-metrics.json')
+    metrics['runtime'] = load(timing) if result.name=='result.json' and timing.is_file() else None
     metrics['reference'] = check_reference(cues,load(manifest.parent/episode['reference'])) if episode.get('reference') else None
     return metrics
 
@@ -130,7 +133,8 @@ def measure(root, episode, manifest):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--corpus', type=Path, required=True, help='JSON list of cases with id and optional reference file')
-    parser.add_argument('--run', action='append', required=True, metavar='LABEL=DIRECTORY')
+    parser.add_argument('--run', action='append', required=True, metavar='LABEL=PATH',
+                        help='Run directory or, for a one-case corpus, a transcript JSON file')
     args = parser.parse_args()
     manifest = args.corpus.resolve()
     corpus = load(manifest)
@@ -141,10 +145,13 @@ def main():
         parser.error('Duplicate or invalid case ID')
     data = {}
     for argument in args.run:
-        label,sep,root = argument.partition('=')
-        if not sep or not label or not root or label in data:
-            parser.error('Each run needs a unique LABEL=DIRECTORY')
-        data[label] = {entry['id']:measure(Path(root),entry,manifest) for entry in corpus}
+        label,sep,location = argument.partition('=')
+        if not sep or not label or not location or label in data:
+            parser.error('Each run needs a unique LABEL=PATH')
+        root = Path(location)
+        if root.is_file() and len(corpus) != 1:
+            parser.error('A transcript JSON file requires a one-case corpus')
+        data[label] = {entry['id']:measure(root,entry,manifest) for entry in corpus}
     print(json.dumps(data,ensure_ascii=False,indent=2))
 
 
