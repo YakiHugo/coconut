@@ -312,8 +312,8 @@ export async function createSourceJobs({directory,libraryStore,mediaStore,podcas
    const ownerDocument=await prefetch(currentDocument,operation.recognition_document||recognitionSnapshot(currentDocument,value.binding));
    signal.throwIfAborted();
    owned(value);
-   const {hotwords,nameCorrections,context}=recognitionArguments(ownerDocument);
-   await transcriber.run({inputPath:input.path,sha256:operation.fingerprint,workDirectory,pcmCache:mediaStore.pcmCacheDirectory,title:ownerDocument.title,context,hotwords,nameCorrections,speakerCount:ownerDocument.speaker_identity_evidence?.expected_speakers,mediaDuration:ownerDocument.media_duration,signal,
+   await transcriber.run({inputPath:input.path,sha256:operation.fingerprint,workDirectory,pcmCache:mediaStore.pcmCacheDirectory,
+    ...recognitionArguments(ownerDocument),mediaDuration:ownerDocument.media_duration,signal,
     onProgress:setPhase});
    owned(value);await mediaStore.localInput(value.document_key,value.binding,operation.fingerprint);
    let raw=JSON.parse(await readFile(path.join(workDirectory,'result.json'),'utf8'));
