@@ -12,7 +12,7 @@ const hash=value=>createHash('sha256').update(typeof value==='string'?value:JSON
 // Keep logical identity names stable; packaged desktop modules live in app.asar,
 // while Python, reader and shared resources remain beside it in Resources.
 const files=[
- ...['transcript_cleanup.py','transcript_boundaries.py','reader/disfluency.js','shared/reading-fallback.js'].map(file=>[file,new URL('../'+file,import.meta.url)]),
+ ...['transcript_cleanup.py','transcript_boundaries.py','audio_vad.py','reader/disfluency.js','shared/reading-fallback.js'].map(file=>[file,new URL('../'+file,import.meta.url)]),
  ...['reading-fallback.mjs','clean-reading.mjs'].map(file=>['desktop/'+file,new URL('./'+file,import.meta.url)])
 ];
 export async function cleanReadingIdentity(){return hash(await Promise.all(files.map(async([file,url])=>[file,hash(await readFile(url,'utf8'))])));}
@@ -47,7 +47,7 @@ export function mergeReadingEdits(document,{decisions=[],marks=[],breaks=[]}={})
 }
 
 export function createCleanReadingPlanner({python='python3',fallback=createReadingFallback(),run=runCommand,environment=process.env,pcmCache}={}){
- const env={...safeEnvironment(environment),...(path.isAbsolute(pcmCache||'')?{COCONUT_PCM_CACHE:pcmCache}:{})};
+ const env={...safeEnvironment(environment),...(path.isAbsolute(pcmCache||'')?{COCONUT_PCM_CACHE:pcmCache}:{}),...(path.isAbsolute(environment.COCONUT_VAD_MODEL||'')?{COCONUT_VAD_MODEL:environment.COCONUT_VAD_MODEL}:{})};
  return {
   identity:cleanReadingIdentity,
   async prepare(document,{directory,provider='',model='',audioPath=null,signal,onProgress=()=>{}}={}){

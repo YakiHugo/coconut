@@ -7,7 +7,7 @@ import {fileURLToPath,pathToFileURL} from 'node:url';
 import {cleanReadingIdentity} from '../desktop/clean-reading.mjs';
 
 const root=fileURLToPath(new URL('../',import.meta.url));
-const resourceFiles=['transcript_cleanup.py','transcript_boundaries.py','reader/disfluency.js','shared/reading-fallback.js'];
+const resourceFiles=['transcript_cleanup.py','transcript_boundaries.py','audio_vad.py','reader/disfluency.js','shared/reading-fallback.js'];
 const moduleFiles=['clean-reading.mjs','reading-fallback.mjs','providers.mjs','review-providers.mjs','provider-errors.mjs','client-access.mjs'];
 async function stage(t,kind){
  const work=await realpath(await mkdtemp(path.join(tmpdir(),'coconut-clean-identity-')));

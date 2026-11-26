@@ -182,6 +182,35 @@ def plan_chunks(frames, chunk_seconds=600, context_seconds=5):
             for index, start in enumerate(range(0, frames, size))]
 
 
+def plan_silence_chunks(frames, speech, chunk_seconds=240, context_seconds=5):
+    """Place each ownership boundary near the target without discarding audio."""
+    fixed = plan_chunks(frames, chunk_seconds, context_seconds)
+    target = int(chunk_seconds * SAMPLE_RATE)
+    if len(fixed) == 1:
+        return fixed, set()
+    ends = [0, *(stop for _, stop in speech)]
+    starts = [*(start for start, _ in speech), frames]
+    silence = [(start+stop)//2 for start, stop in zip(ends, starts) if stop-start >= .45*SAMPLE_RATE]
+    radius = min(20*SAMPLE_RATE, target//4)
+    boundaries, hard = [0], set()
+    from bisect import bisect_left, bisect_right
+    while frames - boundaries[-1] > target + radius:
+        goal = boundaries[-1] + target
+        choices = silence[bisect_left(silence, goal-radius):bisect_right(silence, goal+radius)]
+        if choices:
+            boundaries.append(min(choices, key=lambda cut: (abs(cut-goal), cut)))
+        else:
+            boundaries.append(goal)
+            hard.add(len(boundaries)-1)
+    # A short tail is better than a forced cut. The maximum extent remains bounded.
+    boundaries.append(frames)
+    context = int(context_seconds*SAMPLE_RATE)
+    chunks = [AudioChunk(i, max(0, a-context) if i in hard else a,
+                         min(frames, b+context) if i+1 in hard else b, a, b)
+              for i, (a, b) in enumerate(zip(boundaries, boundaries[1:]))]
+    return chunks, hard
+
+
 def _wav_frames(path):
     with wave.open(str(path), 'rb') as stream:
         if (stream.getnchannels(), stream.getsampwidth(), stream.getframerate(), stream.getcomptype()) != (

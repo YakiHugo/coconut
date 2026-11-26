@@ -68,6 +68,11 @@ def probe(profile):
             model_files(profile.get('asr_model', ''))
             if backend == 'qwen-mlx':
                 model_files(profile.get('align_model', ''))
+                from audio_vad import silero_model
+                if importlib.util.find_spec('onnxruntime') is None:
+                    return dict(available=False, code='missing_dependencies',
+                                message='本地 Silero VAD 需要 ONNX Runtime；请安装转录依赖。')
+                silero_model(profile.get('vad_model'))
             elif json.loads((Path(profile['asr_model']) / 'config.json').read_text()).get('model_type') != 'moss_transcribe_diarize':
                 raise ValueError('Expected a local MOSS transcription model')
         elif backend == 'faster-whisper':
@@ -329,7 +334,7 @@ def _check_cancel(event):
         raise InterruptedError('Transcription cancelled')
 
 
-def _qwen_stages(backend, audio, directory, chunks, frames, check):
+def _qwen_stages(backend, audio, directory, chunks, frames, hard_seams, check):
     from dataclasses import asdict
     from audio_pipeline import (_digest, owned_segments, stitch_segments, normalize_word_clocks,
                                 validate_window_clocks, write_chunk)
@@ -366,7 +371,7 @@ def _qwen_stages(backend, audio, directory, chunks, frames, check):
             lambda: backend.align_recognition(audio, raw, chunk.duration, key, alignment,
                                               origin=chunk.start, check=check), chunk)
         segments.extend(owned_segments(aligned, chunk, frames))
-        if previous:
+        if previous and chunk.index in hard_seams:
             words, observations = recover_seam(previous[0], previous[1], aligned, chunk)
             recovered.extend(words)
             evidence.extend(observations)
@@ -381,7 +386,7 @@ def _qwen_stages(backend, audio, directory, chunks, frames, check):
 
 
 def _qwen_document(request, source, work, profile, speaker_count, backend, options):
-    from audio_pipeline import _directory, _wav_frames, plan_chunks, prepare_audio, SAMPLE_RATE, VERSION
+    from audio_pipeline import _directory, _wav_frames, plan_silence_chunks, prepare_audio, SAMPLE_RATE, VERSION
     from existing_alignment import repair_transcribed_clocks
     from transcript import make_document, save_document
 
@@ -409,8 +414,13 @@ def _qwen_document(request, source, work, profile, speaker_count, backend, optio
             raise ValueError('Audio duration does not match the transcript source')
         try:
             if hasattr(backend, 'recognize_text'):
-                chunks = plan_chunks(frames, options['chunk_seconds'], options['context_seconds'])
-                result = _qwen_stages(backend, audio, directory, chunks, frames, check)
+                from audio_vad import speech_evidence
+                vad = speech_evidence(audio, source, directory, model=profile.get('vad_model'), check=check)
+                chunks, hard_seams = plan_silence_chunks(frames, vad['speech_frames'],
+                    options['chunk_seconds'], options['context_seconds'])
+                result = _qwen_stages(backend, audio, directory, chunks, frames, hard_seams, check)
+                result['chunking'] = dict(method='silero-silence-v1', chunks=len(chunks),
+                    silence_cuts=len(chunks)-1-len(hard_seams), forced_cuts=len(hard_seams))
             else:
                 # Explicit incremental adapters carry a sealed, previously aligned chunk.
                 from audio_pipeline import _digest, run_audio_pipeline
@@ -431,6 +441,8 @@ def _qwen_document(request, source, work, profile, speaker_count, backend, optio
             caption_method='asr', review_status='unreviewed', language_basis='asr_detected' if result.get('language') else 'unknown',
             alignment_warning=result.get('alignment_warning'), source_sha256=request['sha256'],
             speaker_method='unavailable', audio_pipeline=VERSION)
+        if 'chunking' in result:
+            document['provenance']['chunking'] = result['chunking']
         if profile.get('segmentation'):
             from audio_speakers import diarize_recording, label_aligned_segments
             turns = diarize_recording(audio, directory / 'speakers', profile['segmentation'], profile['embedding'],

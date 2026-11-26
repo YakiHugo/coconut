@@ -121,30 +121,26 @@ def build_acoustic_evidence(document,audio_path,work_dir):
  never downloads. Caller can pass the already normalized 16k mono PCM16 WAV.
  """
  import numpy as np
- import faster_whisper
- from faster_whisper.vad import get_speech_timestamps,VadOptions
+ from audio_vad import energy_windows, speech_evidence
  from audio_pipeline import prepare_audio
  started=time.monotonic();directory=Path(work_dir).resolve();directory.mkdir(parents=True,exist_ok=True)
  audio_path=Path(audio_path).resolve();audio_hash=_digest(audio_path)
  normalize_dir=directory/('audio-'+audio_hash[:16]);normalize_dir.mkdir(exist_ok=True)
  wav=Path(prepare_audio(audio_path,normalize_dir))
- model=Path(faster_whisper.__file__).parent/'assets/silero_vad_v6.onnx'
- options={'threshold':.5,'min_speech_duration_ms':40,'min_silence_duration_ms':80,'speech_pad_ms':0}
- identity={'schema_version':1,'source_fingerprint':source_fingerprint(document),'audio_sha256':audio_hash,'normalized_sha256':_digest(wav),'vad_model_sha256':_digest(model),'vad_runtime':importlib.metadata.version('faster-whisper'),'vad_options':options,'evidence_version':'vad-energy-gaps-v1'}
+ vad=speech_evidence(wav,audio_path,normalize_dir)
+ frames=vad['identity']['frames']
+ identity={'schema_version':1,'source_fingerprint':source_fingerprint(document),'audio_sha256':audio_hash,
+           'vad_evidence':vad['identity'],'evidence_version':'vad-energy-gaps-v2'}
  cache=directory/'acoustic-evidence.json'
  if cache.exists():
   saved=json.loads(cache.read_text())
   if saved.get('identity')==identity:return saved
- with wave.open(str(wav),'rb') as f:
-  if (f.getframerate(),f.getnchannels(),f.getsampwidth())!=(16000,1,2):raise ValueError('Expected normalized 16k mono PCM16 WAV')
-  frames=f.getnframes();pcm=np.frombuffer(f.readframes(frames),dtype='<i2').astype(np.float32)/32768
- speech=get_speech_timestamps(pcm,VadOptions(**options));spans=[(z['start']/16000,z['end']/16000) for z in speech];starts=[a for a,b in spans]
- # 10ms energy, leaving the audio timeline intact.
- n=len(pcm)//160;energy=10*np.log10(np.mean(pcm[:n*160].reshape(n,160)**2,axis=1)+1e-12)
+ spans=[(start/16000,end/16000) for start,end in vad['speech_frames']];starts=[a for a,b in spans]
+ energy=energy_windows(wav);n=len(energy)
  def measure(a,b):
   d=b-a
   if d<=0:return {'gap_seconds':round(d,6),'confirmed_pause':False,'reason':'overlap_or_no_gap'}
-  if a<0 or b>len(pcm)/16000+.05:return {'gap_seconds':round(d,6),'confirmed_pause':False,'reason':'clock_outside_audio'}
+  if a<0 or b>frames/16000+.05:return {'gap_seconds':round(d,6),'confirmed_pause':False,'reason':'clock_outside_audio'}
   overlap=0.;j=max(0,bisect_left(starts,a)-1)
   while j<len(spans) and spans[j][0]<b:
    x,y=spans[j];overlap+=max(0,min(b,y)-max(a,x));j+=1
@@ -168,7 +164,8 @@ def build_acoustic_evidence(document,audio_path,work_dir):
   a=lw[-1]['end'] if lw else l['end'];b=rw[0]['start'] if rw else r['start']
   edges.append({'left_cue_id':l['id'],'right_cue_id':r['id'],'kind':'cue','word_clocks_bound':bool(lw and rw),**measure(a,b)})
  result={'version':1,'identity':identity,'normalized_audio':str(wav),'duration_seconds':frames/16000,'vad_speech_regions':len(spans),'speech_intervals':spans,'gaps':gaps,'cue_gaps':edges,'unbound_word_cue_ids':unbound,'seconds':time.monotonic()-started,'warning':'VAD and energy validate acoustic quiet only, never a semantic sentence boundary.'}
- cache.write_text(json.dumps(result,ensure_ascii=False,indent=2)+'\n');return result
+ from transcript import save_document
+ save_document(result,cache);return result
 
 def plan_boundaries(document,*,acoustic_evidence=None,punctuation_candidates=None,reading_cleanup=None):
  """Return additive reading marks, punctuation masks, paragraph hints and issues."""
