@@ -4,4 +4,4 @@
 sherpa-onnx==1.13.8
 
 # Local word boundaries for Chinese reading and speaker cuts.
-jieba==0.42.1
+rjieba==0.2.2

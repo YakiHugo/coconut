@@ -20,7 +20,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Protocol
 
-from audio_speakers import SpeakerRegistry, label_segments, unit_vector, reconcile_recording_speakers
+from audio_speakers import SpeakerRegistry, label_segments, unit_vector
 from transcript import save_document
 
 VERSION = 'audio-pipeline-v1'
@@ -626,7 +626,6 @@ def run_audio_pipeline(source: Path, backend: ASRBackend, *, work_dir=None, spea
                        chunk_seconds=600, context_seconds=5, local_only=False,
                        speaker_threshold=.72, speaker_margin=.08, progress=None,
                        expected_duration=None, minimum_duration=None,
-                       reconcile_speakers=False, expected_speakers=None,
                        decode_mode="buffered", cancel_event=None, pcm_queue_capacity=2,
                        max_decoded_frames=None):
     """Run/resume either local ASR or an explicitly selected cloud adapter.
@@ -678,7 +677,7 @@ def run_audio_pipeline(source: Path, backend: ASRBackend, *, work_dir=None, spea
             check_duration(frames)
             chunks = plan_chunks(frames, chunk_seconds, context_seconds)
             stream = ((chunk, frames) for chunk in chunks)
-        output, languages, warnings, speaker_turns, speaker_blocks = [], [], [], [], []
+        output, languages, warnings, speaker_turns = [], [], [], []
         previous = None
         seam_cues, seam_evidence = [], []
         voice_key = _digest(speaker_backend.cache_key)[:16] if speaker_backend else ''
@@ -735,10 +734,6 @@ def run_audio_pipeline(source: Path, backend: ASRBackend, *, work_dir=None, spea
                         check_cancel()
                         save_document(voices, voice_cache)
                     turns = []
-                    if reconcile_speakers:
-                        speaker_blocks.append(dict(start=chunk.start,
-                            core_start=chunk.core_start_frame / SAMPLE_RATE,
-                            core_end=chunk.core_end_frame / SAMPLE_RATE, voices=voices))
                     for turn in voices['turns']:
                         a, b = _time_range(turn, chunk.duration)
                         turns.append({**turn, 'speaker': str(turn['speaker']),
@@ -770,23 +765,6 @@ def run_audio_pipeline(source: Path, backend: ASRBackend, *, work_dir=None, spea
                 raise ValueError('Source media changed during decoding')
         output = stitch_segments(output)
         speaker_count = len(registry.voices)
-        if speaker_backend and reconcile_speakers:
-            speaker_turns, speaker_count = reconcile_recording_speakers(speaker_blocks,
-                expected_speakers=expected_speakers, threshold=speaker_threshold, margin=speaker_margin)
-            if hasattr(speaker_backend, 'refine_turns'):
-                # Separate from raw acoustic checkpoints: assignment upgrades
-                # reuse expensive segmentation and invalidate only this pass.
-                refinement_key = _digest({'version': 'turn-refinement-v3', 'voices': voice_key,
-                                          'turns': speaker_turns})[:16]
-                refined_path = directory / f'refined-{refinement_key}.json'
-                if refined_path.exists():
-                    speaker_turns = json.loads(refined_path.read_text())['turns']
-                else:
-                    speaker_turns = speaker_backend.refine_turns(audio, speaker_turns)
-                    save_document({'turns': speaker_turns}, refined_path)
-            decisions = {turn['speaker']: dict(speaker_id=turn['speaker_id'], status=turn['speaker_status'])
-                         for turn in speaker_turns}
-            label_segments(output, speaker_turns, decisions)
         # Recovered words have unverified clocks: never inherit a neighboring
         # speaker or enter heuristic duplicate removal. Raw ASR caches are intact.
         output = sorted(output + seam_cues, key=lambda item: (item['start'], item['end']))

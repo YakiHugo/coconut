@@ -75,14 +75,10 @@ def _quote_masks(cues):
 @lru_cache(maxsize=1)
 def _word_segmenter():
  try:
-  from jieba import Tokenizer
+  from rjieba import cut
  except ImportError:
   return None
- tokenizer=Tokenizer()
- with tokenizer.get_dict_file() as dictionary:
-  tokenizer.FREQ,tokenizer.total=tokenizer.gen_pfdict(dictionary)
- tokenizer.initialized=True
- return tokenizer
+ return cut
 
 def _lexeme_crosses(left,right):
  if re.search(r'[A-Za-z0-9]$',left) and re.match(r'[A-Za-z0-9]',right):return True
@@ -93,7 +89,12 @@ def _lexeme_crosses(left,right):
  if tokenizer is None:return False
  text=left[0]+right[0]
  boundary=len(left[0])
- return any(start<boundary<end for _,start,end in tokenizer.tokenize(text,HMM=False))
+ offset=0
+ for word in tokenizer(text,hmm=False):
+  end=offset+len(word)
+  if end>=boundary:return offset<boundary<end
+  offset=end
+ return False
 
 def _incomplete(left,right):
  a=left.rstrip().rstrip('，,；;：:…').rstrip();b=right.lstrip('，,；;：:…嗯呃 ')

@@ -158,25 +158,6 @@ class PCMTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'local-only'):
             run_audio_pipeline(self.source, backend, decode_mode='pipelined')
 
-    def test_speaker_finalization_uses_complete_recording_after_all_chunks(self):
-        calls = []
-        class Voices:
-            local_only = True
-            cache_key = {'voice': 'fixture'}
-            def analyze(self, path):
-                duration = _wav_frames(path)/SAMPLE_RATE
-                calls.append('voice')
-                return {'turns': [{'start': 0, 'end': duration, 'speaker': 'a'}],
-                        'evidence': {'a': {'embedding': [1, 0], 'duration': duration}},
-                        'embedding_model': 'fixture'}
-            def refine_turns(self, path, turns):
-                calls.append('final')
-                if _wav_frames(path) != 7*SAMPLE_RATE:
-                    raise AssertionError('finalization before full PCM')
-                return turns
-        self.run_pipeline(lambda _: {'segments': []}, speaker_backend=Voices(), reconcile_speakers=True)
-        self.assertEqual(calls, ['voice']*4 + ['final'])
-
     def test_truncated_native_wav_is_not_accepted_as_shorter_recording(self):
         self.source.write_bytes(self.source.read_bytes()[:-100])
         with self.assertRaisesRegex(ValueError, 'Truncated PCM'):
