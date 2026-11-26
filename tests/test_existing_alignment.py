@@ -80,7 +80,7 @@ class ExistingAlignmentTests(unittest.TestCase):
                 dict(word='Hello, ', start=1.1, end=1.5), dict(word='world!', start=2., end=2.)]}
             good = {**copy.deepcopy(cue), 'id':'good'}
             good['words'][1]['end'] = 2.3
-            for finish, expected_basis in [(2.16, 'word'), (2.82, 'segment')]:
+            for finish, expected_basis in [(2.16, 'word'), (2.82, 'word_partial')]:
                 doc = dict(language='en', segments=[copy.deepcopy(cue), copy.deepcopy(good)])
                 measure = Mock(return_value=[dict(word='Hello', start=1.1, end=1.5),
                                              dict(word='world', start=2., end=finish)])
@@ -89,7 +89,11 @@ class ExistingAlignmentTests(unittest.TestCase):
                 revised = doc['segments'][0]
                 self.assertEqual((revised['text'], revised['start'], revised['end']), ('Hello, world!', 1., 3.))
                 self.assertEqual(revised['timing_basis'], expected_basis)
-                self.assertEqual('words' in revised, expected_basis == 'word')
+                self.assertEqual(''.join(word['word'] for word in revised['words']), revised['text'])
+                self.assertEqual((revised['words'][0]['start'], revised['words'][0]['end']), (1.1, 1.5))
+                if expected_basis == 'word_partial':
+                    self.assertEqual(revised['alignment_status'], 'needs_review')
+                    self.assertEqual(revised['words'][1]['start'], revised['words'][1]['end'])
                 self.assertEqual(doc['segments'][1], good)
                 measure.assert_called_once()
 
