@@ -216,7 +216,7 @@ def fuse_speakers(cues, turns, *, split=True, check=lambda: None):
                 continue
             if terminal.search(a['word']):
                 priority = 0
-            elif gap >= .15 and not _lexeme_crosses(a['word'].rstrip(), b['word'].lstrip()):
+            elif gap >= .15 and not _lexeme_crosses(a['word'], b['word']):
                 priority = 1
             elif clause.search(a['word']):
                 priority = 2
@@ -374,13 +374,17 @@ def _stable_activity(runs, left, right, sample_rate):
     """Suppress short, isolated activity flutter while retaining overlaps."""
     minimum = round(.12*sample_rate)
     lanes = [[], [], []]
-    for start,end,active in runs:
+    previous_end = left
+    for start, end, active in runs:
         for lane in active:
             spans = lanes[lane]
-            if spans and start-spans[-1][1] <= minimum:
-                spans[-1] = (spans[-1][0],end)
+            # Bridge a brief gap only when it has no other active voice.
+            # Otherwise smoothing can fabricate a cannot-link overlap.
+            if spans and spans[-1][1] == previous_end and start - previous_end <= minimum:
+                spans[-1] = (spans[-1][0], end)
             else:
-                spans.append((start,end))
+                spans.append((start, end))
+        previous_end = end
     events = []
     for lane,spans in enumerate(lanes):
         for start,end in spans:
@@ -490,7 +494,7 @@ def diarize_recording(audio, directory, segmentation, embedding, *, expected_spe
 
     check()
     models = [Path(segmentation), Path(embedding)]
-    identity = {'version':'recording-powerset-v3', 'models':[_file_digest(p) for p in models],
+    identity = {'version':'recording-powerset-v4', 'models':[_file_digest(p) for p in models],
                 'pcm_sha256':_file_digest(audio)}
     directory = Path(directory) / _digest(identity)
     directory.mkdir(parents=True, exist_ok=True)

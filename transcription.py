@@ -121,8 +121,8 @@ def sentence_segments(segments):
                 emit_group()
             group.append(word)
             text = ''.join(item['word'] for item in group)
-            if (re.search(r'[。！？.!?][\s”’」』）)]*$', word['word']) or
-                    len(text) >= 160 and re.search(r'[，,；;：:][\s”’」』）)]*$', word['word']) or
+            if (re.search(r'[。！？.!?][\s"”’」』）)]*$', word['word']) or
+                    len(text) >= 160 and re.search(r'[，,；;：:][\s"”’」』）)]*$', word['word']) or
                     group[-1]['end'] - group[0]['start'] >= 45):
                 emit_group()
         emit_group()
