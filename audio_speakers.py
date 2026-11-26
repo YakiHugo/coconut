@@ -620,6 +620,33 @@ def _active_lanes(scores, left, right, origin, hop, receptive_field):
         yield start, right, powerset[previous]
 
 
+def _stable_activity(runs, left, right, sample_rate):
+    """Suppress short, isolated activity flutter while retaining overlaps."""
+    minimum = round(.12*sample_rate)
+    lanes = [[], [], []]
+    for start,end,active in runs:
+        for lane in active:
+            spans = lanes[lane]
+            if spans and start-spans[-1][1] <= minimum:
+                spans[-1] = (spans[-1][0],end)
+            else:
+                spans.append((start,end))
+    events = []
+    for lane,spans in enumerate(lanes):
+        for start,end in spans:
+            if end-start>=minimum or start==left or end==right:
+                events.extend([(start, lane, True),(end, lane, False)])
+    active, previous = set(), left
+    for point,lane,entering in sorted(events):
+        if point>previous and active:
+            yield previous,point,tuple(sorted(active))
+        if entering:
+            active.add(lane)
+        else:
+            active.discard(lane)
+        previous = point
+
+
 def _acoustic_windows(audio, directory, segmentation, embedding, check, progress):
     import json
     import numpy as np
@@ -638,7 +665,7 @@ def _acoustic_windows(audio, directory, segmentation, embedding, check, progress
         raise ValueError('Unsupported pyannote segmentation export')
     window = int(metadata['window_size'])
     hop, receptive_field = int(metadata['receptive_field_shift']), int(metadata['receptive_field_size'])
-    step = window // 2
+    step = window * 4 // 5
     extractor = sherpa_onnx.SpeakerEmbeddingExtractor(
         sherpa_onnx.SpeakerEmbeddingExtractorConfig(model=str(embedding), num_threads=2))
     frames = _wav_frames(audio)
@@ -658,11 +685,11 @@ def _acoustic_windows(audio, directory, segmentation, embedding, check, progress
         for left in core_windows[block*per_block:(block+1)*per_block]:
             check()
             right = min(frames, left+step)
-            origin = min(max(left - step//2, 0), max(0, frames - window))
+            origin = min(max(left - (window-step)//2, 0), max(0, frames - window))
             waveform = aligner_audio(audio, origin, min(frames, origin+window))
             model_input = np.pad(waveform, (0, window-len(waveform)))[None, None, :]
             scores, = session.run(None, {session.get_inputs()[0].name:model_input})
-            runs = list(_active_lanes(scores[0], left, right, origin, hop, receptive_field))
+            runs = list(_stable_activity(_active_lanes(scores[0], left, right, origin, hop, receptive_field), left, right, SAMPLE_RATE))
             compact = {}
             for lane in {lane for _, _, active in runs for lane in active}:
                 slices = [waveform[a-origin:b-origin] for a, b, active in runs if active == (lane,)]
@@ -691,7 +718,7 @@ def diarize_recording(audio, directory, segmentation, embedding, *, expected_spe
 
     check()
     models = [Path(segmentation), Path(embedding)]
-    identity = {'version':'recording-powerset-v1', 'models':[_file_digest(p) for p in models],
+    identity = {'version':'recording-powerset-v2', 'models':[_file_digest(p) for p in models],
                 'pcm_sha256':_file_digest(audio)}
     directory = Path(directory) / _digest(identity)
     directory.mkdir(parents=True, exist_ok=True)
