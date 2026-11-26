@@ -523,7 +523,7 @@ def fuse_speakers(cues, turns, *, split=True, check=lambda: None):
     return result
 
 
-def _global_clusters(samples, conflicts, expected_speakers, check):
+def _global_clusters(samples, conflicts, expected_speakers, check, continuity=None):
     """Cluster all recording-wide anchors once. Overlapping lanes cannot link."""
     import numpy as np
 
@@ -579,18 +579,24 @@ def _global_clusters(samples, conflicts, expected_speakers, check):
         groups = groups[:expected_speakers]
     groups.sort(key=lambda i: min(members[i]))
     assignments = {index: group for group in groups for index in members[group]}
+    continuity = continuity or {}
     for index, (_, vector) in enumerate(samples):
         check()
-        if index in assignments or not vector:
+        if index in assignments:
             continue
-        ranked = sorted(((float(centers[group] @ vector), group) for group in groups if
-                         not members[group] & conflicts.get(index, set())), reverse=True)
-        if not ranked:
+        available = [group for group in groups if not members[group] & conflicts.get(index, set())]
+        supported = {assignments[i] for i in continuity.get(index, ()) if i in assignments}
+        if len(supported) == 1 and supported <= set(available):
+            group = next(iter(supported))
+        elif vector:
+            ranked = sorted(((float(centers[group] @ vector), group) for group in available), reverse=True)
+            if not ranked or ranked[0][0] < similarity or (len(ranked)>1 and ranked[0][0]-ranked[1][0]<margin):
+                continue
+            group = ranked[0][1]
+        else:
             continue
-        score, group = ranked[0]
-        if score >= similarity and (len(ranked) == 1 or score - ranked[1][0] >= margin):
-            assignments[index] = group
-            members[group].add(index)
+        assignments[index] = group
+        members[group].add(index)
     names = {group: f'speaker-{i+1:04d}' for i, group in enumerate(groups)}
     return {index:names[group] for index, group in assignments.items()}
 
@@ -647,6 +653,26 @@ def _stable_activity(runs, left, right, sample_rate):
         previous = point
 
 
+def _continuing_lanes(left, right, rate):
+    """Link two local lanes only when their independent views agree in real time."""
+    votes = {}
+    for a,b,prior in left:
+        if len(prior)!=1:
+            continue
+        for x,y,current in right:
+            if len(current)!=1:
+                continue
+            overlap = min(b,y)-max(a,x)
+            if overlap>0:
+                key = (prior[0],current[0])
+                votes[key] = votes.get(key,0)+overlap
+    for (prior,current),duration in votes.items():
+        competing = max((value for (p,c),value in votes.items()
+                         if (p==prior)!=(c==current)),default=0)
+        if duration >= .45*rate and duration-competing >= .30*rate:
+            yield prior,current
+
+
 def _acoustic_windows(audio, directory, segmentation, embedding, check, progress):
     import json
     import numpy as np
@@ -689,7 +715,9 @@ def _acoustic_windows(audio, directory, segmentation, embedding, check, progress
             waveform = aligner_audio(audio, origin, min(frames, origin+window))
             model_input = np.pad(waveform, (0, window-len(waveform)))[None, None, :]
             scores, = session.run(None, {session.get_inputs()[0].name:model_input})
-            runs = list(_stable_activity(_active_lanes(scores[0], left, right, origin, hop, receptive_field), left, right, SAMPLE_RATE))
+            full = list(_active_lanes(scores[0], origin, min(frames,origin+window), origin, hop, receptive_field))
+            owned = [(max(a,left),min(b,right),active) for a,b,active in full if a<right and left<b]
+            runs = list(_stable_activity(owned, left, right, SAMPLE_RATE))
             compact = {}
             for lane in {lane for _, _, active in runs for lane in active}:
                 slices = [waveform[a-origin:b-origin] for a, b, active in runs if active == (lane,)]
@@ -702,7 +730,7 @@ def _acoustic_windows(audio, directory, segmentation, embedding, check, progress
                     if extractor.is_ready(stream):
                         vector = unit_vector(list(extractor.compute(stream)))
                 compact[lane] = (count / SAMPLE_RATE, vector)
-            rows.append({'runs': runs, 'samples': compact})
+            rows.append({'runs':runs,'samples':compact,'view':full})
         check()
         save_document({'windows':rows}, cache)
         yield rows
@@ -718,7 +746,7 @@ def diarize_recording(audio, directory, segmentation, embedding, *, expected_spe
 
     check()
     models = [Path(segmentation), Path(embedding)]
-    identity = {'version':'recording-powerset-v2', 'models':[_file_digest(p) for p in models],
+    identity = {'version':'recording-powerset-v3', 'models':[_file_digest(p) for p in models],
                 'pcm_sha256':_file_digest(audio)}
     directory = Path(directory) / _digest(identity)
     directory.mkdir(parents=True, exist_ok=True)
@@ -726,19 +754,28 @@ def diarize_recording(audio, directory, segmentation, embedding, *, expected_spe
     if target.exists():
         progress(1, 1)
         return json.loads(target.read_text())['turns']
-    samples, overlapping, runs = [], {}, []
+    samples, overlapping, continuity, runs = [], {}, {}, []
+    previous = None
     for block in _acoustic_windows(audio, directory, *models, check, progress):
         for row in block:
             indices = {}
             for lane, evidence in row['samples'].items():
                 indices[int(lane)] = len(samples)
                 samples.append(evidence)
+            if previous and 'view' in row:
+                earlier_view, earlier_indices = previous
+                for left,right in _continuing_lanes(earlier_view, row['view'], SAMPLE_RATE):
+                    if left in earlier_indices and right in indices:
+                        a,b = earlier_indices[left],indices[right]
+                        continuity.setdefault(a,set()).add(b)
+                        continuity.setdefault(b,set()).add(a)
+            previous = row.get('view',[]),indices
             for start, end, lanes in row['runs']:
                 indices_here = [indices[lane] for lane in lanes]
                 runs.append((start, end, indices_here))
                 for first in indices_here:
                     overlapping.setdefault(first, set()).update(second for second in indices_here if second != first)
-    assignments = _global_clusters(samples, overlapping, expected_speakers, check)
+    assignments = _global_clusters(samples, overlapping, expected_speakers, check, continuity)
     by_voice = {}
     # Preserve unresolved lane activity and its overlap with resolved tracks.
     for start, end, active in runs:
