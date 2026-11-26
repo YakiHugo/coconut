@@ -50,6 +50,20 @@ class AdapterTests(unittest.TestCase):
         with patch('importlib.metadata.version', return_value='authored'):
             return QwenBackend(self.profile, self.root)
 
+    def authored_backend(self, text, words=(), on_recognize=lambda:None):
+        from transcription import checkpoint
+        backend = self.backend()
+        def recognize_text(path, duration, key, directory):
+            def result():
+                on_recognize()
+                return {'segments':[dict(start=0,end=duration,text=text)]}
+            return checkpoint(directory / ('recognition-'+key+'.json'), result)
+        def align_recognition(_audio, _raw, duration, *_args, **_kwargs):
+            return {'language':'zh','segments':[dict(start=0,end=duration,text=text,**({'words':words} if words else {}))]}
+        backend.recognize_text = recognize_text
+        backend.align_recognition = align_recognition
+        return backend
+
     def test_missing_model_and_partial_shards_are_not_ready_without_download(self):
         with patch('importlib.util.find_spec', return_value=object()):
             self.assertTrue(probe(self.profile)['available'])
@@ -139,12 +153,19 @@ class AdapterTests(unittest.TestCase):
             run({**request, 'context': background})
             run({**request, 'context': background})
         self.assertEqual(len(calls), 3)
-        self.assertEqual(calls[0]['hotwords'], ['张元', '陈旌'])
-        self.assertEqual(calls[0]['system_prompt'], '节目标题：对话张元')
-        self.assertEqual(calls[1]['system_prompt'], '节目标题：张元访谈第二期')
-        self.assertIn('节目名称：技术访谈', calls[2]['system_prompt'])
-        self.assertIn('发布者提供的内容说明：本期讨论 Manus 和推理系统。', calls[2]['system_prompt'])
+        self.assertIn('名称与拼写：张元、陈旌', calls[0]['system_prompt'])
+        self.assertIn('标题：对话张元', calls[0]['system_prompt'])
+        self.assertIn('标题：张元访谈第二期', calls[1]['system_prompt'])
+        self.assertIn('节目：技术访谈', calls[2]['system_prompt'])
+        self.assertIn('简介：本期讨论 Manus 和推理系统。', calls[2]['system_prompt'])
         self.assertEqual(len(list((self.root / 'work').glob('stages/recognition/*'))), 3)
+
+    def test_unenriched_publisher_metadata_keeps_the_established_qwen_prompt(self):
+        with patch('importlib.metadata.version', return_value='authored'):
+            backend = QwenBackend(self.profile, self.root, title='节目标题',
+                                  context={'publisher':'公开来源','description':'原始简介'})
+        self.assertEqual(backend.hints, {'system_prompt': '节目标题：节目标题\n发布者：公开来源\n'
+                         '发布者提供的内容说明：原始简介\n以上是背景资料，仅用于辅助辨认词语，转录以实际音频为准。'})
 
     def test_full_media_runs_model_stages_in_order_and_reuses_checkpoints(self):
         from audio_pipeline import _file_digest
@@ -328,9 +349,7 @@ class AdapterTests(unittest.TestCase):
         self.assertEqual(segment['words'][-1], dict(word='后文。', start=2, end=3))
 
     def test_pipeline_writes_canonical_document_with_original_script_and_no_display_conversion(self):
-        from audio_pipeline import CallableBackend
-        backend = CallableBackend({'fixture':'canonical-text'}, lambda path: {
-            'language': 'zh', 'segments': [dict(start=0, end=2, text='我們寫代碼。')]})
+        backend = self.authored_backend('我們寫代碼。')
         from audio_pipeline import _file_digest
         with patch('transcription.probe', return_value={'available': True}), patch('transcription.QwenBackend', return_value=backend), patch('audio_pipeline.prepare_audio', side_effect=lambda source, directory: source), contextlib.redirect_stdout(io.StringIO()):
             run(dict(profile=self.profile, input=str(self.audio), work=str(self.root / 'work'), sha256=_file_digest(self.audio), title='Authored'))
@@ -388,13 +407,11 @@ class AdapterTests(unittest.TestCase):
                 run(dict(profile=self.profile, input=str(self.audio), work=str(self.root / 'work'), sha256=_file_digest(self.audio), speaker_count=count))
 
     def test_qwen_speaker_stage_reuses_recognition_and_acoustic_checkpoints(self):
-        from audio_pipeline import CallableBackend
         calls = {'asr': 0, 'voices': 0, 'refinement': 0}
-        def recognize(*args, **kwargs):
+        def recognized():
             calls['asr'] += 1
-            return {'language': 'zh', 'segments': [dict(start=0, end=2, text='你好再见', words=[
-                dict(start=0, end=1, word='你好'), dict(start=1, end=2, word='再见')])]}
-        backend = CallableBackend({'fixture':'two-voice-transcript'}, recognize)
+        backend = self.authored_backend('你好再见', [
+            dict(start=0, end=1, word='你好'), dict(start=1, end=2, word='再见')], recognized)
         class Voices:
             local_only = True
             cache_key = {'fixture': 'two-authored-voices'}

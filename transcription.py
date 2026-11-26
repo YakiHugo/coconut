@@ -12,6 +12,7 @@ import re
 import signal
 import sys
 import threading
+import time
 from pathlib import Path
 
 os.environ.update(HF_HUB_OFFLINE='1', TRANSFORMERS_OFFLINE='1',
@@ -212,6 +213,37 @@ def _decode_failed(result, budget, duration):
     return any(len(match.group()) >= 40 for match in re.finditer(r'(.{1,20}?)\1{19,}', letters))
 
 
+def _missing_audio_ranges(path, frames, result):
+    import numpy as np
+    from audio_pipeline import aligner_audio, SAMPLE_RATE
+    duration = frames / SAMPLE_RATE
+    segments = result.segments or []
+    if not segments and result.text.strip():
+        return []
+    gaps, edge = [], 0.
+    for item in segments:
+        if not item['text'].strip():
+            continue
+        start, end = max(0., item['start']), min(duration, item['end'])
+        if start > edge:
+            gaps.append((edge, min(start, duration)))
+        edge = max(edge, end)
+    if edge < duration:
+        gaps.append((edge, duration))
+    audible = []
+    for start, end in gaps:
+        if end - start < .5:
+            continue
+        first = round(start * SAMPLE_RATE)
+        samples = aligner_audio(Path(path), first, round(end * SAMPLE_RATE))
+        for offset in range(0, len(samples), SAMPLE_RATE):
+            block = samples[offset:offset + SAMPLE_RATE]
+            if len(block) >= SAMPLE_RATE // 2 and np.mean(block * block) >= .005 ** 2:
+                a = first + offset
+                audible.append((a / SAMPLE_RATE, (a + len(block)) / SAMPLE_RATE))
+    return audible
+
+
 class QwenBackend:
     local_only = True
 
@@ -224,27 +256,59 @@ class QwenBackend:
         if (not isinstance(hotwords, list) or len(hotwords) > 64 or
                 any(not isinstance(word, str) or not word.strip() or len(word) > 80 for word in hotwords)):
             raise ValueError('Invalid transcription vocabulary')
-        self.hints = {}
-        lines = ['节目标题：' + title.strip()] if title.strip() else []
-        if context is not None:
-            if not isinstance(context, dict):
-                raise ValueError('Invalid publisher context')
-            fields = [('platform', '来源平台', 40), ('show', '节目名称', 200),
-                      ('publisher', '发布者', 200), ('published', '发布时间', 100),
-                      ('description', '发布者提供的内容说明', 6000)]
-            for key, label, maximum in fields:
-                value = context.get(key, '')
-                if not isinstance(value, str) or len(value) > maximum:
-                    raise ValueError('Invalid publisher context field')
-                value = re.sub(r'<\|[^>]*\|>', '', value).strip()
-                if value:
-                    lines.append(label + '：' + value)
-            if len(lines) > (1 if title.strip() else 0):
-                lines.append('以上是背景资料，仅用于辅助辨认词语，转录以实际音频为准。')
-        if lines:
-            self.hints['system_prompt'] = '\n'.join(lines)
-        if hotwords:
-            self.hints['hotwords'] = list(dict.fromkeys(word.strip() for word in hotwords))
+        def clean(value, limit):
+            return re.sub(r'<\|[^>]*\|>', '', value).strip()[:limit]
+
+        if context is not None and not isinstance(context, dict):
+            raise ValueError('Invalid publisher context')
+        source = context or {}
+        for key, limit in [('show', 200), ('description', 6000)]:
+            value = source.get(key, '')
+            if not isinstance(value, str) or len(value) > limit:
+                raise ValueError('Invalid publisher context field')
+        participants = source.get('participants', [])
+        if not isinstance(participants, list) or len(participants) > 64:
+            raise ValueError('Invalid publisher participants')
+        names, labels = [], []
+        for person in participants:
+            if not isinstance(person, dict) or not isinstance(person.get('name'), str) or not 1 <= len(person['name']) <= 80:
+                raise ValueError('Invalid publisher participant')
+            name = clean(person['name'], 80)
+            if name and name not in names:
+                names.append(name)
+                role = person.get('role')
+                labels.append(name + ('（' + role + '）' if role in ('主持人', '嘉宾') else ''))
+        terms = [term for term in dict.fromkeys(clean(word, 80) for word in hotwords) if term and term not in names]
+        self.vocabulary_prompt = ''
+        if labels or terms:
+            name_line = '参与者：' + '、'.join(labels) if labels else ''
+            term_line = '名称与拼写：' + '、'.join(terms) if terms else ''
+            description = re.split(r'(?im)^\s*(?:时间轴|时间线|章节|联系方式|chapters|timestamps|contact)\s*[:：]?',
+                                   source.get('description', ''), maxsplit=1)[0]
+            lines = [('标题', clean(title, 240)), ('节目', clean(source.get('show', ''), 200)),
+                     ('简介', clean(description, 800))]
+            self.vocabulary_prompt = '\n'.join(line for line in (name_line, term_line) if line)
+            prompt = '\n'.join([*(label + '：' + value for label, value in lines if value),
+                                *([self.vocabulary_prompt] if self.vocabulary_prompt else [])])
+            self.hints = {'system_prompt':prompt} if prompt else {}
+        else:
+            self.hints = {}
+            lines = ['节目标题：' + title.strip()] if title.strip() else []
+            if context is not None:
+                fields = [('platform', '来源平台', 40), ('show', '节目名称', 200),
+                          ('publisher', '发布者', 200), ('published', '发布时间', 100),
+                          ('description', '发布者提供的内容说明', 6000)]
+                for key, label, maximum in fields:
+                    value = context.get(key, '')
+                    if not isinstance(value, str) or len(value) > maximum:
+                        raise ValueError('Invalid publisher context field')
+                    value = re.sub(r'<\|[^>]*\|>', '', value).strip()
+                    if value:
+                        lines.append(label + '：' + value)
+                if len(lines) > (1 if title.strip() else 0):
+                    lines.append('以上是背景资料，仅用于辅助辨认词语，转录以实际音频为准。')
+            if lines:
+                self.hints['system_prompt'] = '\n'.join(lines)
         self.profile, self.work = profile, work
         self.asr = self.aligner = None
         self.cache_key = dict(backend='qwen-mlx', runtime=version('mlx-audio'),
@@ -272,17 +336,30 @@ class QwenBackend:
             budget = min(16384, max(256, math.ceil(duration * 12) + 64))
             with contextlib.redirect_stdout(sys.stderr):
                 result = self.asr.generate(str(path), max_tokens=budget, verbose=False, **self.hints)
-            if _decode_failed(result, budget, duration):
+            failed = _decode_failed(result, budget, duration)
+            frames = round(duration * 16000)
+            missing = _missing_audio_ranges(path, frames, result)
+            missing_seconds = sum(b-a for a,b in missing)
+            stats = dict(first_pass_missing_ranges=missing, first_pass_invalid_decode=failed,
+                         retry_attempted=False, retry_recovered=False, retry_elapsed_seconds=0.)
+            if failed or missing_seconds >= 8.:
                 if duration < 4:
                     raise RuntimeError('ASR decoding failed; text may be incomplete')
-                retry_budget = min(16384, budget * 2)
+                retry_budget = min(16384, max(4096, budget * 2))
+                retry_options = {'system_prompt':self.vocabulary_prompt} if self.vocabulary_prompt else self.hints
+                started = time.monotonic()
                 with contextlib.redirect_stdout(sys.stderr):
-                    result = self.asr.generate(str(path), max_tokens=retry_budget,
-                                               chunk_duration=min(30, duration / 2), verbose=False, **self.hints)
-                if _decode_failed(result, retry_budget, duration) or not _covers_audio(result.segments, duration):
+                    retry = self.asr.generate(str(path), max_tokens=retry_budget,
+                        chunk_duration=min(30, duration / 2), verbose=False, **retry_options)
+                stats.update(retry_attempted=True, retry_elapsed_seconds=round(time.monotonic()-started, 3))
+                valid = not _decode_failed(retry, retry_budget, duration) and _covers_audio(retry.segments, duration)
+                if failed and not valid:
                     raise RuntimeError('ASR shorter-window retry returned incomplete or repetitive output; partial text discarded')
-                return {'text': result.text, 'segments': result.segments, 'recovery': 'shorter_audio_windows'}
-            return {'text': result.text, 'segments': result.segments}
+                if valid and (failed or sum(b-a for a,b in _missing_audio_ranges(path, frames, retry)) < missing_seconds):
+                    result = retry
+                    stats['retry_recovered'] = True
+            return {'text': result.text, 'segments': result.segments, 'asr_observation':stats,
+                    **({'recovery':'shorter_audio_windows'} if stats['retry_recovered'] else {})}
 
         return checkpoint(raw_path, recognize)
 
@@ -344,7 +421,7 @@ def _check_cancel(event):
 
 def _qwen_stages(backend, audio, directory, chunks, frames, hard_seams, check):
     from dataclasses import asdict
-    from audio_pipeline import (_digest, owned_segments, stitch_segments, normalize_word_clocks,
+    from audio_pipeline import (SAMPLE_RATE, _digest, owned_segments, stitch_segments, normalize_word_clocks,
                                 validate_window_clocks, write_chunk)
     from seam_recovery import recover_seam
 
@@ -371,10 +448,21 @@ def _qwen_stages(backend, audio, directory, chunks, frames, hard_seams, check):
 
     segments, languages, recovered, evidence = [], [], [], []
     previous = None
+    stats = dict(first_pass_chunks=0, first_pass_missing_seconds=0., first_pass_invalid_decode_chunks=0,
+                 retry_chunks=0, retry_recovered_chunks=0,retry_elapsed_seconds=0.)
     for index, (chunk, key) in enumerate(zip(chunks, requests), 1):
         check()
         emit(phase='align', chunk=index, chunks=len(chunks))
         raw = json.loads((recognition / ('recognition-' + key + '.json')).read_text())
+        observation = raw.get('asr_observation')
+        if observation:
+            a, b = chunk.core_start_frame/SAMPLE_RATE-chunk.start, chunk.core_end_frame/SAMPLE_RATE-chunk.start
+            stats['first_pass_chunks'] += 1
+            stats['first_pass_missing_seconds'] += sum(max(0.,min(b,y)-max(a,x)) for x,y in observation['first_pass_missing_ranges'])
+            stats['first_pass_invalid_decode_chunks'] += observation['first_pass_invalid_decode']
+            stats['retry_chunks'] += observation['retry_attempted']
+            stats['retry_recovered_chunks'] += observation['retry_recovered']
+            stats['retry_elapsed_seconds'] += observation['retry_elapsed_seconds']
         aligned = validate_window_clocks(
             lambda: backend.align_recognition(audio, raw, chunk.duration, key, alignment,
                                               origin=chunk.start, check=check), chunk)
@@ -390,7 +478,9 @@ def _qwen_stages(backend, audio, directory, chunks, frames, hard_seams, check):
     output = sorted(stitch_segments(segments) + recovered, key=lambda item: (item['start'], item['end']))
     for cue in output:
         normalize_word_clocks(cue)
-    return {'segments': sentence_segments(output), 'language': language, 'seam_recovery': evidence}
+    stats['first_pass_missing_seconds'] = round(stats['first_pass_missing_seconds'], 3)
+    stats['retry_elapsed_seconds'] = round(stats['retry_elapsed_seconds'], 3)
+    return {'segments': sentence_segments(output), 'language': language, 'seam_recovery': evidence, 'asr_metrics':stats}
 
 
 def _qwen_document(request, source, work, profile, speaker_count, backend, options):
@@ -421,29 +511,20 @@ def _qwen_document(request, source, work, profile, speaker_count, backend, optio
         if expected is not None and abs(duration - expected) > max(3, expected * .005):
             raise ValueError('Audio duration does not match the transcript source')
         try:
-            if hasattr(backend, 'recognize_text'):
-                from audio_vad import speech_evidence
-                vad = speech_evidence(audio, source, directory, model=profile.get('vad_model'), check=check)
-                chunks, hard_seams = plan_silence_chunks(frames, vad['speech_frames'],
-                    options['chunk_seconds'], options['context_seconds'])
-                result = _qwen_stages(backend, audio, directory, chunks, frames, hard_seams, check)
-                result['chunking'] = dict(method='silero-silence-v1', chunks=len(chunks),
-                    silence_cuts=len(chunks)-1-len(hard_seams), forced_cuts=len(hard_seams))
-            else:
-                # Explicit incremental adapters carry a sealed, previously aligned chunk.
-                from audio_pipeline import _digest, run_audio_pipeline
-                result = run_audio_pipeline(audio, backend, work_dir=directory / 'sealed' / _digest(backend.cache_key),
-                                            chunk_seconds=options['chunk_seconds'], context_seconds=options['context_seconds'],
-                                            progress=options['progress'], cancel_event=event, local_only=True)
-                result['segments'] = sentence_segments(result['segments'])
+            from audio_vad import speech_evidence
+            vad = speech_evidence(audio, source, directory, model=profile.get('vad_model'), check=check)
+            chunks, hard_seams = plan_silence_chunks(frames, vad['speech_frames'],
+                options['chunk_seconds'], options['context_seconds'])
+            result = _qwen_stages(backend, audio, directory, chunks, frames, hard_seams, check)
+            result['chunking'] = dict(method='silero-silence-v1', chunks=len(chunks),
+                silence_cuts=len(chunks)-1-len(hard_seams), forced_cuts=len(hard_seams))
             check()
             document = make_document(result, request.get('title', '文字稿'), '')
             document['media_duration'] = duration
             repair_transcribed_clocks(document, audio, directory, profile.get('align_model'),
                                        getattr(backend, 'aligner', None), check=check)
         finally:
-            if hasattr(backend, 'release'):
-                backend.release('aligner')
+            backend.release('aligner')
         check()
         document['provenance'] = dict(kind='local_asr', backend='qwen-mlx', model=Path(profile['asr_model']).name,
             caption_method='asr', review_status='unreviewed', language_basis='asr_detected' if result.get('language') else 'unknown',
@@ -451,6 +532,8 @@ def _qwen_document(request, source, work, profile, speaker_count, backend, optio
             speaker_method='unavailable', audio_pipeline=VERSION)
         if 'chunking' in result:
             document['provenance']['chunking'] = result['chunking']
+        if result.get('asr_metrics', {}).get('first_pass_chunks'):
+            document['provenance']['asr_metrics'] = result['asr_metrics']
         if profile.get('segmentation'):
             from audio_speakers import diarize_recording, label_aligned_segments
             turns = diarize_recording(audio, directory / 'speakers', profile['segmentation'], profile['embedding'],
@@ -529,22 +612,16 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--probe', action='store_true')
     args = parser.parse_args()
-    from incremental_transcription import initial_request
-    request = initial_request()
+    request_line = sys.stdin.buffer.readline(64 * 1024 * 1024 + 1)
+    if not request_line.endswith(b'\n') or len(request_line) > 64 * 1024 * 1024:
+        raise ValueError('Missing or oversized worker request')
+    request = json.loads(request_line)
     if args.probe:
-        if request.get('operation') == 'probe_incremental':
-            from incremental_transcription import probe_incremental
-            emit(**probe_incremental(request['profile']))
-        elif request.get('operation') == 'align_existing':
+        if request.get('operation') == 'align_existing':
             from existing_alignment import probe_alignment
             emit(**probe_alignment(request['profile']))
         else:
             emit(**probe(request['profile']))
-        return
-    if request.get('operation') == 'transcribe_incremental':
-        os.umask(0o077)
-        from incremental_transcription import run_incremental
-        run_incremental(request)
         return
     # Keep stdin open during work. Parent death closes it and terminates this
     # task even when Node cannot run its normal cancellation handler.

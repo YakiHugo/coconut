@@ -3,7 +3,6 @@ import {spawn} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
 import path from 'node:path';
 import {StringDecoder} from 'node:string_decoder';
-import {startIncrementalProcess} from './incremental-transcriber.mjs';
 const script=fileURLToPath(new URL('../transcription.py',import.meta.url));
 const offline={HF_HUB_OFFLINE:'1',TRANSFORMERS_OFFLINE:'1',HF_HUB_DISABLE_IMPLICIT_TOKEN:'1'};
 const phases=new Set(['prepare','recognize','align','speakers','save','done']);
@@ -36,15 +35,6 @@ export function createTranscriber({python,profile,scriptPath=script}={}){
  }
  return {
   profile,
-  async incrementalStatus(){
-   const base={local_only:true,model_download:false,automatic:false,backend:'qwen-mlx',upload_operations:0,incremental_protocol:1};
-   if(!configured||profile?.backend!=='qwen-mlx')return {...base,available:false,code:'incremental_not_configured',message:'本地增量转录尚未配置。'};
-   try{const value=await execute({operation:'probe_incremental'},{probe:true});
-    if(value.available===true&&value.local_only===true&&value.incremental_protocol===1&&Array.isArray(value.supported_containers)&&value.supported_containers.length>0&&value.supported_containers.every(x=>['flac','mp3'].includes(x)))return {...base,available:true,code:'ready',supported_containers:[...new Set(value.supported_containers)]};
-    return {...base,available:false,code:'incremental_unavailable',message:'本地增量转录环境未准备；可使用完整媒体转录。'};
-   }catch{return {...base,available:false,code:'incremental_executor_unavailable',message:'本地增量转录环境检查失败。'};}
-  },
-  startIncremental(options){return startIncrementalProcess({python,profile,scriptPath},options);},
   async alignmentStatus(){const base={local_only:true,model_download:false,automatic:false,backend:'qwen-align-mlx',upload_operations:0};if(!configured)return {...base,available:false,code:'alignment_not_configured',message:'本地对齐 Python 未配置'};try{return {...base,...await execute({operation:'align_existing'},{probe:true})};}catch{return {...base,available:false,code:'alignment_executor_unavailable',message:'本地对齐环境检查失败'};}},
   align({inputPath,sha256,workDirectory,document,signal,pcmCache,onProgress}){if(!path.isAbsolute(inputPath)||!path.isAbsolute(workDirectory))throw Error('对齐只接受服务已保存的音频');return execute({operation:'align_existing',input:inputPath,sha256,work:workDirectory,document},{signal,pcmCache,onProgress});},
   async status(){const base={local_only:true,model_download:false,automatic:false,backend:profile?.backend||'qwen-mlx',upload_operations:0};if(!configured)return {...base,available:false,code:'asr_not_configured',message:'请配置本地转录 Python 与模型目录；不会自动下载模型。'};try{return {...base,...await execute({}, {probe:true})};}catch{return {...base,available:false,code:'asr_executor_unavailable',message:'本地转录环境检查失败；阅读仍可使用。'};}},
