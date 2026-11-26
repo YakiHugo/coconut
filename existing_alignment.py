@@ -72,6 +72,35 @@ def _clock_path(cue, original, alternate=None):
     return selected[::-1]
 
 
+def _partial_word_clocks(cue):
+    """Retain the longest compatible set of observed clocks and exact source slices."""
+    words = cue['words']
+    if ''.join(word['word'] for word in words) != cue['text']:
+        return None
+    valid = [i for i, w in enumerate(words) if cue['start'] <= w['start'] < w['end'] <= cue['end']]
+    if not valid:
+        return None
+    paths = {}
+    for i in valid:
+        best = max((j for j in paths if words[j]['end'] <= words[i]['start']),
+                   key=lambda j: paths[j][0], default=None)
+        paths[i] = (1 if best is None else paths[best][0] + 1, best)
+    cursor = max(paths, key=lambda i: paths[i][0])
+    kept = set()
+    while cursor is not None:
+        kept.add(cursor)
+        cursor = paths[cursor][1]
+    clocks = []
+    edge = cue['start']
+    for i, word in enumerate(words):
+        if i in kept:
+            clocks.append(word)
+            edge = word['end']
+        else:
+            clocks.append(dict(word, start=edge, end=edge))
+    return clocks
+
+
 def align_document(document, duration, align, *, retry=None):
     """Pure validation boundary; align(cue) returns recording-relative word clocks."""
     if not isinstance(document, dict) or not isinstance(document.get('segments'), list) or not document['segments']:
@@ -159,8 +188,12 @@ def repair_transcribed_clocks(document, source, directory, model_path, model=Non
         if row['status'] == 'aligned':
             cue.update(words=recovered['words'], alignment_status='complete', timing_basis='word')
         else:
-            cue.pop('words', None)
-            cue.update(alignment_status='needs_review', timing_basis='segment')
+            partial = _partial_word_clocks(cue)
+            if partial:
+                cue.update(words=partial, alignment_status='needs_review', timing_basis='word_partial')
+            else:
+                cue.pop('words', None)
+                cue.update(alignment_status='needs_review', timing_basis='segment')
 
 
 def run_alignment(request):
