@@ -169,16 +169,24 @@ def fuse_speakers(cues, turns, *, split=True, check=lambda: None):
         duration = end-start
         others = [(a, b) for key, a, b in spans if key != voice]
         status = 'no_speech_evidence' if not spans else 'overlap_or_boundary'
-        if voice and not others and covered >= .70 * duration:
-            status = 'automatic_unreviewed'
+        words = [word for word in cue.get('words', ()) if word['end'] > word['start'] and any(c.isalnum() for c in word['word'])]
+        def speech_under(a, b, source):
+            return sum(max(0., min(b, y)-max(a, x)) for x, y in source)
+        main = [(a, b) for key, a, b in spans if key == voice]
+        if voice and not others:
+            aligned = (len(words) >= 3 and covered >= .60 * duration and sum(
+                speech_under(w['start'],w['end'],main) >= .65*(w['end']-w['start'])
+                for w in words) >= .90*len(words))
+            if covered >= .70*duration or aligned:
+                status = 'automatic_unreviewed'
         elif voice and covered >= .85 * duration:
             competing = sum(b-a for a, b in others)
-            main = [(a, b) for key, a, b in spans if key == voice]
-            # The main voice must remain active through the competing activity.
-            # Independent speech in a pause remains eligible for a speaker turn.
-            if competing <= min(.8, .12 * duration) and all(
-                    b-a-sum(max(0., min(b,y)-max(a,x)) for x,y in main) <= .02 for a,b in others):
-                status = 'dominant_with_brief_overlap'
+            if competing <= min(.8, .12 * duration):
+                fully_overlapping = all(b-a-speech_under(a,b,main) <= (.15 if words else .02) for a,b in others)
+                has_other_words = any(speech_under(w['start'],w['end'],main) < .60*(w['end']-w['start']) and
+                    speech_under(w['start'],w['end'],others) >= .50*(w['end']-w['start']) for w in words)
+                if fully_overlapping and not has_other_words:
+                    status = 'dominant_with_brief_overlap'
         if status not in ('automatic_unreviewed', 'dominant_with_brief_overlap'):
             voice = None
         cue.update(speaker_id=voice, speaker_status=status,
@@ -304,9 +312,9 @@ def _global_clusters(samples, conflicts, expected_speakers, check):
 
     groups = [i for i in range(len(anchors)) if parents[i] == i]
     support = {i: sum(samples[j][0] for j in members[i]) for i in groups}
-    # Repeated evidence dominates isolated clips. A strong clean clip still
-    # supports a voice on short recordings or one late in the programme.
-    groups = [i for i in groups if len(members[i]) >= 2 or support[i] >= 3.]
+    # Stable prototypes require repeat evidence on long recordings.
+    minimum_support = 3. if sum(support.values()) < 30. else 6.
+    groups = [i for i in groups if support[i] >= minimum_support]
     groups.sort(key=lambda i: (-support[i], min(members[i])))
     if expected_speakers is not None:
         groups = groups[:expected_speakers]
@@ -428,7 +436,7 @@ def diarize_recording(audio, directory, segmentation, embedding, *, expected_spe
                 'pcm_sha256':_file_digest(audio)}
     directory = Path(directory) / _digest(identity)
     directory.mkdir(parents=True, exist_ok=True)
-    target = directory / ('groups-' + _digest({'expected':expected_speakers}) + '.json')
+    target = directory / ('groups-' + _digest({'expected':expected_speakers, 'grouping':2}) + '.json')
     if target.exists():
         progress(1, 1)
         return json.loads(target.read_text())['turns']
