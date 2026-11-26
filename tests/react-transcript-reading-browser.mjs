@@ -87,7 +87,8 @@ try {
   const speech=source.matches('.rw-playing')?source:source.querySelector('.rw-playing')||source;
   const range=document.createRange();range.selectNodeContents(speech);
   const rect=[...range.getClientRects()].find(rect=>rect.width&&rect.height);
-  const top=24+document.querySelector('.rw-content-switch').getBoundingClientRect().height;
+  const tabs=document.querySelector('.rw-content-switch');
+  const top=24+parseFloat(getComputedStyle(tabs).top)+tabs.getBoundingClientRect().height;
   const bottom=document.querySelector('.rw-player').getBoundingClientRect().top-24;
   return {top:rect.top,bottom:rect.bottom,anchor:top+(bottom-top)/4,limit:bottom,scroll:scrollY};
  },cueId);
