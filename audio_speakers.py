@@ -264,7 +264,7 @@ def fuse_speakers(cues, turns, *, split=True, check=lambda: None):
     return result
 
 
-def _global_clusters(samples, conflicts, expected_speakers, check, continuity=None):
+def _global_clusters(samples, conflicts, expected_speakers, check, continuity=None, window_ids=None):
     """Cluster all recording-wide anchors once. Overlapping lanes cannot link."""
     import numpy as np
 
@@ -312,9 +312,12 @@ def _global_clusters(samples, conflicts, expected_speakers, check, continuity=No
 
     groups = [i for i in range(len(anchors)) if parents[i] == i]
     support = {i: sum(samples[j][0] for j in members[i]) for i in groups}
-    # Stable prototypes require repeat evidence on long recordings.
-    minimum_support = 3. if sum(support.values()) < 30. else 6.
-    groups = [i for i in groups if support[i] >= minimum_support]
+    # A single long detection can be a mixed lane. On a recording with
+    # enough clean speech, require evidence from two disjoint inference cores.
+    long_recording = sum(support.values()) >= 30.
+    clock_ids = window_ids if window_ids is not None else range(len(samples))
+    groups = [i for i in groups if support[i] >= (6. if long_recording else 3.) and (
+        not long_recording or len({clock_ids[index] for index in members[i]}) >= 2)]
     groups.sort(key=lambda i: (-support[i], min(members[i])))
     if expected_speakers is not None:
         groups = groups[:expected_speakers]
@@ -491,18 +494,20 @@ def diarize_recording(audio, directory, segmentation, embedding, *, expected_spe
                 'pcm_sha256':_file_digest(audio)}
     directory = Path(directory) / _digest(identity)
     directory.mkdir(parents=True, exist_ok=True)
-    target = directory / ('groups-' + _digest({'expected':expected_speakers, 'grouping':2}) + '.json')
+    target = directory / ('groups-' + _digest({'expected':expected_speakers, 'grouping':3}) + '.json')
     if target.exists():
         progress(1, 1)
         return json.loads(target.read_text())['turns']
     samples, overlapping, continuity, runs = [], {}, {}, []
-    previous = None
+    window_ids, window_index, previous = [], 0, None
     for block in _acoustic_windows(audio, directory, *models, check, progress):
         for row in block:
             indices = {}
             for lane, evidence in row['samples'].items():
                 indices[int(lane)] = len(samples)
                 samples.append(evidence)
+                window_ids.append(window_index)
+            window_index += 1
             if previous and 'view' in row:
                 earlier_view, earlier_indices = previous
                 for left,right in _continuing_lanes(earlier_view, row['view'], SAMPLE_RATE):
@@ -516,7 +521,7 @@ def diarize_recording(audio, directory, segmentation, embedding, *, expected_spe
                 runs.append((start, end, indices_here))
                 for first in indices_here:
                     overlapping.setdefault(first, set()).update(second for second in indices_here if second != first)
-    assignments = _global_clusters(samples, overlapping, expected_speakers, check, continuity)
+    assignments = _global_clusters(samples, overlapping, expected_speakers, check, continuity, window_ids)
     by_voice = {}
     # Preserve unresolved lane activity and its overlap with resolved tracks.
     for start, end, active in runs:
