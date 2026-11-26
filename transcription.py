@@ -89,7 +89,8 @@ def sentence_segments(segments):
     Untimed or incompletely aligned text keeps its original coarse extent.
     """
     result = []
-    for segment in segments:
+    for index, segment in enumerate(segments):
+        first_output = len(result)
         words = segment.get('words') or []
         if not words or ''.join(word['word'] for word in words).strip() != segment['text'].strip():
             result.append(segment)
@@ -120,6 +121,13 @@ def sentence_segments(segments):
                     group[-1]['end'] - group[0]['start'] >= 45):
                 emit_group()
         emit_group()
+        # Overlapping ASR extents can make a late sentence start after a
+        # subsequent source extent. Preserve source order and its coarse clock.
+        starts = [cue['start'] for cue in result[first_output:]]
+        if index + 1 < len(segments):
+            starts.append(segments[index+1]['start'])
+        if any(a > b for a, b in zip(starts, starts[1:])):
+            result[first_output:] = [segment]
     return result
 
 
