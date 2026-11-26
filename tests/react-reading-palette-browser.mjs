@@ -2,9 +2,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { build } from 'esbuild';
-import { chromium } from '@playwright/test';
+import { chromium, expect } from '@playwright/test';
 
-test('React saved and system themes apply the island palette to the shell, reader and controls', async () => {
+test('React themes apply the island palette and reading fonts apply to the prose', async () => {
  const browser=await chromium.launch({headless:true,...(process.env.COCONUT_CHROMIUM_EXECUTABLE?{executablePath:process.env.COCONUT_CHROMIUM_EXECUTABLE}:{})});
  try {
   const context=await browser.newContext({colorScheme:'dark',reducedMotion:'reduce'}),page=await context.newPage();
@@ -17,7 +17,12 @@ test('React saved and system themes apply the island palette to the shell, reade
     import React from 'react';import {createRoot} from 'react-dom/client';
     import {ReadingPreferences,useReadingPreferences} from './frontend/reading-preferences/preferences';
     function App(){const controller=useReadingPreferences();return <div className="react-app" data-workspace="read"><ReadingPreferences controller={controller}/><aside className="app-sidebar"><span className="sidebar-foot">Navigation</span><nav><button aria-current="page">Reader</button></nav></aside><main className="reader-workspace"><p className="rw-original">Source text</p><p className="rw-translation">Translation</p><div className="rw-player"><button className="rw-player-play">Play</button></div><div className="rw-selection">Selection</div><textarea aria-label="Note"/><section className="react-ai-panel"><label>Model<select><option>Local</option></select></label><p>Details</p></section><dialog open>Dialog<input placeholder="Search"/></dialog></main></div>;}createRoot(document.getElementById('root')).render(<App/>);`,loader:'tsx',resolveDir:process.cwd()},bundle:true,format:'iife',define:{'process.env.NODE_ENV':'"production"'},write:false});
-  await page.evaluate(()=>localStorage.setItem('coconut-reading-theme-v1','dark'));
+  await page.evaluate(()=>{
+    localStorage.setItem('coconut-reading-theme-v1','dark');
+    window.queryLocalFonts = () => new Promise(resolve => {
+      window.finishFontListing = () => resolve([{family:'Songti SC'},{family:'Georgia'},{family:'Songti SC'}]);
+    });
+  });
   await page.addScriptTag({content:bundle.outputFiles[0].text});
   await page.waitForFunction(()=>document.documentElement.dataset.readerTheme==='dark');
   const palette=()=>page.evaluate(()=>Object.fromEntries(['.react-app','.app-sidebar','.app-sidebar nav','.app-sidebar [aria-current]','.sidebar-foot','.rw-original','.rw-translation','.rw-player','.rw-player-play','.rw-selection','textarea','.react-ai-panel select','dialog','dialog input'].map(selector=>{const style=getComputedStyle(document.querySelector(selector));return [selector,{color:style.color,background:style.backgroundColor}];})));
@@ -40,5 +45,35 @@ test('React saved and system themes apply the island palette to the shell, reade
   await theme.press('End');await theme.press('Enter');await page.waitForFunction(()=>document.documentElement.dataset.readerTheme==='dark');assert.deepEqual(await palette(),dark);
   await page.emulateMedia({colorScheme:'light'});await page.waitForFunction(()=>document.documentElement.dataset.readerTheme==='light');assert.deepEqual(await palette(),light);
   assert.equal(await page.evaluate(()=>localStorage.getItem('coconut-reading-theme-v1')),'system');
+
+  const picker=page.getByRole('combobox',{name:'阅读字体',exact:true});
+  const menu=page.getByRole('listbox',{name:'阅读字体',exact:true});
+  const prose=page.locator('.rw-original');
+  const defaultFont=await prose.evaluate(node=>getComputedStyle(node).fontFamily);
+  await picker.press('End');
+  await expect(page.getByText('正在读取本机字体…',{exact:true})).toBeVisible();
+  await page.evaluate(()=>window.finishFontListing());
+  await expect(menu.getByRole('option')).toHaveText(['默认✓','Georgia','Songti SC','自定义']);
+  await expect(menu.locator('[data-active=true]')).toHaveText('自定义');
+  await expect(page.locator('.reading-font input')).toHaveCount(0);
+  await picker.press('Escape');
+  await expect(menu).toHaveCount(0);
+  await expect(picker).toBeFocused();
+  await picker.click();
+  await menu.getByRole('option',{name:'Songti SC',exact:true}).click();
+  await expect(prose).toHaveCSS('font-family',/^"Songti SC",/);
+  await expect(page.locator('.app-sidebar')).toHaveCSS('font-family',defaultFont);
+  assert.equal(await page.evaluate(()=>localStorage.getItem('coconut-reading-font-family-v1')),'Songti SC');
+  await picker.press('End');
+  await picker.press('Enter');
+  const custom=page.getByRole('textbox',{name:'自定义字体名称',exact:true});
+  await custom.fill('Times New Roman');
+  await expect(page.locator('.reading-font-preview')).toHaveCSS('font-family',/^"Times New Roman",/);
+  await expect(prose).toHaveCSS('font-family',/^"Songti SC",/);
+  await custom.press('Enter');
+  await expect(prose).toHaveCSS('font-family',/^"Times New Roman",/);
+  await picker.press('Home');
+  await picker.press('Enter');
+  await expect(prose).toHaveCSS('font-family',defaultFont);
  } finally {await browser.close();}
 });

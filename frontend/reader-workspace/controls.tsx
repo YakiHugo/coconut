@@ -3,34 +3,55 @@ import {useEffect, useId, useRef, useState, type ReactNode} from 'react';
 export type Choice = {value:string; label:string};
 
 /** A shared listbox: no hidden native select, and one predictable keyboard path. */
-export function ChoicePicker({label,value,options,disabled=false,onChange}:{label:string;value:string;options:Choice[];disabled?:boolean;onChange:(value:string)=>void}) {
-    const id=useId(), host=useRef<HTMLDivElement>(null), trigger=useRef<HTMLButtonElement>(null);
-    const [open,setOpen]=useState(false),[active,setActive]=useState(0);
-    const selected=Math.max(0,options.findIndex(option=>option.value===value));
-    const choose=(index:number)=>{onChange(options[index].value);setOpen(false);trigger.current?.focus();};
-    const show=(index=selected)=>{setActive(index);setOpen(true);};
+export function ChoicePicker({label,value,options,disabled=false,onChange,onOpen}:{
+    label:string;value:string;options:Choice[];disabled?:boolean;onChange:(value:string)=>void;onOpen?:()=>void;
+}) {
+    const id=useId(), host=useRef<HTMLDivElement>(null), trigger=useRef<HTMLButtonElement>(null), list=useRef<HTMLDivElement>(null);
+    const [open,setOpen]=useState(false),[activeValue,setActiveValue]=useState<string|null>(null);
+    const selected=options.findIndex(option=>option.value===value);
+    const active=Math.max(0,options.findIndex(option=>option.value===activeValue));
+    const choose=(option:Choice)=>{onChange(option.value);setOpen(false);trigger.current?.focus();};
+    const show=(index=Math.max(0,selected))=>{
+        setActiveValue(options[index]?.value??null);setOpen(true);
+        if(!open)onOpen?.();
+    };
     useEffect(()=>{if(disabled)setOpen(false);},[disabled]);
     useEffect(()=>{
         if(!open)return;
-        host.current?.querySelector<HTMLElement>('[role=option][data-active=true]')?.scrollIntoView({block:'nearest'});
+        const scroll=list.current,item=scroll?.querySelector<HTMLElement>('[role=option][data-active=true]');
+        if(scroll&&item){
+            const top=item.offsetTop,bottom=top+item.offsetHeight;
+            if(top<scroll.scrollTop)scroll.scrollTop=top;
+            else if(bottom>scroll.scrollTop+scroll.clientHeight)scroll.scrollTop=bottom-scroll.clientHeight;
+        }
+    },[open,active,options.length]);
+    useEffect(()=>{
+        if(!open)return;
         const outside=(event:PointerEvent)=>{if(!host.current?.contains(event.target as Node))setOpen(false);};
         document.addEventListener('pointerdown',outside);
         return()=>document.removeEventListener('pointerdown',outside);
-    },[open,active]);
+    },[open]);
     return <div className="rw-choice" ref={host} onBlur={event=>{if(!event.currentTarget.contains(event.relatedTarget as Node|null))setOpen(false);}}>
         <span id={id+'-label'} className="rw-choice-label">{label}</span>
-        <button ref={trigger} type="button" role="combobox" aria-labelledby={id+'-label'} aria-expanded={open} aria-controls={id+'-list'} aria-haspopup="listbox" aria-activedescendant={open?id+'-option-'+active:undefined} disabled={disabled}
+        <button ref={trigger} type="button" role="combobox" aria-labelledby={id+'-label'} aria-expanded={open} aria-controls={open?id+'-list':undefined}
+            aria-haspopup="listbox" aria-activedescendant={open&&options[active]?id+'-option-'+active:undefined} disabled={disabled}
             onClick={()=>open?setOpen(false):show()} onKeyDown={event=>{
                 if(event.nativeEvent.isComposing||event.nativeEvent.keyCode===229)return;
-                if(['ArrowDown','ArrowUp','Home','End'].includes(event.key)){
+                if(options.length&&['ArrowDown','ArrowUp','Home','End'].includes(event.key)){
                     event.preventDefault();
-                    const next=event.key==='Home'?0:event.key==='End'?options.length-1:open?(active+(event.key==='ArrowDown'?1:-1)+options.length)%options.length:selected;
+                    const next=event.key==='Home'?0:event.key==='End'?options.length-1:open?(active+(event.key==='ArrowDown'?1:-1)+options.length)%options.length:Math.max(0,selected);
                     show(next);
-                }else if(open&&(event.key==='Enter'||event.key===' ')){event.preventDefault();choose(active);}
-                else if(open&&event.key==='Escape'){event.preventDefault();event.stopPropagation();setOpen(false);}
+                }else if(open&&(event.key==='Enter'||event.key===' ')){
+                    event.preventDefault();
+                    if(options[active])choose(options[active]);
+                }else if(open&&event.key==='Escape'){event.preventDefault();event.stopPropagation();setOpen(false);}
                 else if(event.key==='Tab')setOpen(false);
-            }}><span id={id+'-value'}>{options.find(option=>option.value===value)?.label||'请选择'}</span><span aria-hidden="true">⌄</span></button>
-        {open&&<div id={id+'-list'} role="listbox" aria-labelledby={id+'-label'} className="rw-choice-options">{options.map((option,index)=><div id={id+'-option-'+index} role="option" key={option.value} aria-selected={option.value===value} data-active={index===active} onPointerMove={()=>setActive(index)} onPointerDown={event=>event.preventDefault()} onClick={()=>choose(index)}>{option.label}{option.value===value&&<span aria-hidden="true">✓</span>}</div>)}</div>}
+            }}><span id={id+'-value'}>{options[selected]?.label||'请选择'}</span><span aria-hidden="true">⌄</span></button>
+        {open&&<div id={id+'-list'} ref={list} role="listbox" aria-labelledby={id+'-label'} className="rw-choice-options">
+            {options.map((option,index)=><div id={id+'-option-'+index} role="option" key={option.value} aria-selected={option.value===value}
+                data-active={index===active} onPointerMove={()=>setActiveValue(option.value)} onPointerDown={event=>event.preventDefault()}
+                onClick={()=>choose(option)}>{option.label}{option.value===value&&<span aria-hidden="true">✓</span>}</div>)}
+        </div>}
     </div>;
 }
 
