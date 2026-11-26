@@ -39,3 +39,15 @@ test('pre-ASR metadata extraction accepts literal roster and terms, excludes dis
  const r=await prepareContext(d,{directory,provider:'codex',providers:{structured:async()=>({roster_complete:true,participants:[{name:'张元',role:'嘉宾',quote:'张元｜投资人'},{name:'陈旌',role:'主持人',quote:'陈旌｜主持人'}],terms:[{term:'Manus',quote:'话题：Manus'},{term:'虚构拼写',quote:'话题：Manus'}]})}});
  assert.deepEqual(r.speaker_identity_evidence.speakers.map(x=>x.name),['张元','陈旌']);assert.equal(r.speaker_identity_evidence.expected_speakers,2);assert.deepEqual(r.transcription_glossary.map(x=>x.term),['Manus']);assert.equal(d.speaker_identity_evidence,undefined);
 }));
+
+test('a partial roster drops the old automatic count and preserves sourced vocabulary',()=>fixture(async directory=>{
+ const {prepareContext}=await import('../desktop/speaker-identity.mjs');
+ const source='https://publisher.example/ep', existing={term:'Claude Code',source};
+ const input={title:'对话张元',transcription_context:{source_url:source,description:'嘉宾张元讲 Manus。'},
+  speaker_identity_evidence:{metadata_status:'automatic_unreviewed',expected_speakers:2,speakers:[{name:'张元'}]},
+  transcription_glossary:[existing]};
+ const result=await prepareContext(input,{directory,provider:'codex',providers:{structured:async()=>({roster_complete:false,
+  participants:[{name:'张元',role:'嘉宾',quote:'嘉宾张元'}],terms:[{term:'Manus',quote:'讲 Manus'}]})}});
+ assert.equal(result.speaker_identity_evidence.expected_speakers,undefined);
+ assert.deepEqual(result.transcription_glossary,[existing,{term:'Manus',source,quote:'讲 Manus'}]);
+}));
