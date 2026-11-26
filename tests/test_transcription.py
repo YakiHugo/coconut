@@ -160,12 +160,20 @@ class AdapterTests(unittest.TestCase):
         self.assertIn('简介：本期讨论 Manus 和推理系统。', calls[2]['system_prompt'])
         self.assertEqual(len(list((self.root / 'work').glob('stages/recognition/*'))), 3)
 
-    def test_unenriched_publisher_metadata_keeps_the_established_qwen_prompt(self):
+    def test_unenriched_publisher_metadata_uses_the_same_compact_fields(self):
+        context = {'platform': 'xiaoyuzhou', 'show': '访谈节目', 'publisher': '公开来源',
+                   'published': '今日', 'description': '原始简介\n时间轴：\n00:01 话题'}
         with patch('importlib.metadata.version', return_value='authored'):
-            backend = QwenBackend(self.profile, self.root, title='节目标题',
-                                  context={'publisher':'公开来源','description':'原始简介'})
-        self.assertEqual(backend.hints, {'system_prompt': '节目标题：节目标题\n发布者：公开来源\n'
-                         '发布者提供的内容说明：原始简介\n以上是背景资料，仅用于辅助辨认词语，转录以实际音频为准。'})
+            backend = QwenBackend(self.profile, self.root, title='节目标题', context=context)
+            enriched = QwenBackend(self.profile, self.root, title='节目标题', context=context,
+                                   hotwords=['节目专名'])
+            long_description = QwenBackend(self.profile, self.root, context={'description': '甲' * 900})
+            empty = QwenBackend(self.profile, self.root)
+        prompt = '标题：节目标题\n节目：访谈节目\n简介：原始简介'
+        self.assertEqual(backend.hints, {'system_prompt': prompt})
+        self.assertEqual(enriched.hints, {'system_prompt': prompt + '\n名称与拼写：节目专名'})
+        self.assertEqual(long_description.hints['system_prompt'], '简介：' + '甲' * 800)
+        self.assertEqual(empty.hints, {})
 
     def test_full_media_runs_model_stages_in_order_and_reuses_checkpoints(self):
         from audio_pipeline import _file_digest
@@ -302,7 +310,8 @@ class AdapterTests(unittest.TestCase):
         with wave.open(str(self.audio),'wb') as stream:
             stream.setparams((1,2,SAMPLE_RATE,0,'NONE','not compressed'))
             stream.writeframes(b'\0'*(SAMPLE_RATE*2*8))
-        backend=self.backend()
+        with patch('importlib.metadata.version', return_value='authored'):
+            backend = QwenBackend(self.profile, self.root, title='上下文标题')
         segments=[dict(text='你好。',start=0,end=4,language='Chinese'),dict(text='再见。',start=4,end=8,language='Chinese')]
         initial=types.SimpleNamespace(text='不停重复',segments=[],generation_tokens=256)
         backend.asr=Mock()
@@ -317,7 +326,9 @@ class AdapterTests(unittest.TestCase):
         self.assertEqual([segment['text'] for segment in result['segments']],['你好。','再见。'])
         self.assertEqual(result['segments'][1]['words'][0]['start'],4.1)
         self.assertNotIn('chunk_duration',backend.asr.generate.call_args_list[0].kwargs)
+        self.assertEqual(backend.asr.generate.call_args_list[0].kwargs['system_prompt'], '标题：上下文标题')
         self.assertEqual(backend.asr.generate.call_args_list[1].kwargs['chunk_duration'],4.)
+        self.assertNotIn('system_prompt', backend.asr.generate.call_args_list[1].kwargs)
         self.assertFalse((self.root/'recognition-partial.json').exists())
 
     def test_only_failed_decodes_trigger_text_retry(self):
