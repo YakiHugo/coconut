@@ -138,7 +138,48 @@ class AdapterTests(unittest.TestCase):
         self.assertEqual(calls[1]['system_prompt'], '节目标题：张元访谈第二期')
         self.assertIn('节目名称：技术访谈', calls[2]['system_prompt'])
         self.assertIn('发布者提供的内容说明：本期讨论 Manus 和推理系统。', calls[2]['system_prompt'])
-        self.assertEqual(len(list((self.root / 'work').glob('audio-context-*'))), 3)
+        self.assertEqual(len(list((self.root / 'work').glob('stages/recognition/*'))), 3)
+
+    def test_full_media_runs_model_stages_in_order_and_reuses_checkpoints(self):
+        from audio_pipeline import _file_digest
+        backend = self.backend()
+        events = []
+        original_release = backend.release
+        def release(stage):
+            events.append('release-' + stage)
+            original_release(stage)
+        backend.release = release
+        def load(path):
+            stage = 'asr' if path == self.profile['asr_model'] else 'aligner'
+            self.assertTrue(backend.asr is None and backend.aligner is None)
+            events.append(stage)
+            if stage == 'asr':
+                return types.SimpleNamespace(generate=lambda *args, **kwargs: types.SimpleNamespace(
+                    text='你好。', segments=[dict(text='你好。', start=0, end=2, language='Chinese')]))
+            return types.SimpleNamespace(generate=lambda **kwargs: [
+                types.SimpleNamespace(text='你好', start_time=.1, end_time=1.8)])
+        def voices(*args, **kwargs):
+            self.assertIsNone(backend.asr)
+            self.assertIsNone(backend.aligner)
+            events.append('speakers')
+            kwargs['progress'](1, 1)
+            return []
+        profile = {**self.profile, 'segmentation':str(self.audio), 'embedding':str(self.audio)}
+        request = dict(profile=profile, input=str(self.audio), work=str(self.root / 'work'),
+                       sha256=_file_digest(self.audio), media_duration=2)
+        modules = {'mlx_audio':types.ModuleType('mlx_audio'), 'mlx_audio.stt':types.SimpleNamespace(load=load)}
+        stdout = io.StringIO()
+        with patch('transcription.probe', return_value={'available':True}), \
+                patch.dict('sys.modules', modules), patch('audio_speakers.diarize_recording', side_effect=voices), \
+                patch('audio_pipeline.prepare_audio', wraps=__import__('audio_pipeline').prepare_audio) as pcm, \
+                contextlib.redirect_stdout(stdout):
+            run(request, qwen_backend=backend)
+            self.assertEqual(pcm.call_count, 1)
+            run(request, qwen_backend=backend)
+        self.assertEqual(events, ['asr','release-asr','aligner','release-aligner','speakers',
+                                  'release-asr','release-aligner','speakers'])
+        self.assertIn({'phase':'speakers','chunk':1,'chunks':1}, [json.loads(line) for line in stdout.getvalue().splitlines()])
+        self.assertEqual(json.loads((self.root / 'work' / 'result.json').read_text())['media_duration'], 2)
 
     def test_invalid_vocabulary_is_rejected_before_inference(self):
         for hotwords in ('张元', [''], [42], ['a' * 81], ['a'] * 65):
@@ -281,8 +322,9 @@ class AdapterTests(unittest.TestCase):
         self.assertEqual(segment['words'][-1], dict(word='后文。', start=2, end=3))
 
     def test_pipeline_writes_canonical_document_with_original_script_and_no_display_conversion(self):
-        backend = self.backend()
-        backend.recognize = lambda *args, **kwargs: {'language': 'zh', 'segments': [dict(start=0, end=2, text='我們寫代碼。')]}
+        from audio_pipeline import CallableBackend
+        backend = CallableBackend({'fixture':'canonical-text'}, lambda path: {
+            'language': 'zh', 'segments': [dict(start=0, end=2, text='我們寫代碼。')]})
         from audio_pipeline import _file_digest
         with patch('transcription.probe', return_value={'available': True}), patch('transcription.QwenBackend', return_value=backend), patch('audio_pipeline.prepare_audio', side_effect=lambda source, directory: source), contextlib.redirect_stdout(io.StringIO()):
             run(dict(profile=self.profile, input=str(self.audio), work=str(self.root / 'work'), sha256=_file_digest(self.audio), title='Authored'))
@@ -340,13 +382,13 @@ class AdapterTests(unittest.TestCase):
                 run(dict(profile=self.profile, input=str(self.audio), work=str(self.root / 'work'), sha256=_file_digest(self.audio), speaker_count=count))
 
     def test_qwen_speaker_stage_reuses_recognition_and_acoustic_checkpoints(self):
+        from audio_pipeline import CallableBackend
         calls = {'asr': 0, 'voices': 0, 'refinement': 0}
-        backend = self.backend()
         def recognize(*args, **kwargs):
             calls['asr'] += 1
             return {'language': 'zh', 'segments': [dict(start=0, end=2, text='你好再见', words=[
                 dict(start=0, end=1, word='你好'), dict(start=1, end=2, word='再见')])]}
-        backend.recognize = recognize
+        backend = CallableBackend({'fixture':'two-voice-transcript'}, recognize)
         class Voices:
             local_only = True
             cache_key = {'fixture': 'two-authored-voices'}
@@ -356,7 +398,7 @@ class AdapterTests(unittest.TestCase):
                     dict(start=1, end=2, speaker='b')], 'evidence': {
                     'a': {'embedding': [1, 0], 'duration': 2},
                     'b': {'embedding': [0, 1], 'duration': 2}}}
-            def refine_turns(inner, path, turns):
+            def refine_turns(inner, path, turns, *, check):
                 calls['refinement'] += 1
                 return turns
         from audio_pipeline import _file_digest

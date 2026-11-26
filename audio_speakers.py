@@ -397,6 +397,50 @@ def preserve_overlap_conflicts(original, assigned):
     return assigned
 
 
+def diarize_recording(audio, directory, segmentation, embedding, *, expected_speakers=None,
+                      check=lambda: None, progress=lambda index, total: None):
+    """Build and cache a recording-wide acoustic timeline from normalized PCM."""
+    import json
+    from audio_pipeline import SAMPLE_RATE, _digest, _wav_frames, plan_chunks, validate_voices, write_chunk
+    from transcript import save_document
+
+    check()
+    backend = SherpaSpeakerBackend(segmentation, embedding)
+    frames = _wav_frames(audio)
+    chunks = plan_chunks(frames)
+    directory = directory / _digest(backend.cache_key)
+    directory.mkdir(parents=True, exist_ok=True)
+    target = directory / ('refined-' + _digest({'count': expected_speakers, 'version': 1}) + '.json')
+    if target.exists():
+        progress(len(chunks), len(chunks))
+        return json.loads(target.read_text())['turns']
+    blocks = []
+    for chunk in chunks:
+        check()
+        progress(chunk.index + 1, len(chunks))
+        cache = directory / f'voices-{chunk.index:05d}.json'
+        if cache.exists():
+            voices = validate_voices(json.loads(cache.read_text()), chunk.duration)
+        else:
+            window = directory / 'window.wav'
+            try:
+                write_chunk(audio, chunk, window)
+                voices = validate_voices(backend.analyze(window), chunk.duration)
+                check()
+                save_document(voices, cache)
+            finally:
+                window.unlink(missing_ok=True)
+        blocks.append(dict(start=chunk.start, core_start=chunk.core_start_frame / SAMPLE_RATE,
+                           core_end=chunk.core_end_frame / SAMPLE_RATE, voices=voices))
+    check()
+    turns, _ = reconcile_recording_speakers(blocks, expected_speakers=expected_speakers)
+    check()
+    turns = backend.refine_turns(audio, turns, check=check)
+    check()
+    save_document({'turns': turns}, target)
+    return turns
+
+
 class SherpaSpeakerBackend:
     """Bounded local diarization + clean voice samples, reusable by cloud ASR."""
     local_only = True
@@ -433,7 +477,7 @@ class SherpaSpeakerBackend:
             samples = np.frombuffer(stream.readframes(stream.getnframes()), dtype='<i2').astype('float32') / 32768
             return self.analyze_samples(samples, stream.getframerate())
 
-    def refine_turns(self, path, turns):
+    def refine_turns(self, path, turns, *, check=lambda: None):
         """Recover rejected local clusters from individual clean utterances.
 
         Only existing recording identities are candidates. A failed/mixed local
@@ -456,6 +500,7 @@ class SherpaSpeakerBackend:
             return [(a + .04, b - .04) for a, b in clean if b - a >= .28]
 
         def extract_ranges(ranges):
+            check()
             parts = []
             for start, end in ranges:
                 stream_audio.setpos(round(start * rate))
