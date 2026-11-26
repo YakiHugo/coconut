@@ -64,13 +64,13 @@ from tests.test_seam_recovery import fixture
 from audio_pipeline import owned_segments,stitch_segments
 from seam_recovery import recover_seam
 from transcription import sentence_segments
-from audio_speakers import label_aligned_segments
+from audio_speakers import fuse_speakers
 from transcript import make_document
 a,left,b,right=fixture()
 extra,trace=recover_seam(a,left,b,right)
 segments=sorted(stitch_segments(owned_segments(a,left,160000)+owned_segments(b,right,160000))+extra,key=lambda s:s['start'])
 segments=sentence_segments(segments)
-segments=label_aligned_segments(segments,[{'start':0,'end':10,'speaker':'a'}],{'a':{'speaker_id':'speaker-0001','status':'automatic_unreviewed'}},split=True)
+segments=fuse_speakers(segments,[{'start':0,'end':10,'speaker_id':'speaker-0001'}])
 print(json.dumps(make_document({'segments':segments,'seam_recovery':trace},'Seam fixture','')))`;
  const {stdout}=await promisify(execFile)('python3',['-B','-c',script],{cwd:root,timeout:15000});
  const raw=JSON.parse(stdout),doc=C.parse(JSON.stringify(C.validate(raw)),'backup.json');
