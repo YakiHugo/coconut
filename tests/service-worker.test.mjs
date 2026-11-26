@@ -57,7 +57,7 @@ test('malformed worker output and missing Python are explicit failures',async t=
 });
 test('parent death terminates the real task parent-control path without an orphan',async t=>{
  const data=await directory(t),script=path.join(data,'held.py'),pidFile=path.join(data,'pid');
- await writeFile(script,`import sys,time,os\nsys.path.insert(0,${JSON.stringify(process.cwd())})\nimport transcription\ntranscription.probe=lambda _: {'available':True}\ndef held(request):\n open(${JSON.stringify(pidFile)},'w').write(str(os.getpid()))\n transcription.emit(phase='recognize')\n time.sleep(30)\ntranscription.run=held\ntranscription.main()\n`);
+ await writeFile(script,`import sys,time,os\nsys.path.insert(0,${JSON.stringify(process.cwd())})\nimport transcription\ntranscription.probe=lambda _: {'available':True}\ndef held(request, *, pipeline_options):\n assert pipeline_options['cancel_event'].is_set() is False\n open(${JSON.stringify(pidFile)},'w').write(str(os.getpid()))\n transcription.emit(phase='recognize')\n time.sleep(30)\ntranscription.run=held\ntranscription.main()\n`);
  const module=new URL('../server/transcription.mjs',import.meta.url).href;
  const child=spawn(process.execPath,['--input-type=module','-e',`import {createTranscriber} from ${JSON.stringify(module)};await createTranscriber(${JSON.stringify({python,profile:{backend:'authored'},scriptPath:script})}).run(${JSON.stringify({inputPath:path.join(data,'audio'),workDirectory:data,sha256:'a'.repeat(64)})});`],{stdio:['ignore','ignore','ignore']});t.after(()=>child.kill('SIGKILL'));
  let pid;for(let i=0;i<100;i++){try{pid=Number(await readFile(pidFile,'utf8'));if(pid)break;}catch{}await delay(20);}assert.ok(pid);child.kill('SIGKILL');
@@ -65,7 +65,7 @@ test('parent death terminates the real task parent-control path without an orpha
 });
 test('normal completion exits cleanly while the production parent watcher is waiting',async t=>{
  const data=await directory(t),script=path.join(data,'completed.py');
- await writeFile(script,`import sys\nsys.path.insert(0,${JSON.stringify(process.cwd())})\nimport transcription\ntranscription.run=lambda _: transcription.emit(phase='done')\ntranscription.main()\n`);
+ await writeFile(script,`import sys\nsys.path.insert(0,${JSON.stringify(process.cwd())})\nimport transcription\ntranscription.run=lambda _, **options: transcription.emit(phase='done')\ntranscription.main()\n`);
  const phases=[];await createTranscriber({python,profile:{backend:'authored'},scriptPath:script}).run({inputPath:path.join(data,'audio'),sha256:'a'.repeat(64),workDirectory:data,onProgress:value=>phases.push(value.phase)});
  assert.deepEqual(phases,['done']);
 });
