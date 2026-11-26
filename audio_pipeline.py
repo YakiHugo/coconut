@@ -6,7 +6,7 @@ and recording-scoped speaker identities belong to this module, not the provider.
 from __future__ import annotations
 
 import copy
-from contextlib import contextmanager, ExitStack
+from contextlib import contextmanager
 import errno
 import hashlib
 import json
@@ -626,8 +626,7 @@ def run_audio_pipeline(source: Path, backend: ASRBackend, *, work_dir=None, spea
                        chunk_seconds=600, context_seconds=5, local_only=False,
                        speaker_threshold=.72, speaker_margin=.08, progress=None,
                        expected_duration=None, minimum_duration=None,
-                       decode_mode="buffered", cancel_event=None, pcm_queue_capacity=2,
-                       max_decoded_frames=None):
+                       cancel_event=None, max_decoded_frames=None):
     """Run/resume either local ASR or an explicitly selected cloud adapter.
 
     Atomic ASR and acoustic checkpoints are separate. Completed paid chunks are
@@ -636,23 +635,16 @@ def run_audio_pipeline(source: Path, backend: ASRBackend, *, work_dir=None, spea
     if local_only and (not backend.local_only or
                        speaker_backend and not getattr(speaker_backend, 'local_only', False)):
         raise ValueError('Local-only processing cannot use a cloud/provider backend')
-    if decode_mode == 'pipelined' and (not backend.local_only or
-            speaker_backend and not getattr(speaker_backend, 'local_only', False)):
-        raise ValueError('Pipelined decoding currently requires local-only backends')
-    if decode_mode not in ('buffered', 'pipelined'):
-        raise ValueError('Unknown PCM decode mode')
     def check_cancel():
         if cancel_event is not None and cancel_event.is_set():
             raise InterruptedError('Audio processing cancelled')
     check_cancel()
     registry = SpeakerRegistry(speaker_threshold, speaker_margin)
-    with _directory(work_dir) as directory, ExitStack() as resources:
+    with _directory(work_dir) as directory:
         directory = Path(directory)
         manifest = {'version': VERSION, 'source_sha256': _file_digest(source),
                     'backend': backend.cache_key, 'local_only': local_only,
                     'chunk_seconds': chunk_seconds, 'context_seconds': context_seconds}
-        if decode_mode == 'pipelined':
-            manifest['decode_mode'] = 'pipelined-pcm-v1'
         marker = directory / 'manifest.json'
         if marker.exists() and json.loads(marker.read_text()) != manifest:
             raise ValueError('Audio work directory belongs to different input/options')
@@ -663,55 +655,35 @@ def run_audio_pipeline(source: Path, backend: ASRBackend, *, work_dir=None, spea
                 raise ValueError('Audio duration does not match the transcript source')
             if minimum_duration is not None and duration + 1 < minimum_duration:
                 raise ValueError('Transcript timing extends beyond the supplied audio')
-        producer = None
-        if decode_mode == 'pipelined':
-            from pcm_producer import PCMProducer
-            producer = resources.enter_context(PCMProducer(source, directory, chunk_seconds=chunk_seconds,
-                context_seconds=context_seconds, cancel=cancel_event, capacity=pcm_queue_capacity))
-            audio, frames, chunks = producer.audio, None, []
-            stream = iter(producer)
-        else:
-            audio = (prepare_audio(source, directory) if max_decoded_frames is None else
-                     prepare_audio(source, directory, max_frames=max_decoded_frames))
-            frames = _wav_frames(audio)
-            check_duration(frames)
-            chunks = plan_chunks(frames, chunk_seconds, context_seconds)
-            stream = ((chunk, frames) for chunk in chunks)
+        audio = (prepare_audio(source, directory) if max_decoded_frames is None else
+                 prepare_audio(source, directory, max_frames=max_decoded_frames))
+        frames = _wav_frames(audio)
+        check_duration(frames)
+        chunks = plan_chunks(frames, chunk_seconds, context_seconds)
         output, languages, warnings, speaker_turns = [], [], [], []
         previous = None
         seam_cues, seam_evidence = [], []
         voice_key = _digest(speaker_backend.cache_key)[:16] if speaker_backend else ''
         identity_key = _digest({'voice_key': voice_key, 'threshold': speaker_threshold,
                                 'margin': speaker_margin})[:16]
-        for chunk, ownership_frames in stream:
+        for chunk in chunks:
             check_cancel()
-            if producer:
-                chunks.append(chunk)
             if progress:
-                progress(chunk.index, None if producer else len(chunks))
+                progress(chunk.index, len(chunks))
             request_id = _digest({'manifest': manifest, 'chunk': asdict(chunk)})
             cache = directory / f'asr-{chunk.index:05d}.json'
             voice_cache = directory / f'voices-{voice_key}-{chunk.index:05d}.json'
             path = directory / f'chunk-{chunk.index:05d}.wav'
             try:
-                pcm = True if producer else None
-                if producer:
-                    identity = {'chunk': asdict(chunk), 'pcm_sha256': _file_digest(path)}
-                    identity_path = directory / f'pcm-{chunk.index:05d}.json'
-                    if (cache.exists() or voice_cache.exists()) and not identity_path.exists():
-                        raise ValueError('Decoded chunk checkpoint has no identity')
-                    if identity_path.exists() and json.loads(identity_path.read_text()) != identity:
-                        raise ValueError('Decoded chunk identity changed')
-                    save_document(identity, identity_path)
+                pcm = None
                 if cache.exists():
                     raw = validate_result(json.loads(cache.read_text()), chunk.duration)
                 else:
-                    if not producer:
-                        pcm = write_chunk(audio, chunk, path)
+                    pcm = write_chunk(audio, chunk, path)
                     raw = validate_result(recognize_window(backend, path, request_id, chunk), chunk.duration)
                     check_cancel()
                     save_document(raw, cache)
-                segments = owned_segments(raw, chunk, ownership_frames)
+                segments = owned_segments(raw, chunk, frames)
                 if previous:
                     from seam_recovery import recover_seam
                     recovered, evidence = recover_seam(previous[0], previous[1], raw, chunk)
@@ -758,11 +730,6 @@ def run_audio_pipeline(source: Path, backend: ASRBackend, *, work_dir=None, spea
             finally:
                 path.unlink(missing_ok=True)
         check_cancel()
-        if producer:
-            frames = producer.frames
-            check_duration(frames)
-            if _file_digest(source) != manifest['source_sha256']:
-                raise ValueError('Source media changed during decoding')
         output = stitch_segments(output)
         speaker_count = len(registry.voices)
         # Recovered words have unverified clocks: never inherit a neighboring

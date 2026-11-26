@@ -54,7 +54,15 @@ export async function prepareContext(document,{providers,directory,provider,mode
  const participants=value.participants.filter(p=>p&&['主持人','嘉宾',''].includes(p.role)&&grounded(p.name,p.quote));
  const distinct=[...new Map(participants.map(p=>[p.name,p])).values()];
  const speakers=distinct.map(p=>({name:p.name,role:p.role,source_url:input.source_url,metadata_quote:p.quote}));
- const terms=[...new Map(value.terms.filter(p=>p&&grounded(p.term,p.quote)).map(p=>[p.term,{term:p.term,source:input.source_url,quote:p.quote}])).values()];
+ const glossary=new Map((Array.isArray(document.transcription_glossary)?document.transcription_glossary:[])
+  .filter(entry=>typeof entry?.term==='string'&&entry.term.trim()&&typeof entry.source==='string'&&entry.source.trim())
+  .map(entry=>[entry.term,entry]));
+ for(const item of value.terms)if(item&&grounded(item.term,item.quote)&&!glossary.has(item.term)){
+  glossary.set(item.term,{term:item.term,source:input.source_url,quote:item.quote});
+ }
+ const identityEvidence={...document.speaker_identity_evidence,version:1,source_url:input.source_url,metadata_status:'automatic_unreviewed',speakers};
+ if(value.roster_complete&&speakers.length&&speakers.length===value.participants.length)identityEvidence.expected_speakers=speakers.length;
+ else delete identityEvidence.expected_speakers;
  await writeFile(file+'.tmp',JSON.stringify(value),{mode:0o600});await rename(file+'.tmp',file);
- return {...document,speaker_identity_evidence:{...document.speaker_identity_evidence,version:1,source_url:input.source_url,metadata_status:'automatic_unreviewed',speakers,...(value.roster_complete&&speakers.length&&speakers.length===value.participants.length?{expected_speakers:speakers.length}:{})},transcription_glossary:terms};
+ return {...document,speaker_identity_evidence:identityEvidence,transcription_glossary:[...glossary.values()].slice(0,64)};
 }
