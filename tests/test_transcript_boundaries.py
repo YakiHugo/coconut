@@ -1,8 +1,10 @@
 from copy import deepcopy
+from importlib.util import find_spec
 import json
 import subprocess
 import sys
 import unittest
+from unittest.mock import patch
 from transcript_boundaries import plan_boundaries,source_fingerprint,utf16_offset
 
 
@@ -41,6 +43,7 @@ class TranscriptBoundaryTests(unittest.TestCase):
   self.assertEqual(r['cue_boundaries'][0]['kind'],'continue')
   self.assertFalse(r['marks']);self.assertFalse(r['breaks'])
 
+ @unittest.skipUnless(find_spec('rjieba'), 'optional local dictionary is not installed')
  def test_split_lexeme_with_speaker_conflict_routes_issue(self):
   d=doc(('为什么融资都不大顺','a'),('利？','b'));before=deepcopy(d)
   r=plan_boundaries(d)
@@ -48,10 +51,18 @@ class TranscriptBoundaryTests(unittest.TestCase):
   self.assertTrue(any(z['reason']=='lexical_continuation_conflicts_with_source_speaker_boundary' for z in r['issues']))
   self.assertFalse(r['marks']);self.assertEqual(d,before)
 
+ @unittest.skipUnless(find_spec('rjieba'), 'optional local dictionary is not installed')
  def test_unknown_speakers_are_not_assumed_identical(self):
   r=plan_boundaries(doc(('幻想过很多可',None),('能。',None)))
   self.assertEqual(r['cue_boundaries'][0]['kind'],'uncertain')
   self.assertTrue(r['issues']);self.assertFalse(r['marks'])
+
+ def test_no_dictionary_keeps_speaker_changes_without_inventing_word_breaks(self):
+  d=doc(('为什么融资都不大顺','a'),('利？','b'))
+  with patch('transcript_boundaries._word_segmenter',return_value=None):
+   result=plan_boundaries(d)
+  self.assertEqual(result['cue_boundaries'][0]['kind'],'speaker_turn')
+  self.assertFalse(result['marks'])
 
  def test_question_quotes_numbers_and_english_are_protected(self):
   text='他说：“我们过去很多年一直都在认真学习和观察这个行业的发展以及不同的选择，然后我觉得四千二和四千五是两个数字。”你觉得呢？'
